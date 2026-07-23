@@ -2152,7 +2152,7 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
             while (nai < c.args.len()) { new_args = new_args.append(c.args[nai]); nai = nai + 1; }
             var rewritten: parser.ExprCall = parser.ExprCall {
                 callee: parser.ExprIdent { name: amf, line: fa.line, col: fa.col },
-                args: new_args, line: c.line, col: c.col, type_argc: 0
+                args: new_args, line: c.line, col: c.col, type_argc: 0, ty: ""
             };
             return emit_call(rewritten, s);
         }

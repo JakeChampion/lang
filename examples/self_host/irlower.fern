@@ -4001,7 +4001,7 @@ pub function lower_foreach_snapshot(var_name: string, iter: parser.Expr, body: p
 function to_json_append_stmt(on: string, byte: parser.Expr): parser.Stmt {
     var oref: parser.Expr = parser.ExprIdent { name: on, line: 0, col: 0 };
     var casted: parser.Expr = parser.ExprUnary { op: "as_u8", operand: byte, line: 0, col: 0 };
-    var app: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: oref, field: "append", line: 0, col: 0 }, args: [casted], line: 0, col: 0, type_argc: 0 };
+    var app: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: oref, field: "append", line: 0, col: 0 }, args: [casted], line: 0, col: 0, type_argc: 0, ty: "" };
     return parser.StmtAssign { target: on, value: app, line: 0, col: 0, target_line: 0, target_col: 0 };
 }
 
@@ -4013,7 +4013,7 @@ function to_json_bytecopy_stmt(on: string, sn: string, kn: string): parser.Stmt 
     var sref: parser.Expr = parser.ExprIdent { name: sn, line: 0, col: 0 };
     var kref: parser.Expr = parser.ExprIdent { name: kn, line: 0, col: 0 };
     var one: parser.Expr = parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 };
-    var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+    var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var cond: parser.Expr = parser.ExprBinary { op: "<", left: kref, right: lenc, line: 0, col: 0 };
     var elem: parser.Expr = parser.ExprIndex { array: sref, index: kref, unchecked: false };
     var app: parser.Stmt = to_json_append_stmt(on, elem);
@@ -4037,14 +4037,14 @@ function to_json_loop_stmt(on: string, inm: string, sn: string, kn: string, aref
     var zero: parser.Expr = parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 };
     var one: parser.Expr = parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 };
     var comma: parser.Expr = parser.ExprNumber { text: "44", suffix: "", is_float: false, line: 0, col: 0 };
-    var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: aref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+    var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: aref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var cond: parser.Expr = parser.ExprBinary { op: "<", left: iref, right: lenc, line: 0, col: 0 };
     var igt: parser.Expr = parser.ExprBinary { op: ">", left: iref, right: zero, line: 0, col: 0 };
     var noelse: parser.Stmt[] = [];
     var ifc: parser.Stmt = parser.StmtIf { cond: igt, then_body: [to_json_append_stmt(on, comma)], else_body: noelse };
     // var $s = aref[$i].to_json();
     var elem: parser.Expr = parser.ExprIndex { array: aref, index: iref, unchecked: false };
-    var elemj: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: elem, field: "to_json", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+    var elemj: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: elem, field: "to_json", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var dvs: parser.Stmt = parser.StmtVar { name: sn, type_name: "", init: elemj, line: 0, col: 0, is_str: false };
     // var $k = 0;
     var dk: parser.Stmt = parser.StmtVar { name: kn, type_name: "", init: zero, line: 0, col: 0, is_str: false };
@@ -4094,7 +4094,7 @@ pub function lower_array_to_json(arr: parser.Expr, s: LowerState): LowerState {
     s2 = lower_stmt(to_json_append_stmt(on, parser.ExprNumber { text: "93", suffix: "", is_float: false, line: 0, col: 0 }), s2);
     if (!s2.ok) { return s2; }
     // result expression: string_from_bytes($tjout)
-    var result: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "string_from_bytes", line: 0, col: 0 }, args: [parser.ExprIdent { name: on, line: 0, col: 0 }], line: 0, col: 0, type_argc: 0 };
+    var result: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "string_from_bytes", line: 0, col: 0 }, args: [parser.ExprIdent { name: on, line: 0, col: 0 }], line: 0, col: 0, type_argc: 0, ty: "" };
     return lower_expr(result, s2);
 }
 
@@ -4116,9 +4116,9 @@ function lower_string_foreach(var_name: string, iter: parser.Expr, body: parser.
     var sref: parser.Expr = parser.ExprIdent { name: sn, line: 0, col: 0 };
     var iref: parser.Expr = parser.ExprIdent { name: idx, line: 0, col: 0 };
     var zero: parser.Expr = parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 };
-    var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+    var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var rargs: parser.Expr[] = [zero, lenc];
-    var range_iter: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__range", line: 0, col: 0 }, args: rargs, line: 0, col: 0, type_argc: 0 };
+    var range_iter: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__range", line: 0, col: 0 }, args: rargs, line: 0, col: 0, type_argc: 0, ty: "" };
     var bind: parser.Stmt = parser.StmtVar { name: var_name, type_name: "", init: parser.ExprIndex { array: sref, index: iref, unchecked: false }, line: 0, col: 0, is_str: false };
     var nbody: parser.Stmt[] = [bind];
     var bi: i32 = 0;
@@ -6040,7 +6040,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // E009), so bail to the AST path rather than mis-lower the
                     // struct pointers as scalar arithmetic.
                     if (s.struct_ret_type(blt + "." + ovm) == "") { return s.fail(); }
-                    var ovcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: b.left, field: ovm, line: b.line, col: b.col }, args: [b.right], line: b.line, col: b.col, type_argc: 0 };
+                    var ovcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: b.left, field: ovm, line: b.line, col: b.col }, args: [b.right], line: b.line, col: b.col, type_argc: 0, ty: "" };
                     return lower_expr(ovcall, s);
                 }
             }
@@ -6265,7 +6265,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 var ust: string = expr_struct_type(u.operand, s);
                 if (decl_is_struct(s.structs, ust)) {
                     if (s.struct_ret_type(ust + ".neg") == "") { return s.fail(); }
-                    var negcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: u.operand, field: "neg", line: u.line, col: u.col }, args: [], line: u.line, col: u.col, type_argc: 0 };
+                    var negcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: u.operand, field: "neg", line: u.line, col: u.col }, args: [], line: u.line, col: u.col, type_argc: 0, ty: "" };
                     return lower_expr(negcall, s);
                 }
                 // -x  ==  0 - x  : push 0, push x, sub.
@@ -15092,14 +15092,14 @@ function lower_map_clone_insert(target: string, recv: parser.Expr, key: parser.E
     var mci: string = "$mci" + util.i32_to_string(n);
     var zero: parser.Expr = parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 };
     // var $mc: <maptype> = map_new(0);  (key kind from the annotation)
-    var newcall: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "map_new", line: 0, col: 0 }, args: [zero], line: 0, col: 0, type_argc: 0 };
+    var newcall: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "map_new", line: 0, col: 0 }, args: [zero], line: 0, col: 0, type_argc: 0, ty: "" };
     var st: LowerState = lower_stmt(parser.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0, is_str: false }, s);
     if (!st.ok) { return st; }
     // var $mck = recv.keys();  var $mcv = recv.values();
-    var keyscall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "keys", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+    var keyscall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "keys", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     st = lower_stmt(parser.StmtVar { name: mck, type_name: "", init: keyscall, line: 0, col: 0, is_str: false }, st);
     if (!st.ok) { return st; }
-    var valscall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "values", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+    var valscall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "values", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     st = lower_stmt(parser.StmtVar { name: mcv, type_name: "", init: valscall, line: 0, col: 0, is_str: false }, st);
     if (!st.ok) { return st; }
     // for $mci in 0 .. $mck.len() { $mc = $mc.insert($mck[$mci], $mcv[$mci]); }
@@ -15107,16 +15107,16 @@ function lower_map_clone_insert(target: string, recv: parser.Expr, key: parser.E
     var mcvref: parser.Expr = parser.ExprIdent { name: mcv, line: 0, col: 0 };
     var mciref: parser.Expr = parser.ExprIdent { name: mci, line: 0, col: 0 };
     var mcref: parser.Expr = parser.ExprIdent { name: mc, line: 0, col: 0 };
-    var lencall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mckref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
-    var range: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__range", line: 0, col: 0 }, args: [zero, lencall], line: 0, col: 0, type_argc: 0 };
+    var lencall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mckref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
+    var range: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__range", line: 0, col: 0 }, args: [zero, lencall], line: 0, col: 0, type_argc: 0, ty: "" };
     var insargs: parser.Expr[] = [parser.ExprIndex { array: mckref, index: mciref, unchecked: false }, parser.ExprIndex { array: mcvref, index: mciref, unchecked: false }];
-    var insexpr: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0 }, args: insargs, line: 0, col: 0, type_argc: 0 };
+    var insexpr: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0 }, args: insargs, line: 0, col: 0, type_argc: 0, ty: "" };
     var loopbody: parser.Stmt[] = [parser.StmtAssign { target: mc, value: insexpr, line: 0, col: 0, target_line: 0, target_col: 0 }];
     st = lower_stmt(parser.StmtFor { var_name: mci, iter: range, body: loopbody, label: "" }, st);
     if (!st.ok) { return st; }
     // target = $mc.insert(key, val);  ($mc != target → generic assign; $mc is
     // unaliased so its in-place insert is sound, and the fresh clone binds to m).
-    var finalins: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0 }, args: [key, val], line: 0, col: 0, type_argc: 0 };
+    var finalins: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0 }, args: [key, val], line: 0, col: 0, type_argc: 0, ty: "" };
     return lower_stmt(parser.StmtAssign { target: target, value: finalins, line: 0, col: 0, target_line: 0, target_col: 0 }, st);
 }
 
@@ -37071,7 +37071,7 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
                 nargs = nargs.append(r.expr);
                 i = i + 1;
             }
-            return LiftExpr { expr: parser.ExprCall { callee: ce.expr, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, acc: a };
+            return LiftExpr { expr: parser.ExprCall { callee: ce.expr, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, acc: a };
         },
         // A no-capture lambda in a TUPLE-element position (`(function(x){...}, 10)`)
         // hoists the same way — lift_call_arg turns it into a bare `__lam_N` fn-name
@@ -37840,13 +37840,13 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
                         var ca: i32 = 0;
                         while (ca < capargs.len()) { nargs = nargs.append(capargs[ca]); ca = ca + 1; }
                         var lc: parser.Expr = parser.ExprIdent { name: lname, line: 0, col: 0 };
-                        return parser.ExprCall { callee: lc, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc };
+                        return parser.ExprCall { callee: lc, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
                     }
                 },
                 _ => { }
             }
             var rc: parser.Expr = subst_fcall_expr(c.callee, fname, lname, capargs);
-            return parser.ExprCall { callee: rc, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc };
+            return parser.ExprCall { callee: rc, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         parser.ExprBinary(b) => {
             return parser.ExprBinary { op: b.op, left: subst_fcall_expr(b.left, fname, lname, capargs), right: subst_fcall_expr(b.right, fname, lname, capargs), line: b.line, col: b.col };
@@ -38180,7 +38180,7 @@ function try_inline_closure(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: 
     var capargs: parser.Expr[] = [];
     var ci: i32 = 0;
     while (ci < caps.len()) { capargs = capargs.append(parser.ExprIdent { name: caps[ci], line: 0, col: 0 }); ci = ci + 1; }
-    var marker: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__mkclo$" + cloname, line: 0, col: 0 }, args: capargs, line: 0, col: 0, type_argc: 0 };
+    var marker: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__mkclo$" + cloname, line: 0, col: 0 }, args: capargs, line: 0, col: 0, type_argc: 0, ty: "" };
     return InlineCloRes { expr: marker, funcs: funcs.append(hr.func), counter: counter + 1 };
 }
 
@@ -38235,7 +38235,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.F
                 args = args.append(parser.ExprIdent { name: tgt.params[pj].name, line: 0, col: 0 });
                 pj = pj + 1;
             }
-            var call: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: fnname, line: 0, col: 0 }, args: args, line: 0, col: 0, type_argc: 0 };
+            var call: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: fnname, line: 0, col: 0 }, args: args, line: 0, col: 0, type_argc: 0, ty: "" };
             var bd: parser.Stmt[] = [parser.StmtReturn { value: call, line: 0, col: 0 }];
             var notp: string[] = [];
             return HoistResult { func: parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false }, ok: true };
@@ -38261,7 +38261,7 @@ function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.F
             // No-capture lambda → wrap trampoline (body inlined, __env ignored).
             var wn: string = fd.name + "$wrap" + util.i32_to_string(counter);
             var wf: parser.FuncDecl = make_wrap_lambda_func(lam, wn);
-            var marker: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+            var marker: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
             return InlineCloRes { expr: marker, funcs: funcs.append(wf), counter: counter + 1 };
         },
         parser.ExprIdent(id) => {
@@ -38269,7 +38269,7 @@ function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.F
             var wn2: string = fd.name + "$wrap" + util.i32_to_string(counter);
             var hr: HoistResult = make_wrap_named_func(id.name, wn2, mfuncs);
             if (!hr.ok) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
-            var marker2: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__mkclo$" + wn2, line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+            var marker2: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__mkclo$" + wn2, line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
             return InlineCloRes { expr: marker2, funcs: funcs.append(hr.func), counter: counter + 1 };
         },
         _ => { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
@@ -38454,7 +38454,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                     fs = cr.funcs; ct = cr.counter; ncallee = cr.expr;
                 }
             }
-            return InlineCloRes { expr: parser.ExprCall { callee: ncallee, args: nargs, line: call.line, col: call.col, type_argc: call.type_argc }, funcs: fs, counter: ct };
+            return InlineCloRes { expr: parser.ExprCall { callee: ncallee, args: nargs, line: call.line, col: call.col, type_argc: call.type_argc, ty: call.ty }, funcs: fs, counter: ct };
         },
         parser.ExprFieldAccess(fa) => {
             // A field read / method-callee receiver: recurse into the object so
@@ -38797,7 +38797,7 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                             var wn: string = fd.name + "$wrap" + util.i32_to_string(ct);
                             var hr: HoistResult = make_wrap_named_func(vid.name, wn, mfuncs);
                             if (hr.ok) {
-                                var marker: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0 };
+                                var marker: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
                                 fs = fs.append(hr.func); ct = ct + 1;
                                 out = out.append(parser.StmtVar { name: bn, type_name: bty, init: marker, line: bln, col: bco, is_str: false });
                                 boxed = true;
@@ -39005,7 +39005,7 @@ function box_rewrite_expr(e: parser.Expr, boxed: string[], btypes: string[]): pa
             var nargs: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < c.args.len()) { nargs = nargs.append(box_rewrite_expr(c.args[i], boxed, btypes)); i = i + 1; }
-            return parser.ExprCall { callee: box_rewrite_expr(c.callee, boxed, btypes), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc };
+            return parser.ExprCall { callee: box_rewrite_expr(c.callee, boxed, btypes), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         parser.ExprArray(a) => {
             var ne: parser.Expr[] = [];
@@ -39052,7 +39052,7 @@ function box_rewrite_stmt(st: parser.Stmt, boxed: string[], btypes: string[]): p
             if (util.index_of_str(boxed, a.target) >= 0) {
                 // x = v  ->  x = x.with(0, v)   (receiver stays the raw cell ident)
                 var recv: parser.Expr = parser.ExprIdent { name: a.target, line: a.target_line, col: a.target_col };
-                var wcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "with", line: a.line, col: a.col }, args: [parser.ExprNumber { text: "0", suffix: "", is_float: false, line: a.line, col: a.col }, box_rewrite_expr(a.value, boxed, btypes)], line: a.line, col: a.col, type_argc: 0 };
+                var wcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "with", line: a.line, col: a.col }, args: [parser.ExprNumber { text: "0", suffix: "", is_float: false, line: a.line, col: a.col }, box_rewrite_expr(a.value, boxed, btypes)], line: a.line, col: a.col, type_argc: 0, ty: "" };
                 return parser.StmtAssign { target: a.target, value: wcall, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
             }
             return parser.StmtAssign { target: a.target, value: box_rewrite_expr(a.value, boxed, btypes), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };

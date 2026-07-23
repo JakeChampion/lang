@@ -44,7 +44,13 @@ pub struct ExprUnary { op: string, operand: Expr, line: i32, col: i32 }
 // has 1). The arguments themselves are erased — only the count is kept, so the
 // checker can flag a generic-call type-argument arity mismatch (E040). 0 means
 // no `[...]` was written.
-pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32, type_argc: i32 }
+// `ty` is the resolved result-type tag (typed-IR migration, #5531): the annotate
+// pass (annotate.fern) stamps it post-constfold with the checker's inferred type
+// in irlower's tag vocabulary ("f64" for a float value, etc.), and lowering READS
+// it instead of re-deriving the call's type structurally. "" = unannotated (the
+// asm_ir_run harness and native cmd/fern don't run annotate), in which case
+// lowering falls back to its structural walk — so the field is byte-identity-safe.
+pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32, type_argc: i32, ty: string }
 // Array literal `[e1, e2, e3]`. Empty literal `[]` is allowed —
 // the checker rejects an empty literal in inference contexts
 // because it can't infer the element type.
@@ -357,8 +363,8 @@ function e_binary_at(op: string, left: Expr, right: Expr, line: i32, col: i32): 
 }
 function e_unary(op: string, operand: Expr): Expr { return ExprUnary { op: op, operand: operand, line: 0, col: 0 }; }
 function e_unary_at(op: string, operand: Expr, line: i32, col: i32): Expr { return ExprUnary { op: op, operand: operand, line: line, col: col }; }
-function e_call(callee: Expr, args: Expr[]): Expr { return ExprCall { callee: callee, args: args, line: 0, col: 0, type_argc: 0 }; }
-function e_call_at(callee: Expr, args: Expr[], line: i32, col: i32): Expr { return ExprCall { callee: callee, args: args, line: line, col: col, type_argc: 0 }; }
+function e_call(callee: Expr, args: Expr[]): Expr { return ExprCall { callee: callee, args: args, line: 0, col: 0, type_argc: 0, ty: "" }; }
+function e_call_at(callee: Expr, args: Expr[], line: i32, col: i32): Expr { return ExprCall { callee: callee, args: args, line: line, col: col, type_argc: 0, ty: "" }; }
 function e_array(elements: Expr[]): Expr { return ExprArray { elements: elements }; }
 function e_tuple(elements: Expr[]): Expr { return ExprTuple { elements: elements, line: 0, col: 0 }; }
 function e_tuple_at(elements: Expr[], line: i32, col: i32): Expr { return ExprTuple { elements: elements, line: line, col: col }; }
@@ -593,7 +599,7 @@ function maybe_desugar_array_build(base: Expr): Expr {
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
                                     var iife: Expr = ExprLambda { params: [], ret_type: arrty, body: stmts, use_infer: false };
-                                    return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0 };
+                                    return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0, ty: "" };
                                 },
                                 _ => { return base; },
                             }
@@ -660,7 +666,7 @@ function maybe_desugar_map_build(base: Expr): Expr {
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
                                     var iife: Expr = ExprLambda { params: [], ret_type: mapty, body: stmts, use_infer: false };
-                                    return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0 };
+                                    return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0, ty: "" };
                                 },
                                 _ => { return base; },
                             }
@@ -1310,7 +1316,7 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
                 return (e_unknown("missing ) in call"), p);
             }
             p = p.advance();
-            base = ExprCall { callee: base, args: args, line: oline, col: ocol, type_argc: pending_type_argc };
+            base = ExprCall { callee: base, args: args, line: oline, col: ocol, type_argc: pending_type_argc, ty: "" };
             base = maybe_desugar_array_build(base);
             base = maybe_desugar_map_build(base);
             pending_type_argc = 0;
@@ -6439,7 +6445,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                             // struct pass's mg_ty still see `iter__ArrayIter[i32]`.
                             var mang: string = cid.name + "__" + sanitize_key(ct);
                             cur = cur.iadd(cid.name, ct);
-                            return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang, line: cid.line, col: cid.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: cur };
+                            return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang, line: cid.line, col: cid.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
                         }
                     }
                 },
@@ -6457,7 +6463,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                                 var ct2: string = infer_inst(funcs[bi2], c.args, env, funcs);
                                 if (ct2.len() > 0) {
                                     cur = cur.iadd(qn, ct2);
-                                    return RExpr { rexpr: ExprCall { callee: ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + sanitize_key(ct2), line: fac.line, col: fac.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: cur };
+                                    return RExpr { rexpr: ExprCall { callee: ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + sanitize_key(ct2), line: fac.line, col: fac.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
                                 }
                             }
                         },
@@ -6498,7 +6504,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                                 var fk: i32 = 0;
                                 while (fk < nargs.len()) { folded = folded.append(nargs[fk]); fk = fk + 1; }
                                 cur = cur.iadd(amn, ct3);
-                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: amn + "__" + sanitize_key(ct3), line: fac.line, col: fac.col }, args: folded, line: c.line, col: c.col, type_argc: 0 }, rins: cur };
+                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: amn + "__" + sanitize_key(ct3), line: fac.line, col: fac.col }, args: folded, line: c.line, col: c.col, type_argc: 0, ty: "" }, rins: cur };
                             }
                         }
                     }
@@ -6524,7 +6530,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                                 var mfk: i32 = 0;
                                 while (mfk < nargs.len()) { mfolded = mfolded.append(nargs[mfk]); mfk = mfk + 1; }
                                 cur = cur.iadd(mmn, mct);
-                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mmn + "__" + sanitize_key(mct), line: fac.line, col: fac.col }, args: mfolded, line: c.line, col: c.col, type_argc: 0 }, rins: cur };
+                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mmn + "__" + sanitize_key(mct), line: fac.line, col: fac.col }, args: mfolded, line: c.line, col: c.col, type_argc: 0, ty: "" }, rins: cur };
                             }
                         }
                     }
@@ -6532,7 +6538,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                 _ => {}
             }
             var rc: RExpr = mono_expr(c.callee, env, funcs, cur);
-            return RExpr { rexpr: ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: rc.rins };
+            return RExpr { rexpr: ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: rc.rins };
         },
         ExprArray(a) => {
             var els: Expr[] = [];
@@ -6629,7 +6635,7 @@ function mono_call_expected(e: Expr, expected: string, env: MEnv, funcs: FuncDec
                                 }
                                 var mang: string = cid.name + "__" + sanitize_key(key);
                                 cur = cur.iadd(cid.name, key);
-                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang, line: cid.line, col: cid.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: cur };
+                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mang, line: cid.line, col: cid.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
                             }
                         }
                     },
@@ -6824,7 +6830,7 @@ function subst_expr(e: Expr, tparams: string[], cts: string[]): Expr {
             var na: Expr[] = [];
             var ci: i32 = 0;
             while (ci < c.args.len()) { na = na.append(subst_expr(c.args[ci], tparams, cts)); ci = ci + 1; }
-            return ExprCall { callee: subst_expr(c.callee, tparams, cts), args: na, line: c.line, col: c.col, type_argc: c.type_argc };
+            return ExprCall { callee: subst_expr(c.callee, tparams, cts), args: na, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         ExprStructLit(sl) => {
             var nv: Expr[] = [];
@@ -6900,7 +6906,7 @@ function retarget_self_lit_expr(e: Expr, base: string, mang: string): Expr {
             var na: Expr[] = [];
             var ci: i32 = 0;
             while (ci < c.args.len()) { na = na.append(retarget_self_lit_expr(c.args[ci], base, mang)); ci = ci + 1; }
-            return ExprCall { callee: retarget_self_lit_expr(c.callee, base, mang), args: na, line: c.line, col: c.col, type_argc: c.type_argc };
+            return ExprCall { callee: retarget_self_lit_expr(c.callee, base, mang), args: na, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         ExprTuple(t) => {
             var ne: Expr[] = [];
@@ -7480,7 +7486,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
                 nargs = nargs.append(ra.rexpr);
                 i = i + 1;
             }
-            return RExpr { rexpr: ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: cur };
+            return RExpr { rexpr: ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
         },
         ExprArray(a) => {
             var els: Expr[] = [];
@@ -7581,7 +7587,7 @@ function retype_assoc_ctor(init: Expr, concrete: string, gstructs: StructDecl[])
                             if (gstruct_index(gstructs, oid.name) >= 0) {
                                 var pfx: string = oid.name + "__";
                                 if (concrete.len() > pfx.len() && concrete[0 : pfx.len()] == pfx) {
-                                    return ExprCall { callee: ExprFieldAccess { obj: ExprIdent { name: concrete, line: oid.line, col: oid.col }, field: fa.field, line: fa.line, col: fa.col }, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc };
+                                    return ExprCall { callee: ExprFieldAccess { obj: ExprIdent { name: concrete, line: oid.line, col: oid.col }, field: fa.field, line: fa.line, col: fa.col }, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
                                 }
                             }
                         },
@@ -8328,12 +8334,12 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
                         if (carg.len() == 0) { carg = key; }
                         cur = cur.iadd_arg(enums[owner].name, key, carg);
                         var mv: string = vname + "__" + key;
-                        return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mv, line: c.line, col: c.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: cur };
+                        return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mv, line: c.line, col: c.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
                     }
                 }
             }
             var rc: RExpr = me_expr(c.callee, "", env, enums, structs, funcs, cur);
-            return RExpr { rexpr: ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc }, rins: rc.rins };
+            return RExpr { rexpr: ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: rc.rins };
         },
         ExprIdent(id) => {
             // A bare unit-variant construction `Nn` — needs the expected
@@ -9355,7 +9361,7 @@ function rw_call_expr(e: Expr, fname: string, caps: string[]): Expr {
                 var k: i32 = 0;
                 while (k < caps.len()) { new_args = new_args.append(e_ident(caps[k])); k = k + 1; }
             }
-            return ExprCall { callee: new_callee, args: new_args, line: c.line, col: c.col, type_argc: c.type_argc };
+            return ExprCall { callee: new_callee, args: new_args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         ExprBinary(b) => { return e_binary(b.op, rw_call_expr(b.left, fname, caps), rw_call_expr(b.right, fname, caps)); },
         ExprUnary(u) => { return e_unary(u.op, rw_call_expr(u.operand, fname, caps)); },
@@ -10301,7 +10307,7 @@ function fda_expr(e: Expr, funcs: FuncDecl[]): Expr {
                     if (has_named) { new_args = fda_strip_named(new_args); }
                 }
             }
-            return ExprCall { callee: new_callee, args: new_args, line: c.line, col: c.col, type_argc: c.type_argc };
+            return ExprCall { callee: new_callee, args: new_args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         ExprBinary(b) => { return e_binary(b.op, fda_expr(b.left, funcs), fda_expr(b.right, funcs)); },
         ExprUnary(u) => { return e_unary(u.op, fda_expr(u.operand, funcs)); },
@@ -10705,7 +10711,7 @@ function cf_rw_expr(e: Expr, f: string, target: string): Expr {
                 _ => { }
             }
             if (!done) { ncallee = cf_rw_expr(c.callee, f, target); }
-            return ExprCall { callee: ncallee, args: na, line: c.line, col: c.col, type_argc: c.type_argc };
+            return ExprCall { callee: ncallee, args: na, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         ExprArray(a) => {
             var ne: Expr[] = [];
@@ -11104,7 +11110,7 @@ function elb_mark_expr(e: Expr, idx: string, arr: string): Expr {
             var na: Expr[] = [];
             var i: i32 = 0;
             while (i < c.args.len()) { na = na.append(elb_mark_expr(c.args[i], idx, arr)); i = i + 1; }
-            return ExprCall { callee: elb_mark_expr(c.callee, idx, arr), args: na, line: c.line, col: c.col, type_argc: c.type_argc };
+            return ExprCall { callee: elb_mark_expr(c.callee, idx, arr), args: na, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         ExprArray(a) => {
             var ne: Expr[] = [];

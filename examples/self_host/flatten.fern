@@ -335,7 +335,7 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                 args = args.append(rewrite_expr(c.args[i], ctx));
                 i = i + 1;
             }
-            return parser.ExprCall { callee: rewrite_expr(c.callee, ctx), args: args, line: c.line, col: c.col, type_argc: c.type_argc };
+            return parser.ExprCall { callee: rewrite_expr(c.callee, ctx), args: args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         parser.ExprBinary(b) => {
             return parser.ExprBinary {
