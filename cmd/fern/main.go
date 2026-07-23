@@ -272,6 +272,10 @@ func loadMultiFileEntry(srcPath, abs, litSrc string, doc *literate.Document) (en
 // multi-file document's modules when none is marked `entry`.
 var mainFuncRe = regexp.MustCompile(`(?m)^\s*(pub\s+)?(function|fn)\s+main\b`)
 
+// emitDebugSyms is set from the -g flag: emit a static .symtab into native
+// binaries so debuggers / nm / backtraces / profilers can name code addresses.
+var emitDebugSyms bool
+
 func definesMain(code string) bool { return mainFuncRe.MatchString(code) }
 
 // format renders err against the right source for each entry it
@@ -593,6 +597,7 @@ func main() {
 	asyncExport := flag.Bool("async-export", false, "with -target wasm-bin: wrap the core as a WASI Preview-3 component-model-async component exporting `run: async func() -> u32` (lifted from main, which must return i32). The result is delivered via `canon task.return`. Run with `wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
 	var asyncProviders repeatedString
 	flag.Var(&asyncProviders, "async-provider", "with -target wasm-bin and an `@import async` (WASI Preview-3) program: bundle a pre-built provider *component* (.wasm) that exports the matching async function, so the result is a single self-contained runnable component (no separate host needed). Repeatable: `WITNAME=PATH` maps a provider to the async import whose WIT name is WITNAME; a single bare `PATH` is shorthand when the program has exactly one async import. Each provider must export its WITNAME. Scalar params + scalar result only (e.g. `@import(\"iface\",\"name\") async function add(a: i32, b: i32): i32;`). See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
+	emitDebug := flag.Bool("g", false, "emit a static symbol table (.symtab) into the native binary so debuggers, nm, backtraces, and profilers can map code addresses to function names")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
@@ -624,6 +629,7 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+	emitDebugSyms = *emitDebug
 
 	// Diagnostics colourise per -color (docs/DIAGNOSTIC-UX-RESEARCH.md
 	// Rec §7). Decided once, up front, so every diag.Format call below
@@ -1801,6 +1807,18 @@ func linkDarwin(asm, outPath, cc string) error {
 // and executable — required by W^X-enforcing loaders such as Android's.
 // Unsupported instructions surface as an error rather than a miscompile.
 func linkNative(asm, outPath string) error {
+	if emitDebugSyms {
+		text, rodata, syms, err := nativearm64.AssembleProgramWXSyms(asm, nativeelf.TextVAddrWX)
+		if err != nil {
+			return fmt.Errorf("native assembler: %w", err)
+		}
+		fs := nativeelf.FuncSyms(syms, nativeelf.TextVAddrWX+uint64(len(text)))
+		bin := nativeelf.StaticExecutableDataWXSyms(text, rodata, fs)
+		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
+			return err
+		}
+		return os.Chmod(outPath, 0o755)
+	}
 	text, rodata, err := nativearm64.AssembleProgramWX(asm, nativeelf.TextVAddrWX)
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
@@ -1891,6 +1909,18 @@ func sharedExports(names []string, vaddr map[string]uint64) []nativeelf.Export {
 // via the pure-Go internal/native/x86_64 backend, using the same W^X
 // two-segment layout (R+X code, R+W data).
 func linkNativeX86(asm, outPath string) error {
+	if emitDebugSyms {
+		text, rodata, syms, err := nativex86.AssembleProgramWXSyms(asm, nativeelf.TextVAddrWX)
+		if err != nil {
+			return fmt.Errorf("native assembler: %w", err)
+		}
+		fs := nativeelf.FuncSyms(syms, nativeelf.TextVAddrWX+uint64(len(text)))
+		bin := nativeelf.StaticExecutableDataX86WXSyms(text, rodata, fs)
+		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
+			return err
+		}
+		return os.Chmod(outPath, 0o755)
+	}
 	text, rodata, err := nativex86.AssembleProgramWX(asm, nativeelf.TextVAddrWX)
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)

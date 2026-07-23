@@ -43,6 +43,21 @@ func AssembleProgramWX(src string, textVAddr uint64) (text, rodata []byte, err e
 	return a.BytesProgramWX(textVAddr)
 }
 
+// AssembleProgramWXSyms is AssembleProgramWX that also returns every .text
+// label resolved to its absolute virtual address — the function-symbol table
+// the ELF writer emits into .symtab under `-g`. Pass elf.TextVAddrWX.
+func AssembleProgramWXSyms(src string, textVAddr uint64) (text, rodata []byte, syms map[string]uint64, err error) {
+	a, err := ParseProgram(src)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	text, rodata, err = a.BytesProgramWX(textVAddr)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return text, rodata, a.TextLabelVAddrs(textVAddr), nil
+}
+
 // AssembleProgramWXEntry is AssembleProgramWX that also resolves the byte
 // offset of an entry symbol within .text (for
 // elf.StaticExecutableDataWXEntry's e_entry). The Go arm64 backend emits

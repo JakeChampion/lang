@@ -933,3 +933,96 @@ func u64(b []byte, off int) uint64 {
 	}
 	return v
 }
+
+// TestStaticExecutableDataWXSyms checks the -g static symbol table: the
+// image carries a parseable .symtab (function name → vaddr/size), and the
+// loadable segments are byte-identical to the non-symtab image, so adding
+// symbols never changes what runs.
+func TestStaticExecutableDataWXSyms(t *testing.T) {
+	text := []byte{0xb8, 0x2a, 0x00, 0x00, 0x00, 0xc3, 0x90, 0x90} // 8 bytes
+	data := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	base := uint64(elf.TextVAddrWX)
+	syms := []elf.Sym{
+		{Name: "main", Value: base, Size: 6},
+		{Name: "helper", Value: base + 6, Size: 2},
+	}
+
+	for _, tc := range []struct {
+		arch    string
+		syms    []byte
+		nosyms  []byte
+		machine goelf.Machine
+	}{
+		{"x86-64", elf.StaticExecutableDataX86WXSyms(text, data, syms), elf.StaticExecutableDataX86WX(text, data), goelf.EM_X86_64},
+		{"arm64", elf.StaticExecutableDataWXSyms(text, data, syms), elf.StaticExecutableDataWX(text, data), goelf.EM_AARCH64},
+	} {
+		f, err := goelf.NewFile(bytes.NewReader(tc.syms))
+		if err != nil {
+			t.Fatalf("%s: not a parseable ELF: %v", tc.arch, err)
+		}
+		if f.Type != goelf.ET_EXEC {
+			t.Errorf("%s: type = %v, want ET_EXEC", tc.arch, f.Type)
+		}
+		if f.Machine != tc.machine {
+			t.Errorf("%s: machine = %v, want %v", tc.arch, f.Machine, tc.machine)
+		}
+		got, err := f.Symbols()
+		if err != nil {
+			t.Fatalf("%s: Symbols(): %v", tc.arch, err)
+		}
+		want := map[string]struct{ v, s uint64 }{
+			"main":   {base, 6},
+			"helper": {base + 6, 2},
+		}
+		seen := map[string]bool{}
+		for _, sym := range got {
+			w, ok := want[sym.Name]
+			if !ok {
+				t.Errorf("%s: unexpected symbol %q", tc.arch, sym.Name)
+				continue
+			}
+			seen[sym.Name] = true
+			if sym.Value != w.v || sym.Size != w.s {
+				t.Errorf("%s: %s = {value:0x%x size:%d}, want {0x%x %d}", tc.arch, sym.Name, sym.Value, sym.Size, w.v, w.s)
+			}
+			if goelf.ST_TYPE(sym.Info) != goelf.STT_FUNC {
+				t.Errorf("%s: %s type = %v, want STT_FUNC", tc.arch, sym.Name, goelf.ST_TYPE(sym.Info))
+			}
+		}
+		for n := range want {
+			if !seen[n] {
+				t.Errorf("%s: missing symbol %q", tc.arch, n)
+			}
+		}
+		// The loadable image (everything past the 64-byte ELF header) must be
+		// byte-identical to the non-symtab build: only the header's inert
+		// section-table fields change, never a mapped byte.
+		if len(tc.syms) < len(tc.nosyms) {
+			t.Fatalf("%s: symtab image shorter than plain image", tc.arch)
+		}
+		if !bytes.Equal(tc.syms[64:len(tc.nosyms)], tc.nosyms[64:]) {
+			t.Errorf("%s: loadable segments differ from the non-symtab image", tc.arch)
+		}
+	}
+}
+
+// TestFuncSyms checks the label→Sym conversion: assembler-local labels are
+// dropped, symbols are sorted by address, and each size is the gap to the
+// next symbol (the last runs to textEnd).
+func TestFuncSyms(t *testing.T) {
+	labels := map[string]uint64{
+		"beta":   0x2000,
+		"alpha":  0x1000,
+		".Lloop": 0x1500, // assembler-local: must be dropped
+	}
+	got := elf.FuncSyms(labels, 0x2010)
+	if len(got) != 2 {
+		t.Fatalf("got %d syms, want 2 (%.v)", len(got), got)
+	}
+	if got[0].Name != "alpha" || got[0].Value != 0x1000 || got[0].Size != 0x1000 {
+		t.Errorf("sym0 = %+v, want alpha@0x1000 size 0x1000", got[0])
+	}
+	if got[1].Name != "beta" || got[1].Value != 0x2000 || got[1].Size != 0x10 {
+		t.Errorf("sym1 = %+v, want beta@0x2000 size 0x10", got[1])
+	}
+}

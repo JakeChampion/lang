@@ -318,6 +318,19 @@ func (a *Assembler) TextLabelVAddr(name string, textVAddr uint64) (uint64, bool)
 	return textVAddr + uint64(s.val)*4, true
 }
 
+// TextLabelVAddrs returns every .text label mapped to its absolute virtual
+// address (textVAddr + instruction-index × 4) — the function-symbol set the
+// ELF writer emits into .symtab under `-g`.
+func (a *Assembler) TextLabelVAddrs(textVAddr uint64) map[string]uint64 {
+	out := make(map[string]uint64, len(a.syms))
+	for name, s := range a.syms {
+		if s.inText {
+			out[name] = textVAddr + uint64(s.val)*4
+		}
+	}
+	return out
+}
+
 // BytesProgramPIE resolves the program for a static position-independent
 // executable (elf.StaticPieExecutable): the same W^X two-segment layout,
 // but laid out relative to a load base of 0 (pass elf.TextVAddrPIE as
