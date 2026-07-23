@@ -1351,6 +1351,14 @@ pub function expr_map_kind(e: parser.Expr, s: LowerState): i32 {
 // position (a tuple element) recovers a tag is_map_type_name / map_key_kind_of /
 // map_value_of accept. #3317.
 pub function expr_map_type_tag(e: parser.Expr, s: LowerState): string {
+    // typed-IR (#5531): a map-returning call carries its full "Map[K, V]" tag on
+    // c.ty, so read it instead of re-deriving via the map_ret_fns registry.
+    // Guarded to a well-formed Map[…] tag; anything else falls through to the
+    // structural walk below (which also covers map locals and struct fields).
+    match (e) {
+        parser.ExprCall(mc0) => { if (is_map_type_name(mc0.ty)) { return mc0.ty; } },
+        _ => {}
+    }
     // A map-typed local already carries its full tag — reuse it directly.
     match (e) {
         parser.ExprIdent(mid) => {

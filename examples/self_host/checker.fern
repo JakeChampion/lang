@@ -9005,6 +9005,16 @@ function type_to_irtag(t: Type): string {
         // compare it to their own keyword, so a struct name reads false there —
         // matching the structural walk's false for a struct call.
         TypeStruct(st) => { return st.name; },
+        // A map-valued call: the "Map[K, V]" tag irlower's expr_map_type_tag reads
+        // (its own canonical spelling — see the "Map[" + ktag + ", " + vtag + "]"
+        // constructor). Only when both K and V serialise to a scalar/string tag;
+        // a composite key/value yields "" (unannotated → structural fallback).
+        TypeMap(m) => {
+            var kt: string = type_to_irtag(m.key);
+            var vt: string = type_to_irtag(m.value);
+            if (kt == "" || vt == "") { return ""; }
+            return "Map[" + kt + ", " + vt + "]";
+        },
         _ => { return ""; }
     }
     return "";
