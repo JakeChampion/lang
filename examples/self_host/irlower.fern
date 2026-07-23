@@ -4366,6 +4366,23 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
+// field_or_tuple_type_tag returns the canonical scalar type string of a
+// struct-field or tuple-element access `obj.field` — the tuple element's
+// annotated tag (`t.N`, N all-digits) or the struct field's declared type
+// (`p.x`) — or "" when `obj` is neither a typed tuple nor a known struct. It is
+// the shared leaf the four numeric-kind predicates (expr_is_f64/f32/u32/u64)
+// test for membership, so their field arms resolve the type ONE way and can't
+// drift apart (#5520). infer_expr_width's struct arm deliberately stays on
+// struct_field_is_i64 (a width query, not a tag match), so it is not unified.
+function field_or_tuple_type_tag(obj: parser.Expr, field: string, s: LowerState): string {
+    if (util.is_all_digits(field)) {
+        return expr_tuple_elem_tag(obj, util.digits_to_i32(field), s);
+    }
+    var oty: string = expr_struct_type(obj, s);
+    if (oty == "") { return ""; }
+    return decl_field_type(s.structs, oty, field);
+}
+
 // expr_is_f64 reports whether `e` evaluates to an f64 value — a float literal, an
 // f64-tracked local/param, an arithmetic combination of f64 operands, or an
 // f64-array element read `a[i]`. (A comparison is NOT f64 — it yields an i32
@@ -4462,14 +4479,8 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
         },
         parser.ExprFieldAccess(fa) => {
             // An f64-typed struct field read `p.x`, or an f64 tuple element.
-            if (util.is_all_digits(fa.field)) {
-                var ttf: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
-                return ttf == "f64" || ttf == "f32" || ttf == "float";
-            }
-            var oty: string = expr_struct_type(fa.obj, s);
-            if (oty == "") { return false; }
-            var sff: string = decl_field_type(s.structs, oty, fa.field);
-            return sff == "f64" || sff == "f32" || sff == "float";
+            var ft: string = field_or_tuple_type_tag(fa.obj, fa.field, s);
+            return ft == "f64" || ft == "f32" || ft == "float";
         },
         parser.ExprIndex(ix) => { return arr_index_is_f64(ix.array, s); },
         _ => { return false; }
@@ -4505,12 +4516,7 @@ pub function expr_is_f32(e: parser.Expr, s: LowerState): boolean {
             return false;
         },
         parser.ExprFieldAccess(fa) => {
-            if (util.is_all_digits(fa.field)) {
-                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "f32";
-            }
-            var oty: string = expr_struct_type(fa.obj, s);
-            if (oty == "") { return false; }
-            return decl_field_type(s.structs, oty, fa.field) == "f32";
+            return field_or_tuple_type_tag(fa.obj, fa.field, s) == "f32";
         },
         // An erased-generic fn whose return mirrors argument i (`id[T](x: T): T`)
         // is f32 exactly when that argument is — the f32 sibling of expr_is_f64's
@@ -4575,12 +4581,7 @@ pub function expr_is_u32(e: parser.Expr, s: LowerState): boolean {
         // expr_is_u64's ExprFieldAccess arm — on wasm a signed shr/div on a
         // bit-31-set u32 field/element diverges (x86 zero-extension hides it).
         parser.ExprFieldAccess(fa) => {
-            if (util.is_all_digits(fa.field)) {
-                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "u32";
-            }
-            var oty: string = expr_struct_type(fa.obj, s);
-            if (oty == "") { return false; }
-            return decl_field_type(s.structs, oty, fa.field) == "u32";
+            return field_or_tuple_type_tag(fa.obj, fa.field, s) == "u32";
         },
         parser.ExprUnary(u) => {
             if (u.op == "as_u32") { return true; }
@@ -4690,19 +4691,12 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
             }
         },
         parser.ExprFieldAccess(fa) => {
-            // A u64 tuple element `t.N` (tag carried from the tuple's annotated
-            // `(u64, …)` type) is a u64 value, so unsigned ops on it stay unsigned.
-            if (util.is_all_digits(fa.field)) {
-                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "u64";
-            }
-            // A u64 STRUCT field read `p.n`: the field carries u64 in the struct
-            // decl, so a chained `p.n >> 1` / `p.n > x` selects shr_u / gt_u. The
-            // width is already tracked by infer_expr_width (struct_field_is_i64);
-            // this recovers the unsigned-ness — the u64 sibling of expr_is_f64's
-            // struct-field arm.
-            var oty: string = expr_struct_type(fa.obj, s);
-            if (oty == "") { return false; }
-            return decl_field_type(s.structs, oty, fa.field) == "u64";
+            // A u64 tuple element `t.N` (tag from the tuple's annotated `(u64, …)`
+            // type) or a u64 STRUCT field read `p.n` (the field carries u64 in the
+            // decl) is a u64 value, so a chained `>> 1` / `> x` selects shr_u / gt_u.
+            // The 64-bit WIDTH is already tracked by infer_expr_width; this recovers
+            // the unsigned-ness.
+            return field_or_tuple_type_tag(fa.obj, fa.field, s) == "u64";
         },
         parser.ExprUnary(u) => {
             if (u.op == "as_u64") { return true; }
