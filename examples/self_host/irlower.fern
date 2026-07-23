@@ -1357,6 +1357,17 @@ pub function expr_map_type_tag(e: parser.Expr, s: LowerState): string {
             var lt: string = s.map_type_of(s.slot_of(mid.name));
             if (is_map_type_name(lt)) { return lt; }
         },
+        // A Map-typed struct FIELD (`r.caps` where `caps: Map[K, V]`): recover the
+        // field's declared Map[K, V] from the receiver struct, so a map op on it
+        // (`r.caps.get(k)` / `.len()` / …) resolves its K/V instead of falling
+        // through to the scalar tag.
+        parser.ExprFieldAccess(mfa) => {
+            var fsty: string = expr_struct_type(mfa.obj, s);
+            if (fsty != "") {
+                var fmt: string = decl_field_type(s.structs, fsty, mfa.field);
+                if (is_map_type_name(fmt)) { return fmt; }
+            }
+        },
         _ => {}
     }
     // A call to a map-RETURNING function (`(mk(), 3)` / `(f.mk(), 3)` — the
@@ -9022,13 +9033,10 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
                         return "Option[string]";
                     }
                     if (scfa.field == "get") {
-                        match (scfa.obj) {
-                            parser.ExprIdent(mapid) => {
-                                var vt: string = map_value_of(s.map_type_of(s.slot_of(mapid.name)));
-                                if (vt != "") { return "Option[" + vt + "]"; }
-                            },
-                            _ => {}
-                        }
+                        // `m.get(k)` on a map local OR a Map-typed struct field
+                        // (`r.caps.get(k)`) — expr_map_type_tag covers both.
+                        var gvt: string = map_value_of(expr_map_type_tag(scfa.obj, s));
+                        if (gvt != "") { return "Option[" + gvt + "]"; }
                     }
                     // Associated call `Type.method()?` returning Option/Result —
                     // the object is a bare TYPE name (not a slot), so key by
@@ -14499,15 +14507,12 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                                             && !expr_is_arr_src(scfa.obj, ms)) {
                                             srt = "Option[string]";
                                         }
-                                        // `m.get(k)` evaluates to Option[V] (V = the map's value type).
+                                        // `m.get(k)` evaluates to Option[V] (V = the map's value type)
+                                        // — a map local OR a Map-typed struct field (`r.caps.get(k)`),
+                                        // both resolved by expr_map_type_tag.
                                         if (srt == "" && scfa.field == "get") {
-                                            match (scfa.obj) {
-                                                parser.ExprIdent(mapid) => {
-                                                    var vt: string = map_value_of(ms.map_type_of(ms.slot_of(mapid.name)));
-                                                    if (vt != "") { srt = "Option[" + vt + "]"; }
-                                                },
-                                                _ => {}
-                                            }
+                                            var gvt: string = map_value_of(expr_map_type_tag(scfa.obj, ms));
+                                            if (gvt != "") { srt = "Option[" + gvt + "]"; }
                                         }
                                         // `x.method()` where x's method returns Option/Result —
                                         // key by "<Type>.<method>".

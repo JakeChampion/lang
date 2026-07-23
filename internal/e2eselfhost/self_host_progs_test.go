@@ -88,6 +88,11 @@ var selfHostProgCases = []struct {
 	// the resolver keyed "<prim>.<method>" for non-struct/enum/string receivers
 	// (#3457 IR-gap: std/i64.checked_add et al.). 3.tryadd(4)=Some(7).
 	{"prim-recv-opt-match", `function (n: i64) tryadd(x: i64): Option[i64] { if (x > 0 as i64) { return Some(n + x); } return None; } function main(): i32 { var a: i64 = 3 as i64; match (a.tryadd(4 as i64)) { Some(v) => { return v as i32; }, None => { return 0; } } }`, 7},
+	// A direct `match (r.caps.get(k))` where `caps` is a Map-typed struct FIELD —
+	// the map.get resolver only handled a map IDENT receiver, so a struct-field map
+	// bailed the function to AST (#3457 IR-gap: std/peg's PegResult.caps and any
+	// map-in-struct). expr_map_type_tag now recovers the field's Map[K,V].
+	{"map-field-get-opt-match", `struct R { caps: Map[string, i32] } function mk(): R { var m: Map[string, i32] = map_new(4); m = m.insert("a", 7); return R { caps: m }; } function main(): i32 { var r: R = mk(); match (r.caps.get("a")) { Some(v) => { return v; }, None => { return 0; } } }`, 7},
 	// Array.build (parser.fern desugar): for-in builds [1,4,9]; sum 14.
 	{"array-build", `function main(): i32 { var xs: i32[] = [1,2,3]; var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void { for x in xs { b.append(x * x); } }); return out[0] + out[1] + out[2]; }`, 14},
 	// Repeated with: [0,0,0] → with(0,5) → with(2,7) → [5,0,7]; 5*10+7 = 57.
