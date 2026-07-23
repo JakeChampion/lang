@@ -8,12 +8,32 @@
 // produces); the interpreter reports a diagnostic and exits non-zero.
 package e2e
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// withoutAbortDiag drops the native backends' fatal-abort diagnostic
+// (the `fern: …` line #5538 writes to stderr before exiting) from combined
+// output, so the "printed nothing before aborting" check below tests what it
+// means to — that no program VALUE reached stdout — not the abort's own
+// explanatory message.
+func withoutAbortDiag(out string) string {
+	var kept []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "fern: ") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
 
 // assertAborts compiles + runs src on every available codegen
 // backend and asserts each one aborts (non-zero exit) without
-// printing anything — i.e. the out-of-bounds access was caught
-// before it could yield a value.
+// printing a value — i.e. the out-of-bounds access was caught
+// before it could yield one (the abort's own `fern: …` diagnostic
+// on stderr is expected and ignored).
 func assertAborts(t *testing.T, src string) {
 	t.Helper()
 	t.Run("x86_64", func(t *testing.T) {
@@ -21,7 +41,7 @@ func assertAborts(t *testing.T, src string) {
 		if code == 0 {
 			t.Errorf("x86_64 did not abort (exit 0); stdout=%q\nsrc:\n%s", out, src)
 		}
-		if trimOut(out) != "" {
+		if trimOut(withoutAbortDiag(out)) != "" {
 			t.Errorf("x86_64 printed %q before aborting\nsrc:\n%s", out, src)
 		}
 	})
@@ -30,7 +50,7 @@ func assertAborts(t *testing.T, src string) {
 		if code == 0 {
 			t.Errorf("arm64 did not abort (exit 0); stdout=%q\nsrc:\n%s", out, src)
 		}
-		if trimOut(out) != "" {
+		if trimOut(withoutAbortDiag(out)) != "" {
 			t.Errorf("arm64 printed %q before aborting\nsrc:\n%s", out, src)
 		}
 	})
