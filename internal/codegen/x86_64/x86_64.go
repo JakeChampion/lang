@@ -271,6 +271,11 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesMemcpy = true
 		g.usesAlloc = true
 	}
+	// Fatal-abort diagnostics (#5538): __fern_report writes an abort's
+	// cause to stderr before exit_group, so a bounds / arena / slice abort
+	// names itself instead of exiting silently. Emitted unconditionally —
+	// the abort sites jmp here, and label resolution is order-independent.
+	g.emitAbortRuntime()
 	// Runtime helpers — gated on use-flags so unused programs
 	// pay nothing extra in binary size.
 	if g.usesAlloc {
@@ -3596,9 +3601,7 @@ func (g *generator) emitArrBoundsCheck() {
 	g.emit("mov edx, [rax - 4]") // len prefix
 	g.emit("cmp ecx, edx")
 	g.emit(fmt.Sprintf("jb %s", ok)) // unsigned idx < len → in bounds
-	g.emit("mov edi, 134")
-	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
-	g.emit("syscall")
+	g.emitAbort("__fern_msg_arr_oob")
 	g.label(ok)
 }
 
@@ -3611,9 +3614,7 @@ func (g *generator) emitSliceBoundsCheck() {
 	g.emit("mov edx, [rax + 8]") // len at [slice+8] (after 8-byte data_ptr)
 	g.emit("cmp ecx, edx")
 	g.emit(fmt.Sprintf("jb %s", ok))
-	g.emit("mov edi, 134")
-	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
-	g.emit("syscall")
+	g.emitAbort("__fern_msg_slice_oob")
 	g.label(ok)
 }
 
@@ -4069,6 +4070,68 @@ func (g *generator) emitDataSections() {
 // per-request arena reset both gone, the mode flag and the
 // persistent cursors were deleted. See the arm64 generator's
 // `emitAllocRuntime` comment for the full rationale.
+// abortMessages are the fatal-abort diagnostics (#5538): a fixed message
+// written to stderr before the process exits, so a bounds / arena / slice
+// abort names its cause instead of exiting with a bare code. Ordered (not a
+// map) so emission stays deterministic (byte-identical output).
+var abortMessages = []struct {
+	label, text string
+	code        int
+}{
+	{"__fern_msg_arr_oob", "fern: array index out of range\n", 134},
+	{"__fern_msg_slice_oob", "fern: slice index out of range\n", 134},
+	{"__fern_msg_oom", "fern: out of memory (heap arena exhausted)\n", 137},
+	{"__fern_msg_slice_range", "fern: slice range out of bounds\n", 134},
+	{"__fern_msg_str_slice", "fern: string index out of range\n", 134},
+}
+
+func abortMsg(label string) (text string, code int) {
+	for _, m := range abortMessages {
+		if m.label == label {
+			return m.text, m.code
+		}
+	}
+	panic("x86_64: unknown abort message " + label)
+}
+
+// emitAbort routes a fatal abort site through __fern_report: it points rsi/edx
+// at the named diagnostic, sets the exit code, and tail-jumps to the reporter
+// (which writes to stderr, then exit_group). Replaces a bare, silent
+// `mov edi, code; syscall` so the failure names its cause (#5538).
+func (g *generator) emitAbort(label string) {
+	text, code := abortMsg(label)
+	g.emit(fmt.Sprintf("lea rsi, [rip + %s]", label))
+	g.emit(fmt.Sprintf("mov edx, %d", len(text)))
+	g.emit(fmt.Sprintf("mov edi, %d", code))
+	g.emit("jmp __fern_report")
+}
+
+// emitAbortRuntime emits __fern_report — write(2, msg, len) then
+// exit_group(code) — plus the abort message strings. Emitted unconditionally
+// (once): the bounds / arena / slice sites jmp here instead of exiting
+// silently (#5538). The messages sit in .rodata; the reporter's write length
+// excludes the .asciz NUL.
+func (g *generator) emitAbortRuntime() {
+	g.line("")
+	g.line(".globl __fern_report")
+	g.line(".type __fern_report, @function")
+	g.label("__fern_report") // rsi = msg ptr, edx = length, edi = exit code
+	g.emit("mov r8d, edi")   // stash exit code (kernel preserves r8 across the write syscall)
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("mov edi, 2") // fd = stderr
+	g.emit("syscall")    // write(2, msg, len)
+	g.emit("mov edi, r8d")
+	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
+	g.emit("syscall") // exit_group(code)
+	g.line(".size __fern_report, .-__fern_report")
+	g.line(".section .rodata")
+	for _, m := range abortMessages {
+		g.label(m.label)
+		g.emit(fmt.Sprintf(".asciz %q", m.text))
+	}
+	g.line(".text")
+}
+
 func (g *generator) emitAllocRuntime() {
 	const heapBytes = 17179869184 // 0x400000000 (16 GiB) per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source in one process. Raised from 8 GiB (0x200000000) when the stage-2 x86 self-compile crossed the 8 GiB exit-137 alloc trap — the same wall arm64 hit and cleared: the compiler's live set grows with every compiler-source addition and reached ~8 GiB (0.6% headroom under the old ceiling), so an IR-widening addition tipped it. The mmap is MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE (0x22|0x4000), so the wider reservation is exempt from Linux overcommit accounting and costs nothing until touched — the ~8 GiB actually touched is unchanged, only the exit-137 ceiling moves. The length loads via `movabs rsi` (64-bit imm). The arm64 backend is already at 16 GiB (internal/codegen/arm64's heapBytes) — this brings x86 up to match. Matches the self-host emitters' own `heap_size` (asm.fern / asm_ir.fern = 17179869184) — keeping the native (stage-0 mmc) and self-host x86 heaps in lockstep. This native heap is an mmap region addressed via REGISTER (not a static `.bss` block), so it has no RIP-relative / imm32 displacement ceiling — heap_base + heap_size may exceed 2 GiB. The heap-END is built `movabs rcx, heapBytes` + `add rcx, rax` rather than a signed-disp32 `lea [base + heapBytes]` (which caps at 0x7FFFFFFF). The self-host emitters reach their `.bss` heap via 64-bit-absolute `movabs $__fern_heap` with __fern_heap emitted LAST in .bss so its > 2 GiB base never truncates a PC32 relocation.
 	g.line("")
@@ -4218,9 +4281,7 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.label(".Lalloc_oom")
-	g.emit("mov edi, 137")
-	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
-	g.emit("syscall")
+	g.emitAbort("__fern_msg_oom")
 	g.line(".size __fern_alloc, .-__fern_alloc")
 }
 
@@ -4695,9 +4756,7 @@ func (g *generator) emitSliceRangeRuntime() {
 	g.emit("sub eax, edi")
 	g.emit("ret")
 	g.label(".Lslicerange_trap")
-	g.emit("mov edi, 134")
-	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
-	g.emit("syscall")
+	g.emitAbort("__fern_msg_slice_range")
 	g.line(".size __fern_slice_range, .-__fern_slice_range")
 }
 
@@ -7349,9 +7408,7 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.label(".Lstrslice_trap")
-	g.emit("mov edi, 134")
-	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
-	g.emit("syscall")
+	g.emitAbort("__fern_msg_str_slice")
 	g.line(".size __str_slice, .-__str_slice")
 }
 
