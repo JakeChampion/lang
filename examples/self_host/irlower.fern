@@ -327,6 +327,15 @@ pub struct LowerState {
     // plain call_indirect. A small list (grown only at closure bindings), not a
     // per-slot array.
     closure_locals: string[],
+    // closure_opt_rets: "<paramname>|<Option/Result type>" for each closure/fn-
+    // typed PARAM whose signature return type is an Option/Result (the coarsened
+    // "fn" type_name discards it, but ParamDecl.fn_ret keeps the spelling). Lets a
+    // match/`?` on a DIRECT closure-call scrutinee (`match (f(x)) { Some… }`)
+    // recover the Option type — the closure sibling of opt_ret_type's named-fn
+    // lookup, which is keyed by function name and misses a closure param. Without
+    // it such a match bailed the whole function to AST (std/array.find_map and
+    // every find_map-shaped closure combinator).
+    closure_opt_rets: string[],
     // f64_ret_fns: names of free functions returning f64, so a call to one is
     // recognised as an f64 value (expr_is_f64). Without it an unannotated
     // `f(a) * g(b)` of two f64-returning calls would mis-select integer mul on
@@ -649,6 +658,21 @@ pub function (s: LowerState) is_const_fn(name: string): boolean {
 // uses the env-passing closure-call form (closures slice 3a).
 pub function (s: LowerState) is_closure_local(name: string): boolean {
     return util.index_of_str(s.closure_locals, name) >= 0;
+}
+// closure_opt_ret returns the Option/Result return type recorded for a closure/
+// fn-typed param named `name` (from ParamDecl.fn_ret), or "". Drives Option-type
+// recovery for a DIRECT closure-call match scrutinee in try_opt_type.
+pub function (s: LowerState) closure_opt_ret(name: string): string {
+    var pfx: string = name + "|";
+    var i: i32 = 0;
+    while (i < s.closure_opt_rets.len()) {
+        var e: string = s.closure_opt_rets[i];
+        if (e.len() > pfx.len() && e[0 : pfx.len()] + "" == pfx) {
+            return e[pfx.len() : e.len()] + "";
+        }
+        i = i + 1;
+    }
+    return "";
 }
 // fn_arg_is_dyn reports whether argument index `ai` of an indirect call through
 // the fn-value named `name` targets a `dyn Trait` parameter — so the arg must be
@@ -8980,6 +9004,11 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
                     // some_opt_type fallback), so `match (Some(6)) { … }` in value
                     // position lowers instead of bailing.
                     if (rt == "") { rt = some_opt_type(inner, s); }
+                    // A DIRECT closure-call scrutinee (`match (f(x))` where f is a
+                    // closure/fn param returning Option/Result): opt_ret_type is
+                    // keyed by function name and misses the param, so recover the
+                    // type from its recorded signature return (closure_opt_rets).
+                    if (rt == "") { rt = s.closure_opt_ret(scid.name); }
                     return rt;
                 },
                 parser.ExprFieldAccess(scfa) => {
@@ -14432,6 +14461,13 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                                         // construction recovers the payload from
                                         // the scrutinee (no local needed).
                                         if (srt == "") { srt = some_opt_type(m.scrutinee, ms); }
+                                        // A DIRECT closure-call scrutinee (`match
+                                        // (f(x))`, f a closure/fn param returning
+                                        // Option/Result): opt_ret_type is keyed by
+                                        // function name and misses the param, so
+                                        // recover from its signature return type
+                                        // (closure_opt_rets — find_map-shaped).
+                                        if (srt == "") { srt = ms.closure_opt_ret(scid.name); }
                                     },
                                     parser.ExprFieldAccess(scfa) => {
                                         // Associated call `Type.method()` returning
@@ -29208,6 +29244,10 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var isstrarr: boolean[] = [];
     var structty: string[] = [];
     var optty: string[] = [];
+    // closure/fn param -> its Option/Result return type (from ParamDecl.fn_ret),
+    // "<name>|<type>". Seeds LowerState.closure_opt_rets so a direct closure-call
+    // match scrutinee recovers the Option type (find_map-shaped combinators).
+    var clo_opt_rets: string[] = [];
     var tupty: string[] = [];
     var mapty: string[] = [];
     var isi64: boolean[] = [];
@@ -29290,6 +29330,15 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
             return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
         }
         names = names.append(fn.params[i].name);
+        // A closure/fn param whose signature returns Option/Result: record it so a
+        // direct `match (f(x))` / `f(x)?` scrutinee recovers the Option type. The
+        // "fn" type_name coarsens the return away; ParamDecl.fn_ret preserves it.
+        if (fn.params[i].type_name == "fn") {
+            var pfr: string = fn.params[i].fn_ret;
+            if (pfr.len() >= 7 && (pfr[0:7] == "Option[" || pfr[0:7] == "Result[")) {
+                clo_opt_rets = clo_opt_rets.append(fn.params[i].name + "|" + pfr);
+            }
+        }
         // An array-typed param is array-tracked (so a[i] / a.len() / aliasing
         // it work) but BORROWED — the dec-sweep skips slots < n_params. A
         // string[] param is additionally element-tracked (a[i] is a string).
@@ -29679,7 +29728,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var ret_arrdyn0: i32 = 0;
     if (ret_i64arr) { ret_arrdyn0 = ret_arrdyn0 + 1; }
     if (ret_dyn) { ret_arrdyn0 = ret_arrdyn0 + 2; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0,  ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: closure_fns, closurearr_ret_fns: closurearr_ret_fns, const_fns: const_fns, closure_locals: noclos, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns_aug, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, aliased_names: aliased, fn_names: fn_names, return_fresh_struct_ret_fns: return_fresh_struct_ret_fns, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], n_params: names.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, locals: locals0,  ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: closure_fns, closurearr_ret_fns: closurearr_ret_fns, const_fns: const_fns, closure_locals: noclos, closure_opt_rets: clo_opt_rets, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns_aug, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, aliased_names: aliased, fn_names: fn_names, return_fresh_struct_ret_fns: return_fresh_struct_ret_fns, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], n_params: names.len(), ok: true };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -35511,7 +35560,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, i64_ret_fns: no_strs, fn_param_sigs: no_strs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: no_strs, closurearr_ret_fns: no_strs, const_fns: no_strs, closure_locals: no_strs, f64_ret_fns: no_strs, f64arr_ret_fns: no_strs, i64arr_ret_fns: no_strs, structs: structs, str_ret_fns: str_ret_fns_of(funcs), arr_ret_fns: no_strs, strarr_ret_fns: no_strs, arr_method_fns: no_strs, opt_ret_fns: no_strs, tuple_ret_fns: no_strs, struct_ret_fns: no_strs, map_ret_fns: no_strs, reclaimable_names: no_strs, aliased_names: no_strs, fn_names: no_strs, return_fresh_struct_ret_fns: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], n_params: fn.params.len(), ok: true };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, i64_ret_fns: no_strs, fn_param_sigs: no_strs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: no_strs, closurearr_ret_fns: no_strs, const_fns: no_strs, closure_locals: no_strs, closure_opt_rets: no_strs, f64_ret_fns: no_strs, f64arr_ret_fns: no_strs, i64arr_ret_fns: no_strs, structs: structs, str_ret_fns: str_ret_fns_of(funcs), arr_ret_fns: no_strs, strarr_ret_fns: no_strs, arr_method_fns: no_strs, opt_ret_fns: no_strs, tuple_ret_fns: no_strs, struct_ret_fns: no_strs, map_ret_fns: no_strs, reclaimable_names: no_strs, aliased_names: no_strs, fn_names: no_strs, return_fresh_struct_ret_fns: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], n_params: fn.params.len(), ok: true };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
