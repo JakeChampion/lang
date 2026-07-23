@@ -4111,24 +4111,93 @@ func (g *generator) emitAbort(label string) {
 // (once): the bounds / arena / slice sites jmp here instead of exiting
 // silently (#5538). The messages sit in .rodata; the reporter's write length
 // excludes the .asciz NUL.
+const abortBacktraceMsg = "backtrace:\n"
+
 func (g *generator) emitAbortRuntime() {
 	g.line("")
 	g.line(".globl __fern_report")
 	g.line(".type __fern_report, @function")
 	g.label("__fern_report") // rsi = msg ptr, edx = length, edi = exit code
-	g.emit("mov r8d, edi")   // stash exit code (kernel preserves r8 across the write syscall)
+	g.emit("mov r15d, edi")  // save exit code (r15 survives the writes below; we never return)
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("mov edi, 2") // fd = stderr
 	g.emit("syscall")    // write(2, msg, len)
-	g.emit("mov edi, r8d")
+	// Backtrace (#5538): walk the frame-pointer chain and print each return
+	// address in hex. With `-g` (the .symtab) they resolve to functions via
+	// addr2line / nm. Bounded to 64 frames; terminates at rbp == 0 (main's
+	// saved rbp, since the kernel zeroes rbp at entry).
+	g.emit("lea rsi, [rip + __fern_msg_bt]")
+	g.emit(fmt.Sprintf("mov edx, %d", len(abortBacktraceMsg)))
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("mov edi, 2")
+	g.emit("syscall")
+	g.emit("mov rbx, rbp") // rbx = frame pointer (survives __fern_print_hex + syscalls)
+	g.emit("mov r14d, 64") // frame budget
+	g.label(".Lbt_loop")
+	g.emit("test rbx, rbx")
+	g.emit("jz .Lbt_done")
+	g.emit("test r14d, r14d")
+	g.emit("jz .Lbt_done")
+	g.emit("mov rsi, [rbx + 8]") // return address
+	g.emit("test rsi, rsi")
+	g.emit("jz .Lbt_done")
+	g.emit("call __fern_print_hex")
+	g.emit("mov rbx, [rbx]") // next frame
+	g.emit("dec r14d")
+	g.emit("jmp .Lbt_loop")
+	g.label(".Lbt_done")
+	g.emit("mov edi, r15d")
 	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
 	g.emit("syscall") // exit_group(code)
 	g.line(".size __fern_report, .-__fern_report")
+
+	// __fern_print_hex(rsi = value) writes "  0x<16 hex>\n" to stderr. Uses
+	// only rax/rcx/rdx/rdi/rsi so the caller's rbx/r14/r15 survive. No rol
+	// (the native assembler lacks it) — nibbles come off the low end via
+	// shr, written right-to-left.
+	g.line("")
+	g.line(".globl __fern_print_hex")
+	g.line(".type __fern_print_hex, @function")
+	g.label("__fern_print_hex")
+	g.emit("sub rsp, 32")
+	g.emit("mov byte ptr [rsp], 32")      // ' '
+	g.emit("mov byte ptr [rsp + 1], 32")  // ' '
+	g.emit("mov byte ptr [rsp + 2], 48")  // '0'
+	g.emit("mov byte ptr [rsp + 3], 120") // 'x'
+	g.emit("mov byte ptr [rsp + 20], 10") // '\n'
+	g.emit("mov ecx, 16")
+	g.emit("lea rdi, [rsp + 19]") // last hex digit slot
+	g.label(".Lph_loop")
+	g.emit("mov rax, rsi")
+	g.emit("and eax, 15") // low nibble
+	g.emit("cmp al, 10")
+	g.emit("jb .Lph_dec")
+	g.emit("add al, 87") // 'a' - 10
+	g.emit("jmp .Lph_put")
+	g.label(".Lph_dec")
+	g.emit("add al, 48") // '0'
+	g.label(".Lph_put")
+	g.emit("mov [rdi], al")
+	g.emit("dec rdi")
+	g.emit("shr rsi, 4")
+	g.emit("dec ecx")
+	g.emit("jnz .Lph_loop")
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("mov edi, 2") // stderr
+	g.emit("mov rsi, rsp")
+	g.emit("mov edx, 21")
+	g.emit("syscall")
+	g.emit("add rsp, 32")
+	g.emit("ret")
+	g.line(".size __fern_print_hex, .-__fern_print_hex")
+
 	g.line(".section .rodata")
 	for _, m := range abortMessages {
 		g.label(m.label)
 		g.emit(fmt.Sprintf(".asciz %q", m.text))
 	}
+	g.label("__fern_msg_bt")
+	g.emit(fmt.Sprintf(".asciz %q", abortBacktraceMsg))
 	g.line(".text")
 }
 

@@ -13,20 +13,19 @@ import (
 	"testing"
 )
 
-// withoutAbortDiag drops the native backends' fatal-abort diagnostic
-// (the `fern: …` line #5538 writes to stderr before exiting) from combined
-// output, so the "printed nothing before aborting" check below tests what it
-// means to — that no program VALUE reached stdout — not the abort's own
-// explanatory message.
+// withoutAbortDiag drops the native backends' fatal-abort diagnostic from
+// combined output: the `fern: …` cause line #5538 writes to stderr before
+// exiting, plus the frame-pointer backtrace that follows it (`backtrace:` and
+// the `  0x…` frame lines). The abort block is contiguous and trailing — a
+// program VALUE reaches stdout before the aborting op — so everything from the
+// first `fern: ` line to the end is the diagnostic. This lets the "printed
+// nothing before aborting" check below test what it means to: that no value
+// was produced, not that the abort stayed silent.
 func withoutAbortDiag(out string) string {
-	var kept []string
-	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(line, "fern: ") {
-			continue
-		}
-		kept = append(kept, line)
+	if i := strings.Index(out, "fern: "); i >= 0 {
+		return out[:i]
 	}
-	return strings.Join(kept, "\n")
+	return out
 }
 
 // assertAborts compiles + runs src on every available codegen
