@@ -206,23 +206,30 @@ via `struct_type_id`; see `TestSelfHostStatIRWasm` et al.), and the libm
 transcendentals (`fexp`/`flog`/`fsin`/`fcos`/`fpow`) lower via
 polynomial-approx WAT helpers (`wasm.exp_func`/`log_func`/`pow_func`/…,
 the wasm siblings of the arm64 helpers, wired in `wasm_ir_run`). The
-wasm-IR exclusions that genuinely REMAIN are all the async / readiness /
-socket set — `poll` / `timer_fd` / `wasm_timer_pollable` /
-`wasm_pollable_drop` / `tcp_*` / `subprocess` — which need the
-component-model wasi interfaces the bare core-wasm+preview1 backend
-doesn't wire; these are actively worked in parallel, **avoid**. Net: the
-tractable goal-1 IR-widening work is essentially done. **Goal 2 (the
-Perceus port) is ALSO substantially complete** — despite what older
-notes here said, constructor reuse is implemented and enabled in the
-self-host (self-overwrite, cross-local, enum-donor, consuming-match,
-tuple reuse, nested-struct fields), exercised by the byte-identical
-self-compile; see `docs/SELFHOST-PERCEUS-REUSE.md`'s correction
-header. The remaining reuse deltas are MARGINAL (struct reuse with
-enum / Map / closure / tuple pointer fields — §3 Delta B). The real
-remaining frontier for retiring the legacy AST emitters is the
-per-module epic's step 5 (#3457), which is blocked on the wasm
-component-model sub-issues (#4315–#4320 — actively worked in
-parallel, **avoid**). When picking up "the next task", VERIFY tracker
+wasm-IR exclusions that genuinely REMAIN are the deferral-gate set in
+`wasm_ir_deferrals_ok`: erased-wide (an i64/f64 value through a bare-
+typevar param), `xs.join`, i64/u64-VALUE maps, `writer_write`,
+`open_file`, and `c_call`. The component-model async / readiness /
+socket set that was once listed here — `poll` / `timer_fd` /
+`wasm_timer_pollable` / `wasm_pollable_drop` / `tcp_*` / `subprocess` —
+**has since LANDED** (the sub-issues #4315–#4320 are all closed, 2026-07):
+poll / timer-pollable / block / wasm_poll / tcp_* lower on the wasm IR
+path via the component-model wasi interfaces, and subprocess / timer_fd
+are clean "unsupported on wasm" error endpoints (`wasm_unsupported_builtin`).
+These are **no longer an avoid-list item.** Net: the tractable goal-1
+IR-widening work is essentially done. **Goal 2 (the Perceus port) is ALSO
+substantially complete** — despite what older notes here said, constructor
+reuse is implemented and enabled in the self-host (self-overwrite,
+cross-local, enum-donor, consuming-match, tuple reuse, nested-struct
+fields), exercised by the byte-identical self-compile; see
+`docs/SELFHOST-PERCEUS-REUSE.md`'s correction header. The remaining reuse
+deltas are MARGINAL (struct reuse with enum / Map / closure / tuple
+pointer fields — §3 Delta B). The real remaining frontier for retiring
+the legacy AST emitters is the per-module epic's step 5 (#3457, still
+OPEN). Its wasm component-model sub-issues (#4315–#4320) are now ALL
+closed, so it is **no longer blocked on them** — verify its current
+blockers directly before picking it up rather than assuming it is gated.
+When picking up "the next task", VERIFY tracker
 state against the code first: issues #4451/#4363/#4346 have repeatedly
 lagged reality (the checker-codes filter is already deleted, the
 ill_typed_hint fallback already landed, the arm64 per-module
