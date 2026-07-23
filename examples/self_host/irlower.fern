@@ -4662,6 +4662,10 @@ pub function expr_is_u32(e: parser.Expr, s: LowerState): boolean {
         // this arm also covers an erased-GENERIC return that mirrors a u32
         // argument (`idg[T](x: T): T`) and a u32-valued if/match IIFE (#5245).
         parser.ExprCall(c) => {
+            // typed-IR (#5531): trust the checker-stamped result type when present,
+            // retiring the is_u32_ret_fn re-derivation for annotated calls. ""
+            // (unannotated) falls through to the structural walk.
+            if (c.ty != "") { return c.ty == "u32"; }
             // A u32-valued if/match-EXPRESSION (the 0-arg IIFE the desugar emits):
             // `(if (c) { big_u32 } else { 0 }) >> 1` selects the UNSIGNED shift.
             // Classify by its first branch's returned value — the u32 sibling of
@@ -4766,6 +4770,10 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
         // compare on it selects shr_u / lt_u — without it `id(big_u64) >> 1`
         // used a signed (arithmetic) shift and diverged once bit 63 was set.
         parser.ExprCall(c) => {
+            // typed-IR (#5531): trust the checker-stamped result type when present,
+            // retiring the is_u64_ret_fn re-derivation for annotated calls. ""
+            // (unannotated) falls through to the structural walk.
+            if (c.ty != "") { return c.ty == "u64"; }
             // A u64-valued if/match-EXPRESSION (the 0-arg IIFE the desugar emits)
             // is a u64 value, so `(if (c) { big_u64 } else { 0 }) >> 1` selects the
             // UNSIGNED shift — the u64 sibling of expr_is_f64's IIFE arm and of
