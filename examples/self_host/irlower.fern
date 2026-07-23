@@ -4927,6 +4927,13 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
             return 32;
         },
         parser.ExprCall(c) => {
+            // typed-IR (#5531): a checker-typed i64/u64 call is a 64-bit value, so
+            // it routes through lower_i64 (is_i64_ret_fn accepts both '1'/i64 and
+            // '2'/u64). Positive fast-path ONLY — a non-64 or unresolved ("") tag
+            // falls through to the structural walk below, which still handles the
+            // i64-returning builtins (clock / __load_i64 / f64_bits), argref
+            // generics and i64/u64-map get_or the checker may not model.
+            if (c.ty == "i64" || c.ty == "u64") { return 64; }
             // An i64-width if/match-EXPRESSION (the 0-arg IIFE the desugar emits)
             // is an i64 value, so an unannotated `var x = if (c) { 5000000000 }
             // else { 1 }` width-tracks i64. (iife_any_return_i64 inspects every
