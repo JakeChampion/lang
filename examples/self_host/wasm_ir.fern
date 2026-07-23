@@ -248,6 +248,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_calls_strarrarr_free(cache)) { out = out.append("@calls_strarrarr_free"); }
     if (module_uses_arr_slice(cache)) { out = out.append("@uses_arr_slice"); }
     if (module_uses_arr_slice8(cache)) { out = out.append("@uses_arr_slice8"); }
+    if (module_calls_arr_str_join(cache)) { out = out.append("@uses_arr_str_join"); }
     if (module_uses_chr(cache)) { out = out.append("@uses_chr"); }
     if (module_uses_divrem(cache)) { out = out.append("@uses_divrem"); }
     if (module_uses_i32_to_string(cache)) { out = out.append("@uses_i32_to_string"); }
@@ -911,11 +912,9 @@ pub function module_uses_i32_to_string(cache: irlower.LowerResult[]): boolean {
 }
 
 // module_calls_arr_str_join reports whether any function emits the xs.join(sep)
-// runtime call (a call_direct to __fern_arr_str_join). The register backends
-// lower it (#5328); on wasm it stays deferred to the AST path, which has its own
-// $__fern_str_join runtime (a distinct symbol from the register helper), so a
-// join module keeps the AST wasm backend. (module_emits_op keys on op.kind, not
-// the call_direct symbol, so this needs its own scan.)
+// runtime call (a call_direct to __fern_arr_str_join, #5328) — so needs_of can
+// pull in the $__fern_str_join WAT helper (@uses_arr_str_join). (module_emits_op
+// keys on op.kind, not the call_direct symbol, so this needs its own scan.)
 pub function module_calls_arr_str_join(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
     while (fi < cache.len()) {
@@ -1227,12 +1226,10 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // the AST path, so the op-blocklist below need not be exhaustive (#6).
         && all_lowered_ok(cache)
         && !module_erased_wide(cache)
-        // xs.join(sep) lowers on the register IR backends (#5328) but not wasm:
-        // the register helper (__fern_arr_str_join) has no wasm runtime — wasm's
-        // AST path uses a different symbol ($__fern_str_join) — so a join module
-        // stays on the wasm AST path (where join already works). Same deferral
-        // shape as the socket/poll set below.
-        && !module_calls_arr_str_join(cache)
+        // xs.join(sep) NOW lowers on the wasm IR path (#5328): the register
+        // backends' __fern_arr_str_join runtime call is served by a matching
+        // $__fern_arr_str_join shim over the $__fern_str_join WAT worker
+        // (wasm.arr_str_join_helper, gated on @uses_arr_str_join) — no exclusion here.
         // An i64/u64-VALUE map stays on the wasm AST path: the wasm map runtime
         // takes an i32 value, so the 8-byte value irlower now threads (valwide)
         // would fail wasm validation. The register backends store it 8-byte and
