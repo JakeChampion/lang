@@ -1071,18 +1071,83 @@ func (g *generator) emitAbort(label string) {
 // arena / slice sites branch here instead of exiting silently (#5538). x19
 // (callee-saved, kernel-preserved across the write syscall) holds the exit
 // code; the reporter never returns so no frame is needed.
+const abortBacktraceMsg = "backtrace:\n"
+
 func (g *generator) emitAbortRuntime() {
 	g.line("")
 	g.line(".global __fern_report")
 	g.typeDirective("__fern_report")
 	g.label("__fern_report") // x1 = msg ptr, x2 = length, x0 = exit code
-	g.emit("mov x19, x0")    // stash exit code
+	g.emit("mov x19, x0")    // stash exit code (x19 survives the writes; we never return)
 	g.emit("mov x0, #2")     // fd = stderr; x1/x2 already set by emitAbort
 	g.syscall("write")
+	// Backtrace (#5538): walk the x29 frame-pointer chain and print each
+	// return address (the saved x30 at [fp+8]) in hex. With `-g` (the
+	// .symtab) they resolve to functions via addr2line / nm. Bounded to 64
+	// frames; terminates at x29 == 0.
+	g.adrpAdd("x1", "__fern_msg_bt")
+	g.emit("mov x2, #%d", len(abortBacktraceMsg))
+	g.emit("mov x0, #2")
+	g.syscall("write")
+	g.emit("mov x20, x29") // x20 = frame pointer (callee-saved, survives the bl)
+	g.emit("mov x21, #64") // frame budget
+	g.label(".Lbt_loop")
+	g.emit("cbz x20, .Lbt_done")
+	g.emit("cbz x21, .Lbt_done")
+	g.emit("ldr x0, [x20, #8]") // return address
+	g.emit("cbz x0, .Lbt_done")
+	g.emit("bl __fern_print_hex")
+	g.emit("ldr x20, [x20]") // next frame
+	g.emit("sub x21, x21, #1")
+	g.emit("b .Lbt_loop")
+	g.label(".Lbt_done")
 	g.emit("mov x0, x19")
 	g.syscallExit()
 	g.sizeDirective("__fern_report")
 	g.line(".ltorg")
+
+	// __fern_print_hex(x0 = value) writes "  0x<16 hex>\n" to stderr. A leaf
+	// (only the write syscall) using x0..x12, so the caller's x19/x20/x21
+	// survive. Nibbles come off the low end via lsr, written right-to-left.
+	g.line("")
+	g.line(".global __fern_print_hex")
+	g.typeDirective("__fern_print_hex")
+	g.label("__fern_print_hex")
+	g.emit("sub sp, sp, #32")
+	g.emit("mov w9, #32")
+	g.emit("strb w9, [sp]")     // ' '
+	g.emit("strb w9, [sp, #1]") // ' '
+	g.emit("mov w9, #48")
+	g.emit("strb w9, [sp, #2]") // '0'
+	g.emit("mov w9, #120")
+	g.emit("strb w9, [sp, #3]") // 'x'
+	g.emit("mov w9, #10")
+	g.emit("strb w9, [sp, #20]") // '\n'
+	g.emit("mov w10, #16")       // digit counter
+	g.emit("add x11, sp, #19")   // last hex slot
+	g.label(".Lph_loop")
+	g.emit("and x12, x0, #0xf") // low nibble
+	g.emit("cmp x12, #10")
+	g.emit("b.lo .Lph_dec")
+	g.emit("add x12, x12, #87") // 'a' - 10
+	g.emit("b .Lph_put")
+	g.label(".Lph_dec")
+	g.emit("add x12, x12, #48") // '0'
+	g.label(".Lph_put")
+	g.emit("strb w12, [x11]")
+	g.emit("sub x11, x11, #1")
+	g.emit("lsr x0, x0, #4")
+	g.emit("sub w10, w10, #1")
+	g.emit("cbnz w10, .Lph_loop")
+	g.emit("mov x1, sp") // buf
+	g.emit("mov x2, #21")
+	g.emit("mov x0, #2") // stderr
+	g.syscall("write")
+	g.emit("add sp, sp, #32")
+	g.emit("ret")
+	g.sizeDirective("__fern_print_hex")
+	g.line(".ltorg")
+
 	// Read-only message strings. Mach-O has no `.rodata`; its read-only
 	// constants live in __TEXT,__const (matching emitDataSections).
 	if g.darwin {
@@ -1094,6 +1159,8 @@ func (g *generator) emitAbortRuntime() {
 		g.label(m.label)
 		g.line("\t.asciz " + escapeForGAS(m.text))
 	}
+	g.label("__fern_msg_bt")
+	g.line("\t.asciz " + escapeForGAS(abortBacktraceMsg))
 	g.line(".text")
 }
 
