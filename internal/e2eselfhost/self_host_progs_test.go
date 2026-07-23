@@ -61,6 +61,23 @@ var selfHostProgCases = []struct {
 	{"f32-struct-field", `struct Q { v: f32 } function main(): i32 { var q: Q = Q { v: 4.5 }; return (q.v + 0.5) as i32; }`, 5},
 	{"float-tuple-elem", `function main(): i32 { var t: (f64, i32) = (3.5, 1); return (t.0 + 0.5) as i32; }`, 4},
 	{"float-array-index", `function main(): i32 { var a: f64[] = [1.5, 2.5]; return (a[1] + 0.5) as i32; }`, 3},
+	// Unsigned-64 classification edge cases (#5520) — the u64 siblings of the
+	// float cases above, guarding the field/tuple resolver (#5523) and the
+	// method-receiver key resolver (#5524) on the unsigned-64 side (the corpus had
+	// zero u64 coverage). Each shifts a u64 with bit 63 set by 60: unsigned shr_u
+	// yields 15, a mis-classified SIGNED shr_s yields -1 -> exit 255, so the arm's
+	// is_u64 verdict is what the exit code turns on (the -1>>60 control confirms the
+	// signed reading is 255). These run on both the legacy-asm x86 leg and the
+	// IR-path arm64 leg (asm_ir_run -> irlower), so they guard the refactored
+	// predicates directly. (u32 is deliberately NOT covered: x86/arm zero-extension
+	// hides its signedness divergence, so a u32 shift test would pass regardless of
+	// classification — only wasm exposes it. The u64-IIFE arm is likewise omitted:
+	// the legacy asm x86 backend does not classify an IIFE result u64 — a gap that
+	// per policy is not fixed, the backend being retired — so it would fail this
+	// leg while passing the IR one.)
+	{"u64-struct-field", `struct S { v: u64 } function main(): i32 { var s: S = S { v: 18446744073709551615 as u64 }; return (s.v >> 60) as i32; }`, 15},
+	{"u64-tuple-elem", `function main(): i32 { var t: (u64, i32) = (18446744073709551615 as u64, 0); return (t.0 >> 60) as i32; }`, 15},
+	{"u64-method-ret", `struct S {} function (s: S) w(): u64 { return 18446744073709551615 as u64; } function main(): i32 { var s: S = S {}; return (s.w() >> 60) as i32; }`, 15},
 	// Array.build (parser.fern desugar): for-in builds [1,4,9]; sum 14.
 	{"array-build", `function main(): i32 { var xs: i32[] = [1,2,3]; var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void { for x in xs { b.append(x * x); } }); return out[0] + out[1] + out[2]; }`, 14},
 	// Repeated with: [0,0,0] → with(0,5) → with(2,7) → [5,0,7]; 5*10+7 = 57.
