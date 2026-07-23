@@ -403,6 +403,11 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesTempDir {
 		g.usesMonotonicNs = true
 	}
+	// Fatal-abort diagnostics (#5538): __fern_report writes an abort's cause
+	// to stderr before exit, so a bounds / arena / slice abort names itself
+	// instead of exiting silently. Emitted unconditionally — the abort sites
+	// branch here, and label resolution is order-independent.
+	g.emitAbortRuntime()
 	if g.usesAlloc {
 		g.emitAllocRuntime()
 		// __fern_alloc_box piggybacks on __fern_alloc — the
@@ -1023,6 +1028,75 @@ func (g *generator) emitDataSections() {
 // __store_i32 / __load_i32 round-trip pointers without
 // truncation).
 //
+// abortMessages are the fatal-abort diagnostics (#5538): a fixed message
+// written to stderr before the process exits, so a bounds / arena / slice
+// abort names its cause instead of exiting with a bare code. The text MUST
+// match the x86-64 backend's table (internal/codegen/x86_64) so a program's
+// abort output is identical across natives. Ordered (not a map) for
+// deterministic emission.
+var abortMessages = []struct {
+	label, text string
+	code        int
+}{
+	{"__fern_msg_arr_oob", "fern: array index out of range\n", 134},
+	{"__fern_msg_slice_oob", "fern: slice index out of range\n", 134},
+	{"__fern_msg_oom", "fern: out of memory (heap arena exhausted)\n", 137},
+	{"__fern_msg_slice_range", "fern: slice range out of bounds\n", 134},
+	{"__fern_msg_str_slice", "fern: string index out of range\n", 134},
+}
+
+func abortMsg(label string) (text string, code int) {
+	for _, m := range abortMessages {
+		if m.label == label {
+			return m.text, m.code
+		}
+	}
+	panic("arm64: unknown abort message " + label)
+}
+
+// emitAbort routes a fatal abort site through __fern_report: it points x1/x2
+// at the named diagnostic, sets the exit code in x0, and tail-branches to the
+// reporter (write to stderr, then exit). Replaces a bare, silent
+// `mov x0, #code; syscallExit` so the failure names its cause (#5538).
+func (g *generator) emitAbort(label string) {
+	text, code := abortMsg(label)
+	g.adrpAdd("x1", label) // x1 = message ptr
+	g.emit("mov x2, #%d", len(text))
+	g.emit("mov x0, #%d", code)
+	g.emit("b __fern_report")
+}
+
+// emitAbortRuntime emits __fern_report — write(stderr, msg, len) then exit —
+// plus the abort message strings. Emitted unconditionally (once): the bounds /
+// arena / slice sites branch here instead of exiting silently (#5538). x19
+// (callee-saved, kernel-preserved across the write syscall) holds the exit
+// code; the reporter never returns so no frame is needed.
+func (g *generator) emitAbortRuntime() {
+	g.line("")
+	g.line(".global __fern_report")
+	g.typeDirective("__fern_report")
+	g.label("__fern_report") // x1 = msg ptr, x2 = length, x0 = exit code
+	g.emit("mov x19, x0")    // stash exit code
+	g.emit("mov x0, #2")     // fd = stderr; x1/x2 already set by emitAbort
+	g.syscall("write")
+	g.emit("mov x0, x19")
+	g.syscallExit()
+	g.sizeDirective("__fern_report")
+	g.line(".ltorg")
+	// Read-only message strings. Mach-O has no `.rodata`; its read-only
+	// constants live in __TEXT,__const (matching emitDataSections).
+	if g.darwin {
+		g.line(".section __TEXT,__const")
+	} else {
+		g.line(".section .rodata")
+	}
+	for _, m := range abortMessages {
+		g.label(m.label)
+		g.line("\t.asciz " + escapeForGAS(m.text))
+	}
+	g.line(".text")
+}
+
 // Bump-only at the cursor level — freed blocks return to the
 // segregated freelist (see __fern_free) when RcFreeEnabled; the
 // OS reclaims everything at process exit regardless.
@@ -1199,8 +1273,7 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("ldp x29, x30, [sp], #16")
 	g.emit("ret")
 	g.label(".Lalloc_oom")
-	g.emit("mov x0, #137")
-	g.syscallExit()
+	g.emitAbort("__fern_msg_oom")
 	g.sizeDirective("__fern_alloc")
 	g.line(".ltorg")
 }
@@ -2582,8 +2655,7 @@ func (g *generator) emitSliceRangeRuntime() {
 	g.emit("sub w0, w1, w0")
 	g.emit("ret")
 	g.label(".Lslicerange_trap")
-	g.emit("mov x0, #134")
-	g.syscallExit()
+	g.emitAbort("__fern_msg_slice_range")
 	g.sizeDirective("__fern_slice_range")
 	g.line(".ltorg")
 }
@@ -2809,8 +2881,7 @@ func (g *generator) emitArrBoundsCheck() {
 	g.emit("ldur w2, [x1, #-4]") // len prefix
 	g.emit("cmp w0, w2")
 	g.emit("b.lo %s", ok) // unsigned idx < len → in bounds
-	g.emit("mov x0, #134")
-	g.syscallExit()
+	g.emitAbort("__fern_msg_arr_oob")
 	g.label(ok)
 }
 
@@ -2823,8 +2894,7 @@ func (g *generator) emitSliceBoundsCheck() {
 	g.emit("ldur w2, [x1, #8]") // len at [slice+8] (after 8-byte data_ptr)
 	g.emit("cmp w0, w2")
 	g.emit("b.lo %s", ok)
-	g.emit("mov x0, #134")
-	g.syscallExit()
+	g.emitAbort("__fern_msg_slice_oob")
 	g.label(ok)
 }
 
@@ -3433,8 +3503,7 @@ func (g *generator) emitStrSliceRuntime() {
 	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
 	g.label(".Lstrslice_trap")
-	g.emit("mov x0, #134")
-	g.syscallExit()
+	g.emitAbort("__fern_msg_str_slice")
 	g.sizeDirective("__str_slice")
 	g.line(".ltorg")
 }
@@ -3508,8 +3577,7 @@ func (g *generator) emitStrSliceRuntime2W() {
 	g.emit("ldp x29, x30, [sp], #96")
 	g.emit("ret")
 	g.label(".Lstrslice2w_trap")
-	g.emit("mov x0, #134")
-	g.syscallExit()
+	g.emitAbort("__fern_msg_str_slice")
 	g.sizeDirective("__str_slice")
 	g.line(".ltorg")
 }
