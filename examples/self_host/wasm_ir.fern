@@ -1155,6 +1155,29 @@ function module_erased_wide(cache: irlower.LowerResult[]): boolean {
     return false;
 }
 
+// all_lowered_ok reports whether EVERY function in the module lowered
+// successfully (LowerResult.ok). The rest of the deferral gate is a hand-
+// maintained BLOCKLIST — one `!module_emits_op_cached(cache, "<op>")` per op the
+// wasm backend can't lower — that must be kept exhaustive by hand, or a function
+// that bails for an un-listed reason still passes the gate and reaches emit,
+// where its empty/truncated `ops` produce a body the wasm loader rejects
+// ("values remaining on stack"). This derives the backstop from the lowering
+// ITSELF: any bail (LowerResult.ok == false) routes the whole module to the AST
+// path cleanly, so the blocklist no longer has to be perfect (fragility #6 —
+// eligibility drift from what actually lowers). The register IR path already
+// gates on `r.ok` this way (asm_ir.func_eligible); this brings wasm to parity.
+// Byte-identity-safe: an all-ok module (every current IR-eligible one, since it
+// emits valid wasm today) is unaffected; the gate only ever moves a
+// silently-bailing module off the IR path.
+function all_lowered_ok(cache: irlower.LowerResult[]): boolean {
+    var i: i32 = 0;
+    while (i < cache.len()) {
+        if (!cache[i].ok) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // wasm_unsupported_builtin returns the name of the first builtin the module
 // calls that has NO wasm meaning at all, or "" when there is none. These are
 // error endpoints, not deferrals: routing them to the AST emitter produces a
@@ -1200,6 +1223,9 @@ pub function wasm_unsupported_message(name: string): string {
 
 pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
     return true
+        // Total backstop: any function that failed to lower routes the module to
+        // the AST path, so the op-blocklist below need not be exhaustive (#6).
+        && all_lowered_ok(cache)
         && !module_erased_wide(cache)
         // xs.join(sep) lowers on the register IR backends (#5328) but not wasm:
         // the register helper (__fern_arr_str_join) has no wasm runtime — wasm's
@@ -1249,20 +1275,12 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // is why native resolves these imports against the same subset WIT that
         // blocks the self-host — and why its array layout differs too (see
         // wasm_poll_func).
-        // tcp_* client primitives: native lowers them via the IR (socket
-        // syscalls + the self-host string ABI for recv/send), but the
-        // self-host wasm backend has no socket runtime (wasm sockets need the
-        // component-model wasi:sockets interfaces), so a tcp module stays on the
-        // wasm AST path (#4318). Same SHAPE as wasm_poll above, and the same
-        // correction applies: the prerequisite is enriching the vendored WIT +
-        // attaching the world payload, not building an encoder. cmd/fern/wit/
-        // deps/sockets/*.wit is 123 lines of deliberate subset ("Vendored subset
-        // of wasi:sockets/network@0.2.0 — the `network` resource ... plus the
-        // `ip-socket-address` variant used by start-bind"), tailored to exactly
-        // what native's Go composer emits. Whatever the self-host emits beyond
-        // that subset has to be declared there before `component new` can
-        // resolve it. Do wasm_poll (#4316) first — it is the smaller instance of
-        // the identical problem and proves the pipeline.
+        // tcp_* client/server primitives NOW lower on the wasm IR path (#4318,
+        // closed): wasm_ir emits the wasi:sockets component calls and the vendored
+        // WIT subset (cmd/fern/wit/deps/sockets/*.wit — the `network` resource +
+        // the `ip-socket-address` variant used by start-bind) carries the world
+        // payload `component new` resolves. No tcp exclusion here — same route as
+        // wasm_poll (#4316) proved.
         && !module_emits_op_cached(cache, "writer_write")
         && !module_emits_op_cached(cache, "open_file")
         // subprocess is NOT deferred to the AST path — it is unsupportable on
