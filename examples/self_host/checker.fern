@@ -8998,6 +8998,13 @@ function type_to_irtag(t: Type): string {
         TypeI32(x) => { return int_label(x); },
         TypeString(_) => { return "string"; },
         TypeBool(_) => { return "boolean"; },
+        // A struct-valued call carries its nominal type NAME as the tag, so
+        // irlower's expr_struct_type can read it instead of re-deriving via the
+        // struct_ret_fns registry. A struct name never collides with a scalar tag
+        // (f64/i32/... are reserved), and the scalar predicates that read c.ty
+        // compare it to their own keyword, so a struct name reads false there —
+        // matching the structural walk's false for a struct call.
+        TypeStruct(st) => { return st.name; },
         _ => { return ""; }
     }
     return "";
