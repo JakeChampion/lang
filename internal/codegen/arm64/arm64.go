@@ -1083,7 +1083,13 @@ func (g *generator) emitAbortRuntime() {
 	g.syscallExit()
 	g.sizeDirective("__fern_report")
 	g.line(".ltorg")
-	g.line(".section .rodata")
+	// Read-only message strings. Mach-O has no `.rodata`; its read-only
+	// constants live in __TEXT,__const (matching emitDataSections).
+	if g.darwin {
+		g.line(".section __TEXT,__const")
+	} else {
+		g.line(".section .rodata")
+	}
 	for _, m := range abortMessages {
 		g.label(m.label)
 		g.line("\t.asciz " + escapeForGAS(m.text))
