@@ -585,6 +585,13 @@ function main(): i32 {
         merged = constfold.fold_module(merged);
     }
 
+    // typed-IR (#5531): stamp each call expression with its checker-inferred
+    // result type so the IR lowering READS the type instead of re-deriving it
+    // structurally (docs/TYPED-IR-REWRITE.md). Runs after check + constfold and
+    // before every emit path, so the emit_module_ir routing sees c.ty. Deterministic,
+    // so the byte-identical self-compile fixpoint is preserved.
+    merged = checker.annotate_module(merged);
+
     // Production default: the IR path. The compile falls through to the AST
     // shell below (asm.fern / asm_arm64.fern / wasm.fern), which itself routes
     // eligible modules AST → stack IR → asm via asm_ir.emit_module_ir

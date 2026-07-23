@@ -8967,3 +8967,219 @@ function main(): i32 {
 
     return 0;
 }
+
+// ---------------------------------------------------------------------------
+// Typed-IR annotation pass (#5531, docs/TYPED-IR-REWRITE.md)
+//
+// The lowering (irlower.fern) re-derives the type of nearly every expression at
+// codegen time with structural predicates, because parser.Expr nodes carry no
+// resolved type. This pass closes that gap for CALL expressions: it walks the
+// module with a threaded Scope (the same scope build_func_scope / check_stmt
+// use), asks check_expr for each ExprCall's inferred result type, and stamps the
+// result into ExprCall.ty in irlower's string tag vocabulary. Lowering then READS
+// c.ty instead of re-deriving. An unresolved / non-scalar result stamps "" so
+// lowering falls back to its structural walk — the pass never widens what lowers,
+// only removes re-derivation. Drivers that do not run it (asm_ir_run, native
+// cmd/fern) leave every ty "" and are unaffected.
+//
+// The pass is a faithful AST rebuild (parser.Expr is immutable): every node is
+// reconstructed, changing only ExprCall.ty. Any dropped/altered field would show
+// as a codegen divergence under the byte-identical self-compile fixpoint.
+
+// type_to_irtag serialises a resolved Type to irlower's scalar/string tag
+// vocabulary. Only the tags a lowering predicate reads are produced; every
+// composite / unresolved type maps to "" (unannotated → structural fallback).
+// Note: TypeFloat covers both f64 and f32 (the checker does not distinguish
+// them), so the tag is "f64" — the value irlower's expr_is_f64 keys on; the
+// strict f32/f64 split stays structural (expr_is_f32).
+function type_to_irtag(t: Type): string {
+    match (t) {
+        TypeFloat(_) => { return "f64"; },
+        TypeI32(x) => { return int_label(x); },
+        TypeString(_) => { return "string"; },
+        TypeBool(_) => { return "boolean"; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// ModuleTables is the four name-resolution tables the checker builds per module.
+// build_module_tables mirrors the head of check_module (structs → union names →
+// enums → func sigs → methods); it is duplicated rather than shared so the
+// annotate pass cannot perturb check_module's byte-identity-critical body.
+pub struct ModuleTables { structs: StructSig[], unions: UnionSig[], sigs: FuncSig[], methods: MethodSig[] }
+function build_module_tables(mod: parser.Module): ModuleTables {
+    var alias_names: string[] = [];
+    var an: i32 = 0;
+    while (an < mod.aliases.len()) { alias_names = alias_names.append(mod.aliases[an].name); an = an + 1; }
+    var structs: StructSig[] = collect_struct_sigs(mod.structs, alias_names);
+    var struct_names: string[] = [];
+    var sn: i32 = 0;
+    while (sn < structs.len()) { struct_names = struct_names.append(structs[sn].name); sn = sn + 1; }
+    var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
+    var een: i32 = 0;
+    while (een < mod.enums.len()) {
+        unions = unions.append(UnionSig { name: mod.enums[een].name, variants: mod.enums[een].variant_names });
+        een = een + 1;
+    }
+    var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
+    var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
+    return ModuleTables { structs: structs, unions: unions, sigs: sigs, methods: methods };
+}
+
+// annotate_advance threads the block scope from one statement to the next,
+// reproducing exactly the scope check_stmt returns: only a StmtVar changes it
+// (binding its name to the declared type, or the inferred init type when
+// unannotated); every other statement's bindings are block-local and do not
+// escape, so the scope passes through unchanged. This is the cheap half of
+// check_stmt (no diagnostics), so annotation does not re-run the full checker.
+function annotate_advance(st: parser.Stmt, s: Scope): Scope {
+    match (st) {
+        parser.StmtVar(v) => {
+            if (v.type_name.len() > 0) {
+                return s.bind(v.name, type_from_name_with_structs_unions(v.type_name, s.structs, s.unions));
+            }
+            return s.bind(v.name, check_expr(v.init, s));
+        },
+        parser.StmtDefer(d) => { return annotate_advance(d.action, s); },
+        _ => { return s; }
+    }
+    return s;
+}
+
+// annotate_expr rebuilds `e`, stamping ExprCall.ty with the checker-inferred
+// result tag. Recurses through every composite so a nested call is reached.
+function annotate_expr(e: parser.Expr, s: Scope): parser.Expr {
+    match (e) {
+        parser.ExprBinary(b) => {
+            return parser.ExprBinary { op: b.op, left: annotate_expr(b.left, s), right: annotate_expr(b.right, s), line: b.line, col: b.col };
+        },
+        parser.ExprUnary(u) => {
+            return parser.ExprUnary { op: u.op, operand: annotate_expr(u.operand, s), line: u.line, col: u.col };
+        },
+        parser.ExprCall(c) => {
+            var nargs: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) { nargs = nargs.append(annotate_expr(c.args[i], s)); i = i + 1; }
+            var tag: string = type_to_irtag(check_expr(e, s));
+            return parser.ExprCall { callee: annotate_expr(c.callee, s), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: tag };
+        },
+        parser.ExprFieldAccess(fa) => {
+            return parser.ExprFieldAccess { obj: annotate_expr(fa.obj, s), field: fa.field, line: fa.line, col: fa.col };
+        },
+        parser.ExprIndex(x) => {
+            return parser.ExprIndex { array: annotate_expr(x.array, s), index: annotate_expr(x.index, s), unchecked: x.unchecked };
+        },
+        parser.ExprSlice(sl) => {
+            return parser.ExprSlice { array: annotate_expr(sl.array, s), start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s) };
+        },
+        parser.ExprArray(a) => {
+            var na: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < a.elements.len()) { na = na.append(annotate_expr(a.elements[i], s)); i = i + 1; }
+            return parser.ExprArray { elements: na };
+        },
+        parser.ExprTuple(t) => {
+            var nt: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < t.elements.len()) { nt = nt.append(annotate_expr(t.elements[i], s)); i = i + 1; }
+            return parser.ExprTuple { elements: nt, line: t.line, col: t.col };
+        },
+        parser.ExprStructLit(sli) => {
+            var nfv: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < sli.field_values.len()) { nfv = nfv.append(annotate_expr(sli.field_values[i], s)); i = i + 1; }
+            var nbase: parser.Expr = sli.base;
+            if (sli.has_base) { nbase = annotate_expr(sli.base, s); }
+            return parser.ExprStructLit { type_name: sli.type_name, field_names: sli.field_names, field_values: nfv, has_base: sli.has_base, base: nbase, line: sli.line, col: sli.col };
+        },
+        parser.ExprLambda(lm) => {
+            var ls: Scope = s;
+            var pi: i32 = 0;
+            while (pi < lm.params.len()) {
+                ls = ls.bind(lm.params[pi].name, type_from_name_with_structs_unions(lm.params[pi].type_name, s.structs, s.unions));
+                pi = pi + 1;
+            }
+            return parser.ExprLambda { params: lm.params, ret_type: lm.ret_type, body: annotate_block(lm.body, ls), use_infer: lm.use_infer };
+        },
+        _ => { return e; }
+    }
+    return e;
+}
+
+// annotate_block rebuilds a statement list, threading scope statement-to-statement
+// via annotate_advance. Nested control-flow bodies are rebuilt with the enclosing
+// scope; a for-loop variable / match-arm payload binding is NOT re-introduced, so
+// a call over one stays unannotated ("") and falls back to the structural walk —
+// a later slice can thread those bindings to widen coverage.
+function annotate_block(body: parser.Stmt[], s: Scope): parser.Stmt[] {
+    var out: parser.Stmt[] = [];
+    var cur: Scope = s;
+    var i: i32 = 0;
+    while (i < body.len()) {
+        out = out.append(annotate_stmt(body[i], cur));
+        cur = annotate_advance(body[i], cur);
+        i = i + 1;
+    }
+    return out;
+}
+
+function annotate_stmt(st: parser.Stmt, s: Scope): parser.Stmt {
+    match (st) {
+        parser.StmtVar(v) => {
+            return parser.StmtVar { name: v.name, type_name: v.type_name, init: annotate_expr(v.init, s), line: v.line, col: v.col, is_str: v.is_str };
+        },
+        parser.StmtReturn(r) => {
+            return parser.StmtReturn { value: annotate_expr(r.value, s), line: r.line, col: r.col };
+        },
+        parser.StmtExpr(x) => {
+            return parser.StmtExpr { value: annotate_expr(x.value, s) };
+        },
+        parser.StmtIf(f) => {
+            return parser.StmtIf { cond: annotate_expr(f.cond, s), then_body: annotate_block(f.then_body, s), else_body: annotate_block(f.else_body, s) };
+        },
+        parser.StmtWhile(w) => {
+            return parser.StmtWhile { cond: annotate_expr(w.cond, s), body: annotate_block(w.body, s), label: w.label };
+        },
+        parser.StmtAssign(a) => {
+            return parser.StmtAssign { target: a.target, value: annotate_expr(a.value, s), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+        },
+        parser.StmtMatch(m) => {
+            var narms: parser.MatchArm[] = [];
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                var arm: parser.MatchArm = m.arms[i];
+                narms = narms.append(parser.MatchArm { pattern: arm.pattern, body: annotate_block(arm.body, s), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
+                i = i + 1;
+            }
+            return parser.StmtMatch { scrutinee: annotate_expr(m.scrutinee, s), arms: narms, line: m.line, col: m.col, origin: m.origin };
+        },
+        parser.StmtFor(fr) => {
+            return parser.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, s), label: fr.label };
+        },
+        parser.StmtDefer(d) => {
+            return parser.StmtDefer { action: annotate_stmt(d.action, s), on_error: d.on_error };
+        },
+        _ => { return st; }
+    }
+    return st;
+}
+
+function annotate_func(fd: parser.FuncDecl, mt: ModuleTables): parser.FuncDecl {
+    var s: Scope = build_func_scope(fd, mt.sigs, mt.structs, mt.unions, mt.methods);
+    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: annotate_block(fd.body, s), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str };
+}
+
+// annotate_module stamps every function body's call expressions with their
+// checker-inferred result type. Top-level statements are left unannotated for
+// now (they lower rarely and via a distinct path); a later slice can extend.
+pub function annotate_module(mod: parser.Module): parser.Module {
+    var mt: ModuleTables = build_module_tables(mod);
+    var nfuncs: parser.FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        nfuncs = nfuncs.append(annotate_func(mod.funcs[i], mt));
+        i = i + 1;
+    }
+    return parser.Module { funcs: nfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+}

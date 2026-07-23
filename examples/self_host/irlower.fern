@@ -4469,6 +4469,14 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
             return false;
         },
         parser.ExprCall(c) => {
+            // typed-IR (#5531): the annotate pass (checker.annotate_module) stamps
+            // c.ty with the checker's inferred result type. When present it is
+            // authoritative for the float question, retiring the is_f64_ret_fn /
+            // f64-builtin re-derivation below for annotated calls. "" — an
+            // unannotated call (the asm_ir_run harness / native cmd/fern never run
+            // annotate, or the checker left this call's type unresolved) — falls
+            // through to the structural walk, so behaviour is unchanged there.
+            if (c.ty != "") { return c.ty == "f64"; }
             // An f64-valued if/match-EXPRESSION (the 0-arg IIFE the desugar emits)
             // — classify by its first branch's returned value, so `var f = if (…)
             // { 1.5 } else { 2.5 }` tracks f as an f64.
