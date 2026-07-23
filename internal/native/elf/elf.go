@@ -27,6 +27,11 @@
 // (https://refspecs.linuxfoundation.org/elf/gabi4+/contents.html).
 package elf
 
+import (
+	"sort"
+	"strings"
+)
+
 const (
 	ehSize    = 64       // ELF-64 header size (e_ehsize)
 	phSize    = 56       // ELF-64 program-header entry size (e_phentsize)
@@ -663,6 +668,166 @@ func image(body []byte, flags uint32, machine uint16) []byte {
 	buf = le64(buf, pageAlignFor(machine)) // p_align
 
 	return append(buf, body...)
+}
+
+// Sym is one function symbol for the `-g` static symbol table (.symtab):
+// its Name, absolute virtual Value, and byte Size.
+type Sym struct {
+	Name  string
+	Value uint64
+	Size  uint64
+}
+
+// FuncSyms turns an assembler's label→absolute-vaddr map into a sorted
+// []Sym for .symtab. It drops assembler-local labels (".L…" and any name
+// beginning with ".") — those are branch targets, not functions — and
+// computes each symbol's Size as the gap to the next symbol; the last runs
+// to textEndVAddr (TextVAddrWX + len(text)).
+func FuncSyms(labels map[string]uint64, textEndVAddr uint64) []Sym {
+	syms := make([]Sym, 0, len(labels))
+	for name, v := range labels {
+		if name == "" || strings.HasPrefix(name, ".") {
+			continue
+		}
+		syms = append(syms, Sym{Name: name, Value: v})
+	}
+	sort.Slice(syms, func(i, j int) bool {
+		if syms[i].Value != syms[j].Value {
+			return syms[i].Value < syms[j].Value
+		}
+		return syms[i].Name < syms[j].Name
+	})
+	for i := range syms {
+		end := textEndVAddr
+		if i+1 < len(syms) {
+			end = syms[i+1].Value
+		}
+		if end >= syms[i].Value {
+			syms[i].Size = end - syms[i].Value
+		}
+	}
+	return syms
+}
+
+// StaticExecutableDataX86WXSyms is StaticExecutableDataX86WX plus a static
+// symbol table. It appends non-alloc .symtab / .strtab / .shstrtab sections
+// and a section-header table so a debugger, nm, or a backtrace can resolve a
+// code address to a function name. The loadable image (segments + entry) is
+// byte-identical to StaticExecutableDataX86WX — the extra sections sit past
+// the loaded segments and are ignored by the kernel loader. Emitted under
+// `fern -g`.
+func StaticExecutableDataX86WXSyms(text, data []byte, syms []Sym) []byte {
+	return imageWXSyms(text, data, emX86_64, 0, syms)
+}
+
+// StaticExecutableDataWXSyms is the arm64 counterpart of
+// StaticExecutableDataX86WXSyms.
+func StaticExecutableDataWXSyms(text, data []byte, syms []Sym) []byte {
+	return imageWXSyms(text, data, emAArch64, 0, syms)
+}
+
+// imageWXSyms builds the W^X image (imageWX) and appends a section table with
+// a .symtab. The sections are all non-alloc and live after the loadable
+// segments, so the running image is identical to imageWX's.
+func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym) []byte {
+	buf := imageWX(text, data, machine, entryOff)
+
+	// .strtab: NUL, then each symbol name NUL-terminated.
+	strtab := []byte{0}
+	nameOff := make([]uint32, len(syms))
+	for i, s := range syms {
+		nameOff[i] = uint32(len(strtab))
+		strtab = append(strtab, s.Name...)
+		strtab = append(strtab, 0)
+	}
+	// .shstrtab: the section names.
+	shstrtab := []byte{0}
+	addShName := func(n string) uint32 {
+		off := uint32(len(shstrtab))
+		shstrtab = append(shstrtab, n...)
+		shstrtab = append(shstrtab, 0)
+		return off
+	}
+	nText := addShName(".text")
+	nSymtab := addShName(".symtab")
+	nStrtab := addShName(".strtab")
+	nShstrtab := addShName(".shstrtab")
+
+	// .symtab: index 0 is STN_UNDEF (all zero), then one STT_FUNC per symbol.
+	symtab := make([]byte, 24)
+	for i, s := range syms {
+		e := make([]byte, 24)
+		putLE32s(e[0:], nameOff[i]) // st_name
+		e[4] = (1 << 4) | 2         // st_info: STB_GLOBAL | STT_FUNC
+		e[5] = 0                    // st_other
+		putLE16s(e[6:], 1)          // st_shndx = .text (section 1)
+		putLE64s(e[8:], s.Value)    // st_value (absolute vaddr, ET_EXEC)
+		putLE64s(e[16:], s.Size)    // st_size
+		symtab = append(symtab, e...)
+	}
+
+	pad8 := func() {
+		for len(buf)%8 != 0 {
+			buf = append(buf, 0)
+		}
+	}
+	pad8()
+	symtabOff := uint64(len(buf))
+	buf = append(buf, symtab...)
+	strtabOff := uint64(len(buf))
+	buf = append(buf, strtab...)
+	shstrtabOff := uint64(len(buf))
+	buf = append(buf, shstrtab...)
+	pad8()
+	shoff := uint64(len(buf))
+
+	textOff := uint64(ehSize + 2*phSize) // .text file offset in the WX image
+	// [0] SHT_NULL
+	buf = appendShdr(buf, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	// [1] .text: PROGBITS, ALLOC|EXECINSTR
+	buf = appendShdr(buf, nText, 1, 0x6, uint64(TextVAddrWX), textOff, uint64(len(text)), 0, 0, 16, 0)
+	// [2] .symtab: link=.strtab(3), info=index of first global symbol(1)
+	buf = appendShdr(buf, nSymtab, 2, 0, 0, symtabOff, uint64(len(symtab)), 3, 1, 8, 24)
+	// [3] .strtab
+	buf = appendShdr(buf, nStrtab, 3, 0, 0, strtabOff, uint64(len(strtab)), 0, 0, 1, 0)
+	// [4] .shstrtab
+	buf = appendShdr(buf, nShstrtab, 3, 0, 0, shstrtabOff, uint64(len(shstrtab)), 0, 0, 1, 0)
+
+	// Patch the ELF header's section-table fields (imageWX left them zero).
+	putLE64s(buf[40:], shoff) // e_shoff
+	putLE16s(buf[58:], 64)    // e_shentsize
+	putLE16s(buf[60:], 5)     // e_shnum
+	putLE16s(buf[62:], 4)     // e_shstrndx (.shstrtab)
+	return buf
+}
+
+// appendShdr appends one 64-byte Elf64_Shdr.
+func appendShdr(buf []byte, name, styp uint32, flags, addr, off, size uint64, link, info uint32, align, entsize uint64) []byte {
+	buf = le32(buf, name)
+	buf = le32(buf, styp)
+	buf = le64(buf, flags)
+	buf = le64(buf, addr)
+	buf = le64(buf, off)
+	buf = le64(buf, size)
+	buf = le32(buf, link)
+	buf = le32(buf, info)
+	buf = le64(buf, align)
+	buf = le64(buf, entsize)
+	return buf
+}
+
+// putLE{16,32,64}s write little-endian into an existing slice (for in-place
+// header patching), the counterpart of the appending le{16,32,64}.
+func putLE16s(b []byte, v uint16) { b[0], b[1] = byte(v), byte(v>>8) }
+func putLE32s(b []byte, v uint32) {
+	for i := 0; i < 4; i++ {
+		b[i] = byte(v >> (8 * i))
+	}
+}
+func putLE64s(b []byte, v uint64) {
+	for i := 0; i < 8; i++ {
+		b[i] = byte(v >> (8 * i))
+	}
 }
 
 func le16(buf []byte, v uint16) []byte {

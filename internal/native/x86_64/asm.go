@@ -110,7 +110,7 @@ func (a *Assembler) emit32(v uint32) {
 // .text (8-byte aligned), matching the single-segment R+W+X image
 // (elf.StaticExecutableDataX86).
 func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err error) {
-	text, rodata, _, err = assembleProgram(src, textVAddr, false, false, nil)
+	text, rodata, _, _, err = assembleProgram(src, textVAddr, false, false, nil)
 	return text, rodata, err
 }
 
@@ -119,7 +119,7 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 // R+W segment instead of laid contiguously after .text, so the code
 // segment can be mapped R+X. Pass elf.TextVAddrWX as textVAddr.
 func AssembleProgramWX(src string, textVAddr uint64) (text, rodata []byte, err error) {
-	text, rodata, _, err = assembleProgram(src, textVAddr, true, false, nil)
+	text, rodata, _, _, err = assembleProgram(src, textVAddr, true, false, nil)
 	return text, rodata, err
 }
 
@@ -138,7 +138,25 @@ type Reloc struct {
 // `.quad <symbol>` slots. rip-relative code is base-independent and needs
 // no relocation. Pass elf.TextVAddrPIE as textVAddr.
 func AssembleProgramPIE(src string, textVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
-	return assembleProgram(src, textVAddr, true, true, nil)
+	text, rodata, relocs, _, err = assembleProgram(src, textVAddr, true, true, nil)
+	return text, rodata, relocs, err
+}
+
+// AssembleProgramWXSyms is AssembleProgramWX that also returns every .text
+// label resolved to its absolute virtual address (textVAddr + offset) — the
+// function-symbol table the ELF writer emits into .symtab under `-g`, so a
+// debugger / nm / a backtrace can map a code address back to a name. Pass
+// elf.TextVAddrWX as textVAddr.
+func AssembleProgramWXSyms(src string, textVAddr uint64) (text, rodata []byte, syms map[string]uint64, err error) {
+	text, rodata, _, off, err := assembleProgram(src, textVAddr, true, false, nil)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	syms = make(map[string]uint64, len(off))
+	for name, o := range off {
+		syms[name] = textVAddr + uint64(o)
+	}
+	return text, rodata, syms, nil
 }
 
 // AssembleProgramShared assembles for a shared object (.so): the same
@@ -152,7 +170,7 @@ func AssembleProgramShared(src string, textVAddr uint64, exportNames []string) (
 	for _, n := range exportNames {
 		exportVAddr[n] = 0 // marker: resolve this label
 	}
-	text, rodata, relocs, err = assembleProgram(src, textVAddr, true, true, exportVAddr)
+	text, rodata, relocs, _, err = assembleProgram(src, textVAddr, true, true, exportVAddr)
 	return text, rodata, relocs, exportVAddr, err
 }
 
@@ -162,7 +180,7 @@ func AssembleProgramShared(src string, textVAddr uint64, exportNames []string) (
 // base-0 layout, returning .quad-slot relocations). When exportVAddr is
 // non-nil, each key is resolved to textVAddr + its .text-label offset (for
 // AssembleProgramShared).
-func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map[string]uint64) (text, rodata []byte, relocs []Reloc, err error) {
+func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map[string]uint64) (text, rodata []byte, relocs []Reloc, syms map[string]int, err error) {
 	a := newAssembler()
 	sec := "text"
 	for lineno, raw := range strings.Split(src, "\n") {
@@ -187,16 +205,16 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		if strings.HasPrefix(line, ".") {
 			sec, err = a.directive(line, sec)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
+				return nil, nil, nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
 			}
 			continue
 		}
 		if sec != "text" {
-			return nil, nil, nil, fmt.Errorf("line %d: %q: instruction outside .text", lineno+1, strings.TrimSpace(raw))
+			return nil, nil, nil, nil, fmt.Errorf("line %d: %q: instruction outside .text", lineno+1, strings.TrimSpace(raw))
 		}
 		nRip := len(a.ripFixups)
 		if err := a.insn(line); err != nil {
-			return nil, nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
+			return nil, nil, nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
 		}
 		// Stamp every rip fixup this instruction produced with the
 		// instruction's end offset — the runtime RIP its disp32 is
@@ -209,7 +227,7 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 	for _, f := range a.relFixups {
 		dst, ok := a.textLabels[f.sym]
 		if !ok {
-			return nil, nil, nil, fmt.Errorf("undefined label %q", f.sym)
+			return nil, nil, nil, nil, fmt.Errorf("undefined label %q", f.sym)
 		}
 		rel := int32(dst - (f.at + 4))
 		putLE32(a.text, f.at, uint32(rel))
@@ -258,7 +276,7 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		} else if off, ok := a.textLabels[f.sym]; ok {
 			symOff = off // text symbol: a function address (e.g. a closure body)
 		} else {
-			return nil, nil, nil, fmt.Errorf("undefined rip-relative symbol %q", f.sym)
+			return nil, nil, nil, nil, fmt.Errorf("undefined rip-relative symbol %q", f.sym)
 		}
 		disp := int32(symOff - f.end)
 		putLE32(a.text, f.at, uint32(disp))
@@ -273,7 +291,7 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		} else if off, ok := a.rodataLabels[f.sym]; ok {
 			abs = rodataVAddr + uint64(off)
 		} else {
-			return nil, nil, nil, fmt.Errorf("undefined .quad symbol %q", f.sym)
+			return nil, nil, nil, nil, fmt.Errorf("undefined .quad symbol %q", f.sym)
 		}
 		for i := 0; i < 8; i++ {
 			a.rodata[f.at+i] = byte(abs >> (8 * i))
@@ -286,11 +304,11 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 	for name := range exportVAddr {
 		off, ok := a.textLabels[name]
 		if !ok {
-			return nil, nil, nil, fmt.Errorf("export %q is not a defined .text symbol", name)
+			return nil, nil, nil, nil, fmt.Errorf("export %q is not a defined .text symbol", name)
 		}
 		exportVAddr[name] = textVAddr + uint64(off)
 	}
-	return a.text, a.rodata, relocs, nil
+	return a.text, a.rodata, relocs, a.textLabels, nil
 }
 
 func putLE32(b []byte, at int, v uint32) {
