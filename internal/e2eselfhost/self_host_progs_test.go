@@ -83,6 +83,11 @@ var selfHostProgCases = []struct {
 	// lower_stmt_match recover the closure param's Option return type (#3457 IR-gap).
 	// pick(2)=Some(20), so apply(pick) matches Some(v)=20.
 	{"closure-opt-match", `function pick(x: i32): Option[i32] { if (x == 2) { return Some(x * 10); } return None; } function apply(f: (i32) => Option[i32]): i32 { match (f(2)) { Some(v) => { return v; }, None => { return 0; } } } function main(): i32 { return apply(pick); }`, 20},
+	// A direct `match (recv.method(...))` on a NUMERIC-primitive receiver whose
+	// method returns Option — the i64 sibling of closure-opt-match. Bailed before
+	// the resolver keyed "<prim>.<method>" for non-struct/enum/string receivers
+	// (#3457 IR-gap: std/i64.checked_add et al.). 3.tryadd(4)=Some(7).
+	{"prim-recv-opt-match", `function (n: i64) tryadd(x: i64): Option[i64] { if (x > 0 as i64) { return Some(n + x); } return None; } function main(): i32 { var a: i64 = 3 as i64; match (a.tryadd(4 as i64)) { Some(v) => { return v as i32; }, None => { return 0; } } }`, 7},
 	// Array.build (parser.fern desugar): for-in builds [1,4,9]; sum 14.
 	{"array-build", `function main(): i32 { var xs: i32[] = [1,2,3]; var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void { for x in xs { b.append(x * x); } }); return out[0] + out[1] + out[2]; }`, 14},
 	// Repeated with: [0,0,0] → with(0,5) → with(2,7) → [5,0,7]; 5*10+7 = 57.

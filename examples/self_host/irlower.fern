@@ -9055,6 +9055,11 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
                     // variant (`V(7).get()`) — key "<Enum>.<m>" (#3076).
                     var men: string = expr_enum_type(scfa.obj, s);
                     if (men != "") { return s.opt_ret_type(men + "." + scfa.field); }
+                    // A NUMERIC-primitive / string receiver method returning
+                    // Option/Result (`(3 as i64).checked_add(4)?`) — key
+                    // "<prim>.<method>". Mirrors lower_stmt_match's inline resolver.
+                    var mprim: string = expr_recv_prim_type(scfa.obj, s);
+                    if (mprim != "") { return s.opt_ret_type(mprim + "." + scfa.field); }
                     return "";
                 },
                 // An if-/match-EXPRESSION scrutinee (`match (if (c) { Some(7) }
@@ -14527,6 +14532,16 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                                                     // register under base_type "string").
                                                     else if (expr_is_str(scfa.obj, ms)) {
                                                         srt = ms.opt_ret_type("string." + scfa.field);
+                                                    }
+                                                    // A NUMERIC-primitive receiver
+                                                    // method returning Option/Result
+                                                    // (`match ((3 as i64).checked_add(4))`)
+                                                    // — key "<prim>.<method>" (i64 /
+                                                    // u64 / f64 / … methods register
+                                                    // under their base scalar type).
+                                                    else {
+                                                        var mprim: string = expr_recv_prim_type(scfa.obj, ms);
+                                                        if (mprim != "") { srt = ms.opt_ret_type(mprim + "." + scfa.field); }
                                                     }
                                                 }
                                             }
