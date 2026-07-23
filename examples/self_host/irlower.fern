@@ -2632,6 +2632,13 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
             return "";
         },
         parser.ExprCall(c) => {
+            // typed-IR (#5531): the annotate pass stamps c.ty with the checker's
+            // inferred result type; for a struct-returning call that is the struct
+            // NAME. Trust it when it names a known struct, retiring the
+            // struct_ret_type re-derivation below for annotated calls. Guarded to a
+            // known struct so a scalar/"" tag (or an enum, not covered here) falls
+            // through to the structural walk unchanged.
+            if (c.ty != "" && decl_is_struct(s.structs, c.ty)) { return c.ty; }
             // A call to a struct-returning function evaluates to that struct type
             // (so `var p = make()` / `var p = obj.make()` then `p.x` resolves).
             match (c.callee) {
