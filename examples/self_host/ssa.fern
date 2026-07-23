@@ -1508,7 +1508,7 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
                     var binit: parser.Expr = parser.ExprIdent { name: "$scrut", line: 0, col: 0 };
                     if (ot >= 0) {
                         var oargs: parser.Expr[] = [parser.ExprIdent { name: "$scrut", line: 0, col: 0 }];
-                        binit = parser.ExprCall { callee: parser.ExprIdent { name: "__opt_payload", line: 0, col: 0 }, args: oargs, line: 0, col: 0, type_argc: 0 };
+                        binit = parser.ExprCall { callee: parser.ExprIdent { name: "__opt_payload", line: 0, col: 0 }, args: oargs, line: 0, col: 0, type_argc: 0, ty: "" };
                     }
                     then_body = then_body.append(parser.StmtVar { name: pv.binding, type_name: pv.type_name, init: binit, line: 0, col: 0, is_str: false });
                 }
@@ -1604,7 +1604,7 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
             right: parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 } },
         right: parser.ExprCall {
             callee: parser.ExprFieldAccess { obj: parser.ExprIdent { name: arr_name, line: 0, col: 0 }, field: "len", line: 0, col: 0 },
-            args: [], line: 0, col: 0, type_argc: 0 } };
+            args: [], line: 0, col: 0, type_argc: 0, ty: "" } };
 
     // body: $iN = $iN + 1; <element binding>; <body>
     var incr: parser.Stmt = parser.StmtAssign { target: i_name,
@@ -1628,12 +1628,12 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
         kargs = kargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
         kargs = kargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0 });
         var bind_k: parser.Stmt = parser.StmtVar { name: kname + "", type_name: "",
-            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at", line: 0, col: 0 }, args: kargs, line: 0, col: 0, type_argc: 0 }, line: 0, col: 0, is_str: false };
+            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_key_at", line: 0, col: 0 }, args: kargs, line: 0, col: 0, type_argc: 0, ty: "" }, line: 0, col: 0, is_str: false };
         var vargs: parser.Expr[] = [];
         vargs = vargs.append(parser.ExprIdent { name: arr_name, line: 0, col: 0 });
         vargs = vargs.append(parser.ExprIdent { name: i_name, line: 0, col: 0 });
         var bind_v: parser.Stmt = parser.StmtVar { name: vname + "", type_name: "",
-            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at", line: 0, col: 0 }, args: vargs, line: 0, col: 0, type_argc: 0 }, line: 0, col: 0, is_str: false };
+            init: parser.ExprCall { callee: parser.ExprIdent { name: "__ssa_map_val_at", line: 0, col: 0 }, args: vargs, line: 0, col: 0, type_argc: 0, ty: "" }, line: 0, col: 0, is_str: false };
         wbody = wbody.append(bind_k);
         wbody = wbody.append(bind_v);
     } else {

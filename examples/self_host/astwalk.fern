@@ -116,7 +116,7 @@ pub function subst_ident_expr(e: parser.Expr, from: string, to: string): parser.
             var nargs: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < c.args.len()) { nargs = nargs.append(subst_ident_expr(c.args[i], from, to)); i = i + 1; }
-            return parser.ExprCall { callee: subst_ident_expr(c.callee, from, to), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc };
+            return parser.ExprCall { callee: subst_ident_expr(c.callee, from, to), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         parser.ExprFieldAccess(fa) => {
             return parser.ExprFieldAccess { obj: subst_ident_expr(fa.obj, from, to), field: fa.field, line: fa.line, col: fa.col };
