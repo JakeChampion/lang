@@ -4374,6 +4374,12 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
     // A Cell[f64/float] get() is f64 (#5510).
     var cf64e: string = cell_get_elem(e, s);
     if (cf64e == "f64" || cf64e == "float") { return true; }
+    // f32 is f64-SHAPED (stored 8-byte), so every f32 value is also f64 — made
+    // explicit here (was implicit, and independently re-derived below). This is
+    // the load-bearing invariant the f32/f64 split rests on; keeping it a single
+    // delegation removes the risk of the two walks drifting (typed-IR migration,
+    // #5520). Byte-identity guards that it was already true.
+    if (expr_is_f32(e, s)) { return true; }
     match (e) {
         parser.ExprNumber(n) => { return n.is_float; },
         parser.ExprIdent(id) => {
