@@ -78,6 +78,11 @@ var selfHostProgCases = []struct {
 	{"u64-struct-field", `struct S { v: u64 } function main(): i32 { var s: S = S { v: 18446744073709551615 as u64 }; return (s.v >> 60) as i32; }`, 15},
 	{"u64-tuple-elem", `function main(): i32 { var t: (u64, i32) = (18446744073709551615 as u64, 0); return (t.0 >> 60) as i32; }`, 15},
 	{"u64-method-ret", `struct S {} function (s: S) w(): u64 { return 18446744073709551615 as u64; } function main(): i32 { var s: S = S {}; return (s.w() >> 60) as i32; }`, 15},
+	// A DIRECT closure-call Option scrutinee `match (f(x))` — the find_map-shaped
+	// combinator that bailed the whole function to AST before closure_opt_rets let
+	// lower_stmt_match recover the closure param's Option return type (#3457 IR-gap).
+	// pick(2)=Some(20), so apply(pick) matches Some(v)=20.
+	{"closure-opt-match", `function pick(x: i32): Option[i32] { if (x == 2) { return Some(x * 10); } return None; } function apply(f: (i32) => Option[i32]): i32 { match (f(2)) { Some(v) => { return v; }, None => { return 0; } } } function main(): i32 { return apply(pick); }`, 20},
 	// Array.build (parser.fern desugar): for-in builds [1,4,9]; sum 14.
 	{"array-build", `function main(): i32 { var xs: i32[] = [1,2,3]; var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void { for x in xs { b.append(x * x); } }); return out[0] + out[1] + out[2]; }`, 14},
 	// Repeated with: [0,0,0] → with(0,5) → with(2,7) → [5,0,7]; 5*10+7 = 57.
