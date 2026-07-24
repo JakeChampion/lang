@@ -107,7 +107,7 @@ function test_to_string_paths(): test.TestOutcome {
     if ((1e20).to_string() != "100000000000000000000") { return test.fail("1e20"); }
     // >= 1e21 now routes to scientific notation (was an unmarked 31-digit
     // integer). The mantissa is approximate until Ryu/Dragon4 (#5536).
-    return test.assert_eq((1.5e30).to_string(), "1.5000000000000004e+30");
+    return test.assert_eq((1.5e30).to_string(), "1.5e+30");
 }
 
 function main(): i32 {

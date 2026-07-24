@@ -160,8 +160,139 @@ pub function (n: f32) to_string(): string {
     return __float_to_string(n as f64, 7);
 }
 
+// Shortest round-trip f64 formatting (#5536). Exact bignum digit
+// generation from the IEEE-754 mantissa/exponent (f64_bits), then the
+// shortest significand whose value falls in the ULP interval of n
+// (round-half-to-even). No parse_float dependency. Validated against
+// Go strconv shortest over extremes, subnormals, and random f64s.
+// bignum: i64[] limbs, base 2^32 (4294967296).
+function bn_from_i64(v: i64): i64[] { var a: i64[] = []; a = a.append(v & 4294967295); a = a.append((v >> 32) & 4294967295); return a; }
+function bn_len(a: i64[]): i32 { var n: i32 = a.len(); while (n > 1 && a[n - 1] == 0) { n = n - 1; } return n; }
+function bn_mul_small(a: i64[], k: i64): i64[] {
+    var n: i32 = a.len(); var out: i64[] = []; var carry: i64 = 0; var i: i32 = 0;
+    while (i < n) { var prod: i64 = a[i] * k + carry; out = out.append(prod & 4294967295); carry = prod >> 32; i = i + 1; }
+    while (carry > 0) { out = out.append(carry & 4294967295); carry = carry >> 32; }
+    return out;
+}
+function bn_to_decimal(a: i64[]): string {
+    var n: i32 = bn_len(a); var w: i64[] = []; var i: i32 = 0; while (i < n) { w = w.append(a[i]); i = i + 1; }
+    var dc: string = "0123456789"; var rev: u8[] = [];
+    while (true) {
+        var rem: i64 = 0; var j: i32 = n - 1;
+        while (j >= 0) { var cur: i64 = (rem << 32) | w[j]; w = w.with(j, cur / 10); rem = cur % 10; j = j - 1; }
+        rev = rev.append(dc[rem as i32] as u8);
+        while (n > 1 && w[n - 1] == 0) { n = n - 1; }
+        if (n == 1 && w[0] == 0) { var o: u8[] = []; var mm: i32 = rev.len() - 1; while (mm >= 0) { o = o.append(rev[mm]); mm = mm - 1; } return string_from_bytes(o); }
+    }
+    return "";
+}
+function bn_cmp(a: i64[], b: i64[]): i32 {
+    var la: i32 = bn_len(a); var lb: i32 = bn_len(b);
+    if (la < lb) { return 0 - 1; }
+    if (la > lb) { return 1; }
+    var i: i32 = la - 1;
+    while (i >= 0) { if (a[i] < b[i]) { return 0 - 1; } if (a[i] > b[i]) { return 1; } i = i - 1; }
+    return 0;
+}
+// compare C*10^p  vs  V*2^b  (all fit i64 inputs). Returns -1/0/1.
+function cmp_val(C: i64, p: i32, V: i64, b: i32): i32 {
+    var L: i64[] = bn_from_i64(C); var R: i64[] = bn_from_i64(V);
+    var x: i32 = 0;
+    if (p > 0) { x = 0; while (x < p) { L = bn_mul_small(L, 10); x = x + 1; } }
+    if (p < 0) { x = 0; var pp: i32 = 0 - p; while (x < pp) { R = bn_mul_small(R, 10); x = x + 1; } }
+    if (b > 0) { x = 0; while (x < b) { R = bn_mul_small(R, 2); x = x + 1; } }
+    if (b < 0) { x = 0; var bb: i32 = 0 - b; while (x < bb) { L = bn_mul_small(L, 2); x = x + 1; } }
+    return bn_cmp(L, R);
+}
+function inc_digits(s: string): string {
+    var b: u8[] = []; var i: i32 = 0; while (i < s.len()) { b = b.append(s[i] as u8); i = i + 1; }
+    var j: i32 = b.len() - 1; var carry: i32 = 1;
+    while (j >= 0 && carry == 1) { var d: i32 = (b[j] as i32) - 48 + carry; if (d >= 10) { d = d - 10; carry = 1; } else { carry = 0; } b = b.with(j, (d + 48) as u8); j = j - 1; }
+    var out: string = string_from_bytes(b); if (carry == 1) { out = "1" + out; } return out;
+}
+function digits_to_i64(s: string): i64 { var v: i64 = 0; var i: i32 = 0; while (i < s.len()) { v = v * 10 + ((s[i] as i64) - 48); i = i + 1; } return v; }
+
+function __float_sig_pack(n: f64): string {
+    var bits: i64 = f64_bits(n);
+    var be: i64 = (bits >> 52) & 2047; var frac: i64 = bits & 4503599627370495;
+    var m: i64 = frac; var e: i64 = 0 - 1074;
+    // NOTE: `frac | <literal 2^52>` miscompiles on the native backends
+    // (large-immediate OR drops the high bits — #5567); hold the
+    // constant in a variable so the OR uses a register operand.
+    var hidden_bit: i64 = 4503599627370496;
+    if (be != 0) { m = frac | hidden_bit; e = be - 1075; }
+    var N: i64[] = bn_from_i64(m); var scale: i32 = 0;
+    if (e >= 0) { var c: i64 = 0; while (c < e) { N = bn_mul_small(N, 2); c = c + 1; } }
+    else { var c2: i64 = 0; var ae: i64 = 0 - e; while (c2 < ae) { N = bn_mul_small(N, 5); c2 = c2 + 1; } scale = (0 - ae) as i32; }
+    var sig: string = bn_to_decimal(N);
+    var msdexp: i32 = (sig.len() - 1) + scale;
+    // boundaries of n: lo=(2m-1)*2^(e-1), hi=(2m+1)*2^(e-1)
+    var lv: i64 = 2 * m - 1; var hv: i64 = 2 * m + 1; var eb: i32 = (e - 1) as i32;
+    var meven: boolean = (m & 1) == 0;
+    var kmax: i32 = sig.len(); if (kmax > 17) { kmax = 17; }
+    var k: i32 = 1;
+    while (k <= kmax) {
+        var roundup: boolean = false;
+        if (k < sig.len()) { var nd: i32 = (sig[k] as i32) - 48; if (nd >= 5) { roundup = true; } }
+        var cand: string = "" + sig[0:k]; var cmsd: i32 = msdexp;
+        if (roundup) { cand = inc_digits(cand); if (cand.len() > k) { cmsd = cmsd + 1; cand = "" + cand[0:k]; } }
+        var Ci: i64 = digits_to_i64(cand);
+        var p: i32 = cmsd - (cand.len() - 1);
+        // rounds to n iff lo < cand*10^p < hi
+        var lo_c: i32 = cmp_val(Ci, p, lv, eb); var hi_c: i32 = cmp_val(Ci, p, hv, eb);
+        var lo_ok: boolean = lo_c > 0; var hi_ok: boolean = hi_c < 0;
+        if (meven) { lo_ok = lo_c >= 0; hi_ok = hi_c <= 0; }
+        if (lo_ok && hi_ok) { return cand + "|" + cmsd.to_string(); }
+        k = k + 1;
+    }
+    return sig + "|" + msdexp.to_string();
+}
+
+// Format shortest significand `sig` with most-significant-digit decimal
+// exponent `msd` into Go %v / strconv 'g' style: scientific when msd < -4 or
+// msd >= 21, else fixed-point.
+function __float_fmt_sci(sig: string, msd: i32): string {
+    var nd: i32 = sig.len();
+    if (msd < 0 - 4 || msd >= 21) {
+        // scientific: d[.ddd]e±XX
+        var out: string = "" + sig[0:1];
+        if (nd > 1) { out = out + "." + sig[1:nd]; }
+        if (msd < 0) { return out + "e-" + (0 - msd).to_string(); }
+        return out + "e+" + msd.to_string();
+    }
+    if (msd < 0) {
+        // 0.000sig
+        var z: string = ""; var i: i32 = 0; while (i < (0 - msd) - 1) { z = z + "0"; i = i + 1; }
+        return "0." + z + sig;
+    }
+    if (msd + 1 >= nd) {
+        // integer, pad trailing zeros
+        var z2: string = ""; var i2: i32 = 0; while (i2 < (msd + 1) - nd) { z2 = z2 + "0"; i2 = i2 + 1; }
+        return sig + z2;
+    }
+    // point in the middle
+    return "" + sig[0:msd+1] + "." + sig[msd+1:nd];
+}
+function __float_shortest(n: f64): string {
+    if (n != n) { return "NaN"; }
+    var out: string = "";
+    if (n < 0.0) { out = "-"; n = 0.0 - n; }
+    if (n != 0.0 && n * 2.0 == n) { return out + "Inf"; }
+    if (n == 0.0) { return out + "0"; }
+    var packed: string = __float_sig_pack(n);
+    // split "sig|msd"
+    var bar: i32 = 0; while (packed[bar] != 124) { bar = bar + 1; }   // '|' == 124
+    var sig: string = "" + packed[0:bar];
+    var msd: i32 = 0; var neg: boolean = false; var q: i32 = bar + 1;
+    if (packed[q] == 45) { neg = true; q = q + 1; }
+    while (q < packed.len()) { msd = msd * 10 + ((packed[q] as i32) - 48); q = q + 1; }
+    if (neg) { msd = 0 - msd; }
+    return out + __float_fmt_sci(sig, msd);
+}
+
+
 pub function (n: f64) to_string(): string {
-    return __float_to_string(n, 15);
+    return __float_shortest(n);
 }
 
 // __float_to_string_prec renders `n` with EXACTLY `prec` fractional
