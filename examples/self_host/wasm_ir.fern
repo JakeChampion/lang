@@ -2039,7 +2039,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
     // 8-byte slot the register backends give every value — so a wide value
     // survives pass-through; the caller coerces the i64 result to the concrete
     // type at the call boundary (#5464). Free functions only.
-    else if (fd.receiver_type.len() == 0 && irlower.is_erased_typevar(fd.ret_type, structs)) { out = out + " (result i64)\n"; }
+    else if (irlower.erased_passthrough_safe(fd, structs)) { out = out + " (result i64)\n"; }
     else { out = out + " (result i32)\n"; }
     // body locals + 5 scratch locals. A body local in r.i64_slots is declared
     // (local i64), one in r.f64_slots (local f64); the trailing scratch locals
@@ -3137,7 +3137,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
     else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { out = out + "    f64.const 0)\n"; }
     // A bare-typevar (erased-generic) return is typed i64 on wasm (#5464), so its
     // fallthrough filler must be i64.const 0 to match the (result i64) signature.
-    else if (fd.receiver_type.len() == 0 && irlower.is_erased_typevar(fd.ret_type, structs)) { out = out + "    i64.const 0)\n"; }
+    else if (irlower.erased_passthrough_safe(fd, structs)) { out = out + "    i64.const 0)\n"; }
     else { out = out + "    i32.const 0)\n"; }
     return out;
 }
