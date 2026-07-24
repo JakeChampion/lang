@@ -731,27 +731,49 @@ func StaticExecutableDataWXSyms(text, data []byte, syms []Sym) []byte {
 // debugger and addr2line can map a code address back to `file:line` (#5537
 // slice 2). Empty funcLines behaves exactly like StaticExecutableDataX86WXSyms.
 func StaticExecutableDataX86WXSymsLines(text, data []byte, syms []Sym, funcLines []FuncLine, srcFile string) []byte {
-	return imageWXSymsLines(text, data, emX86_64, 0, syms, funcLines, srcFile)
+	return imageWXSymsLines(text, data, emX86_64, 0, syms, debugLineFor(funcLines, srcFile))
 }
 
 // StaticExecutableDataWXSymsLines is the arm64 counterpart of
 // StaticExecutableDataX86WXSymsLines.
 func StaticExecutableDataWXSymsLines(text, data []byte, syms []Sym, funcLines []FuncLine, srcFile string) []byte {
-	return imageWXSymsLines(text, data, emAArch64, 0, syms, funcLines, srcFile)
+	return imageWXSymsLines(text, data, emAArch64, 0, syms, debugLineFor(funcLines, srcFile))
+}
+
+// StaticExecutableDataX86WXSymsRows is StaticExecutableDataX86WXSyms plus a
+// per-statement DWARF .debug_line table built from (address, line) rows (the
+// finer x86-64 -g path, #5537 slice 2 — one row per source statement, from
+// the assembler's `.loc` markers). Empty rows behave like the plain symtab
+// image. textEndVAddr bounds the line program's final range.
+func StaticExecutableDataX86WXSymsRows(text, data []byte, syms []Sym, rows []LineRow, srcFile string, textEndVAddr uint64) []byte {
+	var dl []byte
+	if len(rows) > 0 {
+		dl = buildDebugLineRows(rows, uint64(TextVAddrWX), textEndVAddr, srcFile)
+	}
+	return imageWXSymsLines(text, data, emX86_64, 0, syms, dl)
+}
+
+// debugLineFor encodes the function-granularity .debug_line for funcLines, or
+// nil when there are none.
+func debugLineFor(funcLines []FuncLine, srcFile string) []byte {
+	if len(funcLines) == 0 {
+		return nil
+	}
+	return buildDebugLine(funcLines, srcFile)
 }
 
 // imageWXSyms builds the W^X image (imageWX) and appends a section table with
 // a .symtab. The sections are all non-alloc and live after the loadable
 // segments, so the running image is identical to imageWX's.
 func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym) []byte {
-	return imageWXSymsLines(text, data, machine, entryOff, syms, nil, "")
+	return imageWXSymsLines(text, data, machine, entryOff, syms, nil)
 }
 
-// imageWXSymsLines is imageWXSyms plus an optional DWARF .debug_line table
-// (funcLines, from source file srcFile). When funcLines is empty no line
-// section is emitted and the CU carries no DW_AT_stmt_list — identical to the
-// plain symtab+DIE image.
-func imageWXSymsLines(text, data []byte, machine uint16, entryOff uint64, syms []Sym, funcLines []FuncLine, srcFile string) []byte {
+// imageWXSymsLines is imageWXSyms plus an optional pre-encoded DWARF
+// .debug_line table (debugLine). When debugLine is empty no line section is
+// emitted and the CU carries no DW_AT_stmt_list — identical to the plain
+// symtab+DIE image.
+func imageWXSymsLines(text, data []byte, machine uint16, entryOff uint64, syms []Sym, debugLine []byte) []byte {
 	buf := imageWX(text, data, machine, entryOff)
 
 	// .strtab: NUL, then each symbol name NUL-terminated.
@@ -776,7 +798,7 @@ func imageWXSymsLines(text, data []byte, machine uint16, entryOff uint64, syms [
 	nShstrtab := addShName(".shstrtab")
 	nDebugAbbrev := addShName(".debug_abbrev")
 	nDebugInfo := addShName(".debug_info")
-	hasLines := len(funcLines) > 0
+	hasLines := len(debugLine) > 0
 	var nDebugLine uint32
 	if hasLines {
 		nDebugLine = addShName(".debug_line")
@@ -806,10 +828,6 @@ func imageWXSymsLines(text, data []byte, machine uint16, entryOff uint64, syms [
 	// (DW_FORM_string) → no .debug_str needed.
 	debugAbbrev := buildDebugAbbrev(hasLines)
 	debugInfo := buildDebugInfo(syms, uint64(TextVAddrWX), uint64(TextVAddrWX)+uint64(len(text)), "", hasLines)
-	var debugLine []byte
-	if hasLines {
-		debugLine = buildDebugLine(funcLines, srcFile)
-	}
 
 	pad8()
 	symtabOff := uint64(len(buf))

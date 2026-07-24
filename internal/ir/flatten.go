@@ -213,6 +213,9 @@ func simulateOpEffect(op Op, dataDepth int, sigs map[string]funcSig) (int, bool)
 // silently miscount).
 func opStackEffect(op Op, sigs map[string]funcSig) (pops int, pushes int, ok bool) {
 	switch op.Kind {
+	// Zero-effect source-line marker (native -g only): no stack effect.
+	case OpLine:
+		return 0, 0, true
 	// Constants — produce one value.
 	case OpConstI32, OpConstI64, OpConstF32, OpConstF64, OpConstStr, OpConstFunc:
 		return 0, 1, true

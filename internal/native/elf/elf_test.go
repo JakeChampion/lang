@@ -1139,6 +1139,59 @@ func TestStaticExecutableDataWXSymsLines(t *testing.T) {
 	}
 }
 
+// TestStaticExecutableDataWXSymsRows checks the per-statement .debug_line path
+// (#5537 slice 2, x86-64): a single line-number-program sequence over
+// (address, line) rows decodes through debug/dwarf to exactly those rows, so
+// gdb can step by source line inside a function (not just per function).
+func TestStaticExecutableDataWXSymsRows(t *testing.T) {
+	text := make([]byte, 32)
+	for i := range text {
+		text[i] = 0x90 // nops
+	}
+	text[len(text)-1] = 0xc3 // ret
+	data := []byte{1, 2, 3, 4}
+	base := uint64(elf.TextVAddrWX)
+	syms := []elf.Sym{{Name: "main", Value: base, Size: uint64(len(text))}}
+	rows := []elf.LineRow{
+		{Addr: base, Line: 7},
+		{Addr: base + 8, Line: 8},
+		{Addr: base + 16, Line: 9},
+	}
+	bin := elf.StaticExecutableDataX86WXSymsRows(text, data, syms, rows, "prog.fern", base+uint64(len(text)))
+
+	f, err := goelf.NewFile(bytes.NewReader(bin))
+	if err != nil {
+		t.Fatalf("not a parseable ELF: %v", err)
+	}
+	d, err := f.DWARF()
+	if err != nil {
+		t.Fatalf("DWARF(): %v", err)
+	}
+	cu, err := d.Reader().Next()
+	if err != nil || cu == nil {
+		t.Fatalf("no CU: %v", err)
+	}
+	lr, err := d.LineReader(cu)
+	if err != nil {
+		t.Fatalf("LineReader: %v", err)
+	}
+	got := map[uint64]int{}
+	var le dwarf.LineEntry
+	for {
+		if err := lr.Next(&le); err != nil {
+			break
+		}
+		if !le.EndSequence {
+			got[le.Address] = le.Line
+		}
+	}
+	for _, r := range rows {
+		if got[r.Addr] != r.Line {
+			t.Errorf("addr %#x: line = %d, want %d (all rows: %v)", r.Addr, got[r.Addr], r.Line, got)
+		}
+	}
+}
+
 // TestFuncSyms checks the label→Sym conversion: assembler-local labels are
 // dropped, symbols are sorted by address, and each size is the gap to the
 // next symbol (the last runs to textEnd).
