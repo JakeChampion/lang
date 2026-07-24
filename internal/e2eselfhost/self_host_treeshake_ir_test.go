@@ -183,4 +183,40 @@ func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 			}
 		}
 	})
+
+	// Regression: a function referenced ONLY from a match-arm `when` guard must
+	// survive treeshake. ts_names_stmt's StmtMatch arm walked the scrutinee and
+	// arm bodies but NOT the guard, so guard_only was pruned and the emitted
+	// guard called a stripped symbol → segfault (exit 139). Routing-independent
+	// (a treeshake reachability bug), so this asserts the run result, not ir/ast.
+	t.Run("guard-reachability", func(t *testing.T) {
+		const guardProg = `function guard_only(n: i32): boolean { return n > 5; }
+enum E { N(i32), Z }
+function main(): i32 {
+    var e: E = E.N(7);
+    match (e) { E.N(v) when guard_only(v) => { return 42; }, _ => { return 0; } }
+}`
+		entry := filepath.Join(dir, "ts_guard.fern")
+		if err := os.WriteFile(entry, []byte(guardProg+"\n"), 0o644); err != nil {
+			t.Fatalf("write entry: %v", err)
+		}
+		if _, code := runFixtureInterp(t, entry, ""); code != 42 {
+			t.Fatalf("guard native interp = %d, want 42", code)
+		}
+		asm, _ := runDriver(entry, root, "-treeshake")
+		if len(asm) == 0 {
+			t.Fatalf("guard: driver emitted 0 bytes")
+		}
+		bin := buildBin(t, gcc, dir, "ts_guard_bin", asm)
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(bin)
+		} else {
+			cmd = exec.Command(runner[0], append(runner[1:], bin)...)
+		}
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != 42 {
+			t.Errorf("guard -treeshake run = %d, want 42 (guard-only fn pruned by treeshake?)", code)
+		}
+	})
 }
