@@ -21,6 +21,9 @@ import (
 //     wasm_timer_pollable, which returns a wasi:io/poll pollable. Before the
 //     fix, timer_fd was merely DEFERRED to the AST path, so the program failed
 //     at load with the unhelpful `unknown func: failed to find name $timer_fd`.
+//   - __c_call<n> (#4375) — the C-FFI call primitive. wasm has no C ABI, so there
+//     is no __c_call runtime on any wasm path; before this it deferred to the AST
+//     emitter, which emitted a call against an undefined $__c_call<n>.
 //
 // Both drivers are exercised. The differential wasm_ir_run driver has rejected
 // subprocess since #4320, but the PRODUCTION wasm_run driver had no such gate
@@ -85,6 +88,16 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 			name:    "timer_fd",
 			src:     `function main(): i32 { var fd: i32 = timer_fd(10); if (fd >= 0) { return 0; } return 1; }` + "\n",
 			mustSay: "timer_fd",
+		},
+		{
+			// FFI __c_call<n> (#4375) is written directly as a builtin call, so its
+			// callee ident is collected by wasm_unsupported_builtin. Wasm has no C
+			// ABI — no __c_call runtime on any wasm path — so both drivers reject it
+			// (before this it deferred to the AST emitter, which also emitted a call
+			// against an undefined $__c_call0). asm_ir.is_c_call classifies the ident.
+			name:    "c_call",
+			src:     `function main(): i32 { var cb: usize = 0; return __c_call0(cb) as i32; }` + "\n",
+			mustSay: "__c_call0",
 		},
 	}
 

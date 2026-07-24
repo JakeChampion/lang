@@ -206,9 +206,12 @@ via `struct_type_id`; see `TestSelfHostStatIRWasm` et al.), and the libm
 transcendentals (`fexp`/`flog`/`fsin`/`fcos`/`fpow`) lower via
 polynomial-approx WAT helpers (`wasm.exp_func`/`log_func`/`pow_func`/…,
 the wasm siblings of the arm64 helpers, wired in `wasm_ir_run`). The
-wasm-IR exclusions that genuinely REMAIN are the deferral-gate set in
+wasm-IR exclusion that genuinely REMAINS is the deferral-gate set in
 `wasm_ir_deferrals_ok`: erased-wide (an i64/f64 value through a bare-
-typevar param) and `c_call`. (`open_file` / `writer_write` — the
+typevar param) — the last one. (`c_call` is no longer deferred — FFI
+`__c_call<n>` has no wasm C ABI, so it is now a clean error endpoint,
+rejected before emit by `wasm_unsupported_builtin` like `subprocess` /
+`timer_fd`, #4375.) (`open_file` / `writer_write` — the
 open_reader/open_writer/open_appender + Writer.write streaming file I/O —
 now lower on the wasm IR path: `$__fern_open_file` does path_open under
 preopen fd 3, `$__fern_writer_write` fd_writes the bytes; #4372. `xs.join` is
