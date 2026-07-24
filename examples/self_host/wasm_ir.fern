@@ -817,34 +817,10 @@ pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string):
     return false;
 }
 
-// module_has_wide_map_val_cached reports whether any function emits an 8-byte
-// VALUE-column map op the wasm IR path does NOT handle, so the module stays on the
-// AST backend. i64/u64 map_set (125), map_get_or (129), map_values (132), map_get
-// (127), and map_iter (133) with widekind 1 ARE handled (map_w64_helpers boxes the
-// 8-byte value into an rc cell and dereferences it — get boxes it into a 16-byte
-// Option[i64], iter snapshots the values into an i64[]), so they no longer defer.
-// What still defers: any f64 map op (widekind 2 in i64_imm — f64 rides its own float
-// path, not yet wired to a cell). #5253.
-pub function module_has_wide_map_val_cached(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            var o: ir.Op = r.ops[i];
-            // f64 set / get_or / values / get / iter (widekind 2): still deferred.
-            if ((o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127 || o.kind_tag == 133) && o.i64_imm == 2) { return true; }
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
-}
-
-// module_uses_map_w64 reports whether any function emits an i64/u64-VALUED map op
-// the wasm IR path HANDLES (map_set 125, map_get_or 129, map_values 132, map_get
-// 127, or map_iter 133 with widekind 1), so emit_ir_module_units emits
-// map_w64_helpers. #5253.
+// module_uses_map_w64 reports whether any function emits an 8-byte-VALUED map op
+// the wasm IR path handles via the cell helpers (map_set 125, map_get_or 129,
+// map_values 132, map_get 127, or map_iter 133 with widekind 1 = i64/u64 or 2 =
+// f64), so emit_ir_module_units emits map_w64_helpers. #5253.
 pub function module_uses_map_w64(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
     while (fi < cache.len()) {
@@ -852,7 +828,7 @@ pub function module_uses_map_w64(cache: irlower.LowerResult[]): boolean {
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var o: ir.Op = r.ops[i];
-            if ((o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127 || o.kind_tag == 133) && o.i64_imm == 1) { return true; }
+            if ((o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127 || o.kind_tag == 133) && o.i64_imm != 0) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -1250,12 +1226,12 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // backends' __fern_arr_str_join runtime call is served by a matching
         // $__fern_arr_str_join shim over the $__fern_str_join WAT worker
         // (wasm.arr_str_join_helper, gated on @uses_arr_str_join) — no exclusion here.
-        // i64/u64-VALUE maps NOW lower on the wasm IR path (#5253): map_set /
-        // map_get_or box the 8-byte value into an rc cell whose pointer rides the
-        // i32 value column ($__fern_map_set_w64 / _get_or_w64, map_w64_helpers).
-        // module_has_wide_map_val_cached now defers ONLY what is still i32-celled:
-        // f64-valued maps, and wide map_values / map_get / map_iter.
-        && !module_has_wide_map_val_cached(cache)
+        // 8-byte-VALUE maps (i64/u64 AND f64) NOW lower fully on the wasm IR path
+        // (#5253): set / get_or / values / get / iter box the 8-byte value into an
+        // rc cell whose pointer rides the i32 value column (map_w64_helpers, the
+        // *_w64 helpers). The cell stores raw 8 bytes, so f64 rides the same helpers
+        // as i64/u64 with an f64<->i64 reinterpret at the scalar sites. No exclusion
+        // here — the former module_has_wide_map_val_cached gate is retired.
         // poll has no wasm IR runtime: real readiness on wasm needs the
         // component-model wasi:io/poll multiplexer (list<pollable>), which the
         // self-host wasm backend doesn't wire (it is bare core-wasm + WASI
@@ -2175,10 +2151,10 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
         } else if (o.kind_tag == 133) {  // map_iter
             // m.iter() -> a 12-byte iterator box [keys@0, vals@4, cursor@8].
             // $__fern_map_iter materializes the live keys/values (map snapshots)
-            // and boxes them. An i64/u64 VALUE column (i64_imm 1, #5253) snapshots
-            // the values into a fresh i64[] via $__fern_map_iter_w64; f64 (i64_imm 2)
-            // stays deferred (wasm_ir_deferrals_ok).
-            if (o.i64_imm == 1) {
+            // and boxes them. An 8-byte VALUE column (i64_imm != 0, #5253) snapshots
+            // the raw 8-byte values via $__fern_map_iter_w64 (serving i64/u64 AND
+            // f64 — mapiter_value reinterprets f64). Otherwise the narrow snapshot.
+            if (o.i64_imm != 0) {
                 out = out + "    call $__fern_map_iter_w64\n";
             } else {
                 out = out + "    call $__fern_map_iter\n";
@@ -2188,10 +2164,13 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
         } else if (o.kind_tag == 135) {  // mapiter_key
             out = out + "    call $__fern_mapiter_key\n";
         } else if (o.kind_tag == 136) {  // mapiter_value
-            // An i64/u64 VALUE column (i64_imm 1, #5253) reads the 8-byte element
-            // from the i64[] value snapshot via $__fern_mapiter_value_w64 (i64
-            // result). f64 never reaches here (its map_iter defers).
-            if (o.i64_imm == 1) {
+            // An 8-byte VALUE column (i64_imm != 0, #5253) reads the 8-byte element
+            // from the value snapshot via $__fern_mapiter_value_w64 (i64 result).
+            // i64/u64 (i64_imm 1) use it directly; f64 (i64_imm 2) reinterprets the
+            // i64 bits back to f64.
+            if (o.i64_imm == 2) {
+                out = out + "    call $__fern_mapiter_value_w64\n    f64.reinterpret_i64\n";
+            } else if (o.i64_imm == 1) {
                 out = out + "    call $__fern_mapiter_value_w64\n";
             } else {
                 out = out + "    call $__fern_mapiter_value\n";
@@ -2744,12 +2723,14 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // no args -> snapshot the builder into a fresh string box and reset it
             // (a value op, allocates). Pushes the box ptr.
             out = out + "    call $__fern_strbuf_take\n";
-        } else if (o.kind_tag == 125 && o.i64_imm == 1) {  // map_set, i64/u64 VALUE
-            // stack: map, k, v(i64) -> push kcons -> $__fern_map_set_w64 -> map.
-            // The 8-byte value (lower_i64) is boxed into a cell and stored as a
-            // vis-managed value the map takes (vis/vconsume forced inside the
-            // helper); only the KEY-consume bit (o.width bit 1) varies here. An f64
-            // value (i64_imm 2) never reaches the IR path (wasm_ir_deferrals_ok). #5253.
+        } else if (o.kind_tag == 125 && o.i64_imm != 0) {  // map_set, 8-byte VALUE
+            // stack: map, k, v(8-byte) -> push kcons -> $__fern_map_set_w64 -> map.
+            // The 8-byte value is boxed into a cell and stored as a vis-managed
+            // value the map takes (vis/vconsume forced inside the helper); only the
+            // KEY-consume bit (o.width bit 1) varies here. i64/u64 (i64_imm 1) push
+            // the value as i64 (lower_i64); an f64 value (i64_imm 2) is an f64 on the
+            // stack, reinterpreted to the cell's raw i64 bits first. #5253.
+            if (o.i64_imm == 2) { out = out + "    i64.reinterpret_f64\n"; }
             var kcons_w: string = "0";
             if ((o.width / 2) % 2 == 1) { kcons_w = "1"; }
             out = out + "    i32.const " + kcons_w + "\n    call $__fern_map_set_w64\n";
@@ -2782,11 +2763,12 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // stack: map -> i32.load(map) (length at offset 0, wasm map layout).
             out = out + "    i32.load\n";
         } else if (o.kind_tag == 127) {  // map_get
-            // stack: map, key -> Option box. An i64/u64 VALUE (i64_imm 1, #5253)
-            // dereferences the boxed 8-byte cell into a 16-byte Option[i64]
-            // ([tag@0][payload@8]) via $__fern_map_get_w64. f64 (i64_imm 2) stays
-            // deferred (wasm_ir_deferrals_ok). Otherwise the narrow i32-payload path.
-            if (o.i64_imm == 1) {
+            // stack: map, key -> Option box. An 8-byte VALUE (i64_imm != 0, #5253)
+            // dereferences the boxed cell into a 16-byte Option box [tag@0][payload@8]
+            // via $__fern_map_get_w64 — the raw 8 payload bytes serve i64/u64 AND f64
+            // (opt_payload reads them i64.load / f64.load per the Option's V type).
+            // Otherwise the narrow i32-payload path.
+            if (o.i64_imm != 0) {
                 out = out + "    call $__fern_map_get_w64\n";
             } else {
                 out = out + "    call $__fern_map_get\n";
@@ -2801,11 +2783,13 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // element i at offset i*4, matching $__fern_map_delete's box. #2933.
             out = out + "    call $__fern_map_delete\n";
         } else if (o.kind_tag == 129) {  // map_get_or
-            // stack: map, k, default -> value. An i64/u64 VALUE (i64_imm 1, #5253)
-            // has an i64 default on the stack (lower_i64) and dereferences the boxed
-            // 8-byte cell via $__fern_map_get_or_w64 (i64 result). f64 (i64_imm 2)
-            // never reaches here — it stays deferred (wasm_ir_deferrals_ok).
-            if (o.i64_imm == 1) {
+            // stack: map, k, default -> value. An 8-byte VALUE dereferences the boxed
+            // cell via $__fern_map_get_or_w64 (i64 result). i64/u64 (i64_imm 1) push
+            // an i64 default (lower_i64); f64 (i64_imm 2) has an f64 default,
+            // reinterpreted to i64 in and the i64 result reinterpreted back to f64. #5253.
+            if (o.i64_imm == 2) {
+                out = out + "    i64.reinterpret_f64\n    call $__fern_map_get_or_w64\n    f64.reinterpret_i64\n";
+            } else if (o.i64_imm == 1) {
                 out = out + "    call $__fern_map_get_or_w64\n";
             } else {
                 out = out + "    call $__fern_map_get_or\n";
@@ -2823,11 +2807,12 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             }
         } else if (o.kind_tag == 132) {  // map_values
             // hash map: snapshot the live values into a fresh array (probe order).
-            // An i64/u64 VALUE column (i64_imm 1, #5253) dereferences the boxed
-            // 8-byte cells into a fresh i64[] via $__fern_map_values_w64. f64
-            // (i64_imm 2) never reaches here (wasm_ir_deferrals_ok). Otherwise the
-            // narrow path, with the same string-column retaining split as map_keys.
-            if (o.i64_imm == 1) {
+            // An 8-byte VALUE column (i64_imm != 0, #5253) dereferences the boxed
+            // cells into a fresh array via $__fern_map_values_w64 — the raw 8-byte
+            // elements serve i64/u64 (i64[]) AND f64 (f64[]); the consuming arr_get
+            // reads them per the array's element type. Otherwise the narrow path,
+            // with the same string-column retaining split as map_keys.
+            if (o.i64_imm != 0) {
                 out = out + "    call $__fern_map_values_w64\n";
             } else if (o.i32_imm == 2) {
                 out = out + "    call $__fern_map_values_inc\n";
