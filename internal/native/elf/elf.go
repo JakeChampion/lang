@@ -734,6 +734,12 @@ func StaticExecutableDataX86WXSymsLines(text, data []byte, syms []Sym, funcLines
 	return imageWXSymsLines(text, data, emX86_64, 0, syms, funcLines, srcFile)
 }
 
+// StaticExecutableDataWXSymsLines is the arm64 counterpart of
+// StaticExecutableDataX86WXSymsLines.
+func StaticExecutableDataWXSymsLines(text, data []byte, syms []Sym, funcLines []FuncLine, srcFile string) []byte {
+	return imageWXSymsLines(text, data, emAArch64, 0, syms, funcLines, srcFile)
+}
+
 // imageWXSyms builds the W^X image (imageWX) and appends a section table with
 // a .symtab. The sections are all non-alloc and live after the loadable
 // segments, so the running image is identical to imageWX's.
