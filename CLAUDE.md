@@ -208,15 +208,17 @@ polynomial-approx WAT helpers (`wasm.exp_func`/`log_func`/`pow_func`/…,
 the wasm siblings of the arm64 helpers, wired in `wasm_ir_run`). The
 wasm-IR exclusions that genuinely REMAIN are the deferral-gate set in
 `wasm_ir_deferrals_ok`: erased-wide (an i64/f64 value through a bare-
-typevar param), `writer_write`, `open_file`, and `c_call`, plus f64-valued
-maps (the last i32-celled corner of wide-value maps). (`xs.join` is no
-longer deferred
+typevar param), `writer_write`, `open_file`, and `c_call`. (`xs.join` is
+no longer deferred
 — it lowers on the wasm IR path via the `$__fern_arr_str_join` shim over
-the `$__fern_str_join` WAT worker; #5328. i64/u64-VALUE maps now lower
-end-to-end — `set` / `get_or` / `values` / `get` / `iter` — via
-`$__fern_map_{set,get_or,values,get,iter}_w64`, which box the 8-byte value
-into an rc cell riding the i32 value column (get → a 16-byte Option[i64],
-values/iter → a fresh i64[]), selected by the `widekind` op flag; #5253.) The component-model async / readiness /
+the `$__fern_str_join` WAT worker; #5328. 8-byte-VALUE maps — i64/u64 AND
+f64 — now lower end-to-end, `set` / `get_or` / `values` / `get` / `iter`,
+via `$__fern_map_{set,get_or,values,get,iter}_w64`, which box the 8-byte
+value into an rc cell riding the i32 value column (get → a 16-byte Option,
+values/iter → a fresh 8-byte-element array), selected by the `widekind` op
+flag; f64 rides the same raw-byte cells as i64/u64 with an f64↔i64
+reinterpret at the scalar sites. The former `module_has_wide_map_val_cached`
+gate is retired. #5253.) The component-model async / readiness /
 socket set that was once listed here — `poll` / `timer_fd` /
 `wasm_timer_pollable` / `wasm_pollable_drop` / `tcp_*` / `subprocess` —
 **has since LANDED** (the sub-issues #4315–#4320 are all closed, 2026-07):
