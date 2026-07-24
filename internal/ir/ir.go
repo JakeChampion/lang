@@ -319,6 +319,15 @@ const (
 	OpRcInc      // (ptr) → ptr (pass-through; bumps rc, sentinel-guarded)
 	OpRcDec      // (ptr) → ptr (pass-through; drops one reference)
 	OpRcIsUnique // (ptr) → i32 (1 iff rc == 1; sentinel/static → 0)
+
+	// OpLine is a zero-effect source-position marker (#5537 slice 2):
+	// it carries a statement's Pos but consumes/produces nothing and emits
+	// no machine code. Native backends turn it into a DWARF `.loc` directive
+	// under -g so the line table maps addresses to source lines; every other
+	// consumer ignores it. Emitted by the builder only when the
+	// EmitLineMarkers lower-option is set (native -g), so ordinary builds —
+	// and the self-host byte-identical fixpoint — never see it.
+	OpLine // () → () (source-line marker; Pos is the payload)
 )
 
 // BlockType describes the type a block / loop / if leaves on the stack
@@ -531,6 +540,8 @@ func (k OpKind) String() string {
 		return "rc.dec"
 	case OpRcIsUnique:
 		return "rc.is_unique"
+	case OpLine:
+		return "line"
 	}
 	return "<invalid>"
 }
@@ -2518,6 +2529,12 @@ type lowerOpts struct {
 	// arm64 keeps leaking `dyn` — harmless). wasm RC (slice 4a) keys on
 	// ptrW==4 and never needs this.
 	dynRcSupported bool
+	// emitLineMarkers makes the builder emit a zero-effect OpLine at each
+	// statement boundary, carrying its source Pos, so a native backend can
+	// build a DWARF .debug_line table under -g (#5537 slice 2). Off by
+	// default: ordinary builds — and the self-host byte-identical fixpoint —
+	// never see OpLine.
+	emitLineMarkers bool
 }
 
 // DynSupported marks the calling backend as able to lower `dyn Trait`
@@ -2532,6 +2549,12 @@ func DynSupported() LowerOption { return func(o *lowerOpts) { o.dynSupported = t
 // x86-64 passes it (slice 4b); arm64 does not yet (slice 4c — it keeps
 // leaking `dyn`, which is harmless). wasm RC keys on ptrW==4 directly.
 func DynRcSupported() LowerOption { return func(o *lowerOpts) { o.dynRcSupported = true } }
+
+// EmitLineMarkers makes the lowering emit OpLine source-position markers at
+// statement boundaries so a native backend can build a DWARF .debug_line
+// table (#5537 slice 2). Native backends pass it under -g; ordinary builds
+// leave it off and never see OpLine.
+func EmitLineMarkers() LowerOption { return func(o *lowerOpts) { o.emitLineMarkers = true } }
 
 // LowerWith is the pointer-width-aware variant. `ptrW` is 4 on
 // wasm32 and 8 on arm64; it sizes pointer-typed enum payloads,
@@ -2735,7 +2758,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes, readOnlyComparators, growParams)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes, readOnlyComparators, growParams)
 		if err != nil {
 			return nil, err
 		}
@@ -4405,6 +4428,11 @@ type builder struct {
 	// lowered. emit() stamps it onto every op so backends can drive
 	// per-statement DWARF / .loc directives.
 	curPos ast.Position
+	// emitLineMarkers, when set (native -g), makes stmt() emit an OpLine
+	// marker at each new source line; lastLineMark dedups consecutive
+	// statements sharing a line.
+	emitLineMarkers bool
+	lastLineMark    int
 	// defers is the in-source-order list of every Defer
 	// statement in the function body, collected by a pre-walk
 	// before any IR emission. deferSlots holds the synthetic
@@ -4711,7 +4739,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, readOnlyComparators map[string]bool, growParams map[string][]uint8) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, readOnlyComparators map[string]bool, growParams map[string][]uint8) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -4728,6 +4756,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		scratchType:          map[int32]ast.Type{},
 		ptrW:                 ptrW,
 		dynRcSupported:       dynRcSupported,
+		emitLineMarkers:      emitLineMarkers,
 		pairForm:             pairForm,
 		closureCaps:          closureCaps,
 		genEnumDrops:         genEnumDrops,
@@ -6580,6 +6609,13 @@ func (b *builder) slotShapeType(slot int32) ast.Type {
 
 func (b *builder) stmt(s ast.Stmt) error {
 	b.curPos = s.Pos()
+	// Under native -g, mark each new source line so the backend can build a
+	// DWARF .debug_line row. OpLine consumes/produces nothing and emits no
+	// machine code; it just carries the Pos.
+	if b.emitLineMarkers && b.curPos.Line > 0 && b.curPos.Line != b.lastLineMark {
+		b.lastLineMark = b.curPos.Line
+		b.emit(Op{Kind: OpLine, Pos: b.curPos})
+	}
 	switch n := s.(type) {
 	case *ast.Block:
 		for _, ss := range n.Stmts {

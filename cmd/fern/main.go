@@ -1528,7 +1528,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 	var asm string
 	switch target {
 	case "x86-64":
-		asm, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{Exports: exportNames})
+		asm, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{Exports: exportNames, DebugLines: emitDebugSyms})
 	default:
 		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin, PIE: android, Exports: exportNames})
 	}
@@ -1600,7 +1600,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			return 1, err
 		}
 	case useNative && target == "x86-64":
-		if err := linkNativeX86(asm, binPath, declLines, srcFileBase); err != nil {
+		if err := linkNativeX86(asm, binPath, srcFileBase); err != nil {
 			return 1, err
 		}
 	case useNative:
@@ -1936,14 +1936,21 @@ func sharedExports(names []string, vaddr map[string]uint64) []nativeelf.Export {
 // links x86-64 assembly into a static ELF executable entirely in-process
 // via the pure-Go internal/native/x86_64 backend, using the same W^X
 // two-segment layout (R+X code, R+W data).
-func linkNativeX86(asm, outPath string, declLines map[string]int, srcFile string) error {
+func linkNativeX86(asm, outPath string, srcFile string) error {
 	if emitDebugSyms {
-		text, rodata, syms, err := nativex86.AssembleProgramWXSyms(asm, nativeelf.TextVAddrWX)
+		text, rodata, syms, locRows, err := nativex86.AssembleProgramWXSyms(asm, nativeelf.TextVAddrWX)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
-		fs := nativeelf.FuncSyms(syms, nativeelf.TextVAddrWX+uint64(len(text)))
-		bin := nativeelf.StaticExecutableDataX86WXSymsLines(text, rodata, fs, funcLinesFor(fs, declLines), srcFile)
+		textEnd := nativeelf.TextVAddrWX + uint64(len(text))
+		fs := nativeelf.FuncSyms(syms, textEnd)
+		// Per-statement DWARF .debug_line rows from the assembler's `.loc`
+		// markers (#5537 slice 2); Offset is text-relative → absolute vaddr.
+		rows := make([]nativeelf.LineRow, 0, len(locRows))
+		for _, r := range locRows {
+			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
+		}
+		bin := nativeelf.StaticExecutableDataX86WXSymsRows(text, rodata, fs, rows, srcFile, textEnd)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}

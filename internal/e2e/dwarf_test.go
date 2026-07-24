@@ -128,13 +128,14 @@ func TestDWARFLineTable(t *testing.T) {
 				t.Fatalf("DWARF(): %v", err)
 			}
 
-			// Subprogram low_pc per function, then the line at that address.
+			// Subprogram PC ranges per function.
 			r := d.Reader()
 			cu, err := r.Next()
 			if err != nil || cu == nil {
 				t.Fatalf("no CU: %v", err)
 			}
-			lowpc := map[string]uint64{}
+			type pcRange struct{ lo, hi uint64 }
+			ranges := map[string]pcRange{}
 			for {
 				e, err := r.Next()
 				if err != nil {
@@ -146,7 +147,8 @@ func TestDWARFLineTable(t *testing.T) {
 				if e.Tag == dwarf.TagSubprogram {
 					name, _ := e.Val(dwarf.AttrName).(string)
 					lo, _ := e.Val(dwarf.AttrLowpc).(uint64)
-					lowpc[name] = lo
+					hi, _ := e.Val(dwarf.AttrHighpc).(uint64)
+					ranges[name] = pcRange{lo, hi}
 				}
 			}
 
@@ -154,24 +156,41 @@ func TestDWARFLineTable(t *testing.T) {
 			if err != nil {
 				t.Fatalf("LineReader (expected .debug_line under -g): %v", err)
 			}
-			lineAt := map[uint64]int{}
+			type row struct {
+				addr uint64
+				line int
+			}
+			var rows []row
 			var le dwarf.LineEntry
 			for {
 				if err := lr.Next(&le); err != nil {
 					break
 				}
 				if !le.EndSequence {
-					lineAt[le.Address] = le.Line
+					rows = append(rows, row{le.Address, le.Line})
 				}
 			}
-			for name, wantLine := range map[string]int{"helper": 1, "main": 4} {
-				lo, ok := lowpc[name]
+			// Each function's PC range must contain a line-table row whose line
+			// falls within that function's source span — robust to both
+			// per-function (arm64: the decl line) and per-statement (x86-64:
+			// the statement line, after the prologue) granularity. helper
+			// spans lines 1-3, main spans lines 4-6 in the source below.
+			spans := map[string][2]int{"helper": {1, 3}, "main": {4, 6}}
+			for name, span := range spans {
+				pc, ok := ranges[name]
 				if !ok {
 					t.Errorf("no subprogram %q", name)
 					continue
 				}
-				if lineAt[lo] != wantLine {
-					t.Errorf("%s entry %#x maps to line %d, want %d (rows: %v)", name, lo, lineAt[lo], wantLine, lineAt)
+				found := false
+				for _, rw := range rows {
+					if rw.addr >= pc.lo && rw.addr < pc.hi && rw.line >= span[0] && rw.line <= span[1] {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("%s [%#x,%#x): no line-table row with line in %v (rows: %v)", name, pc.lo, pc.hi, span, rows)
 				}
 			}
 		})
