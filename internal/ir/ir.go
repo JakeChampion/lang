@@ -10296,21 +10296,17 @@ func (b *builder) maybeFoldArithIdentity(n *ast.Binary) (error, bool) {
 			return b.expr(n.Left), true
 		}
 	case "&":
-		// `x & -1 → x` only when -1 really is this operation's all-ones
-		// mask. constNumber truncates to int32, so a 64-bit literal
-		// 0xFFFFFFFF (4294967295) also reads as -1 here — but for an i64
-		// AND that mask CLEARS the high 32 bits (e.g. after `lo as i64`
-		// sign-extends a negative i32), so folding it away is a
-		// miscompile. Restrict the identity to non-64-bit widths, where an
-		// int32 -1 is genuinely all-ones. A true i64 `x & -1` just keeps
-		// the (harmless) AND rather than risk collapsing a real mask.
-		if n.IntWidth != 64 {
-			if lok && numL == -1 {
-				return b.expr(n.Right), true
-			}
-			if rok && numR == -1 {
-				return b.expr(n.Left), true
-			}
+		// `x & mask → x` only when the mask is this operation's all-ones
+		// value. For a 64-bit AND that is -1 (0xFFFFFFFFFFFFFFFF); a
+		// 32-bit AND accepts either -1 or 0xFFFFFFFF (an unsigned literal
+		// spells the same all-ones mask as 4294967295). An i64 literal
+		// 0xFFFFFFFF is NOT all-ones — it CLEARS the high 32 bits — so it
+		// must not fold; the width-aware check below excludes it.
+		if lok && isAllOnesMask(numL, n.IntWidth) {
+			return b.expr(n.Right), true
+		}
+		if rok && isAllOnesMask(numR, n.IntWidth) {
+			return b.expr(n.Left), true
 		}
 	case "*":
 		if lok && numL == 1 {
@@ -10320,25 +10316,35 @@ func (b *builder) maybeFoldArithIdentity(n *ast.Binary) (error, bool) {
 			return b.expr(n.Left), true
 		}
 		if lok {
-			if k, ok := powerOfTwo(numL); ok && k > 0 {
+			if k, ok := log2I64(numL); ok && k > 0 {
 				if err := b.expr(n.Right); err != nil {
 					return err, true
 				}
-				b.emitShlByConst(n, k)
+				b.emitShlByConst(n, int32(k))
 				return nil, true
 			}
 		}
 		if rok {
-			if k, ok := powerOfTwo(numR); ok && k > 0 {
+			if k, ok := log2I64(numR); ok && k > 0 {
 				if err := b.expr(n.Left); err != nil {
 					return err, true
 				}
-				b.emitShlByConst(n, k)
+				b.emitShlByConst(n, int32(k))
 				return nil, true
 			}
 		}
 	}
 	return nil, false
+}
+
+// isAllOnesMask reports whether v is the all-bits-set mask for an
+// integer of the given resolved width (IntWidth 0 defaults to 32).
+// A 64-bit all-ones is -1; a 32-bit all-ones is -1 or 0xFFFFFFFF.
+func isAllOnesMask(v int64, intWidth int) bool {
+	if intWidth == 64 {
+		return v == -1
+	}
+	return v == -1 || v == 0xFFFFFFFF
 }
 
 // emitShlByConst pushes a constant shift count `k` of the
@@ -10366,14 +10372,17 @@ func (b *builder) emitShlByConst(n *ast.Binary, k int32) {
 //   - Unary("-", num) (e.g. `-1`, which the parser builds as
 //     a unary minus on a positive literal)
 //
-// Returns the int32 value and true on a hit.
-func constNumber(e ast.Expr) (int32, bool) {
+// Returns the full int64 value and true on a hit. It must NOT
+// truncate to int32: a 64-bit literal whose low 32 bits are zero
+// (e.g. 2^52 = 0x10000000000000) would read as 0 and make
+// maybeFoldArithIdentity mis-fold `x | 2^52 → x` (#5567).
+func constNumber(e ast.Expr) (int64, bool) {
 	if n, ok := e.(*ast.NumberLit); ok {
-		return int32(n.Value), true
+		return n.Value, true
 	}
 	if u, ok := e.(*ast.Unary); ok && u.Op == "-" {
 		if inner, ok := u.Operand.(*ast.NumberLit); ok {
-			return -int32(inner.Value), true
+			return -inner.Value, true
 		}
 	}
 	return 0, false
@@ -10450,23 +10459,6 @@ func (b *builder) emitZeroConstForWidth(intWidth int) {
 		return
 	}
 	b.emit(Op{Kind: OpConstI32, I32: 0})
-}
-
-// powerOfTwo returns (k, true) when n == 1 << k for some
-// 0 <= k < 31. Used by the multiplication strength reduction.
-func powerOfTwo(n int32) (int32, bool) {
-	if n <= 0 {
-		return 0, false
-	}
-	if n&(n-1) != 0 {
-		return 0, false
-	}
-	for k := int32(0); k < 31; k++ {
-		if n == 1<<k {
-			return k, true
-		}
-	}
-	return 0, false
 }
 
 func (b *builder) maybeFoldStringEq(n *ast.Binary) (error, bool) {
