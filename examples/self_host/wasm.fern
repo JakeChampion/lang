@@ -8637,8 +8637,10 @@ function arr_push_wide(vty: string, sop: string): string {
 // a string value; vconsume=1, so the map takes the fresh cell's sole ref). Reads
 // dereference the cell: $__fern_map_get_or_w64 for a single value,
 // $__fern_map_get_w64 for an Option[i64], $__fern_map_values_w64 for the whole
-// column (into a fresh i64[]). Depends on $__fern_map_set / $__fern_map_find /
-// $__fern_str_box / $__fern_arr_box (map_helpers + heap, co-present with maps).
+// column (into a fresh i64[]), and $__fern_map_iter_w64 / $__fern_mapiter_value_w64
+// for iteration (an i64[] value snapshot + an 8-byte accessor). Depends on
+// $__fern_map_set / $__fern_map_find / $__fern_map_keys / $__fern_str_box /
+// $__fern_arr_box / $__fern_alloc (map_helpers + heap, co-present with maps).
 pub function map_w64_helpers(): string {
     var o: string = "";
     // $__fern_map_set_w64(box, k, v, kcons) → box: box v into an 8-byte cell and
@@ -8693,6 +8695,20 @@ pub function map_w64_helpers(): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c)))\n";
     o = o + "    (local.get $arr))\n";
+    // $__fern_map_iter_w64(map) → a MapIter box [keys@0][values@4][cursor@8] whose
+    // VALUE snapshot is a fresh i64[] (values dereferenced from the cells). Mirrors
+    // $__fern_map_iter but swaps $__fern_map_values → $__fern_map_values_w64.
+    o = o + "  (func $__fern_map_iter_w64 (param $map i32) (result i32)\n";
+    o = o + "    (local $box i32)\n";
+    o = o + "    (local.set $box (call $__fern_alloc (i32.const 12)))\n";
+    o = o + "    (i32.store (local.get $box) (call $__fern_map_keys (local.get $map)))\n";
+    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (call $__fern_map_values_w64 (local.get $map)))\n";
+    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (i32.const 0))\n";
+    o = o + "    (local.get $box))\n";
+    // $__fern_mapiter_value_w64(box) → values[cursor] as an 8-byte i64 (values =
+    // box@4 is an i64[]; element at values + 8 + cursor*8).
+    o = o + "  (func $__fern_mapiter_value_w64 (param $box i32) (result i64)\n";
+    o = o + "    (i64.load (i32.add (i32.add (i32.load (i32.add (local.get $box) (i32.const 4))) (i32.const 8)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.const 8)))))\n";
     return o;
 }
 

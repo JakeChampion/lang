@@ -4839,6 +4839,15 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
                     // `m.get_or(k, d)` on a u64-VALUED map is an unsigned 64-bit
                     // value, so a chained `m.get_or(...) >> 1` selects shr_u (#5253).
                     if (cfa.field == "get_or" && c.args.len() == 2 && map_value_of(get_or_recv_map_type(cfa.obj, s)) == "u64") { return true; }
+                    // `it.value()` on a MapIter[K, u64] is likewise unsigned (#5253).
+                    if (cfa.field == "value" && c.args.len() == 0) {
+                        match (cfa.obj) {
+                            parser.ExprIdent(uvid) => {
+                                if (mapiter_value_of(s.map_type_of(s.slot_of(uvid.name))) == "u64") { return true; }
+                            },
+                            _ => {}
+                        }
+                    }
                     var u64k: string = method_recv_prim_key(cfa.obj, cfa.field, s);
                     return u64k != "" && s.is_u64_ret_fn(u64k);
                 },
@@ -5004,6 +5013,19 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                     if (cfa.field == "get_or" && c.args.len() == 2) {
                         var gvt: string = map_value_of(get_or_recv_map_type(cfa.obj, s));
                         if (gvt == "i64" || gvt == "u64") { return 64; }
+                    }
+                    // `it.value()` on a MapIter[K, i64/u64] is a 64-bit value (the
+                    // iterator's value snapshot is an i64[]), so an unannotated
+                    // `var v = it.value()` and any chained arithmetic width-track
+                    // i64 — the mapiter sibling of the get_or rule above. #5253.
+                    if (cfa.field == "value" && c.args.len() == 0) {
+                        match (cfa.obj) {
+                            parser.ExprIdent(wvid) => {
+                                var wvt: string = mapiter_value_of(s.map_type_of(s.slot_of(wvid.name)));
+                                if (wvt == "i64" || wvt == "u64") { return 64; }
+                            },
+                            _ => {}
+                        }
                     }
                 },
                 _ => {}
@@ -7880,7 +7902,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (fa.field == "value" && c.args.len() == 0) {
                             var iv2: LowerState = lower_expr(fa.obj, s);
                             if (!iv2.ok) { return iv2; }
-                            return iv2.emit(ir.op_mapiter_value());
+                            return iv2.emit(ir.op_mapiter_value(map_value_wide(mapiter_value_of(itype))));
                         }
                         if (fa.field == "advance" && c.args.len() == 0) {
                             var iadv: LowerState = lower_expr(fa.obj, s);
@@ -8086,7 +8108,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             // here we just emit the box-building op.
                             var mit: LowerState = lower_expr(fa.obj, s);
                             if (!mit.ok) { return mit; }
-                            return mit.emit(ir.op_map_iter(map_value_wide(map_value_of(mtype))));
+                            return mit.emit(ir.op_map_iter(map_value_widekind(map_value_of(mtype))));
                         }
                         // Not a built-in map op — a USER method on Map[K, V]
                         // (`m.merge(other)`, `m.extend(...)`). Dispatch to the
