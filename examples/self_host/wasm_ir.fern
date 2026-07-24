@@ -819,12 +819,12 @@ pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string):
 
 // module_has_wide_map_val_cached reports whether any function emits an 8-byte
 // VALUE-column map op the wasm IR path does NOT handle, so the module stays on the
-// AST backend. i64/u64 map_set (125), map_get_or (129), map_values (132), and
-// map_get (127) with widekind 1 ARE handled (map_w64_helpers boxes the 8-byte value
-// into an rc cell and dereferences it — get boxes it into a 16-byte Option[i64]),
-// so they no longer defer. What still defers: any f64 map op (widekind 2 in i64_imm
-// — f64 rides its own float path, not yet wired to a cell), and wide map_iter (133),
-// whose iterator-value path is still i32-celled and would truncate. #5253.
+// AST backend. i64/u64 map_set (125), map_get_or (129), map_values (132), map_get
+// (127), and map_iter (133) with widekind 1 ARE handled (map_w64_helpers boxes the
+// 8-byte value into an rc cell and dereferences it — get boxes it into a 16-byte
+// Option[i64], iter snapshots the values into an i64[]), so they no longer defer.
+// What still defers: any f64 map op (widekind 2 in i64_imm — f64 rides its own float
+// path, not yet wired to a cell). #5253.
 pub function module_has_wide_map_val_cached(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
     while (fi < cache.len()) {
@@ -832,11 +832,8 @@ pub function module_has_wide_map_val_cached(cache: irlower.LowerResult[]): boole
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var o: ir.Op = r.ops[i];
-            // f64 set / get_or / values / get (widekind 2): still deferred.
-            if ((o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127) && o.i64_imm == 2) { return true; }
-            // wide iter (any 8-byte value): still deferred (iterator-value path
-            // remains i32-celled).
-            if (o.kind_tag == 133 && o.i64_imm != 0) { return true; }
+            // f64 set / get_or / values / get / iter (widekind 2): still deferred.
+            if ((o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127 || o.kind_tag == 133) && o.i64_imm == 2) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -845,8 +842,9 @@ pub function module_has_wide_map_val_cached(cache: irlower.LowerResult[]): boole
 }
 
 // module_uses_map_w64 reports whether any function emits an i64/u64-VALUED map op
-// the wasm IR path HANDLES (map_set 125, map_get_or 129, map_values 132, or
-// map_get 127 with widekind 1), so emit_ir_module_units emits map_w64_helpers. #5253.
+// the wasm IR path HANDLES (map_set 125, map_get_or 129, map_values 132, map_get
+// 127, or map_iter 133 with widekind 1), so emit_ir_module_units emits
+// map_w64_helpers. #5253.
 pub function module_uses_map_w64(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
     while (fi < cache.len()) {
@@ -854,7 +852,7 @@ pub function module_uses_map_w64(cache: irlower.LowerResult[]): boolean {
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var o: ir.Op = r.ops[i];
-            if ((o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127) && o.i64_imm == 1) { return true; }
+            if ((o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127 || o.kind_tag == 133) && o.i64_imm == 1) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -2177,14 +2175,27 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
         } else if (o.kind_tag == 133) {  // map_iter
             // m.iter() -> a 12-byte iterator box [keys@0, vals@4, cursor@8].
             // $__fern_map_iter materializes the live keys/values (map snapshots)
-            // and boxes them; emitted caller-side in wasm_ir_run with map_helpers.
-            out = out + "    call $__fern_map_iter\n";
+            // and boxes them. An i64/u64 VALUE column (i64_imm 1, #5253) snapshots
+            // the values into a fresh i64[] via $__fern_map_iter_w64; f64 (i64_imm 2)
+            // stays deferred (wasm_ir_deferrals_ok).
+            if (o.i64_imm == 1) {
+                out = out + "    call $__fern_map_iter_w64\n";
+            } else {
+                out = out + "    call $__fern_map_iter\n";
+            }
         } else if (o.kind_tag == 134) {  // mapiter_has_next
             out = out + "    call $__fern_mapiter_has_next\n";
         } else if (o.kind_tag == 135) {  // mapiter_key
             out = out + "    call $__fern_mapiter_key\n";
         } else if (o.kind_tag == 136) {  // mapiter_value
-            out = out + "    call $__fern_mapiter_value\n";
+            // An i64/u64 VALUE column (i64_imm 1, #5253) reads the 8-byte element
+            // from the i64[] value snapshot via $__fern_mapiter_value_w64 (i64
+            // result). f64 never reaches here (its map_iter defers).
+            if (o.i64_imm == 1) {
+                out = out + "    call $__fern_mapiter_value_w64\n";
+            } else {
+                out = out + "    call $__fern_mapiter_value\n";
+            }
         } else if (o.kind_tag == 137) {  // mapiter_advance
             // bumps the box's cursor in place; pushes a dummy the statement drops.
             out = out + "    call $__fern_mapiter_advance\n";

@@ -831,19 +831,26 @@ pub function op_map_values(elemptr: i32, widekind: i32): Op {
 // keys[cursor] / values[cursor] element (cursor is 0-based; the element load is
 // keys[cursor+1], the +1 skipping the array box's len header). `mapiter_advance`
 // pops [iter], bumps the stored cursor, and pushes a dummy result for the drop.
-// No wasm IR runtime (wasm maps are hash maps, not parallel arrays), so a mapiter
-// module is wasm-ineligible (wasm_eligible) and stays on the wasm AST path.
-// `valwide` (i64_imm 1) marks a map whose VALUE column is 8-byte (i64/u64/f64):
-// the wasm IR path defers iteration over such a map (mapiter_value would truncate
-// the 8-byte value) — see wasm_ir_deferrals_ok; the register backends ignore it. #5253.
-pub function op_map_iter(valwide: boolean): Op {
+// `widekind` (i64_imm) marks a map whose VALUE column is 8-byte — 0 narrow,
+// 1 i64/u64, 2 f64. On wasm, widekind 1 builds the iterator's value snapshot as a
+// fresh i64[] ($__fern_map_iter_w64 over $__fern_map_values_w64); widekind 2 (f64)
+// stays deferred (wasm_ir_deferrals_ok). The register backends ignore it. #5253.
+pub function op_map_iter(widekind: i32): Op {
     var vw: i64 = 0;
-    if (valwide) { vw = 1; }
+    if (widekind == 1) { vw = 1; }
+    if (widekind == 2) { vw = 2; }
     return Op { kind_tag: 133, i32_imm: 0, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 pub function op_mapiter_has_next(): Op { return op0("mapiter_has_next"); }
 pub function op_mapiter_key(): Op { return op0("mapiter_key"); }
-pub function op_mapiter_value(): Op { return op0("mapiter_value"); }
+// `valwide` (i64_imm 1) marks an i64/u64 VALUE column: on wasm the accessor reads
+// the 8-byte element via $__fern_mapiter_value_w64 (i64 result). f64 never reaches
+// it (its map_iter defers). The register backends ignore it. #5253.
+pub function op_mapiter_value(valwide: boolean): Op {
+    var vw: i64 = 0;
+    if (valwide) { vw = 1; }
+    return Op { kind_tag: 136, i32_imm: 0, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
 pub function op_mapiter_advance(): Op { return op0("mapiter_advance"); }
 
 // high-level struct ops — layout-agnostic, like the array/string ops. `str`
