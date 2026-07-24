@@ -1207,7 +1207,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		if err != nil {
 			return 1, fmt.Errorf("arm64-ssa: %v", err)
 		}
-		if err := linkNative(asm, outPath); err != nil {
+		if err := linkNative(asm, outPath, nil, ""); err != nil {
 			return 1, fmt.Errorf("arm64-ssa link: %v", err)
 		}
 		return 0, nil
@@ -1604,7 +1604,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			return 1, err
 		}
 	case useNative:
-		if err := linkNative(asm, binPath); err != nil {
+		if err := linkNative(asm, binPath, declLines, srcFileBase); err != nil {
 			return 1, err
 		}
 	case darwin:
@@ -1821,14 +1821,27 @@ func linkDarwin(asm, outPath, cc string) error {
 // two-segment layout (R+X code, R+W data) so no mapping is both writable
 // and executable — required by W^X-enforcing loaders such as Android's.
 // Unsupported instructions surface as an error rather than a miscompile.
-func linkNative(asm, outPath string) error {
+// funcLinesFor builds the DWARF .debug_line rows (one per entry-module
+// function: address range → declaration line) from the sorted symbol table
+// and the name→line map. fs is already address-sorted, so the rows are too.
+func funcLinesFor(fs []nativeelf.Sym, declLines map[string]int) []nativeelf.FuncLine {
+	var out []nativeelf.FuncLine
+	for _, s := range fs {
+		if line, ok := declLines[s.Name]; ok && s.Size > 0 {
+			out = append(out, nativeelf.FuncLine{Lo: s.Value, Hi: s.Value + s.Size, Line: line})
+		}
+	}
+	return out
+}
+
+func linkNative(asm, outPath string, declLines map[string]int, srcFile string) error {
 	if emitDebugSyms {
 		text, rodata, syms, err := nativearm64.AssembleProgramWXSyms(asm, nativeelf.TextVAddrWX)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
 		fs := nativeelf.FuncSyms(syms, nativeelf.TextVAddrWX+uint64(len(text)))
-		bin := nativeelf.StaticExecutableDataWXSyms(text, rodata, fs)
+		bin := nativeelf.StaticExecutableDataWXSymsLines(text, rodata, fs, funcLinesFor(fs, declLines), srcFile)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}
@@ -1930,15 +1943,7 @@ func linkNativeX86(asm, outPath string, declLines map[string]int, srcFile string
 			return fmt.Errorf("native assembler: %w", err)
 		}
 		fs := nativeelf.FuncSyms(syms, nativeelf.TextVAddrWX+uint64(len(text)))
-		// DWARF .debug_line: one row per entry-module function (address →
-		// declaration line). fs is already sorted by address, so are the rows.
-		var funcLines []nativeelf.FuncLine
-		for _, s := range fs {
-			if line, ok := declLines[s.Name]; ok && s.Size > 0 {
-				funcLines = append(funcLines, nativeelf.FuncLine{Lo: s.Value, Hi: s.Value + s.Size, Line: line})
-			}
-		}
-		bin := nativeelf.StaticExecutableDataX86WXSymsLines(text, rodata, fs, funcLines, srcFile)
+		bin := nativeelf.StaticExecutableDataX86WXSymsLines(text, rodata, fs, funcLinesFor(fs, declLines), srcFile)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}

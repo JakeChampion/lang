@@ -110,65 +110,71 @@ func TestDWARFLineTable(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	out := filepath.Join(dir, "g.bin")
-	if o, err := exec.Command(bin, "-g", "-target", "x86-64", "-o", out, p).CombinedOutput(); err != nil {
-		t.Fatalf("-g build: %v\n%s", err, o)
-	}
-	f, err := goelf.Open(out)
-	if err != nil {
-		t.Fatalf("open ELF: %v", err)
-	}
-	defer f.Close()
-	d, err := f.DWARF()
-	if err != nil {
-		t.Fatalf("DWARF(): %v", err)
-	}
+	// The line table is target-independent (address_size 8 both ways) and
+	// decoded host-side, so we build for each target and parse without running.
+	for _, target := range []string{"x86-64", "arm64"} {
+		t.Run(target, func(t *testing.T) {
+			out := filepath.Join(dir, "g-"+target+".bin")
+			if o, err := exec.Command(bin, "-g", "-target", target, "-o", out, p).CombinedOutput(); err != nil {
+				t.Fatalf("-g build: %v\n%s", err, o)
+			}
+			f, err := goelf.Open(out)
+			if err != nil {
+				t.Fatalf("open ELF: %v", err)
+			}
+			defer f.Close()
+			d, err := f.DWARF()
+			if err != nil {
+				t.Fatalf("DWARF(): %v", err)
+			}
 
-	// Collect subprogram low_pc per function, then the line at that address.
-	r := d.Reader()
-	cu, err := r.Next()
-	if err != nil || cu == nil {
-		t.Fatalf("no CU: %v", err)
-	}
-	lowpc := map[string]uint64{}
-	for {
-		e, err := r.Next()
-		if err != nil {
-			t.Fatalf("reader: %v", err)
-		}
-		if e == nil {
-			break
-		}
-		if e.Tag == dwarf.TagSubprogram {
-			name, _ := e.Val(dwarf.AttrName).(string)
-			lo, _ := e.Val(dwarf.AttrLowpc).(uint64)
-			lowpc[name] = lo
-		}
-	}
+			// Subprogram low_pc per function, then the line at that address.
+			r := d.Reader()
+			cu, err := r.Next()
+			if err != nil || cu == nil {
+				t.Fatalf("no CU: %v", err)
+			}
+			lowpc := map[string]uint64{}
+			for {
+				e, err := r.Next()
+				if err != nil {
+					t.Fatalf("reader: %v", err)
+				}
+				if e == nil {
+					break
+				}
+				if e.Tag == dwarf.TagSubprogram {
+					name, _ := e.Val(dwarf.AttrName).(string)
+					lo, _ := e.Val(dwarf.AttrLowpc).(uint64)
+					lowpc[name] = lo
+				}
+			}
 
-	lr, err := d.LineReader(cu)
-	if err != nil {
-		t.Fatalf("LineReader (expected .debug_line under -g): %v", err)
-	}
-	lineAt := map[uint64]int{}
-	var le dwarf.LineEntry
-	for {
-		if err := lr.Next(&le); err != nil {
-			break
-		}
-		if !le.EndSequence {
-			lineAt[le.Address] = le.Line
-		}
-	}
-	for name, wantLine := range map[string]int{"helper": 1, "main": 4} {
-		lo, ok := lowpc[name]
-		if !ok {
-			t.Errorf("no subprogram %q", name)
-			continue
-		}
-		if lineAt[lo] != wantLine {
-			t.Errorf("%s entry %#x maps to line %d, want %d (rows: %v)", name, lo, lineAt[lo], wantLine, lineAt)
-		}
+			lr, err := d.LineReader(cu)
+			if err != nil {
+				t.Fatalf("LineReader (expected .debug_line under -g): %v", err)
+			}
+			lineAt := map[uint64]int{}
+			var le dwarf.LineEntry
+			for {
+				if err := lr.Next(&le); err != nil {
+					break
+				}
+				if !le.EndSequence {
+					lineAt[le.Address] = le.Line
+				}
+			}
+			for name, wantLine := range map[string]int{"helper": 1, "main": 4} {
+				lo, ok := lowpc[name]
+				if !ok {
+					t.Errorf("no subprogram %q", name)
+					continue
+				}
+				if lineAt[lo] != wantLine {
+					t.Errorf("%s entry %#x maps to line %d, want %d (rows: %v)", name, lo, lineAt[lo], wantLine, lineAt)
+				}
+			}
+		})
 	}
 
 	// Default build: no line table.
