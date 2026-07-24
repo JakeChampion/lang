@@ -752,6 +752,8 @@ func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym)
 	nSymtab := addShName(".symtab")
 	nStrtab := addShName(".strtab")
 	nShstrtab := addShName(".shstrtab")
+	nDebugAbbrev := addShName(".debug_abbrev")
+	nDebugInfo := addShName(".debug_info")
 
 	// .symtab: index 0 is STN_UNDEF (all zero), then one STT_FUNC per symbol.
 	symtab := make([]byte, 24)
@@ -771,6 +773,12 @@ func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym)
 			buf = append(buf, 0)
 		}
 	}
+	// DWARF debug info (#5537 slice 3): a CU DIE + one subprogram DIE per
+	// function, from the same syms. Non-alloc, so the loaded image is
+	// unchanged. Names inline (DW_FORM_string) → no .debug_str needed.
+	debugAbbrev := buildDebugAbbrev()
+	debugInfo := buildDebugInfo(syms, uint64(TextVAddrWX), uint64(TextVAddrWX)+uint64(len(text)), "")
+
 	pad8()
 	symtabOff := uint64(len(buf))
 	buf = append(buf, symtab...)
@@ -778,6 +786,10 @@ func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym)
 	buf = append(buf, strtab...)
 	shstrtabOff := uint64(len(buf))
 	buf = append(buf, shstrtab...)
+	debugAbbrevOff := uint64(len(buf))
+	buf = append(buf, debugAbbrev...)
+	debugInfoOff := uint64(len(buf))
+	buf = append(buf, debugInfo...)
 	pad8()
 	shoff := uint64(len(buf))
 
@@ -792,11 +804,14 @@ func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym)
 	buf = appendShdr(buf, nStrtab, 3, 0, 0, strtabOff, uint64(len(strtab)), 0, 0, 1, 0)
 	// [4] .shstrtab
 	buf = appendShdr(buf, nShstrtab, 3, 0, 0, shstrtabOff, uint64(len(shstrtab)), 0, 0, 1, 0)
+	// [5] .debug_abbrev  [6] .debug_info — PROGBITS, non-alloc.
+	buf = appendShdr(buf, nDebugAbbrev, 1, 0, 0, debugAbbrevOff, uint64(len(debugAbbrev)), 0, 0, 1, 0)
+	buf = appendShdr(buf, nDebugInfo, 1, 0, 0, debugInfoOff, uint64(len(debugInfo)), 0, 0, 1, 0)
 
 	// Patch the ELF header's section-table fields (imageWX left them zero).
 	putLE64s(buf[40:], shoff) // e_shoff
 	putLE16s(buf[58:], 64)    // e_shentsize
-	putLE16s(buf[60:], 5)     // e_shnum
+	putLE16s(buf[60:], 7)     // e_shnum
 	putLE16s(buf[62:], 4)     // e_shstrndx (.shstrtab)
 	return buf
 }

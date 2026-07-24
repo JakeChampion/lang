@@ -2,6 +2,7 @@ package elf_test
 
 import (
 	"bytes"
+	"debug/dwarf"
 	goelf "debug/elf"
 	"os"
 	"os/exec"
@@ -1002,6 +1003,80 @@ func TestStaticExecutableDataWXSyms(t *testing.T) {
 		}
 		if !bytes.Equal(tc.syms[64:len(tc.nosyms)], tc.nosyms[64:]) {
 			t.Errorf("%s: loadable segments differ from the non-symtab image", tc.arch)
+		}
+	}
+}
+
+// TestStaticExecutableDataWXSymsDWARF checks the -g DWARF debug info (#5537
+// slice 3): the same image carries a parseable .debug_info with a compilation
+// unit spanning the text and one subprogram DIE per function (name + PC
+// range), decodable through Go's debug/dwarf — which is what lets gdb/lldb
+// break by function name and show frames in a backtrace.
+func TestStaticExecutableDataWXSymsDWARF(t *testing.T) {
+	text := []byte{0xb8, 0x2a, 0x00, 0x00, 0x00, 0xc3, 0x90, 0x90} // 8 bytes
+	data := []byte{1, 2, 3, 4, 5, 6, 7, 8}
+	base := uint64(elf.TextVAddrWX)
+	syms := []elf.Sym{
+		{Name: "main", Value: base, Size: 6},
+		{Name: "helper", Value: base + 6, Size: 2},
+	}
+	for _, tc := range []struct {
+		arch string
+		bin  []byte
+	}{
+		{"x86-64", elf.StaticExecutableDataX86WXSyms(text, data, syms)},
+		{"arm64", elf.StaticExecutableDataWXSyms(text, data, syms)},
+	} {
+		f, err := goelf.NewFile(bytes.NewReader(tc.bin))
+		if err != nil {
+			t.Fatalf("%s: not a parseable ELF: %v", tc.arch, err)
+		}
+		d, err := f.DWARF()
+		if err != nil {
+			t.Fatalf("%s: DWARF(): %v", tc.arch, err)
+		}
+		r := d.Reader()
+		var sawCU bool
+		subs := map[string][2]uint64{}
+		for {
+			e, err := r.Next()
+			if err != nil {
+				t.Fatalf("%s: DWARF reader: %v", tc.arch, err)
+			}
+			if e == nil {
+				break
+			}
+			switch e.Tag {
+			case dwarf.TagCompileUnit:
+				sawCU = true
+				lo, _ := e.Val(dwarf.AttrLowpc).(uint64)
+				hi, _ := e.Val(dwarf.AttrHighpc).(uint64)
+				if lo != base || hi != base+uint64(len(text)) {
+					t.Errorf("%s: CU pc range = [%#x,%#x), want [%#x,%#x)", tc.arch, lo, hi, base, base+uint64(len(text)))
+				}
+			case dwarf.TagSubprogram:
+				name, _ := e.Val(dwarf.AttrName).(string)
+				lo, _ := e.Val(dwarf.AttrLowpc).(uint64)
+				hi, _ := e.Val(dwarf.AttrHighpc).(uint64)
+				subs[name] = [2]uint64{lo, hi}
+			}
+		}
+		if !sawCU {
+			t.Errorf("%s: no compile-unit DIE", tc.arch)
+		}
+		want := map[string][2]uint64{
+			"main":   {base, base + 6},
+			"helper": {base + 6, base + 8},
+		}
+		for n, w := range want {
+			got, ok := subs[n]
+			if !ok {
+				t.Errorf("%s: missing subprogram DIE %q", tc.arch, n)
+				continue
+			}
+			if got != w {
+				t.Errorf("%s: subprogram %q pc = [%#x,%#x), want [%#x,%#x)", tc.arch, n, got[0], got[1], w[0], w[1])
+			}
 		}
 	}
 }
