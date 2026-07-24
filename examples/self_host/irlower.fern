@@ -905,6 +905,16 @@ pub function expr_tuple_elem_tag(e: parser.Expr, n: i32, s: LowerState): string 
             }
             return "";
         },
+        parser.ExprCall(tc) => {
+            // typed-IR (#5531): a tuple-returning call carries its full
+            // "(t0, t1, …)" tag on c.ty (the checker resolved any generic
+            // element to a concrete type), so read element n directly. Without
+            // it a `f().N` tuple-element read whose element is a struct / nested
+            // tuple had no tag here, so `f().N.field` bailed the function to the
+            // AST emitter. Unannotated (asm_ir_run / native) leaves c.ty "" →
+            // tuple_type_elem_tag("", n) is "" → unchanged (AST fallback).
+            return tuple_type_elem_tag(tc.ty, n);
+        },
         _ => { return ""; }
     }
     return "";
