@@ -1099,7 +1099,7 @@ func TestStaticExecutableDataWXSymsRows(t *testing.T) {
 		{Addr: base + 8, Line: 8},
 		{Addr: base + 16, Line: 9},
 	}
-	bin := elf.StaticExecutableDataX86WXSymsRows(text, data, syms, rows, "prog.fern", "/tmp", base+uint64(len(text)))
+	bin := elf.StaticExecutableDataX86WXSymsRows(text, data, syms, rows, "prog.fern", "/tmp", base+uint64(len(text)), nil)
 
 	f, err := goelf.NewFile(bytes.NewReader(bin))
 	if err != nil {
@@ -1130,6 +1130,98 @@ func TestStaticExecutableDataWXSymsRows(t *testing.T) {
 	for _, r := range rows {
 		if got[r.Addr] != r.Line {
 			t.Errorf("addr %#x: line = %d, want %d (all rows: %v)", r.Addr, got[r.Addr], r.Line, got)
+		}
+	}
+}
+
+// TestDebugInfoLocalVars checks the -g DWARF variable DIEs (#5537 slice 3
+// locals/params): a subprogram carries formal_parameter / variable child DIEs
+// with a name, a DW_AT_type resolving to the right base type, and a
+// frame-relative DW_AT_location — the information gdb/lldb use for `info args`
+// / `info locals` / `print <var>`.
+func TestDebugInfoLocalVars(t *testing.T) {
+	text := make([]byte, 16)
+	base := uint64(elf.TextVAddrWX)
+	syms := []elf.Sym{{Name: "add", Value: base, Size: 16}}
+	funcVars := map[string][]elf.LocalVar{
+		"add": {
+			{Name: "a", TypeKey: "i32", Offset: -8, IsParam: true},
+			{Name: "b", TypeKey: "i32", Offset: -16, IsParam: true},
+			{Name: "sum", TypeKey: "i32", Offset: -24, IsParam: false},
+		},
+	}
+	bin := elf.StaticExecutableDataX86WXSymsRows(text, nil, syms, nil, "prog.fern", "/tmp", base+16, funcVars)
+
+	f, err := goelf.NewFile(bytes.NewReader(bin))
+	if err != nil {
+		t.Fatalf("not a parseable ELF: %v", err)
+	}
+	d, err := f.DWARF()
+	if err != nil {
+		t.Fatalf("DWARF(): %v", err)
+	}
+	r := d.Reader()
+	// Walk to the `add` subprogram, then read its children.
+	var kids []*dwarf.Entry
+	for {
+		e, err := r.Next()
+		if err != nil {
+			t.Fatalf("reader: %v", err)
+		}
+		if e == nil {
+			break
+		}
+		if e.Tag == dwarf.TagSubprogram {
+			if name, _ := e.Val(dwarf.AttrName).(string); name != "add" {
+				continue
+			}
+			for {
+				c, err := r.Next()
+				if err != nil {
+					t.Fatalf("reader: %v", err)
+				}
+				if c == nil || c.Tag == 0 { // null entry ends the children
+					break
+				}
+				kids = append(kids, c)
+			}
+			break
+		}
+	}
+	if len(kids) != 3 {
+		t.Fatalf("add: got %d child DIEs, want 3 (a, b, sum): %v", len(kids), kids)
+	}
+	wantParam := map[string]bool{"a": true, "b": true, "sum": false}
+	for _, k := range kids {
+		name, _ := k.Val(dwarf.AttrName).(string)
+		isParam, ok := wantParam[name]
+		if !ok {
+			t.Errorf("unexpected variable DIE %q", name)
+			continue
+		}
+		wantTag := dwarf.TagVariable
+		if isParam {
+			wantTag = dwarf.TagFormalParameter
+		}
+		if k.Tag != wantTag {
+			t.Errorf("%s: tag = %v, want %v", name, k.Tag, wantTag)
+		}
+		// DW_AT_type resolves to an i32 base type.
+		toff, ok := k.Val(dwarf.AttrType).(dwarf.Offset)
+		if !ok {
+			t.Errorf("%s: no DW_AT_type", name)
+			continue
+		}
+		typ, err := d.Type(toff)
+		if err != nil {
+			t.Errorf("%s: resolve type: %v", name, err)
+			continue
+		}
+		if typ.String() != "i32" || typ.Size() != 4 {
+			t.Errorf("%s: type = %q size %d, want i32/4", name, typ.String(), typ.Size())
+		}
+		if _, ok := k.Val(dwarf.AttrLocation).([]byte); !ok {
+			t.Errorf("%s: no DW_AT_location exprloc", name)
 		}
 	}
 }
