@@ -8013,7 +8013,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mget.ok) { return mget; }
                             mget = lower_expr(c.args[0], mget);
                             if (!mget.ok) { return mget; }
-                            return mget.emit(ir.op_map_get(mkk2, meqfn, map_value_wide(map_value_of(mtype))));
+                            return mget.emit(ir.op_map_get(mkk2, meqfn, map_value_widekind(map_value_of(mtype))));
                         }
                         if (fa.field == "has" && c.args.len() == 1) {
                             var mhas: LowerState = lower_expr(fa.obj, s);

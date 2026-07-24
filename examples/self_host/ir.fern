@@ -772,13 +772,15 @@ pub function op_sleep_ms(): Op { return op0("sleep_ms"); }
 // hit, None on a miss) — the SAME layout as opt_make, so it plugs into the
 // built-in Option match. `map_has` pops [map, key] → i32 0/1. Both carry the key
 // kind in i32_imm.
-// `valwide` (i64_imm 1) marks a map whose VALUE column is 8-byte (i64/u64/f64).
-// The wasm IR path defers such a `.get()` (its Option payload would truncate the
-// 8-byte value through the i32-celled runtime) — see wasm_ir_deferrals_ok; the
-// register backends ignore it. #5253.
-pub function op_map_get(keykind: i32, eqfn: string, valwide: boolean): Op {
+// `widekind` (i64_imm) marks a map whose VALUE column is 8-byte — the twin of
+// op_map_set's: 0 narrow, 1 i64/u64, 2 f64. On wasm, widekind 1 boxes the
+// dereferenced 8-byte cell into a 16-byte Option[i64] via $__fern_map_get_w64;
+// widekind 2 (f64) stays deferred (wasm_ir_deferrals_ok). The register backends
+// ignore it. #5253.
+pub function op_map_get(keykind: i32, eqfn: string, widekind: i32): Op {
     var vw: i64 = 0;
-    if (valwide) { vw = 1; }
+    if (widekind == 1) { vw = 1; }
+    if (widekind == 2) { vw = 2; }
     return Op { kind_tag: 127, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn };
 }
 pub function op_map_has(keykind: i32, eqfn: string): Op { return Op { kind_tag: 128, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }

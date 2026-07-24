@@ -8636,9 +8636,9 @@ function arr_push_wide(vty: string, sop: string): string {
 // column as an rc-managed value (vis=1, so $__fern_map_release frees the cell like
 // a string value; vconsume=1, so the map takes the fresh cell's sole ref). Reads
 // dereference the cell: $__fern_map_get_or_w64 for a single value,
-// $__fern_map_values_w64 for the whole column (into a fresh i64[]). Depends on
-// $__fern_map_set / $__fern_map_find / $__fern_str_box / $__fern_arr_box
-// (map_helpers + heap, always co-present when a module uses maps).
+// $__fern_map_get_w64 for an Option[i64], $__fern_map_values_w64 for the whole
+// column (into a fresh i64[]). Depends on $__fern_map_set / $__fern_map_find /
+// $__fern_str_box / $__fern_arr_box (map_helpers + heap, co-present with maps).
 pub function map_w64_helpers(): string {
     var o: string = "";
     // $__fern_map_set_w64(box, k, v, kcons) → box: box v into an 8-byte cell and
@@ -8655,6 +8655,21 @@ pub function map_w64_helpers(): string {
     o = o + "    (local.set $idx (call $__fern_map_find (local.get $box) (local.get $k)))\n";
     o = o + "    (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (local.get $d))))\n";
     o = o + "    (i64.load (i32.load (i32.add (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.mul (local.get $idx) (i32.const 4))))))\n";
+    // $__fern_map_get_or_w64's Option sibling: $__fern_map_get_w64(box, k) → a
+    // 16-byte Option[i64] box [tag@0][payload@8] (Some=0, None=1) — the same shape
+    // opt_make/opt_payload use for an 8-byte payload — dereferencing the cell into
+    // payload@8 on a hit.
+    o = o + "  (func $__fern_map_get_w64 (param $box i32) (param $k i32) (result i32)\n";
+    o = o + "    (local $idx i32) (local $bx i32)\n";
+    o = o + "    (local.set $idx (call $__fern_map_find (local.get $box) (local.get $k)))\n";
+    o = o + "    (local.set $bx (call $__fern_str_box (i32.const 16)))\n";
+    o = o + "    (if (i32.lt_s (local.get $idx) (i32.const 0)) (then\n";
+    o = o + "      (i32.store (local.get $bx) (i32.const 1))\n";
+    o = o + "      (i64.store (i32.add (local.get $bx) (i32.const 8)) (i64.const 0))\n";
+    o = o + "      (return (local.get $bx))))\n";
+    o = o + "    (i32.store (local.get $bx) (i32.const 0))\n";
+    o = o + "    (i64.store (i32.add (local.get $bx) (i32.const 8)) (i64.load (i32.load (i32.add (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.mul (local.get $idx) (i32.const 4))))))\n";
+    o = o + "    (local.get $bx))\n";
     // $__fern_map_values_w64(box) → a fresh i64[] of the live values in probe
     // order: snapshot the value column (cell pointers) and dereference each cell
     // into an 8-byte element ([len@0][cap@4][elems@8], 8-byte stride).
