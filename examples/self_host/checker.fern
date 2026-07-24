@@ -9051,6 +9051,25 @@ function type_to_irtag(t: Type): string {
             }
             return "";
         },
+        // A tuple-valued call: the canonical "(t0, t1, …)" tag irlower's
+        // tuple_type_elem_tag / expr_tuple_elem_tag parse (via parse_type_ref),
+        // so a `f().N` tuple-element read resolves element N's type instead of
+        // bailing to the AST path. Every element must serialise to a scalar /
+        // string / struct / nested-composite tag; any unserialisable element
+        // (or a degenerate <2-element tuple) yields "" → structural fallback.
+        TypeTuple(tp) => {
+            if (tp.elements.len() < 2) { return ""; }
+            var out: string = "(";
+            var i: i32 = 0;
+            while (i < tp.elements.len()) {
+                var et2: string = type_to_irtag(tp.elements[i]);
+                if (et2 == "") { return ""; }
+                if (i > 0) { out = out + ", "; }
+                out = out + et2;
+                i = i + 1;
+            }
+            return out + ")";
+        },
         _ => { return ""; }
     }
     return "";
