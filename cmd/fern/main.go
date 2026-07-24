@@ -1510,6 +1510,21 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			exportNames = strings.Split(export, ",")
 		}
 	}
+	// Under -g, map each entry-module function to its source line for the
+	// DWARF .debug_line table (#5537 slice 2). Only bare-named entry decls
+	// are included: imported/stdlib decls (`mod__name`) and runtime helpers
+	// (`__fern_*`) live in other files, so their lines wouldn't map to srcFile.
+	var declLines map[string]int
+	if emitDebugSyms {
+		declLines = make(map[string]int, len(prog.Funcs))
+		for _, fn := range prog.Funcs {
+			if fn.P.Line > 0 && !strings.Contains(fn.Name, "__") {
+				declLines[fn.Name] = fn.P.Line
+			}
+		}
+	}
+	srcFileBase := filepath.Base(srcPath)
+
 	var asm string
 	switch target {
 	case "x86-64":
@@ -1585,7 +1600,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			return 1, err
 		}
 	case useNative && target == "x86-64":
-		if err := linkNativeX86(asm, binPath); err != nil {
+		if err := linkNativeX86(asm, binPath, declLines, srcFileBase); err != nil {
 			return 1, err
 		}
 	case useNative:
@@ -1908,14 +1923,22 @@ func sharedExports(names []string, vaddr map[string]uint64) []nativeelf.Export {
 // links x86-64 assembly into a static ELF executable entirely in-process
 // via the pure-Go internal/native/x86_64 backend, using the same W^X
 // two-segment layout (R+X code, R+W data).
-func linkNativeX86(asm, outPath string) error {
+func linkNativeX86(asm, outPath string, declLines map[string]int, srcFile string) error {
 	if emitDebugSyms {
 		text, rodata, syms, err := nativex86.AssembleProgramWXSyms(asm, nativeelf.TextVAddrWX)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
 		fs := nativeelf.FuncSyms(syms, nativeelf.TextVAddrWX+uint64(len(text)))
-		bin := nativeelf.StaticExecutableDataX86WXSyms(text, rodata, fs)
+		// DWARF .debug_line: one row per entry-module function (address →
+		// declaration line). fs is already sorted by address, so are the rows.
+		var funcLines []nativeelf.FuncLine
+		for _, s := range fs {
+			if line, ok := declLines[s.Name]; ok && s.Size > 0 {
+				funcLines = append(funcLines, nativeelf.FuncLine{Lo: s.Value, Hi: s.Value + s.Size, Line: line})
+			}
+		}
+		bin := nativeelf.StaticExecutableDataX86WXSymsLines(text, rodata, fs, funcLines, srcFile)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}

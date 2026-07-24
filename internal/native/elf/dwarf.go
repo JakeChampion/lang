@@ -22,18 +22,94 @@ const (
 	dwChildrenNo  = 0
 
 	dwAtName     = 0x03
+	dwAtStmtList = 0x10
 	dwAtLowPC    = 0x11
 	dwAtHighPC   = 0x12
 	dwAtLanguage = 0x13
 	dwAtCompDir  = 0x1b
 	dwAtProducer = 0x25
 
-	dwFormAddr   = 0x01
-	dwFormData2  = 0x05
-	dwFormString = 0x08
+	dwFormAddr      = 0x01
+	dwFormData2     = 0x05
+	dwFormString    = 0x08
+	dwFormSecOffset = 0x17
 
 	dwLangC99 = 0x000c // generic C-like; no DWARF language code exists for Fern
 )
+
+// FuncLine maps one function's PC range to its source line for the
+// .debug_line table. Function-granularity (#5537 slice 2 first cut): every
+// address in [Lo, Hi) resolves to Line — enough for gdb/lldb backtrace frames
+// to show `func at file:line`. Per-statement rows are a follow-up feeding the
+// same encoder finer entries.
+type FuncLine struct {
+	Lo, Hi uint64
+	Line   int
+}
+
+// appendSLEB appends v as signed LEB128.
+func appendSLEB(b []byte, v int64) []byte {
+	for {
+		c := byte(v & 0x7f)
+		v >>= 7
+		if (v == 0 && c&0x40 == 0) || (v == -1 && c&0x40 != 0) {
+			return append(b, c)
+		}
+		b = append(b, c|0x80)
+	}
+}
+
+// buildDebugLine encodes a DWARF v4 .debug_line section: one self-contained
+// line-number-program sequence per function (set_address → advance to its
+// line → copy → advance to its end → end_sequence). srcFile names file 1.
+func buildDebugLine(funcs []FuncLine, srcFile string) []byte {
+	// Program: one sequence per function. After DW_LNE_end_sequence the row
+	// state resets (address 0, line 1), so each function stands alone.
+	var prog []byte
+	for _, f := range funcs {
+		prog = append(prog, 0x00, 9, 0x02) // ext: DW_LNE_set_address
+		prog = le64(prog, f.Lo)
+		if f.Line != 1 {
+			prog = append(prog, 0x03)                    // DW_LNS_advance_line
+			prog = appendSLEB(prog, int64(f.Line)-1)     // from default line 1
+		}
+		prog = append(prog, 0x01) // DW_LNS_copy (emit the row)
+		if f.Hi > f.Lo {
+			prog = append(prog, 0x02) // DW_LNS_advance_pc
+			prog = appendULEB(prog, f.Hi-f.Lo)
+		}
+		prog = append(prog, 0x00, 1, 0x01) // ext: DW_LNE_end_sequence
+	}
+
+	// Line-program header.
+	var hdr []byte
+	hdr = append(hdr, 1)              // minimum_instruction_length
+	hdr = append(hdr, 1)              // maximum_operations_per_instruction (v4)
+	hdr = append(hdr, 1)  // default_is_stmt
+	lineBase := int8(-5)
+	hdr = append(hdr, byte(lineBase)) // line_base (0xFB)
+	hdr = append(hdr, 14)             // line_range
+	hdr = append(hdr, 13)             // opcode_base
+	// standard_opcode_lengths for opcodes 1..12.
+	hdr = append(hdr, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1)
+	hdr = append(hdr, 0) // include_directories: none (terminator)
+	// file_names: one entry {name, dir=0, mtime=0, size=0}, then terminator.
+	hdr = append(hdr, srcFile...)
+	hdr = append(hdr, 0)
+	hdr = appendULEB(hdr, 0) // dir index
+	hdr = appendULEB(hdr, 0) // mtime
+	hdr = appendULEB(hdr, 0) // size
+	hdr = append(hdr, 0)     // end of file_names
+
+	var body []byte
+	body = le16(body, 4)                // version
+	body = le32(body, uint32(len(hdr))) // header_length (to start of program)
+	body = append(body, hdr...)
+	body = append(body, prog...)
+
+	out := le32(nil, uint32(len(body))) // unit_length
+	return append(out, body...)
+}
 
 // appendULEB appends v as unsigned LEB128.
 func appendULEB(b []byte, v uint64) []byte {
@@ -51,8 +127,9 @@ func appendULEB(b []byte, v uint64) []byte {
 }
 
 // buildDebugAbbrev is the fixed abbreviation table: abbrev 1 = compile_unit
-// (with children), abbrev 2 = subprogram (no children).
-func buildDebugAbbrev() []byte {
+// (with children), abbrev 2 = subprogram (no children). When hasLines, the CU
+// carries DW_AT_stmt_list pointing at the .debug_line table.
+func buildDebugAbbrev(hasLines bool) []byte {
 	var b []byte
 	attr := func(at, form uint64) {
 		b = appendULEB(b, at)
@@ -68,6 +145,9 @@ func buildDebugAbbrev() []byte {
 	attr(dwAtCompDir, dwFormString)
 	attr(dwAtLowPC, dwFormAddr)
 	attr(dwAtHighPC, dwFormAddr)
+	if hasLines {
+		attr(dwAtStmtList, dwFormSecOffset)
+	}
 	attr(0, 0) // end of attribute list
 
 	// abbrev 2: DW_TAG_subprogram, no children
@@ -84,8 +164,9 @@ func buildDebugAbbrev() []byte {
 }
 
 // buildDebugInfo encodes the .debug_info compilation unit: the CU DIE spanning
-// [textLo, textHi) followed by one subprogram DIE per symbol.
-func buildDebugInfo(syms []Sym, textLo, textHi uint64, name string) []byte {
+// [textLo, textHi) followed by one subprogram DIE per symbol. When hasLines,
+// the CU adds DW_AT_stmt_list (offset 0 into .debug_line).
+func buildDebugInfo(syms []Sym, textLo, textHi uint64, name string, hasLines bool) []byte {
 	cstr := func(b []byte, s string) []byte {
 		b = append(b, s...)
 		return append(b, 0)
@@ -100,6 +181,9 @@ func buildDebugInfo(syms []Sym, textLo, textHi uint64, name string) []byte {
 	die = cstr(die, "")         // DW_AT_comp_dir
 	die = le64(die, textLo)     // DW_AT_low_pc
 	die = le64(die, textHi)     // DW_AT_high_pc
+	if hasLines {
+		die = le32(die, 0) // DW_AT_stmt_list → .debug_line offset 0
+	}
 	// Subprogram DIEs (abbrev 2), children of the CU.
 	for _, s := range syms {
 		die = appendULEB(die, 2)

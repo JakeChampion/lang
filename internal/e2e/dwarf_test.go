@@ -95,6 +95,101 @@ function main(): i32 { return helper(21); }
 	}
 }
 
+// TestDWARFLineTable is the end-to-end guard for the -g .debug_line source-
+// line table (#5537 slice 2): a real `fern -g` build maps each function's
+// address range to its declaration line, decodable through Go's debug/dwarf
+// LineReader — the information gdb/lldb and addr2line use to turn a backtrace
+// address into `file:line`. The default build has no line table.
+func TestDWARFLineTable(t *testing.T) {
+	// helper on line 1, main on line 4.
+	src := "function helper(x: i32): i32 {\n    return x * 2;\n}\nfunction main(): i32 {\n    return helper(21);\n}\n"
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	out := filepath.Join(dir, "g.bin")
+	if o, err := exec.Command(bin, "-g", "-target", "x86-64", "-o", out, p).CombinedOutput(); err != nil {
+		t.Fatalf("-g build: %v\n%s", err, o)
+	}
+	f, err := goelf.Open(out)
+	if err != nil {
+		t.Fatalf("open ELF: %v", err)
+	}
+	defer f.Close()
+	d, err := f.DWARF()
+	if err != nil {
+		t.Fatalf("DWARF(): %v", err)
+	}
+
+	// Collect subprogram low_pc per function, then the line at that address.
+	r := d.Reader()
+	cu, err := r.Next()
+	if err != nil || cu == nil {
+		t.Fatalf("no CU: %v", err)
+	}
+	lowpc := map[string]uint64{}
+	for {
+		e, err := r.Next()
+		if err != nil {
+			t.Fatalf("reader: %v", err)
+		}
+		if e == nil {
+			break
+		}
+		if e.Tag == dwarf.TagSubprogram {
+			name, _ := e.Val(dwarf.AttrName).(string)
+			lo, _ := e.Val(dwarf.AttrLowpc).(uint64)
+			lowpc[name] = lo
+		}
+	}
+
+	lr, err := d.LineReader(cu)
+	if err != nil {
+		t.Fatalf("LineReader (expected .debug_line under -g): %v", err)
+	}
+	lineAt := map[uint64]int{}
+	var le dwarf.LineEntry
+	for {
+		if err := lr.Next(&le); err != nil {
+			break
+		}
+		if !le.EndSequence {
+			lineAt[le.Address] = le.Line
+		}
+	}
+	for name, wantLine := range map[string]int{"helper": 1, "main": 4} {
+		lo, ok := lowpc[name]
+		if !ok {
+			t.Errorf("no subprogram %q", name)
+			continue
+		}
+		if lineAt[lo] != wantLine {
+			t.Errorf("%s entry %#x maps to line %d, want %d (rows: %v)", name, lo, lineAt[lo], wantLine, lineAt)
+		}
+	}
+
+	// Default build: no line table.
+	plain := filepath.Join(dir, "plain.bin")
+	if o, err := exec.Command(bin, "-target", "x86-64", "-o", plain, p).CombinedOutput(); err != nil {
+		t.Fatalf("plain build: %v\n%s", err, o)
+	}
+	if pf, err := goelf.Open(plain); err == nil {
+		if pd, derr := pf.DWARF(); derr == nil {
+			if pr := pd.Reader(); pr != nil {
+				if pcu, _ := pr.Next(); pcu != nil {
+					if _, lerr := pd.LineReader(pcu); lerr == nil {
+						t.Errorf("default build has a .debug_line table; -g should be required")
+					}
+				}
+			}
+		}
+		pf.Close()
+	}
+}
+
 func keys(m map[string][2]uint64) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
