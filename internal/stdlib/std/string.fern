@@ -2612,15 +2612,142 @@ pub function (s: string) parse_int_radix(base: i32): Option[i32] {
     return int.parse_int_radix(s, base);
 }
 
+// --- correctly-rounded decimal → f64 (#5566) ------------------------
+// A minimal base-2^32 big-integer, self-contained here: std/string can
+// NOT import std/float (float → std/i32 → std/string would cycle), so
+// the formatter's bignum in std/float.fern is mirrored rather than
+// shared. Extracting a common std/i64 bignum module is a possible
+// future de-dup, out of scope for this fix.
+function __bn_mul_small(a: i64[], k: i64): i64[] {
+    var n: i32 = a.len(); var out: i64[] = []; var carry: i64 = 0; var i: i32 = 0;
+    while (i < n) { var prod: i64 = a[i] * k + carry; out = out.append(prod & 4294967295); carry = prod >> 32; i = i + 1; }
+    while (carry > 0) { out = out.append(carry & 4294967295); carry = carry >> 32; }
+    return out;
+}
+function __bn_add_small(a: i64[], k: i64): i64[] {
+    var n: i32 = a.len(); var out: i64[] = []; var carry: i64 = k; var i: i32 = 0;
+    while (i < n) { var cur: i64 = a[i] + carry; out = out.append(cur & 4294967295); carry = cur >> 32; i = i + 1; }
+    while (carry > 0) { out = out.append(carry & 4294967295); carry = carry >> 32; }
+    return out;
+}
+function __bn_len(a: i64[]): i32 { var n: i32 = a.len(); while (n > 1 && a[n - 1] == 0) { n = n - 1; } return n; }
+function __bn_from_i64(v: i64): i64[] { var a: i64[] = []; a = a.append(v & 4294967295); a = a.append((v >> 32) & 4294967295); return a; }
+function __bn_cmp(a: i64[], b: i64[]): i32 {
+    var la: i32 = __bn_len(a); var lb: i32 = __bn_len(b);
+    if (la < lb) { return 0 - 1; }
+    if (la > lb) { return 1; }
+    var i: i32 = la - 1;
+    while (i >= 0) { if (a[i] < b[i]) { return 0 - 1; } if (a[i] > b[i]) { return 1; } i = i - 1; }
+    return 0;
+}
+function __bn_from_digits(s: string): i64[] {
+    var a: i64[] = __bn_from_i64(0); var i: i32 = 0;
+    while (i < s.len()) { a = __bn_mul_small(a, 10); a = __bn_add_small(a, (s[i] as i64) - 48); i = i + 1; }
+    return a;
+}
+// compare  Ldig * 10^p  vs  V * 2^b  → -1 / 0 / 1 (cross-multiply, no
+// fractions). Ldig is a bignum; V fits an i64.
+function __cmp_big(Ldig: i64[], p: i32, V: i64, b: i32): i32 {
+    var L: i64[] = Ldig; var R: i64[] = __bn_from_i64(V); var x: i32 = 0;
+    if (p > 0) { x = 0; while (x < p) { L = __bn_mul_small(L, 10); x = x + 1; } }
+    if (p < 0) { x = 0; var pp: i32 = 0 - p; while (x < pp) { R = __bn_mul_small(R, 10); x = x + 1; } }
+    if (b > 0) { x = 0; while (x < b) { R = __bn_mul_small(R, 2); x = x + 1; } }
+    if (b < 0) { x = 0; var bb: i32 = 0 - b; while (x < bb) { L = __bn_mul_small(L, 2); x = x + 1; } }
+    return __bn_cmp(L, R);
+}
+// IEEE-754 f64 = sig * 2^bexp, sig in [2^52, 2^53) for normals (or the
+// raw fraction for subnormals). These decode the fields of a bit pattern.
+function __f64_sig(bits: i64): i64 {
+    var e11: i64 = (bits >> 52) & 2047; var frac: i64 = bits & 4503599627370495;
+    if (e11 == 0) { return frac; }
+    return frac | 4503599627370496;
+}
+function __f64_bexp(bits: i64): i32 {
+    var e11: i64 = (bits >> 52) & 2047;
+    if (e11 == 0) { return 0 - 1074; }
+    return (e11 - 1075) as i32;
+}
+// `(dig as integer) * 10^k` → the positive f64 NEAREST that value,
+// round-half-to-even. `dig` carries only significant digits (no sign /
+// point / leading / trailing zeros); "" is 0. A cheap f64 estimate seeds
+// the answer, then exact bignum comparison against the two neighbouring
+// ULP midpoints steps to — and pins the tie at — the correctly-rounded
+// bit pattern. Neighbours come from ±1 on the bit pattern, so the ULP-
+// spacing changes at powers of two and the subnormal boundary are handled
+// automatically (IEEE bit patterns are monotone in magnitude).
+function __decimal_to_f64(dig: string, k: i32): f64 {
+    var dl: i32 = dig.len();
+    if (dl == 0) { return 0.0; }
+    var mag: i32 = dl + k;                  // ~ floor(log10(value)) + 1
+    if (mag > 310) { return 1.0 / 0.0; }    // clearly overflows → +Inf
+    if (mag < 0 - 330) { return 0.0; }      // clearly underflows → 0
+    // Seed: m0 = first <=15 digits (exact, < 2^53); Clinger's exact path
+    // (single mul/div by an exact 10^e) when |e0| <= 22, else a drifting
+    // estimate the refinement below corrects.
+    var take: i32 = dl; if (take > 15) { take = 15; }
+    var m0: i64 = 0; var di: i32 = 0;
+    while (di < take) { m0 = m0 * 10 + ((dig[di] as i64) - 48); di = di + 1; }
+    var e0: i32 = k + (dl - take);
+    var v: f64 = 0.0;
+    if (e0 >= 0 && e0 <= 22) {
+        var p: f64 = 1.0; var t: i32 = 0; while (t < e0) { p = p * 10.0; t = t + 1; }
+        v = (m0 as f64) * p;
+    } else if (e0 < 0 && e0 >= 0 - 22) {
+        var p2: f64 = 1.0; var t2: i32 = 0; var ne: i32 = 0 - e0; while (t2 < ne) { p2 = p2 * 10.0; t2 = t2 + 1; }
+        v = (m0 as f64) / p2;
+    } else {
+        v = m0 as f64; var ee: i32 = e0;
+        while (ee > 0) { v = v * 10.0; ee = ee - 1; }
+        while (ee < 0) { v = v / 10.0; ee = ee + 1; }
+    }
+    var INF: i64 = 9218868437227405312;     // 0x7FF0000000000000
+    var bits: i64 = f64_bits(v);
+    if (bits < 1) { bits = 1; }             // estimate underflowed → smallest subnormal
+    if (bits >= INF) { bits = INF - 1; }    // estimate overflowed → max finite
+    // Ld = 2 * mantissa: the midpoint tests compare 2*value against the
+    // (integer) sum of two adjacent f64s.
+    var Ld: i64[] = __bn_mul_small(__bn_from_digits(dig), 2);
+    var guard: i32 = 0;
+    while (guard < 4000) {
+        guard = guard + 1;
+        var s: i64 = __f64_sig(bits); var e: i32 = __f64_bexp(bits);
+        var up: i64 = bits + 1;
+        var su: i64 = __f64_sig(up); var eu: i32 = __f64_bexp(up);
+        var emin: i32 = e; if (eu < emin) { emin = eu; }
+        var msum_up: i64 = (s << (e - emin)) + (su << (eu - emin));
+        var cu: i32 = __cmp_big(Ld, k, msum_up, emin);   // sign of (2*value - (v + v_up))
+        if (cu > 0) {
+            if (up >= INF) { return f64_from_bits(INF); }   // rounds up past max finite → +Inf
+            bits = up;
+        } else if (bits == 0) {
+            return f64_from_bits(bits);
+        } else {
+            var dn: i64 = bits - 1;
+            var sd: i64 = __f64_sig(dn); var ed: i32 = __f64_bexp(dn);
+            var emin2: i32 = e; if (ed < emin2) { emin2 = ed; }
+            var msum_dn: i64 = (s << (e - emin2)) + (sd << (ed - emin2));
+            var cd: i32 = __cmp_big(Ld, k, msum_dn, emin2);
+            if (cd < 0) {
+                bits = dn;
+            } else {
+                // mid_dn <= value <= mid_up: `bits` is nearest. Exact ties
+                // (value on a midpoint) round to the even significand.
+                if (cu == 0 && (s & 1) == 1) { bits = up; }
+                else if (cd == 0 && (s & 1) == 1) { bits = dn; }
+                return f64_from_bits(bits);
+            }
+        }
+    }
+    return f64_from_bits(bits);
+}
+
 // `s.parse_float()` — decimal f64 parser (f64 is the language's
 // primary float, #5363). Grammar:
 //   [-]<digits>[.<digits>][(e|E)[+-]?<digits>]
-// At least one of integer or fraction digits required;
-// trailing garbage rejected. Mantissa accumulates into an
-// i64 with a saturation cap at 1e15; beyond that, extra
-// digits are skipped while `exp_adj` keeps the magnitude
-// right. Final value = `(f64) mantissa * 10^exp_adj`,
-// sign applied via `0.0 - v`.
+// At least one of integer or fraction digits required; trailing
+// garbage rejected. The significant digits and base-10 exponent are
+// handed to __decimal_to_f64, which returns the correctly-rounded
+// (round-half-to-even) nearest f64 — bit-exact with strconv (#5566).
 pub function (s: string) parse_float(): Option[f64] {
     var n: i32 = s.len();
     if (n == 0) { return None; }
@@ -2633,40 +2760,32 @@ pub function (s: string) parse_float(): Option[f64] {
         i = 1;
     }
 
-    var mantissa: i64 = 0;
-    var exp_adj: i32 = 0;
+    // Collect every integer + fraction digit into one buffer; the base-10
+    // exponent tracks the decimal point and the literal exponent.
+    var db: u8[] = [];
+    var fraclen: i32 = 0;
     var saw_int: boolean = false;
     var saw_frac: boolean = false;
-    // Single `b` reused across the integer / fraction /
-    // exponent inner loops — declaring the same name in
-    // multiple inner scopes triggers a duplicate-local
-    // collision in the wasm emitter (which names locals by
-    // their lang identifier).
+    // Single `b` reused across the integer / fraction / exponent inner
+    // loops — declaring the same name in multiple inner scopes triggers a
+    // duplicate-local collision in the wasm emitter.
     var b: i32 = 0;
 
-    // Integer digits.
     while (i < n) {
         b = s[i];
         if (b < 48 || b > 57) { break; }
-        if (mantissa < 1000000000000000) {
-            mantissa = mantissa * 10 + ((b - 48) as i64);
-        } else {
-            exp_adj = exp_adj + 1;
-        }
+        db = db.append(b as u8);
         saw_int = true;
         i = i + 1;
     }
 
-    // Fraction part: `.` followed by digits.
     if (i < n && s[i] == 46) {              // '.'
         i = i + 1;
         while (i < n) {
             b = s[i];
             if (b < 48 || b > 57) { break; }
-            if (mantissa < 1000000000000000) {
-                mantissa = mantissa * 10 + ((b - 48) as i64);
-                exp_adj = exp_adj - 1;
-            }
+            db = db.append(b as u8);
+            fraclen = fraclen + 1;
             saw_frac = true;
             i = i + 1;
         }
@@ -2674,7 +2793,7 @@ pub function (s: string) parse_float(): Option[f64] {
 
     if (!saw_int && !saw_frac) { return None; }
 
-    // Exponent part.
+    var eexp: i32 = 0;
     if (i < n && (s[i] == 101 || s[i] == 69)) {  // 'e' / 'E'
         i = i + 1;
         var exp_neg: boolean = false;
@@ -2685,21 +2804,35 @@ pub function (s: string) parse_float(): Option[f64] {
         while (i < n) {
             b = s[i];
             if (b < 48 || b > 57) { break; }
-            if (exp < 1000) { exp = exp * 10 + (b - 48); }
+            if (exp < 1000000) { exp = exp * 10 + (b - 48); }
             saw_exp = true;
             i = i + 1;
         }
         if (!saw_exp) { return None; }
-        if (exp_neg) { exp_adj = exp_adj - exp; }
-        else { exp_adj = exp_adj + exp; }
+        if (exp_neg) { eexp = 0 - exp; }
+        else { eexp = exp; }
     }
 
     if (i < n) { return None; }   // trailing garbage
 
-    // v = (f64) mantissa * 10^exp_adj
-    var v: f64 = mantissa as f64;
-    while (exp_adj > 0) { v = v * 10.0; exp_adj = exp_adj - 1; }
-    while (exp_adj < 0) { v = v / 10.0; exp_adj = exp_adj + 1; }
+    // value = (db as integer) * 10^(eexp - fraclen). Strip leading zeros
+    // (no value change) and trailing zeros (each bumps the exponent) so
+    // the bignum stays small and `dig` is canonical.
+    var m: i32 = db.len();
+    var lo: i32 = 0;
+    while (lo < m && db[lo] == 48) { lo = lo + 1; }
+    var hi: i32 = m - 1;
+    while (hi >= lo && db[hi] == 48) { hi = hi - 1; }
+    var k: i32 = eexp - fraclen + (m - 1 - hi);
+    var dig: string = "";
+    if (hi >= lo) {
+        var out: u8[] = [];
+        var j: i32 = lo;
+        while (j <= hi) { out = out.append(db[j]); j = j + 1; }
+        dig = string_from_bytes(out);
+    }
+
+    var v: f64 = __decimal_to_f64(dig, k);
     if (neg) { v = 0.0 - v; }
     return Some(v);
 }
