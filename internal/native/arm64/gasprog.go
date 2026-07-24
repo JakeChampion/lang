@@ -46,16 +46,16 @@ func AssembleProgramWX(src string, textVAddr uint64) (text, rodata []byte, err e
 // AssembleProgramWXSyms is AssembleProgramWX that also returns every .text
 // label resolved to its absolute virtual address — the function-symbol table
 // the ELF writer emits into .symtab under `-g`. Pass elf.TextVAddrWX.
-func AssembleProgramWXSyms(src string, textVAddr uint64) (text, rodata []byte, syms map[string]uint64, err error) {
+func AssembleProgramWXSyms(src string, textVAddr uint64) (text, rodata []byte, syms map[string]uint64, locRows []LineRow, err error) {
 	a, err := ParseProgram(src)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	text, rodata, err = a.BytesProgramWX(textVAddr)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	return text, rodata, a.TextLabelVAddrs(textVAddr), nil
+	return text, rodata, a.TextLabelVAddrs(textVAddr), a.locRows, nil
 }
 
 // AssembleProgramWXEntry is AssembleProgramWX that also resolves the byte
@@ -183,6 +183,19 @@ func handleProgDirective(a *Assembler, line string, sec int) (int, error) {
 		// .bss is zero-initialised data; we materialise it as zero
 		// bytes in the (writable) data region right alongside .rodata.
 		return secRodata, nil
+	case ".file":
+		// DWARF `.file` directive (-g); emits no bytes.
+		return sec, nil
+	case ".loc":
+		// DWARF `.loc <file> <line> [<col>]` line marker (-g). It emits no
+		// bytes, so len(a.insns)*4 is the byte offset of the next
+		// instruction — the address this source line begins at.
+		if sec == secText && len(fields) >= 3 {
+			if ln, err := strconv.Atoi(fields[2]); err == nil {
+				a.locRows = append(a.locRows, LineRow{Offset: len(a.insns) * 4, Line: ln})
+			}
+		}
+		return sec, nil
 	case ".section":
 		// e.g. ".section .rodata" / ".section .bss" / ".section .text" /
 		// ".section .note.GNU-stack,...". Mach-O variants name a segment

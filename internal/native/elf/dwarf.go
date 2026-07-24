@@ -37,16 +37,6 @@ const (
 	dwLangC99 = 0x000c // generic C-like; no DWARF language code exists for Fern
 )
 
-// FuncLine maps one function's PC range to its source line for the
-// .debug_line table. Function-granularity (#5537 slice 2 first cut): every
-// address in [Lo, Hi) resolves to Line — enough for gdb/lldb backtrace frames
-// to show `func at file:line`. Per-statement rows are a follow-up feeding the
-// same encoder finer entries.
-type FuncLine struct {
-	Lo, Hi uint64
-	Line   int
-}
-
 // appendSLEB appends v as signed LEB128.
 func appendSLEB(b []byte, v int64) []byte {
 	for {
@@ -100,34 +90,9 @@ func buildDebugLineRows(rows []LineRow, textLo, textHi uint64, srcFile string) [
 	return dwarfLineSection(prog, srcFile)
 }
 
-// buildDebugLine encodes a DWARF v4 .debug_line section: one self-contained
-// line-number-program sequence per function (set_address → advance to its
-// line → copy → advance to its end → end_sequence). srcFile names file 1.
-func buildDebugLine(funcs []FuncLine, srcFile string) []byte {
-	// Program: one sequence per function. After DW_LNE_end_sequence the row
-	// state resets (address 0, line 1), so each function stands alone.
-	var prog []byte
-	for _, f := range funcs {
-		prog = append(prog, 0x00, 9, 0x02) // ext: DW_LNE_set_address
-		prog = le64(prog, f.Lo)
-		if f.Line != 1 {
-			prog = append(prog, 0x03)                    // DW_LNS_advance_line
-			prog = appendSLEB(prog, int64(f.Line)-1)     // from default line 1
-		}
-		prog = append(prog, 0x01) // DW_LNS_copy (emit the row)
-		if f.Hi > f.Lo {
-			prog = append(prog, 0x02) // DW_LNS_advance_pc
-			prog = appendULEB(prog, f.Hi-f.Lo)
-		}
-		prog = append(prog, 0x00, 1, 0x01) // ext: DW_LNE_end_sequence
-	}
-	return dwarfLineSection(prog, srcFile)
-}
-
 // dwarfLineSection wraps a line-number program `prog` in the DWARF v4
 // .debug_line unit header (version, standard opcode lengths, a single source
-// file named srcFile). Shared by the function-granularity and per-statement
-// encoders.
+// file named srcFile).
 func dwarfLineSection(prog []byte, srcFile string) []byte {
 	var hdr []byte
 	hdr = append(hdr, 1) // minimum_instruction_length
