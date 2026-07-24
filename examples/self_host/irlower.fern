@@ -9049,6 +9049,18 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
 // map `.get()` (Option[V]), a local/param via its tracked Option/Result type, or
 // an Option/Result struct field. "" when it can't (lower_try then bails to AST).
 function try_opt_type(inner: parser.Expr, s: LowerState): string {
+    // typed-IR (#5531): an Option/Result-returning call carries its full
+    // "Option[T]" / "Result[T, E]" tag on c.ty (the checker resolved any generic
+    // args). Read it instead of re-deriving via opt_ret_type + argref/closure
+    // resolution. Guarded to a well-formed Option[…] / Result[…] tag; anything
+    // else (an unresolved "" tag, or a non-call scrutinee) falls through to the
+    // structural walk below.
+    match (inner) {
+        parser.ExprCall(oc0) => {
+            if (oc0.ty.len() >= 7 && (oc0.ty[0:7] == "Option[" || oc0.ty[0:7] == "Result[")) { return oc0.ty; }
+        },
+        _ => {}
+    }
     match (inner) {
         parser.ExprCall(scl) => {
             match (scl.callee) {
