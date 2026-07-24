@@ -208,7 +208,14 @@ polynomial-approx WAT helpers (`wasm.exp_func`/`log_func`/`pow_func`/…,
 the wasm siblings of the arm64 helpers, wired in `wasm_ir_run`). The
 wasm-IR exclusion that genuinely REMAINS is the deferral-gate set in
 `wasm_ir_deferrals_ok`: erased-wide (an i64/f64 value through a bare-
-typevar param) — the last one. (`c_call` is no longer deferred — FFI
+typevar param), now PARTIALLY closed (#5464) — a wide value through a
+bare-typevar-RETURN PASS-THROUGH fn (`id[T](x:T):T`) lowers on the wasm
+IR path (params/returns typed i64, the uniform 8-byte slot; the caller
+coerces its arg/result at the boundary — see `is_erased_typevar`, the
+`for_wasm` flag folded into `ret_arrdyn` bit 2, and the result-narrow in
+lower_expr). Only CONTAINER-returning erased fns (a tuple/array/Option/
+Result of `T` — `str_ret_argref < 0`) still defer via `erased_wide`; that
+container slice is the remaining piece. (`c_call` is no longer deferred — FFI
 `__c_call<n>` has no wasm C ABI, so it is now a clean error endpoint,
 rejected before emit by `wasm_unsupported_builtin` like `subprocess` /
 `timer_fd`, #4375.) (`open_file` / `writer_write` — the

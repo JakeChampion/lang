@@ -5,30 +5,23 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 // TestSelfHostErasedWideGenericWasm pins the wasm side of the erased-generic
-// 64-bit widening: a module passing a 64-bit or f64 value through a
-// bare-typevar (erased-generic) param is DEFERRED off the wasm IR path
-// (LowerResult.erased_wide → wasm_ir_deferrals_ok) because wasm types erased
-// param locals i32. Before the deferral, the f64 shape emitted type-INVALID
-// WAT (f64.const flowing into an i32 param) that the wasmtime loader
-// rejects — so the real assertion here is that the emitted module LOADS and
-// computes the right value on the (AST) path it defers to.
+// 64-bit widening (#5464): a module passing a 64-bit or f64 value through a
+// bare-typevar (erased-generic) PASS-THROUGH fn (`ident[T](x: T): T`) now
+// LOWERS on the wasm IR path. The erased param/return/locals are typed i64 —
+// the uniform 8-byte slot the register backends give every value — and the
+// caller coerces its arg/result at the boundary (f64 <-> i64 reinterpret,
+// i32/pointer <-> i64 extend/wrap). Before this the module deferred to the
+// legacy AST emitter, which emitted type-INVALID WAT (`(call $ident
+// (f64.const 2.5))` into an i32 erased param) that wasmtime rejects. The test
+// asserts the module reaches the IR path (no `$__lit` AST-fallback scratch
+// locals) AND computes the right value under wasmtime. Container-returning
+// erased fns (tuple/array/Option/Result of T) still defer — a later slice.
 func TestSelfHostErasedWideGenericWasm(t *testing.T) {
-	// KNOWN FAILURE — tracked in #5464. This test only ran now because its file
-	// was renamed off the `_wasm_test.go` suffix (which Go treated as a
-	// GOARCH=wasm build constraint, silently excluding it). It reveals a real
-	// bug: erased_wide correctly defers an erased-generic 64-bit value off the
-	// wasm IR path, but the legacy AST emitter it falls back to (wasm.fern) emits
-	// type-invalid WAT — `(call $ident (f64.const 2.5))` into $ident's i32 erased
-	// param — that wasmtime rejects, and an i32-typed erased param cannot hold an
-	// f64 anyway (so the roundtrip could never return 42). The fix is a #3457
-	// decision: lower erased-generic 64-bit on the wasm IR path, or emit a clean
-	// "not supported on the wasm target" error (the #4320 pattern). Skipped, not
-	// deleted, so the gap stays visible instead of silently hidden.
-	t.Skip("erased-generic 64-bit on the wasm AST fallback emits invalid WAT — tracked in #5464")
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping erased-wide generic wasm e2e")
 	}
@@ -72,6 +65,14 @@ func TestSelfHostErasedWideGenericWasm(t *testing.T) {
 			wat, err := cmd.Output()
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %s: %v", tc.name, err)
+			}
+			// The AST fallback pre-declares `$__lit0` scratch locals; the IR
+			// emitter does not. Its absence proves the module lowered on the IR
+			// path (the point of #5464) rather than deferring to the AST emitter
+			// that miscompiled it — a value-correct AST fallback would still be a
+			// regression here.
+			if strings.Contains(string(wat), "$__lit0") {
+				t.Errorf("%s deferred to the AST path (found $__lit0); expected IR lowering", tc.name)
 			}
 			watFile := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {

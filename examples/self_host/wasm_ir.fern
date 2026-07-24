@@ -112,7 +112,7 @@ pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[]
     var out: irlower.LowerResult[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out.append(irlower.lower_func(mod.funcs[fi], arf, all_structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(all_funcs, all_structs), cnf, bp, fnames, frsf, csp, rfrsf, sfrf, ofrf, sfot, tfrf));
+        out = out.append(irlower.lower_func(mod.funcs[fi], arf, all_structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(all_funcs, all_structs), cnf, bp, fnames, frsf, csp, rfrsf, sfrf, ofrf, sfot, tfrf, true));
         fi = fi + 1;
     }
     return out;
@@ -2035,6 +2035,11 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
     // value's own ops differs, handled at the producing expression) (#2904).
     if (fd.ret_type == "i64" || fd.ret_type == "u64") { out = out + " (result i64)\n"; }
     else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { out = out + " (result f64)\n"; }
+    // A bare-typevar (erased-generic) return is typed i64 on wasm — the uniform
+    // 8-byte slot the register backends give every value — so a wide value
+    // survives pass-through; the caller coerces the i64 result to the concrete
+    // type at the call boundary (#5464). Free functions only.
+    else if (irlower.erased_passthrough_safe(fd, structs)) { out = out + " (result i64)\n"; }
     else { out = out + " (result i32)\n"; }
     // body locals + 5 scratch locals. A body local in r.i64_slots is declared
     // (local i64), one in r.f64_slots (local f64); the trailing scratch locals
@@ -3130,6 +3135,9 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
     // the default's type tracks the result: i64 / f64 / i32.
     if (fd.ret_type == "i64" || fd.ret_type == "u64") { out = out + "    i64.const 0)\n"; }
     else if (irlower.is_f64_scalar_type_name(fd.ret_type)) { out = out + "    f64.const 0)\n"; }
+    // A bare-typevar (erased-generic) return is typed i64 on wasm (#5464), so its
+    // fallthrough filler must be i64.const 0 to match the (result i64) signature.
+    else if (irlower.erased_passthrough_safe(fd, structs)) { out = out + "    i64.const 0)\n"; }
     else { out = out + "    i32.const 0)\n"; }
     return out;
 }
