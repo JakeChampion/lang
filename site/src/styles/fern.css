@@ -1,74 +1,769 @@
-/* Fern docs custom styling.
+/* Fern docs theme — "field guide".
  *
- * Botanical, fresh, low-to-the-ground identity: a fern-green accent
- * palette (replacing the old corporate blue), plus a faint fern-frond
- * watermark and the iframe framing rules for the live-snippet
- * component.
+ * The visual identity is a botanist's field guide: pressed-specimen
+ * greens on warm paper, hairline rules, small-caps monospace labels for
+ * metadata, and a display serif (Fraunces) for headings so the prose
+ * reads editorial rather than dashboard. Code stays in IBM Plex Mono.
  *
- * Palette reference:
- *   Deep forest  #1b4332
- *   Pine         #2d6a4f
- *   Fern green   #40916c / #52b788  (primary accent)
- *   Fresh frond  #74c69d
- *   Pale mint    #d8f3dc            (light-mode high accent / backgrounds)
+ * Layers, in order:
+ *   1. Tokens         — the fern palette + typography vars.
+ *   2. Starlight vars — accent + gray ramps, so the whole chrome
+ *                       (sidebar, nav, search, asides) inherits the
+ *                       palette instead of being overridden piecemeal.
+ *   3. Prose          — headings, links, tables, asides, code.
+ *   4. Landing        — splash hero + the landing-only components
+ *                       (install card, facet rail, spec sheet).
+ *   5. Playground     — the embedded live-snippet figure.
+ *
+ * Everything degrades: the webfonts are `display=swap` with real
+ * fallback stacks, and every reveal animation is disabled under
+ * `prefers-reduced-motion`.
  */
 
-/* Dark theme (default). On a dark surface the "high" accent is the
- * bright frond green used for links / emphasis, "low" the deep forest. */
+/* ---------------------------------------------------------------- *
+ * 1. Tokens
+ * ---------------------------------------------------------------- */
+
 :root {
-  --sl-color-accent-low: #1b4332;
-  --sl-color-accent: #40916c;
-  --sl-color-accent-high: #74c69d;
+  /* Pressed-frond greens. */
+  --fern-forest: #143026;
+  --fern-pine: #2d6a4f;
+  --fern-green: #40916c;
+  --fern-frond: #74c69d;
+  --fern-mint: #d8f3dc;
+
+  /* Warm counterweight: paper, bark, and a muted spore ochre used as
+   * the single sharp accent (indices, rules, focus ring). A palette of
+   * greens alone reads flat; the ochre is what makes it a field guide. */
+  --fern-paper: #faf7f0;
+  --fern-bark: #6f6350;
+  --fern-spore: #b08331;
+  --fern-spore-soft: #d9b169;
+
+  --fern-font-display: "Fraunces", "Iowan Old Style", "Palatino Linotype",
+    Palatino, "Book Antiqua", Georgia, serif;
+  --fern-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo,
+    Consolas, monospace;
+
+  --sl-font-mono: var(--fern-font-mono);
+
+  /* Hairline weight used by the specimen panels + section rules. */
+  --fern-rule: 1px solid var(--sl-color-hairline);
+
+  --fern-ease: cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
-/* Light theme. Inverted: "high" is the deepest green (text on pale
- * backgrounds), "low" is the pale mint wash. */
+/* ---------------------------------------------------------------- *
+ * 2. Starlight palette overrides
+ *
+ * Dark is the default theme: near-black tinted green rather than a
+ * neutral gray, so the chrome shares the frond hue. Light mode swaps
+ * to warm paper — Starlight's `--sl-color-white`/`--sl-color-black`
+ * are semantic ("furthest"/"nearest" from the text), so light mode
+ * inverts them rather than redefining every consumer.
+ * ---------------------------------------------------------------- */
+
+:root {
+  --sl-color-accent-low: #12291f;
+  --sl-color-accent: #3f9169;
+  --sl-color-accent-high: #9ddcbc;
+
+  --sl-color-white: #f2f7f3;
+  --sl-color-gray-1: #e0eae3;
+  --sl-color-gray-2: #b9c8be;
+  --sl-color-gray-3: #8ba394;
+  --sl-color-gray-4: #566c5e;
+  --sl-color-gray-5: #384a3f;
+  --sl-color-gray-6: #24332b;
+  --sl-color-gray-7: #1a2620;
+  --sl-color-black: #101a15;
+
+  --sl-color-hairline: #2c3d33;
+  --sl-color-hairline-light: #33463b;
+  --sl-color-hairline-shade: #16211b;
+
+  --sl-color-bg-nav: #141f19;
+  --sl-color-bg-sidebar: #131e18;
+}
+
 :root[data-theme="light"] {
-  --sl-color-accent-low: #d8f3dc;
-  --sl-color-accent: #2d6a4f;
-  --sl-color-accent-high: #1b4332;
+  --sl-color-accent-low: var(--fern-mint);
+  --sl-color-accent: #2b6a4d;
+  --sl-color-accent-high: #16382a;
+
+  --sl-color-white: #16241d;
+  --sl-color-gray-1: #23342b;
+  --sl-color-gray-2: #3b4d43;
+  --sl-color-gray-3: #5d6f64;
+  --sl-color-gray-4: #8b978d;
+  --sl-color-gray-5: #cdd3c9;
+  --sl-color-gray-6: #e8e6dc;
+  --sl-color-gray-7: #f3f0e7;
+  --sl-color-black: var(--fern-paper);
+
+  --sl-color-hairline: #ddd8c9;
+  --sl-color-hairline-light: #e6e2d5;
+  --sl-color-hairline-shade: #eae6d9;
+
+  --sl-color-bg-nav: #f6f2e9;
+  --sl-color-bg-sidebar: #f5f1e7;
+
+  --fern-spore: #8a6520;
+  --fern-bark: #5f5442;
 }
 
-/* Subtle botanical watermark: a faint fern frond in the top-right of
- * the main content column. Inline SVG data-URI so it costs no extra
- * request; kept very low opacity so it never competes with body text
- * for contrast. */
-.sl-markdown-content {
+/* Slightly wider measure than Starlight's default: the display serif
+ * sets a larger x-height, and the reference tables want the room. */
+:root {
+  --sl-content-width: 47rem;
+}
+
+::selection {
+  background: var(--sl-color-accent-low);
+  color: var(--sl-color-white);
+}
+
+:focus-visible {
+  outline: 2px solid var(--fern-spore);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ---------------------------------------------------------------- *
+ * 3. Prose
+ * ---------------------------------------------------------------- */
+
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4,
+.hero h1,
+.site-title,
+site-search dialog h2 {
+  font-family: var(--fern-font-display);
+  font-weight: 600;
+  font-variation-settings: "SOFT" 30, "WONK" 1;
+  letter-spacing: -0.01em;
+}
+
+.site-title {
+  font-size: var(--sl-text-xl);
+  letter-spacing: 0.01em;
+}
+
+/* Section rules: an ochre tick in the left margin instead of a full
+ * border, so a long page scans as a sequence of specimens. */
+.sl-markdown-content h2:not(:where(.not-content *)) {
+  margin-top: 3rem;
+  padding-top: 1.4rem;
+  border-top: var(--fern-rule);
   position: relative;
 }
 
-.sl-markdown-content::before {
+.sl-markdown-content h2:not(:where(.not-content *))::before {
   content: "";
   position: absolute;
-  top: -0.5rem;
-  right: -0.5rem;
-  width: 220px;
-  height: 220px;
-  pointer-events: none;
-  z-index: 0;
-  opacity: 0.05;
-  background-repeat: no-repeat;
-  background-position: top right;
-  background-size: contain;
-  /* Fern frond, stroked in fern green. */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none' stroke='%2340916c' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 29 C 9 22, 13 14, 18 9 C 21 6, 24 6, 25 8'/%3E%3Cpath d='M7.6 25 C 4.5 24, 3 21.5, 3.2 18.8'/%3E%3Cpath d='M9.6 21 C 7 20, 5.7 17.8, 6 15.4'/%3E%3Cpath d='M11.8 17 C 9.6 16.2, 8.6 14.3, 9 12.2'/%3E%3Cpath d='M14 13.5 C 12.2 12.9, 11.5 11.3, 12 9.6'/%3E%3Cpath d='M9.4 23 C 12.5 22, 14 19.5, 13.8 16.8'/%3E%3Cpath d='M11.4 19 C 14 18, 15.3 15.8, 15 13.4'/%3E%3Cpath d='M13.6 15 C 15.8 14.2, 16.8 12.3, 16.4 10.2'/%3E%3Cpath d='M25 8 C 26.8 9.5, 26.4 12.2, 24.2 12.2 C 22.6 12.2, 22.6 10.2, 24 10'/%3E%3C/svg%3E");
+  top: -1px;
+  left: 0;
+  width: 2.5rem;
+  height: 2px;
+  background: var(--fern-spore);
 }
 
-/* Keep real content above the watermark. */
-.sl-markdown-content > * {
-  position: relative;
-  z-index: 1;
+.sl-markdown-content a:not(:where(.not-content *)) {
+  text-underline-offset: 0.22em;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in oklab, var(--sl-color-accent) 55%, transparent);
+  transition: text-decoration-color 0.15s var(--fern-ease);
 }
+
+.sl-markdown-content a:hover:not(:where(.not-content *)) {
+  text-decoration-color: currentColor;
+}
+
+.sl-markdown-content :not(pre) > code:not(:where(.not-content *)) {
+  background: color-mix(in oklab, var(--sl-color-accent-low) 65%, transparent);
+  border: 1px solid color-mix(in oklab, var(--sl-color-accent) 22%, transparent);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.32em;
+  font-size: 0.875em;
+}
+
+.sl-markdown-content blockquote:not(:where(.not-content *)) {
+  border-inline-start: 2px solid var(--fern-spore);
+  padding-inline-start: 1rem;
+  font-style: normal;
+  color: var(--sl-color-gray-2);
+}
+
+/* Tables read as specimen data: mono values, uppercase heads, no
+ * heavy grid — hairlines only. */
+.sl-markdown-content table:not(:where(.not-content *)) {
+  border-collapse: collapse;
+  font-size: var(--sl-text-sm);
+}
+
+.sl-markdown-content th:not(:where(.not-content *)) {
+  font-family: var(--fern-font-mono);
+  font-size: var(--sl-text-xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sl-color-gray-3);
+  border-bottom: 1px solid var(--sl-color-gray-4);
+  padding-block: 0.5rem;
+}
+
+.sl-markdown-content td:not(:where(.not-content *)) {
+  border-bottom: var(--fern-rule);
+  border-inline: 0;
+  padding-block: 0.55rem;
+  vertical-align: baseline;
+}
+
+.expressive-code .frame {
+  --code-border-radius: 0.4rem;
+}
+
+.starlight-aside {
+  border-inline-start-width: 2px;
+  border-radius: 0 0.35rem 0.35rem 0;
+}
+
+.starlight-aside__title {
+  font-family: var(--fern-font-mono);
+  font-size: var(--sl-text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* ---------------------------------------------------------------- *
+ * 4. Landing page
+ *
+ * Scoped to `.hero`'s presence (splash template only), plus the
+ * `fern-*` component classes which only the landing page uses.
+ * ---------------------------------------------------------------- */
+
+.hero {
+  position: relative;
+  isolation: isolate;
+}
+
+/* Atmosphere: a low forest wash rising from the baseline plus a fine
+ * grain, both behind the copy and inert to pointers. Vertical bleed
+ * only — a horizontal bleed would push the page into overflow and
+ * summon a scrollbar for a purely decorative layer. */
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: -4rem 0 -2rem;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E"),
+    radial-gradient(
+      70% 90% at 18% 30%,
+      color-mix(in oklab, var(--sl-color-accent) 16%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      50% 70% at 85% 80%,
+      color-mix(in oklab, var(--fern-spore) 9%, transparent),
+      transparent 70%
+    );
+  /* The grain rides on top of the two washes, modulating them rather
+   * than sitting over the page as a flat gray film. */
+  background-blend-mode: soft-light, normal, normal;
+  opacity: 0.85;
+  /* Fade out on all four sides — an un-masked edge reads as a stray
+   * rectangle behind the hero, which is exactly what atmosphere
+   * shouldn't do. */
+  mask-image:
+    linear-gradient(to bottom, black 55%, transparent),
+    linear-gradient(to right, transparent, black 18%, black 82%, transparent);
+  mask-composite: intersect;
+}
+
+/* The specimen: a frond pressed into the hero's empty right column
+ * (Starlight's hero grid is 7fr 4fr on wide viewports, and the
+ * pseudo-element takes the second cell). */
+.hero::after {
+  content: "";
+  display: none;
+  aspect-ratio: 1;
+  width: min(100%, 22rem);
+  background: no-repeat center / contain
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none' stroke='%2340916c' stroke-width='0.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 29 C 9 22, 13 14, 18 9 C 21 6, 24 6, 25 8'/%3E%3Cpath d='M7.6 25 C 4.5 24, 3 21.5, 3.2 18.8'/%3E%3Cpath d='M9.6 21 C 7 20, 5.7 17.8, 6 15.4'/%3E%3Cpath d='M11.8 17 C 9.6 16.2, 8.6 14.3, 9 12.2'/%3E%3Cpath d='M14 13.5 C 12.2 12.9, 11.5 11.3, 12 9.6'/%3E%3Cpath d='M9.4 23 C 12.5 22, 14 19.5, 13.8 16.8'/%3E%3Cpath d='M11.4 19 C 14 18, 15.3 15.8, 15 13.4'/%3E%3Cpath d='M13.6 15 C 15.8 14.2, 16.8 12.3, 16.4 10.2'/%3E%3Cpath d='M25 8 C 26.8 9.5, 26.4 12.2, 24.2 12.2 C 22.6 12.2, 22.6 10.2, 24 10'/%3E%3C/svg%3E");
+  opacity: 0.5;
+  filter: drop-shadow(0 0 24px color-mix(in oklab, var(--fern-green) 25%, transparent));
+}
+
+@media (min-width: 50rem) {
+  /* Starlight's hero padding scales with the viewport and leaves the
+   * fold almost empty at laptop heights; pull it in so the install
+   * card and the first facets are visible without scrolling. */
+  .hero {
+    padding-block: clamp(2rem, 6vmin, 5rem);
+  }
+
+  .hero::after {
+    display: block;
+    order: 2;
+  }
+}
+
+.hero h1 {
+  font-variation-settings: "SOFT" 40, "WONK" 1;
+  letter-spacing: -0.025em;
+}
+
+.hero .tagline {
+  max-width: 40ch;
+  color: var(--sl-color-gray-2);
+  font-size: clamp(var(--sl-text-base), 2.2vw, var(--sl-text-xl));
+  line-height: 1.5;
+}
+
+.hero .actions a {
+  font-family: var(--fern-font-mono);
+  font-size: var(--sl-text-sm);
+  letter-spacing: 0.01em;
+  transition:
+    transform 0.18s var(--fern-ease),
+    box-shadow 0.18s var(--fern-ease);
+}
+
+.hero .actions a.primary:hover,
+.hero .actions a.secondary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px -8px color-mix(in oklab, var(--fern-green) 70%, transparent);
+}
+
+/* A short lead paragraph under the hero, set larger than body copy.
+ * The wrapper is a <div> so MDX can put real markdown inside it. */
+.fern-lead {
+  max-width: 62ch;
+}
+
+.fern-lead p {
+  margin-top: 0;
+  font-size: var(--sl-text-lg);
+  line-height: 1.6;
+  color: var(--sl-color-gray-2);
+}
+
+/* Shared specimen-panel chrome: hairline box, paper tint, and a
+ * mono label sitting on the top rule. */
+.fern-panel {
+  position: relative;
+  border: var(--fern-rule);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--sl-color-bg-sidebar) 70%, transparent);
+}
+
+.fern-label {
+  font-family: var(--fern-font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--sl-color-gray-3);
+}
+
+/* The landing components opt out of Starlight's markdown styles
+ * (`.not-content`) so their tight layouts survive the global
+ * adjacent-sibling margin rule — which means links and inline code
+ * inside them need their own treatment. */
+.fern-panel a,
+.fern-facet__body a {
+  color: var(--sl-color-text-accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--sl-color-accent) 45%, transparent);
+  text-underline-offset: 0.2em;
+}
+
+.fern-panel a:hover,
+.fern-facet__body a:hover {
+  text-decoration-color: currentColor;
+}
+
+.fern-facet__body code,
+.fern-panel :not(.fern-cmd) > code {
+  background: color-mix(in oklab, var(--sl-color-accent-low) 65%, transparent);
+  border: 1px solid color-mix(in oklab, var(--sl-color-accent) 22%, transparent);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.32em;
+  font-size: 0.86em;
+}
+
+/* --- Install card ------------------------------------------------ */
+
+.fern-install {
+  margin-block: 2rem;
+  padding: 1rem 1.1rem 1.15rem;
+}
+
+.fern-install__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.7rem;
+}
+
+.fern-install__note {
+  font-size: var(--sl-text-xs);
+  color: var(--sl-color-gray-3);
+  text-align: end;
+  max-width: 34ch;
+}
+
+.fern-install__note p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.fern-cmd {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.42rem 0.5rem 0.42rem 0.65rem;
+  border-radius: 0.35rem;
+  font-family: var(--fern-font-mono);
+  font-size: var(--sl-text-sm);
+  line-height: 1.5;
+}
+
+.fern-cmd + .fern-cmd {
+  margin-top: 0.3rem;
+}
+
+.fern-cmd:hover {
+  background: color-mix(in oklab, var(--sl-color-accent-low) 45%, transparent);
+}
+
+.fern-cmd__prompt {
+  color: var(--fern-spore);
+  user-select: none;
+}
+
+.fern-cmd__text {
+  flex: 1;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--sl-color-white);
+  scrollbar-width: none;
+}
+
+.fern-cmd__copy {
+  flex: none;
+  border: var(--fern-rule);
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--sl-color-gray-3);
+  font-family: var(--fern-font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 0.2rem 0.45rem;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.15s var(--fern-ease),
+    color 0.15s var(--fern-ease),
+    border-color 0.15s var(--fern-ease);
+}
+
+.fern-cmd:hover .fern-cmd__copy,
+.fern-cmd__copy:focus-visible {
+  opacity: 1;
+}
+
+.fern-cmd__copy:hover {
+  color: var(--sl-color-white);
+  border-color: var(--sl-color-accent);
+}
+
+.fern-cmd__copy[data-copied] {
+  opacity: 1;
+  color: var(--sl-color-accent-high);
+  border-color: var(--sl-color-accent);
+}
+
+/* Touch: no hover to reveal the button, so pin it visible. */
+@media (hover: none) {
+  .fern-cmd__copy {
+    opacity: 1;
+  }
+}
+
+/* --- Facet rail -------------------------------------------------- */
+
+.fern-rail {
+  display: grid;
+  gap: 1px;
+  margin-block: 2rem 2.5rem;
+  border-block: var(--fern-rule);
+  background: var(--sl-color-hairline);
+}
+
+@media (min-width: 50rem) {
+  .fern-rail {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.fern-facet {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.9rem;
+  padding: 1.35rem 1.2rem 1.5rem;
+  background: var(--sl-color-bg);
+  transition: background 0.2s var(--fern-ease);
+}
+
+/* Offset every other facet a hair so the rail reads hand-set rather
+ * than as a plain card grid. */
+@media (min-width: 50rem) {
+  .fern-facet:nth-child(even) {
+    padding-top: 2.1rem;
+  }
+}
+
+.fern-facet:hover {
+  background: color-mix(in oklab, var(--sl-color-accent-low) 30%, var(--sl-color-bg));
+}
+
+.fern-facet__index {
+  grid-row: span 2;
+  font-family: var(--fern-font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--fern-spore);
+  padding-top: 0.35rem;
+}
+
+.fern-facet__title {
+  font-family: var(--fern-font-display);
+  font-variation-settings: "SOFT" 30, "WONK" 1;
+  font-size: var(--sl-text-lg);
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 0;
+  color: var(--sl-color-white);
+}
+
+.fern-facet__body {
+  font-size: var(--sl-text-sm);
+  line-height: 1.6;
+  color: var(--sl-color-gray-2);
+}
+
+.fern-facet__body p {
+  margin: 0.4rem 0 0;
+}
+
+/* --- Spec sheet -------------------------------------------------- */
+
+.fern-spec {
+  margin-block: 2rem;
+  padding: 1.1rem 1.2rem 1.25rem;
+}
+
+.fern-spec__caption {
+  display: block;
+  margin-bottom: 0.9rem;
+}
+
+.fern-spec__list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+@media (min-width: 44rem) {
+  .fern-spec__list {
+    grid-template-columns: 11rem 1fr;
+  }
+}
+
+.fern-spec__list dt {
+  font-family: var(--fern-font-mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--sl-color-gray-3);
+  padding-top: 0.75rem;
+  border-top: var(--fern-rule);
+}
+
+.fern-spec__list dd {
+  margin: 0;
+  padding: 0.7rem 0 0.75rem;
+  font-size: var(--sl-text-sm);
+  line-height: 1.55;
+  color: var(--sl-color-gray-1);
+  border-top: var(--fern-rule);
+}
+
+/* On narrow screens the two cells stack, so only the label keeps the
+ * rule — otherwise every row draws two. */
+@media (max-width: 43.99rem) {
+  .fern-spec__list dd {
+    border-top: 0;
+    padding-top: 0.15rem;
+  }
+}
+
+.fern-spec__list dt:first-of-type,
+.fern-spec__list dd:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.fern-spec__note {
+  margin: 0.9rem 0 0;
+  padding-top: 0.75rem;
+  border-top: var(--fern-rule);
+  font-family: var(--fern-font-mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--sl-color-gray-3);
+}
+
+/* --- Next steps -------------------------------------------------- */
+
+.fern-next {
+  display: grid;
+  gap: 0.75rem;
+  margin-block: 1.5rem 2rem;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 44rem) {
+  .fern-next {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.fern-next li {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.85rem 1rem 0.95rem;
+  border: var(--fern-rule);
+  border-radius: 0.45rem;
+  transition:
+    border-color 0.18s var(--fern-ease),
+    transform 0.18s var(--fern-ease);
+}
+
+.fern-next li:hover {
+  border-color: var(--sl-color-accent);
+  transform: translateY(-2px);
+}
+
+.fern-next a {
+  font-family: var(--fern-font-display);
+  font-variation-settings: "SOFT" 30, "WONK" 1;
+  font-size: var(--sl-text-base);
+  font-weight: 600;
+  color: var(--sl-color-white);
+  text-decoration: none;
+}
+
+/* The arrow is a real aria-hidden span in the component, not generated
+   content: Chromium folds an ::after `content` string into the link's
+   accessible name, which would turn "Tutorial" into "Tutorial →" and
+   break name-based navigation (and the docs test suite's link
+   assertions). An aria-hidden subtree is skipped by name computation. */
+.fern-next__arrow {
+  color: var(--sl-color-accent);
+}
+
+.fern-next p {
+  margin: 0;
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
+  line-height: 1.5;
+}
+
+/* --- Landing reveal --------------------------------------------- */
+
+.hero .stack,
+.hero::after,
+.fern-install,
+.fern-rail {
+  animation: fern-rise 0.7s var(--fern-ease) both;
+}
+
+.hero::after {
+  animation-duration: 1.1s;
+  animation-delay: 0.15s;
+}
+
+.fern-install {
+  animation-delay: 0.1s;
+}
+
+.fern-rail {
+  animation-delay: 0.18s;
+}
+
+@keyframes fern-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The frond fades in without moving — it settles like a pressed
+ * specimen rather than sliding. */
+@keyframes fern-settle {
+  from {
+    opacity: 0;
+    transform: scale(0.96) rotate(-3deg);
+  }
+  to {
+    opacity: 0.5;
+    transform: none;
+  }
+}
+
+.hero::after {
+  animation-name: fern-settle;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero .stack,
+  .hero::after,
+  .fern-install,
+  .fern-rail,
+  .fern-next li,
+  .hero .actions a {
+    animation: none;
+    transition: none;
+    transform: none;
+  }
+}
+
+/* ---------------------------------------------------------------- *
+ * 5. Embedded playground
+ * ---------------------------------------------------------------- */
 
 .fern-playground {
   display: block;
   width: 100%;
-  margin: 1.25rem 0;
-  border: 1px solid var(--sl-color-gray-5);
+  margin: 1.5rem 0;
+  border: var(--fern-rule);
   border-radius: 0.5rem;
   background: var(--sl-color-bg-sidebar);
   overflow: hidden;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 .fern-playground iframe {
@@ -76,33 +771,37 @@
   width: 100%;
   border: 0;
   background: var(--sl-color-bg);
-  /* `block` is enough — explicit height set inline per-snippet
-   * via the component's `height` prop. */
+  /* Height is set inline per-snippet by the component, and updated
+   * live for `minimal` embeds via the `fern:height` message. */
 }
 
 .fern-playground header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.4rem 0.8rem;
-  border-bottom: 1px solid var(--sl-color-gray-5);
+  gap: 1rem;
+  padding: 0.45rem 0.8rem;
+  border-bottom: var(--fern-rule);
   background: var(--sl-color-bg-nav);
-  font-size: 0.78rem;
+  font-family: var(--fern-font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
   color: var(--sl-color-gray-3);
-  font-family: var(--sl-font-system-mono);
-  letter-spacing: 0.01em;
 }
 
 .fern-playground header span[aria-hidden] {
-  color: var(--sl-color-accent);
+  color: var(--fern-spore);
 }
 
 .fern-playground header a {
-  color: var(--sl-color-accent-high);
+  color: var(--sl-color-text-accent);
   text-decoration: none;
   font-weight: 500;
+  letter-spacing: 0.08em;
 }
 
 .fern-playground header a:hover {
   text-decoration: underline;
+  text-underline-offset: 0.25em;
 }

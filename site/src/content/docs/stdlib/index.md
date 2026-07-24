@@ -11,13 +11,18 @@ file per module with the public functions, structs, enums and
 constants — along with any doc comments preceding each
 declaration.
 
-Run the generator manually with:
+Because the source of truth is the `.fern` source itself, the
+reference can't drift from the code: to correct or expand a
+description, edit the doc comment above the declaration.
+
+Regenerate the pages with:
 
 ```bash
 go run ./cmd/ferndoc -out site/src/content/docs/stdlib/
 ```
 
-It runs automatically as part of `npm run build` in `site/`.
+The docs workflow runs that step before every site build, so
+published pages always match `main`.
 
 ## Modules
 

@@ -89,37 +89,62 @@ error*, so the compiler walks you to each place that needs updating.
 ## Combinator methods
 
 When a full `match` is overkill, `std/option` and `std/result` provide
-chainable helpers. Import the module to bring them into scope.
+chainable helpers. Import the module to bring them into scope. These are
+the complete sets; [`std/option`](../../stdlib/option/) and
+[`std/result`](../../stdlib/result/) carry the exact signatures.
 
 ### On `Option[T]`
 
 | Method                       | Returns          | Meaning                              |
 | ---------------------------- | ---------------- | ------------------------------------ |
 | `is_some()` / `is_none()`    | `boolean`        | Tag test.                            |
+| `is_some_and(pred)`          | `boolean`        | `Some` *and* the payload satisfies `pred`. |
+| `is_none_or(pred)`           | `boolean`        | `None`, or the payload satisfies `pred`. |
 | `unwrap_or(fallback)`        | `T`              | The value, or `fallback` if `None`.  |
 | `unwrap_or_else(f)`          | `T`              | …or compute the fallback lazily.     |
 | `map(f)`                     | `Option[U]`      | Transform the `Some` payload.        |
+| `map_or(fallback, f)`        | `U`              | Transform, or fall back to a value.  |
+| `map_or_else(default_fn, f)` | `U`              | …with a lazily-computed fallback.    |
 | `and_then(f)`                | `Option[U]`      | Chain another optional computation.  |
+| `and(other)`                 | `Option[U]`      | `other` if this is `Some`.           |
+| `or(other)`                  | `Option[T]`      | This, or `other` when `None`.        |
 | `or_else(f)`                 | `Option[T]`      | Supply an alternative when `None`.   |
+| `xor(other)`                 | `Option[T]`      | `Some` only if exactly one is.       |
 | `filter(pred)`               | `Option[T]`      | Keep `Some` only if `pred` holds.    |
+| `zip(other)`                 | `Option[(T, U)]` | Pair two `Some`s, else `None`.       |
+| `unzip()`                    | `(Option[T], Option[U])` | Split an optional pair.      |
+| `flatten()`                  | `Option[T]`      | Collapse `Option[Option[T]]`.        |
 | `ok_or(e)`                   | `Result[T, E]`   | Promote `None` to an `Err(e)`.       |
+| `ok_or_else(f)`              | `Result[T, E]`   | …computing the error lazily.         |
+| `transpose()`                | `Result[Option[T], E]` | Swap with a nested `Result`.   |
 
 ### On `Result[T, E]`
 
 | Method                       | Returns          | Meaning                              |
 | ---------------------------- | ---------------- | ------------------------------------ |
 | `is_ok()` / `is_err()`       | `boolean`        | Tag test.                            |
+| `is_ok_and(pred)`            | `boolean`        | `Ok` *and* the payload satisfies `pred`. |
+| `is_err_and(pred)`           | `boolean`        | `Err` *and* the error satisfies `pred`. |
 | `unwrap_or(fallback)`        | `T`              | The value, or `fallback` if `Err`.   |
 | `unwrap_or_else(f)`          | `T`              | …with access to the error value.     |
 | `map(f)`                     | `Result[U, E]`   | Transform the `Ok` payload.          |
 | `map_err(f)`                 | `Result[T, F]`   | Transform the `Err` payload.         |
+| `map_or(fallback, f)`        | `U`              | Transform, or fall back to a value.  |
+| `map_or_else(default_fn, f)` | `U`              | …deriving the fallback from the error. |
 | `and_then(f)`                | `Result[U, E]`   | Chain another fallible computation.  |
+| `and(other)`                 | `Result[U, E]`   | `other` if this is `Ok`.             |
+| `or(other)`                  | `Result[T, E]`   | This, or `other` when `Err`.         |
+| `or_else(f)`                 | `Result[T, F]`   | Recover, possibly changing the error type. |
+| `flatten()`                  | `Result[T, E]`   | Collapse a nested `Result`.          |
 | `ok()` / `err()`             | `Option[…]`      | Project to the success / error side. |
+| `transpose()`                | `Option[Result[T, E]]` | Swap with a nested `Option`.   |
 
 ```fern
+import "core/map";
 import "std/option";
 
 // Default a missing config value instead of branching.
+var config: Map[string, i32] = Map { "workers": 4 };
 var port: i32 = config.get("port").unwrap_or(8080);
 ```
 

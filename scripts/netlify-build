@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#
+# scripts/netlify-build — build the docs site + playground for a Netlify deploy.
+#
+# Mirrors the four build steps in .github/workflows/pages.yml, which is the
+# canonical recipe for a publishable bundle:
+#
+#   1. Compile the playground's wasm from ./cmd/fern-wasm.
+#   2. Stage web/ under site/public/playground/ so Astro serves it at
+#      /playground/ alongside the docs.
+#   3. Run cmd/ferndoc to emit the generated stdlib reference pages.
+#   4. npm install && astro build under site/ → site/dist/.
+#
+# Two deliberate differences from the Pages workflow, both about leaving the
+# source tree alone during a deploy:
+#
+#   - The wasm is compiled straight into the staging directory rather than to
+#     web/fern.wasm and copied across.
+#   - web/build.sh also refreshes the *tracked* web/wasm_exec.js from GOROOT,
+#     as a developer convenience. A deploy has no business rewriting a tracked
+#     file, so the shim is written into the staging directory only. It still
+#     comes from GOROOT rather than the committed copy, because the shim and
+#     the wasm it loads have to come from the same Go toolchain.
+#
+# Netlify runs this from the repository root; `publish` is site/dist (see
+# netlify.toml).
+
+set -euo pipefail
+
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
+
+stage=site/public/playground
+
+# Echoed so a toolchain mismatch is one glance into the deploy log rather
+# than a puzzling compile error further down. go.mod needs Go 1.24+, Astro 6
+# needs Node 22.12+; netlify.toml pins both.
+echo "==> $(go version)"
+echo "==> node $(node --version)"
+
+echo "==> compiling playground wasm"
+rm -rf "$stage"
+mkdir -p "$stage"
+GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" \
+  -o "$stage/fern.wasm" ./cmd/fern-wasm
+
+echo "==> staging playground assets"
+# index.html statically imports ./wasi-shim.js and ./wasi-http-shim.js, so a
+# missing sibling breaks the whole ES module and the playground hangs on
+# "loading runtime…". Glob rather than list, so a newly-added local asset
+# stages without a change here.
+cp -L web/*.html web/*.js "$stage/"
+
+goroot="$(go env GOROOT)"
+# Overwrites the committed shim staged just above, on purpose — see the header.
+# Go 1.24 moved wasm_exec.js from $GOROOT/misc/wasm to $GOROOT/lib/wasm.
+if [ -f "$goroot/lib/wasm/wasm_exec.js" ]; then
+  cp "$goroot/lib/wasm/wasm_exec.js" "$stage/wasm_exec.js"
+elif [ -f "$goroot/misc/wasm/wasm_exec.js" ]; then
+  cp "$goroot/misc/wasm/wasm_exec.js" "$stage/wasm_exec.js"
+else
+  echo "error: no wasm_exec.js under $goroot" >&2
+  exit 1
+fi
+
+echo "==> generating stdlib reference"
+go run ./cmd/ferndoc -out site/src/content/docs/stdlib/
+
+echo "==> building site"
+cd site
+
+# astro.config.mjs defaults `site` to the GitHub Pages origin, which would put
+# another host's domain in this deploy's canonical + Open Graph URLs. Netlify
+# exposes the deploy's own origin, so hand it over through the config's
+# existing SITE_URL hook. DEPLOY_PRIME_URL is the branch/preview URL; URL is
+# the production one. Only set it when non-empty: the config falls back on a
+# nullish value, and an empty string is not nullish — it would fail the build.
+if [ -z "${SITE_URL:-}" ]; then
+  deploy_url="${DEPLOY_PRIME_URL:-${URL:-}}"
+  if [ -n "$deploy_url" ]; then
+    export SITE_URL="$deploy_url"
+    echo "==> SITE_URL=$SITE_URL"
+  fi
+fi
+
+npm install
+npm run build

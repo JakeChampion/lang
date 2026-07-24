@@ -48,9 +48,11 @@ go build -o ~/.local/bin/fern ./cmd/fern
 ```
 
 Building needs **Go 1.24+** ([download](https://go.dev/dl/)). The
-compiler is a single Go module with no external dependencies. Producing
-*native* ELF / Mach-O executables also needs a **C linker** (`clang`,
-`gcc`, or `cc`); the WASM target needs no linker.
+compiler is a single Go module with no external dependencies, and the
+native backends assemble *and* link in-process — so emitting an ELF,
+Mach-O, or `.wasm` binary needs no `gcc`, `clang`, or `ld` on your
+machine. Pass `-cc` (for example `-cc clang`) if you would rather route
+through your own assembler and linker.
 
 ## Verify the install
 
@@ -66,8 +68,8 @@ These are only built from a source checkout (`go build ./cmd/...`):
 | ------------ | -------------------------------------- | -------------------------------- |
 | `fern`       | `go build ./cmd/fern`                  | The main compiler + runner.      |
 | `fern-lsp`   | `go build ./cmd/fern-lsp`              | Language server for editors.     |
+| `ferndoc`    | `go build ./cmd/ferndoc`               | Generate the stdlib reference.   |
 | `dump_arm64` | `go build ./cmd/dump_arm64`            | Disassemble an emitted .s file.  |
-| `dump_wat`   | `go build ./cmd/dump_wat`              | Inspect a .wat module.           |
 
 ## Run hello, world
 

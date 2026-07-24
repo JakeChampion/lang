@@ -1,0 +1,38 @@
+---
+// NextSteps — the landing page's closing signpost grid.
+//
+// Hrefs are built from `import.meta.env.BASE_URL` rather than written
+// relative, because the landing page is reachable as both `/lang` and
+// `/lang/` (trailingSlash: "ignore") and a relative href resolves
+// differently between the two.
+//
+// Props:
+//   items — [{ label, href, blurb }]. `href` is site-relative WITHOUT
+//           the base prefix, e.g. "tutorial/install/". `label` is the
+//           whole accessible name: the trailing arrow is aria-hidden so
+//           the name stays exactly the label, which is what name-based
+//           navigation (and the docs test suite) matches on.
+
+interface Props {
+  items: { label: string; href: string; blurb: string }[];
+}
+
+const { items } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<ul class="fern-next not-content">
+  {
+    items.map((item) => (
+      <li>
+        <a href={`${base}/${item.href.replace(/^\//, "")}`}>
+          {item.label}
+          <span class="fern-next__arrow" aria-hidden="true">
+            {" →"}
+          </span>
+        </a>
+        <p>{item.blurb}</p>
+      </li>
+    ))
+  }
+</ul>
