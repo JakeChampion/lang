@@ -12,12 +12,10 @@
 // declares `import "std/float";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
 
-// __float_to_string's body dispatches (i64) `.to_string()` on
-// the integer and fractional parts (both `intPart` / `fracInt`
-// are i64 to avoid the `f64 → i32` truncation pitfall on
-// large magnitudes). Declare std/i64 so the receiver method
-// registers under no-prelude. std/i32 stays imported for the
-// trailing-zero loop's i32 arithmetic.
+// The formatters dispatch (i64) `.to_string()` (e.g. __float_int_part's
+// digit chunks, __float_to_string_prec) and (i32) `.to_string()` (the
+// shortest formatter's decimal-exponent rendering). Declare std/i64 and
+// std/i32 so those receiver methods register under no-prelude.
 import "std/i32";
 import "std/i64";
 
@@ -62,103 +60,6 @@ function __float_int_part(n: f64): string {
     return string_from_bytes(buf);
 }
 
-// __float_sci renders a positive f64 in scientific notation `d.ddde±XX`
-// with up to `maxsig` significant digits (trailing zeros trimmed). The value
-// is normalised to [1, 10) by repeated ×/÷ 10; the mantissa is approximate
-// for extreme exponents (each step rounds) but the exponent is right and no
-// magnitude renders as "0" or an unmarked hundreds-of-digits integer. A
-// correctly-rounded shortest significand (Ryu/Dragon4) is tracked in #5536.
-function __float_sci(n: f64, maxsig: i32): string {
-    if (n <= 0.0) { return "0"; }   // caller excludes 0; guard the normalise loop
-    var e: i32 = 0;
-    while (n >= 10.0) { n = n / 10.0; e = e + 1; }
-    while (n < 1.0) { n = n * 10.0; e = e - 1; }
-    // n is now in [1, 10). Peel `maxsig` significant digits.
-    var digits: string = "0123456789";
-    var buf: u8[] = __alloc_u8(maxsig);
-    var i: i32 = 0;
-    while (i < maxsig) {
-        var d: i32 = __floor_f64(n) as i32;
-        if (d < 0) { d = 0; }
-        if (d > 9) { d = 9; }
-        buf = buf.with(i, digits[d] as u8);
-        n = (n - (d as f64)) * 10.0;
-        i = i + 1;
-    }
-    var ds: string = string_from_bytes(buf);
-    // Trim trailing zeros from the significand (keep at least one digit).
-    var last: i32 = maxsig;
-    while (last > 1 && ds[last - 1] == 48) { last = last - 1; }   // '0' == 48
-    // `ds[a:b]` is a `str` view; concatenating onto a `string` yields a
-    // `string` (see __float_to_string's fraction return), so lead with "".
-    var res: string = "" + ds[0:1];
-    if (last > 1) { res = res + "." + ds[1:last]; }
-    // Exponent: always signed, no zero-pad (matches strconv 'g').
-    if (e < 0) { res = res + "e-" + (0 - e).to_string(); }
-    else { res = res + "e+" + e.to_string(); }
-    return res;
-}
-
-function __float_to_string(n: f64, k: i32): string {
-    if (n != n) { return "NaN"; }
-    var out: string = "";
-    if (n < 0.0) {
-        out = "-";
-        n = 0.0 - n;
-    }
-    // Inf detection without a literal `inf` constant: for
-    // any finite non-zero f64, `n * 2.0` is strictly larger
-    // than `n`. For ±Inf, `Inf * 2.0 == Inf`. We've already
-    // extracted the sign and ruled out NaN, so `n` here is
-    // either zero, finite-positive, or +Inf.
-    if (n != 0.0 && n * 2.0 == n) { return out + "Inf"; }
-    // Scientific notation for extreme magnitudes (decimal exponent >= 21 or
-    // < -4, the strconv 'g' / Go %v thresholds). Without it, huge values
-    // that overflow the `n as i64` cast below printed as an unmarked
-    // hundreds-of-digits integer (or garbage past 2^53), and tiny values
-    // with more leading zeros than the k fractional digits below silently
-    // rendered as "0" — a data-loss bug (1e-300 -> "0", 1e300 -> garbage).
-    // The bounds leave the normal-range fixed-point path below byte-
-    // identical. Not yet correctly-rounded shortest (Ryu/Dragon4) — #5536.
-    if (n != 0.0 && (n >= 1.0e21 || n < 1.0e-4)) { return out + __float_sci(n, 17); }
-    // Magnitudes at or above 2^63 overflow the `n as i64` cast
-    // below — and that overflow is *not* portable: x86 yields
-    // INT_MIN, arm64 saturates to INT_MAX, and wasm traps
-    // outright (`integer overflow`). Any f64 this large is already
-    // integer-valued (the exponent leaves no fractional bits), so
-    // format the integer digits in the float domain instead, which
-    // never touches the i64 range and agrees across every backend.
-    if (n >= 9223372036854775808.0) { return out + __float_int_part(n); }
-    // Integer part.
-    var intPart: i64 = n as i64;
-    out = out + intPart.to_string();
-    // Fraction part.
-    var frac: f64 = n - (intPart as f64);
-    if (frac < 0.0) { frac = 0.0 - frac; }   // guard against `(intPart as f64)` rounding above n
-    // mult = 10^k.
-    var mult: f64 = 1.0;
-    var i: i32 = 0;
-    while (i < k) { mult = mult * 10.0; i = i + 1; }
-    var fracInt: i64 = (frac * mult) as i64;
-    // Find the effective number of digits by trimming
-    // trailing zeros from fracInt.
-    var effective: i32 = k;
-    var tmp: i64 = fracInt;
-    while (effective > 0 && (tmp % 10) == 0) {
-        tmp = tmp / 10;
-        effective = effective - 1;
-    }
-    if (effective == 0) { return out; }
-    // Pad fracInt's decimal repr to k digits with leading
-    // zeros, then truncate to `effective`.
-    var fracStr: string = fracInt.to_string();
-    while (fracStr.len() < k) { fracStr = "0" + fracStr; }
-    return out + "." + fracStr[0:effective];
-}
-
-pub function (n: f32) to_string(): string {
-    return __float_to_string(n as f64, 7);
-}
 
 // Shortest round-trip f64 formatting (#5536). Exact bignum digit
 // generation from the IEEE-754 mantissa/exponent (f64_bits), then the
@@ -212,11 +113,15 @@ function inc_digits(s: string): string {
 }
 function digits_to_i64(s: string): i64 { var v: i64 = 0; var i: i32 = 0; while (i < s.len()) { v = v * 10 + ((s[i] as i64) - 48); i = i + 1; } return v; }
 
-function __float_sig_pack(n: f64): string {
-    var bits: i64 = f64_bits(n);
-    var be: i64 = (bits >> 52) & 2047; var frac: i64 = bits & 4503599627370495;
-    var m: i64 = frac; var e: i64 = 0 - 1074;
-    if (be != 0) { m = frac | 4503599627370496; e = be - 1075; }
+// Shortest-significand search shared by the f32 and f64 formatters. Given a
+// float decoded to `value = m * 2^e` (m the integer significand, e its binary
+// exponent) and whether m is even, it generates the exact decimal expansion
+// via bignum and returns the SHORTEST "sig|msd" prefix that still rounds back
+// to the same float — testing each k-digit candidate against the value's ULP
+// boundaries lo=(2m-1)*2^(e-1) / hi=(2m+1)*2^(e-1), inclusive on ties when m
+// is even (round-half-to-even). `digcap` bounds the search (17 for f64, 9 for
+// f32 — the max shortest lengths of each).
+function __float_sig_core(m: i64, e: i64, meven: boolean, digcap: i32): string {
     var N: i64[] = bn_from_i64(m); var scale: i32 = 0;
     if (e >= 0) { var c: i64 = 0; while (c < e) { N = bn_mul_small(N, 2); c = c + 1; } }
     else { var c2: i64 = 0; var ae: i64 = 0 - e; while (c2 < ae) { N = bn_mul_small(N, 5); c2 = c2 + 1; } scale = (0 - ae) as i32; }
@@ -224,8 +129,7 @@ function __float_sig_pack(n: f64): string {
     var msdexp: i32 = (sig.len() - 1) + scale;
     // boundaries of n: lo=(2m-1)*2^(e-1), hi=(2m+1)*2^(e-1)
     var lv: i64 = 2 * m - 1; var hv: i64 = 2 * m + 1; var eb: i32 = (e - 1) as i32;
-    var meven: boolean = (m & 1) == 0;
-    var kmax: i32 = sig.len(); if (kmax > 17) { kmax = 17; }
+    var kmax: i32 = sig.len(); if (kmax > digcap) { kmax = digcap; }
     var k: i32 = 1;
     while (k <= kmax) {
         var roundup: boolean = false;
@@ -242,6 +146,23 @@ function __float_sig_pack(n: f64): string {
         k = k + 1;
     }
     return sig + "|" + msdexp.to_string();
+}
+function __float_sig_pack(n: f64): string {
+    var bits: i64 = f64_bits(n);
+    var be: i64 = (bits >> 52) & 2047; var frac: i64 = bits & 4503599627370495;
+    var m: i64 = frac; var e: i64 = 0 - 1074;
+    if (be != 0) { m = frac | 4503599627370496; e = be - 1075; }
+    return __float_sig_core(m, e, (m & 1) == 0, 17);
+}
+// f32 sibling of __float_sig_pack: 23-bit fraction, 8-bit exponent, bias 127.
+// value = (frac | 2^23) * 2^(be-150) for normals, frac * 2^-149 for
+// subnormals. n is pre-stripped of its sign, so f32_bits(n) is non-negative.
+function __float_sig_pack_f32(n: f32): string {
+    var bits: i64 = f32_bits(n) as i64;
+    var be: i64 = (bits >> 23) & 255; var frac: i64 = bits & 8388607;
+    var m: i64 = frac; var e: i64 = 0 - 149;
+    if (be != 0) { m = frac | 8388608; e = be - 150; }
+    return __float_sig_core(m, e, (m & 1) == 0, 9);
 }
 
 // Format shortest significand `sig` with most-significant-digit decimal
@@ -269,14 +190,10 @@ function __float_fmt_sci(sig: string, msd: i32): string {
     // point in the middle
     return "" + sig[0:msd+1] + "." + sig[msd+1:nd];
 }
-function __float_shortest(n: f64): string {
-    if (n != n) { return "NaN"; }
-    var out: string = "";
-    if (n < 0.0) { out = "-"; n = 0.0 - n; }
-    if (n != 0.0 && n * 2.0 == n) { return out + "Inf"; }
-    if (n == 0.0) { return out + "0"; }
-    var packed: string = __float_sig_pack(n);
-    // split "sig|msd"
+// Split a "sig|msd" pack (see __float_sig_core) into its significand + most-
+// significant-digit exponent and render it in strconv 'g' style, prefixed by
+// `out` (the already-extracted sign). Shared by the f32 and f64 formatters.
+function __float_render(out: string, packed: string): string {
     var bar: i32 = 0; while (packed[bar] != 124) { bar = bar + 1; }   // '|' == 124
     var sig: string = "" + packed[0:bar];
     var msd: i32 = 0; var neg: boolean = false; var q: i32 = bar + 1;
@@ -285,17 +202,41 @@ function __float_shortest(n: f64): string {
     if (neg) { msd = 0 - msd; }
     return out + __float_fmt_sci(sig, msd);
 }
+function __float_shortest(n: f64): string {
+    if (n != n) { return "NaN"; }
+    var out: string = "";
+    if (n < 0.0) { out = "-"; n = 0.0 - n; }
+    if (n != 0.0 && n * 2.0 == n) { return out + "Inf"; }
+    if (n == 0.0) { return out + "0"; }
+    return __float_render(out, __float_sig_pack(n));
+}
+// f32 shortest-round-trip formatter (#5536 follow-on). Same shape as the f64
+// path — sign / NaN / Inf / 0 handling, then the shared shortest-digit search
+// via the f32 field unpacker — so an f32 renders with the fewest digits that
+// still parse back to it (e.g. 0.1f32 -> "0.1", not "0.099999994").
+function __float_shortest_f32(n: f32): string {
+    if (n != n) { return "NaN"; }
+    var out: string = "";
+    if (n < 0.0) { out = "-"; n = 0.0 - n; }
+    if (n != 0.0 && n * 2.0 == n) { return out + "Inf"; }
+    if (n == 0.0) { return out + "0"; }
+    return __float_render(out, __float_sig_pack_f32(n));
+}
 
 
 pub function (n: f64) to_string(): string {
     return __float_shortest(n);
 }
 
+pub function (n: f32) to_string(): string {
+    return __float_shortest_f32(n);
+}
+
 // __float_to_string_prec renders `n` with EXACTLY `prec` fractional
 // digits — no trailing-zero trimming — rounding half away from zero.
-// Unlike __float_to_string (which trims and caps at the precision
-// floor), this gives the fixed-width output that table / currency
-// formatting wants: `3.14159 @ prec 2` -> "3.14", `2.5 @ prec 0` ->
+// Unlike the default shortest formatter (which emits the fewest digits
+// that round-trip), this gives the fixed-width output that table /
+// currency formatting wants: `3.14159 @ prec 2` -> "3.14", `2.5 @ prec 0` ->
 // "3", `1.0 @ prec 3` -> "1.000". The whole computation stays in the
 // float domain via __float_int_part, so no value crosses the
 // trapping/non-portable `f64 -> i64` boundary regardless of magnitude.

@@ -70,15 +70,16 @@ func TestFloatSemantics_PortableSubset(t *testing.T) {
 // unannotated float expression evaluates and dispatches at f64
 // precision (1.0/3.0 renders with std/float's shortest-round-trip f64
 // formatter — 0.3333333333333333, #5536), a `float`-annotated value
-// behaves identically (the alias IS f64), and an explicit f32 stays at
-// the 7-digit f32 rendering — on the interpreter, native x86-64, and wasm.
+// behaves identically (the alias IS f64), and an explicit f32 renders with
+// std/float's shortest-round-trip f32 formatter (0.33333334, the fewest
+// digits that parse back to that f32) — on the interpreter, x86-64, and wasm.
 func TestFloatDefaultWidthF64(t *testing.T) {
 	src := `import "std/float";
 function main(): i32 {
 	if ((1.0 / 3.0).to_string() != "0.3333333333333333") { return 1; }
 	var x: float = 1.0;
 	if ((x / 3.0).to_string() != "0.3333333333333333") { return 2; }
-	if ((1.0 as f32 / 3.0 as f32).to_string() != "0.3333333") { return 3; }
+	if ((1.0 as f32 / 3.0 as f32).to_string() != "0.33333334") { return 3; }
 	return 0;
 }`
 	t.Run("interp", func(t *testing.T) {
