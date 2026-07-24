@@ -785,24 +785,6 @@ pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: 
 // the shared cache once (not re-lowering every function per call) is what makes
 // the wasm self-host compile linear (#4652). The op-kind arrives by string;
 // resolve it to the integer tag once so the inner scan is an int compare.
-// module_uses_c_call reports whether any function calls an FFI `__c_call<n>`
-// shim (a call_direct, kind 149, whose callee is is_c_call). Wasm has no C-ABI,
-// so such a module stays off the wasm IR path — native parity: native wasm has
-// no __c_call either (#4375). module_emits_op_cached can't express this (it
-// matches by op KIND; __c_call is an ordinary direct call), so scan by name.
-function module_uses_c_call(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 149 && asm_ir.is_c_call(r.ops[i].str)) { return true; }
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
-}
 
 pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string): boolean {
     var ktag: i32 = ir.kind_id(kind);
@@ -1203,6 +1185,16 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
         }
         if (util.index_of_str(ids, "subprocess") >= 0) { return "subprocess"; }
         if (util.index_of_str(ids, "timer_fd") >= 0) { return "timer_fd"; }
+        // FFI __c_call<n>(...) (#4375) is written directly as a builtin call, so
+        // its callee ident is collected here. Wasm has no C ABI — there is no
+        // __c_call runtime on any wasm path — so reject it with a clean diagnostic
+        // (before this it deferred to the AST emitter, which also has no __c_call
+        // and emitted a call to an undefined $__c_call<n>).
+        var ci: i32 = 0;
+        while (ci < ids.len()) {
+            if (asm_ir.is_c_call(ids[ci])) { return ids[ci]; }
+            ci = ci + 1;
+        }
         fi = fi + 1;
     }
     return "";
@@ -1214,6 +1206,9 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
 pub function wasm_unsupported_message(name: string): string {
     if (name == "timer_fd") {
         return "error: timer_fd is not supported on the wasm target (wasm has no pollable file descriptors); use wasm_timer_pollable, which returns a wasi:io/poll pollable\n";
+    }
+    if (asm_ir.is_c_call(name)) {
+        return "error: " + name + " (C FFI) is not supported on the wasm target (wasm has no C ABI)\n";
     }
     return "error: " + name + " is not supported on the wasm target\n";
 }
@@ -1281,12 +1276,11 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // on the wasm IR path (#4372): $__fern_open_file does path_open under preopen
         // fd 3 (openat-flags -> WASI oflags/rights/fdflags) and $__fern_writer_write
         // fd_writes the bytes — reusing file_imports' path_open + the fd_write import.
-        // subprocess is NOT deferred to the AST path — it is unsupportable on
-        // wasm/WASI, so the driver rejects it with a clean diagnostic before emit
-        // (module_uses_subprocess, #4320). No exclusion here.
-        // FFI __c_call<n> has no wasm C-ABI meaning (#4375) — native wasm has no
-        // __c_call, so a module using it stays on the wasm AST path here.
-        && !module_uses_c_call(cache);
+        // subprocess (#4320) and FFI __c_call<n> (#4375) are NOT deferred — both
+        // are unsupportable on wasm (no process spawn, no C ABI), so the driver
+        // rejects them with a clean diagnostic before emit (wasm_unsupported_builtin,
+        // wasm_unsupported_message). No exclusion here.
+        ;
 }
 
 // should_use_ir_core is the CHEAP gate the emit dispatch (wasm.emit_module)
