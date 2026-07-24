@@ -1207,7 +1207,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		if err != nil {
 			return 1, fmt.Errorf("arm64-ssa: %v", err)
 		}
-		if err := linkNative(asm, outPath, "", ""); err != nil {
+		if err := linkNative(asm, outPath, "", "", nil); err != nil {
 			return 1, fmt.Errorf("arm64-ssa link: %v", err)
 		}
 		return 0, nil
@@ -1519,11 +1519,10 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 	dbgCompDir, _ := os.Getwd()
 	// DWARF variable DIEs (#5537 slice 3 locals/params): map each function to
 	// its scalar parameters + locals with frame offsets, so gdb/lldb can
-	// `info args` / `print <var>`. x86-64 only for now (arm64 frame layout is a
-	// follow-up); gated on -g.
+	// `info args` / `print <var>`. x86-64 and arm64 (Linux ELF); gated on -g.
 	var dbgVars map[string][]nativeelf.LocalVar
-	if emitDebugSyms && target == "x86-64" {
-		dbgVars = dwarfLocalVars(prog, info)
+	if emitDebugSyms && (target == "x86-64" || target == "arm64") && !darwin && !android {
+		dbgVars = dwarfLocalVars(prog, info, target)
 	}
 
 	var asm string
@@ -1605,7 +1604,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			return 1, err
 		}
 	case useNative:
-		if err := linkNative(asm, binPath, dbgSrc, dbgCompDir); err != nil {
+		if err := linkNative(asm, binPath, dbgSrc, dbgCompDir, dbgVars); err != nil {
 			return 1, err
 		}
 	case darwin:
@@ -1822,7 +1821,7 @@ func linkDarwin(asm, outPath, cc string) error {
 // two-segment layout (R+X code, R+W data) so no mapping is both writable
 // and executable — required by W^X-enforcing loaders such as Android's.
 // Unsupported instructions surface as an error rather than a miscompile.
-func linkNative(asm, outPath, srcFile, compDir string) error {
+func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nativeelf.LocalVar) error {
 	if emitDebugSyms {
 		text, rodata, syms, locRows, err := nativearm64.AssembleProgramWXSyms(asm, nativeelf.TextVAddrWX)
 		if err != nil {
@@ -1836,7 +1835,7 @@ func linkNative(asm, outPath, srcFile, compDir string) error {
 		for _, r := range locRows {
 			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
 		}
-		bin := nativeelf.StaticExecutableDataWXSymsRows(text, rodata, fs, rows, srcFile, compDir, textEnd, nil)
+		bin := nativeelf.StaticExecutableDataWXSymsRows(text, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}
@@ -1966,31 +1965,47 @@ func scalarTypeKey(t ast.Type) string {
 }
 
 // dwarfLocalVars builds the per-function scalar parameter/local variable list
-// for the DWARF subprogram DIEs (#5537 slice 3). It relies on the x86-64
-// codegen's frame layout: parameters occupy slots 0..N-1, then info.Locals in
-// order, and slot k lives at [rbp - 8*(k+1)]. Closures are skipped — their
-// capture slots shift that layout. Only scalar-typed variables are emitted.
-func dwarfLocalVars(prog *ast.Program, info *checker.Info) map[string][]nativeelf.LocalVar {
+// for the DWARF subprogram DIEs (#5537 slice 3). Both native backends place
+// parameters in slots 0..N-1 then info.Locals in order, with slot k relative
+// to the frame pointer (rbp / x29). The per-slot byte size differs: x86-64
+// uses a single-word string ABI so every slot is 8 bytes (offset -8*(k+1));
+// arm64 uses two-word strings, so a string slot is 16 bytes and shifts every
+// later slot's offset. Closures are skipped (capture slots shift the layout);
+// only scalar-typed variables get a DIE, but non-scalar slots still count
+// toward the arm64 running offset.
+func dwarfLocalVars(prog *ast.Program, info *checker.Info, target string) map[string][]nativeelf.LocalVar {
 	out := map[string][]nativeelf.LocalVar{}
 	for _, fn := range prog.Funcs {
 		if len(fn.Captures) > 0 {
 			continue
 		}
+		type slotVar struct {
+			name    string
+			typ     ast.Type
+			isParam bool
+		}
+		slots := make([]slotVar, 0, len(fn.Params)+len(info.Locals[fn]))
+		for _, p := range fn.Params {
+			slots = append(slots, slotVar{p.Name, p.Type, true})
+		}
+		for _, v := range info.Locals[fn] {
+			slots = append(slots, slotVar{v.Name, v.Type, false})
+		}
+
 		var vars []nativeelf.LocalVar
-		add := func(name string, t ast.Type, slot int, isParam bool) {
-			key := scalarTypeKey(t)
-			if key == "" {
-				return
+		cum := 0 // arm64 running byte offset (sum of slot sizes so far)
+		for k, s := range slots {
+			off := -8 * (k + 1) // x86-64: uniform 8-byte slots
+			if target != "x86-64" {
+				sz := 8
+				if _, isStr := s.typ.(ast.StringType); isStr {
+					sz = 16 // arm64 two-word string
+				}
+				cum += sz
+				off = -cum
 			}
-			vars = append(vars, nativeelf.LocalVar{Name: name, TypeKey: key, Offset: -8 * (slot + 1), IsParam: isParam})
-		}
-		for i, p := range fn.Params {
-			add(p.Name, p.Type, i, true)
-		}
-		base := len(fn.Params)
-		for j, v := range info.Locals[fn] {
-			if v.Type != nil {
-				add(v.Name, v.Type, base+j, false)
+			if key := scalarTypeKey(s.typ); key != "" {
+				vars = append(vars, nativeelf.LocalVar{Name: s.name, TypeKey: key, Offset: off, IsParam: s.isParam})
 			}
 		}
 		if len(vars) > 0 {
