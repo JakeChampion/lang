@@ -2056,13 +2056,10 @@ function main(): i32 {
 }
 
 // `s.parse_float(): Option[f64]` — accepts integer-only,
-// integer.fraction, .fraction, and exponent forms. The
-// helper bumps a saturating mantissa accumulator to avoid
-// overflow on very-long inputs while keeping the magnitude
-// right via exp_adj. Compares each parsed value against an
-// expected literal with a generous epsilon — float-from-
-// decimal isn't bit-exact and we don't claim Steele/White
-// guarantees yet.
+// integer.fraction, .fraction, and exponent forms. Parsing is
+// correctly-rounded (round-half-to-even, bit-exact with strconv;
+// #5566) — the bit-exact guard is TestParseFloatCorrectlyRounded;
+// this test pins the grammar (accepted / rejected shapes).
 func TestWASMParseFloat(t *testing.T) {
 	src := `
 import "std/string";
