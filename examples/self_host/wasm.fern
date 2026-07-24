@@ -8630,6 +8630,32 @@ function arr_push_wide(vty: string, sop: string): string {
     return o;
 }
 
+// map_w64_helpers emits the wasm IR runtime for i64/u64-VALUED maps (#5253).
+// The i32-celled value column can't hold an 8-byte value inline, so a wide value
+// is boxed into a fresh 8-byte rc cell and the cell's i32 pointer is stored in the
+// column as an rc-managed value (vis=1, so $__fern_map_release frees the cell like
+// a string value; vconsume=1, so the map takes the fresh cell's sole ref). Reads
+// dereference the cell. Depends on $__fern_map_set / $__fern_map_find /
+// $__fern_str_box (map_helpers, always co-present when a module uses maps).
+pub function map_w64_helpers(): string {
+    var o: string = "";
+    // $__fern_map_set_w64(box, k, v, kcons) → box: box v into an 8-byte cell and
+    // store the cell pointer as a vis-managed value the map takes ownership of.
+    o = o + "  (func $__fern_map_set_w64 (param $box i32) (param $k i32) (param $v i64) (param $kcons i32) (result i32)\n";
+    o = o + "    (local $cell i32)\n";
+    o = o + "    (local.set $cell (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (i64.store (local.get $cell) (local.get $v))\n";
+    o = o + "    (return (call $__fern_map_set (local.get $box) (local.get $k) (local.get $cell) (i32.const 1) (i32.const 1) (local.get $kcons))))\n";
+    // $__fern_map_get_or_w64(box, k, d) → the 8-byte value at k, or default d on a
+    // miss. vals[idx] holds the cell pointer; deref it with i64.load.
+    o = o + "  (func $__fern_map_get_or_w64 (param $box i32) (param $k i32) (param $d i64) (result i64)\n";
+    o = o + "    (local $idx i32)\n";
+    o = o + "    (local.set $idx (call $__fern_map_find (local.get $box) (local.get $k)))\n";
+    o = o + "    (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (local.get $d))))\n";
+    o = o + "    (i64.load (i32.load (i32.add (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.mul (local.get $idx) (i32.const 4))))))\n";
+    return o;
+}
+
 // map_helpers emits the i32-keyed / i32-valued hash-map runtime. The map
 // box is 24 bytes: [count@0][cap@4][keys@8][vals@12][used@16][pad@20];
 // keys / vals / used are three separate cap*4 regions (open addressing,
@@ -12978,6 +13004,10 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     if (wasm_ir.need(needs, "arr_push_i64")) { out = out + arr_push_i64_helper(); }
     if (wasm_ir.need(needs, "arr_push_f64")) { out = out + arr_push_f64_helper(); }
     if (wasm_ir.need(needs, "@uses_maps")) { out = out + map_helpers(); }
+    // $__fern_map_set_w64 / $__fern_map_get_or_w64: the i64/u64-VALUED map runtime
+    // (#5253), over the map_helpers primitives above. Emitted when a module
+    // inserts/reads an 8-byte i64/u64 map value.
+    if (wasm_ir.need(needs, "@uses_map_w64")) { out = out + map_w64_helpers(); }
     // $__fern_map_iter + accessors: the wasm map-iterator runtime (materializes
     // keys/values via map_helpers above, so gated after it). Emitted when the
     // module iterates a map (m.iter() / for-in-map).
