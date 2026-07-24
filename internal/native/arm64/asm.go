@@ -29,6 +29,20 @@ type Assembler struct {
 	// flush (.ltorg or end), and the placed literals to relocate.
 	pendingLits []litRef
 	litFixups   []litResolve
+
+	// DWARF .debug_line rows: the source line active at a .text byte offset,
+	// recorded when the code generator emits a `.loc` directive under -g.
+	locRows []LineRow
+}
+
+// LineRow is one DWARF .debug_line row: the source line active at a .text
+// byte offset (the next instruction's, since `.loc` emits no bytes). arm64
+// instructions are fixed 4 bytes, so the offset is the instruction index × 4.
+// The linker converts Offset to an absolute vaddr. Mirror of the x86-64
+// assembler's LineRow.
+type LineRow struct {
+	Offset int
+	Line   int
 }
 
 type litRef struct {

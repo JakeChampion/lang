@@ -1207,7 +1207,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		if err != nil {
 			return 1, fmt.Errorf("arm64-ssa: %v", err)
 		}
-		if err := linkNative(asm, outPath, nil, ""); err != nil {
+		if err := linkNative(asm, outPath, ""); err != nil {
 			return 1, fmt.Errorf("arm64-ssa link: %v", err)
 		}
 		return 0, nil
@@ -1510,19 +1510,9 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			exportNames = strings.Split(export, ",")
 		}
 	}
-	// Under -g, map each entry-module function to its source line for the
-	// DWARF .debug_line table (#5537 slice 2). Only bare-named entry decls
-	// are included: imported/stdlib decls (`mod__name`) and runtime helpers
-	// (`__fern_*`) live in other files, so their lines wouldn't map to srcFile.
-	var declLines map[string]int
-	if emitDebugSyms {
-		declLines = make(map[string]int, len(prog.Funcs))
-		for _, fn := range prog.Funcs {
-			if fn.P.Line > 0 && !strings.Contains(fn.Name, "__") {
-				declLines[fn.Name] = fn.P.Line
-			}
-		}
-	}
+	// Under -g, the DWARF .debug_line table is built from per-statement `.loc`
+	// markers the native backends emit (#5537 slice 2); the source file names
+	// file 1 in the line program.
 	srcFileBase := filepath.Base(srcPath)
 
 	var asm string
@@ -1530,7 +1520,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 	case "x86-64":
 		asm, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{Exports: exportNames, DebugLines: emitDebugSyms})
 	default:
-		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin, PIE: android, Exports: exportNames})
+		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin, PIE: android, Exports: exportNames, DebugLines: emitDebugSyms && !darwin && !android})
 	}
 	if err != nil {
 		return 1, err
@@ -1604,7 +1594,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			return 1, err
 		}
 	case useNative:
-		if err := linkNative(asm, binPath, declLines, srcFileBase); err != nil {
+		if err := linkNative(asm, binPath, srcFileBase); err != nil {
 			return 1, err
 		}
 	case darwin:
@@ -1821,27 +1811,21 @@ func linkDarwin(asm, outPath, cc string) error {
 // two-segment layout (R+X code, R+W data) so no mapping is both writable
 // and executable — required by W^X-enforcing loaders such as Android's.
 // Unsupported instructions surface as an error rather than a miscompile.
-// funcLinesFor builds the DWARF .debug_line rows (one per entry-module
-// function: address range → declaration line) from the sorted symbol table
-// and the name→line map. fs is already address-sorted, so the rows are too.
-func funcLinesFor(fs []nativeelf.Sym, declLines map[string]int) []nativeelf.FuncLine {
-	var out []nativeelf.FuncLine
-	for _, s := range fs {
-		if line, ok := declLines[s.Name]; ok && s.Size > 0 {
-			out = append(out, nativeelf.FuncLine{Lo: s.Value, Hi: s.Value + s.Size, Line: line})
-		}
-	}
-	return out
-}
-
-func linkNative(asm, outPath string, declLines map[string]int, srcFile string) error {
+func linkNative(asm, outPath string, srcFile string) error {
 	if emitDebugSyms {
-		text, rodata, syms, err := nativearm64.AssembleProgramWXSyms(asm, nativeelf.TextVAddrWX)
+		text, rodata, syms, locRows, err := nativearm64.AssembleProgramWXSyms(asm, nativeelf.TextVAddrWX)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
-		fs := nativeelf.FuncSyms(syms, nativeelf.TextVAddrWX+uint64(len(text)))
-		bin := nativeelf.StaticExecutableDataWXSymsLines(text, rodata, fs, funcLinesFor(fs, declLines), srcFile)
+		textEnd := nativeelf.TextVAddrWX + uint64(len(text))
+		fs := nativeelf.FuncSyms(syms, textEnd)
+		// Per-statement DWARF .debug_line rows from the assembler's `.loc`
+		// markers (#5537 slice 2); Offset is text-relative → absolute vaddr.
+		rows := make([]nativeelf.LineRow, 0, len(locRows))
+		for _, r := range locRows {
+			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
+		}
+		bin := nativeelf.StaticExecutableDataWXSymsRows(text, rodata, fs, rows, srcFile, textEnd)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}

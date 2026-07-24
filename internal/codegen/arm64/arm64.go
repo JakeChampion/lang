@@ -218,6 +218,12 @@ type Options struct {
 	// The peephole is a pure size optimisation and on by default; this only
 	// exists so asm-shape tests can assert the un-collapsed emission.
 	NoPeephole bool
+
+	// DebugLines makes the lowering emit OpLine markers and the backend emit
+	// DWARF `.loc` directives, so the assembler can build a .debug_line
+	// source-line table (#5537 slice 2). Set under `fern -g`. Mirror of the
+	// x86-64 backend's DebugLines.
+	DebugLines bool
 }
 
 // Emit produces the assembly text for prog.
@@ -267,7 +273,11 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// 4c — docs/DYN-TRAITS.md §4.4): DynRcSupported lifts the RC path (the
 	// trailing vtable drop slot + the per-set __drop_dyn_<set> helper + the
 	// dec/drop sweep arms), the structural mirror of the x86-64 slice 4b.
-	ip, err := ir.LowerWith(prog, info, 8, ir.DynSupported(), ir.DynRcSupported())
+	lowerOpts := []ir.LowerOption{ir.DynSupported(), ir.DynRcSupported()}
+	if opts.DebugLines {
+		lowerOpts = append(lowerOpts, ir.EmitLineMarkers())
+	}
+	ip, err := ir.LowerWith(prog, info, 8, lowerOpts...)
 	if err != nil {
 		return "", err
 	}
@@ -9679,6 +9689,12 @@ func (g *generator) loadImm64(reg string, v uint64) {
 // owns the slice.
 func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]irScope) error {
 	switch op.Kind {
+	case ir.OpLine:
+		// Source-line marker → DWARF `.loc` directive (file 1). Emits no
+		// machine code; the assembler records the current text offset as a
+		// .debug_line row. `.loc` never matches a peephole instruction
+		// pattern, so it only ever prevents a fusion at a line boundary.
+		g.line(fmt.Sprintf("\t.loc 1 %d %d", op.Pos.Line, op.Pos.Col))
 	case ir.OpConstI32:
 		// Materialise the constant into x0 and push. Small
 		// values fit `mov` (imm16); larger ones use `ldr =N`

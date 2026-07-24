@@ -1081,64 +1081,6 @@ func TestStaticExecutableDataWXSymsDWARF(t *testing.T) {
 	}
 }
 
-// TestStaticExecutableDataWXSymsLines checks the -g DWARF .debug_line table
-// (#5537 slice 2): the emitted image carries a line-number program that Go's
-// debug/dwarf decodes to (address → file:line) rows, so gdb/lldb and addr2line
-// can resolve a code address back to source. Uses function-granularity rows
-// (each function → its declaration line).
-func TestStaticExecutableDataWXSymsLines(t *testing.T) {
-	text := []byte{0xb8, 0x2a, 0x00, 0x00, 0x00, 0xc3, 0x90, 0x90} // 8 bytes
-	data := []byte{1, 2, 3, 4, 5, 6, 7, 8}
-	base := uint64(elf.TextVAddrWX)
-	syms := []elf.Sym{
-		{Name: "main", Value: base, Size: 6},
-		{Name: "helper", Value: base + 6, Size: 2},
-	}
-	lines := []elf.FuncLine{
-		{Lo: base, Hi: base + 6, Line: 10},    // main declared at line 10
-		{Lo: base + 6, Hi: base + 8, Line: 3}, // helper declared at line 3
-	}
-	bin := elf.StaticExecutableDataX86WXSymsLines(text, data, syms, lines, "prog.fern")
-
-	f, err := goelf.NewFile(bytes.NewReader(bin))
-	if err != nil {
-		t.Fatalf("not a parseable ELF: %v", err)
-	}
-	d, err := f.DWARF()
-	if err != nil {
-		t.Fatalf("DWARF(): %v", err)
-	}
-	r := d.Reader()
-	cu, err := r.Next()
-	if err != nil || cu == nil {
-		t.Fatalf("no CU: %v", err)
-	}
-	lr, err := d.LineReader(cu)
-	if err != nil {
-		t.Fatalf("LineReader: %v", err)
-	}
-	got := map[uint64]int{}
-	var le dwarf.LineEntry
-	for {
-		if err := lr.Next(&le); err != nil {
-			break
-		}
-		if le.EndSequence {
-			continue
-		}
-		got[le.Address] = le.Line
-		if le.File == nil || le.File.Name != "prog.fern" {
-			t.Errorf("addr %#x: file = %v, want prog.fern", le.Address, le.File)
-		}
-	}
-	want := map[uint64]int{base: 10, base + 6: 3}
-	for a, l := range want {
-		if got[a] != l {
-			t.Errorf("addr %#x: line = %d, want %d (all rows: %v)", a, got[a], l, got)
-		}
-	}
-}
-
 // TestStaticExecutableDataWXSymsRows checks the per-statement .debug_line path
 // (#5537 slice 2, x86-64): a single line-number-program sequence over
 // (address, line) rows decodes through debug/dwarf to exactly those rows, so

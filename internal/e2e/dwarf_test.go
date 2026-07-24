@@ -95,14 +95,18 @@ function main(): i32 { return helper(21); }
 	}
 }
 
-// TestDWARFLineTable is the end-to-end guard for the -g .debug_line source-
-// line table (#5537 slice 2): a real `fern -g` build maps each function's
-// address range to its declaration line, decodable through Go's debug/dwarf
-// LineReader — the information gdb/lldb and addr2line use to turn a backtrace
-// address into `file:line`. The default build has no line table.
+// TestDWARFLineTable is the end-to-end guard for the -g .debug_line
+// per-statement source-line table (#5537 slice 2): a real `fern -g` build maps
+// code addresses to their exact source lines, decodable through Go's
+// debug/dwarf LineReader — the information gdb/lldb and addr2line use to step
+// by source line and turn a backtrace address into `file:line`. Both native
+// backends (x86-64 and arm64) emit `.loc` per statement, so a multi-statement
+// function's PC range carries a row for each of its lines. The default build
+// has no line table.
 func TestDWARFLineTable(t *testing.T) {
-	// helper on line 1, main on line 4.
-	src := "function helper(x: i32): i32 {\n    return x * 2;\n}\nfunction main(): i32 {\n    return helper(21);\n}\n"
+	// helper: decl line 1, `var y` line 2, `return` line 3.
+	// main:   decl line 5, `var a` line 6, `return` line 7.
+	src := "function helper(x: i32): i32 {\n    var y: i32 = x * 2;\n    return y + 1;\n}\nfunction main(): i32 {\n    var a: i32 = helper(20);\n    return a;\n}\n"
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	p := filepath.Join(dir, "prog.fern")
@@ -170,27 +174,29 @@ func TestDWARFLineTable(t *testing.T) {
 					rows = append(rows, row{le.Address, le.Line})
 				}
 			}
-			// Each function's PC range must contain a line-table row whose line
-			// falls within that function's source span — robust to both
-			// per-function (arm64: the decl line) and per-statement (x86-64:
-			// the statement line, after the prologue) granularity. helper
-			// spans lines 1-3, main spans lines 4-6 in the source below.
-			spans := map[string][2]int{"helper": {1, 3}, "main": {4, 6}}
+			// Per-statement granularity: `helper` has two body statements on
+			// distinct lines (2 and 3), so its PC range must carry rows for at
+			// least two distinct source lines within its 1-3 span — a
+			// per-function table (one decl-line row) would fail this. `main`
+			// (lines 5-7) must likewise map somewhere in its span.
+			spans := map[string][2]int{"helper": {1, 3}, "main": {5, 7}}
 			for name, span := range spans {
 				pc, ok := ranges[name]
 				if !ok {
 					t.Errorf("no subprogram %q", name)
 					continue
 				}
-				found := false
+				seen := map[int]bool{}
 				for _, rw := range rows {
 					if rw.addr >= pc.lo && rw.addr < pc.hi && rw.line >= span[0] && rw.line <= span[1] {
-						found = true
-						break
+						seen[rw.line] = true
 					}
 				}
-				if !found {
+				if len(seen) == 0 {
 					t.Errorf("%s [%#x,%#x): no line-table row with line in %v (rows: %v)", name, pc.lo, pc.hi, span, rows)
+				}
+				if name == "helper" && len(seen) < 2 {
+					t.Errorf("helper [%#x,%#x): want >=2 distinct source lines (per-statement), got %v (rows: %v)", pc.lo, pc.hi, seen, rows)
 				}
 			}
 		})

@@ -726,20 +726,6 @@ func StaticExecutableDataWXSyms(text, data []byte, syms []Sym) []byte {
 	return imageWXSyms(text, data, emAArch64, 0, syms)
 }
 
-// StaticExecutableDataX86WXSymsLines is StaticExecutableDataX86WXSyms plus a
-// DWARF .debug_line source-line table (funcLines, source file srcFile), so a
-// debugger and addr2line can map a code address back to `file:line` (#5537
-// slice 2). Empty funcLines behaves exactly like StaticExecutableDataX86WXSyms.
-func StaticExecutableDataX86WXSymsLines(text, data []byte, syms []Sym, funcLines []FuncLine, srcFile string) []byte {
-	return imageWXSymsLines(text, data, emX86_64, 0, syms, debugLineFor(funcLines, srcFile))
-}
-
-// StaticExecutableDataWXSymsLines is the arm64 counterpart of
-// StaticExecutableDataX86WXSymsLines.
-func StaticExecutableDataWXSymsLines(text, data []byte, syms []Sym, funcLines []FuncLine, srcFile string) []byte {
-	return imageWXSymsLines(text, data, emAArch64, 0, syms, debugLineFor(funcLines, srcFile))
-}
-
 // StaticExecutableDataX86WXSymsRows is StaticExecutableDataX86WXSyms plus a
 // per-statement DWARF .debug_line table built from (address, line) rows (the
 // finer x86-64 -g path, #5537 slice 2 — one row per source statement, from
@@ -753,13 +739,14 @@ func StaticExecutableDataX86WXSymsRows(text, data []byte, syms []Sym, rows []Lin
 	return imageWXSymsLines(text, data, emX86_64, 0, syms, dl)
 }
 
-// debugLineFor encodes the function-granularity .debug_line for funcLines, or
-// nil when there are none.
-func debugLineFor(funcLines []FuncLine, srcFile string) []byte {
-	if len(funcLines) == 0 {
-		return nil
+// StaticExecutableDataWXSymsRows is the arm64 counterpart of
+// StaticExecutableDataX86WXSymsRows.
+func StaticExecutableDataWXSymsRows(text, data []byte, syms []Sym, rows []LineRow, srcFile string, textEndVAddr uint64) []byte {
+	var dl []byte
+	if len(rows) > 0 {
+		dl = buildDebugLineRows(rows, uint64(TextVAddrWX), textEndVAddr, srcFile)
 	}
-	return buildDebugLine(funcLines, srcFile)
+	return imageWXSymsLines(text, data, emAArch64, 0, syms, dl)
 }
 
 // imageWXSyms builds the W^X image (imageWX) and appends a section table with
