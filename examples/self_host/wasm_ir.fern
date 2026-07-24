@@ -819,12 +819,12 @@ pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string):
 
 // module_has_wide_map_val_cached reports whether any function emits an 8-byte
 // VALUE-column map op the wasm IR path does NOT handle, so the module stays on the
-// AST backend. i64/u64 map_set (125), map_get_or (129), and map_values (132) with
-// widekind 1 ARE handled (map_w64_helpers boxes the 8-byte value into an rc cell
-// and dereferences it), so they no longer defer. What still defers: any f64
-// set/get_or/values (widekind 2 in i64_imm — f64 rides its own float path, not yet
-// wired to a cell), and ANY wide map_get (127) or map_iter (133) — the
-// Option-payload / iterator-value paths are still i32-celled and would truncate. #5253.
+// AST backend. i64/u64 map_set (125), map_get_or (129), map_values (132), and
+// map_get (127) with widekind 1 ARE handled (map_w64_helpers boxes the 8-byte value
+// into an rc cell and dereferences it — get boxes it into a 16-byte Option[i64]),
+// so they no longer defer. What still defers: any f64 map op (widekind 2 in i64_imm
+// — f64 rides its own float path, not yet wired to a cell), and wide map_iter (133),
+// whose iterator-value path is still i32-celled and would truncate. #5253.
 pub function module_has_wide_map_val_cached(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
     while (fi < cache.len()) {
@@ -832,11 +832,11 @@ pub function module_has_wide_map_val_cached(cache: irlower.LowerResult[]): boole
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var o: ir.Op = r.ops[i];
-            // f64 set / get_or / values (widekind 2): still deferred.
-            if ((o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132) && o.i64_imm == 2) { return true; }
-            // wide get / iter (any 8-byte value): still deferred (Option-payload /
-            // iterator-value paths remain i32-celled).
-            if ((o.kind_tag == 127 || o.kind_tag == 133) && o.i64_imm != 0) { return true; }
+            // f64 set / get_or / values / get (widekind 2): still deferred.
+            if ((o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127) && o.i64_imm == 2) { return true; }
+            // wide iter (any 8-byte value): still deferred (iterator-value path
+            // remains i32-celled).
+            if (o.kind_tag == 133 && o.i64_imm != 0) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -845,8 +845,8 @@ pub function module_has_wide_map_val_cached(cache: irlower.LowerResult[]): boole
 }
 
 // module_uses_map_w64 reports whether any function emits an i64/u64-VALUED map op
-// the wasm IR path HANDLES (map_set 125, map_get_or 129, or map_values 132 with
-// widekind 1), so emit_ir_module_units emits map_w64_helpers. #5253.
+// the wasm IR path HANDLES (map_set 125, map_get_or 129, map_values 132, or
+// map_get 127 with widekind 1), so emit_ir_module_units emits map_w64_helpers. #5253.
 pub function module_uses_map_w64(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
     while (fi < cache.len()) {
@@ -854,7 +854,7 @@ pub function module_uses_map_w64(cache: irlower.LowerResult[]): boolean {
         var i: i32 = 0;
         while (i < r.ops.len()) {
             var o: ir.Op = r.ops[i];
-            if ((o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132) && o.i64_imm == 1) { return true; }
+            if ((o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127) && o.i64_imm == 1) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
@@ -2771,8 +2771,15 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // stack: map -> i32.load(map) (length at offset 0, wasm map layout).
             out = out + "    i32.load\n";
         } else if (o.kind_tag == 127) {  // map_get
-            // stack: map, key -> $__fern_map_get (keykind read from the box) -> Option box.
-            out = out + "    call $__fern_map_get\n";
+            // stack: map, key -> Option box. An i64/u64 VALUE (i64_imm 1, #5253)
+            // dereferences the boxed 8-byte cell into a 16-byte Option[i64]
+            // ([tag@0][payload@8]) via $__fern_map_get_w64. f64 (i64_imm 2) stays
+            // deferred (wasm_ir_deferrals_ok). Otherwise the narrow i32-payload path.
+            if (o.i64_imm == 1) {
+                out = out + "    call $__fern_map_get_w64\n";
+            } else {
+                out = out + "    call $__fern_map_get\n";
+            }
         } else if (o.kind_tag == 128) {  // map_has
             out = out + "    call $__fern_map_has\n";
         } else if (o.kind_tag == 130) {  // map_delete
