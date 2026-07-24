@@ -7734,7 +7734,8 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // i32 (wasm32 pointers are 32-bit; the low half round-trips). The
                     // register backends never reach here (for_wasm gate) — their
                     // 8-byte operand stack needs no narrowing.
-                    if (scr.for_wasm() && str_ret_argref(scr, cid.name) >= 0) {
+                    var ewri: i32 = str_ret_argref(scr, cid.name);
+                    if (scr.for_wasm() && ewri >= 0 && scr.callee_param_is_typevar(cid.name, ewri)) {
                         if (expr_is_f64(e, scr)) { scr = scr.emit(ir.op_f64_from_bits()); }
                         else if (infer_expr_width(e, scr) == 64) { }
                         else { scr = scr.emit(ir.op_int_wrap(true)); }
@@ -11153,7 +11154,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
             // would bail the erased return (its ret_type isn't literally "i64").
             // Register backends never set for_wasm — their 8-byte return slot needs
             // no widening, so they take the generic path below unchanged.
-            if (s.for_wasm() && is_bare_typevar_name(s.cur_ret)) {
+            if (s.for_wasm() && is_erased_typevar(s.cur_ret, s.structs)) {
                 var rerw: LowerState = lower_i64(r.value, s);
                 if (!rerw.ok) { return rerw; }
                 rerw = emit_dec_sweep_except(rerw, 0 - 1);
@@ -29586,7 +29587,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         // never erased generics), matching flag '5' in fn_param_sigs_of.
         isi64 = isi64.append(fn.params[i].type_name == "i64"
             || (for_wasm && fn.receiver_type.len() == 0
-                && is_bare_typevar_name(fn.params[i].type_name) && is_bare_typevar_name(fn.ret_type)));
+                && is_erased_typevar(fn.params[i].type_name, structs) && is_erased_typevar(fn.ret_type, structs)));
         isf64 = isf64.append(is_f64_scalar_type_name(fn.params[i].type_name));
         isf32 = isf32.append(fn.params[i].type_name == "f32" || fn.params[i].type_name == "float");
         // An f64[] param is element-width-tracked (a[i] reads an 8-byte f64);
@@ -30738,6 +30739,21 @@ function irl_is_alnum_byte(b: i32): boolean {
 // it survives; callers coerce their arg/result at the i64 boundary (#erased-wide).
 pub function is_bare_typevar_name(t: string): boolean {
     return t.len() == 1 && t[0] >= 65 && t[0] <= 90;
+}
+
+// is_erased_typevar: a single-uppercase-letter spelling that is an ERASED
+// generic type variable, NOT a declared single-letter struct/enum (a program
+// may name a struct `A` — `is_bare_typevar_name` alone would misread it as a
+// typevar and wrongly widen `A.default(): A` to an i64 return). The struct/enum
+// exclusion needs the module's decls, so this is the predicate the wasm
+// erased-wide widening (#5464) keys on — is_bare_typevar_name stays the pure
+// syntactic check for the flag-'5' registry, which is width-gated and inert on
+// a struct-typed param anyway.
+pub function is_erased_typevar(t: string, structs: parser.StructDecl[]): boolean {
+    // Only exclude ACTUALLY-DECLARED single-letter structs/enums — not the broad
+    // is_enum_like_name heuristic, which reads any bare uppercase letter (incl. a
+    // real typevar `T`) as enum-like and would defeat the widening entirely.
+    return is_bare_typevar_name(t) && !decl_is_struct(structs, t) && !decl_is_enum(structs, t);
 }
 
 // rewrite_typevars_to_argrefs replaces every STANDALONE single-uppercase-letter
@@ -33453,8 +33469,7 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             // i32-typed — see erased_wide in LowerResult). Free functions only
             // (methods are never erased generics). Distinct from '1'-'4', so
             // the existing consumers are unaffected.
-            else if (funcs[k].receiver_type.len() == 0 && funcs[k].params[pj].type_name.len() == 1
-                     && funcs[k].params[pj].type_name[0] >= 65 && funcs[k].params[pj].type_name[0] <= 90) { flags = flags + "5"; any = true; }
+            else if (funcs[k].receiver_type.len() == 0 && is_erased_typevar(funcs[k].params[pj].type_name, structs)) { flags = flags + "5"; any = true; }
             else { flags = flags + "0"; }
             pj = pj + 1;
         }
@@ -35981,7 +35996,8 @@ function erased_wide_expr(e: parser.Expr, s: LowerState): boolean {
                     // T — str_ret_argref < 0) still defer to the AST path, so keep
                     // flagging those. Non-wasm lowerings ignore erased_wide (it is a
                     // wasm-only gate), so the pass-through carve-out is wasm-gated.
-                    var handled: boolean = s.for_wasm() && str_ret_argref(s, cid.name) >= 0;
+                    var earef: i32 = str_ret_argref(s, cid.name);
+                    var handled: boolean = s.for_wasm() && earef >= 0 && s.callee_param_is_typevar(cid.name, earef);
                     if (!handled) {
                         var ai: i32 = 0;
                         while (ai < c.args.len()) {
