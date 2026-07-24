@@ -1,0 +1,93 @@
+---
+// CommandCard — a specimen-label panel of shell commands, each with a
+// click-to-copy affordance.
+//
+// Used on the landing page for the install / first-run lines, where a
+// plain fenced code block would read as sample output rather than as
+// "run this now". Prefer a regular ```bash fence inside the docs
+// proper; this is deliberately a landing-page device.
+//
+// Usage in MDX:
+//
+//   <CommandCard label="Install" commands={["go install …", "fern -help"]}>
+//     Prefer a prebuilt binary? [Grab a nightly](…).
+//   </CommandCard>
+//
+// Props:
+//   label    — the mono uppercase label on the panel.
+//   commands — one line per command; the `$` prompt is decoration and
+//              is excluded from what gets copied.
+
+interface Props {
+  label: string;
+  commands: string[];
+}
+
+const { label, commands } = Astro.props;
+const hasNote = Astro.slots.has("default");
+---
+
+<div class="fern-panel fern-install not-content">
+  <div class="fern-install__head">
+    <span class="fern-label">{label}</span>
+    {
+      hasNote && (
+        <div class="fern-install__note">
+          <slot />
+        </div>
+      )
+    }
+  </div>
+  {
+    commands.map((cmd) => (
+      <div class="fern-cmd">
+        <span class="fern-cmd__prompt" aria-hidden="true">
+          $
+        </span>
+        <code class="fern-cmd__text">{cmd}</code>
+        <button
+          class="fern-cmd__copy"
+          type="button"
+          data-fern-copy={cmd}
+          aria-label={`Copy command: ${cmd}`}>
+          copy
+        </button>
+      </div>
+    ))
+  }
+</div>
+
+<script>
+  // One delegated listener per page, however many CommandCards render.
+  // `navigator.clipboard` is unavailable on insecure origins (plain-HTTP
+  // previews), so fall back to a detached textarea + execCommand.
+  document.addEventListener("click", async (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>("[data-fern-copy]");
+    if (!button) return;
+    const text = button.dataset.fernCopy ?? "";
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const scratch = document.createElement("textarea");
+        scratch.value = text;
+        scratch.setAttribute("readonly", "");
+        scratch.style.position = "fixed";
+        scratch.style.opacity = "0";
+        document.body.append(scratch);
+        scratch.select();
+        document.execCommand("copy");
+        scratch.remove();
+      }
+      button.dataset.copied = "1";
+      button.textContent = "copied";
+    } catch {
+      button.textContent = "press ⌘C";
+    }
+    window.setTimeout(() => {
+      delete button.dataset.copied;
+      button.textContent = "copy";
+    }, 1600);
+  });
+</script>

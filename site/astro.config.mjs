@@ -25,6 +25,13 @@ import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
 const base = process.env.SITE_BASE ?? "/lang";
+const siteUrl = process.env.SITE_URL ?? "https://jakechampion.github.io";
+
+// One-line summary reused for the meta description, the Open Graph
+// card, and Starlight's own `description` — so search results, chat
+// unfurls, and the site itself all say the same thing.
+const tagline =
+  "Fern is a small statically-typed language with no runtime and no garbage collector, compiling to native arm64 / x86-64 binaries and WASI Preview 2 components.";
 
 // Load the real Fern TextMate grammar (the same one the VS Code
 // extension ships) so ```fern code fences highlight as actual Fern
@@ -44,7 +51,7 @@ const fernGrammar = JSON.parse(
 );
 
 export default defineConfig({
-  site: process.env.SITE_URL ?? "https://jakechampion.github.io",
+  site: siteUrl,
   base,
   trailingSlash: "ignore",
   integrations: [
@@ -54,8 +61,58 @@ export default defineConfig({
         src: "./src/assets/fern-logo.svg",
         alt: "Fern",
       },
-      description:
-        "Fern — a small, general-purpose, fast-startup language with native arm64 / x86-64 / wasm backends.",
+      description: tagline,
+      // Two webfonts, both `display=swap` behind real fallback stacks
+      // so a blocked or slow font-CDN costs layout only, never content:
+      // Fraunces (variable, with its SOFT + WONK axes) sets headings and
+      // the landing page's display type, IBM Plex Mono carries code and
+      // the small-caps metadata labels. Plus the Open Graph / Twitter
+      // card tags Starlight doesn't emit itself.
+      head: [
+        {
+          tag: "link",
+          attrs: { rel: "preconnect", href: "https://fonts.googleapis.com" },
+        },
+        {
+          tag: "link",
+          attrs: {
+            rel: "preconnect",
+            href: "https://fonts.gstatic.com",
+            crossorigin: "anonymous",
+          },
+        },
+        {
+          tag: "link",
+          attrs: {
+            rel: "stylesheet",
+            href:
+              "https://fonts.googleapis.com/css2" +
+              "?family=Fraunces:opsz,wght,SOFT,WONK@9..144,400..700,0..100,0..1" +
+              "&family=IBM+Plex+Mono:wght@400;500;600" +
+              "&display=swap",
+          },
+        },
+        {
+          tag: "meta",
+          attrs: { property: "og:type", content: "website" },
+        },
+        {
+          tag: "meta",
+          attrs: { property: "og:site_name", content: "Fern" },
+        },
+        {
+          tag: "meta",
+          attrs: { property: "og:description", content: tagline },
+        },
+        {
+          tag: "meta",
+          attrs: { name: "twitter:card", content: "summary" },
+        },
+        {
+          tag: "meta",
+          attrs: { name: "theme-color", content: "#143026" },
+        },
+      ],
       // Register Fern's own TextMate grammar (loaded above) so ```fern
       // fences get language-accurate highlighting — method receivers,
       // `match`, sized integer types, generics, f-strings, and the
@@ -64,6 +121,17 @@ export default defineConfig({
       expressiveCode: {
         shiki: {
           langs: [fernGrammar],
+        },
+        // Match the site's own chrome: the same hairline radius the
+        // specimen panels use, and code set in IBM Plex Mono via the
+        // shared `--sl-font-mono` token rather than a second stack.
+        styleOverrides: {
+          borderRadius: "0.4rem",
+          codeFontFamily: "var(--sl-font-mono)",
+          uiFontFamily: "var(--sl-font-mono)",
+          frames: {
+            frameBoxShadowCssValue: "none",
+          },
         },
       },
       social: [

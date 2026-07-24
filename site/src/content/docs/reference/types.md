@@ -10,13 +10,56 @@ sidebar:
 | Category   | Members                                              |
 | ---------- | ---------------------------------------------------- |
 | Integers   | `i32` `i64` `u8` `u32` `u64` `usize`                  |
-| Floats     | `f32` `f64`                                          |
+| Floats     | `f32` `f64` (`float` is an alias for `f64`)          |
 | Other      | `boolean` `string` `void`                            |
-| Composite  | `T[]` (owned array), `[T]` (slice), `(T, U, ...)` (tuple) |
+| Composite  | `T[]` (owned array), `[T]` (slice), `(T, U, ...)` (tuple), `Map[K, V]` |
 | Function   | `(T1, T2) => R`                                      |
 
 `usize` is target-aware: 4 bytes on wasm32, 8 on arm64 and x86-64.
 Use it for "size of a thing in memory" semantics.
+
+There is no `i8`, `i16` or `u16`: they cost a full set of per-stride
+backend paths for a handful of call sites, so `i32` / `u32` cover that
+ground instead. `u8` stays because bytes are genuinely a different thing.
+
+## Maps
+
+`Map[K, V]` is built into the language, with a literal syntax — but its
+operations live in `core/map`, so the module has to be imported:
+
+```fern
+import "core/map";
+
+var stock: Map[string, i32] = Map { "frond": 3, "spore": 7 };
+stock = stock.insert("rhizome", 1);
+
+match (stock.get("frond")) {
+    Some(n) => { print(n.to_string()); },
+    None    => { print("(none)"); },
+}
+```
+
+Keys are integers or strings. Iteration order is insertion order and is
+part of the contract, not an accident — see the
+[`for (k, v) in m` form](../language-features/#iteration--for--in).
+Forget the `core/map` import and the checker says so directly rather than
+failing on an unknown method.
+
+| Operation             | Returns              |
+| --------------------- | -------------------- |
+| `len()`               | `i32`                |
+| `has(k)`              | `boolean`            |
+| `get(k)`              | `Option[V]`          |
+| `get_or(k, fallback)` | `V`                  |
+| `keys()` / `values()` | `K[]` / `V[]`        |
+| `insert(k, v)`        | the updated map      |
+| `without(k)`          | `(Map[K, V], boolean)` — the map, and whether the key was there |
+| `cleared()`           | an empty map         |
+
+The last three return the updated map rather than mutating in place *as
+an expression*, but they may reuse the original's storage when it is
+uniquely referenced. Rebind the result — `stock = stock.insert(…)` — and
+treat the old binding as spent instead of expecting two independent maps.
 
 ## Implicit conversions
 

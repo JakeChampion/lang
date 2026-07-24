@@ -1,0 +1,36 @@
+---
+// SpecSheet — a herbarium-style label for the project's hard facts:
+// mono uppercase term, plain-language value, hairline between rows.
+//
+// Kept as a component (rather than a Markdown table) because the rows
+// are label/value pairs, not tabular data — a <dl> is the honest markup
+// and it collapses to a readable stack on narrow screens.
+//
+// Props:
+//   caption — the panel label, e.g. "At a glance".
+//   items   — [{ term, value }] rows. `value` is plain text.
+//   note    — optional mono footnote under the list.
+
+interface Props {
+  caption: string;
+  items: { term: string; value: string }[];
+  note?: string;
+}
+
+const { caption, items, note } = Astro.props;
+---
+
+<div class="fern-panel fern-spec not-content">
+  <span class="fern-label fern-spec__caption">{caption}</span>
+  <dl class="fern-spec__list">
+    {
+      items.map((item) => (
+        <>
+          <dt>{item.term}</dt>
+          <dd>{item.value}</dd>
+        </>
+      ))
+    }
+  </dl>
+  {note && <p class="fern-spec__note">{note}</p>}
+</div>

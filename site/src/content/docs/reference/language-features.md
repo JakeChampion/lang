@@ -1,13 +1,65 @@
 ---
 title: Language features
-description: The distinctive constructs — defer, let-else, the pipe operator, f-strings, loop, and use.
+description: The distinctive constructs — iteration, defer, let-else, match guards, the pipe operator, f-strings, and use.
 sidebar:
   order: 5
 ---
 
 Beyond the basics covered in the [tutorial](../../tutorial/install/), Fern
-has a handful of constructs worth knowing on their own. None are exotic,
-but each removes a class of boilerplate.
+has a set of constructs worth knowing on their own — the iteration forms
+you'll reach for daily, plus a handful that each remove a class of
+boilerplate. None are exotic.
+
+## Iteration — `for … in`
+
+The three-part `for (init; cond; step)` loop exists, but it is rarely what
+you want. `for x in …` walks an array, a slice, a range, or anything
+implementing `Iterator`, and binds each element directly:
+
+```fern
+var trees: string[] = ["ash", "beech", "elm"];
+for name in trees {
+    print(name);
+}
+```
+
+Ranges are `start..end` (exclusive) or `start..=end` (inclusive), and in a
+foreach head they compile to a counted loop with no iterator allocated:
+
+```fern
+for i in 0..xs.len() { total = total + xs[i]; }
+for n in 1..=100    { sum = sum + n; }
+```
+
+Maps destructure their entries in one step. Iteration order is insertion
+order, and it's part of the contract rather than an accident:
+
+```fern
+import "core/map";
+
+var stock: Map[string, i32] = Map { "frond": 3, "spore": 7 };
+for (species, count) in stock {
+    print(f"{species}={count}");
+}
+```
+
+### Labelled loops
+
+Prefix any loop with `label:` and a nested `break label` / `continue
+label` targets it instead of the innermost loop — the usual alternative
+is a flag variable threaded through both levels:
+
+```fern
+function find_pair(xs: i32[], target: i32): (i32, i32) {
+    search: for i in 0..xs.len() {
+        for j in (i + 1)..xs.len() {
+            if (xs[i] + xs[j] == target) { return (i, j); }
+            if (xs[j] > target) { continue search; }
+        }
+    }
+    return (-1, -1);
+}
+```
 
 ## Deferred cleanup — `defer` and `errdefer`
 
@@ -33,7 +85,7 @@ defer log("done");           // always
 errdefer rollback();         // only if we bail with an error
 ```
 
-## Refutable bindings — `let … else`
+## Refutable bindings — `let … else` and `if let`
 
 `var` binds an irrefutable value. `let` binds a **pattern** that might
 not match, and forces you to handle the miss with a diverging `else`:
@@ -53,6 +105,37 @@ same way, and because their arity is static they need no `else`:
 ```fern
 let (q, r) = divmod(17, 5);   // q = 3, r = 2
 ```
+
+When the miss is *not* an early exit — you want to do something else and
+carry on — use `if let` instead. It's a one-arm `match`, and the binding
+scopes to the `then` block only:
+
+```fern
+if let Some(cached) = lookup(id) {
+    return cached;
+} else {
+    print("cache miss");
+}
+```
+
+## Match guards — `when`
+
+A `match` arm can carry a `when` condition. The arm matches only if the
+pattern fits *and* the guard holds, so several arms can share one variant
+without nesting an `if` inside each body:
+
+```fern
+match (reading) {
+    Temp(c) when c > 30 => { return "hot"; },
+    Temp(c) when c < 0  => { return "freezing"; },
+    Temp(_)             => { return "mild"; },
+    Offline             => { return "no reading"; },
+}
+```
+
+Guarded arms don't count toward exhaustiveness — a guard can always fail,
+so a variant covered *only* by guarded arms still needs an unguarded
+fallback like the `Temp(_)` above.
 
 ## The pipe operator — `|>`
 
@@ -125,6 +208,35 @@ deeply-indented chain of closures — handy for sequencing fallible
 `Option`/`Result`-returning steps. Where the callback target is
 monomorphic, the compiler defunctionalises the closures away, so the
 flattened form has no allocation overhead versus hand-written nesting.
+
+## Assertions and stubs — `assert` and `todo`
+
+Both are recognised in statement position only, so neither name is
+reserved anywhere else.
+
+`assert(cond)` — optionally `assert(cond, msg)` — prints `assertion
+failed: msg` to stderr and exits `1`. It desugars to a plain `if` plus
+`eprint` plus `exit`, so it needs no import and costs nothing beyond the
+branch:
+
+```fern
+assert(xs.len() > 0, "caller must supply at least one path");
+```
+
+`todo` marks a hole. `todo;` or `todo("msg")` prints `todo: msg` and
+exits `101` — a distinct code, so an unimplemented path is
+distinguishable from a failed assertion in a CI log. It counts as
+diverging, which means it can stand in for the whole body of a function
+that owes a return value:
+
+```fern
+function render(width: i32): string {
+    todo("wire up the renderer");
+}
+```
+
+That compiles, and the checker won't ask for the missing `return` — so
+you can sketch a module's shape and fill it in afterwards.
 
 ## See also
 

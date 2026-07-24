@@ -12,7 +12,7 @@ import FernPlayground from "../../../components/FernPlayground.astro";
 `var` declares a mutable binding. Annotate the type, or let the checker
 infer it from the initialiser. (`let` is a separate, refutable
 pattern-binding form — see
-[Language features](../../reference/language-features/#refutable-bindings--let--else).)
+[Language features](../../reference/language-features/#refutable-bindings--let--else-and-if-let).)
 
 <FernPlayground
   code={`import "std/i32";
@@ -29,8 +29,8 @@ function main(): i32 {
 
 There's no untyped `int`. The integer types are `i32`, `i64`
 (signed) and `u8`, `u32`, `u64` (unsigned), plus `usize` for
-native pointer-width counts. Two floats: `f32` and `f64`. Mixing
-widths needs an explicit cast.
+native pointer-width counts. Two floats: `f32` and `f64` — `float` is
+an alias for `f64`. Mixing widths needs an explicit cast.
 
 ```fern
 var a: i32 = 7;
@@ -40,22 +40,40 @@ var c: i32 = b as i32;   // wide → narrow (may truncate)
 
 ## Control flow
 
-`if` / `else`, `while`, and three-part `for`.
+`if` / `else` and `while` behave as you'd expect. For iteration, reach
+for `for … in` — over an array, or over a range written `start..end`
+(exclusive) or `start..=end` (inclusive):
 
 <FernPlayground
   code={`import "std/i32";
+import "std/string";
 
 function main(): i32 {
-    var sum: i32 = 0;
-    for (var i: i32 = 0; i < 10; i = i + 1) {
-        if (i % 2 == 0) {
-            sum = sum + i;
-        }
+    var trees: string[] = ["ash", "beech", "elm"];
+    for name in trees {
+        print(name);
     }
-    print(sum.to_string()); // 20
+
+    var sum: i32 = 0;
+    for i in 0..10 {
+        if (i % 2 == 0) { sum = sum + i; }
+    }
+    print(sum.to_string());  // 20
     return 0;
 }`}
 />
+
+The three-part `for (init; cond; step)` form also exists, for the rare
+loop whose stepping isn't a simple walk:
+
+```fern
+for (var i: i32 = 0; i < n; i = i * 2) { … }
+```
+
+`loop { … }` is an unconditional loop you leave with `break`. Any loop can
+be labelled so a nested `break` / `continue` targets it — see
+[Language features](../../reference/language-features/) for that, plus
+map iteration with `for (k, v) in m`.
 
 `if` is also an expression, for one-line ternaries.
 

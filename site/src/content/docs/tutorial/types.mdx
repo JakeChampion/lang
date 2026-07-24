@@ -86,10 +86,18 @@ a wildcard `_` arm acknowledges the gap.
 function describe(s: Shape): string {
     match (s) {
         Circle(_) => { return "round"; },
-        // error: missing variant Rectangle
-        //        ^~~~~
     }
 }
 ```
+
+```
+error[E030]: match is not exhaustive — variant Rectangle of enum Shape
+             is not covered (add an arm or use `_`)
+```
+
+That's the property that makes adding a variant safe: every `match` that
+now has a hole becomes a compile error pointing at the code that needs
+updating. Arms can also carry a `when` guard — but a guard can always
+fail, so a variant covered only by guarded arms still counts as a hole.
 
 [Next: Modules →](../modules/)

@@ -1,0 +1,25 @@
+---
+// Facet — one entry in the landing page's <FacetRail>: a mono index, a
+// display-serif title, and a short body (the default slot).
+//
+// Props:
+//   index — the specimen number, e.g. "01". Decorative, so it's
+//           aria-hidden; the title carries the meaning.
+//   title — the facet heading. Rendered as a <p>, not an <h*>, so the
+//           landing page's heading outline stays meaningful.
+
+interface Props {
+  index: string;
+  title: string;
+}
+
+const { index, title } = Astro.props;
+---
+
+<div class="fern-facet">
+  <span class="fern-facet__index" aria-hidden="true">{index}</span>
+  <p class="fern-facet__title">{title}</p>
+  <div class="fern-facet__body">
+    <slot />
+  </div>
+</div>

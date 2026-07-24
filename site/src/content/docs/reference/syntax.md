@@ -16,7 +16,7 @@ Reserved across all syntactic positions:
 function var let use as
 if else while for loop break continue return
 true false boolean void string
-i8 i16 i32 i64 u8 u16 u32 u64 usize f32 f64
+i32 i64 u8 u32 u64 usize f32 f64
 default
 struct enum type
 import pub const
@@ -24,6 +24,11 @@ match when
 defer errdefer
 trait impl dyn
 ```
+
+`in` is *not* reserved — the foreach forms below match it positionally,
+so `in` stays available as an ordinary identifier. Neither is `float`,
+the width-unqualified alias for `f64`: the parser recognises it in type
+position only, which keeps `float.pi()` module calls working.
 
 ## Comments
 
@@ -66,17 +71,55 @@ Statements end with `;` and group in `{ ... }` blocks. Whitespace
 isn't significant.
 
 - **`if (cond) { ... } else { ... }`** — statement or expression.
+- **`if let Pat(b) = expr { ... } else { ... }`** — one-arm match; `b`
+  is in scope for the `then` block only.
 - **`while (cond) { ... }`** — pre-test loop.
 - **`for (init; cond; step) { ... }`** — three-part loop.
+- **`for x in expr { ... }`** — foreach over an array, slice, range or
+  iterator.
+- **`for (k, v) in m { ... }`** — foreach over a map's entries.
 - **`loop { ... }`** — infinite loop; exit with `break` / `return`.
+- **`label: while … `** / **`label: for … `** / **`label: loop …`** —
+  a named loop, so a nested `break label` / `continue label` can target
+  it instead of the innermost one.
 - **`match (expr) { Pat(b) => { ... }, ... }`** — pattern dispatch.
+  Arms may carry a `when` guard.
 - **`let Pat(b) = expr else { ... };`** — refutable binding; the `else`
   block must diverge.
 - **`defer expr;`** / **`errdefer expr;`** — schedule expr to run on
   function exit (LIFO); `errdefer` runs only on an error exit.
 
-See [Language features](../language-features/) for `defer` / `errdefer`,
-`let … else`, `loop`, the pipe operator, and `use`.
+Ranges are `start..end` (exclusive) and `start..=end` (inclusive):
+
+```fern
+for i in 0..xs.len() { print(xs[i]); }
+for n in 1..=100 { total = total + n; }
+```
+
+Outside a foreach head, a range is an ordinary iterator value —
+`0..5` desugars to `iter.range(0, 5)` — so it can be passed to any
+combinator, given `import "core/iter"`. In a `for … in` head it compiles
+to a counted loop instead, with no iterator allocated.
+
+See [Language features](../language-features/) for the iteration forms,
+`defer` / `errdefer`, `let … else`, `loop`, the pipe operator, and `use`.
+
+## Statement builtins
+
+Two constructs are recognised in statement position only, so both names
+stay usable as ordinary identifiers elsewhere.
+
+- **`assert(cond);`** / **`assert(cond, msg);`** — on failure prints
+  `assertion failed[: msg]` to stderr and exits `1`.
+- **`todo;`** / **`todo("msg");`** — an unimplemented marker that prints
+  `todo[: msg]` and exits `101`. It counts as diverging, so it can stand
+  in for the entire body of a function that owes a return value.
+
+```fern
+function render(width: i32): string {
+    todo("wire up the renderer");
+}
+```
 
 ## String literals
 

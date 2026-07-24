@@ -1,0 +1,54 @@
+# Netlify deploy config for the Fern docs site.
+#
+# Without this file Netlify found no build to run and published the
+# repository root as static files, so every docs URL 404'd (the raw
+# README.md was served, but no index.html existed anywhere).
+#
+# The canonical build recipe lives in .github/workflows/pages.yml, for
+# GitHub Pages; scripts/netlify-build mirrors its four steps so the two
+# hosts publish the same bundle from the same inputs.
+
+[build]
+  command = "scripts/netlify-build"
+  publish = "site/dist"
+
+[build.environment]
+  # Astro 6 requires Node >=22.12; go.mod requires Go 1.24. Both pins match
+  # what pages.yml is tested on — bump them together with that workflow.
+  # Go is pinned to a concrete release rather than "1.24" because the build
+  # image resolves this through gimme, which wants an exact version.
+  NODE_VERSION = "22"
+  GO_VERSION = "1.24.0"
+
+# site/astro.config.mjs sets `base: "/lang"`, because GitHub Pages serves
+# this project from the repo's subpath (jakechampion.github.io/lang/), and
+# that prefix is baked into every internal link and asset URL. Astro does
+# NOT nest the build output to match — `base` only affects the URLs it
+# writes, so site/dist/ holds the site at its own root. GitHub Pages lines
+# the two up by serving dist/ at /lang/; a Netlify deploy serves dist/ at
+# the domain root, so the /lang-prefixed links have to be mapped back down.
+#
+# These are 200 rewrites, not 3xx redirects: the response comes from the
+# real file in one request with no visible bounce, and there's no chance of
+# a loop, since a rewritten path no longer matches the rule. Static files
+# take precedence over non-forced rules, so nothing that already resolves
+# is intercepted.
+#
+# Unmatched paths still fall through to Starlight's own 404 page, which
+# Astro writes to dist/404.html where Netlify picks it up automatically.
+[[redirects]]
+  from = "/lang/*"
+  to = "/:splat"
+  status = 200
+
+# `/lang/*` does not match the bare prefix, so spell those cases out. Netlify
+# usually treats the two as the same path, but matching both is free.
+[[redirects]]
+  from = "/lang"
+  to = "/"
+  status = 200
+
+[[redirects]]
+  from = "/lang/"
+  to = "/"
+  status = 200
