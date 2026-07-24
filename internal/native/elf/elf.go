@@ -726,10 +726,26 @@ func StaticExecutableDataWXSyms(text, data []byte, syms []Sym) []byte {
 	return imageWXSyms(text, data, emAArch64, 0, syms)
 }
 
+// StaticExecutableDataX86WXSymsLines is StaticExecutableDataX86WXSyms plus a
+// DWARF .debug_line source-line table (funcLines, source file srcFile), so a
+// debugger and addr2line can map a code address back to `file:line` (#5537
+// slice 2). Empty funcLines behaves exactly like StaticExecutableDataX86WXSyms.
+func StaticExecutableDataX86WXSymsLines(text, data []byte, syms []Sym, funcLines []FuncLine, srcFile string) []byte {
+	return imageWXSymsLines(text, data, emX86_64, 0, syms, funcLines, srcFile)
+}
+
 // imageWXSyms builds the W^X image (imageWX) and appends a section table with
 // a .symtab. The sections are all non-alloc and live after the loadable
 // segments, so the running image is identical to imageWX's.
 func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym) []byte {
+	return imageWXSymsLines(text, data, machine, entryOff, syms, nil, "")
+}
+
+// imageWXSymsLines is imageWXSyms plus an optional DWARF .debug_line table
+// (funcLines, from source file srcFile). When funcLines is empty no line
+// section is emitted and the CU carries no DW_AT_stmt_list — identical to the
+// plain symtab+DIE image.
+func imageWXSymsLines(text, data []byte, machine uint16, entryOff uint64, syms []Sym, funcLines []FuncLine, srcFile string) []byte {
 	buf := imageWX(text, data, machine, entryOff)
 
 	// .strtab: NUL, then each symbol name NUL-terminated.
@@ -754,6 +770,11 @@ func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym)
 	nShstrtab := addShName(".shstrtab")
 	nDebugAbbrev := addShName(".debug_abbrev")
 	nDebugInfo := addShName(".debug_info")
+	hasLines := len(funcLines) > 0
+	var nDebugLine uint32
+	if hasLines {
+		nDebugLine = addShName(".debug_line")
+	}
 
 	// .symtab: index 0 is STN_UNDEF (all zero), then one STT_FUNC per symbol.
 	symtab := make([]byte, 24)
@@ -773,11 +794,16 @@ func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym)
 			buf = append(buf, 0)
 		}
 	}
-	// DWARF debug info (#5537 slice 3): a CU DIE + one subprogram DIE per
-	// function, from the same syms. Non-alloc, so the loaded image is
-	// unchanged. Names inline (DW_FORM_string) → no .debug_str needed.
-	debugAbbrev := buildDebugAbbrev()
-	debugInfo := buildDebugInfo(syms, uint64(TextVAddrWX), uint64(TextVAddrWX)+uint64(len(text)), "")
+	// DWARF debug info (#5537): a CU DIE + one subprogram DIE per function
+	// (slice 3), plus an optional .debug_line source-line table (slice 2).
+	// Non-alloc, so the loaded image is unchanged. Names inline
+	// (DW_FORM_string) → no .debug_str needed.
+	debugAbbrev := buildDebugAbbrev(hasLines)
+	debugInfo := buildDebugInfo(syms, uint64(TextVAddrWX), uint64(TextVAddrWX)+uint64(len(text)), "", hasLines)
+	var debugLine []byte
+	if hasLines {
+		debugLine = buildDebugLine(funcLines, srcFile)
+	}
 
 	pad8()
 	symtabOff := uint64(len(buf))
@@ -790,6 +816,8 @@ func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym)
 	buf = append(buf, debugAbbrev...)
 	debugInfoOff := uint64(len(buf))
 	buf = append(buf, debugInfo...)
+	debugLineOff := uint64(len(buf))
+	buf = append(buf, debugLine...)
 	pad8()
 	shoff := uint64(len(buf))
 
@@ -804,15 +832,20 @@ func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym)
 	buf = appendShdr(buf, nStrtab, 3, 0, 0, strtabOff, uint64(len(strtab)), 0, 0, 1, 0)
 	// [4] .shstrtab
 	buf = appendShdr(buf, nShstrtab, 3, 0, 0, shstrtabOff, uint64(len(shstrtab)), 0, 0, 1, 0)
-	// [5] .debug_abbrev  [6] .debug_info — PROGBITS, non-alloc.
+	// [5] .debug_abbrev  [6] .debug_info  [7] .debug_line — PROGBITS, non-alloc.
 	buf = appendShdr(buf, nDebugAbbrev, 1, 0, 0, debugAbbrevOff, uint64(len(debugAbbrev)), 0, 0, 1, 0)
 	buf = appendShdr(buf, nDebugInfo, 1, 0, 0, debugInfoOff, uint64(len(debugInfo)), 0, 0, 1, 0)
+	shnum := uint16(7)
+	if hasLines {
+		buf = appendShdr(buf, nDebugLine, 1, 0, 0, debugLineOff, uint64(len(debugLine)), 0, 0, 1, 0)
+		shnum = 8
+	}
 
 	// Patch the ELF header's section-table fields (imageWX left them zero).
-	putLE64s(buf[40:], shoff) // e_shoff
-	putLE16s(buf[58:], 64)    // e_shentsize
-	putLE16s(buf[60:], 7)     // e_shnum
-	putLE16s(buf[62:], 4)     // e_shstrndx (.shstrtab)
+	putLE64s(buf[40:], shoff)    // e_shoff
+	putLE16s(buf[58:], 64)       // e_shentsize
+	putLE16s(buf[60:], shnum)    // e_shnum
+	putLE16s(buf[62:], 4)        // e_shstrndx (.shstrtab)
 	return buf
 }
 
