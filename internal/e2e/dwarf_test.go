@@ -71,6 +71,14 @@ function main(): i32 { return helper(21); }
 			if prod, _ := e.Val(dwarf.AttrProducer).(string); prod != "fern" {
 				t.Errorf("CU producer = %q, want %q", prod, "fern")
 			}
+			// DW_AT_name + DW_AT_comp_dir must be set so a debugger can locate
+			// and display the source (not just addresses).
+			if nm, _ := e.Val(dwarf.AttrName).(string); nm == "" {
+				t.Errorf("CU DW_AT_name is empty; want the source path")
+			}
+			if cd, _ := e.Val(dwarf.AttrCompDir).(string); cd == "" {
+				t.Errorf("CU DW_AT_comp_dir is empty; want the compile directory")
+			}
 		case dwarf.TagSubprogram:
 			name, _ := e.Val(dwarf.AttrName).(string)
 			lo, _ := e.Val(dwarf.AttrLowpc).(uint64)

@@ -728,39 +728,40 @@ func StaticExecutableDataWXSyms(text, data []byte, syms []Sym) []byte {
 
 // StaticExecutableDataX86WXSymsRows is StaticExecutableDataX86WXSyms plus a
 // per-statement DWARF .debug_line table built from (address, line) rows (the
-// finer x86-64 -g path, #5537 slice 2 — one row per source statement, from
-// the assembler's `.loc` markers). Empty rows behave like the plain symtab
-// image. textEndVAddr bounds the line program's final range.
-func StaticExecutableDataX86WXSymsRows(text, data []byte, syms []Sym, rows []LineRow, srcFile string, textEndVAddr uint64) []byte {
+// x86-64 -g path, #5537 slice 2 — one row per source statement, from the
+// assembler's `.loc` markers). srcFile names the source (relative to compDir,
+// which the CU records so a debugger can locate it). Empty rows behave like
+// the plain symtab image. textEndVAddr bounds the line program's final range.
+func StaticExecutableDataX86WXSymsRows(text, data []byte, syms []Sym, rows []LineRow, srcFile, compDir string, textEndVAddr uint64) []byte {
 	var dl []byte
 	if len(rows) > 0 {
 		dl = buildDebugLineRows(rows, uint64(TextVAddrWX), textEndVAddr, srcFile)
 	}
-	return imageWXSymsLines(text, data, emX86_64, 0, syms, dl)
+	return imageWXSymsLines(text, data, emX86_64, 0, syms, dl, srcFile, compDir)
 }
 
 // StaticExecutableDataWXSymsRows is the arm64 counterpart of
 // StaticExecutableDataX86WXSymsRows.
-func StaticExecutableDataWXSymsRows(text, data []byte, syms []Sym, rows []LineRow, srcFile string, textEndVAddr uint64) []byte {
+func StaticExecutableDataWXSymsRows(text, data []byte, syms []Sym, rows []LineRow, srcFile, compDir string, textEndVAddr uint64) []byte {
 	var dl []byte
 	if len(rows) > 0 {
 		dl = buildDebugLineRows(rows, uint64(TextVAddrWX), textEndVAddr, srcFile)
 	}
-	return imageWXSymsLines(text, data, emAArch64, 0, syms, dl)
+	return imageWXSymsLines(text, data, emAArch64, 0, syms, dl, srcFile, compDir)
 }
 
 // imageWXSyms builds the W^X image (imageWX) and appends a section table with
 // a .symtab. The sections are all non-alloc and live after the loadable
 // segments, so the running image is identical to imageWX's.
 func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym) []byte {
-	return imageWXSymsLines(text, data, machine, entryOff, syms, nil)
+	return imageWXSymsLines(text, data, machine, entryOff, syms, nil, "", "")
 }
 
 // imageWXSymsLines is imageWXSyms plus an optional pre-encoded DWARF
 // .debug_line table (debugLine). When debugLine is empty no line section is
 // emitted and the CU carries no DW_AT_stmt_list — identical to the plain
 // symtab+DIE image.
-func imageWXSymsLines(text, data []byte, machine uint16, entryOff uint64, syms []Sym, debugLine []byte) []byte {
+func imageWXSymsLines(text, data []byte, machine uint16, entryOff uint64, syms []Sym, debugLine []byte, srcName, compDir string) []byte {
 	buf := imageWX(text, data, machine, entryOff)
 
 	// .strtab: NUL, then each symbol name NUL-terminated.
@@ -814,7 +815,7 @@ func imageWXSymsLines(text, data []byte, machine uint16, entryOff uint64, syms [
 	// Non-alloc, so the loaded image is unchanged. Names inline
 	// (DW_FORM_string) → no .debug_str needed.
 	debugAbbrev := buildDebugAbbrev(hasLines)
-	debugInfo := buildDebugInfo(syms, uint64(TextVAddrWX), uint64(TextVAddrWX)+uint64(len(text)), "", hasLines)
+	debugInfo := buildDebugInfo(syms, uint64(TextVAddrWX), uint64(TextVAddrWX)+uint64(len(text)), srcName, compDir, hasLines)
 
 	pad8()
 	symtabOff := uint64(len(buf))
