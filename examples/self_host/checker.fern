@@ -85,7 +85,14 @@ pub struct TypeMap { key: Type, value: Type }
 // the union name for assignability: a variant value (TypeStruct
 // "Circle") is assignable to a TypeUnion "Shape" if Circle
 // appears in Shape's variant list.
-pub struct TypeUnion { name: string }
+// `args` carries a builtin generic union's instantiation arguments
+// (`Option[i32]` → TypeUnion{"Option", [i32]}), mirroring TypeStruct.args.
+// type_eq / assignability compare unions by NAME and ignore args, so a
+// name-only union (args=[]) and an instantiated one stay interchangeable
+// everywhere the checker compares them — the field is read only by the
+// typed-IR annotation (type_to_irtag), to reconstruct the "Option[T]" /
+// "Result[T, E]" tag irlower's try_opt_type keys on (#5531).
+pub struct TypeUnion { name: string, args: Type[] }
 // A `dyn Trait` object type. `traits` is the trait-set text after the
 // `dyn ` prefix — "Greet" for `dyn Greet`, "A + B" for `dyn A + B`. In this
 // partial type system a dyn value's concrete Self isn't tracked (native
@@ -156,7 +163,8 @@ function digit_string_to_i32(s: string): i32 {
     }
     return acc;
 }
-function t_union(name: string): Type { return TypeUnion { name: name }; }
+function t_union(name: string): Type { var noargs: Type[] = []; return TypeUnion { name: name, args: noargs }; }
+function t_union_g(name: string, args: Type[]): Type { return TypeUnion { name: name, args: args }; }
 function t_dyn(traits: string): Type { return TypeDyn { traits: traits }; }
 function t_unknown(reason: string): Type { return TypeUnknown { reason: reason }; }
 
@@ -2300,7 +2308,15 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
     // both `Option` and `Option[i32]` land here. Without this the full
     // spelling `Option[i32]` matches no struct/union below and the annotation
     // collapsed to unknown, over-rejecting every `var o: Option[i32] = …`.
-    if (is_reserved_enum_name(r.base)) { return t_union(r.base); }
+    if (is_reserved_enum_name(r.base)) {
+        // Capture the instantiation args (Option[i32] → args [i32]) so the
+        // typed-IR annotation can reconstruct the full "Option[T]"/"Result[T,E]"
+        // tag. Checker-behaviour-neutral: type_eq/assignability ignore union args.
+        var uargs: Type[] = [];
+        var ua: i32 = 0;
+        while (ua < r.args.len()) { uargs = uargs.append(type_from_ref_su(r.args[ua], structs, unions)); ua = ua + 1; }
+        return t_union_g(r.base, uargs);
+    }
     // User generic struct / union-alias instantiation (#4346 piece 2):
     // `Box[i32]` / `Foo[T]` resolves to the NAME-ONLY struct / union off
     // r.base, dropping the generic args (this partial type system carries
@@ -9014,6 +9030,26 @@ function type_to_irtag(t: Type): string {
             var vt: string = type_to_irtag(m.value);
             if (kt == "" || vt == "") { return ""; }
             return "Map[" + kt + ", " + vt + "]";
+        },
+        // A builtin Option/Result-valued call: reconstruct the full "Option[T]" /
+        // "Result[T, E]" tag irlower's try_opt_type keys on, from the union's
+        // captured args. Only Option/Result (the shapes try_opt_type resolves);
+        // other unions (enums / aliases / JsonValue / IoError) → "" (structural
+        // fallback). "" if any payload/error type isn't scalar/string/struct-
+        // serialisable, keeping the tag well-formed.
+        TypeUnion(u) => {
+            if (u.name == "Option" && u.args.len() == 1) {
+                var pt: string = type_to_irtag(u.args[0]);
+                if (pt == "") { return ""; }
+                return "Option[" + pt + "]";
+            }
+            if (u.name == "Result" && u.args.len() == 2) {
+                var ot: string = type_to_irtag(u.args[0]);
+                var et: string = type_to_irtag(u.args[1]);
+                if (ot == "" || et == "") { return ""; }
+                return "Result[" + ot + ", " + et + "]";
+            }
+            return "";
         },
         _ => { return ""; }
     }
