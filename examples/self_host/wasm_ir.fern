@@ -243,6 +243,8 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "wasm_pollable_drop")) { out = out.append("wasm_pollable_drop"); }
     if (module_emits_op_cached(cache, "wasm_timer_pollable")) { out = out.append("wasm_timer_pollable"); }
     if (module_emits_op_cached(cache, "write_file")) { out = out.append("write_file"); }
+    if (module_emits_op_cached(cache, "open_file")) { out = out.append("open_file"); }
+    if (module_emits_op_cached(cache, "writer_write")) { out = out.append("writer_write"); }
     if (module_allocates(cache)) { out = out.append("@allocates"); }
     if (module_calls_optarrarr_free(cache)) { out = out.append("@calls_optarrarr_free"); }
     if (module_calls_strarrarr_free(cache)) { out = out.append("@calls_strarrarr_free"); }
@@ -1275,8 +1277,10 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // the `ip-socket-address` variant used by start-bind) carries the world
         // payload `component new` resolves. No tcp exclusion here — same route as
         // wasm_poll (#4316) proved.
-        && !module_emits_op_cached(cache, "writer_write")
-        && !module_emits_op_cached(cache, "open_file")
+        // open_file (open_reader/open_writer/open_appender) + writer_write NOW lower
+        // on the wasm IR path (#4372): $__fern_open_file does path_open under preopen
+        // fd 3 (openat-flags -> WASI oflags/rights/fdflags) and $__fern_writer_write
+        // fd_writes the bytes — reusing file_imports' path_open + the fd_write import.
         // subprocess is NOT deferred to the AST path — it is unsupportable on
         // wasm/WASI, so the driver rejects it with a clean diagnostic before emit
         // (module_uses_subprocess, #4320). No exclusion here.
@@ -2648,6 +2652,15 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // opens the path for write (path_open) and writes via fd_write (the
             // import print already pulls in; wasm_ir_run extends its gate).
             out = out + "    call $__fern_write_file\n";
+        } else if (o.kind_tag == 203) {  // open_file (#4372)
+            // stack: path box -> push the openat flags (i32_imm) -> $__fern_open_file
+            // (path_open under preopen fd 3) -> fd (>= 0, a bare Reader/Writer) or
+            // -errno. wasm_ir_run gates in file_imports (path_open) on the open_file need.
+            out = out + "    i32.const " + util.i32_to_string(o.i32_imm) + "\n    call $__fern_open_file\n";
+        } else if (o.kind_tag == 202) {  // writer_write (#4372)
+            // stack: fd, str box -> $__fern_writer_write (fd_write of the box's
+            // bytes) -> bytes written (>= 0) or -errno.
+            out = out + "    call $__fern_writer_write\n";
         } else if (o.kind_tag == 176) {  // env
             // stack: name strblock ptr -> look up the env var, push a fresh
             // Option[string] box (Some(value) / None). $__fern_env (param i32 name,

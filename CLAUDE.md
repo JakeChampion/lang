@@ -208,7 +208,10 @@ polynomial-approx WAT helpers (`wasm.exp_func`/`log_func`/`pow_func`/…,
 the wasm siblings of the arm64 helpers, wired in `wasm_ir_run`). The
 wasm-IR exclusions that genuinely REMAIN are the deferral-gate set in
 `wasm_ir_deferrals_ok`: erased-wide (an i64/f64 value through a bare-
-typevar param), `writer_write`, `open_file`, and `c_call`. (`xs.join` is
+typevar param) and `c_call`. (`open_file` / `writer_write` — the
+open_reader/open_writer/open_appender + Writer.write streaming file I/O —
+now lower on the wasm IR path: `$__fern_open_file` does path_open under
+preopen fd 3, `$__fern_writer_write` fd_writes the bytes; #4372. `xs.join` is
 no longer deferred
 — it lowers on the wasm IR path via the `$__fern_arr_str_join` shim over
 the `$__fern_str_join` WAT worker; #5328. 8-byte-VALUE maps — i64/u64 AND
