@@ -178,19 +178,20 @@ func buildDebugAbbrev(hasLines bool) []byte {
 // buildDebugInfo encodes the .debug_info compilation unit: the CU DIE spanning
 // [textLo, textHi) followed by one subprogram DIE per symbol. When hasLines,
 // the CU adds DW_AT_stmt_list (offset 0 into .debug_line).
-func buildDebugInfo(syms []Sym, textLo, textHi uint64, name string, hasLines bool) []byte {
+func buildDebugInfo(syms []Sym, textLo, textHi uint64, name, compDir string, hasLines bool) []byte {
 	cstr := func(b []byte, s string) []byte {
 		b = append(b, s...)
 		return append(b, 0)
 	}
 
 	var die []byte
-	// CU DIE (abbrev 1).
+	// CU DIE (abbrev 1). DW_AT_name + DW_AT_comp_dir let a debugger locate
+	// the source: gdb resolves a relative name against comp_dir.
 	die = appendULEB(die, 1)
 	die = cstr(die, "fern")     // DW_AT_producer
 	die = le16(die, dwLangC99)  // DW_AT_language
-	die = cstr(die, name)       // DW_AT_name
-	die = cstr(die, "")         // DW_AT_comp_dir
+	die = cstr(die, name)       // DW_AT_name (source path as compiled)
+	die = cstr(die, compDir)    // DW_AT_comp_dir (compilation directory)
 	die = le64(die, textLo)     // DW_AT_low_pc
 	die = le64(die, textHi)     // DW_AT_high_pc
 	if hasLines {

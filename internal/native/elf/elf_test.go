@@ -1099,7 +1099,7 @@ func TestStaticExecutableDataWXSymsRows(t *testing.T) {
 		{Addr: base + 8, Line: 8},
 		{Addr: base + 16, Line: 9},
 	}
-	bin := elf.StaticExecutableDataX86WXSymsRows(text, data, syms, rows, "prog.fern", base+uint64(len(text)))
+	bin := elf.StaticExecutableDataX86WXSymsRows(text, data, syms, rows, "prog.fern", "/tmp", base+uint64(len(text)))
 
 	f, err := goelf.NewFile(bytes.NewReader(bin))
 	if err != nil {

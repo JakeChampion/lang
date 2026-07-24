@@ -1207,7 +1207,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		if err != nil {
 			return 1, fmt.Errorf("arm64-ssa: %v", err)
 		}
-		if err := linkNative(asm, outPath, ""); err != nil {
+		if err := linkNative(asm, outPath, "", ""); err != nil {
 			return 1, fmt.Errorf("arm64-ssa link: %v", err)
 		}
 		return 0, nil
@@ -1511,9 +1511,12 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		}
 	}
 	// Under -g, the DWARF .debug_line table is built from per-statement `.loc`
-	// markers the native backends emit (#5537 slice 2); the source file names
-	// file 1 in the line program.
-	srcFileBase := filepath.Base(srcPath)
+	// markers the native backends emit (#5537 slice 2). The source path (as
+	// compiled) names file 1 in the line program and DW_AT_name; the compile
+	// directory (cwd) is DW_AT_comp_dir, so a debugger resolves a relative
+	// source path and displays the source, not just addresses.
+	dbgSrc := srcPath
+	dbgCompDir, _ := os.Getwd()
 
 	var asm string
 	switch target {
@@ -1590,11 +1593,11 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			return 1, err
 		}
 	case useNative && target == "x86-64":
-		if err := linkNativeX86(asm, binPath, srcFileBase); err != nil {
+		if err := linkNativeX86(asm, binPath, dbgSrc, dbgCompDir); err != nil {
 			return 1, err
 		}
 	case useNative:
-		if err := linkNative(asm, binPath, srcFileBase); err != nil {
+		if err := linkNative(asm, binPath, dbgSrc, dbgCompDir); err != nil {
 			return 1, err
 		}
 	case darwin:
@@ -1811,7 +1814,7 @@ func linkDarwin(asm, outPath, cc string) error {
 // two-segment layout (R+X code, R+W data) so no mapping is both writable
 // and executable — required by W^X-enforcing loaders such as Android's.
 // Unsupported instructions surface as an error rather than a miscompile.
-func linkNative(asm, outPath string, srcFile string) error {
+func linkNative(asm, outPath, srcFile, compDir string) error {
 	if emitDebugSyms {
 		text, rodata, syms, locRows, err := nativearm64.AssembleProgramWXSyms(asm, nativeelf.TextVAddrWX)
 		if err != nil {
@@ -1825,7 +1828,7 @@ func linkNative(asm, outPath string, srcFile string) error {
 		for _, r := range locRows {
 			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
 		}
-		bin := nativeelf.StaticExecutableDataWXSymsRows(text, rodata, fs, rows, srcFile, textEnd)
+		bin := nativeelf.StaticExecutableDataWXSymsRows(text, rodata, fs, rows, srcFile, compDir, textEnd)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}
@@ -1920,7 +1923,7 @@ func sharedExports(names []string, vaddr map[string]uint64) []nativeelf.Export {
 // links x86-64 assembly into a static ELF executable entirely in-process
 // via the pure-Go internal/native/x86_64 backend, using the same W^X
 // two-segment layout (R+X code, R+W data).
-func linkNativeX86(asm, outPath string, srcFile string) error {
+func linkNativeX86(asm, outPath, srcFile, compDir string) error {
 	if emitDebugSyms {
 		text, rodata, syms, locRows, err := nativex86.AssembleProgramWXSyms(asm, nativeelf.TextVAddrWX)
 		if err != nil {
@@ -1934,7 +1937,7 @@ func linkNativeX86(asm, outPath string, srcFile string) error {
 		for _, r := range locRows {
 			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
 		}
-		bin := nativeelf.StaticExecutableDataX86WXSymsRows(text, rodata, fs, rows, srcFile, textEnd)
+		bin := nativeelf.StaticExecutableDataX86WXSymsRows(text, rodata, fs, rows, srcFile, compDir, textEnd)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}
