@@ -1517,6 +1517,14 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 	// source path and displays the source, not just addresses.
 	dbgSrc := srcPath
 	dbgCompDir, _ := os.Getwd()
+	// DWARF variable DIEs (#5537 slice 3 locals/params): map each function to
+	// its scalar parameters + locals with frame offsets, so gdb/lldb can
+	// `info args` / `print <var>`. x86-64 only for now (arm64 frame layout is a
+	// follow-up); gated on -g.
+	var dbgVars map[string][]nativeelf.LocalVar
+	if emitDebugSyms && target == "x86-64" {
+		dbgVars = dwarfLocalVars(prog, info)
+	}
 
 	var asm string
 	switch target {
@@ -1593,7 +1601,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 			return 1, err
 		}
 	case useNative && target == "x86-64":
-		if err := linkNativeX86(asm, binPath, dbgSrc, dbgCompDir); err != nil {
+		if err := linkNativeX86(asm, binPath, dbgSrc, dbgCompDir, dbgVars); err != nil {
 			return 1, err
 		}
 	case useNative:
@@ -1828,7 +1836,7 @@ func linkNative(asm, outPath, srcFile, compDir string) error {
 		for _, r := range locRows {
 			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
 		}
-		bin := nativeelf.StaticExecutableDataWXSymsRows(text, rodata, fs, rows, srcFile, compDir, textEnd)
+		bin := nativeelf.StaticExecutableDataWXSymsRows(text, rodata, fs, rows, srcFile, compDir, textEnd, nil)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}
@@ -1923,7 +1931,76 @@ func sharedExports(names []string, vaddr map[string]uint64) []nativeelf.Export {
 // links x86-64 assembly into a static ELF executable entirely in-process
 // via the pure-Go internal/native/x86_64 backend, using the same W^X
 // two-segment layout (R+X code, R+W data).
-func linkNativeX86(asm, outPath, srcFile, compDir string) error {
+// scalarTypeKey maps a Fern scalar type to its DWARF base-type key (matching
+// elf.scalarBaseType), or "" for a non-scalar type (which gets no variable DIE
+// in this slice — composite type DIEs are a follow-up).
+func scalarTypeKey(t ast.Type) string {
+	switch v := t.(type) {
+	case ast.NumberType:
+		if v.IsPointerWidth() {
+			return "" // usize/isize — target-width, skip for now
+		}
+		sign := "i"
+		if !v.IsSigned() { // i32 is NumberType{Width:0}; IsSigned handles that
+			sign = "u"
+		}
+		switch v.NormalWidth() {
+		case 8:
+			return sign + "8"
+		case 16:
+			return sign + "16"
+		case 32:
+			return sign + "32"
+		case 64:
+			return sign + "64"
+		}
+	case ast.FloatType:
+		if v.Width == 32 {
+			return "f32"
+		}
+		return "f64"
+	case ast.BoolType:
+		return "bool"
+	}
+	return ""
+}
+
+// dwarfLocalVars builds the per-function scalar parameter/local variable list
+// for the DWARF subprogram DIEs (#5537 slice 3). It relies on the x86-64
+// codegen's frame layout: parameters occupy slots 0..N-1, then info.Locals in
+// order, and slot k lives at [rbp - 8*(k+1)]. Closures are skipped — their
+// capture slots shift that layout. Only scalar-typed variables are emitted.
+func dwarfLocalVars(prog *ast.Program, info *checker.Info) map[string][]nativeelf.LocalVar {
+	out := map[string][]nativeelf.LocalVar{}
+	for _, fn := range prog.Funcs {
+		if len(fn.Captures) > 0 {
+			continue
+		}
+		var vars []nativeelf.LocalVar
+		add := func(name string, t ast.Type, slot int, isParam bool) {
+			key := scalarTypeKey(t)
+			if key == "" {
+				return
+			}
+			vars = append(vars, nativeelf.LocalVar{Name: name, TypeKey: key, Offset: -8 * (slot + 1), IsParam: isParam})
+		}
+		for i, p := range fn.Params {
+			add(p.Name, p.Type, i, true)
+		}
+		base := len(fn.Params)
+		for j, v := range info.Locals[fn] {
+			if v.Type != nil {
+				add(v.Name, v.Type, base+j, false)
+			}
+		}
+		if len(vars) > 0 {
+			out[fn.Name] = vars
+		}
+	}
+	return out
+}
+
+func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]nativeelf.LocalVar) error {
 	if emitDebugSyms {
 		text, rodata, syms, locRows, err := nativex86.AssembleProgramWXSyms(asm, nativeelf.TextVAddrWX)
 		if err != nil {
@@ -1937,7 +2014,7 @@ func linkNativeX86(asm, outPath, srcFile, compDir string) error {
 		for _, r := range locRows {
 			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
 		}
-		bin := nativeelf.StaticExecutableDataX86WXSymsRows(text, rodata, fs, rows, srcFile, compDir, textEnd)
+		bin := nativeelf.StaticExecutableDataX86WXSymsRows(text, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}

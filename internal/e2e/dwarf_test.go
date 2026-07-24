@@ -236,3 +236,103 @@ func keys(m map[string][2]uint64) []string {
 	}
 	return out
 }
+
+// TestDWARFLocalVars is the end-to-end guard for the -g DWARF variable DIEs
+// (#5537 slice 3 locals/params): a real `fern -g` x86-64 build gives each
+// function's scalar parameters and locals a DIE with a name, an i32/f64/…
+// base type, and a frame-relative location — what gdb/lldb use for `info args`
+// / `info locals` / `print <var>`. (Verified live: gdb prints a=20, b=22,
+// sum=42 at a source-line breakpoint.)
+func TestDWARFLocalVars(t *testing.T) {
+	src := "function add(a: i32, b: i32): i32 {\n    var sum: i32 = a + b;\n    return sum;\n}\nfunction main(): i32 {\n    return add(20, 22);\n}\n"
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	out := filepath.Join(dir, "g.bin")
+	if o, err := exec.Command(bin, "-g", "-target", "x86-64", "-o", out, p).CombinedOutput(); err != nil {
+		t.Fatalf("-g build: %v\n%s", err, o)
+	}
+	f, err := goelf.Open(out)
+	if err != nil {
+		t.Fatalf("open ELF: %v", err)
+	}
+	defer f.Close()
+	d, err := f.DWARF()
+	if err != nil {
+		t.Fatalf("DWARF(): %v", err)
+	}
+
+	// Find the `add` subprogram and collect its variable children.
+	r := d.Reader()
+	vars := map[string]struct {
+		tag  dwarf.Tag
+		typ  string
+		size int64
+		loc  bool
+	}{}
+	for {
+		e, err := r.Next()
+		if err != nil {
+			t.Fatalf("reader: %v", err)
+		}
+		if e == nil {
+			break
+		}
+		if e.Tag != dwarf.TagSubprogram {
+			continue
+		}
+		if name, _ := e.Val(dwarf.AttrName).(string); name != "add" {
+			continue
+		}
+		for {
+			c, err := r.Next()
+			if err != nil {
+				t.Fatalf("reader: %v", err)
+			}
+			if c == nil || c.Tag == 0 {
+				break
+			}
+			name, _ := c.Val(dwarf.AttrName).(string)
+			v := struct {
+				tag  dwarf.Tag
+				typ  string
+				size int64
+				loc  bool
+			}{tag: c.Tag}
+			if toff, ok := c.Val(dwarf.AttrType).(dwarf.Offset); ok {
+				if typ, terr := d.Type(toff); terr == nil {
+					v.typ, v.size = typ.String(), typ.Size()
+				}
+			}
+			_, v.loc = c.Val(dwarf.AttrLocation).([]byte)
+			vars[name] = v
+		}
+		break
+	}
+
+	for name, want := range map[string]struct {
+		tag dwarf.Tag
+	}{
+		"a":   {dwarf.TagFormalParameter},
+		"b":   {dwarf.TagFormalParameter},
+		"sum": {dwarf.TagVariable},
+	} {
+		v, ok := vars[name]
+		if !ok {
+			t.Errorf("add: missing variable DIE %q (have %v)", name, vars)
+			continue
+		}
+		if v.tag != want.tag {
+			t.Errorf("%s: tag = %v, want %v", name, v.tag, want.tag)
+		}
+		if v.typ != "i32" || v.size != 4 {
+			t.Errorf("%s: type = %q/%d, want i32/4", name, v.typ, v.size)
+		}
+		if !v.loc {
+			t.Errorf("%s: missing DW_AT_location", name)
+		}
+	}
+}
