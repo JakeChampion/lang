@@ -8077,7 +8077,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (fa.field == "values" && c.args.len() == 0) {
                             var mvs: LowerState = lower_expr(fa.obj, s);
                             if (!mvs.ok) { return mvs; }
-                            return mvs.emit(ir.op_map_values(map_kv_elem_flag(mtype, "values"), map_value_wide(map_value_of(mtype))));
+                            return mvs.emit(ir.op_map_values(map_kv_elem_flag(mtype, "values"), map_value_widekind(map_value_of(mtype))));
                         }
                         if (fa.field == "iter" && c.args.len() == 0) {
                             // m.iter() -> a fresh MapIter box [map_ptr@0, cursor@8].
@@ -13975,7 +13975,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
             if (!mkf.ok) { return mkf; }
             var mki_flag: i32 = map_kv_elem_flag(mkimty, mki_method);
             if (mki_method == "keys") { mkf = mkf.emit(ir.op_map_keys(mki_flag)); }
-            else { mkf = mkf.emit(ir.op_map_values(mki_flag, map_value_wide(map_value_of(mkimty)))); }
+            else { mkf = mkf.emit(ir.op_map_values(mki_flag, map_value_widekind(map_value_of(mkimty)))); }
             mkf = mkf.emit(ir.op_store_local(mkisslot));
             // hidden index
             var mkidxn: string = "$formki" + util.i32_to_string(mkf.locals.len());
@@ -14215,7 +14215,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         fm = fm.add_local(vsn);
         var vsslot: i32 = fm.slot_of(vsn);
         fm = fm.emit(ir.op_load_local(mslot));
-        fm = fm.emit(ir.op_map_values(mkv_vflag, map_value_wide(vty)));
+        fm = fm.emit(ir.op_map_values(mkv_vflag, map_value_widekind(vty)));
         fm = fm.emit(ir.op_store_local(vsslot));
         // hidden index
         var idxn: string = "$foridx" + util.i32_to_string(fm.locals.len());
