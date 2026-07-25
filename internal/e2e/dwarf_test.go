@@ -355,6 +355,105 @@ func TestDWARFLocalVars(t *testing.T) {
 	}
 }
 
+// TestDWARFStructVars is the end-to-end guard for composite (struct) variable
+// DIEs (#5537 slice 3): a struct-typed variable gets a DW_TAG_pointer_type →
+// DW_TAG_structure_type with a DW_TAG_member per scalar field (name, type,
+// byte offset), so gdb/lldb `print *p` shows the fields. (Verified live: gdb
+// prints `{x = 7, y = 35}` and `p->x` = 7.)
+func TestDWARFStructVars(t *testing.T) {
+	src := "struct Point { x: i32, y: i32 }\n" +
+		"function main(): i32 {\n" +
+		"    var pt: Point = Point { x: 7, y: 35 };\n" +
+		"    return pt.x + pt.y;\n" +
+		"}\n"
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	for _, target := range []string{"x86-64", "arm64"} {
+		t.Run(target, func(t *testing.T) {
+			out := filepath.Join(dir, "g-"+target+".bin")
+			if o, err := exec.Command(bin, "-g", "-target", target, "-o", out, p).CombinedOutput(); err != nil {
+				t.Fatalf("-g build: %v\n%s", err, o)
+			}
+			ef, err := goelf.Open(out)
+			if err != nil {
+				t.Fatalf("open ELF: %v", err)
+			}
+			defer ef.Close()
+			d, err := ef.DWARF()
+			if err != nil {
+				t.Fatalf("DWARF(): %v", err)
+			}
+			r := d.Reader()
+			var ptType dwarf.Type
+			for {
+				e, err := r.Next()
+				if err != nil {
+					t.Fatalf("reader: %v", err)
+				}
+				if e == nil {
+					break
+				}
+				if e.Tag != dwarf.TagSubprogram {
+					continue
+				}
+				if name, _ := e.Val(dwarf.AttrName).(string); name != "main" {
+					continue
+				}
+				for {
+					c, err := r.Next()
+					if err != nil {
+						t.Fatalf("reader: %v", err)
+					}
+					if c == nil || c.Tag == 0 {
+						break
+					}
+					if name, _ := c.Val(dwarf.AttrName).(string); name != "pt" {
+						continue
+					}
+					if toff, ok := c.Val(dwarf.AttrType).(dwarf.Offset); ok {
+						ptType, _ = d.Type(toff)
+					}
+				}
+				break
+			}
+			if ptType == nil {
+				t.Fatal("no DW_AT_type for pt")
+			}
+			ptr, ok := ptType.(*dwarf.PtrType)
+			if !ok {
+				t.Fatalf("pt type = %T (%v), want *dwarf.PtrType", ptType, ptType)
+			}
+			st, ok := ptr.Type.(*dwarf.StructType)
+			if !ok {
+				t.Fatalf("pt points to %T, want *dwarf.StructType", ptr.Type)
+			}
+			if st.StructName != "Point" {
+				t.Errorf("struct name = %q, want Point", st.StructName)
+			}
+			want := []struct {
+				name string
+				off  int64
+			}{{"x", 0}, {"y", 4}}
+			if len(st.Field) != 2 {
+				t.Fatalf("Point has %d fields, want 2: %v", len(st.Field), st.Field)
+			}
+			for i, w := range want {
+				f := st.Field[i]
+				if f.Name != w.name || f.ByteOffset != w.off {
+					t.Errorf("field %d = {%s @%d}, want {%s @%d}", i, f.Name, f.ByteOffset, w.name, w.off)
+				}
+				if f.Type.String() != "i32" {
+					t.Errorf("field %s type = %q, want i32", f.Name, f.Type.String())
+				}
+			}
+		})
+	}
+}
+
 // sleb128 decodes a signed LEB128 value from the front of b.
 func sleb128(b []byte) (int64, bool) {
 	var result int64

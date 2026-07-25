@@ -20,14 +20,18 @@ const (
 	dwTagBaseType         = 0x24
 	dwTagFormalParameter  = 0x05
 	dwTagVariable         = 0x34
+	dwTagStructureType    = 0x13
+	dwTagMember           = 0x0d
+	dwTagPointerType      = 0x0f
 
 	dwChildrenYes = 1
 	dwChildrenNo  = 0
 
 	dwAtLocation  = 0x02
-	dwAtName      = 0x03
-	dwAtByteSize  = 0x0b
-	dwAtStmtList  = 0x10
+	dwAtName                = 0x03
+	dwAtByteSize            = 0x0b
+	dwAtStmtList            = 0x10
+	dwAtDataMemberLocation  = 0x38
 	dwAtLowPC     = 0x11
 	dwAtHighPC    = 0x12
 	dwAtLanguage  = 0x13
@@ -64,9 +68,28 @@ const (
 // scalarBaseType. Only scalar-typed variables are emitted for now.
 type LocalVar struct {
 	Name    string
-	TypeKey string
+	TypeKey string      // scalar base type ("i32", …); empty when Struct is set
+	Struct  *StructType // pointer-to-struct type; nil for scalars
 	Offset  int
 	IsParam bool
+}
+
+// StructType describes an all-scalar-field struct for a pointer-to-struct
+// variable DIE (#5537 slice 3 composite). Fern struct values are a heap data
+// pointer, so a struct variable's DWARF type is a pointer to this type; each
+// field sits at Offset within the pointed-to field area. Structs with any
+// non-scalar field are not described (the variable gets no DIE).
+type StructType struct {
+	Name   string
+	Size   int
+	Fields []StructField
+}
+
+// StructField is one scalar member of a StructType.
+type StructField struct {
+	Name    string
+	TypeKey string
+	Offset  int
 }
 
 // baseTypeInfo is a DWARF base type: its byte size and DW_ATE encoding.
@@ -193,6 +216,9 @@ const (
 	abbrevBaseType       = 4
 	abbrevFormalParam    = 5
 	abbrevVariable       = 6
+	abbrevStructType     = 7
+	abbrevMember         = 8
+	abbrevPointerType    = 9
 )
 
 // buildDebugAbbrev is the fixed abbreviation table: compile_unit, subprogram
@@ -262,6 +288,31 @@ func buildDebugAbbrev(hasLines bool) []byte {
 		attr(0, 0)
 	}
 
+	// abbrev 7: DW_TAG_structure_type, has children (members)
+	b = appendULEB(b, abbrevStructType)
+	b = appendULEB(b, dwTagStructureType)
+	b = append(b, dwChildrenYes)
+	attr(dwAtName, dwFormString)
+	attr(dwAtByteSize, dwFormData2)
+	attr(0, 0)
+
+	// abbrev 8: DW_TAG_member, no children
+	b = appendULEB(b, abbrevMember)
+	b = appendULEB(b, dwTagMember)
+	b = append(b, dwChildrenNo)
+	attr(dwAtName, dwFormString)
+	attr(dwAtType, dwFormRef4)
+	attr(dwAtDataMemberLocation, dwFormData2)
+	attr(0, 0)
+
+	// abbrev 9: DW_TAG_pointer_type, no children
+	b = appendULEB(b, abbrevPointerType)
+	b = appendULEB(b, dwTagPointerType)
+	b = append(b, dwChildrenNo)
+	attr(dwAtType, dwFormRef4)
+	attr(dwAtByteSize, dwFormData1)
+	attr(0, 0)
+
 	b = appendULEB(b, 0) // end of abbreviation table
 	return b
 }
@@ -296,34 +347,97 @@ func buildDebugInfo(syms []Sym, textLo, textHi uint64, name, compDir string, has
 		die = le32(die, 0) // DW_AT_stmt_list → .debug_line offset 0
 	}
 
-	// Emit one base_type DIE per distinct scalar type any variable uses, and
-	// record each type's CU-relative offset for the DW_AT_type refs below.
+	// Emit one base_type DIE per distinct scalar type used by any variable or
+	// struct field, recording each type's CU-relative offset for DW_AT_type.
 	typeOff := map[string]uint32{}
+	emitBase := func(key string) {
+		if key == "" {
+			return
+		}
+		if _, ok := typeOff[key]; ok {
+			return
+		}
+		bt, ok := scalarBaseType[key]
+		if !ok {
+			return
+		}
+		typeOff[key] = uint32(cuHeaderLen + len(die))
+		die = appendULEB(die, abbrevBaseType)
+		die = cstr(die, key)       // DW_AT_name
+		die = append(die, bt.size) // DW_AT_byte_size
+		die = append(die, bt.enc)  // DW_AT_encoding
+	}
 	for _, s := range syms {
 		for _, v := range funcVars[s.Name] {
-			if _, ok := typeOff[v.TypeKey]; ok {
-				continue
+			emitBase(v.TypeKey)
+			if v.Struct != nil {
+				for _, f := range v.Struct.Fields {
+					emitBase(f.TypeKey)
+				}
 			}
-			bt, ok := scalarBaseType[v.TypeKey]
-			if !ok {
-				continue
-			}
-			typeOff[v.TypeKey] = uint32(cuHeaderLen + len(die))
-			die = appendULEB(die, abbrevBaseType)
-			die = cstr(die, v.TypeKey) // DW_AT_name
-			die = append(die, bt.size) // DW_AT_byte_size
-			die = append(die, bt.enc)  // DW_AT_encoding
 		}
 	}
 
-	// Subprogram DIEs, children of the CU. A function with scalar variables
-	// uses abbrev 3 (frame base + parameter/variable children); others use the
-	// bare abbrev 2.
+	// Emit a structure_type + pointer_type per distinct struct a variable uses
+	// (all fields already have a base type); a struct variable's DW_AT_type
+	// points at the pointer_type (Fern struct values are a heap data pointer).
+	structPtrOff := map[string]uint32{}
+	for _, s := range syms {
+		for _, v := range funcVars[s.Name] {
+			st := v.Struct
+			if st == nil {
+				continue
+			}
+			if _, done := structPtrOff[st.Name]; done {
+				continue
+			}
+			allKnown := true
+			for _, f := range st.Fields {
+				if _, ok := typeOff[f.TypeKey]; !ok {
+					allKnown = false
+					break
+				}
+			}
+			if !allKnown {
+				continue
+			}
+			structOff := uint32(cuHeaderLen + len(die))
+			die = appendULEB(die, abbrevStructType)
+			die = cstr(die, st.Name)          // DW_AT_name
+			die = le16(die, uint16(st.Size))  // DW_AT_byte_size
+			for _, f := range st.Fields {
+				die = appendULEB(die, abbrevMember)
+				die = cstr(die, f.Name)             // DW_AT_name
+				die = le32(die, typeOff[f.TypeKey]) // DW_AT_type (ref4)
+				die = le16(die, uint16(f.Offset))   // DW_AT_data_member_location
+			}
+			die = appendULEB(die, 0) // end structure_type children
+			structPtrOff[st.Name] = uint32(cuHeaderLen + len(die))
+			die = appendULEB(die, abbrevPointerType)
+			die = le32(die, structOff) // DW_AT_type (ref4 → the struct)
+			die = append(die, 8)       // DW_AT_byte_size (a pointer)
+		}
+	}
+
+	// typeRef returns a variable's DW_AT_type ref4 (scalar base type, or the
+	// pointer-to-struct type) and whether it is describable.
+	typeRef := func(v LocalVar) (uint32, bool) {
+		if v.Struct != nil {
+			off, ok := structPtrOff[v.Struct.Name]
+			return off, ok
+		}
+		off, ok := typeOff[v.TypeKey]
+		return off, ok
+	}
+
+	// Subprogram DIEs, children of the CU. A function with describable
+	// variables uses abbrev 3 (frame base + parameter/variable children);
+	// others use the bare abbrev 2.
 	for _, s := range syms {
 		vars := funcVars[s.Name]
 		emittable := vars[:0]
 		for _, v := range vars {
-			if _, ok := typeOff[v.TypeKey]; ok {
+			if _, ok := typeRef(v); ok {
 				emittable = append(emittable, v)
 			}
 		}
@@ -348,7 +462,8 @@ func buildDebugInfo(syms []Sym, textLo, textHi uint64, name, compDir string, has
 				die = appendULEB(die, abbrevVariable)
 			}
 			die = cstr(die, v.Name)
-			die = le32(die, typeOff[v.TypeKey]) // DW_AT_type (ref4)
+			off, _ := typeRef(v)
+			die = le32(die, off) // DW_AT_type (ref4)
 			// DW_AT_location = exprloc [DW_OP_fbreg <sleb offset>].
 			loc := appendSLEB([]byte{dwOpFbreg}, int64(v.Offset))
 			die = appendULEB(die, uint64(len(loc)))
