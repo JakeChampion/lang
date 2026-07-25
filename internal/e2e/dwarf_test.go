@@ -454,6 +454,110 @@ func TestDWARFStructVars(t *testing.T) {
 	}
 }
 
+// TestDWARFMixedStructVars guards partial struct DIEs (#5537 slice 3): a struct
+// with BOTH scalar and non-scalar fields is still described — its scalar fields
+// get member DIEs (at their real layout offsets, which account for the
+// non-scalar field's space) while the non-scalar field is omitted. gdb shows
+// `{age = 36, score = 99}` for a `Person { name: string, age: i32, score:
+// i32 }`. The described members must carry the correct offsets (so the string
+// field's slot is skipped), verified on both x86-64 and arm64.
+func TestDWARFMixedStructVars(t *testing.T) {
+	src := "struct Person { name: string, age: i32, score: i32 }\n" +
+		"function describe(p: Person): i32 { return p.age + p.score; }\n" +
+		"function main(): i32 {\n" +
+		"    var p: Person = Person { name: \"Ada\", age: 36, score: 99 };\n" +
+		"    return describe(p);\n" +
+		"}\n"
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	spath := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(spath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	for _, target := range []string{"x86-64", "arm64"} {
+		t.Run(target, func(t *testing.T) {
+			out := filepath.Join(dir, "g-"+target+".bin")
+			if o, err := exec.Command(bin, "-g", "-target", target, "-o", out, spath).CombinedOutput(); err != nil {
+				t.Fatalf("-g build: %v\n%s", err, o)
+			}
+			ef, err := goelf.Open(out)
+			if err != nil {
+				t.Fatalf("open ELF: %v", err)
+			}
+			defer ef.Close()
+			d, err := ef.DWARF()
+			if err != nil {
+				t.Fatalf("DWARF(): %v", err)
+			}
+			// Find `describe`'s param `p` and resolve its pointed-to struct.
+			r := d.Reader()
+			var st *dwarf.StructType
+			for {
+				e, err := r.Next()
+				if err != nil {
+					t.Fatalf("reader: %v", err)
+				}
+				if e == nil {
+					break
+				}
+				if e.Tag != dwarf.TagSubprogram {
+					continue
+				}
+				if name, _ := e.Val(dwarf.AttrName).(string); name != "describe" {
+					continue
+				}
+				for {
+					c, err := r.Next()
+					if err != nil {
+						t.Fatalf("reader: %v", err)
+					}
+					if c == nil || c.Tag == 0 {
+						break
+					}
+					if name, _ := c.Val(dwarf.AttrName).(string); name != "p" {
+						continue
+					}
+					if toff, ok := c.Val(dwarf.AttrType).(dwarf.Offset); ok {
+						if typ, _ := d.Type(toff); typ != nil {
+							if ptr, ok := typ.(*dwarf.PtrType); ok {
+								st, _ = ptr.Type.(*dwarf.StructType)
+							}
+						}
+					}
+				}
+				break
+			}
+			if st == nil {
+				t.Fatal("no pointer-to-struct type for param p")
+			}
+			// Only the two scalar fields are described; `name` (string) is omitted.
+			byName := map[string]int64{}
+			for _, f := range st.Field {
+				byName[f.Name] = f.ByteOffset
+				if f.Type.String() != "i32" {
+					t.Errorf("field %s type = %q, want i32", f.Name, f.Type.String())
+				}
+			}
+			if _, present := byName["name"]; present {
+				t.Errorf("string field `name` should be omitted, got member at %d", byName["name"])
+			}
+			if len(st.Field) != 2 {
+				t.Errorf("described %d fields, want 2 (age, score): %v", len(st.Field), st.Field)
+			}
+			for _, f := range []string{"age", "score"} {
+				if _, ok := byName[f]; !ok {
+					t.Errorf("missing scalar member %q (have %v)", f, byName)
+				}
+			}
+			// age/score must sit AFTER the string field's slot (offset > 0),
+			// proving the layout offsets are real (not a 0-based scalar-only pack).
+			if byName["age"] == 0 {
+				t.Errorf("age at offset 0 — expected the string field to precede it")
+			}
+		})
+	}
+}
+
 // sleb128 decodes a signed LEB128 value from the front of b.
 func sleb128(b []byte) (int64, bool) {
 	var result int64

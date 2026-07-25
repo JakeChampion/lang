@@ -1965,11 +1965,15 @@ func scalarTypeKey(t ast.Type) string {
 }
 
 // structDesc describes an all-scalar-field struct for a DWARF pointer-to-struct
-// variable DIE, or returns nil if t isn't such a struct (unknown struct, empty,
-// or any non-scalar field — composite/nested fields are a follow-up). Field
-// offsets come from the same layout the codegen uses (ir.StructFieldLayout,
-// ptrW=8), and the user-visible struct pointer already points past the rc
-// header, so the offsets are relative to that pointer.
+// variable DIE, or returns nil if t isn't a struct with at least one scalar
+// field. A struct's SCALAR fields are described even when it also has
+// non-scalar fields (string / array / nested struct) — those members are
+// simply omitted from the structure DIE (a valid partial description; gdb
+// shows the fields it has), so `print *p` still surfaces the scalar fields of
+// a mixed struct. Nested-struct member recursion is a follow-up. Field offsets
+// come from the same layout the codegen uses (ir.StructFieldLayout, ptrW=8);
+// the user-visible struct pointer already points past the rc header, so the
+// offsets are relative to that pointer.
 func structDesc(t ast.Type, info *checker.Info) *nativeelf.StructType {
 	st, ok := t.(ast.StructType)
 	if !ok {
@@ -1984,9 +1988,12 @@ func structDesc(t ast.Type, info *checker.Info) *nativeelf.StructType {
 	for _, f := range sd.Fields {
 		key := scalarTypeKey(f.Type)
 		if key == "" {
-			return nil // non-scalar field — not describable in this slice
+			continue // non-scalar field: omit this member (nested/composite is a follow-up)
 		}
 		fields = append(fields, nativeelf.StructField{Name: f.Name, TypeKey: key, Offset: int(offs[f.Name])})
+	}
+	if len(fields) == 0 {
+		return nil // nothing describable
 	}
 	return &nativeelf.StructType{Name: st.Name, Size: int(size), Fields: fields}
 }
