@@ -1964,6 +1964,33 @@ func scalarTypeKey(t ast.Type) string {
 	return ""
 }
 
+// structDesc describes an all-scalar-field struct for a DWARF pointer-to-struct
+// variable DIE, or returns nil if t isn't such a struct (unknown struct, empty,
+// or any non-scalar field — composite/nested fields are a follow-up). Field
+// offsets come from the same layout the codegen uses (ir.StructFieldLayout,
+// ptrW=8), and the user-visible struct pointer already points past the rc
+// header, so the offsets are relative to that pointer.
+func structDesc(t ast.Type, info *checker.Info) *nativeelf.StructType {
+	st, ok := t.(ast.StructType)
+	if !ok {
+		return nil
+	}
+	sd := info.Structs[st.Name]
+	if sd == nil || len(sd.Fields) == 0 {
+		return nil
+	}
+	offs, size := ir.StructFieldLayout(sd.Fields, 8)
+	fields := make([]nativeelf.StructField, 0, len(sd.Fields))
+	for _, f := range sd.Fields {
+		key := scalarTypeKey(f.Type)
+		if key == "" {
+			return nil // non-scalar field — not describable in this slice
+		}
+		fields = append(fields, nativeelf.StructField{Name: f.Name, TypeKey: key, Offset: int(offs[f.Name])})
+	}
+	return &nativeelf.StructType{Name: st.Name, Size: int(size), Fields: fields}
+}
+
 // dwarfLocalVars builds the per-function scalar parameter/local variable list
 // for the DWARF subprogram DIEs (#5537 slice 3). Both native backends place
 // parameters in slots 0..N-1 then info.Locals in order, with slot k relative
@@ -2006,6 +2033,8 @@ func dwarfLocalVars(prog *ast.Program, info *checker.Info, target string) map[st
 			}
 			if key := scalarTypeKey(s.typ); key != "" {
 				vars = append(vars, nativeelf.LocalVar{Name: s.name, TypeKey: key, Offset: off, IsParam: s.isParam})
+			} else if sd := structDesc(s.typ, info); sd != nil {
+				vars = append(vars, nativeelf.LocalVar{Name: s.name, Struct: sd, Offset: off, IsParam: s.isParam})
 			}
 		}
 		if len(vars) > 0 {

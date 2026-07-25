@@ -15112,6 +15112,14 @@ func isWideScalar(t ast.Type) bool {
 // multiple of 8 so str x / ldr x land on aligned addresses.
 // Returned map is field-name → offset; second return is the
 // total struct size.
+// StructFieldLayout is the exported view of structFieldLayout: it returns the
+// byte offset of each field within a struct's heap field-area (excluding the
+// rc header — the user-visible data pointer already points past it) and the
+// total field-area size. Used by cmd/fern to emit DWARF struct-member DIEs.
+func StructFieldLayout(fields []ast.Param, ptrW int) (map[string]int32, int32) {
+	return structFieldLayout(fields, ptrW)
+}
+
 func structFieldLayout(fields []ast.Param, ptrW int) (map[string]int32, int32) {
 	offs := make(map[string]int32, len(fields))
 	pos := int32(0)
