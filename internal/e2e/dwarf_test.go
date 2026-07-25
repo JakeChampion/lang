@@ -558,6 +558,127 @@ func TestDWARFMixedStructVars(t *testing.T) {
 	}
 }
 
+// TestDWARFNestedStructVars guards nested-struct member recursion (#5537 slice
+// 3 composite): a struct field that is itself a struct is described as a
+// pointer-to-struct member (the field holds a pointer to the nested box), so
+// gdb `print *r` shows `{origin = 0x…, w = 5, h = 6}` and `print *r.origin`
+// derefs to `{x = 3, y = 4}`. The nested `Point` structure_type must be emitted
+// with its own scalar members and referenced through a pointer_type; verified
+// on both x86-64 and arm64.
+func TestDWARFNestedStructVars(t *testing.T) {
+	src := "struct Point { x: i32, y: i32 }\n" +
+		"struct Rect { origin: Point, w: i32, h: i32 }\n" +
+		"function area(r: Rect): i32 { return r.w * r.h; }\n" +
+		"function main(): i32 {\n" +
+		"    var r: Rect = Rect { origin: Point { x: 3, y: 4 }, w: 5, h: 6 };\n" +
+		"    return area(r) + r.origin.x;\n" +
+		"}\n"
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	spath := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(spath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	for _, target := range []string{"x86-64", "arm64"} {
+		t.Run(target, func(t *testing.T) {
+			out := filepath.Join(dir, "g-"+target+".bin")
+			if o, err := exec.Command(bin, "-g", "-target", target, "-o", out, spath).CombinedOutput(); err != nil {
+				t.Fatalf("-g build: %v\n%s", err, o)
+			}
+			ef, err := goelf.Open(out)
+			if err != nil {
+				t.Fatalf("open ELF: %v", err)
+			}
+			defer ef.Close()
+			d, err := ef.DWARF()
+			if err != nil {
+				t.Fatalf("DWARF(): %v", err)
+			}
+			// Find `area`'s param `r` and resolve its pointed-to Rect struct.
+			r := d.Reader()
+			var st *dwarf.StructType
+			for {
+				e, err := r.Next()
+				if err != nil {
+					t.Fatalf("reader: %v", err)
+				}
+				if e == nil {
+					break
+				}
+				if e.Tag != dwarf.TagSubprogram {
+					continue
+				}
+				if name, _ := e.Val(dwarf.AttrName).(string); name != "area" {
+					continue
+				}
+				for {
+					c, err := r.Next()
+					if err != nil {
+						t.Fatalf("reader: %v", err)
+					}
+					if c == nil || c.Tag == 0 {
+						break
+					}
+					if name, _ := c.Val(dwarf.AttrName).(string); name != "r" {
+						continue
+					}
+					if toff, ok := c.Val(dwarf.AttrType).(dwarf.Offset); ok {
+						if typ, _ := d.Type(toff); typ != nil {
+							if ptr, ok := typ.(*dwarf.PtrType); ok {
+								st, _ = ptr.Type.(*dwarf.StructType)
+							}
+						}
+					}
+				}
+				break
+			}
+			if st == nil {
+				t.Fatal("no pointer-to-struct type for param r")
+			}
+			if st.StructName != "Rect" {
+				t.Errorf("struct name = %q, want Rect", st.StructName)
+			}
+			byName := map[string]*dwarf.StructField{}
+			for _, f := range st.Field {
+				byName[f.Name] = f
+			}
+			if len(st.Field) != 3 {
+				t.Fatalf("Rect described %d fields, want 3 (origin, w, h): %v", len(st.Field), st.Field)
+			}
+			// origin is a pointer-to-Point struct with its own x/y i32 members.
+			origin := byName["origin"]
+			if origin == nil {
+				t.Fatalf("missing nested member `origin` (have %v)", byName)
+			}
+			optr, ok := origin.Type.(*dwarf.PtrType)
+			if !ok {
+				t.Fatalf("origin type = %T, want *dwarf.PtrType", origin.Type)
+			}
+			pt, ok := optr.Type.(*dwarf.StructType)
+			if !ok {
+				t.Fatalf("origin points to %T, want *dwarf.StructType", optr.Type)
+			}
+			if pt.StructName != "Point" {
+				t.Errorf("origin struct = %q, want Point", pt.StructName)
+			}
+			if len(pt.Field) != 2 || pt.Field[0].Name != "x" || pt.Field[1].Name != "y" {
+				t.Errorf("Point members = %v, want x,y", pt.Field)
+			}
+			// w/h are scalars sitting after the nested-struct pointer slot.
+			for _, n := range []string{"w", "h"} {
+				f := byName[n]
+				if f == nil {
+					t.Errorf("missing scalar member %q", n)
+					continue
+				}
+				if f.Type.String() != "i32" {
+					t.Errorf("field %s type = %q, want i32", n, f.Type.String())
+				}
+			}
+		})
+	}
+}
+
 // TestDWARFEnumVars guards enum type DIEs (#5537 slice 3 composite): a
 // payloadless (C-style) enum variable is described as a pointer to a
 // DW_TAG_enumeration_type whose DW_TAG_enumerator children map each variant's
