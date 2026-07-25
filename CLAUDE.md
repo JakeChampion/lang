@@ -209,13 +209,30 @@ the wasm siblings of the arm64 helpers, wired in `wasm_ir_run`). The
 wasm-IR exclusion that genuinely REMAINS is the deferral-gate set in
 `wasm_ir_deferrals_ok`: erased-wide (an i64/f64 value through a bare-
 typevar param), now PARTIALLY closed (#5464) — a wide value through a
-bare-typevar-RETURN PASS-THROUGH fn (`id[T](x:T):T`) lowers on the wasm
-IR path (params/returns typed i64, the uniform 8-byte slot; the caller
-coerces its arg/result at the boundary — see `is_erased_typevar`, the
-`for_wasm` flag folded into `ret_arrdyn` bit 2, and the result-narrow in
-lower_expr). Only CONTAINER-returning erased fns (a tuple/array/Option/
-Result of `T` — `str_ret_argref < 0`) still defer via `erased_wide`; that
-container slice is the remaining piece. (`c_call` is no longer deferred — FFI
+bare-typevar-RETURN PASS-THROUGH fn (`id[T](x:T):T`, #5586) OR a bare-TUPLE-
+return fn (`pair[K,V](k,v):(K,V)`, #5593) lowers on the wasm IR path (erased
+params/returns/locals typed i64, the uniform 8-byte slot; the caller coerces
+its arg/result at the boundary — see `is_erased_typevar` / `erased_widenable`
+/ `erased_passthrough_safe` (the body-safety gate that keeps `fold`-style
+bodies that USE the typevar off the widened path), the `for_wasm` flag folded
+into `ret_arrdyn` bit 2, the `'6'` `fn_param_sigs` flag +
+`callee_param_is_erased_widened`, and the result-narrow in lower_expr).
+Tuples were tractable because their wasm box is ALREADY uniform 8-byte-per-
+element AND an erased `(T,T)` has byte-identical layout to a concrete
+`(i64,i32)` (the reader reads each element at its concrete width from the same
+`N*8` offset — no result narrow). The REMAINING erased-wide containers —
+`Option[T]` / `Result[T,E]` / `T[]` returns — are NOT a quick slice: their box
+layout SHIFTS with payload width (an Option is 8B/payload-@4 for i32 but
+16B/payload-@8 for i64/f64; an array stride is 4 vs 8), so a widened shared
+`some1[T]:Option[T]` forces the wide box for EVERY caller, and a reader on a
+plain `var o: Option[string] = some1("hi")` can't tell an erased-wide
+`Option[i64]` (16B) from a regular `Option[i64]` (16B... vs an `Option[string]`
+that must stay 8B) — the erased instance and the concrete instance share a type
+but need different representations (the same indirect-read ambiguity defeats the
+boxing variant too, which additionally leaks since Options are leak-only). The
+clean fix is MONOMORPHIZING erased container-returning generics — a substantial
+separate change, since unbounded `[T]` generics are deliberately NOT
+monomorphized. Until then those shapes stay deferred. (`c_call` is no longer deferred — FFI
 `__c_call<n>` has no wasm C ABI, so it is now a clean error endpoint,
 rejected before emit by `wasm_unsupported_builtin` like `subprocess` /
 `timer_fd`, #4375.) (`open_file` / `writer_write` — the
