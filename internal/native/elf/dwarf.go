@@ -23,6 +23,8 @@ const (
 	dwTagStructureType    = 0x13
 	dwTagMember           = 0x0d
 	dwTagPointerType      = 0x0f
+	dwTagEnumerationType  = 0x04
+	dwTagEnumerator       = 0x28
 
 	dwChildrenYes = 1
 	dwChildrenNo  = 0
@@ -32,6 +34,7 @@ const (
 	dwAtByteSize            = 0x0b
 	dwAtStmtList            = 0x10
 	dwAtDataMemberLocation  = 0x38
+	dwAtConstValue          = 0x1c
 	dwAtLowPC     = 0x11
 	dwAtHighPC    = 0x12
 	dwAtLanguage  = 0x13
@@ -48,6 +51,7 @@ const (
 	dwFormRef4      = 0x13
 	dwFormSecOffset = 0x17
 	dwFormExprLoc   = 0x18
+	dwFormSdata     = 0x0d
 
 	// DWARF base-type encodings (DW_ATE_*) and location opcodes.
 	dwAteAddress  = 0x01
@@ -68,8 +72,9 @@ const (
 // scalarBaseType. Only scalar-typed variables are emitted for now.
 type LocalVar struct {
 	Name    string
-	TypeKey string      // scalar base type ("i32", …); empty when Struct is set
-	Struct  *StructType // pointer-to-struct type; nil for scalars
+	TypeKey string      // scalar base type ("i32", …); empty when Struct/Enum is set
+	Struct  *StructType // pointer-to-struct type; nil otherwise
+	Enum    *EnumType   // pointer-to-enum type; nil otherwise
 	Offset  int
 	IsParam bool
 }
@@ -90,6 +95,21 @@ type StructField struct {
 	Name    string
 	TypeKey string
 	Offset  int
+}
+
+// EnumType describes a payloadless (C-style) enum for a variable DIE. A Fern
+// payloadless enum value is a pointer to a 4-byte i32 tag sentinel, so the
+// variable's DWARF type is a pointer to this enumeration_type; gdb `print *c`
+// derefs the pointer, reads the tag, and renders it as the enumerator name.
+type EnumType struct {
+	Name        string
+	Enumerators []Enumerator
+}
+
+// Enumerator is one variant of an EnumType: its name and its i32 tag value.
+type Enumerator struct {
+	Name  string
+	Value int
 }
 
 // baseTypeInfo is a DWARF base type: its byte size and DW_ATE encoding.
@@ -219,6 +239,8 @@ const (
 	abbrevStructType     = 7
 	abbrevMember         = 8
 	abbrevPointerType    = 9
+	abbrevEnumType       = 10
+	abbrevEnumerator     = 11
 )
 
 // buildDebugAbbrev is the fixed abbreviation table: compile_unit, subprogram
@@ -313,6 +335,23 @@ func buildDebugAbbrev(hasLines bool) []byte {
 	attr(dwAtByteSize, dwFormData1)
 	attr(0, 0)
 
+	// abbrev 10: DW_TAG_enumeration_type, has children (enumerators)
+	b = appendULEB(b, abbrevEnumType)
+	b = appendULEB(b, dwTagEnumerationType)
+	b = append(b, dwChildrenYes)
+	attr(dwAtName, dwFormString)
+	attr(dwAtByteSize, dwFormData1)
+	attr(dwAtType, dwFormRef4)
+	attr(0, 0)
+
+	// abbrev 11: DW_TAG_enumerator, no children
+	b = appendULEB(b, abbrevEnumerator)
+	b = appendULEB(b, dwTagEnumerator)
+	b = append(b, dwChildrenNo)
+	attr(dwAtName, dwFormString)
+	attr(dwAtConstValue, dwFormSdata)
+	attr(0, 0)
+
 	b = appendULEB(b, 0) // end of abbreviation table
 	return b
 }
@@ -375,6 +414,9 @@ func buildDebugInfo(syms []Sym, textLo, textHi uint64, name, compDir string, has
 					emitBase(f.TypeKey)
 				}
 			}
+			if v.Enum != nil {
+				emitBase("i32") // enumeration_type's underlying type
+			}
 		}
 	}
 
@@ -419,11 +461,51 @@ func buildDebugInfo(syms []Sym, textLo, textHi uint64, name, compDir string, has
 		}
 	}
 
+	// Emit an enumeration_type + pointer_type per distinct payloadless enum a
+	// variable uses; a Fern enum value is a pointer to a 4-byte i32 tag, so the
+	// variable's DW_AT_type points at the pointer_type. Enumerator children map
+	// each tag value to its variant name for gdb `print *c`.
+	enumPtrOff := map[string]uint32{}
+	for _, s := range syms {
+		for _, v := range funcVars[s.Name] {
+			et := v.Enum
+			if et == nil {
+				continue
+			}
+			if _, done := enumPtrOff[et.Name]; done {
+				continue
+			}
+			i32Off, ok := typeOff["i32"]
+			if !ok {
+				continue
+			}
+			enumOff := uint32(cuHeaderLen + len(die))
+			die = appendULEB(die, abbrevEnumType)
+			die = cstr(die, et.Name) // DW_AT_name
+			die = append(die, 4)     // DW_AT_byte_size (i32 tag)
+			die = le32(die, i32Off)  // DW_AT_type (ref4 → i32 underlying)
+			for _, e := range et.Enumerators {
+				die = appendULEB(die, abbrevEnumerator)
+				die = cstr(die, e.Name)               // DW_AT_name
+				die = appendSLEB(die, int64(e.Value)) // DW_AT_const_value (sdata)
+			}
+			die = appendULEB(die, 0) // end enumeration_type children
+			enumPtrOff[et.Name] = uint32(cuHeaderLen + len(die))
+			die = appendULEB(die, abbrevPointerType)
+			die = le32(die, enumOff) // DW_AT_type (ref4 → the enum)
+			die = append(die, 8)     // DW_AT_byte_size (a pointer)
+		}
+	}
+
 	// typeRef returns a variable's DW_AT_type ref4 (scalar base type, or the
-	// pointer-to-struct type) and whether it is describable.
+	// pointer-to-struct / pointer-to-enum type) and whether it is describable.
 	typeRef := func(v LocalVar) (uint32, bool) {
 		if v.Struct != nil {
 			off, ok := structPtrOff[v.Struct.Name]
+			return off, ok
+		}
+		if v.Enum != nil {
+			off, ok := enumPtrOff[v.Enum.Name]
 			return off, ok
 		}
 		off, ok := typeOff[v.TypeKey]

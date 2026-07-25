@@ -1998,6 +1998,32 @@ func structDesc(t ast.Type, info *checker.Info) *nativeelf.StructType {
 	return &nativeelf.StructType{Name: st.Name, Size: int(size), Fields: fields}
 }
 
+// enumDesc describes a payloadless (C-style) enum for a DWARF pointer-to-enum
+// variable DIE, or returns nil if t isn't an enum whose every variant is
+// payloadless. A Fern payloadless enum value is a pointer to a 4-byte i32 tag
+// sentinel, so the variable's DWARF type is a pointer to an enumeration_type;
+// the tag value of each variant is its declaration index (the same tag the
+// codegen assigns). Enums with any payload-carrying variant are not described
+// (their runtime layout is a boxed tagged union, a follow-up).
+func enumDesc(t ast.Type, info *checker.Info) *nativeelf.EnumType {
+	et, ok := t.(ast.EnumType)
+	if !ok {
+		return nil
+	}
+	ed := info.Enums[et.Name]
+	if ed == nil || len(ed.Variants) == 0 {
+		return nil
+	}
+	enumerators := make([]nativeelf.Enumerator, 0, len(ed.Variants))
+	for i, vr := range ed.Variants {
+		if len(vr.Payloads) > 0 {
+			return nil // payload-carrying variant: not a plain enum
+		}
+		enumerators = append(enumerators, nativeelf.Enumerator{Name: vr.Name, Value: i})
+	}
+	return &nativeelf.EnumType{Name: et.Name, Enumerators: enumerators}
+}
+
 // dwarfLocalVars builds the per-function scalar parameter/local variable list
 // for the DWARF subprogram DIEs (#5537 slice 3). Both native backends place
 // parameters in slots 0..N-1 then info.Locals in order, with slot k relative
@@ -2042,6 +2068,8 @@ func dwarfLocalVars(prog *ast.Program, info *checker.Info, target string) map[st
 				vars = append(vars, nativeelf.LocalVar{Name: s.name, TypeKey: key, Offset: off, IsParam: s.isParam})
 			} else if sd := structDesc(s.typ, info); sd != nil {
 				vars = append(vars, nativeelf.LocalVar{Name: s.name, Struct: sd, Offset: off, IsParam: s.isParam})
+			} else if ed := enumDesc(s.typ, info); ed != nil {
+				vars = append(vars, nativeelf.LocalVar{Name: s.name, Enum: ed, Offset: off, IsParam: s.isParam})
 			}
 		}
 		if len(vars) > 0 {
