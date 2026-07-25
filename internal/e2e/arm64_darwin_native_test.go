@@ -196,6 +196,66 @@ func TestArm64DarwinNativeReadFile(t *testing.T) {
 	}
 }
 
+// TestArm64DarwinDwarfSymtab guards the -g static symbol table for the
+// arm64-darwin native path (#5537 slice 1, Mach-O): a `-g` build carries an
+// LC_SYMTAB whose entries resolve every function name, while the default build
+// has none (keeping default binaries small). Structural check — builds and
+// parses on every host; no execution needed.
+func TestArm64DarwinDwarfSymtab(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	prog := "function helper(x: i32): i32 { return x * 2; }\n" +
+		"function main(): i32 { return helper(21); }\n"
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	// Default build: no symbol table.
+	plain := filepath.Join(dir, "plain")
+	if o, err := exec.Command(bin, "-target", "arm64-darwin", "-o", plain, src).CombinedOutput(); err != nil {
+		t.Fatalf("default build: %v\n%s", err, o)
+	}
+	pf, err := macho.Open(plain)
+	if err != nil {
+		t.Fatalf("parse default: %v", err)
+	}
+	if pf.Symtab != nil && len(pf.Symtab.Syms) > 0 {
+		t.Errorf("default build should have no symbols, got %d", len(pf.Symtab.Syms))
+	}
+
+	// -g build: LC_SYMTAB naming the functions.
+	g := filepath.Join(dir, "g")
+	if o, err := exec.Command(bin, "-g", "-target", "arm64-darwin", "-o", g, src).CombinedOutput(); err != nil {
+		t.Fatalf("-g build: %v\n%s", err, o)
+	}
+	gf, err := macho.Open(g)
+	if err != nil {
+		t.Fatalf("parse -g: %v", err)
+	}
+	if gf.Symtab == nil {
+		t.Fatal("-g build has no LC_SYMTAB")
+	}
+	got := map[string]uint64{}
+	for _, s := range gf.Symtab.Syms {
+		got[s.Name] = s.Value
+	}
+	for _, name := range []string{"main", "helper"} {
+		if _, ok := got[name]; !ok {
+			t.Errorf("missing symbol %q in -g build (have %v)", name, got)
+		}
+	}
+	// Every function symbol lands inside the __text section's address range.
+	if ts := gf.Section("__text"); ts != nil {
+		lo, hi := ts.Addr, ts.Addr+ts.Size
+		for name, v := range got {
+			if v < lo || v >= hi {
+				t.Errorf("symbol %q @%#x outside __text [%#x,%#x)", name, v, lo, hi)
+			}
+		}
+	}
+}
+
 // TestArm64DarwinCcOptsOut confirms -cc still routes arm64-darwin through
 // an external toolchain: a failing -cc must make the build fail, proving
 // the default path doesn't shell out. Host-independent.

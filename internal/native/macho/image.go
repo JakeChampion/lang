@@ -93,8 +93,20 @@ func (m *image) segmentData(vaddr, vmsize, fileoff uint64, dataLen int) {
 	m.section("__data", "__DATA", vaddr, dataLen, uint32(fileoff), 3, 0)
 }
 
-func (m *image) segmentLinkedit(vaddr, vmsize, fileoff uint64, sigLen int) {
-	m.segment("__LINKEDIT", vaddr, vmsize, fileoff, uint64(sigLen), vmProtRead, vmProtRead, 0)
+func (m *image) segmentLinkedit(vaddr, vmsize, fileoff uint64, fileLen int) {
+	m.segment("__LINKEDIT", vaddr, vmsize, fileoff, uint64(fileLen), vmProtRead, vmProtRead, 0)
+}
+
+// symtab writes an LC_SYMTAB command pointing at the nlist_64 array (symoff,
+// nsyms) and string table (stroff, strsize), all file offsets into __LINKEDIT.
+func (m *image) symtab(symoff, nsyms, stroff, strsize uint32) {
+	m.u32(lcSymtab)
+	m.u32(symtabCmdLen)
+	m.u32(symoff)
+	m.u32(nsyms)
+	m.u32(stroff)
+	m.u32(strsize)
+	m.ncmds++
 }
 
 func (m *image) unixThread(entry uint64) {
