@@ -90,10 +90,13 @@ type StructType struct {
 	Fields []StructField
 }
 
-// StructField is one scalar member of a StructType.
+// StructField is one member of a StructType: either a scalar (TypeKey set) or a
+// nested struct (Struct set — the field holds a pointer to that struct's box, so
+// its DWARF member type is a pointer to the nested structure_type).
 type StructField struct {
 	Name    string
 	TypeKey string
+	Struct  *StructType // nested pointer-to-struct member; nil for scalars
 	Offset  int
 }
 
@@ -406,13 +409,21 @@ func buildDebugInfo(syms []Sym, textLo, textHi uint64, name, compDir string, has
 		die = append(die, bt.size) // DW_AT_byte_size
 		die = append(die, bt.enc)  // DW_AT_encoding
 	}
+	var collectStructBases func(st *StructType)
+	collectStructBases = func(st *StructType) {
+		for _, f := range st.Fields {
+			if f.Struct != nil {
+				collectStructBases(f.Struct)
+			} else {
+				emitBase(f.TypeKey)
+			}
+		}
+	}
 	for _, s := range syms {
 		for _, v := range funcVars[s.Name] {
 			emitBase(v.TypeKey)
 			if v.Struct != nil {
-				for _, f := range v.Struct.Fields {
-					emitBase(f.TypeKey)
-				}
+				collectStructBases(v.Struct)
 			}
 			if v.Enum != nil {
 				emitBase("i32") // enumeration_type's underlying type
@@ -420,44 +431,61 @@ func buildDebugInfo(syms []Sym, textLo, textHi uint64, name, compDir string, has
 		}
 	}
 
-	// Emit a structure_type + pointer_type per distinct struct a variable uses
-	// (all fields already have a base type); a struct variable's DW_AT_type
-	// points at the pointer_type (Fern struct values are a heap data pointer).
+	// Emit a structure_type + pointer_type per distinct struct a variable uses;
+	// a struct variable's (or nested struct field's) DW_AT_type points at the
+	// pointer_type (Fern struct values are a heap data pointer). emitStruct is
+	// post-order: a nested struct field's type is emitted before the parent's
+	// member references it. inProgress breaks reference cycles (a self- or
+	// mutually-recursive field is omitted rather than looping forever). Returns
+	// the struct's pointer_type CU offset.
 	structPtrOff := map[string]uint32{}
+	inProgress := map[string]bool{}
+	var emitStruct func(st *StructType) (uint32, bool)
+	emitStruct = func(st *StructType) (uint32, bool) {
+		if off, done := structPtrOff[st.Name]; done {
+			return off, true
+		}
+		if inProgress[st.Name] {
+			return 0, false // cycle: omit the field that closes the loop
+		}
+		inProgress[st.Name] = true
+		// Resolve each field's DW_AT_type ref4 (post-order for nested structs).
+		fieldRef := make([]uint32, len(st.Fields))
+		fieldOK := make([]bool, len(st.Fields))
+		for i, f := range st.Fields {
+			if f.Struct != nil {
+				fieldRef[i], fieldOK[i] = emitStruct(f.Struct)
+			} else {
+				fieldRef[i], fieldOK[i] = typeOff[f.TypeKey]
+			}
+		}
+		delete(inProgress, st.Name)
+		structOff := uint32(cuHeaderLen + len(die))
+		die = appendULEB(die, abbrevStructType)
+		die = cstr(die, st.Name)         // DW_AT_name
+		die = le16(die, uint16(st.Size)) // DW_AT_byte_size
+		for i, f := range st.Fields {
+			if !fieldOK[i] {
+				continue // undescribable (unknown scalar or cyclic nested)
+			}
+			die = appendULEB(die, abbrevMember)
+			die = cstr(die, f.Name)           // DW_AT_name
+			die = le32(die, fieldRef[i])      // DW_AT_type (ref4)
+			die = le16(die, uint16(f.Offset)) // DW_AT_data_member_location
+		}
+		die = appendULEB(die, 0) // end structure_type children
+		ptrOff := uint32(cuHeaderLen + len(die))
+		die = appendULEB(die, abbrevPointerType)
+		die = le32(die, structOff) // DW_AT_type (ref4 → the struct)
+		die = append(die, 8)       // DW_AT_byte_size (a pointer)
+		structPtrOff[st.Name] = ptrOff
+		return ptrOff, true
+	}
 	for _, s := range syms {
 		for _, v := range funcVars[s.Name] {
-			st := v.Struct
-			if st == nil {
-				continue
+			if v.Struct != nil {
+				emitStruct(v.Struct)
 			}
-			if _, done := structPtrOff[st.Name]; done {
-				continue
-			}
-			allKnown := true
-			for _, f := range st.Fields {
-				if _, ok := typeOff[f.TypeKey]; !ok {
-					allKnown = false
-					break
-				}
-			}
-			if !allKnown {
-				continue
-			}
-			structOff := uint32(cuHeaderLen + len(die))
-			die = appendULEB(die, abbrevStructType)
-			die = cstr(die, st.Name)          // DW_AT_name
-			die = le16(die, uint16(st.Size))  // DW_AT_byte_size
-			for _, f := range st.Fields {
-				die = appendULEB(die, abbrevMember)
-				die = cstr(die, f.Name)             // DW_AT_name
-				die = le32(die, typeOff[f.TypeKey]) // DW_AT_type (ref4)
-				die = le16(die, uint16(f.Offset))   // DW_AT_data_member_location
-			}
-			die = appendULEB(die, 0) // end structure_type children
-			structPtrOff[st.Name] = uint32(cuHeaderLen + len(die))
-			die = appendULEB(die, abbrevPointerType)
-			die = le32(die, structOff) // DW_AT_type (ref4 → the struct)
-			die = append(die, 8)       // DW_AT_byte_size (a pointer)
 		}
 	}
 

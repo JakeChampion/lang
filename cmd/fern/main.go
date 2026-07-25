@@ -1964,33 +1964,49 @@ func scalarTypeKey(t ast.Type) string {
 	return ""
 }
 
-// structDesc describes an all-scalar-field struct for a DWARF pointer-to-struct
-// variable DIE, or returns nil if t isn't a struct with at least one scalar
-// field. A struct's SCALAR fields are described even when it also has
-// non-scalar fields (string / array / nested struct) — those members are
-// simply omitted from the structure DIE (a valid partial description; gdb
-// shows the fields it has), so `print *p` still surfaces the scalar fields of
-// a mixed struct. Nested-struct member recursion is a follow-up. Field offsets
-// come from the same layout the codegen uses (ir.StructFieldLayout, ptrW=8);
-// the user-visible struct pointer already points past the rc header, so the
-// offsets are relative to that pointer.
+// structDesc describes a struct for a DWARF pointer-to-struct variable DIE, or
+// returns nil if t isn't a struct with at least one describable member. Scalar
+// fields become base-typed members; a NESTED struct field becomes a
+// pointer-to-struct member (the field holds a pointer to the nested box), so
+// `print *p` on a `Rect { origin: Point, … }` surfaces `origin` too. Other
+// non-scalar fields (string / array / enum) are omitted — a valid partial
+// description; gdb shows the members it has. Field offsets come from the same
+// layout the codegen uses (ir.StructFieldLayout, ptrW=8); the user-visible
+// struct pointer already points past the rc header, so offsets are relative to
+// that pointer.
 func structDesc(t ast.Type, info *checker.Info) *nativeelf.StructType {
+	return structDescPath(t, info, nil)
+}
+
+// structDescPath is structDesc with a cycle guard: `path` is the set of struct
+// names currently being described (ancestors). A field whose struct is already
+// on the path is omitted, breaking recursive / mutually-recursive types (a
+// linked-list `next: Node` field, a tree node's children) instead of looping
+// forever; the enclosing struct is still described from its remaining members.
+func structDescPath(t ast.Type, info *checker.Info, path map[string]bool) *nativeelf.StructType {
 	st, ok := t.(ast.StructType)
 	if !ok {
 		return nil
+	}
+	if path[st.Name] {
+		return nil // cycle: this field closes a reference loop
 	}
 	sd := info.Structs[st.Name]
 	if sd == nil || len(sd.Fields) == 0 {
 		return nil
 	}
 	offs, size := ir.StructFieldLayout(sd.Fields, 8)
+	sub := map[string]bool{st.Name: true}
+	for k := range path {
+		sub[k] = true
+	}
 	fields := make([]nativeelf.StructField, 0, len(sd.Fields))
 	for _, f := range sd.Fields {
-		key := scalarTypeKey(f.Type)
-		if key == "" {
-			continue // non-scalar field: omit this member (nested/composite is a follow-up)
+		if key := scalarTypeKey(f.Type); key != "" {
+			fields = append(fields, nativeelf.StructField{Name: f.Name, TypeKey: key, Offset: int(offs[f.Name])})
+		} else if nested := structDescPath(f.Type, info, sub); nested != nil {
+			fields = append(fields, nativeelf.StructField{Name: f.Name, Struct: nested, Offset: int(offs[f.Name])})
 		}
-		fields = append(fields, nativeelf.StructField{Name: f.Name, TypeKey: key, Offset: int(offs[f.Name])})
 	}
 	if len(fields) == 0 {
 		return nil // nothing describable
