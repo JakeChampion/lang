@@ -558,6 +558,109 @@ func TestDWARFMixedStructVars(t *testing.T) {
 	}
 }
 
+// TestDWARFEnumVars guards enum type DIEs (#5537 slice 3 composite): a
+// payloadless (C-style) enum variable is described as a pointer to a
+// DW_TAG_enumeration_type whose DW_TAG_enumerator children map each variant's
+// tag (its declaration index) to its name. A Fern payloadless enum value is a
+// pointer to a 4-byte i32 tag sentinel, so gdb `print *d` derefs and renders
+// the tag as the variant name (e.g. `South`). Verified on both backends.
+func TestDWARFEnumVars(t *testing.T) {
+	src := "enum Direction { North, East, South, West }\n" +
+		"function turn(d: Direction): i32 {\n" +
+		"    match (d) {\n" +
+		"        North => { return 0; },\n" +
+		"        East => { return 1; },\n" +
+		"        South => { return 2; },\n" +
+		"        West => { return 3; },\n" +
+		"    }\n" +
+		"    return -1;\n" +
+		"}\n" +
+		"function main(): i32 {\n" +
+		"    var d: Direction = South;\n" +
+		"    return turn(d);\n" +
+		"}\n"
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	spath := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(spath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	for _, target := range []string{"x86-64", "arm64"} {
+		t.Run(target, func(t *testing.T) {
+			out := filepath.Join(dir, "g-"+target+".bin")
+			if o, err := exec.Command(bin, "-g", "-target", target, "-o", out, spath).CombinedOutput(); err != nil {
+				t.Fatalf("-g build: %v\n%s", err, o)
+			}
+			ef, err := goelf.Open(out)
+			if err != nil {
+				t.Fatalf("open ELF: %v", err)
+			}
+			defer ef.Close()
+			d, err := ef.DWARF()
+			if err != nil {
+				t.Fatalf("DWARF(): %v", err)
+			}
+			// Find `turn`'s param `d` and resolve its pointed-to enum type.
+			r := d.Reader()
+			var et *dwarf.EnumType
+			for {
+				e, err := r.Next()
+				if err != nil {
+					t.Fatalf("reader: %v", err)
+				}
+				if e == nil {
+					break
+				}
+				if e.Tag != dwarf.TagSubprogram {
+					continue
+				}
+				if name, _ := e.Val(dwarf.AttrName).(string); name != "turn" {
+					continue
+				}
+				for {
+					c, err := r.Next()
+					if err != nil {
+						t.Fatalf("reader: %v", err)
+					}
+					if c == nil || c.Tag == 0 {
+						break
+					}
+					if name, _ := c.Val(dwarf.AttrName).(string); name != "d" {
+						continue
+					}
+					if toff, ok := c.Val(dwarf.AttrType).(dwarf.Offset); ok {
+						if typ, _ := d.Type(toff); typ != nil {
+							if ptr, ok := typ.(*dwarf.PtrType); ok {
+								et, _ = ptr.Type.(*dwarf.EnumType)
+							}
+						}
+					}
+				}
+				break
+			}
+			if et == nil {
+				t.Fatal("no pointer-to-enum type for param d")
+			}
+			if et.EnumName != "Direction" {
+				t.Errorf("enum name = %q, want Direction", et.EnumName)
+			}
+			want := []struct {
+				name string
+				val  int64
+			}{{"North", 0}, {"East", 1}, {"South", 2}, {"West", 3}}
+			if len(et.Val) != len(want) {
+				t.Fatalf("enum has %d enumerators, want %d: %v", len(et.Val), len(want), et.Val)
+			}
+			for i, w := range want {
+				ev := et.Val[i]
+				if ev.Name != w.name || ev.Val != w.val {
+					t.Errorf("enumerator %d = {%s = %d}, want {%s = %d}", i, ev.Name, ev.Val, w.name, w.val)
+				}
+			}
+		})
+	}
+}
+
 // sleb128 decodes a signed LEB128 value from the front of b.
 func sleb128(b []byte) (int64, bool) {
 	var result int64
