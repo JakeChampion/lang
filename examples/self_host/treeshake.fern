@@ -145,6 +145,11 @@ function ts_names_stmt(st: parser.Stmt, acc: string[]): string[] {
             acc = ts_names_expr(m.scrutinee, acc);
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
+                // A `when` guard is executable code: names it references (e.g. a
+                // method called only from the guard) are reachable, so walk it
+                // too. Without this, treeshake pruned such a function and the
+                // emitted guard called a stripped symbol → segfault.
+                if (m.arms[ai].has_guard) { acc = ts_names_expr(m.arms[ai].guard, acc); }
                 var bi: i32 = 0;
                 while (bi < m.arms[ai].body.len()) { acc = ts_names_stmt(m.arms[ai].body[bi], acc); bi = bi + 1; }
                 ai = ai + 1;
