@@ -87,6 +87,12 @@ var closureEscapeCases = []struct {
 	// Regression: a directly-returned lambda (bare fn pointer, no box) must
 	// keep working under the extended detection.
 	{"direct-return", "function adder(a: i32): (i32) => i32 { return function (b: i32): i32 { return a + b; }; } function main(): i32 { var add10 = adder(10); return add10(5); }", 15},
+	// Capture used ONLY in a match-arm `when` guard: astwalk.collect_idents_stmt
+	// (the free-variable collector for capture analysis) walked the scrutinee and
+	// arm bodies but NOT the guard, so `threshold` — read only in the guard — was
+	// left out of the closure's capture list. The guard then read garbage →
+	// SIGSEGV. Now the collector walks the guard, so `threshold` is captured.
+	{"capture-in-guard", "enum Opt { Has(i32), Empty } function apply(f: () => i32): i32 { return f(); } function main(): i32 { var threshold: i32 = 5; var o: Opt = Opt.Has(7); var f = () => match (o) { Has(v) when v > threshold => 100, _ => 0 }; return apply(f); }", 100},
 }
 
 // TestSelfHostClosureEscapeIRX86_64 — escaping var-bound closures through the

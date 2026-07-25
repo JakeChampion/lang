@@ -39066,6 +39066,9 @@ function value_use_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
             acc = value_use_idents_expr(m.scrutinee, acc);
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
+                // A `when` guard is executable code — a value-use inside it counts
+                // (mirrors ident_used_as_value_stmt, which already checks it).
+                if (m.arms[ai].has_guard) { acc = value_use_idents_expr(m.arms[ai].guard, acc); }
                 var bi: i32 = 0;
                 while (bi < m.arms[ai].body.len()) { acc = value_use_idents_stmt(m.arms[ai].body[bi], acc); bi = bi + 1; }
                 ai = ai + 1;
@@ -39395,7 +39398,12 @@ function box_rewrite_stmt(st: parser.Stmt, boxed: string[], btypes: string[]): p
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 var arm: parser.MatchArm = m.arms[ai];
-                na = na.append(parser.MatchArm { pattern: arm.pattern, body: box_rewrite_stmts(arm.body, boxed, btypes), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
+                // Rewrite a boxed var read in the guard too — else the guard read
+                // the raw slot instead of the box (stale value). No-op when the
+                // guard references no boxed var (box_rewrite_expr returns it as-is).
+                var ng: parser.Expr = arm.guard;
+                if (arm.has_guard) { ng = box_rewrite_expr(arm.guard, boxed, btypes); }
+                na = na.append(parser.MatchArm { pattern: arm.pattern, body: box_rewrite_stmts(arm.body, boxed, btypes), line: arm.line, col: arm.col, guard: ng, has_guard: arm.has_guard });
                 ai = ai + 1;
             }
             return parser.StmtMatch { scrutinee: box_rewrite_expr(m.scrutinee, boxed, btypes), arms: na, line: m.line, col: m.col, origin: m.origin };

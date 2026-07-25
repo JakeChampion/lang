@@ -187,6 +187,11 @@ pub function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
             acc = collect_idents_expr(m.scrutinee, acc);
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
+                // A `when` guard reads identifiers too (e.g. an enclosing local
+                // used only in the guard). Missing it left such a name out of
+                // the closure's capture list, so the guard read garbage at
+                // runtime → segfault. Walk the guard like the body.
+                if (m.arms[ai].has_guard) { acc = collect_idents_expr(m.arms[ai].guard, acc); }
                 var bi: i32 = 0;
                 while (bi < m.arms[ai].body.len()) {
                     acc = collect_idents_stmt(m.arms[ai].body[bi], acc);
