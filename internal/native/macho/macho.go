@@ -35,6 +35,7 @@ const (
 	lcSegment64     = 0x19
 	lcUnixThread    = 0x5
 	lcCodeSignature = 0x1D
+	lcSymtab        = 0x2
 
 	vmProtRead    = 0x1
 	vmProtWrite   = 0x2
@@ -53,18 +54,35 @@ type layout struct {
 	dataLen         int
 	textVMSize      int    // page-aligned __TEXT segment size
 	dataFileLen     int    // page-aligned __DATA segment size (0 if no data)
-	linkeditFileOff int    // == codeLimit; signature starts here
+	linkeditFileOff int    // start of __LINKEDIT (symtab, then strtab, then sig)
 	textVAddr       uint64 // address of the first code byte (== entry)
 	dataVAddr       uint64 // __DATA segment base
+	// Symtab placement inside __LINKEDIT (zero-valued when no syms).
+	symOff int // file offset of the nlist_64 array
+	strOff int // file offset of the string table
+	sigOff int // file offset where the code signature begins (== codeLimit)
 }
 
-func layoutFor(textLen, dataLen int) layout {
+// layoutFor computes the layout for the given code/data sizes and, when
+// hasSyms, an LC_SYMTAB whose nlist array (symtabLen bytes) + string table
+// (strtabLen bytes) sit at the front of __LINKEDIT, before the code signature.
+// The extra load command shifts textOff (hence every address), so the assembler
+// must lay out against a layout with the SAME hasSyms — see SegmentAddrsSyms.
+func layoutFor(textLen, dataLen, symtabLen, strtabLen int, hasSyms bool) layout {
 	hasData := dataLen > 0
-	textOff := machHeaderLen + loadCommandsLen(hasData)
+	textOff := machHeaderLen + loadCommandsLen(hasData, hasSyms)
 	textVMSize := alignUp(textOff+textLen, pageSize)
 	dataFileLen := 0
 	if hasData {
 		dataFileLen = alignUp(dataLen, pageSize)
+	}
+	linkeditFileOff := textVMSize + dataFileLen
+	symOff, strOff := 0, 0
+	sigOff := linkeditFileOff
+	if hasSyms {
+		symOff = linkeditFileOff
+		strOff = symOff + symtabLen
+		sigOff = alignUp(strOff+strtabLen, 16)
 	}
 	return layout{
 		textOff:         textOff,
@@ -72,9 +90,12 @@ func layoutFor(textLen, dataLen int) layout {
 		dataLen:         dataLen,
 		textVMSize:      textVMSize,
 		dataFileLen:     dataFileLen,
-		linkeditFileOff: textVMSize + dataFileLen,
+		linkeditFileOff: linkeditFileOff,
 		textVAddr:       baseVAddr + uint64(textOff),
 		dataVAddr:       baseVAddr + uint64(textVMSize),
+		symOff:          symOff,
+		strOff:          strOff,
+		sigOff:          sigOff,
 	}
 }
 
@@ -83,7 +104,17 @@ func layoutFor(textLen, dataLen int) layout {
 // @PAGEOFF references against these before StaticExecutable lays the same
 // blobs out at the same addresses.
 func SegmentAddrs(textLen, dataLen int) (textVAddr, dataVAddr uint64) {
-	lo := layoutFor(textLen, dataLen)
+	lo := layoutFor(textLen, dataLen, 0, 0, false)
+	return lo.textVAddr, lo.dataVAddr
+}
+
+// SegmentAddrsSyms is SegmentAddrs for the `-g` path: the LC_SYMTAB load
+// command shifts textOff by its 24 bytes, so a symbol-table build must resolve
+// adrp against these (shifted) addresses. The symtab/strtab sizes don't affect
+// the code/data addresses (they live at the end, in __LINKEDIT), so zero
+// suffices here.
+func SegmentAddrsSyms(textLen, dataLen int) (textVAddr, dataVAddr uint64) {
+	lo := layoutFor(textLen, dataLen, 0, 0, true)
 	return lo.textVAddr, lo.dataVAddr
 }
 
@@ -94,29 +125,56 @@ func SegmentAddrs(textLen, dataLen int) (textVAddr, dataVAddr uint64) {
 // first code byte (the code generator's `_main`). The text/data sizes
 // must match those passed to SegmentAddrs so addresses line up.
 func StaticExecutable(text, data []byte, identifier string) []byte {
-	lo := layoutFor(len(text), len(data))
-	codeLimit := lo.linkeditFileOff
+	return staticExecutable(text, data, identifier, nil)
+}
+
+// StaticExecutableSyms is StaticExecutable plus a static symbol table
+// (LC_SYMTAB): the nlist_64 array + string table naming each function sit at
+// the front of __LINKEDIT, ahead of the code signature (which hashes them, so
+// they stay covered). Emitted under `fern -g` so lldb / nm / a backtrace can
+// symbolicate arm64-darwin binaries. The text/data must have been laid out
+// against SegmentAddrsSyms (the LC_SYMTAB command shifts every address).
+func StaticExecutableSyms(text, data []byte, identifier string, syms []Sym) []byte {
+	return staticExecutable(text, data, identifier, syms)
+}
+
+func staticExecutable(text, data []byte, identifier string, syms []Sym) []byte {
+	hasSyms := len(syms) > 0
+	var nlists, strtab []byte
+	if hasSyms {
+		nlists, strtab = buildSymtab(syms)
+	}
+	lo := layoutFor(len(text), len(data), len(nlists), len(strtab), hasSyms)
+	codeLimit := lo.sigOff
 
 	sig := codeSignature(nil, identifier, codeLimit, lo.textVMSize) // size probe
 	sigLen := len(sig)
-	linkeditVMSize := alignUp(sigLen, pageSize)
+	linkeditFileLen := (lo.sigOff - lo.linkeditFileOff) + sigLen
+	linkeditVMSize := alignUp(linkeditFileLen, pageSize)
 	linkeditVAddr := lo.dataVAddr + uint64(lo.dataFileLen)
 
-	buf := make([]byte, lo.linkeditFileOff)
+	buf := make([]byte, lo.sigOff)
 	mh := newImage(buf)
 	mh.machHeader()
 	mh.segmentText(uint64(lo.textOff), len(text))
 	if len(data) > 0 {
 		mh.segmentData(lo.dataVAddr, uint64(lo.dataFileLen), uint64(lo.textVMSize), len(data))
 	}
-	mh.segmentLinkedit(linkeditVAddr, uint64(linkeditVMSize), uint64(lo.linkeditFileOff), sigLen)
+	mh.segmentLinkedit(linkeditVAddr, uint64(linkeditVMSize), uint64(lo.linkeditFileOff), linkeditFileLen)
+	if hasSyms {
+		mh.symtab(uint32(lo.symOff), uint32(len(syms)), uint32(lo.strOff), uint32(len(strtab)))
+	}
 	mh.unixThread(lo.textVAddr)
-	mh.codeSig(uint32(lo.linkeditFileOff), uint32(sigLen))
+	mh.codeSig(uint32(lo.sigOff), uint32(sigLen))
 	mh.done()
 
 	copy(buf[lo.textOff:], text)
 	if len(data) > 0 {
 		copy(buf[lo.textVMSize:], data)
+	}
+	if hasSyms {
+		copy(buf[lo.symOff:], nlists)
+		copy(buf[lo.strOff:], strtab)
 	}
 
 	sig = codeSignature(buf[:codeLimit], identifier, codeLimit, lo.textVMSize)
@@ -131,15 +189,20 @@ const (
 	sectLen       = 80
 	unixThreadLen = 16 + armThreadState64Cnt*4
 	codeSigCmdLen = 16
+	symtabCmdLen  = 24 // LC_SYMTAB: cmd/cmdsize + symoff/nsyms/stroff/strsize
+	nlistLen      = 16 // nlist_64
 )
 
 // loadCommandsLen returns the total size of all load commands:
 // __PAGEZERO + __TEXT (1 section: __text) + optional __DATA (1 section) +
-// __LINKEDIT + LC_UNIXTHREAD + LC_CODE_SIGNATURE.
-func loadCommandsLen(hasData bool) int {
+// __LINKEDIT + optional LC_SYMTAB + LC_UNIXTHREAD + LC_CODE_SIGNATURE.
+func loadCommandsLen(hasData, hasSyms bool) int {
 	n := segCmdLen + (segCmdLen + sectLen) + segCmdLen
 	if hasData {
 		n += segCmdLen + sectLen
+	}
+	if hasSyms {
+		n += symtabCmdLen
 	}
 	n += unixThreadLen + codeSigCmdLen
 	return n

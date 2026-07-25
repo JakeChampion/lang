@@ -2142,7 +2142,24 @@ func linkNativeDarwin(asm, outPath string) error {
 	// Code lives in __TEXT, data (string constants + globals) in a separate
 	// __DATA segment; the assembler resolves adrp @PAGE / @PAGEOFF against
 	// the addresses the Mach-O layout will place them at.
-	textVAddr, dataVAddr := nativemacho.SegmentAddrs(a.MachOTextLen(), a.MachODataLen())
+	textLen, dataLen := a.MachOTextLen(), a.MachODataLen()
+	// Under -g, an LC_SYMTAB naming every function is emitted into __LINKEDIT
+	// (#5537 slice 1 for arm64-darwin). Its 24-byte load command shifts every
+	// address, so the assembler must resolve against the syms-inclusive layout.
+	if emitDebugSyms {
+		textVAddr, dataVAddr := nativemacho.SegmentAddrsSyms(textLen, dataLen)
+		text, data, err := a.LinkMachO(textVAddr, dataVAddr)
+		if err != nil {
+			return fmt.Errorf("native assembler: %w", err)
+		}
+		syms := nativemacho.FuncSyms(a.TextLabelVAddrs(textVAddr), textVAddr+uint64(len(text)))
+		bin := nativemacho.StaticExecutableSyms(text, data, filepath.Base(outPath), syms)
+		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
+			return err
+		}
+		return os.Chmod(outPath, 0o755)
+	}
+	textVAddr, dataVAddr := nativemacho.SegmentAddrs(textLen, dataLen)
 	text, data, err := a.LinkMachO(textVAddr, dataVAddr)
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
