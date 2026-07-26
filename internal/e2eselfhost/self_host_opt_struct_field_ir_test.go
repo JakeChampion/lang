@@ -36,7 +36,7 @@ function use_box(): i32 {
 }
 function main(): i32 { return use_box(); }`
 	asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
-	if len(asm) == 0 || len(asm) > 15000 {
+	if len(asm) == 0 || len(asm) > 18000 {
 		t.Fatalf("asm is %d bytes — expected small IR output; the Option/Result-field module likely bailed to the AST runtime", len(asm))
 	}
 	progBin := buildBin(t, gcc, dir, "opt_struct_field", string(asm))

@@ -86,7 +86,7 @@ function main(): i32 {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 || len(asm) > 25000 {
+			if len(asm) == 0 || len(asm) > 28000 {
 				t.Fatalf("%s: asm is %d bytes — expected compact IR output, not an AST-fallback bail", tc.name, len(asm))
 			}
 			progBin := buildBin(t, gcc, dir, "sfr_"+tc.name, string(asm))

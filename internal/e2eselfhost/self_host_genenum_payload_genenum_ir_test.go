@@ -85,7 +85,7 @@ func TestSelfHostGenEnumPayloadGenEnumIRX86_64(t *testing.T) {
 	for _, tc := range genEnumPayloadGenEnumIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 || len(asm) > 15000 {
+			if len(asm) == 0 || len(asm) > 18000 {
 				t.Fatalf("asm is %d bytes — expected small IR output; the module likely bailed to the AST runtime", len(asm))
 			}
 			progBin := buildBin(t, gcc, dir, "genenum_payload_genenum_"+tc.name, string(asm))

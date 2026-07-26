@@ -851,6 +851,22 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_rc_underflow: .quad 0\n");
     s = s.write("    .align 8\n");
     s = s.write("__fern_freelist: .skip 524288\n");
+    s = s.write("    .align 8\n");
+    // Large-tier segregated freelist (#3425): the 65536-word __fern_freelist above
+    // recycles blocks <512 KiB exactly; blocks >=512 KiB previously LEAKED (no class),
+    // so a long-running emit that frees big per-function analysis arrays exhausted the
+    // arena (exit 137) — the self-host runtime lagging the native two-tier design. This
+    // array is the large tier: LINEAR 512-KiB classes, class = round_up(size, 512 KiB)
+    // >> 19 (1..2048 for 512 KiB..1 GiB), so 2049 slots suffice (2560 for headroom).
+    // A power-of-two/log2 binning is deliberately AVOIDED: the self-host x86_gas
+    // assembler (used by the capstone self-assembly test) has no `bsr` and only
+    // immediate-count shifts, so the linear scheme uses only leaq/andq/shrq-$imm.
+    // Each large ALLOC rounds the request up to its class capacity (a 512-KiB multiple)
+    // and bumps at THAT — so every block in a class has one capacity and any freed block
+    // satisfies any same-class request; each large FREE re-derives the class from the
+    // logical size via the same round-up and pushes the block (successor pointer in its
+    // first 8 bytes; 0 = empty). >1 GiB is never freelisted (bump/leak only).
+    s = s.write("__fern_large_freelist: .skip 20480\n");
     s = s.write("    .section .text\n");
     // __fern_alloc(%rdi = bytes) -> %rax = block. Size-classed freelist reuse
     // (class = bytes/8 < 65536) then bump; OOM traps with exit 137.
@@ -864,13 +880,37 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rdi, %rcx\n");
     s = s.write("    shrq $3, %rcx\n");
     s = s.write("    cmpq $65536, %rcx\n");
-    s = s.write("    jae .Lalloc_nofl\n");
+    s = s.write("    jae .Lalloc_large\n");
     s = s.write("    leaq __fern_freelist(%rip), %rdx\n");
     s = s.write("    movq (%rdx,%rcx,8), %rax\n");
     s = s.write("    testq %rax, %rax\n");
     s = s.write("    jz .Lalloc_nofl\n");
     s = s.write("    movq (%rax), %rdi\n");
     s = s.write("    movq %rdi, (%rdx,%rcx,8)\n");
+    s = s.write("    popq %rdx\n");
+    s = s.write("    popq %rcx\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    // Large tier (#3425): a >=512 KiB request. Round the byte size UP to a 512-KiB
+    // multiple (the class capacity — bump AT it so every block in a class has one
+    // size, so any freed block satisfies any same-class request), derive class =
+    // cap >> 19, and pop the large freelist; empty falls through to the bump with
+    // %rdi = capacity. >1 GiB is bump-only. Linear (no bsr / no %cl shift) so the
+    // self-host x86_gas assembler can encode it. %rcx/%rdx are already saved.
+    s = s.write(".Lalloc_large:\n");
+    s = s.write("    cmpq $0x40000000, %rdi\n");        // > 1 GiB: bump exact, no freelist
+    s = s.write("    ja .Lalloc_nofl\n");
+    s = s.write("    leaq 524287(%rdi), %rax\n");       // size + (512 KiB - 1)
+    s = s.write("    andq $-524288, %rax\n");           // cap = round_up(size, 512 KiB)
+    s = s.write("    movq %rax, %rdi\n");               // %rdi = cap = bytes to bump
+    s = s.write("    shrq $19, %rax\n");                // class = cap >> 19  (1..2048)
+    s = s.write("    leaq __fern_large_freelist(%rip), %rdx\n");
+    s = s.write("    movq (%rdx,%rax,8), %rcx\n");      // head
+    s = s.write("    testq %rcx, %rcx\n");
+    s = s.write("    jz .Lalloc_nofl\n");               // empty class: bump at cap (%rdi)
+    s = s.write("    movq (%rcx), %rdi\n");             // head.next
+    s = s.write("    movq %rdi, (%rdx,%rax,8)\n");      // heads[class] = next
+    s = s.write("    movq %rcx, %rax\n");               // return reused block
     s = s.write("    popq %rdx\n");
     s = s.write("    popq %rcx\n");
     s = s.write("    popq %rbp\n");
@@ -1022,6 +1062,27 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fn___fern_rc_underflow_count:\n");
     s = s.write("    movl __fern_rc_underflow(%rip), %eax\n");
     s = s.write("    ret\n");
+    // __fern_large_push(base = %r8, bytes = %rsi): return a freed >=512 KiB block
+    // to the large tier (#3425). Bins by the same 3-significant-bit round-up
+    // __fern_alloc's .Lalloc_large uses (so the block returns to the class whose
+    // capacity it was bumped at) and pushes it (successor pointer in its first 8
+    // bytes). >1 GiB is dropped (never freelisted, matching alloc). Clobbers
+    // %rax/%rcx/%rdx/%rsi, preserves %r8 — a subset of every caller free-site's
+    // documented scratch set, so a large-block free site sets %r8=base, %rsi=bytes
+    // and CALLs it in place of its former leak. Leaf (integer-only), so callers need
+    // no stack realignment.
+    s = s.write("__fern_large_push:\n");
+    s = s.write("    cmpq $0x40000000, %rsi\n");         // > 1 GiB: drop (leak, matches alloc)
+    s = s.write("    ja .Llpush_ret\n");
+    s = s.write("    leaq 524287(%rsi), %rax\n");        // bytes + (512 KiB - 1)
+    s = s.write("    andq $-524288, %rax\n");            // cap = round_up(bytes, 512 KiB)
+    s = s.write("    shrq $19, %rax\n");                 // class = cap >> 19
+    s = s.write("    leaq __fern_large_freelist(%rip), %rdx\n");
+    s = s.write("    movq (%rdx,%rax,8), %rcx\n");       // old head
+    s = s.write("    movq %rcx, (%r8)\n");               // *base = old head
+    s = s.write("    movq %r8, (%rdx,%rax,8)\n");        // heads[class] = base
+    s = s.write(".Llpush_ret:\n");
+    s = s.write("    ret\n");
     s = s.write("__fn___fern_arr_dec:\n");
     s = s.write("    movq 8(%rsp), %rax\n");
     s = s.write("    testq %rax, %rax\n");
@@ -1045,13 +1106,20 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl -16(%rax), %ecx\n");
     s = s.write("    addq $3, %rcx\n");
     s = s.write("    cmpq $65536, %rcx\n");
-    s = s.write("    jae .Larrdec_ret\n");
+    s = s.write("    jae .Larrdec_large\n");
     s = s.write("    leaq -16(%rax), %rdx\n");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");
     s = s.write("    movq %rdi, (%rdx)\n");
     s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
     s = s.write(".Larrdec_ret:\n");
+    s = s.write("    ret\n");
+    // Large tier (#3425): return the >=512 KiB array block (base = arr-16, bytes =
+    // words*8) to the large freelist instead of leaking it.
+    s = s.write(".Larrdec_large:\n");
+    s = s.write("    leaq -16(%rax), %r8\n");           // base = arr-16
+    s = s.write("    leaq 0(,%rcx,8), %rsi\n");         // bytes = words*8
+    s = s.write("    call __fern_large_push\n");
     s = s.write("    ret\n");
     // __fern_str_free(box) — RC-AWARE release of a HEAP string box (#2649
     // Option A rc-headered string). A self-host heap string is the 24-byte
@@ -1106,8 +1174,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jle .Lstrfree_box\n");
     s = s.write("    addq $7, %rdx\n");             // words = ceil(len/8)
     s = s.write("    shrq $3, %rdx\n");
-    s = s.write("    cmpq $65536, %rdx\n");         // large tier -> leak buffer
-    s = s.write("    jae .Lstrfree_box\n");
+    s = s.write("    cmpq $65536, %rdx\n");         // large tier -> recycle via __fern_large_push
+    s = s.write("    jae .Lstrfree_large\n");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rdx,8), %rsi\n");   // old head of class `words`
     s = s.write("    movq %rsi, (%rcx)\n");         // *data = old head
@@ -1122,6 +1190,16 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rsi, (%rdx)\n");         // *base = old head
     s = s.write("    movq %rdx, 24(%r8)\n");        // freelist[3] = base
     s = s.write("    jmp .Lstrfree_ret\n");
+    // Large tier (#3425): recycle the >=512 KiB string DATA buffer (%rcx = data,
+    // %rdx = words) instead of leaking, then continue to free the 24-byte box. %rax
+    // (box) is preserved across the call — __fern_large_push clobbers it.
+    s = s.write(".Lstrfree_large:\n");
+    s = s.write("    movq %rcx, %r8\n");             // base = data
+    s = s.write("    leaq 0(,%rdx,8), %rsi\n");      // bytes = words*8
+    s = s.write("    pushq %rax\n");                 // preserve box across the call
+    s = s.write("    call __fern_large_push\n");
+    s = s.write("    popq %rax\n");
+    s = s.write("    jmp .Lstrfree_box\n");
     s = s.write(".Lstrfree_dec:\n");
     s = s.write("    subl $1, %ecx\n");
     s = s.write("    movl %ecx, -8(%rax)\n");
