@@ -558,6 +558,8 @@ func printType(t ast.Type) string {
 		return "void"
 	case ast.StringType:
 		return "string"
+	case ast.CharType:
+		return "char"
 	case ast.StrType:
 		// The borrowed-string view type (#4813).
 		return "str"

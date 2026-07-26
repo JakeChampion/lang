@@ -5,20 +5,26 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 )
 
-// eraseStrTypes rewrites every ast.StrType (`str`, the borrowed-string view —
-// #4813 / #4297 Option A) to a plain ast.StringType across the AST and the
-// checker Info that the IR reads.
+// eraseSurfaceTypes rewrites the SURFACE-ONLY types — the ones the checker
+// enforces a discipline on but which lower to an existing runtime shape — to
+// that shape, across the AST and the checker Info that the IR reads:
 //
-// A `str` lowers to exactly the same runtime shape as `string` (a box
-// pointer; the #4294 immortal rc=-1 view box is the runtime view), so once
-// the checker has enforced the view discipline (string borrows into str;
-// str never silently promotes to an owned string), the backends — and the
-// self-host emitter — only ever need to see StringType. Erasing here, at the
-// single LowerWith choke point next to eraseHandleTypes, keeps StrType out
-// of every width / store-op / value classification without threading a new
-// type through the backends. Idempotent: a second run finds no StrType and
-// is a no-op, so re-lowering for multiple backends is safe.
-func eraseStrTypes(prog *ast.Program, info *checker.Info) {
+//   - ast.StrType (`str`, the borrowed-string view — #4813 / #4297 Option A)
+//     to ast.StringType. A `str` lowers to exactly the same runtime shape as
+//     `string` (a box pointer; the #4294 immortal rc=-1 view box IS the
+//     runtime view).
+//   - ast.CharType (`char`, the Unicode scalar value — #5629) to a 32-bit
+//     signed ast.NumberType. A `char` rides an i32 slot.
+//
+// In both cases the checker has already enforced the discipline (string
+// borrows into str and str never silently promotes; char never implicitly
+// converts to or from an integer), so the backends — and the self-host
+// emitter — only ever need to see the underlying shape. Erasing here, at the
+// single LowerWith choke point next to eraseHandleTypes, keeps these types
+// out of every width / store-op / value classification without threading new
+// types through the backends. Idempotent: a second run finds neither and is a
+// no-op, so re-lowering for multiple backends is safe.
+func eraseSurfaceTypes(prog *ast.Program, info *checker.Info) {
 	ast.WalkProgram(prog, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.FuncDecl:
@@ -31,6 +37,19 @@ func eraseStrTypes(prog *ast.Program, info *checker.Info) {
 			}
 		case *ast.Var:
 			x.Type = eraseStr(x.Type)
+		case *ast.Lambda:
+			for i := range x.Params {
+				x.Params[i].Type = eraseStr(x.Params[i].Type)
+			}
+			x.ReturnType = eraseStr(x.ReturnType)
+		case *ast.CastExpr:
+			// Type slots inside an EXPRESSION, not just a declaration.
+			// `str` never needed this (nothing casts to a view), but a
+			// cast is the only way to produce a `char`, so leaving these
+			// unerased hands the backends a `cast from char to i32`
+			// they have no lowering for.
+			x.Target = eraseStr(x.Target)
+			x.InnerType = eraseStr(x.InnerType)
 		}
 		return true
 	})
@@ -70,13 +89,15 @@ func eraseStrTypes(prog *ast.Program, info *checker.Info) {
 	}
 }
 
-// eraseStr returns t with every StrType (including nested inside arrays,
-// slices, tuples, function types, or generic type arguments) replaced by
-// StringType.
+// eraseStr returns t with every surface-only type (including nested inside
+// arrays, slices, tuples, function types, or generic type arguments) replaced
+// by its runtime shape: StrType by StringType, CharType by i32.
 func eraseStr(t ast.Type) ast.Type {
 	switch x := t.(type) {
 	case ast.StrType:
 		return ast.StringType{}
+	case ast.CharType:
+		return ast.NumberType{Width: 32}
 	case ast.ArrayType:
 		return ast.ArrayType{Elem: eraseStr(x.Elem)}
 	case ast.SliceType:
