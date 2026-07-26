@@ -220,19 +220,31 @@ into `ret_arrdyn` bit 2, the `'6'` `fn_param_sigs` flag +
 Tuples were tractable because their wasm box is ALREADY uniform 8-byte-per-
 element AND an erased `(T,T)` has byte-identical layout to a concrete
 `(i64,i32)` (the reader reads each element at its concrete width from the same
-`N*8` offset — no result narrow). The REMAINING erased-wide containers —
-`Option[T]` / `Result[T,E]` / `T[]` returns — are NOT a quick slice: their box
-layout SHIFTS with payload width (an Option is 8B/payload-@4 for i32 but
-16B/payload-@8 for i64/f64; an array stride is 4 vs 8), so a widened shared
-`some1[T]:Option[T]` forces the wide box for EVERY caller, and a reader on a
-plain `var o: Option[string] = some1("hi")` can't tell an erased-wide
-`Option[i64]` (16B) from a regular `Option[i64]` (16B... vs an `Option[string]`
-that must stay 8B) — the erased instance and the concrete instance share a type
-but need different representations (the same indirect-read ambiguity defeats the
-boxing variant too, which additionally leaks since Options are leak-only). The
-clean fix is MONOMORPHIZING erased container-returning generics — a substantial
-separate change, since unbounded `[T]` generics are deliberately NOT
-monomorphized. Until then those shapes stay deferred. (`c_call` is no longer deferred — FFI
+`N*8` offset — no result narrow). The single-type-arg erased-wide containers —
+`Option[T]` and `T[]` returns — are now CLOSED (#5464 container slice) by
+MONOMORPHIZING them rather than widening: parser targeted promotion (clause (c)
+in `parse_func`, `has_bare_scalar_param` + `feeds_wide_container`) promotes an
+erased `some1[T](x: T): Option[T]` / `dup[T](x: T): T[]` to BOUNDED, so
+`monomorphize_module` clones it per concrete instantiation
+(`some1__i64(x: i64): Option[i64]` with the concrete 16B box). After cloning no
+call passes a wide value through a bare-typevar param, so `module_erased_wide`
+clears; `wasm_ir_run`'s `mono_ok` rescue then admits the module by judging
+eligibility on the SAME monomorphised module it emits (only when the raw
+verdicts both defer, so existing programs keep their exact IR/AST verdict and
+byte-identical output). A bare wide LITERAL binds the clone's `T` by magnitude
+(`mono_infer` → `literal_is_i64`, mirroring `infer_expr_width` in lowering), so
+`some1(5000000000)` clones `some1__i64` not the truncating `__i32`. This dodges
+the box-layout-shift problem (an Option is 8B/@4 for i32 but 16B/@8 for i64/f64;
+an array stride is 4 vs 8): the CONCRETE clone has an unambiguous box the IR path
+already lowers on every backend. Byte-identity-safe because the stdlib generics
+that match (`array.intersperse` / `async.gather` — the only bare-scalar-param +
+`T[]`-return shapes) are DCE'd uncalled in the bootstrap. Pinned by
+`TestSelfHostErasedWideContainerWasm`. `Result[T, E]` returns STAY deferred: a
+two-type-arg container where `okg[T, E](x: T): Result[T, E]` binds only `T` from
+the scalar param leaves `E` erased in the clone (`Result[i64, E]`) —
+reintroducing the width ambiguity on the Err arm. Closing it needs binding `E`
+from the call-site return annotation too (a larger change; `feeds_wide_container`
+deliberately excludes `Result`). (`c_call` is no longer deferred — FFI
 `__c_call<n>` has no wasm C ABI, so it is now a clean error endpoint,
 rejected before emit by `wasm_unsupported_builtin` like `subprocess` /
 `timer_fd`, #4375.) (`open_file` / `writer_write` — the
