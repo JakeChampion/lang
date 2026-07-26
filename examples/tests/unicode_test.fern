@@ -47,6 +47,12 @@ function test_eq_ignore_case(): test.TestOutcome {
     if (!unicode.eq_ignore_case("ПРИВЕТ", "привет")) { return test.fail("cyrillic fold"); }
     if (unicode.eq_ignore_case("abc", "abd")) { return test.fail("abc != abd"); }
     if (unicode.eq_ignore_case("ab", "abc")) { return test.fail("length differs"); }
+    if (unicode.eq_ignore_case("abc", "ab")) { return test.fail("length differs, reversed"); }
+    // KELVIN SIGN (U+212A, 3 bytes) folds to plain 'k' (1 byte): equal
+    // under case folding while the BYTE lengths differ, which is why the
+    // comparison walks both operands independently.
+    if (!unicode.eq_ignore_case("K", "k")) { return test.fail("kelvin sign ~ k"); }
+    if (unicode.eq_ignore_case("K", "kk")) { return test.fail("kelvin sign != kk"); }
     return test.pass();
 }
 
@@ -83,6 +89,50 @@ function test_is_upper_lower(): test.TestOutcome {
                             unicode.is_upper(0x391) && unicode.is_lower(0x3B1));
 }
 
+function test_ascii_fast_path_agrees(): test.TestOutcome {
+    // A pure-ASCII string takes the byte-fold fast path; the same text
+    // with one non-ASCII code point appended takes the decode path. The
+    // ASCII prefix must come out identical either way.
+    if (unicode.to_upper("abcXYZ 123!") != "ABCXYZ 123!") { return test.fail("ascii fast path"); }
+    if (unicode.to_upper("abcXYZ 123!é") != "ABCXYZ 123!É") { return test.fail("decode path prefix"); }
+    if (unicode.to_lower("ABCxyz 123!") != "abcxyz 123!") { return test.fail("ascii fast path lower"); }
+    if (unicode.to_lower("ABCxyz 123!É") != "abcxyz 123!é") { return test.fail("decode path prefix lower"); }
+    // The 0x7F/0x80 boundary the fast path branches on.
+    if (unicode.to_upper_char(127) != 127) { return test.fail("U+007F unchanged"); }
+    if (unicode.to_upper_char(0xB5) != 0x39C) { return test.fail("µ -> Μ across the boundary"); }
+    return test.pass();
+}
+
+function test_alternating_run(): test.TestOutcome {
+    // Latin Extended-A is encoded as alternating pair runs (even offset
+    // uppercase, odd its lowercase) rather than per-code-point entries —
+    // a decode path nothing else here exercises.
+    if (unicode.to_lower_char(0x100) != 0x101) { return test.fail("Ā -> ā"); }
+    if (unicode.to_upper_char(0x101) != 0x100) { return test.fail("ā -> Ā"); }
+    if (unicode.to_upper_char(0x100) != 0x100) { return test.fail("Ā is already upper"); }
+    if (unicode.to_lower_char(0x101) != 0x101) { return test.fail("ā is already lower"); }
+    // Deep inside the same run, and at its far end.
+    if (unicode.to_upper_char(0x12F) != 0x12E) { return test.fail("į -> Į"); }
+    return test.assert_eq(unicode.to_upper("ăćĕ"), "ĂĆĔ");
+}
+
+function test_large_delta_and_non_bmp(): test.TestOutcome {
+    // Constant runs whose delta is large, and mappings outside the BMP
+    // (4-byte UTF-8 on both sides).
+    if (unicode.to_upper_char(0x250) != 0x2C6F) { return test.fail("ɐ -> Ɐ (delta 10783)"); }
+    if (unicode.to_lower_char(0x10400) != 0x10428) { return test.fail("Deseret upper -> lower"); }
+    if (unicode.to_upper_char(0x10428) != 0x10400) { return test.fail("Deseret lower -> upper"); }
+    return test.assert_eq(unicode.to_upper("𐐨𐐩"), "𐐀𐐁");
+}
+
+function test_invalid_utf8_replaced(): test.TestOutcome {
+    // A malformed byte becomes U+FFFD, the same lossy rule
+    // utf8.codepoints uses — checked here because the case path decodes
+    // independently of `codepoints`.
+    var bad: u8[] = [65 as u8, 200 as u8, 66 as u8];
+    return test.assert_eq(unicode.to_lower(string_from_bytes(bad)), "a�b");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/unicode");
     r = r.it("ascii",             test_ascii());
@@ -98,5 +148,9 @@ function main(): i32 {
     r = r.it("is_digit",          test_is_digit());
     r = r.it("is_alnum/space",    test_is_alnum_whitespace());
     r = r.it("is_upper/lower",    test_is_upper_lower());
+    r = r.it("ascii fast path",   test_ascii_fast_path_agrees());
+    r = r.it("alternating run",   test_alternating_run());
+    r = r.it("big delta/non-BMP", test_large_delta_and_non_bmp());
+    r = r.it("invalid utf-8",     test_invalid_utf8_replaced());
     return r.finish();
 }

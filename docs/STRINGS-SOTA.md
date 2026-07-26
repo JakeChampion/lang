@@ -65,30 +65,32 @@ below proposes changing it.
 | `std/regex` | no Unicode classes (`\p{…}`), byte-oriented |
 | A `char` / scalar type | **does not exist** — code points and bytes are both bare `i32` |
 
-### Three measurements that constrain the design
+### Three measurements that constrained the design
 
-Taken on this tree, x86-64, `/tmp/fern -target x86-64`:
+Taken on this tree, x86-64, `/tmp/fern -target x86-64`. **D7 has since
+landed (#5627)**; these are the numbers that set its shape, with the
+post-fix figures alongside.
 
 1. **The Unicode tables cost 176 KB of binary.** A program whose only
    Unicode call is `unicode.to_upper(s)`: **184,636 bytes**. The same
    program using the ASCII `s.to_upper()`: **8,492 bytes**. The tables
-   are emitted as *code* — `_upper_keys()` is a function that
-   materialises a 1450-element `i32[]` literal, ~2900 array stores
-   across the upper+lower pair.
+   were emitted as *code* — `_upper_keys()` was a function that
+   materialised a 1450-element `i32[]` literal, ~2900 array stores
+   across the upper+lower pair. *Now: 27,820 bytes.*
 
 2. **They cost 22× at runtime, on pure ASCII.** 2000 calls over a
    34-byte ASCII string: `unicode.to_upper` **45 ms**, `s.to_upper()`
-   **2 ms**. The tables are rebuilt *per call* (the module doc says so
-   outright: "the language has no const-array caching yet"), so every
-   call allocates ~11.6 KB before touching the string.
+   **2 ms**. The tables were rebuilt *per call*, so every call allocated
+   ~11.6 KB before touching the string. *Now: 2 ms — parity with the
+   byte fold.*
 
-3. **Static data is ~free, and the fix is available today.** A 12,000-byte
-   *string literal*, indexed 4000× in a loop: binary grows by exactly
-   ~12 KB (20,460 vs the 8,492 baseline — 1:1, straight into rodata) and
-   the loop runs in ~1 ms including 2000 calls to the accessor. Returning
-   a literal from a function does not copy it.
+3. **Static data is ~free, and the fix was available today.** A
+   12,000-byte *string literal*, indexed 4000× in a loop: binary grows by
+   exactly ~12 KB (20,460 vs the 8,492 baseline — 1:1, straight into
+   rodata) and the loop runs in ~1 ms including 2000 calls to the
+   accessor. Returning a literal from a function does not copy it.
 
-So the shape of the engineering answer is already visible: **tables must
+So the shape of the engineering answer was already visible: **tables must
 be static data, not constructed arrays** (§5.7), and per-function DCE
 already gives Fern the "pay only for what you use" property that ICU4X
 calls *data slicing* — the ASCII binary stayed at 8.5 KB.
@@ -511,11 +513,17 @@ binaries and has a binary-size epic. Concretely:
   and name the alternative (iterate, or use a segmentation-aware
   operation directly).
 
-### D7 — Unicode tables become static data. This is a prerequisite, not a follow-up.
+### D7 — Unicode tables become static data. This is a prerequisite, not a follow-up. — **LANDED (#5627)**
 
 Measured in §1: tables-as-code cost 176 KB and 22 µs/call; the same
-bytes as a string literal cost 12 KB and ~0. Until this changes, "Unicode
-by default" would mean every `to_upper` caller pays 176 KB and 22×.
+bytes as a string literal cost 12 KB and ~0. Until this changed, "Unicode
+by default" would have meant every `to_upper` caller paying 176 KB and
+22×.
+
+Both steps below shipped. Result: **176 KB → 27.8 KB** and **22× → 1×**
+(parity with the raw byte fold on ASCII), with 351 case runs replacing
+2900 key/value pairs, verified against Go's `unicode` for every code
+point in 0..MaxRune at generation time *and* on every `go test`.
 
 Two steps, both available today:
 
@@ -620,17 +628,19 @@ diagnostic, so the fix is the same work.
 
 Ordered by (payoff ÷ blast radius), and by what unblocks what.
 
+Tracked as epic #5626; issue numbers below.
+
 | # | Slice | Depends on | Notes |
 |---|---|---|---|
-| 1 | **D7** — static tables + range coalescing + ASCII fast path | — | Pure win today; makes `std/unicode` usable at all (176 KB → single-digit KB, 22 µs → ~0). Prerequisite for D3. |
-| 2 | **D11** — lexer UTF-8 fix + identifier policy | — | Self-contained bug fix; correct diagnostics. |
-| 3 | **D2** — the `char` type | — | Checker + `std/utf8` + `std/unicode` signatures. Big but mechanical; unblocks honest naming everywhere. |
-| 4 | **D3 + D4** — flip the default, full case mapping | 1, 3 | Touches the self-host builtin (`irlower.fern` / `asmcore.fern`) **and** the native stdlib — see D3's implementation note. Differential coverage required. |
-| 5 | **D5** — normalization + `eq_canonical` | 1 | Highest correctness payoff of the remaining Unicode work; new tables, same static-data machinery as slice 1. |
-| 6 | **D8** — `[u8]` string view | — | Independent; unblocks copy-free parsers. |
-| 7 | **D6** — grapheme segmentation | 1, 3 | Largest table; opt-in. |
-| 8 | **D9** — the UTF-8 validity invariant | 6, 8 | Largest blast radius; do last, after `[u8]` makes "raw bytes" ergonomic. |
-| 9 | **D10** — document the path assumption | — | Doc-only, any time. |
+| 1 | **D7** (#5627) — static tables + range coalescing + ASCII fast path — **DONE** | — | Pure win; made `std/unicode` usable at all (176 KB → 27.8 KB, 22× → parity). Prerequisite for D3. |
+| 2 | **D11** (#5628) — lexer UTF-8 fix + identifier policy | — | Self-contained bug fix; correct diagnostics. |
+| 3 | **D2** (#5629) — the `char` type | — | Checker + `std/utf8` + `std/unicode` signatures. Big but mechanical; unblocks honest naming everywhere. |
+| 4 | **D3 + D4** (#5630) — flip the default, full case mapping | 1, 3 | Touches the self-host builtin (`irlower.fern` / `asmcore.fern`) **and** the native stdlib — see D3's implementation note. Differential coverage required. |
+| 5 | **D5** (#5631) — normalization + `eq_canonical` | 1 | Highest correctness payoff of the remaining Unicode work; new tables, same static-data machinery as slice 1. |
+| 6 | **D8** (#5632) — `[u8]` string view | — | Independent; unblocks copy-free parsers. |
+| 7 | **D6** (#5633) — grapheme segmentation | 1, 3 | Largest table; opt-in. |
+| 8 | **D9** (#5634) — the UTF-8 validity invariant | 6 | Largest blast radius; do last, after `[u8]` makes "raw bytes" ergonomic. |
+| 9 | **D10** (#5635) — document the path assumption | — | Doc-only, any time. |
 
 #5552 as filed maps onto slices 1, 4, 5, 6, 7. Its step 1 (document the
 ASCII contract) is already done (#5620).
