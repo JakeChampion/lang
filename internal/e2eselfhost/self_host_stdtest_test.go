@@ -236,6 +236,7 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"fuzz_corpus", langSrcAbs(t, "examples/tests/fuzz_corpus_test.fern"), ""},
 		{"fuzz_shrink", langSrcAbs(t, "examples/tests/fuzz_shrink_test.fern"), ""},
 		{"filesystem_ops", langSrcAbs(t, "examples/tests/filesystem_ops_test.fern"), ""},
+		{"enum_payload_sort_rc", langSrcAbs(t, "examples/tests/enum_payload_sort_rc_test.fern"), ""},
 		{"float_math", langSrcAbs(t, "examples/tests/float_math_test.fern"), ""},
 		{"float_convert", langSrcAbs(t, "examples/tests/float_convert_test.fern"), ""},
 		{"float_hypot", langSrcAbs(t, "examples/tests/float_hypot_test.fern"), ""},

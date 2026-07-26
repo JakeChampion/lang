@@ -1,0 +1,89 @@
+import "std/sort";
+import "std/test";
+
+// examples/tests/enum_payload_sort_rc_test.fern — self-host RC regression
+// guard for #5311: a heap `string[]` extracted from an enum payload with
+// `match Ok(names)` and passed to a CONSUMING, reallocating function (the
+// generic `sort.sort_by`, whose `src = dst` COW frees its working backing) must
+// be freed EXACTLY once. The bug: the match-arm's exit dec-sweep decremented the
+// extracted array in ADDITION to the consumer's free — a double-free that
+// poisoned the __fern_alloc freelist and SIGSEGV'd under alloc-reuse pressure,
+// but only on the self-host codegen path (the interpreter oracle was always
+// correct). The construction-side alias-inc (#5358) balances the extraction, and
+// `sort_by` borrow-retains its argument rather than consuming the caller's ref,
+// so the array is freed once. The churn loops + the empty-array case (freelist
+// class 3, which a later string box recycles) turn any residual double-free
+// fatal — a clean run proves the balance holds.
+
+function make_names(k: i32): Result[string[], i32] {
+  var a: string[] = [];
+  var i: i32 = 0;
+  while (i < k) {
+    a = a.append("item_" + (k - i).to_string());
+    i = i + 1;
+  }
+  return Ok(a);
+}
+
+function ascending(xs: string[]): boolean {
+  var i: i32 = 1;
+  while (i < xs.len()) {
+    if (sort.string_cmp(xs[i - 1], xs[i]) > 0) { return false; }
+    i = i + 1;
+  }
+  return true;
+}
+
+// The core #5311 shape: extract via match, sort (consuming), keep the result
+// live across an allocating call, repeat under churn.
+function test_match_payload_sort(): test.TestOutcome {
+  var rounds: i32 = 0;
+  while (rounds < 24) {
+    var k: i32 = 1;
+    while (k <= 8) {
+      match (make_names(k)) {
+        Ok(names) => {
+          var sorted: string[] = sort.sort_by(names, sort.string_cmp);
+          var churn: string = "x";
+          var c: i32 = 0;
+          while (c < 40) { churn = churn + "yyyy"; c = c + 1; }
+          if (sorted.len() != k) {
+            return test.fail("length changed after sort: got " + sorted.len().to_string() + " want " + k.to_string());
+          }
+          if (!ascending(sorted)) { return test.fail("not ascending at k=" + k.to_string()); }
+        },
+        Err(_) => { return test.fail("unexpected Err"); }
+      }
+      k = k + 1;
+    }
+    rounds = rounds + 1;
+  }
+  return test.pass();
+}
+
+// The empty-array danger case: `Ok([])`'s backing is freelist class 3, which a
+// later 24-byte string box recycles — the shape most likely to fault fatally if
+// double-freed.
+function test_empty_payload_sort(): test.TestOutcome {
+  var rounds: i32 = 0;
+  while (rounds < 64) {
+    match (make_names(0)) {
+      Ok(names) => {
+        var sorted: string[] = sort.sort_by(names, sort.string_cmp);
+        var s: string = "a" + "b" + "c";
+        if (sorted.len() != 0) { return test.fail("empty sort grew"); }
+        if (s.len() != 3) { return test.fail("string clobbered: " + s); }
+      },
+      Err(_) => { return test.fail("unexpected Err"); }
+    }
+    rounds = rounds + 1;
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("enum payload sort RC (#5311)");
+  r = r.it("match-extracted array into consuming sort", test_match_payload_sort());
+  r = r.it("empty extracted array into consuming sort", test_empty_payload_sort());
+  return r.finish();
+}

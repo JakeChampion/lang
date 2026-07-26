@@ -22,6 +22,102 @@ func buildExit(t *testing.T, data []byte) []byte {
 	return StaticExecutable(text, data, "fern-test")
 }
 
+// buildWithSyms assembles a two-function program and wraps it in a Mach-O with
+// an LC_SYMTAB (the -g path), mirroring cmd/fern's linkNativeDarwin: lay out
+// against the syms-inclusive addresses, then emit the symbol table.
+func buildWithSyms(t *testing.T, data []byte) ([]byte, []Sym) {
+	t.Helper()
+	asm := ".text\n_main:\n\tmov x0, #42\n\tbl helper\n\tmov x16, #1\n\tsvc #0x80\nhelper:\n\tret\n"
+	a, err := nativearm64.ParseProgram(asm)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	textLen, dataLen := a.MachOTextLen(), a.MachODataLen()
+	if len(data) > 0 {
+		dataLen = len(data)
+	}
+	textVAddr, dataVAddr := SegmentAddrsSyms(textLen, dataLen)
+	text, rodata, err := a.LinkMachO(textVAddr, dataVAddr)
+	if err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	if len(data) > 0 {
+		rodata = data
+	}
+	syms := FuncSyms(a.TextLabelVAddrs(textVAddr), textVAddr+uint64(len(text)))
+	return StaticExecutableSyms(text, rodata, "fern-test", syms), syms
+}
+
+// TestMachOSymtab guards the -g static symbol table (#5537 slice 1 for
+// arm64-darwin): debug/macho parses the LC_SYMTAB and every function name
+// resolves to its __text address, so lldb / nm / a backtrace can symbolicate.
+func TestMachOSymtab(t *testing.T) {
+	bin, _ := buildWithSyms(t, nil)
+	f, err := macho.NewFile(bytes.NewReader(bin))
+	if err != nil {
+		t.Fatalf("debug/macho cannot parse output: %v", err)
+	}
+	if f.Symtab == nil {
+		t.Fatal("no LC_SYMTAB in output")
+	}
+	got := map[string]uint64{}
+	for _, s := range f.Symtab.Syms {
+		got[s.Name] = s.Value
+	}
+	for _, name := range []string{"_main", "helper"} {
+		if _, ok := got[name]; !ok {
+			t.Errorf("missing symbol %q (have %v)", name, got)
+		}
+	}
+	// _main is the first text label → the entry / __text section address.
+	if textSec := f.Section("__text"); textSec != nil && got["_main"] != textSec.Addr {
+		t.Errorf("_main = %#x, want __text addr %#x", got["_main"], textSec.Addr)
+	}
+	// helper sits after _main.
+	if got["helper"] <= got["_main"] {
+		t.Errorf("helper %#x should follow _main %#x", got["helper"], got["_main"])
+	}
+}
+
+// TestMachOSymtabSigned confirms the code signature stays self-consistent with
+// the symtab in place: codeLimit moves past the symtab/strtab to the signature
+// offset, and every page hash (now covering the symbol table too) matches.
+func TestMachOSymtabSigned(t *testing.T) {
+	bin, _ := buildWithSyms(t, nil)
+	cmd := findLoad(t, bin, lcCodeSignature)
+	dataoff := binary.LittleEndian.Uint32(cmd[0:])
+	datasize := binary.LittleEndian.Uint32(cmd[4:])
+	sig := bin[dataoff : dataoff+datasize]
+	be := binary.BigEndian
+	cdOff := be.Uint32(sig[16:])
+	cd := sig[cdOff:]
+	hashOffset := be.Uint32(cd[16:])
+	nCodeSlots := be.Uint32(cd[28:])
+	codeLimit := be.Uint32(cd[32:])
+	if int(codeLimit) != int(dataoff) {
+		t.Errorf("codeLimit %d != signature offset %d", codeLimit, dataoff)
+	}
+	// The symtab load command points inside [textEnd, codeLimit).
+	st := findLoad(t, bin, lcSymtab)
+	symoff := binary.LittleEndian.Uint32(st[0:])
+	if symoff >= codeLimit {
+		t.Errorf("symoff %d not before codeLimit %d (must be hashed)", symoff, codeLimit)
+	}
+	content := bin[:codeLimit]
+	for i := uint32(0); i < nCodeSlots; i++ {
+		start := int(i) * csPageSizeBytes
+		end := start + csPageSizeBytes
+		if end > len(content) {
+			end = len(content)
+		}
+		want := sha256.Sum256(content[start:end])
+		got := cd[hashOffset+i*csHashSize : hashOffset+(i+1)*csHashSize]
+		if !bytes.Equal(want[:], got) {
+			t.Errorf("page %d hash mismatch", i)
+		}
+	}
+}
+
 func TestMachOStructure(t *testing.T) {
 	bin := buildExit(t, nil)
 	f, err := macho.NewFile(bytes.NewReader(bin))
