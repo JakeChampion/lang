@@ -133,22 +133,48 @@ tier → leak.
   `TestSelfHostModloadPerModuleWholeCompilerX86_64` already does for gen0) so no
   path emits the merged bundle. The gen0 (Go-built) per-module emit is already
   fast enough for CI; the *self-reproduction* proof needs the gen1 emit, which
-  no longer OOMs but runs ~16.6 min **serially** — past a 13-min shard. Options,
-  now that (b) is done:
-  - (a) keep the full gen1 per-module fixpoint env-gated / on a dedicated slow
-    lane (nightly), and make the *primary* CI guard the gen0 per-module test
-    (fast, already exists) — self-reproduction proven off the hot path.
-  - (b) **make the gen1 per-module emit fit a shard** via *memory-budgeted*
-    parallelism: the measured peak is ~7.6 GB for the ONE dominant window
-    (`irlower`) while the other 34 are small, so a `buildMemLimiter`-style
-    weighted semaphore (reserve each window's estimated RSS against ~85 % of
-    `MemTotal`) parallelises the small windows and serialises the big one —
-    cutting wall time toward ~8–10 min while staying under 16 GB. This is the
-    highest-value next step; it de-env-gates the per-module fixpoint as a real
-    CI guard. Model: `internal/e2eharness/self_host_membudget.go`.
-  - (c) a gen0-only fast guard that forgoes self-reproduction (weakest).
-  Recommended: (b) for the CI guard, with (a)'s env-gated full fixpoint retained
-  as the belt-and-braces nightly.
+  no longer OOMs but runs ~16.6 min **serially** — past a 13-min shard.
+
+  **Measured cost model (2026-07-26, gen0 driver, `RUN_MEASURE_SPLIT`).** Two
+  earlier hypotheses are REFUTED by direct measurement:
+  - The whole-program **parse+infer floor is only ~1.34 s** — so a
+    single-process "parse once, loop-emit" mode saves essentially nothing on its
+    own. *emit-all as a parse-once win is refuted.*
+  - The per-unit emit cost is ~20–28 s and is **nearly independent of the unit's
+    own size**: a 3-function module emits in 20.3 s, a 922-function module in
+    27.3 s. So the cost is NOT per-window lowering — it is the **~22
+    whole-program side-tables** `emit_module_funcs` derives on every call
+    (`array_ret_fns_of` / `borrowable_params_interproc` / `str_ret_fns_of` / …,
+    each an O(all_funcs≈1000) scan; asm_ir.fern:5489–5519). They run once per
+    unit × 35 units. *(The code comment there calling them "cheap relative to the
+    lowering they feed" holds only for large modules; for the many small units of
+    the whole-compiler emit they dominate.)*
+  - Because **every** gen1 unit peaks 5.5–7.8 GB (the retained whole-program view
+    + those per-unit tables), 2 units won't fit a 16 GB runner. *Memory-budgeted
+    parallelism is refuted too — there is no "one big, 34 small" split to exploit.*
+
+  So the real lever is **hoisting the ~22 whole-program side-tables to
+  compute-once** (the same move `wasm_ir.lower_all_for` and the `cache` mechanism
+  at asm_ir.fern:5481 already make), which *requires* a single-process
+  **`-per-module-emit-all`** driver mode to share them across units. Together
+  they cut the ~20 s/unit recompute → gen1 per-module could drop from ~16.6 min
+  to ~2–3 min AND lower per-unit peak (no per-unit table alloc), making the
+  per-module fixpoint a real CI guard. Plan:
+  - (a) **Add `-per-module-emit-all -out-dir DIR`** to `asm_modload_run.fern`:
+    parse+infer once, then loop every module/window emitting each unit to `DIR`,
+    passing a **once-computed** whole-program-table bundle into
+    `emit_module_ir_unit` → `emit_module_funcs`. In-driver windowing mirrors the
+    harness `emitWindowSize` (func_budget 100 + 300 KB byte budget) so the units
+    are **byte-identical to the per-process fixpoint's** — a free correctness
+    check.
+  - (b) Refactor `emit_module_funcs` to accept the precomputed table bundle
+    (compute-at-call-site for the single-unit callers = byte-identical + same
+    cost; compute-once for emit-all = the win).
+  - (c) Then point `TestSelfHostModloadFixpointX86_64` at emit-all; keep the
+    env-gated per-process `TestSelfHostPerModuleFixpointX86_64` as belt-and-braces.
+  - **gen0 parallel per-module is already CI-affordable (~3.3 min)** — the fast
+    guard `TestSelfHostModloadPerModuleWholeCompilerX86_64` already exists; only
+    the gen1 self-reproduction proof needs the hoist to become CI-cheap.
 
 - **Slice 3 — replace the now-unreachable AST fallbacks.** Once slice 2 makes the
   merged path unreachable, replace `asm.emit_module` at the sites above with a
