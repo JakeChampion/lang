@@ -5080,7 +5080,15 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // (ARRAY params — the wide value rides an i32 array pointer, never trips
         // the erased-wide gate, and promoting them would over-monomorphise the
         // stdlib). `x: T` is bindable from the call arg, so the clone's T resolves.
-        if (has_bare_scalar_param(params, un) && feeds_wide_container(ret_type, un)) { promote = true; }
+        //
+        // Guarded to SINGLE-type-param functions (`all_tp_count == 1`): promoting
+        // ONE var of a multi-param generic leaves the sibling erased in the clone
+        // (`scan[T, A](xs: T[], init: A, f: (A, T) => A): A[]` — promoting A binds
+        // A but keeps T erased, a malformed `scan__i32` with `xs: T[]` that
+        // crashes). A single-param fn has no sibling to strand, so the clone is
+        // fully concrete. Multi-param container generics stay erased (as before) —
+        // a follow-up, like Result.
+        if (all_tp_count == 1 && has_bare_scalar_param(params, un) && feeds_wide_container(ret_type, un)) { promote = true; }
         if (promote) { bounded_tps = bounded_tps.append(un); bound_names = bound_names.append(""); }
         ui = ui + 1;
     }

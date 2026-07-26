@@ -84,6 +84,16 @@ func TestSelfHostErasedWideContainerWasm(t *testing.T) {
 		{"opt-i32",
 			some + ` function main(): i32 { var a: Option[i32] = some1[i32](5); var r: i32 = 0; match (a) { Some(v) => { r = v; }, None => {} } return r + 37; }`,
 			42},
+		// Multi-type-param guard: a two-typevar generic whose `init: A` + `A[]`
+		// return matches clause (c)'s inner shape (bare scalar param feeding a
+		// container of it) must NOT be promoted — promoting only A would leave the
+		// sibling T erased in the clone (`mk2__i32` with `t: T`), a malformed clone
+		// (this is the std/array `scan[T, A]` shape that crashed CI). The
+		// all_tp_count==1 guard keeps it fully erased, so it lowers on the IR path
+		// (i32, not wide) and computes correctly. 5+5 = 10, +32 = 42.
+		{"multi-tparam-unpromoted",
+			`function mk2[T, A](t: T, init: A): A[] { var out: A[] = [init]; return out.append(init); } function main(): i32 { var r: i32[] = mk2[i32, i32](7, 5); return r[0] + r[1] + 32; }`,
+			42},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
