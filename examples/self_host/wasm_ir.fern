@@ -221,6 +221,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "read_file")) { out = out.append("read_file"); }
     if (module_emits_op_cached(cache, "read_int")) { out = out.append("read_int"); }
     if (module_emits_op_cached(cache, "read_line")) { out = out.append("read_line"); }
+    if (module_emits_op_cached(cache, "read_all_stdin")) { out = out.append("read_all_stdin"); }
     if (module_emits_op_cached(cache, "reader_close")) { out = out.append("reader_close"); }
     if (module_emits_op_cached(cache, "remove_dir_all")) { out = out.append("remove_dir_all"); }
     if (module_emits_op_cached(cache, "remove_file")) { out = out.append("remove_file"); }
@@ -2627,6 +2628,12 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
         } else if (o.kind_tag == 183) {  // now_ns
             // 0-arg i64 clock reading -> raw realtime nanoseconds.
             out = out + "    call $__fern_now_ns\n";
+        } else if (o.kind_tag == 209) {  // read_all_stdin
+            // 0-arg -> read fd 0 to EOF, push ONE fresh string block holding the
+            // whole input. The helper ($__fern_read_all_stdin, result i32) is
+            // emitted caller-side in wasm_ir_run with the fd_read import + the
+            // heap runtime, exactly like $__fern_read_line.
+            out = out + "    call $__fern_read_all_stdin\n";
         } else if (o.kind_tag == 168) {  // read_line
             // 0-arg -> read one line of stdin (fd 0), push a fresh string block
             // (the line without its trailing newline). The helper

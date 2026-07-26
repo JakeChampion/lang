@@ -96,3 +96,7 @@ TestSelfHostAppendFreshReclaimIRX86_64 6
 # Cell on the wasm IR path (#5510): 5 subtests through one warm driver, each
 # with a native cross-check compile.
 TestSelfHostCellWasmIR 6
+TestSelfHostReadAllStdinIRX86_64 10
+TestSelfHostReadAllStdinIRArm64 20
+TestSelfHostReadAllStdinIRRoutingX86_64 6
+TestSelfHostReadAllStdinIRWasm 12

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/ast"
 )
@@ -173,13 +174,14 @@ func Keywords() []string {
 // shifts (`<<=`, `>>=`) sit before the 2-char shifts so the
 // longest-prefix rule picks the right one.
 var multiPunct = []string{
-	"<<=", ">>=", "...",
+	"<<=", ">>=", "<<|", "...",
 	"..=", "..",
 	"==", "!=", "<=", ">=", "&&", "||", "<<", ">>", "=>", "|>",
 	"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
 	// Saturating arithmetic (#5542) — clamp to the operand type's
 	// [MIN, MAX] instead of wrapping. Listed after the compound
 	// assignments so `+=` still wins over a `+`-prefixed match.
+	// `<<|` sits up with the 3-char punctuators so it beats `<<`.
 	"+|", "-|", "*|",
 	// Checked arithmetic (#5542) — `Some(result)` when it fits the
 	// operand type, `None` on overflow. Each lexes as one two-char
@@ -269,6 +271,34 @@ type lexer struct {
 	afterDot bool
 }
 
+// The lexer scans BYTES: peek / advance widen `l.src[l.i]` to a rune, so
+// every classifier below must be an ASCII test. Handing such a byte to
+// `unicode.IsLetter` treats a UTF-8 continuation byte as though it were
+// the Latin-1 character with that value, which is how `cafê` (C3 AA — AA
+// is `ª`, category Lo) used to lex as an identifier while `café` (C3 A9 —
+// A9 is `©`) failed (#5628).
+//
+// Fern identifiers are ASCII-only, deliberately: it dodges the
+// confusable / bidi surface of UAX #31 (see docs/STRINGS-SOTA.md D11).
+// Non-ASCII text is still free inside string literals and comments, which
+// are scanned as raw bytes.
+func asciiIdentStart(r rune) bool {
+	return r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+}
+
+func asciiIdentCont(r rune) bool {
+	return asciiIdentStart(r) || asciiDigit(r)
+}
+
+func asciiDigit(r rune) bool { return r >= '0' && r <= '9' }
+
+// asciiSpace matches only ASCII whitespace. `unicode.IsSpace` on a raw
+// byte would also match 0x85 and 0xA0, which are UTF-8 continuation
+// bytes, not spaces.
+func asciiSpace(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\v' || r == '\f'
+}
+
 func (l *lexer) peek() (rune, bool) {
 	if l.i >= len(l.src) {
 		return 0, false
@@ -294,7 +324,7 @@ func (l *lexer) skipTrivia() {
 	for l.i < len(l.src) {
 		r := rune(l.src[l.i])
 		switch {
-		case unicode.IsSpace(r):
+		case asciiSpace(r):
 			l.advance()
 		case r == '/' && l.i+1 < len(l.src) && l.src[l.i+1] == '/':
 			// Capture the comment with its starting position. Skip
@@ -344,13 +374,9 @@ func (l *lexer) next() (Token, error) {
 	}
 
 	// Identifier or keyword.
-	if r == '_' || unicode.IsLetter(r) {
+	if asciiIdentStart(r) {
 		begin := l.i
-		for l.i < len(l.src) {
-			c := rune(l.src[l.i])
-			if c != '_' && !unicode.IsLetter(c) && !unicode.IsDigit(c) {
-				break
-			}
+		for l.i < len(l.src) && asciiIdentCont(rune(l.src[l.i])) {
 			l.advance()
 		}
 		text := l.src[begin:l.i]
@@ -365,7 +391,7 @@ func (l *lexer) next() (Token, error) {
 	// integer match to a float; `1.` (no fractional digits) and `.5`
 	// (no leading integer digits) aren't accepted, keeping the
 	// lexer unambiguous about Index-style `a[0].x` style suffixes.
-	if unicode.IsDigit(r) {
+	if asciiDigit(r) {
 		begin := l.i
 		// `0x` / `0X` hex integer literal: consume hex digits and skip
 		// the float (fractional / exponent) upgrades below.
@@ -382,7 +408,7 @@ func (l *lexer) next() (Token, error) {
 				return Token{}, &Error{Pos: start, Msg: "hex literal needs at least one digit after 0x"}
 			}
 		} else {
-			for l.i < len(l.src) && unicode.IsDigit(rune(l.src[l.i])) {
+			for l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
 				l.advance()
 			}
 		}
@@ -393,10 +419,10 @@ func (l *lexer) next() (Token, error) {
 		// field-access, not a fractional part — suppress the float
 		// upgrade so the second `.0` lands as `.` `0` instead of
 		// being eaten as a continuation of `1`.
-		if !isHex && !l.afterDot && l.i+1 < len(l.src) && l.src[l.i] == '.' && unicode.IsDigit(rune(l.src[l.i+1])) {
+		if !isHex && !l.afterDot && l.i+1 < len(l.src) && l.src[l.i] == '.' && asciiDigit(rune(l.src[l.i+1])) {
 			isFloat = true
 			l.advance() // '.'
-			for l.i < len(l.src) && unicode.IsDigit(rune(l.src[l.i])) {
+			for l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
 				l.advance()
 			}
 		}
@@ -412,13 +438,13 @@ func (l *lexer) next() (Token, error) {
 			if j < len(l.src) && (l.src[j] == '+' || l.src[j] == '-') {
 				j++
 			}
-			if j < len(l.src) && unicode.IsDigit(rune(l.src[j])) {
+			if j < len(l.src) && asciiDigit(rune(l.src[j])) {
 				isFloat = true
 				l.advance() // 'e' / 'E'
 				if l.src[l.i] == '+' || l.src[l.i] == '-' {
 					l.advance()
 				}
-				for l.i < len(l.src) && unicode.IsDigit(rune(l.src[l.i])) {
+				for l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
 					l.advance()
 				}
 			}
@@ -437,7 +463,7 @@ func (l *lexer) next() (Token, error) {
 			if ch == 'i' || ch == 'u' || ch == 'f' {
 				sBegin := l.i
 				l.advance()
-				for l.i < len(l.src) && unicode.IsDigit(rune(l.src[l.i])) {
+				for l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
 					l.advance()
 				}
 				suffix = l.src[sBegin:l.i]
@@ -537,7 +563,25 @@ func (l *lexer) next() (Token, error) {
 		return Token{Kind: Punct, Text: string(r), Pos: start}, nil
 	}
 
-	return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("unexpected character %q", r)}
+	return Token{}, l.badCharError(start)
+}
+
+// badCharError reports the character the lexer could not use. `r` at the
+// call site is a single BYTE, so reporting it directly would name the
+// Latin-1 character for a UTF-8 continuation byte — `var café` used to
+// fail with `unexpected character '©'`, naming a character absent from
+// the source and pointing mid-character. Decode the whole character
+// instead, and say so plainly when it is a letter, since "identifiers
+// must be ASCII" is the actionable form of that error.
+func (l *lexer) badCharError(start ast.Position) error {
+	r, size := utf8.DecodeRuneInString(l.src[l.i:])
+	if r == utf8.RuneError && size <= 1 {
+		return &Error{Pos: start, Msg: fmt.Sprintf("invalid UTF-8 byte 0x%02X", l.src[l.i])}
+	}
+	if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		return &Error{Pos: start, Msg: fmt.Sprintf("identifiers must be ASCII; found %q", r)}
+	}
+	return &Error{Pos: start, Msg: fmt.Sprintf("unexpected character %q", r)}
 }
 
 // scanFString consumes the body of an f-string starting at the

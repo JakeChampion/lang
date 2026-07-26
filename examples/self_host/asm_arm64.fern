@@ -5057,6 +5057,44 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
+    // __fern_read_all_stdin_rc: the IR path's read_all_stdin (#5623). Same
+    // sys_read-to-EOF loop as the AST __fern_read_all_stdin above, but the result
+    // is boxed by __fern_str_box so it carries the rc header at box-8 that
+    // __fern_str_free reads. The AST body keeps its headerless raw-16 box so its
+    // emitted bytes are unchanged; the two are separate symbols for the same
+    // reason asm.fern and asm_ir.fern keep parallel runtimes on x86-64. Labels are
+    // suffixed _rc so they can't collide when both bodies are emitted.
+    if (s.has_need("read_all_stdin")) {
+        s = s.write("__fern_read_all_stdin_rc:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    str x21, [sp, #-16]!\n");
+        s = s.write("    ldr x0, =33554432\n");   // 32 MiB buffer
+        s = s.write("    bl __fern_alloc\n");
+        s = s.write("    mov x19, x0\n");          // buf base
+        s = s.write("    mov x20, x0\n");          // write ptr
+        s = s.write("    mov x21, #0\n");          // total
+        s = s.write(".Lras_rc_loop:\n");
+        s = s.write("    mov x0, #0\n");           // fd 0
+        s = s.write("    mov x1, x20\n");          // dst
+        s = s.write("    ldr x2, =1048576\n");     // up to 1 MiB per read
+        s = s.write("    mov x8, #63\n");          // sys_read
+        s = s.write("    svc #0\n");
+        s = s.write("    cmp x0, #0\n");
+        s = s.write("    b.le .Lras_rc_done\n");   // 0 = EOF, <0 = error
+        s = s.write("    add x21, x21, x0\n");
+        s = s.write("    add x20, x20, x0\n");
+        s = s.write("    b .Lras_rc_loop\n");
+        s = s.write(".Lras_rc_done:\n");
+        s = s.write("    mov x0, x19\n");          // data
+        s = s.write("    mov x1, x21\n");          // len
+        s = s.write("    bl __fern_str_box\n");    // rc-headered string box
+        s = s.write("    ldr x21, [sp], #16\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+    }
     // __fern_i32_to_string is now a Fern runtime function (#2649, via the
     // raw-memory intrinsics): see asmcore.rt_src_i32_to_string. The single shared
     // __fn___fern_i32_to_string body serves both arm64 AST + IR, replacing the old

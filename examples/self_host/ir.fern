@@ -643,6 +643,13 @@ pub function op_print_str(): Op { return op0("print_str"); }
 // to each backend's __fern_read_int helper. No wasm support (no stdin read), so a
 // read_int module is wasm-ineligible (wasm_eligible) and stays on the AST path.
 pub function op_read_int(): Op { return op0("read_int"); }
+// `read_all_stdin` reads fd 0 to EOF and pushes ONE string box holding the whole
+// input (a VALUE op — no args). Unlike `read_line`'s single 256-byte read it
+// loops until the read syscall returns 0, so it can pull in a whole multi-line
+// source. Lowers to each register backend's __fern_read_all_stdin helper and to
+// wasm's $__fern_read_all_stdin (an fd_read loop over the same preview1 scratch
+// idiom read_line uses), so every IR backend covers it.
+pub function op_read_all_stdin(): Op { return op0("read_all_stdin"); }
 // `eprint_str` pops a string value and writes its bytes to STDERR (fd 2, no
 // newline), pushing a dummy result so a statement-level drop balances. `eprint(s)`
 // is a bare eprint_str; `eprint_int(n)` is i32_to_string(n) then eprint_str.
@@ -1303,6 +1310,7 @@ function kind_id_4(name: string): i32 {
     if (name == "raw_environ") { return 207; }
     // udp_send(host, port, data): one-shot fire-and-forget datagram (#4375).
     if (name == "udp_send") { return 208; }
+    if (name == "read_all_stdin") { return 209; }
     return 0;
 }
 
@@ -1540,6 +1548,7 @@ function kind_name_4(id: i32): string {
     if (id == 206) { return "syscall4"; }
     if (id == 207) { return "raw_environ"; }
     if (id == 208) { return "udp_send"; }
+    if (id == 209) { return "read_all_stdin"; }
     return "invalid";
 }
 
@@ -1719,6 +1728,8 @@ pub function op_allocates(tag: i32): boolean {
     // (read_int is NOT here: it parses into scratch + returns a bare i32, like
     // the register backends, so a read_int-only module needs no heap runtime.)
     if (tag == 168) { return true; }
+    // read_all_stdin allocates the whole-input buffer plus its string box.
+    if (tag == 209) { return true; }
     if (tag == 106 || tag == 107) { return true; }
     if (tag == 108 || tag == 109 || tag == 110) { return true; }
     if (tag == 111 || tag == 112 || tag == 113) { return true; }

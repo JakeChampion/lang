@@ -130,13 +130,42 @@ without being asked. The user prefers to be alerted via the subscription
 flow rather than driving manual CI checks after the fact.
 
 **The full loop is: branch → commit → push → PR → subscribe → watch CI
-→ auto-merge when green → move on to the next task.** Do NOT stop and
-wait after opening the PR, and do NOT ask whether to merge. Once CI is
-green on the PR, merge it automatically (squash) and immediately pick up
-the next slice of work. If CI fails, diagnose and push fixes on the same
-branch until it's green, then merge. Only pause for the user on a genuine
-fork (an ambiguous review comment, an architectural decision) — never for
-permission to open, merge, or continue.
+**and mergeability** → auto-merge when green → move on to the next
+task.** Do NOT stop and wait after opening the PR, and do NOT ask whether
+to merge. Once CI is green on the PR, merge it automatically (squash) and
+immediately pick up the next slice of work. If CI fails, diagnose and
+push fixes on the same branch until it's green, then merge. Only pause
+for the user on a genuine fork (an ambiguous review comment, an
+architectural decision) — never for permission to open, merge, or
+continue.
+
+**Every PR check covers BOTH halves: is CI green, and is it still
+mergeable?** A PR can be perfectly green and unmergeable, and webhooks do
+not reliably announce the transition — main moves under you. So on every
+wake-up read the PR's `mergeable_state` alongside its checks and resolve
+a conflict the same way you'd fix a red build: without being asked.
+
+- `dirty` = conflicts. Fix it yourself; only ask the user when both sides
+  genuinely changed the same logic and picking one loses behaviour.
+- `behind` / stale base = merge or rebase main in and push.
+- `unstable` = mergeable, checks still running or non-required ones
+  failing. Keep waiting.
+
+**PRs here are SQUASH-merged, which is the usual cause of a conflict on
+these branches.** A squash gives main a *new* SHA for content your branch
+still carries under its original commit, so continuing to build on the
+pre-squash commit makes git see two independent creations of the same
+file — an add/add conflict, even though nothing really diverged. After
+any PR merges, start follow-up work from a fresh base:
+
+```
+git fetch origin main && git checkout -B <branch> origin/main
+```
+
+If you only notice after committing, reset onto main and replay just the
+new commits (`git checkout -B <branch> origin/main && git cherry-pick
+<sha>`) rather than hand-resolving conflict markers between a file and
+its own squashed copy — then force-with-lease push.
 
 ### Project goal / roadmap (what "the next task" means)
 

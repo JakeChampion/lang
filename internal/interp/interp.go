@@ -3883,6 +3883,13 @@ func satArith(op string, ln, rn Number, width int, unsigned bool, signExtend fun
 			} else {
 				res = ul - ur
 			}
+		case "<<|":
+			c := uint64(shiftCount(rn, width))
+			if ul > maxU>>c {
+				res = maxU
+			} else {
+				res = ul << c
+			}
 		default:
 			if ul != 0 && ur > maxU/ul {
 				res = maxU
@@ -3919,12 +3926,27 @@ func satArith(op string, ln, rn Number, width int, unsigned bool, signExtend fun
 			return Number(minS)
 		}
 		return Number(il - ir)
+	case "<<|":
+		// `a <<| c` overflows iff |a| exceeds the largest magnitude
+		// that survives the shift. The two sides differ because |MIN|
+		// is one larger than MAX; both bounds are exact divisions of a
+		// power of two (and collapse to 0 once the masked count runs
+		// past the width, which correctly saturates every non-zero a).
+		c := uint64(shiftCount(rn, width))
+		if il < 0 {
+			if uint64(-(il+1))+1 > (uint64(maxS)+1)>>c {
+				return Number(minS)
+			}
+		} else if uint64(il) > uint64(maxS)>>c {
+			return Number(maxS)
+		}
+		return Number(il << c)
 	}
 	// `*|`: compare the magnitudes against the clamp limit — |MIN| is
 	// one larger than MAX, so a negative product gets the extra headroom.
 	absU := func(v int64) uint64 {
 		if v < 0 {
-			return uint64(-(v+1)) + 1
+			return uint64(-(v + 1)) + 1
 		}
 		return uint64(v)
 	}
@@ -4068,7 +4090,7 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 				return signExtend(Number(uint64(ln) % uint64(rn))), nil
 			}
 			return signExtend(signExtend(ln) % signExtend(rn)), nil
-		case "+|", "-|", "*|":
+		case "+|", "-|", "*|", "<<|":
 			// Saturating arithmetic (#5542): clamp to the operand
 			// type's [MIN, MAX] rather than wrap. The result is in
 			// range by construction, so signExtend only normalises

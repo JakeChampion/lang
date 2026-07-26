@@ -1899,7 +1899,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
             }
             // Saturating arithmetic (#5542) is integer-only, so the
             // result type is just the (already-unified) operand type.
-            if (b.op == "+|" || b.op == "-|" || b.op == "*|") {
+            if (b.op == "+|" || b.op == "-|" || b.op == "*|" || b.op == "<<|") {
                 var slt: Ty = infer_expr_type(b.left, s);
                 if (ty_is_i32(slt)) { return infer_expr_type(b.right, s); }
                 return slt;
