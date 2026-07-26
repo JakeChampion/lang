@@ -851,6 +851,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_rc_underflow: .quad 0\n");
     s = s.write("    .align 8\n");
     s = s.write("__fern_freelist: .skip 524288\n");
+    // #3425 large tier: power-of-two freelist heads for blocks the 65536-word
+    // small tier can't class (>= 512 KiB). Indexed by the block's rounded-up
+    // power-of-two exponent (19..30 for 512 KiB..1 GiB); 32 slots covers it.
+    // Closes the "large-tier buffers leak" hole that made the gen1 self-compile
+    // accumulate its per-function array churn until the arena wall.
+    s = s.write("    .align 8\n");
+    s = s.write("__fern_large_heads: .skip 256\n");
     s = s.write("    .section .text\n");
     // __fern_alloc(%rdi = bytes) -> %rax = block. Size-classed freelist reuse
     // (class = bytes/8 < 65536) then bump; OOM traps with exit 137.
@@ -864,13 +871,34 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rdi, %rcx\n");
     s = s.write("    shrq $3, %rcx\n");
     s = s.write("    cmpq $65536, %rcx\n");
-    s = s.write("    jae .Lalloc_nofl\n");
+    s = s.write("    jae .Lalloc_large\n");        // #3425: large tier, not leak-to-bump
     s = s.write("    leaq __fern_freelist(%rip), %rdx\n");
     s = s.write("    movq (%rdx,%rcx,8), %rax\n");
     s = s.write("    testq %rax, %rax\n");
     s = s.write("    jz .Lalloc_nofl\n");
     s = s.write("    movq (%rax), %rdi\n");
     s = s.write("    movq %rdi, (%rdx,%rcx,8)\n");
+    s = s.write("    popq %rdx\n");
+    s = s.write("    popq %rcx\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    // #3425 large tier: reuse a freed >= 512 KiB block before bumping. The class
+    // (shared with __fern_large_push) rounds the request up to a power of two —
+    // %rdi becomes that capacity (the bytes actually bumped when the class is
+    // empty), so a popped block always fits any later same-class request. Blocks
+    // > 1 GiB skip the tier (bump the raw size). %rcx/%rdx are saved on the stack
+    // (restored by .Lalloc_nofl); %rax is the return slot; %rdi is clobberable.
+    s = s.write(".Lalloc_large:\n");
+    s = s.write("    cmpq $0x40000000, %rdi\n");   // > 1 GiB: bump the raw size
+    s = s.write("    ja .Lalloc_nofl\n");
+    s = s.write("    call __fern_large_class\n");   // %rax = class, %rdi = cap
+    s = s.write("    leaq __fern_large_heads(%rip), %rdx\n");
+    s = s.write("    movq (%rdx,%rax,8), %rcx\n");  // head
+    s = s.write("    testq %rcx, %rcx\n");
+    s = s.write("    jz .Lalloc_nofl\n");           // empty: bump %rdi (= cap)
+    s = s.write("    movq (%rcx), %rdi\n");         // head.next
+    s = s.write("    movq %rdi, (%rdx,%rax,8)\n");  // heads[class] = next
+    s = s.write("    movq %rcx, %rax\n");           // return the reused block
     s = s.write("    popq %rdx\n");
     s = s.write("    popq %rcx\n");
     s = s.write("    popq %rbp\n");
@@ -938,6 +966,36 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq $60, %rax\n");
     s = s.write("    movq $134, %rdi\n");
     s = s.write("    syscall\n");
+    // #3425 large-tier classing (SHARED by the alloc pop + every free push, so
+    // the pop and push classes can never diverge). __fern_large_class(%rdi=bytes,
+    // 512KiB..1GiB) -> %rax=class exponent, %rdi=cap (bytes to bump). cap =
+    // next-pow-2 >= bytes; class = log2(cap). Clobbers %rax/%rcx/%rdi only.
+    s = s.write("__fern_large_class:\n");
+    s = s.write("    leaq -1(%rdi), %rax\n");     // bytes - 1
+    s = s.write("    bsrq %rax, %rcx\n");         // floor(log2(bytes-1))
+    s = s.write("    addq $1, %rcx\n");           // class = that + 1
+    s = s.write("    movq $1, %rdi\n");
+    s = s.write("    shlq %cl, %rdi\n");          // cap = 1 << class
+    s = s.write("    movq %rcx, %rax\n");         // rax = class
+    s = s.write("    ret\n");
+    // __fern_large_push(%rdi=block base, %rsi=block size in bytes) — push a freed
+    // large block onto its power-of-two class's intrusive freelist (successor ptr
+    // in the block's first 8 bytes), mirroring __fern_alloc's large pop exactly.
+    // Blocks > 1 GiB are dropped (alloc never large-pops them). Clobbers scratch;
+    // callers invoke it at their leak branch just before ret.
+    s = s.write("__fern_large_push:\n");
+    s = s.write("    cmpq $0x40000000, %rsi\n");  // > 1 GiB: leak (bump-only tier)
+    s = s.write("    ja .Llpush_ret\n");
+    s = s.write("    pushq %rdi\n");              // save base across the class call
+    s = s.write("    movq %rsi, %rdi\n");         // bytes -> arg
+    s = s.write("    call __fern_large_class\n"); // %rax = class
+    s = s.write("    popq %rdi\n");               // restore base
+    s = s.write("    leaq __fern_large_heads(%rip), %rdx\n");
+    s = s.write("    movq (%rdx,%rax,8), %rcx\n");// old head
+    s = s.write("    movq %rcx, (%rdi)\n");       // base[0] = old head
+    s = s.write("    movq %rdi, (%rdx,%rax,8)\n");// heads[class] = base
+    s = s.write(".Llpush_ret:\n");
+    s = s.write("    ret\n");
     // __fern_arr_box(%rdi = cap element count) -> %rax = data ptr (base+16).
     // base = [cap, rc=1, len=cap, e0..]; element i at data+(i+1)*8.
     s = s.write("__fern_arr_box:\n");
@@ -1045,7 +1103,18 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl -16(%rax), %ecx\n");
     s = s.write("    addq $3, %rcx\n");
     s = s.write("    cmpq $65536, %rcx\n");
-    s = s.write("    jae .Larrdec_ret\n");
+    s = s.write("    jb .Larrdec_small\n");
+    // #3425 large tier: recycle instead of leaking. base = %rax-16, bytes =
+    // words*8; __fern_large_push classes + links it. Preserve %rax (the box) —
+    // the push helper clobbers scratch — even though arr_dec returns void.
+    s = s.write("    leaq -16(%rax), %rdi\n");
+    s = s.write("    movq %rcx, %rsi\n");
+    s = s.write("    shlq $3, %rsi\n");
+    s = s.write("    pushq %rax\n");
+    s = s.write("    call __fern_large_push\n");
+    s = s.write("    popq %rax\n");
+    s = s.write("    jmp .Larrdec_ret\n");
+    s = s.write(".Larrdec_small:\n");
     s = s.write("    leaq -16(%rax), %rdx\n");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");
