@@ -83,3 +83,7 @@ TestSelfHostStructArrElemDropIRX86_64 6
 TestSelfHostParserX86_64 5
 TestSelfHostIRPipelineProbe 4
 TestSelfHostStructFreshRetFieldIRX86_64 4
+# Saturating arithmetic (#5542): ~30 subtests each, one warm driver apiece —
+# the x86 leg gcc-links every subtest, the wasm leg wasmtime-runs every subtest.
+TestSelfHostSaturatingX86IR 25
+TestSelfHostSaturatingWasmIR 25

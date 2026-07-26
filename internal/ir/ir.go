@@ -10241,6 +10241,9 @@ func (b *builder) binary(n *ast.Binary) error {
 		b.emit(Op{Kind: op, Width: w})
 		return nil
 	}
+	if isSatOp(n.Op) {
+		return b.satBinary(n)
+	}
 	op, ok := intOp(n.Op)
 	if !ok {
 		return fmt.Errorf("ir: unsupported binary %q", n.Op)
@@ -10558,6 +10561,237 @@ func (b *builder) maybeFoldStringEq(n *ast.Binary) (error, bool) {
 		b.emit(Op{Kind: OpNot})
 	}
 	return nil, true
+}
+
+// isSatOp reports whether `s` is one of the saturating arithmetic
+// operators (`+|` / `-|` / `*|`, #5542). They are integer-only and
+// clamp to the operand type's [MIN, MAX] instead of wrapping.
+func isSatOp(s string) bool {
+	return s == "+|" || s == "-|" || s == "*|"
+}
+
+// satBinary lowers a saturating integer binary. Both operands are
+// already on the operand stack (left below right — the same shape
+// the wrapping path consumes), so the first thing it does is spill
+// them to scratch slots: every lowering reads each operand two or
+// three times.
+//
+// The tests are formulated as *pre*-checks against the type's MIN /
+// MAX rather than as post-hoc overflow-flag reconstruction, so the
+// same shape works at every width — including sub-i32 `u8`, whose
+// wrapping mask never has to run because a saturated result is in
+// range by construction. Every intermediate (`MAX - r` for `r > 0`,
+// `MIN - r` for `r < 0`, …) is provably non-overflowing.
+//
+//	signed   a +| b →  b > 0 && a > MAX - b ? MAX
+//	                 : b < 0 && a < MIN - b ? MIN : a + b
+//	signed   a -| b →  b < 0 && a > MAX + b ? MAX
+//	                 : b > 0 && a < MIN + b ? MIN : a - b
+//	unsigned a +| b →  a > MAX - b ? MAX : a + b
+//	unsigned a -| b →  a < b ? 0 : a - b
+//	unsigned a *| b →  a != 0 && b > MAX / a ? MAX : a * b
+//
+// Signed `*|` is the one shape a pre-check can't express cheaply
+// (four sign quadrants), so it post-checks the wrapping product
+// with a division: `a != 0 && (s / a != b || (a == -1 && b == MIN))`.
+// The `a == -1 && b == MIN` term is needed because Fern's division
+// is total — `MIN / -1` yields `MIN`, so the round-trip spuriously
+// agrees on exactly that pair. The clamp direction is the sign of
+// the true product, `(a < 0) ^ (b < 0)`.
+//
+// Division-by-zero in the guarded operand is harmless for the same
+// total-division reason: the `a != 0` conjunct discards the result,
+// and `x / 0` is defined as 0 rather than a trap
+// (docs/INTEGER-SEMANTICS.md).
+func (b *builder) satBinary(n *ast.Binary) error {
+	w := n.IntWidth
+	if w != 8 && w != 64 {
+		w = 32
+	}
+	uns := n.IsUnsigned
+	wide := w == 64
+	bt := BlockTypeI32
+	slotT := ast.Type(ast.NumberType{Width: 32})
+	if wide {
+		bt = BlockTypeI64
+		slotT = ast.NumberType{Width: 64}
+	}
+	var minV, maxV int64
+	switch {
+	case uns && w == 8:
+		minV, maxV = 0, 255
+	case uns:
+		// All-ones at the op width: -1 reinterpreted unsigned.
+		minV, maxV = 0, -1
+	case w == 8:
+		minV, maxV = -128, 127
+	case wide:
+		minV, maxV = -9223372036854775808, 9223372036854775807
+	default:
+		minV, maxV = -2147483648, 2147483647
+	}
+
+	spill := func() int32 {
+		sl := b.allocSlot()
+		b.locals[fmt.Sprintf("__sattmp_%d", sl)] = sl
+		b.scratchType[sl] = slotT
+		b.emit(Op{Kind: OpStoreLocal, I32: sl})
+		return sl
+	}
+	// Right is on top, so it pops first.
+	rs := spill()
+	ls := spill()
+
+	konst := func(v int64) {
+		if wide {
+			b.emit(Op{Kind: OpConstI64, I64: v})
+			return
+		}
+		b.emit(Op{Kind: OpConstI32, I32: int32(v)})
+	}
+	loadL := func() { b.emit(Op{Kind: OpLoadLocal, I32: ls}) }
+	loadR := func() { b.emit(Op{Kind: OpLoadLocal, I32: rs}) }
+	// Arithmetic + comparison at the operand width. Comparisons
+	// yield an i32 boolean regardless, so the boolean combinators
+	// below stay width-free.
+	at := func(k OpKind) { b.emit(Op{Kind: k, Width: w, Unsigned: uns}) }
+	boolOp := func(k OpKind) { b.emit(Op{Kind: k}) }
+
+	switch n.Op {
+	case "+|", "-|":
+		add, sub := OpAdd, OpSub
+		if n.Op == "-|" {
+			// `a -| b` is `a +| (-b)` in structure: the overflow
+			// direction flips with b's sign, and the guard bound
+			// is reached by adding rather than subtracting b.
+			add, sub = OpSub, OpAdd
+		}
+		if uns {
+			if n.Op == "+|" {
+				loadL()
+				konst(maxV)
+				loadR()
+				at(OpSub)
+				at(OpGtS)
+				b.openIf(bt)
+				konst(maxV)
+				b.elseBranch()
+				loadL()
+				loadR()
+				at(OpAdd)
+				b.closeScope()
+				return nil
+			}
+			loadL()
+			loadR()
+			at(OpLtS)
+			b.openIf(bt)
+			konst(0)
+			b.elseBranch()
+			loadL()
+			loadR()
+			at(OpSub)
+			b.closeScope()
+			return nil
+		}
+		// Signed: clamp high when b pushes past MAX, low when it
+		// pushes past MIN. `sub` is the bound-adjusting op (the
+		// inverse of the arithmetic), `add` the arithmetic itself.
+		hiCmp, loCmp := OpGtS, OpLtS
+		if n.Op == "-|" {
+			hiCmp, loCmp = OpLtS, OpGtS
+		}
+		loadR()
+		konst(0)
+		at(hiCmp)
+		loadL()
+		konst(maxV)
+		loadR()
+		at(sub)
+		at(OpGtS)
+		boolOp(OpAnd)
+		b.openIf(bt)
+		konst(maxV)
+		b.elseBranch()
+		loadR()
+		konst(0)
+		at(loCmp)
+		loadL()
+		konst(minV)
+		loadR()
+		at(sub)
+		at(OpLtS)
+		boolOp(OpAnd)
+		b.openIf(bt)
+		konst(minV)
+		b.elseBranch()
+		loadL()
+		loadR()
+		at(add)
+		b.closeScope()
+		b.closeScope()
+		return nil
+	case "*|":
+		if uns {
+			loadL()
+			konst(0)
+			at(OpNe)
+			loadR()
+			konst(maxV)
+			loadL()
+			at(OpDivS)
+			at(OpGtS)
+			boolOp(OpAnd)
+			b.openIf(bt)
+			konst(maxV)
+			b.elseBranch()
+			loadL()
+			loadR()
+			at(OpMul)
+			b.closeScope()
+			return nil
+		}
+		loadL()
+		loadR()
+		at(OpMul)
+		ss := spill()
+		loadS := func() { b.emit(Op{Kind: OpLoadLocal, I32: ss}) }
+		loadL()
+		konst(0)
+		at(OpNe)
+		loadS()
+		loadL()
+		at(OpDivS)
+		loadR()
+		at(OpNe)
+		loadL()
+		konst(-1)
+		at(OpEq)
+		loadR()
+		konst(minV)
+		at(OpEq)
+		boolOp(OpAnd)
+		boolOp(OpOr)
+		boolOp(OpAnd)
+		b.openIf(bt)
+		loadL()
+		konst(0)
+		at(OpLtS)
+		loadR()
+		konst(0)
+		at(OpLtS)
+		boolOp(OpXor)
+		b.openIf(bt)
+		konst(minV)
+		b.elseBranch()
+		konst(maxV)
+		b.closeScope()
+		b.elseBranch()
+		loadS()
+		b.closeScope()
+		return nil
+	}
+	return fmt.Errorf("ir: unsupported saturating binary %q", n.Op)
 }
 
 func intOp(s string) (OpKind, bool) {

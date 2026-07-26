@@ -3773,6 +3773,275 @@ function tostring_recv_is_scalar(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
+// is_sat_op reports whether `op` is one of the saturating arithmetic operators
+// (`+|` / `-|` / `*|`, #5542): integer-only, clamping to the operand type's
+// [MIN, MAX] instead of wrapping.
+pub function is_sat_op(op: string): boolean {
+    return op == "+|" || op == "-|" || op == "*|";
+}
+
+// lower_sat_binary lowers a saturating integer binary (`+|` / `-|` / `*|`).
+//
+// The tests are formulated as PRE-checks against the type's MIN / MAX rather
+// than as post-hoc overflow-flag reconstruction, so one shape works at every
+// width — including sub-i32 `u8`, whose wrapping mask never has to run because
+// a saturated result is in range by construction. Every intermediate
+// (`MAX - r` for `r > 0`, `MIN - r` for `r < 0`, …) is provably in range.
+//
+//     signed   a +| b →  b > 0 && a > MAX - b ? MAX
+//                      : b < 0 && a < MIN - b ? MIN : a + b
+//     signed   a -| b →  b < 0 && a > MAX + b ? MAX
+//                      : b > 0 && a < MIN + b ? MIN : a - b
+//     unsigned a +| b →  a > MAX - b ? MAX : a + b
+//     unsigned a -| b →  a < b ? 0 : a - b
+//     unsigned a *| b →  a != 0 && b > MAX / a ? MAX : a * b
+//
+// Signed `*|` is the one shape a pre-check can't express cheaply (four sign
+// quadrants), so it post-checks the WRAPPED product with a division:
+// `a != 0 && (s / a != b || (a == -1 && b == MIN))`. The second term is needed
+// because Fern's division is total — `MIN / -1` yields `MIN`, so the round-trip
+// spuriously agrees on exactly that pair. The clamp direction is the sign of
+// the true product, `(a < 0) ^ (b < 0)`. Division by zero in the guarded
+// operand is harmless for the same total-division reason (`x / 0 == 0`,
+// docs/INTEGER-SEMANTICS.md) — the `a != 0` conjunct discards it.
+//
+// Branches are the self-host's void-`if` + store-to-temp shape (lower_value_if),
+// not typed block results, so every backend lowers it unchanged. Mirrors
+// `internal/ir.(*builder).satBinary` — keep the two in step.
+function lower_sat_binary(b: parser.ExprBinary, e: parser.Expr, s: LowerState): LowerState {
+    var wide: boolean = infer_expr_width(b.left, s) == 64 || infer_expr_width(b.right, s) == 64;
+    var kind: string = "i32";
+    if (wide) {
+        if (expr_is_u64(b.left, s) || expr_is_u64(b.right, s)) { kind = "u64"; } else { kind = "i64"; }
+    } else if (expr_is_u32(b.left, s) || expr_is_u32(b.right, s)) {
+        kind = "u32";
+    } else if (expr_subword_kind(e, s) == "u8") {
+        kind = "u8";
+    }
+    var uns: boolean = kind == "u8" || kind == "u32" || kind == "u64";
+    var w: i32 = 0;
+    if (wide) { w = 64; }
+
+    // Spill both operands: every shape below reads each of them twice or more.
+    var p: LowerState = s;
+    var lname: string = "$satl" + util.i32_to_string(p.locals.len());
+    p = p.add_local(lname);
+    var lslot: i32 = p.slot_of(lname);
+    if (wide) { p = p.mark_i64(lslot, true); }
+    if (wide) { p = lower_i64(b.left, p); } else { p = lower_expr(b.left, p); }
+    if (!p.ok) { return p; }
+    p = p.emit(ir.op_store_local(lslot));
+    var rname: string = "$satr" + util.i32_to_string(p.locals.len());
+    p = p.add_local(rname);
+    var rslot: i32 = p.slot_of(rname);
+    if (wide) { p = p.mark_i64(rslot, true); }
+    if (wide) { p = lower_i64(b.right, p); } else { p = lower_expr(b.right, p); }
+    if (!p.ok) { return p; }
+    p = p.emit(ir.op_store_local(rslot));
+    var oname: string = "$sato" + util.i32_to_string(p.locals.len());
+    p = p.add_local(oname);
+    var oslot: i32 = p.slot_of(oname);
+    if (wide) { p = p.mark_i64(oslot, true); }
+
+    if (uns) {
+        if (b.op == "+|") {
+            p = sat_load(lslot, p);
+            p = sat_const(kind, "max", p);
+            p = sat_load(rslot, p);
+            p = sat_arith("sub", kind, w, p);
+            p = p.emit(ir.op_bin("gt_u", w, false));
+            p = p.emit(ir.op_if(0));
+            p = sat_const(kind, "max", p);
+            p = p.emit(ir.op_store_local(oslot));
+            p = p.emit(ir.op_else());
+            p = sat_load(lslot, p);
+            p = sat_load(rslot, p);
+            p = sat_arith("add", kind, w, p);
+            p = p.emit(ir.op_store_local(oslot));
+            p = p.emit(ir.op_end());
+            return sat_load(oslot, p);
+        }
+        if (b.op == "-|") {
+            p = sat_load(lslot, p);
+            p = sat_load(rslot, p);
+            p = p.emit(ir.op_bin("lt_u", w, false));
+            p = p.emit(ir.op_if(0));
+            p = sat_const(kind, "zero", p);
+            p = p.emit(ir.op_store_local(oslot));
+            p = p.emit(ir.op_else());
+            p = sat_load(lslot, p);
+            p = sat_load(rslot, p);
+            p = sat_arith("sub", kind, w, p);
+            p = p.emit(ir.op_store_local(oslot));
+            p = p.emit(ir.op_end());
+            return sat_load(oslot, p);
+        }
+        p = sat_load(lslot, p);
+        p = sat_const(kind, "zero", p);
+        p = p.emit(ir.op_bin("ne", w, false));
+        p = sat_load(rslot, p);
+        p = sat_const(kind, "max", p);
+        p = sat_load(lslot, p);
+        p = sat_arith("div_u", kind, w, p);
+        p = p.emit(ir.op_bin("gt_u", w, false));
+        p = p.emit(ir.op_bin("and", 0, false));
+        p = p.emit(ir.op_if(0));
+        p = sat_const(kind, "max", p);
+        p = p.emit(ir.op_store_local(oslot));
+        p = p.emit(ir.op_else());
+        p = sat_load(lslot, p);
+        p = sat_load(rslot, p);
+        p = sat_arith("mul", kind, w, p);
+        p = p.emit(ir.op_store_local(oslot));
+        p = p.emit(ir.op_end());
+        return sat_load(oslot, p);
+    }
+
+    if (b.op == "+|" || b.op == "-|") {
+        // `adj` reaches the guard bound (MAX ∓ b) — the inverse of the
+        // arithmetic; `act` is the arithmetic itself. The sign test on b
+        // that selects the clamp direction flips with the operator too.
+        var act: string = "add";
+        var adj: string = "sub";
+        var hicmp: string = "gt_s";
+        var locmp: string = "lt_s";
+        if (b.op == "-|") {
+            act = "sub";
+            adj = "add";
+            hicmp = "lt_s";
+            locmp = "gt_s";
+        }
+        p = sat_load(rslot, p);
+        p = sat_const(kind, "zero", p);
+        p = p.emit(ir.op_bin(hicmp, w, false));
+        p = sat_load(lslot, p);
+        p = sat_const(kind, "max", p);
+        p = sat_load(rslot, p);
+        p = sat_arith(adj, kind, w, p);
+        p = p.emit(ir.op_bin("gt_s", w, false));
+        p = p.emit(ir.op_bin("and", 0, false));
+        p = p.emit(ir.op_if(0));
+        p = sat_const(kind, "max", p);
+        p = p.emit(ir.op_store_local(oslot));
+        p = p.emit(ir.op_else());
+        p = sat_load(rslot, p);
+        p = sat_const(kind, "zero", p);
+        p = p.emit(ir.op_bin(locmp, w, false));
+        p = sat_load(lslot, p);
+        p = sat_const(kind, "min", p);
+        p = sat_load(rslot, p);
+        p = sat_arith(adj, kind, w, p);
+        p = p.emit(ir.op_bin("lt_s", w, false));
+        p = p.emit(ir.op_bin("and", 0, false));
+        p = p.emit(ir.op_if(0));
+        p = sat_const(kind, "min", p);
+        p = p.emit(ir.op_store_local(oslot));
+        p = p.emit(ir.op_else());
+        p = sat_load(lslot, p);
+        p = sat_load(rslot, p);
+        p = sat_arith(act, kind, w, p);
+        p = p.emit(ir.op_store_local(oslot));
+        p = p.emit(ir.op_end());
+        p = p.emit(ir.op_end());
+        return sat_load(oslot, p);
+    }
+
+    // Signed `*|`: stash the wrapped product, then the division round-trip.
+    var sname: string = "$satp" + util.i32_to_string(p.locals.len());
+    p = p.add_local(sname);
+    var sslot: i32 = p.slot_of(sname);
+    if (wide) { p = p.mark_i64(sslot, true); }
+    p = sat_load(lslot, p);
+    p = sat_load(rslot, p);
+    p = sat_arith("mul", kind, w, p);
+    p = p.emit(ir.op_store_local(sslot));
+    p = sat_load(lslot, p);
+    p = sat_const(kind, "zero", p);
+    p = p.emit(ir.op_bin("ne", w, false));
+    p = sat_load(sslot, p);
+    p = sat_load(lslot, p);
+    p = sat_arith("div_s", kind, w, p);
+    p = sat_load(rslot, p);
+    p = p.emit(ir.op_bin("ne", w, false));
+    p = sat_load(lslot, p);
+    p = sat_const(kind, "negone", p);
+    p = p.emit(ir.op_bin("eq", w, false));
+    p = sat_load(rslot, p);
+    p = sat_const(kind, "min", p);
+    p = p.emit(ir.op_bin("eq", w, false));
+    p = p.emit(ir.op_bin("and", 0, false));
+    p = p.emit(ir.op_bin("or", 0, false));
+    p = p.emit(ir.op_bin("and", 0, false));
+    p = p.emit(ir.op_if(0));
+    p = sat_load(lslot, p);
+    p = sat_const(kind, "zero", p);
+    p = p.emit(ir.op_bin("lt_s", w, false));
+    p = sat_load(rslot, p);
+    p = sat_const(kind, "zero", p);
+    p = p.emit(ir.op_bin("lt_s", w, false));
+    p = p.emit(ir.op_bin("xor", 0, false));
+    p = p.emit(ir.op_if(0));
+    p = sat_const(kind, "min", p);
+    p = p.emit(ir.op_store_local(oslot));
+    p = p.emit(ir.op_else());
+    p = sat_const(kind, "max", p);
+    p = p.emit(ir.op_store_local(oslot));
+    p = p.emit(ir.op_end());
+    p = p.emit(ir.op_else());
+    p = sat_load(sslot, p);
+    p = p.emit(ir.op_store_local(oslot));
+    p = p.emit(ir.op_end());
+    return sat_load(oslot, p);
+}
+
+// sat_load / sat_const / sat_arith are the width-aware emit primitives the
+// saturating lowering is written against.
+//
+// `sat_const` pushes one of the four constants the lowering needs ("min" /
+// "max" / "zero" / "negone") at the operand type's width. A 64-bit constant
+// goes through op_const_i64_TEXT: every IR backend splices the literal text
+// into its 64-bit immediate (movabsq / ldr =N / i64.const) and never reads
+// op_const_i64's parsed i64_imm. An unsigned MAX rides its all-ones bit
+// pattern (-1), which the operand-width unsigned compares read back as 2^W-1;
+// a u32 one is re-zero-extended so the register backends hold it as 0xFFFFFFFF
+// rather than a sign-extended -1.
+//
+// `sat_arith` re-applies the width normalisation the ordinary binary path
+// applies after add/sub/mul: the register backends hold a u32 zero-extended and
+// an i32 sign-extended in a 64-bit register, so a 32-bit product must be
+// narrowed before the signed `*|` division round-trip can detect its overflow.
+function sat_load(slot: i32, s: LowerState): LowerState {
+    return s.emit(ir.op_load_local(slot));
+}
+function sat_const(kind: string, which: string, s: LowerState): LowerState {
+    if (kind == "i64" || kind == "u64") {
+        var t: string = "0";
+        if (which == "negone") { t = "-1"; }
+        if (which == "max") {
+            if (kind == "u64") { t = "-1"; } else { t = "9223372036854775807"; }
+        }
+        if (which == "min" && kind == "i64") { t = "-9223372036854775808"; }
+        return s.emit(ir.op_const_i64_text(t));
+    }
+    var v: i32 = 0;
+    if (which == "negone") { v = 0 - 1; }
+    if (which == "max") {
+        if (kind == "u8") { v = 255; } else if (kind == "u32") { v = 0 - 1; } else { v = 2147483647; }
+    }
+    if (which == "min" && kind == "i32") { v = 0 - 2147483647 - 1; }
+    var p: LowerState = s.emit(ir.op_const_i32(v));
+    if (kind == "u32") { return p.emit(ir.op_u32_wrap()); }
+    return p;
+}
+function sat_arith(k: string, kind: string, w: i32, s: LowerState): LowerState {
+    var p: LowerState = s.emit(ir.op_bin(k, w, false));
+    if (k != "add" && k != "sub" && k != "mul") { return p; }
+    if (kind == "u32") { return p.emit(ir.op_u32_wrap()); }
+    if (kind == "i32") { return p.emit(ir.op_int_cast("i32")); }
+    if (kind == "u8") { return p.emit(ir.op_int_cast("u8")); }
+    return p;
+}
+
 // emit_str_concat_reclaim lowers a string concat `b.left + b.right`, and frees any
 // operand that is_fresh_str_temp classifies as a dead anonymous temp right after
 // the concat consumes it. Each fresh operand is captured into a scratch slot before
@@ -5179,6 +5448,19 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
             return s.fail();
         },
         parser.ExprBinary(b) => {
+            // Saturating arithmetic (#5542) carries its own width-aware
+            // lowering (clamped, not wrapped) at every width. When its OPERANDS
+            // are 32-bit-or-narrower it produces a 32-bit value, so an i64
+            // context — e.g. `(p +| q) == 4294967295`, whose literal is an i64
+            // and drags the whole compare to width 64 — has to widen it, the
+            // same way the ExprIdent arm below widens a narrow local. Without
+            // that the wasm module fails to validate (i32 where i64 expected).
+            if (is_sat_op(b.op)) {
+                var satw: LowerState = lower_sat_binary(b, e, s);
+                if (!satw.ok) { return satw; }
+                if (infer_expr_width(e, s) == 64) { return satw; }
+                return satw.emit(ir.op_int_extend(expr_is_u32(e, s) || expr_subword_kind(e, s) != ""));
+            }
             var kind: string = map_binop(b.op);
             if (kind == "") { return s.fail(); }
             // Comparisons aren't i64 values (they yield an i32 bool). i64
@@ -6110,6 +6392,10 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             return s.emit(ir.op_const_func(0, id.name));
         },
         parser.ExprBinary(b) => {
+            // Saturating arithmetic (#5542) is integer-only — no string concat,
+            // no float form, no composite overload — so it precedes every other
+            // dispatch and carries its own width-aware clamp lowering.
+            if (is_sat_op(b.op)) { return lower_sat_binary(b, e, s); }
             // Composite operator overload (#2706): `a <op> b` where the left
             // operand is a struct lowers to `a.<method>(b)` (`+`→add, …),
             // mirroring the native checker desugar. Rewriting to a method call
