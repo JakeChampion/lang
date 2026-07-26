@@ -27,6 +27,14 @@ import (
 // emits). Cases assert the module reached the IR path (no `$__lit0` AST-fallback
 // locals) and computes the right value under wasmtime; values cross-checked
 // against the native interpreter.
+//
+// The `result2-*` cases cover the GENUINELY two-typevar Result[T, E] shape
+// (`okg[T, E](x: T): Result[T, E]`) that the single-var promotion (clause c,
+// all_tp_count==1) deliberately left open: promoting only T strands E erased on
+// the Err arm. The new clause (c′) (result_two_bare_vars) promotes BOTH vars — T
+// binds from the bare-scalar arg, the return-only E from the call-site annotation
+// via infer_inst_ret — so the clone is fully concrete and lowers where the erased
+// two-var Result deferred. This closes the last per-function IR-subset remnant.
 func TestSelfHostErasedWideContainerWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping erased-wide container wasm IR e2e")
@@ -51,6 +59,7 @@ func TestSelfHostErasedWideContainerWasm(t *testing.T) {
 	const dup = `function dup[T](x: T): T[] { return [x, x]; }`
 	const okr = `function okr[T](x: T): Result[T, string] { return Ok(x); }`
 	const errg = `function errg[E](e: E): Result[i32, E] { return Err(e); }`
+	const okg = `function okg[T, E](x: T): Result[T, E] { return Ok(x); }`
 	cases := []struct {
 		name string
 		src  string
@@ -97,6 +106,38 @@ func TestSelfHostErasedWideContainerWasm(t *testing.T) {
 		// returns Result[i32, i64], the wide Err value round-trips. 5+37 = 42.
 		{"result-err-wide",
 			errg + ` function main(): i32 { var a: Result[i32, i64] = errg[i64](5000000000 as i64); var r: i64 = 0; match (a) { Ok(v) => {}, Err(e) => { r = e; } } return (r / 1000000000) as i32 + 37; }`,
+			42},
+		// Genuinely two-typevar Result[T, E] (okg[T, E](x: T): Result[T, E]): the
+		// clause-(c) all_tp_count==1 guard leaves this open, so the NEW clause (c′)
+		// (result_two_bare_vars) promotes BOTH vars — T from the arg, E from the
+		// call-site annotation via infer_inst_ret. The concrete clone
+		// okg__i64_string returns Result[i64, string], so the wide Ok round-trips on
+		// the wasm IR path where the erased two-var Result deferred to AST. 5e9/1e9 =
+		// 5, +37 = 42.
+		{"result2-ok-wide-explicit",
+			okg + ` function main(): i32 { var a: Result[i64, string] = okg[i64, string](5000000000 as i64); var r: i64 = 0; match (a) { Ok(v) => { r = v; }, Err(e) => {} } return (r / 1000000000) as i32 + 37; }`,
+			42},
+		// The SAME shape with the type args INFERRED — okg(x) with no `[i64, string]`.
+		// E (return-only) can only come from the `Result[i64, string]` annotation, so
+		// this exercises the infer_inst_ret expected-return binding that makes the
+		// two-var promotion resolvable at all.
+		{"result2-ok-wide-inferred",
+			okg + ` function main(): i32 { var a: Result[i64, string] = okg(5000000000 as i64); var r: i64 = 0; match (a) { Ok(v) => { r = v; }, Err(e) => {} } return (r / 1000000000) as i32 + 37; }`,
+			42},
+		// Wide Err arm (Result[i32, i64]): okg__i32_i64 keeps the Err var concrete
+		// too, so an i64 Err value round-trips full-width. 5 + 37 = 42.
+		{"result2-err-wide",
+			okg + ` function main(): i32 { var a: Result[i32, i64] = okg[i32, i64](5); var r: i32 = 0; match (a) { Ok(v) => { r = v; }, Err(e) => {} } return r + 37; }`,
+			42},
+		// f64 Ok arm (Result[f64, string]): the concrete clone's f64 payload box
+		// round-trips the float. 2.5*2 = 5, +37 = 42.
+		{"result2-f64",
+			okg + ` function main(): i32 { var a: Result[f64, string] = okg[f64, string](2.5); var r: f64 = 0.0; match (a) { Ok(v) => { r = v; }, Err(e) => {} } return (r * 2.0) as i32 + 37; }`,
+			42},
+		// Narrow (Result[i32, string]) — regression guard that promoting the two-var
+		// shape leaves a non-wide caller's value unchanged. 5 + 37 = 42.
+		{"result2-narrow",
+			okg + ` function main(): i32 { var a: Result[i32, string] = okg[i32, string](5); var r: i32 = 0; match (a) { Ok(v) => { r = v; }, Err(e) => {} } return r + 37; }`,
 			42},
 		// Multi-type-param guard: a two-typevar generic whose `init: A` + `A[]`
 		// return matches clause (c)'s inner shape (bare scalar param feeding a

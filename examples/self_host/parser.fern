@@ -5086,9 +5086,26 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // (`scan[T, A](xs: T[], init: A, f: (A, T) => A): A[]` — promoting A binds
         // A but keeps T erased, a malformed `scan__i32` with `xs: T[]` that
         // crashes). A single-param fn has no sibling to strand, so the clone is
-        // fully concrete. Multi-param container generics stay erased (as before) —
-        // a follow-up, like Result.
+        // fully concrete. Most multi-param container generics stay erased (e.g.
+        // scan's `A[]` return); the one exception is the two-var Result[T, E] shape,
+        // now closed by clause (c′) below (it promotes BOTH vars, so nothing is
+        // stranded).
         if (all_tp_count == 1 && has_bare_scalar_param(params, un) && feeds_wide_container(ret_type, un)) { promote = true; }
+        // (c′) genuinely two-typevar Result[T, E] with a bare-scalar param — the
+        // `okg[T, E](x: T): Result[T, E]` shape clause (c) leaves open. Promoting
+        // ONLY the wide param strands the other var erased on the Err arm
+        // (`Result[i64, E]`), reintroducing the wasm box-width ambiguity, so BOTH
+        // vars of the pair are promoted (this clause is var-independent, so it fires
+        // for each). T binds from the bare-scalar arg; the return-only E binds from
+        // the call-site annotation via infer_inst_ret (bind_unify of `Result[T, E]`
+        // against the expected `Result[i64, string]`). The fully-concrete clone
+        // (`okg__i64_string(x: i64): Result[i64, string]`) lowers on the wasm IR
+        // path where the erased two-var Result cannot. Like the return-only
+        // constructor promotion (clause b′), an UNANNOTATED `okg(5)` leaves E unbound
+        // and the dropped template becomes an undefined reference — the same accepted
+        // constraint. No compiler/stdlib generic matches this shape, so the bootstrap
+        // is untouched (byte-identity holds with nothing to monomorphise).
+        if (all_tp_count == 2 && result_two_bare_vars(ret_type, unbounded_tps) && has_any_bare_scalar_param(params, unbounded_tps)) { promote = true; }
         if (promote) { bounded_tps = bounded_tps.append(un); bound_names = bound_names.append(""); }
         ui = ui + 1;
     }
@@ -12615,14 +12632,15 @@ function feeds_map_typearg(ty: string, name: string): boolean {
 // backend. Non-wasm backends just gain a clone.
 //
 // `Result[…]` is included, but the caller's `all_tp_count == 1` guard is what
-// keeps it SOUND: a Result matched here is only promoted when `name` is the fn's
-// ONLY type param, so the clone is fully concrete — `okr[T](x: T): Result[T,
-// string]` → `okr__i64(x: i64): Result[i64, string]` (concrete Err arm), or
-// `Result[T, T]` → `Result[i64, i64]`. The genuinely two-typevar
-// `okg[T, E](x: T): Result[T, E]` has `all_tp_count == 2`, so it is NOT promoted
-// — promoting only T there would leave E erased in the clone (`Result[i64, E]`),
-// reintroducing width ambiguity on the Err arm. Closing that needs binding E from
-// the call-site return annotation too — a follow-up.
+// keeps THIS clause SOUND: a Result matched here is only promoted when `name` is
+// the fn's ONLY type param, so the clone is fully concrete — `okr[T](x: T):
+// Result[T, string]` → `okr__i64(x: i64): Result[i64, string]` (concrete Err arm),
+// or `Result[T, T]` → `Result[i64, i64]`. The genuinely two-typevar
+// `okg[T, E](x: T): Result[T, E]` (`all_tp_count == 2`) is handled by the SEPARATE
+// clause (c′) via result_two_bare_vars, which promotes BOTH vars so neither is
+// stranded erased on the Err arm — T binds from the arg, E from the call-site
+// return annotation (infer_inst_ret). It is NOT reached through this single-var
+// path (the all_tp_count==1 guard excludes it), so the two paths stay disjoint.
 function feeds_wide_container(ty: string, name: string): boolean {
     var i: i32 = 0;
     var nl: i32 = name.len();
@@ -12658,6 +12676,57 @@ function has_bare_scalar_param(params: ParamDecl[], name: string): boolean {
         i = i + 1;
     }
     return false;
+}
+// has_any_bare_scalar_param reports whether SOME param's type is EXACTLY one of
+// the given type params — the bare-scalar param that carries a wide i64/f64 value
+// into an erased-generic call (the trigger for the wasm box-layout ambiguity).
+// The two-typevar sibling of has_bare_scalar_param (used by result_two_bare_vars'
+// promotion clause, where either of the pair may be the wide-carrying param).
+function has_any_bare_scalar_param(params: ParamDecl[], tps: string[]): boolean {
+    var i: i32 = 0;
+    while (i < tps.len()) {
+        if (has_bare_scalar_param(params, tps[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+// strip_ws trims ASCII spaces/tabs off both ends of `s` — used to normalise a
+// split type-arg (`Result[T, E]`'s second arg is ` E` before trimming).
+function strip_ws(s: string): string {
+    var a: i32 = 0;
+    var b: i32 = s.len();
+    while (a < b && (s[a] == 32 || s[a] == 9)) { a = a + 1; }
+    while (b > a && (s[b - 1] == 32 || s[b - 1] == 9)) { b = b - 1; }
+    return s[a : b] + "";
+}
+// result_two_bare_vars reports whether `ret_type` is exactly `Result[A, B]` whose
+// two top-level args are the function's two unbounded type params, in either order
+// — the `okg[T, E](x: T): Result[T, E]` shape. Requires BARE var args: a nested
+// `Result[Option[T], E]` arg is not a bare var name and so does not match, which
+// is what guarantees the clone is fully concrete once both vars bind (T from the
+// scalar arg, E from the call-site annotation). This is the two-var closer for the
+// erased-wide Result gap that the all_tp_count==1 clause (c) deliberately left open.
+function result_two_bare_vars(ret_type: string, unbounded_tps: string[]): boolean {
+    if (unbounded_tps.len() != 2) { return false; }
+    var n: i32 = ret_type.len();
+    if (n < 9 || ret_type[0 : 7] != "Result[" || ret_type[n - 1] != 93) { return false; }  // 93 = ']'
+    var inner: string = ret_type[7 : n - 1] + "";
+    var depth: i32 = 0;
+    var ci: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < inner.len() && ci < 0) {
+        var c: i32 = inner[i];
+        if (c == 91) { depth = depth + 1; }        // '['
+        else if (c == 93) { depth = depth - 1; }   // ']'
+        else if (c == 44 && depth == 0) { ci = i; }  // ',' at the top level
+        i = i + 1;
+    }
+    if (ci < 0) { return false; }
+    var a: string = strip_ws(inner[0 : ci] + "");
+    var b: string = strip_ws(inner[ci + 1 : inner.len()] + "");
+    var t0: string = unbounded_tps[0];
+    var t1: string = unbounded_tps[1];
+    return (a == t0 && b == t1) || (a == t1 && b == t0);
 }
 // token_at_paren_depth0 reports whether `name` appears as a standalone
 // identifier token at PAREN nesting depth 0 in `ty` — the positions a param
