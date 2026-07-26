@@ -5052,7 +5052,7 @@ func (p *parser) parseRelational() (ast.Expr, error) {
 	return p.parseBinaryLeft(p.parseShift, "<", ">", "<=", ">=")
 }
 func (p *parser) parseShift() (ast.Expr, error) {
-	return p.parseBinaryLeft(p.parseAdditive, "<<", ">>")
+	return p.parseBinaryLeft(p.parseAdditive, "<<", ">>", "<<|")
 }
 func (p *parser) parseAdditive() (ast.Expr, error) {
 	return p.parseBinaryLeft(p.parseMultiplicative, "+", "-", "+|", "-|")

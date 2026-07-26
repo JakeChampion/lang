@@ -368,10 +368,10 @@ function str_to_f64(s: string): f64 {
 // the early-return pattern out of the body and matches the
 // checker's TypeUnknown threading.
 // is_sat_op_name reports whether `op` is a saturating arithmetic operator
-// (`+|` / `-|` / `*|`, #5542) — clamping to the operand type's [MIN, MAX]
-// rather than wrapping.
+// (`+|` / `-|` / `*|` / `<<|`, #5542) — clamping to the operand type's
+// [MIN, MAX] rather than wrapping.
 function is_sat_op_name(op: string): boolean {
-    return op == "+|" || op == "-|" || op == "*|";
+    return op == "+|" || op == "-|" || op == "*|" || op == "<<|";
 }
 
 // sat_exact computes a saturating op EXACTLY in the host i64, valid only when
@@ -380,6 +380,9 @@ function is_sat_op_name(op: string): boolean {
 function sat_exact(op: string, a: i64, b: i64): i64 {
     if (op == "+|") { return a + b; }
     if (op == "-|") { return a - b; }
+    // The count is masked to the 32-bit lane the callers work in, so the
+    // widest exact product here is (2^32-1) * 2^31 — still inside i64.
+    if (op == "<<|") { return a << (b & 31); }
     return a * b;
 }
 
@@ -407,6 +410,18 @@ function sat_i64(op: string, a: i64, b: i64): i64 {
         if (b < 0 && a > maxv + b) { return maxv; }
         if (b > 0 && a < minv + b) { return minv; }
         return a - b;
+    }
+    if (op == "<<|") {
+        // Round-trip check: at 64 bits there is no wider host type to
+        // compute the exact result in, and the negative-side pre-check
+        // bound would need a ceiling division an arithmetic shift cannot
+        // give. `>>` is arithmetic, so it restores `a` iff nothing was
+        // shifted out.
+        var sc: i64 = b & 63;
+        var sh: i64 = a << sc;
+        if ((sh >> sc) == a) { return sh; }
+        if (a < 0) { return minv; }
+        return maxv;
     }
     var prod: i64 = a * b;
     if (a != 0) {

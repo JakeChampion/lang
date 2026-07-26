@@ -173,13 +173,14 @@ func Keywords() []string {
 // shifts (`<<=`, `>>=`) sit before the 2-char shifts so the
 // longest-prefix rule picks the right one.
 var multiPunct = []string{
-	"<<=", ">>=", "...",
+	"<<=", ">>=", "<<|", "...",
 	"..=", "..",
 	"==", "!=", "<=", ">=", "&&", "||", "<<", ">>", "=>", "|>",
 	"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
 	// Saturating arithmetic (#5542) — clamp to the operand type's
 	// [MIN, MAX] instead of wrapping. Listed after the compound
 	// assignments so `+=` still wins over a `+`-prefixed match.
+	// `<<|` sits up with the 3-char punctuators so it beats `<<`.
 	"+|", "-|", "*|",
 	"::",
 }

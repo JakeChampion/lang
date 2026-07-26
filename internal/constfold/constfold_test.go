@@ -173,6 +173,24 @@ func TestFoldRejectsConstantDivByZero(t *testing.T) {
 	}
 }
 
+// The saturating operators (#5542) are rejected in a constant
+// initialiser rather than folded: folding runs BEFORE the checker, so
+// no operand width — and therefore no clamp bound — is known yet.
+// Guessing one would silently pick i32's bounds for a u8 const.
+func TestFoldRejectsSaturatingOperators(t *testing.T) {
+	for _, src := range []string{
+		`const X: i32 = 1 +| 2;`,
+		`const X: i32 = 5 -| 2;`,
+		`const X: i32 = 3 *| 4;`,
+		`const X: i32 = 1 <<| 31;`,
+	} {
+		got := foldErr(t, src)
+		if !strings.Contains(got, "not allowed in integer constant expressions") {
+			t.Errorf("%s: error should reject the operator; got %v", src, got)
+		}
+	}
+}
+
 // Substitution reaches every expression position the language
 // supports — array elements, ternary arms, struct fields,
 // conditions inside loops and ifs. This guards against a regression

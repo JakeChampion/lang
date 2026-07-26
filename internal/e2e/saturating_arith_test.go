@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// The saturating operators `+|` / `-|` / `*|` (#5542) clamp to the operand
+// The saturating operators `+|` / `-|` / `*|` / `<<|` (#5542) clamp to the operand
 // type's [MIN, MAX] instead of wrapping. `+` / `-` / `*` keep their wrapping,
 // never-trapping semantics (docs/INTEGER-SEMANTICS.md) — this is purely
 // additive surface.
@@ -66,9 +66,41 @@ function main(): i32 {
     if ((m *| 2) != 18446744073709551615) { return 51; }
     if ((m -| m) != 0) { return 52; }
 
+    // Saturating shift-left. Unlike the other three it post-checks by
+    // shifting back: the negative-side pre-check bound would need a ceiling
+    // division that an arithmetic shift cannot express.
+    if ((1 <<| 30) != 1073741824) { return 70; }
+    if ((1 <<| 31) != 2147483647) { return 71; }
+    if ((2 <<| 30) != 2147483647) { return 72; }
+    if (((0 - 1) <<| 31) != i32min) { return 73; }
+    if (((0 - 2) <<| 31) != i32min) { return 74; }
+    if ((0 <<| 31) != 0) { return 75; }
+    if (((0 - 1) <<| 0) != (0 - 1)) { return 76; }
+    if (((0 - 1073741824) <<| 1) != i32min) { return 77; }
+    if ((1073741824 <<| 1) != 2147483647) { return 78; }
+    // The count is masked exactly as the wrapping shift masks it, so a
+    // count past the width wraps to a small one rather than saturating.
+    if ((3 <<| 32) != 3) { return 79; }
+    // u8 wraps into its 8-bit slot, so the round-trip has to see the
+    // wrapped value: 200u8 << 1 is 144, which shifts back to 72, not 200.
+    if ((u <<| v) != 255) { return 80; }
+    if ((v <<| (1 as u8)) != 20) { return 81; }
+    if (((100 as u8) <<| (1 as u8)) != 200) { return 82; }
+    if (((200 as u8) <<| (1 as u8)) != 255) { return 83; }
+    if ((p <<| (1 as u32)) != 4294967295) { return 84; }
+    if (((1 as u32) <<| (31 as u32)) != 2147483648) { return 85; }
+    if ((q <<| (1 as u32)) != 20) { return 86; }
+    if ((x <<| (1 as i64)) != 9223372036854775807) { return 87; }
+    if (((1 as i64) <<| (62 as i64)) != 4611686018427387904) { return 88; }
+    if (((1 as i64) <<| (63 as i64)) != 9223372036854775807) { return 89; }
+    if (((0 - 1) as i64 <<| (63 as i64)) != i64min) { return 90; }
+    if ((m <<| (1 as u64)) != 18446744073709551615) { return 91; }
+    if (((1 as u64) <<| (63 as u64)) != 9223372036854775808) { return 92; }
+
     // The wrapping operators are unchanged.
     if ((a + b) != i32min) { return 60; }
     if ((u + v) != 4) { return 61; }
+    if ((1 << 31) != i32min) { return 62; }
     return 0;
 }
 `
@@ -85,6 +117,14 @@ function main(): i32 {
     if ((10 -| 3 -| 4) != 3) { return 3; }
     // Shift is looser than the additive tier: 1 << 2 +| 1 == 1 << 3 == 8.
     if ((1 << 2 +| 1) != 8) { return 4; }
+    // Saturating shift sits in the same tier as the wrapping one:
+    // 1 <<| 2 + 1 == 1 <<| 3 == 8.
+    if ((1 <<| 2 + 1) != 8) { return 5; }
+    // Left-associative within the shift tier: (1 <<| 2) <<| 3 == 32.
+    if ((1 <<| 2 <<| 3) != 32) { return 6; }
+    // ... and looser than the comparison it feeds is tighter than: the
+    // shift happens first, so this is (1 <<| 3) > 4.
+    if (!(1 <<| 3 > 4)) { return 7; }
     return 0;
 }
 `
