@@ -2083,30 +2083,6 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 					continue
 				}
 				typeName = rt.Name
-			case ast.StringType:
-				typeName = "string"
-			case ast.NumberType:
-				// Same width/sign mapping the dispatch path uses
-				// for numeric method calls — keeps receiver and
-				// call-site naming in lockstep.
-				switch {
-				case rt.NormalWidth() == 64 && rt.IsSigned():
-					typeName = "i64"
-				case rt.NormalWidth() == 64 && !rt.IsSigned():
-					typeName = "u64"
-				case !rt.IsSigned():
-					typeName = "u32"
-				default:
-					typeName = "i32"
-				}
-			case ast.FloatType:
-				if rt.NormalWidth() == 64 {
-					typeName = "f64"
-				} else {
-					typeName = "f32"
-				}
-			case ast.BoolType:
-				typeName = "boolean"
 			case ast.ArrayType:
 				// Element-polymorphic method on an owned array,
 				// `function (xs: T[]) first(): T`. Registered under the
@@ -2132,8 +2108,21 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				}
 				typeName = "slice"
 			default:
-				c.errfCode(fn.P, "E021", "method receiver type must be a struct, enum, array, slice, or built-in type, got %s", fn.Receiver.Type)
-				continue
+				// Every SCALAR receiver (string / str / char / the
+				// numeric widths / float / bool) takes its surface name
+				// from methodTypeName -- the same function the call-site
+				// dispatch uses. This was a copy of that switch carrying
+				// a comment promising the two stayed "in lockstep"; they
+				// drifted the moment `u8` got its own name (#5629 slice
+				// 2), registering a u8 receiver under "u32" while calls
+				// looked it up under "u8". One function, both sites, so
+				// the next width can't reintroduce the skew.
+				n, ok := methodTypeName(fn.Receiver.Type)
+				if !ok {
+					c.errfCode(fn.P, "E021", "method receiver type must be a struct, enum, array, slice, or built-in type, got %s", fn.Receiver.Type)
+					continue
+				}
+				typeName = n
 			}
 			methodKey := typeName + "." + fn.Name
 			if _, dup := c.info.Methods[methodKey]; dup {
@@ -2731,6 +2720,8 @@ func methodTypeName(t ast.Type) (string, bool) {
 			return "i64", true
 		case rt.NormalWidth() == 64 && !rt.IsSigned():
 			return "u64", true
+		case rt.NormalWidth() == 8:
+			return "u8", true
 		case !rt.IsSigned():
 			return "u32", true
 		default:
@@ -11002,40 +10993,6 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				typeName = t.Name
 			case ast.EnumType:
 				typeName = t.Name
-			case ast.StringType:
-				_ = t
-				typeName = "string"
-			case ast.StrType:
-				// `str` (#4813) shares the `string` method surface --
-				// methods borrow their receiver, so dispatching a view
-				// through the string method table is sound.
-				_ = t
-				typeName = "string"
-			case ast.NumberType:
-				// Method dispatch on integer types names by
-				// width / signedness so a `t.to_string()` on
-				// an i64 value can resolve to a different
-				// (i64-aware) helper than the i32 variant.
-				switch {
-				case t.NormalWidth() == 64 && t.IsSigned():
-					typeName = "i64"
-				case t.NormalWidth() == 64 && !t.IsSigned():
-					typeName = "u64"
-				case !t.IsSigned():
-					typeName = "u32"
-				default:
-					typeName = "i32"
-				}
-			case ast.FloatType:
-				// f32 / f64 split same way.
-				if t.NormalWidth() == 64 {
-					typeName = "f64"
-				} else {
-					typeName = "f32"
-				}
-			case ast.BoolType:
-				_ = t
-				typeName = "boolean"
 			case ast.ArrayType:
 				// Generic array methods (today: `push`, `len`).
 				// Treated as if Array were a one-type-param
@@ -11052,6 +11009,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// future per-T method.
 				_ = t
 				typeName = "slice"
+			default:
+				// Every SCALAR receiver (string / str / char / the
+				// numeric widths / float / bool) names its method
+				// surface through methodTypeName. This was the THIRD
+				// copy of that width/sign switch -- declaration
+				// registration and the operator-overload path had the
+				// others -- and copies drift: `u8` collapsing into
+				// "u32" here is what left a byte with no surface of its
+				// own (#5629 slice 2). methodTypeName reports !ok for a
+				// receiver with no method surface, which leaves
+				// typeName empty and falls through to the existing
+				// unknown-method diagnostics.
+				if n, ok := methodTypeName(tt); ok {
+					typeName = n
+				}
 			}
 			if typeName != "" {
 				key := typeName + "." + fa.Field
@@ -12619,7 +12591,7 @@ func (c *checker) refineCallTypeArgsFromDest(e ast.Expr, dst ast.Type) {
 // `__assoc_<prim>_<f>`).
 func isPrimitiveTypeName(name string) bool {
 	switch name {
-	case "i32", "i64", "u32", "u64", "f32", "f64", "string", "boolean":
+	case "i32", "i64", "u8", "u32", "u64", "f32", "f64", "string", "boolean":
 		return true
 	}
 	return false
