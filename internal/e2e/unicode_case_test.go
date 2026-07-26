@@ -6,10 +6,13 @@ import "testing"
 // mapping (ASCII, Latin-1, Greek, Cyrillic, the code-point helpers, the
 // non-letter passthrough, the ß caveat) AND the character-class
 // predicates (CJK letter, Arabic-Indic digit, NBSP whitespace, Greek
-// upper/lower). The tables are large i32[] literals (~1450 entries
-// each) plus the range tables, so this also exercises big-array-literal
-// codegen on every backend. Each leg skips itself when its toolchain is
-// absent.
+// upper/lower).
+//
+// The tables are long STRING literals decoded in place (#5627), so this
+// also exercises big-string-literal codegen and the two decode paths —
+// constant-delta runs and alternating pair runs — plus the ASCII fast
+// path that fronts every entry point. Each leg skips itself when its
+// toolchain is absent.
 const unicodeCaseProg = `
 import "std/unicode" as unicode;
 function main(): i32 {
@@ -30,6 +33,21 @@ function main(): i32 {
     if (!unicode.is_digit(0x0669) || !unicode.is_alnum(97)) { return 14; }
     if (!unicode.is_whitespace(0xA0) || unicode.is_whitespace(97)) { return 15; }
     if (!unicode.is_upper(0x391) || !unicode.is_lower(0x3B1)) { return 16; }
+    // ASCII fast path vs decode path: the same prefix, both ways.
+    if (unicode.to_upper("abc 1!") != "ABC 1!") { return 17; }
+    if (unicode.to_upper("abc 1!é") != "ABC 1!É") { return 18; }
+    // Alternating pair run (Latin Extended-A) — the kind-1 decode.
+    if (unicode.to_lower_char(0x100) != 0x101) { return 19; }
+    if (unicode.to_upper_char(0x101) != 0x100) { return 20; }
+    if (unicode.to_upper("ăćĕ") != "ĂĆĔ") { return 21; }
+    // Large constant delta, and a non-BMP mapping (4-byte UTF-8).
+    if (unicode.to_upper_char(0x250) != 0x2C6F) { return 22; }
+    if (unicode.to_upper_char(0x10428) != 0x10400) { return 23; }
+    if (unicode.to_upper("𐐨") != "𐐀") { return 24; }
+    // eq_ignore_case streams both operands: KELVIN SIGN (3 bytes) folds
+    // to 'k' (1 byte), so equal text with unequal byte lengths.
+    if (!unicode.eq_ignore_case("K", "k")) { return 25; }
+    if (unicode.eq_ignore_case("abc", "ab")) { return 26; }
     return 42;
 }
 `
