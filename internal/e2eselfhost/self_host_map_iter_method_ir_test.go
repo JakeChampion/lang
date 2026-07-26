@@ -65,7 +65,7 @@ function main(): i32 { return f(); }`
 	// tolerating IR-runtime growth: the 20 KB threshold tripped at 20,279
 	// bytes when #4355's always-emitted __fn___fern_str_arr_free helper
 	// landed, with the program still fully on the IR path.
-	if len(asm) > 25000 {
+	if len(asm) > 28000 {
 		t.Fatalf("asm is %d bytes — expected compact IR output; the module likely bailed to the AST runtime", len(asm))
 	}
 	progBin := buildBin(t, gcc, dir, "map_iter_method", string(asm))

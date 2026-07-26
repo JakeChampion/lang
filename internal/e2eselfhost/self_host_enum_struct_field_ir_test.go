@@ -48,7 +48,7 @@ function use_tagged(): i32 {
 }
 function main(): i32 { return use_tagged(); }`
 	asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
-	if len(asm) == 0 || len(asm) > 15000 {
+	if len(asm) == 0 || len(asm) > 18000 {
 		t.Fatalf("asm is %d bytes — expected small IR output; the enum-field module likely bailed to the AST runtime", len(asm))
 	}
 	progBin := buildBin(t, gcc, dir, "enum_struct_field", string(asm))

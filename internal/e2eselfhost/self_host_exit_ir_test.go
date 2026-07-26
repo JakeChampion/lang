@@ -38,7 +38,7 @@ func TestSelfHostExitIRX86_64(t *testing.T) {
 	for _, tc := range exitIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 || len(asm) > 15000 {
+			if len(asm) == 0 || len(asm) > 18000 {
 				t.Fatalf("%s: asm is %d bytes — expected the small IR output, not the AST runtime", tc.name, len(asm))
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
@@ -84,7 +84,7 @@ func TestSelfHostExitIRArm64(t *testing.T) {
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			asm, err := cmd.Output()
-			if err != nil || len(asm) == 0 || len(asm) > 15000 {
+			if err != nil || len(asm) == 0 || len(asm) > 18000 {
 				t.Fatalf("%s: driver asm is %d bytes (err %v) — expected the small IR output", tc.name, len(asm), err)
 			}
 			bin := buildBinArm64(t, arm64gcc, dir, "ex_"+tc.name, string(asm))

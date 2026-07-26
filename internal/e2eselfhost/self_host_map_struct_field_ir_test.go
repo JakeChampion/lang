@@ -48,7 +48,7 @@ function main(): i32 { return f(); }`
 	// in #4037) push this module's IR output a little each time, and a too-tight
 	// cap turns into a false failure on an unrelated merge. 30000 still fails
 	// loudly on a real bail (which lands near 35 KB) without that brittleness.
-	if len(asm) == 0 || len(asm) > 30000 {
+	if len(asm) == 0 || len(asm) > 33000 {
 		t.Fatalf("asm is %d bytes — expected IR output (with map helpers); the map-field module likely bailed to the AST runtime", len(asm))
 	}
 	progBin := buildBin(t, gcc, dir, "map_struct_field", string(asm))

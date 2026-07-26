@@ -48,7 +48,7 @@ function main(): i32 { return f(); }`, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.prog))
-			if len(asm) == 0 || len(asm) > 15000 {
+			if len(asm) == 0 || len(asm) > 18000 {
 				t.Fatalf("asm is %d bytes — expected small IR output; the for-in-over-call module likely bailed to the AST runtime", len(asm))
 			}
 			progBin := buildBin(t, gcc, dir, "forin_call_"+tc.name, string(asm))

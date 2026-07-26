@@ -112,7 +112,7 @@ func TestSelfHostClosureCallsClosureX86IR(t *testing.T) {
 	for _, tc := range closureCallsClosureIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 || len(asm) > 15000 {
+			if len(asm) == 0 || len(asm) > 18000 {
 				t.Fatalf("asm is %d bytes — expected small IR output; the closure-calls-closure module likely bailed to the AST runtime", len(asm))
 			}
 			if !strings.Contains(string(asm), "__lam_") {

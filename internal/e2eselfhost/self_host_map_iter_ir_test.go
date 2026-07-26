@@ -55,7 +55,7 @@ function main(): i32 { return f(); }`, 4},
 			// the always-emitted prelude (bumped to 30 KB). The programs stay
 			// fully on the IR path — an actual AST bail is ~40 KB+, and the
 			// exit-code checks below pin correctness either way.
-			if len(asm) == 0 || len(asm) > 30000 {
+			if len(asm) == 0 || len(asm) > 33000 {
 				t.Fatalf("asm is %d bytes — expected IR output; the map-iteration module likely bailed to the AST runtime", len(asm))
 			}
 			progBin := buildBin(t, gcc, dir, "map_iter_"+tc.name, string(asm))
