@@ -3582,6 +3582,71 @@ func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads ma
 		}
 		return true
 	})
+	// Distinct-target append (#5608): `var ys = xs.append(v)`. The same COW
+	// induction as the self-rebind above — the result is xs's own buffer (the
+	// rc==1 in-place path) or a fresh copy of it — so the receiver occurrence
+	// does not end xs's freshness either, and the rc pairing balances on both
+	// paths: in-place the grow helper bumps xs to rc 2 and ys's owner drops it
+	// back, on the copy path xs stays at rc 1 and its exit sweep frees the
+	// orphan.
+	//
+	// Sound ONLY when this is the receiver's single occurrence in the whole
+	// body. The in-place path mutates xs's buffer in place, so any later read
+	// of xs would observe the longer array — the #4827 hazard appendForcesCopy
+	// guards at emit time. Requiring one occurrence means no later read exists,
+	// which is strictly stronger than what appendForcesCopy needs, so the two
+	// cannot disagree.
+	// Built lazily on the first candidate: most functions contain no
+	// distinct-target append, and this walk is on the compile-hot path.
+	var allOccurrences map[string][]*ast.Ident
+	occurrencesOf := func(name string) []*ast.Ident {
+		if allOccurrences == nil {
+			allOccurrences = map[string][]*ast.Ident{}
+			ast.Walk(fn.Body, func(n ast.Node) bool {
+				if id, ok := n.(*ast.Ident); ok {
+					allOccurrences[id.Name] = append(allOccurrences[id.Name], id)
+				}
+				return true
+			})
+		}
+		return allOccurrences[name]
+	}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		v, ok := n.(*ast.Var)
+		if !ok || v.Init == nil {
+			return true
+		}
+		call, ok := v.Init.(*ast.Call)
+		if !ok {
+			return true
+		}
+		callee, ok := call.Callee.(*ast.Ident)
+		if !ok || callee.Name != "__method_Array_push" || len(call.Args) != 2 {
+			return true
+		}
+		recv, ok := call.Args[0].(*ast.Ident)
+		if !ok || recv.Name == v.Name {
+			return true // the self-rebind form is handled above
+		}
+		decl, isDecl := decls[recv.Name]
+		if !isDecl || decl.Type == nil {
+			return true // a param receiver never qualifies (not a Var decl)
+		}
+		slots, ok := cowArgSlots(callee.Name, decl.Type, len(call.Args))
+		if !ok {
+			return true
+		}
+		if !exprNoParamEscape(call.Args[1], slots[0], info, variantPayloads, q, nil) {
+			return true
+		}
+		// A `var x = …` declaration contributes no Ident node for x (Var.Name
+		// is a string), so a single occurrence means the receiver is used
+		// exactly once — here — and never read again.
+		if occ := occurrencesOf(recv.Name); len(occ) == 1 && occ[0] == recv {
+			cowUse[recv] = true
+		}
+		return true
+	})
 	tainted := map[string]bool{}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		if id, ok := n.(*ast.Ident); ok && !inReturn[id] && !cowUse[id] {
@@ -3742,6 +3807,23 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		// local never entered freshLocals.
 		if id.Name == "map_new" {
 			return true
+		}
+		// `xs.append(v)` returns the receiver's OWN buffer (the rc==1 in-place
+		// path) or a fresh copy of it — never anything derived from the element
+		// argument's heap. So the result is param-free exactly when the
+		// receiver is, provided the element itself can't strand a param alias
+		// in the buffer. Mirrors rhsTainted's receiver-aliasing arms for
+		// `__method_Map_set` / `__method_Array_set`, and is the piece that lets
+		// `var ys = xs.append(v); return ys;` prove fresh (#5608). Without it
+		// the generic any-arg rule below rejected the call and the caller's
+		// binding fell back to a non-freeing dec.
+		if id.Name == "__method_Array_push" && len(x.Args) == 2 {
+			var elem ast.Type
+			if at, isArr := slot.(ast.ArrayType); isArr {
+				elem = at.Elem
+			}
+			return exprNoParamEscape(x.Args[0], slot, info, variantPayloads, q, freshLocals) &&
+				exprNoParamEscape(x.Args[1], elem, info, variantPayloads, q, freshLocals)
 		}
 		// User function / method call: its result can't contain OUR args iff the
 		// callee itself never lets a param escape. Builtins / locals / unknowns
