@@ -176,8 +176,10 @@ tier → leak.
     guard `TestSelfHostModloadPerModuleWholeCompilerX86_64` already exists; only
     the gen1 self-reproduction proof needs the hoist to become CI-cheap.
 
-  **BLOCKER found (2026-07-26 attempt) — a self-host codegen gap on
-  nested-aggregate return.** The plan above was implemented end-to-end and
+  **BLOCKER found (2026-07-26 attempt) — a self-host codegen bug triggered by
+  the hoist, root cause NOT yet isolated (initial "nested-aggregate return"
+  hypothesis refuted by a minimal repro — see below).** The plan above was
+  implemented end-to-end and
   *works on the native (Go-built) driver*: the hoist (a `compute_wp_tables`
   bundling the 22 side-tables) + a **batched** `-per-module-emit-all -out-dir DIR
   -unit-range LO:HI` (batches of ~8 units per process, sharing the derivation,
@@ -190,27 +192,45 @@ tier → leak.
   self-host backend miscompiles the bundle. Isolated:
   - It is NOT the table values (the emitted output was byte-identical) — it is
     the **compiler's own codegen** of the bundle-carrying functions.
-  - Tried carrying the bundle as a **24-field struct** (segfault) and as a
-    **`string[][]`** (segfault). `compute_wp_tables` is the ONLY function in the
-    whole self-host source that returns a `string[][]` — a **nested-aggregate
-    return** (array-of-arrays / struct-of-arrays) the self-host backend has never
-    had to codegen. The native backend handles it, which is why the driver runs
-    and the output is correct; the self-host emit of that return/RC pattern is
-    the gap.
+  - The bundle was carried first as a **24-field struct** and then as a
+    **`string[][]`** — BOTH segfault the self-host-built compiler. `compute_wp_tables`
+    is the ONLY function in the whole self-host source that returns a `string[][]`.
   - A read-after-consume UAF in `emit_module_ir_unit_wpt` (indexing the bundle
-    after passing it to `emit_module_funcs`, which consumes it) was also found
-    and fixed, but the segfault persists → the nested-aggregate-return codegen is
-    the primary gap.
+    after passing it to `emit_module_funcs`, which consumes it) was found and
+    fixed; the segfault persisted regardless.
 
-  **So slice 2 is gated on a self-host codegen fix, not just orchestration.**
-  Next attempt should FIRST land a minimal repro (a self-host function that
-  returns/holds a `string[][]` and is shared across calls, differential vs
-  native) and fix the self-host nested-aggregate-return codegen, OR redesign the
-  bundle as a **flat representation** that avoids the nested-aggregate boundary
-  (e.g. 24 individual `string[]` params computed inline in the emit-all setup and
-  threaded through `emit_module_funcs` — no aggregate return/pass), before
-  re-attempting the hoist. This is a `internal/`-vs-self-host convergence item
-  (a native-only-working pattern), so it belongs on the #4451 debt tracker.
+  **Minimal repro attempted — plain `string[][]` is NOT the cause (2026-07-26,
+  correcting the first hypothesis).** A throwaway differential
+  (`RUN_NESTED_AGG_REPRO`, `asm_run` self-host IR emit vs the interpreter oracle)
+  exercised five `string[][]` shapes on the IR path: return a locally-built
+  `string[][]` (`return t;`, not a literal), return-then-index, share the same
+  `string[][]` across two reader calls, **extract elements into locals then let the
+  container die**, and extract-in-caller-then-consume-the-container-then-use — the
+  exact `emit_module_funcs` / `emit_module_ir_unit_wpt` patterns. **ALL FIVE PASS**
+  (route "ir", exit-match the interpreter). So plain nested-aggregate
+  return/extract/share/extract-then-free all lower correctly in isolation — the
+  "self-host can't codegen `string[][]` return" hypothesis is **refuted**. The
+  segfault is **contextual to the full self-compile**, not the `string[][]` shape.
+  Leading remaining hypotheses (unverified):
+  - **Whole-program-analysis shift.** Adding `compute_wp_tables` + the `wpt_*`
+    accessors to the compiler changes `all_funcs`, so the ~22 side-tables (derived
+    OVER `all_funcs`) reclassify some *other* function, exposing a latent codegen
+    bug elsewhere — which would explain why no self-contained `string[][]` program
+    reproduces it.
+  - **Multi-boundary re-extraction of the same container.** In the compiler the
+    one `wpt` is extracted 22× in `emit_module_ir_gated`, passed to
+    `emit_module_ir_unit_wpt` (extracted 2×), passed again to `emit_module_funcs`
+    (extracted 22×) — a depth the repro did not chain.
+
+  **So slice 2 is gated on isolating + fixing this, not just orchestration.** Next
+  attempt should NOT re-try the `string[][]` repro (proven to pass); instead
+  **bisect the refactor** against `TestSelfHostModloadPerModuleWholeCompilerX86_64`
+  (~5 min/step) to find the minimal triggering change, or inspect the
+  self-host-emitted asm for `compute_wp_tables` / `emit_module_funcs`. A
+  **flat-representation redesign** (24 individual `string[]` params computed inline
+  in the emit-all setup and threaded through `emit_module_funcs` — no aggregate
+  return/pass) may sidestep it regardless of root cause and is the lower-risk path
+  to re-attempt the hoist. `internal/`-vs-self-host convergence item (#4451).
 
 - **Slice 3 — replace the now-unreachable AST fallbacks.** Once slice 2 makes the
   merged path unreachable, replace `asm.emit_module` at the sites above with a
