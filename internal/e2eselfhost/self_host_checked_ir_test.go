@@ -37,7 +37,7 @@ var checkedIRCases = []struct {
 	// u8: clamp low is 0, result in range by construction.
 	{"u8-add-overflow", `function main(): i32 { var u: u8 = 250; var w: u8 = 10; match (u +? w) { Some(v) => { return 6; }, None => { return 21; } } }`, 21},
 	{"u8-sub-underflow", `function main(): i32 { var u: u8 = 250; var w: u8 = 10; match (w -? u) { Some(v) => { return 7; }, None => { return 22; } } }`, 22},
-	{"u8-sub-ok", `function main(): i32 { var u: u8 = 250; var w: u8 = 10; match (u -? w) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 240},
+	{"u8-sub-ok", `function main(): i32 { var u: u8 = 250; var w: u8 = 10; match (u -? w) { Some(v) => { if ((v as i32) == 240) { return 24; } return 98; }, None => { return 99; } } }`, 24},
 	{"u8-mul-overflow", `function main(): i32 { var u: u8 = 250; var w: u8 = 10; match (u *? w) { Some(v) => { return 8; }, None => { return 23; } } }`, 23},
 
 	// u32.

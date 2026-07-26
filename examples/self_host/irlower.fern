@@ -4101,6 +4101,24 @@ pub function is_chk_op(op: string): boolean {
     return op == "+?" || op == "-?" || op == "*?";
 }
 
+// chk_opt_type_tag is the "Option[T]" tag a checked binary (`+?` / `-?` / `*?`)
+// evaluates to, T being the operand width. Option-consuming positions (a
+// `match` scrutinee, a `?`) resolve the scrutinee's Option type by walking the
+// expression; without this a `match (a +? b)` can't recover the Some payload's
+// type and bails to the AST path. The width detection mirrors
+// lower_checked_binary's `kind`.
+pub function chk_opt_type_tag(b: parser.ExprBinary, s: LowerState): string {
+    if (infer_expr_width(b.left, s) == 64 || infer_expr_width(b.right, s) == 64) {
+        if (expr_is_u64(b.left, s) || expr_is_u64(b.right, s)) { return "Option[u64]"; }
+        return "Option[i64]";
+    }
+    if (expr_is_u32(b.left, s) || expr_is_u32(b.right, s)) { return "Option[u32]"; }
+    // u8 has no distinct Option payload representation — it rides an i32 slot
+    // (op_opt_make stores the 4-byte wrapped value), so the Some(v) arm binds v
+    // as i32; "Option[u8]" isn't a payload tag the arm reader recognises.
+    return "Option[i32]";
+}
+
 // chk_overflow pushes the overflow boolean for a checked binary. It is the
 // SAME clamp condition lower_sat_binary tests (so it inherits that shape's
 // per-backend proof), OR'd across the two saturation directions for
@@ -9662,6 +9680,10 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
     match (inner) {
         parser.ExprCall(oc0) => {
             if (oc0.ty.len() >= 7 && (oc0.ty[0:7] == "Option[" || oc0.ty[0:7] == "Result[")) { return oc0.ty; }
+        },
+        // `(a +? b)?` — a checked arithmetic operand (#5542) is Option[T].
+        parser.ExprBinary(ob) => {
+            if (is_chk_op(ob.op)) { return chk_opt_type_tag(ob, s); }
         },
         _ => {}
     }
@@ -15290,6 +15312,12 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                                     },
                                     _ => {}
                                 }
+                            },
+                            // `match (a +? b)` — a checked arithmetic scrutinee
+                            // (#5542) evaluates to Option[T] (T the operand
+                            // width). Recover it so the Some(v) arm binds v.
+                            parser.ExprBinary(scb) => {
+                                if (is_chk_op(scb.op)) { srt = chk_opt_type_tag(scb, ms); }
                             },
                             _ => {}
                         }
