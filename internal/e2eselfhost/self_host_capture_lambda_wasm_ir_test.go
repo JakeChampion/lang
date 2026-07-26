@@ -51,6 +51,13 @@ func TestSelfHostCaptureLambdaWasmIR(t *testing.T) {
 		{"arr-literal-index", `function main(): i32 { var a = [3, 5, 9]; var third = function(): i32 { return a[2]; }; return third(); }`, 9},
 		{"strarr-literal-capture", `function main(): i32 { var a = ["x", "y"]; var len = function(): i32 { return a.len(); }; return len(); }`, 2},
 		{"struct-literal-capture", `struct P { x: i32 } function main(): i32 { var p = P { x: 42 }; var get = function(): i32 { return p.x; }; return get(); }`, 42},
+		// Nested capturing closure — inner captures the OUTER lambda's own capture
+		// (`a` flows main → outer → inner). Before unwrap_sole_iife_return the
+		// block-body `outer` lifted to `[return (IIFE)()]` with `inner` buried in
+		// the IIFE, so it bailed to the wasm AST emitter which emitted `unknown
+		// local $a` (a runtime trap). Now the IIFE is beta-reduced inline so inner
+		// lifts and the module stays on the wasm IR path.
+		{"nested-capture-transitive", `function main(): i32 { var a: i32 = 10; var outer = () => { var b: i32 = 20; var inner = () => a + b; inner() }; return outer(); }`, 30},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

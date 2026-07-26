@@ -39642,6 +39642,41 @@ function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], struct
 // lambda was lifted (keeping lambda-free modules byte-identical), else a module
 // whose bodies reference the hoisted __lam_<k> functions, with those functions
 // appended.
+// unwrap_sole_iife_return beta-reduces a function whose ENTIRE body is
+// `return (() => { … })()` — a 0-arg immediately-invoked lambda — to just that
+// lambda's body. A block-body arrow lambda `() => { STMTS; value }` is
+// represented as exactly this IIFE-return, so once such a lambda is lifted to a
+// `__lam_N`, its body is `[return (IIFE)()]` and any lambda NESTED in the block
+// stays buried inside the IIFE where closure_lift_one never descends → the inner
+// lambda doesn't lift and the module bails to AST (broken on wasm). Inlining the
+// IIFE (rather than hoisting it — which breaks enclosing-loop break/continue and
+// match-expression payloads) is semantically neutral: no function boundary is
+// added, so control flow and captures resolve exactly as before, and the block's
+// nested lambdas become ordinary top-level statements the next closure_lift_one
+// round lifts. Only the exact sole-`return`-0-arg-IIFE-0-args shape is touched.
+function unwrap_sole_iife_return(fd: parser.FuncDecl): parser.FuncDecl {
+    if (fd.body.len() != 1) { return fd; }
+    match (fd.body[0]) {
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprCall(c) => {
+                    if (c.args.len() != 0) { return fd; }
+                    match (c.callee) {
+                        parser.ExprLambda(lam) => {
+                            if (lam.params.len() != 0) { return fd; }
+                            return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: lam.body, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str };
+                        },
+                        _ => { return fd; }
+                    }
+                },
+                _ => { return fd; }
+            }
+        },
+        _ => { return fd; }
+    }
+    return fd;
+}
+
 pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
     // Fill omitted trailing arguments from default parameter values before the
     // IR path inspects the module, so `f(5)` to `f(a, b = 128)` reaches the IR
@@ -39698,6 +39733,11 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
     var wi: i32 = 0;
     while (wi < worklist.len()) {
         var fd: parser.FuncDecl = worklist[wi];
+        // 0-pre. Beta-reduce a `return (() => {…})()` sole body (a lifted
+        // block-body arrow lambda) so nested lambdas in the block become ordinary
+        // statements the lifts below can reach (#nested-capture). Inline, not
+        // hoist — control flow + captures stay in scope.
+        fd = unwrap_sole_iife_return(fd);
         // 0. Box captured-and-mutated scalar locals into 1-element array cells so
         // a closure's write to a captured outer scalar is shared by reference
         // (#2850). Must run BEFORE the closure lifts so they see the boxed cell

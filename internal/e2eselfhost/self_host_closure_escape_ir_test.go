@@ -93,6 +93,16 @@ var closureEscapeCases = []struct {
 	// left out of the closure's capture list. The guard then read garbage →
 	// SIGSEGV. Now the collector walks the guard, so `threshold` is captured.
 	{"capture-in-guard", "enum Opt { Has(i32), Empty } function apply(f: () => i32): i32 { return f(); } function main(): i32 { var threshold: i32 = 5; var o: Opt = Opt.Has(7); var f = () => match (o) { Has(v) when v > threshold => 100, _ => 0 }; return apply(f); }", 100},
+	// Nested capturing closure — the inner lambda captures the OUTER lambda's own
+	// captured variable (`a` flows main → outer → inner). A block-body arrow
+	// lambda is a `return (() => {…})()` IIFE, so once `outer` lifts to `__lam_N`
+	// its body is `[return (IIFE)()]` and `inner` stayed buried in the IIFE where
+	// closure_lift_one never descended → `inner` didn't lift → the module bailed
+	// to AST (correct on x86, but broken WAT `unknown local $a` on wasm).
+	// unwrap_sole_iife_return now beta-reduces that IIFE inline so `inner` lifts.
+	{"nested-capture-transitive", "function main(): i32 { var a: i32 = 10; var outer = () => { var b: i32 = 20; var inner = () => a + b; inner() }; return outer(); }", 30},
+	// Minimal: inner captures ONLY the transitive `a` (no outer local).
+	{"nested-capture-transitive-only", "function main(): i32 { var a: i32 = 10; var outer = () => { var inner = () => a + 1; inner() }; return outer(); }", 11},
 }
 
 // TestSelfHostClosureEscapeIRX86_64 — escaping var-bound closures through the
