@@ -176,6 +176,42 @@ tier → leak.
     guard `TestSelfHostModloadPerModuleWholeCompilerX86_64` already exists; only
     the gen1 self-reproduction proof needs the hoist to become CI-cheap.
 
+  **BLOCKER found (2026-07-26 attempt) — a self-host codegen gap on
+  nested-aggregate return.** The plan above was implemented end-to-end and
+  *works on the native (Go-built) driver*: the hoist (a `compute_wp_tables`
+  bundling the 22 side-tables) + a **batched** `-per-module-emit-all -out-dir DIR
+  -unit-range LO:HI` (batches of ~8 units per process, sharing the derivation,
+  each a fresh process so the per-window emit's ~0.4 GB net working set — which
+  is NOT reclaimed within one process, so all 35 units in one process OOM ~16 GB
+  — is released on exit) emitted the whole compiler **byte-identically to the
+  per-process path, ~2.1× faster** (238 s vs 560 s), no OOM. **But the
+  self-host-BUILT compiler segfaults**: the merged path routes trivial programs
+  through `emit_module_ir_gated → compute_wp_tables` (asm.fern:7345), and the
+  self-host backend miscompiles the bundle. Isolated:
+  - It is NOT the table values (the emitted output was byte-identical) — it is
+    the **compiler's own codegen** of the bundle-carrying functions.
+  - Tried carrying the bundle as a **24-field struct** (segfault) and as a
+    **`string[][]`** (segfault). `compute_wp_tables` is the ONLY function in the
+    whole self-host source that returns a `string[][]` — a **nested-aggregate
+    return** (array-of-arrays / struct-of-arrays) the self-host backend has never
+    had to codegen. The native backend handles it, which is why the driver runs
+    and the output is correct; the self-host emit of that return/RC pattern is
+    the gap.
+  - A read-after-consume UAF in `emit_module_ir_unit_wpt` (indexing the bundle
+    after passing it to `emit_module_funcs`, which consumes it) was also found
+    and fixed, but the segfault persists → the nested-aggregate-return codegen is
+    the primary gap.
+
+  **So slice 2 is gated on a self-host codegen fix, not just orchestration.**
+  Next attempt should FIRST land a minimal repro (a self-host function that
+  returns/holds a `string[][]` and is shared across calls, differential vs
+  native) and fix the self-host nested-aggregate-return codegen, OR redesign the
+  bundle as a **flat representation** that avoids the nested-aggregate boundary
+  (e.g. 24 individual `string[]` params computed inline in the emit-all setup and
+  threaded through `emit_module_funcs` — no aggregate return/pass), before
+  re-attempting the hoist. This is a `internal/`-vs-self-host convergence item
+  (a native-only-working pattern), so it belongs on the #4451 debt tracker.
+
 - **Slice 3 — replace the now-unreachable AST fallbacks.** Once slice 2 makes the
   merged path unreachable, replace `asm.emit_module` at the sites above with a
   per-module call or a clean error. Note the `asm_ir_run.fern:158` fallback is
