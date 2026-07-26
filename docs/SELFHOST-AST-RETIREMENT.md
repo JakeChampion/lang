@@ -261,16 +261,25 @@ tier → leak.
   **PASSES** — the self-host-built compiler no longer segfaults, and the emit is
   byte-identical (same derivation + `append_dyn`, just relocated). This confirms
   the flat individual-params shape is the fix.
-  - **Step 2 (remaining): emit-all sharing.** Add an `emit_module_ir_unit_flat`
-    that takes the pre-computed bases, and re-add the batched
-    `-per-module-emit-all` (compute `compute_wp_bases` ONCE in the emit-all setup,
-    pass the individual bases to each unit) to realize the ~2.1× speedup. Watch
-    one RC subtlety here: the shared bases are passed to EVERY unit, and
-    `emit_module_funcs` does `append_dyn(b_srf, mod.trait_reqs)` — `append_dyn`
-    returns the base unchanged when `trait_reqs` is empty and COWs when the base
-    is shared (rc>1), so shared reuse should hold, but validate it (per-module,
-    then emit-all byte-identity + speedup, then fixpoint). Do NOT re-run the
-    `string[][]` repro (proven to pass) or the analysis-shift probe (refuted).
+  - **Step 2 is DONE + VALIDATED (2026-07-26).** `emit_module_ir_unit_flat` takes
+    the pre-computed bases (the public `emit_module_ir_unit` is now a thin wrapper
+    that computes `compute_wp_bases` + delegates), and the batched
+    `-per-module-emit-all` is re-added: it computes `compute_wp_bases` ONCE per
+    process, extracts the bases into individual `string[]` locals, and passes them
+    to every unit's `emit_module_ir_unit_flat`. `TestSelfHostPerModuleEmitAllX86_64`
+    (env-gated `RUN_EMITALL_CHECK=1`, ~19 min) is GREEN: emit-all is
+    **byte-identical to the per-process path across all 35 units**, **2.6× faster**
+    (278 s vs 720 s), links into a working compiler, no OOM. The append_dyn
+    COW-on-shared concern held — shared bases reuse correctly across the batch.
+
+  **So slice 2's speedup is landed.** What remains to fully close slice 2 (make
+  the merged AST path unreachable) is the CI wiring: use `-per-module-emit-all` to
+  drive a per-module fixpoint guard (the gen0 per-module path is already fast; the
+  gen1 self-reproduction is now ~2.6× cheaper per emit, though still heavy — decide
+  between a batched-parallel CI lane vs the env-gated proof), then repoint the
+  bootstrap/fixpoint drivers off the merged bundle (slice 3) and delete the AST
+  emitters (slice 5). Do NOT re-run the `string[][]` repro (proven to pass) or the
+  analysis-shift probe (refuted).
 
   `internal/`-vs-self-host convergence item (#4451).
 

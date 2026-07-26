@@ -5832,7 +5832,21 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
 //            can be emitted across separate processes without any single emit's
 //            leak-mode heap crossing the arena ceiling. Only non-entry library
 //            shards are windowed; the entry emits its full window.
+// emit_module_ir_unit computes the whole-program side-table bases and delegates
+// to emit_module_ir_unit_flat. Single-unit callers (the differential driver,
+// gated) use this form — the derivation costs the same as before. The
+// single-process `-per-module-emit-all` path instead computes the bases ONCE and
+// calls emit_module_ir_unit_flat directly for every unit, sharing them (#3457
+// slice 2 step 2). The bases cross as a `string[][]` bundle that flat extracts
+// straight into emit_module_funcs's INDIVIDUAL params (never re-extracted into
+// locals + re-passed — the RC-miscount blocker fixed in step 1). The bundle is a
+// SINGLE param rather than 23 individual params so flat's arm64 stack frame stays
+// within `stur`'s ±256 offset range (23 params overflowed it).
 pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], lo: i32, hi: i32, cache: irlower.LowerResult[]): string {
+    return emit_module_ir_unit_flat(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, compute_wp_bases(all_funcs, all_structs));
+}
+
+pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], lo: i32, hi: i32, cache: irlower.LowerResult[], b: string[][]): string {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
     // matches the AST path, which gets the same via module_with_builtins.
@@ -5851,13 +5865,11 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // Per-module: the entry exports its shared runtime entry points so sibling
     // library modules can link their `call __fern_*` externs against them.
     if (is_entry && globl_defs) { s = emit_runtime_globls(s); }
-    // Derive the whole-program side-table bases once and pass them to
-    // emit_module_funcs as INDIVIDUAL params (never as a shared string[][] across
-    // the boundary — #3457 slice 2). wpb is extracted only here; the strfldok /
-    // FNPTR need seeding below recomputes its two columns directly rather than
-    // re-reading wpb after its elements were passed as args.
-    var wpb: string[][] = compute_wp_bases(all_funcs, all_structs);
-    s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache, wpb[0], wpb[1], wpb[2], wpb[3], wpb[4], wpb[5], wpb[6], wpb[7], wpb[8], wpb[9], wpb[10], wpb[11], wpb[12], wpb[13], wpb[14], wpb[15], wpb[16], wpb[17], wpb[18], wpb[19], wpb[20], wpb[21], wpb[22]);
+    // The side-table bases arrive as INDIVIDUAL params (b_*), threaded straight to
+    // emit_module_funcs. The strfldok / FNPTR need seeding below recomputes its
+    // two columns directly (all_funcs is in scope) rather than re-reading a base
+    // that was just passed as an arg.
+    s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15], b[16], b[17], b[18], b[19], b[20], b[21], b[22]);
     // #4355: admit the replaced-STRING-field arm per type, from the
     // WHOLE-PROGRAM read scan (all_funcs — a unit-local list would
     // under-count the reads and re-open the UAF the scan exists to prevent;
