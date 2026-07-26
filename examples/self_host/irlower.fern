@@ -3249,6 +3249,11 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
                     if (cid.name == "random_bytes") { return true; }
+                    // read_all_stdin() reads fd 0 to EOF into ONE string box, so
+                    // its result str-tracks (`s.len()` dispatches to str_len, the
+                    // binding takes the string reclaim path). Unlike read_line it
+                    // is a bare string, not an Option[string].
+                    if (cid.name == "read_all_stdin" && c.args.len() == 0) { return true; }
                     // string_from_bytes(arr) packs bytes into a fresh string box.
                     if (cid.name == "string_from_bytes") { return true; }
                     // read_line() returns Option[string] now (#4369), opt-tracked via
@@ -7490,6 +7495,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // rejects read_int modules; x86 / arm64 lower it.
                     if (cid.name == "read_int" && c.args.len() == 0) {
                         return s.emit(ir.op_read_int());
+                    }
+                    // Built-in `read_all_stdin()` — read fd 0 to EOF into one
+                    // string box (#5623). A value op; the result str-tracks via
+                    // expr_is_str's matching case. Like read_int there is no wasm
+                    // stdin, so wasm_eligible rejects read_all_stdin modules;
+                    // x86 / arm64 lower it.
+                    if (cid.name == "read_all_stdin" && c.args.len() == 0) {
+                        return s.emit(ir.op_read_all_stdin());
                     }
                     // Built-in `stdin()` — returns a Reader. As in the AST backend
                     // (asm.fern), a Reader is just its fd, and fd 0 is stdin; so the

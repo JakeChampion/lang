@@ -689,6 +689,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // __fern_read_int, reused via the read_int need). Push x0 (the value).
             s = s.need("read_int");
             s = s.write("    bl __fern_read_int\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 209) {  // read_all_stdin
+            // no args -> read fd 0 to EOF into ONE fresh rc-headered string box
+            // (asm_arm64.emit_runtime's __fern_read_all_stdin_rc, reused via the
+            // read_all_stdin need). Push x0 (the box).
+            s = s.need("heap"); s = s.need("read_all_stdin");
+            s = s.write("    bl __fern_read_all_stdin_rc\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 168) {  // read_line
             // no args -> read one line from stdin into a fresh string box
             // (asm_arm64.emit_runtime's __fern_read_line, reused via str_read_line).

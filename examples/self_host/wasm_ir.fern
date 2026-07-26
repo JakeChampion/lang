@@ -1219,6 +1219,12 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // the AST path, so the op-blocklist below need not be exhaustive (#6).
         && all_lowered_ok(cache)
         && !module_erased_wide(cache)
+        // read_all_stdin (#5623) reads fd 0 to EOF into one string box. The
+        // register backends lower it via __fern_read_all_stdin; wasm has stdin
+        // (read_int / read_line already lower via fd_read), so this is a plain
+        // not-yet-written runtime rather than an impossibility — a deferral, not
+        // an error endpoint. Excluded until the fd_read loop + box is written.
+        && !module_emits_op_cached(cache, "read_all_stdin")
         // xs.join(sep) NOW lowers on the wasm IR path (#5328): the register
         // backends' __fern_arr_str_join runtime call is served by a matching
         // $__fern_arr_str_join shim over the $__fern_str_join WAT worker
