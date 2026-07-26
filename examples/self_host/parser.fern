@@ -5066,7 +5066,30 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // and stay unpromoted: feeds_user_parametric excludes their bases, so a
         // `find[T,I](): Option[T]` — bindable from NO call site — is untouched.
         var ret_bindable: boolean = feeds_user_parametric(ret_type, un) || feeds_map_typearg(ret_type, un);
-        if (feeds && (bindable || ret_bindable)) { bounded_tps = bounded_tps.append(un); bound_names = bound_names.append(""); }
+        var promote: boolean = feeds && (bindable || ret_bindable);
+        // (c) wide-container promotion: an erased fn that takes a BARE-SCALAR
+        // param (`x: T`, which carries a wide i64/f64 value) and RETURNS a
+        // single-type-arg BUILTIN container of it (`Option[T]` / `T[]`) is
+        // erased-safe on the register backends but NOT on wasm — the container's
+        // box LAYOUT shifts with payload width (an Option is 8B/@4 for i32 but
+        // 16B/@8 for i64/f64; an array stride is 4 vs 8), so a wide value returned
+        // in an erased container can't be read back unambiguously. Monomorphising
+        // to a CONCRETE container (`some1__i64(x: i64): Option[i64]`) makes every
+        // backend lower it via the existing container path, so the wasm module no
+        // longer defers to AST. The bare-scalar-param gate excludes `map`/`filter`
+        // (ARRAY params — the wide value rides an i32 array pointer, never trips
+        // the erased-wide gate, and promoting them would over-monomorphise the
+        // stdlib). `x: T` is bindable from the call arg, so the clone's T resolves.
+        //
+        // Guarded to SINGLE-type-param functions (`all_tp_count == 1`): promoting
+        // ONE var of a multi-param generic leaves the sibling erased in the clone
+        // (`scan[T, A](xs: T[], init: A, f: (A, T) => A): A[]` — promoting A binds
+        // A but keeps T erased, a malformed `scan__i32` with `xs: T[]` that
+        // crashes). A single-param fn has no sibling to strand, so the clone is
+        // fully concrete. Multi-param container generics stay erased (as before) —
+        // a follow-up, like Result.
+        if (all_tp_count == 1 && has_bare_scalar_param(params, un) && feeds_wide_container(ret_type, un)) { promote = true; }
+        if (promote) { bounded_tps = bounded_tps.append(un); bound_names = bound_names.append(""); }
         ui = ui + 1;
     }
     // A body-less function (`function f(): T;`) is an extern import
@@ -6288,11 +6311,37 @@ function assoc_ret_of(funcs: FuncDecl[], tyname: string, method: string): string
 // mono_infer computes a coarse type-name for an expression, enough to
 // pick the right clone. Unknown shapes return "" (the call stays
 // generic — fine for non-primitive receivers).
+// literal_is_i64 reports whether a non-negative decimal integer literal text is
+// too big for i32 (so it is an i64 value): >10 digits always, exactly 10 digits
+// if it exceeds i32-max "2147483647". Mirrors irlower.literal_is_i64 — parser
+// can't import irlower (the dependency runs the other way), so the width
+// classification is duplicated here to keep instantiation inference and lowering
+// in agreement. (Negative literals are unary minus over a positive literal;
+// hex literals keep the "0x" prefix so len<10 reads i32, matching irlower.)
+function literal_is_i64(text: string): boolean {
+    var n: i32 = text.len();
+    if (n > 10) { return true; }
+    if (n < 10) { return false; }
+    var m: string = "2147483647";
+    var i: i32 = 0;
+    while (i < 10) {
+        if (text[i] > m[i]) { return true; }
+        if (text[i] < m[i]) { return false; }
+        i = i + 1;
+    }
+    return false;
+}
 function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
     match (e) {
         ExprNumber(n) => {
             if (n.is_float) { return "f64"; }
             if (n.suffix.len() > 0) { return n.suffix; }
+            // A bare integer literal whose value exceeds i32-max is unambiguously
+            // an i64 value (the same magnitude rule infer_expr_width lowers it by),
+            // so a generic instantiation binds `T = i64`, not i32 — otherwise
+            // `some1(5000000000)` (an erased `some1[T](x: T): Option[T]`) would
+            // clone `some1__i32` and truncate the wide value.
+            if (literal_is_i64(n.text)) { return "i64"; }
             return "i32";
         },
         ExprString(_) => { return "string"; },
@@ -12550,6 +12599,59 @@ function feeds_map_typearg(ty: string, name: string): boolean {
                 if (enclosing_bracket_base(ty, i) == "Map") { return true; }
             }
         }
+        i = i + 1;
+    }
+    return false;
+}
+// feeds_wide_container reports whether `name` is the SOLE element/payload of a
+// single-type-arg BUILTIN container in `ty` — `name[]` (array element) or
+// `Option[name]`. feeds_user_parametric EXCLUDES these builtin bases (they need
+// no user-struct clone and are erased-safe on the register backends). But on
+// WASM an erased container's box LAYOUT shifts with payload width (an `Option`
+// is 8B/@4 for i32 vs 16B/@8 for i64/f64; an array stride is 4 vs 8), so a wide
+// value returned in an erased container can't be read back unambiguously.
+// Promoting the type var (paired with a bare-scalar param, below) monomorphises
+// the fn to a CONCRETE container, which the IR path already lowers on every
+// backend. Non-wasm backends just gain a clone.
+//
+// `Result[T, E]` is deliberately EXCLUDED: it has two type-args, and a fn like
+// `okg[T, E](x: T): Result[T, E]` binds only T from the scalar param — E stays
+// erased, so the clone `okg__i64` would return `Result[i64, E]` with an erased
+// Err arm, reintroducing the same width ambiguity on that side. Handling Result
+// needs binding E too (from the call-site return annotation), a larger change
+// left for a follow-up. Option / array have a single type-arg = `name`, so no
+// sibling typevar survives the clone.
+function feeds_wide_container(ty: string, name: string): boolean {
+    var i: i32 = 0;
+    var nl: i32 = name.len();
+    if (nl == 0) { return false; }
+    while (i < ty.len()) {
+        if (i + nl <= ty.len() && ty[i : i + nl] == name) {
+            var prev_ok: boolean = true;
+            if (i > 0 && ident_byte(ty[i - 1])) { prev_ok = false; }
+            var nxt: i32 = i + nl;
+            var next_ok: boolean = true;
+            if (nxt < ty.len() && ident_byte(ty[nxt])) { next_ok = false; }
+            if (prev_ok && next_ok) {
+                // `name[]` — an array element.
+                if (nxt + 1 < ty.len() && ty[nxt] == 91 && ty[nxt + 1] == 93) { return true; }   // '[' ']'
+                if (enclosing_bracket_base(ty, i) == "Option") { return true; }
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+// has_bare_scalar_param reports whether some param's type is EXACTLY `name` — a
+// bare-typevar SCALAR param (`x: T`), the shape that carries a wide i64/f64 value
+// through an erased-generic call. Distinguishes `some1[T](x: T): Option[T]` /
+// `dup[T](x: T): T[]` (promote) from `map[T,U](xs: T[], …)` (an ARRAY param — the
+// wide value rides an i32 array pointer, not a bare scalar, so it never trips the
+// erased-wide gate and must stay erased to avoid over-monomorphising the stdlib).
+function has_bare_scalar_param(params: ParamDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < params.len()) {
+        if (params[i].type_name == name) { return true; }
         i = i + 1;
     }
     return false;
