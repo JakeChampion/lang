@@ -1428,6 +1428,22 @@ function __string_case_fold(s: string, srcBase: i32, dstBase: i32): string {
     return string_from_bytes(buf);
 }
 
+// `s.to_lower()` / `s.to_upper()` — ASCII-only case folding, like the
+// byte-level `(b: i32) to_upper()` these are the string-shaped twins of.
+// Only `A-Z` / `a-z` are remapped; every other byte passes through
+// UNCHANGED, including every byte of a multibyte UTF-8 sequence (they are
+// all >= 0x80, outside the folded range). So the result is always valid
+// UTF-8 — non-ASCII text is left alone, not corrupted:
+//
+//     "café".to_upper()  == "CAFé"     // é survives, is not uppercased
+//     "CAFÉ".to_lower()  == "cafÉ"
+//
+// What this cannot do is real Unicode case mapping, which is not a
+// byte-wise operation: `ß` uppercases to `SS` (1 -> 2 codepoints) and
+// Turkish `İ`/`ı` are locale-sensitive. Those need a Unicode-aware
+// implementation with case-mapping tables (#5552); until one exists, treat
+// these as the ASCII fast path they are and don't reach for them to
+// normalise user-submitted text.
 pub function (s: string) to_lower(): string {
     return __string_case_fold(s, 65, 97);     // A-Z → a-z
 }
