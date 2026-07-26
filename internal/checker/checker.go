@@ -2662,7 +2662,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		// inert for them; string concatenation is flagged separately.
 		if b.IntWidth == 0 && b.FloatWidth == 0 && !b.IsStringConcat {
 			switch b.Op {
-			case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>":
+			case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|":
 				b.IntWidth = 32
 			}
 		}
@@ -11422,6 +11422,42 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				n.IsUnsigned = !common.IsSigned()
 			}
 			return common
+		case "+|", "-|", "*|":
+			// Saturating integer arithmetic (#5542): clamp to the
+			// operand type's [MIN, MAX] instead of wrapping. Integer
+			// only — there is no float form (floats already saturate
+			// to ±Inf), no string concat, and no composite overload.
+			c.requireInteger(n.P, lt, n.Op)
+			c.requireInteger(n.P, rt, n.Op)
+			// `usize` is target-width, so its clamp bounds aren't
+			// expressible in the target-agnostic IR. Reject rather
+			// than silently clamping at the wrong width.
+			for _, t := range []ast.Type{lt, rt} {
+				if nt, ok := t.(ast.NumberType); ok && nt.IsPointerWidth() {
+					c.errfCode(n.P, "E009", "saturating operator %q is not supported on `usize` — its clamp bounds are target-width-dependent; cast to a fixed-width integer (`as u64`) first", n.Op)
+					return ast.NumberType{}
+				}
+			}
+			common, ok := commonIntegerWidth(lt, rt)
+			if !ok {
+				if isInteger(lt) && isInteger(rt) {
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				}
+				return ast.NumberType{}
+			}
+			c.settleNumeric(n.Left, common)
+			c.settleNumeric(n.Right, common)
+			if ln, ok := lt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Left, ln, common)
+			}
+			if rn, ok := rt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Right, rn, common)
+			}
+			if !common.Polymorphic {
+				n.IntWidth = common.NormalWidth()
+				n.IsUnsigned = !common.IsSigned()
+			}
+			return common
 		case "%", "&", "|", "^", "<<", ">>":
 			// Composite-type operator overloading (`%`→rem, `&`→bitand,
 			// `|`→bitor, `^`→bitxor, `<<`→shl, `>>`→shr). See #2706.
@@ -12881,7 +12917,7 @@ func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
 		}
 	case *ast.Binary:
 		switch x.Op {
-		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>":
+		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|":
 			// Don't stomp a float-typed binary's resolved
 			// FloatWidth with an int width — happens when an
 			// int-cast surrounds a float multiply, e.g.

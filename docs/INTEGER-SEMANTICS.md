@@ -74,6 +74,69 @@ backends match it:
   (`__fern_idiv_*` / `__fern_irem_*`) that sanitise the divisor before
   the trapping instruction and `select` the contract result.
 
+## Saturating arithmetic (opt-in)
+
+`+|`, `-|`, and `*|` are the **saturating** counterparts of `+`, `-`,
+and `*`: instead of wrapping, they clamp to the operand type's
+`[MIN, MAX]`. They are additive surface — the wrapping default above is
+unchanged, and a program that never writes `|` after an arithmetic
+operator behaves exactly as before.
+
+```
+2147483647 +| 1  == 2147483647       // i32 clamps high
+(-2147483648) -| 1 == -2147483648    // i32 clamps low
+100000 *| 100000 == 2147483647
+250u8 +| 10u8    == 255              // clamps at the u8 max
+10u8 -| 250u8    == 0                // unsigned clamps low at 0
+```
+
+The operators sit in the existing arithmetic tiers: `+|` / `-|` bind
+like `+` / `-`, `*|` binds like `*`. They are **integer-only** — there
+is no string-concat form (unlike `+`), no float form (floats already
+saturate to ±Inf), and no composite operator overload. `usize` is
+rejected (E009) because its clamp bounds are target-width-dependent and
+so aren't expressible in the target-agnostic IR; cast to a fixed-width
+integer first.
+
+Saturation never traps, so the no-exceptions contract above still
+holds.
+
+### How it's implemented
+
+There is no saturating IR opcode. Both the native lowering
+(`internal/ir.(*builder).satBinary`) and the self-host one
+(`irlower.lower_sat_binary`) expand to a clamp over ordinary IR ops, so
+every backend gets it for free. The tests are formulated as *pre*-checks
+against the type's MIN / MAX rather than as post-hoc overflow-flag
+reconstruction, which makes one shape work at every width — including
+sub-i32 `u8`, whose wrap mask never has to run because a saturated
+result is in range by construction:
+
+```
+signed   a +| b →  b > 0 && a > MAX - b ? MAX
+                 : b < 0 && a < MIN - b ? MIN : a + b
+unsigned a -| b →  a < b ? 0 : a - b
+unsigned a *| b →  a != 0 && b > MAX / a ? MAX : a * b
+```
+
+Signed `*|` is the one shape a pre-check can't express cheaply (four
+sign quadrants), so it post-checks the *wrapped* product with a
+division: `a != 0 && (s / a != b || (a == -1 && b == MIN))`. The second
+term is needed precisely because division is total here — `MIN / -1`
+yields `MIN`, so the round-trip spuriously agrees on exactly that pair.
+
+### Known limitations
+
+`+|` / `-|` / `*|` are not allowed inside a `const` initializer. Const
+folding runs *before* the checker, so no operand width — and therefore
+no clamp bound — is known at that point; the compiler reports
+``operator `+|` not allowed in integer constant expressions`` rather
+than guessing one.
+
+The remaining overflow disciplines from #5542 — the `Option`-returning
+checked form and the `overflowing_*` (result, overflowed) pair — are
+not implemented yet.
+
 ## Conversions
 
 Integer↔integer casts truncate (narrowing) or extend (widening) per

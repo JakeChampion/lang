@@ -367,6 +367,62 @@ function str_to_f64(s: string): f64 {
 // errors, the surrounding op returns the same VErr. This keeps
 // the early-return pattern out of the body and matches the
 // checker's TypeUnknown threading.
+// is_sat_op_name reports whether `op` is a saturating arithmetic operator
+// (`+|` / `-|` / `*|`, #5542) — clamping to the operand type's [MIN, MAX]
+// rather than wrapping.
+function is_sat_op_name(op: string): boolean {
+    return op == "+|" || op == "-|" || op == "*|";
+}
+
+// sat_exact computes a saturating op EXACTLY in the host i64, valid only when
+// both operands are 32-bit-or-narrower (so no host overflow is possible); the
+// caller clamps the wide result to the operand type's range.
+function sat_exact(op: string, a: i64, b: i64): i64 {
+    if (op == "+|") { return a + b; }
+    if (op == "-|") { return a - b; }
+    return a * b;
+}
+
+// sat_clamp clamps an exact result into [minv, maxv].
+function sat_clamp(v: i64, minv: i64, maxv: i64): i64 {
+    if (v > maxv) { return maxv; }
+    if (v < minv) { return minv; }
+    return v;
+}
+
+// sat_i64 saturates at full 64-bit width, where no wider host type exists.
+// Add / sub pre-check against the bound; mul post-checks the WRAPPED product
+// with a division round-trip, plus the `a == -1 && b == MIN` term that a total
+// `MIN / -1 == MIN` would otherwise hide. Mirrors the IR lowering
+// (irlower.lower_sat_binary) and native's ir.satBinary.
+function sat_i64(op: string, a: i64, b: i64): i64 {
+    var maxv: i64 = 9223372036854775807;
+    var minv: i64 = 0 - 9223372036854775807 - 1;
+    if (op == "+|") {
+        if (b > 0 && a > maxv - b) { return maxv; }
+        if (b < 0 && a < minv - b) { return minv; }
+        return a + b;
+    }
+    if (op == "-|") {
+        if (b < 0 && a > maxv + b) { return maxv; }
+        if (b > 0 && a < minv + b) { return minv; }
+        return a - b;
+    }
+    var prod: i64 = a * b;
+    if (a != 0) {
+        var bad: boolean = prod / a != b;
+        if (a == 0 - 1 && b == minv) { bad = true; }
+        if (bad) {
+            var neg: boolean = false;
+            if (a < 0) { neg = !neg; }
+            if (b < 0) { neg = !neg; }
+            if (neg) { return minv; }
+            return maxv;
+        }
+    }
+    return prod;
+}
+
 // eval_binary applies a binary operator to two already-evaluated
 // operands. Pure in (op, lv, rv) — extracted from eval_expr's
 // ExprBinary arm so the operator semantics live in one place,
@@ -390,6 +446,7 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
         if (op == "+") { return v_int64(a + b); }
         if (op == "-") { return v_int64(a - b); }
         if (op == "*") { return v_int64(a * b); }
+        if (is_sat_op_name(op)) { return v_int64(sat_i64(op, a, b)); }
         if (op == "/") { if (b == 0) { return v_int64(0); } var q64: i64 = a / b; return v_int64(q64); }
         if (op == "%") { if (b == 0) { return v_int64(a); } var r64: i64 = a % b; return v_int64(r64); }
         if (op == "<") { return v_bool(a < b); }
@@ -417,6 +474,9 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
         if (op == "+") { return v_uint(la + rb); }
         if (op == "-") { return v_uint(la - rb); }
         if (op == "*") { return v_uint(la * rb); }
+        if (is_sat_op_name(op)) {
+            return v_uint(sat_clamp(sat_exact(op, uint_zext(la), uint_zext(rb)), 0, 4294967295) as i32);
+        }
         if (op == "&") { return v_uint(la & rb); }
         if (op == "|") { return v_uint(la | rb); }
         if (op == "^") { return v_uint(la ^ rb); }
@@ -465,6 +525,22 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
         if (op == ">=") { return v_bool(fa >= fb); }
         if (op == "==") { return v_bool(fa == fb); }
         if (op == "!=") { return v_bool(fa != fb); }
+    }
+    // Saturating arithmetic (#5542) on plain i32: the exact 64-bit result
+    // always fits the host i64, so it is computed wide and clamped.
+    if (is_sat_op_name(op)) {
+        match (lv) {
+            VInt(li) => {
+                match (rv) {
+                    VInt(ri) => {
+                        var sv: i64 = sat_exact(op, li.v as i64, ri.v as i64);
+                        return v_int(sat_clamp(sv, 0 - 2147483647 - 1, 2147483647) as i32);
+                    },
+                    _ => { return v_err("saturating rhs not i32"); }
+                }
+            },
+            _ => { return v_err("saturating lhs not i32"); }
+        }
     }
     // `+` overloads i32 (arithmetic) and string (concat).
     if (op == "+") {

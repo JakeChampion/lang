@@ -3851,6 +3851,98 @@ func narrowInt(v int64, width int, unsigned bool) int64 {
 	return v
 }
 
+// satArith evaluates a saturating arithmetic operator (`+|` / `-|` /
+// `*|`, #5542) on two width-masked operands, clamping to the operand
+// type's [MIN, MAX] instead of wrapping. `signExtend` is the caller's
+// width-and-signedness narrowing closure, used to recover the signed
+// value of a masked operand. Mirrors the IR lowering in
+// `internal/ir.(*builder).satBinary` — keep the two in step.
+func satArith(op string, ln, rn Number, width int, unsigned bool, signExtend func(Number) Number) Number {
+	if unsigned {
+		var maxU uint64
+		switch width {
+		case 8:
+			maxU = 255
+		case 32:
+			maxU = 0xFFFFFFFF
+		default:
+			maxU = ^uint64(0)
+		}
+		ul, ur := uint64(int64(ln)), uint64(int64(rn))
+		var res uint64
+		switch op {
+		case "+|":
+			if ul > maxU-ur {
+				res = maxU
+			} else {
+				res = ul + ur
+			}
+		case "-|":
+			if ul < ur {
+				res = 0
+			} else {
+				res = ul - ur
+			}
+		default:
+			if ul != 0 && ur > maxU/ul {
+				res = maxU
+			} else {
+				res = ul * ur
+			}
+		}
+		return Number(int64(res))
+	}
+	var minS, maxS int64
+	switch width {
+	case 8:
+		minS, maxS = -128, 127
+	case 32:
+		minS, maxS = math.MinInt32, math.MaxInt32
+	default:
+		minS, maxS = math.MinInt64, math.MaxInt64
+	}
+	il, ir := int64(signExtend(ln)), int64(signExtend(rn))
+	switch op {
+	case "+|":
+		switch {
+		case ir > 0 && il > maxS-ir:
+			return Number(maxS)
+		case ir < 0 && il < minS-ir:
+			return Number(minS)
+		}
+		return Number(il + ir)
+	case "-|":
+		switch {
+		case ir < 0 && il > maxS+ir:
+			return Number(maxS)
+		case ir > 0 && il < minS+ir:
+			return Number(minS)
+		}
+		return Number(il - ir)
+	}
+	// `*|`: compare the magnitudes against the clamp limit — |MIN| is
+	// one larger than MAX, so a negative product gets the extra headroom.
+	absU := func(v int64) uint64 {
+		if v < 0 {
+			return uint64(-(v+1)) + 1
+		}
+		return uint64(v)
+	}
+	au, bu := absU(il), absU(ir)
+	neg := (il < 0) != (ir < 0)
+	limit := uint64(maxS)
+	if neg {
+		limit = uint64(maxS) + 1
+	}
+	if au != 0 && bu > limit/au {
+		if neg {
+			return Number(minS)
+		}
+		return Number(maxS)
+	}
+	return Number(il * ir)
+}
+
 func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 	// Short-circuit logical operators.
 	switch b.Op {
@@ -3976,6 +4068,12 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 				return signExtend(Number(uint64(ln) % uint64(rn))), nil
 			}
 			return signExtend(signExtend(ln) % signExtend(rn)), nil
+		case "+|", "-|", "*|":
+			// Saturating arithmetic (#5542): clamp to the operand
+			// type's [MIN, MAX] rather than wrap. The result is in
+			// range by construction, so signExtend only normalises
+			// the stored representation.
+			return signExtend(satArith(b.Op, ln, rn, b.IntWidth, b.IsUnsigned, signExtend)), nil
 		case "&":
 			return signExtend(ln & rn), nil
 		case "|":

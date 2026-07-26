@@ -114,7 +114,7 @@ func wrapMain(body string) string {
 
 // genNumProgram builds one random numeric-operation program.
 func genNumProgram(r *rand.Rand) string {
-	switch r.Intn(7) {
+	switch r.Intn(8) {
 	case 0:
 		return genIntBinary(r)
 	case 1:
@@ -127,6 +127,8 @@ func genNumProgram(r *rand.Rand) string {
 		return genFloatBinary(r)
 	case 5:
 		return genFloatToInt(r)
+	case 6:
+		return genIntSaturating(r)
 	default:
 		return genIntToFloat(r)
 	}
@@ -143,6 +145,21 @@ func genIntBinary(r *rand.Rand) string {
 	// the operands — including 0 and -1 divisors and the INT_MIN
 	// dividend — are drawn from the full edge pool like every other
 	// op. The pool already contains 0, 1, -1, and the type min/max.
+	body := fmt.Sprintf("    var a: %s = %s;\n    var b: %s = %s;\n    %s\n",
+		t.name, pick(r, lits), t.name, pick(r, lits), printInt(t, "a "+op+" b"))
+	return wrapMain(body)
+}
+
+// genIntSaturating draws from the same edge-literal pool as genIntBinary but
+// with the saturating operators (#5542), which clamp to the operand type's
+// [MIN, MAX] instead of wrapping. The clamp bounds are per-width, so the whole
+// width × signedness matrix is the interesting surface — exactly what this
+// harness sweeps. `usize` isn't in intTypes, so the target-width rejection
+// never fires here.
+func genIntSaturating(r *rand.Rand) string {
+	t := pick(r, intTypes)
+	lits := litsFor(t)
+	op := pick(r, []string{"+|", "-|", "*|"})
 	body := fmt.Sprintf("    var a: %s = %s;\n    var b: %s = %s;\n    %s\n",
 		t.name, pick(r, lits), t.name, pick(r, lits), printInt(t, "a "+op+" b"))
 	return wrapMain(body)
@@ -387,6 +404,43 @@ func TestNumericProperty_Regressions(t *testing.T) {
 		{"u8_mod_zero", `    var z: u8 = 0;
     var n: u8 = 200;
     print(((n % z) as i64).to_string());`},
+		// Saturating arithmetic (#5542) clamps at the operand width.
+		// The edges are the two clamp directions per signedness, plus
+		// the signed-mul `MIN / -1` pair the division round-trip would
+		// otherwise read as non-overflowing.
+		{"i32_sat_add_hi", `    var a: i32 = 2147483647;
+    var b: i32 = 1;
+    print((a +| b).to_string());`},
+		{"i32_sat_sub_lo", `    var a: i32 = 0 - 2147483647 - 1;
+    var b: i32 = 1;
+    print((a -| b).to_string());`},
+		{"i32_sat_mul_min_neg1", `    var a: i32 = 0 - 2147483647 - 1;
+    var b: i32 = 0 - 1;
+    print((a *| b).to_string());`},
+		{"i32_sat_mul_neg1_min", `    var a: i32 = 0 - 1;
+    var b: i32 = 0 - 2147483647 - 1;
+    print((a *| b).to_string());`},
+		{"i64_sat_mul_min_neg1", `    var a: i64 = 0 - 9223372036854775807 - 1;
+    var b: i64 = 0 - 1;
+    print((a *| b).to_string());`},
+		{"i64_sat_add_hi", `    var a: i64 = 9223372036854775807;
+    var b: i64 = 1;
+    print((a +| b).to_string());`},
+		{"u64_sat_add_hi", `    var a: u64 = 18446744073709551615;
+    var b: u64 = 1;
+    print((a +| b).to_string());`},
+		{"u64_sat_sub_lo", `    var a: u64 = 0;
+    var b: u64 = 1;
+    print((a -| b).to_string());`},
+		{"u32_sat_mul_hi", `    var a: u32 = 4294967295;
+    var b: u32 = 2;
+    print(((a *| b) as i64).to_string());`},
+		{"u8_sat_add_hi", `    var a: u8 = 255;
+    var b: u8 = 1;
+    print(((a +| b) as i64).to_string());`},
+		{"u8_sat_sub_lo", `    var a: u8 = 0;
+    var b: u8 = 1;
+    print(((a -| b) as i64).to_string());`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

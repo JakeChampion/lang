@@ -1509,6 +1509,14 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                 }
                 return t_unknown("`+` operands type mismatch");
             }
+            // Saturating arithmetic (#5542) clamps instead of wrapping;
+            // integer-only, so there is no string or float form.
+            if (b.op == "+|" || b.op == "-|" || b.op == "*|") {
+                if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
+                    return t_i32();
+                }
+                return t_unknown("`" + b.op + "` operands must both be integers");
+            }
             if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
                 if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
                     return t_i32();
@@ -4691,6 +4699,18 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     var okf: boolean = b.op != "%" && type_eq(alt, t_float()) && type_eq(art, t_float());
                     if (!oki && !okf) {
                         out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(alt) + " and " + type_label(art), b.line, b.col));
+                    }
+                }
+            }
+            // E009: saturating arithmetic (`+|` `-|` `*|`) is integer-only —
+            // no string concat, no float form. Mirrors the Go checker's
+            // dedicated `case "+|", "-|", "*|"` requireInteger pair (#5542).
+            if (b.op == "+|" || b.op == "-|" || b.op == "*|") {
+                var qlt: Type = check_expr(b.left, s);
+                var qrt: Type = check_expr(b.right, s);
+                if (!is_unknown(qlt) && !is_unknown(qrt)) {
+                    if (!type_eq(qlt, t_i32()) || !type_eq(qrt, t_i32())) {
+                        out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(qlt) + " and " + type_label(qrt), b.line, b.col));
                     }
                 }
             }
