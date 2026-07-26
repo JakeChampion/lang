@@ -448,6 +448,14 @@ not locale-aware. Covered by `examples/tests/unicode_test.fern` and
 `internal/e2e/unicode_case_test.go` (differential across interp /
 x86-64 / wasm / arm64).
 
+**Superseded shape**: "fine at CLI scale" measured badly — the
+per-call table construction costs **176 KB of binary and 22× the
+ASCII path** on a 34-byte ASCII string. `docs/STRINGS-SOTA.md`
+surveys the field and sets the target design: static string-literal
+tables, Unicode-correct defaults with `ascii`-named fast paths, a
+distinct `char` type, and normalization/segmentation as the
+remaining substance of #5552.
+
 ## Extras (not in the original 15)
 
 These landed in the chunks above but weren't on the original
