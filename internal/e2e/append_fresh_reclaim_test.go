@@ -25,7 +25,12 @@ import (
 // this for so long. Keep them non-inlinable.
 //
 // `noAppend` is the control that must stay at 0 both before and after — it
-// guards against "fix" that merely frees everything.
+// guards against a "fix" that merely frees everything.
+//
+// `distinctTarget` covers the second half of #5608: the append result bound to
+// a NEW local instead of rebound to the receiver. That one is reclaimable only
+// because the receiver has no later occurrence — the rc==1 grow path mutates
+// the receiver's buffer in place, so a later read would see the longer array.
 // appendFreshReclaimSrc builds the program. `underflowGuard` adds the
 // over-release assertion, which only the compiled backends can answer — the
 // interpreter has no `__rc_underflow_count` (nor a bump-allocator model), so it
@@ -55,11 +60,16 @@ function loopGrows(k: i32): i32[] {
     while (j < 12) { xs = xs.append(k); j = j + 1; }
     return xs;
 }
+// Distinct append target: the result is bound to a NEW local rather than
+// rebound to the receiver, so the self-rebind carve-out does not apply. This
+// is only reclaimable because the receiver has no later occurrence.
+function distinctTarget(k: i32): i32[] { var xs: i32[] = [1]; var ys: i32[] = xs.append(k); return ys; }
 
 function churnNone(n: i32): i32 { var k: i32 = n & 3; var i: i32 = 0; var a: i32 = 0; while (i < n) { var z: i32[] = noAppend(k); a = (a + z.len()) % 251; i = i + 1; } return a; }
 function churnOne(n: i32): i32 { var k: i32 = n & 3; var i: i32 = 0; var a: i32 = 0; while (i < n) { var z: i32[] = oneGrow(k); a = (a + z.len()) % 251; i = i + 1; } return a; }
 function churnTwo(n: i32): i32 { var k: i32 = n & 3; var i: i32 = 0; var a: i32 = 0; while (i < n) { var z: i32[] = twoGrows(k); a = (a + z.len()) % 251; i = i + 1; } return a; }
 function churnLoop(n: i32): i32 { var k: i32 = n & 3; var i: i32 = 0; var a: i32 = 0; while (i < n) { var z: i32[] = loopGrows(k); a = (a + z.len()) % 251; i = i + 1; } return a; }
+function churnDistinct(n: i32): i32 { var k: i32 = n & 3; var i: i32 = 0; var a: i32 = 0; while (i < n) { var z: i32[] = distinctTarget(k); a = (a + z.len()) % 251; i = i + 1; } return a; }
 
 function main(): i32 {
     var t: i32 = 0;
@@ -73,6 +83,8 @@ function main(): i32 {
     if (c2 != c1) { return 13; }
     t = t + churnLoop(3); var d1: i32 = __heap_bump_bytes(); t = t + churnLoop(10); var d2: i32 = __heap_bump_bytes();
     if (d2 != d1) { return 14; }
+    t = t + churnDistinct(3); var e1: i32 = __heap_bump_bytes(); t = t + churnDistinct(10); var e2: i32 = __heap_bump_bytes();
+    if (e2 != e1) { return 15; }
 `
 
 // Over-release guard is spliced in here for the compiled backends.
@@ -82,6 +94,10 @@ const appendFreshReclaimTail = `    // Value guard: the arrays must still hold t
     if (v.len() != 13) { return 20; }
     if (v[0] != 1) { return 21; }
     if (v[12] != 7) { return 22; }
+    var w: i32[] = distinctTarget(9);
+    if (w.len() != 2) { return 24; }
+    if (w[0] != 1) { return 25; }
+    if (w[1] != 9) { return 26; }
     if (t < 0) { return 23; }
     return 0;
 }
