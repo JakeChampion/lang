@@ -1904,6 +1904,13 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                 if (ty_is_i32(slt)) { return infer_expr_type(b.right, s); }
                 return slt;
             }
+            // Checked arithmetic (#5542) wraps the operand type in an
+            // Option — `Some(result)` when it fits, `None` on overflow.
+            if (b.op == "+?" || b.op == "-?" || b.op == "*?") {
+                var clt: Ty = infer_expr_type(b.left, s);
+                if (ty_is_i32(clt)) { return ty_option(infer_expr_type(b.right, s)); }
+                return ty_option(clt);
+            }
             return ty_i32();
         },
         parser.ExprUnary(u) => {

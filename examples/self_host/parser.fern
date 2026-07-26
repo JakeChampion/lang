@@ -1861,8 +1861,8 @@ function precedence(op: string): i32 {
     if (op == "==" || op == "!=") { return 6; }
     if (op == "<" || op == ">" || op == "<=" || op == ">=") { return 7; }
     if (op == "<<" || op == ">>") { return 8; }
-    if (op == "+" || op == "-" || op == "+|" || op == "-|") { return 9; }
-    if (op == "*" || op == "/" || op == "%" || op == "*|") { return 10; }
+    if (op == "+" || op == "-" || op == "+|" || op == "-|" || op == "+?" || op == "-?") { return 9; }
+    if (op == "*" || op == "/" || op == "%" || op == "*|" || op == "*?") { return 10; }
     return 0 - 1;
 }
 

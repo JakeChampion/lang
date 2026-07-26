@@ -52,8 +52,8 @@ except where noted.
 | ---------- | ------------------------------- | ------------- |
 | 1 (highest)| `(...)` `f(...)` `a[i]` `a.f` `e?` `e as T` | left          |
 | 2          | `!` `-` (unary)                 | right         |
-| 3          | `*` `/` `%` `*\|`               | left          |
-| 4          | `+` `-` `+\|` `-\|`            | left          |
+| 3          | `*` `/` `%` `*\|` `*?`          | left          |
+| 4          | `+` `-` `+\|` `-\|` `+?` `-?`   | left          |
 | 5          | `<<` `>>`                       | left          |
 | 6          | `&`                             | left          |
 | 7          | `^`                             | left          |
@@ -66,8 +66,11 @@ except where noted.
 | 14 (lowest)| `=` `+=` `-=` `*=` `/=` etc.    | right         |
 
 `+|` / `-|` / `*|` are the **saturating** integer operators: they clamp to
-the operand type's `[MIN, MAX]` instead of wrapping. They are integer-only
-and otherwise behave exactly like their wrapping counterparts — see
+the operand type's `[MIN, MAX]` instead of wrapping. `+?` / `-?` / `*?` are
+the **checked** integer operators: they evaluate to `Some(result)` when it
+fits the operand type and `None` on overflow. Both families are
+integer-only and otherwise behave exactly like their wrapping
+counterparts — see
 [Integer semantics](https://github.com/JakeChampion/lang/blob/main/docs/INTEGER-SEMANTICS.md).
 
 ## Block forms

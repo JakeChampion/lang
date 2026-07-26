@@ -1517,6 +1517,17 @@ function check_expr(e: parser.Expr, s: Scope): Type {
                 }
                 return t_unknown("`" + b.op + "` operands must both be integers");
             }
+            // Checked arithmetic (#5542) yields `Option[T]` — integer-only,
+            // no string or float form. The coarse Type collapses widths to
+            // i32, so the element is t_i32() (asmcore's Ty carries the real
+            // width for lowering).
+            if (b.op == "+?" || b.op == "-?" || b.op == "*?") {
+                if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
+                    var chkoa: Type[] = [t_i32()];
+                    return t_union_g("Option", chkoa);
+                }
+                return t_unknown("`" + b.op + "` operands must both be integers");
+            }
             if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
                 if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
                     return t_i32();
@@ -4711,6 +4722,17 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 if (!is_unknown(qlt) && !is_unknown(qrt)) {
                     if (!type_eq(qlt, t_i32()) || !type_eq(qrt, t_i32())) {
                         out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(qlt) + " and " + type_label(qrt), b.line, b.col));
+                    }
+                }
+            }
+            // E009: checked arithmetic (`+?` `-?` `*?`) is integer-only too —
+            // it yields Option[T]. Same requireInteger pair as saturating (#5542).
+            if (b.op == "+?" || b.op == "-?" || b.op == "*?") {
+                var klt: Type = check_expr(b.left, s);
+                var krt: Type = check_expr(b.right, s);
+                if (!is_unknown(klt) && !is_unknown(krt)) {
+                    if (!type_eq(klt, t_i32()) || !type_eq(krt, t_i32())) {
+                        out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(klt) + " and " + type_label(krt), b.line, b.col));
                     }
                 }
             }
