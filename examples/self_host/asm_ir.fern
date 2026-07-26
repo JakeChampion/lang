@@ -856,15 +856,17 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // recycles blocks <512 KiB exactly; blocks >=512 KiB previously LEAKED (no class),
     // so a long-running emit that frees big per-function analysis arrays exhausted the
     // arena (exit 137) — the self-host runtime lagging the native two-tier design. This
-    // array is the large tier: 256 power-of-two-ish classes indexed by native's binning
-    // (class = 4*(e2-2)+mant+88, mant = cap>>(e2-2) in {4,5,6,7}; large-tier indices are
-    // <=207, so 256 slots cover them). Each large ALLOC rounds the request up to its
-    // class capacity and bumps at THAT (so every block in a class has one capacity —
-    // native's invariant — and any freed block satisfies any same-class request); each
-    // large FREE re-derives the class from the logical size via the same round-up and
-    // pushes the block (successor pointer in its first 8 bytes; 0 = empty). >1 GiB is
-    // never freelisted (bump/leak only). Mirrors native codegen/x86_64/x86_64.go's tier.
-    s = s.write("__fern_large_freelist: .skip 2048\n");
+    // array is the large tier: LINEAR 512-KiB classes, class = round_up(size, 512 KiB)
+    // >> 19 (1..2048 for 512 KiB..1 GiB), so 2049 slots suffice (2560 for headroom).
+    // A power-of-two/log2 binning is deliberately AVOIDED: the self-host x86_gas
+    // assembler (used by the capstone self-assembly test) has no `bsr` and only
+    // immediate-count shifts, so the linear scheme uses only leaq/andq/shrq-$imm.
+    // Each large ALLOC rounds the request up to its class capacity (a 512-KiB multiple)
+    // and bumps at THAT — so every block in a class has one capacity and any freed block
+    // satisfies any same-class request; each large FREE re-derives the class from the
+    // logical size via the same round-up and pushes the block (successor pointer in its
+    // first 8 bytes; 0 = empty). >1 GiB is never freelisted (bump/leak only).
+    s = s.write("__fern_large_freelist: .skip 20480\n");
     s = s.write("    .section .text\n");
     // __fern_alloc(%rdi = bytes) -> %rax = block. Size-classed freelist reuse
     // (class = bytes/8 < 65536) then bump; OOM traps with exit 137.
@@ -889,29 +891,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq %rcx\n");
     s = s.write("    popq %rbp\n");
     s = s.write("    ret\n");
-    // Large tier (#3425): a >=512 KiB request. Round the byte size UP to its
-    // 3-significant-bit capacity (bump AT that capacity so every block in a class
-    // has one size — native's reuse invariant), derive the class, and pop the
-    // large freelist; empty falls through to the bump with %rdi = capacity. >1 GiB
-    // is bump-only (never freelisted). Register-faithful port of native's
-    // .Lalloc_large (codegen/x86_64/x86_64.go); %rcx/%rdx are already saved.
+    // Large tier (#3425): a >=512 KiB request. Round the byte size UP to a 512-KiB
+    // multiple (the class capacity — bump AT it so every block in a class has one
+    // size, so any freed block satisfies any same-class request), derive class =
+    // cap >> 19, and pop the large freelist; empty falls through to the bump with
+    // %rdi = capacity. >1 GiB is bump-only. Linear (no bsr / no %cl shift) so the
+    // self-host x86_gas assembler can encode it. %rcx/%rdx are already saved.
     s = s.write(".Lalloc_large:\n");
     s = s.write("    cmpq $0x40000000, %rdi\n");        // > 1 GiB: bump exact, no freelist
     s = s.write("    ja .Lalloc_nofl\n");
-    s = s.write("    bsrq %rdi, %rcx\n");               // e2 = floor(log2(size))
-    s = s.write("    leaq -2(%rcx), %rdx\n");           // e2 - 2
-    s = s.write("    movq $1, %rax\n");
-    s = s.write("    movq %rdx, %rcx\n");
-    s = s.write("    shlq %cl, %rax\n");                // gran = 1 << (e2-2)
-    s = s.write("    leaq -1(%rdi,%rax), %rdi\n");      // size + gran - 1
-    s = s.write("    negq %rax\n");
-    s = s.write("    andq %rax, %rdi\n");               // %rdi = cap = roundup(size, gran) = bytes to bump
-    s = s.write("    bsrq %rdi, %rcx\n");               // e2' = floor(log2(cap))
-    s = s.write("    leaq -2(%rcx), %rdx\n");           // e2' - 2
-    s = s.write("    movq %rdi, %rax\n");
-    s = s.write("    movq %rdx, %rcx\n");
-    s = s.write("    shrq %cl, %rax\n");                // mant = cap >> (e2'-2)
-    s = s.write("    leaq 88(%rax,%rdx,4), %rax\n");    // class = 4*(e2'-2) + mant + 88
+    s = s.write("    leaq 524287(%rdi), %rax\n");       // size + (512 KiB - 1)
+    s = s.write("    andq $-524288, %rax\n");           // cap = round_up(size, 512 KiB)
+    s = s.write("    movq %rax, %rdi\n");               // %rdi = cap = bytes to bump
+    s = s.write("    shrq $19, %rax\n");                // class = cap >> 19  (1..2048)
     s = s.write("    leaq __fern_large_freelist(%rip), %rdx\n");
     s = s.write("    movq (%rdx,%rax,8), %rcx\n");      // head
     s = s.write("    testq %rcx, %rcx\n");
@@ -1082,20 +1074,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_large_push:\n");
     s = s.write("    cmpq $0x40000000, %rsi\n");         // > 1 GiB: drop (leak, matches alloc)
     s = s.write("    ja .Llpush_ret\n");
-    s = s.write("    bsrq %rsi, %rcx\n");                // e2
-    s = s.write("    leaq -2(%rcx), %rdx\n");
-    s = s.write("    movq $1, %rax\n");
-    s = s.write("    movq %rdx, %rcx\n");
-    s = s.write("    shlq %cl, %rax\n");                 // gran = 1 << (e2-2)
-    s = s.write("    leaq -1(%rsi,%rax), %rsi\n");       // bytes + gran - 1
-    s = s.write("    negq %rax\n");
-    s = s.write("    andq %rax, %rsi\n");                // %rsi = cap
-    s = s.write("    bsrq %rsi, %rcx\n");                // e2'
-    s = s.write("    leaq -2(%rcx), %rdx\n");
-    s = s.write("    movq %rsi, %rax\n");
-    s = s.write("    movq %rdx, %rcx\n");
-    s = s.write("    shrq %cl, %rax\n");                 // mant = cap >> (e2'-2)
-    s = s.write("    leaq 88(%rax,%rdx,4), %rax\n");     // class = 4*(e2'-2) + mant + 88
+    s = s.write("    leaq 524287(%rsi), %rax\n");        // bytes + (512 KiB - 1)
+    s = s.write("    andq $-524288, %rax\n");            // cap = round_up(bytes, 512 KiB)
+    s = s.write("    shrq $19, %rax\n");                 // class = cap >> 19
     s = s.write("    leaq __fern_large_freelist(%rip), %rdx\n");
     s = s.write("    movq (%rdx,%rax,8), %rcx\n");       // old head
     s = s.write("    movq %rcx, (%r8)\n");               // *base = old head
