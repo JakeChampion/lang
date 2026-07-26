@@ -8395,6 +8395,40 @@ pub function read_line_func(): string {
     return o;
 }
 
+// read_all_stdin_func emits $__fern_read_all_stdin (no args -> string): the
+// WHOLE of stdin as ONE string block, the wasm sibling of the register
+// backends' __fern_read_all_stdin (#5623). Unlike read_line's single 256-byte
+// read it loops fd_read until the byte count comes back 0, so it can pull in a
+// multi-line source — blank lines and all, which read_line cannot express
+// (it can't distinguish a blank line from EOF).
+//
+// Reads STRAIGHT INTO the result block rather than into a scratch buffer that
+// is copied afterwards: a wasm string is [len:i32][bytes], so reserving the
+// block up front and filling from blk+4 means the bytes are already in place
+// and only the length has to be stored at the end. The reservation matches the
+// register backends' 32 MiB; $__fern_alloc grows linear memory to cover it, and
+// the unused tail is bump space that is never touched.
+pub function read_all_stdin_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_read_all_stdin (result i32)\n";
+    o = o + "    (local $blk i32) (local $total i32) (local $nread i32)\n";
+    o = o + "    (local.set $blk (call $__fern_alloc (i32.const 33554432)))\n";
+    o = o + "    (local.set $total (i32.const 0))\n";
+    o = o + "    (block $done (loop $again\n";
+    // iovec {ptr,len} at addr 0, byte count at addr 8 — the same scratch idiom
+    // read_line / reader_read_chunk use. ptr advances with the running total.
+    o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $total)))\n";
+    o = o + "      (i32.store (i32.const 4) (i32.const 1048576))\n";
+    o = o + "      (drop (call $fd_read (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+    o = o + "      (local.set $nread (i32.load (i32.const 8)))\n";
+    o = o + "      (br_if $done (i32.eqz (local.get $nread)))\n";
+    o = o + "      (local.set $total (i32.add (local.get $total) (local.get $nread)))\n";
+    o = o + "      (br $again)))\n";
+    o = o + "    (i32.store (local.get $blk) (local.get $total))\n";
+    o = o + "    (local.get $blk))\n";
+    return o;
+}
+
 // reader_fd_close_import emits the standalone wasi fd_close import that
 // $__fern_reader_close uses. file_imports ALSO imports fd_close (for path I/O),
 // so the caller (wasm_ir_run) emits this one ONLY when a reader-closing module
@@ -12784,7 +12818,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     // emit the standalone fd_read import ONLY when the module reads stdin but
     // does NOT do file I/O — otherwise fd_read would be imported twice (an
     // invalid module).
-    if ((wasm_ir.need(needs, "read_line") || wasm_ir.need(needs, "read_int") || wasm_ir.need(needs, "read_chunk")) && !(wasm_ir.need(needs, "read_file") || wasm_ir.need(needs, "write_file") || wasm_ir.need(needs, "read_dir") || wasm_ir.need(needs, "remove_dir_all") || wasm_ir.need(needs, "open_file"))) {
+    if ((wasm_ir.need(needs, "read_line") || wasm_ir.need(needs, "read_int") || wasm_ir.need(needs, "read_chunk") || wasm_ir.need(needs, "read_all_stdin")) && !(wasm_ir.need(needs, "read_file") || wasm_ir.need(needs, "write_file") || wasm_ir.need(needs, "read_dir") || wasm_ir.need(needs, "remove_dir_all") || wasm_ir.need(needs, "open_file"))) {
         out = out + stdin_fd_read_import();
     }
     // reader_close calls preview1 fd_close. file_imports supplies fd_close for
@@ -13036,6 +13070,9 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     // module reads stdin.
     if (wasm_ir.need(needs, "read_line")) { out = out + read_line_func(); }
     if (wasm_ir.need(needs, "read_int")) { out = out + read_int_func(); }
+    // $__fern_read_all_stdin reads fd 0 to EOF into one string block (#5623);
+    // allocates, so it rides the heap runtime gated above.
+    if (wasm_ir.need(needs, "read_all_stdin")) { out = out + read_all_stdin_func(); }
     // $__fern_reader_read_chunk(fd,n) / $__fern_reader_close(fd) back the
     // Reader intrinsics (r.read_chunk(n) / r.close()) — a Reader is just its fd
     // (stdin = fd 0). Both box (Option[string] / Option[IoError]), so they ride

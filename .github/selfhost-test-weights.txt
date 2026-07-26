@@ -96,3 +96,4 @@ TestSelfHostCellWasmIR 6
 TestSelfHostReadAllStdinIRX86_64 10
 TestSelfHostReadAllStdinIRArm64 20
 TestSelfHostReadAllStdinIRRoutingX86_64 6
+TestSelfHostReadAllStdinIRWasm 12
