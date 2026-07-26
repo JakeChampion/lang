@@ -49,6 +49,8 @@ func TestSelfHostErasedWideContainerWasm(t *testing.T) {
 
 	const some = `function some1[T](x: T): Option[T] { return Some(x); }`
 	const dup = `function dup[T](x: T): T[] { return [x, x]; }`
+	const okr = `function okr[T](x: T): Result[T, string] { return Ok(x); }`
+	const errg = `function errg[E](e: E): Result[i32, E] { return Err(e); }`
 	cases := []struct {
 		name string
 		src  string
@@ -83,6 +85,18 @@ func TestSelfHostErasedWideContainerWasm(t *testing.T) {
 		// some1__i32 but the box stays 8B, value unchanged. 5 + 37 = 42.
 		{"opt-i32",
 			some + ` function main(): i32 { var a: Option[i32] = some1[i32](5); var r: i32 = 0; match (a) { Some(v) => { r = v; }, None => {} } return r + 37; }`,
+			42},
+		// Single-typevar Result with a concrete Err arm: the clone
+		// okr__i64 returns Result[i64, string] (concrete Err), so the wide Ok
+		// round-trips. 5e9/1e9 = 5, +37 = 42. The all_tp_count==1 guard makes
+		// this sound (no sibling typevar left erased).
+		{"result-ok-wide",
+			okr + ` function main(): i32 { var a: Result[i64, string] = okr[i64](5000000000 as i64); var r: i64 = 0; match (a) { Ok(v) => { r = v; }, Err(e) => {} } return (r / 1000000000) as i32 + 37; }`,
+			42},
+		// Single-typevar Result with a wide Err arm (`Result[i32, E]`): errg__i64
+		// returns Result[i32, i64], the wide Err value round-trips. 5+37 = 42.
+		{"result-err-wide",
+			errg + ` function main(): i32 { var a: Result[i32, i64] = errg[i64](5000000000 as i64); var r: i64 = 0; match (a) { Ok(v) => {}, Err(e) => { r = e; } } return (r / 1000000000) as i32 + 37; }`,
 			42},
 		// Multi-type-param guard: a two-typevar generic whose `init: A` + `A[]`
 		// return matches clause (c)'s inner shape (bare scalar param feeding a
