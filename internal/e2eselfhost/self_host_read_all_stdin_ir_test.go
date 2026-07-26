@@ -24,8 +24,9 @@ import (
 // __fern_str_box rather than the AST path's bare __fern_alloc(16): on the IR
 // path this is a reclaimable string the program holds directly, and
 // __fern_str_free reads the rc word at box-8, which a headerless box does not
-// have. wasm defers it (see wasm_ir_deferrals_ok) — it has stdin, so that is a
-// not-yet-written runtime rather than an impossibility.
+// have. wasm gets $__fern_read_all_stdin, an fd_read loop over the same preview1
+// scratch idiom read_line uses, reading straight into the [len][bytes] result
+// block rather than into a scratch buffer that is copied afterwards.
 //
 // TestSelfHostReadAllStdinX86_64 already pins the byte counts through the same
 // driver; these cases add the routing assertion and the shapes that exercise
@@ -142,5 +143,74 @@ func TestSelfHostReadAllStdinIRArm64(t *testing.T) {
 	}
 	if got := runReadAllStdinIR(t, "arm64", readAllStdinIRBigProg, bigStdinInput()); got != 7 {
 		t.Errorf("read_all_stdin IR arm64 3 MiB = %d, want 7", got)
+	}
+}
+
+// TestSelfHostReadAllStdinIRWasm runs the same shapes through the self-hosted
+// wasm IR driver. wasm strings are [len:i32][bytes] blocks rather than the
+// register backends' {data,len} box, so the helper builds the block directly
+// instead of going through a str-box.
+func TestSelfHostReadAllStdinIRWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host read_all_stdin wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	for _, tc := range []struct {
+		name string
+		src  string
+		in   []byte
+		want int
+	}{
+		{"len", "function main(): i32 { var s: string = read_all_stdin(); return s.len(); }\n", []byte("hello\n"), 6},
+		{"empty", "function main(): i32 { var s: string = read_all_stdin(); return s.len(); }\n", nil, 0},
+		{"shapes", readAllStdinIRProg, []byte("alpha\nbeta\n"), 42},
+		// Crosses the helper's 1 MiB per-fd_read chunk, so the loop runs more
+		// than once rather than the single-read case.
+		{"multi-chunk", readAllStdinIRBigProg, bigStdinInput(), 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin, "-ir")
+			} else {
+				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			wat, err := cmd.Output()
+			if err != nil || len(wat) == 0 {
+				t.Fatalf("wasm IR driver failed: %v", err)
+			}
+			if !bytes.Contains(wat, []byte("$__fern_read_all_stdin")) {
+				t.Fatal("emitted wat has no $__fern_read_all_stdin helper")
+			}
+			watFile := filepath.Join(dir, "ras_"+tc.name+".wat")
+			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			run := exec.Command("wasmtime", "run", watFile)
+			run.Stdin = bytes.NewReader(tc.in)
+			_ = run.Run()
+			if run.ProcessState == nil || !run.ProcessState.Exited() {
+				t.Fatal("wasmtime did not exit normally")
+			}
+			if code := run.ProcessState.ExitCode(); code != tc.want {
+				t.Errorf("read_all_stdin wasm IR %q = %d, want %d", tc.name, code, tc.want)
+			}
+		})
 	}
 }

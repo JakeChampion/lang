@@ -646,10 +646,9 @@ pub function op_read_int(): Op { return op0("read_int"); }
 // `read_all_stdin` reads fd 0 to EOF and pushes ONE string box holding the whole
 // input (a VALUE op — no args). Unlike `read_line`'s single 256-byte read it
 // loops until the read syscall returns 0, so it can pull in a whole multi-line
-// source. Lowers to each register backend's __fern_read_all_stdin helper. wasm
-// DOES have stdin (read_int / read_line lower there via fd_read), so this is a
-// not-yet-written runtime rather than an impossibility: wasm_ir_deferrals_ok
-// defers a read_all_stdin module to the AST path until that loop is written.
+// source. Lowers to each register backend's __fern_read_all_stdin helper and to
+// wasm's $__fern_read_all_stdin (an fd_read loop over the same preview1 scratch
+// idiom read_line uses), so every IR backend covers it.
 pub function op_read_all_stdin(): Op { return op0("read_all_stdin"); }
 // `eprint_str` pops a string value and writes its bytes to STDERR (fd 2, no
 // newline), pushing a dummy result so a statement-level drop balances. `eprint(s)`
