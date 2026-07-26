@@ -2720,6 +2720,11 @@ func methodTypeName(t ast.Type) (string, bool) {
 		// receiver method (builtin len/as_bytes and the std/string family)
 		// dispatches on a view too -- methods borrow their receiver.
 		return "string", true
+	case ast.CharType:
+		// `char` (#5629) has its OWN method surface -- deliberately not
+		// i32's, so the byte classifiers can never be reached through a
+		// scalar. Nothing declares a `char` receiver yet.
+		return "char", true
 	case ast.NumberType:
 		switch {
 		case rt.NormalWidth() == 64 && rt.IsSigned():
@@ -4629,6 +4634,8 @@ func displayDispatchTypeName(t ast.Type) string {
 		return "string"
 	case ast.StrType:
 		return "string"
+	case ast.CharType:
+		return "char"
 	case ast.BoolType:
 		return "boolean"
 	case ast.NumberType:
@@ -10268,6 +10275,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			} else {
 				c.settleNumeric(n.Inner, n.Target)
 			}
+		} else if _, tgtIsChar := n.Target.(ast.CharType); tgtIsChar {
+			// `65 as char`: `char` is not a NumberType, so settle the
+			// inner at i32 (the slot a scalar rides) rather than handing
+			// settleNumeric a non-numeric target.
+			c.settleNumeric(n.Inner, ast.NumberType{Width: 32})
 		} else {
 			c.settleNumeric(n.Inner, n.Target)
 		}
@@ -10278,6 +10290,19 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		_, targetIsNum := n.Target.(ast.NumberType)
 		_, targetIsFloat := n.Target.(ast.FloatType)
 		if (innerIsNum || innerIsFloat) && (targetIsNum || targetIsFloat) {
+			return n.Target
+		}
+		// `char` (#5629) converts to and from an integer ONLY by an
+		// explicit cast — that explicitness is the type's entire purpose,
+		// since a byte and a code point sharing `i32` is what made
+		// `s[i].to_upper()` and `to_upper_char(cp)` indistinguishable.
+		// `c as i32` yields the scalar value; `n as char` reinterprets an
+		// integer as one. Range / surrogate validation on the inbound
+		// direction rides the producer slice (#5629 slice 5).
+		if _, tgtIsChar := n.Target.(ast.CharType); tgtIsChar && innerIsNum {
+			return n.Target
+		}
+		if _, innerIsChar := inner.(ast.CharType); innerIsChar && targetIsNum {
 			return n.Target
 		}
 		// Any owned array, slice, string, or struct → i32 / usize —

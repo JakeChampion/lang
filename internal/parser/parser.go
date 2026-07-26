@@ -2141,6 +2141,16 @@ func (p *parser) parseType() (ast.Type, error) {
 		// like Self).
 		p.advance()
 		base = ast.StrType{}
+	case t.Kind == lexer.Ident && t.Text == "char" &&
+		!(p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "."):
+		// `char` is the contextual Unicode-scalar type (#5629). Contextual
+		// for the same reason as `str`: an Ident, not a lexer keyword, so
+		// `.char` methods and `char` locals in expression position keep
+		// working and only type position is claimed. The `char.` guard
+		// keeps a module-qualified reference (`char.Foo`) on the
+		// bare-identifier path below.
+		p.advance()
+		base = ast.CharType{}
 	case t.Kind == lexer.Ident && t.Text == "float" &&
 		!(p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "."):
 		// `float` is the width-unqualified float alias — f64, the

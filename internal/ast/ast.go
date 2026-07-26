@@ -103,6 +103,28 @@ type StringType struct{}
 // sees it. The escape/dangling rule is the A2 slice (#4814).
 type StrType struct{}
 
+// CharType is `char`: a single Unicode SCALAR VALUE (0..0x10FFFF, excluding
+// the surrogate range D800..DFFF) — Rust's `char`, Swift's `Unicode.Scalar`,
+// C#'s `Rune`. It exists because a byte and a code point were previously the
+// SAME type (`i32`), so `s[i].to_upper()` (an ASCII byte fold) and
+// `unicode.to_upper_char(cp)` (a Unicode mapping) had identical signatures and
+// neither the checker nor a reader could tell them apart — the root confusion
+// behind #5552, and the reason the ASCII/Unicode split can't survive as a
+// naming convention across a 144-method surface (docs/STRINGS-SOTA.md D2).
+//
+// In this first slice NO stdlib producer yields `char` yet — the type exists
+// so signatures can declare scalar-vs-byte intent, mirroring how StrType
+// landed. Conversion is EXPLICIT in both directions (`c as i32`, `n as char`);
+// a `char` never implicitly becomes an integer or vice versa, which is the
+// whole point. Range/surrogate validation on `as char` is deferred with the
+// producers (#5629 slice 5).
+//
+// Runtime shape: an i32 slot, identical to NumberType{Width:32}, so it is
+// ERASED to i32 at the LowerWith choke point (ir/erase_char.go) exactly as
+// StrType erases to StringType — no backend or width classification ever sees
+// it.
+type CharType struct{}
+
 // NeverType is the bottom type: the type of an expression that never
 // yields a value because every control-flow path through it exits
 // early (`return` / `break` / `continue`). It arises only internally
@@ -434,6 +456,7 @@ func (VoidType) isType()     {}
 func (NeverType) isType()    {}
 func (StringType) isType()   {}
 func (StrType) isType()      {}
+func (CharType) isType()     {}
 func (FloatType) isType()    {}
 func (ArrayType) isType()    {}
 func (StreamType) isType()   {}
@@ -460,6 +483,7 @@ func (VoidType) String() string   { return "void" }
 func (NeverType) String() string  { return "never" }
 func (StringType) String() string { return "string" }
 func (StrType) String() string    { return "str" }
+func (CharType) String() string   { return "char" }
 func (f FloatType) String() string {
 	return fmt.Sprintf("f%d", f.NormalWidth())
 }
@@ -1237,6 +1261,9 @@ func Equal(a, b Type) bool {
 		return ok
 	case StrType:
 		_, ok := b.(StrType)
+		return ok
+	case CharType:
+		_, ok := b.(CharType)
 		return ok
 	case FloatType:
 		y, ok := b.(FloatType)

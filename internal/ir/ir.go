@@ -2637,7 +2637,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// Erase the borrowed-string view type `str` to plain StringType (#4813):
 	// a view lowers to exactly the string box shape, and the checker has
 	// already enforced the borrow discipline, so no backend sees StrType.
-	eraseStrTypes(prog, info)
+	eraseSurfaceTypes(prog, info)
 	// Rename shadowed local variables so each Var declaration
 	// in a function carries a name that's globally unique
 	// within the function. The IR's per-name `b.locals` slot
