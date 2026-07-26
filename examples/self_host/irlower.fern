@@ -3774,10 +3774,10 @@ function tostring_recv_is_scalar(e: parser.Expr, s: LowerState): boolean {
 }
 
 // is_sat_op reports whether `op` is one of the saturating arithmetic operators
-// (`+|` / `-|` / `*|`, #5542): integer-only, clamping to the operand type's
-// [MIN, MAX] instead of wrapping.
+// (`+|` / `-|` / `*|` / `<<|`, #5542): integer-only, clamping to the operand
+// type's [MIN, MAX] instead of wrapping.
 pub function is_sat_op(op: string): boolean {
-    return op == "+|" || op == "-|" || op == "*|";
+    return op == "+|" || op == "-|" || op == "*|" || op == "<<|";
 }
 
 // lower_sat_binary lowers a saturating integer binary (`+|` / `-|` / `*|`).
@@ -3804,6 +3804,13 @@ pub function is_sat_op(op: string): boolean {
 // the true product, `(a < 0) ^ (b < 0)`. Division by zero in the guarded
 // operand is harmless for the same total-division reason (`x / 0 == 0`,
 // docs/INTEGER-SEMANTICS.md) — the `a != 0` conjunct discards it.
+//
+// `<<|` is the odd one out: it post-checks with a round-trip (`(a << c) >> c ==
+// a ?`) rather than a pre-check, because the negative-side pre-check bound is
+// `ceil(MIN / 2^c)` and an arithmetic shift only yields the floor — `-1 <<| 31`
+// must clamp to MIN, yet `MIN >> 31` is `-1`. The shift back uses the SAME
+// masked count, and is arithmetic for signed / logical for unsigned, which is
+// what makes it value-preserving exactly when the shift did not overflow.
 //
 // Branches are the self-host's void-`if` + store-to-temp shape (lower_value_if),
 // not typed block results, so every backend lowers it unchanged. Mirrors
@@ -3842,6 +3849,46 @@ function lower_sat_binary(b: parser.ExprBinary, e: parser.Expr, s: LowerState): 
     p = p.add_local(oname);
     var oslot: i32 = p.slot_of(oname);
     if (wide) { p = p.mark_i64(oslot, true); }
+
+    if (b.op == "<<|") {
+        var hname: string = "$sats" + util.i32_to_string(p.locals.len());
+        p = p.add_local(hname);
+        var hslot: i32 = p.slot_of(hname);
+        if (wide) { p = p.mark_i64(hslot, true); }
+        var back: string = "shr_s";
+        if (uns) { back = "shr_u"; }
+        p = sat_load(lslot, p);
+        p = sat_load(rslot, p);
+        p = sat_arith("shl", kind, w, p);
+        p = p.emit(ir.op_store_local(hslot));
+        p = sat_load(hslot, p);
+        p = sat_load(rslot, p);
+        p = p.emit(ir.op_bin(back, w, false));
+        p = sat_load(lslot, p);
+        p = p.emit(ir.op_bin("eq", w, false));
+        p = p.emit(ir.op_if(0));
+        p = sat_load(hslot, p);
+        p = p.emit(ir.op_store_local(oslot));
+        p = p.emit(ir.op_else());
+        if (uns) {
+            p = sat_const(kind, "max", p);
+            p = p.emit(ir.op_store_local(oslot));
+            p = p.emit(ir.op_end());
+            return sat_load(oslot, p);
+        }
+        p = sat_load(lslot, p);
+        p = sat_const(kind, "zero", p);
+        p = p.emit(ir.op_bin("lt_s", w, false));
+        p = p.emit(ir.op_if(0));
+        p = sat_const(kind, "min", p);
+        p = p.emit(ir.op_store_local(oslot));
+        p = p.emit(ir.op_else());
+        p = sat_const(kind, "max", p);
+        p = p.emit(ir.op_store_local(oslot));
+        p = p.emit(ir.op_end());
+        p = p.emit(ir.op_end());
+        return sat_load(oslot, p);
+    }
 
     if (uns) {
         if (b.op == "+|") {
@@ -4007,7 +4054,7 @@ function lower_sat_binary(b: parser.ExprBinary, e: parser.Expr, s: LowerState): 
 // rather than a sign-extended -1.
 //
 // `sat_arith` re-applies the width normalisation the ordinary binary path
-// applies after add/sub/mul: the register backends hold a u32 zero-extended and
+// applies after add/sub/mul/shl: the register backends hold a u32 zero-extended and
 // an i32 sign-extended in a 64-bit register, so a 32-bit product must be
 // narrowed before the signed `*|` division round-trip can detect its overflow.
 function sat_load(slot: i32, s: LowerState): LowerState {
@@ -4035,7 +4082,7 @@ function sat_const(kind: string, which: string, s: LowerState): LowerState {
 }
 function sat_arith(k: string, kind: string, w: i32, s: LowerState): LowerState {
     var p: LowerState = s.emit(ir.op_bin(k, w, false));
-    if (k != "add" && k != "sub" && k != "mul") { return p; }
+    if (k != "add" && k != "sub" && k != "mul" && k != "shl") { return p; }
     if (kind == "u32") { return p.emit(ir.op_u32_wrap()); }
     if (kind == "i32") { return p.emit(ir.op_int_cast("i32")); }
     if (kind == "u8") { return p.emit(ir.op_int_cast("u8")); }

@@ -76,11 +76,11 @@ backends match it:
 
 ## Saturating arithmetic (opt-in)
 
-`+|`, `-|`, and `*|` are the **saturating** counterparts of `+`, `-`,
-and `*`: instead of wrapping, they clamp to the operand type's
-`[MIN, MAX]`. They are additive surface — the wrapping default above is
-unchanged, and a program that never writes `|` after an arithmetic
-operator behaves exactly as before.
+`+|`, `-|`, `*|`, and `<<|` are the **saturating** counterparts of `+`,
+`-`, `*`, and `<<`: instead of wrapping, they clamp to the operand
+type's `[MIN, MAX]`. They are additive surface — the wrapping default
+above is unchanged, and a program that never writes `|` after an
+arithmetic operator behaves exactly as before.
 
 ```
 2147483647 +| 1  == 2147483647       // i32 clamps high
@@ -88,12 +88,16 @@ operator behaves exactly as before.
 100000 *| 100000 == 2147483647
 250u8 +| 10u8    == 255              // clamps at the u8 max
 10u8 -| 250u8    == 0                // unsigned clamps low at 0
+1 <<| 31         == 2147483647       // i32 shift clamps high
+(-2) <<| 31      == -2147483648      // ... and low
+200u8 <<| 1      == 255
 ```
 
 The operators sit in the existing arithmetic tiers: `+|` / `-|` bind
-like `+` / `-`, `*|` binds like `*`. They are **integer-only** — there
-is no string-concat form (unlike `+`), no float form (floats already
-saturate to ±Inf), and no composite operator overload. `usize` is
+like `+` / `-`, `*|` binds like `*`, `<<|` binds like `<<`. They are
+**integer-only** — there is no string-concat form (unlike `+`), no
+float form (floats already saturate to ±Inf), and no composite
+operator overload. `usize` is
 rejected (E009) because its clamp bounds are target-width-dependent and
 so aren't expressible in the target-agnostic IR; cast to a fixed-width
 integer first.
@@ -125,17 +129,44 @@ division: `a != 0 && (s / a != b || (a == -1 && b == MIN))`. The second
 term is needed precisely because division is total here — `MIN / -1`
 yields `MIN`, so the round-trip spuriously agrees on exactly that pair.
 
+`<<|` post-checks the same way, and for a related reason: its
+negative-side pre-check bound would be `ceil(MIN / 2^c)`, and an
+arithmetic shift only yields the floor —
+`-1 <<| 31` must clamp to MIN, yet `MIN >> 31` is `-1`, so
+`a < MIN >> c` would wrongly report no overflow.
+
+```
+a <<| b →  s := a << b; (s >> b) == a ? s
+                        : signed ? (a < 0 ? MIN : MAX) : MAX
+```
+
+The count is masked exactly as `<<` masks it (`& 31` / `& 63`), so
+`3 <<| 32 == 3`, and the shift back uses the same masked count. `>>`
+is arithmetic for signed operands and logical for unsigned, which is
+what makes the round-trip value-preserving in each signedness. Sub-i32
+`u8` is the one width where the shifted value has to be masked back
+into its 8 bits before the round-trip runs, since sub-i32 arithmetic
+otherwise stays in a 32-bit lane.
+
 ### Known limitations
 
-`+|` / `-|` / `*|` are not allowed inside a `const` initializer. Const
+`+|` / `-|` / `*|` / `<<|` are not allowed inside a `const` initializer. Const
 folding runs *before* the checker, so no operand width — and therefore
 no clamp bound — is known at that point; the compiler reports
 ``operator `+|` not allowed in integer constant expressions`` rather
 than guessing one.
 
-The remaining overflow disciplines from #5542 — the `Option`-returning
-checked form and the `overflowing_*` (result, overflowed) pair — are
-not implemented yet.
+The remaining overflow disciplines from #5542 are available as
+**library** surface rather than operators: `std/i32`, `std/i64`,
+`std/u32` and `std/u64` each carry `checked_add` / `checked_sub` /
+`checked_mul` / `checked_div` / `checked_rem` / `checked_pow` /
+`checked_shl` / `checked_shr` (returning `Option[T]`) and
+`overflowing_add` / `overflowing_sub` / `overflowing_mul` /
+`overflowing_div` / `overflowing_rem` (returning `(T, boolean)`),
+alongside `saturating_*` method forms. There is no operator spelling
+for the checked disciplines, and no aborting-on-overflow build mode —
+the never-trapping contract at the top of this document still holds
+unconditionally.
 
 ## Conversions
 

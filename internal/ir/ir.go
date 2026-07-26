@@ -10658,10 +10658,10 @@ func (b *builder) maybeFoldStringEq(n *ast.Binary) (error, bool) {
 }
 
 // isSatOp reports whether `s` is one of the saturating arithmetic
-// operators (`+|` / `-|` / `*|`, #5542). They are integer-only and
-// clamp to the operand type's [MIN, MAX] instead of wrapping.
+// operators (`+|` / `-|` / `*|` / `<<|`, #5542). They are integer-only
+// and clamp to the operand type's [MIN, MAX] instead of wrapping.
 func isSatOp(s string) bool {
-	return s == "+|" || s == "-|" || s == "*|"
+	return s == "+|" || s == "-|" || s == "*|" || s == "<<|"
 }
 
 // satBinary lowers a saturating integer binary. Both operands are
@@ -10697,6 +10697,22 @@ func isSatOp(s string) bool {
 // total-division reason: the `a != 0` conjunct discards the result,
 // and `x / 0` is defined as 0 rather than a trap
 // (docs/INTEGER-SEMANTICS.md).
+//
+// `<<|` is the odd one out: it post-checks with a round-trip rather
+// than a pre-check, because the pre-check bound for the negative side
+// would need `ceil(MIN / 2^c)` and an arithmetic shift only gives the
+// floor (`-1i8 <<| 31` must clamp to MIN, but `MIN >> 31` is `-1`, so
+// `a < MIN >> c` is false). Shifting back is exact at every width:
+//
+//	a <<| b →  s := a << b; (s >> b) == a ? s
+//	                        : signed   ? (a < 0 ? MIN : MAX)
+//	                        : /*uns*/    MAX
+//
+// The count is masked exactly as `<<` masks it (`& 31` / `& 63`), and
+// the round-trip shifts by the same masked count, so the check tests
+// the shift that actually ran. `>>` is arithmetic for signed operands
+// and logical for unsigned, which is what makes the round-trip
+// value-preserving in each signedness.
 func (b *builder) satBinary(n *ast.Binary) error {
 	w := n.IntWidth
 	if w != 8 && w != 64 {
@@ -10882,6 +10898,43 @@ func (b *builder) satBinary(n *ast.Binary) error {
 		b.closeScope()
 		b.elseBranch()
 		loadS()
+		b.closeScope()
+		return nil
+	case "<<|":
+		loadL()
+		loadR()
+		at(OpShl)
+		if w == 8 {
+			// Sub-i32 arithmetic runs in 32-bit lanes and only wraps
+			// on the way into a u8 slot, so the round-trip below has
+			// to see the wrapped value — otherwise `200u8 <<| 1`
+			// shifts back to 200 and reports no overflow.
+			konst(255)
+			at(OpAnd)
+		}
+		ss := spill()
+		loadS := func() { b.emit(Op{Kind: OpLoadLocal, I32: ss}) }
+		loadS()
+		loadR()
+		at(OpShrS)
+		loadL()
+		at(OpEq)
+		b.openIf(bt)
+		loadS()
+		b.elseBranch()
+		if uns {
+			konst(maxV)
+			b.closeScope()
+			return nil
+		}
+		loadL()
+		konst(0)
+		at(OpLtS)
+		b.openIf(bt)
+		konst(minV)
+		b.elseBranch()
+		konst(maxV)
+		b.closeScope()
 		b.closeScope()
 		return nil
 	}

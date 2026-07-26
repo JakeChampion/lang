@@ -298,6 +298,33 @@ var interpProgs = []struct {
 	// Unlabeled break/continue still bind to the innermost loop (depth 0 —
 	// the encoding's base case, unchanged).
 	{"unlabeled-break-innermost", "function main(): i32 { var s = 0; var i = 0; while (i < 3) { var j = 0; while (j < 10) { if (j == 2) { break; } s = s + 1; j = j + 1; } i = i + 1; } return s; }", 6},
+	// Saturating operators (#5542) in the SELF-HOST tree-walking
+	// interpreter: interp.fern computes the i32 forms exactly in a host
+	// i64 and clamps, and the i64 forms with the same pre-check /
+	// round-trip shapes irlower emits. These are the interp-side sibling
+	// of internal/e2e/saturating_arith_test.go.
+	//
+	// There is deliberately no `2147483647 + 1 == i32::MIN` control here:
+	// this interpreter does not wrap i32 arithmetic at all once it is
+	// compiled by the self-hosted compiler (an i32 read out of a VInt
+	// payload keeps its 64-bit register width), which is a separate,
+	// pre-existing divergence from docs/INTEGER-SEMANTICS.md. The
+	// wrapping control lives in internal/e2e/saturating_arith_test.go and
+	// in the self-host IR suite, both of which do hold it.
+	{"sat-add-hi", "function main(): i32 { var a: i32 = 2147483647; if ((a +| 1) == a) { return 7; } return 0; }", 7},
+	{"sat-sub-lo", "function main(): i32 { var a: i32 = 0 - 2147483647 - 1; if ((a -| 1) == a) { return 7; } return 0; }", 7},
+	{"sat-mul-hi", "function main(): i32 { if ((100000 *| 100000) == 2147483647) { return 7; } return 0; }", 7},
+	{"sat-mul-lo", "function main(): i32 { if (((0 - 100000) *| 100000) == (0 - 2147483647 - 1)) { return 7; } return 0; }", 7},
+	{"sat-plain", "function main(): i32 { return 40 +| 2; }", 42},
+	// Shift member: clamps high, clamps low, passes through, and masks the
+	// count exactly as the wrapping shift does.
+	{"sat-shl-hi", "function main(): i32 { var a: i32 = 1; if ((a <<| 31) == 2147483647) { return 7; } return 0; }", 7},
+	{"sat-shl-lo", "function main(): i32 { var a: i32 = 0 - 2; if ((a <<| 31) == (0 - 2147483647 - 1)) { return 7; } return 0; }", 7},
+	// -1 << 31 is exactly i32::MIN, so it must NOT clamp by accident: the
+	// round-trip has to accept it.
+	{"sat-shl-exact-min", "function main(): i32 { var a: i32 = 0 - 1; if ((a <<| 31) == (0 - 2147483647 - 1)) { return 7; } return 0; }", 7},
+	{"sat-shl-plain", "function main(): i32 { return 21 <<| 1; }", 42},
+	{"sat-shl-mask", "function main(): i32 { return 42 <<| 32; }", 42},
 }
 
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference

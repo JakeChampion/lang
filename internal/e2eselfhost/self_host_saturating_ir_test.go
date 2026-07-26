@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// The saturating operators `+|` / `-|` / `*|` (#5542) clamp to the operand
+// The saturating operators `+|` / `-|` / `*|` / `<<|` (#5542) clamp to the operand
 // type's [MIN, MAX] instead of wrapping. irlower.lower_sat_binary emits the
 // clamp as a void-`if` + store-to-temp chain over ordinary IR ops (no new
 // opcode), so every self-host IR backend lowers it unchanged. These cases
@@ -61,6 +61,25 @@ var saturatingIRCases = []struct {
 	{"u8-sub-lo", `function main(): i32 { var u: u8 = 250; var v: u8 = 10; if ((v -| u) == 0) { return 20; } return 0; }`, 20},
 	{"u8-mul-hi", `function main(): i32 { var u: u8 = 250; var v: u8 = 10; if ((u *| v) == 255) { return 21; } return 0; }`, 21},
 	{"u8-plain", `function main(): i32 { var u: u8 = 6; var v: u8 = 7; return (u *| v) as i32; }`, 42},
+
+	// `<<|` post-checks by shifting back rather than pre-checking, so its
+	// cases pin both directions of the round-trip at every width.
+	{"shl-i32-hi", `function main(): i32 { var a: i32 = 1; var b: i32 = 31; if ((a <<| b) == 2147483647) { return 22; } return 0; }`, 22},
+	{"shl-i32-lo", `function main(): i32 { var a: i32 = 0 - 2; var b: i32 = 31; if ((a <<| b) == (0 - 2147483647 - 1)) { return 23; } return 0; }`, 23},
+	{"shl-i32-exact-min", `function main(): i32 { var a: i32 = 0 - 1; var b: i32 = 31; if ((a <<| b) == (0 - 2147483647 - 1)) { return 24; } return 0; }`, 24},
+	{"shl-i32-plain", `function main(): i32 { var a: i32 = 21; var b: i32 = 1; return a <<| b; }`, 42},
+	{"shl-i32-zero", `function main(): i32 { var a: i32 = 0; var b: i32 = 31; if ((a <<| b) == 0) { return 25; } return 0; }`, 25},
+	{"shl-i32-mask", `function main(): i32 { var a: i32 = 42; var b: i32 = 32; return a <<| b; }`, 42},
+	{"shl-u8-hi", `function main(): i32 { var u: u8 = 200; var v: u8 = 1; if ((u <<| v) == 255) { return 26; } return 0; }`, 26},
+	{"shl-u8-plain", `function main(): i32 { var u: u8 = 21; var v: u8 = 1; return (u <<| v) as i32; }`, 42},
+	{"shl-u32-hi", `function main(): i32 { var p: u32 = 4294967290; var q: u32 = 1; if ((p <<| q) == 4294967295) { return 27; } return 0; }`, 27},
+	{"shl-u32-edge", `function main(): i32 { var p: u32 = 1; var q: u32 = 31; if ((p <<| q) == 2147483648) { return 28; } return 0; }`, 28},
+	{"shl-i64-hi", `function main(): i32 { var x: i64 = 9223372036854775807; var y: i64 = 1; if ((x <<| y) == 9223372036854775807) { return 29; } return 0; }`, 29},
+	{"shl-i64-lo", `function main(): i32 { var x: i64 = 0 - 1; var y: i64 = 63; if ((x <<| y) == (0 - 9223372036854775807 - 1)) { return 30; } return 0; }`, 30},
+	{"shl-i64-plain", `function main(): i32 { var x: i64 = 21; var y: i64 = 1; return (x <<| y) as i32; }`, 42},
+	{"shl-u64-hi", `function main(): i32 { var m: u64 = 18446744073709551615; var n: u64 = 1; if ((m <<| n) == 18446744073709551615) { return 31; } return 0; }`, 31},
+	// Same tier as `<<`, left-associative.
+	{"shl-prec", `function main(): i32 { var a: i32 = 1; var b: i32 = 2; var c: i32 = 3; return a <<| b + c; }`, 32},
 }
 
 // TestSelfHostSaturatingX86IR pins the saturating operators on the x86-64 IR

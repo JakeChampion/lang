@@ -2662,7 +2662,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		// inert for them; string concatenation is flagged separately.
 		if b.IntWidth == 0 && b.FloatWidth == 0 && !b.IsStringConcat {
 			switch b.Op {
-			case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|":
+			case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|", "<<|":
 				b.IntWidth = 32
 			}
 		}
@@ -11422,11 +11422,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				n.IsUnsigned = !common.IsSigned()
 			}
 			return common
-		case "+|", "-|", "*|":
+		case "+|", "-|", "*|", "<<|":
 			// Saturating integer arithmetic (#5542): clamp to the
 			// operand type's [MIN, MAX] instead of wrapping. Integer
 			// only — there is no float form (floats already saturate
 			// to ±Inf), no string concat, and no composite overload.
+			// `<<|` is the shift member: like `<<` it takes its count
+			// on the right at the same integer type, and like the
+			// other three it clamps instead of wrapping.
 			c.requireInteger(n.P, lt, n.Op)
 			c.requireInteger(n.P, rt, n.Op)
 			// `usize` is target-width, so its clamp bounds aren't
@@ -12917,7 +12920,7 @@ func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
 		}
 	case *ast.Binary:
 		switch x.Op {
-		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|":
+		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|", "<<|":
 			// Don't stomp a float-typed binary's resolved
 			// FloatWidth with an int width — happens when an
 			// int-cast surrounds a float multiply, e.g.

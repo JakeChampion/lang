@@ -44,9 +44,10 @@ func shape(e ast.Expr) string {
 }
 
 // The saturating operators (#5542) sit in the existing arithmetic tiers:
-// `+|` / `-|` with `+` / `-`, `*|` with `*` / `/` / `%`. They lex as single
-// two-character punctuators, so `a +| b` is one operator rather than `a + (|b)`
-// — and `+=` still wins over a `+`-prefixed match.
+// `+|` / `-|` with `+` / `-`, `*|` with `*` / `/` / `%`, `<<|` with `<<` /
+// `>>`. They lex as single punctuators, so `a +| b` is one operator rather
+// than `a + (|b)` — and `+=` still wins over a `+`-prefixed match, while the
+// three-character `<<|` wins over `<<`.
 func TestSaturatingOperatorPrecedence(t *testing.T) {
 	for _, tc := range []struct{ src, want string }{
 		{"a +| b", "(+| a b)"},
@@ -64,6 +65,13 @@ func TestSaturatingOperatorPrecedence(t *testing.T) {
 		{"a << b +| c", "(<< a (+| b c))"},
 		// Bitwise-or is looser still, so `a +| b | c` groups as `(a +| b) | c`.
 		{"a +| b | c", "(| (+| a b) c)"},
+		// `<<|` shares the shift tier with `<<` / `>>`.
+		{"a <<| b", "(<<| a b)"},
+		{"a <<| b + c", "(<<| a (+ b c))"},
+		{"a <<| b <<| c", "(<<| (<<| a b) c)"},
+		{"a << b <<| c", "(<<| (<< a b) c)"},
+		{"a <<| b & c", "(& (<<| a b) c)"},
+		{"a +| b <<| c", "(<<| (+| a b) c)"},
 	} {
 		if got := shape(exprOfReturn(t, tc.src)); got != tc.want {
 			t.Errorf("parse %q = %s, want %s", tc.src, got, tc.want)
@@ -79,5 +87,13 @@ func TestCompoundAssignStillLexesBeforeSaturating(t *testing.T) {
 	}
 	if _, err := Parse(`function main(): i32 { var a: i32 = 1; var b: i32 = 2; return a | b; }`); err != nil {
 		t.Errorf("bitwise or after adding +|: %v", err)
+	}
+	// `<<|` sits ahead of `<<` in the punctuator table; `<<=` is longer still
+	// and must keep winning over both.
+	if _, err := Parse(`function main(): i32 { var a: i32 = 1; a <<= 2; return a; }`); err != nil {
+		t.Errorf("shift-assign after adding <<|: %v", err)
+	}
+	if got := shape(exprOfReturn(t, "a << b")); got != "(<< a b)" {
+		t.Errorf("wrapping shift after adding <<| = %s, want (<< a b)", got)
 	}
 }
