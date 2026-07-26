@@ -5230,6 +5230,14 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // indexed by idx = roundup8(size)/8; <= 8 KiB classes. Pushed by
         // __fern_arr_dec, popped by __fern_alloc before bumping.
         s = s.write("__fern_freelist: .skip 524288\n");
+        s = s.write("    .align 8\n");
+        // Large-tier freelist (#3425): the 65536-word __fern_freelist above recycles
+        // blocks <512 KiB exactly; blocks >=512 KiB previously LEAKED, exhausting the
+        // arena on a long emit. LINEAR 512-KiB classes: class = round_up(size,512KiB)
+        // >> 19 (1..2048), 2560 slots for headroom. The arm64 twin of asm_ir.fern's
+        // tier (bsr/variable-shift-free — built from 1<<19 to avoid arm64's tight
+        // immediate/wide-literal encoding, like the existing round-to-8 lsr/lsl).
+        s = s.write("__fern_large_freelist: .skip 20480\n");
         s = s.write("    .text\n");
         s = s.write(".globl __fern_alloc\n");
         s = s.write(".type __fern_alloc, %function\n");
@@ -5244,7 +5252,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    lsl x0, x3, #3\n");        // rounded size = idx*8 (avoids bic, unsupported by the in-process arm64-darwin assembler)
         s = s.write("    mov x2, #0x10000\n");      // freelist class cap (65536); reg form (shifted cmp imm may be unsupported)
         s = s.write("    cmp x3, x2\n");
-        s = s.write("    b.hs .Lalloc_nofl\n");
+        s = s.write("    b.hs .Lalloc_large\n");
         s = s.write("    adrp x1, __fern_freelist\n");
         s = s.write("    add x1, x1, :lo12:__fern_freelist\n");
         s = s.write("    ldr x2, [x1, x3, lsl #3]\n");   // head = freelist[idx]
@@ -5252,6 +5260,32 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldr x0, [x2]\n");               // next = *head
         s = s.write("    str x0, [x1, x3, lsl #3]\n");   // freelist[idx] = next
         s = s.write("    mov x0, x2\n");                 // return head
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        // Large tier (#3425): x0 = rounded-8 size (>=512 KiB), x3 = idx. Round the
+        // size up to a 512-KiB multiple (the class capacity — bump AT it so every
+        // block in a class has one size), class = cap>>19, pop the large freelist;
+        // empty falls through to the bump with x0 = cap. >1 GiB is bump-only. Only
+        // x0..x3 used (alloc's clobber contract). 512 KiB is built as 1<<19 to avoid
+        // wide immediates; masking is lsr/lsl (bic is unsupported by the assembler).
+        s = s.write(".Lalloc_large:\n");
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    lsl x1, x1, #30\n");            // x1 = 1 GiB
+        s = s.write("    cmp x0, x1\n");
+        s = s.write("    b.hi .Lalloc_nofl\n");          // > 1 GiB: bump exact, no freelist
+        s = s.write("    mov x1, #1\n");
+        s = s.write("    lsl x1, x1, #19\n");            // x1 = 512 KiB
+        s = s.write("    sub x1, x1, #1\n");             // x1 = 512 KiB - 1
+        s = s.write("    add x0, x0, x1\n");             // size + (512 KiB - 1)
+        s = s.write("    lsr x3, x0, #19\n");            // class = round_up(size,512KiB) >> 19  (1..2048)
+        s = s.write("    lsl x0, x3, #19\n");            // cap = class << 19 = bytes to bump
+        s = s.write("    adrp x1, __fern_large_freelist\n");
+        s = s.write("    add x1, x1, :lo12:__fern_large_freelist\n");
+        s = s.write("    ldr x2, [x1, x3, lsl #3]\n");   // head
+        s = s.write("    cbz x2, .Lalloc_nofl\n");       // empty class: bump at cap (x0)
+        s = s.write("    ldr x0, [x2]\n");               // next = *head
+        s = s.write("    str x0, [x1, x3, lsl #3]\n");   // freelist[class] = next
+        s = s.write("    mov x0, x2\n");                 // return reused block
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".Lalloc_nofl:\n");                  // x0 = rounded size
@@ -5744,6 +5778,30 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         // Guards null / low-address / static sentinel; clears rc on free
         // so a stray second release is a detector tick, not a re-free.
         // Frameless: data at [sp]. Clobbers x0..x3, x9.
+        // __fern_large_push(base=x1, bytes=x2): return a freed >=512 KiB block to
+        // the large tier (#3425), arm64 twin of asm_ir's helper. Bins by the same
+        // linear round-up __fern_alloc uses (class = round_up(bytes,512KiB)>>19) and
+        // pushes (successor in the block's first word). >1 GiB is dropped. Clobbers
+        // x1..x4, PRESERVES x0 (so a caller mid-free — e.g. str_free with box in x0 —
+        // survives). A caller that only ret's after can TAIL-BRANCH here (b, not bl),
+        // so its ret-addr in x30 flows straight through.
+        s = s.write("__fern_large_push:\n");
+        s = s.write("    mov x3, #1\n");
+        s = s.write("    lsl x3, x3, #30\n");           // 1 GiB
+        s = s.write("    cmp x2, x3\n");
+        s = s.write("    b.hi .Llpush_ret\n");          // > 1 GiB: drop (leak, matches alloc)
+        s = s.write("    mov x3, #1\n");
+        s = s.write("    lsl x3, x3, #19\n");           // 512 KiB
+        s = s.write("    sub x3, x3, #1\n");            // 512 KiB - 1
+        s = s.write("    add x2, x2, x3\n");            // bytes + (512 KiB - 1)
+        s = s.write("    lsr x2, x2, #19\n");           // class = round_up(bytes,512KiB) >> 19
+        s = s.write("    adrp x3, __fern_large_freelist\n");
+        s = s.write("    add x3, x3, :lo12:__fern_large_freelist\n");
+        s = s.write("    ldr x4, [x3, x2, lsl #3]\n");  // old head
+        s = s.write("    str x4, [x1]\n");              // *base = old head
+        s = s.write("    str x1, [x3, x2, lsl #3]\n");  // heads[class] = base
+        s = s.write(".Llpush_ret:\n");
+        s = s.write("    ret\n");
         s = s.write("__fn___fern_arr_dec:\n");
         s = s.write("    ldr x0, [sp]\n");
         s = s.write("    cbz x0, .Larrdec_ret\n");
@@ -5771,7 +5829,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x1, x1, #3\n");           // idx = cap + 3
         s = s.write("    mov x9, #0x10000\n");         // freelist class cap (65536)
         s = s.write("    cmp x1, x9\n");
-        s = s.write("    bhs .Larrdec_ret\n");
+        s = s.write("    bhs .Larrdec_large\n");
         s = s.write("    sub x2, x0, #16\n");          // base = data - 16
         s = s.write("    adrp x3, __fern_freelist\n");
         s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
@@ -5780,6 +5838,13 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str x2, [x3, x1, lsl #3]\n"); // freelist[idx] = base
         s = s.write(".Larrdec_ret:\n");
         s = s.write("    ret\n");
+        // Large tier (#3425): recycle the >=512 KiB array block (base=data-16, bytes
+        // =idx*8) via __fern_large_push instead of leaking. Tail-branch (b): the
+        // helper's ret returns to arr_dec's caller, x30 flows through untouched.
+        s = s.write(".Larrdec_large:\n");
+        s = s.write("    lsl x2, x1, #3\n");           // bytes = idx * 8
+        s = s.write("    sub x1, x0, #16\n");          // base = data - 16
+        s = s.write("    b __fern_large_push\n");
         // __fern_str_free(box) — reclaim a FRESH, sole-owned HEAP string (#2649
         // string RC), the arm64 sibling of the x86-64 body in asm_ir.emit_ir_runtime.
         // A self-host string is a header-LESS 16-byte box {data@0, len@8}, so it
