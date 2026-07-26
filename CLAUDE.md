@@ -287,11 +287,19 @@ deltas are MARGINAL (struct reuse with enum / Map / closure / tuple
 pointer fields — §3 Delta B). The real remaining frontier for retiring
 the legacy AST emitters is the per-module epic's step 5 (#3457, still
 OPEN) — see **`docs/SELFHOST-AST-RETIREMENT.md`** for the code-verified
-slice plan (slice 1 done; 2/3/5 gated on the #3425 self-host-runtime
-memory leak; 4 is a ~5k-line arm64/wasm runtime duplication that unlocks
-no deletion on its own). Its wasm component-model sub-issues (#4315–#4320)
-are now ALL closed, so it is **no longer blocked on them** — verify its
-current blockers directly before picking it up rather than assuming it is gated.
+slice plan (slice 1 done; **#3425 — the self-host-runtime memory leak
+that gated 2/3/5 — is now CLOSED**: the native large-tier freelist was
+ported to the self-host runtime, x86 `asm_ir.fern` #5609 + arm64
+`asm_arm64.fern` #5614, and `TestSelfHostPerModuleFixpointX86_64`
+(env-gated `RUN_PERMODULE_FIXPOINT=1`) is GREEN — a self-host-BUILT
+compiler per-module-emits all 35 units with no arena OOM, gen0==gen1
+byte-identical, ~7.6 GB peak/window under the 8 GiB arena. Slice 2 is
+now unblocked — the only residual is the gen1 per-module fixpoint's CI
+*time* (serial ~16.6 min), addressed by memory-budgeted parallel emit,
+not a memory wall; 4 is a ~5k-line arm64/wasm runtime duplication that
+unlocks no deletion on its own). Its wasm component-model sub-issues
+(#4315–#4320) are now ALL closed, so it is **no longer blocked on them** —
+verify its current blockers directly before picking it up rather than assuming it is gated.
 When picking up "the next task", VERIFY tracker
 state against the code first: issues #4451/#4363/#4346 have repeatedly
 lagged reality (the checker-codes filter is already deleted, the
