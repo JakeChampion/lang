@@ -95,12 +95,15 @@ be static data, not constructed arrays** (§5.7), and per-function DCE
 already gives Fern the "pay only for what you use" property that ICU4X
 calls *data slicing* — the ASCII binary stayed at 8.5 KB.
 
-### One bug found while measuring: the lexer is not UTF-8-aware
+### One bug found while measuring: the lexer was not UTF-8-aware
 
-#5552's body opens with "Fern's lexer is UTF-8-aware". It isn't — for
-identifiers. `lexer.go:342` applies `unicode.IsLetter` to
+*(Fixed in #5628; recorded here because it is what forced the identifier
+decision in D11.)*
+
+#5552's body opens with "Fern's lexer is UTF-8-aware". It wasn't — for
+identifiers. The scanner applied `unicode.IsLetter` to
 `rune(l.src[l.i])`, i.e. to a single **byte** widened to a rune, so
-UTF-8 continuation bytes are classified as though they were Latin-1
+UTF-8 continuation bytes were classified as though they were Latin-1
 characters. Observable consequences:
 
 ```
@@ -111,9 +114,9 @@ var cafê = 7;   // ACCEPTED, prints 7
 `é` is `C3 A9`; `A9` is `©` in Latin-1, not a letter → rejected, with a
 diagnostic pointing at the second byte of a character and naming a
 character that isn't in the source. `ê` is `C3 AA`; `AA` is `ª`
-(category Lo) → *is* a letter → silently accepted. The accepted set is
+(category Lo) → *is* a letter → silently accepted. The accepted set was
 "code points all of whose continuation bytes happen to be `ª`, `µ`, or
-`º` in Latin-1", which is not a design. See §5.10.
+`º` in Latin-1", which is not a design. See D11 for the fix.
 
 ---
 
@@ -593,7 +596,24 @@ containing invalid UTF-8 is a boundary error rather than a value. Write
 it down in `std/path` rather than leaving it implied — the same honesty
 `FLOAT-SEMANTICS.md` / `INTEGER-SEMANTICS.md` apply to their domains.
 
-### D11 — Fix the lexer, and decide identifiers explicitly.
+### D11 — Fix the lexer, and decide identifiers explicitly. — **LANDED (#5628)**
+
+**Decided: identifiers are ASCII-only.** The lexer now classifies with
+explicit ASCII predicates instead of handing raw bytes to
+`unicode.IsLetter`, and reports the real character:
+
+```
+var café = 7;   // error: identifiers must be ASCII; found 'é'
+var cafê = 7;   // same error — it no longer compiles
+x — 1           // error: unexpected character '—'
+var x = \xff;   // error: invalid UTF-8 byte 0xFF
+```
+
+Non-ASCII stays free in string literals and comments. The caret lands on
+the first byte of the offending character rather than a continuation
+byte. `unicode.IsSpace` on a raw byte also went — it matched 0x85 and
+0xA0, which are continuation bytes, not spaces.
+
 
 §1's bug. Whatever the policy, the current behaviour — Latin-1
 predicates applied to UTF-8 continuation bytes, so `cafê` compiles and
@@ -633,7 +653,7 @@ Tracked as epic #5626; issue numbers below.
 | # | Slice | Depends on | Notes |
 |---|---|---|---|
 | 1 | **D7** (#5627) — static tables + range coalescing + ASCII fast path — **DONE** | — | Pure win; made `std/unicode` usable at all (176 KB → 27.8 KB, 22× → parity). Prerequisite for D3. |
-| 2 | **D11** (#5628) — lexer UTF-8 fix + identifier policy | — | Self-contained bug fix; correct diagnostics. |
+| 2 | **D11** (#5628) — lexer UTF-8 fix + identifier policy — **DONE** | — | Self-contained bug fix; correct diagnostics. Identifiers are ASCII-only. |
 | 3 | **D2** (#5629) — the `char` type | — | Checker + `std/utf8` + `std/unicode` signatures. Big but mechanical; unblocks honest naming everywhere. |
 | 4 | **D3 + D4** (#5630) — flip the default, full case mapping | 1, 3 | Touches the self-host builtin (`irlower.fern` / `asmcore.fern`) **and** the native stdlib — see D3's implementation note. Differential coverage required. |
 | 5 | **D5** (#5631) — normalization + `eq_canonical` | 1 | Highest correctness payoff of the remaining Unicode work; new tables, same static-data machinery as slice 1. |
