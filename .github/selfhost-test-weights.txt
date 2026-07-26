@@ -90,3 +90,6 @@ TestSelfHostSaturatingWasmIR 25
 # Append-fresh reclaim (#5608): one program through two warm drivers
 # (asm_run + asm_pathprobe_run), plus a native cross-check.
 TestSelfHostAppendFreshReclaimIRX86_64 6
+# Cell on the wasm IR path (#5510): 5 subtests through one warm driver, each
+# with a native cross-check compile.
+TestSelfHostCellWasmIR 6
