@@ -3880,7 +3880,22 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
         if (o.kind_tag == 1) {  // const_i32
-            s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rax\n    pushq %rax\n");
+            // Zero materialises as `xorl %eax, %eax` (2 bytes) rather than
+            // `movq $0, %rax` (7: REX.W + C7 /0 + imm32). Literal zero is
+            // everywhere — every source `0`, zero-init and implicit `return 0`
+            // — so the 5 bytes compound. Mirrors the native x86-64 backend's
+            // OpConstI32 zero case (#4380 lever 2).
+            //
+            // `xor` clobbers FLAGS where `mov` does not, which is only safe
+            // because FLAGS are never live across an IR-op boundary here: each
+            // comparison op emits its own cmp + setcc together, so a const
+            // materialisation can never sit between a flag-setter and its
+            // reader. Do not weaken that invariant without revisiting this.
+            if (o.i32_imm == 0) {
+                s = s.write("    xorl %eax, %eax\n    pushq %rax\n");
+            } else {
+                s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rax\n    pushq %rax\n");
+            }
         } else if (o.kind_tag == 2) {  // const_i32_text
             // Integer literal source text spliced into a 32-bit immediate (hex /
             // full u32 range) — byte-identical to asm.fern's ExprNumber.
