@@ -85,6 +85,15 @@ func TestSelfHostCaptureLambdaX86IR(t *testing.T) {
 		{"arr-literal-index", `function main(): i32 { var a = [3, 5, 9]; var third = function(): i32 { return a[2]; }; return third(); }`, 9},
 		{"strarr-literal-capture", `function main(): i32 { var a = ["x", "y"]; var len = function(): i32 { return a.len(); }; return len(); }`, 2},
 		{"struct-literal-capture", `struct P { x: i32 } function main(): i32 { var p = P { x: 42 }; var get = function(): i32 { return p.x; }; return get(); }`, 42},
+		// Wide-value (i64/u64) lambdas with an INFERRED (empty) return type: the
+		// lifted __lam_N carried ret_type "" so eligibility's `lower` bailed on the
+		// i64 return (ret_is_i64 unknown) → the lambda routed to the AST emitter.
+		// lift_lambdas now infers the lifted body's return type, so these lower on
+		// the IR path. (An explicit `function(x: i64): i64` return already worked;
+		// the gap was the arrow / inferred-return form.)
+		{"i64-capture-inferred-ret", `function main(): i32 { var base: i64 = 7000000000; var f = () => base + 2000000000; return (f() / 1000000000) as i32; }`, 9},
+		{"i64-param-inferred-ret", `function main(): i32 { var f = (x: i64) => x + 1; return f(5) as i32; }`, 6},
+		{"u64-param-inferred-ret", `function main(): i32 { var f = (x: u64) => x + 3; return f(5) as i32; }`, 8},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

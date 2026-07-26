@@ -40092,7 +40092,15 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
     if (acc.counter != 0) {
         result = parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
     }
-    return parser.lower_defers_module(result);
+    // Infer return types on the FINAL lifted module so a lifted lambda with an
+    // inferred (empty) ret_type that returns i64/u64 is typed BEFORE eligibility
+    // lowers it. Without this, eligibility ran on the un-inferred module and
+    // `lower` bailed on the wide return (ret_is_i64 unknown) → the lambda routed
+    // to the AST emitter (correct on x86, broken WAT on wasm), even though EMIT
+    // (which runs on the separately-inferred module) would have handled it.
+    // infer_ret_types_module only fills EMPTY ret_types (annotated fns untouched)
+    // and is idempotent with the drivers' own downstream infer pass.
+    return parser.infer_ret_types_module(parser.lower_defers_module(result));
 }
 
 // ============== #4873 port: cross-function in-place growth containment ==============
