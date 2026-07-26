@@ -75,7 +75,26 @@ function builtin_view(dir: string, base: parser.StructDecl[]): parser.StructDecl
 // invalidate the modules that merely call into it. Return types are read off the
 // INFERRED module (infer_ret_types_module has already run), so an inferred
 // return-type change is caught even when the source left the type implicit.
-function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_extra: string[], cache_dir: string, pm_lo: i32, pm_hi: i32, target: string): i32 {
+// emit_window_size returns the [lo,hi) function-window size for a module of
+// `funcs` functions and `bytes` source bytes — the in-driver twin of the harness
+// emitWindowSize (internal/e2eselfhost/self_host_modload_permodule_test.go), kept
+// byte-identical so `-per-module-emit-all` shards each module into the SAME
+// windows the per-process fixpoint does. A 100-func budget and a 300 KB
+// source-byte budget each set a minimum window count (the byte budget shards
+// modules of FEW but GIANT functions, e.g. asm_arm64, that the count alone emits
+// whole and blows the emit's peak); the window is funcs / ceil(max of the two).
+function emit_window_size(funcs: i32, bytes: i32, func_budget: i32): i32 {
+    var byte_budget: i32 = 300000;
+    var nwin: i32 = (funcs + func_budget - 1) / func_budget;
+    var bybytes: i32 = (bytes + byte_budget - 1) / byte_budget;
+    if (bybytes > nwin) { nwin = bybytes; }
+    if (nwin < 1) { nwin = 1; }
+    var window: i32 = (funcs + nwin - 1) / nwin;
+    if (window < 1) { window = 1; }
+    return window;
+}
+
+function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_extra: string[], cache_dir: string, pm_lo: i32, pm_hi: i32, target: string, out_dir: string, func_budget: i32, unit_lo: i32, unit_hi: i32): i32 {
     var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded);
     if (pm_mode == "count") {
         print(util.i32_to_string(parts.len()) + "\n");
@@ -106,6 +125,82 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     }
     // Extend the struct view with the built-in type layouts (see builtin_view).
     all_structs = builtin_view(dir, all_structs);
+    if (pm_mode == "emit-all") {
+        // Multi-unit-per-process whole-compiler per-module emit (#3457 slice 2).
+        // The whole-program side-table bases are derived ONCE per process
+        // (compute_wp_bases) and shared across every unit it emits — collapsing
+        // the O(units × all_funcs) re-derivation that dominated the per-process
+        // serial emit (~20 s/unit even for a 3-function module). The bases are
+        // extracted into individual string[] LOCALS here and passed to every unit
+        // as individual params (never a string[][] across a boundary — the #3457
+        // slice-2 RC blocker fixed in the flat refactor). Units are the flat
+        // (module × window) list, each module sharded into the SAME [lo,hi)
+        // windows the per-process fixpoint uses (emit_window_size), and every unit
+        // is written to <out_dir>/unit_<modIdx>[_s<lo>].s.
+        //
+        // `-unit-range LO:HI` restricts this process to flat unit indices [LO,HI).
+        // The per-window emit's net working set (~0.4 GB) is NOT reclaimed within
+        // one process, so emitting ALL 35 units in one process OOMs (~16 GB); an
+        // orchestrator drives BATCHES of units, each a fresh process that releases
+        // the accumulation on exit while still sharing the base derivation across
+        // its batch. The entry gets the full runtime-need roots as its extra_needs.
+        // x86 shares the bases; -target arm64 uses the arm64 emitter unchanged.
+        var needs: string[] = asm_ir.all_runtime_need_roots();
+        var wpb: string[][] = asm_ir.compute_wp_bases(all_funcs, all_structs);
+        var uidx: i32 = 0;
+        var idx: i32 = 0;
+        while (idx < parts.len()) {
+            var fcount: i32 = infmods[idx].funcs.len();
+            var sbytes: i32 = 0;
+            match (read_file(dir + parts[idx].ns + ".fern")) {
+                Ok(fsrc) => { sbytes = fsrc.len(); },
+                Err(e_all) => { },
+            }
+            var window: i32 = emit_window_size(fcount, sbytes, func_budget);
+            var extra_all: string[] = [];
+            if (parts[idx].is_entry) { extra_all = needs; }
+            var elig_checked: boolean = false;
+            var wlo: i32 = 0;
+            var more: boolean = true;
+            while (more) {
+                var whi: i32 = wlo + window;
+                if (whi > fcount) { whi = fcount; }
+                if (uidx >= unit_lo && uidx < unit_hi) {
+                    if (!elig_checked) {
+                        var elig_all: boolean = asm_ir.all_eligible_lib_known_view(infmods[idx], known, all_funcs, all_structs);
+                        if (parts[idx].is_entry) { elig_all = asm_ir.all_eligible_known_view(infmods[idx], known, all_funcs, all_structs); }
+                        if (!elig_all) {
+                            eprint("per-module: module not IR-eligible: ");
+                            eprint(parts[idx].ns);
+                            eprint("\n");
+                            return 1;
+                        }
+                        elig_checked = true;
+                    }
+                    var shard_ns: string = parts[idx].ns;
+                    if (wlo > 0) { shard_ns = shard_ns + "_s" + util.i32_to_string(wlo); }
+                    var unit: string = "";
+                    if (target == "arm64") {
+                        unit = asm_arm64.emit_module_ir_unit_arm64(infmods[idx], parts[idx].is_entry, true, shard_ns, extra_all, all_funcs, all_structs, wlo, whi);
+                    } else {
+                        unit = asm_ir.emit_module_ir_unit_flat(infmods[idx], parts[idx].is_entry, true, shard_ns, extra_all, all_funcs, all_structs, wlo, whi, [], wpb);
+                    }
+                    var tag: string = "";
+                    if (wlo > 0) { tag = "_s" + util.i32_to_string(wlo); }
+                    var outpath: string = out_dir + "/unit_" + util.i32_to_string(idx) + tag + ".s";
+                    match (write_file(outpath, unit)) {
+                        Some(werr) => { eprint("per-module: emit-all write failed: " + outpath + "\n"); return 1; },
+                        None => { },
+                    }
+                }
+                uidx = uidx + 1;
+                wlo = wlo + window;
+                if (wlo >= fcount) { more = false; }
+            }
+            idx = idx + 1;
+        }
+        return 0;
+    }
     if (pm_mode == "func-counts") {
         // Per-module function count (post lift_lambdas / infer — the exact count
         // emit_module_funcs windows over), one per line. A build orchestrator
@@ -280,6 +375,16 @@ function main(): i32 {
     // every pre-fold caller byte-identical; module loading, the probe, and the
     // per-module analyses are target-agnostic.
     var target: string = "x86_64";
+    // `-per-module-emit-all -out-dir DIR` emits every unit in ONE process (#3457
+    // slice 2), sharing the whole-program side-table bases. `-func-budget N` sets
+    // the per-window function budget (default 100, matching the harness
+    // shardThreshold); `-unit-range LO:HI` restricts a batch process to flat unit
+    // indices [LO,HI) (default = every unit) so an orchestrator can batch the emit
+    // across processes to bound the per-window accumulation.
+    var out_dir: string = "";
+    var func_budget: i32 = 100;
+    var unit_lo: i32 = 0;
+    var unit_hi: i32 = 2000000000;
     var ai: i32 = 1;
     while (ai < a.len()) {
         if (a[ai] == "-ir-probe") { probe = true; }
@@ -288,6 +393,17 @@ function main(): i32 {
         else if (a[ai] == "-per-module-func-counts") { pm_mode = "func-counts"; }
         else if (a[ai] == "-per-module-manifest") { pm_mode = "manifest"; }
         else if (a[ai] == "-per-module-emit" && ai + 1 < a.len()) { pm_mode = "emit"; pm_index = util.digits_to_i32(a[ai + 1]); ai = ai + 1; }
+        else if (a[ai] == "-per-module-emit-all") { pm_mode = "emit-all"; }
+        else if (a[ai] == "-out-dir" && ai + 1 < a.len()) { out_dir = a[ai + 1]; ai = ai + 1; }
+        else if (a[ai] == "-func-budget" && ai + 1 < a.len()) { func_budget = util.digits_to_i32(a[ai + 1]); ai = ai + 1; }
+        else if (a[ai] == "-unit-range" && ai + 1 < a.len()) {
+            var urng: string = a[ai + 1];
+            var uci: i32 = 0;
+            while (uci < urng.len() && urng[uci] != 58) { uci = uci + 1; }  // 58 = ':'
+            unit_lo = util.digits_to_i32(urng);
+            if (uci + 1 <= urng.len()) { unit_hi = util.digits_to_i32(urng[uci + 1:urng.len()]); }
+            ai = ai + 1;
+        }
         else if (a[ai] == "-extra-need" && ai + 1 < a.len()) { pm_extra = pm_extra.append(a[ai + 1]); ai = ai + 1; }
         else if (a[ai] == "-cache-dir" && ai + 1 < a.len()) { cache_dir = a[ai + 1]; ai = ai + 1; }
         else if (a[ai] == "-target" && ai + 1 < a.len()) { target = a[ai + 1]; ai = ai + 1; }
@@ -305,7 +421,7 @@ function main(): i32 {
         ai = ai + 1;
     }
     if (entry_path == "") {
-        eprint("usage: asm_modload_run <entry.fern> [-ir-probe | -per-module-count | -per-module-needs | -per-module-func-counts | -per-module-manifest | -per-module-emit N [-cache-dir DIR] [-func-range LO:HI]]\n");
+        eprint("usage: asm_modload_run <entry.fern> [-ir-probe | -per-module-count | -per-module-needs | -per-module-func-counts | -per-module-manifest | -per-module-emit N [-cache-dir DIR] [-func-range LO:HI] | -per-module-emit-all -out-dir DIR [-func-budget N] [-unit-range LO:HI]]\n");
         return 2;
     }
     var dir: string = modloader.dirname(entry_path);
@@ -314,7 +430,7 @@ function main(): i32 {
             var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
             var loaded: flatten.LoadedModule[] = modloader.load_imports(dir, entry);
             if (pm_mode.len() > 0) {
-                return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi, target);
+                return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi, target, out_dir, func_budget, unit_lo, unit_hi);
             }
             var merged: parser.Module = flatten.bundle(entry, loaded);
             merged = modloader.merge_builtins(dir, merged);
