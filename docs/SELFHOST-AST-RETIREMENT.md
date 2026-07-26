@@ -248,14 +248,31 @@ tier → leak.
      strong but not yet a direct repro.)
 
   **So the fix is the flat representation, and it's now well-directed.** Extract
-  the 24 columns **exactly once** (in `emit_module_ir_unit` / the emit-all setup)
-  and thread them as **individual `string[]` params** through `emit_module_funcs`
-  — the shared `string[][]` never crosses a boundary and is never re-extracted, so
-  the RC miscount can't arise. `emit_function_via_ir` already takes ~28 params, so
-  24 more is within the self-host's proven envelope. Re-attempt the hoist on that
-  shape, validating with the per-module test first (fast), then emit-all +
-  fixpoint. Do NOT re-run the `string[][]` repro (proven to pass) or the
-  analysis-shift probe (refuted). `internal/`-vs-self-host convergence item (#4451).
+  the 24 columns **exactly once** and thread them as **individual `string[]`
+  params** through `emit_module_funcs` — the shared `string[][]` never crosses a
+  boundary and is never re-extracted, so the RC miscount can't arise.
+
+  **Step 1 of the flat fix is IMPLEMENTED + VALIDATED (2026-07-26).**
+  `compute_wp_bases` derives the 24 bases; `emit_module_funcs` now takes the 23 it
+  needs as **individual `string[]` params** (applying the per-module `append_dyn`
+  tails); `emit_module_ir_unit` / `module_runtime_needs` call `compute_wp_bases`,
+  extract once, and pass individuals. `emit_module_ir_gated` is unchanged (still
+  derives inline for its cache lowering). `TestSelfHostModloadPerModuleWholeCompilerX86_64`
+  **PASSES** — the self-host-built compiler no longer segfaults, and the emit is
+  byte-identical (same derivation + `append_dyn`, just relocated). This confirms
+  the flat individual-params shape is the fix.
+  - **Step 2 (remaining): emit-all sharing.** Add an `emit_module_ir_unit_flat`
+    that takes the pre-computed bases, and re-add the batched
+    `-per-module-emit-all` (compute `compute_wp_bases` ONCE in the emit-all setup,
+    pass the individual bases to each unit) to realize the ~2.1× speedup. Watch
+    one RC subtlety here: the shared bases are passed to EVERY unit, and
+    `emit_module_funcs` does `append_dyn(b_srf, mod.trait_reqs)` — `append_dyn`
+    returns the base unchanged when `trait_reqs` is empty and COWs when the base
+    is shared (rc>1), so shared reuse should hold, but validate it (per-module,
+    then emit-all byte-identity + speedup, then fixpoint). Do NOT re-run the
+    `string[][]` repro (proven to pass) or the analysis-shift probe (refuted).
+
+  `internal/`-vs-self-host convergence item (#4451).
 
 - **Slice 3 — replace the now-unreachable AST fallbacks.** Once slice 2 makes the
   merged path unreachable, replace `asm.emit_module` at the sites above with a

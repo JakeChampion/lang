@@ -5518,55 +5518,92 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     return s;
 }
 
+// compute_wp_bases derives the 24 whole-program side-table BASES once, appended
+// in a fixed column order (0 arf, 1 bparams, 2 csparams, 3 str_ret_fns, 4
+// strarr_ret_fns, 5 amf, 6 orf, 7 i64_ret_fns, 8 trf, 9 srtf, 10 mrtf, 11
+// f64_ret_fns, 12 f64arr_ret_fns, 13 iarf, 14 fps, 15 cfs, 16 cnf, 17 frsf, 18
+// rfrsf, 19 sfrf, 20 ofrf, 21 sfot, 22 tfrf, 23 fpk). `csparams` depends on
+// `bparams`, so bparams is bound first; every other column is an independent pure
+// scan of funcs (/ structs). These are the pre-`append_dyn` bases (the expensive
+// O(all_funcs) part); emit_module_funcs applies the cheap per-module append_dyn.
+// A caller extracts this string[][] into 24 LOCALS exactly once, then passes them
+// to emit_module_funcs as INDIVIDUAL params — the aggregate itself is never passed
+// across a boundary (see the emit_module_funcs param comment / #3457 slice 2).
+pub function compute_wp_bases(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[][] {
+    var bparams: string[] = irlower.borrowable_params_interproc(funcs);
+    var t: string[][] = [];
+    t = t.append(array_ret_fns_of(funcs));
+    t = t.append(bparams);
+    t = t.append(irlower.consume_safe_params_interproc(funcs, bparams));
+    t = t.append(irlower.str_ret_fns_of(funcs));
+    t = t.append(irlower.strarr_ret_fns_of(funcs));
+    t = t.append(irlower.arr_method_fns_of(funcs));
+    t = t.append(irlower.opt_ret_fns_of(funcs));
+    t = t.append(irlower.i64_ret_fns_of(funcs));
+    t = t.append(irlower.tuple_ret_fns_of(funcs));
+    t = t.append(irlower.struct_ret_fns_of(funcs, structs));
+    t = t.append(irlower.map_ret_fns_of(funcs));
+    t = t.append(irlower.f64_ret_fns_of(funcs));
+    t = t.append(irlower.f64arr_ret_fns_of(funcs));
+    t = t.append(irlower.i64arr_ret_fns_of(funcs));
+    t = t.append(irlower.fn_param_sigs_of(funcs, structs));
+    t = t.append(irlower.closure_and_fnptr_fns_of(funcs, structs));
+    t = t.append(irlower.const_fns_of(funcs));
+    t = t.append(irlower.fresh_struct_ret_fns_of(funcs, structs));
+    t = t.append(irlower.return_fresh_struct_ret_fns_of(funcs, structs));
+    t = t.append(irlower.str_fresh_ret_fns_of(funcs));
+    t = t.append(irlower.opt_fresh_ret_fns_of(funcs, structs));
+    t = t.append(irlower.strfld_reclaim_ok_types_of(funcs, structs));
+    t = t.append(irlower.tuple_fresh_ret_fns_of(funcs));
+    t = t.append(irlower.fnptr_arr_fields_of(funcs, structs));
+    return t;
+}
+
 // emit_module_funcs emits mod's function bodies in the index window [lo, hi).
 // A full window (lo=0, hi=mod.funcs.len(), or hi<0 as a "to the end" sentinel)
 // reproduces the whole-module emit byte-for-byte; a partial window emits only
 // that slice's `__fn_*` defs (its own string pool, its weak field-reclaims /
 // struct-drops), so an oversized module (irlower, 511 funcs — #3425) can be
 // sharded across separate process invocations to keep each emit's peak heap
-// under the leak-mode ceiling. The hoisted side-tables below are ALWAYS
-// computed over the WHOLE all_funcs (never windowed) so cross-window call
-// tagging is identical to the unsharded emit; only the emit loop is windowed.
-function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[]): asmcore.EmitState {
+// under the leak-mode ceiling. The side-table bases (b_*) are ALWAYS computed
+// over the WHOLE all_funcs (never windowed) so cross-window call tagging is
+// identical to the unsharded emit; only the emit loop is windowed.
+function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[], b_arf: string[], b_bparams: string[], b_csparams: string[], b_srf: string[], b_sarf: string[], b_amf: string[], b_orf: string[], b_irf: string[], b_trf: string[], b_srtf: string[], b_mrtf: string[], b_frf: string[], b_farf: string[], b_iarf: string[], b_fps: string[], b_cfs: string[], b_cnf: string[], b_frsf: string[], b_rfrsf: string[], b_sfrf: string[], b_ofrf: string[], b_sfot: string[], b_tfrf: string[]): asmcore.EmitState {
     // #4394 lever 3: when `cache` is non-empty the caller (emit_module_ir_gated)
     // has ALREADY lowered every function — into cache[i], indexed by mod.funcs
     // position — during its fused eligibility scan, so emit reuses that lowering
-    // (via emit_function_via_ir_pre) instead of lowering it a second time. An
-    // empty cache is the standard path: every function is lowered here from the
-    // eighteen side-tables below, exactly as before. The side-tables are cheap
-    // relative to the lowering they feed, so they are derived unconditionally
-    // (the lever's win is skipping the re-LOWERING, not the derivation).
-    var arf: string[] = array_ret_fns_of(all_funcs);
-    // Inter-procedural borrowability computed ONCE per module (not per function —
-    // that OOMs the arm64 self-compile); threaded into every emit_function_via_ir.
-    var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
-    var csparams: string[] = irlower.consume_safe_params_interproc(all_funcs, bparams);
-    // The fourteen return-type / signature side-tables lower_func consults are
-    // derived ONCE here (each scans all of all_funcs — the WHOLE-PROGRAM
-    // signature view, #3454), then threaded into every emit_function_via_ir —
-    // recomputing them per function is O(n^2) and OOMs the bump heap on a large
-    // module (parser, ~300 funcs). This mirrors bparams above and the wasm
-    // backend's emit_module, which already hoists them.
-    var srf: string[] = irlower.append_dyn_str_ret_fns(irlower.str_ret_fns_of(all_funcs), mod.trait_reqs);
-    var sarf: string[] = irlower.append_dyn_arr_ret_fns(irlower.strarr_ret_fns_of(all_funcs), mod.trait_reqs, "string[]");
-    var amf: string[] = irlower.arr_method_fns_of(all_funcs);
-    var orf: string[] = irlower.opt_ret_fns_of(all_funcs);
-    var irf: string[] = irlower.append_dyn_i64_ret_fns(irlower.i64_ret_fns_of(all_funcs), mod.trait_reqs);
-    var trf: string[] = irlower.tuple_ret_fns_of(all_funcs);
-    var srtf: string[] = irlower.struct_ret_fns_of(all_funcs, all_structs);
-    var mrtf: string[] = irlower.map_ret_fns_of(all_funcs);
-    var frf: string[] = irlower.append_dyn_f64_ret_fns(irlower.f64_ret_fns_of(all_funcs), mod.trait_reqs);
-    var farf: string[] = irlower.append_dyn_arr_ret_fns(irlower.f64arr_ret_fns_of(all_funcs), mod.trait_reqs, "f64[]");
-    var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(all_funcs, all_structs);
-    var cfs: string[] = irlower.closure_and_fnptr_fns_of(all_funcs, all_structs);
-    var cnf: string[] = irlower.const_fns_of(all_funcs);
-    var frsf: string[] = irlower.fresh_struct_ret_fns_of(all_funcs, all_structs);
-    var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
-    var sfrf: string[] = irlower.str_fresh_ret_fns_of(all_funcs);
-    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(all_funcs, all_structs);
-    var sfot: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
-    var tfrf: string[] = irlower.tuple_fresh_ret_fns_of(all_funcs);
+    // (via emit_function_via_ir_pre) instead of lowering it a second time.
+    //
+    // The whole-program side-table BASES arrive as INDIVIDUAL string[] params
+    // (b_*), each derived once by the caller (compute_wp_bases). They are passed
+    // one-per-parameter — NOT bundled into a string[][] — because a shared
+    // string[][] extracted-from then passed across a call boundary to a function
+    // that re-extracts it triggers a self-host RC miscount (#3457 slice 2 blocker,
+    // isolated by bisect). Only the per-module append_dyn_* tails (folding in THIS
+    // module's trait_reqs) are applied here; they are cheap.
+    var arf: string[] = b_arf;
+    var bparams: string[] = b_bparams;
+    var csparams: string[] = b_csparams;
+    var srf: string[] = irlower.append_dyn_str_ret_fns(b_srf, mod.trait_reqs);
+    var sarf: string[] = irlower.append_dyn_arr_ret_fns(b_sarf, mod.trait_reqs, "string[]");
+    var amf: string[] = b_amf;
+    var orf: string[] = b_orf;
+    var irf: string[] = irlower.append_dyn_i64_ret_fns(b_irf, mod.trait_reqs);
+    var trf: string[] = b_trf;
+    var srtf: string[] = b_srtf;
+    var mrtf: string[] = b_mrtf;
+    var frf: string[] = irlower.append_dyn_f64_ret_fns(b_frf, mod.trait_reqs);
+    var farf: string[] = irlower.append_dyn_arr_ret_fns(b_farf, mod.trait_reqs, "f64[]");
+    var iarf: string[] = b_iarf;
+    var fps: string[] = b_fps;
+    var cfs: string[] = b_cfs;
+    var cnf: string[] = b_cnf;
+    var frsf: string[] = b_frsf;
+    var rfrsf: string[] = b_rfrsf;
+    var sfrf: string[] = b_sfrf;
+    var ofrf: string[] = b_ofrf;
+    var sfot: string[] = b_sfot;
+    var tfrf: string[] = b_tfrf;
     // hi<0 is the "to the end" sentinel; an over-large hi is clamped so a shard
     // window that overshoots the module length can't index past mod.funcs.
     var hh: i32 = hi;
@@ -5609,8 +5646,10 @@ pub function module_runtime_needs(mod: parser.Module): string[] {
     s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
     // Needs depend only on this module's own ops, so the single-module
     // signature view suffices (a cross-module call's NEED set is the callee's,
-    // aggregated separately via module_runtime_needs over each module).
-    s = emit_module_funcs(mod, mod.funcs, mod.structs, s, false, 0, 0 - 1, []);
+    // aggregated separately via module_runtime_needs over each module). Extract
+    // the bases into locals here (once) and pass them as individual params.
+    var mnb: string[][] = compute_wp_bases(mod.funcs, mod.structs);
+    s = emit_module_funcs(mod, mod.funcs, mod.structs, s, false, 0, 0 - 1, [], mnb[0], mnb[1], mnb[2], mnb[3], mnb[4], mnb[5], mnb[6], mnb[7], mnb[8], mnb[9], mnb[10], mnb[11], mnb[12], mnb[13], mnb[14], mnb[15], mnb[16], mnb[17], mnb[18], mnb[19], mnb[20], mnb[21], mnb[22]);
     s = s.close_needs();
     strbuf_reset();
     return s.needed;
@@ -5812,7 +5851,13 @@ pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_de
     // Per-module: the entry exports its shared runtime entry points so sibling
     // library modules can link their `call __fern_*` externs against them.
     if (is_entry && globl_defs) { s = emit_runtime_globls(s); }
-    s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache);
+    // Derive the whole-program side-table bases once and pass them to
+    // emit_module_funcs as INDIVIDUAL params (never as a shared string[][] across
+    // the boundary — #3457 slice 2). wpb is extracted only here; the strfldok /
+    // FNPTR need seeding below recomputes its two columns directly rather than
+    // re-reading wpb after its elements were passed as args.
+    var wpb: string[][] = compute_wp_bases(all_funcs, all_structs);
+    s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache, wpb[0], wpb[1], wpb[2], wpb[3], wpb[4], wpb[5], wpb[6], wpb[7], wpb[8], wpb[9], wpb[10], wpb[11], wpb[12], wpb[13], wpb[14], wpb[15], wpb[16], wpb[17], wpb[18], wpb[19], wpb[20], wpb[21], wpb[22]);
     // #4355: admit the replaced-STRING-field arm per type, from the
     // WHOLE-PROGRAM read scan (all_funcs — a unit-local list would
     // under-count the reads and re-open the UAF the scan exists to prevent;
