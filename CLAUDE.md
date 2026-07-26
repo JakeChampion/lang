@@ -221,10 +221,12 @@ Tuples were tractable because their wasm box is ALREADY uniform 8-byte-per-
 element AND an erased `(T,T)` has byte-identical layout to a concrete
 `(i64,i32)` (the reader reads each element at its concrete width from the same
 `N*8` offset — no result narrow). The single-type-arg erased-wide containers —
-`Option[T]` and `T[]` returns — are now CLOSED (#5464 container slice) by
-MONOMORPHIZING them rather than widening: parser targeted promotion (clause (c)
-in `parse_func`, `has_bare_scalar_param` + `feeds_wide_container`) promotes an
-erased `some1[T](x: T): Option[T]` / `dup[T](x: T): T[]` to BOUNDED, so
+`Option[T]`, `T[]`, AND single-typevar `Result` returns — are now CLOSED (#5464
+container slice) by MONOMORPHIZING them rather than widening: parser targeted
+promotion (clause (c) in `parse_func`, `has_bare_scalar_param` +
+`feeds_wide_container`, guarded by `all_tp_count == 1`) promotes an erased
+`some1[T](x: T): Option[T]` / `dup[T](x: T): T[]` / `okr[T](x: T): Result[T,
+string]` to BOUNDED, so
 `monomorphize_module` clones it per concrete instantiation
 (`some1__i64(x: i64): Option[i64]` with the concrete 16B box). After cloning no
 call passes a wide value through a bare-typevar param, so `module_erased_wide`
@@ -239,12 +241,19 @@ an array stride is 4 vs 8): the CONCRETE clone has an unambiguous box the IR pat
 already lowers on every backend. Byte-identity-safe because the stdlib generics
 that match (`array.intersperse` / `async.gather` — the only bare-scalar-param +
 `T[]`-return shapes) are DCE'd uncalled in the bootstrap. Pinned by
-`TestSelfHostErasedWideContainerWasm`. `Result[T, E]` returns STAY deferred: a
-two-type-arg container where `okg[T, E](x: T): Result[T, E]` binds only `T` from
-the scalar param leaves `E` erased in the clone (`Result[i64, E]`) —
-reintroducing the width ambiguity on the Err arm. Closing it needs binding `E`
-from the call-site return annotation too (a larger change; `feeds_wide_container`
-deliberately excludes `Result`). (`c_call` is no longer deferred — FFI
+`TestSelfHostErasedWideContainerWasm`. The `all_tp_count == 1` guard is also what
+makes `Result` SOUND: a `Result` matched by `feeds_wide_container` is only
+promoted when the type var is the fn's ONLY one, so the clone is fully concrete
+(`okr__i64: Result[i64, string]`, `Result[T, T]` → `Result[i64, i64]`,
+`errg[E]: Result[i32, E]` → `Result[i32, i64]`). It also blocks the
+partial-promotion hazard: a multi-typevar generic where only ONE var matches
+clause (c) — `scan[T, A](xs: T[], init: A, f: (A, T) => A): A[]` (A matches, T
+doesn't) — would otherwise clone with an erased sibling `T`, a malformed clone
+that crashes (caught by `array_hof`). The genuinely two-typevar `Result[T, E]`
+(`okg[T, E](x: T): Result[T, E]`, `all_tp_count == 2`) STAYS deferred: promoting
+only `T` leaves `E` erased in the clone (`Result[i64, E]`), reintroducing the
+width ambiguity on the Err arm — closing it needs binding `E` from the call-site
+return annotation too (a follow-up). (`c_call` is no longer deferred — FFI
 `__c_call<n>` has no wasm C ABI, so it is now a clean error endpoint,
 rejected before emit by `wasm_unsupported_builtin` like `subprocess` /
 `timer_fd`, #4375.) (`open_file` / `writer_write` — the

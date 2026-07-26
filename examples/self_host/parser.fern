@@ -5069,7 +5069,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         var promote: boolean = feeds && (bindable || ret_bindable);
         // (c) wide-container promotion: an erased fn that takes a BARE-SCALAR
         // param (`x: T`, which carries a wide i64/f64 value) and RETURNS a
-        // single-type-arg BUILTIN container of it (`Option[T]` / `T[]`) is
+        // BUILTIN container of it (`Option[T]` / `T[]` / `Result[T, …]`) is
         // erased-safe on the register backends but NOT on wasm — the container's
         // box LAYOUT shifts with payload width (an Option is 8B/@4 for i32 but
         // 16B/@8 for i64/f64; an array stride is 4 vs 8), so a wide value returned
@@ -12603,9 +12603,9 @@ function feeds_map_typearg(ty: string, name: string): boolean {
     }
     return false;
 }
-// feeds_wide_container reports whether `name` is the SOLE element/payload of a
-// single-type-arg BUILTIN container in `ty` — `name[]` (array element) or
-// `Option[name]`. feeds_user_parametric EXCLUDES these builtin bases (they need
+// feeds_wide_container reports whether `name` appears as a type-arg of a BUILTIN
+// container in `ty` — `name[]` (array element), `Option[name]`, or a `Result[…]`
+// arg. feeds_user_parametric EXCLUDES these builtin bases (they need
 // no user-struct clone and are erased-safe on the register backends). But on
 // WASM an erased container's box LAYOUT shifts with payload width (an `Option`
 // is 8B/@4 for i32 vs 16B/@8 for i64/f64; an array stride is 4 vs 8), so a wide
@@ -12614,13 +12614,15 @@ function feeds_map_typearg(ty: string, name: string): boolean {
 // the fn to a CONCRETE container, which the IR path already lowers on every
 // backend. Non-wasm backends just gain a clone.
 //
-// `Result[T, E]` is deliberately EXCLUDED: it has two type-args, and a fn like
-// `okg[T, E](x: T): Result[T, E]` binds only T from the scalar param — E stays
-// erased, so the clone `okg__i64` would return `Result[i64, E]` with an erased
-// Err arm, reintroducing the same width ambiguity on that side. Handling Result
-// needs binding E too (from the call-site return annotation), a larger change
-// left for a follow-up. Option / array have a single type-arg = `name`, so no
-// sibling typevar survives the clone.
+// `Result[…]` is included, but the caller's `all_tp_count == 1` guard is what
+// keeps it SOUND: a Result matched here is only promoted when `name` is the fn's
+// ONLY type param, so the clone is fully concrete — `okr[T](x: T): Result[T,
+// string]` → `okr__i64(x: i64): Result[i64, string]` (concrete Err arm), or
+// `Result[T, T]` → `Result[i64, i64]`. The genuinely two-typevar
+// `okg[T, E](x: T): Result[T, E]` has `all_tp_count == 2`, so it is NOT promoted
+// — promoting only T there would leave E erased in the clone (`Result[i64, E]`),
+// reintroducing width ambiguity on the Err arm. Closing that needs binding E from
+// the call-site return annotation too — a follow-up.
 function feeds_wide_container(ty: string, name: string): boolean {
     var i: i32 = 0;
     var nl: i32 = name.len();
@@ -12635,7 +12637,8 @@ function feeds_wide_container(ty: string, name: string): boolean {
             if (prev_ok && next_ok) {
                 // `name[]` — an array element.
                 if (nxt + 1 < ty.len() && ty[nxt] == 91 && ty[nxt + 1] == 93) { return true; }   // '[' ']'
-                if (enclosing_bracket_base(ty, i) == "Option") { return true; }
+                var b: string = enclosing_bracket_base(ty, i);
+                if (b == "Option" || b == "Result") { return true; }
             }
         }
         i = i + 1;
