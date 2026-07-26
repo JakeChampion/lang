@@ -176,10 +176,12 @@ tier → leak.
     guard `TestSelfHostModloadPerModuleWholeCompilerX86_64` already exists; only
     the gen1 self-reproduction proof needs the hoist to become CI-cheap.
 
-  **BLOCKER found (2026-07-26 attempt) — a self-host codegen bug triggered by
-  the hoist, root cause NOT yet isolated (initial "nested-aggregate return"
-  hypothesis refuted by a minimal repro — see below).** The plan above was
-  implemented end-to-end and
+  **BLOCKER found + ISOLATED (2026-07-26) — a self-host RC miscount when a
+  `string[][]` is extracted-from, then passed across a boundary to a function
+  that re-extracts it. Fix is the flat representation (see below).** (The initial
+  "nested-aggregate return" framing was refuted by a minimal repro, then a
+  four-step bisect isolated the real trigger — both recorded below.) The plan
+  above was implemented end-to-end and
   *works on the native (Go-built) driver*: the hoist (a `compute_wp_tables`
   bundling the 22 side-tables) + a **batched** `-per-module-emit-all -out-dir DIR
   -unit-range LO:HI` (batches of ~8 units per process, sharing the derivation,
@@ -222,15 +224,38 @@ tier → leak.
     `emit_module_ir_unit_wpt` (extracted 2×), passed again to `emit_module_funcs`
     (extracted 22×) — a depth the repro did not chain.
 
-  **So slice 2 is gated on isolating + fixing this, not just orchestration.** Next
-  attempt should NOT re-try the `string[][]` repro (proven to pass); instead
-  **bisect the refactor** against `TestSelfHostModloadPerModuleWholeCompilerX86_64`
-  (~5 min/step) to find the minimal triggering change, or inspect the
-  self-host-emitted asm for `compute_wp_tables` / `emit_module_funcs`. A
-  **flat-representation redesign** (24 individual `string[]` params computed inline
-  in the emit-all setup and threaded through `emit_module_funcs` — no aggregate
-  return/pass) may sidestep it regardless of root cause and is the lower-risk path
-  to re-attempt the hoist. `internal/`-vs-self-host convergence item (#4451).
+  **Bisect done (2026-07-26) — isolated to multi-boundary re-extraction; the
+  analysis-shift hypothesis is cleared.** Four bisect steps against
+  `TestSelfHostModloadPerModuleWholeCompilerX86_64` (~5 min each), each toggling
+  one piece of the refactor:
+  1. `compute_wp_tables` added but **uncalled** → **PASS** (but vacuous: the
+     self-host DCEs uncalled functions, so it was never emitted).
+  2. A **live** `compute_wp_tables(all_funcs, all_structs)` call in
+     `emit_module_ir_unit`, result used trivially → **PASS**. So its own
+     codegen-when-called is fine, and the whole-program **analysis-shift**
+     hypothesis is **refuted** (adding it + calling it changes nothing).
+  3. `emit_module_ir_gated` derives its lowering tables by **extracting** them
+     from a `wpt` bundle (`wpt[i]`) and feeding them to `lower_func` in the
+     per-function loop → **PASS**. So single-site extract-then-use is fine.
+  4. The only untested delta left is the **multi-boundary pass**: gated extracts
+     `wpt`, then PASSES the same `wpt` onward to `emit_module_ir_unit_wpt` →
+     `emit_module_funcs`, which **re-extract** it. The full refactor (which does
+     this) segfaults; steps 1–3 (which don't) pass. **By elimination the trigger
+     is passing an already-extracted-from `string[][]` across a call boundary to
+     a function that re-extracts it** — a self-host RC miscount (double-dec /
+     UAF) on the shared container the native memory model tolerates. (Confirming
+     step — add JUST the onward-pass+re-extract — was not run; the elimination is
+     strong but not yet a direct repro.)
+
+  **So the fix is the flat representation, and it's now well-directed.** Extract
+  the 24 columns **exactly once** (in `emit_module_ir_unit` / the emit-all setup)
+  and thread them as **individual `string[]` params** through `emit_module_funcs`
+  — the shared `string[][]` never crosses a boundary and is never re-extracted, so
+  the RC miscount can't arise. `emit_function_via_ir` already takes ~28 params, so
+  24 more is within the self-host's proven envelope. Re-attempt the hoist on that
+  shape, validating with the per-module test first (fast), then emit-all +
+  fixpoint. Do NOT re-run the `string[][]` repro (proven to pass) or the
+  analysis-shift probe (refuted). `internal/`-vs-self-host convergence item (#4451).
 
 - **Slice 3 — replace the now-unreachable AST fallbacks.** Once slice 2 makes the
   merged path unreachable, replace `asm.emit_module` at the sites above with a
