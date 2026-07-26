@@ -1,12 +1,26 @@
 # Retiring the self-host legacy AST emitters (#3457)
 
-Status: **IN PROGRESS — slice 1 done; the rest is memory-gated.** This doc is
-the single home for the #3457 endgame (retire `asm.fern` / `asm_arm64.fern` /
-`wasm.fern`, the pre-IR AST→asm emitters, plus the ~512-function merged-bundle
-budget). It exists because the analysis kept being re-derived and mis-scoped —
-CLAUDE.md's "VERIFY tracker state against the code first; #3457's blockers have
-repeatedly lagged reality" warning applies especially here. Everything below was
-verified against the code (2026-07-26).
+Status: **IN PROGRESS — slice 1 done; #3425 (the memory gate) CLOSED; slice 2
+is now unblocked.** This doc is the single home for the #3457 endgame (retire
+`asm.fern` / `asm_arm64.fern` / `wasm.fern`, the pre-IR AST→asm emitters, plus
+the ~512-function merged-bundle budget). It exists because the analysis kept
+being re-derived and mis-scoped — CLAUDE.md's "VERIFY tracker state against the
+code first; #3457's blockers have repeatedly lagged reality" warning applies
+especially here. Everything below was verified against the code (2026-07-26).
+
+**Update 2026-07-26 — #3425 is closed.** The large-tier freelist port
+predicted below LANDED on both native backends (x86 `asm_ir.fern` #5609, arm64
+`asm_arm64.fern` #5614), and the direct proof it was meant to unblock now
+passes: `TestSelfHostPerModuleFixpointX86_64` (env-gated,
+`RUN_PERMODULE_FIXPOINT=1`) is **GREEN** — a self-host-BUILT compiler (gen1)
+per-module-emits the whole compiler (35 units) in ~998 s with **no arena OOM**,
+and gen0 == gen1 byte-identically across all 35 units (per-module emit is
+self-reproducing). Measured gen1 peak: **~7.6 GB RSS per emit window** — under
+the 8 GiB arena ceiling that the leaked large blocks previously blew past. So
+**the arena wall is no longer the slice-2 blocker**; the only remaining slice-2
+obstacle is the *CI-affordability* of the gen1 per-module fixpoint (serial
+~16.6 min > a 13-min shard; 2-way parallel needs ~15 GB → OOM-risky on a 16 GB
+runner). See "Slice 2" below for the now-concrete plan.
 
 ## Where the roadmap stands (context)
 
@@ -54,64 +68,87 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   `wasm.emit_ir_module_units` / `wasm.emit_ir_rc_bodies_from`
   (`wasm_modload_run.fern:336-337`) **live in `wasm.fern`**, not `wasm_ir.fern`.
 
-## The gate: #3425 (self-host runtime memory)
+## The gate: #3425 (self-host runtime memory) — CLOSED
 
 The merged path is fast (one emit) but needs the AST emitter + 512-budget. The
-per-module IR path is the replacement but its **self-host-built (gen1) emit runs
-~16 min serially / is arena-limited** — the self-host runtime does not reclaim
-the whole-program string/analysis allocations during a large-module emit (#3425,
-the reclamation frontier that goal-2 reuse reduces but does not close, since the
-peak is the accumulated *output*, not per-iteration churn). This is why:
+per-module IR path is the replacement. Its **self-host-built (gen1) emit** was
+arena-limited — the self-host runtime did not reclaim the whole-program
+string/analysis allocations during a large-module emit (#3425). **That is now
+fixed** (the large-tier freelist port, below), and the direct proof
+(`TestSelfHostPerModuleFixpointX86_64`, still env-gated `RUN_PERMODULE_FIXPOINT=1`
+for its ~16.6-min serial runtime) is GREEN: gen1 emits all 35 units with no
+arena OOM, gen0 == gen1 byte-identically. **The arena wall is gone; the only
+residual slice-2 obstacle is CI *time*, not memory.**
 
-- `TestSelfHostPerModuleFixpointX86_64` (proves gen0==gen1 per-module
-  byte-identity — the property the default-flip depends on) is **env-gated**
-  (`RUN_PERMODULE_FIXPOINT=1`), too slow for a CI lane.
-- Routing the merged bundle through IR instead peaks ~13 GB RSS (the same leak).
+### #3425 was a bounded, reference-guided port (prediction confirmed)
 
-So the budget must retire **with** the merged drivers, not before, and the
-per-module path cannot become the primary CI fixpoint guard until the emit is
-cheap enough. **#3425 is the true unblocker for slices 2/3/5.**
-
-### #3425 is a bounded, reference-guided port (not research-grade)
-
-The root cause is concrete: the **self-host** RC runtime (`asm_ir.fern`'s
-`emit_ir_runtime`, mirrored in `asm.fern` / `asm_arm64.fern` / `wasm.fern`) uses
+The root cause was concrete: the **self-host** RC runtime (`asm_ir.fern`'s
+`emit_ir_runtime`, mirrored in `asm.fern` / `asm_arm64.fern` / `wasm.fern`) used
 a size-classed freelist of **65536 exact word-classes** (`__fern_freelist`, up to
-~512 KB blocks). Anything larger has no class and **leaks into the bump arena**
-(asm_ir.fern:1067 "large-tier buffers leak (sound)"), so a long-running emit that
-frees big blocks (per-function analysis temps, strbuf-growth cast-offs)
-accumulates them until `__fern_alloc`'s bounds check `exit(137)`s.
+~512 KB blocks). Anything larger had no class and **leaked into the bump arena**,
+so a long-running emit that freed big blocks (per-function analysis temps,
+strbuf-growth cast-offs) accumulated them until `__fern_alloc`'s bounds check
+`exit(137)`d.
 
-The **native** runtime already solved this: `internal/codegen/x86_64/x86_64.go`
-(~L4056) emits a **two-tier segregated freelist** — small tier (0..127, 16-byte
-classes 16..2048) **plus a large tier** (heads 128+b, power-of-two capacity
-2^b, b=12..30, i.e. 4 KiB..1 GiB), free blocks storing the successor pointer in
-their first 8 bytes. That large tier is exactly what the self-host lacks.
+The **native** runtime already solved this with a two-tier segregated freelist
+(a large tier atop the small classes). The self-host runtime lacked it — which
+**is** the "gen0 fits, gen1 OOMs" asymmetry: gen0 (self-host source compiled by
+the Go backend) runs the **native** runtime → has the large tier; gen1+
+(compiled by a self-host-built compiler) run the **self-host** runtime → no large
+tier → leak.
 
-This asymmetry **is** the "gen0 fits, gen1 OOMs" behaviour: gen0 (self-host
-source compiled by the Go backend) runs the **native** runtime → has the large
-tier; gen1+ (compiled by a self-host-built compiler) run the **self-host**
-runtime → no large tier → leak. So the fix is a **port**, not an invention: add
-the native large-tier binning to the self-host runtime emitters. It re-baselines
-the fixpoints (the emitted runtime bodies change) but stays self-reproducing, and
-it is memory-safety-critical + cross-cutting (4 backends), so land it native-parity-
-first with the differential + both fixpoint suites as the nets — start with the
-x86 self-host runtime (`asm_ir.fern`), locally gated by the x86 differential +
-`TestSelfHostModloadFixpointX86_64`, then arm64 / wasm.
+**The port landed (2026-07-26):**
+- **x86 (`asm_ir.fern`, #5609):** a `__fern_large_freelist` array + a
+  `.Lalloc_large` path in `__fern_alloc` and a `__fern_large_push` free helper,
+  redirecting `__fern_arr_dec` and `__fern_str_free` off the leak. LINEAR
+  512-KiB binning (`class = round_up(size, 512 KiB) >> 19`, 1..2048 for
+  512 KiB..1 GiB) — deliberately no `bsr` / variable-count shift, because the
+  self-host `x86_gas` assembler (exercised by `TestSelfHostX86Capstone`) has
+  neither; the linear scheme uses only `leaq`/`andq $imm`/`shrq $imm`.
+- **arm64 (`asm_arm64.fern`, #5614):** the same design in aarch64 (mask via
+  `lsr`/`lsl`, wide immediates built from `1<<19`, tail-`b` to preserve x30).
+- **Both re-baselined their fixpoints byte-identically and stay
+  self-reproducing** — confirmed by the modload fixpoints (CI) and the gen1
+  per-module fixpoint (env-gated, GREEN).
+- **wasm deferred** (task #18): wasm uses `memory.grow` (growable linear
+  memory), so a leaked large block grows RSS but never hits a fixed arena wall
+  → no exit-137, no slice-blocking. It is an RSS optimisation only, and adding a
+  large tier there shifts `heap_base` across the byte-identity surface for no
+  correctness gain; low priority.
+- **Remaining native free sites** (task #18, marginal): the
+  `__fern_str_arr_free` / `__fern_arrarr_free` / `__fern_optarr_free` /
+  struct-drop *buffer* frees still `leak (sound)` a ≥512 KiB collection buffer.
+  These free small collection buffers, not the multi-MB op/analysis arrays that
+  fill the arena (`arr_dec` + `str_free`, both redirected, cover those), so they
+  are soundness-completeness, not an arena-wall win — a clean small follow-up.
 
 ## Slices
 
 - **Slice 1 — retire `bundle_demo.fern`. DONE** (#5603). Dead AST-only demo,
   coverage redundant with the modload fixpoint's file-based multi-module cases.
 
-- **Slice 2 — flip the bootstrap/fixpoint to per-module. BLOCKED on #3425.**
+- **Slice 2 — flip the bootstrap/fixpoint to per-module. UNBLOCKED (#3425
+  closed); the remaining question is CI time, not memory.**
   Make `TestSelfHostModloadFixpointX86_64` drive `-per-module-*` (as
   `TestSelfHostModloadPerModuleWholeCompilerX86_64` already does for gen0) so no
   path emits the merged bundle. The gen0 (Go-built) per-module emit is already
-  fast enough for CI; the *self-reproduction* proof needs the slow gen1 emit,
-  which is the #3425 wall. Options when unblocked: (a) accept a slow env-gated
-  fixpoint lane, (b) fix #3425 so gen1 is cheap, (c) a gen0-only fast guard that
-  forgoes self-reproduction (weaker).
+  fast enough for CI; the *self-reproduction* proof needs the gen1 emit, which
+  no longer OOMs but runs ~16.6 min **serially** — past a 13-min shard. Options,
+  now that (b) is done:
+  - (a) keep the full gen1 per-module fixpoint env-gated / on a dedicated slow
+    lane (nightly), and make the *primary* CI guard the gen0 per-module test
+    (fast, already exists) — self-reproduction proven off the hot path.
+  - (b) **make the gen1 per-module emit fit a shard** via *memory-budgeted*
+    parallelism: the measured peak is ~7.6 GB for the ONE dominant window
+    (`irlower`) while the other 34 are small, so a `buildMemLimiter`-style
+    weighted semaphore (reserve each window's estimated RSS against ~85 % of
+    `MemTotal`) parallelises the small windows and serialises the big one —
+    cutting wall time toward ~8–10 min while staying under 16 GB. This is the
+    highest-value next step; it de-env-gates the per-module fixpoint as a real
+    CI guard. Model: `internal/e2eharness/self_host_membudget.go`.
+  - (c) a gen0-only fast guard that forgoes self-reproduction (weakest).
+  Recommended: (b) for the CI guard, with (a)'s env-gated full fixpoint retained
+  as the belt-and-braces nightly.
 
 - **Slice 3 — replace the now-unreachable AST fallbacks.** Once slice 2 makes the
   merged path unreachable, replace `asm.emit_module` at the sites above with a
@@ -152,11 +189,12 @@ x86 self-host runtime (`asm_ir.fern`), locally gated by the x86 differential +
 
 ## Recommended order
 
-1. **#3425** (the actual unblocker) — measure the self-host emit's RSS on a large
-   module to find the non-reclaimed allocation; a bounded reclamation win here
-   unblocks 2/3/5 and makes the per-module fixpoint cheap. Research-grade; no
-   guaranteed bounded slice, but the highest leverage.
-2. Then **slice 2 → 3**, with the per-module fixpoint now affordable.
+1. **#3425 — DONE** (large-tier freelist port, x86 #5609 + arm64 #5614; gen1
+   per-module fixpoint GREEN). This was the actual unblocker; the bounded
+   reference-guided port hit exactly as predicted.
+2. **Slice 2 next** — memory-budgeted parallel gen1 per-module emit → de-env-gate
+   a CI-affordable per-module fixpoint, then repoint the drivers so the merged
+   bundle path is unreachable. Then **slice 3**.
 3. **Slice 4a/4b** alongside/after, since the untangle only pays off once the
    merged path is gone.
 4. **Slice 5** last.
