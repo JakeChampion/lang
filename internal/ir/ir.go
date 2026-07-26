@@ -3525,6 +3525,18 @@ func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads ma
 				return nil, false
 			}
 			return []ast.Type{ast.NumberType{}, at.Elem}, true // index, element
+		case "__method_Array_push":
+			// `a = a.append(v)` — __fern_arr_push_grow has the same COW
+			// contract as the `.with` cow helper above: the SAME buffer at
+			// rc==1 (in-place, length bumped) and a fresh copy otherwise. So
+			// a buffer that started fresh stays param-free across the rebind.
+			// Args are (receiver, element), so the slot list aligns with
+			// Args[1:] as one element slot.
+			at, ok := declared.(ast.ArrayType)
+			if !ok || nargs != 2 {
+				return nil, false
+			}
+			return []ast.Type{at.Elem}, true // element
 		}
 		return nil, false
 	}
@@ -3535,7 +3547,7 @@ func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads ma
 			return true
 		}
 		tid, ok := asn.Target.(*ast.Ident)
-		if !ok || !isSelfMapMutation(asn.Value, tid.Name) {
+		if !ok || !isSelfCowRebind(asn.Value, tid.Name) {
 			return true
 		}
 		decl, isDecl := decls[tid.Name]
@@ -14632,6 +14644,33 @@ func (b *builder) assign(n *ast.Assign) error {
 // structs in addition to arrays. The matching inc widening
 // (Phase 1e-struct-ii) ensures every aliasing event that
 // bumped the rc gets a balancing dec when `y` is overwritten.
+// isSelfCowRebind reports whether `value` is a self-rebinding COW mutation of
+// `targetName`: `m = m.insert(..)` / `m = m.cleared()` / `a = a.with(..)` /
+// `a = a.append(..)`. Every one returns the SAME handle when the receiver is
+// uniquely owned and a fresh copy otherwise, so a handle that started fresh
+// stays param-free across the rebind — which is all computeFreshLocals needs.
+//
+// Deliberately WIDER than isSelfMapMutation, which the assign-site dec uses:
+// there the array-push form takes its own path (isSelfArrayPushLocal → the
+// buffer-only __fern_arr_dec that pairs with push's non-retaining copy), so
+// the two must stay separate predicates even though the freshness argument is
+// identical for both. Merging them would route push through the map COW dec.
+func isSelfCowRebind(value ast.Expr, targetName string) bool {
+	if isSelfMapMutation(value, targetName) {
+		return true
+	}
+	call, ok := value.(*ast.Call)
+	if !ok {
+		return false
+	}
+	callee, ok := call.Callee.(*ast.Ident)
+	if !ok || callee.Name != "__method_Array_push" || len(call.Args) == 0 {
+		return false
+	}
+	recv, ok := call.Args[0].(*ast.Ident)
+	return ok && recv.Name == targetName
+}
+
 // isSelfMapMutation reports whether `value` is a value-returning
 // map mutator called on the ident `targetName` — i.e. the RHS of
 // a `m = m.set(...)` / `m = m.clear()` reassignment. The checker
