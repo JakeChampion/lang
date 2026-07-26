@@ -58,6 +58,13 @@ func TestSelfHostCaptureLambdaWasmIR(t *testing.T) {
 		// local $a` (a runtime trap). Now the IIFE is beta-reduced inline so inner
 		// lifts and the module stays on the wasm IR path.
 		{"nested-capture-transitive", `function main(): i32 { var a: i32 = 10; var outer = () => { var b: i32 = 20; var inner = () => a + b; inner() }; return outer(); }`, 30},
+		// Wide-value (i64/u64) lambdas with an INFERRED return type: the lifted
+		// __lam_N had ret_type "" so eligibility's `lower` bailed on the i64 return
+		// and the lambda routed to the wasm AST emitter, which emitted WASM the
+		// loader rejected. lift_lambdas now infers the return type so these lower
+		// on the wasm IR path.
+		{"i64-capture-inferred-ret", `function main(): i32 { var base: i64 = 7000000000; var f = () => base + 2000000000; return (f() / 1000000000) as i32; }`, 9},
+		{"i64-param-inferred-ret", `function main(): i32 { var f = (x: i64) => x + 1; return f(5) as i32; }`, 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
