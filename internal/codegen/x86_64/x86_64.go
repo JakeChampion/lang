@@ -1404,7 +1404,29 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// case. Negative values are written as `mov eax, N`
 		// with N's two's-complement bit pattern (assembler
 		// accepts negative imm32 directly).
-		g.emit(fmt.Sprintf("mov eax, %d", op.I32))
+		//
+		// Zero takes `xor eax, eax` instead: 2 bytes against
+		// mov's 5, and it also zero-extends into rax. Literal
+		// zero is everywhere (every `0` in source, every
+		// zero-init, every implicit `return 0`), so the 3
+		// bytes compound (#4380 lever 2) — ~1% of emitted code
+		// across the examples.
+		//
+		// `xor` clobbers FLAGS where `mov` does not. That is safe
+		// because FLAGS are never live across an IR-op boundary in
+		// this backend: every flag producer is emitted together
+		// with its consumer inside a single op's expansion (OpEq
+		// and friends emit `cmp` + `setcc` back to back), and the
+		// cmp/branch fusion peephole only rewrites a pair that is
+		// ALREADY adjacent. A const materialisation is its own IR
+		// op, so it can never land between a flag-setter and its
+		// reader. (Do not weaken that invariant without revisiting
+		// this.)
+		if op.I32 == 0 {
+			g.emit("xor eax, eax")
+		} else {
+			g.emit(fmt.Sprintf("mov eax, %d", op.I32))
+		}
 		g.push()
 	case ir.OpConstStr:
 		// Materialise the .rodata string-literal address
