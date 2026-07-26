@@ -2622,6 +2622,11 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		if !ok {
 			return e
 		}
+		// Checked arithmetic: `a +? b` → its `Option`-yielding block-expr
+		// desugar (#5542). Built and fully checked during checkExpr.
+		if b.CheckedLowered != nil {
+			return b.CheckedLowered
+		}
 		if b.EqCall != nil {
 			if b.EqNegate {
 				return &ast.Unary{P: b.P, Op: "!", Operand: b.EqCall}
@@ -4692,6 +4697,9 @@ type checker struct {
 	// tryConvN uniquifies the temp-var name in the error-converting `?`
 	// desugar (TryOp.Lowered). See #3234.
 	tryConvN int
+	// checkedN uniquifies the temp-var names in the checked-arithmetic
+	// desugar (Binary.CheckedLowered, `+?` / `-?` / `*?`). See #5542.
+	checkedN int
 	// inferReturns, when non-nil, accumulates the type of every
 	// `return EXPR` statement checked in the body of the CURRENT
 	// function — set up by checkFunction only for an unannotated
@@ -5486,6 +5494,89 @@ var arithOpMethod = map[string]string{
 // (the cast's DynCoercion recorded, the inner `?` stamped). Returns
 // (nil, false) when the target error isn't a `dyn Trait` E implements.
 // See #3234.
+// buildCheckedLowered synthesises the desugar for a checked integer
+// operator (`+?` / `-?` / `*?`, #5542). The result is `Some(a <op> b)`
+// when the exact result fits `t`, else `None`:
+//
+//	{ var l: T = a; var r: T = b; var s: T = a <op> b;   // wrapped
+//	  if (<overflowed>) { None } else { Some(s) } }
+//
+// The overflow predicate reads back the wrapped result `s` rather than
+// comparing against MIN / MAX literals, so one shape works at every
+// width — the unsigned MAX (unrepresentable as a signed literal) never
+// appears:
+//
+//	unsigned  a +? b  ⇔ s < a                 (carry out)
+//	unsigned  a -? b  ⇔ a < b                 (borrow)
+//	unsigned  a *? b  ⇔ a != 0 && s / a != b
+//	signed    a +? b  ⇔ (a^b) >= 0 && (s^a) < 0   (same sign in, sign flip)
+//	signed    a -? b  ⇔ (a^b) <  0 && (s^a) < 0
+//	signed    a *? b  ⇔ a != 0 && (s / a != b || (a == -1 && b == MIN))
+//
+// The signed `*?` division round-trip agrees spuriously on exactly the
+// `(-1, MIN)` pair (`MIN / -1 == MIN` because Fern's division is total),
+// so that pair is added back explicitly. `MIN` / `-1` are spelled with a
+// leading `0 - …` because a bare negative literal is rejected (E047).
+//
+// The synthesised block is fully checked here, so the post-check rewrite
+// pass (RewriteProgramExprs) can splice it in and every later pass sees a
+// plain `Option[T]`-valued block-expr.
+func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope) ast.Expr {
+	c.checkedN++
+	p := n.P
+	lN := fmt.Sprintf("__chk_l_%d", c.checkedN)
+	rN := fmt.Sprintf("__chk_r_%d", c.checkedN)
+	sN := fmt.Sprintf("__chk_s_%d", c.checkedN)
+	id := func(name string) ast.Expr { return &ast.Ident{P: p, Name: name} }
+	num := func(v int64) ast.Expr { return &ast.NumberLit{P: p, Value: v} }
+	bin := func(op string, l, r ast.Expr) ast.Expr { return &ast.Binary{P: p, Op: op, Left: l, Right: r} }
+	negOne := bin("-", num(0), num(1))
+	baseOp := n.Op[:1] // "+?" -> "+", "-?" -> "-", "*?" -> "*"
+	unsigned := !t.IsSigned()
+
+	var overflow ast.Expr
+	switch {
+	case unsigned && baseOp == "+":
+		overflow = bin("<", id(sN), id(lN))
+	case unsigned && baseOp == "-":
+		overflow = bin("<", id(lN), id(rN))
+	case unsigned: // "*"
+		overflow = bin("&&", bin("!=", id(lN), num(0)),
+			bin("!=", bin("/", id(sN), id(lN)), id(rN)))
+	case baseOp == "+":
+		overflow = bin("&&",
+			bin(">=", bin("^", id(lN), id(rN)), num(0)),
+			bin("<", bin("^", id(sN), id(lN)), num(0)))
+	case baseOp == "-":
+		overflow = bin("&&",
+			bin("<", bin("^", id(lN), id(rN)), num(0)),
+			bin("<", bin("^", id(sN), id(lN)), num(0)))
+	default: // signed "*"
+		maxLit := int64(2147483647)
+		if t.NormalWidth() == 64 {
+			maxLit = 9223372036854775807
+		}
+		minExpr := bin("-", bin("-", num(0), num(maxLit)), num(1)) // 0 - MAX - 1
+		overflow = bin("&&", bin("!=", id(lN), num(0)),
+			bin("||",
+				bin("!=", bin("/", id(sN), id(lN)), id(rN)),
+				bin("&&", bin("==", id(lN), negOne), bin("==", id(rN), minExpr))))
+	}
+
+	block := &ast.BlockExpr{P: p, Stmts: []ast.Stmt{
+		&ast.Var{P: p, Name: lN, Type: t, Init: n.Left},
+		&ast.Var{P: p, Name: rN, Type: t, Init: n.Right},
+		&ast.Var{P: p, Name: sN, Type: t, Init: bin(baseOp, id(lN), id(rN))},
+	}, Tail: &ast.IfExpr{P: p, Cond: overflow,
+		Then: id("None"),
+		Else: &ast.Call{P: p, Callee: id("Some"), Args: []ast.Expr{id(sN)}},
+	}}
+	if c.checkExpr(block, s) == nil {
+		return nil
+	}
+	return block
+}
+
 func (c *checker) tryConvertErrToDyn(n *ast.TryOp, srcEnum, retEnum ast.EnumType, s *scope) (ast.Expr, bool) {
 	dt, ok := retEnum.Args[1].(ast.DynTraitType)
 	if !ok {
@@ -11461,6 +11552,50 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				n.IsUnsigned = !common.IsSigned()
 			}
 			return common
+		case "+?", "-?", "*?":
+			// Checked integer arithmetic (#5542): `Some(result)` when the
+			// exact result fits the operand type, `None` on overflow.
+			// Integer only — there is no float form and no composite
+			// overload — and it desugars to a block-expr over ordinary
+			// `Option`, `if`, and wrapping arithmetic, so every backend
+			// (interp + all codegen) lowers it for free via CheckedLowered.
+			c.requireInteger(n.P, lt, n.Op)
+			c.requireInteger(n.P, rt, n.Op)
+			// `usize` is target-width, so the overflow bound isn't
+			// expressible portably. Reject rather than checking at the
+			// wrong width — mirrors the saturating operators' stance.
+			for _, t := range []ast.Type{lt, rt} {
+				if nt, ok := t.(ast.NumberType); ok && nt.IsPointerWidth() {
+					c.errfCode(n.P, "E009", "checked operator %q is not supported on `usize` — its overflow bound is target-width-dependent; cast to a fixed-width integer (`as u64`) first", n.Op)
+					return ast.NumberType{}
+				}
+			}
+			common, ok := commonIntegerWidth(lt, rt)
+			if !ok {
+				if isInteger(lt) && isInteger(rt) {
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				}
+				return ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}}
+			}
+			// A pair of unsuffixed literals (`40 +? 2`) leaves `common`
+			// polymorphic; the desugar's overflow predicate needs a
+			// concrete width, so default to i32 exactly like every other
+			// integer op (see the `b.IntWidth == 0` default below).
+			if common.Polymorphic {
+				common = ast.NumberType{Width: 32, Signed: true}
+			}
+			c.settleNumeric(n.Left, common)
+			c.settleNumeric(n.Right, common)
+			if ln, ok := lt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Left, ln, common)
+			}
+			if rn, ok := rt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Right, rn, common)
+			}
+			n.IntWidth = common.NormalWidth()
+			n.IsUnsigned = !common.IsSigned()
+			n.CheckedLowered = c.buildCheckedLowered(n, common, s)
+			return ast.EnumType{Name: "Option", Args: []ast.Type{common}}
 		case "%", "&", "|", "^", "<<", ">>":
 			// Composite-type operator overloading (`%`→rem, `&`→bitand,
 			// `|`→bitor, `^`→bitxor, `<<`→shl, `>>`→shr). See #2706.

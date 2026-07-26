@@ -5055,10 +5055,10 @@ func (p *parser) parseShift() (ast.Expr, error) {
 	return p.parseBinaryLeft(p.parseAdditive, "<<", ">>", "<<|")
 }
 func (p *parser) parseAdditive() (ast.Expr, error) {
-	return p.parseBinaryLeft(p.parseMultiplicative, "+", "-", "+|", "-|")
+	return p.parseBinaryLeft(p.parseMultiplicative, "+", "-", "+|", "-|", "+?", "-?")
 }
 func (p *parser) parseMultiplicative() (ast.Expr, error) {
-	return p.parseBinaryLeft(p.parseUnary, "*", "/", "%", "*|")
+	return p.parseBinaryLeft(p.parseUnary, "*", "/", "%", "*|", "*?")
 }
 
 func (p *parser) parseUnary() (ast.Expr, error) {

@@ -1721,6 +1721,14 @@ type Binary struct {
 	// replaces the Binary with this method call, so every later pass
 	// sees an ordinary call. See #2706.
 	ArithCall *Call
+	// CheckedLowered is set by the checker for the checked integer
+	// operators (`+?` `-?` `*?`, #5542): the operator desugars to a
+	// block-expr that yields `Some(result)` when it fits the operand
+	// type and `None` on overflow. The post-check rewrite replaces
+	// the Binary with this expression, so every later pass — interp,
+	// codegen — sees an ordinary `Option[T]`-valued expression rather
+	// than a bespoke opcode. Mirrors the EqCall / ArithCall channel.
+	CheckedLowered Expr
 }
 type Unary struct {
 	P       Position

@@ -4094,6 +4094,188 @@ function sat_arith(k: string, kind: string, w: i32, s: LowerState): LowerState {
     return p;
 }
 
+// is_chk_op reports whether `op` is a checked arithmetic operator (`+?` /
+// `-?` / `*?`, #5542): integer-only, yielding `Some(result)` when it fits the
+// operand type and `None` on overflow.
+pub function is_chk_op(op: string): boolean {
+    return op == "+?" || op == "-?" || op == "*?";
+}
+
+// chk_opt_type_tag is the "Option[T]" tag a checked binary (`+?` / `-?` / `*?`)
+// evaluates to, T being the operand width. Option-consuming positions (a
+// `match` scrutinee, a `?`) resolve the scrutinee's Option type by walking the
+// expression; without this a `match (a +? b)` can't recover the Some payload's
+// type and bails to the AST path. The width detection mirrors
+// lower_checked_binary's `kind`.
+pub function chk_opt_type_tag(b: parser.ExprBinary, s: LowerState): string {
+    if (infer_expr_width(b.left, s) == 64 || infer_expr_width(b.right, s) == 64) {
+        if (expr_is_u64(b.left, s) || expr_is_u64(b.right, s)) { return "Option[u64]"; }
+        return "Option[i64]";
+    }
+    if (expr_is_u32(b.left, s) || expr_is_u32(b.right, s)) { return "Option[u32]"; }
+    // u8 has no distinct Option payload representation — it rides an i32 slot
+    // (op_opt_make stores the 4-byte wrapped value), so the Some(v) arm binds v
+    // as i32; "Option[u8]" isn't a payload tag the arm reader recognises.
+    return "Option[i32]";
+}
+
+// chk_overflow pushes the overflow boolean for a checked binary. It is the
+// SAME clamp condition lower_sat_binary tests (so it inherits that shape's
+// per-backend proof), OR'd across the two saturation directions for
+// signed add / sub because a checked op only cares that it overflowed at
+// all, not which way:
+//
+//     unsigned +?  l > MAX - r
+//     unsigned -?  l < r
+//     unsigned *?  l != 0 && r > MAX / l
+//     signed   +?  (r > 0 && l > MAX - r) || (r < 0 && l < MIN - r)
+//     signed   -?  (r < 0 && l > MAX + r) || (r > 0 && l < MIN + r)
+//     signed   *?  l != 0 && (s / l != r || (l == -1 && r == MIN))   (s = l * r wrapped)
+function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32, rslot: i32, sslot: i32, s: LowerState): LowerState {
+    var p: LowerState = s;
+    if (uns) {
+        if (op == "+?") {
+            p = sat_load(lslot, p);
+            p = sat_const(kind, "max", p);
+            p = sat_load(rslot, p);
+            p = sat_arith("sub", kind, w, p);
+            return p.emit(ir.op_bin("gt_u", w, false));
+        }
+        if (op == "-?") {
+            p = sat_load(lslot, p);
+            p = sat_load(rslot, p);
+            return p.emit(ir.op_bin("lt_u", w, false));
+        }
+        // *?  l != 0 && r > MAX / l
+        p = sat_load(lslot, p);
+        p = sat_const(kind, "zero", p);
+        p = p.emit(ir.op_bin("ne", w, false));
+        p = sat_load(rslot, p);
+        p = sat_const(kind, "max", p);
+        p = sat_load(lslot, p);
+        p = sat_arith("div_u", kind, w, p);
+        p = p.emit(ir.op_bin("gt_u", w, false));
+        return p.emit(ir.op_bin("and", 0, false));
+    }
+    if (op == "+?" || op == "-?") {
+        var rsign_hi: string = "gt_s";
+        var rsign_lo: string = "lt_s";
+        var adj: string = "sub";
+        if (op == "-?") {
+            rsign_hi = "lt_s";
+            rsign_lo = "gt_s";
+            adj = "add";
+        }
+        // hi = (r <rsign_hi> 0) && (l > MAX <adj> r)
+        p = sat_load(rslot, p);
+        p = sat_const(kind, "zero", p);
+        p = p.emit(ir.op_bin(rsign_hi, w, false));
+        p = sat_load(lslot, p);
+        p = sat_const(kind, "max", p);
+        p = sat_load(rslot, p);
+        p = sat_arith(adj, kind, w, p);
+        p = p.emit(ir.op_bin("gt_s", w, false));
+        p = p.emit(ir.op_bin("and", 0, false));
+        // lo = (r <rsign_lo> 0) && (l < MIN <adj> r)
+        p = sat_load(rslot, p);
+        p = sat_const(kind, "zero", p);
+        p = p.emit(ir.op_bin(rsign_lo, w, false));
+        p = sat_load(lslot, p);
+        p = sat_const(kind, "min", p);
+        p = sat_load(rslot, p);
+        p = sat_arith(adj, kind, w, p);
+        p = p.emit(ir.op_bin("lt_s", w, false));
+        p = p.emit(ir.op_bin("and", 0, false));
+        return p.emit(ir.op_bin("or", 0, false));
+    }
+    // signed *?  l != 0 && (s / l != r || (l == -1 && r == MIN))
+    p = sat_load(lslot, p);
+    p = sat_const(kind, "zero", p);
+    p = p.emit(ir.op_bin("ne", w, false));
+    p = sat_load(sslot, p);
+    p = sat_load(lslot, p);
+    p = sat_arith("div_s", kind, w, p);
+    p = sat_load(rslot, p);
+    p = p.emit(ir.op_bin("ne", w, false));
+    p = sat_load(lslot, p);
+    p = sat_const(kind, "negone", p);
+    p = p.emit(ir.op_bin("eq", w, false));
+    p = sat_load(rslot, p);
+    p = sat_const(kind, "min", p);
+    p = p.emit(ir.op_bin("eq", w, false));
+    p = p.emit(ir.op_bin("and", 0, false));
+    p = p.emit(ir.op_bin("or", 0, false));
+    return p.emit(ir.op_bin("and", 0, false));
+}
+
+// lower_checked_binary lowers a checked integer binary (`+?` / `-?` / `*?`,
+// #5542): `Some(a <op> b)` when the exact result fits the operand type,
+// `None` on overflow. The overflow predicate is chk_overflow (the SAME
+// condition lower_sat_binary clamps on); the difference is only the
+// outcome — None vs Some(wrapped) instead of MIN/MAX/clamp.
+//
+// void-`if` + store-to-temp (the Option value rides oslot, a default,
+// un-i64-marked slot: a pointer, i32 on wasm and 64-bit on the register
+// backends). Mirrors the native desugar Binary.CheckedLowered — keep the
+// two in step.
+function lower_checked_binary(b: parser.ExprBinary, e: parser.Expr, s: LowerState): LowerState {
+    var wide: boolean = infer_expr_width(b.left, s) == 64 || infer_expr_width(b.right, s) == 64;
+    var kind: string = "i32";
+    if (wide) {
+        if (expr_is_u64(b.left, s) || expr_is_u64(b.right, s)) { kind = "u64"; } else { kind = "i64"; }
+    } else if (expr_is_u32(b.left, s) || expr_is_u32(b.right, s)) {
+        kind = "u32";
+    } else if (expr_subword_kind(e, s) == "u8") {
+        kind = "u8";
+    }
+    var uns: boolean = kind == "u8" || kind == "u32" || kind == "u64";
+    var w: i32 = 0;
+    if (wide) { w = 64; }
+
+    var p: LowerState = s;
+    var lname: string = "$chkl" + util.i32_to_string(p.locals.len());
+    p = p.add_local(lname);
+    var lslot: i32 = p.slot_of(lname);
+    if (wide) { p = p.mark_i64(lslot, true); }
+    if (wide) { p = lower_i64(b.left, p); } else { p = lower_expr(b.left, p); }
+    if (!p.ok) { return p; }
+    p = p.emit(ir.op_store_local(lslot));
+    var rname: string = "$chkr" + util.i32_to_string(p.locals.len());
+    p = p.add_local(rname);
+    var rslot: i32 = p.slot_of(rname);
+    if (wide) { p = p.mark_i64(rslot, true); }
+    if (wide) { p = lower_i64(b.right, p); } else { p = lower_expr(b.right, p); }
+    if (!p.ok) { return p; }
+    p = p.emit(ir.op_store_local(rslot));
+    // Wrapped result: the Some payload, and the dividend for signed `*?`.
+    var sname: string = "$chks" + util.i32_to_string(p.locals.len());
+    p = p.add_local(sname);
+    var sslot: i32 = p.slot_of(sname);
+    if (wide) { p = p.mark_i64(sslot, true); }
+    var basek: string = "add";
+    if (b.op == "-?") { basek = "sub"; }
+    if (b.op == "*?") { basek = "mul"; }
+    p = sat_load(lslot, p);
+    p = sat_load(rslot, p);
+    p = sat_arith(basek, kind, w, p);
+    p = p.emit(ir.op_store_local(sslot));
+    // The Option result rides a default (un-i64-marked) pointer slot.
+    var oname: string = "$chko" + util.i32_to_string(p.locals.len());
+    p = p.add_local(oname);
+    var oslot: i32 = p.slot_of(oname);
+
+    p = chk_overflow(b.op, kind, uns, w, lslot, rslot, sslot, p);
+    p = p.emit(ir.op_if(0));
+    p = p.emit(ir.op_opt_none());
+    p = p.emit(ir.op_store_local(oslot));
+    p = p.emit(ir.op_else());
+    p = sat_load(sslot, p);
+    if (wide) { p = p.emit(ir.op_opt_make_w(0, 64, true)); } else { p = p.emit(ir.op_opt_make(0)); }
+    p = p.emit(ir.op_store_local(oslot));
+    p = p.emit(ir.op_end());
+    return sat_load(oslot, p);
+}
+
 // emit_str_concat_reclaim lowers a string concat `b.left + b.right`, and frees any
 // operand that is_fresh_str_temp classifies as a dead anonymous temp right after
 // the concat consumes it. Each fresh operand is captured into a scratch slot before
@@ -6448,6 +6630,9 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // no float form, no composite overload — so it precedes every other
             // dispatch and carries its own width-aware clamp lowering.
             if (is_sat_op(b.op)) { return lower_sat_binary(b, e, s); }
+            // Checked arithmetic (#5542) yields `Option[T]` — integer-only,
+            // no composite overload — so it too precedes every other dispatch.
+            if (is_chk_op(b.op)) { return lower_checked_binary(b, e, s); }
             // Composite operator overload (#2706): `a <op> b` where the left
             // operand is a struct lowers to `a.<method>(b)` (`+`→add, …),
             // mirroring the native checker desugar. Rewriting to a method call
@@ -9495,6 +9680,10 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
     match (inner) {
         parser.ExprCall(oc0) => {
             if (oc0.ty.len() >= 7 && (oc0.ty[0:7] == "Option[" || oc0.ty[0:7] == "Result[")) { return oc0.ty; }
+        },
+        // `(a +? b)?` — a checked arithmetic operand (#5542) is Option[T].
+        parser.ExprBinary(ob) => {
+            if (is_chk_op(ob.op)) { return chk_opt_type_tag(ob, s); }
         },
         _ => {}
     }
@@ -15123,6 +15312,12 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                                     },
                                     _ => {}
                                 }
+                            },
+                            // `match (a +? b)` — a checked arithmetic scrutinee
+                            // (#5542) evaluates to Option[T] (T the operand
+                            // width). Recover it so the Some(v) arm binds v.
+                            parser.ExprBinary(scb) => {
+                                if (is_chk_op(scb.op)) { srt = chk_opt_type_tag(scb, ms); }
                             },
                             _ => {}
                         }

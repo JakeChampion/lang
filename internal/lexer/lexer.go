@@ -183,6 +183,12 @@ var multiPunct = []string{
 	// assignments so `+=` still wins over a `+`-prefixed match.
 	// `<<|` sits up with the 3-char punctuators so it beats `<<`.
 	"+|", "-|", "*|",
+	// Checked arithmetic (#5542) — `Some(result)` when it fits the
+	// operand type, `None` on overflow. Each lexes as one two-char
+	// punctuator; the trailing `?` never merges with the postfix
+	// try `?` because that only follows a completed operand, never
+	// an arithmetic operator.
+	"+?", "-?", "*?",
 	"::",
 }
 

@@ -156,16 +156,79 @@ no clamp bound — is known at that point; the compiler reports
 ``operator `+|` not allowed in integer constant expressions`` rather
 than guessing one.
 
-The remaining overflow disciplines from #5542 are available as
-**library** surface rather than operators: `std/i32`, `std/i64`,
-`std/u32` and `std/u64` each carry `checked_add` / `checked_sub` /
-`checked_mul` / `checked_div` / `checked_rem` / `checked_pow` /
-`checked_shl` / `checked_shr` (returning `Option[T]`) and
-`overflowing_add` / `overflowing_sub` / `overflowing_mul` /
-`overflowing_div` / `overflowing_rem` (returning `(T, boolean)`),
-alongside `saturating_*` method forms. There is no operator spelling
-for the checked disciplines, and no aborting-on-overflow build mode —
-the never-trapping contract at the top of this document still holds
+## Checked arithmetic (opt-in)
+
+`+?`, `-?`, and `*?` are the **checked** counterparts of `+`, `-`, and
+`*`: they evaluate to `Some(result)` when the exact result fits the
+operand type and `None` on overflow, so overflow becomes a value the
+caller handles rather than a silent wrap. Also additive surface — a
+program that never writes `?` after an arithmetic operator is unchanged.
+
+```
+2147483647 +? 1  == None          // i32 overflows high
+40 +? 2          == Some(42)       // fits
+250u8 +? 10u8    == None           // u8 overflows
+10u8 -? 250u8    == None           // unsigned borrow
+```
+
+They sit in the same arithmetic tiers as the wrapping and saturating
+operators: `+?` / `-?` bind like `+` / `-`, `*?` binds like `*`. They
+are **integer-only** — no string or float form, no composite overload —
+and `usize` is rejected (E009) because its overflow bound is
+target-width-dependent. The result composes with the postfix `?`
+operator, so `(a +? b)?` propagates `None` out of an `Option`-returning
+function. The trailing `?` never collides with the postfix try `?`: it
+only follows an arithmetic operator, never a completed operand.
+
+Checked arithmetic never traps — `None` is a value — so the no-exceptions
+contract above still holds. `+?` / `-?` / `*?` are the operator form of
+the `checked_add` / `checked_sub` / `checked_mul` stdlib methods, the way
+`+|` / `-|` / `*|` are the operator form of `saturating_*`.
+
+### How it's implemented
+
+There is no checked IR opcode. The native compiler desugars `a +? b` in
+the checker (`buildCheckedLowered`, spliced in via `Binary.CheckedLowered`)
+to an `Option`-yielding block-expr — `{ var l = a; var r = b; var s = a
+<op> b; if (overflowed) { None } else { Some(s) } }` — so the interpreter
+and every codegen backend lower it through the ordinary `Option` / `if` /
+wrapping-arithmetic paths. The self-host compiler, whose IR-subset has no
+block-expression node, emits the same shape directly in
+`irlower.lower_checked_binary`: the overflow predicate is exactly the
+clamp condition `lower_sat_binary` tests (`chk_overflow`), OR'd across the
+two saturation directions, and the outcome is `op_opt_none` /
+`op_opt_make` instead of the clamp. The wrapped result rides a value slot
+and the `Option` rides a default pointer slot (i32 on wasm, 64-bit on the
+register backends).
+
+The overflow predicate reads back the wrapped result rather than
+comparing against literals, so the unsigned MAX — unrepresentable as a
+signed literal — never has to appear:
+
+```
+unsigned a +? b  overflowed ⇔ s < a                       (carry out)
+unsigned a *? b  overflowed ⇔ a != 0 && s / a != b
+signed   a +? b  overflowed ⇔ (a^b) >= 0 && (s^a) < 0     (native desugar)
+signed   a *? b  overflowed ⇔ a != 0 && (s / a != b || (a == -1 && b == MIN))
+```
+
+The signed `*?` division round-trip agrees spuriously on exactly the
+`(-1, MIN)` pair (`MIN / -1 == MIN` because division is total), so that
+pair is added back explicitly.
+
+The remaining overflow discipline from #5542 — the `overflowing_*`
+(result, overflowed) pair — has no operator form: `std/i32`, `std/i64`,
+`std/u32` and `std/u64` carry `overflowing_add` / `overflowing_sub` /
+`overflowing_mul` / `overflowing_div` / `overflowing_rem` (returning
+`(T, boolean)`) as methods only.
+
+Those same modules also carry the full checked family — `checked_add` /
+`checked_sub` / `checked_mul` / `checked_div` / `checked_rem` /
+`checked_pow` / `checked_shl` / `checked_shr`, all returning `Option[T]`
+— alongside the `saturating_*` method forms. The operators above spell
+only the three arithmetic cases; division, remainder, pow and the shifts
+stay method-only. There is still no aborting-on-overflow build mode, so
+the never-trapping contract at the top of this document holds
 unconditionally.
 
 ## Conversions
