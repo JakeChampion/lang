@@ -286,9 +286,12 @@ fields), exercised by the byte-identical self-compile; see
 deltas are MARGINAL (struct reuse with enum / Map / closure / tuple
 pointer fields — §3 Delta B). The real remaining frontier for retiring
 the legacy AST emitters is the per-module epic's step 5 (#3457, still
-OPEN). Its wasm component-model sub-issues (#4315–#4320) are now ALL
-closed, so it is **no longer blocked on them** — verify its current
-blockers directly before picking it up rather than assuming it is gated.
+OPEN) — see **`docs/SELFHOST-AST-RETIREMENT.md`** for the code-verified
+slice plan (slice 1 done; 2/3/5 gated on the #3425 self-host-runtime
+memory leak; 4 is a ~5k-line arm64/wasm runtime duplication that unlocks
+no deletion on its own). Its wasm component-model sub-issues (#4315–#4320)
+are now ALL closed, so it is **no longer blocked on them** — verify its
+current blockers directly before picking it up rather than assuming it is gated.
 When picking up "the next task", VERIFY tracker
 state against the code first: issues #4451/#4363/#4346 have repeatedly
 lagged reality (the checker-codes filter is already deleted, the
