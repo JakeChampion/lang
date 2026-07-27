@@ -31,9 +31,9 @@ function test_mixed_unchanged(): test.TestOutcome {
 
 function test_char_level(): test.TestOutcome {
     // 'a'(97) -> 'A'(65); Greek Α(0x391) -> α(0x3B1).
-    return test.assert_true(unicode.to_upper_char(97) == 65 &&
-                            unicode.to_lower_char(913) == 945 &&
-                            unicode.to_upper_char(48) == 48);   // '0' unchanged
+    return test.assert_true(((97 as char).to_upper() as i32) == 65 &&
+                            ((913 as char).to_lower() as i32) == 945 &&
+                            ((48 as char).to_upper() as i32) == 48);   // '0' unchanged
 }
 
 function test_sharp_s_expands(): test.TestOutcome {
@@ -41,7 +41,7 @@ function test_sharp_s_expands(): test.TestOutcome {
     // to two. The per-code-point to_upper_char cannot express this and
     // leaves it alone — that is the whole reason both exist.
     if (unicode.to_upper("straße") != "STRASSE") { return test.fail("straße -> STRASSE"); }
-    if (unicode.to_upper_char(223) != 223) { return test.fail("to_upper_char leaves ß alone"); }
+    if (((223 as char).to_upper() as i32) != 223) { return test.fail("to_upper_char leaves ß alone"); }
     return test.pass();
 }
 
@@ -86,29 +86,29 @@ function test_roundtrip(): test.TestOutcome {
 
 function test_is_letter(): test.TestOutcome {
     // Latin, Greek, and CJK are letters; a digit is not.
-    return test.assert_true(unicode.is_letter(97) && unicode.is_letter(945) &&
-                            unicode.is_letter(0x4E2D) && !unicode.is_letter(48));
+    return test.assert_true(((97 as char).is_letter()) && ((945 as char).is_letter()) &&
+                            ((0x4E2D as char).is_letter()) && !((48 as char).is_letter()));
 }
 
 function test_is_digit(): test.TestOutcome {
     // ASCII 0, Arabic-Indic 9 (U+0669) are digits; a letter is not.
-    return test.assert_true(unicode.is_digit(48) && unicode.is_digit(0x0669) &&
-                            !unicode.is_digit(97));
+    return test.assert_true(((48 as char).is_digit()) && ((0x0669 as char).is_digit()) &&
+                            !((97 as char).is_digit()));
 }
 
 function test_is_alnum_whitespace(): test.TestOutcome {
-    if (!unicode.is_alnum(97) || !unicode.is_alnum(48)) { return test.fail("alnum"); }
-    if (unicode.is_alnum(32)) { return test.fail("space is not alnum"); }
+    if (!((97 as char).is_alnum()) || !((48 as char).is_alnum())) { return test.fail("alnum"); }
+    if (((32 as char).is_alnum())) { return test.fail("space is not alnum"); }
     // space, tab, and NBSP (U+00A0) are whitespace; a letter is not.
-    if (!unicode.is_whitespace(32) || !unicode.is_whitespace(9) ||
-        !unicode.is_whitespace(0xA0)) { return test.fail("whitespace"); }
-    return test.assert_false(unicode.is_whitespace(97));
+    if (!((32 as char).is_whitespace()) || !((9 as char).is_whitespace()) ||
+        !((0xA0 as char).is_whitespace())) { return test.fail("whitespace"); }
+    return test.assert_false(((97 as char).is_whitespace()));
 }
 
 function test_is_upper_lower(): test.TestOutcome {
-    return test.assert_true(unicode.is_upper(65) && !unicode.is_upper(97) &&
-                            unicode.is_lower(97) && !unicode.is_lower(65) &&
-                            unicode.is_upper(0x391) && unicode.is_lower(0x3B1));
+    return test.assert_true(((65 as char).is_upper()) && !((97 as char).is_upper()) &&
+                            ((97 as char).is_lower()) && !((65 as char).is_lower()) &&
+                            ((0x391 as char).is_upper()) && ((0x3B1 as char).is_lower()));
 }
 
 function test_ascii_fast_path_agrees(): test.TestOutcome {
@@ -120,8 +120,8 @@ function test_ascii_fast_path_agrees(): test.TestOutcome {
     if (unicode.to_lower("ABCxyz 123!") != "abcxyz 123!") { return test.fail("ascii fast path lower"); }
     if (unicode.to_lower("ABCxyz 123!É") != "abcxyz 123!é") { return test.fail("decode path prefix lower"); }
     // The 0x7F/0x80 boundary the fast path branches on.
-    if (unicode.to_upper_char(127) != 127) { return test.fail("U+007F unchanged"); }
-    if (unicode.to_upper_char(0xB5) != 0x39C) { return test.fail("µ -> Μ across the boundary"); }
+    if (((127 as char).to_upper() as i32) != 127) { return test.fail("U+007F unchanged"); }
+    if (((0xB5 as char).to_upper() as i32) != 0x39C) { return test.fail("µ -> Μ across the boundary"); }
     return test.pass();
 }
 
@@ -129,21 +129,21 @@ function test_alternating_run(): test.TestOutcome {
     // Latin Extended-A is encoded as alternating pair runs (even offset
     // uppercase, odd its lowercase) rather than per-code-point entries —
     // a decode path nothing else here exercises.
-    if (unicode.to_lower_char(0x100) != 0x101) { return test.fail("Ā -> ā"); }
-    if (unicode.to_upper_char(0x101) != 0x100) { return test.fail("ā -> Ā"); }
-    if (unicode.to_upper_char(0x100) != 0x100) { return test.fail("Ā is already upper"); }
-    if (unicode.to_lower_char(0x101) != 0x101) { return test.fail("ā is already lower"); }
+    if (((0x100 as char).to_lower() as i32) != 0x101) { return test.fail("Ā -> ā"); }
+    if (((0x101 as char).to_upper() as i32) != 0x100) { return test.fail("ā -> Ā"); }
+    if (((0x100 as char).to_upper() as i32) != 0x100) { return test.fail("Ā is already upper"); }
+    if (((0x101 as char).to_lower() as i32) != 0x101) { return test.fail("ā is already lower"); }
     // Deep inside the same run, and at its far end.
-    if (unicode.to_upper_char(0x12F) != 0x12E) { return test.fail("į -> Į"); }
+    if (((0x12F as char).to_upper() as i32) != 0x12E) { return test.fail("į -> Į"); }
     return test.assert_eq(unicode.to_upper("ăćĕ"), "ĂĆĔ");
 }
 
 function test_large_delta_and_non_bmp(): test.TestOutcome {
     // Constant runs whose delta is large, and mappings outside the BMP
     // (4-byte UTF-8 on both sides).
-    if (unicode.to_upper_char(0x250) != 0x2C6F) { return test.fail("ɐ -> Ɐ (delta 10783)"); }
-    if (unicode.to_lower_char(0x10400) != 0x10428) { return test.fail("Deseret upper -> lower"); }
-    if (unicode.to_upper_char(0x10428) != 0x10400) { return test.fail("Deseret lower -> upper"); }
+    if (((0x250 as char).to_upper() as i32) != 0x2C6F) { return test.fail("ɐ -> Ɐ (delta 10783)"); }
+    if (((0x10400 as char).to_lower() as i32) != 0x10428) { return test.fail("Deseret upper -> lower"); }
+    if (((0x10428 as char).to_upper() as i32) != 0x10400) { return test.fail("Deseret lower -> upper"); }
     return test.assert_eq(unicode.to_upper("𐐨𐐩"), "𐐀𐐁");
 }
 

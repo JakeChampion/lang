@@ -969,9 +969,10 @@ function _case_apply(cp: i32, want_upper: boolean): i32 {
     return cp;
 }
 
-// ` + "`to_upper_char(cp)`" + ` — the uppercase of a single code point (its
-// simple mapping), or ` + "`cp`" + ` unchanged when it has none.
-pub function to_upper_char(cp: i32): i32 {
+// _upper_cp / _lower_cp are the i32 workers the rest of this module uses;
+// the public surface is the ` + "`char`" + ` methods below. Keeping the internals on
+// i32 avoids casting on every table lookup.
+function _upper_cp(cp: i32): i32 {
     if (cp < 128) {
         if (cp >= 97 && cp <= 122) { return cp - 32; }
         return cp;
@@ -979,8 +980,7 @@ pub function to_upper_char(cp: i32): i32 {
     return _case_apply(cp, true);
 }
 
-// ` + "`to_lower_char(cp)`" + ` — the lowercase of a single code point.
-pub function to_lower_char(cp: i32): i32 {
+function _lower_cp(cp: i32): i32 {
     if (cp < 128) {
         if (cp >= 65 && cp <= 90) { return cp + 32; }
         return cp;
@@ -1190,7 +1190,7 @@ function _fold_cp(cp: i32): string {
             return out;
         }
     }
-    return utf8.utf8_encode(to_lower_char(cp));
+    return utf8.utf8_encode(_lower_cp(cp));
 }
 
 // ` + "`case_fold(s)`" + ` — ` + "`s`" + ` mapped to a form suitable for caseless comparison.
@@ -1241,8 +1241,8 @@ pub function eq_ignore_case(a: string, b: string): boolean {
 // (digits, punctuation, CJK, …) pass through — ` + "`is_upper`" + ` / ` + "`is_lower`" + `
 // are both false for them, so neither branch fires.
 function _swap_case_cp(cp: i32): i32 {
-    if (is_upper(cp)) { return to_lower_char(cp); }
-    if (is_lower(cp)) { return to_upper_char(cp); }
+    if (_is_upper_cp(cp)) { return _lower_cp(cp); }
+    if (_is_lower_cp(cp)) { return _upper_cp(cp); }
     return cp;
 }
 
@@ -1286,7 +1286,7 @@ pub function capitalize(s: string): string {
     if (n == 0) { return ""; }
     match (utf8.utf8_decode_at(s, 0)) {
         Some(pair) => {
-            var up: i32 = to_upper_char(pair.0);
+            var up: i32 = _upper_cp(pair.0);
             if (up == pair.0) { return s; }
             return utf8.utf8_encode(up) + s[pair.1:n];
         },
@@ -1310,11 +1310,11 @@ pub function title_case(s: string): string {
             Some(pair) => {
                 var cp: i32 = pair.0;
                 if (at_start) {
-                    out = out + utf8.utf8_encode(to_upper_char(cp));
+                    out = out + utf8.utf8_encode(_upper_cp(cp));
                 } else {
                     out = out + utf8.utf8_encode(cp);
                 }
-                at_start = is_whitespace(cp);
+                at_start = _is_whitespace_cp(cp);
                 i = i + pair.1;
             },
             None => {
@@ -1342,39 +1342,98 @@ function _in_ranges(t: string, cp: i32): boolean {
     return false;
 }
 
-// ` + "`is_letter(cp)`" + ` — is ` + "`cp`" + ` in the Unicode Letter category (L*)?
-pub function is_letter(cp: i32): boolean {
+// ` + "`_is_letter_cp(cp)`" + ` — is ` + "`cp`" + ` in the Unicode Letter category (L*)?
+function _is_letter_cp(cp: i32): boolean {
     if (cp < 128) { return (cp >= 65 && cp <= 90) || (cp >= 97 && cp <= 122); }
     return _in_ranges(_letter_ranges(), cp);
 }
 
-// ` + "`is_digit(cp)`" + ` — is ` + "`cp`" + ` a Unicode decimal digit (category Nd)?
-pub function is_digit(cp: i32): boolean {
+// ` + "`_is_digit_cp(cp)`" + ` — is ` + "`cp`" + ` a Unicode decimal digit (category Nd)?
+function _is_digit_cp(cp: i32): boolean {
     if (cp < 128) { return cp >= 48 && cp <= 57; }
     return _in_ranges(_digit_ranges(), cp);
 }
 
-// ` + "`is_alnum(cp)`" + ` — a letter or a decimal digit.
-pub function is_alnum(cp: i32): boolean {
-    return is_letter(cp) || is_digit(cp);
+// ` + "`_is_alnum_cp(cp)`" + ` — a letter or a decimal digit.
+function _is_alnum_cp(cp: i32): boolean {
+    return _is_letter_cp(cp) || _is_digit_cp(cp);
 }
 
-// ` + "`is_whitespace(cp)`" + ` — matches Go's unicode.IsSpace (space, tab,
+// ` + "`_is_whitespace_cp(cp)`" + ` — matches Go's unicode.IsSpace (space, tab,
 // newline, NBSP, the Unicode space separators, …).
-pub function is_whitespace(cp: i32): boolean {
+function _is_whitespace_cp(cp: i32): boolean {
     if (cp < 128) { return cp == 32 || (cp >= 9 && cp <= 13); }
     return _in_ranges(_space_ranges(), cp);
 }
 
-// ` + "`is_upper(cp)`" + ` / ` + "`is_lower(cp)`" + ` — Unicode upper/lowercase letters.
-pub function is_upper(cp: i32): boolean {
+// ` + "`_is_upper_cp(cp)`" + ` / ` + "`_is_lower_cp(cp)`" + ` — Unicode upper/lowercase letters.
+function _is_upper_cp(cp: i32): boolean {
     if (cp < 128) { return cp >= 65 && cp <= 90; }
     return _in_ranges(_upper_ranges(), cp);
 }
 
-pub function is_lower(cp: i32): boolean {
+function _is_lower_cp(cp: i32): boolean {
     if (cp < 128) { return cp >= 97 && cp <= 122; }
     return _in_ranges(_lower_ranges(), cp);
+}
+
+
+// === The ` + "`char`" + ` surface ===
+//
+// A ` + "`char`" + ` is a Unicode scalar value, distinct in the checker from the
+// ` + "`i32`" + ` a byte rides in (#5629). These are METHODS rather than free
+// functions because a free ` + "`to_upper(c: char)`" + ` would collide with
+// ` + "`to_upper(s: string)`" + ` above — and because ` + "`c.to_upper()`" + ` next to
+// ` + "`s.to_upper()`" + ` is exactly the point: the receiver TYPE says which of
+// the two operations you meant, where before both were ` + "`i32`" + ` and only a
+// naming convention told them apart.
+//
+// Case mapping here is SIMPLE (1:1). A 1->N expansion has no single
+// ` + "`char`" + ` to return, so ` + "`'ß'`" + ` maps to itself; use the string-level
+// ` + "`to_upper`" + ` when you need ` + "`SS`" + `. Rust draws the same line between
+// ` + "`char::to_uppercase`" + ` and ` + "`str::to_uppercase`" + `.
+
+// ` + "`c.to_upper()`" + ` — the simple uppercase of one scalar, or ` + "`c`" + ` unchanged.
+pub function (c: char) to_upper(): char {
+    return _upper_cp(c as i32) as char;
+}
+
+// ` + "`c.to_lower()`" + ` — the simple lowercase of one scalar.
+pub function (c: char) to_lower(): char {
+    return _lower_cp(c as i32) as char;
+}
+
+// ` + "`c.is_letter()`" + ` — is ` + "`c`" + ` in the Unicode Letter category (L*)?
+pub function (c: char) is_letter(): boolean {
+    return _is_letter_cp(c as i32);
+}
+
+// ` + "`c.is_digit()`" + ` — is ` + "`c`" + ` a Unicode decimal digit (category Nd)? Note
+// this is the DECIMAL class, so it is true for Arabic-Indic and
+// fullwidth digits, not just ASCII ` + "`0-9`" + `.
+pub function (c: char) is_digit(): boolean {
+    return _is_digit_cp(c as i32);
+}
+
+// ` + "`c.is_alnum()`" + ` — a letter or a decimal digit.
+pub function (c: char) is_alnum(): boolean {
+    return _is_alnum_cp(c as i32);
+}
+
+// ` + "`c.is_whitespace()`" + ` — matches Go's unicode.IsSpace (space, tab,
+// newline, NBSP, the Unicode space separators, ...).
+pub function (c: char) is_whitespace(): boolean {
+    return _is_whitespace_cp(c as i32);
+}
+
+// ` + "`c.is_upper()`" + ` / ` + "`c.is_lower()`" + ` — Unicode upper/lowercase letters.
+// Both are false for caseless scalars (digits, punctuation, CJK).
+pub function (c: char) is_upper(): boolean {
+    return _is_upper_cp(c as i32);
+}
+
+pub function (c: char) is_lower(): boolean {
+    return _is_lower_cp(c as i32);
 }
 
 // _all_cp reports whether every code point of ` + "`s`" + ` satisfies the class
@@ -1394,9 +1453,9 @@ function _all_cp(s: string, kind: i32): boolean {
             Some(pr) => { cp = pr.0; w = pr.1; },
             None => { }
         }
-        if (kind == 0) { if (!is_letter(cp)) { return false; } }
-        else if (kind == 1) { if (!is_alnum(cp)) { return false; } }
-        else { if (!is_digit(cp)) { return false; } }
+        if (kind == 0) { if (!_is_letter_cp(cp)) { return false; } }
+        else if (kind == 1) { if (!_is_alnum_cp(cp)) { return false; } }
+        else { if (!_is_digit_cp(cp)) { return false; } }
         i = i + w;
     }
     return true;
