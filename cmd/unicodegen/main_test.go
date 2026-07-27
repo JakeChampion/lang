@@ -327,3 +327,213 @@ func lookupFold(cp rune) (string, bool) {
 	}
 	return "", false
 }
+
+// The normalization data is checked in rather than derived from the Go
+// standard library, which ships neither decompositions nor combining
+// classes. That makes its INVARIANTS the thing worth asserting: a
+// corrupted or hand-edited normdata.txt has to fail loudly here rather
+// than produce a subtly wrong normalizer.
+func TestNormDataWellFormed(t *testing.T) {
+	cccs, decomps, prims := parseNormData()
+	if len(cccs) == 0 || len(decomps) == 0 || len(prims) == 0 {
+		t.Fatalf("empty normalization tables: %d ccc, %d decomp, %d primary", len(cccs), len(decomps), len(prims))
+	}
+	for i, r := range cccs {
+		if r.lo > r.hi {
+			t.Errorf("ccc range %d inverted: U+%04X..U+%04X", i, r.lo, r.hi)
+		}
+		if r.ccc <= 0 || r.ccc > 254 {
+			t.Errorf("ccc range %d has class %d, want 1..254", i, r.ccc)
+		}
+		if i > 0 && cccs[i-1].hi >= r.lo {
+			t.Errorf("ccc ranges %d and %d overlap or are unsorted", i-1, i)
+		}
+	}
+	for i, d := range decomps {
+		if i > 0 && decomps[i-1].cp >= d.cp {
+			t.Errorf("decomposition table not sorted at %d (U+%04X)", i, d.cp)
+		}
+		if d.to[0] == 0 {
+			t.Errorf("U+%04X has an empty decomposition", d.cp)
+		}
+		// A 0 terminates the record, so no code point may follow one.
+		seenZero := false
+		for _, r := range d.to {
+			if r == 0 {
+				seenZero = true
+			} else if seenZero {
+				t.Errorf("U+%04X has a code point after a terminating 0: %v", d.cp, d.to)
+				break
+			}
+		}
+		if d.cp >= hangulSBase && d.cp < hangulSBase+hangulSCount {
+			t.Errorf("Hangul U+%04X must not be in the table; it decomposes arithmetically", d.cp)
+		}
+	}
+	for i, p := range prims {
+		if i > 0 && (prims[i-1].a > p.a || (prims[i-1].a == p.a && prims[i-1].b >= p.b)) {
+			t.Errorf("composition table not sorted by pair at %d", i)
+		}
+	}
+}
+
+// Composition is not the inverse of the stored decomposition: the table
+// above holds the FULL expansion while composition recombines one step
+// at a time. This pins the relationship that does hold — every primary
+// composite decomposes to something starting with the pair's own first
+// element — so a future change cannot quietly conflate the two.
+func TestPrimaryCompositesDecompose(t *testing.T) {
+	_, decomps, prims := parseNormData()
+	byCP := make(map[rune]decomp, len(decomps))
+	for _, d := range decomps {
+		byCP[d.cp] = d
+	}
+	for _, p := range prims {
+		d, ok := byCP[p.cp]
+		if !ok {
+			t.Errorf("primary composite U+%04X has no decomposition", p.cp)
+			continue
+		}
+		// The full expansion begins with the expansion of the pair's
+		// first element, which for a non-decomposing starter is itself.
+		first := p.a
+		if fd, ok := byCP[p.a]; ok {
+			first = fd.to[0]
+		}
+		if d.to[0] != first {
+			t.Errorf("U+%04X: expansion starts U+%04X, want U+%04X from pair head U+%04X",
+				p.cp, d.to[0], first, p.a)
+		}
+	}
+}
+
+// Every emitted table has to decode back to what went in. generate()
+// already calls verifyNorm and panics on a mismatch; running it here
+// turns that into a named failure instead of a stack trace, and covers
+// the decoders the generated Fern mirrors.
+func TestNormTablesRoundTrip(t *testing.T) {
+	cccs, decomps, prims := parseNormData()
+	cccT, decompT, composeT := encodeCCC(cccs), encodeDecomp(decomps), encodeCompose(prims)
+	verifyNorm(cccT, decompT, composeT, cccs, decomps, prims)
+
+	// Absent keys must read as absent, not as a neighbouring entry.
+	if got := decodeCCC(cccT, 'a'); got != 0 {
+		t.Errorf("ccc('a') = %d, want 0", got)
+	}
+	if _, ok := decodeDecomp(decompT, 'a'); ok {
+		t.Errorf("'a' must not decompose")
+	}
+	if got := decodeCompose(composeT, 'a', 'b'); got != 0 {
+		t.Errorf("compose('a','b') = U+%04X, want none", got)
+	}
+	// e + COMBINING ACUTE composes to e-acute; the reverse pair does not.
+	if got := decodeCompose(composeT, 'e', 0x0301); got != 0x00E9 {
+		t.Errorf("compose(e, U+0301) = U+%04X, want U+00E9", got)
+	}
+	if got := decodeCompose(composeT, 0x0301, 'e'); got != 0 {
+		t.Errorf("compose(U+0301, e) = U+%04X, want none", got)
+	}
+}
+
+// Golden decompositions, including the shapes most likely to be got
+// wrong: a singleton that maps to a different character, a multi-step
+// expansion, and a four-code-point one.
+func TestNormKnownAnswers(t *testing.T) {
+	_, decomps, prims := parseNormData()
+	byCP := make(map[rune]decomp, len(decomps))
+	for _, d := range decomps {
+		byCP[d.cp] = d
+	}
+	recomposes := make(map[rune]bool, len(prims))
+	for _, p := range prims {
+		recomposes[p.cp] = true
+	}
+	for _, tc := range []struct {
+		cp   rune
+		want []rune
+	}{
+		{0x00E9, []rune{'e', 0x0301}},                    // e-acute
+		{0x212B, []rune{'A', 0x030A}},                    // ANGSTROM SIGN, a singleton
+		{0x2126, []rune{0x03A9}},                         // OHM SIGN -> Greek omega
+		{0x1E69, []rune{'s', 0x0323, 0x0307}},            // multi-step, three out
+		{0x1F82, []rune{0x03B1, 0x0313, 0x0300, 0x0345}}, // the four-code-point case
+		{0x0958, []rune{0x0915, 0x093C}},                 // DEVANAGARI KA WITH NUKTA
+	} {
+		d, ok := byCP[tc.cp]
+		if !ok {
+			t.Errorf("U+%04X has no decomposition", tc.cp)
+			continue
+		}
+		var got []rune
+		for _, r := range d.to {
+			if r == 0 {
+				break
+			}
+			got = append(got, r)
+		}
+		if len(got) != len(tc.want) {
+			t.Errorf("U+%04X: decomposition %v, want %v", tc.cp, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("U+%04X: decomposition %v, want %v", tc.cp, got, tc.want)
+				break
+			}
+		}
+	}
+	// Composition exclusions: these decompose but must never be rebuilt.
+	// U+0958 is the script-exclusion case, the singletons the other kind.
+	for _, cp := range []rune{0x0958, 0x212B, 0x2126, 0x0340} {
+		if recomposes[cp] {
+			t.Errorf("U+%04X is composition-excluded and must not be a primary composite", cp)
+		}
+	}
+	// ... while an ordinary precomposed character must be.
+	for _, cp := range []rune{0x00E9, 0x1E69} {
+		if !recomposes[cp] {
+			t.Errorf("U+%04X should recompose under NFC", cp)
+		}
+	}
+}
+
+// The Hangul constants drive arithmetic that replaces 11172 table
+// entries, so an off-by-one in any of them silently corrupts a whole
+// script. Check the formula against known syllables at both ends and
+// across the with/without-trailing-jamo split.
+func TestHangulConstants(t *testing.T) {
+	decompose := func(s rune) []rune {
+		si := int(s - hangulSBase)
+		l := rune(hangulLBase + si/hangulNCount)
+		v := rune(hangulVBase + (si%hangulNCount)/hangulTCount)
+		out := []rune{l, v}
+		if tj := si % hangulTCount; tj != 0 {
+			out = append(out, rune(hangulTBase+tj))
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		s    rune
+		want []rune
+	}{
+		{0xAC00, []rune{0x1100, 0x1161}},         // first syllable, no trailing jamo
+		{0xAC01, []rune{0x1100, 0x1161, 0x11A8}}, // ... and with one
+		{0xD7A3, []rune{0x1112, 0x1175, 0x11C2}}, // last syllable
+	} {
+		got := decompose(tc.s)
+		if len(got) != len(tc.want) {
+			t.Fatalf("U+%04X: %v, want %v", tc.s, got, tc.want)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Fatalf("U+%04X: %v, want %v", tc.s, got, tc.want)
+			}
+		}
+	}
+	if hangulSBase+hangulSCount != 0xD7A4 {
+		t.Errorf("Hangul block ends at U+%04X, want U+D7A4", hangulSBase+hangulSCount)
+	}
+	if hangulNCount != 21*hangulTCount {
+		t.Errorf("NCount %d must equal VCount*TCount", hangulNCount)
+	}
+}
