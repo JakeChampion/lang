@@ -26,7 +26,19 @@ import (
 //
 // SKIPs cleanly without the aarch64 cross-toolchain / qemu-aarch64
 // (arm64Tooling); CI provides them.
+//
+// RETIRED FROM ROUTINE CI (#3457 slice 2, arm64 leg — mirrors the x86
+// TestSelfHostModloadFixpointX86_64 retirement). This is the last routine
+// arm64 test compiling the whole compiler through the MERGED bundle — the
+// legacy AST emitter (`asm_arm64.emit_module`) that #3457 is retiring.
+// Routine arm64 coverage of the file-based whole-compiler self-compile now
+// comes from TestSelfHostModloadPerModuleWholeCompilerArm64 (per-module IR).
+// This stays runnable on demand (RUN_MERGED_FIXPOINT=1) as a merged-path
+// byte-identity backstop until slice 5 deletes `asm_arm64.fern`.
 func TestSelfHostFixpointArm64(t *testing.T) {
+	if os.Getenv("RUN_MERGED_FIXPOINT") == "" {
+		t.Skip("set RUN_MERGED_FIXPOINT=1 to run the arm64 merged-bundle self-compile byte-identity fixpoint (retired from routine CI, #3457 slice 2 — routine coverage is TestSelfHostModloadPerModuleWholeCompilerArm64)")
+	}
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
