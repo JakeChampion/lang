@@ -158,6 +158,15 @@ Includes the byte-level free function `__is_ascii_ws` used by
 
 Grouped by family:
 
+- **Bytes:** `s.as_bytes(): [u8]` is a non-owning **view** over the
+  string's bytes — no allocation, no copy — and works on a `str`
+  receiver too, where it is a reinterpretation rather than a copy.
+  Indexing is bounds-checked and traps like any array access. Reach for
+  it whenever you only need to *read* bytes. `s.bytes(): u8[]` is the
+  **copying** constructor, for when you want owned, mutable bytes.
+  Caveat: a view borrows, so it must not outlive the string it aliases —
+  keep it in a scope where the owner is live. (The escape rule is the
+  same open question as `str`'s, #4814.)
 - **Length / shape:** `is_empty`, `to_string`, `repeat`
 - **Substring search:** `starts_with`, `ends_with`, `contains`,
   `index_of`, `last_index_of`, `starts_with_ci`,

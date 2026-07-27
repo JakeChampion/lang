@@ -1748,9 +1748,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	// `s.as_bytes()` — non-copying companion to `s.bytes()`. Returns
 	// a `[u8]` slice header whose data_ptr aliases the string's
-	// payload and whose len is `len(s)`. Sharing the parent's
-	// lifetime is fine under the bump allocator (the string's
-	// storage lives until the arena tears down).
+	// payload and whose len is `len(s)`.
+	//
+	// The view borrows: it must not outlive the string it aliases.
+	// That used to be free — under the bump arena the payload lived
+	// until teardown — but reference counting can release the string
+	// while a view still points at it, so the escape rule is now the
+	// same open question as `str`'s (#4814) rather than a non-issue.
+	// Uses that keep the view local to a frame where the owner is
+	// live, which is the common shape, are unaffected.
 	registerStringMethod("as_bytes", nil, ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}})
 	// `s.len()` — IR intercepts the rewritten
 	// `__method_string_len(s)` call and emits OpStrLen so a

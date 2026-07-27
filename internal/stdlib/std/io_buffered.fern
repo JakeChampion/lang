@@ -43,7 +43,10 @@ pub function bytes_writer_new(): BytesWriter {
 // bytes. Same call shape as the fd-backed Writer's write
 // method.
 pub function (w: BytesWriter) write_string(s: string): BytesWriter {
-    var bs: u8[] = s.bytes();
+    // A VIEW, not a copy: the loop below only reads bs, and the
+    // view never outlives s (a live parameter), so `bytes()` here
+    // would allocate and copy the whole string for nothing.
+    var bs: [u8] = s.as_bytes();
     var data: u8[] = w.data;
     var i: i32 = 0;
     while (i < bs.len()) {

@@ -599,12 +599,32 @@ any byte ≥ 0x80 and delegate to the byte fold when there is none. That's
 what keeps D3 from regressing the CLI/header workloads the constraints
 section of #5552 (rightly) protects.
 
-### D8 — Add the `[u8]` view over strings; stop copying in `.bytes()`.
+### D8 — Add the `[u8]` view over strings; stop copying in `.bytes()`. **LANDED** (#5632)
 
 Already listed as deferred in `LANGUAGE-DIRECTION.md`. This is Fern's
 `UTF8Span`/`&[u8]` (§2.2), and every parser in the tree — `std/json`,
-`std/csv`, `std/regex`, the self-host lexer — currently pays a full copy
+`std/csv`, `std/regex`, the self-host lexer — used to pay a full copy
 through `.bytes()` to do byte-level work.
+
+`s.as_bytes(): [u8]` returns a slice header aliasing the string's
+payload, on both `string` and `str` receivers, with bounds-checked
+indexing that traps like any array access. `.bytes()` remains as the
+*copying* constructor for when an owned, mutable `u8[]` is genuinely
+wanted, and its doc says so.
+
+**Most of this was already implemented when the issue was written** —
+the builtin, the `[u8]` return type, both receivers and the four-backend
+lowering all predated it. What #5632 actually added was the missing
+half: a migrated consumer (`BytesWriter.write_string`, which only reads
+the bytes it appends — ~8% faster on a 12k-call benchmark, and 12000
+allocations plus ~516 KB of copying removed), the differential test
+across interp / x86-64 / wasm / arm64, and this documentation.
+
+**The borrow rule is still open.** Under the old bump arena a view could
+never dangle; refcounting can release a string while a view still aliases
+it. An escaping view does not crash today, but that is the allocator not
+reusing the storage yet, not a guarantee. This is the same open question
+as `str`'s escape rule (#4814) and is tracked there, not solved here.
 
 ### D9 — Guarantee UTF-8 validity on `string`. (Biggest change; sequence it last.)
 
@@ -700,7 +720,7 @@ Tracked as epic #5626; issue numbers below.
 | 3 | **D2** (#5629) — the `char` type | — | Checker + `std/utf8` + `std/unicode` signatures. Big but mechanical; unblocks honest naming everywhere. |
 | 4 | **D3 + D4** (#5630) — flip the default, full case mapping | 1, 3 | Touches the self-host builtin (`irlower.fern` / `asmcore.fern`) **and** the native stdlib — see D3's implementation note. Differential coverage required. |
 | 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
-| 6 | **D8** (#5632) — `[u8]` string view | — | Independent; unblocks copy-free parsers. |
+| 6 | **D8** (#5632) — `[u8]` string view — **DONE** | — | Builtin already existed; #5632 added the migrated consumer, the four-backend differential, and the docs. Borrow rule still open (#4814). |
 | 7 | **D6** (#5633) — grapheme segmentation | 1, 3 | Largest table; opt-in. |
 | 8 | **D9** (#5634) — the UTF-8 validity invariant | 6 | Largest blast radius; do last, after `[u8]` makes "raw bytes" ergonomic. |
 | 9 | **D10** (#5635) — document the path assumption | — | Doc-only, any time. |
