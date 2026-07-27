@@ -3730,7 +3730,15 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fn___fern_str_arr_free",
         // arr-of-arr reclaim (#4355 slice 9): the exit sweep of a module with a
         // fresh arr-of-arr local references these; the entry owns the bodies.
-        "__fn___fern_arrarr_free", "__fn___fern_strarrarr_free", "__fn___fern_optarrarr_free"
+        "__fn___fern_arrarr_free", "__fn___fern_strarrarr_free", "__fn___fern_optarrarr_free",
+        // compact base copy (#4650): a LIBRARY module doing `T { ...base, f: v }`
+        // on a struct_copy_eligible T emits `call __fn___fern_struct_copy`; the
+        // entry owns the single definition (emit_ir_runtime's heap block). Every
+        // eligible spread used to sit in the entry, so this went unnoticed until
+        // asmcore.synth_script_main spread a `parser.Module` — whose fields are
+        // ALL arrays, making it eligible where the string-carrying EmitState /
+        // FuncDecl spreads take the inline per-field path and never call out.
+        "__fn___fern_struct_copy"
     ];
     var i: i32 = 0;
     while (i < names.len()) {
