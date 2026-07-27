@@ -485,7 +485,7 @@ Still ASCII, pending the rest of D3: the `is_*_only` predicate family
 and the `eq_ignore_case` row above (which needs case *folding*, so it
 belongs with D4's tables).
 
-### D4 — Full (1→N) case mapping for strings; simple for `char`; locale-independent.
+### D4 — Full (1→N) case mapping for strings; simple for `char`; locale-independent. — **LANDED, except Final_Sigma (#5630)**
 
 `"ß".to_upper() == "SS"`. This is Python/JS/Java/Rust behaviour and it's
 what "correct by default" means; simple mapping (Go, C#, today's

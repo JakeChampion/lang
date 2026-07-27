@@ -1491,16 +1491,19 @@ pub function (s: string) to_ascii_upper(): string {
 // the same byte fold `to_ascii_upper` does — so the common case costs a
 // scan, not a binary search.
 //
-// SIMPLE (1:1) mapping: a code point maps to exactly one code point. The
-// multi-code-point expansions (`ß` → `SS`, `ﬁ` → `FI`) and the
-// context-sensitive rules (Greek final sigma) are NOT applied yet — see
-// #5630. Locale-independent by design: no Turkish dotless-i tailoring, so
-// `"I".to_lower()` is `"i"` in every locale.
+// FULL mapping: one code point may become SEVERAL — `"ß".to_upper()` is
+// `"SS"`, `"ﬁ".to_upper()` is `"FI"`. What is NOT applied is the
+// context-sensitive part: a word-final `Σ` lowercases to `σ` where
+// Unicode says `ς` (#5630). Locale-independent by design: no Turkish
+// dotless-i tailoring, so `"I".to_lower()` is `"i"` in every locale.
 //
 // Two consequences of decoding rather than folding bytes, both of which
 // `to_ascii_*` does NOT share:
-//   - Length is not preserved. A code point can change width under case
-//     mapping (`İ` U+0130 is 2 bytes; its lowercase `i` is 1).
+//   - Length is not preserved, in either direction. A code point can
+//     change width (`İ` U+0130 is 2 bytes, its lowercase `i̇` is 3) and
+//     an expansion adds code points outright. Note the two are
+//     independent: `ß` → `SS` doubles the code points while leaving the
+//     byte length at 2.
 //   - `string` is never validity-checked, and a malformed byte decodes to
 //     U+FFFD — so these NORMALISE invalid UTF-8 rather than passing it
 //     through. If you are folding bytes that may not be UTF-8 (a protocol

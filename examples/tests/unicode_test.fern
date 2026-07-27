@@ -36,10 +36,13 @@ function test_char_level(): test.TestOutcome {
                             unicode.to_upper_char(48) == 48);   // '0' unchanged
 }
 
-function test_sharp_s_unchanged(): test.TestOutcome {
-    // SIMPLE mapping only: ß has no single-code-point uppercase, so it
-    // is left as-is (full mapping ß -> SS is out of scope, matching Go).
-    return test.assert_eq(unicode.to_upper("straße"), "STRAßE");
+function test_sharp_s_expands(): test.TestOutcome {
+    // FULL mapping: ß has no single-code-point uppercase, so it expands
+    // to two. The per-code-point to_upper_char cannot express this and
+    // leaves it alone — that is the whole reason both exist.
+    if (unicode.to_upper("straße") != "STRASSE") { return test.fail("straße -> STRASSE"); }
+    if (unicode.to_upper_char(223) != 223) { return test.fail("to_upper_char leaves ß alone"); }
+    return test.pass();
 }
 
 function test_eq_ignore_case(): test.TestOutcome {
@@ -57,9 +60,19 @@ function test_eq_ignore_case(): test.TestOutcome {
 }
 
 function test_roundtrip(): test.TestOutcome {
-    // lower(upper(x)) == lower(x) for these simple-mapping scripts.
-    var s: string = "Groß-Ελλάδα";
-    return test.assert_eq(unicode.to_lower(unicode.to_upper(s)), unicode.to_lower(s));
+    // lower(upper(x)) == lower(x) holds only where every code point maps
+    // 1:1. Greek and Latin without expansions qualify.
+    var s: string = "Gross-Ελλάδα";
+    if (unicode.to_lower(unicode.to_upper(s)) != unicode.to_lower(s)) {
+        return test.fail("simple-mapping roundtrip");
+    }
+    // It does NOT hold once an expansion is involved: upper("ß") is "SS",
+    // whose lowercase is "ss", not "ß". Full mapping is not reversible.
+    var e: string = "Groß";
+    if (unicode.to_lower(unicode.to_upper(e)) == unicode.to_lower(e)) {
+        return test.fail("expansion should break the roundtrip");
+    }
+    return test.pass();
 }
 
 function test_is_letter(): test.TestOutcome {
@@ -141,7 +154,7 @@ function main(): i32 {
     r = r.it("cyrillic",          test_cyrillic());
     r = r.it("mixed unchanged",   test_mixed_unchanged());
     r = r.it("char level",        test_char_level());
-    r = r.it("sharp-s unchanged", test_sharp_s_unchanged());
+    r = r.it("sharp-s expands",   test_sharp_s_expands());
     r = r.it("eq_ignore_case",    test_eq_ignore_case());
     r = r.it("roundtrip",         test_roundtrip());
     r = r.it("is_letter",         test_is_letter());

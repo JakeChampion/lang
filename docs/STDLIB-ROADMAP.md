@@ -434,7 +434,7 @@ public API is designed to carry over unchanged.
 the byte fold (now named `to_ascii_upper`/`to_ascii_lower`) remaps
 only A–Z, so
 `café` / `ΑΒΓ` / `привет` were untouched. This maps the full set of
-code points with a **simple (1:1)** mapping (Latin, Greek, Cyrillic,
+code points with a **full (1→N)** mapping (Latin, Greek, Cyrillic,
 Armenian, fullwidth, …), decoding UTF-8 via `std/utf8` and re-encoding.
 
 **Status**: shipped in `internal/stdlib/std/unicode.fern`, the tables
