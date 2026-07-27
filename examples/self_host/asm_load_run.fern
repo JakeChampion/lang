@@ -100,6 +100,80 @@ function add_imports(paths: string[], mod: parser.Module, root: string): string[
     return paths;
 }
 
+// prune_to_reachable keeps only `mod`'s funcs whose mangled name is in `reach`
+// (the reachable-name set derived from the treeshaked merged module). Both
+// flatten.bundle (the merged path) and flatten.bundle_per_module mangle a
+// non-entry decl to `prefix__name`, so the names line up. Runs BEFORE
+// lift_lambdas — exactly where the merged path treeshakes — so a kept function's
+// lifted lambdas (generated names, not in `reach`) survive.
+function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module {
+    var kept: parser.FuncDecl[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        if (util.has_str(reach, mod.funcs[fi].name)) { kept = kept.append(mod.funcs[fi]); }
+        fi = fi + 1;
+    }
+    return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+}
+
+// emit_per_module_concat compiles a program's modules SEPARATELY (per-module IR
+// units) and concatenates them into one linkable asm stream, routing a program
+// that overflows the merged 512-function IR budget through the IR path instead
+// of the AST emitter (#3457). Each module is under budget, so each unit lowers
+// on the IR path; the units share a whole-program func/struct view (all_funcs /
+// all_structs) so cross-module calls and imported struct layouts resolve, and
+// only the entry unit emits `_start` + the shared runtime (seeded with the full
+// need roots). `reach` is the reachable-name set: each module is pruned to it
+// first, so unused stdlib functions — which may use per-function constructs the
+// IR path cannot lower yet — do NOT drag the module onto the AST emitter.
+// Returns "" if a REACHABLE module is still not IR-eligible, so such programs
+// fall back to the AST emitter.
+//
+// Bounded to programs that fit ONE process: the whole-compiler self-compile
+// (~2040 funcs) would accumulate every unit's working set in a single process
+// and OOM (that path uses the batched, file-based per-module emit instead), so
+// the caller only routes here for merged sizes comfortably below it.
+function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.LoadedModule[], reach: string[]): string {
+    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded);
+    var infmods: parser.Module[] = [];
+    var all_funcs: parser.FuncDecl[] = [];
+    var all_structs: parser.StructDecl[] = [];
+    var known: string[] = [];
+    var pi: i32 = 0;
+    while (pi < parts.len()) {
+        var im: parser.Module = parser.infer_ret_types_module(asm_ir.lift_lambdas(prune_to_reachable(parts[pi].mod, reach)));
+        infmods = infmods.append(im);
+        var fk: i32 = 0;
+        while (fk < im.funcs.len()) {
+            all_funcs = all_funcs.append(im.funcs[fk]);
+            known = known.append(im.funcs[fk].name);
+            if (im.funcs[fk].receiver_type.len() > 0) {
+                known = known.append(util.base_type_name(im.funcs[fk].receiver_type) + "." + im.funcs[fk].name);
+            }
+            fk = fk + 1;
+        }
+        var sk: i32 = 0;
+        while (sk < im.structs.len()) { all_structs = all_structs.append(im.structs[sk]); sk = sk + 1; }
+        pi = pi + 1;
+    }
+    var needs: string[] = asm_ir.all_runtime_need_roots();
+    var out: string = "";
+    var idx: i32 = 0;
+    while (idx < parts.len()) {
+        // Per-module eligibility against the whole-program view, exactly as the
+        // per-module emit lowers. Any ineligible REACHABLE module aborts the whole
+        // concat so the caller uses the AST emitter.
+        var elig: boolean = asm_ir.all_eligible_lib_known_view(infmods[idx], known, all_funcs, all_structs);
+        if (parts[idx].is_entry) { elig = asm_ir.all_eligible_known_view(infmods[idx], known, all_funcs, all_structs); }
+        if (!elig) { return ""; }
+        var extra: string[] = [];
+        if (parts[idx].is_entry) { extra = needs; }
+        out = out + asm_ir.emit_module_ir_unit(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_structs, 0, 0 - 1, []);
+        idx = idx + 1;
+    }
+    return out;
+}
+
 function main(): i32 {
     var av: string[] = args();
     if (av.len() < 2) {
@@ -373,6 +447,26 @@ function main(): i32 {
         write(asm_arm64.emit_module(parser.module_with_builtins(merged), false));
         return 0;
     }
-    write(asm.emit_module(parser.module_with_builtins(merged)));
+    var mwb: parser.Module = parser.module_with_builtins(merged);
+    // OVER the merged 512-function IR budget but small enough to fit one process:
+    // route per-module (each module is under budget → IR) instead of dropping the
+    // whole program to the AST emitter (#3457). The lower bound is the budget the
+    // merged IR path bails at (asm_ir.emit_module_ir_gated: sm.funcs.len() > 512);
+    // the upper bound keeps the whole-compiler self-compile (~2040 funcs, driven
+    // through this same default) OUT — a single-process per-module concat of that
+    // many funcs OOMs, and it has the batched file-based per-module path instead.
+    // `merged` is already treeshaked (above), so its func names are the reachable
+    // set the per-module emit prunes each module to; emit_per_module_concat
+    // returns "" if a reachable module is genuinely IR-ineligible, so such
+    // programs still reach the AST emitter below.
+    var nfuncs: i32 = asm_ir.lift_lambdas(mwb).funcs.len();
+    if (nfuncs > 512 && nfuncs < 1500) {
+        var reach: string[] = [];
+        var ri: i32 = 0;
+        while (ri < merged.funcs.len()) { reach = reach.append(merged.funcs[ri].name); ri = ri + 1; }
+        var pmc: string = emit_per_module_concat(entry_mod, loaded, reach);
+        if (pmc.len() > 0) { write(pmc); return 0; }
+    }
+    write(asm.emit_module(mwb));
     return 0;
 }
