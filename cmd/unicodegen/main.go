@@ -52,9 +52,11 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -847,6 +849,266 @@ func isCaseIgnorable(r rune) bool {
 		unicode.Is(unicode.Sk, r) || wordBreakMid[r]
 }
 
+// normdata.txt holds the canonical-normalization source data. It is
+// checked in rather than derived here because Go's unicode package ships
+// neither canonical decompositions nor combining classes, and this module
+// has no external dependencies. gen_normdata.py regenerates it from
+// CPython's unicodedata — the same oracle the full case tables came from.
+//
+//go:embed normdata.txt
+var normData string
+
+// cccRun is an inclusive range of code points sharing one combining class.
+type cccRun struct {
+	lo, hi rune
+	ccc    int
+}
+
+// decomp is one code point's FULL canonical decomposition, already in
+// canonical order. Four elements is the observed maximum (U+1F82 and its
+// Greek neighbours); unused trailing slots are 0, which is unambiguous
+// because U+0000 never appears in a decomposition.
+type decomp struct {
+	cp rune
+	to [4]rune
+}
+
+// primary is a primary composite: to0 + to1 recompose to cp under NFC.
+// Composition-excluded characters are simply absent, so the table encodes
+// the Full_Composition_Exclusion property by omission.
+type primary struct {
+	a, b, cp rune
+}
+
+const (
+	cccChars     = 3 * fieldChars
+	decompChars  = 5 * fieldChars
+	composeChars = 3 * fieldChars
+)
+
+// Hangul syllables decompose arithmetically rather than by table (UAX #15).
+// normdata.txt deliberately omits them; the generated Fern implements the
+// formula with these constants.
+const (
+	hangulSBase = 0xAC00
+	hangulLBase = 0x1100
+	hangulVBase = 0x1161
+	hangulTBase = 0x11A7
+	hangulTCount = 28
+	hangulNCount = 588
+	hangulSCount = 11172
+)
+
+// parseNormData reads the embedded data into the three tables. Malformed
+// input panics: it is generated and checked in, so a parse failure is a
+// broken commit, not a runtime condition to tolerate.
+func parseNormData() (cccs []cccRun, decomps []decomp, prims []primary) {
+	ccc := map[rune]int{}
+	for _, line := range strings.Split(normData, "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Split(line, ";")
+		if len(f) < 2 {
+			panic("unicodegen: malformed normdata line: " + line)
+		}
+		cp := rune(mustHex(f[1]))
+		switch f[0] {
+		case "C":
+			v, err := strconv.Atoi(f[2])
+			if err != nil {
+				panic("unicodegen: bad combining class: " + line)
+			}
+			ccc[cp] = v
+		case "D":
+			var d decomp
+			d.cp = cp
+			parts := strings.Fields(f[2])
+			if len(parts) == 0 || len(parts) > len(d.to) {
+				panic("unicodegen: decomposition arity out of range: " + line)
+			}
+			for i, p := range parts {
+				d.to[i] = rune(mustHex(p))
+			}
+			decomps = append(decomps, d)
+		case "P":
+			parts := strings.Fields(f[2])
+			if len(parts) != 2 {
+				panic("unicodegen: primary composite must have two parts: " + line)
+			}
+			prims = append(prims, primary{a: rune(mustHex(parts[0])), b: rune(mustHex(parts[1])), cp: cp})
+		default:
+			panic("unicodegen: unknown normdata record: " + line)
+		}
+	}
+
+	// Coalesce equal classes into ranges the same way the character
+	// classes do — 912 code points collapse to a few hundred records.
+	keys := make([]rune, 0, len(ccc))
+	for cp := range ccc {
+		keys = append(keys, cp)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	for _, cp := range keys {
+		if n := len(cccs); n > 0 && cccs[n-1].hi == cp-1 && cccs[n-1].ccc == ccc[cp] {
+			cccs[n-1].hi = cp
+			continue
+		}
+		cccs = append(cccs, cccRun{lo: cp, hi: cp, ccc: ccc[cp]})
+	}
+
+	// Both lookup tables are binary-searched by the generated Fern, so
+	// they must be sorted by their search key. The composition table is
+	// keyed on the PAIR, not on the composite.
+	sort.Slice(decomps, func(i, j int) bool { return decomps[i].cp < decomps[j].cp })
+	sort.Slice(prims, func(i, j int) bool {
+		if prims[i].a != prims[j].a {
+			return prims[i].a < prims[j].a
+		}
+		return prims[i].b < prims[j].b
+	})
+	return cccs, decomps, prims
+}
+
+func mustHex(s string) int64 {
+	v, err := strconv.ParseInt(strings.TrimSpace(s), 16, 32)
+	if err != nil {
+		panic("unicodegen: bad hex field " + s)
+	}
+	return v
+}
+
+func encodeCCC(rs []cccRun) string {
+	var b strings.Builder
+	for _, r := range rs {
+		encField(&b, int(r.lo))
+		encField(&b, int(r.hi))
+		encField(&b, r.ccc)
+	}
+	return b.String()
+}
+
+func encodeDecomp(ds []decomp) string {
+	var b strings.Builder
+	for _, d := range ds {
+		encField(&b, int(d.cp))
+		for _, r := range d.to {
+			encField(&b, int(r))
+		}
+	}
+	return b.String()
+}
+
+func encodeCompose(ps []primary) string {
+	var b strings.Builder
+	for _, p := range ps {
+		encField(&b, int(p.a))
+		encField(&b, int(p.b))
+		encField(&b, int(p.cp))
+	}
+	return b.String()
+}
+
+// verifyNorm decodes the three emitted tables and checks them against the
+// parsed data, the same round-trip discipline verify applies to the case
+// tables. It also asserts the invariant the composer relies on: a primary
+// composite's pair must itself be canonically ordered, so composing left
+// to right can never need to look backwards.
+func verifyNorm(cccT, decompT, composeT string, cccs []cccRun, decomps []decomp, prims []primary) {
+	classOf := func(cp rune) int {
+		for _, r := range cccs {
+			if cp >= r.lo && cp <= r.hi {
+				return r.ccc
+			}
+		}
+		return 0
+	}
+	for _, r := range cccs {
+		for cp := r.lo; cp <= r.hi; cp++ {
+			if got := decodeCCC(cccT, int(cp)); got != r.ccc {
+				panic(fmt.Sprintf("unicodegen: ccc(U+%04X) = %d, want %d", cp, got, r.ccc))
+			}
+		}
+	}
+	for _, d := range decomps {
+		got, ok := decodeDecomp(decompT, int(d.cp))
+		if !ok || got != d.to {
+			panic(fmt.Sprintf("unicodegen: decomp(U+%04X) = %v (%v), want %v", d.cp, got, ok, d.to))
+		}
+		if hangulSBase <= d.cp && d.cp < hangulSBase+hangulSCount {
+			panic(fmt.Sprintf("unicodegen: Hangul U+%04X must decompose arithmetically, not by table", d.cp))
+		}
+	}
+	for _, p := range prims {
+		if got := decodeCompose(composeT, int(p.a), int(p.b)); got != int(p.cp) {
+			panic(fmt.Sprintf("unicodegen: compose(U+%04X,U+%04X) = U+%04X, want U+%04X", p.a, p.b, got, p.cp))
+		}
+		if ca, cb := classOf(p.a), classOf(p.b); ca != 0 && ca > cb {
+			panic(fmt.Sprintf("unicodegen: primary composite U+%04X has misordered pair", p.cp))
+		}
+	}
+}
+
+// decodeCCC mirrors the generated _ccc_of.
+func decodeCCC(t string, cp int) int {
+	lo, hi := 0, len(t)/cccChars-1
+	for lo <= hi {
+		mid := lo + (hi-lo)/2
+		base := mid * cccChars
+		switch {
+		case cp < decField(t, base):
+			hi = mid - 1
+		case cp > decField(t, base+fieldChars):
+			lo = mid + 1
+		default:
+			return decField(t, base+2*fieldChars)
+		}
+	}
+	return 0
+}
+
+// decodeDecomp mirrors the generated _decomp_of.
+func decodeDecomp(t string, cp int) ([4]rune, bool) {
+	lo, hi := 0, len(t)/decompChars-1
+	for lo <= hi {
+		mid := lo + (hi-lo)/2
+		base := mid * decompChars
+		switch {
+		case cp < decField(t, base):
+			hi = mid - 1
+		case cp > decField(t, base):
+			lo = mid + 1
+		default:
+			var out [4]rune
+			for i := range out {
+				out[i] = rune(decField(t, base+(i+1)*fieldChars))
+			}
+			return out, true
+		}
+	}
+	return [4]rune{}, false
+}
+
+// decodeCompose mirrors the generated _compose_pair, returning 0 for a
+// pair with no primary composite.
+func decodeCompose(t string, a, b int) int {
+	lo, hi := 0, len(t)/composeChars-1
+	for lo <= hi {
+		mid := lo + (hi-lo)/2
+		base := mid * composeChars
+		ka, kb := decField(t, base), decField(t, base+fieldChars)
+		switch {
+		case a < ka || (a == ka && b < kb):
+			hi = mid - 1
+		case a > ka || (a == ka && b > kb):
+			lo = mid + 1
+		default:
+			return decField(t, base+2*fieldChars)
+		}
+	}
+	return 0
+}
+
 // genStats is what main reports after a run; the tests ignore it.
 type genStats struct{ runs, tableBytes int }
 
@@ -859,6 +1121,38 @@ func generate() (string, genStats) {
 	for _, c := range classes {
 		stats.tableBytes += len(c.table)
 	}
+
+	cccs, decomps, prims := parseNormData()
+	cccT, decompT, composeT := encodeCCC(cccs), encodeDecomp(decomps), encodeCompose(prims)
+	verifyNorm(cccT, decompT, composeT, cccs, decomps, prims)
+
+	// Both quick-check sets fall out of the tables already parsed, so
+	// normdata.txt carries no separate quick-check data. NFD=No is
+	// "decomposes at all"; NFC=No is "decomposes but never recomposes",
+	// which is the Full_Composition_Exclusion property restated.
+	decomposes := make(map[rune]bool, len(decomps))
+	for _, d := range decomps {
+		decomposes[d.cp] = true
+	}
+	recomposes := make(map[rune]bool, len(prims))
+	for _, p := range prims {
+		recomposes[p.cp] = true
+	}
+	isHangul := func(r rune) bool { return r >= hangulSBase && r < hangulSBase+hangulSCount }
+	nfdNo := coalesce(func(r rune) bool { return decomposes[r] || isHangul(r) })
+	nfcNo := coalesce(func(r rune) bool { return decomposes[r] && !recomposes[r] })
+
+	// NFC_QC=Maybe: the trailing halves of the primary composites. Their
+	// presence cannot be decided by a local test, so the quick check has
+	// to escalate to a full comparison — see the generated is_nfc.
+	combinesLeft := make(map[rune]bool, len(prims))
+	for _, p := range prims {
+		combinesLeft[p.b] = true
+	}
+	nfcMaybe := coalesce(func(r rune) bool { return combinesLeft[r] })
+
+	stats.tableBytes += len(cccT) + len(decompT) + len(composeT) +
+		len(encodeRanges(nfcNo)) + len(encodeRanges(nfcMaybe)) + len(encodeRanges(nfdNo))
 
 	var b strings.Builder
 	fmt.Fprintf(&b, `// std/unicode — Unicode case mapping + character classes.
@@ -928,6 +1222,25 @@ import "std/utf8" as utf8;
 	emitTable(&b, "_fold_table",
 		"Case FOLDING deltas: from | to0 | to1 | to2, trailing 0 = absent.\n// Only where the fold differs from simple lowercase — everything else\n// falls through to the lowercase table.",
 		encodeFull(foldExceptions), len(foldExceptions), fullChars)
+
+	emitTable(&b, "_ccc_ranges",
+		"Canonical combining classes: lo | hi | class. Only nonzero classes\n// are stored; everything absent is a starter (class 0).",
+		cccT, len(cccs), cccChars)
+	emitTable(&b, "_decomp_table",
+		"Canonical decompositions, FULLY expanded and already in canonical\n// order: cp | to0 | to1 | to2 | to3, trailing 0 = absent. Storing the\n// recursive expansion rather than the one-step mapping means NFD needs\n// one lookup and no fixpoint loop. Hangul is absent by design — it\n// decomposes arithmetically.",
+		decompT, len(decomps), decompChars)
+	emitTable(&b, "_compose_table",
+		"Primary composites, sorted by the PAIR: a | b | composed. This is\n// NOT the inverse of the table above — composition recombines one step\n// at a time, so the key is the one-step pair. Composition-excluded\n// characters are omitted, which is how Full_Composition_Exclusion is\n// represented here.",
+		composeT, len(prims), composeChars)
+	emitTable(&b, "_nfc_no_ranges",
+		"Quick-check NFC=No: code points that never survive NFC unchanged.\n// Lets is_nfc reject without allocating a normalized copy.",
+		encodeRanges(nfcNo), len(nfcNo), rangeChars)
+	emitTable(&b, "_nfc_maybe_ranges",
+		"Quick-check NFC=Maybe: marks that can combine with what precedes\n// them. Seeing one means the answer cannot be decided locally.",
+		encodeRanges(nfcMaybe), len(nfcMaybe), rangeChars)
+	emitTable(&b, "_nfd_no_ranges",
+		"Quick-check NFD=No: code points that decompose, Hangul included.\n// Lets is_nfd answer without allocating.",
+		encodeRanges(nfdNo), len(nfdNo), rangeChars)
 
 	b.WriteString(`// _dig decodes one table character to its 6-bit value. The alphabet
 // skips ` + "`\\`" + ` (92), so the two spans are 48..91 and 93..112.
@@ -1478,6 +1791,259 @@ pub function is_alnum_only(s: string): boolean {
 // nothing about signs, separators or overflow.
 pub function is_numeric(s: string): boolean {
     return _all_cp(s, 2);
+}
+
+// _ccc_of is the canonical combining class of a code point: 0 for a
+// starter, 1..254 for a combining mark. Nothing below U+0300 combines,
+// which covers all of ASCII without a search.
+function _ccc_of(cp: char): i32 {
+    var n: i32 = cp as i32;
+    if (n < 768) { return 0; }
+    var t: string = _ccc_ranges();
+    var lo: i32 = 0;
+    var hi: i32 = t.len() / 12 - 1;
+    while (lo <= hi) {
+        var mid: i32 = lo + (hi - lo) / 2;
+        var base: i32 = mid * 12;
+        if (n < _fld(t, base)) { hi = mid - 1; }
+        else if (n > _fld(t, base + 4)) { lo = mid + 1; }
+        else { return _fld(t, base + 8); }
+    }
+    return 0;
+}
+
+// _decomp_append appends the full canonical decomposition of cp to out,
+// or cp itself when it does not decompose.
+//
+// Hangul is handled by the UAX #15 arithmetic rather than a lookup: the
+// 11172 syllables would otherwise dominate the table, and getting the
+// formula wrong is a classic normalization bug, so it is written out
+// once here and pinned by tests.
+function _decomp_append(out: char[], cp: char): char[] {
+    var n: i32 = cp as i32;
+    if (n >= 44032 && n < 55204) {
+        var si: i32 = n - 44032;
+        out = out.append((4352 + si / 588) as char);
+        out = out.append((4449 + (si % 588) / 28) as char);
+        var tj: i32 = si % 28;
+        if (tj != 0) { out = out.append((4519 + tj) as char); }
+        return out;
+    }
+    var t: string = _decomp_table();
+    var lo: i32 = 0;
+    var hi: i32 = t.len() / 20 - 1;
+    while (lo <= hi) {
+        var mid: i32 = lo + (hi - lo) / 2;
+        var base: i32 = mid * 20;
+        var from: i32 = _fld(t, base);
+        if (n < from) {
+            hi = mid - 1;
+        } else if (n > from) {
+            lo = mid + 1;
+        } else {
+            var k: i32 = 1;
+            while (k <= 4) {
+                var c: i32 = _fld(t, base + k * 4);
+                if (c == 0) { return out; }
+                out = out.append((c) as char);
+                k = k + 1;
+            }
+            return out;
+        }
+    }
+    return out.append(cp);
+}
+
+// _canon_order puts combining marks into canonical order: a stable
+// insertion sort by combining class. Stability is required, not just
+// nice — reordering marks of EQUAL class would change the text. It also
+// runs linearly on already-ordered input, which is the common case.
+function _canon_order(cps: char[]): char[] {
+    var n: i32 = cps.len();
+    var i: i32 = 1;
+    while (i < n) {
+        var c: i32 = _ccc_of(cps[i]);
+        if (c != 0) {
+            var j: i32 = i;
+            while (j > 0) {
+                // A starter has class 0, so this also stops the scan
+                // dead at one: marks never migrate across a starter.
+                if (_ccc_of(cps[j - 1]) <= c) { break; }
+                var tmp: char = cps[j - 1];
+                cps = cps.with(j - 1, cps[j]);
+                cps = cps.with(j, tmp);
+                j = j - 1;
+            }
+        }
+        i = i + 1;
+    }
+    return cps;
+}
+
+// _compose_pair returns the primary composite of a + b, or 0 when the
+// pair does not compose. U+0000 is never a composite, so it is an
+// unambiguous "no".
+function _compose_pair(a: char, b: char): i32 {
+    var x: i32 = a as i32;
+    var y: i32 = b as i32;
+    // Hangul L + V, then LV + T — arithmetic again, matching _decomp_append.
+    if (x >= 4352 && x < 4371 && y >= 4449 && y < 4470) {
+        return 44032 + ((x - 4352) * 21 + (y - 4449)) * 28;
+    }
+    if (x >= 44032 && x < 55204 && y > 4519 && y < 4547) {
+        if ((x - 44032) % 28 == 0) { return x + (y - 4519); }
+        return 0;
+    }
+    var t: string = _compose_table();
+    var lo: i32 = 0;
+    var hi: i32 = t.len() / 12 - 1;
+    while (lo <= hi) {
+        var mid: i32 = lo + (hi - lo) / 2;
+        var base: i32 = mid * 12;
+        var ka: i32 = _fld(t, base);
+        var kb: i32 = _fld(t, base + 4);
+        if (x < ka || (x == ka && y < kb)) { hi = mid - 1; }
+        else if (x > ka || (x == ka && y > kb)) { lo = mid + 1; }
+        else { return _fld(t, base + 8); }
+    }
+    return 0;
+}
+
+// _nfd_cps decomposes s into a canonically ordered code-point sequence.
+function _nfd_cps(s: string): char[] {
+    var cps: char[] = utf8.codepoints(s);
+    var out: char[] = [];
+    var i: i32 = 0;
+    while (i < cps.len()) {
+        out = _decomp_append(out, cps[i]);
+        i = i + 1;
+    }
+    return _canon_order(out);
+}
+
+// _compose runs the NFC composition pass over a decomposed, canonically
+// ordered sequence.
+//
+// The subtlety is BLOCKING: a mark can only combine with the last
+// starter if nothing between them has a class greater than or equal to
+// its own. prev_cc tracks the class of the character immediately
+// preceding, with -1 meaning "nothing between", which is what lets two
+// adjacent starters (Hangul L + V) compose.
+function _compose(cps: char[]): char[] {
+    var n: i32 = cps.len();
+    if (n == 0) { return cps; }
+    var out: char[] = [];
+    out = out.append(cps[0]);
+    var starter: i32 = -1;
+    if (_ccc_of(cps[0]) == 0) { starter = 0; }
+    var prev_cc: i32 = -1;
+    var i: i32 = 1;
+    while (i < n) {
+        var cp: char = cps[i];
+        var cc: i32 = _ccc_of(cp);
+        var joined: boolean = false;
+        if (starter >= 0 && (prev_cc == -1 || prev_cc < cc)) {
+            var comp: i32 = _compose_pair(out[starter], cp);
+            if (comp != 0) {
+                out = out.with(starter, (comp) as char);
+                joined = true;
+            }
+        }
+        if (!joined) {
+            if (cc == 0) {
+                starter = out.len();
+                prev_cc = -1;
+            } else {
+                prev_cc = cc;
+            }
+            out = out.append(cp);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ` + "`nfd(s)`" + ` — canonical decomposition. Precomposed characters are split
+// into base plus combining marks, and the marks are canonically ordered.
+pub function nfd(s: string): string {
+    if (_is_ascii(s)) { return s; }
+    return utf8.encode_all(_nfd_cps(s));
+}
+
+// ` + "`nfc(s)`" + ` — canonical composition, the form to normalize to when in
+// doubt. Text is decomposed first and then recombined, which is what
+// makes NFC a true normal form rather than a best effort.
+//
+// Split from nfd deliberately: per-function DCE means a program that
+// only ever calls nfd does not pay for the composition table.
+pub function nfc(s: string): string {
+    if (_is_ascii(s)) { return s; }
+    return utf8.encode_all(_compose(_nfd_cps(s)));
+}
+
+// ` + "`is_nfd(s)`" + ` — is s already in NFD? Answers from a quick-check table
+// without building a normalized copy, so the common "yes" costs one
+// pass and no allocation.
+pub function is_nfd(s: string): boolean {
+    if (_is_ascii(s)) { return true; }
+    var cps: char[] = utf8.codepoints(s);
+    var prev_cc: i32 = 0;
+    var i: i32 = 0;
+    while (i < cps.len()) {
+        var cp: char = cps[i];
+        if (_in_ranges(_nfd_no_ranges(), cp as i32)) { return false; }
+        var cc: i32 = _ccc_of(cp);
+        if (cc != 0 && prev_cc > cc) { return false; }
+        prev_cc = cc;
+        i = i + 1;
+    }
+    return true;
+}
+
+// ` + "`is_nfc(s)`" + ` — is s already in NFC? The three-state quick check from
+// UAX #15: a code point that never survives NFC answers No outright, a
+// misordered mark likewise, and everything else answers Yes without
+// allocating.
+//
+// The Maybe state is the one that cannot be shortcut. It is tempting to
+// ask "does this mark compose with the starter before it?" and answer
+// locally, but that is WRONG, because the preceding starter may itself
+// decompose and the marks then reorder around it. U+1E63 followed by a
+// cedilla is the counterexample: the pair does not compose, yet the
+// string is not NFC, because U+1E63 splits into s + dot-below and the
+// lower-class cedilla sorts in front of the dot, landing next to the s
+// where it does compose. So a Maybe escalates to the full comparison.
+//
+// That fallback is why is_nfc saves ALLOCATION but not binary size: it
+// reaches nfc, so it links the composition table. is_nfd has no such
+// escalation and stays cheap on both counts.
+pub function is_nfc(s: string): boolean {
+    if (_is_ascii(s)) { return true; }
+    var cps: char[] = utf8.codepoints(s);
+    var prev_cc: i32 = 0;
+    var i: i32 = 0;
+    while (i < cps.len()) {
+        var cp: char = cps[i];
+        var n: i32 = cp as i32;
+        var cc: i32 = _ccc_of(cp);
+        if (cc != 0 && prev_cc > cc) { return false; }
+        if (_in_ranges(_nfc_no_ranges(), n)) { return false; }
+        if (_in_ranges(_nfc_maybe_ranges(), n)) { return nfc(s) == s; }
+        prev_cc = cc;
+        i = i + 1;
+    }
+    return true;
+}
+
+// ` + "`eq_canonical(a, b)`" + ` — are a and b the same text under canonical
+// equivalence? This is what to reach for when comparing user-supplied
+// text (search, dedup, usernames): NFC and NFD spellings of an accented
+// character are equal here and NOT equal under ` + "`==`" + `.
+//
+// The byte-equality fast path means identical strings never normalize.
+pub function eq_canonical(a: string, b: string): boolean {
+    if (a == b) { return true; }
+    return nfc(a) == nfc(b);
 }
 
 `)

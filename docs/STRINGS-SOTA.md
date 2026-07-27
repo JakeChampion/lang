@@ -270,7 +270,7 @@ of silently dropping the expansion.
 |---|---|---|
 | Swift | **Canonical equivalence** — `"é"` (NFC) `==` `"é"` (NFD) is `true` | implicit; `String` compares under canonical equivalence |
 | Raku | canonical, via NFG on ingest | implicit |
-| Rust, Go, Python, JS, C#, Java, **Fern** | byte / code-unit equality | explicit (`unicodedata.normalize`, `String.prototype.normalize`, `unicode-normalization` crate, `golang.org/x/text/unicode/norm`) |
+| Rust, Go, Python, JS, C#, Java, **Fern** | byte / code-unit equality | explicit (`unicodedata.normalize`, `String.prototype.normalize`, `unicode-normalization` crate, `golang.org/x/text/unicode/norm`; Fern's is `unicode.nfc` / `nfd` / `eq_canonical`) |
 
 **Not converged, and the split is principled.** Swift's canonical `==`
 is *the* correct answer for user-facing text and a large ongoing tax:
@@ -507,21 +507,41 @@ in the issue.
   (`:default` / `:ascii` / `:turkic`) — not Java's implicit default
   locale, which is a documented bug-generator (§2.5).
 
-### D5 — `==` stays byte equality. Canonical equivalence is a call.
+### D5 — `==` stays byte equality. Canonical equivalence is a call. **LANDED** (#5631)
 
 Reject Swift's canonical `==` (§2.6). Rationale: `==` must stay a byte
 compare so it stays O(n) and so hashing/`Map` keys don't need to
 normalize in lockstep — Fern's `Map[string, V]` is on the hot path of
-every handler. Instead:
+every handler. Shipped as:
 
-- `unicode.normalize(s, NFC | NFD | NFKC | NFKD)`
+- `unicode.nfc(s)` / `unicode.nfd(s)` — the two canonical forms
 - `unicode.eq_canonical(a, b)` — normalize-and-compare
-- Document, in `std/string`'s header, that `==` is byte equality and
-  which situations (search, dedup, usernames — the issue's own list)
-  need `normalize` first.
+- `unicode.is_nfc(s)` / `unicode.is_nfd(s)` — quick checks that answer
+  without allocating a normalized copy
+- `std/string`'s header documents that `==` is byte equality and names
+  the situations (search, dedup, usernames) that need normalizing first
 
-Normalization is the part of #5552 with the highest correctness payoff
-per byte of table, and it's the part currently at zero.
+Two departures from the sketch above, both deliberate:
+
+- **`nfc` / `nfd` are separate entry points, not `normalize(s, form)`.**
+  Per-function DCE is the reason: a program that only decomposes must not
+  link the composition table. Measured — `std/unicode` without
+  normalization is 9.6 KB, `+nfd` 66.5 KB, `+nfc` 81.9 KB, so the split
+  keeps 15.4 KB out of decompose-only programs and *both* tables out of
+  programs that never normalize.
+- **NFKC/NFKD are not shipped.** They are compatibility forms, and D5
+  only ever justified them "if the table cost is incremental". It is
+  not — they need a second decomposition table roughly the size of the
+  canonical one, for a transform that is lossy and rarely what a caller
+  actually wants. Revisit only with a concrete use case.
+
+Data comes from CPython's `unicodedata` (`cmd/unicodegen/gen_normdata.py`
+regenerates `normdata.txt`), because Go's `unicode` package ships neither
+canonical decompositions nor combining classes and this module has no
+external dependencies. Hangul is arithmetic, not table data. Correctness
+is pinned by a full differential against that oracle: every code point
+that normalizes (13233), a multi-mark sequence corpus (3192), and the
+quick-check predicates (513) all match exactly.
 
 ### D6 — Segmentation stays opt-in. `len()` stays bytes.
 
@@ -679,7 +699,7 @@ Tracked as epic #5626; issue numbers below.
 | 2 | **D11** (#5628) — lexer UTF-8 fix + identifier policy — **DONE** | — | Self-contained bug fix; correct diagnostics. Identifiers are ASCII-only. |
 | 3 | **D2** (#5629) — the `char` type | — | Checker + `std/utf8` + `std/unicode` signatures. Big but mechanical; unblocks honest naming everywhere. |
 | 4 | **D3 + D4** (#5630) — flip the default, full case mapping | 1, 3 | Touches the self-host builtin (`irlower.fern` / `asmcore.fern`) **and** the native stdlib — see D3's implementation note. Differential coverage required. |
-| 5 | **D5** (#5631) — normalization + `eq_canonical` | 1 | Highest correctness payoff of the remaining Unicode work; new tables, same static-data machinery as slice 1. |
+| 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
 | 6 | **D8** (#5632) — `[u8]` string view | — | Independent; unblocks copy-free parsers. |
 | 7 | **D6** (#5633) — grapheme segmentation | 1, 3 | Largest table; opt-in. |
 | 8 | **D9** (#5634) — the UTF-8 validity invariant | 6 | Largest blast radius; do last, after `[u8]` makes "raw bytes" ergonomic. |

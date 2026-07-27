@@ -3,6 +3,23 @@
 // No prelude: a file now `import "std/string";` explicitly to
 // bring these methods into scope (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
+//
+// `==` ON STRINGS IS BYTE EQUALITY. It is not Unicode-aware, and
+// that is deliberate: the same text can be spelled more than one
+// way, so `"é"` as one code point and `"e"` plus a combining
+// acute are equal text that `==` reports as different. Making
+// `==` normalize would put a normalization pass in front of every
+// string-keyed map lookup, which is why Rust, Go, Python, JS, C#
+// and Java all decline to.
+//
+// So reach for `std/unicode`'s `eq_canonical(a, b)` — or normalize
+// once with `nfc(s)` and compare the results — whenever the input
+// is text a human typed or another system sent: SEARCH, DEDUP, and
+// USERNAME or other identity comparison. NFD-shaped text is not
+// exotic; macOS filesystem APIs, some IME and browser input paths,
+// and any client that normalizes differently from the server all
+// produce it. For program-internal keys that never leave the
+// process, `==` is the right tool and the cheaper one.
 
 import "core/int";
 // std/string's bodies dispatch (i32) byte methods on `s[i]`
