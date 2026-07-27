@@ -127,6 +127,19 @@ func TestSelfHostI32PredicatesIRX86_64(t *testing.T) {
 		{"is-empty-strarr-false", "function main(): i32 { var ss: string[] = [\"a\"]; if (ss.is_empty()) { return 1; } return 0; }", 0},
 		// Fresh string-concat receiver: the temp box the `.len()` arm reclaims (#4365).
 		{"is-empty-fresh-concat", "function main(): i32 { var a: string = \"x\"; var b: string = \"y\"; if ((a + b).is_empty()) { return 1; } return 0; }", 0},
+		// first_byte / last_byte reuse the string-INDEX op (s[0], s[len-1]) rather than
+		// raw loads. Operand order there is NATURAL (string then index) — the op_*
+		// convention, unlike op_call_direct to a helper, which binds in reverse.
+		// last_byte reads the receiver twice, so it goes through a temp local.
+		{"first-byte-upper", "function main(): i32 { var s: string = \"Hello\"; return s.first_byte(); }", 72},
+		{"first-byte-lower", "function main(): i32 { var s: string = \"abc\"; return s.first_byte(); }", 97},
+		{"first-byte-single", "function main(): i32 { var s: string = \"z\"; return s.first_byte(); }", 122},
+		{"last-byte-letter", "function main(): i32 { var s: string = \"abc\"; return s.last_byte(); }", 99},
+		{"last-byte-punct", "function main(): i32 { var s: string = \"hi!\"; return s.last_byte(); }", 33},
+		// Single char: first_byte and last_byte must agree.
+		{"last-byte-single", "function main(): i32 { var s: string = \"z\"; return s.last_byte(); }", 122},
+		// Fresh concat receiver exercises the temp local (evaluated once, read twice).
+		{"last-byte-fresh-concat", "function main(): i32 { var a: string = \"ab\"; var b: string = \"cd\"; return (a + b).last_byte(); }", 100},
 	}
 
 	for _, tc := range cases {

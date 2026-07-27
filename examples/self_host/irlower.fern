@@ -8840,6 +8840,38 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (fa.field == "sum") { return parr.emit(ir.op_call_direct("__fern_arr_i32_sum", 1)); }
                         return parr.emit(ir.op_call_direct("__fern_arr_i32_product", 1));
                     }
+                    // s.first_byte() / s.last_byte() — inline byte reads in the AST
+                    // emitter (asm.fern:2057/2065), i.e. exactly s[0] and s[len-1], so
+                    // they reuse the existing string-index op rather than emitting raw
+                    // loads. NOTE the operand order is NATURAL here (string then index):
+                    // that is the op_* convention, unlike op_call_direct to a Fern
+                    // helper, which binds params in REVERSE push order (#5666).
+                    //
+                    // last_byte reads the receiver TWICE (once for the length, once as
+                    // the indexed string), so it goes through a temp local — the #5661
+                    // abs/sign pattern — instead of lowering the subtree again, which
+                    // would evaluate a side-effecting receiver twice.
+                    if ((fa.field == "first_byte" || fa.field == "last_byte") && c.args.len() == 0
+                            && expr_is_str(fa.obj, s)) {
+                        if (fa.field == "first_byte") {
+                            var pfb: LowerState = lower_expr(fa.obj, s);
+                            if (!pfb.ok) { return pfb; }
+                            pfb = pfb.emit(ir.op_const_i32(0));
+                            return pfb.emit(ir.op_str_index());
+                        }
+                        var sname: string = "$lbs" + util.i32_to_string(s.locals.len());
+                        var plb: LowerState = s.add_local(sname);
+                        var sslot: i32 = plb.slot_of(sname);
+                        plb = lower_expr(fa.obj, plb);
+                        if (!plb.ok) { return plb; }
+                        plb = plb.emit(ir.op_store_local(sslot));
+                        plb = plb.emit(ir.op_load_local(sslot));    // string (operand 1)
+                        plb = plb.emit(ir.op_load_local(sslot));
+                        plb = plb.emit(ir.op_str_len());
+                        plb = plb.emit(ir.op_const_i32(1));
+                        plb = plb.emit(ir.op_bin("sub", 0, false)); // len - 1 (operand 2)
+                        return plb.emit(ir.op_str_index());
+                    }
                     // x.is_empty() desugars to `x.len() == 0` and re-lowers, rather
                     // than emitting its own len op. The `.len()` arm below carries real
                     // machinery a duplicate would have to clone — notably the fresh
