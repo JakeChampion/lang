@@ -672,6 +672,22 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		// callee's registered return type, letting a later `match (o)` lower.
 		{"opt-fncall-if-expr", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { var o = if (true) { mkO(7) } else { Some(0) }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`},
 		{"result-fncall-if-expr", `function div(a: i32, b: i32): Result[i32, i32] { if (b == 0) { return Err(1); } return Ok(a / b); } function main(): i32 { var r = if (true) { div(20, 4) } else { Err(9) }; match (r) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`},
+		// The i32 builtins backed by Fern runtime helpers (#3457). irlower lowers
+		// these for EVERY backend, but their bodies are need-gated per backend and
+		// the arm64 IR path marked none of them — so the IR leg emitted
+		// `bl __fn___fern_arr_i32_sum` against no definition and the aarch64 link
+		// failed. Assembling both legs is what asserts it: a missing helper body is
+		// an undefined reference, so it fails at buildBinArm64 rather than as an
+		// exit-code mismatch. min/max additionally allocate their Option box, so they
+		// also pin that the heap runtime is pulled in with them.
+		{"arr-sum-helper", `function main(): i32 { var xs: i32[] = [1, 2, 3, 4]; return xs.sum(); }`},
+		{"arr-product-helper", `function main(): i32 { var xs: i32[] = [2, 3, 5]; return xs.product(); }`},
+		{"arr-index-of-helper", `function main(): i32 { var xs: i32[] = [7, 8, 9]; return xs.index_of(9); }`},
+		{"arr-contains-helper", `function main(): i32 { var xs: i32[] = [7, 8, 9]; if (xs.contains(8)) { return 1; } return 0; }`},
+		{"i32-pow-helper", `function main(): i32 { var n: i32 = 2; return n.pow(5); }`},
+		{"arr-min-helper", `function main(): i32 { var xs: i32[] = [5, 2, 8]; match (xs.min()) { Some(m) => { return m; }, None => { return 99; } } }`},
+		{"arr-max-helper", `function main(): i32 { var xs: i32[] = [5, 2, 8]; match (xs.max()) { Some(m) => { return m; }, None => { return 99; } } }`},
+		{"arr-max-empty-helper", `function main(): i32 { var xs: i32[] = []; match (xs.max()) { Some(m) => { return m; }, None => { return 99; } } }`},
 	}
 
 	for _, tc := range cases {

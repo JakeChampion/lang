@@ -144,6 +144,33 @@ func TestSelfHostI32PredicatesIRX86_64(t *testing.T) {
 		// no extra argv, so the count is 1 (argv[0] alone).
 		{"args-count", "function main(): i32 { return args_count(); }", 1},
 		{"args-count-compare", "function main(): i32 { if (args_count() >= 1) { return 7; } return 0; }", 7},
+		// xs.min() / xs.max() are the first helper-backed builtins with a COMPOSITE
+		// return (Option[i32]). The AST emitter open-codes the `len == 0` branch and
+		// both 16-byte boxes; the IR path calls a helper that carries the guard and
+		// the box in its Fern body. The EMPTY cases are the point of the design — a
+		// non-empty-only test set would pass with the guard dropped entirely.
+		{"arr-min", "function main(): i32 { var xs: i32[] = [5, 2, 8]; match (xs.min()) { Some(m) => { return m; }, None => { return 99; } } }", 2},
+		{"arr-max", "function main(): i32 { var xs: i32[] = [5, 2, 8]; match (xs.max()) { Some(m) => { return m; }, None => { return 99; } } }", 8},
+		{"arr-min-empty", "function main(): i32 { var xs: i32[] = []; match (xs.min()) { Some(m) => { return m; }, None => { return 99; } } }", 99},
+		{"arr-max-empty", "function main(): i32 { var xs: i32[] = []; match (xs.max()) { Some(m) => { return m; }, None => { return 99; } } }", 99},
+		// Single element: min and max must agree. The distinct-extreme cases above
+		// are what keep the two from being wired to the same body.
+		{"arr-min-single", "function main(): i32 { var xs: i32[] = [7]; match (xs.min()) { Some(m) => { return m; }, None => { return 99; } } }", 7},
+		{"arr-max-single", "function main(): i32 { var xs: i32[] = [7]; match (xs.max()) { Some(m) => { return m; }, None => { return 99; } } }", 7},
+		{"arr-min-negatives", "function main(): i32 { var xs: i32[] = [3, 0 - 5, 1]; match (xs.min()) { Some(m) => { return m + 10; }, None => { return 99; } } }", 5},
+		{"arr-max-negatives", "function main(): i32 { var xs: i32[] = [0 - 9, 0 - 2, 0 - 5]; match (xs.max()) { Some(m) => { return m + 10; }, None => { return 99; } } }", 8},
+		// An UNTYPED array literal receiver (inferred i32[]) takes the same guard.
+		{"arr-min-untyped", "function main(): i32 { var a = [5, 3, 8, 1]; match (a.min()) { Some(m) => { return m; }, None => { return 99; } } }", 1},
+		// The three scrutinee-type resolvers the helper's return type had to be
+		// registered with, since opt_ret_fns_of cannot see a runtime helper: a
+		// direct `match` scrutinee (above), an unannotated `var` binding matched
+		// later, and the try operator.
+		{"arr-max-var-binding", "function main(): i32 { var xs: i32[] = [4, 9, 1]; var o = xs.max(); match (o) { Some(m) => { return m; }, None => { return 99; } } }", 9},
+		{"arr-min-try", "function f(xs: i32[]): Option[i32] { var m: i32 = xs.min()?; return Some(m + 1); } function main(): i32 { var xs: i32[] = [6, 2]; match (f(xs)) { Some(v) => { return v; }, None => { return 99; } } }", 3},
+		{"arr-min-try-empty", "function f(xs: i32[]): Option[i32] { var m: i32 = xs.min()?; return Some(m + 1); } function main(): i32 { var xs: i32[] = []; match (f(xs)) { Some(v) => { return v; }, None => { return 99; } } }", 99},
+		// Crossing a call boundary: the helper's Option box is returned by a user
+		// function and matched in the caller.
+		{"arr-min-through-fn", "function pick(xs: i32[]): Option[i32] { return xs.min(); } function main(): i32 { var xs: i32[] = [9, 3, 5]; match (pick(xs)) { Some(m) => { return m; }, None => { return 99; } } }", 3},
 	}
 
 	for _, tc := range cases {

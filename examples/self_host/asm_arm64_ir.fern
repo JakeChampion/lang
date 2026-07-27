@@ -1034,6 +1034,23 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // chr(n)'s 1-char-box helper — gated on this need (the self-contained
             // stack-ABI __fn___fern_chr in asm_arm64.emit_runtime).
             if (o.str == "__fern_chr") { s = s.mark_chr(); }
+            // The i32 builtin helpers irlower lowers for EVERY backend (#3457):
+            // xs.sum() / .product() / .index_of() / .contains(), n.pow(k), and
+            // xs.min() / .max(). Their bodies are need-gated in
+            // asm_arm64.emit_runtime, and the arm64 IR path marked none of them —
+            // so `bl __fn___fern_arr_i32_sum` was emitted against nothing and the
+            // link failed with an undefined reference (the same gap u32_to_string
+            // had above; the x86 IR path marks its equivalents in asm_ir).
+            if (o.str == "__fern_arr_i32_sum") { s = s.mark_arr_i32_sum(); }
+            if (o.str == "__fern_arr_i32_product") { s = s.mark_arr_i32_product(); }
+            if (o.str == "__fern_i32_pow") { s = s.mark_i32_pow(); }
+            if (o.str == "__fern_arr_i32_index_of") { s = s.mark_arr_i32_index_of(); }
+            // min/max return a freshly allocated Option box, so unlike the fold
+            // helpers they need the heap runtime as well as their own bodies.
+            if (o.str == "__fern_arr_i32_min_opt" || o.str == "__fern_arr_i32_max_opt") {
+                s = s.mark_heap();
+                s = s.need("arr_i32_min_max_opt");
+            }
             // arr.join(sep) (#5328): mark_arr_str_join sets the arr_str_join +
             // str_concat + heap needs; the bodies come from asm_arm64.emit_runtime
             // (which asm_arm64_ir reuses verbatim — the arr_str_join block already
