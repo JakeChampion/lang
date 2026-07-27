@@ -165,6 +165,7 @@ pub function is_fern_helper(name: string): boolean {
         || name == "__fern_arr_i32_sum"
         || name == "__fern_arr_i32_product"
         || name == "__fern_i32_pow"
+        || name == "__fern_arr_i32_index_of"
         // xs.join(sep)'s array-of-strings concatenator (#5328): a real Fern
         // runtime function (asmcore.rt_src_arr_str_join) built with `+`, so it
         // needs the heap + str_concat runtime. Body under __fn___fern_arr_str_join,
@@ -3748,7 +3749,8 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         // i32[] sum / product (#3457): a LIBRARY module calling xs.sum() emits
         // `call __fn___fern_arr_i32_sum`; the entry owns the definition. A
         // registered NEED root is not the same as an exported SYMBOL.
-        "__fn___fern_arr_i32_sum", "__fn___fern_arr_i32_product", "__fn___fern_i32_pow"
+        "__fn___fern_arr_i32_sum", "__fn___fern_arr_i32_product", "__fn___fern_i32_pow",
+        "__fn___fern_arr_i32_index_of"
     ];
     var i: i32 = 0;
     while (i < names.len()) {
@@ -4713,6 +4715,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             if (o.str == "__fern_arr_i32_sum") { s = s.need("arr_i32_sum"); }
             if (o.str == "__fern_arr_i32_product") { s = s.need("arr_i32_product"); }
             if (o.str == "__fern_i32_pow") { s = s.need("i32_pow"); }
+            if (o.str == "__fern_arr_i32_index_of") { s = s.need("arr_i32_index_of"); }
             // chr allocates its 1-char box, so pull in the heap runtime too.
             if (o.str == "__fern_chr") { s = s.need("heap"); s = s.need("chr"); }
             // arr.join(sep) needs its own body + the heap + str_concat runtime it
@@ -6281,6 +6284,12 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("i32_pow")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_pow(), all_structs, s);
+    }
+    // arr_i32_index_of backs xs.index_of(x) / xs.contains(x) (#3457) —
+    // allocation-free, like the other fold helpers.
+    if (s.has_need("arr_i32_index_of")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_index_of(), all_structs, s);
     }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).

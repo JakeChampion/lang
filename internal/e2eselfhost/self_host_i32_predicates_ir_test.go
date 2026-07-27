@@ -104,6 +104,16 @@ func TestSelfHostI32PredicatesIRX86_64(t *testing.T) {
 		// Negative base, odd exponent: -8, shifted into exit-code range.
 		{"pow-negative-base", "function main(): i32 { var n: i32 = 0 - 2; return n.pow(3) + 100; }", 92},
 		{"pow-expr-receiver", "function main(): i32 { var b: i32 = 2; var e: i32 = 3; return (b + 1).pow(e); }", 27},
+		// xs.index_of(x) / xs.contains(x): helper-backed WITH an argument, so both the
+		// need-mapping and the reverse operand order apply. The not-found cases shift
+		// by +10 because the helper returns -1, which is not an exit code.
+		{"index-of-found-mid", "function main(): i32 { var xs: i32[] = [7, 8, 9]; return xs.index_of(9); }", 2},
+		{"index-of-found-first", "function main(): i32 { var xs: i32[] = [7, 8, 9]; return xs.index_of(7); }", 0},
+		{"index-of-missing", "function main(): i32 { var xs: i32[] = [7, 8, 9]; return xs.index_of(4) + 10; }", 9},
+		{"index-of-empty", "function main(): i32 { var xs: i32[] = []; return xs.index_of(1) + 10; }", 9},
+		{"contains-true", "function main(): i32 { var xs: i32[] = [7, 8, 9]; if (xs.contains(8)) { return 1; } return 0; }", 1},
+		{"contains-false", "function main(): i32 { var xs: i32[] = [7, 8, 9]; if (xs.contains(3)) { return 1; } return 0; }", 0},
+		{"contains-single", "function main(): i32 { var xs: i32[] = [5]; if (xs.contains(5)) { return 1; } return 0; }", 1},
 	}
 
 	for _, tc := range cases {
