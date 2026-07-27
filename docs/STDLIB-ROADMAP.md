@@ -477,8 +477,8 @@ think they're free additions to make.
   `(n).max(other)` / `(n).clamp(lo, hi)`. Standard scalar
   reductions; the abs path widens to i64 internally to handle
   i32::MIN cleanly (matches Rust wrapping_abs).
-- **Byte case helpers**: `(b).is_lower()` / `is_upper()` /
-  `to_lower()` / `to_upper()` — ASCII-only. Non-letters pass
+- **Byte case helpers**: `(b).is_ascii_lower()` / `is_ascii_upper()` /
+  `to_ascii_lower()` / `to_ascii_upper()` — ASCII-only. Non-letters pass
   through unchanged from the to_* helpers.
 - **String predicates**: `s.is_ascii_only()` /
   `s.is_numeric()` / `s.is_alpha_only()` / `s.is_alnum_only()`.
@@ -492,7 +492,7 @@ think they're free additions to make.
   Option), `s.chars()` (i32[] of byte values), `s.reverse_bytes()`
   (ASCII-only reverse; multibyte UTF-8 will scramble). The
   name `reverse_bytes` carries the warning.
-- **Byte classifiers**: `(b).is_punct()` (Python's string.
+- **Byte classifiers**: `(b).is_ascii_punct()` (Python's string.
   punctuation set), `(b).hex_digit()` (numeric → single-byte
   string).
 - **i32 sign helpers**: `(n).signum()` (-1/0/1 trichotomy),
@@ -618,7 +618,7 @@ think they're free additions to make.
 - **i32 bit accessors**: `(n).bit(i)` / `set_bit(i)` /
   `clear_bit(i)` / `toggle_bit(i)`. Out-of-range i is a
   no-op for the mutators and false for the reader.
-- **`(b: i32).is_newline()`**: true for LF or CR. Companion
+- **`(b: i32).is_ascii_newline()`**: true for LF or CR. Companion
   to the existing is_ascii_white_space.
 - **`(s: string).count_lines()`**: count newline-separated
   lines; a trailing newline doesn't add a phantom empty
@@ -698,7 +698,7 @@ think they're free additions to make.
   Newton's method. 0 fallback for n <= 0.
 - **`(n: i32).to_rgb_hex()`**: render the low 24 bits as
   `"#RRGGBB"`. CSS / SVG / terminal-ANSI emission.
-- **`(b: i32).is_vowel()`**: ASCII a/e/i/o/u in either case.
+- **`(b: i32).is_ascii_vowel()`**: ASCII a/e/i/o/u in either case.
   Y not counted.
 - **`s.rstrip_newline()`**: strip a single trailing `\n` or
   `\r\n` — preserves runs.
@@ -742,8 +742,8 @@ think they're free additions to make.
   suffix selection on string arrays.
 - **`pack_rgb(r, g, b)`**: pack three 0..255 components
   into a 24-bit i32. Pairs with `to_rgb_hex` for round-trip.
-- **Byte printability**: `(b).is_printable()` (32..126),
-  `(b).is_control()` (0..31 or 127).
+- **Byte printability**: `(b).is_ascii_printable()` (32..126),
+  `(b).is_ascii_control()` (0..31 or 127).
 - **Radix parse sugar**: `s.parse_hex_int()` /
   `s.parse_bin_int()`. Companion to the generic
   `parse_int_radix`.
@@ -763,7 +763,7 @@ think they're free additions to make.
   markers; None if either is missing.
 - **`(n: i32).is_between(lo, hi)`**: inclusive companion to
   `is_in_range` (which is half-open).
-- **`(b: i32).is_letter()`**: alias for `is_alpha`. Roc /
+- **`(b: i32).is_ascii_letter()`**: alias for `is_ascii_alpha`. Roc /
   MoonBit naming.
 - **`(arr: string[]).all_non_empty()`**: vacuously true on
   empty array; false on any empty entry.

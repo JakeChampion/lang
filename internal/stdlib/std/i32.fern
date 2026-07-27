@@ -49,67 +49,67 @@ pub function (n: i32) abs_diff(other: i32): i32 {
 pub function (n: i32) midpoint(other: i32): i32 {
     return (n & other) + ((n ^ other) >> 1);
 }
-// ASCII byte predicates — `is_digit` / `is_alpha` / `is_alnum` /
-// `is_ascii_white_space` classify a single byte (typically an
+// ASCII byte predicates — `is_ascii_digit` / `is_ascii_alpha` /
+// `is_ascii_alnum` / `is_ascii_white_space` classify a single byte (typically an
 // `s[i]` index into a string, i.e. a UTF-8 code unit, hence the
 // byte-range narrowing). Multibyte UTF-8 sequences pass through as
 // false for the alphabetic / digit predicates because their
 // leading bytes are all >= 0x80 — that matches Go's
 // `unicode/utf8` convention.
 //
-// Method-style chosen so call sites read as `s[i].is_digit()`
+// Method-style chosen so call sites read as `s[i].is_ascii_digit()`
 // — matches the rest of the i32 / string receiver surface's
 // `to_string()` / `is_empty()` shape. `__is_ascii_ws`
 // stays as a free function for the `trim()` body that pre-
 // dates this surface.
 
-pub function (b: i32) is_digit(): boolean {
+pub function (b: i32) is_ascii_digit(): boolean {
     return b >= 48 && b <= 57;
 }
 
-pub function (b: i32) is_alpha(): boolean {
+pub function (b: i32) is_ascii_alpha(): boolean {
     return (b >= 65 && b <= 90) || (b >= 97 && b <= 122);
 }
 
-pub function (b: i32) is_alnum(): boolean {
-    return b.is_digit() || b.is_alpha();
+pub function (b: i32) is_ascii_alnum(): boolean {
+    return b.is_ascii_digit() || b.is_ascii_alpha();
 }
 
 pub function (b: i32) is_ascii_white_space(): boolean {
     return b == 32 || b == 9 || b == 10 || b == 13 || b == 11 || b == 12;
 }
 
-// `(b: i32) is_newline()` — true for LF (10) or CR (13). Use
+// `(b: i32) is_ascii_newline()` — true for LF (10) or CR (13). Use
 // when tokenising line-oriented input that should treat the
 // CRLF pair like a single boundary; pair with the trailing-CR
 // strip in lines().
-pub function (b: i32) is_newline(): boolean {
+pub function (b: i32) is_ascii_newline(): boolean {
     return b == 10 || b == 13;
 }
 
-// `(b: i32) is_vowel()` — true for ASCII a/e/i/o/u in either
+// `(b: i32) is_ascii_vowel()` — true for ASCII a/e/i/o/u in either
 // case. Y is not counted (it's contextual; matches the
 // English-class default). Useful for text analysis,
 // Pig Latin / spelling-rule kinds of routines.
-pub function (b: i32) is_vowel(): boolean {
+pub function (b: i32) is_ascii_vowel(): boolean {
     if (b == 97 || b == 101 || b == 105 || b == 111 || b == 117) { return true; }
     if (b == 65 || b == 69 || b == 73 || b == 79 || b == 85) { return true; }
     return false;
 }
 
-// `(b: i32) is_printable()` — printable ASCII (32..126).
+// `(b: i32) is_ascii_printable()` — printable ASCII (32..126).
 // Excludes control characters (0..31, 127) and the high-
 // byte range (128..255). Useful for log sanitisation /
 // diagnostic dumps.
-pub function (b: i32) is_printable(): boolean {
+pub function (b: i32) is_ascii_printable(): boolean {
     return b >= 32 && b <= 126;
 }
 
-// `(b: i32) is_control()` — ASCII control character: 0..31
+// `(b: i32) is_ascii_control()` — ASCII control character: 0..31
 // or 127. Inverse of is_printable in the ASCII range; the
 // high-byte range (128..255) is neither printable nor
 // control under this definition.
-pub function (b: i32) is_control(): boolean {
+pub function (b: i32) is_ascii_control(): boolean {
     return (b >= 0 && b <= 31) || b == 127;
 }
 
@@ -127,15 +127,16 @@ pub function (b: i32) matches_any(bytes: string): boolean {
     return false;
 }
 
-// `(b: i32) is_letter()` — alias for is_alpha. The name
-// matches the Unicode-aware convention seen in Roc / MoonBit;
-// is_alpha is the Python / Go convention. Both stay.
-pub function (b: i32) is_letter(): boolean {
-    return b.is_alpha();
+// `(b: i32) is_ascii_letter()` — alias for is_ascii_alpha. The
+// `letter` spelling matches the convention seen in Roc / MoonBit;
+// `alpha` is the Python / Go one. Both stay, both ASCII-named:
+// neither classifies a non-ASCII byte (#5629).
+pub function (b: i32) is_ascii_letter(): boolean {
+    return b.is_ascii_alpha();
 }
 
-pub function (b: i32) is_hex_digit(): boolean {
-    return b.is_digit() ||
+pub function (b: i32) is_ascii_hex_digit(): boolean {
+    return b.is_ascii_digit() ||
            (b >= 65 && b <= 70) ||   // A-F
            (b >= 97 && b <= 102);    // a-f
 }
@@ -144,11 +145,11 @@ pub function (b: i32) is_ascii(): boolean {
     return b >= 0 && b <= 127;
 }
 
-// `(b: i32) is_punct()` — true for an ASCII punctuation byte.
+// `(b: i32) is_ascii_punct()` — true for an ASCII punctuation byte.
 // Set matches Python's `string.punctuation`: 32 chars in the
 // four ranges 33-47, 58-64, 91-96, 123-126. Useful for
 // tokenisers that slice on `!"#$%&'()*+,-./:;<=>?@[\]^_\``{|}~`.
-pub function (b: i32) is_punct(): boolean {
+pub function (b: i32) is_ascii_punct(): boolean {
     if (b >= 33 && b <= 47)  { return true; }
     if (b >= 58 && b <= 64)  { return true; }
     if (b >= 91 && b <= 96)  { return true; }
@@ -375,26 +376,27 @@ pub function (n: i32) is_prime(): boolean {
 
 // === Byte-level case helpers ===
 //
-// `(b: i32) is_lower()` / `is_upper()` / `to_lower()` /
-// `to_upper()` — ASCII-only. Non-letter bytes (digits, punct,
+// `(b: i32) is_ascii_lower()` / `is_ascii_upper()` /
+// `to_ascii_lower()` / `to_ascii_upper()` — ASCII-only, and now
+// named for it (#5629). Non-letter bytes (digits, punct,
 // non-ASCII) pass through unchanged for the to_* path and
 // return false for the is_* path. Used by string-level
 // methods below and by hand-rolled tokenisers.
 
-pub function (b: i32) is_lower(): boolean {
+pub function (b: i32) is_ascii_lower(): boolean {
     return b >= 97 && b <= 122;
 }
 
-pub function (b: i32) is_upper(): boolean {
+pub function (b: i32) is_ascii_upper(): boolean {
     return b >= 65 && b <= 90;
 }
 
-pub function (b: i32) to_lower(): i32 {
+pub function (b: i32) to_ascii_lower(): i32 {
     if (b >= 65 && b <= 90) { return b + 32; }
     return b;
 }
 
-pub function (b: i32) to_upper(): i32 {
+pub function (b: i32) to_ascii_upper(): i32 {
     if (b >= 97 && b <= 122) { return b - 32; }
     return b;
 }

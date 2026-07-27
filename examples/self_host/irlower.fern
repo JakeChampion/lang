@@ -31086,11 +31086,11 @@ pub function str_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         if (funcs[k].ret_type == "string") {
             // A METHOD is keyed "<BaseType>.<method>" (like i64_ret_fns_of /
             // f64_ret_fns_of), NOT its bare name — a method name can collide
-            // across receiver types with DIFFERENT return types (e.g. i32's
-            // `to_lower` returns i32 while string's `to_lower` returns string).
-            // A bare key let `b.to_lower()` on an i32 wrongly type as string, so
-            // the chained `b.to_lower().to_ascii_string()` mis-dispatched to the
-            // nonexistent `string.to_ascii_string` (#case_separator). The method
+            // across receiver types with DIFFERENT return types. A bare key
+            // let a byte fold on an i32 wrongly type as string (back when it
+            // shared the name `to_lower` with string's), so the chained
+            // `b.to_lower().to_ascii_string()` mis-dispatched to the
+            // nonexistent `string.to_ascii_string`. The method
             // str-check (expr_is_str) now looks up the qualified key.
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }

@@ -2140,13 +2140,13 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (ty_is_f64(rt) && fa.field == "to_string") {
                         return ty_string();
                     }
-                    if (ty_is_i32(rt) && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign" || fa.field == "to_lower" || fa.field == "to_upper" || fa.field == "gcd" || fa.field == "lcm")) {
+                    if (ty_is_i32(rt) && (fa.field == "abs" || fa.field == "min" || fa.field == "max" || fa.field == "clamp" || fa.field == "pow" || fa.field == "sign" || fa.field == "to_ascii_lower" || fa.field == "to_ascii_upper" || fa.field == "gcd" || fa.field == "lcm")) {
                         return ty_i32();
                     }
                     if (ty_is_i32(rt) && fa.field == "to_ascii_string") {
                         return ty_string();
                     }
-                    if (ty_is_i32(rt) && (fa.field == "is_even" || fa.field == "is_odd" || fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative" || fa.field == "is_digit" || fa.field == "is_alpha" || fa.field == "is_letter" || fa.field == "is_alnum" || fa.field == "is_lower" || fa.field == "is_upper" || fa.field == "is_hex_digit")) {
+                    if (ty_is_i32(rt) && (fa.field == "is_even" || fa.field == "is_odd" || fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative" || fa.field == "is_ascii_digit" || fa.field == "is_ascii_alpha" || fa.field == "is_ascii_letter" || fa.field == "is_ascii_alnum" || fa.field == "is_ascii_lower" || fa.field == "is_ascii_upper" || fa.field == "is_ascii_hex_digit")) {
                         return ty_bool();
                     }
                     if (fa.field == "len"
