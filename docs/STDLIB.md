@@ -22,12 +22,13 @@ program sees only the modules it declares via `import "std/…";` /
 Receiver methods on i32 / byte values.
 
 - **Byte classifiers (`b: i32` receiver):**
-  `is_digit`, `is_alpha`, `is_alnum`, `is_ascii`,
-  `is_ascii_white_space`, `is_newline`, `is_vowel`,
-  `is_printable`, `is_control`, `is_letter`, `is_hex_digit`,
-  `is_punct`, `is_lower`, `is_upper`, `matches_any`,
-  `hex_digit`, `digit_value`, `hex_value`, `to_lower`,
-  `to_upper`, `to_ascii_string`
+  `is_ascii_digit`, `is_ascii_alpha`, `is_ascii_alnum`, `is_ascii`,
+  `is_ascii_white_space`, `is_ascii_newline`, `is_ascii_vowel`,
+  `is_ascii_printable`, `is_ascii_control`, `is_ascii_letter`,
+  `is_ascii_hex_digit`, `is_ascii_punct`, `is_ascii_lower`,
+  `is_ascii_upper`, `matches_any`,
+  `hex_digit`, `digit_value`, `hex_value`, `to_ascii_lower`,
+  `to_ascii_upper`, `to_ascii_string`
 - **Sign / classification:** `signum`, `is_positive`, `is_negative`,
   `is_zero`, `is_in_range`, `is_between`, `is_multiple_of`,
   `is_perfect_square`, `is_palindrome`, `is_even`, `is_odd`,
@@ -167,7 +168,10 @@ Grouped by family:
   companions `find`, `rfind`, `find_ci` (which return
   `None` instead) so a forgotten `< 0` check can't read a
   bogus index — consistent with `split_once` / `strip_prefix`.
-- **Casing / transform:** `capitalize`, `to_lower`, `to_upper`,
+- **Casing / transform:** `capitalize`, `to_lower`, `to_upper`
+  (Unicode simple case mapping, ASCII fast path inside),
+  `to_ascii_lower` / `to_ascii_upper` (the byte fold, for
+  known-ASCII input),
   `swap_case` (toggle ASCII case, à la Python `str.swapcase`),
   `snake_case`, `kebab_case`, `title_case`, `to_acronym`,
   `word_count`, `eq_ignore_ascii_case`, `slugify` (free-form text →
@@ -283,8 +287,9 @@ convention.
 
 ### `std/unicode`
 
-Unicode-aware **simple (1:1) case mapping** — the complement to
-`std/string`'s byte-wise, ASCII-only `to_upper`/`to_lower`. Decodes
+Unicode-aware **simple (1:1) case mapping** — what `std/string`'s
+`to_upper`/`to_lower` methods delegate to, and callable directly as
+free functions over a whole string or a single code point. Decodes
 UTF-8, maps each code point (Latin, Greek, Cyrillic, Armenian,
 fullwidth, …) via a table generated from the Go stdlib's `unicode`
 package, and re-encodes.

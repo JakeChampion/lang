@@ -26,7 +26,7 @@ var strFreshRetIRCases = []struct {
 		4, true},
 	// Un-annotated binding of a fresh-string-returning method-forwarder. len 3.
 	{"freshret-unannotated",
-		`function up(s: string): string { return s.to_upper(); } function main(): i32 { var r = up("abc"); return r.len(); }`,
+		`function up(s: string): string { return s.to_ascii_upper(); } function main(): i32 { var r = up("abc"); return r.len(); }`,
 		3, true},
 	// Memory-safety at scale: r = build() reclaimed every iteration (flat heap). A
 	// double-free would corrupt the freelist and crash / return garbage. exit 0.

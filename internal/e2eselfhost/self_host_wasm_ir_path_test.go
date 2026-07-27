@@ -805,12 +805,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// ASCII case transforms → fresh string (op_str_to_upper / _to_lower). The
 		// wasm IR path emits the narrow str_case_helpers ($__fern_str_upper /
 		// _lower); the AST path gets them from strcat_helpers — must agree.
-		{"to-upper-len", `function main(): i32 { var s = "Hello"; return s.to_upper().len(); }`},
-		{"to-upper-byte", `function main(): i32 { var s = "abc"; var u = s.to_upper(); return u[0]; }`},
-		{"to-lower-byte", `function main(): i32 { var s = "ABC"; var l = s.to_lower(); return l[2]; }`},
-		{"to-upper-mixed", `function main(): i32 { var u = "aB9z".to_upper(); return u[0] + u[1] + u[2] + u[3]; }`},
-		{"case-roundtrip", `function main(): i32 { var s = "Hello"; if (s.to_upper().to_lower() == "hello") { return 7; } return 0; }`},
-		{"case-param", `function up(s: string): i32 { return s.to_upper()[0]; } function main(): i32 { return up("xyz"); }`},
+		{"to-upper-len", `function main(): i32 { var s = "Hello"; return s.to_ascii_upper().len(); }`},
+		{"to-upper-byte", `function main(): i32 { var s = "abc"; var u = s.to_ascii_upper(); return u[0]; }`},
+		{"to-lower-byte", `function main(): i32 { var s = "ABC"; var l = s.to_ascii_lower(); return l[2]; }`},
+		{"to-upper-mixed", `function main(): i32 { var u = "aB9z".to_ascii_upper(); return u[0] + u[1] + u[2] + u[3]; }`},
+		{"case-roundtrip", `function main(): i32 { var s = "Hello"; if (s.to_ascii_upper().to_ascii_lower() == "hello") { return 7; } return 0; }`},
+		{"case-param", `function up(s: string): i32 { return s.to_ascii_upper()[0]; } function main(): i32 { return up("xyz"); }`},
 		// String repeat → fresh string (op_str_repeat). The wasm IR path emits the
 		// narrow str_repeat_helper; the AST path gets $__fern_str_repeat from
 		// strcat_helpers — must agree.

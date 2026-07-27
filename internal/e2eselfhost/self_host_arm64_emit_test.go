@@ -693,13 +693,13 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		},
 		{
 			"str-method-to-upper",
-			"function main(): i32 { var s = \"hello\"; write(s.to_upper()); return 0; }",
+			"function main(): i32 { var s = \"hello\"; write(s.to_ascii_upper()); return 0; }",
 			0,
 			"HELLO",
 		},
 		{
 			"str-method-to-lower",
-			"function main(): i32 { var s = \"HELLO\"; write(s.to_lower()); return 0; }",
+			"function main(): i32 { var s = \"HELLO\"; write(s.to_ascii_lower()); return 0; }",
 			0,
 			"hello",
 		},
@@ -717,13 +717,13 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		},
 		{
 			"str-method-chain",
-			"function main(): i32 { var s = \"  HELLO WORLD  \"; write(s.trim().to_lower()); return 0; }",
+			"function main(): i32 { var s = \"  HELLO WORLD  \"; write(s.trim().to_ascii_lower()); return 0; }",
 			0,
 			"hello world",
 		},
 		{
 			"str-literal-method-direct",
-			"function main(): i32 { write(\"hello\".to_upper()); return 0; }",
+			"function main(): i32 { write(\"hello\".to_ascii_upper()); return 0; }",
 			0,
 			"HELLO",
 		},

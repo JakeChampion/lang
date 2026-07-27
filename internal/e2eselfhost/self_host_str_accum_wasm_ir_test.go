@@ -16,7 +16,7 @@ import (
 // detector ($__fern_rc_underflow) ticks on any dec below rc 0. Each case runs the
 // accumulator in a churn helper (lowered through the IR reclaim) and checks
 // __fern_rc_underflow_count() == 0 in main: a double-free surfaces as exit 99. The
-// reset uses a loop-invariant operand + a fresh .to_upper() (both stay on the IR
+// reset uses a loop-invariant operand + a fresh .to_ascii_upper() (both stay on the IR
 // path under the underflow probe, unlike i32_to_string). Exit codes stay < 126.
 func TestSelfHostStrAccumWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -43,10 +43,10 @@ func TestSelfHostStrAccumWasmIR(t *testing.T) {
 		src      string
 		expected int
 	}{
-		// Bounded accumulator (grow via `s + x`, reset to a fresh `x.to_upper()` at
+		// Bounded accumulator (grow via `s + x`, reset to a fresh `x.to_ascii_upper()` at
 		// len > 40) over 3000 iters. Every superseded box is freed exactly once; a
 		// double-free would tick the underflow detector → 99. return 0.
-		{"accum-churn", `function churn(n: i32): i32 { var x: string = "yy"; var s: string = ""; var i: i32 = 0; while (i < n) { s = s + x; if (s.len() > 40) { s = x.to_upper(); } i = i + 1; } return 0; } function main(): i32 { var r: i32 = churn(3000); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`, 0},
+		{"accum-churn", `function churn(n: i32): i32 { var x: string = "yy"; var s: string = ""; var i: i32 = 0; while (i < n) { s = s + x; if (s.len() > 40) { s = x.to_ascii_upper(); } i = i + 1; } return 0; } function main(): i32 { var r: i32 = churn(3000); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`, 0},
 		// Small accumulator whose final value's length is returned — exercises the
 		// exit-sweep free of the final box with no double-free. "a"+"b"+"b"+"b" len 4.
 		{"accum-len", `function build(): i32 { var s: string = "a"; var i: i32 = 0; while (i < 3) { s = s + "b"; i = i + 1; } return s.len(); } function main(): i32 { var r: i32 = build(); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`, 4},
