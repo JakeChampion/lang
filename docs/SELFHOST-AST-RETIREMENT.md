@@ -85,14 +85,28 @@ with **no definition** — an undefined reference at link, latent since #5664
 because no arm64/wasm IR test uses these builtins. Both backends are now handled:
 arm64 marks the needs in `asm_arm64_ir.fern`'s `is_fern_helper` branch (the
 bodies already existed in `asm_arm64.emit_runtime`, gated and unmarked), and wasm
-— which has no body for any of them and would fail with `unknown func` at load —
-**defers** such a module to its AST path via `wasm_ir.register_only_fern_helper`,
-which is where it went before the lowerings existed. Any future helper-backed
+— which had no body for any of them and would fail with `unknown func` at load —
+initially **deferred** such a module to its AST path, which is where it went
+before the lowerings existed (since replaced by real WAT bodies — see below). Any future helper-backed
 builtin must do the same three-backend triage, not just the x86 five-part recipe.
-Noticed while verifying the wasm leg, and recorded because it will matter when
-#3457 reaches wasm: the wasm **AST** emitter does not implement these builtins
-either — `xs.sum()` emits `i32.const 0`, silently — so on wasm they are wrong on
-both paths today. That is a pre-existing wasm gap, orthogonal to this issue.
+
+**The wasm deferral is now retired (2026-07-27): wasm has real bodies.** The
+deferral was a stopgap, and a poor one — it routed those modules to a path that
+does not implement the builtins EITHER (the wasm AST emitter emits
+`i32.const 0` for `xs.sum()`), so both paths were silently wrong. `wasm_ir`
+now carries hand-written WAT for all six (`arr_i32_helpers`, gated on
+`@uses_arr_i32_helpers`), and they compute the same answers the register
+backends do — pinned by IR-ONLY cases in `TestSelfHostWasmIRPath`, since an
+AST==IR differential could only be satisfied by the IR path being wrong the
+same way. Two notes for anyone adding to that set: the WAT lives in
+`wasm_ir.fern`, not `wasm.fern`, so it does not grow the file #3457 deletes;
+and the two-argument helpers take their parameters **reversed** relative to
+the register signature — `index_of(target, xs)`, `pow(exp, base)` — because
+irlower pushes the argument first (the register callees bind params in reverse
+push order, #5666) while a wasm `call` binds first-pushed to param 0. Symmetric
+test data hides that; the cases are asymmetric on purpose. The wasm AST path is
+left as it was — silently wrong — since #3457 deletes it; the IR path is the one
+that has to be right.
 
 Also worth recording, because it bears on whether script support should survive
 at all: **the native compiler rejects script-shaped source** (`fern -interp` on

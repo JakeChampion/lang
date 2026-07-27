@@ -253,6 +253,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_arr_slice(cache)) { out = out.append("@uses_arr_slice"); }
     if (module_uses_arr_slice8(cache)) { out = out.append("@uses_arr_slice8"); }
     if (module_calls_arr_str_join(cache)) { out = out.append("@uses_arr_str_join"); }
+    if (module_calls_arr_i32_helper(cache)) { out = out.append("@uses_arr_i32_helpers"); }
     if (module_uses_chr(cache)) { out = out.append("@uses_chr"); }
     if (module_uses_divrem(cache)) { out = out.append("@uses_divrem"); }
     if (module_uses_i32_to_string(cache)) { out = out.append("@uses_i32_to_string"); }
@@ -780,17 +781,23 @@ pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: 
     return out;
 }
 
-// register_only_fern_helper reports whether a call_direct callee is one of the
-// Fern runtime helpers that exist ONLY on the register backends (#3457): the i32
-// builtins irlower lowers for every backend — xs.sum() / .product() /
-// .index_of() / .contains(), n.pow(k), xs.min() / .max() — whose bodies are
-// emitted by asm_ir.emit_ir_runtime / asm_arm64.emit_runtime from
-// asmcore.rt_src_*. wasm has no body for them: wasm_helper_symbol falls through
-// to `$<name>`, so the module would reference a function nothing defines and the
-// loader would reject it with `unknown func`. A module calling one is DEFERRED to
-// the wasm AST path (wasm.fern intercepts these builtins directly), which is
-// exactly where it went before the lowerings existed.
-function register_only_fern_helper(name: string): boolean {
+// arr_i32_fern_helper reports whether a call_direct callee is one of the i32
+// builtin helpers irlower lowers for every backend — xs.sum() / .product() /
+// .index_of() / .contains(), n.pow(k), xs.min() / .max() (#3457). On the
+// register backends their bodies are compiled from Fern source
+// (asmcore.rt_src_*) by asm_ir.emit_ir_runtime / asm_arm64.emit_runtime; wasm
+// has no such mechanism, so arr_i32_helpers below emits hand-written WAT
+// equivalents, gated on this scan. They were briefly DEFERRED to the wasm AST
+// path instead — which was never a real fallback, since that path does not
+// implement them either (it emits `i32.const 0` for xs.sum()).
+//
+// PARAMETER ORDER on the two-argument helpers is the reverse of the register
+// signature. irlower pushes the ARGUMENT first and the receiver second (the
+// register callees bind params in reverse push order, #5666), and a wasm `call`
+// binds the first-pushed value to param 0 — so the WAT signatures are
+// (target, xs) and (exp, base). wasm.arr_str_join_helper's `(param $sep i32)
+// (param $xs i32)` is the same convention.
+function arr_i32_fern_helper(name: string): boolean {
     return name == "__fern_arr_i32_sum"
         || name == "__fern_arr_i32_product"
         || name == "__fern_i32_pow"
@@ -799,16 +806,101 @@ function register_only_fern_helper(name: string): boolean {
         || name == "__fern_arr_i32_max_opt";
 }
 
-// module_calls_register_only_helper scans the lowered cache for a call to any of
-// those helpers — the call_direct analogue of the op blocklist in
-// wasm_ir_deferrals_ok, since these are callee NAMES rather than op kinds.
-function module_calls_register_only_helper(cache: irlower.LowerResult[]): boolean {
+// arr_i32_helpers is the WAT for that set. Array layout is $__fern_arr_box's —
+// [len@0][cap@4][elems@8], 4-byte i32 stride (see wasm.args_func, which builds
+// one) — and min/max return the same i32-payload Option box opt_make emits:
+// $__fern_str_box(8) with [tag@0][payload@4], tag 0 = Some, 1 = None. Emitted
+// as one block gated on @uses_arr_i32_helpers, mirroring the other helper
+// bundles; the cost of the unused members is a few hundred bytes of WAT in a
+// module that already uses one of them.
+pub function arr_i32_helpers(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_arr_i32_sum (param $a i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $i i32) (local $s i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $a)))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
+    o = o + "      (local.set $s (i32.add (local.get $s) (i32.load (i32.add (local.get $a) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 4)))))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $s))\n";
+    o = o + "  (func $__fern_arr_i32_product (param $a i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $i i32) (local $p i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $a)))\n";
+    o = o + "    (local.set $p (i32.const 1))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
+    o = o + "      (local.set $p (i32.mul (local.get $p) (i32.load (i32.add (local.get $a) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 4)))))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $p))\n";
+    // Not found is -1, matching asmcore.rt_src_arr_i32_index_of; `contains` is
+    // the `>= 0` test irlower emits around the result.
+    o = o + "  (func $__fern_arr_i32_index_of (param $t i32) (param $a i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $i i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $a)))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
+    o = o + "      (if (i32.eq (local.get $t) (i32.load (i32.add (local.get $a) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 4))))))\n";
+    o = o + "        (then (return (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (i32.const -1))\n";
+    // pow: exponent first (see the parameter-order note above). A negative
+    // exponent yields 0 and 0^0 yields 1, matching asmcore.rt_src_i32_pow.
+    o = o + "  (func $__fern_i32_pow (param $e i32) (param $b i32) (result i32)\n";
+    o = o + "    (local $r i32) (local $i i32)\n";
+    o = o + "    (local.set $r (i32.const 1))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $e)))\n";
+    o = o + "      (local.set $r (i32.mul (local.get $r) (local.get $b)))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $r))\n";
+    o = o + arr_i32_extremum_helper("min", "i32.lt_s");
+    o = o + arr_i32_extremum_helper("max", "i32.gt_s");
+    return o;
+}
+
+// arr_i32_extremum_helper is the shared min/max body: the empty-array guard and
+// the Option box live INSIDE the helper, exactly as they do in the Fern source
+// the register backends compile (asmcore.rt_src_arr_i32_min_max_opt), so the
+// call site is an unconditional call on every backend.
+function arr_i32_extremum_helper(which: string, cmp: string): string {
+    var o: string = "";
+    o = o + "  (func $__fern_arr_i32_" + which + "_opt (param $a i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $i i32) (local $m i32) (local $e i32) (local $box i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $a)))\n";
+    o = o + "    (local.set $box (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (if (i32.eqz (local.get $n))\n";
+    o = o + "      (then\n";
+    o = o + "        (i32.store (local.get $box) (i32.const 1))\n";
+    o = o + "        (i32.store (i32.add (local.get $box) (i32.const 4)) (i32.const 0))\n";
+    o = o + "        (return (local.get $box))))\n";
+    o = o + "    (local.set $m (i32.load (i32.add (local.get $a) (i32.const 8))))\n";
+    o = o + "    (local.set $i (i32.const 1))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
+    o = o + "      (local.set $e (i32.load (i32.add (local.get $a) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 4))))))\n";
+    o = o + "      (if (" + cmp + " (local.get $e) (local.get $m)) (then (local.set $m (local.get $e))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (i32.store (local.get $box) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (local.get $m))\n";
+    o = o + "    (local.get $box))\n";
+    return o;
+}
+
+// module_calls_arr_i32_helper scans the lowered cache for a call to any of those
+// helpers — a callee-NAME scan rather than an op-kind one, so it cannot ride
+// module_emits_op_cached. Drives the @uses_arr_i32_helpers need.
+pub function module_calls_arr_i32_helper(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
     while (fi < cache.len()) {
         var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 149 && register_only_fern_helper(r.ops[i].str)) { return true; }  // call_direct
+            if (r.ops[i].kind_tag == 149 && arr_i32_fern_helper(r.ops[i].str)) { return true; }  // call_direct
             i = i + 1;
         }
         fi = fi + 1;
@@ -1257,11 +1349,11 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // the AST path, so the op-blocklist below need not be exhaustive (#6).
         && all_lowered_ok(cache)
         && !module_erased_wide(cache)
-        // The register-only i32 builtin helpers (sum / product / pow / index_of /
-        // contains / min / max) have no wasm body — see
-        // register_only_fern_helper. Deferred to the AST path, which intercepts
-        // those builtins itself.
-        && !module_calls_register_only_helper(cache)
+        // The i32 builtin helpers (sum / product / pow / index_of / contains /
+        // min / max) are NO LONGER deferred: wasm_ir.arr_i32_helpers emits WAT
+        // bodies for them, gated on @uses_arr_i32_helpers. Deferring them was
+        // never a real fallback anyway — the AST path does not implement them
+        // either (xs.sum() emits `i32.const 0` there).
         // xs.join(sep) NOW lowers on the wasm IR path (#5328): the register
         // backends' __fern_arr_str_join runtime call is served by a matching
         // $__fern_arr_str_join shim over the $__fern_str_join WAT worker
