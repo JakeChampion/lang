@@ -9,15 +9,20 @@ import (
 	"testing"
 )
 
-// TestSelfHostI32PredicatesIRX86_64 pins that the zero-arg i32 builtin predicates
-// lower on the IR path rather than bailing the module to the legacy AST emitter
-// (#3457).
+// TestSelfHostI32PredicatesIRX86_64 pins that the built-in i32 methods lower on
+// the IR path rather than bailing the module to the legacy AST emitter (#3457).
 //
-// asm.fern intercepted these inline (its ty_is_i32 block) and irlower had no case
-// for them, so ANY program calling one sent its whole module to the AST emitter.
+// asm.fern intercepted these (its ty_is_i32 block) and irlower had no case for
+// them, so ANY program calling one sent its whole module to the AST emitter.
 // Measuring the fallback put 105 of the reachable AST-emit cases in this
-// "ineligible-fn" bucket — the largest category keeping asm.fern alive — and these
-// five predicates are the slice that needs no new opcode and no runtime helper.
+// "ineligible-fn" bucket — the largest category keeping asm.fern alive.
+//
+// Three shapes are covered, in increasing order of what they require:
+//   - the zero-arg predicates: pure inline arithmetic over existing ops;
+//   - abs / sign: inline too, but they need the receiver value twice, so it is
+//     stored to a temp local and re-loaded rather than lowered twice;
+//   - xs.sum() / xs.product(): HELPER-backed, the shape with the most moving
+//     parts (see the comment on those cases below).
 //
 // Two-part assertion on purpose: the exit code alone would still pass if the
 // program silently fell back to AST, so each case also asserts the emitted asm
@@ -77,6 +82,18 @@ func TestSelfHostI32PredicatesIRX86_64(t *testing.T) {
 		{"sign-zero", "function main(): i32 { var n: i32 = 0; return n.sign(); }", 0},
 		// sign(-7) is -1; +2 keeps the exit code in range and pins the sign.
 		{"sign-negative", "function main(): i32 { var n: i32 = 0 - 7; return n.sign() + 2; }", 1},
+		// xs.sum() / xs.product() are HELPER-backed rather than inline arithmetic,
+		// which needs four things beyond the lowering: an is_fern_helper entry (else
+		// calls_only_known bails the module), a need mapping on the call target and a
+		// matching emit_ir_runtime_fern_fn gate (else the body is never emitted and the
+		// program calls an undefined symbol), and an emit_runtime_globls export (else a
+		// library unit dangles at the per-module link).
+		{"arr-sum", "function main(): i32 { var xs: i32[] = [1, 2, 3, 4, 5]; return xs.sum(); }", 15},
+		{"arr-sum-empty", "function main(): i32 { var xs: i32[] = []; return xs.sum(); }", 0},
+		{"arr-sum-mixed-signs", "function main(): i32 { var xs: i32[] = [10, 0 - 3, 0 - 2, 5]; return xs.sum(); }", 10},
+		{"arr-product", "function main(): i32 { var xs: i32[] = [2, 3, 5]; return xs.product(); }", 30},
+		{"arr-product-empty", "function main(): i32 { var xs: i32[] = []; return xs.product(); }", 1},
+		{"arr-product-with-zero", "function main(): i32 { var xs: i32[] = [4, 0, 7]; return xs.product(); }", 0},
 	}
 
 	for _, tc := range cases {
