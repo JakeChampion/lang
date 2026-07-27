@@ -168,12 +168,15 @@ Grouped by family:
   companions `find`, `rfind`, `find_ci` (which return
   `None` instead) so a forgotten `< 0` check can't read a
   bogus index — consistent with `split_once` / `strip_prefix`.
-- **Casing / transform:** `capitalize`, `to_lower`, `to_upper`
-  (Unicode simple case mapping, ASCII fast path inside),
-  `to_ascii_lower` / `to_ascii_upper` (the byte fold, for
-  known-ASCII input),
-  `swap_case` (toggle ASCII case, à la Python `str.swapcase`),
-  `snake_case`, `kebab_case`, `title_case`, `to_acronym`,
+- **Casing / transform:** Unicode simple case mapping with an ASCII
+  fast path inside — `to_lower`, `to_upper`, `capitalize` (first code
+  point), `title_case` (first code point of each whitespace-separated
+  word), `swap_case` (à la Python `str.swapcase`). Each has a
+  byte-wise twin for known-ASCII input, which is also what you want
+  for bytes that may not be UTF-8: `to_ascii_lower`,
+  `to_ascii_upper`, `to_ascii_capitalize`, `to_ascii_title_case`,
+  `to_ascii_swap_case`.
+  Plus `snake_case`, `kebab_case`, `to_acronym`,
   `word_count`, `eq_ignore_ascii_case`, `slugify` (free-form text →
   URL slug: lowercased, non-`[a-z0-9]` runs collapsed to `-`, ends
   trimmed — distinct from `kebab_case`, which only folds camelCase)

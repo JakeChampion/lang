@@ -1,9 +1,12 @@
 import "std/test";
 import "std/string";
 // examples/tests/string_swap_case_test.fern — pure-Fern coverage of
-// std/string.swap_case: toggle the case of every ASCII letter (A-Z <-> a-z),
-// passing digits / punctuation / non-ASCII through unchanged (Python's
-// str.swapcase, ASCII-only). Covers mixed case, all-upper / all-lower,
+// std/string.swap_case: toggle the case of every code point, passing
+// caseless ones (digits, punctuation) through unchanged (Python's
+// str.swapcase). The cases below are all ASCII, where it agrees exactly
+// with the byte-wise `to_ascii_swap_case`; the Unicode-specific
+// behaviour is pinned by the Go-side TestStringUnicodeCase.
+// Covers mixed case, all-upper / all-lower,
 // non-letters, empty, and the involution property. Kept as its own suite so the
 // self-host merged bundle stays under the asm_ir IR budget; uses assert_true.
 // The Go-side TestStringSwapCase pins these across all four backends; this is

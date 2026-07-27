@@ -58,6 +58,31 @@ function main(): i32 {
 
     // Locale-independent: no Turkish dotless-i tailoring in the default path.
     if ("I".to_lower() != "i") { return 23; }
+
+    // capitalize / title_case / swap_case: same split, same contrast.
+    if ("élan".capitalize() != "Élan") { return 24; }
+    if ("élan".to_ascii_capitalize() != "élan") { return 25; }
+    if ("hello".capitalize() != "Hello") { return 26; }
+    if ("".capitalize() != "") { return 27; }
+
+    if ("élan vital".title_case() != "Élan Vital") { return 28; }
+    if ("the quick brown FOX".title_case() != "The Quick Brown FOX") { return 29; }
+    if ("hello world".to_ascii_title_case() != "Hello World") { return 30; }
+    if ("".title_case() != "") { return 31; }
+
+    if ("Élan".swap_case() != "éLAN") { return 32; }
+    // The byte fold swaps the ASCII tail but leaves É alone: ÉLAN, not éLAN.
+    if ("Élan".to_ascii_swap_case() != "ÉLAN") { return 33; }
+    if ("Hello World".swap_case() != "hELLO wORLD") { return 34; }
+    if ("123!@#".swap_case() != "123!@#") { return 35; }
+    // Still its own inverse, on ASCII and beyond it.
+    if ("Hello, World!".swap_case().swap_case() != "Hello, World!") { return 36; }
+    if ("Élan Vital".swap_case().swap_case() != "Élan Vital") { return 37; }
+
+    // The Unicode title_case breaks on any whitespace; the byte one only
+    // on U+0020. This is the one place the two differ on pure ASCII.
+    if ("a\tb".title_case() != "A\tB") { return 38; }
+    if ("a\tb".to_ascii_title_case() != "A\tb") { return 39; }
     return 0;
 }
 `
