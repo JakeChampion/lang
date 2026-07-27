@@ -1174,6 +1174,9 @@ function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
 // couldn't recover the width to dispatch.
 function type_from_name(name: string): Type {
     if (name == "i32") { return t_i32(); }
+    // `char` is a SURFACE type that erases to an i32 slot at the IR choke
+    // point (#5629); this port has no separate tag, so it resolves as i32.
+    if (name == "char") { return t_i32(); }
     if (name == "i64") { return t_i64(); }
     if (name == "u32") { return t_u32(); }
     if (name == "u64") { return t_u64(); }
@@ -5861,7 +5864,12 @@ function dup_name_before(names: string[], idx: i32): boolean {
 // port resolves coarsely). The base name is taken modulo `[...]`.
 function receiver_type_ok(rt: string, mod: parser.Module): boolean {
     if (rt.len() == 0) { return true; }
-    if (rt == "i32" || rt == "i64" || rt == "u32" || rt == "u64" || rt == "bool" || rt == "boolean" || rt == "string" || rt == "f64" || rt == "f32" || rt == "float") { return true; }
+    // `char` belongs here for the same reason the integers do: it is a
+    // built-in the native checker accepts as a receiver. std/unicode
+    // declares seven `char` methods (#5629), so leaving it out made EVERY
+    // program that transitively imports std/unicode — which is every
+    // program importing std/string — draw a spurious E021 per method.
+    if (rt == "i32" || rt == "i64" || rt == "u32" || rt == "u64" || rt == "bool" || rt == "boolean" || rt == "string" || rt == "f64" || rt == "f32" || rt == "float" || rt == "char") { return true; }
     var bi: i32 = 0;
     while (bi < rt.len()) { if (rt[bi] == 91) { return true; } bi = bi + 1; }   // '[' → generic/Map/array
     if (rt.len() >= 4 && rt[0:4] == "dyn ") { return true; }
