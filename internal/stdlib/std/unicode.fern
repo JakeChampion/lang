@@ -21,10 +21,9 @@
 //     iota-subscript forms). The per-code-point to_upper_char /
 //     to_lower_char stay SIMPLE (1:1) — a 1→N expansion has no single
 //     code point to return.
-//   - The CONDITIONAL rules are not applied: a word-final `Σ` lowercases
-//     to `σ`, not `ς` (Final_Sigma needs the Cased and
-//     Case_Ignorable properties, which Go's unicode package does not
-//     expose).
+//   - One CONDITIONAL rule is applied when lowercasing: Greek Final_Sigma,
+//     so a word-final `Σ` becomes `ς` and a medial one `σ`. The LOCALE
+//     tailorings (Turkish dotless i, Lithuanian) are not, by design.
 //   - is_digit is the decimal-digit class (Unicode Nd); is_letter is the
 //     full Letter category; is_whitespace matches unicode.IsSpace.
 //   - Not locale-aware (no Turkish / Lithuanian tailoring), by design.
@@ -82,6 +81,18 @@ function _upper_ranges(): string {
 // 658 entries, 5264 bytes (8 chars per entry).
 function _lower_ranges(): string {
     return "001Q001k002f002f003O003g003i003p0041004100430043004500450047004700490049004;004;004=004=004?004?004A004A004C004C004E004E004G004G004I004I004K004K004M004M004O004O004Q004Q004S004S004U004U004W004W004Y004Y004[004[004^004^004`004`004b004b004d004d004f004f004h004i004k004k004m004m004o004o0050005000520052005400540056005600580059005;005;005=005=005?005?005A005A005C005C005E005E005G005G005I005I005K005K005M005M005O005O005Q005Q005S005S005U005U005W005W005Y005Y005[005[005^005^005`005`005b005b005d005d005f005f005h005h005k005k005m005m005o0060006300630065006500680068006<006=006B006B006E006E006I006K006N006N006Q006Q006S006S006U006U006X006X006Z006[006^006^006a006a006e006e006g006g006j006k006n006p0076007600790079007<007<007>007>007@007@007B007B007D007D007F007F007H007H007J007J007L007M007O007O007Q007Q007S007S007U007U007W007W007Y007Y007[007[007^007^007`007a007d007d007f007f007j007j007l007l007n007n007p007p0081008100830083008500850087008700890089008;008;008=008=008?008?008A008A008C008C008E008E008G008G008I008I008K008K008M008M008O008O008Q008Q008S008S008U008U008W008W008Y008Y008[008[008^008^008`008`008b008b008d008j008m008m008p0090009200920097009700990099009;009;009=009=009?00:C00:E00:`00=b00=b00=d00=d00=h00=h00=l00=n00>@00>@00>]00?>00?@00?A00?E00?G00?I00?I00?K00?K00?M00?M00?O00?O00?Q00?Q00?S00?S00?U00?U00?W00?W00?Y00?Y00?[00?[00?^00?^00?`00?d00?f00?f00?i00?i00?l00?m00@a00AO00AQ00AQ00AS00AS00AU00AU00AW00AW00AY00AY00A[00A[00A^00A^00A`00A`00Ab00Ab00Ad00Ad00Af00Af00Ah00Ah00Aj00Aj00Al00Al00An00An00Ap00Ap00B100B100B;00B;00B=00B=00B?00B?00BA00BA00BC00BC00BE00BE00BG00BG00BI00BI00BK00BK00BM00BM00BO00BO00BQ00BQ00BS00BS00BU00BU00BW00BW00BY00BY00B[00B[00B^00B^00B`00B`00Bb00Bb00Bd00Bd00Bf00Bf00Bh00Bh00Bj00Bj00Bl00Bl00Bn00Bn00Bp00Bp00C200C200C400C400C600C600C800C800C:00C:00C<00C<00C>00C?00CA00CA00CC00CC00CE00CE00CG00CG00CI00CI00CK00CK00CM00CM00CO00CO00CQ00CQ00CS00CS00CU00CU00CW00CW00CY00CY00C[00C[00C^00C^00C`00C`00Cb00Cb00Cd00Cd00Cf00Cf00Ch00Ch00Cj00Cj00Cl00Cl00Cn00Cn00Cp00Cp00D100D100D300D300D500D500D700D700D900D900D;00D;00D=00D=00D?00D?00DA00DA00DC00DC00DE00DE00DG00DG00DI00DI00DK00DK00DM00DM00DO00DO00DQ00DQ00DS00DS00DU00DU00DW00DW00DY00DY00D[00D[00D^00D^00D`00D`00EP00F8013@013k013n013p01?i01?n01c001c801e001e[01f[01fh01fj01gJ01i101i101i301i301i501i501i701i701i901i901i;01i;01i=01i=01i?01i?01iA01iA01iC01iC01iE01iE01iG01iG01iI01iI01iK01iK01iM01iM01iO01iO01iQ01iQ01iS01iS01iU01iU01iW01iW01iY01iY01i[01i[01i^01i^01i`01i`01ib01ib01id01id01if01if01ih01ih01ij01ij01il01il01in01in01ip01ip01j101j101j301j301j501j501j701j701j901j901j;01j;01j=01j=01j?01j?01jA01jA01jC01jC01jE01jE01jG01jG01jI01jI01jK01jK01jM01jM01jO01jO01jQ01jQ01jS01jS01jU01jU01jW01jW01jY01jY01j[01j[01j^01j^01j`01j`01jb01jb01jd01jd01jf01jf01jh01jh01jj01jj01jl01jl01jn01jn01jp01jp01k101k101k301k301k501k501k701k701k901k901k;01k;01k=01k=01k?01k?01kA01kA01kC01kC01kE01kM01kO01kO01kQ01kQ01kS01kS01kU01kU01kW01kW01kY01kY01k[01k[01k^01k^01k`01k`01kb01kb01kd01kd01kf01kf01kh01kh01kj01kj01kl01kl01kn01kn01kp01kp01l101l101l301l301l501l501l701l701l901l901l;01l;01l=01l=01l?01l?01lA01lA01lC01lC01lE01lE01lG01lG01lI01lI01lK01lK01lM01lM01lO01lO01lQ01lQ01lS01lS01lU01lU01lW01lW01lY01lY01l[01l[01l^01l^01l`01l`01lb01lb01ld01ld01lf01lf01lh01lh01lj01lj01ll01ll01ln01ln01lp01m701m@01mE01mP01mW01ma01mh01n001n501n@01nG01nP01nW01na01nn01o001o701o@01oG01oP01oW01oa01oe01og01oh01oo01oo01p201p401p601p701p@01pC01pF01pG01pP01pW01pc01pe01pg01ph024:024:024>024?024C024C024`024`024e024e024j024j024m024n02560259025>025>0264026402aa02bO02bQ02bQ02bU02bV02bX02bX02bZ02bZ02b]02b]02bb02bb02bd02be02bg02bl02c102c102c302c302c502c502c702c702c902c902c;02c;02c=02c=02c?02c?02cA02cA02cC02cC02cE02cE02cG02cG02cI02cI02cK02cK02cM02cM02cO02cO02cQ02cQ02cS02cS02cU02cU02cW02cW02cY02cY02c[02c[02c^02c^02c`02c`02cb02cb02cd02cd02cf02cf02ch02ch02cj02cj02cl02cl02cn02cn02cp02cp02d102d102d302d302d502d502d702d702d902d902d;02d;02d=02d=02d?02d?02dA02dA02dC02dC02dE02dE02dG02dG02dI02dI02dK02dK02dM02dM02dO02dO02dQ02dQ02dS02dT02d]02d]02d_02d_02dd02dd02e002eU02eW02eW02e^02e^0:I10:I10:I30:I30:I50:I50:I70:I70:I90:I90:I;0:I;0:I=0:I=0:I?0:I?0:IA0:IA0:IC0:IC0:IE0:IE0:IG0:IG0:II0:II0:IK0:IK0:IM0:IM0:IO0:IO0:IQ0:IQ0:IS0:IS0:IU0:IU0:IW0:IW0:IY0:IY0:I[0:I[0:I^0:I^0:J10:J10:J30:J30:J50:J50:J70:J70:J90:J90:J;0:J;0:J=0:J=0:J?0:J?0:JA0:JA0:JC0:JC0:JE0:JE0:JG0:JG0:JI0:JI0:JK0:JK0:LS0:LS0:LU0:LU0:LW0:LW0:LY0:LY0:L[0:L[0:L^0:L^0:L`0:Lb0:Ld0:Ld0:Lf0:Lf0:Lh0:Lh0:Lj0:Lj0:Ll0:Ll0:Ln0:Ln0:Lp0:Lp0:M10:M10:M30:M30:M50:M50:M70:M70:M90:M90:M;0:M;0:M=0:M=0:M?0:M?0:MA0:MA0:MC0:MC0:ME0:ME0:MG0:MG0:MI0:MI0:MK0:MK0:MM0:MM0:MO0:MO0:MQ0:MQ0:MS0:MS0:MU0:MU0:MW0:MW0:MY0:MY0:M[0:M[0:M^0:M^0:M`0:M`0:Mb0:Mi0:Mk0:Mk0:Mm0:Mm0:Mp0:Mp0:N10:N10:N30:N30:N50:N50:N70:N70:N<0:N<0:N>0:N>0:NA0:NA0:NC0:NE0:NG0:NG0:NI0:NI0:NK0:NK0:NM0:NM0:NO0:NO0:NQ0:NQ0:NS0:NS0:NU0:NU0:NW0:NW0:NY0:NY0:N`0:N`0:Nf0:Nf0:Nh0:Nh0:Nj0:Nj0:Nl0:Nl0:Nn0:Nn0:Np0:Np0:O10:O10:O30:O30:O80:O80:O:0:O:0:OA0:OA0:OC0:OC0:OE0:OE0:OG0:OG0:OI0:OI0:Og0:Og0:Ok0:Ok0:]a0:^J0:^P0:^X0:^a0:_p0?]00?]60?]C0?]G0?n10?nJ0@@X0@A?0@CH0@Cl0@FG0@FQ0@FS0@Fb0@Fd0@Fj0@Fl0@Fm0@d00@dc0AS00ASO0FjP0Fjp0M@J0M@d0MA>0MAD0MAF0MAW0MB20MBK0MBg0MBj0MBl0MBl0MBn0MC30MC50MC?0MCZ0MD30MDN0MDh0MEB0ME[0MF60MFO0MFk0MGC0MG_0MH70MHR0MHl0MIF0MI`0MJ:0MJU0MK20MKJ0MKL0MKQ0MKm0MLD0MLF0MLK0MLg0MM>0MM@0MME0MMa0MN80MN:0MN?0MNZ0MO20MO40MO90MO;0MO;0Mm00Mm90Mm;0MmN0MmU0MmZ0NTR0NU3";
+}
+
+// Inclusive code-point ranges for the cased class: lo | hi.
+// 157 entries, 1256 bytes (8 chars per entry).
+function _cased_ranges(): string {
+    return "0011001J001Q001k002Z002Z002f002f002k002k0030003F003H003g003i006k006m006p007400:C00:E00:i00;000;100;P00;T00=500=500=a00=d00=g00=h00=k00=n00=p00=p00>600>600>800>:00><00><00>>00>Q00>S00?f00?h00B100B:00D`00Db00EF00EP00F8012P013501370137013=013=013@013k013m013p01>P01?f01?i01?n01c001c801c@01ck01cn01cp01e001gp01i001mE01mH01mM01mP01n501n801n=01n@01nG01nI01nI01nK01nK01nM01nM01nO01nn01o001oe01og01om01oo01oo01p201p401p601p<01p@01pC01pF01pK01pP01p]01pc01pe01pg01pm021b021b021p021p022@022L0242024202470247024:024C024E024E024I024M024T024T024V024V024X024X024Z024^024`024e024j024j024m024p02550259025>025>025P025p0263026402Bg02CY02a002dT02d[02d_02dc02dd02e002eU02eW02eW02e^02e^0:I00:I^0:J00:JM0:LR0:N70:N;0:N>0:N@0:O:0:O@0:OA0:OC0:OC0:OE0:OI0:Oc0:Og0:Oi0:Ok0:]a0:^J0:^L0:^Y0:^a0:_p0?]00?]60?]C0?]G0?mQ0?mk0?n10?nJ0@@00@A?0@Ba0@CC0@CH0@Cl0@Ea0@Ek0@Em0@F:0@F<0@FB0@FD0@FE0@FG0@FQ0@FS0@Fb0@Fd0@Fj0@Fl0@Fm0@N00@N00@N30@N50@N70@Na0@Nc0@Nk0@c00@cc0@d00@dc0ARP0ASO0Fj00Fjp0M@00MAD0MAF0MBL0MBN0MBO0MBR0MBR0MBU0MBV0MBY0MB]0MB_0MBj0MBl0MBl0MBn0MC30MC50MD50MD70MD:0MD=0MDD0MDF0MDL0MDN0MDj0MDl0MDo0ME00ME40ME60ME60ME:0ME@0MEB0MJU0MJX0MK00MK20MKJ0MKL0MKk0MKm0MLD0MLF0MLe0MLg0MM>0MM@0MM_0MMa0MN80MN:0MNX0MNZ0MO20MO40MO;0Mm00Mm90Mm;0MmN0MmU0MmZ0N0a0N1^0NT00NU30O4a0O590O5@0O5Y0O5a0O69";
+}
+
+// Inclusive code-point ranges for the caseignorable class: lo | hi.
+// 437 entries, 3496 bytes (8 chars per entry).
+function _caseignorable_ranges(): string {
+    return "000W000W000_000_000k000k001N001N001P001P002X002X002^002^002`002`002e002e002h002i00:a00=`00=e00=f00=k00=k00>400>500>700>700B300B900EI00EI00EO00EO00FA00Fn00Fp00Fp00G100G200G400G500G700G700Ge00Ge00H000H500H@00HJ00HL00HL00I000I000I;00IO00Ia00Ia00KF00KM00KO00KX00KZ00K^00L?00L?00LA00LA00La00M:00NV00Na00O[00Of00Ok00Ok00On00On00PF00P^00QI00QK00R800R800R@00RA00RH00RO00S900T200Tk00Tk00Tm00Tm00U100U800U=00U=00UA00UG00UR00US00Ub00Ub00V100V100Vm00Vm00W100W400W=00W=00WR00WS00Wo00Wo00X100X200Xm00Xm00Y100Y200Y700Y800Y;00Y=00YA00YA00Ya00Yb00Yf00Yf00Z100Z200Zm00Zm00[100[500[700[800[=00[=00[R00[S00[k00[p00]100]100]m00]m00]p00]p00^100^400^=00^=00^E00^F00^R00^S00_200_200`000`000`=00`=00a000a000a400a400am00am00ao00b000b600b800b:00b=00bE00bF00bR00bS00c100c100cm00cm00cp00cp00d600d600d<00d=00dR00dS00e000e100el00em00f100f400f=00f=00fR00fS00g100g100h:00h:00hB00hD00hF00hF00ib00ib00ie00ik00j600j>00kb00kb00ke00km00l600l600l800l>00mH00mI00mf00mf00mh00mh00mj00mj00nb00no00o000o400o600o700o=00oG00oI00om00p600p6010^010a010c010h010j010k010n010o011H011I011N011P011b011e0122012201250126012=012=012M012M013m013m01=M01=O01LB01LD01Lc01Ld01MB01MC01Mc01Md01Ne01Nf01Nh01Nn01O601O601O901OC01OG01OG01OM01OM01P;01P?01Q301Q301R501R601RY01RY01TP01TR01TW01TX01Tc01Tc01Tj01Tl01XG01XH01XK01XK01YF01YF01YH01YN01YP01YP01YR01YR01YU01Y]01Yd01Ym01Yp01Yp01ZW01ZW01Za01[>01]001]301]e01]e01]g01]k01]m01]m01^201^201^[01^d01_001_101_R01_U01_X01_Y01_[01_^01`V01`V01`X01`Y01`^01`^01``01`b01a]01ad01ag01ah01bi01bn01d@01dB01dD01dP01dR01dX01d^01d^01de01de01di01dj01e]01fZ01fi01fi01gK01hp01on01on01op01p101p=01p?01pM01pO01p^01p`01pn01po020;020?020H020I020T020T020W020W020Z020_021P021T021V021`021b021b021p021p022@022L023@023a02bm02bn02d`02db02f`02f`02fp02fp02hP02hp02i`02i`03050305030Z030^030b030f030l030l032I032N033m033o0:0E0:0E0:Ci0:Cn0:H<0:H<0:I`0:Ic0:Ie0:In0:Ip0:Ip0:JL0:JO0:Ka0:Kb0:L00:LQ0:Ma0:Ma0:N80:N:0:Oc0:Oe0:Oi0:Oj0:P20:P20:P60:P60:P;0:P;0:PU0:PV0:P]0:P]0:S40:S50:SP0:Sb0:Sp0:Sp0:TV0:T^0:U70:UA0:V00:V20:Vd0:Vd0:Vg0:Vj0:Vm0:Vn0:W?0:W?0:WU0:WV0:XY0:X_0:Xb0:Xc0:Xf0:Xg0:Y30:Y30:Y<0:Y<0:Ya0:Ya0:Ym0:Ym0:Za0:Za0:Zc0:Ze0:Zh0:Zi0:Zo0:Zp0:[10:[10:[M0:[M0:[]0:[^0:[d0:[e0:[g0:[g0:^K0:^O0:^Y0:^[0:`U0:`U0:`X0:`X0:`^0:`^0?]N0?]N0?_c0?`20?i00?i?0?iC0?iC0?iP0?i`0?jB0?jB0?jE0?jE0?lp0?lp0?m70?m70?m>0?m>0?mJ0?mJ0?mo0?mo0?n00?n00?na0?na0?oN0?oO0?pS0?pS0?pj0?pl0@7n0@7n0@;P0@;P0@=g0@=k0@N00@N50@N70@Na0@Nc0@Nk0@X10@X30@X50@X60@X<0@X?0@Xi0@Xk0@Xp0@Xp0@[U0@[V0@eT0@eW0@k[0@k]0@ln0@lp0@n60@n@0@o20@o50A010A010A0i0A160A1a0A1a0A1d0A1e0A1p0A210A2d0A2g0A2j0A2k0A2n0A2n0A320A320A3=0A3=0A400A420A4W0A4[0A4^0A4e0A5d0A5d0A600A610A6g0A6o0A790A7<0A7?0A7?0A8`0A8b0A8e0A8e0A8g0A8h0A8o0A8o0A910A910A;O0A;O0A;S0A;Z0A<00A<10A<l0A<m0A=00A=00A=V0A=]0A=a0A=e0A@i0A@p0AA20AA40AA60AA60AAN0AAN0ABd0ABi0ABk0ABk0ABp0AC00AC20AC30AFc0AFf0AFm0AFn0AFp0AG00AGL0AGM0AHd0AHk0AHn0AHn0AHp0AI00AJ[0AJ[0AJ^0AJ^0AJa0AJf0AJh0AJh0ALM0ALO0ALR0ALU0ALW0AL[0AP`0APh0APj0APk0ATl0ATm0ATo0ATo0AU30AU30AWD0AWG0AWJ0AWK0AWP0AWP0AX10AX:0AXd0AXi0AXl0AXo0AY70AY70AYA0AYF0AYI0AYK0AZ:0AZF0AZH0AZI0Aaa0Aag0Aai0Aan0Aap0Aap0AcB0AcW0AcZ0Aca0Acc0Acd0Acf0Acg0Aeb0Aeg0Aek0Aek0Aem0Aen0Aep0Af50Af70Af70Ag@0AgA0AgE0AgE0AgG0AgG0Ald0Ale0Am00Am10Amg0Amk0An00An00An20An20C@a0CA00CA70CAE0F[a0F[e0F]a0F]g0F^00F^30Fn?0Fn?0Fo?0FoO0FpP0FpQ0FpS0FpT0Jpa0Jpd0Jpf0Jpl0Jpn0Jpo0KcM0KcN0KcP0KcS0Lm00Lm^0Lma0Ln60M5W0M5Y0M5d0M620M650M6;0M6Z0M6^0M920M940MX00MXg0MXl0MY]0MYf0MYf0MZ40MZ40MZK0MZO0MZQ0MZ`0N000N060N080N0H0N0K0N0Q0N0S0N0T0N0V0N0Z0N0a0N1^0N2?0N2?0N4a0N4n0N:_0N:_0N;]0N;`0NC[0NC`0NS@0NSF0NU40NU;0O?l0O?p3P013P013P0P3P1p3P403P7`";
 }
 
 // Full (1->N) uppercase: from | to0 | to1 | to2, trailing 0 = absent.
@@ -221,25 +232,100 @@ function _full_case(cp: i32, want_upper: boolean): string {
     return "";
 }
 
-// _map_case decodes `s`, maps every code point, and re-encodes.
-// Malformed bytes each become U+FFFD, matching utf8.codepoints.
+// _final_sigma reports whether the sigma at byte offset `at` in `s` is
+// word-FINAL in the Unicode sense: preceded by a Cased code point and NOT
+// followed by one, skipping Case_Ignorable code points on both sides.
+// That is the Final_Sigma condition from SpecialCasing, and it is why
+// `ΣΟΦΟΣ` lowercases to `σοφος` and not `σοφοσ`.
+function _final_sigma(s: string, at: i32, sigma_len: i32): boolean {
+    // Look BACK for a cased code point, skipping case-ignorables.
+    var before: boolean = false;
+    var k: i32 = at;
+    while (k > 0) {
+        var st: i32 = k - 1;
+        while (st > 0 && (s[st] & 192) == 128) { st = st - 1; }
+        var cp: i32 = 65533;
+        match (utf8.utf8_decode_at(s, st)) {
+            Some(pr) => { cp = pr.0; },
+            None => { }
+        }
+        if (_in_ranges(_caseignorable_ranges(), cp)) { k = st; }
+        else {
+            before = _in_ranges(_cased_ranges(), cp);
+            k = 0;
+        }
+    }
+    if (!before) { return false; }
+    // Look FORWARD for a cased code point, skipping case-ignorables.
+    var n: i32 = s.len();
+    var i: i32 = at + sigma_len;
+    while (i < n) {
+        var cp2: i32 = 65533;
+        var w: i32 = 1;
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pr2) => { cp2 = pr2.0; w = pr2.1; },
+            None => { }
+        }
+        if (_in_ranges(_caseignorable_ranges(), cp2)) { i = i + w; }
+        else { return !_in_ranges(_cased_ranges(), cp2); }
+    }
+    return true;
+}
+
+// _map_upper and _map_lower decode `s`, map every code point, and
+// re-encode. Malformed bytes each become U+FFFD, matching utf8.codepoints.
 //
 // FULL mapping: a code point with a 1->N expansion (`ß` -> `SS`, the
 // ligatures, the Greek iota-subscript forms) contributes several code
 // points, so the result can be longer than the input in BOTH bytes and
 // code points. Everything else takes the simple 1:1 table.
-function _map_case(s: string, want_upper: boolean): string {
+//
+// These are deliberately TWO functions rather than one taking a direction
+// flag. Only the lowercase path needs Final_Sigma, and Final_Sigma reaches
+// the Cased and Case_Ignorable range tables — about 8.9 KB. With a shared
+// body, per-function DCE cannot tell that an uppercase-only program never
+// reaches them, so every such program paid for tables it could not use.
+// Do not merge these back together.
+function _map_upper(s: string): string {
     var out: string = "";
     var n: i32 = s.len();
     var i: i32 = 0;
     while (i < n) {
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => {
-                var full: string = _full_case(pair.0, want_upper);
+                var full: string = _full_case(pair.0, true);
                 if (full.len() > 0) {
                     out = out + full;
                 } else {
-                    out = out + utf8.utf8_encode(_case_apply(pair.0, want_upper));
+                    out = out + utf8.utf8_encode(_case_apply(pair.0, true));
+                }
+                i = i + pair.1;
+            },
+            None => { out = out + utf8.utf8_encode(65533); i = i + 1; }
+        }
+    }
+    return out;
+}
+
+// The lowercase half, plus the one CONDITIONAL rule Fern applies: capital
+// sigma (U+03A3) becomes final sigma `ς` in word-final position and `σ`
+// elsewhere. The locale tailorings (Turkish, Lithuanian) are not applied.
+function _map_lower(s: string): string {
+    var out: string = "";
+    var n: i32 = s.len();
+    var i: i32 = 0;
+    while (i < n) {
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pair) => {
+                if (pair.0 == 931 && _final_sigma(s, i, pair.1)) {
+                    out = out + utf8.utf8_encode(962);
+                } else {
+                    var full: string = _full_case(pair.0, false);
+                    if (full.len() > 0) {
+                        out = out + full;
+                    } else {
+                        out = out + utf8.utf8_encode(_case_apply(pair.0, false));
+                    }
                 }
                 i = i + pair.1;
             },
@@ -254,15 +340,15 @@ function _map_case(s: string, want_upper: boolean): string {
 // a byte fold and never touches a table.
 pub function to_upper(s: string): string {
     if (_is_ascii(s)) { return _ascii_fold(s, 97, 65); }
-    return _map_case(s, true);
+    return _map_upper(s);
 }
 
 // `to_lower(s)` — `s` lowercased with FULL Unicode mapping.
-// The Greek Final_Sigma context rule is NOT applied: a final `Σ` lowercases
-// to `σ`, not `ς` (#5630).
+// Greek Final_Sigma IS applied: a word-final `Σ` becomes `ς`, a
+// medial one `σ`.
 pub function to_lower(s: string): string {
     if (_is_ascii(s)) { return _ascii_fold(s, 65, 97); }
-    return _map_case(s, false);
+    return _map_lower(s);
 }
 
 // `case_fold(cp)` — the case-folded form of one code point, as an

@@ -1484,7 +1484,7 @@ pub function (s: string) to_ascii_upper(): string {
 // point, not a byte fold:
 //
 //     "café".to_upper()  == "CAFÉ"
-//     "ΣΟΦΟΣ".to_lower() == "σοφοσ"
+//     "ΣΟΦΟΣ".to_lower() == "σοφος"
 //     "ΑΒΓ".to_lower()   == "αβγ"
 //
 // Pure-ASCII input never touches a table — `std/unicode` fast-paths it to
@@ -1492,10 +1492,11 @@ pub function (s: string) to_ascii_upper(): string {
 // scan, not a binary search.
 //
 // FULL mapping: one code point may become SEVERAL — `"ß".to_upper()` is
-// `"SS"`, `"ﬁ".to_upper()` is `"FI"`. What is NOT applied is the
-// context-sensitive part: a word-final `Σ` lowercases to `σ` where
-// Unicode says `ς` (#5630). Locale-independent by design: no Turkish
-// dotless-i tailoring, so `"I".to_lower()` is `"i"` in every locale.
+// `"SS"`, `"ﬁ".to_upper()` is `"FI"`. The context-sensitive Greek rule is
+// applied too, so a word-final `Σ` lowercases to `ς` and a medial one to
+// `σ` (`"ΣΟΦΟΣ".to_lower()` is `"σοφος"`). Locale-independent by design:
+// no Turkish dotless-i tailoring, so `"I".to_lower()` is `"i"` in every
+// locale.
 //
 // Two consequences of decoding rather than folding bytes, both of which
 // `to_ascii_*` does NOT share:
