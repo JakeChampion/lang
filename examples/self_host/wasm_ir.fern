@@ -193,6 +193,7 @@ pub function need(needs: string[], name: string): boolean {
 // this same set, so an omission changes the emitted module and fails the suite.
 pub function needs_of(cache: irlower.LowerResult[]): string[] {
     var out: string[] = [];
+    if (module_emits_op_cached(cache, "arg_at")) { out = out.append("arg_at"); }
     if (module_emits_op_cached(cache, "args")) { out = out.append("args"); }
     if (module_emits_op_cached(cache, "arr_push")) { out = out.append("arr_push"); }
     if (module_emits_op_cached(cache, "arr_push_f64")) { out = out.append("arr_push_f64"); }
@@ -2755,6 +2756,13 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // args (module_emits_op "args"). argv[0] is the program name,
             // matching the register backends.
             out = out + "    call $__fern_args\n";
+        } else if (o.kind_tag == 210) {  // arg_at
+            // stack: i -> push a fresh string block holding argv[i]. The helper
+            // ($__fern_arg_at, param i32 / result i32) shares the args imports and
+            // the heap runtime with $__fern_args but copies only the one entry;
+            // emitted caller-side in wasm_ir_run when the module reads an argument
+            // (module_emits_op "arg_at"). An out-of-range index gives "".
+            out = out + "    call $__fern_arg_at\n";
         } else if (o.kind_tag == 166) {  // exit
             // stack: n -> proc_exit(n) (already imported for _start). Never returns;
             // push a dummy i32 for the statement-level drop.

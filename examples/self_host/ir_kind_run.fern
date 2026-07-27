@@ -51,7 +51,7 @@ function main(): i32 {
     var ext_names: string[] = [
         "struct_copy", "store_i64", "tcp_listen", "tcp_accept", "writer_write",
         "open_file", "syscall3", "raw_scratch", "syscall4", "raw_environ",
-        "udp_send", "read_all_stdin"
+        "udp_send", "read_all_stdin", "arg_at"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;

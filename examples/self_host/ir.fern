@@ -650,6 +650,16 @@ pub function op_read_int(): Op { return op0("read_int"); }
 // wasm's $__fern_read_all_stdin (an fd_read loop over the same preview1 scratch
 // idiom read_line uses), so every IR backend covers it.
 pub function op_read_all_stdin(): Op { return op0("read_all_stdin"); }
+// `arg_at` pops an i32 index and pushes argv[index] as a fresh string box. It is
+// the O(1) sibling of `args`, which allocates the WHOLE argv as a string[] per
+// call — so `args()[i]` in a loop is quadratic, which is why arg_at gets a real
+// op rather than the args().len() desugar args_count uses. Lowers on every IR
+// backend: the register backends call __fern_arg_at_rc (the rc-headered sibling
+// of the headerless __fern_arg_at that __fern_args builds its elements from —
+// a bare arg_at result is a reclaimable string the program holds directly);
+// wasm calls $__fern_arg_at, which shares the wasi args_get imports with
+// $__fern_args but copies only the one entry.
+pub function op_arg_at(): Op { return op0("arg_at"); }
 // `eprint_str` pops a string value and writes its bytes to STDERR (fd 2, no
 // newline), pushing a dummy result so a statement-level drop balances. `eprint(s)`
 // is a bare eprint_str; `eprint_int(n)` is i32_to_string(n) then eprint_str.
@@ -1311,6 +1321,7 @@ function kind_id_4(name: string): i32 {
     // udp_send(host, port, data): one-shot fire-and-forget datagram (#4375).
     if (name == "udp_send") { return 208; }
     if (name == "read_all_stdin") { return 209; }
+    if (name == "arg_at") { return 210; }
     return 0;
 }
 
@@ -1549,6 +1560,7 @@ function kind_name_4(id: i32): string {
     if (id == 207) { return "raw_environ"; }
     if (id == 208) { return "udp_send"; }
     if (id == 209) { return "read_all_stdin"; }
+    if (id == 210) { return "arg_at"; }
     return "invalid";
 }
 
@@ -1702,7 +1714,8 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 185 || tag == 104 || tag == 105) { return true; }
     // args() materialises a fresh string[] (the arr box + a string block per
     // argv entry), so it needs the heap runtime like any other allocator.
-    if (tag == 180) { return true; }
+    // arg_at(i) boxes the one entry it reads, so it needs it too.
+    if (tag == 180 || tag == 210) { return true; }
     // read_file boxes the file contents + a Result wrapper; write_file boxes its
     // Option[IoError] result — both via __fern_str_box, so they need the heap.
     if (tag == 169 || tag == 170) { return true; }
