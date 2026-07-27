@@ -36,6 +36,55 @@ before the native freeze (`docs/NATIVE-CONVERGENCE.md`):
   delta (own-param enum/string field reuse) is *fundamentally* blocked — a
   parameter has no bind literal to prove field freshness — not a tractable slice.
 
+## What actually still reaches the x86 AST emitter (measured, 2026-07-27)
+
+The sections below reason about the AST emitter's *call sites*. That is the
+wrong granularity for the x86 endgame: `asm.emit_module` is a thin shell whose
+body is reached only when `asm_ir.emit_module_ir_gated` declines, so the
+question is which PROGRAMS still make it decline. That had been re-derived by
+inspection; it is now measured directly — replace the fallback with
+`exit(<reason>)` and run `internal/e2eselfhost`, and every failing test is by
+construction one that still needs the AST emitter.
+
+Result: **27 failures, 24 of them genuine** (the other 3 are unrelated — the
+`wasm-tools validate` component cases and an arm64 `R_AARCH64_CONDBR19`
+relocation overflow). The run hit its 60-minute timeout with
+`TestSelfHostModloadPerModuleWholeCompilerX86_64` still going, so treat 24 as a
+lower bound. Re-encoding the bail reason in the exit code and re-running a
+representative subset splits it three ways:
+
+| Reason | Count | What it is | Status |
+|---|---|---|---|
+| `no-funcs` | 39 | SCRIPT-shaped source — top-level statements, no `main`, so nothing for `_start` to `call`. The gate's `funcs.len() == 0` arm fires before the `has_main` one. | **CLOSED** — `asmcore.synth_script_main` desugars it to `function main(): i32 { … }` (guarded by `TestSelfHostScriptMainIRX86_64`) |
+| `ineligible-fn` | 105 | Builtin METHODS the AST emitter intercepts and the IR path does not lower: `n.pow/sign/abs/is_even/is_odd/is_zero/is_negative/is_positive`, `xs.sum/product/min/max`, `s.first_byte/last_byte/is_empty`, `args_count`/`arg_at`. | **OPEN — the dominant blocker** |
+| `over-budget` | 4 | `import "std/array"` and friends push the merged module past the 512-function budget. Same gate as the whole-compiler bundle, reached by ordinary programs. | **OPEN** |
+| `no-main` | 0 | Functions but no `main`. Supported by the desugar; not exercised today. | n/a |
+
+Two corrections to the framing that was here before:
+
+- **The 512-budget is not only a whole-compiler problem.** Any program importing
+  a decent slice of stdlib crosses it, so it is reached by ordinary test
+  programs, not just the bootstrap. Lifting it still needs the memory work.
+- **"Every compiler function is IR-eligible" (the 2026-07-26 issue comment) is
+  true of the COMPILER'S OWN source and does not generalise.** The programs the
+  test suite compiles hit a per-function gap that the compiler's sources happen
+  not to use: ~20 builtin methods whose Fern helper *bodies* already exist and
+  are shared (`asmcore.fern` — `__fern_arr_i32_sum`, `__fern_i32_pow`, …) and
+  whose runtime *needs* are already listed in `asm_ir.all_runtime_need_roots`.
+  Only the LOWERING is missing: `irlower.fern` contains no occurrence of
+  `"sum"` / `"pow"` / `"is_empty"` / `"first_byte"`, while `asm.fern` intercepts
+  each of them. So this is a bounded port against an existing reference, not new
+  design — but it is the work that actually gates deleting `asm.fern`.
+
+Also worth recording, because it bears on whether script support should survive
+at all: **the native compiler rejects script-shaped source** (`fern -interp` on
+`return 42;` gives `P001: expected "function"`). Top-level statements parse only
+in the self-host parser, so this is an existing native/self-host divergence
+(#4451). The desugar preserves the self-host behaviour rather than regressing it
+while the emitter is retired; whether to instead retire the script shape and
+converge on the native surface is a separate roadmap call, deliberately not made
+here.
+
 ## The AST-emitter call graph (what must go, and what blocks each)
 
 The three legacy emitters are still reached through these entry points

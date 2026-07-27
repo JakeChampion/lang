@@ -7431,7 +7431,12 @@ function main(): i32 {
     var a1: string = emit_source("return 42;");
     if (!util.contains(a1, "movq $42")) { return 10; }
     if (!util.contains(a1, "pushq %rax")) { return 11; }
-    if (!util.contains(a1, "popq %rdi")) { return 12; }
+    // The exit code reaches %rdi before the exit_group syscall. Which
+    // instruction puts it there is instruction selection, not contract: the AST
+    // emitter popped the statement stack straight into %rdi, while the IR path
+    // — which now serves these script-shaped sources via asmcore.synth_script_main
+    // (#3457) — returns through __fn_main and moves %rax across.
+    if (!util.contains(a1, "popq %rdi") && !util.contains(a1, "movq %rax, %rdi")) { return 12; }
     if (!util.contains(a1, "movq $60, %rax")) { return 13; }
     if (!util.contains(a1, "syscall")) { return 14; }
     if (!util.contains(a1, ".globl _start")) { return 15; }
@@ -7461,9 +7466,11 @@ function main(): i32 {
     if (!util.contains(a6, "idivq")) { return 61; }
     if (!util.contains(a6, "movq %rdx, %rax")) { return 62; }
 
-    // Unary negation.
+    // Unary negation. The AST emitter selected `negq`; the IR path (which serves
+    // this script-shaped source since #3457) lowers `-x` as `0 - x`, so accept
+    // either — the contract is that the negation is materialised, not how.
     var a7: string = emit_source("return -5;");
-    if (!util.contains(a7, "negq")) { return 70; }
+    if (!util.contains(a7, "negq") && !util.contains(a7, "subq")) { return 70; }
 
     // Nested expressions: `return (2 + 3) * 4;` — should have
     // an addq before the imulq (left subtree fully emitted
