@@ -25,6 +25,36 @@
 //   path_with_extension(p, ext)
 //                       — replace/append the final extension.
 //
+// PATHS ARE ASSUMED TO BE VALID UTF-8. Every function here
+// takes and returns plain `string`, and that is a deliberate
+// simplification rather than an oversight: on Linux and macOS a
+// path is really an arbitrary byte sequence, so a path that is
+// not valid UTF-8 is representable by the OS but not by these
+// functions.
+//
+// There is NO `OsStr`-style type, and none is planned. Rust
+// needs `OsStr` / `Path` (and WTF-8) because Windows paths are
+// UTF-16 that may contain lone surrogates while Unix paths are
+// arbitrary bytes; Python needs `surrogateescape`; Haskell added
+// `OsPath`. Fern targets Linux, macOS and WASI, where in practice
+// paths are UTF-8, and the whole-language cost of a second string
+// type is not worth the cases it would buy.
+//
+// A path that is not valid UTF-8 is therefore a BOUNDARY ERROR,
+// not a value to thread through the program: it should surface
+// where the path enters — a command-line argument, a directory
+// listing, a config file — and not deep inside path manipulation,
+// where these functions would already have mangled it.
+//
+// If you genuinely need to handle such a path, do not reach for
+// this module. Work on the raw bytes instead: `s.as_bytes()` gives
+// a non-copying `[u8]` view (see std/string), and the byte-level
+// file APIs let you carry the name through unmodified.
+//
+// The same honesty applies here as in docs/FLOAT-SEMANTICS.md and
+// docs/INTEGER-SEMANTICS.md: say what is and is not portable
+// rather than leaving it to be discovered.
+//
 // No prelude: these are in scope only after a program
 // declares `import "std/path";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).

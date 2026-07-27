@@ -677,15 +677,33 @@ The payoff: `std/utf8`'s `is_valid_utf8` stops being something callers
 must remember, `.chars()` can skip validity checks, and the "é is a
 hazard" framing in #5552 becomes "é is data".
 
-### D10 — No `OsStr`. Document the UTF-8-path assumption instead.
+### D10 — No `OsStr`. Document the UTF-8-path assumption instead. **LANDED** (#5635)
 
 Rust needs `OsStr`/WTF-8 because Windows paths are UTF-16 with lone
 surrogates and Unix paths are arbitrary bytes. Fern's targets are Linux,
 macOS and WASI. The honest position is: **Fern assumes paths are valid
 UTF-8**, that this is a deliberate simplification, and that a path
-containing invalid UTF-8 is a boundary error rather than a value. Write
-it down in `std/path` rather than leaving it implied — the same honesty
-`FLOAT-SEMANTICS.md` / `INTEGER-SEMANTICS.md` apply to their domains.
+containing invalid UTF-8 is a boundary error rather than a value — the
+same honesty `FLOAT-SEMANTICS.md` / `INTEGER-SEMANTICS.md` apply to
+their domains.
+
+Now written down in three places, chosen so the reader meets it where
+the assumption actually bites:
+
+- **`std/path`'s header** — the full statement: no `OsStr` and none
+  planned, why (a second string type costs more across the language
+  than the cases it buys), and what to do instead — work on raw bytes
+  via `s.as_bytes()`'s non-copying `[u8]` view (D8) and the byte-level
+  file APIs.
+- **`std/io`'s header** — the syscall boundary its `path` argument
+  crosses, pointing back at `std/path`.
+- **`read_dir`'s builtin signature** (`internal/checker`) — the entry
+  point where a non-UTF-8 name would actually arrive from the OS.
+
+This is load-bearing for D9 (#5634): once `string` is guaranteed
+well-formed, "what happens when `read_dir` returns a name that isn't
+UTF-8" needs an answer on the record, and that slice now inherits a
+decision instead of having to make one.
 
 ### D11 — Fix the lexer, and decide identifiers explicitly. — **LANDED (#5628)**
 
@@ -751,7 +769,7 @@ Tracked as epic #5626; issue numbers below.
 | 6 | **D8** (#5632) — `[u8]` string view — **DONE** | — | Builtin already existed; #5632 added the migrated consumer, the four-backend differential, and the docs. Borrow rule still open (#4814). |
 | 7 | **D6** (#5633) — grapheme segmentation — **DONE** | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `string[]` pending the arm64/wasm `str[]` element bugs. |
 | 8 | **D9** (#5634) — the UTF-8 validity invariant | 6 | Largest blast radius; do last, after `[u8]` makes "raw bytes" ergonomic. |
-| 9 | **D10** (#5635) — document the path assumption | — | Doc-only, any time. |
+| 9 | **D10** (#5635) — document the path assumption — **DONE** | — | Doc-only. Stated in `std/path`, `std/io`, and `read_dir`'s builtin signature. |
 
 #5552 as filed maps onto slices 1, 4, 5, 6, 7. Its step 1 (document the
 ASCII contract) is already done (#5620).

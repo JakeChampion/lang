@@ -1446,6 +1446,14 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// non-recursive children of `path`. Entries are base names
 	// (no leading directory), unsorted. Use `std/sort` on the
 	// result if a deterministic order matters.
+	//
+	// Entries come back as `string`, so this inherits the
+	// UTF-8-path assumption std/path's header documents: on Linux
+	// and macOS a directory entry is an arbitrary byte sequence,
+	// and one that is not valid UTF-8 has no faithful `string`
+	// representation. This is the boundary where such a name
+	// enters a program, which is deliberately where the problem
+	// should surface rather than deep in path manipulation.
 	c.info.FuncSigs["read_dir"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{

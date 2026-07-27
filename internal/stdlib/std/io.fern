@@ -5,6 +5,13 @@
 // string; `read_input(path)` is the CLI-tool companion that picks
 // stdin or a file from a path operand.
 //
+// The `path` these take is a plain `string`, so it inherits
+// std/path's assumption that filesystem paths are valid UTF-8 —
+// see that module's header for why there is no `OsStr` and what
+// to do with a path that is not. This is the syscall boundary
+// where such a path would enter, which is exactly where the
+// problem should surface.
+//
 // No prelude: these are in scope only after a program
 // declares `import "std/io";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
