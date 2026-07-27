@@ -7884,6 +7884,29 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // returning a fresh string box (str-tracked via expr_is_str). They
                     // were the last bail in asmcore.EmitState.write (an unknown
                     // call_direct); dedicated ops make that function IR-eligible.
+                    // args_count() desugars to args().len() and re-lowers. args() is
+                    // already lowered (op_args, above) and `.len()` already handles a
+                    // string[] receiver, so this needs no new op and no backend cases —
+                    // the reuse move from #5669 / #5671.
+                    //
+                    // arg_at(i) deliberately does NOT get the same treatment. args()
+                    // allocates a fresh string[] per call, so `args()[i]` inside a loop
+                    // would allocate the whole argv per iteration — O(n) where the AST
+                    // path is O(1), i.e. quadratic argv iteration in a language aimed at
+                    // CLI tools. args_count is typically called once, so a single
+                    // allocation is acceptable; arg_at wants a real register-ABI op
+                    // (see #3457 comment 5093322914).
+                    if (cid.name == "args_count" && c.args.len() == 0) {
+                        var acall: parser.Expr = parser.ExprCall {
+                            callee: parser.ExprIdent { name: "args", line: cid.line, col: cid.col },
+                            args: [], line: c.line, col: c.col, type_argc: 0, ty: "",
+                        };
+                        var alen: parser.Expr = parser.ExprCall {
+                            callee: parser.ExprFieldAccess { obj: acall, field: "len", line: c.line, col: c.col },
+                            args: [], line: c.line, col: c.col, type_argc: 0, ty: "",
+                        };
+                        return lower_expr(alen, s);
+                    }
                     if (cid.name == "strbuf_reset" && c.args.len() == 0) {
                         return s.emit(ir.op_strbuf_reset());
                     }
