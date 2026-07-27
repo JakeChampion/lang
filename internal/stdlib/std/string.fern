@@ -1742,12 +1742,32 @@ pub function (s: string) fields(): string[] {
     return out;
 }
 
+// `s.case_fold()` — `s` mapped to a form for caseless comparison.
+// Folding is a THIRD operation, not a synonym for lowercasing:
+// `"ß".case_fold()` is `"ss"` where `to_lower` leaves `ß` alone,
+// and `ſ` (LATIN SMALL LETTER LONG S) folds to `s`. The result is
+// for COMPARISON, not display — it is not guaranteed to be
+// readable or to round-trip.
+pub function (s: string) case_fold(): string {
+    return unicode.case_fold(s);
+}
+
+// `s.eq_ignore_case(other)` — caseless equality under full Unicode
+// case folding, so `"ß".eq_ignore_case("ss")` is true and
+// `"STRASSE".eq_ignore_case("straße")` is true. This is what you
+// want for comparing human text; `eq_ignore_ascii_case` is what you
+// want for a protocol token. Pure-ASCII operands allocate nothing.
+pub function (s: string) eq_ignore_case(other: string): boolean {
+    return unicode.eq_ignore_case(s, other);
+}
+
 // `s.eq_ignore_ascii_case(other)` — equality with ASCII A-Z
 // folded to a-z on both sides. Non-ASCII bytes (>= 0x80) only
 // match byte-exact — multibyte UTF-8 sequences and Unicode
 // case folding aren't handled. Standard shape for HTTP header
 // keys ("Content-Type" vs "content-type") where the fold is
-// strictly ASCII per RFC 7230.
+// strictly ASCII per RFC 7230. Unlike `eq_ignore_case`, this
+// never allocates and never consults a table.
 pub function (s: string) eq_ignore_ascii_case(other: string): boolean {
     var n: i32 = s.len();
     if (n != other.len()) { return false; }

@@ -237,3 +237,93 @@ func lookupFull(cp rune, up bool) (string, bool) {
 	}
 	return "", false
 }
+
+// Case folding is a third operation, distinct from both upper and lower.
+// The table stores only the code points where the fold differs from simple
+// lowercase; everything else falls through. So these check the fold
+// RESULT (table plus fallback), which is what callers see, and then
+// separately check that the entries which cannot come from lowercase are
+// actually stored.
+func TestFoldKnownAnswers(t *testing.T) {
+	for _, tc := range []struct {
+		from rune
+		want string
+	}{
+		// Written as escapes, not literals: several are visually identical
+		// to an ASCII letter.
+		{'\u00DF', "ss"},     // sharp s - lower leaves it alone, fold expands
+		{'\u017F', "s"},      // LATIN SMALL LETTER LONG S
+		{'\u00B5', "\u03BC"}, // MICRO SIGN folds to Greek mu - changes script
+		{'\uFB01', "fi"},     // fi ligature, 1 -> 2
+		{'\uFB04', "ffl"},    // ffl ligature, 1 -> 3
+		// These reach the same answer through the LOWERCASE fallback rather
+		// than the table, which is the half a membership test would miss.
+		{'\u212A', "k"}, // KELVIN SIGN, NOT ASCII K
+		{'A', "a"},
+		{'\u0391', "\u03B1"}, // Greek capital alpha
+	} {
+		if got := foldCP(tc.from); got != tc.want {
+			t.Errorf("U+%04X: fold = %q, want %q", tc.from, got, tc.want)
+		}
+	}
+	// The expansions genuinely require a table entry — simple lowercase
+	// cannot produce a multi-code-point result.
+	for _, cp := range []rune{'\u00DF', '\u017F', '\u00B5', '\uFB01', '\uFB04'} {
+		if _, ok := lookupFold(cp); !ok {
+			t.Errorf("U+%04X must be a fold-table entry; lowercase cannot produce it", cp)
+		}
+	}
+}
+
+// foldCP mirrors the generated `_fold_cp`: table first, simple lowercase
+// as the fallback.
+func foldCP(cp rune) string {
+	if s, ok := lookupFold(cp); ok {
+		return s
+	}
+	return string(unicode.ToLower(cp))
+}
+
+// Every stored entry must actually differ from the simple lowercase it
+// would otherwise fall through to; an entry that agrees is dead weight,
+// and a table full of them would hide a generation bug.
+func TestFoldExceptionsAllDiffer(t *testing.T) {
+	var prev rune = -1
+	for _, f := range foldExceptions {
+		if f.from <= prev {
+			t.Errorf("fold table: U+%04X out of order after U+%04X", f.from, prev)
+		}
+		prev = f.from
+		if f.to[1] == 0 && f.to[0] == unicode.ToLower(f.from) {
+			t.Errorf("fold table: U+%04X folds to its simple lowercase and "+
+				"should not be stored", f.from)
+		}
+	}
+}
+
+// lookupFold mirrors the generated `_fold_cp` lookup over the emitted
+// table, minus the lowercase fallback.
+func lookupFold(cp rune) (string, bool) {
+	t := encodeFull(foldExceptions)
+	lo, hi := 0, len(t)/fullChars-1
+	for lo <= hi {
+		mid := lo + (hi-lo)/2
+		base := mid * fullChars
+		from := decField(t, base)
+		switch {
+		case int(cp) < from:
+			hi = mid - 1
+		case int(cp) > from:
+			lo = mid + 1
+		default:
+			out := string(rune(decField(t, base+fieldChars)))
+			for _, off := range []int{2 * fieldChars, 3 * fieldChars} {
+				if c := decField(t, base+off); c != 0 {
+					out += string(rune(c))
+				}
+			}
+			return out, true
+		}
+	}
+	return "", false
+}

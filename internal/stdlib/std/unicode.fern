@@ -97,6 +97,14 @@ function _full_lower_table(): string {
     return "004a001Y00<70000";
 }
 
+// Case FOLDING deltas: from | to0 | to1 | to2, trailing 0 = absent.
+// Only where the fold differs from simple lowercase — everything else
+// falls through to the lowercase table.
+// 297 entries, 4752 bytes (16 chars per entry).
+function _fold_table(): string {
+    return "002f00>m00000000003O001d001d0000005900:m001_0000005p001d00000000007a001Z00<<000000=500>j0000000000>@00>j00<800<100>a00?500<800<100?200?30000000000?@00>c0000000000?A00>i0000000000?E00?60000000000?F00?00000000000?a00>k0000000000?b00?10000000000?f00>f0000000000F700EU00F2000001>P01>P0000000001>Q01>Q0000000001>R01>R0000000001>S01>S0000000001>T01>T0000000001>U01>U0000000001>V01>V0000000001>W01>W0000000001>X01>X0000000001>Y01>Y0000000001>Z01>Z0000000001>[01>[0000000001>]01>]0000000001>^01>^0000000001>_01>_0000000001>`01>`0000000001>a01>a0000000001>b01>b0000000001>c01>c0000000001>d01>d0000000001>e01>e0000000001>f01>f0000000001>g01>g0000000001>h01>h0000000001>i01>i0000000001>j01>j0000000001>k01>k0000000001>l01>l0000000001>m01>m0000000001>n01>n0000000001>o01>o0000000001>p01>p0000000001?001?00000000001?101?10000000001?201?20000000001?301?30000000001?401?40000000001?501?50000000001?601?60000000001?701?70000000001?801?80000000001?901?90000000001?:01?:0000000001?;01?;0000000001?<01?<0000000001?=01?=0000000001?>01?>0000000001??01??0000000001?@01?@0000000001?A01?A0000000001?B01?B0000000001?C01?C0000000001?D01?D0000000001?E01?E0000000001?F01?F0000000001?G01?G0000000001?H01?H0000000001?I01?I0000000001?J01?J0000000001?K01?K0000000001?L01?L0000000001?M01?M0000000001?N01?N0000000001?O01?O0000000001?P01?P0000000001?Q01?Q0000000001?R01?R0000000001?S01?S0000000001?T01?T0000000001?U01?U0000000001?V01?V0000000001?W01?W0000000001?X01?X0000000001?Y01?Y0000000001?Z01?Z0000000001?[01?[0000000001?]01?]0000000001?^01?^0000000001?_01?_0000000001?`01?`0000000001?a01?a0000000001?b01?b0000000001?c01?c0000000001?d01?d0000000001?e01?e0000000001?f01?f0000000001?i01?a0000000001?j01?b0000000001?k01?c0000000001?l01?d0000000001?m01?e0000000001?n01?f0000000001c000@c0000000001c100@e0000000001c200@o0000000001c300A10000000001c400A20000000001c500A20000000001c600A:0000000001c700AS0000000001c80:I;0000000001kF001X00<b000001kG001e00<8000001kH001h00<:000001kI001j00<:000001kJ001Q00:o000001kK01jQ0000000001kN001d001d000001n@00?500<C000001nB00?500<C00<001nD00?500<C00<101nF00?500<C00=201o001m000>j000001o101m100>j000001o201m200>j000001o301m300>j000001o401m400>j000001o501m500>j000001o601m600>j000001o701m700>j000001o801m000>j000001o901m100>j000001o:01m200>j000001o;01m300>j000001o<01m400>j000001o=01m500>j000001o>01m600>j000001o?01m700>j000001o@01mP00>j000001oA01mQ00>j000001oB01mR00>j000001oC01mS00>j000001oD01mT00>j000001oE01mU00>j000001oF01mV00>j000001oG01mW00>j000001oH01mP00>j000001oI01mQ00>j000001oJ01mR00>j000001oK01mS00>j000001oL01mT00>j000001oM01mU00>j000001oN01mV00>j000001oO01mW00>j000001oP01nP00>j000001oQ01nQ00>j000001oR01nR00>j000001oS01nS00>j000001oT01nT00>j000001oU01nU00>j000001oV01nV00>j000001oW01nW00>j000001oX01nP00>j000001oY01nQ00>j000001oZ01nR00>j000001o[01nS00>j000001o]01nT00>j000001o^01nU00>j000001o_01nV00>j000001o`01nW00>j000001oc01na00>j000001od00>b00>j000001oe00>]00>j000001og00>b00=2000001oh00>b00=200>j01om00>b00>j000001oo00>j0000000001p201ne00>j000001p300>h00>j000001p400>_00>j000001p600>h00=2000001p700>h00=200>j01p<00>h00>j000001pB00>j00<800<001pC00>j00<800<101pF00>j00=2000001pG00>j00<800=201pR00?500<800<001pS00?500<800<101pT00?100<C000001pV00?500=2000001pW00?500<800=201pc01nm00>j000001pd00?900>j000001pe00?>00>j000001pg00?900=2000001ph00?900=200>j01pm00?900>j00000:^a01>P000000000:^b01>Q000000000:^c01>R000000000:^d01>S000000000:^e01>T000000000:^f01>U000000000:^g01>V000000000:^h01>W000000000:^i01>X000000000:^j01>Y000000000:^k01>Z000000000:^l01>[000000000:^m01>]000000000:^n01>^000000000:^o01>_000000000:^p01>`000000000:_001>a000000000:_101>b000000000:_201>c000000000:_301>d000000000:_401>e000000000:_501>f000000000:_601>g000000000:_701>h000000000:_801>i000000000:_901>j000000000:_:01>k000000000:_;01>l000000000:_<01>m000000000:_=01>n000000000:_>01>o000000000:_?01>p000000000:_@01?0000000000:_A01?1000000000:_B01?2000000000:_C01?3000000000:_D01?4000000000:_E01?5000000000:_F01?6000000000:_G01?7000000000:_H01?8000000000:_I01?9000000000:_J01?:000000000:_K01?;000000000:_L01?<000000000:_M01?=000000000:_N01?>000000000:_O01??000000000:_P01?@000000000:_Q01?A000000000:_R01?B000000000:_S01?C000000000:_T01?D000000000:_U01?E000000000:_V01?F000000000:_W01?G000000000:_X01?H000000000:_Y01?I000000000:_Z01?J000000000:_[01?K000000000:_]01?L000000000:_^01?M000000000:__01?N000000000:_`01?O000000000:_a01?P000000000:_b01?Q000000000:_c01?R000000000:_d01?S000000000:_e01?T000000000:_f01?U000000000:_g01?V000000000:_h01?W000000000:_i01?X000000000:_j01?Y000000000:_k01?Z000000000:_l01?[000000000:_m01?]000000000:_n01?^000000000:_o01?_000000000:_p01?`000000000?]0001V001V00000?]1001V001Y00000?]2001V001]00000?]3001V001V001Y0?]4001V001V001]0?]5001d001e00000?]6001d001e00000?]C00Ee00Eg00000?]D00Ee00EU00000?]E00Ee00E[00000?]F00Eo00Eg00000?]G00Ee00E^0000";
+}
+
 // _dig decodes one table character to its 6-bit value. The alphabet
 // skips `\` (92), so the two spans are 48..91 and 93..112.
 function _dig(c: i32): i32 {
@@ -257,33 +265,77 @@ pub function to_lower(s: string): string {
     return _map_case(s, false);
 }
 
-// `eq_ignore_case(a, b)` — case-insensitive equality under simple
-// lowercase folding. Streams both operands, so it allocates nothing and
-// stops at the first difference. (Simple folding, so `ß` and `SS` are
-// NOT equal — case FOLDING proper is #5631.)
-pub function eq_ignore_case(a: string, b: string): boolean {
-    var na: i32 = a.len();
-    var nb: i32 = b.len();
-    var i: i32 = 0;
-    var j: i32 = 0;
-    while (i < na && j < nb) {
-        var ca: i32 = 65533;
-        var wa: i32 = 1;
-        match (utf8.utf8_decode_at(a, i)) {
-            Some(pa) => { ca = pa.0; wa = pa.1; },
-            None => { }
+// `case_fold(cp)` — the case-folded form of one code point, as an
+// encoded string. Folding is its own operation, NOT lowercasing: `ß`
+// folds to `ss` and `ſ` folds to `s`, neither of which `to_lower_char`
+// does. Only the differing code points are tabulated; the rest fall
+// through to the simple lowercase mapping.
+function _fold_cp(cp: i32): string {
+    var t: string = _fold_table();
+    var lo: i32 = 0;
+    var hi: i32 = t.len() / 16 - 1;
+    while (lo <= hi) {
+        var mid: i32 = lo + (hi - lo) / 2;
+        var base: i32 = mid * 16;
+        var from: i32 = _fld(t, base);
+        if (cp < from) {
+            hi = mid - 1;
+        } else if (cp > from) {
+            lo = mid + 1;
+        } else {
+            var out: string = utf8.utf8_encode(_fld(t, base + 4));
+            var c2: i32 = _fld(t, base + 8);
+            if (c2 != 0) { out = out + utf8.utf8_encode(c2); }
+            var c3: i32 = _fld(t, base + 12);
+            if (c3 != 0) { out = out + utf8.utf8_encode(c3); }
+            return out;
         }
-        var cb: i32 = 65533;
-        var wb: i32 = 1;
-        match (utf8.utf8_decode_at(b, j)) {
-            Some(pb) => { cb = pb.0; wb = pb.1; },
-            None => { }
-        }
-        if (to_lower_char(ca) != to_lower_char(cb)) { return false; }
-        i = i + wa;
-        j = j + wb;
     }
-    return i >= na && j >= nb;
+    return utf8.utf8_encode(to_lower_char(cp));
+}
+
+// `case_fold(s)` — `s` mapped to a form suitable for caseless comparison.
+// NOT the same as lowercasing: folding `ß` gives `ss`, so folding two
+// strings and comparing catches equivalences `to_lower` misses. The
+// result is for COMPARISON only — it is not meant to be displayed.
+pub function case_fold(s: string): string {
+    if (_is_ascii(s)) { return _ascii_fold(s, 65, 97); }
+    var out: string = "";
+    var n: i32 = s.len();
+    var i: i32 = 0;
+    while (i < n) {
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pair) => {
+                out = out + _fold_cp(pair.0);
+                i = i + pair.1;
+            },
+            None => { out = out + utf8.utf8_encode(65533); i = i + 1; }
+        }
+    }
+    return out;
+}
+
+// `eq_ignore_case(a, b)` — caseless equality under full case FOLDING, so
+// `ß` and `ss` compare equal and `ſ` matches `s`. Pure-ASCII
+// operands stream byte-wise and allocate nothing; anything else folds
+// both sides, because a fold can change length and so the two cannot be
+// walked in lockstep.
+pub function eq_ignore_case(a: string, b: string): boolean {
+    if (_is_ascii(a) && _is_ascii(b)) {
+        var na: i32 = a.len();
+        if (na != b.len()) { return false; }
+        var k: i32 = 0;
+        while (k < na) {
+            var ca: i32 = a[k];
+            var cb: i32 = b[k];
+            if (ca >= 65 && ca <= 90) { ca = ca + 32; }
+            if (cb >= 65 && cb <= 90) { cb = cb + 32; }
+            if (ca != cb) { return false; }
+            k = k + 1;
+        }
+        return true;
+    }
+    return case_fold(a) == case_fold(b);
 }
 
 // _swap_case_cp toggles one code point's case. Caseless code points

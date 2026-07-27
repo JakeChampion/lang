@@ -177,9 +177,14 @@ Grouped by family:
   `to_ascii_upper`, `to_ascii_capitalize`, `to_ascii_title_case`,
   `to_ascii_swap_case`.
   Plus `snake_case`, `kebab_case`, `to_acronym`,
-  `word_count`, `eq_ignore_ascii_case`, `slugify` (free-form text →
+  `word_count`, `slugify` (free-form text →
   URL slug: lowercased, non-`[a-z0-9]` runs collapsed to `-`, ends
   trimmed — distinct from `kebab_case`, which only folds camelCase)
+- **Caseless comparison:** `eq_ignore_case` (full Unicode case
+  folding — `"ß"` equals `"ss"`), `case_fold` (the folded form
+  itself, for comparison not display), and `eq_ignore_ascii_case`
+  (byte fold, allocation-free, the right choice for protocol tokens
+  where the fold is ASCII by spec)
 - **Escape / encode:** `escape_html`, `escape_c`, `escape_shell`
 - **Strip / trim:** `strip_quotes`, `strip_prefix`,
   `strip_suffix`, `remove_prefix`, `remove_suffix`, `trim`,
@@ -300,7 +305,9 @@ from the Go stdlib's `unicode` package, and re-encodes.
   (`ß` → `SS`)
 - `swap_case(s)` / `capitalize(s)` / `title_case(s)`
 - `to_upper_char(cp)` / `to_lower_char(cp)` — single code point
-- `eq_ignore_case(a, b)` — case-insensitive equality (simple fold)
+- `case_fold(s)` — the comparison form (`ß` → `ss`); a third operation,
+  not lowercasing
+- `eq_ignore_case(a, b)` — caseless equality under **full case folding**
 - **character classes** (over a code point, via range binary search):
   `is_letter`, `is_digit` (Nd), `is_alnum`, `is_whitespace`,
   `is_upper`, `is_lower`
