@@ -543,21 +543,49 @@ is pinned by a full differential against that oracle: every code point
 that normalizes (13233), a multi-mark sequence corpus (3192), and the
 quick-check predicates (513) all match exactly.
 
-### D6 — Segmentation stays opt-in. `len()` stays bytes.
+### D6 — Segmentation stays opt-in. `len()` stays bytes. **LANDED** (#5633)
 
 Follow Rust/Go/Zig/Roc, not Swift (§2.7) — Fern emits standalone
-binaries and has a binary-size epic. Concretely:
+binaries and has a binary-size epic. Shipped as:
 
 - `s.len()` — bytes. Unchanged.
 - `utf8.codepoint_count(s)` — exists. Unchanged.
-- `unicode.graphemes(s) → str[]` / `unicode.grapheme_count(s)` — new,
-  opt-in, tables DCE'd unless called.
+- `unicode.graphemes(s)` / `unicode.grapheme_count(s)` — opt-in, tables
+  DCE'd unless called. `grapheme_count` is a separate scan rather than
+  `graphemes(s).len()`, so counting does not allocate the array.
 - `reverse_bytes` keeps its name (it is already the honest one);
-  add `unicode.reverse_graphemes(s)`.
-- Take Roc's advice as *documentation*: the `graphemes` doc comment
-  should say that wanting the n-th grapheme is usually a design smell
-  and name the alternative (iterate, or use a segmentation-aware
-  operation directly).
+  `unicode.reverse_graphemes(s)` is the correct-by-default sibling.
+- Roc's advice is carried as *documentation* in the `graphemes` doc
+  comment: wanting the n-th grapheme is usually a design smell.
+
+**`graphemes` returns `string[]`, not the `str[]` sketched above.** That
+is a concession to two backend bugs, not a design change: reading a
+`str` element back out of a `str[]` returns garbage on arm64 and is
+rejected outright by the wasm valtype seam. Both reproduce with no
+stdlib involved on an unmodified tree — a three-element split whose
+element lengths are then summed already gets the wrong answer on arm64 —
+so they are backend bugs to fix rather than something segmentation can
+work around. The views are the better shape and this should become
+`str[]` once they are fixed.
+
+**Sizing note, correcting the epic's framing.** D6 was expected to be
+the largest table in the epic. Measured, it is not: Grapheme_Cluster_Break
+coalesces to 1376 ranges and Extended_Pictographic to 78, ~17 KB total,
+against normalization's ~58 KB. Binary cost when used is 24 KB
+(`graphemes`) / 20 KB (`grapheme_count`), and **zero** when unused —
+a program importing `std/unicode` without segmenting is byte-identical
+to one built before these tables existed.
+
+Data comes from `uniseg` (PyPI) via `cmd/unicodegen/gen_gcbdata.py`,
+since neither Go's `unicode` nor CPython's `unicodedata` exposes these
+properties and unicode.org is unreachable from the build environment.
+It is a regeneration-time dependency only. Note it tracks a **newer UCD
+(16.0)** than the module's other tables (case 15.0, normalization 14.0);
+segmentation is self-contained — boundaries never consult the case or
+normalization tables — so this is internally consistent rather than a
+mismatch, but unlike canonical decompositions the GCB assignments are
+*not* frozen by a stability policy, so the emitted table records its
+version.
 
 ### D7 — Unicode tables become static data. This is a prerequisite, not a follow-up. — **LANDED (#5627)**
 
@@ -721,7 +749,7 @@ Tracked as epic #5626; issue numbers below.
 | 4 | **D3 + D4** (#5630) — flip the default, full case mapping | 1, 3 | Touches the self-host builtin (`irlower.fern` / `asmcore.fern`) **and** the native stdlib — see D3's implementation note. Differential coverage required. |
 | 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
 | 6 | **D8** (#5632) — `[u8]` string view — **DONE** | — | Builtin already existed; #5632 added the migrated consumer, the four-backend differential, and the docs. Borrow rule still open (#4814). |
-| 7 | **D6** (#5633) — grapheme segmentation | 1, 3 | Largest table; opt-in. |
+| 7 | **D6** (#5633) — grapheme segmentation — **DONE** | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `string[]` pending the arm64/wasm `str[]` element bugs. |
 | 8 | **D9** (#5634) — the UTF-8 validity invariant | 6 | Largest blast radius; do last, after `[u8]` makes "raw bytes" ergonomic. |
 | 9 | **D10** (#5635) — document the path assumption | — | Doc-only, any time. |
 

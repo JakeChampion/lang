@@ -1109,6 +1109,171 @@ func decodeCompose(t string, a, b int) int {
 	return 0
 }
 
+// gcbdata.txt holds the UAX #29 segmentation source data. Like
+// normdata.txt it is checked in: neither Go's unicode package nor
+// CPython's unicodedata exposes Grapheme_Cluster_Break or
+// Extended_Pictographic. gen_gcbdata.py regenerates it from `uniseg`,
+// a regeneration-time dependency only.
+//
+//go:embed gcbdata.txt
+var gcbData string
+
+// Grapheme_Cluster_Break class IDs. The generated Fern hard-codes these
+// same numbers, so they are part of the table format: renumbering here
+// without renumbering there silently changes every boundary decision.
+//
+// Other is 0 because it is the default the lookup returns for the code
+// points the table omits.
+const (
+	gcbOther = iota
+	gcbCR
+	gcbLF
+	gcbControl
+	gcbExtend
+	gcbZWJ
+	gcbRegionalIndicator
+	gcbPrepend
+	gcbSpacingMark
+	gcbL
+	gcbV
+	gcbT
+	gcbLV
+	gcbLVT
+	gcbClassCount
+)
+
+// gcbNames maps uniseg's enum names onto the IDs above. SpacingMark is
+// spelled PACINGMARK upstream; the mapping is the one place that quirk
+// is allowed to appear.
+var gcbNames = map[string]int{
+	"CR": gcbCR, "LF": gcbLF, "CONTROL": gcbControl,
+	"EXTEND": gcbExtend, "ZWJ": gcbZWJ,
+	"REGIONAL_INDICATOR": gcbRegionalIndicator,
+	"PREPEND": gcbPrepend, "PACINGMARK": gcbSpacingMark,
+	"L": gcbL, "V": gcbV, "T": gcbT, "LV": gcbLV, "LVT": gcbLVT,
+}
+
+const gcbChars = 3 * fieldChars
+
+type gcbRun struct {
+	lo, hi rune
+	class  int
+}
+
+// parseGCBData reads the embedded segmentation data. Malformed input
+// panics: it is generated and checked in, so a parse failure is a broken
+// commit rather than a condition to tolerate.
+func parseGCBData() (gcbs []gcbRun, extPict [][2]rune, version string) {
+	for _, line := range strings.Split(gcbData, "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			if i := strings.Index(line, "# UCD "); i == 0 {
+				version = strings.TrimSpace(strings.TrimPrefix(line, "# UCD "))
+			}
+			continue
+		}
+		f := strings.Split(line, ";")
+		switch f[0] {
+		case "G":
+			if len(f) != 4 {
+				panic("unicodegen: malformed GCB line: " + line)
+			}
+			class, ok := gcbNames[f[3]]
+			if !ok {
+				panic("unicodegen: unknown Grapheme_Cluster_Break class: " + f[3])
+			}
+			gcbs = append(gcbs, gcbRun{lo: rune(mustHex(f[1])), hi: rune(mustHex(f[2])), class: class})
+		case "E":
+			if len(f) != 3 {
+				panic("unicodegen: malformed Extended_Pictographic line: " + line)
+			}
+			extPict = append(extPict, [2]rune{rune(mustHex(f[1])), rune(mustHex(f[2]))})
+		default:
+			panic("unicodegen: unknown gcbdata record: " + line)
+		}
+	}
+	sort.Slice(gcbs, func(i, j int) bool { return gcbs[i].lo < gcbs[j].lo })
+	sort.Slice(extPict, func(i, j int) bool { return extPict[i][0] < extPict[j][0] })
+	return gcbs, extPict, version
+}
+
+func encodeGCB(rs []gcbRun) string {
+	var b strings.Builder
+	for _, r := range rs {
+		encField(&b, int(r.lo))
+		encField(&b, int(r.hi))
+		encField(&b, r.class)
+	}
+	return b.String()
+}
+
+// decodeGCB mirrors the generated _gcb_of.
+func decodeGCB(t string, cp int) int {
+	lo, hi := 0, len(t)/gcbChars-1
+	for lo <= hi {
+		mid := lo + (hi-lo)/2
+		base := mid * gcbChars
+		switch {
+		case cp < decField(t, base):
+			hi = mid - 1
+		case cp > decField(t, base+fieldChars):
+			lo = mid + 1
+		default:
+			return decField(t, base+2*fieldChars)
+		}
+	}
+	return gcbOther
+}
+
+// verifyGCB round-trips the emitted tables and checks the structural
+// invariants the binary search depends on.
+func verifyGCB(gcbTable, extT string, gcbs []gcbRun, extPict [][2]rune) {
+	for i, r := range gcbs {
+		if r.lo > r.hi {
+			panic(fmt.Sprintf("unicodegen: GCB range U+%04X..U+%04X inverted", r.lo, r.hi))
+		}
+		if i > 0 && gcbs[i-1].hi >= r.lo {
+			panic(fmt.Sprintf("unicodegen: GCB ranges overlap at U+%04X", r.lo))
+		}
+		if r.class <= gcbOther || r.class >= gcbClassCount {
+			panic(fmt.Sprintf("unicodegen: GCB class %d out of range at U+%04X", r.class, r.lo))
+		}
+		for _, cp := range []rune{r.lo, r.hi} {
+			if got := decodeGCB(gcbTable, int(cp)); got != r.class {
+				panic(fmt.Sprintf("unicodegen: gcb(U+%04X) = %d, want %d", cp, got, r.class))
+			}
+		}
+	}
+	for i, r := range extPict {
+		if r[0] > r[1] {
+			panic(fmt.Sprintf("unicodegen: ExtPict range U+%04X..U+%04X inverted", r[0], r[1]))
+		}
+		if i > 0 && extPict[i-1][1] >= r[0] {
+			panic(fmt.Sprintf("unicodegen: ExtPict ranges overlap at U+%04X", r[0]))
+		}
+		if !inRanges(extT, int(r[0])) || !inRanges(extT, int(r[1])) {
+			panic(fmt.Sprintf("unicodegen: ExtPict range U+%04X..U+%04X does not decode", r[0], r[1]))
+		}
+	}
+	// Spot-check the anchors the state machine keys on; a renumbering of
+	// the class IDs would sail past the round-trip above but not this.
+	for _, tc := range []struct {
+		cp    rune
+		class int
+	}{
+		{0x000D, gcbCR}, {0x000A, gcbLF}, {0x200D, gcbZWJ},
+		{0x1F1E6, gcbRegionalIndicator}, {0x0300, gcbExtend},
+		{0x1100, gcbL}, {0x1161, gcbV}, {0x11A8, gcbT},
+		{0xAC00, gcbLV}, {0xAC01, gcbLVT}, {'a', gcbOther},
+	} {
+		if got := decodeGCB(gcbTable, int(tc.cp)); got != tc.class {
+			panic(fmt.Sprintf("unicodegen: gcb(U+%04X) = %d, want %d", tc.cp, got, tc.class))
+		}
+	}
+}
+
 // genStats is what main reports after a run; the tests ignore it.
 type genStats struct{ runs, tableBytes int }
 
@@ -1153,6 +1318,11 @@ func generate() (string, genStats) {
 
 	stats.tableBytes += len(cccT) + len(decompT) + len(composeT) +
 		len(encodeRanges(nfcNo)) + len(encodeRanges(nfcMaybe)) + len(encodeRanges(nfdNo))
+
+	gcbs, extPict, gcbVersion := parseGCBData()
+	gcbTable, extT := encodeGCB(gcbs), encodeRanges(extPict)
+	verifyGCB(gcbTable, extT, gcbs, extPict)
+	stats.tableBytes += len(gcbTable) + len(extT)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, `// std/unicode — Unicode case mapping + character classes.
@@ -1241,6 +1411,19 @@ import "std/utf8" as utf8;
 	emitTable(&b, "_nfd_no_ranges",
 		"Quick-check NFD=No: code points that decompose, Hangul included.\n// Lets is_nfd answer without allocating.",
 		encodeRanges(nfdNo), len(nfdNo), rangeChars)
+
+	emitTable(&b, "_gcb_ranges",
+		fmt.Sprintf("Grapheme_Cluster_Break (UAX #29, UCD %s): lo | hi | class.\n"+
+			"// Class Other (0) is the default and is NOT stored -- it covers\n"+
+			"// almost every code point, so storing it would bloat the table for\n"+
+			"// no information. Class IDs are fixed by cmd/unicodegen and are\n"+
+			"// part of this table's format.", gcbVersion),
+		gcbTable, len(gcbs), gcbChars)
+	emitTable(&b, "_extpict_ranges",
+		"Extended_Pictographic ranges: lo | hi. Emoji, needed for the\n"+
+			"// ZWJ-sequence rule (GB11) -- it is a separate property from the\n"+
+			"// break classes above, so a code point can be both.",
+		extT, len(extPict), rangeChars)
 
 	b.WriteString(`// _dig decodes one table character to its 6-bit value. The alphabet
 // skips ` + "`\\`" + ` (92), so the two spans are 48..91 and 93..112.
@@ -2047,6 +2230,192 @@ pub function eq_canonical(a: string, b: string): boolean {
 }
 
 `)
+
+	// The class IDs are substituted from cmd/unicodegen's own constants
+	// rather than written out here, so the table encoder and the state
+	// machine that reads it cannot drift apart.
+	b.WriteString(strings.NewReplacer(
+		"$CR", strconv.Itoa(gcbCR),
+		"$LF", strconv.Itoa(gcbLF),
+		"$CONTROL", strconv.Itoa(gcbControl),
+		"$EXTEND", strconv.Itoa(gcbExtend),
+		"$ZWJ", strconv.Itoa(gcbZWJ),
+		"$RI", strconv.Itoa(gcbRegionalIndicator),
+		"$PREPEND", strconv.Itoa(gcbPrepend),
+		"$SPACINGMARK", strconv.Itoa(gcbSpacingMark),
+		"$LVT", strconv.Itoa(gcbLVT),
+		"$LV", strconv.Itoa(gcbLV),
+		"$L", strconv.Itoa(gcbL),
+		"$V", strconv.Itoa(gcbV),
+		"$T", strconv.Itoa(gcbT),
+	).Replace(`// _gcb_of is a code point's Grapheme_Cluster_Break class. Absent
+// code points are Other, which is the overwhelming majority.
+function _gcb_of(cp: char): i32 {
+    var n: i32 = cp as i32;
+    var t: string = _gcb_ranges();
+    var lo: i32 = 0;
+    var hi: i32 = t.len() / 12 - 1;
+    while (lo <= hi) {
+        var mid: i32 = lo + (hi - lo) / 2;
+        var base: i32 = mid * 12;
+        if (n < _fld(t, base)) { hi = mid - 1; }
+        else if (n > _fld(t, base + 4)) { lo = mid + 1; }
+        else { return _fld(t, base + 8); }
+    }
+    return 0;
+}
+
+// _is_extpict — Extended_Pictographic, a property SEPARATE from the
+// break classes: an emoji is usually class Other and pictographic.
+function _is_extpict(cp: char): boolean {
+    return _in_ranges(_extpict_ranges(), cp as i32);
+}
+
+// _gcb_break decides whether a cluster boundary falls between two
+// adjacent code points, following the UAX #29 rules in their numbered
+// order. The rules are order-sensitive: GB3 has to beat GB4, and the
+// catch-all GB999 only applies once every joining rule has declined.
+//
+//   prev / cur  break classes of the two code points
+//   ri          how many Regional_Indicators run up to prev
+//   pict        1 = prev ends ExtPict Extend*, 2 = ... followed by ZWJ
+//   cur_pict    is cur itself Extended_Pictographic
+function _gcb_break(prev: i32, cur: i32, ri: i32, pict: i32, cur_pict: boolean): boolean {
+    // GB3: CR x LF -- a Windows line ending is ONE cluster, not two.
+    if (prev == $CR && cur == $LF) { return false; }
+    // GB4 / GB5: a control, CR or LF never joins anything either way.
+    if (prev == $CR || prev == $LF || prev == $CONTROL) { return true; }
+    if (cur == $CR || cur == $LF || cur == $CONTROL) { return true; }
+    // GB6 / GB7 / GB8: Hangul jamo compose into one syllable cluster.
+    if (prev == $L && (cur == $L || cur == $V || cur == $LV || cur == $LVT)) { return false; }
+    if ((prev == $LV || prev == $V) && (cur == $V || cur == $T)) { return false; }
+    if ((prev == $LVT || prev == $T) && cur == $T) { return false; }
+    // GB9 / GB9a: combining marks, ZWJ and spacing marks attach to what
+    // precedes them -- this is the rule that keeps e + acute together.
+    if (cur == $EXTEND || cur == $ZWJ) { return false; }
+    if (cur == $SPACINGMARK) { return false; }
+    // GB9b: Prepend attaches forwards instead.
+    if (prev == $PREPEND) { return false; }
+    // GB11: ExtPict Extend* ZWJ x ExtPict -- the emoji ZWJ sequences, so
+    // a family emoji is one cluster rather than three people and a join.
+    if (pict == 2 && cur_pict) { return false; }
+    // GB12 / GB13: regional indicators pair up, so a flag is one cluster
+    // and FOUR indicators are TWO flags rather than one long run.
+    if (prev == $RI && cur == $RI && ri % 2 == 1) { return false; }
+    // GB999: anything else breaks.
+    return true;
+}
+
+// _pict_next advances the GB11 pictographic state.
+function _pict_next(pict: i32, cls: i32, cur_pict: boolean): i32 {
+    // A pictograph always (re)starts the sequence, including the one
+    // that just terminated a ZWJ join.
+    if (cur_pict) { return 1; }
+    if (pict == 1 && cls == $EXTEND) { return 1; }
+    if (pict == 1 && cls == $ZWJ) { return 2; }
+    return 0;
+}
+
+// ` + "`graphemes(s)`" + ` — split into extended grapheme clusters: what a
+// reader would call "characters". Combining sequences, emoji ZWJ
+// sequences, flags and Hangul syllables each stay whole.
+//
+// Elements are owned strings. A ` + "`str[]`" + ` of VIEWS would be the better
+// shape -- the clusters are contiguous slices of s and copying them is
+// pure overhead -- but reading a ` + "`str`" + ` element back out of a ` + "`str[]`" + ` is
+// currently broken on two backends: arm64 returns garbage (a bare
+// three-element split then summing the element lengths already gets the
+// wrong answer) and the wasm valtype seam rejects the type outright.
+// Both reproduce with no stdlib involved and on an unmodified tree, so
+// they are backend bugs to fix, not something segmentation can work
+// around. Switch this to ` + "`str[]`" + ` once they are.
+//
+// A WARNING WORTH HEEDING, and the reason this is opt-in: reaching for
+// the n-th grapheme is usually a design smell. It is O(n) to find, and
+// the answer is rarely what the problem actually needed. Prefer
+// iterating this result, or an operation that does not need to know
+// about clusters at all. Fern keeps ` + "`s.len()`" + ` in BYTES and ` + "`s[i]`" + ` a byte
+// index precisely so that the cheap operations stay visibly cheap.
+pub function graphemes(s: string): string[] {
+    var out: string[] = [];
+    var n: i32 = s.len();
+    if (n == 0) { return out; }
+    var start: i32 = 0;
+    var i: i32 = 0;
+    var prev: i32 = 0 - 1;
+    var ri: i32 = 0;
+    var pict: i32 = 0;
+    while (i < n) {
+        var cp: char = 0 as char;
+        var w: i32 = 1;
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pair) => { cp = (pair.0) as char; w = pair.1; },
+            None => { cp = (s[i]) as char; w = 1; }
+        }
+        var cls: i32 = _gcb_of(cp);
+        var cur_pict: boolean = _is_extpict(cp);
+        if (prev >= 0) {
+            if (_gcb_break(prev, cls, ri, pict, cur_pict)) {
+                out = out.append(s[start : i]);
+                start = i;
+            }
+        }
+        if (cls == $RI) { ri = ri + 1; } else { ri = 0; }
+        pict = _pict_next(pict, cls, cur_pict);
+        prev = cls;
+        i = i + w;
+    }
+    return out.append(s[start : n]);
+}
+
+// ` + "`grapheme_count(s)`" + ` — how many clusters, without building the array
+// of them. Deliberately a separate scan rather than ` + "`graphemes(s).len()`" + `:
+// counting should not allocate.
+pub function grapheme_count(s: string): i32 {
+    var n: i32 = s.len();
+    if (n == 0) { return 0; }
+    var count: i32 = 1;
+    var i: i32 = 0;
+    var prev: i32 = 0 - 1;
+    var ri: i32 = 0;
+    var pict: i32 = 0;
+    while (i < n) {
+        var cp: char = 0 as char;
+        var w: i32 = 1;
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pair) => { cp = (pair.0) as char; w = pair.1; },
+            None => { cp = (s[i]) as char; w = 1; }
+        }
+        var cls: i32 = _gcb_of(cp);
+        var cur_pict: boolean = _is_extpict(cp);
+        if (prev >= 0) {
+            if (_gcb_break(prev, cls, ri, pict, cur_pict)) { count = count + 1; }
+        }
+        if (cls == $RI) { ri = ri + 1; } else { ri = 0; }
+        pict = _pict_next(pict, cls, cur_pict);
+        prev = cls;
+        i = i + w;
+    }
+    return count;
+}
+
+// ` + "`reverse_graphemes(s)`" + ` — reverse by cluster, which is the
+// correct-by-default sibling of ` + "`reverse_bytes`" + `. An accented letter or a
+// family emoji comes back intact rather than scrambled.
+//
+// ` + "`reverse_bytes`" + ` keeps its name and its place: it is the honest one,
+// carrying the hazard in the name for callers who really do want bytes.
+pub function reverse_graphemes(s: string): string {
+    var gs: string[] = graphemes(s);
+    var out: string = "";
+    var i: i32 = gs.len() - 1;
+    while (i >= 0) {
+        out = out + gs[i];
+        i = i - 1;
+    }
+    return out;
+}
+`))
 
 	return b.String(), stats
 }

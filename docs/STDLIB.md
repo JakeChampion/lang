@@ -352,6 +352,24 @@ that normalizes differently from the server.
 NFKC/NFKD are **not** provided: they are compatibility (lossy) forms
 needing a second full-size table, which the payoff does not justify.
 
+**Grapheme segmentation (UAX #29).** A "character" as a *reader* means a
+grapheme cluster, not a byte and not a code point: `e`+combining-acute,
+a family emoji ZWJ sequence, a flag, and a Hangul syllable are each one
+cluster. Opt-in, and DCE'd to nothing unless called.
+
+- `graphemes(s): string[]` — split into extended grapheme clusters
+- `grapheme_count(s): i32` — a separate scan, so counting does not
+  allocate the array
+- `reverse_graphemes(s): string` — reverse by cluster. This is the
+  correct-by-default sibling of `reverse_bytes`, which keeps its name
+  because it is the honest one: it carries the hazard in the name.
+
+Reaching for the *n-th* grapheme is usually a design smell — it is O(n)
+to find and rarely what the problem needed. Prefer iterating, or an
+operation that need not know about clusters at all. `s.len()` stays
+**bytes** and `s[i]` stays a byte index precisely so the cheap
+operations remain visibly cheap.
+
 Caveats: the per-scalar `char` methods `c.to_upper()` / `c.to_lower()` stay
 **simple** (1:1) — a 1→N expansion has no single code point to return.
 Greek Final_Sigma **is** applied when lowercasing (a word-final `Σ`
