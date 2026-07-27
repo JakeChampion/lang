@@ -422,16 +422,24 @@ tier → leak.
   opts in, with any regression still caught loudly by the fixpoint/smoke-run.
   Guarded by `TestSelfHostAssumeEligibleByteIdenticalX86_64`.
 
-  **This is the concrete lever the memory blocker needed.** Halving the gen1
-  per-window peak (~7.6 GB → ~3.8 GB) drops it well under the 8 GiB arena, which
-  should let the gen1 `-per-module-emit-all` fixpoint batch multiple units per
-  process without OOM (the CI-affordability blocker) and lower every per-module
-  emit's memory. Next: wire the memory-sensitive fixpoint/emit-all lanes to pass
-  `-assume-eligible` and re-measure the gen1 emit-all batch ceiling. The driver
-  repoint + `asm.emit_module` → per-module-or-error swap is mechanical once the
-  gen1 path is comfortably CI-affordable. (`asm_ir_run.fern:158` stays the
-  differential oracle regardless; retiring it means trusting the IR path outright,
-  which the fixpoint + differential suites must justify.)
+  **CONFIRMED: this unblocks the gen1 emit-all fixpoint (2026-07-27).**
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` — a gen0 → link → gen1 →
+  gen1-emit-all byte-identity fixpoint — now runs green at **batch=8**, the exact
+  per-process batch that OOM'd (exit 137) before `-assume-eligible`: 35 units in
+  5 batches, **no OOM**, gen0 == gen1 byte-identically. Halving each unit's arena
+  advance halved the per-batch accumulation, so batch=8 fits. Bonus: skipping the
+  redundant eligibility lowering also makes it **~3.3× faster** (gen0 emit-all
+  ~80 s vs ~270 s pre-fix; whole test ~9 min vs the ~16.6 min serial fixpoint).
+  Env-gated (`RUN_EMITALL_FIXPOINT=1`) — the gen1 self-reproduction proof is now
+  cheap enough to consider de-gating, but 9 min is still heavy for every lane.
+
+  **So the slice-3 memory blocker is resolved for the per-module path.** The
+  remaining work to retire the AST emitters is the mechanical part: repoint the
+  bootstrap/fixpoint drivers off the merged bundle onto the (now memory-fit,
+  self-reproducing) per-module path, then `asm.emit_module` → per-module-or-error
+  swap, then delete. (`asm_ir_run.fern:158` stays the differential oracle
+  regardless; retiring it means trusting the IR path outright, which the fixpoint
+  + differential suites must justify.)
 
 - **Slice 4 — untangle the arm64/wasm IR runtime from the AST files.**
   Independent of #3425, but **delivers no standalone deletion** (the driver still
