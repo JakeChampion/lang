@@ -301,21 +301,25 @@ convention.
 ### `std/unicode`
 
 Unicode-aware case mapping — what `std/string`'s casing methods
-delegate to, and callable directly as free functions over a whole
-string or a single code point. Decodes UTF-8, maps each code point
+delegate to, callable directly over a whole string, plus the `char`
+method surface for a single scalar. Decodes UTF-8, maps each code point
 (Latin, Greek, Cyrillic, Armenian, fullwidth, …) via tables generated
 from the Go stdlib's `unicode` package, and re-encodes.
 
 - `to_upper(s)` / `to_lower(s)` — whole-string, **full (1→N)** mapping
   (`ß` → `SS`)
 - `swap_case(s)` / `capitalize(s)` / `title_case(s)`
-- `to_upper_char(cp)` / `to_lower_char(cp)` — single code point
+- **`char` methods** — `c.to_upper()` / `c.to_lower()` (**simple** 1:1,
+  since a 1→N expansion has no single scalar to return), plus
+  `c.is_letter()` / `is_digit()` (Nd) / `is_alnum()` / `is_whitespace()`
+  / `is_upper()` / `is_lower()`. Methods rather than free functions
+  because a free `to_upper(c: char)` would collide with
+  `to_upper(s: string)` — and because the receiver type is what says
+  which operation you meant.
 - `case_fold(s)` — the comparison form (`ß` → `ss`); a third operation,
   not lowercasing
 - `eq_ignore_case(a, b)` — caseless equality under **full case folding**
-- **character classes** (over a code point, via range binary search):
-  `is_letter`, `is_digit` (Nd), `is_alnum`, `is_whitespace`,
-  `is_upper`, `is_lower`
+
 
 Caveats: the per-code-point `to_upper_char` / `to_lower_char` stay
 **simple** (1:1) — a 1→N expansion has no single code point to return.

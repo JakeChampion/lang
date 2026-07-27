@@ -75,3 +75,74 @@ func TestCharTypeArm64(t *testing.T) {
 		t.Fatalf("arm64 got %d, want 0", got)
 	}
 }
+
+// charUnicodeProgram pins std/unicode's `char` surface (#5629 slice 5) —
+// the first stdlib producer/consumer of the type.
+//
+// These are METHODS, not free functions, and that is load-bearing: a free
+// `to_upper(c: char)` would collide with `to_upper(s: string)` in the same
+// module. The method form also makes the receiver TYPE carry the meaning,
+// which is the whole point of D2 — `c.to_upper()` and `s.to_upper()` are
+// visibly different operations where previously both sides were `i32` and
+// only a naming convention separated them.
+//
+// Case mapping on a `char` is SIMPLE: a 1→N expansion has no single scalar
+// to return, so `ß` maps to itself here while `"ß".to_upper()` is `"SS"`.
+// Step 12 pins exactly that contrast.
+const charUnicodeProgram = `
+import "std/string";
+import "std/unicode" as unicode;
+
+function up(n: i32): i32 { return (n as char).to_upper() as i32; }
+function lo(n: i32): i32 { return (n as char).to_lower() as i32; }
+
+function main(): i32 {
+    // Simple case mapping over scalars, ASCII and beyond.
+    if (up(97) != 65) { return 1; }
+    if (lo(65) != 97) { return 2; }
+    if (lo(913) != 945) { return 3; }        // Greek capital alpha
+    if (up(0xB5) != 0x39C) { return 4; }     // MICRO SIGN → Greek capital mu
+    if (up(0x10428) != 0x10400) { return 5; } // Deseret, beyond the BMP
+    if (up(48) != 48) { return 6; }          // a digit is caseless
+
+    // Classification.
+    var a: char = 97 as char;
+    if (!a.is_letter() || !a.is_lower() || a.is_upper() || !a.is_alnum()) { return 7; }
+    var zero: char = 48 as char;
+    if (!zero.is_digit() || !zero.is_alnum() || zero.is_letter()) { return 8; }
+    // Nd is the DECIMAL class, so Arabic-Indic digits count.
+    if (!((0x0669 as char).is_digit())) { return 9; }
+    if (!((0xA0 as char).is_whitespace())) { return 10; }
+    if ((97 as char).is_whitespace()) { return 11; }
+
+    // char case mapping is SIMPLE; the string one is FULL. Same input,
+    // deliberately different answers.
+    if (up(223) != 223) { return 12; }
+    if ("ß".to_upper() != "SS") { return 13; }
+    return 0;
+}
+`
+
+func TestCharUnicodeInterp(t *testing.T) {
+	if got := runInterpExit(t, charUnicodeProgram); got != 0 {
+		t.Fatalf("interp got %d, want 0", got)
+	}
+}
+
+func TestCharUnicodeX86_64(t *testing.T) {
+	if _, got := compileAndRunX86_64(t, charUnicodeProgram); got != 0 {
+		t.Fatalf("x86-64 got %d, want 0", got)
+	}
+}
+
+func TestCharUnicodeWasm(t *testing.T) {
+	if got := compileAndRunWasmbinMain(t, charUnicodeProgram); got != 0 {
+		t.Fatalf("wasm got %d, want 0", got)
+	}
+}
+
+func TestCharUnicodeArm64(t *testing.T) {
+	if _, got := compileAndRunArm64(t, charUnicodeProgram); got != 0 {
+		t.Fatalf("arm64 got %d, want 0", got)
+	}
+}

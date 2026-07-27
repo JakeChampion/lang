@@ -24,25 +24,25 @@ function main(): i32 {
     if (unicode.to_upper("привет") != "ПРИВЕТ") { return 6; }
     if (!unicode.eq_ignore_case("Café", "cafÉ")) { return 7; }
     if (unicode.eq_ignore_case("abc", "abd")) { return 8; }
-    if (unicode.to_upper_char(97) != 65) { return 9; }
-    if (unicode.to_lower_char(913) != 945) { return 10; }
+    if (((97 as char).to_upper() as i32) != 65) { return 9; }
+    if (((913 as char).to_lower() as i32) != 945) { return 10; }
     if (unicode.to_upper("123!") != "123!") { return 11; }
     if (unicode.to_upper("straße") != "STRASSE") { return 12; }
     // character classes: CJK letter, Arabic-Indic digit, NBSP space
-    if (!unicode.is_letter(0x4E2D) || unicode.is_letter(48)) { return 13; }
-    if (!unicode.is_digit(0x0669) || !unicode.is_alnum(97)) { return 14; }
-    if (!unicode.is_whitespace(0xA0) || unicode.is_whitespace(97)) { return 15; }
-    if (!unicode.is_upper(0x391) || !unicode.is_lower(0x3B1)) { return 16; }
+    if (!((0x4E2D as char).is_letter()) || ((48 as char).is_letter())) { return 13; }
+    if (!((0x0669 as char).is_digit()) || !((97 as char).is_alnum())) { return 14; }
+    if (!((0xA0 as char).is_whitespace()) || ((97 as char).is_whitespace())) { return 15; }
+    if (!((0x391 as char).is_upper()) || !((0x3B1 as char).is_lower())) { return 16; }
     // ASCII fast path vs decode path: the same prefix, both ways.
     if (unicode.to_upper("abc 1!") != "ABC 1!") { return 17; }
     if (unicode.to_upper("abc 1!é") != "ABC 1!É") { return 18; }
     // Alternating pair run (Latin Extended-A) — the kind-1 decode.
-    if (unicode.to_lower_char(0x100) != 0x101) { return 19; }
-    if (unicode.to_upper_char(0x101) != 0x100) { return 20; }
+    if (((0x100 as char).to_lower() as i32) != 0x101) { return 19; }
+    if (((0x101 as char).to_upper() as i32) != 0x100) { return 20; }
     if (unicode.to_upper("ăćĕ") != "ĂĆĔ") { return 21; }
     // Large constant delta, and a non-BMP mapping (4-byte UTF-8).
-    if (unicode.to_upper_char(0x250) != 0x2C6F) { return 22; }
-    if (unicode.to_upper_char(0x10428) != 0x10400) { return 23; }
+    if (((0x250 as char).to_upper() as i32) != 0x2C6F) { return 22; }
+    if (((0x10428 as char).to_upper() as i32) != 0x10400) { return 23; }
     if (unicode.to_upper("𐐨") != "𐐀") { return 24; }
     // eq_ignore_case streams both operands: KELVIN SIGN (3 bytes) folds
     // to 'k' (1 byte), so equal text with unequal byte lengths.

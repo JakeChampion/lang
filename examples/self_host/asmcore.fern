@@ -1698,7 +1698,7 @@ pub function ty_from_ref(t: parser.TypeRef): Ty {
     // where only the literal "i32[]"/"u32[]"/… strings hit a dedicated array and
     // any other trailing "[]" falls through to ty_array.
     if (t.array_depth == 1 && !t.is_tuple && t.args.len() == 0) {
-        if (t.base == "i32") { return ty_array_i32(); }
+        if (t.base == "i32" || t.base == "char") { return ty_array_i32(); }
         if (t.base == "u32") { return ty_array_u32(); }
         if (t.base == "u64") { return ty_array_u64(); }
         if (t.base == "i64") { return ty_array_i64(); }
@@ -1733,6 +1733,11 @@ pub function ty_from_ref(t: parser.TypeRef): Ty {
     }
     // array_depth == 0, no args: scalar or bare name.
     if (t.base == "i32") { return ty_i32(); }
+    // `char` is a surface type that erases to an i32 slot at the IR choke
+    // point (#5629), so codegen sees plain i32 — same treatment the native
+    // backends get from ir/erase_surface.go. Without this a `char` receiver
+    // or parameter types as ty_unknown and its methods fail to dispatch.
+    if (t.base == "char") { return ty_i32(); }
     if (t.base == "u32") { return ty_u32(); }
     if (t.base == "u64") { return ty_u64(); }
     if (t.base == "i64") { return ty_i64(); }
