@@ -8811,6 +8811,27 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // an array source that is NOT string[] / f64[] / i64[]. Those
                     // exclusions are load-bearing — the helper reads 8-byte i32 slots,
                     // so admitting an f64[] would sum float bit patterns as integers.
+                    // xs.index_of(x) / xs.contains(x) on an i32[] — helper-backed like
+                    // sum/product, but with an ARGUMENT, so the operand order rule from
+                    // #5666 applies: the callee binds params in reverse push order, so
+                    // the target is pushed first and the array (param[0]) second.
+                    // asm.fern's own comment at this intercept says the same — "push
+                    // args right-to-left (target then array) so the array is param[0]".
+                    // `contains` is `index_of(...) >= 0`. Same receiver guard as below.
+                    if ((fa.field == "index_of" || fa.field == "contains") && c.args.len() == 1
+                        && expr_is_arr_src(fa.obj, s)
+                        && !expr_is_strarr(fa.obj, s) && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)) {
+                        var pidx: LowerState = lower_expr(c.args[0], s);
+                        if (!pidx.ok) { return pidx; }
+                        pidx = lower_expr(fa.obj, pidx);
+                        if (!pidx.ok) { return pidx; }
+                        pidx = pidx.emit(ir.op_call_direct("__fern_arr_i32_index_of", 2));
+                        if (fa.field == "contains") {
+                            pidx = pidx.emit(ir.op_const_i32(0));
+                            return pidx.emit(ir.op_bin("ge_s", 0, false));
+                        }
+                        return pidx;
+                    }
                     if ((fa.field == "sum" || fa.field == "product") && c.args.len() == 0
                         && expr_is_arr_src(fa.obj, s)
                         && !expr_is_strarr(fa.obj, s) && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)) {
