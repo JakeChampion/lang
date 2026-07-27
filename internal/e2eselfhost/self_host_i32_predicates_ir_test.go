@@ -140,6 +140,10 @@ func TestSelfHostI32PredicatesIRX86_64(t *testing.T) {
 		{"last-byte-single", "function main(): i32 { var s: string = \"z\"; return s.last_byte(); }", 122},
 		// Fresh concat receiver exercises the temp local (evaluated once, read twice).
 		{"last-byte-fresh-concat", "function main(): i32 { var a: string = \"ab\"; var b: string = \"cd\"; return (a + b).last_byte(); }", 100},
+		// args_count() desugars to args().len(). The harness runs the inner binary with
+		// no extra argv, so the count is 1 (argv[0] alone).
+		{"args-count", "function main(): i32 { return args_count(); }", 1},
+		{"args-count-compare", "function main(): i32 { if (args_count() >= 1) { return 7; } return 0; }", 7},
 	}
 
 	for _, tc := range cases {
