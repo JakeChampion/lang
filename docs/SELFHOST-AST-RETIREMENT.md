@@ -397,17 +397,41 @@ tier → leak.
   emit memory scales far worse than the output size implies).
 
   **Therefore slice 3 cannot proceed by making the merged path route IR.** The
-  whole-compiler emit must stay **windowed** (per-module), which is byte-fixpoint-
-  stable and CI-affordable at gen0 (`TestSelfHostModloadPerModuleWholeCompilerX86_64`)
-  but whose gen1 self-reproduction proof is env-gated/heavy. Retiring the AST
-  emitter is gated on **making the self-host whole-program emit fit** — either a
-  genuine reduction of the per-window emit peak (why 7.6 GB for 100 funcs? profile
-  side-tables vs output vs lowering churn), or an arena checkpoint/reset so a
-  single process can window without accumulating. That is the real slice-3/5
-  prerequisite; the driver repoint + `asm.emit_module` → per-module-or-error swap
-  is mechanical once it lands. (`asm_ir_run.fern:158` stays the differential
-  oracle regardless; retiring it means trusting the IR path outright, which the
-  fixpoint + differential suites must justify.)
+  whole-compiler emit must stay **windowed** (per-module).
+
+  **The per-window peak profiled + HALVED (2026-07-27).** A peak-RSS profile of
+  the Go-built per-module driver (poll `/proc/<pid>/VmHWM`) localized the peak
+  precisely, and it is neither the parse nor per-function accumulation:
+  - It is a **module-INDEPENDENT baseline** — a 5-func window and a 50-func
+    window of the same module both peak the same (`irlower` ~4.07 GB either way),
+    and a tiny 15-func module (`util`) peaks ~3.05 GB. The parse+infer floor is
+    only ~382 MB.
+  - Bracketing the phases: the **per-module IR-eligibility pre-check**
+    (`all_eligible_lib_known_view`) is the dominant contributor. It **fully
+    re-lowers every function of the module** purely to verify it lowers — a
+    SECOND whole-module lowering pass on top of the emit's own. (The interproc
+    borrow/consume fixpoints add only ~350 MB combined; they are NOT the cost.)
+  - On the self-host bump arena (no GC) the eligibility pass and the emit pass
+    **stack**, which is exactly the gen1 ~7.6 GB ≈ 2 × ~3.8 GB single-pass.
+
+  **Fix landed: `-assume-eligible`** skips the pre-check (`asm_modload_run.fern`).
+  Byte-identical — skipping a pure verification pass cannot change an eligible
+  module's asm (proven across all 15 whole-compiler modules) — and it ~halves the
+  peak: `irlower` window 4.07 GB → 1.81 GB, `util` 3.05 GB → 1.75 GB. Default OFF
+  preserves the clean "not IR-eligible" diagnostic; the known-eligible bootstrap
+  opts in, with any regression still caught loudly by the fixpoint/smoke-run.
+  Guarded by `TestSelfHostAssumeEligibleByteIdenticalX86_64`.
+
+  **This is the concrete lever the memory blocker needed.** Halving the gen1
+  per-window peak (~7.6 GB → ~3.8 GB) drops it well under the 8 GiB arena, which
+  should let the gen1 `-per-module-emit-all` fixpoint batch multiple units per
+  process without OOM (the CI-affordability blocker) and lower every per-module
+  emit's memory. Next: wire the memory-sensitive fixpoint/emit-all lanes to pass
+  `-assume-eligible` and re-measure the gen1 emit-all batch ceiling. The driver
+  repoint + `asm.emit_module` → per-module-or-error swap is mechanical once the
+  gen1 path is comfortably CI-affordable. (`asm_ir_run.fern:158` stays the
+  differential oracle regardless; retiring it means trusting the IR path outright,
+  which the fixpoint + differential suites must justify.)
 
 - **Slice 4 — untangle the arm64/wasm IR runtime from the AST files.**
   Independent of #3425, but **delivers no standalone deletion** (the driver still

@@ -94,7 +94,7 @@ function emit_window_size(funcs: i32, bytes: i32, func_budget: i32): i32 {
     return window;
 }
 
-function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_extra: string[], cache_dir: string, pm_lo: i32, pm_hi: i32, target: string, out_dir: string, func_budget: i32, unit_lo: i32, unit_hi: i32): i32 {
+function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_extra: string[], cache_dir: string, pm_lo: i32, pm_hi: i32, target: string, out_dir: string, func_budget: i32, unit_lo: i32, unit_hi: i32, assume_eligible: boolean): i32 {
     var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded);
     if (pm_mode == "count") {
         print(util.i32_to_string(parts.len()) + "\n");
@@ -166,7 +166,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
                 var whi: i32 = wlo + window;
                 if (whi > fcount) { whi = fcount; }
                 if (uidx >= unit_lo && uidx < unit_hi) {
-                    if (!elig_checked) {
+                    if (!elig_checked && !assume_eligible) {
                         var elig_all: boolean = asm_ir.all_eligible_lib_known_view(infmods[idx], known, all_funcs, all_structs);
                         if (parts[idx].is_entry) { elig_all = asm_ir.all_eligible_known_view(infmods[idx], known, all_funcs, all_structs); }
                         if (!elig_all) {
@@ -299,8 +299,11 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
             }
         }
     }
-    var elig: boolean = asm_ir.all_eligible_lib_known_view(infmods[pm_index], known, all_funcs, all_structs);
-    if (parts[pm_index].is_entry) { elig = asm_ir.all_eligible_known_view(infmods[pm_index], known, all_funcs, all_structs); }
+    var elig: boolean = true;
+    if (!assume_eligible) {
+        elig = asm_ir.all_eligible_lib_known_view(infmods[pm_index], known, all_funcs, all_structs);
+        if (parts[pm_index].is_entry) { elig = asm_ir.all_eligible_known_view(infmods[pm_index], known, all_funcs, all_structs); }
+    }
     if (!elig) {
         eprint("per-module: module not IR-eligible: ");
         eprint(parts[pm_index].ns);
@@ -385,6 +388,18 @@ function main(): i32 {
     var func_budget: i32 = 100;
     var unit_lo: i32 = 0;
     var unit_hi: i32 = 2000000000;
+    // -assume-eligible skips the per-module IR-eligibility pre-check
+    // (all_eligible_lib_known_view). That check fully re-lowers every function of
+    // the module purely to verify it lowers — a SECOND whole-module lowering pass
+    // on top of the emit's own. On the self-host bump arena (no GC) the two passes
+    // stack, so the pre-check ~doubles the per-window peak (measured: irlower
+    // 4.07 GB → 1.81 GB, util 3.05 GB → 1.75 GB, output BYTE-IDENTICAL). The
+    // whole-compiler bootstrap (the only caller of the per-module path) is known
+    // IR-eligible, and any regression is still caught loudly by the fixpoint /
+    // smoke-run (a miscompiled unit fails to link or diverges), so skipping the
+    // pre-check there is safe. Default OFF preserves the clean "not IR-eligible"
+    // diagnostic for arbitrary per-module use.
+    var assume_eligible: boolean = false;
     var ai: i32 = 1;
     while (ai < a.len()) {
         if (a[ai] == "-ir-probe") { probe = true; }
@@ -394,6 +409,7 @@ function main(): i32 {
         else if (a[ai] == "-per-module-manifest") { pm_mode = "manifest"; }
         else if (a[ai] == "-per-module-emit" && ai + 1 < a.len()) { pm_mode = "emit"; pm_index = util.digits_to_i32(a[ai + 1]); ai = ai + 1; }
         else if (a[ai] == "-per-module-emit-all") { pm_mode = "emit-all"; }
+        else if (a[ai] == "-assume-eligible") { assume_eligible = true; }
         else if (a[ai] == "-out-dir" && ai + 1 < a.len()) { out_dir = a[ai + 1]; ai = ai + 1; }
         else if (a[ai] == "-func-budget" && ai + 1 < a.len()) { func_budget = util.digits_to_i32(a[ai + 1]); ai = ai + 1; }
         else if (a[ai] == "-unit-range" && ai + 1 < a.len()) {
@@ -421,7 +437,7 @@ function main(): i32 {
         ai = ai + 1;
     }
     if (entry_path == "") {
-        eprint("usage: asm_modload_run <entry.fern> [-ir-probe | -per-module-count | -per-module-needs | -per-module-func-counts | -per-module-manifest | -per-module-emit N [-cache-dir DIR] [-func-range LO:HI] | -per-module-emit-all -out-dir DIR [-func-budget N] [-unit-range LO:HI]]\n");
+        eprint("usage: asm_modload_run <entry.fern> [-ir-probe | -per-module-count | -per-module-needs | -per-module-func-counts | -per-module-manifest | -per-module-emit N [-cache-dir DIR] [-func-range LO:HI] | -per-module-emit-all -out-dir DIR [-func-budget N] [-unit-range LO:HI]] [-assume-eligible]\n");
         return 2;
     }
     var dir: string = modloader.dirname(entry_path);
@@ -430,7 +446,7 @@ function main(): i32 {
             var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
             var loaded: flatten.LoadedModule[] = modloader.load_imports(dir, entry);
             if (pm_mode.len() > 0) {
-                return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi, target, out_dir, func_budget, unit_lo, unit_hi);
+                return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi, target, out_dir, func_budget, unit_lo, unit_hi, assume_eligible);
             }
             var merged: parser.Module = flatten.bundle(entry, loaded);
             merged = modloader.merge_builtins(dir, merged);
