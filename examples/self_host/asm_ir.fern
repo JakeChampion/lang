@@ -1257,7 +1257,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl -16(%rbx), %ecx\n");      // cap
     s = s.write("    addq $3, %rcx\n");             // class = cap + 3 words
     s = s.write("    cmpq $65536, %rcx\n");
-    s = s.write("    jae .Lsaf_pop\n");             // large tier -> leak buffer (sound)
+    s = s.write("    jae .Lsaf_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");   // old head
@@ -1276,6 +1276,16 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    incl __fern_rc_underflow(%rip)\n");
     s = s.write(".Lsaf_ret:\n");
     s = s.write("    ret\n");
+    // Large tier (#3425): recycle the >=512 KiB string[] outer buffer (base =
+    // arr-16, bytes = words*8) via __fern_large_push instead of leaking. A leaked
+    // buffer dies with the process in the per-window serial emit, but in the
+    // single-process -per-module-emit-all mode it ACCUMULATES across the batch and
+    // blows the arena. %rbx/%r12/%r13 are callee-saved across the call.
+    s = s.write(".Lsaf_large:\n");
+    s = s.write("    leaq -16(%rbx), %r8\n");        // base = arr - 16
+    s = s.write("    leaq 0(,%rcx,8), %rsi\n");      // bytes = words*8
+    s = s.write("    call __fern_large_push\n");
+    s = s.write("    jmp .Lsaf_pop\n");
     // __fern_arrarr_free(arr) — SCALAR-array-of-arrays reclaim (#4355 slice 9):
     // the arr-of-arr sibling of __fn___fern_str_arr_free with the identical
     // guard chain and buffer free; only the per-element call differs — each
@@ -1320,7 +1330,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl -16(%rbx), %ecx\n");      // cap
     s = s.write("    addq $3, %rcx\n");             // class = cap + 3 words
     s = s.write("    cmpq $65536, %rcx\n");
-    s = s.write("    jae .Laaf_pop\n");             // large tier -> leak buffer (sound)
+    s = s.write("    jae .Laaf_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");
@@ -1339,6 +1349,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    incl __fern_rc_underflow(%rip)\n");
     s = s.write(".Laaf_ret:\n");
     s = s.write("    ret\n");
+    // Large tier (#3425): recycle the >=512 KiB arr-of-arr outer buffer instead of
+    // leaking (accumulates across a -per-module-emit-all batch otherwise).
+    s = s.write(".Laaf_large:\n");
+    s = s.write("    leaq -16(%rbx), %r8\n");        // base = arr - 16
+    s = s.write("    leaq 0(,%rcx,8), %rsi\n");      // bytes = words*8
+    s = s.write("    call __fern_large_push\n");
+    s = s.write("    jmp .Laaf_pop\n");
     }
     // __fern_strarrarr_free(arr) — STRING-array-of-arrays reclaim (#4355
     // slice 9): each element is a string[] INNER buffer released fully by
@@ -1378,7 +1395,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl -16(%rbx), %ecx\n");
     s = s.write("    addq $3, %rcx\n");
     s = s.write("    cmpq $65536, %rcx\n");
-    s = s.write("    jae .Lssaf_pop\n");
+    s = s.write("    jae .Lssaf_large\n");          // large tier -> recycle via __fern_large_push
     s = s.write("    leaq -16(%rbx), %rdx\n");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");
@@ -1397,6 +1414,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    incl __fern_rc_underflow(%rip)\n");
     s = s.write(".Lssaf_ret:\n");
     s = s.write("    ret\n");
+    // Large tier (#3425): recycle the >=512 KiB string[][] outer buffer instead of
+    // leaking (accumulates across a -per-module-emit-all batch otherwise).
+    s = s.write(".Lssaf_large:\n");
+    s = s.write("    leaq -16(%rbx), %r8\n");        // base = arr - 16
+    s = s.write("    leaq 0(,%rcx,8), %rsi\n");      // bytes = words*8
+    s = s.write("    call __fern_large_push\n");
+    s = s.write("    jmp .Lssaf_pop\n");
     }
     // __fern_optarrarr_free(arr) — Option[<scalar-arr>][] reclaim (#4365):
     // walks a fresh, sole-owned array of OPTION boxes. Per element (an
@@ -1460,7 +1484,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl -16(%rbx), %ecx\n");      // cap
     s = s.write("    addq $3, %rcx\n");             // class = cap + 3 words
     s = s.write("    cmpq $65536, %rcx\n");
-    s = s.write("    jae .Loaf_pop\n");             // large tier -> leak buffer (sound)
+    s = s.write("    jae .Loaf_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");
@@ -1479,6 +1503,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    incl __fern_rc_underflow(%rip)\n");
     s = s.write(".Loaf_ret:\n");
     s = s.write("    ret\n");
+    // Large tier (#3425): recycle the >=512 KiB Option[]-array outer buffer instead
+    // of leaking (accumulates across a -per-module-emit-all batch otherwise).
+    s = s.write(".Loaf_large:\n");
+    s = s.write("    leaq -16(%rbx), %r8\n");        // base = arr - 16
+    s = s.write("    leaq 0(,%rcx,8), %rsi\n");      // bytes = words*8
+    s = s.write("    call __fern_large_push\n");
+    s = s.write("    jmp .Loaf_pop\n");
     }
     // __fern_map_free(box) — reclaim a FRESH, sole-owned map local (Perceus
     // map-local slice). The self-host asm map box is a RAW 16-byte __fern_alloc(16)
@@ -1690,7 +1721,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl -16(%rcx), %esi\n");     // old cap
     s = s.write("    addq $3, %rsi\n");            // words = cap + 3 (header)
     s = s.write("    cmpq $65536, %rsi\n");
-    s = s.write("    jae .Lsd_ret\n");             // large tier — leak (matches arr_dec)
+    s = s.write("    jae .Lsd_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    movl $0, -8(%rcx)\n");        // mark freed
     s = s.write("    leaq -16(%rcx), %rdi\n");     // old box base
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
@@ -1698,6 +1729,17 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %r9, (%rdi)\n");         // node.next = head
     s = s.write("    movq %rdi, (%r8,%rsi,8)\n");  // head = node
     s = s.write(".Lsd_ret:\n");
+    s = s.write("    ret\n");                      // %rax = new
+    // Large tier (#3425): recycle the >=512 KiB old box (base = old-16, bytes =
+    // words*8) instead of leaking. %rax holds the return value `new` and
+    // __fern_large_push clobbers it, so preserve it across the call.
+    s = s.write(".Lsd_large:\n");
+    s = s.write("    movl $0, -8(%rcx)\n");        // mark freed
+    s = s.write("    leaq -16(%rcx), %r8\n");      // base = old - 16
+    s = s.write("    leaq 0(,%rsi,8), %rsi\n");    // bytes = words*8
+    s = s.write("    pushq %rax\n");               // preserve return value (new)
+    s = s.write("    call __fern_large_push\n");
+    s = s.write("    popq %rax\n");
     s = s.write("    ret\n");                      // %rax = new
     // __fern_print_int: the i32 in %rdi → decimal text in a stack buffer → stdout
     // (sys_write, fd 1, no newline). Transcribed verbatim from asm.fern's
@@ -2443,7 +2485,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movl -16(%r12), %ecx\n");    // old cap
         s = s.write("    addq $3, %rcx\n");           // words = cap + 3 (header)
         s = s.write("    cmpq $65536, %rcx\n");
-        s = s.write("    jae .Lapo_ret\n");           // large tier — leak (matches arr_dec)
+        s = s.write("    jae .Lapo_large\n");         // large tier -> recycle via __fern_large_push
         s = s.write("    movl $0, -8(%r12)\n");       // mark freed
         s = s.write("    leaq -16(%r12), %rdx\n");    // old box base
         s = s.write("    leaq __fern_freelist(%rip), %r8\n");
@@ -2455,6 +2497,18 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    popq %r12\n");
         s = s.write("    leave\n");
         s = s.write("    ret\n");
+        // Large tier (#3425): recycle the >=512 KiB superseded old buffer (base =
+        // old-16, bytes = words*8) instead of leaking. %rax holds the return value
+        // `new` and __fern_large_push clobbers it, so preserve it across the call;
+        // %r12 is callee-saved.
+        s = s.write(".Lapo_large:\n");
+        s = s.write("    movl $0, -8(%r12)\n");       // mark freed
+        s = s.write("    leaq -16(%r12), %r8\n");     // base = old - 16
+        s = s.write("    leaq 0(,%rcx,8), %rsi\n");   // bytes = words*8
+        s = s.write("    pushq %rax\n");              // preserve return value (new)
+        s = s.write("    call __fern_large_push\n");
+        s = s.write("    popq %rax\n");
+        s = s.write("    jmp .Lapo_ret\n");
     }
 
     // Map runtime (transcribed from asm.fern) — only for map-using modules, so a
