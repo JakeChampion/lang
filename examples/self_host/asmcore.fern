@@ -2016,6 +2016,12 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "tcp_pollable") { return ty_i32(); }
                     // See asm.fern for rationale.
                     if (id.name == "sleep_ms") { return ty_i32(); }
+                    // proc_fork() → 0 in the child / child pid in the parent /
+                    // -errno; proc_waitpid(pid) → the child's exit status
+                    // (shell convention: 128 + signal on a signal death).
+                    // Both plain i32, matching native's FuncSigs (#5686).
+                    if (id.name == "proc_fork") { return ty_i32(); }
+                    if (id.name == "proc_waitpid") { return ty_i32(); }
                     if (id.name == "remove_file") { return ty_option(ty_unknown()); }
                     // subprocess(cmd, args, stdin) → ProcessResult struct.
                     // See asm.fern: returns "unknown" because the struct's

@@ -557,6 +557,15 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // the random_i32 need (asm_arm64.emit_runtime), heap-independent.
             s = s.need("random_i32");
             s = s.write("    bl __fern_random_i32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 211) {  // proc_fork
+            // no operands; __fern_proc_fork() -> i32 in x0 (0 child / pid parent
+            // / -errno). Helper gated by the need, like random_i32 (#5686).
+            s = s.need("proc_fork");
+            s = s.write("    bl __fern_proc_fork\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 212) {  // proc_waitpid
+            // [pid] -> __fern_proc_waitpid(x0 = pid) -> decoded status in x0.
+            s = s.need("proc_waitpid");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_proc_waitpid\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 182) {  // monotonic_ns
             // no operands; __fern_monotonic_ns() -> i64 in x0. asm_arm64.emit_
             // runtime emits the helper unconditionally (heap-independent), so no

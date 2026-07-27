@@ -779,6 +779,63 @@ function emit_ir_sleep_ms(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+// emit_ir_proc_fork appends __fern_proc_fork() -> i32 — a bare fork(2)
+// (syscall 57, no args) whose return shape IS the builtin's contract: 0 in the
+// child, the child's pid in the parent, -errno on failure. Transcribed from the
+// native x86-64 backend's emitProcForkRuntime. Allocation-free, so emitted
+// independently of the heap runtime (gated on the proc_fork need), like
+// __fern_random_i32 (#5686).
+pub function emit_ir_proc_fork(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_proc_fork:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    movq $57, %rax\n");
+    s = s.write("    syscall\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
+// emit_ir_proc_waitpid appends __fern_proc_waitpid(%rdi = pid) -> i32: a
+// blocking wait4(2) (syscall 61 — pid, &status, options=0, rusage=NULL, status
+// in a stack slot) plus the status-word decode both native backends use,
+//
+//     WIFEXITED ((status & 0x7f) == 0) -> (status >> 8) & 0xff
+//     else (signal death)              -> 128 + (status & 0x7f)
+//
+// the shell convention, so a bounds-trapping worker surfaces as 134. A negative
+// syscall return (-errno, e.g. -ECHILD) passes through untouched. Transcribed
+// from the native x86-64 emitProcWaitpidRuntime; allocation-free (#5686).
+pub function emit_ir_proc_waitpid(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_proc_waitpid:\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    subq $16, %rsp\n");          // status slot (16 keeps rsp aligned)
+    s = s.write("    movslq %edi, %rdi\n");       // pid
+    s = s.write("    movq %rsp, %rsi\n");         // &status
+    s = s.write("    xorl %edx, %edx\n");         // options = 0
+    s = s.write("    xorl %r10d, %r10d\n");       // rusage = NULL
+    s = s.write("    movq $61, %rax\n");
+    s = s.write("    syscall\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    js .Lir_pw_done\n");         // -errno -> return as-is
+    s = s.write("    movl (%rsp), %ecx\n");       // status word
+    s = s.write("    movl %ecx, %eax\n");
+    s = s.write("    andl $127, %eax\n");
+    s = s.write("    jnz .Lir_pw_sig\n");
+    s = s.write("    movl %ecx, %eax\n");
+    s = s.write("    shrl $8, %eax\n");
+    s = s.write("    andl $255, %eax\n");
+    s = s.write("    jmp .Lir_pw_done\n");
+    s = s.write(".Lir_pw_sig:\n");
+    s = s.write("    addl $128, %eax\n");
+    s = s.write(".Lir_pw_done:\n");
+    s = s.write("    movq %rbp, %rsp\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 // emit_ir_runtime appends the array/RC/heap runtime the IR path needs, using
 // asm.fern's OWN array layout + helper bodies (transcribed verbatim from
 // asm.fern's emit_runtime) so the IR path is a byte-compatible DROP-IN: the
@@ -3741,6 +3798,8 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         // runtime — .globl so a per-module sibling's `call` resolves against it.
         "__fern_read_all_stdin",
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
+        // crash-only supervision (#5686): the entry owns fork / wait4.
+        "__fern_proc_fork", "__fern_proc_waitpid",
         // __fern_random_bytes: register-ABI symbol kept for the arm64 / AST
         // backends (still hand-asm); the x86-64 IR path defines the Fern-compiled
         // __fn___fern_random_bytes (#2649). Both listed during the transition —
@@ -4283,6 +4342,15 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // no operands; __fern_random_i32() -> i32 in %rax.
             s = s.write("    call __fern_random_i32\n    pushq %rax\n");
             s = s.need("random_i32");
+        } else if (o.kind_tag == 211) {  // proc_fork
+            // no operands; __fern_proc_fork() -> i32 in %rax (0 child / pid
+            // parent / -errno).
+            s = s.write("    call __fern_proc_fork\n    pushq %rax\n");
+            s = s.need("proc_fork");
+        } else if (o.kind_tag == 212) {  // proc_waitpid
+            // [pid] -> __fern_proc_waitpid(%rdi = pid) -> decoded status in %rax.
+            s = s.write("    popq %rdi\n    call __fern_proc_waitpid\n    pushq %rax\n");
+            s = s.need("proc_waitpid");
         } else if (o.kind_tag == 182) {  // monotonic_ns
             // no operands; Fern-compiled __fn___fern_monotonic_ns() -> i64 in %rax (#2649).
             s = s.write("    call __fn___fern_monotonic_ns\n    pushq %rax\n");
@@ -5829,7 +5897,7 @@ pub function all_runtime_need_roots(): string[] {
         "arr_str_index_of", "arr_str_join", "arrarr_free", "chr", "env", "eprint", "heap", "i32_gcd",
         "i32_lcm", "i32_pow",
         "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
-        "print_int", "putchar", "random_bytes", "random_i32", "read_file",
+        "print_int", "proc_fork", "proc_waitpid", "putchar", "random_bytes", "random_i32", "read_file",
         "read_int", "sleep_ms", "str_bytes", "str_case", "str_chars", "str_cmp",
         "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
         "str_read_line", "str_repeat", "str_replace", "str_reverse", "str_search",
@@ -6360,6 +6428,9 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
     if (s.has_need("random_i32")) { s = emit_ir_random_i32(s); }
+    // fork / wait4 allocate nothing either — same heap-independent gating.
+    if (s.has_need("proc_fork")) { s = emit_ir_proc_fork(s); }
+    if (s.has_need("proc_waitpid")) { s = emit_ir_proc_waitpid(s); }
     // The fixed static __fern_scratch buffer (#2649): the buffer the syscall-leaf
     // helpers hand the kernel to write structs into (timespec for the clocks,
     // struct stat for `stat`), reused/never-freed so no per-call leak. Emitted once

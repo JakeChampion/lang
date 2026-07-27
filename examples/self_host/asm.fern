@@ -488,6 +488,24 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.write("    pushq $0\n");
         return CallOut { state: s, done: true };
     }
+    // proc_fork() / proc_waitpid(pid) — crash-only supervision
+    // (docs/CRASH-ONLY-SERVE.md D2', #5686). Both return i32 in
+    // %rax; the helper bodies are asm_ir's (emitted need-gated in
+    // emit_runtime), so the two paths share one definition.
+    if (name == "proc_fork" && c.args.len() == 0) {
+        s = s.write("    call __fern_proc_fork\n");
+        s = s.write("    pushq %rax\n");
+        s = s.need("proc_fork");
+        return CallOut { state: s, done: true };
+    }
+    if (name == "proc_waitpid" && c.args.len() == 1) {
+        s = emit_expr(c.args[0], s);
+        s = s.write("    popq %rdi\n");
+        s = s.write("    call __fern_proc_waitpid\n");
+        s = s.write("    pushq %rax\n");
+        s = s.need("proc_waitpid");
+        return CallOut { state: s, done: true };
+    }
     // remove_file(path) — unlink. Returns Option[IoError]:
     // None on success, Some(_) on error.
     if (name == "remove_file" && c.args.len() == 1) {
@@ -7283,6 +7301,12 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("arr_i32_sum")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_arr_i32_sum(), s);
     }
+    // __fern_proc_fork / __fern_proc_waitpid (#5686): the AST path calls the
+    // SAME helpers the IR path emits, so the bodies live once in asm_ir rather
+    // than being transcribed a second time here. Allocation-free, so gated on
+    // their own needs independently of the heap runtime.
+    if (s.has_need("proc_fork")) { s = asm_ir.emit_ir_proc_fork(s); }
+    if (s.has_need("proc_waitpid")) { s = asm_ir.emit_ir_proc_waitpid(s); }
     // __fern_arr_str_index_of is now a Fern runtime function (#2649): see
     // asmcore.rt_src_arr_str_index_of. It CALLS str_eq (also Fern now) — the
     // first migrated helper that calls another; its str_eq dep is marked by

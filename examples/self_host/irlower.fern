@@ -7665,6 +7665,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sms.ok) { return sms; }
                         return sms.emit(ir.op_sleep_ms());
                     }
+                    // Crash-only supervision (docs/CRASH-ONLY-SERVE.md D2',
+                    // #5686): `proc_fork()` forks and pushes the kernel's return
+                    // verbatim (0 child / pid parent / -errno), `proc_waitpid(pid)`
+                    // reaps and pushes the decoded exit status. Both reserved
+                    // builtins, so neither shadows a user function; std/tcp's
+                    // tcp_serve_supervised is the stdlib caller.
+                    if (cid.name == "proc_fork" && c.args.len() == 0) {
+                        return s.emit(ir.op_proc_fork());
+                    }
+                    if (cid.name == "proc_waitpid" && c.args.len() == 1) {
+                        var pws: LowerState = lower_expr(c.args[0], s);
+                        if (!pws.ok) { return pws; }
+                        return pws.emit(ir.op_proc_waitpid());
+                    }
                     // Built-in `write(s)` / `print(s)` — write a string's bytes to
                     // stdout. `print` appends a newline (Fern's print == println):
                     // it desugars to `print_str(s + "\n")` via the existing str_concat
