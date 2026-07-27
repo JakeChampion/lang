@@ -20,10 +20,11 @@ import (
 //
 // This is the wasm analogue of the asm whole-compiler per-module link test, and
 // the first end-to-end proof that per-module wasm emit scales past the toy cases
-// to the compiler itself. It does not run the linked module (that would need the
-// compiler's argv/fs environment); wasm-tools validate is the bar — a module
+// to the compiler itself. wasm-tools validate is the structural bar — a module
 // that assembled with mismatched namespaces, a missing runtime helper, or a
-// dangling funcref would fail it.
+// dangling funcref fails it — and the linked compiler is then RUN (see
+// runShardedCompiler): validating proves well-formedness, not that the windows
+// compute the right thing.
 func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	if testing.Short() {
 		t.Skip("whole-compiler sharded link is heavy; skipped in -short")
@@ -31,6 +32,10 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	wasmtools, err := exec.LookPath("wasm-tools")
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping whole-compiler sharded link")
+	}
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH; skipping whole-compiler sharded link")
 	}
 	gcc, runner := x86_64Tooling(t)
 
@@ -198,5 +203,84 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	if out, err := exec.Command(wasmtools, "validate", corePath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate of the whole-compiler link failed: %v\n%s", err, out)
 	}
-	t.Logf("whole-compiler wasm link OK: %d modules, %d bytes WAT, validated", n, len(wat))
+	t.Logf("whole-compiler wasm link OK: %d modules, %d units, %d bytes WAT, validated", n, len(jobs), len(wat))
+	runShardedCompiler(t, wasmtime, wasmtools, dir, corePath)
+}
+
+// runShardedCompiler runs the linked whole-compiler module. Validation above
+// proves the module is well-FORMED; it says nothing about whether the windows
+// compute the right thing. A shard whose $__str_base or $__fn_base was assembled
+// against another unit's literals validates perfectly and reads the wrong string
+// or calls the wrong funcref — exactly the failure mode sharding introduces, and
+// exactly the one validate cannot see.
+//
+// The linked module IS the wasm compiler, so the sharpest available exercise is
+// to make it compile something: drive the wasm-hosted driver through the same
+// count → emit → link cycle the Go harness just drove natively, over a small
+// two-module program, then run the module IT produced. The program's answer
+// (14 = len("sharded") + 7) comes back only if the lexer, parser, module
+// resolution, IR lowering and wasm emit all still work after being cut into
+// function windows across as many processes — and the string literal in the leaf
+// module makes the data-section/base wiring load-bearing rather than incidental.
+func runShardedCompiler(t *testing.T, wasmtime, wasmtools, dir, compiler string) {
+	t.Helper()
+	proj := filepath.Join(dir, "proj")
+	if err := os.MkdirAll(filepath.Join(proj, "cache"), 0o755); err != nil {
+		t.Fatalf("mkdir proj: %v", err)
+	}
+	for _, f := range []struct{ name, src string }{
+		{"leaf.fern", "pub function leaf_tag(): string { return \"sharded\"; }\n"},
+		{"prog.fern", "import \"./leaf\";\nfunction main(): i32 { return leaf.leaf_tag().len() + 7; }\n"},
+	} {
+		if err := os.WriteFile(filepath.Join(proj, f.name), []byte(f.src), 0o644); err != nil {
+			t.Fatalf("write %s: %v", f.name, err)
+		}
+	}
+	const want = 14
+
+	// The guest sees proj as its only preopen, so paths are relative to it —
+	// `prog.fern` is the entry and `cache` the object dir, both inside proj.
+	drive := func(args ...string) string {
+		t.Helper()
+		full := append([]string{"run", "--dir", proj + "::/", compiler, "prog.fern"}, args...)
+		cmd := exec.Command(wasmtime, full...)
+		var so, se bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &so, &se
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("wasm-hosted compiler %v failed: %v\n%s", args, err, se.String())
+		}
+		return so.String()
+	}
+
+	if got := strings.TrimSpace(drive("-per-module-count")); got != "2" {
+		t.Fatalf("wasm-hosted -per-module-count = %q, want 2 — the linked compiler mis-resolved the program", got)
+	}
+	for i := range 2 {
+		drive("-per-module-emit", strconv.Itoa(i), "-cache-dir", "cache")
+	}
+	out := drive("-link", "-cache-dir", "cache")
+	if len(out) == 0 {
+		t.Fatal("wasm-hosted -link produced no module text")
+	}
+
+	watPath := filepath.Join(dir, "hosted.wat")
+	if err := os.WriteFile(watPath, []byte(out), 0o644); err != nil {
+		t.Fatalf("write hosted wat: %v", err)
+	}
+	binPath := filepath.Join(dir, "hosted.wasm")
+	if o, err := exec.Command(wasmtools, "parse", watPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools parse of the wasm-hosted compiler's output failed: %v\n%s", err, o)
+	}
+	got := 0
+	if err := exec.Command(wasmtime, "run", binPath).Run(); err != nil {
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) {
+			t.Fatalf("run the wasm-hosted compiler's output: %v", err)
+		}
+		got = ee.ExitCode()
+	}
+	if got != want {
+		t.Fatalf("program compiled by the sharded-linked compiler returned %d, want %d", got, want)
+	}
+	t.Logf("sharded-linked whole compiler runs: compiled a 2-module program to wasm, answer %d", got)
 }
