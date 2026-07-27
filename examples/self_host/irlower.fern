@@ -39372,7 +39372,18 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.F
             var call: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: fnname, line: 0, col: 0 }, args: args, line: 0, col: 0, type_argc: 0, ty: "" };
             var bd: parser.Stmt[] = [parser.StmtReturn { value: call, line: 0, col: 0 }];
             var notp: string[] = [];
-            return HoistResult { func: parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false }, ok: true };
+            // The FuncDecl is bound to a local rather than constructed inline
+            // inside the returned HoistResult (#5649). Two aggregates built in
+            // one `return` expression are mislowered when this pass runs inside
+            // an IR-built compiler: the lifted wrapper ends up declared under its
+            // BASE name (`main` rather than `main$wrap0`), so the eligibility
+            // walk's module_has_func lookup fails and the whole module falls back
+            // to the AST emitter — which per #5622 silently drops i32 wrapping.
+            // Binding EITHER aggregate to a local fixes it; binding a scalar
+            // field value does not. The underlying lowering defect is #5674 —
+            // this hoist works around it at the one site that is known to hit it.
+            var mkf: parser.FuncDecl = parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
+            return HoistResult { func: mkf, ok: true };
         }
         fi = fi + 1;
     }
