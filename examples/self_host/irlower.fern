@@ -9095,6 +9095,46 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             else { ppar = ppar.emit(ir.op_const_i32(1)); }
                             return ppar.emit(ir.op_bin("eq", 0, false));
                         }
+                        // abs / sign need the receiver value TWICE. Store it into a
+                        // temp local once and re-load it, rather than lowering the
+                        // receiver subtree a second time — that would evaluate a
+                        // side-effecting receiver (`next().abs()`) twice. Slot naming
+                        // follows the saturating-arith temps ($sat*) above.
+                        if (fa.field == "abs" || fa.field == "sign") {
+                            var nname: string = "$i32n" + util.i32_to_string(s.locals.len());
+                            var pv: LowerState = s.add_local(nname);
+                            var nslot: i32 = pv.slot_of(nname);
+                            pv = lower_expr(fa.obj, pv);
+                            if (!pv.ok) { return pv; }
+                            pv = pv.emit(ir.op_store_local(nslot));
+                            if (fa.field == "sign") {
+                                // sign(n) = (n > 0) - (n < 0): 1, -1 or 0.
+                                pv = pv.emit(ir.op_load_local(nslot));
+                                pv = pv.emit(ir.op_const_i32(0));
+                                pv = pv.emit(ir.op_bin("gt_s", 0, false));
+                                pv = pv.emit(ir.op_load_local(nslot));
+                                pv = pv.emit(ir.op_const_i32(0));
+                                pv = pv.emit(ir.op_bin("lt_s", 0, false));
+                                return pv.emit(ir.op_bin("sub", 0, false));
+                            }
+                            // abs(n) = (n ^ m) - m where m = n >> 31 — all-ones for a
+                            // negative n, zero otherwise. Branchless, so it needs no
+                            // if/else scope, and it agrees with the AST emitter's
+                            // cmov-based negate-or-keep on every input including
+                            // i32 MIN (which both leave unchanged, wrapping).
+                            var mname: string = "$i32m" + util.i32_to_string(pv.locals.len());
+                            pv = pv.add_local(mname);
+                            var mslot: i32 = pv.slot_of(mname);
+                            pv = pv.emit(ir.op_load_local(nslot));
+                            pv = pv.emit(ir.op_const_i32(31));
+                            pv = pv.emit(ir.op_bin("shr_s", 0, false));
+                            pv = pv.emit(ir.op_store_local(mslot));
+                            pv = pv.emit(ir.op_load_local(nslot));
+                            pv = pv.emit(ir.op_load_local(mslot));
+                            pv = pv.emit(ir.op_bin("xor", 0, false));
+                            pv = pv.emit(ir.op_load_local(mslot));
+                            return pv.emit(ir.op_bin("sub", 0, false));
+                        }
                     }
                     // Associated-function call `Type.f(args)` — a receiver-less
                     // impl method (e.g. a constructor `Point.make(x, y)` or a
