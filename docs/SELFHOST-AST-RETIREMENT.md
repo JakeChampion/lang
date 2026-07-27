@@ -56,7 +56,7 @@ representative subset splits it three ways:
 | Reason | Count | What it is | Status |
 |---|---|---|---|
 | `no-funcs` | 39 | SCRIPT-shaped source — top-level statements, no `main`, so nothing for `_start` to `call`. The gate's `funcs.len() == 0` arm fires before the `has_main` one. | **CLOSED** — `asmcore.synth_script_main` desugars it to `function main(): i32 { … }` (guarded by `TestSelfHostScriptMainIRX86_64`) |
-| `ineligible-fn` | 105 | Builtin METHODS the AST emitter intercepts and the IR path did not lower. | **IN PROGRESS.** Landed: `is_zero`/`is_positive`/`is_negative`/`is_even`/`is_odd` (#5659), `abs`/`sign` (#5661), `xs.sum`/`product` (#5664), `n.pow` (#5666), `xs.index_of`/`contains` (#5667), `is_empty` (#5669), `s.first_byte`/`last_byte` (#5671), `args_count` (desugared to `args().len()`), `xs.min`/`max` (the `len==0` branch + the Option box moved INTO Fern-source helpers — `asmcore.rt_src_arr_i32_min_max_opt` — so the call site is a plain `call_direct` like `sum`; the helper's composite return type is registered for the scrutinee resolvers via `irlower.builtin_arr_opt_ret_type`, since `opt_ret_fns_of` cannot see a runtime helper). Remaining: `arg_at` (needs a real register-ABI op — desugaring to `args()[i]` would allocate all of argv per loop iteration, O(1)->O(n)). |
+| `ineligible-fn` | 105 | Builtin METHODS the AST emitter intercepts and the IR path did not lower. | **IN PROGRESS.** Landed: `is_zero`/`is_positive`/`is_negative`/`is_even`/`is_odd` (#5659), `abs`/`sign` (#5661), `xs.sum`/`product` (#5664), `n.pow` (#5666), `xs.index_of`/`contains` (#5667), `is_empty` (#5669), `s.first_byte`/`last_byte` (#5671), `args_count` (desugared to `args().len()`), `xs.min`/`max` (the `len==0` branch + the Option box moved INTO Fern-source helpers — `asmcore.rt_src_arr_i32_min_max_opt` — so the call site is a plain `call_direct` like `sum`; the helper's composite return type is registered for the scrutinee resolvers via `irlower.builtin_arr_opt_ret_type`, since `opt_ret_fns_of` cannot see a runtime helper), `arg_at` (`ir.op_arg_at`, tag 210 — a real op rather than a desugar to `args()[i]`, which would allocate all of argv per loop iteration; it calls the same register-ABI `__fern_arg_at` the AST emitters do, under the `args` need `op_args` already marks). **Bucket CLOSED.** |
 | `over-budget` | 4 | `import "std/array"` and friends push the merged module past the 512-function budget. Same gate as the whole-compiler bundle, reached by ordinary programs. | **IN PROGRESS.** `asm_load_run`'s default merged path now routes an over-budget-but-eligible program (`512 < merged funcs < 1500`) through a per-module IR concat instead of the AST emitter (`emit_per_module_concat` + `prune_to_reachable`, #5676; guarded by `TestSelfHostOverBudgetPerModuleIR`). The `< 1500` bound keeps the whole-compiler self-compile out (single-process concat of ~2040 funcs OOMs the arena). Remaining: the same routing on the other merged-default drivers (`asm_modload_run`, `asm_ir_run`'s AST fallback), and lifting the budget for the whole-compiler bundle itself (needs the batched file-based per-module emit — slice 2). |
 | `no-main` | 0 | Functions but no `main`. Supported by the desugar; not exercised today. | n/a |
 
@@ -93,6 +93,21 @@ Noticed while verifying the wasm leg, and recorded because it will matter when
 #3457 reaches wasm: the wasm **AST** emitter does not implement these builtins
 either — `xs.sum()` emits `i32.const 0`, silently — so on wasm they are wrong on
 both paths today. That is a pre-existing wasm gap, orthogonal to this issue.
+
+**The same triage applied to `arg_at` (2026-07-27), and its wasm gap is the one
+worth fixing next.** `ir.op_arg_at` lowers on both register backends onto the
+existing `__fern_arg_at`; wasm has no arg_at on EITHER path, so an arg_at module
+is deferred (`module_emits_op_cached(cache, "arg_at")`). Measured: the wasm AST
+emitter emits `(call $arg_at …)` against nothing, so `arg_at` on wasm fails at
+load with `unknown func: failed to find name $arg_at` — broken today, deferral
+or not. Unlike the fold helpers this one is straightforwardly fixable, and on
+the IR path only (so `wasm.fern` gains nothing on its way out): `$__fern_args`
+already does sizes_get → alloc ptrs/buf → args_get → per-entry strlen+copy into
+a `[len][bytes]` block (`wasm.args_func`); `$__fern_arg_at(i)` is that loop body
+for a single `i`, needs no new import, and gates the same way args does (the
+`module_emits_op` need list wasm_ir_run consults). Left out of the op slice
+deliberately — it is new wasm capability, not a regression — but it is the
+cheapest remaining wasm-side item and should land before #3457 reaches wasm.
 
 Also worth recording, because it bears on whether script support should survive
 at all: **the native compiler rejects script-shaped source** (`fern -interp` on

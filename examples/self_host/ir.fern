@@ -745,11 +745,20 @@ pub function op_read_chunk(): Op { return op0("read_chunk"); }
 pub function op_reader_close(): Op { return op0("reader_close"); }
 // `args` reads the process command-line arguments, pushing a fresh string[]
 // (argv[0] first) — a VALUE op with no args, leaving the array box on the stack.
-// Lowers to each backend's __fern_args helper (which reads the __fern_argc /
-// __fern_argv globals the entry's _start saves from the initial stack). No wasm
-// argv in this runtime, so an args module is wasm-ineligible (wasm_eligible) and
-// stays on the AST path there.
+// Lowers to each backend's __fern_args helper: on the register backends it reads
+// the __fern_argc / __fern_argv globals the entry's _start saves from the initial
+// stack; on wasm, $__fern_args reads the wasi args_sizes_get / args_get imports
+// (emitted caller-side by wasm_ir_run), so an args module IS wasm-eligible.
 pub function op_args(): Op { return op0("args"); }
+// `arg_at` pops an i32 index and pushes argv[i] as a fresh string box — the
+// O(1) single-element read, where `args()` allocates the whole vector. That is
+// why this is a real op rather than a desugar to `args()[i]` the way
+// `args_count()` desugars to `args().len()` (#3457): an arg_at in a loop would
+// otherwise allocate all of argv per iteration. Lowers to the same
+// __fern_arg_at register-ABI helper the AST emitters call, which the args need
+// already emits. No wasm equivalent exists on EITHER path (wasm.fern has no
+// arg_at either), so an arg_at module is deferred to the wasm AST path.
+pub function op_arg_at(): Op { return op0("arg_at"); }
 // `putchar` pops an i32 and writes its low byte to stdout (write(1, &byte, 1)),
 // pushing a dummy result (the syscall return) so a statement-level drop balances.
 // Lowers to each backend's __fern_putchar helper — the byte-level twin of
@@ -1311,6 +1320,8 @@ function kind_id_4(name: string): i32 {
     // udp_send(host, port, data): one-shot fire-and-forget datagram (#4375).
     if (name == "udp_send") { return 208; }
     if (name == "read_all_stdin") { return 209; }
+    // arg_at(i): a single argv element, O(1) — see op_arg_at.
+    if (name == "arg_at") { return 210; }
     return 0;
 }
 
@@ -1549,6 +1560,7 @@ function kind_name_4(id: i32): string {
     if (id == 207) { return "raw_environ"; }
     if (id == 208) { return "udp_send"; }
     if (id == 209) { return "read_all_stdin"; }
+    if (id == 210) { return "arg_at"; }
     return "invalid";
 }
 
@@ -1702,7 +1714,9 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 185 || tag == 104 || tag == 105) { return true; }
     // args() materialises a fresh string[] (the arr box + a string block per
     // argv entry), so it needs the heap runtime like any other allocator.
-    if (tag == 180) { return true; }
+    // arg_at(i) allocates ONE of those string blocks (__fern_alloc inside
+    // __fern_arg_at), so it needs the heap too.
+    if (tag == 180 || tag == 210) { return true; }
     // read_file boxes the file contents + a Result wrapper; write_file boxes its
     // Option[IoError] result — both via __fern_str_box, so they need the heap.
     if (tag == 169 || tag == 170) { return true; }

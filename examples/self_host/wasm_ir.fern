@@ -1261,6 +1261,13 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // register_only_fern_helper. Deferred to the AST path, which intercepts
         // those builtins itself.
         && !module_calls_register_only_helper(cache)
+        // arg_at(i) is the register backends' O(1) single-argv read
+        // (__fern_arg_at, off the __fern_argv global). wasm has no equivalent on
+        // EITHER path — wasm.fern implements args() from args_sizes_get/args_get
+        // but no arg_at — so the module stays on the wasm AST path, where it was
+        // before the op existed. (args() itself DOES lower on wasm; only the
+        // indexed read is missing.)
+        && !module_emits_op_cached(cache, "arg_at")
         // xs.join(sep) NOW lowers on the wasm IR path (#5328): the register
         // backends' __fern_arr_str_join runtime call is served by a matching
         // $__fern_arr_str_join shim over the $__fern_str_join WAT worker

@@ -3276,6 +3276,10 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     if (cid.name == "i32_to_string") { return true; }
                     // chr(n) yields a fresh 1-char string box.
                     if (cid.name == "chr") { return true; }
+                    // arg_at(i) yields a string box over argv[i] (#3457). The box is
+                    // fresh but its DATA points into the kernel's argv strings, which
+                    // outlive the program — the same shape __fern_args's elements have.
+                    if (cid.name == "arg_at" && c.args.len() == 1) { return true; }
                     // __raw_string(data, len) is the Tier-2 intrinsic that boxes raw
                     // bytes back into a string (#2649 — docs/RUNTIME-INTRINSICS.md).
                     if (cid.name == "__raw_string" && c.args.len() == 2) { return true; }
@@ -7894,13 +7898,21 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // string[] receiver, so this needs no new op and no backend cases —
                     // the reuse move from #5669 / #5671.
                     //
-                    // arg_at(i) deliberately does NOT get the same treatment. args()
+                    // arg_at(i) gets a real op instead of the same desugar. args()
                     // allocates a fresh string[] per call, so `args()[i]` inside a loop
                     // would allocate the whole argv per iteration — O(n) where the AST
                     // path is O(1), i.e. quadratic argv iteration in a language aimed at
-                    // CLI tools. args_count is typically called once, so a single
-                    // allocation is acceptable; arg_at wants a real register-ABI op
-                    // (see #3457 comment 5093322914).
+                    // CLI tools. args_count is typically called once, so its single
+                    // allocation is acceptable; arg_at is the one that had to stay O(1).
+                    // The op lowers to the SAME __fern_arg_at helper the AST emitters
+                    // call, which both register backends already emit under the args
+                    // need — so this is one op plus two three-line backend cases, no
+                    // new runtime.
+                    if (cid.name == "arg_at" && c.args.len() == 1) {
+                        var aa: LowerState = lower_expr(c.args[0], s);
+                        if (!aa.ok) { return aa; }
+                        return aa.emit(ir.op_arg_at());
+                    }
                     if (cid.name == "args_count" && c.args.len() == 0) {
                         var acall: parser.Expr = parser.ExprCall {
                             callee: parser.ExprIdent { name: "args", line: cid.line, col: cid.col },

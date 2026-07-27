@@ -4492,6 +4492,13 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // entry's _start save argc/argv from the initial stack.
             s = s.write("    call __fern_args\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("args");
+        } else if (o.kind_tag == 210) {  // arg_at
+            // [i] -> argv[i] as a fresh string box, via the same register-ABI
+            // __fern_arg_at the AST path calls (index in %rdi, box in %rax). It is
+            // emitted by the args block in emit_ir_runtime, so the need is the same
+            // one op_args marks — no separate runtime.
+            s = s.write("    popq %rdi\n    call __fern_arg_at\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("args");
         } else if (o.kind_tag == 164) {  // eprint_str
             // [strbox] -> write its bytes to stderr (the AST path's __fern_eprint_str).
             // Push the syscall return so the statement-level drop balances.
