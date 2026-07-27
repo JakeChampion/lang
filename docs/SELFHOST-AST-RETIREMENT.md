@@ -315,11 +315,50 @@ tier → leak.
 
   `internal/`-vs-self-host convergence item (#4451).
 
-- **Slice 3 — replace the now-unreachable AST fallbacks.** Once slice 2 makes the
-  merged path unreachable, replace `asm.emit_module` at the sites above with a
-  per-module call or a clean error. Note the `asm_ir_run.fern:158` fallback is
-  the *differential oracle* (compares IR vs AST); retiring it means trusting the
-  IR path outright, which the fixpoint + differential suites must justify first.
+- **Slice 3 — replace the now-unreachable AST fallbacks. BLOCKED on self-host
+  whole-program emit memory (2026-07-27 investigation; two direct fixes ruled
+  out).** Grounding the call graph in code: `asm.emit_module` is a *dispatcher* —
+  it calls `asm_ir.emit_module_ir_gated`, which returns IR asm when the whole
+  module is eligible, else `""` → the AST emit loop. For a normal program every
+  function is IR-eligible, so `emit_module_ir_gated` already returns IR and the
+  **AST emitter body is never reached**. The *only* thing that still reaches it is
+  the **whole-compiler self-compile**: the merged bundle is ~1000 functions and
+  trips the `mod.funcs.len() > 512` gate (`asm_ir.fern:5785`), which bails to AST.
+  That gate is the single remaining AST trigger, and its comment says it stands
+  "**until the native large-tier freelist is fixed**" (#3425) — now done. So two
+  direct unlocks were probed against `TestSelfHostModloadFixpointX86_64` (the
+  merged 3-generation self-compile):
+  1. **Lift the budget (cached merged IR).** Route the whole ~1000-func bundle
+     through the existing cached IR emit. → **Stage 1 (native runtime) fits;
+     stage 2 (self-host runtime, mmc) OOMs (exit 137).**
+  2. **Stream the merged IR emit (no cache).** `emit_module_funcs` already
+     lowers+emits one function at a time when handed an empty `cache`
+     (`asm_ir.fern:5676`), so the eligibility pass discards each result and the
+     emit re-lowers per function — the whole-program IR is never resident. →
+     **Still OOMs stage 2 (exit 137), same wall.**
+
+  So the peak is **not** the whole-program IR cache (streaming removed it and the
+  OOM stayed). It is the self-host runtime's inability to hold a whole-compiler
+  emit's *working set* — the ~22 whole-program side-tables + the ~470 MB output
+  buffer + per-function lowering churn — within the 8 GiB arena. The **native**
+  runtime holds it (stage 1 passes every time); the **self-host** runtime does not
+  (stage 2 OOMs). This is the same asymmetry as the emit-all gen1 finding, and the
+  same root: the self-host runtime reclaims less completely than the native one
+  (per emit-all measurement a single 100-func window already peaks ~7.6 GB —
+  emit memory scales far worse than the output size implies).
+
+  **Therefore slice 3 cannot proceed by making the merged path route IR.** The
+  whole-compiler emit must stay **windowed** (per-module), which is byte-fixpoint-
+  stable and CI-affordable at gen0 (`TestSelfHostModloadPerModuleWholeCompilerX86_64`)
+  but whose gen1 self-reproduction proof is env-gated/heavy. Retiring the AST
+  emitter is gated on **making the self-host whole-program emit fit** — either a
+  genuine reduction of the per-window emit peak (why 7.6 GB for 100 funcs? profile
+  side-tables vs output vs lowering churn), or an arena checkpoint/reset so a
+  single process can window without accumulating. That is the real slice-3/5
+  prerequisite; the driver repoint + `asm.emit_module` → per-module-or-error swap
+  is mechanical once it lands. (`asm_ir_run.fern:158` stays the differential
+  oracle regardless; retiring it means trusting the IR path outright, which the
+  fixpoint + differential suites must justify.)
 
 - **Slice 4 — untangle the arm64/wasm IR runtime from the AST files.**
   Independent of #3425, but **delivers no standalone deletion** (the driver still
@@ -354,16 +393,25 @@ tier → leak.
 
 ## Recommended order
 
-1. **#3425 — DONE** (large-tier freelist port, x86 #5609 + arm64 #5614; gen1
-   per-module fixpoint GREEN). This was the actual unblocker; the bounded
-   reference-guided port hit exactly as predicted.
-2. **Slice 2 next** — memory-budgeted parallel gen1 per-module emit → de-env-gate
-   a CI-affordable per-module fixpoint, then repoint the drivers so the merged
-   bundle path is unreachable. Then **slice 3**.
-3. **Slice 4a/4b** alongside/after, since the untangle only pays off once the
-   merged path is gone.
-4. **Slice 5** last.
+1. **#3425 — DONE** (large-tier freelist port, x86 #5609 + arm64 #5614; the
+   self-host collection-buffer siblings x86 #5651 + arm64 #5652; gen1 per-module
+   fixpoint GREEN). The freelist port was a real unblocker but, as the slice-3
+   investigation now shows, **not sufficient** to let the merged whole-compiler
+   emit fit the self-host runtime.
+2. **THE REAL BLOCKER (all of slice 3/5 gate on it): self-host whole-program
+   emit memory.** Both direct ways to make the merged bundle route IR — lifting
+   the 512-func budget, and streaming the emit with no cache — OOM the self-host
+   runtime at stage 2 (see Slice 3). The whole-compiler emit only fits when
+   **windowed** (per-module), and a single 100-func window already peaks ~7.6 GB.
+   The next actionable step is a **profiling pass on the per-window emit peak**
+   (side-tables vs the ~470 MB output buffer vs per-function lowering churn) to
+   find what scales to 7.6 GB/100-func, then either shrink it or add an arena
+   checkpoint/reset so one process can window without accumulating. Until that
+   lands, the gen1 per-module fixpoint stays env-gated and the AST emitters stay.
+3. **Slice 3 driver repoint + Slice 5 deletion** — mechanical once (2) lands.
+4. **Slice 4a/4b** (arm64/wasm runtime untangle) alongside/after — a ~5k-line,
+   qemu-gated duplication that unlocks nothing on its own; avoid until the
+   endgame is reachable.
 
-Doing slice 4 first (the tempting "mechanical" step) is a ~5k-line, qemu-gated
-duplication that unlocks nothing on its own — avoid it until the endgame is
-actually reachable.
+Do NOT re-probe the budget-lift or streaming merged-IR paths — both are recorded
+above as OOMing the self-host runtime at stage 2; they are ruled out, not untried.
