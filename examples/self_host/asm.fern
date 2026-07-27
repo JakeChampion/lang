@@ -7525,11 +7525,14 @@ function main(): i32 {
     if (!util.contains(a16, "cmpq $0") && !util.contains(a16, "testq %rax, %rax")) { return 160; }
     if (!util.contains(a16, "je .L") && !util.contains(a16, "jz .L")) { return 161; }
 
-    // While: emits top label, cond, je exit, body, jmp top,
-    // exit label.
+    // While: top label, condition, conditional branch to the exit label, body,
+    // jmp back to the top. The branch polarity is backend-specific — the AST
+    // emitter compared the condition against zero and left the loop with `je`,
+    // while the IR path materialises the negation and leaves with `jnz` — so
+    // accept either, the same way the if/else assertions above do.
     var a17: string = emit_source("while (1 < 2) { return 0; }");
     if (!util.contains(a17, "cmpq $0") && !util.contains(a17, "testq %rax, %rax")) { return 170; }
-    if (!util.contains(a17, "je .L") && !util.contains(a17, "jz .L")) { return 171; }
+    if (!util.contains(a17, "je .L") && !util.contains(a17, "jz .L") && !util.contains(a17, "jnz .L")) { return 171; }
     if (!util.contains(a17, "jmp .L")) { return 172; }
 
     // Locals: frame prologue + slot store + slot load. `var x =
@@ -7567,7 +7570,7 @@ function main(): i32 {
         "var i = 0; while (i < 3) { i = i + 1; } return i;"
     );
     if (!util.contains(a22, "pushq -8(%rbp)")) { return 220; }
-    if (!util.contains(a22, "je .L") && !util.contains(a22, "jz .L")) { return 221; }
+    if (!util.contains(a22, "je .L") && !util.contains(a22, "jz .L") && !util.contains(a22, "jnz .L")) { return 221; }
     if (!util.contains(a22, "jmp .L")) { return 222; }
 
     // Function decl + call: emits __fn_add label, calls from
