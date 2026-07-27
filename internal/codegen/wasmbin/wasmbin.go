@@ -1230,6 +1230,15 @@ func valtypeFor(t ast.Type) (byte, error) {
 	case ast.HandleType:
 		// own/borrow R — a resource handle is an opaque i32 (P5).
 		return encode.ValtypeI32, nil
+	case ast.CharType:
+		// A Unicode scalar rides an i32 slot, the same way a handle does.
+		// ir.eraseSurfaceTypes turns `char` into i32 for the declaration
+		// and Info slots it can reach, but a lowering-created scratch slot
+		// can still be typed from an expression position the walk misses,
+		// and the other three backends classify by width and never notice.
+		// This seam classifies by TYPE, so it has to know the shape —
+		// listing it here is the same call HandleType already makes.
+		return encode.ValtypeI32, nil
 	case *ast.FuncType:
 		return encode.ValtypeI32, nil
 	}
