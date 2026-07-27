@@ -257,15 +257,20 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_arr_str_join:", ".Lasj_loop"},
 		},
 		{
+			// min/max lower on the IR path now (#3457), which calls the
+			// Option-returning helper — the empty-array guard and the Option box
+			// live in the Fern body rather than being open-coded at the call site
+			// as the AST emitter does around the raw-extremum __fern_arr_i32_min.
+			// Same migration contract: Fern-compiled `__fn_` symbol, hand-asm gone.
 			"arr_i32_min",
 			"function main(): i32 { var xs: i32[] = [5, 2, 7]; match (xs.min()) { Some(v) => { return v; }, None => { return 0; } } }",
-			"__fn___fern_arr_i32_min",
+			"__fn___fern_arr_i32_min_opt",
 			[]string{"\n__fern_arr_i32_min:", ".Lai32_min_loop"},
 		},
 		{
 			"arr_i32_max",
 			"function main(): i32 { var xs: i32[] = [5, 2, 7]; match (xs.max()) { Some(v) => { return v; }, None => { return 0; } } }",
-			"__fn___fern_arr_i32_max",
+			"__fn___fern_arr_i32_max_opt",
 			[]string{"\n__fern_arr_i32_max:", ".Lai32_max_loop"},
 		},
 	}

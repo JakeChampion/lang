@@ -722,12 +722,26 @@ pub function rt_src_arr_i32_index_of(): string {
     return "function __fern_arr_i32_index_of(xs: i32[], target: i32): i32 { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return i; } i = i + 1; } return 0 - 1; }";
 }
 
-// rt_src_arr_i32_min / _max back `xs.min()` / `.max()`. The call site handles
-// the empty array (→ None) and wraps the result in Option[i32], so these
-// helpers take a NON-EMPTY borrowed array and return the extremum i32 — the
-// same clean Tier 1 reduce-with-comparison shape as sum/product (#2649).
+// rt_src_arr_i32_min / _max back `xs.min()` / `.max()` on the AST path. The
+// call site handles the empty array (→ None) and wraps the result in
+// Option[i32], so these helpers take a NON-EMPTY borrowed array and return the
+// extremum i32 — the same clean Tier 1 reduce-with-comparison shape as
+// sum/product (#2649).
 pub function rt_src_arr_i32_min(): string {
     return "function __fern_arr_i32_min(xs: i32[]): i32 { var m: i32 = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i] < m) { m = xs[i]; } i = i + 1; } return m; }";
+}
+
+// rt_src_arr_i32_min_max_opt is the IR path's pair (#3457): ONE helper per
+// extremum that carries the empty-array guard AND the Option box itself, so the
+// call site is an unconditional call — the sum/product shape — instead of the
+// AST emitter's open-coded `len == 0` branch plus two hand-built 16-byte boxes.
+// Keeping the branch in Fern source is what makes these tractable on the IR
+// path at all: `emit_ir_runtime_fern_fn` already compiles Option/Result-
+// returning helpers (rt_src_read_file), so no Option construction has to be
+// hand-emitted as IR ops on three backends. They allocate, so unlike the fold
+// helpers their need pulls in the heap runtime.
+pub function rt_src_arr_i32_min_max_opt(): string {
+    return "function __fern_arr_i32_min_opt(xs: i32[]): Option[i32] { if (xs.len() == 0) { return None; } var m: i32 = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i] < m) { m = xs[i]; } i = i + 1; } return Some(m); } function __fern_arr_i32_max_opt(xs: i32[]): Option[i32] { if (xs.len() == 0) { return None; } var m: i32 = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i] > m) { m = xs[i]; } i = i + 1; } return Some(m); }";
 }
 
 // rt_src_str_to_i32 backs `str_to_i32(s)` — parse a borrowed string into an

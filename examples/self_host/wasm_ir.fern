@@ -779,6 +779,42 @@ pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: 
     return out;
 }
 
+// register_only_fern_helper reports whether a call_direct callee is one of the
+// Fern runtime helpers that exist ONLY on the register backends (#3457): the i32
+// builtins irlower lowers for every backend — xs.sum() / .product() /
+// .index_of() / .contains(), n.pow(k), xs.min() / .max() — whose bodies are
+// emitted by asm_ir.emit_ir_runtime / asm_arm64.emit_runtime from
+// asmcore.rt_src_*. wasm has no body for them: wasm_helper_symbol falls through
+// to `$<name>`, so the module would reference a function nothing defines and the
+// loader would reject it with `unknown func`. A module calling one is DEFERRED to
+// the wasm AST path (wasm.fern intercepts these builtins directly), which is
+// exactly where it went before the lowerings existed.
+function register_only_fern_helper(name: string): boolean {
+    return name == "__fern_arr_i32_sum"
+        || name == "__fern_arr_i32_product"
+        || name == "__fern_i32_pow"
+        || name == "__fern_arr_i32_index_of"
+        || name == "__fern_arr_i32_min_opt"
+        || name == "__fern_arr_i32_max_opt";
+}
+
+// module_calls_register_only_helper scans the lowered cache for a call to any of
+// those helpers — the call_direct analogue of the op blocklist in
+// wasm_ir_deferrals_ok, since these are callee NAMES rather than op kinds.
+function module_calls_register_only_helper(cache: irlower.LowerResult[]): boolean {
+    var fi: i32 = 0;
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind_tag == 149 && register_only_fern_helper(r.ops[i].str)) { return true; }  // call_direct
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
 // module_emits_op_cached reports whether any lowered function emits an op of
 // `kind` — the shared scanner the random/byte-source helper gates use (issue
 // #2747). It reads the pre-lowered cache (lower_all_for) rather than re-lowering
@@ -1220,6 +1256,11 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // the AST path, so the op-blocklist below need not be exhaustive (#6).
         && all_lowered_ok(cache)
         && !module_erased_wide(cache)
+        // The register-only i32 builtin helpers (sum / product / pow / index_of /
+        // contains / min / max) have no wasm body — see
+        // register_only_fern_helper. Deferred to the AST path, which intercepts
+        // those builtins itself.
+        && !module_calls_register_only_helper(cache)
         // xs.join(sep) NOW lowers on the wasm IR path (#5328): the register
         // backends' __fern_arr_str_join runtime call is served by a matching
         // $__fern_arr_str_join shim over the $__fern_str_join WAT worker

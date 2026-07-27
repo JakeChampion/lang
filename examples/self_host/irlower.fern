@@ -1164,13 +1164,18 @@ pub function opt_recv_base_type(e: parser.Expr, s: LowerState): string {
                     // Lets a chained `b.find().map(...)` recover the inner result
                     // (#3066).
                     parser.ExprFieldAccess(cfa) => {
+                        // A built-in array method returning Option (`xs.min()`) —
+                        // helper-backed, so its return type comes from the registry
+                        // rather than the module's own funcs.
+                        var aok: boolean = false;
+                        t = builtin_arr_opt_ret_type(cfa.field, cfa.obj, s);
+                        if (t != "") { aok = true; }
                         // Associated call `Type.method()` returning Option/Result
                         // — the object is a bare TYPE name (not a slot), so key
                         // opt_ret_type by "<Type>.<method>" directly (mirrors
                         // expr_struct_type's associated arm). Recovers an
                         // unannotated `match (User.from_json(s))`'s Result[User,
                         // string] payload types — the @derive(Json) deserialiser.
-                        var aok: boolean = false;
                         match (cfa.obj) {
                             parser.ExprIdent(tid) => {
                                 if (s.slot_of(tid.name) < 0) {
@@ -8863,6 +8868,27 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (fa.field == "sum") { return parr.emit(ir.op_call_direct("__fern_arr_i32_sum", 1)); }
                         return parr.emit(ir.op_call_direct("__fern_arr_i32_product", 1));
                     }
+                    // xs.min() / xs.max() on an i32[] — receiver-only like
+                    // sum/product, but the first helper-backed builtin with a
+                    // COMPOSITE return: Option[i32], Some(extremum) on a non-empty
+                    // array and None on an empty one. The AST emitter open-codes the
+                    // `len == 0` branch and both 16-byte boxes around a raw-extremum
+                    // helper; here the guard and the box live INSIDE the Fern helper
+                    // (asmcore.rt_src_arr_i32_min_max_opt), so the call site is an
+                    // unconditional call and no Option construction is hand-emitted
+                    // as IR ops. The composite return needs one thing the scalar
+                    // helpers did not: the helper is not in the module's funcs, so
+                    // opt_ret_fns_of cannot see its return type and `match (xs.min())`
+                    // would bail — builtin_arr_opt_ret_type is what the scrutinee
+                    // resolvers consult instead. Same receiver guard as sum/product.
+                    if ((fa.field == "min" || fa.field == "max") && c.args.len() == 0
+                        && expr_is_arr_src(fa.obj, s)
+                        && !expr_is_strarr(fa.obj, s) && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)) {
+                        var pmm: LowerState = lower_expr(fa.obj, s);
+                        if (!pmm.ok) { return pmm; }
+                        if (fa.field == "min") { return pmm.emit(ir.op_call_direct("__fern_arr_i32_min_opt", 1)); }
+                        return pmm.emit(ir.op_call_direct("__fern_arr_i32_max_opt", 1));
+                    }
                     // s.first_byte() / s.last_byte() — inline byte reads in the AST
                     // emitter (asm.fern:2057/2065), i.e. exactly s[0] and s[len-1], so
                     // they reuse the existing string-index op rather than emitting raw
@@ -9875,6 +9901,25 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     return ts;
 }
 
+// builtin_arr_opt_ret_type returns the Option type of a built-in array method
+// whose result is an Option — today just `xs.min()` / `xs.max()` on an i32
+// array, which lower to the Option-returning Fern helpers __fern_arr_i32_min_opt
+// / _max_opt (#3457). Those helpers are RUNTIME functions, not module functions,
+// so opt_ret_fns_of never sees their signature and every scrutinee-type resolver
+// (`match (xs.min())`, `xs.min()?`, `var o = xs.min()`) would fail to recover
+// Option[i32] and bail the module to the AST emitter. This is the composite-
+// return analogue of is_fern_helper: the registry for a helper's shape that the
+// module-derived side-tables cannot supply. The receiver guard mirrors the
+// lowering's (an array source that is not string[] / f64[] / i64[]) so the type
+// reported here agrees with the call that is actually emitted.
+function builtin_arr_opt_ret_type(field: string, obj: parser.Expr, s: LowerState): string {
+    if ((field == "min" || field == "max") && expr_is_arr_src(obj, s)
+        && !expr_is_strarr(obj, s) && !expr_is_f64arr(obj, s) && !expr_is_i64arr(obj, s)) {
+        return "Option[i32]";
+    }
+    return "";
+}
+
 // try_opt_type recovers the Option/Result type spelling of a try-operator's
 // inner expression, mirroring the match-scrutinee resolution: a direct-call
 // `f()` via opt_ret_fns, a direct `Some(x)` construction via some_opt_type, a
@@ -9915,6 +9960,11 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
                     return rt;
                 },
                 parser.ExprFieldAccess(scfa) => {
+                    // A built-in array method returning Option (`xs.min()?`) —
+                    // helper-backed, so its type comes from the registry rather
+                    // than the module's own funcs.
+                    var bmt: string = builtin_arr_opt_ret_type(scfa.field, scfa.obj, s);
+                    if (bmt != "") { return bmt; }
                     // Reader.read_chunk(n) → Option[string] (the built-in resource
                     // intrinsic; gated like lower_expr's interception to a non-struct
                     // / non-enum / non-string / non-array receiver so the scrutinee
@@ -13477,15 +13527,21 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     if (opt_ty == "") { opt_ty = some_opt_type(v.init, se); }
                 },
                 parser.ExprFieldAccess(ifa) => {
+                    // A built-in array method returning Option (`var o = xs.min()`)
+                    // — helper-backed, so its return type comes from the registry
+                    // rather than the module's own funcs.
+                    opt_ty = builtin_arr_opt_ret_type(ifa.field, ifa.obj, se);
                     // Associated call `Type.method()` returning Option/Result
                     // — bare TYPE-name object (not a slot); key by
                     // "<Type>.<method>" so `var r = User.from_json(s)` records
                     // r's Result[User, string] type for a later `match (r)`.
-                    match (ifa.obj) {
-                        parser.ExprIdent(tid) => {
-                            if (se.slot_of(tid.name) < 0) { opt_ty = se.opt_ret_type(tid.name + "." + ifa.field); }
-                        },
-                        _ => {}
+                    if (opt_ty == "") {
+                        match (ifa.obj) {
+                            parser.ExprIdent(tid) => {
+                                if (se.slot_of(tid.name) < 0) { opt_ty = se.opt_ret_type(tid.name + "." + ifa.field); }
+                            },
+                            _ => {}
+                        }
                     }
                     // `var o = x.get()` where x's method returns
                     // Option/Result — key by "<Type>.<method>" so a
@@ -15390,6 +15446,11 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                                         if (srt == "") { srt = ms.closure_opt_ret(scid.name); }
                                     },
                                     parser.ExprFieldAccess(scfa) => {
+                                        // A built-in array method returning Option
+                                        // (`match (xs.min())`) — helper-backed, so its
+                                        // return type comes from the registry, not the
+                                        // module's funcs.
+                                        srt = builtin_arr_opt_ret_type(scfa.field, scfa.obj, ms);
                                         // Associated call `Type.method()` returning
                                         // Option/Result — the object is a bare TYPE
                                         // name (not a slot), so key opt_ret_type by
@@ -15397,13 +15458,15 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                                         // unannotated `match (User.from_json(s))`'s
                                         // Result[User, string] payload types (the
                                         // @derive(Json) deserialiser).
-                                        match (scfa.obj) {
-                                            parser.ExprIdent(tid) => {
-                                                if (ms.slot_of(tid.name) < 0) {
-                                                    srt = ms.opt_ret_type(tid.name + "." + scfa.field);
-                                                }
-                                            },
-                                            _ => {}
+                                        if (srt == "") {
+                                            match (scfa.obj) {
+                                                parser.ExprIdent(tid) => {
+                                                    if (ms.slot_of(tid.name) < 0) {
+                                                        srt = ms.opt_ret_type(tid.name + "." + scfa.field);
+                                                    }
+                                                },
+                                                _ => {}
+                                            }
                                         }
                                         // Reader.read_chunk(n) → Option[string] (built-in resource
                                         // intrinsic; gated like lower_expr's interception to a

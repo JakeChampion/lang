@@ -166,6 +166,11 @@ pub function is_fern_helper(name: string): boolean {
         || name == "__fern_arr_i32_product"
         || name == "__fern_i32_pow"
         || name == "__fern_arr_i32_index_of"
+        // xs.min() / xs.max() (#3457): the Option-returning extremum helpers —
+        // the guard and the box live in their Fern bodies, so the call site is
+        // an ordinary call_direct like sum/product.
+        || name == "__fern_arr_i32_min_opt"
+        || name == "__fern_arr_i32_max_opt"
         // xs.join(sep)'s array-of-strings concatenator (#5328): a real Fern
         // runtime function (asmcore.rt_src_arr_str_join) built with `+`, so it
         // needs the heap + str_concat runtime. Body under __fn___fern_arr_str_join,
@@ -3750,7 +3755,8 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         // `call __fn___fern_arr_i32_sum`; the entry owns the definition. A
         // registered NEED root is not the same as an exported SYMBOL.
         "__fn___fern_arr_i32_sum", "__fn___fern_arr_i32_product", "__fn___fern_i32_pow",
-        "__fn___fern_arr_i32_index_of"
+        "__fn___fern_arr_i32_index_of",
+        "__fn___fern_arr_i32_min_opt", "__fn___fern_arr_i32_max_opt"
     ];
     var i: i32 = 0;
     while (i < names.len()) {
@@ -4716,6 +4722,12 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             if (o.str == "__fern_arr_i32_product") { s = s.need("arr_i32_product"); }
             if (o.str == "__fern_i32_pow") { s = s.need("i32_pow"); }
             if (o.str == "__fern_arr_i32_index_of") { s = s.need("arr_i32_index_of"); }
+            // xs.min() / xs.max() (#3457) — unlike the fold helpers these ALLOCATE
+            // (the Option box they return), so they pull in the heap runtime too.
+            if (o.str == "__fern_arr_i32_min_opt" || o.str == "__fern_arr_i32_max_opt") {
+                s = s.need("heap");
+                s = s.need("arr_i32_min_max_opt");
+            }
             // chr allocates its 1-char box, so pull in the heap runtime too.
             if (o.str == "__fern_chr") { s = s.need("heap"); s = s.need("chr"); }
             // arr.join(sep) needs its own body + the heap + str_concat runtime it
@@ -5765,7 +5777,7 @@ pub function module_runtime_needs(mod: parser.Module): string[] {
 // silent miscompile.
 pub function all_runtime_need_roots(): string[] {
     return [
-        "alloc_u8", "args", "arr_concat", "arr_i32_index_of", "arr_i32_min_max",
+        "alloc_u8", "args", "arr_concat", "arr_i32_index_of", "arr_i32_min_max", "arr_i32_min_max_opt",
         "arr_i32_product", "arr_i32_sum", "arr_push", "arr_push_owned", "arr_reverse", "arr_slice",
         "arr_str_index_of", "arr_str_join", "arrarr_free", "chr", "env", "eprint", "heap", "i32_gcd",
         "i32_lcm", "i32_pow",
@@ -6290,6 +6302,13 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("arr_i32_index_of")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_index_of(), all_structs, s);
+    }
+    // arr_i32_min_max_opt backs xs.min() / xs.max() (#3457). Emitted as ONE
+    // module so both bodies share a lowering pass, and heap-dependent (present
+    // above) — each returns a freshly allocated Option[i32] box.
+    if (s.has_need("arr_i32_min_max_opt")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_min_max_opt(), all_structs, s);
     }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).

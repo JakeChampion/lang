@@ -9493,6 +9493,14 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     if (s.has_need("arr_i32_index_of")) {
         s = emit_runtime_fern_fn(asmcore.rt_src_arr_i32_index_of(), s);
     }
+    // __fern_arr_i32_min_opt / _max_opt back xs.min() / .max() on the IR path
+    // (#3457): unlike the raw-extremum __fern_arr_i32_min / _max above (whose
+    // empty-array guard and Option box the AST call site open-codes), these carry
+    // both in their Fern bodies, so the IR call site is a plain call. Emitted as
+    // one module; they allocate, so the need also pulls in the heap runtime.
+    if (s.has_need("arr_i32_min_max_opt")) {
+        s = emit_runtime_fern_fn(asmcore.rt_src_arr_i32_min_max_opt(), s);
+    }
     return s;
 }
 

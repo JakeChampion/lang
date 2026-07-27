@@ -56,7 +56,7 @@ representative subset splits it three ways:
 | Reason | Count | What it is | Status |
 |---|---|---|---|
 | `no-funcs` | 39 | SCRIPT-shaped source — top-level statements, no `main`, so nothing for `_start` to `call`. The gate's `funcs.len() == 0` arm fires before the `has_main` one. | **CLOSED** — `asmcore.synth_script_main` desugars it to `function main(): i32 { … }` (guarded by `TestSelfHostScriptMainIRX86_64`) |
-| `ineligible-fn` | 105 | Builtin METHODS the AST emitter intercepts and the IR path did not lower. | **IN PROGRESS.** Landed: `is_zero`/`is_positive`/`is_negative`/`is_even`/`is_odd` (#5659), `abs`/`sign` (#5661), `xs.sum`/`product` (#5664), `n.pow` (#5666), `xs.index_of`/`contains` (#5667), `is_empty` (#5669), `s.first_byte`/`last_byte` (#5671), `args_count` (desugared to `args().len()`). Remaining: `arg_at` (needs a real register-ABI op — desugaring to `args()[i]` would allocate all of argv per loop iteration, O(1)->O(n)), `xs.min`/`max` (need a `len==0` branch + 16-byte Option box — Option-construction work, not helper plumbing, so LAST). |
+| `ineligible-fn` | 105 | Builtin METHODS the AST emitter intercepts and the IR path did not lower. | **IN PROGRESS.** Landed: `is_zero`/`is_positive`/`is_negative`/`is_even`/`is_odd` (#5659), `abs`/`sign` (#5661), `xs.sum`/`product` (#5664), `n.pow` (#5666), `xs.index_of`/`contains` (#5667), `is_empty` (#5669), `s.first_byte`/`last_byte` (#5671), `args_count` (desugared to `args().len()`), `xs.min`/`max` (the `len==0` branch + the Option box moved INTO Fern-source helpers — `asmcore.rt_src_arr_i32_min_max_opt` — so the call site is a plain `call_direct` like `sum`; the helper's composite return type is registered for the scrutinee resolvers via `irlower.builtin_arr_opt_ret_type`, since `opt_ret_fns_of` cannot see a runtime helper). Remaining: `arg_at` (needs a real register-ABI op — desugaring to `args()[i]` would allocate all of argv per loop iteration, O(1)->O(n)). |
 | `over-budget` | 4 | `import "std/array"` and friends push the merged module past the 512-function budget. Same gate as the whole-compiler bundle, reached by ordinary programs. | **IN PROGRESS.** `asm_load_run`'s default merged path now routes an over-budget-but-eligible program (`512 < merged funcs < 1500`) through a per-module IR concat instead of the AST emitter (`emit_per_module_concat` + `prune_to_reachable`, #5676; guarded by `TestSelfHostOverBudgetPerModuleIR`). The `< 1500` bound keeps the whole-compiler self-compile out (single-process concat of ~2040 funcs OOMs the arena). Remaining: the same routing on the other merged-default drivers (`asm_modload_run`, `asm_ir_run`'s AST fallback), and lifting the budget for the whole-compiler bundle itself (needs the batched file-based per-module emit — slice 2). |
 | `no-main` | 0 | Functions but no `main`. Supported by the desugar; not exercised today. | n/a |
 
@@ -75,6 +75,24 @@ Two corrections to the framing that was here before:
   `"sum"` / `"pow"` / `"is_empty"` / `"first_byte"`, while `asm.fern` intercepts
   each of them. So this is a bounded port against an existing reference, not new
   design — but it is the work that actually gates deleting `asm.fern`.
+
+**The helper lowerings are shared, but the helper BODIES are not — a debt these
+slices accrued (found + paid 2026-07-27).** `irlower.fern` feeds all three
+backends, so a `call_direct` to a Fern runtime helper is emitted on x86, arm64
+AND wasm; only the x86 side (`asm_ir.fern`) was wired to emit the body. Measured
+on the arm64 IR path: an `xs.sum()` program emitted `bl __fn___fern_arr_i32_sum`
+with **no definition** — an undefined reference at link, latent since #5664
+because no arm64/wasm IR test uses these builtins. Both backends are now handled:
+arm64 marks the needs in `asm_arm64_ir.fern`'s `is_fern_helper` branch (the
+bodies already existed in `asm_arm64.emit_runtime`, gated and unmarked), and wasm
+— which has no body for any of them and would fail with `unknown func` at load —
+**defers** such a module to its AST path via `wasm_ir.register_only_fern_helper`,
+which is where it went before the lowerings existed. Any future helper-backed
+builtin must do the same three-backend triage, not just the x86 five-part recipe.
+Noticed while verifying the wasm leg, and recorded because it will matter when
+#3457 reaches wasm: the wasm **AST** emitter does not implement these builtins
+either — `xs.sum()` emits `i32.const 0`, silently — so on wasm they are wrong on
+both paths today. That is a pre-existing wasm gap, orthogonal to this issue.
 
 Also worth recording, because it bears on whether script support should survive
 at all: **the native compiler rejects script-shaped source** (`fern -interp` on

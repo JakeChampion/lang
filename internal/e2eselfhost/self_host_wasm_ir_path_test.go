@@ -856,6 +856,26 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// differential gate — the method forms above cover the IR predicate ops, and
 		// the free-call forms are validated on x86-64 (TestSelfHostAsmIRPath +
 		// TestSelfHostStrSplitIRPathX86_64).
+		//
+		// The i32 builtins backed by REGISTER-ONLY Fern runtime helpers (#3457):
+		// irlower lowers these on every backend, but only asm_ir / asm_arm64 emit
+		// the helper bodies — wasm has none, so `-ir` must DEFER these modules to
+		// the wasm AST path (wasm_ir.register_only_fern_helper). Without the
+		// deferral the emitted module calls an undefined `$__fern_arr_i32_*` and
+		// wasmtime rejects it with `unknown func`, which this differential catches
+		// as a load failure rather than a mismatch.
+		//
+		// What these pin is that the IR path stays OFF these builtins, not what
+		// they compute: the wasm AST emitter does not implement them either — it
+		// emits `i32.const 0` for xs.sum() — a pre-existing wasm gap that is
+		// orthogonal to #3457 and unchanged here.
+		{"arr-sum-defers", "function main(): i32 { var xs: i32[] = [1, 2, 3, 4]; return xs.sum(); }"},
+		{"arr-product-defers", "function main(): i32 { var xs: i32[] = [2, 3, 5]; return xs.product(); }"},
+		{"arr-index-of-defers", "function main(): i32 { var xs: i32[] = [7, 8, 9]; return xs.index_of(9); }"},
+		{"i32-pow-defers", "function main(): i32 { var n: i32 = 2; return n.pow(5); }"},
+		{"arr-min-defers", "function main(): i32 { var xs: i32[] = [5, 2, 8]; match (xs.min()) { Some(m) => { return m; }, None => { return 99; } } }"},
+		{"arr-max-defers", "function main(): i32 { var xs: i32[] = [5, 2, 8]; match (xs.max()) { Some(m) => { return m; }, None => { return 99; } } }"},
+		{"arr-max-empty-defers", "function main(): i32 { var xs: i32[] = []; match (xs.max()) { Some(m) => { return m; }, None => { return 99; } } }"},
 	}
 
 	for _, tc := range cases {
