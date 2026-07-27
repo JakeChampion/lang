@@ -452,8 +452,8 @@ Answers §4. Specifically:
 | `s.to_upper()` (ASCII) | `s.to_ascii_upper()` |
 | — | `s.to_upper()` (Unicode, full mapping, ASCII fast path inside) |
 | `(b: i32) b.to_upper()` | `(b: u8) b.to_ascii_upper()` |
-| `s.eq_ignore_ascii_case(o)` | keep (already honest) |
-| — | `s.eq_ignore_case(o)` (Unicode, case-*folded* — §2.5) |
+| `s.eq_ignore_ascii_case(o)` | keep (already honest) — **kept** |
+| — | `s.eq_ignore_case(o)` (Unicode, case-*folded* — §2.5) — **LANDED** |
 | `s.is_alpha_only()` (ASCII) | `s.is_ascii_alpha_only()`; Unicode via `char.is_alphabetic()` |
 
 Implementation note, load-bearing — and this is how it was resolved.

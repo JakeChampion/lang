@@ -3,7 +3,7 @@ import "std/unicode" as unicode;
 // examples/tests/unicode_test.fern — pure-Fern coverage of std/unicode's
 // simple (1:1) case mapping. Exercises multiple scripts (ASCII, Latin-1,
 // Latin Extended, Greek, Cyrillic), the code-point-level helpers, the
-// simple-mapping caveat (ß is left unchanged), and eq_ignore_case.
+// full-mapping behaviour (ß expands), and case folding.
 
 function test_ascii(): test.TestOutcome {
     return test.assert_true(unicode.to_upper("hello") == "HELLO" &&
@@ -56,6 +56,15 @@ function test_eq_ignore_case(): test.TestOutcome {
     // comparison walks both operands independently.
     if (!unicode.eq_ignore_case("K", "k")) { return test.fail("kelvin sign ~ k"); }
     if (unicode.eq_ignore_case("K", "kk")) { return test.fail("kelvin sign != kk"); }
+    // FOLDING, not lowercasing: ß folds to ss, so these compare equal
+    // even though to_lower leaves ß alone. This is the whole difference
+    // between eq_ignore_case and eq_ignore_ascii_case.
+    if (!unicode.eq_ignore_case("ß", "ss")) { return test.fail("ß ~ ss"); }
+    if (!unicode.eq_ignore_case("STRASSE", "straße")) { return test.fail("STRASSE ~ straße"); }
+    if (!unicode.eq_ignore_case("ſ", "s")) { return test.fail("long s ~ s"); }
+    if (unicode.eq_ignore_case("ß", "s")) { return test.fail("ß != s"); }
+    if (unicode.case_fold("ß") != "ss") { return test.fail("case_fold ß"); }
+    if (unicode.case_fold("HELLO") != "hello") { return test.fail("case_fold ascii"); }
     return test.pass();
 }
 

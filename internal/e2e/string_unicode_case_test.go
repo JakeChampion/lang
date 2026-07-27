@@ -103,6 +103,19 @@ function main(): i32 {
     // Final_Sigma is NOT applied: a word-final Σ lowercases to σ, not ς.
     // Unicode says "σοφος"; flip this when the context rule lands.
     if ("ΣΟΦΟΣ".to_lower() != "σοφοσ") { return 47; }
+
+    // Case FOLDING is a third operation, not lowercasing. ß folds to ss,
+    // so these are equal under eq_ignore_case and not under to_lower.
+    if (!"ß".eq_ignore_case("ss")) { return 48; }
+    if (!"STRASSE".eq_ignore_case("straße")) { return 49; }
+    if (!"ſ".eq_ignore_case("s")) { return 50; }
+    if ("ß".case_fold() != "ss") { return 51; }
+    if ("ß".to_lower() != "ß") { return 52; }
+    // The ASCII-only comparator is unchanged and still says no.
+    if ("ß".eq_ignore_ascii_case("ss")) { return 53; }
+    // Both agree on a protocol token, which is the common case.
+    if (!"Content-Type".eq_ignore_case("content-type")) { return 54; }
+    if (!"Content-Type".eq_ignore_ascii_case("content-type")) { return 55; }
     return 0;
 }
 `
