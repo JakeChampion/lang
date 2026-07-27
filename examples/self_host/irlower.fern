@@ -8840,6 +8840,28 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (fa.field == "sum") { return parr.emit(ir.op_call_direct("__fern_arr_i32_sum", 1)); }
                         return parr.emit(ir.op_call_direct("__fern_arr_i32_product", 1));
                     }
+                    // x.is_empty() desugars to `x.len() == 0` and re-lowers, rather
+                    // than emitting its own len op. The `.len()` arm below carries real
+                    // machinery a duplicate would have to clone — notably the fresh
+                    // string-concat receiver reclaim (`(a + b).is_empty()` strands a temp
+                    // box otherwise, #4365) — and it already dispatches str vs arr length.
+                    // Reusing it also means is_empty covers every receiver `.len()` does
+                    // (string, i32[]/f64[]/i64[] arrays, string[]), matching the AST
+                    // emitter's guard, which spans all of them rather than strings alone.
+                    if (fa.field == "is_empty" && c.args.len() == 0
+                        && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s) || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s)
+                            || !decl_is_struct(s.structs, expr_struct_type(fa.obj, s)))) {
+                        var lenc: parser.Expr = parser.ExprCall {
+                            callee: parser.ExprFieldAccess { obj: fa.obj, field: "len", line: fa.line, col: fa.col },
+                            args: [], line: c.line, col: c.col, type_argc: 0, ty: "",
+                        };
+                        var iszero: parser.Expr = parser.ExprBinary {
+                            op: "==", left: lenc,
+                            right: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: c.line, col: c.col },
+                            line: c.line, col: c.col,
+                        };
+                        return lower_expr(iszero, s);
+                    }
                     if (fa.field == "len" && c.args.len() == 0
                         && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s) || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s)
                             || !decl_is_struct(s.structs, expr_struct_type(fa.obj, s)))) {
