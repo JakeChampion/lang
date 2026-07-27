@@ -585,6 +585,21 @@ Zero-config stderr wrappers plus a leveled logger (#2683).
 
 POSIX path manipulation (string-level only).
 
+**Paths are assumed to be valid UTF-8**, and there is no `OsStr`-style
+type — deliberately. On Linux and macOS a path is really an arbitrary
+byte sequence, so this is a simplification: Rust needs `OsStr`/WTF-8
+because Windows paths are UTF-16 with possible lone surrogates, Python
+needs `surrogateescape`, Haskell added `OsPath`. Fern targets Linux,
+macOS and WASI, where paths are UTF-8 in practice, and a second string
+type would cost more across the language than the cases it buys.
+
+A path that is not valid UTF-8 is a **boundary error, not a value**: it
+should surface where the path enters the program (an argument, a
+`read_dir` entry, a config file), not deep inside path manipulation. If
+you need to handle one, skip this module and work on raw bytes —
+`s.as_bytes()` gives a non-copying `[u8]` view, and the byte-level file
+APIs carry the name through unmodified.
+
 - `path_join(parts)`, `path_parent(p)`, `path_file_name(p)`,
   `path_extension(p)`, `path_clean(p)`.
 - `path_is_absolute(p)` — true iff `p` begins at the root (`/`).
