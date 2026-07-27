@@ -34,10 +34,14 @@ import (
 // per-module-built compiler compiles the whole compiler (the fixpoint gen2 input)
 // without crashing and emits a real `call __fn_main`. That self-compile first
 // surfaced the string[]-struct-field `.append()` aliasing UAF in the checker
-// (#3561), fixed by routing string[] field appends through the clone form. Routing
-// the DEFAULT bootstrap (TestSelfHostModloadFixpointX86_64) through this path to the
-// byte-identical fixpoint — and then deleting the AST emitters (#3457) — is the next
-// slice; until then the default bootstrap stays on the merged AST emit, untouched.
+// (#3561), fixed by routing string[] field appends through the clone form.
+//
+// This IS the routine whole-compiler self-compile gate now (#3457 slice 2): the
+// merged-bundle fixpoint TestSelfHostModloadFixpointX86_64 — which drove the whole
+// compiler through the legacy AST emitter — is retired from routine CI (env-gated
+// RUN_MERGED_FIXPOINT). Byte-identity of the per-module self-reproduction is proved
+// by the env-gated TestSelfHostPerModuleEmitAllFixpointX86_64; this test guards the
+// per-module emit+link+self-compile mechanics on every run.
 func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)

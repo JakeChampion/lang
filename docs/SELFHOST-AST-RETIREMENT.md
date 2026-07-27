@@ -126,7 +126,7 @@ The three legacy emitters are still reached through these entry points
 |---|---|---|
 | `asm_run.fern:23` | merged AST (x86) | `TestSelfHostBootstrapsItself` / `TestSelfHostAsmRunX86_64` pipe programs through it |
 | `asm_load_run.fern:376` (arm64 373) | merged AST | `TestSelfHostStage2FixedPoint{,Arm64}` fixpoint on this driver |
-| `asm_modload_run.fern:335` (arm64 332) | merged AST default | `TestSelfHostModloadFixpointX86_64` / `…Arm64` invoke the driver with **no** `-per-module-*` flag → merged path |
+| `asm_modload_run.fern:335` (arm64 332) | merged AST default | ~~`TestSelfHostModloadFixpointX86_64`~~ **retired from routine CI (env-gated `RUN_MERGED_FIXPOINT`, #3457 slice 2)** — the x86 whole-compiler self-compile gate now runs `TestSelfHostModloadPerModuleWholeCompilerX86_64` (per-module IR). No x86 routine test exercises the merged default. `TestSelfHostFixpointArm64` still drives the arm64 merged path routinely — the symmetric follow-up (env-gate it, relying on the arm64 per-module guard) |
 | `asm_ir_run.fern:158` (arm64 135/144) | AST *fallback* of the IR differential | reached when `emit_module_ir_gated` returns "" (an ineligible program) |
 | inline `main.fern` | AST | `TestSelfHostStage2Bootstrap` / `…Stage2Compiler` build a one-off compiler over `asm.emit_module` |
 
@@ -273,8 +273,18 @@ tier → leak.
   - (b) Refactor `emit_module_funcs` to accept the precomputed table bundle
     (compute-at-call-site for the single-unit callers = byte-identical + same
     cost; compute-once for emit-all = the win).
-  - (c) Then point `TestSelfHostModloadFixpointX86_64` at emit-all; keep the
-    env-gated per-process `TestSelfHostPerModuleFixpointX86_64` as belt-and-braces.
+  - (c) ~~Then point `TestSelfHostModloadFixpointX86_64` at emit-all~~ **DONE, but
+    by RETIREMENT rather than flip (2026-07-27).** A routine per-module BYTE-IDENTITY
+    fixpoint is ~12 min (2 whole-compiler emit-all passes) — past a CI shard — so
+    instead of flipping the merged fixpoint to that, it is **env-gated
+    (`RUN_MERGED_FIXPOINT`)**: retired from routine CI so no routine x86 test drives
+    the whole compiler through the merged AST emitter. Routine coverage is now
+    `TestSelfHostModloadPerModuleWholeCompilerX86_64` (per-module emit+link+self-compile,
+    ~6 min); the per-module byte-identity proof is the env-gated
+    `TestSelfHostPerModuleEmitAllFixpointX86_64` (#5672). The merged fixpoint stays
+    runnable on demand as a backstop until slice 5 deletes `asm.fern`. **Follow-up:**
+    the arm64 sibling `TestSelfHostFixpointArm64` still drives the merged path
+    routinely — env-gate it the same way once its per-module guard is the routine gate.
   - **gen0 parallel per-module is already CI-affordable (~3.3 min)** — the fast
     guard `TestSelfHostModloadPerModuleWholeCompilerX86_64` already exists; only
     the gen1 self-reproduction proof needs the hoist to become CI-cheap.

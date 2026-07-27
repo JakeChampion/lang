@@ -27,7 +27,22 @@ import (
 // bundle. Proves the file-based loader fully replaces bundle_run for the
 // hardest case (the whole compiler), so the per-feature marker tests can
 // migrate onto it and bundle_run can eventually be deleted.
+//
+// RETIRED FROM ROUTINE CI (#3457 slice 2). This is the last routine test
+// that compiles the whole compiler through the MERGED bundle — i.e. the
+// legacy AST emitter (`asm.emit_module`) that #3457 is retiring. Routine
+// coverage of the file-based whole-compiler self-compile now comes from
+// TestSelfHostModloadPerModuleWholeCompilerX86_64 (the per-module IR path,
+// ~6 min), with the per-module BYTE-IDENTITY proof in the env-gated
+// TestSelfHostPerModuleEmitAllFixpointX86_64. This test stays runnable
+// (RUN_MERGED_FIXPOINT=1) as an on-demand byte-identity backstop for the
+// merged path until slice 5 deletes `asm.fern`, at which point it goes with
+// it. Keeping it env-gated (not deleted) preserves the merged byte-identity
+// signal on demand and keeps the many docs that cite it valid.
 func TestSelfHostModloadFixpointX86_64(t *testing.T) {
+	if os.Getenv("RUN_MERGED_FIXPOINT") == "" {
+		t.Skip("set RUN_MERGED_FIXPOINT=1 to run the merged-bundle self-compile byte-identity fixpoint (retired from routine CI, #3457 slice 2 — routine coverage is TestSelfHostModloadPerModuleWholeCompilerX86_64)")
+	}
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 
