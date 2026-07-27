@@ -9095,6 +9095,24 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // receiver (`next().is_odd()`) still evaluates once. That is also why
                     // `abs` / `sign` are NOT here: both need the value twice, so they want
                     // a temp slot rather than a second lower_expr of the same subtree.
+                    // n.pow(k) — helper-backed like xs.sum() (#5664), but with a
+                    // scalar receiver and ONE argument, so it sits outside the zero-arg
+                    // block below. Same five-part requirement: lowering + is_fern_helper
+                    // + need mapping + emit_ir_runtime_fern_fn gate + globls export.
+                    // (An earlier hypothesis that arg-taking builtins need a dedicated
+                    // IR op was wrong — the missing piece was the need, not the op.)
+                    if (fa.field == "pow" && c.args.len() == 1 && expr_recv_prim_type(fa.obj, s) == "i32") {
+                        // Argument order: the callee binds params in REVERSE push
+                        // order, so the exponent is pushed first and the receiver
+                        // (base) second. Pushing receiver-then-arg gives pow(exp,
+                        // base) — which the symmetric cases (3.pow(3)) hide, so the
+                        // tests below use asymmetric ones.
+                        var ppow: LowerState = lower_expr(c.args[0], s);
+                        if (!ppow.ok) { return ppow; }
+                        ppow = lower_expr(fa.obj, ppow);
+                        if (!ppow.ok) { return ppow; }
+                        return ppow.emit(ir.op_call_direct("__fern_i32_pow", 2));
+                    }
                     if (c.args.len() == 0 && expr_recv_prim_type(fa.obj, s) == "i32") {
                         if (fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative") {
                             var pcmp: LowerState = lower_expr(fa.obj, s);

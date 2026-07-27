@@ -94,6 +94,16 @@ func TestSelfHostI32PredicatesIRX86_64(t *testing.T) {
 		{"arr-product", "function main(): i32 { var xs: i32[] = [2, 3, 5]; return xs.product(); }", 30},
 		{"arr-product-empty", "function main(): i32 { var xs: i32[] = []; return xs.product(); }", 1},
 		{"arr-product-with-zero", "function main(): i32 { var xs: i32[] = [4, 0, 7]; return xs.product(); }", 0},
+		// n.pow(k) is helper-backed AND takes an argument. The callee binds params in
+		// reverse push order, so these cases are deliberately ASYMMETRIC: 3.pow(3)
+		// passes even with the operands swapped and would hide the bug.
+		{"pow-2-5", "function main(): i32 { var n: i32 = 2; return n.pow(5); }", 32},
+		{"pow-zero-exponent", "function main(): i32 { var n: i32 = 7; return n.pow(0); }", 1},
+		{"pow-unit-exponent", "function main(): i32 { var n: i32 = 5; return n.pow(1); }", 5},
+		{"pow-symmetric", "function main(): i32 { var n: i32 = 3; return n.pow(3); }", 27},
+		// Negative base, odd exponent: -8, shifted into exit-code range.
+		{"pow-negative-base", "function main(): i32 { var n: i32 = 0 - 2; return n.pow(3) + 100; }", 92},
+		{"pow-expr-receiver", "function main(): i32 { var b: i32 = 2; var e: i32 = 3; return (b + 1).pow(e); }", 27},
 	}
 
 	for _, tc := range cases {
