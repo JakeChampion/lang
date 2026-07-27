@@ -2356,8 +2356,8 @@ function __utf8_put(buf_in: u8[], pos: i32, c: i32): u8[] {
 // `string_from_codepoint(cp)` — the single-codepoint UTF-8 string for
 // scalar `cp` (out-of-range / surrogate → U+FFFD). The inverse of indexing
 // `codepoints()`; the way to build non-ASCII text from a numeric scalar.
-pub function string_from_codepoint(cp: i32): string {
-    var c: i32 = __utf8_sanitise(cp);
+pub function string_from_codepoint(ch: char): string {
+    var c: i32 = __utf8_sanitise(ch as i32);
     var buf: u8[] = __alloc_u8(__utf8_encoded_len(c));
     buf = __utf8_put(buf, 0, c);
     return string_from_bytes(buf);
@@ -2368,19 +2368,19 @@ pub function string_from_codepoint(cp: i32): string {
 // for well-formed input: `string_from_codepoints(s.codepoints())` re-encodes
 // `s` (ill-formed runs collapse to U+FFFD). Two-pass exact-size buffer, no
 // O(n²) concatenation.
-pub function string_from_codepoints(cps: i32[]): string {
+pub function string_from_codepoints(cps: char[]): string {
     var m: i32 = cps.len();
     var total: i32 = 0;
     var i: i32 = 0;
     while (i < m) {
-        total = total + __utf8_encoded_len(__utf8_sanitise(cps[i]));
+        total = total + __utf8_encoded_len(__utf8_sanitise(cps[i] as i32));
         i = i + 1;
     }
     var buf: u8[] = __alloc_u8(total);
     var pos: i32 = 0;
     i = 0;
     while (i < m) {
-        var c: i32 = __utf8_sanitise(cps[i]);
+        var c: i32 = __utf8_sanitise(cps[i] as i32);
         buf = __utf8_put(buf, pos, c);
         pos = pos + __utf8_encoded_len(c);
         i = i + 1;
