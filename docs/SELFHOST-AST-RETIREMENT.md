@@ -115,12 +115,27 @@ tier → leak.
   → no exit-137, no slice-blocking. It is an RSS optimisation only, and adding a
   large tier there shifts `heap_base` across the byte-identity surface for no
   correctness gain; low priority.
-- **Remaining native free sites** (task #18, marginal): the
-  `__fern_str_arr_free` / `__fern_arrarr_free` / `__fern_optarr_free` /
-  struct-drop *buffer* frees still `leak (sound)` a ≥512 KiB collection buffer.
-  These free small collection buffers, not the multi-MB op/analysis arrays that
-  fill the arena (`arr_dec` + `str_free`, both redirected, cover those), so they
-  are soundness-completeness, not an arena-wall win — a clean small follow-up.
+- **Remaining self-host free sites — x86 DONE (2026-07-27), arm64 follow-up.**
+  The self-host x86 runtime's `__fn___fern_str_arr_free` (`.Lsaf`) /
+  `__fern_arrarr_free` (`.Laaf`) / `__fern_strarrarr_free` (`.Lssaf`) /
+  `__fern_optarrarr_free` (`.Loaf`) / `__fern_snapshot_dec` (`.Lsd`) /
+  `__fern_arr_push_owned` (`.Lapo`) *outer-buffer* frees previously
+  `leak (sound)`ed a ≥512 KiB collection buffer; each now recycles it via
+  `__fern_large_push` (the same redirect `arr_dec` / `str_free` already use). This
+  bounds RSS for the general-purpose large-collection programs Fern now targets
+  (the free sites fire on Perceus-proven-fresh, non-escaping locals). arm64
+  (`asm_arm64.fern`) mirror is a follow-up, matching the #5609→#5614 split.
+  - **Measured: this is soundness-completeness, NOT an arena-wall win — the doc's
+    original assessment was right.** A single-process `-per-module-emit-all` gen1
+    emit still OOMs at the SAME batch boundary with these sites recycled as
+    without (an A/B test: byte-for-byte identical exit-137 at batch `[8:16]`). So
+    these sites free *small* collection buffers in the compiler's own emit; the
+    ≥512 KiB large path is rarely taken. The emit-all single-process batch limit
+    is **arena-structural** — the bump pointer only retreats on process exit, and
+    the self-host runtime serves fewer cross-window allocations from the freelist
+    than the (fuller) native runtime, so gen1 accumulates where gen0 does not.
+    Fixing THAT would need arena checkpoint/reset between windows, not more free
+    redirects; it is deferred (the serial per-module fixpoint stays the proof).
 
 ## Slices
 
@@ -272,14 +287,24 @@ tier → leak.
     (278 s vs 720 s), links into a working compiler, no OOM. The append_dyn
     COW-on-shared concern held — shared bases reuse correctly across the batch.
 
-  **So slice 2's speedup is landed.** What remains to fully close slice 2 (make
-  the merged AST path unreachable) is the CI wiring: use `-per-module-emit-all` to
-  drive a per-module fixpoint guard (the gen0 per-module path is already fast; the
-  gen1 self-reproduction is now ~2.6× cheaper per emit, though still heavy — decide
-  between a batched-parallel CI lane vs the env-gated proof), then repoint the
+  **So slice 2's speedup is landed for gen0.** A CI-affordable **gen1** emit-all
+  fixpoint was attempted and is **deferred (2026-07-27): the emit-all
+  single-process batch limit is arena-structural, not leak-based.** A gen0
+  emit-all → link → gen1 → gen1 emit-all fixpoint OOMs (exit 137) when gen1
+  batches many units per process: the self-host bump arena's pointer only retreats
+  on process exit, and the self-host runtime serves fewer cross-window allocations
+  from the freelist than the fuller native runtime, so gen1 accumulates within a
+  batch where gen0 (native runtime) does not. Recycling the remaining large
+  collection-buffer free sites (above) did **not** move the OOM boundary (A/B
+  byte-identical), confirming the accumulation is not those leaks. Making gen1
+  emit-all CI-cheap would need arena checkpoint/reset between windows — deferred.
+  **The env-gated serial `TestSelfHostPerModuleFixpointX86_64` remains the gen1
+  self-reproduction proof** (the plan always allowed the env-gated route), and
+  gen0's parallel per-module path (`TestSelfHostModloadPerModuleWholeCompilerX86_64`)
+  is the fast CI guard. That is sufficient to proceed: repoint the
   bootstrap/fixpoint drivers off the merged bundle (slice 3) and delete the AST
-  emitters (slice 5). Do NOT re-run the `string[][]` repro (proven to pass) or the
-  analysis-shift probe (refuted).
+  emitters (slice 5). Do NOT re-run the `string[][]` repro (proven to pass), the
+  analysis-shift probe (refuted), or the emit-all-batch-size search (arena-bound).
 
   `internal/`-vs-self-host convergence item (#4451).
 
