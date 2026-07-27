@@ -9063,6 +9063,36 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             return t2s.emit(ir.op_call_direct("__fern_i32_to_string", 1));
                         }
                     }
+                    // Builtin i32 PREDICATES — `n.is_zero/is_positive/is_negative/
+                    // is_even/is_odd()` (zero-arg, i32 receiver). The AST emitter
+                    // (asm.fern) inlines each as a couple of arithmetic ops; the IR
+                    // path lowers them by desugaring to the equivalent boolean
+                    // ExprBinary and recursing through the existing integer-op
+                    // lowering — no runtime helper, so every backend handles them.
+                    // Closes an `ineligible-fn` blocker for retiring asm.fern (#3457):
+                    //   is_zero = n == 0   is_positive = n > 0   is_negative = n < 0
+                    //   is_odd  = (n & 1) == 1   is_even = (n & 1) == 0
+                    if ((fa.field == "is_zero" || fa.field == "is_positive"
+                         || fa.field == "is_negative" || fa.field == "is_even"
+                         || fa.field == "is_odd")
+                        && c.args.len() == 0 && expr_recv_prim_type(fa.obj, s) == "i32") {
+                        var zero: parser.Expr = parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 };
+                        if (fa.field == "is_zero") {
+                            return lower_expr(parser.ExprBinary { op: "==", left: fa.obj, right: zero, line: 0, col: 0 }, s);
+                        }
+                        if (fa.field == "is_positive") {
+                            return lower_expr(parser.ExprBinary { op: ">", left: fa.obj, right: zero, line: 0, col: 0 }, s);
+                        }
+                        if (fa.field == "is_negative") {
+                            return lower_expr(parser.ExprBinary { op: "<", left: fa.obj, right: zero, line: 0, col: 0 }, s);
+                        }
+                        // is_even / is_odd: (n & 1) == {0, 1}
+                        var onel: parser.Expr = parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 };
+                        var band: parser.Expr = parser.ExprBinary { op: "&", left: fa.obj, right: onel, line: 0, col: 0 };
+                        var rhs: parser.Expr = zero;
+                        if (fa.field == "is_odd") { rhs = onel; }
+                        return lower_expr(parser.ExprBinary { op: "==", left: band, right: rhs, line: 0, col: 0 }, s);
+                    }
                     // Associated-function call `Type.f(args)` — a receiver-less
                     // impl method (e.g. a constructor `Point.make(x, y)` or a
                     // derived `Enum.default()`). The callee object is a bare TYPE
