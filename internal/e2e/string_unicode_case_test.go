@@ -122,6 +122,25 @@ function main(): i32 {
     // Both agree on a protocol token, which is the common case.
     if (!"Content-Type".eq_ignore_case("content-type")) { return 54; }
     if (!"Content-Type".eq_ignore_ascii_case("content-type")) { return 55; }
+
+    // Whole-string class predicates: Unicode under the plain name, byte
+    // check under is_ascii_*. Same split, one more time.
+    if (!"Ελλάδα".is_alpha_only()) { return 60; }
+    if ("Ελλάδα".is_ascii_alpha_only()) { return 61; }
+    if (!"hello".is_alpha_only()) { return 62; }
+    if (!"hello".is_ascii_alpha_only()) { return 63; }
+    // Arabic-Indic digits are Nd, so Unicode says numeric and ASCII does not.
+    if (!"٤٢".is_numeric()) { return 64; }
+    if ("٤٢".is_ascii_numeric()) { return 65; }
+    if (!"42".is_numeric()) { return 66; }
+    if (!"élan9".is_alnum_only()) { return 67; }
+    if ("élan 9".is_alnum_only()) { return 68; }   // space breaks it
+    // Empty is false for the class predicates, matching Python.
+    if ("".is_alpha_only()) { return 69; }
+    if ("".is_numeric()) { return 70; }
+    // is_ascii_only has no Unicode counterpart and keeps its meaning.
+    if (!"abc".is_ascii_only()) { return 71; }
+    if ("é".is_ascii_only()) { return 72; }
     return 0;
 }
 `

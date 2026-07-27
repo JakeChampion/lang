@@ -443,7 +443,7 @@ This makes the ASCII/Unicode distinction a **type** distinction rather
 than a naming convention, which is the only version of it that survives
 contact with a 144-method stdlib.
 
-### D3 — Unicode by default; `ascii` in the name of the fast path. — **LANDED for `to_upper`/`to_lower` (#5630)**
+### D3 — Unicode by default; `ascii` in the name of the fast path. — **LANDED (#5630)**
 
 Answers §4. Specifically:
 
@@ -454,7 +454,7 @@ Answers §4. Specifically:
 | `(b: i32) b.to_upper()` | `(b: u8) b.to_ascii_upper()` |
 | `s.eq_ignore_ascii_case(o)` | keep (already honest) — **kept** |
 | — | `s.eq_ignore_case(o)` (Unicode, case-*folded* — §2.5) — **LANDED** |
-| `s.is_alpha_only()` (ASCII) | `s.is_ascii_alpha_only()`; Unicode via `char.is_alphabetic()` |
+| `s.is_alpha_only()` (ASCII) | `s.is_ascii_alpha_only()`, plus a Unicode `s.is_alpha_only()` — **LANDED** |
 
 Implementation note, load-bearing — and this is how it was resolved.
 `s.to_upper()` was **not** just a stdlib function: the self-host
@@ -481,9 +481,11 @@ Unicode under the plain name, byte fold as `to_ascii_swap_case` /
 also breaks words on any Unicode whitespace, where the byte version
 breaks on U+0020 alone.
 
-Still ASCII, pending the rest of D3: the `is_*_only` predicate family
-and the `eq_ignore_case` row above (which needs case *folding*, so it
-belongs with D4's tables).
+D3 is complete: the casing family, the caseless comparators and the
+`is_*_only` predicates all follow the same shape — Unicode under the
+plain name, byte-wise under an `ascii` one. `is_ascii_only` is the one
+exception, and only because asking "is this confined to ASCII" has no
+Unicode counterpart.
 
 ### D4 — Full (1→N) case mapping for strings; simple for `char`; locale-independent. — **LANDED (#5630)**
 

@@ -1057,21 +1057,27 @@ pub function (s: string) lines_non_empty(): string[] {
     return out;
 }
 
-// === String predicates (whole-string ASCII checks) ===
+// === Whole-string character-class predicates ===
 //
-// `(s: string) is_ascii_only()` / `is_numeric()` /
-// `is_alpha_only()` / `is_alnum_only()` — true iff EVERY
-// byte matches the predicate. Empty strings return true for
-// is_ascii_only (no non-ASCII bytes) and false for the
-// numeric / alpha variants (vacuously empty doesn't qualify
-// as a numeric or alphabetic word — matches Python str
-// isdigit / isalpha conventions).
+// `is_numeric()` / `is_alpha_only()` / `is_alnum_only()` are
+// UNICODE: true iff every CODE POINT is in the class, so
+// `"Ελλάδα".is_alpha_only()` and `"٤٢".is_numeric()` are true.
+// Each has an `is_ascii_*` twin that tests every BYTE against
+// the ASCII class instead, for known-ASCII input and for
+// protocol tokens.
 //
-// Suffix `_only` chosen because the bare names (`is_numeric`,
-// `is_alpha`) on a string would shadow the byte-receiver
-// versions above — which now carry `ascii` in their names
-// (`is_ascii_alpha`, #5629), so the collision is gone, but the
-// `_only` spelling stays: it says "every byte", not "some byte".
+// `is_ascii_only()` has no Unicode counterpart by definition —
+// it asks whether the string is confined to ASCII — so it keeps
+// its name and its byte-wise implementation.
+//
+// Empty strings return true for is_ascii_only (no non-ASCII
+// bytes) and false for the numeric / alpha variants (vacuously
+// empty doesn't qualify as a numeric or alphabetic word —
+// matches Python str isdigit / isalpha conventions).
+//
+// Suffix `_only` says "every character", not "some character";
+// it no longer disambiguates from the byte-receiver methods,
+// which carry `ascii` in their names since #5629.
 
 pub function (s: string) is_ascii_only(): boolean {
     var n: i32 = s.len();
@@ -1083,7 +1089,7 @@ pub function (s: string) is_ascii_only(): boolean {
     return true;
 }
 
-pub function (s: string) is_numeric(): boolean {
+pub function (s: string) is_ascii_numeric(): boolean {
     var n: i32 = s.len();
     if (n == 0) { return false; }
     var i: i32 = 0;
@@ -1094,7 +1100,11 @@ pub function (s: string) is_numeric(): boolean {
     return true;
 }
 
-pub function (s: string) is_alpha_only(): boolean {
+pub function (s: string) is_numeric(): boolean {
+    return unicode.is_numeric(s);
+}
+
+pub function (s: string) is_ascii_alpha_only(): boolean {
     var n: i32 = s.len();
     if (n == 0) { return false; }
     var i: i32 = 0;
@@ -1105,7 +1115,11 @@ pub function (s: string) is_alpha_only(): boolean {
     return true;
 }
 
-pub function (s: string) is_alnum_only(): boolean {
+pub function (s: string) is_alpha_only(): boolean {
+    return unicode.is_alpha_only(s);
+}
+
+pub function (s: string) is_ascii_alnum_only(): boolean {
     var n: i32 = s.len();
     if (n == 0) { return false; }
     var i: i32 = 0;
@@ -1114,6 +1128,10 @@ pub function (s: string) is_alnum_only(): boolean {
         i = i + 1;
     }
     return true;
+}
+
+pub function (s: string) is_alnum_only(): boolean {
+    return unicode.is_alnum_only(s);
 }
 
 // `s.is_int()` — true if s parses as a decimal integer

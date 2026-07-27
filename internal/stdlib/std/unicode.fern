@@ -563,3 +563,48 @@ pub function is_lower(cp: i32): boolean {
     if (cp < 128) { return cp >= 97 && cp <= 122; }
     return _in_ranges(_lower_ranges(), cp);
 }
+
+// _all_cp reports whether every code point of `s` satisfies the class
+// named by `kind` (0 letter, 1 letter-or-digit, 2 decimal digit). Empty
+// input is FALSE, matching the std/string predicates these back: "every
+// character is a letter" is not a useful claim about no characters.
+// Malformed bytes decode to U+FFFD, which is in none of the classes, so
+// invalid UTF-8 answers false rather than being skipped.
+function _all_cp(s: string, kind: i32): boolean {
+    var n: i32 = s.len();
+    if (n == 0) { return false; }
+    var i: i32 = 0;
+    while (i < n) {
+        var cp: i32 = 65533;
+        var w: i32 = 1;
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pr) => { cp = pr.0; w = pr.1; },
+            None => { }
+        }
+        if (kind == 0) { if (!is_letter(cp)) { return false; } }
+        else if (kind == 1) { if (!is_alnum(cp)) { return false; } }
+        else { if (!is_digit(cp)) { return false; } }
+        i = i + w;
+    }
+    return true;
+}
+
+// `is_alpha_only(s)` — every code point is a Unicode letter, so `élan` and
+// `Ελλάδα` qualify where the byte-wise ASCII check rejects them.
+pub function is_alpha_only(s: string): boolean {
+    return _all_cp(s, 0);
+}
+
+// `is_alnum_only(s)` — every code point is a letter or a decimal digit.
+pub function is_alnum_only(s: string): boolean {
+    return _all_cp(s, 1);
+}
+
+// `is_numeric(s)` — every code point is a Unicode decimal digit (category
+// Nd), which includes the Arabic-Indic and fullwidth digits, not just
+// ASCII 0-9. Note this is a DIGIT test, not a number-parse test: it says
+// nothing about signs, separators or overflow.
+pub function is_numeric(s: string): boolean {
+    return _all_cp(s, 2);
+}
+
