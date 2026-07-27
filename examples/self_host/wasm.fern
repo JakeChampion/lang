@@ -12981,7 +12981,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
             + le32_escape(sv[di].len()) + wat_escape(sv[di]) + "\")\n";
         di = di + 1;
     }
-    if (wasm_ir.need(needs, "@allocates") || wasm_ir.need(needs, "@uses_i32_to_string") || wasm_ir.need(needs, "@uses_chr") || wasm_ir.need(needs, "@uses_strbuf") || wasm_ir.need(needs, "env") || wasm_ir.need(needs, "stat") || wasm_ir.need(needs, "remove_file") || wasm_ir.need(needs, "read_dir") || wasm_ir.need(needs, "remove_dir_all") || wasm_ir.need(needs, "temp_dir") || wasm_ir.need(needs, "sleep_ms") || wasm_ir.need(needs, "read_chunk") || wasm_ir.need(needs, "reader_close") || wasm_ir.need(needs, "wasm_poll") || wasm_ir.need(needs, "tcp_connect") || wasm_ir.need(needs, "tcp_send") || wasm_ir.need(needs, "tcp_recv") || wasm_ir.need(needs, "tcp_listen") || wasm_ir.need(needs, "tcp_accept") || wasm_ir.need(needs, "udp_send") || wasm_ir.need(needs, "poll")) {
+    if (wasm_ir.need(needs, "@allocates") || wasm_ir.need(needs, "@uses_arr_i32_helpers") || wasm_ir.need(needs, "@uses_i32_to_string") || wasm_ir.need(needs, "@uses_chr") || wasm_ir.need(needs, "@uses_strbuf") || wasm_ir.need(needs, "env") || wasm_ir.need(needs, "stat") || wasm_ir.need(needs, "remove_file") || wasm_ir.need(needs, "read_dir") || wasm_ir.need(needs, "remove_dir_all") || wasm_ir.need(needs, "temp_dir") || wasm_ir.need(needs, "sleep_ms") || wasm_ir.need(needs, "read_chunk") || wasm_ir.need(needs, "reader_close") || wasm_ir.need(needs, "wasm_poll") || wasm_ir.need(needs, "tcp_connect") || wasm_ir.need(needs, "tcp_send") || wasm_ir.need(needs, "tcp_recv") || wasm_ir.need(needs, "tcp_listen") || wasm_ir.need(needs, "tcp_accept") || wasm_ir.need(needs, "udp_send") || wasm_ir.need(needs, "poll")) {
         out = out + heap_alloc_helpers(wasm_ir.heap_base_for_strs(sv), wasm_ir.fl_base_for_strs(sv), wasm_ir.fl_cells());
         out = out + rc_runtime_helpers(wasm_ir.heap_base_for_strs(sv));
     }
@@ -13139,6 +13139,13 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     // register backends' __fern_arr_str_join runtime call. Self-contained (only
     // $__fern_str_box), emitted only when used.
     if (wasm_ir.need(needs, "@uses_arr_str_join")) { out = out + arr_str_join_helper(); }
+    // The i32 builtin helpers backing xs.sum() / .product() / .index_of() /
+    // .contains(), n.pow(k) and xs.min() / .max() (#3457). The register backends
+    // compile these from Fern source (asmcore.rt_src_*); wasm has no such
+    // mechanism, so the WAT lives in wasm_ir.arr_i32_helpers — deliberately NOT
+    // in this file, which #3457 deletes. min/max allocate their Option box via
+    // $__fern_str_box, which @allocates already pulls in.
+    if (wasm_ir.need(needs, "@uses_arr_i32_helpers")) { out = out + wasm_ir.arr_i32_helpers(); }
     // Scalar string search predicates (starts_with / ends_with / index_of /
     // contains) — self-contained, emitted only when used.
     if (wasm_ir.need(needs, "@uses_str_predicate")) { out = out + str_predicate_helpers(); }
