@@ -7431,7 +7431,12 @@ function main(): i32 {
     var a1: string = emit_source("return 42;");
     if (!util.contains(a1, "movq $42")) { return 10; }
     if (!util.contains(a1, "pushq %rax")) { return 11; }
-    if (!util.contains(a1, "popq %rdi")) { return 12; }
+    // The exit code reaches %rdi before the exit_group syscall. Which
+    // instruction puts it there is instruction selection, not contract: the AST
+    // emitter popped the statement stack straight into %rdi, while the IR path
+    // — which now serves these script-shaped sources via asmcore.synth_script_main
+    // (#3457) — returns through __fn_main and moves %rax across.
+    if (!util.contains(a1, "popq %rdi") && !util.contains(a1, "movq %rax, %rdi")) { return 12; }
     if (!util.contains(a1, "movq $60, %rax")) { return 13; }
     if (!util.contains(a1, "syscall")) { return 14; }
     if (!util.contains(a1, ".globl _start")) { return 15; }
@@ -7461,9 +7466,11 @@ function main(): i32 {
     if (!util.contains(a6, "idivq")) { return 61; }
     if (!util.contains(a6, "movq %rdx, %rax")) { return 62; }
 
-    // Unary negation.
+    // Unary negation. The AST emitter selected `negq`; the IR path (which serves
+    // this script-shaped source since #3457) lowers `-x` as `0 - x`, so accept
+    // either — the contract is that the negation is materialised, not how.
     var a7: string = emit_source("return -5;");
-    if (!util.contains(a7, "negq")) { return 70; }
+    if (!util.contains(a7, "negq") && !util.contains(a7, "subq")) { return 70; }
 
     // Nested expressions: `return (2 + 3) * 4;` — should have
     // an addq before the imulq (left subtree fully emitted
@@ -7495,25 +7502,37 @@ function main(): i32 {
     var a14: string = emit_source("return 4 != 5;");
     if (!util.contains(a14, "setne")) { return 140; }
 
-    // If/else: emits `cmpq $0`, `je .L0`, the then-block, `jmp
-    // .L1`, `.L0:`, the else-block, `.L1:`.
+    // If/else: test the condition, branch over the then-block, jump past the
+    // else-block, and define the join labels.
+    //
+    // The two backends encode that shape differently, and since #3457 these
+    // script-shaped sources route through the IR path: the AST emitter compared
+    // against zero (`cmpq $0` + `je`) and numbered labels `.L0`/`.L1`, while the
+    // IR path tests the register (`testq %rax, %rax` + `jz`) and scopes labels
+    // per function (`.Lir_main_N`). Assert the control flow, not the encoding.
     var a15: string = emit_source("if (true) { return 1; } else { return 2; }");
-    if (!util.contains(a15, "cmpq $0")) { return 150; }
-    if (!util.contains(a15, "je .L")) { return 151; }
+    if (!util.contains(a15, "cmpq $0") && !util.contains(a15, "testq %rax, %rax")) { return 150; }
+    if (!util.contains(a15, "je .L") && !util.contains(a15, "jz .L")) { return 151; }
     if (!util.contains(a15, "jmp .L")) { return 152; }
-    if (!util.contains(a15, ".L0:")) { return 153; }
-    if (!util.contains(a15, ".L1:")) { return 154; }
+    // One label-definition check, not two: the old pair asserted `.L0:` and
+    // `.L1:` separately, which only distinguished anything under the AST
+    // emitter's global numbering. The IR path's names are function-scoped, so a
+    // second check would just restate the first.
+    if (!util.contains(a15, ".L0:") && !util.contains(a15, ".Lir_")) { return 153; }
 
     // No-else if: only the cond-fail jump label, no second jmp.
     var a16: string = emit_source("if (true) { return 1; } return 0;");
-    if (!util.contains(a16, "cmpq $0")) { return 160; }
-    if (!util.contains(a16, "je .L")) { return 161; }
+    if (!util.contains(a16, "cmpq $0") && !util.contains(a16, "testq %rax, %rax")) { return 160; }
+    if (!util.contains(a16, "je .L") && !util.contains(a16, "jz .L")) { return 161; }
 
-    // While: emits top label, cond, je exit, body, jmp top,
-    // exit label.
+    // While: top label, condition, conditional branch to the exit label, body,
+    // jmp back to the top. The branch polarity is backend-specific — the AST
+    // emitter compared the condition against zero and left the loop with `je`,
+    // while the IR path materialises the negation and leaves with `jnz` — so
+    // accept either, the same way the if/else assertions above do.
     var a17: string = emit_source("while (1 < 2) { return 0; }");
-    if (!util.contains(a17, "cmpq $0")) { return 170; }
-    if (!util.contains(a17, "je .L")) { return 171; }
+    if (!util.contains(a17, "cmpq $0") && !util.contains(a17, "testq %rax, %rax")) { return 170; }
+    if (!util.contains(a17, "je .L") && !util.contains(a17, "jz .L") && !util.contains(a17, "jnz .L")) { return 171; }
     if (!util.contains(a17, "jmp .L")) { return 172; }
 
     // Locals: frame prologue + slot store + slot load. `var x =
@@ -7551,7 +7570,7 @@ function main(): i32 {
         "var i = 0; while (i < 3) { i = i + 1; } return i;"
     );
     if (!util.contains(a22, "pushq -8(%rbp)")) { return 220; }
-    if (!util.contains(a22, "je .L")) { return 221; }
+    if (!util.contains(a22, "je .L") && !util.contains(a22, "jz .L") && !util.contains(a22, "jnz .L")) { return 221; }
     if (!util.contains(a22, "jmp .L")) { return 222; }
 
     // Function decl + call: emits __fn_add label, calls from

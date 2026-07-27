@@ -2666,6 +2666,52 @@ pub function has_main(mod: parser.Module): boolean {
     return false;
 }
 
+// is_script_module reports whether `mod` is SCRIPT-shaped: top-level statements
+// and no `main` to hang them off. `return 42;` is the smallest example.
+pub function is_script_module(mod: parser.Module): boolean {
+    if (has_main(mod)) { return false; }
+    return mod.top_stmts.len() > 0;
+}
+
+// synth_script_main rewrites a script-shaped module into a function-shaped one,
+// moving the top-level statements into a synthesized `function main(): i32`.
+//
+// The IR emitters are whole-program emitters whose `_start` does `call
+// __fn_main`, so a script had no entry to lower and the eligibility gate turned
+// it away — the legacy AST emitter picked it up and inlined the statements into
+// `_start` itself. That made script support a reason the AST emitter could not
+// retire (#3457). Desugaring here instead lets the one IR pipeline serve both
+// shapes, and it lands in asmcore so every backend's IR path gets it from the
+// shared frontend rather than three parallel copies.
+//
+// A trailing `return 0;` is appended when the script does not already end in a
+// return, matching the fallback exit-0 epilogue the AST emitter wrote after the
+// inlined statements. Function-shaped modules are returned unchanged, so this is
+// inert for every program that already has a `main`.
+pub function synth_script_main(mod: parser.Module): parser.Module {
+    if (!is_script_module(mod)) { return mod; }
+    var body: parser.Stmt[] = mod.top_stmts;
+    var ends_in_return: boolean = false;
+    match (body[body.len() - 1]) {
+        parser.StmtReturn(r) => { ends_in_return = true; },
+        _ => { },
+    }
+    if (!ends_in_return) {
+        body = body.append(parser.StmtReturn {
+            value: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 },
+            line: 0,
+            col: 0,
+        });
+    }
+    var entry: parser.FuncDecl = parser.FuncDecl {
+        name: "main", receiver_name: "", receiver_type: "", type_params: [],
+        params: [], ret_type: "i32", body: body, line: 0, col: 0,
+        import_iface: "", import_wit: "", type_param_count: 0,
+        bound_traits: [], fip: false, ret_str: false,
+    };
+    return parser.Module { ...mod, funcs: mod.funcs.append(entry), top_stmts: [] };
+}
+
 pub struct CheckCtx { st: EmitState, errs: string }
 
 pub function is_wrapper(tag: Ty): boolean {

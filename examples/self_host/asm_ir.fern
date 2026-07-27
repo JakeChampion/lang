@@ -3730,7 +3730,15 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fn___fern_str_arr_free",
         // arr-of-arr reclaim (#4355 slice 9): the exit sweep of a module with a
         // fresh arr-of-arr local references these; the entry owns the bodies.
-        "__fn___fern_arrarr_free", "__fn___fern_strarrarr_free", "__fn___fern_optarrarr_free"
+        "__fn___fern_arrarr_free", "__fn___fern_strarrarr_free", "__fn___fern_optarrarr_free",
+        // compact base copy (#4650): a LIBRARY module doing `T { ...base, f: v }`
+        // on a struct_copy_eligible T emits `call __fn___fern_struct_copy`; the
+        // entry owns the single definition (emit_ir_runtime's heap block). Every
+        // eligible spread used to sit in the entry, so this went unnoticed until
+        // asmcore.synth_script_main spread a `parser.Module` — whose fields are
+        // ALL arrays, making it eligible where the string-carrying EmitState /
+        // FuncDecl spreads take the inline per-field path and never call out.
+        "__fn___fern_struct_copy"
     ];
     var i: i32 = 0;
     while (i < names.len()) {
@@ -5778,16 +5786,25 @@ pub function emit_module_ir(mod: parser.Module): string {
 // "" is an unambiguous "ineligible" sentinel: an eligible module always emits at
 // least `.globl _start\n    .text\n…`, never the empty string.
 pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
+    // A SCRIPT-shaped module (top-level statements, no `main`) is desugared into
+    // `function main(): i32 { … }` first, so the whole-program emit below has an
+    // entry to call — see asmcore.synth_script_main. Lambdas are lifted again
+    // afterwards because the caller lifted while the statements were still
+    // top-level, so a lambda in a script body has not been hoisted yet;
+    // lift_lambdas returns a lambda-free module unchanged, making the second pass
+    // inert for everything else.
+    var sm: parser.Module = mod;
+    if (asmcore.is_script_module(mod)) { sm = lift_lambdas(asmcore.synth_script_main(mod)); }
     // Module-level gates, mirroring eligible_core_known_main's pre-checks: no
     // functions / over the merged-bundle size budget (#3425) / no `main` (the
     // whole-program emit writes `_start` → `call __fn_main`) all fall back to AST.
-    if (mod.funcs.len() == 0) { return ""; }
-    if (mod.funcs.len() > 512) { return ""; }
-    if (!asmcore.has_main(mod)) { return ""; }
+    if (sm.funcs.len() == 0) { return ""; }
+    if (sm.funcs.len() > 512) { return ""; }
+    if (!asmcore.has_main(sm)) { return ""; }
     // Infer ret types BEFORE lowering the cache so the side-tables see inferred
     // return types (emit_module_ir_unit re-infers idempotently, keeping the cache
     // indices aligned with the module it emits).
-    var im: parser.Module = parser.infer_ret_types_module(mod);
+    var im: parser.Module = parser.infer_ret_types_module(sm);
     // Derive the emit-side side-tables ONCE (over im.funcs/im.structs — the whole-
     // program view, all_funcs == im.funcs here) exactly as emit_module_funcs does,
     // so the cached lowering is byte-identical to what emit would produce.
