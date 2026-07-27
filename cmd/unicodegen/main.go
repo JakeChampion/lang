@@ -1034,11 +1034,11 @@ function _full_case(cp: i32, want_upper: boolean): string {
         } else if (cp > from) {
             lo = mid + 1;
         } else {
-            var out: string = utf8.utf8_encode(_fld(t, base + 4));
+            var out: string = utf8.utf8_encode((_fld(t, base + 4)) as char);
             var c2: i32 = _fld(t, base + 8);
-            if (c2 != 0) { out = out + utf8.utf8_encode(c2); }
+            if (c2 != 0) { out = out + utf8.utf8_encode((c2) as char); }
             var c3: i32 = _fld(t, base + 12);
-            if (c3 != 0) { out = out + utf8.utf8_encode(c3); }
+            if (c3 != 0) { out = out + utf8.utf8_encode((c3) as char); }
             return out;
         }
     }
@@ -1110,11 +1110,11 @@ function _map_upper(s: string): string {
                 if (full.len() > 0) {
                     out = out + full;
                 } else {
-                    out = out + utf8.utf8_encode(_case_apply(pair.0, true));
+                    out = out + utf8.utf8_encode((_case_apply(pair.0, true)) as char);
                 }
                 i = i + pair.1;
             },
-            None => { out = out + utf8.utf8_encode(65533); i = i + 1; }
+            None => { out = out + utf8.utf8_encode((65533) as char); i = i + 1; }
         }
     }
     return out;
@@ -1131,18 +1131,18 @@ function _map_lower(s: string): string {
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => {
                 if (pair.0 == 931 && _final_sigma(s, i, pair.1)) {
-                    out = out + utf8.utf8_encode(962);
+                    out = out + utf8.utf8_encode((962) as char);
                 } else {
                     var full: string = _full_case(pair.0, false);
                     if (full.len() > 0) {
                         out = out + full;
                     } else {
-                        out = out + utf8.utf8_encode(_case_apply(pair.0, false));
+                        out = out + utf8.utf8_encode((_case_apply(pair.0, false)) as char);
                     }
                 }
                 i = i + pair.1;
             },
-            None => { out = out + utf8.utf8_encode(65533); i = i + 1; }
+            None => { out = out + utf8.utf8_encode((65533) as char); i = i + 1; }
         }
     }
     return out;
@@ -1182,15 +1182,15 @@ function _fold_cp(cp: i32): string {
         } else if (cp > from) {
             lo = mid + 1;
         } else {
-            var out: string = utf8.utf8_encode(_fld(t, base + 4));
+            var out: string = utf8.utf8_encode((_fld(t, base + 4)) as char);
             var c2: i32 = _fld(t, base + 8);
-            if (c2 != 0) { out = out + utf8.utf8_encode(c2); }
+            if (c2 != 0) { out = out + utf8.utf8_encode((c2) as char); }
             var c3: i32 = _fld(t, base + 12);
-            if (c3 != 0) { out = out + utf8.utf8_encode(c3); }
+            if (c3 != 0) { out = out + utf8.utf8_encode((c3) as char); }
             return out;
         }
     }
-    return utf8.utf8_encode(_lower_cp(cp));
+    return utf8.utf8_encode((_lower_cp(cp)) as char);
 }
 
 // ` + "`case_fold(s)`" + ` — ` + "`s`" + ` mapped to a form suitable for caseless comparison.
@@ -1208,7 +1208,7 @@ pub function case_fold(s: string): string {
                 out = out + _fold_cp(pair.0);
                 i = i + pair.1;
             },
-            None => { out = out + utf8.utf8_encode(65533); i = i + 1; }
+            None => { out = out + utf8.utf8_encode((65533) as char); i = i + 1; }
         }
     }
     return out;
@@ -1269,10 +1269,10 @@ pub function swap_case(s: string): string {
     while (i < len) {
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => {
-                out = out + utf8.utf8_encode(_swap_case_cp(pair.0));
+                out = out + utf8.utf8_encode((_swap_case_cp(pair.0)) as char);
                 i = i + pair.1;
             },
-            None => { out = out + utf8.utf8_encode(65533); i = i + 1; }
+            None => { out = out + utf8.utf8_encode((65533) as char); i = i + 1; }
         }
     }
     return out;
@@ -1288,7 +1288,7 @@ pub function capitalize(s: string): string {
         Some(pair) => {
             var up: i32 = _upper_cp(pair.0);
             if (up == pair.0) { return s; }
-            return utf8.utf8_encode(up) + s[pair.1:n];
+            return utf8.utf8_encode((up) as char) + s[pair.1:n];
         },
         None => { return s; }
     }
@@ -1310,15 +1310,15 @@ pub function title_case(s: string): string {
             Some(pair) => {
                 var cp: i32 = pair.0;
                 if (at_start) {
-                    out = out + utf8.utf8_encode(_upper_cp(cp));
+                    out = out + utf8.utf8_encode((_upper_cp(cp)) as char);
                 } else {
-                    out = out + utf8.utf8_encode(cp);
+                    out = out + utf8.utf8_encode((cp) as char);
                 }
                 at_start = _is_whitespace_cp(cp);
                 i = i + pair.1;
             },
             None => {
-                out = out + utf8.utf8_encode(65533);
+                out = out + utf8.utf8_encode((65533) as char);
                 at_start = false;
                 i = i + 1;
             }

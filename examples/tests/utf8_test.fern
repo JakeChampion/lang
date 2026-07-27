@@ -77,25 +77,25 @@ function test_decode_surrogate(): test.TestOutcome {
 function test_encode_lengths(): test.TestOutcome {
     // Each width encodes to the expected number of bytes.
     return test.assert_true(
-        utf8.utf8_encode(65).len() == 1
-        && utf8.utf8_encode(233).len() == 2
-        && utf8.utf8_encode(8364).len() == 3
-        && utf8.utf8_encode(128512).len() == 4);
+        utf8.utf8_encode((65) as char).len() == 1
+        && utf8.utf8_encode((233) as char).len() == 2
+        && utf8.utf8_encode((8364) as char).len() == 3
+        && utf8.utf8_encode((128512) as char).len() == 4);
 }
 
 function test_encode_decode_roundtrip(): test.TestOutcome {
     // Encode then decode recovers the codepoint, for every width.
     return test.assert_true(
-        decode_cp(utf8.utf8_encode(8364), 0) == 8364
-        && decode_cp(utf8.utf8_encode(128512), 0) == 128512);
+        decode_cp(utf8.utf8_encode((8364) as char), 0) == 8364
+        && decode_cp(utf8.utf8_encode((128512) as char), 0) == 128512);
 }
 
 function test_encode_invalid_is_replacement(): test.TestOutcome {
     // Out-of-range / surrogate codepoints encode as U+FFFD (65533).
     return test.assert_true(
-        decode_cp(utf8.utf8_encode(0 - 1), 0) == 65533
-        && decode_cp(utf8.utf8_encode(55296), 0) == 65533
-        && decode_cp(utf8.utf8_encode(1114112), 0) == 65533);
+        decode_cp(utf8.utf8_encode((0 - 1) as char), 0) == 65533
+        && decode_cp(utf8.utf8_encode((55296) as char), 0) == 65533
+        && decode_cp(utf8.utf8_encode((1114112) as char), 0) == 65533);
 }
 
 function test_codepoint_count(): test.TestOutcome {
@@ -104,9 +104,10 @@ function test_codepoint_count(): test.TestOutcome {
 }
 
 function test_codepoints_array(): test.TestOutcome {
-    var cps: i32[] = utf8.codepoints(mixed());
+    var cps: char[] = utf8.codepoints(mixed());
     if (cps.len() != 4) { return test.fail("codepoint count"); }
-    return test.assert_true(cps[0] == 65 && cps[1] == 233 && cps[2] == 8364 && cps[3] == 128512);
+    return test.assert_true((cps[0] as i32) == 65 && (cps[1] as i32) == 233
+        && (cps[2] as i32) == 8364 && (cps[3] as i32) == 128512);
 }
 
 function test_is_valid(): test.TestOutcome {
@@ -127,7 +128,7 @@ function euro(): string { return string_from_bytes([226 as u8, 130 as u8, 172 as
 function emoji(): string { return string_from_bytes([240 as u8, 159 as u8, 152 as u8, 128 as u8]); }  // 😀
 
 function cp_or(s: string, i: i32): i32 {
-    match (utf8.codepoint_at(s, i)) { Some(c) => { return c; }, None => { return 0 - 1; } }
+    match (utf8.codepoint_at(s, i)) { Some(c) => { return c as i32; }, None => { return 0 - 1; } }
 }
 
 function char_or(s: string, i: i32): string {

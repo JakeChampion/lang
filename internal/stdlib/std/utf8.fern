@@ -73,12 +73,17 @@ pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)] {
     return None;   // 0xF8..0xFF: invalid lead byte
 }
 
-// `utf8_encode(cp)` — the UTF-8 byte string for a single codepoint. An
-// out-of-range or surrogate `cp` encodes U+FFFD instead (lossy), so the
+// `utf8_encode(c)` — the UTF-8 byte string for a single scalar. An
+// out-of-range or surrogate value encodes U+FFFD instead (lossy), so the
 // result is always valid UTF-8. Inverse of `utf8_decode_at` for a valid
 // scalar value.
-pub function utf8_encode(cp: i32): string {
-    var c: i32 = cp;
+//
+// Takes a `char` (#5629). The range check stays because `as char` is not
+// yet validating: a `char` built by casting an arbitrary i32 can still
+// hold a surrogate or an out-of-range value, so this is the last line of
+// defence for "the output is always well-formed UTF-8".
+pub function utf8_encode(ch: char): string {
+    var c: i32 = ch as i32;
     if (c < 0 || c > 1114111 || (c >= 55296 && c <= 57343)) { c = 65533; }  // U+FFFD
     if (c < 128) {
         var one: u8[] = [c as u8];
@@ -101,14 +106,14 @@ pub function utf8_encode(cp: i32): string {
 // U+FFFD and the scan resumes one byte later, so the result is always
 // well-formed (and non-empty for a non-empty input). Byte-for-byte the
 // codepoint sibling of `string.chars()`.
-pub function codepoints(s: string): i32[] {
-    var out: i32[] = [];
+pub function codepoints(s: string): char[] {
+    var out: char[] = [];
     var n: i32 = s.len();
     var i: i32 = 0;
     while (i < n) {
         match (utf8_decode_at(s, i)) {
-            Some(pair) => { out = out.append(pair.0); i = i + pair.1; },
-            None => { out = out.append(65533); i = i + 1; }
+            Some(pair) => { out = out.append(pair.0 as char); i = i + pair.1; },
+            None => { out = out.append(65533 as char); i = i + 1; }
         }
     }
     return out;
@@ -150,7 +155,7 @@ pub function is_valid_utf8(s: string): boolean {
 // `encode_all(cps)` — concatenate the UTF-8 encodings of a codepoint
 // sequence into a string. Inverse of `codepoints` for valid input
 // (`encode_all(codepoints(s)) == s` when `s` is valid UTF-8).
-pub function encode_all(cps: i32[]): string {
+pub function encode_all(cps: char[]): string {
     var out: string = "";
     var i: i32 = 0;
     var n: i32 = cps.len();
@@ -165,9 +170,9 @@ pub function encode_all(cps: i32[]): string {
 // at `byte_index`, or None when the index is out of range or not a
 // valid sequence start. The length-free companion to `utf8_decode_at`
 // for callers that want only the scalar value, not the byte width.
-pub function codepoint_at(s: string, byte_index: i32): Option[i32] {
+pub function codepoint_at(s: string, byte_index: i32): Option[char] {
     match (utf8_decode_at(s, byte_index)) {
-        Some(pair) => { return Some(pair.0); },
+        Some(pair) => { return Some(pair.0 as char); },
         None => { return None; }
     }
 }
@@ -192,7 +197,7 @@ pub function char_at(s: string, index: i32): Option[string] {
         }
         if (cp_idx == index) {
             if (valid) { return Some(s[start : i].to_owned()); }
-            return Some(utf8_encode(65533));   // U+FFFD for a malformed byte
+            return Some(utf8_encode(65533 as char));   // U+FFFD for a malformed byte
         }
         cp_idx = cp_idx + 1;
     }
