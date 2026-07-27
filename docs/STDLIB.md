@@ -192,6 +192,11 @@ Grouped by family:
   `trim_end_chars`, `trim_start_matches`, `trim_end_matches`,
   `rstrip_newline`
 - **Hashing:** `hash_fnv32`, `hash_djb2`
+- **Character-class predicates:** `is_numeric`, `is_alpha_only`,
+  `is_alnum_only` (Unicode — every code point in the class), with
+  `is_ascii_numeric` / `is_ascii_alpha_only` / `is_ascii_alnum_only`
+  as the byte-wise twins. `is_ascii_only` asks whether the string is
+  confined to ASCII and so has no Unicode counterpart.
 - **Predicates:** `is_valid_identifier`, `is_ipv4`,
   `is_email_like`, `is_url_like`, `is_json_like`,
   `is_kebab_case`, `is_snake_case`, `is_quoted`,
