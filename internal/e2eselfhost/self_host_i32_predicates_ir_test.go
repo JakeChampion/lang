@@ -67,6 +67,16 @@ func TestSelfHostI32PredicatesIRX86_64(t *testing.T) {
 		// A side-effect-free but non-trivial receiver: the lowering evaluates the
 		// receiver exactly once, so a compound expression must still work.
 		{"expr-receiver", "function main(): i32 { var a: i32 = 3; var b: i32 = 4; if ((a + b).is_odd()) { return 1; } return 0; }", 1},
+		// abs / sign take the temp-slot path: the receiver is stored once and
+		// re-loaded, since both need the value twice.
+		{"abs-negative", "function main(): i32 { var n: i32 = 0 - 42; return n.abs(); }", 42},
+		{"abs-positive", "function main(): i32 { var n: i32 = 7; return n.abs(); }", 7},
+		{"abs-zero", "function main(): i32 { var n: i32 = 0; return n.abs(); }", 0},
+		{"abs-expr-receiver", "function main(): i32 { var a: i32 = 3; var b: i32 = 0 - 10; return (a + b).abs(); }", 7},
+		{"sign-positive", "function main(): i32 { var n: i32 = 42; return n.sign(); }", 1},
+		{"sign-zero", "function main(): i32 { var n: i32 = 0; return n.sign(); }", 0},
+		// sign(-7) is -1; +2 keeps the exit code in range and pins the sign.
+		{"sign-negative", "function main(): i32 { var n: i32 = 0 - 7; return n.sign() + 2; }", 1},
 	}
 
 	for _, tc := range cases {
