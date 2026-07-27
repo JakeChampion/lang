@@ -136,3 +136,104 @@ func TestCommittedFileIsUpToDate(t *testing.T) {
 	t.Fatalf("%s is out of date (generator targets Unicode %s).\n"+
 		"Re-run: go run ./cmd/unicodegen %s", path, unicode.Version, path)
 }
+
+// The full-case tables are the one dataset here with no build-time oracle
+// (Go's unicode package has simple mappings only), so they get the
+// scrutiny the others get for free from `verify`.
+//
+// These are the cases the feature exists for. `ß` -> `SS` is the example
+// #5552 was filed about; the rest cover each expansion length and each
+// script family in the table.
+func TestFullCaseKnownAnswers(t *testing.T) {
+	for _, tc := range []struct {
+		from rune
+		want string
+		up   bool
+	}{
+		{'ß', "SS", true},  // 1 -> 2, the headline case
+		{'ﬁ', "FI", true},  // Latin ligature
+		{'ﬄ', "FFL", true}, // 1 -> 3
+		{'ŉ', "ʼN", true},  // modifier letter + N
+		{'ǰ', "J̌", true},  // letter + combining caron
+		{'ΐ', "Ϊ́", true}, // Greek, 1 -> 3
+		{'և', "ԵՒ", true},  // Armenian ligature
+		{'ᾀ', "ἈΙ", true},  // Greek iota subscript
+		{'İ', "i̇", false}, // the only full LOWERcase entry
+	} {
+		got, ok := lookupFull(tc.from, tc.up)
+		if !ok {
+			t.Errorf("U+%04X: no full mapping, want %q", tc.from, tc.want)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("U+%04X: got %q, want %q", tc.from, got, tc.want)
+		}
+	}
+}
+
+// Structural invariants the binary search in the generated Fern relies
+// on, plus the ones that would make an entry pointless or unencodable.
+func TestFullCaseTablesWellFormed(t *testing.T) {
+	for _, tab := range []struct {
+		name string
+		fs   []fullCase
+		up   bool
+	}{{"fullUpper", fullUpper, true}, {"fullLower", fullLower, false}} {
+		var prev rune = -1
+		for _, f := range tab.fs {
+			if f.from <= prev {
+				t.Errorf("%s: U+%04X out of order (previous U+%04X) — the "+
+					"generated lookup binary-searches, so order is load-bearing",
+					tab.name, f.from, prev)
+			}
+			prev = f.from
+			if f.to[0] == 0 {
+				t.Errorf("%s: U+%04X has an empty expansion", tab.name, f.from)
+			}
+			// A zero is the "absent" marker, so it may only trail.
+			if f.to[1] == 0 && f.to[2] != 0 {
+				t.Errorf("%s: U+%04X has a hole in its expansion: %v", tab.name, f.from, f.to)
+			}
+			// An entry that expands to exactly the simple mapping would be
+			// dead weight — the simple table already says it.
+			simple := unicode.ToLower(f.from)
+			if tab.up {
+				simple = unicode.ToUpper(f.from)
+			}
+			if f.to[1] == 0 && f.to[0] == simple {
+				t.Errorf("%s: U+%04X duplicates the simple mapping", tab.name, f.from)
+			}
+		}
+	}
+}
+
+// lookupFull mirrors the generated `_full_case`, decoding the emitted
+// table rather than reading the Go slice — so a bug in encodeFull or in
+// the record layout shows up here rather than only at runtime.
+func lookupFull(cp rune, up bool) (string, bool) {
+	t := encodeFull(fullLower)
+	if up {
+		t = encodeFull(fullUpper)
+	}
+	lo, hi := 0, len(t)/fullChars-1
+	for lo <= hi {
+		mid := lo + (hi-lo)/2
+		base := mid * fullChars
+		from := decField(t, base)
+		switch {
+		case int(cp) < from:
+			hi = mid - 1
+		case int(cp) > from:
+			lo = mid + 1
+		default:
+			out := string(rune(decField(t, base+fieldChars)))
+			for _, off := range []int{2 * fieldChars, 3 * fieldChars} {
+				if c := decField(t, base+off); c != 0 {
+					out += string(rune(c))
+				}
+			}
+			return out, true
+		}
+	}
+	return "", false
+}

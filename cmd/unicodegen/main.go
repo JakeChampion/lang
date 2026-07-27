@@ -1,6 +1,7 @@
 // Command unicodegen generates internal/stdlib/std/unicode.fern — the
-// Unicode simple (1:1) case-mapping table, the character-class range
-// tables, and the API built on them. The data comes from the Go standard
+// Unicode case-mapping tables (the simple 1:1 runs plus the
+// unconditional full 1→N mappings), the character-class range tables,
+// and the API built on them. The data comes from the Go standard
 // library's `unicode` package (unicode.ToUpper / unicode.ToLower and the
 // category predicates), so the tables' Unicode version tracks the Go
 // toolchain used to run this generator.
@@ -62,6 +63,139 @@ import (
 // 24-bit field.
 const bias = 1 << 23
 
+// fullCase is one entry of the UNCONDITIONAL full case mapping: a code
+// point whose full mapping is more than one code point, so the simple
+// (1:1) table cannot express it. `to` is zero-padded on the right.
+type fullCase struct {
+	from rune
+	to   [3]rune
+}
+
+// fullUpper / fullLower are the unconditional section of the Unicode
+// SpecialCasing data, transcribed here because Go's `unicode` package
+// has no full mappings at all — it does simple mapping only, and Go's
+// own answer for full mapping lives outside the standard library in
+// x/text/cases, which this zero-dependency module does not have. So
+// unlike every other table in this generator, these are NOT derived
+// from an oracle at build time; they are data, pinned by
+// TestFullCaseKnownAnswers and by the e2e suite.
+//
+// 102 uppercase entries and exactly 1 lowercase (U+0130), matching
+// SpecialCasing.txt's unconditional section, which has been stable for
+// many Unicode versions. The CONDITIONAL rules — Greek Final_Sigma and
+// the Lithuanian / Turkish tailorings — are deliberately absent: the
+// first needs the Cased and Case_Ignorable properties (also not in Go's
+// stdlib), and the locale tailorings are out of scope by design.
+
+var fullUpper = []fullCase{
+	{0x00DF, [3]rune{0x0053, 0x0053, 0x0000}},
+	{0x0149, [3]rune{0x02BC, 0x004E, 0x0000}},
+	{0x01F0, [3]rune{0x004A, 0x030C, 0x0000}},
+	{0x0390, [3]rune{0x0399, 0x0308, 0x0301}},
+	{0x03B0, [3]rune{0x03A5, 0x0308, 0x0301}},
+	{0x0587, [3]rune{0x0535, 0x0552, 0x0000}},
+	{0x1E96, [3]rune{0x0048, 0x0331, 0x0000}},
+	{0x1E97, [3]rune{0x0054, 0x0308, 0x0000}},
+	{0x1E98, [3]rune{0x0057, 0x030A, 0x0000}},
+	{0x1E99, [3]rune{0x0059, 0x030A, 0x0000}},
+	{0x1E9A, [3]rune{0x0041, 0x02BE, 0x0000}},
+	{0x1F50, [3]rune{0x03A5, 0x0313, 0x0000}},
+	{0x1F52, [3]rune{0x03A5, 0x0313, 0x0300}},
+	{0x1F54, [3]rune{0x03A5, 0x0313, 0x0301}},
+	{0x1F56, [3]rune{0x03A5, 0x0313, 0x0342}},
+	{0x1F80, [3]rune{0x1F08, 0x0399, 0x0000}},
+	{0x1F81, [3]rune{0x1F09, 0x0399, 0x0000}},
+	{0x1F82, [3]rune{0x1F0A, 0x0399, 0x0000}},
+	{0x1F83, [3]rune{0x1F0B, 0x0399, 0x0000}},
+	{0x1F84, [3]rune{0x1F0C, 0x0399, 0x0000}},
+	{0x1F85, [3]rune{0x1F0D, 0x0399, 0x0000}},
+	{0x1F86, [3]rune{0x1F0E, 0x0399, 0x0000}},
+	{0x1F87, [3]rune{0x1F0F, 0x0399, 0x0000}},
+	{0x1F88, [3]rune{0x1F08, 0x0399, 0x0000}},
+	{0x1F89, [3]rune{0x1F09, 0x0399, 0x0000}},
+	{0x1F8A, [3]rune{0x1F0A, 0x0399, 0x0000}},
+	{0x1F8B, [3]rune{0x1F0B, 0x0399, 0x0000}},
+	{0x1F8C, [3]rune{0x1F0C, 0x0399, 0x0000}},
+	{0x1F8D, [3]rune{0x1F0D, 0x0399, 0x0000}},
+	{0x1F8E, [3]rune{0x1F0E, 0x0399, 0x0000}},
+	{0x1F8F, [3]rune{0x1F0F, 0x0399, 0x0000}},
+	{0x1F90, [3]rune{0x1F28, 0x0399, 0x0000}},
+	{0x1F91, [3]rune{0x1F29, 0x0399, 0x0000}},
+	{0x1F92, [3]rune{0x1F2A, 0x0399, 0x0000}},
+	{0x1F93, [3]rune{0x1F2B, 0x0399, 0x0000}},
+	{0x1F94, [3]rune{0x1F2C, 0x0399, 0x0000}},
+	{0x1F95, [3]rune{0x1F2D, 0x0399, 0x0000}},
+	{0x1F96, [3]rune{0x1F2E, 0x0399, 0x0000}},
+	{0x1F97, [3]rune{0x1F2F, 0x0399, 0x0000}},
+	{0x1F98, [3]rune{0x1F28, 0x0399, 0x0000}},
+	{0x1F99, [3]rune{0x1F29, 0x0399, 0x0000}},
+	{0x1F9A, [3]rune{0x1F2A, 0x0399, 0x0000}},
+	{0x1F9B, [3]rune{0x1F2B, 0x0399, 0x0000}},
+	{0x1F9C, [3]rune{0x1F2C, 0x0399, 0x0000}},
+	{0x1F9D, [3]rune{0x1F2D, 0x0399, 0x0000}},
+	{0x1F9E, [3]rune{0x1F2E, 0x0399, 0x0000}},
+	{0x1F9F, [3]rune{0x1F2F, 0x0399, 0x0000}},
+	{0x1FA0, [3]rune{0x1F68, 0x0399, 0x0000}},
+	{0x1FA1, [3]rune{0x1F69, 0x0399, 0x0000}},
+	{0x1FA2, [3]rune{0x1F6A, 0x0399, 0x0000}},
+	{0x1FA3, [3]rune{0x1F6B, 0x0399, 0x0000}},
+	{0x1FA4, [3]rune{0x1F6C, 0x0399, 0x0000}},
+	{0x1FA5, [3]rune{0x1F6D, 0x0399, 0x0000}},
+	{0x1FA6, [3]rune{0x1F6E, 0x0399, 0x0000}},
+	{0x1FA7, [3]rune{0x1F6F, 0x0399, 0x0000}},
+	{0x1FA8, [3]rune{0x1F68, 0x0399, 0x0000}},
+	{0x1FA9, [3]rune{0x1F69, 0x0399, 0x0000}},
+	{0x1FAA, [3]rune{0x1F6A, 0x0399, 0x0000}},
+	{0x1FAB, [3]rune{0x1F6B, 0x0399, 0x0000}},
+	{0x1FAC, [3]rune{0x1F6C, 0x0399, 0x0000}},
+	{0x1FAD, [3]rune{0x1F6D, 0x0399, 0x0000}},
+	{0x1FAE, [3]rune{0x1F6E, 0x0399, 0x0000}},
+	{0x1FAF, [3]rune{0x1F6F, 0x0399, 0x0000}},
+	{0x1FB2, [3]rune{0x1FBA, 0x0399, 0x0000}},
+	{0x1FB3, [3]rune{0x0391, 0x0399, 0x0000}},
+	{0x1FB4, [3]rune{0x0386, 0x0399, 0x0000}},
+	{0x1FB6, [3]rune{0x0391, 0x0342, 0x0000}},
+	{0x1FB7, [3]rune{0x0391, 0x0342, 0x0399}},
+	{0x1FBC, [3]rune{0x0391, 0x0399, 0x0000}},
+	{0x1FC2, [3]rune{0x1FCA, 0x0399, 0x0000}},
+	{0x1FC3, [3]rune{0x0397, 0x0399, 0x0000}},
+	{0x1FC4, [3]rune{0x0389, 0x0399, 0x0000}},
+	{0x1FC6, [3]rune{0x0397, 0x0342, 0x0000}},
+	{0x1FC7, [3]rune{0x0397, 0x0342, 0x0399}},
+	{0x1FCC, [3]rune{0x0397, 0x0399, 0x0000}},
+	{0x1FD2, [3]rune{0x0399, 0x0308, 0x0300}},
+	{0x1FD3, [3]rune{0x0399, 0x0308, 0x0301}},
+	{0x1FD6, [3]rune{0x0399, 0x0342, 0x0000}},
+	{0x1FD7, [3]rune{0x0399, 0x0308, 0x0342}},
+	{0x1FE2, [3]rune{0x03A5, 0x0308, 0x0300}},
+	{0x1FE3, [3]rune{0x03A5, 0x0308, 0x0301}},
+	{0x1FE4, [3]rune{0x03A1, 0x0313, 0x0000}},
+	{0x1FE6, [3]rune{0x03A5, 0x0342, 0x0000}},
+	{0x1FE7, [3]rune{0x03A5, 0x0308, 0x0342}},
+	{0x1FF2, [3]rune{0x1FFA, 0x0399, 0x0000}},
+	{0x1FF3, [3]rune{0x03A9, 0x0399, 0x0000}},
+	{0x1FF4, [3]rune{0x038F, 0x0399, 0x0000}},
+	{0x1FF6, [3]rune{0x03A9, 0x0342, 0x0000}},
+	{0x1FF7, [3]rune{0x03A9, 0x0342, 0x0399}},
+	{0x1FFC, [3]rune{0x03A9, 0x0399, 0x0000}},
+	{0xFB00, [3]rune{0x0046, 0x0046, 0x0000}},
+	{0xFB01, [3]rune{0x0046, 0x0049, 0x0000}},
+	{0xFB02, [3]rune{0x0046, 0x004C, 0x0000}},
+	{0xFB03, [3]rune{0x0046, 0x0046, 0x0049}},
+	{0xFB04, [3]rune{0x0046, 0x0046, 0x004C}},
+	{0xFB05, [3]rune{0x0053, 0x0054, 0x0000}},
+	{0xFB06, [3]rune{0x0053, 0x0054, 0x0000}},
+	{0xFB13, [3]rune{0x0544, 0x0546, 0x0000}},
+	{0xFB14, [3]rune{0x0544, 0x0535, 0x0000}},
+	{0xFB15, [3]rune{0x0544, 0x053B, 0x0000}},
+	{0xFB16, [3]rune{0x054E, 0x0546, 0x0000}},
+	{0xFB17, [3]rune{0x0544, 0x053D, 0x0000}},
+}
+
+var fullLower = []fullCase{
+	{0x0130, [3]rune{0x0069, 0x0307, 0x0000}},
+}
+
 // fieldChars is the width of one encoded field, and recChars / rangeChars
 // the width of one case-table / class-table record. The generated Fern
 // decoder hard-codes the same numbers.
@@ -69,6 +203,7 @@ const (
 	fieldChars = 4
 	recChars   = 5 * fieldChars
 	rangeChars = 2 * fieldChars
+	fullChars  = 4 * fieldChars
 )
 
 // enc6 maps a 6-bit value to its alphabet character: 0..43 to '0'..'[',
@@ -255,6 +390,23 @@ func encodeRanges(rs [][2]rune) string {
 	return b.String()
 }
 
+// encodeFull encodes a full-case table as 4-field records:
+//
+//	from | to[0] | to[1] | to[2]
+//
+// Absent trailing code points are 0, which is unambiguous because U+0000
+// is never part of a case expansion.
+func encodeFull(fs []fullCase) string {
+	var b strings.Builder
+	for _, f := range fs {
+		encField(&b, int(f.from))
+		for _, r := range f.to {
+			encField(&b, int(r))
+		}
+	}
+	return b.String()
+}
+
 // inRanges mirrors the generated `_in_ranges`.
 func inRanges(t string, cp int) bool {
 	lo, hi := 0, len(t)/rangeChars-1
@@ -348,7 +500,7 @@ func generate() (string, genStats) {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, `// std/unicode — Unicode simple case mapping + character classes.
+	fmt.Fprintf(&b, `// std/unicode — Unicode case mapping + character classes.
 //
 // GENERATED by cmd/unicodegen from the Go standard library's unicode
 // package (Unicode %s). Do NOT edit by hand — re-run
@@ -358,20 +510,26 @@ func generate() (string, genStats) {
 // What std/string's plain-named case methods delegate to, and the
 // complement to its byte-wise to_ascii_* twins. Two families:
 //   - Case mapping: to_upper / to_lower / to_upper_char / to_lower_char
-//     / swap_case / capitalize / title_case / eq_ignore_case —
-//     full-code-point SIMPLE (1:1) mapping (Latin,
-//     Greek, Cyrillic, Armenian, fullwidth, …), decoding UTF-8 via
-//     std/utf8 and re-encoding.
+//     / swap_case / capitalize / title_case / eq_ignore_case — over
+//     every code point (Latin, Greek, Cyrillic, Armenian, fullwidth, …),
+//     decoding UTF-8 via std/utf8 and re-encoding. See the caveats below
+//     for which mappings are full and which are simple.
 //   - Character classes: is_letter / is_digit / is_alnum / is_whitespace
 //     / is_upper / is_lower over a code point, via range binary search.
 //
 // Scope + caveats:
-//   - SIMPLE case mappings only (1:1). Multi-code-point expansions
-//     (e.g. `+"`ß`"+` → `+"`SS`"+`) are left unchanged — matching Go's
-//     unicode.ToUpper / ToLower. Full mapping is #5630.
+//   - String-level to_upper / to_lower do FULL mapping: a code point may
+//     expand to several (`+"`ß`"+` → `+"`SS`"+`, the ligatures, the Greek
+//     iota-subscript forms). The per-code-point to_upper_char /
+//     to_lower_char stay SIMPLE (1:1) — a 1→N expansion has no single
+//     code point to return.
+//   - The CONDITIONAL rules are not applied: a word-final `+"`Σ`"+` lowercases
+//     to `+"`σ`"+`, not `+"`ς`"+` (Final_Sigma needs the Cased and
+//     Case_Ignorable properties, which Go's unicode package does not
+//     expose).
 //   - is_digit is the decimal-digit class (Unicode Nd); is_letter is the
 //     full Letter category; is_whitespace matches unicode.IsSpace.
-//   - Not locale-aware (no Turkish dotless-i tailoring).
+//   - Not locale-aware (no Turkish / Lithuanian tailoring), by design.
 //
 // Representation: every table below is a STRING literal, not an array —
 // static rodata, so a lookup allocates nothing and no table is ever
@@ -401,6 +559,12 @@ import "std/utf8" as utf8;
 			fmt.Sprintf("Inclusive code-point ranges for the %s class: lo | hi.", name),
 			c.table, c.count, rangeChars)
 	}
+	emitTable(&b, "_full_upper_table",
+		"Full (1->N) uppercase: from | to0 | to1 | to2, trailing 0 = absent.\n// The unconditional SpecialCasing set — what the 1:1 table cannot say.",
+		encodeFull(fullUpper), len(fullUpper), fullChars)
+	emitTable(&b, "_full_lower_table",
+		"Full (1->N) lowercase: from | to0 | to1 | to2, trailing 0 = absent.",
+		encodeFull(fullLower), len(fullLower), fullChars)
 
 	b.WriteString(`// _dig decodes one table character to its 6-bit value. The alphabet
 // skips ` + "`\\`" + ` (92), so the two spans are 48..91 and 93..112.
@@ -489,8 +653,42 @@ function _ascii_fold(s: string, from: i32, to: i32): string {
     return string_from_bytes(buf);
 }
 
+// _full_case returns the FULL (1->N) mapping of ` + "`cp`" + ` as an already
+// encoded string, or "" when ` + "`cp`" + ` has none and the simple table applies.
+// Binary search over 16-character records; a trailing 0 field means the
+// expansion is shorter than 3 code points.
+function _full_case(cp: i32, want_upper: boolean): string {
+    var t: string = _full_lower_table();
+    if (want_upper) { t = _full_upper_table(); }
+    var lo: i32 = 0;
+    var hi: i32 = t.len() / 16 - 1;
+    while (lo <= hi) {
+        var mid: i32 = lo + (hi - lo) / 2;
+        var base: i32 = mid * 16;
+        var from: i32 = _fld(t, base);
+        if (cp < from) {
+            hi = mid - 1;
+        } else if (cp > from) {
+            lo = mid + 1;
+        } else {
+            var out: string = utf8.utf8_encode(_fld(t, base + 4));
+            var c2: i32 = _fld(t, base + 8);
+            if (c2 != 0) { out = out + utf8.utf8_encode(c2); }
+            var c3: i32 = _fld(t, base + 12);
+            if (c3 != 0) { out = out + utf8.utf8_encode(c3); }
+            return out;
+        }
+    }
+    return "";
+}
+
 // _map_case decodes ` + "`s`" + `, maps every code point, and re-encodes.
 // Malformed bytes each become U+FFFD, matching utf8.codepoints.
+//
+// FULL mapping: a code point with a 1->N expansion (` + "`ß`" + ` -> ` + "`SS`" + `, the
+// ligatures, the Greek iota-subscript forms) contributes several code
+// points, so the result can be longer than the input in BOTH bytes and
+// code points. Everything else takes the simple 1:1 table.
 function _map_case(s: string, want_upper: boolean): string {
     var out: string = "";
     var n: i32 = s.len();
@@ -498,7 +696,12 @@ function _map_case(s: string, want_upper: boolean): string {
     while (i < n) {
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => {
-                out = out + utf8.utf8_encode(_case_apply(pair.0, want_upper));
+                var full: string = _full_case(pair.0, want_upper);
+                if (full.len() > 0) {
+                    out = out + full;
+                } else {
+                    out = out + utf8.utf8_encode(_case_apply(pair.0, want_upper));
+                }
                 i = i + pair.1;
             },
             None => { out = out + utf8.utf8_encode(65533); i = i + 1; }
@@ -507,16 +710,17 @@ function _map_case(s: string, want_upper: boolean): string {
     return out;
 }
 
-// ` + "`to_upper(s)`" + ` — ` + "`s`" + ` with every code point mapped to its simple
-// uppercase. Pure-ASCII input takes a byte fold and never touches the
-// table.
+// ` + "`to_upper(s)`" + ` — ` + "`s`" + ` uppercased with FULL Unicode mapping, so
+// a code point may expand to several (` + "`ß`" + ` -> ` + "`SS`" + `). Pure-ASCII input takes
+// a byte fold and never touches a table.
 pub function to_upper(s: string): string {
     if (_is_ascii(s)) { return _ascii_fold(s, 97, 65); }
     return _map_case(s, true);
 }
 
-// ` + "`to_lower(s)`" + ` — ` + "`s`" + ` with every code point mapped to its simple
-// lowercase.
+// ` + "`to_lower(s)`" + ` — ` + "`s`" + ` lowercased with FULL Unicode mapping.
+// The Greek Final_Sigma context rule is NOT applied: a final ` + "`Σ`" + ` lowercases
+// to ` + "`σ`" + `, not ` + "`ς`" + ` (#5630).
 pub function to_lower(s: string): string {
     if (_is_ascii(s)) { return _ascii_fold(s, 65, 97); }
     return _map_case(s, false);

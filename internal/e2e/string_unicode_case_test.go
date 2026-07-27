@@ -12,9 +12,11 @@ import "testing"
 // answer was all you could get, whatever you meant. Each numbered exit
 // isolates one claim so a backend divergence names itself.
 //
-// Mapping is SIMPLE (1:1), so `ß` survives `to_upper` unchanged rather
-// than expanding to `SS`; that is asserted here (step 20) so the follow-up
-// that makes mapping full has a test to flip rather than a gap to notice.
+// Mapping is FULL: a code point may expand to several, so `ß` uppercases
+// to `SS` and the result can be longer than the input in both bytes and
+// code points. The Greek Final_Sigma context rule is the one piece still
+// missing, and step 41 pins its current (wrong-per-Unicode) answer so the
+// follow-up has a test to flip rather than a gap to notice.
 const stringUnicodeCaseProg = `
 import "std/string";
 
@@ -48,8 +50,8 @@ function main(): i32 {
     if ("mixed 9!".to_upper() != "mixed 9!".to_ascii_upper()) { return 18; }
     if ("café".to_upper() == "café".to_ascii_upper()) { return 19; }
 
-    // Simple (1:1) mapping: no 1→N expansion yet.
-    if ("straße".to_upper() != "STRAßE") { return 20; }
+    // FULL (1→N) mapping: one code point can become several.
+    if ("straße".to_upper() != "STRASSE") { return 20; }
 
     // Composition: chained, and on a non-literal receiver.
     var s: string = "  Hello Wörld  ";
@@ -83,6 +85,24 @@ function main(): i32 {
     // on U+0020. This is the one place the two differ on pure ASCII.
     if ("a\tb".title_case() != "A\tB") { return 38; }
     if ("a\tb".to_ascii_title_case() != "A\tb") { return 39; }
+
+    // Full mapping across expansion lengths and scripts, and the length
+    // growth it implies. The byte fold leaves every one of these alone.
+    if ("ﬁsh".to_upper() != "FISH") { return 40; }
+    if ("ﬄ".to_upper() != "FFL") { return 41; }
+    if ("և".to_upper() != "ԵՒ") { return 42; }
+    if ("İ".to_lower().len() != 3) { return 43; }
+    if ("ß".to_ascii_upper() != "ß") { return 44; }
+    // 1 code point becomes 2, but the BYTE length is unchanged: ß is two
+    // bytes and SS is two bytes. Expansion in code points does not imply
+    // expansion in bytes — İ (step 43) is the case where bytes do grow.
+    if ("ß".to_upper() != "SS") { return 45; }
+    // Not idempotent in the "maps to itself" sense — SS is already upper.
+    if ("ß".to_upper().to_upper() != "SS") { return 46; }
+
+    // Final_Sigma is NOT applied: a word-final Σ lowercases to σ, not ς.
+    // Unicode says "σοφος"; flip this when the context rule lands.
+    if ("ΣΟΦΟΣ".to_lower() != "σοφοσ") { return 47; }
     return 0;
 }
 `

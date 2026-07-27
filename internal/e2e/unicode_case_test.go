@@ -27,7 +27,7 @@ function main(): i32 {
     if (unicode.to_upper_char(97) != 65) { return 9; }
     if (unicode.to_lower_char(913) != 945) { return 10; }
     if (unicode.to_upper("123!") != "123!") { return 11; }
-    if (unicode.to_upper("straße") != "STRAßE") { return 12; }
+    if (unicode.to_upper("straße") != "STRASSE") { return 12; }
     // character classes: CJK letter, Arabic-Indic digit, NBSP space
     if (!unicode.is_letter(0x4E2D) || unicode.is_letter(48)) { return 13; }
     if (!unicode.is_digit(0x0669) || !unicode.is_alnum(97)) { return 14; }
