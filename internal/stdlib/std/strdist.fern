@@ -12,8 +12,8 @@ import "std/utf8";
 // insertions, deletions, or substitutions to turn `a` into `b`.
 // O(len(a) · len(b)) time, O(len(b)) space (a rolling DP row).
 pub function levenshtein(a: string, b: string): i32 {
-    var ca: i32[] = utf8.codepoints(a);
-    var cb: i32[] = utf8.codepoints(b);
+    var ca: char[] = utf8.codepoints(a);
+    var cb: char[] = utf8.codepoints(b);
     var n: i32 = ca.len();
     var m: i32 = cb.len();
     if (n == 0) { return m; }

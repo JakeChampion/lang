@@ -6547,7 +6547,8 @@ function e049_append_nt(a: NameTy[], b: NameTy[]): NameTy[] {
 function e049_is_ref(tn: string): boolean {
     if (tn.len() == 0) { return false; }
     if (tn == "i32" || tn == "i64" || tn == "u8" || tn == "u32" || tn == "u64" || tn == "usize"
-        || tn == "bool" || tn == "boolean" || tn == "f64" || tn == "f32") { return false; }
+        || tn == "bool" || tn == "boolean" || tn == "f64" || tn == "f32"
+        || tn == "char") { return false; }
     return true;
 }
 
@@ -6761,9 +6762,14 @@ function e064_unknown_bare(type_name: string, struct_names: string[], union_name
     // a BARE `str` to "string" at the parse boundary, but a `str` inside a
     // generic argument (`Option[str]`) keeps its verbatim spelling — a real
     // native type, so the generic-arg widening must not flag it.
-    // byte/char/isize/i8/i16/u16 are intentionally absent: not valid types,
-    // so the Go checker rejects them and the self-host must keep flagging.
-    if (type_name == "u8" || type_name == "usize" || type_name == "str") { return false; }
+    // `char` (the Unicode scalar, #5629): a real native type since slice 1,
+    // and std/utf8 now returns `char[]` / `Option[char]`, so every program
+    // importing std/string reaches it. It used to be listed below as
+    // intentionally-absent, which was correct only while it did not exist.
+    // byte/isize/i8/i16/u16 remain intentionally absent: not valid types, so
+    // the Go checker rejects them and the self-host must keep flagging.
+    if (type_name == "u8" || type_name == "usize" || type_name == "str"
+        || type_name == "char") { return false; }
     // The parser coarses a function type (`() => R`) to the tag "fn" and some
     // shapes to "tuple"; neither is a user nominal, so don't flag them.
     if (type_name == "fn" || type_name == "tuple") { return false; }
@@ -8016,7 +8022,8 @@ function e060_set_of_name(dyns: string[], name: string): string {
 // zero-false-positive primitive gates of E033/E042/E059.
 function e060_is_primitive_name(t: string): boolean {
     return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64"
-        || t == "f32" || t == "f64" || t == "boolean" || t == "string" || t == "usize";
+        || t == "f32" || t == "f64" || t == "boolean" || t == "string" || t == "usize"
+        || t == "char";
 }
 
 // e060_e062_expr walks one expression, flagging:
