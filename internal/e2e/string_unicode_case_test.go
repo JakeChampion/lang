@@ -14,9 +14,9 @@ import "testing"
 //
 // Mapping is FULL: a code point may expand to several, so `ß` uppercases
 // to `SS` and the result can be longer than the input in both bytes and
-// code points. The Greek Final_Sigma context rule is the one piece still
-// missing, and step 41 pins its current (wrong-per-Unicode) answer so the
-// follow-up has a test to flip rather than a gap to notice.
+// code points. The Greek Final_Sigma context rule is applied too, so a
+// word-final Σ lowercases to ς — the locale tailorings (Turkish,
+// Lithuanian) remain deliberately absent.
 const stringUnicodeCaseProg = `
 import "std/string";
 
@@ -100,9 +100,15 @@ function main(): i32 {
     // Not idempotent in the "maps to itself" sense — SS is already upper.
     if ("ß".to_upper().to_upper() != "SS") { return 46; }
 
-    // Final_Sigma is NOT applied: a word-final Σ lowercases to σ, not ς.
-    // Unicode says "σοφος"; flip this when the context rule lands.
-    if ("ΣΟΦΟΣ".to_lower() != "σοφοσ") { return 47; }
+    // Final_Sigma IS applied when lowercasing: a word-final Σ becomes ς,
+    // a medial one σ. "ΣΣ" exercises both in one word.
+    if ("ΣΟΦΟΣ".to_lower() != "σοφος") { return 47; }
+    if ("ΣΣ".to_lower() != "σς") { return 56; }
+    if ("Σ".to_lower() != "σ") { return 57; }       // no cased char before it
+    if ("ΟΔΟΣ ΑΘΗΝΑΣ".to_lower() != "οδος αθηνας") { return 58; }
+    // An apostrophe is Case_Ignorable, so it does not stop the sigma
+    // being word-final — the rule skips over it rather than breaking.
+    if ("ΑΣ'".to_lower() != "ας'") { return 59; }
 
     // Case FOLDING is a third operation, not lowercasing. ß folds to ss,
     // so these are equal under eq_ignore_case and not under to_lower.

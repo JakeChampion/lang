@@ -82,10 +82,10 @@ type fullCase struct {
 //
 // 102 uppercase entries and exactly 1 lowercase (U+0130), matching
 // SpecialCasing.txt's unconditional section, which has been stable for
-// many Unicode versions. The CONDITIONAL rules — Greek Final_Sigma and
-// the Lithuanian / Turkish tailorings — are deliberately absent: the
-// first needs the Cased and Case_Ignorable properties (also not in Go's
-// stdlib), and the locale tailorings are out of scope by design.
+// many Unicode versions. Greek Final_Sigma is handled separately, as a
+// context rule over the Cased / Case_Ignorable tables rather than a table
+// entry (see isCased / isCaseIgnorable). The Lithuanian and Turkish
+// tailorings are out of scope by design.
 
 var fullUpper = []fullCase{
 	{0x00DF, [3]rune{0x0053, 0x0053, 0x0000}},
@@ -796,9 +796,55 @@ func tables() (caseT string, runs []run, classes map[string]classTable) {
 	addClass("space", unicode.IsSpace)
 	addClass("upper", unicode.IsUpper)
 	addClass("lower", unicode.IsLower)
+	addClass("cased", isCased)
+	addClass("caseignorable", isCaseIgnorable)
 
 	verify(caseT, classes)
 	return caseT, runs, classes
+}
+
+// wordBreakMid is the Word_Break = MidLetter / MidNumLet / Single_Quote
+// set. Go's unicode package exposes the General_Categories and the
+// Other_* properties but not the Word_Break property, and this is the one
+// piece of Case_Ignorable that comes from it — 17 code points, fixed for
+// many Unicode versions.
+var wordBreakMid = map[rune]bool{
+	0x0027: true, // Single_Quote  APOSTROPHE
+	0x002E: true, // MidNumLet     FULL STOP
+	0x003A: true, // MidLetter     COLON
+	0x00B7: true, // MidLetter     MIDDLE DOT
+	0x0387: true, // MidLetter     GREEK ANO TELEIA
+	0x055F: true, // MidLetter     ARMENIAN ABBREVIATION MARK
+	0x05F4: true, // MidLetter     HEBREW PUNCTUATION GERSHAYIM
+	0x2018: true, // MidNumLet     LEFT SINGLE QUOTATION MARK
+	0x2019: true, // MidNumLet     RIGHT SINGLE QUOTATION MARK
+	0x2024: true, // MidNumLet     ONE DOT LEADER
+	0x2027: true, // MidLetter     HYPHENATION POINT
+	0xFE13: true, // MidLetter     PRESENTATION FORM FOR VERTICAL COLON
+	0xFE52: true, // MidNumLet     SMALL FULL STOP
+	0xFE55: true, // MidLetter     SMALL COLON
+	0xFF07: true, // MidNumLet     FULLWIDTH APOSTROPHE
+	0xFF0E: true, // MidNumLet     FULLWIDTH FULL STOP
+	0xFF1A: true, // MidLetter     FULLWIDTH COLON
+}
+
+// isCased is the Unicode Cased property: Lu + Ll + Lt + Other_Uppercase +
+// Other_Lowercase. Final_Sigma is defined in terms of it.
+func isCased(r rune) bool {
+	return unicode.Is(unicode.Lu, r) || unicode.Is(unicode.Ll, r) ||
+		unicode.Is(unicode.Lt, r) ||
+		unicode.Is(unicode.Other_Uppercase, r) ||
+		unicode.Is(unicode.Other_Lowercase, r)
+}
+
+// isCaseIgnorable is the Unicode Case_Ignorable property: Mn + Me + Cf +
+// Lm + Sk, plus the Word_Break mid set above. Final_Sigma skips over these
+// when looking for the cased characters on either side, which is what
+// makes "ΑΣ'" lowercase its sigma as final rather than medial.
+func isCaseIgnorable(r rune) bool {
+	return unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r) ||
+		unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Lm, r) ||
+		unicode.Is(unicode.Sk, r) || wordBreakMid[r]
 }
 
 // genStats is what main reports after a run; the tests ignore it.
@@ -838,10 +884,9 @@ func generate() (string, genStats) {
 //     iota-subscript forms). The per-code-point to_upper_char /
 //     to_lower_char stay SIMPLE (1:1) — a 1→N expansion has no single
 //     code point to return.
-//   - The CONDITIONAL rules are not applied: a word-final `+"`Σ`"+` lowercases
-//     to `+"`σ`"+`, not `+"`ς`"+` (Final_Sigma needs the Cased and
-//     Case_Ignorable properties, which Go's unicode package does not
-//     expose).
+//   - One CONDITIONAL rule is applied when lowercasing: Greek Final_Sigma,
+//     so a word-final `+"`Σ`"+` becomes `+"`ς`"+` and a medial one `+"`σ`"+`. The LOCALE
+//     tailorings (Turkish dotless i, Lithuanian) are not, by design.
 //   - is_digit is the decimal-digit class (Unicode Nd); is_letter is the
 //     full Letter category; is_whitespace matches unicode.IsSpace.
 //   - Not locale-aware (no Turkish / Lithuanian tailoring), by design.
@@ -868,7 +913,7 @@ import "std/utf8" as utf8;
 	emitTable(&b, "_case_table",
 		"Case-mapping runs: lo | hi | kind | dUpper+2^23 | dLower+2^23.\n// kind 0 = constant deltas; kind 1 = alternating pairs, even offset\n// from lo is the uppercase half.",
 		caseT, len(runs), recChars)
-	for _, name := range []string{"letter", "digit", "space", "upper", "lower"} {
+	for _, name := range []string{"letter", "digit", "space", "upper", "lower", "cased", "caseignorable"} {
 		c := classes[name]
 		emitTable(&b, "_"+name+"_ranges",
 			fmt.Sprintf("Inclusive code-point ranges for the %s class: lo | hi.", name),
@@ -1000,25 +1045,100 @@ function _full_case(cp: i32, want_upper: boolean): string {
     return "";
 }
 
-// _map_case decodes ` + "`s`" + `, maps every code point, and re-encodes.
-// Malformed bytes each become U+FFFD, matching utf8.codepoints.
+// _final_sigma reports whether the sigma at byte offset ` + "`at`" + ` in ` + "`s`" + ` is
+// word-FINAL in the Unicode sense: preceded by a Cased code point and NOT
+// followed by one, skipping Case_Ignorable code points on both sides.
+// That is the Final_Sigma condition from SpecialCasing, and it is why
+// ` + "`ΣΟΦΟΣ`" + ` lowercases to ` + "`σοφος`" + ` and not ` + "`σοφοσ`" + `.
+function _final_sigma(s: string, at: i32, sigma_len: i32): boolean {
+    // Look BACK for a cased code point, skipping case-ignorables.
+    var before: boolean = false;
+    var k: i32 = at;
+    while (k > 0) {
+        var st: i32 = k - 1;
+        while (st > 0 && (s[st] & 192) == 128) { st = st - 1; }
+        var cp: i32 = 65533;
+        match (utf8.utf8_decode_at(s, st)) {
+            Some(pr) => { cp = pr.0; },
+            None => { }
+        }
+        if (_in_ranges(_caseignorable_ranges(), cp)) { k = st; }
+        else {
+            before = _in_ranges(_cased_ranges(), cp);
+            k = 0;
+        }
+    }
+    if (!before) { return false; }
+    // Look FORWARD for a cased code point, skipping case-ignorables.
+    var n: i32 = s.len();
+    var i: i32 = at + sigma_len;
+    while (i < n) {
+        var cp2: i32 = 65533;
+        var w: i32 = 1;
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pr2) => { cp2 = pr2.0; w = pr2.1; },
+            None => { }
+        }
+        if (_in_ranges(_caseignorable_ranges(), cp2)) { i = i + w; }
+        else { return !_in_ranges(_cased_ranges(), cp2); }
+    }
+    return true;
+}
+
+// _map_upper and _map_lower decode ` + "`s`" + `, map every code point, and
+// re-encode. Malformed bytes each become U+FFFD, matching utf8.codepoints.
 //
 // FULL mapping: a code point with a 1->N expansion (` + "`ß`" + ` -> ` + "`SS`" + `, the
 // ligatures, the Greek iota-subscript forms) contributes several code
 // points, so the result can be longer than the input in BOTH bytes and
 // code points. Everything else takes the simple 1:1 table.
-function _map_case(s: string, want_upper: boolean): string {
+//
+// These are deliberately TWO functions rather than one taking a direction
+// flag. Only the lowercase path needs Final_Sigma, and Final_Sigma reaches
+// the Cased and Case_Ignorable range tables — about 8.9 KB. With a shared
+// body, per-function DCE cannot tell that an uppercase-only program never
+// reaches them, so every such program paid for tables it could not use.
+// Do not merge these back together.
+function _map_upper(s: string): string {
     var out: string = "";
     var n: i32 = s.len();
     var i: i32 = 0;
     while (i < n) {
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => {
-                var full: string = _full_case(pair.0, want_upper);
+                var full: string = _full_case(pair.0, true);
                 if (full.len() > 0) {
                     out = out + full;
                 } else {
-                    out = out + utf8.utf8_encode(_case_apply(pair.0, want_upper));
+                    out = out + utf8.utf8_encode(_case_apply(pair.0, true));
+                }
+                i = i + pair.1;
+            },
+            None => { out = out + utf8.utf8_encode(65533); i = i + 1; }
+        }
+    }
+    return out;
+}
+
+// The lowercase half, plus the one CONDITIONAL rule Fern applies: capital
+// sigma (U+03A3) becomes final sigma ` + "`ς`" + ` in word-final position and ` + "`σ`" + `
+// elsewhere. The locale tailorings (Turkish, Lithuanian) are not applied.
+function _map_lower(s: string): string {
+    var out: string = "";
+    var n: i32 = s.len();
+    var i: i32 = 0;
+    while (i < n) {
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pair) => {
+                if (pair.0 == 931 && _final_sigma(s, i, pair.1)) {
+                    out = out + utf8.utf8_encode(962);
+                } else {
+                    var full: string = _full_case(pair.0, false);
+                    if (full.len() > 0) {
+                        out = out + full;
+                    } else {
+                        out = out + utf8.utf8_encode(_case_apply(pair.0, false));
+                    }
                 }
                 i = i + pair.1;
             },
@@ -1033,15 +1153,15 @@ function _map_case(s: string, want_upper: boolean): string {
 // a byte fold and never touches a table.
 pub function to_upper(s: string): string {
     if (_is_ascii(s)) { return _ascii_fold(s, 97, 65); }
-    return _map_case(s, true);
+    return _map_upper(s);
 }
 
 // ` + "`to_lower(s)`" + ` — ` + "`s`" + ` lowercased with FULL Unicode mapping.
-// The Greek Final_Sigma context rule is NOT applied: a final ` + "`Σ`" + ` lowercases
-// to ` + "`σ`" + `, not ` + "`ς`" + ` (#5630).
+// Greek Final_Sigma IS applied: a word-final ` + "`Σ`" + ` becomes ` + "`ς`" + `, a
+// medial one ` + "`σ`" + `.
 pub function to_lower(s: string): string {
     if (_is_ascii(s)) { return _ascii_fold(s, 65, 97); }
-    return _map_case(s, false);
+    return _map_lower(s);
 }
 
 // ` + "`case_fold(cp)`" + ` — the case-folded form of one code point, as an
