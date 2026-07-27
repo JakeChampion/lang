@@ -115,16 +115,23 @@ tier → leak.
   → no exit-137, no slice-blocking. It is an RSS optimisation only, and adding a
   large tier there shifts `heap_base` across the byte-identity surface for no
   correctness gain; low priority.
-- **Remaining self-host free sites — x86 DONE (2026-07-27), arm64 follow-up.**
-  The self-host x86 runtime's `__fn___fern_str_arr_free` (`.Lsaf`) /
+- **Remaining self-host free sites — x86 + arm64 DONE (2026-07-27).**
+  The self-host runtime's `__fn___fern_str_arr_free` (`.Lsaf`) /
   `__fern_arrarr_free` (`.Laaf`) / `__fern_strarrarr_free` (`.Lssaf`) /
   `__fern_optarrarr_free` (`.Loaf`) / `__fern_snapshot_dec` (`.Lsd`) /
   `__fern_arr_push_owned` (`.Lapo`) *outer-buffer* frees previously
   `leak (sound)`ed a ≥512 KiB collection buffer; each now recycles it via
   `__fern_large_push` (the same redirect `arr_dec` / `str_free` already use). This
   bounds RSS for the general-purpose large-collection programs Fern now targets
-  (the free sites fire on Perceus-proven-fresh, non-escaping locals). arm64
-  (`asm_arm64.fern`) mirror is a follow-up, matching the #5609→#5614 split.
+  (the free sites fire on Perceus-proven-fresh, non-escaping locals). x86 in
+  `asm_ir.fern` (#5651), arm64 in `asm_arm64.fern` (the #5609→#5614-style mirror:
+  `.Lsaf`/`.Laaf`/`.Lssaf`/`.Loaf`/`.Lapo` `bl`+`b` through the frame that already
+  saves x30; `.Lsd` a terminal tail-`b` since `__fern_large_push` preserves x0).
+  - **Still leaking on BOTH backends** (parity, separate follow-ups): the
+    `__fern_alloc_reuse` oversize-donor discard (`.Lsarelo`), and arm64-only, the
+    `__fern_str_free` DATA buffer's ≥512 KiB path (`.Lstrfree`, a #5614 gap x86
+    already closed). Neither is a collection *outer* buffer, so both are out of
+    scope for the #5651 mirror.
   - **Measured: this is soundness-completeness, NOT an arena-wall win — the doc's
     original assessment was right.** A single-process `-per-module-emit-all` gen1
     emit still OOMs at the SAME batch boundary with these sites recycled as

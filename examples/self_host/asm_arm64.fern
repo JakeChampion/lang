@@ -5800,7 +5800,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x4, x4, #3\n");           // idx = cap + 3
         s = s.write("    mov x9, #0x10000\n");         // freelist class cap (65536)
         s = s.write("    cmp x4, x9\n");
-        s = s.write("    bhs .Lsd_ret\n");             // large tier — leak (matches arr_dec)
+        s = s.write("    bhs .Lsd_large\n");           // large tier -> recycle via __fern_large_push
         s = s.write("    stur wzr, [x1, #-8]\n");      // mark freed (clear rc)
         s = s.write("    sub x5, x1, #16\n");          // base = old - 16
         s = s.write("    adrp x6, __fern_freelist\n");
@@ -5810,6 +5810,15 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str x5, [x6, x4, lsl #3]\n"); // freelist[idx] = base
         s = s.write(".Lsd_ret:\n");
         s = s.write("    ret\n");                      // x0 = new
+        // Large tier (#3425): recycle the >=512 KiB old box (base = old-16, bytes =
+        // idx*8) instead of leaking. snapshot_dec is a leaf, but the large path is
+        // terminal, so TAIL-branch: __fern_large_push preserves x0 (= new, the
+        // return value) and its ret returns to snapshot_dec's caller (x30 untouched).
+        s = s.write(".Lsd_large:\n");
+        s = s.write("    stur wzr, [x1, #-8]\n");      // mark freed (x1 = old)
+        s = s.write("    lsl x2, x4, #3\n");           // bytes = idx*8
+        s = s.write("    sub x1, x1, #16\n");          // base = old-16
+        s = s.write("    b __fern_large_push\n");      // tail: rets to caller, x0 = new preserved
         // __fern_arr_dec(data) — Phase 3 array release (arm64 mirror).
         // rc>1 -> dec; rc==1 -> free buffer to the freelist
         // (base=data-16, size=(cap+3)*8, idx=cap+3); rc<=0 -> detector.
@@ -6010,7 +6019,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x1, x1, #3\n");            // class = cap + 3 words
         s = s.write("    mov x9, #0x10000\n");
         s = s.write("    cmp x1, x9\n");
-        s = s.write("    bhs .Lsaf_pop\n");             // large tier -> leak buffer (sound)
+        s = s.write("    bhs .Lsaf_large\n");           // large tier -> recycle via __fern_large_push
         s = s.write("    sub x2, x19, #16\n");          // base = arr - 16
         s = s.write("    adrp x3, __fern_freelist\n");
         s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
@@ -6033,6 +6042,16 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str w3, [x2]\n");
         s = s.write(".Lsaf_ret:\n");
         s = s.write("    ret\n");
+        // Large tier (#3425): recycle the >=512 KiB string[] outer buffer (base =
+        // arr-16, bytes = class*8) via __fern_large_push instead of leaking. x30 is
+        // saved in the frame (restored at .Lsaf_pop), so the bl is safe; large_push
+        // preserves x19/x20/x21. Accumulates across a -per-module-emit-all batch
+        // otherwise (see the x86 sibling in asm_ir.emit_ir_runtime).
+        s = s.write(".Lsaf_large:\n");
+        s = s.write("    lsl x2, x1, #3\n");            // bytes = class*8
+        s = s.write("    sub x1, x19, #16\n");          // base = arr-16
+        s = s.write("    bl __fern_large_push\n");
+        s = s.write("    b .Lsaf_pop\n");
         // __fern_arrarr_free(arr) — SCALAR arr-of-arr reclaim (#4355 slice 9),
         // the arm64 sibling of the x86-64 body in asm_ir.emit_ir_runtime:
         // identical shell to __fn___fern_str_arr_free above, but each element is
@@ -6075,7 +6094,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x1, x1, #3\n");
         s = s.write("    mov x9, #0x10000\n");
         s = s.write("    cmp x1, x9\n");
-        s = s.write("    bhs .Laaf_pop\n");
+        s = s.write("    bhs .Laaf_large\n");           // large tier -> recycle via __fern_large_push
         s = s.write("    sub x2, x19, #16\n");
         s = s.write("    adrp x3, __fern_freelist\n");
         s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
@@ -6098,6 +6117,13 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str w3, [x2]\n");
         s = s.write(".Laaf_ret:\n");
         s = s.write("    ret\n");
+        // Large tier (#3425): recycle the >=512 KiB arr-of-arr outer buffer instead
+        // of leaking (accumulates across a -per-module-emit-all batch otherwise).
+        s = s.write(".Laaf_large:\n");
+        s = s.write("    lsl x2, x1, #3\n");            // bytes = class*8
+        s = s.write("    sub x1, x19, #16\n");          // base = arr-16
+        s = s.write("    bl __fern_large_push\n");
+        s = s.write("    b .Laaf_pop\n");
         }
         // __fern_strarrarr_free(arr) — string[][] reclaim (#4355 slice 9): each
         // element is a string[] INNER buffer released fully by
@@ -6136,7 +6162,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x1, x1, #3\n");
         s = s.write("    mov x9, #0x10000\n");
         s = s.write("    cmp x1, x9\n");
-        s = s.write("    bhs .Lssaf_pop\n");
+        s = s.write("    bhs .Lssaf_large\n");          // large tier -> recycle via __fern_large_push
         s = s.write("    sub x2, x19, #16\n");
         s = s.write("    adrp x3, __fern_freelist\n");
         s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
@@ -6159,6 +6185,13 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str w3, [x2]\n");
         s = s.write(".Lssaf_ret:\n");
         s = s.write("    ret\n");
+        // Large tier (#3425): recycle the >=512 KiB string[][] outer buffer instead
+        // of leaking (accumulates across a -per-module-emit-all batch otherwise).
+        s = s.write(".Lssaf_large:\n");
+        s = s.write("    lsl x2, x1, #3\n");            // bytes = class*8
+        s = s.write("    sub x1, x19, #16\n");          // base = arr-16
+        s = s.write("    bl __fern_large_push\n");
+        s = s.write("    b .Lssaf_pop\n");
         }
         // __fern_optarrarr_free(arr) — Option[<scalar-arr>][] reclaim (#4365),
         // the arm64 sibling of the x86-64 body: per element (an rc-headered
@@ -6219,7 +6252,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x1, x1, #3\n");
         s = s.write("    mov x9, #0x10000\n");
         s = s.write("    cmp x1, x9\n");
-        s = s.write("    bhs .Loaf_pop\n");
+        s = s.write("    bhs .Loaf_large\n");           // large tier -> recycle via __fern_large_push
         s = s.write("    sub x2, x19, #16\n");
         s = s.write("    adrp x3, __fern_freelist\n");
         s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
@@ -6242,6 +6275,13 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    str w3, [x2]\n");
         s = s.write(".Loaf_ret:\n");
         s = s.write("    ret\n");
+        // Large tier (#3425): recycle the >=512 KiB Option[]-array outer buffer
+        // instead of leaking (accumulates across a -per-module-emit-all batch).
+        s = s.write(".Loaf_large:\n");
+        s = s.write("    lsl x2, x1, #3\n");            // bytes = class*8
+        s = s.write("    sub x1, x19, #16\n");          // base = arr-16
+        s = s.write("    bl __fern_large_push\n");
+        s = s.write("    b .Loaf_pop\n");
         }
         // __fern_map_free(box) — reclaim a FRESH, sole-owned map local (Perceus
         // map-local slice), the arm64 sibling of the x86-64 body in
@@ -9177,7 +9217,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    add x1, x1, #3\n");           // idx = cap + 3
         s = s.write("    mov x9, #0x10000\n");         // freelist class cap (65536)
         s = s.write("    cmp x1, x9\n");
-        s = s.write("    bhs .Lapo_ret\n");            // large tier — leak (matches arr_dec)
+        s = s.write("    bhs .Lapo_large\n");          // large tier -> recycle via __fern_large_push
         s = s.write("    stur wzr, [x19, #-8]\n");     // mark freed (clear rc)
         s = s.write("    sub x2, x19, #16\n");         // old box base
         s = s.write("    adrp x3, __fern_freelist\n");
@@ -9189,6 +9229,15 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");                      // x0 = new
+        // Large tier (#3425): recycle the >=512 KiB superseded old buffer (base =
+        // old-16, bytes = idx*8) instead of leaking. x30 is saved in the frame
+        // (restored at .Lapo_ret) so the bl is safe; large_push preserves x0 (= new).
+        s = s.write(".Lapo_large:\n");
+        s = s.write("    stur wzr, [x19, #-8]\n");     // mark freed (clear rc)
+        s = s.write("    lsl x2, x1, #3\n");           // bytes = idx*8
+        s = s.write("    sub x1, x19, #16\n");         // base = old-16
+        s = s.write("    bl __fern_large_push\n");
+        s = s.write("    b .Lapo_ret\n");
     }
     // __fern_arr_slice: return a fresh array containing
     // arr[start..end] (end exclusive). x0 = src arr ptr,
