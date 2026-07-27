@@ -5435,6 +5435,55 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_type: stri
     return acc.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false });
 }
 
+// builtin_function_names is the set of compiler builtins callable without a
+// declaration — the front-end's intrinsics + lowered runtime helpers. It lives
+// here, in the front end, because TWO consumers read it: the checker's
+// undefined-callee rule (checker.is_resolvable_callee, E001) and the emitters'
+// pre-codegen undefined-call gate (asmcore.check_undefined_calls). A single
+// list means a new builtin is registered once instead of being remembered in
+// two places — the drift that made a whitelist look unassemblable (#5644).
+// Runtime intrinsics are all `__`-prefixed and handled by the callers' prefix
+// test; this is the user-facing / lowered-helper set, a superset of the Go
+// checker's FuncSigs builtins. Over-inclusion is safe for both consumers (it
+// only suppresses a diagnostic), so the list errs toward completeness.
+pub function builtin_function_names(): string[] {
+    return [
+        // I/O + process + environment
+        "print", "write", "eprint", "print_int", "eprint_int", "putchar",
+        "exit", "args", "arg_at", "args_count", "env", "subprocess",
+        // stdin / readers
+        "stdin", "stdout", "stderr", "read_line", "read_int", "read_all_stdin",
+        "open_reader", "open_writer", "open_appender",
+        // filesystem
+        "read_file", "write_file", "read_dir", "remove_dir_all", "remove_file",
+        "stat", "temp_dir",
+        // clocks + randomness + sleep + reactor readiness
+        "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "random_bytes",
+        "random_i32", "poll", "timer_fd", "wasm_timer_pollable",
+        "wasm_pollable_drop", "wasm_block", "wasm_poll",
+        // maps + string builder + bytes + the free-function `len(a)` form.
+        // (`len` is a self-host emitter builtin — the self-host accepts both
+        // `a.len()` and `len(a)`. The Go checker only accepts `a.len()` and
+        // reports E001 on `len(a)`, so this is a deliberate leniency vs Go,
+        // like the `bool`/`boolean` one; not differentially tested.)
+        "map_new", "map_new_i32", "strbuf_append", "strbuf_reset",
+        "strbuf_take", "string_from_bytes", "chr", "len",
+        // Cell[T] constructor (docs/CELL-TYPE-PLAN.md): cell_new(v) is a
+        // front-end builtin (like map_new); get/set are method calls, not
+        // bare names, so only the constructor needs the E001 suppression.
+        "cell_new",
+        // float / int bit reinterprets
+        "f64_bits", "f64_from_bits", "f32_bits", "f32_from_bits",
+        // networking
+        "tcp_listen", "tcp_accept", "tcp_recv", "tcp_send", "tcp_close",
+        "udp_send", "tcp_connect", "tcp_pollable"
+    ];
+}
+
+pub function is_builtin_function(name: string): boolean {
+    return util.index_of_str(builtin_function_names(), name) >= 0;
+}
+
 // inject_builtin_enums adds the variant structs for the enums the
 // reference front-end auto-injects — JsonValue and IoError — unless the
 // program already declares them. This is the self-host analogue of the

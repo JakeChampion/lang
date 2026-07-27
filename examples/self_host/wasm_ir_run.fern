@@ -36,6 +36,11 @@ function main(): i32 {
     // Bare-map_new chain gate (native E038/E003 parity) — same
     // reject-don't-miscompile rationale as the arity gate.
     arity_errs = arity_errs + asmcore.check_map_new_chain(mod);
+    // Undefined-callee gate (native E001, #5644): a callee naming nothing
+    // otherwise reaches the emitter's generic call path, which emits a call
+    // against a symbol nothing defines — an opaque load-time `unknown func`
+    // instead of a diagnostic pointing at the source.
+    arity_errs = arity_errs + asmcore.check_undefined_calls(mod);
     if (arity_errs.len() > 0) {
         eprint(arity_errs);
         return 1;
