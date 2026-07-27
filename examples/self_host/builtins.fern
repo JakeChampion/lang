@@ -67,3 +67,13 @@ struct ProcessResult { stdout: string, stderr: string, exit_code: i32 }
 struct HeaderMap { names: string[], values: string[] }
 struct HttpRequest { method: string, path: string, body: string, headers: HeaderMap }
 struct HttpResponse { status: i32, body: string, headers: HeaderMap }
+
+// Platform — the capability bag threaded as the second parameter of every
+// handler (docs/PLATFORM-RESEARCH.md Rec §1). Native declares it in the
+// checker's builtin struct table; the self-host had no declaration at all, so
+// a signature mentioning it — `(HttpRequest, Platform) => HttpResponse`, which
+// is every std/tcp serve entry point — could not resolve and `__serve_loop`
+// bailed to the AST emitter, which cannot emit tcp_listen / poll either
+// (#5686). Phase 1 carries a single `version: i32` placeholder so the struct
+// has a well-defined ABI without zero-sized-struct edge cases.
+struct Platform { version: i32 }

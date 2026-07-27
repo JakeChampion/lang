@@ -1315,6 +1315,13 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
         }
         if (util.index_of_str(ids, "subprocess") >= 0) { return "subprocess"; }
         if (util.index_of_str(ids, "timer_fd") >= 0) { return "timer_fd"; }
+        // proc_fork / proc_waitpid (#5686) — the crash-only supervision pair.
+        // A wasm component is a single instance with no process model: there is
+        // nothing to fork and no child to reap. Same endpoint treatment as
+        // subprocess rather than a deferral, so the diagnostic names the
+        // feature instead of the loader reporting `unknown func: $proc_fork`.
+        if (util.index_of_str(ids, "proc_fork") >= 0) { return "proc_fork"; }
+        if (util.index_of_str(ids, "proc_waitpid") >= 0) { return "proc_waitpid"; }
         // FFI __c_call<n>(...) (#4375) is written directly as a builtin call, so
         // its callee ident is collected here. Wasm has no C ABI — there is no
         // __c_call runtime on any wasm path — so reject it with a clean diagnostic
@@ -1339,6 +1346,9 @@ pub function wasm_unsupported_message(name: string): string {
     }
     if (asm_ir.is_c_call(name)) {
         return "error: " + name + " (C FFI) is not supported on the wasm target (wasm has no C ABI)\n";
+    }
+    if (name == "proc_fork" || name == "proc_waitpid") {
+        return "error: " + name + " is not supported on the wasm target (a component has no process model to fork or reap)\n";
     }
     return "error: " + name + " is not supported on the wasm target\n";
 }

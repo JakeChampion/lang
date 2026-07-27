@@ -5451,6 +5451,10 @@ pub function builtin_function_names(): string[] {
         // I/O + process + environment
         "print", "write", "eprint", "print_int", "eprint_int", "putchar",
         "exit", "args", "arg_at", "args_count", "env", "subprocess",
+        // Crash-only supervision (docs/CRASH-ONLY-SERVE.md D2'): fork the
+        // process / reap a child. std/tcp's tcp_serve_supervised is the
+        // stdlib caller.
+        "proc_fork", "proc_waitpid",
         // stdin / readers
         "stdin", "stdout", "stderr", "read_line", "read_int", "read_all_stdin",
         "open_reader", "open_writer", "open_appender",
