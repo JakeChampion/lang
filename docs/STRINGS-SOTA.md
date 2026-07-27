@@ -475,8 +475,15 @@ nothing was deleted. `std/string` → `std/unicode` → `std/utf8` →
 resolves it, and the self-host loader compiles the whole chain
 (`TestSelfHostStdlibFuncsIR`).
 
-Still ASCII, pending the rest of D3: `swap_case`, `capitalize`,
-`title_case`, `is_alpha_only`, and the `eq_ignore_case` row above.
+`swap_case`, `capitalize` and `title_case` followed in the same shape:
+Unicode under the plain name, byte fold as `to_ascii_swap_case` /
+`to_ascii_capitalize` / `to_ascii_title_case`. The Unicode `title_case`
+also breaks words on any Unicode whitespace, where the byte version
+breaks on U+0020 alone.
+
+Still ASCII, pending the rest of D3: the `is_*_only` predicate family
+and the `eq_ignore_case` row above (which needs case *folding*, so it
+belongs with D4's tables).
 
 ### D4 — Full (1→N) case mapping for strings; simple for `char`; locale-independent.
 

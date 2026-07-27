@@ -355,10 +355,11 @@ func generate() (string, genStats) {
 // `+"`go run ./cmd/unicodegen internal/stdlib/std/unicode.fern`"+` to
 // refresh after a Go toolchain upgrade.
 //
-// The Unicode-aware complement to std/string's byte-wise, ASCII-only
-// helpers. Two families:
+// What std/string's plain-named case methods delegate to, and the
+// complement to its byte-wise to_ascii_* twins. Two families:
 //   - Case mapping: to_upper / to_lower / to_upper_char / to_lower_char
-//     / eq_ignore_case — full-code-point SIMPLE (1:1) mapping (Latin,
+//     / swap_case / capitalize / title_case / eq_ignore_case —
+//     full-code-point SIMPLE (1:1) mapping (Latin,
 //     Greek, Cyrillic, Armenian, fullwidth, …), decoding UTF-8 via
 //     std/utf8 and re-encoding.
 //   - Character classes: is_letter / is_digit / is_alnum / is_whitespace
@@ -548,6 +549,96 @@ pub function eq_ignore_case(a: string, b: string): boolean {
         j = j + wb;
     }
     return i >= na && j >= nb;
+}
+
+// _swap_case_cp toggles one code point's case. Caseless code points
+// (digits, punctuation, CJK, …) pass through — ` + "`is_upper`" + ` / ` + "`is_lower`" + `
+// are both false for them, so neither branch fires.
+function _swap_case_cp(cp: i32): i32 {
+    if (is_upper(cp)) { return to_lower_char(cp); }
+    if (is_lower(cp)) { return to_upper_char(cp); }
+    return cp;
+}
+
+// ` + "`swap_case(s)`" + ` — every uppercase code point becomes lowercase and vice
+// versa. Its own inverse on any string whose code points round-trip
+// under simple mapping.
+pub function swap_case(s: string): string {
+    if (_is_ascii(s)) {
+        var n: i32 = s.len();
+        var buf: u8[] = __alloc_u8(n);
+        var k: i32 = 0;
+        while (k < n) {
+            var b: i32 = s[k];
+            if (b >= 65 && b <= 90) { b = b + 32; }
+            else if (b >= 97 && b <= 122) { b = b - 32; }
+            buf = buf.with(k, b as u8);
+            k = k + 1;
+        }
+        return string_from_bytes(buf);
+    }
+    var out: string = "";
+    var len: i32 = s.len();
+    var i: i32 = 0;
+    while (i < len) {
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pair) => {
+                out = out + utf8.utf8_encode(_swap_case_cp(pair.0));
+                i = i + pair.1;
+            },
+            None => { out = out + utf8.utf8_encode(65533); i = i + 1; }
+        }
+    }
+    return out;
+}
+
+// ` + "`capitalize(s)`" + ` — uppercase the FIRST code point, leave the rest
+// exactly as they are. Not Python's str.capitalize, which also
+// lowercases the tail; preserving the tail is the less lossy default.
+pub function capitalize(s: string): string {
+    var n: i32 = s.len();
+    if (n == 0) { return ""; }
+    match (utf8.utf8_decode_at(s, 0)) {
+        Some(pair) => {
+            var up: i32 = to_upper_char(pair.0);
+            if (up == pair.0) { return s; }
+            return utf8.utf8_encode(up) + s[pair.1:n];
+        },
+        None => { return s; }
+    }
+}
+
+// ` + "`title_case(s)`" + ` — uppercase the first code point of every
+// whitespace-separated word, leaving the rest of each word alone (so
+// "FOX" stays "FOX"). Word breaks are any Unicode whitespace, not just
+// U+0020 — the ASCII ` + "`to_ascii_title_case`" + ` breaks on the space byte
+// only, so a tab-separated string titles differently between the two.
+// This is a word-BREAK notion, not UAX #29 segmentation (#5633).
+pub function title_case(s: string): string {
+    var out: string = "";
+    var n: i32 = s.len();
+    var i: i32 = 0;
+    var at_start: boolean = true;
+    while (i < n) {
+        match (utf8.utf8_decode_at(s, i)) {
+            Some(pair) => {
+                var cp: i32 = pair.0;
+                if (at_start) {
+                    out = out + utf8.utf8_encode(to_upper_char(cp));
+                } else {
+                    out = out + utf8.utf8_encode(cp);
+                }
+                at_start = is_whitespace(cp);
+                i = i + pair.1;
+            },
+            None => {
+                out = out + utf8.utf8_encode(65533);
+                at_start = false;
+                i = i + 1;
+            }
+        }
+    }
+    return out;
 }
 
 // _in_ranges binary-searches an inclusive-range table (8-character

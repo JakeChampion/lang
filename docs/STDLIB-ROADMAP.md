@@ -516,9 +516,10 @@ think they're free additions to make.
   (symmetric to index_of). Empty needle returns `len(s)`
   per the Python rfind / Go LastIndex "match every gap"
   convention.
-- **`s.capitalize()`**: uppercase the first byte, leave the
-  rest unchanged. Different from `to_ascii_upper` (which
-  folds every ASCII letter) and from Python `str.capitalize` (which
+- **`s.capitalize()`**: uppercase the first code point, leave the
+  rest unchanged (`to_ascii_capitalize` is the byte-wise twin).
+  Different from `to_upper` (which
+  folds every letter) and from Python `str.capitalize` (which
   ALSO lowercases the tail — our version preserves the
   tail since the lossy fold is rarely what callers want).
 - **i32 bit ops**: `count_ones()`, `leading_zeros()`,
