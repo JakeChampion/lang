@@ -8798,6 +8798,27 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             _ => {}
                         }
                     }
+                    // xs.sum() / xs.product() on an i32[] — receiver-only builtins
+                    // backed by Fern helpers (asmcore.fern's __fern_arr_i32_sum /
+                    // _product). Receiver-only is the shape that already works through
+                    // op_call_direct (cf. __fern_i32_to_string); the argument-taking
+                    // builtins use dedicated ops instead. Also needs the helper in
+                    // asm_ir.is_fern_helper (else calls_only_known bails the module to
+                    // AST) and the symbol in emit_runtime_globls (else a library unit
+                    // dangles at the per-module link).
+                    //
+                    // The receiver guard mirrors the `.len()` dispatch just below:
+                    // an array source that is NOT string[] / f64[] / i64[]. Those
+                    // exclusions are load-bearing — the helper reads 8-byte i32 slots,
+                    // so admitting an f64[] would sum float bit patterns as integers.
+                    if ((fa.field == "sum" || fa.field == "product") && c.args.len() == 0
+                        && expr_is_arr_src(fa.obj, s)
+                        && !expr_is_strarr(fa.obj, s) && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)) {
+                        var parr: LowerState = lower_expr(fa.obj, s);
+                        if (!parr.ok) { return parr; }
+                        if (fa.field == "sum") { return parr.emit(ir.op_call_direct("__fern_arr_i32_sum", 1)); }
+                        return parr.emit(ir.op_call_direct("__fern_arr_i32_product", 1));
+                    }
                     if (fa.field == "len" && c.args.len() == 0
                         && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s) || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s)
                             || !decl_is_struct(s.structs, expr_struct_type(fa.obj, s)))) {

@@ -159,6 +159,11 @@ pub function is_fern_helper(name: string): boolean {
         // chr(n)'s 1-char-string-box helper (stack-arg body under
         // __fn___fern_chr; allocates, so it needs the heap runtime).
         || name == "__fern_chr"
+        // i32[] sum / product (#3457): `xs.sum()` / `xs.product()` lower to calls
+        // to these Fern helpers. Without them here, calls_only_known treats the
+        // target as an unknown USER function and bails the module to AST.
+        || name == "__fern_arr_i32_sum"
+        || name == "__fern_arr_i32_product"
         // xs.join(sep)'s array-of-strings concatenator (#5328): a real Fern
         // runtime function (asmcore.rt_src_arr_str_join) built with `+`, so it
         // needs the heap + str_concat runtime. Body under __fn___fern_arr_str_join,
@@ -3738,7 +3743,11 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         // asmcore.synth_script_main spread a `parser.Module` — whose fields are
         // ALL arrays, making it eligible where the string-carrying EmitState /
         // FuncDecl spreads take the inline per-field path and never call out.
-        "__fn___fern_struct_copy"
+        "__fn___fern_struct_copy",
+        // i32[] sum / product (#3457): a LIBRARY module calling xs.sum() emits
+        // `call __fn___fern_arr_i32_sum`; the entry owns the definition. A
+        // registered NEED root is not the same as an exported SYMBOL.
+        "__fn___fern_arr_i32_sum", "__fn___fern_arr_i32_product"
     ];
     var i: i32 = 0;
     while (i < names.len()) {
@@ -4695,6 +4704,13 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // str_to_i32 is allocation-free (parses in registers), so it needs
             // only its own body — not the heap runtime.
             if (o.str == "__fern_str_to_i32") { s = s.need("str_to_i32"); }
+            // i32[] sum / product + i32.pow (#3457): allocation-free Fern helpers,
+            // so each needs only its own body emitted — NOT the heap runtime. A
+            // call_direct does not imply a need, so without these the call site is
+            // emitted against a body the runtime never writes and the program calls
+            // an undefined symbol.
+            if (o.str == "__fern_arr_i32_sum") { s = s.need("arr_i32_sum"); }
+            if (o.str == "__fern_arr_i32_product") { s = s.need("arr_i32_product"); }
             // chr allocates its 1-char box, so pull in the heap runtime too.
             if (o.str == "__fern_chr") { s = s.need("heap"); s = s.need("chr"); }
             // arr.join(sep) needs its own body + the heap + str_concat runtime it
@@ -6247,6 +6263,17 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("u32_to_string")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_u32_to_string(), all_structs, s);
+    }
+    // arr_i32_sum / arr_i32_product — back xs.sum() / xs.product() (#3457).
+    // Allocation-free (they fold into a register), so they are emitted
+    // independently of the heap runtime, like random_i32 below.
+    if (s.has_need("arr_i32_sum")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_sum(), all_structs, s);
+    }
+    if (s.has_need("arr_i32_product")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_product(), all_structs, s);
     }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
