@@ -6,8 +6,9 @@
 
 import "core/int";
 // std/string's bodies dispatch (i32) byte methods on `s[i]`
-// values — `.to_upper()`, `.is_digit()`, `.is_alpha()`,
-// `.is_hex_digit()`, `.to_ascii_string()`. Declaring std/i32
+// values — `.to_ascii_upper()`, `.is_ascii_digit()`,
+// `.is_ascii_alpha()`, `.is_ascii_hex_digit()`,
+// `.to_ascii_string()`. Declaring std/i32
 // makes those resolve under no-prelude; modload's stdlib-cycle
 // support handles the std/string ↔ std/i32 back-edge.
 import "std/i32";

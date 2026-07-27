@@ -7,22 +7,23 @@ import (
 	"testing"
 )
 
-// charMethodCases exercise the inline ASCII i32 methods (to_lower/upper,
-// is_digit/alpha/alnum/lower/upper/hex_digit) — the std/i32 char
-// classifiers std/sort and std/string call. Cross-checked vs Go.
+// charMethodCases exercise the inline ASCII i32 methods
+// (to_ascii_lower/upper, is_ascii_digit/alpha/alnum/lower/upper/hex_digit)
+// — the std/i32 byte classifiers std/sort and std/string call.
+// Cross-checked vs Go.
 var charMethodCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	{"to_lower", "function main(): i32 { var c: i32 = 65; return c.to_lower(); }", 97},
-	{"to_lower-noop", "function main(): i32 { var c: i32 = 53; return c.to_lower(); }", 53},
-	{"to_upper", "function main(): i32 { var c: i32 = 122; return c.to_upper(); }", 90},
-	{"is_digit", "function main(): i32 { var c: i32 = 53; if (c.is_digit()) { return 1; } return 0; }", 1},
-	{"is_digit-false", "function main(): i32 { var c: i32 = 65; if (c.is_digit()) { return 1; } return 0; }", 0},
-	{"is_alpha-upper", "function main(): i32 { var c: i32 = 90; if (c.is_alpha() && c.is_upper() && !c.is_lower()) { return 1; } return 0; }", 1},
-	{"is_hex-alnum", "function main(): i32 { var c: i32 = 102; if (c.is_hex_digit() && c.is_alnum()) { return 1; } return 0; }", 1},
-	{"punct-neither", "function main(): i32 { var c: i32 = 35; if (c.is_alnum() || c.is_hex_digit()) { return 1; } return 0; }", 0},
+	{"to_lower", "function main(): i32 { var c: i32 = 65; return c.to_ascii_lower(); }", 97},
+	{"to_lower-noop", "function main(): i32 { var c: i32 = 53; return c.to_ascii_lower(); }", 53},
+	{"to_upper", "function main(): i32 { var c: i32 = 122; return c.to_ascii_upper(); }", 90},
+	{"is_digit", "function main(): i32 { var c: i32 = 53; if (c.is_ascii_digit()) { return 1; } return 0; }", 1},
+	{"is_digit-false", "function main(): i32 { var c: i32 = 65; if (c.is_ascii_digit()) { return 1; } return 0; }", 0},
+	{"is_alpha-upper", "function main(): i32 { var c: i32 = 90; if (c.is_ascii_alpha() && c.is_ascii_upper() && !c.is_ascii_lower()) { return 1; } return 0; }", 1},
+	{"is_hex-alnum", "function main(): i32 { var c: i32 = 102; if (c.is_ascii_hex_digit() && c.is_ascii_alnum()) { return 1; } return 0; }", 1},
+	{"punct-neither", "function main(): i32 { var c: i32 = 35; if (c.is_ascii_alnum() || c.is_ascii_hex_digit()) { return 1; } return 0; }", 0},
 	{"gcd", "function main(): i32 { var a: i32 = 12; return a.gcd(18); }", 6},
 	{"lcm", "function main(): i32 { var a: i32 = 4; return a.lcm(6); }", 12},
 	{"gcd-neg", "function main(): i32 { var a: i32 = 0 - 12; return a.gcd(8); }", 4},
