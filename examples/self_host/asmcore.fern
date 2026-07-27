@@ -1933,7 +1933,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                 // u64 values with setl. Type the cast truthfully; u8/usize
                 // stay on the i32 tag (subword/pointer-size — no distinct
                 // dispatch surface).
-                if (ct == "i32" || ct == "u8" || ct == "usize") { return ty_i32(); }
+                if (ct == "i32" || ct == "u8" || ct == "usize" || ct == "char") { return ty_i32(); }
                 if (ct == "u32") { return ty_u32(); }
                 if (ct == "i64") { return ty_i64(); }
                 if (ct == "u64") { return ty_u64(); }

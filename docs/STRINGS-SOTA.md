@@ -435,8 +435,9 @@ types.
   stored in an i32 slot, distinct in the checker.
 - `u8` stays the byte type; `s[i]` yields `u8` (today: `i32`).
 - `std/utf8`'s `codepoints() → i32[]` becomes `char[]`;
-  `unicode.to_upper_char(cp: i32)` becomes `char.to_upper()` — **the
-  `std/unicode` half LANDED**; `std/utf8` still returns `i32[]`.
+  `unicode.to_upper_char(cp: i32)` becomes `char.to_upper()` — **both
+  LANDED**. `string_from_codepoint(s)` followed, since the round trip
+  `string_from_codepoints(s.codepoints())` demands it.
 - Deletes: the `(b: i32) to_upper/is_alpha/is_digit` byte methods move
   to `u8` as `to_ascii_upper` / `is_ascii_alpha` / `is_ascii_digit`.
 

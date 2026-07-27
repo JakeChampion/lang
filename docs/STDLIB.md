@@ -321,7 +321,7 @@ from the Go stdlib's `unicode` package, and re-encodes.
 - `eq_ignore_case(a, b)` — caseless equality under **full case folding**
 
 
-Caveats: the per-code-point `to_upper_char` / `to_lower_char` stay
+Caveats: the per-scalar `char` methods `c.to_upper()` / `c.to_lower()` stay
 **simple** (1:1) — a 1→N expansion has no single code point to return.
 Greek Final_Sigma **is** applied when lowercasing (a word-final `Σ`
 becomes `ς`); the locale tailorings — Turkish dotless i, Lithuanian —

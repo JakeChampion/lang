@@ -426,7 +426,7 @@ public API is designed to carry over unchanged.
 ### 17. `std/unicode` — Unicode case mapping · small · ☑
 
 **Surface**: `std/unicode` — case mapping (`to_upper(s)` /
-`to_lower(s)`, `to_upper_char(cp)` / `to_lower_char(cp)`,
+`to_lower(s)`, and the `char` methods `c.to_upper()` / `c.to_lower()`,
 `eq_ignore_case(a, b)`) and character classes (`is_letter`, `is_digit`,
 `is_alnum`, `is_whitespace`, `is_upper`, `is_lower`).
 
