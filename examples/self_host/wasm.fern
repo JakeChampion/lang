@@ -7512,6 +7512,47 @@ pub function args_func(): string {
     return o;
 }
 
+// arg_at_func emits $__fern_arg_at(i): the single-element sibling of
+// $__fern_args. Same sizes-then-get pattern, but it copies only argv[i] into
+// one fresh [len][bytes] block instead of building the whole string[] — the
+// point of arg_at being a real op rather than an `args()[i]` desugar, which
+// would rebuild all of argv per call. An out-of-range index yields the empty
+// string, matching what the register backends' bounds-free load would read
+// past argv only if the caller ignored args_count(); returning empty is the
+// safe answer here because wasi hands us argc directly.
+pub function arg_at_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_arg_at (param $idx i32) (result i32)\n";
+    o = o + "    (local $argc i32) (local $bufsz i32) (local $ptrs i32) (local $buf i32)\n";
+    o = o + "    (local $e i32) (local $len i32) (local $j i32) (local $blk i32)\n";
+    o = o + "    (drop (call $args_sizes_get (i32.const 0) (i32.const 4)))\n";
+    o = o + "    (local.set $argc (i32.load (i32.const 0)))\n";
+    o = o + "    (local.set $bufsz (i32.load (i32.const 4)))\n";
+    o = o + "    (if (i32.ge_u (local.get $idx) (local.get $argc)) (then\n";
+    o = o + "      (local.set $blk (call $__fern_alloc (i32.const 4)))\n";
+    o = o + "      (i32.store (local.get $blk) (i32.const 0))\n";
+    o = o + "      (return (local.get $blk))))\n";
+    o = o + "    (local.set $ptrs (call $__fern_alloc (i32.mul (local.get $argc) (i32.const 4))))\n";
+    o = o + "    (local.set $buf (call $__fern_alloc (local.get $bufsz)))\n";
+    o = o + "    (drop (call $args_get (local.get $ptrs) (local.get $buf)))\n";
+    o = o + "    (local.set $e (i32.load (i32.add (local.get $ptrs) (i32.mul (local.get $idx) (i32.const 4)))))\n";
+    o = o + "    (local.set $len (i32.const 0))\n";
+    o = o + "    (block $ld (loop $lc\n";
+    o = o + "      (br_if $ld (i32.eqz (i32.load8_u (i32.add (local.get $e) (local.get $len)))))\n";
+    o = o + "      (local.set $len (i32.add (local.get $len) (i32.const 1)))\n";
+    o = o + "      (br $lc)))\n";
+    o = o + "    (local.set $blk (call $__fern_alloc (i32.add (i32.const 4) (local.get $len))))\n";
+    o = o + "    (i32.store (local.get $blk) (local.get $len))\n";
+    o = o + "    (local.set $j (i32.const 0))\n";
+    o = o + "    (block $cd (loop $cc\n";
+    o = o + "      (br_if $cd (i32.ge_u (local.get $j) (local.get $len)))\n";
+    o = o + "      (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $e) (local.get $j))))\n";
+    o = o + "      (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "      (br $cc)))\n";
+    o = o + "    (local.get $blk))\n";
+    return o;
+}
+
 // readfile_helpers / readfile_func emit the wasi file-read imports +
 // $__fern_read_file(path): Result[string, IoError]. Opens the path
 // relative to preopen fd 3 (a `--dir` / wasi preopen) via path_open,
@@ -12833,10 +12874,10 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     if (wasm_ir.need(needs, "monotonic_ns") || wasm_ir.need(needs, "now_unix_ms") || wasm_ir.need(needs, "now_ns") || wasm_ir.need(needs, "temp_dir")) {
         out = out + "  (import \"wasi_snapshot_preview1\" \"clock_time_get\" (func $clock_time_get (param i32 i64 i32) (result i32)))\n";
     }
-    // args() reads the wasi argv vector — its args_sizes_get / args_get
-    // imports must precede the function section, emitted when the module
-    // reads argv.
-    if (wasm_ir.need(needs, "args")) { out = out + args_helpers(); }
+    // args() / arg_at(i) read the wasi argv vector — the shared args_sizes_get /
+    // args_get imports must precede the function section, emitted once when the
+    // module reads argv by either route.
+    if (wasm_ir.need(needs, "args") || wasm_ir.need(needs, "arg_at")) { out = out + args_helpers(); }
     // env(name) scans the wasi environ vector — its environ_sizes_get /
     // environ_get imports must precede the function section, emitted when the
     // module reads an env var.
@@ -12992,6 +13033,10 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     // the heap runtime (module_allocates pulls the heap in for an args
     // module — op_allocates admits "args"). Emitted when the module reads argv.
     if (wasm_ir.need(needs, "args")) { out = out + args_func(); }
+    // $__fern_arg_at(i) copies just argv[i] into a fresh string block, sharing
+    // the args imports above. Independent of the args need — a module can read
+    // one argument without ever materialising the whole vector.
+    if (wasm_ir.need(needs, "arg_at")) { out = out + arg_at_func(); }
     // $__fern_env(name): scan the environ vector for `NAME=`, box an
     // Option[string] (Some(value)/None). Heap-backed (allocates the value +
     // box), so the heap gate above folds env in.

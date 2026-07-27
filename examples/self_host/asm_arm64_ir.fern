@@ -776,6 +776,13 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // The args need also makes _start save argc/argv from the initial stack.
             s = s.need("heap"); s = s.need("args");
             s = s.write("    bl __fern_args\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 210) {  // arg_at
+            // [i] -> push argv[i] as a fresh rc-headered string box
+            // (asm_arm64.emit_runtime's __fern_arg_at_rc, in the same args block).
+            // The rc variant, not __fern_arg_at: the result is a bare string the
+            // program holds directly, so it takes the string reclaim path.
+            s = s.need("heap"); s = s.need("args"); s = s.need("arg_at");
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_arg_at_rc\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 164) {  // eprint_str
             // [strbox] -> write its bytes to stderr (asm_arm64.emit_runtime's
             // __fern_eprint_str, reused via the eprint need). Push x0 for the drop.

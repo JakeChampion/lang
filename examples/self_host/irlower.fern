@@ -3259,6 +3259,9 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // binding takes the string reclaim path). Unlike read_line it
                     // is a bare string, not an Option[string].
                     if (cid.name == "read_all_stdin" && c.args.len() == 0) { return true; }
+                    // arg_at(i) boxes argv[i] into a fresh string, so it str-tracks
+                    // the same way — the element of the string[] that args() builds.
+                    if (cid.name == "arg_at" && c.args.len() == 1) { return true; }
                     // string_from_bytes(arr) packs bytes into a fresh string box.
                     if (cid.name == "string_from_bytes") { return true; }
                     // read_line() returns Option[string] now (#4369), opt-tracked via
@@ -7861,8 +7864,8 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // Built-in `args()` — the command-line argv accessor: push a
                     // fresh string[] (argv[0] first). A no-arg value op; the result
                     // str-array-tracks (expr_is_strarr's args case) so `a.len()` /
-                    // `a[i]` dispatch as string[] ops. No wasm argv here, so
-                    // wasm_eligible rejects args modules; x86 / arm64 lower it.
+                    // `a[i]` dispatch as string[] ops. Lowers on every IR backend —
+                    // wasm reads argv through the wasi args_get import.
                     if (cid.name == "args" && c.args.len() == 0) {
                         return s.emit(ir.op_args());
                     }
@@ -7894,13 +7897,17 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // string[] receiver, so this needs no new op and no backend cases —
                     // the reuse move from #5669 / #5671.
                     //
-                    // arg_at(i) deliberately does NOT get the same treatment. args()
-                    // allocates a fresh string[] per call, so `args()[i]` inside a loop
-                    // would allocate the whole argv per iteration — O(n) where the AST
-                    // path is O(1), i.e. quadratic argv iteration in a language aimed at
-                    // CLI tools. args_count is typically called once, so a single
-                    // allocation is acceptable; arg_at wants a real register-ABI op
-                    // (see #3457 comment 5093322914).
+                    // arg_at(i) does NOT get that treatment: args() allocates a fresh
+                    // string[] per call, so `args()[i]` inside a loop would allocate the
+                    // whole argv per iteration — O(n) where the AST path is O(1), i.e.
+                    // quadratic argv iteration in a language aimed at CLI tools.
+                    // args_count is typically called once, so its single allocation is
+                    // fine; arg_at gets a real register-ABI op instead.
+                    if (cid.name == "arg_at" && c.args.len() == 1) {
+                        var aas: LowerState = lower_expr(c.args[0], s);
+                        if (!aas.ok) { return aas; }
+                        return aas.emit(ir.op_arg_at());
+                    }
                     if (cid.name == "args_count" && c.args.len() == 0) {
                         var acall: parser.Expr = parser.ExprCall {
                             callee: parser.ExprIdent { name: "args", line: cid.line, col: cid.col },
