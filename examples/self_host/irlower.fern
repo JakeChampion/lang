@@ -9063,6 +9063,39 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             return t2s.emit(ir.op_call_direct("__fern_i32_to_string", 1));
                         }
                     }
+                    // Built-in zero-arg i32 predicates. The AST emitter lowered these
+                    // inline (asm.fern's ty_is_i32 block) and the IR path did not, which
+                    // made every program calling one bail the whole module to the AST
+                    // emitter — the largest per-function category keeping asm.fern alive
+                    // (#3457). They need no new opcode and no runtime helper: each is the
+                    // equivalent expression over ops the IR already has.
+                    //
+                    // Every case lowers its receiver EXACTLY ONCE, so a side-effecting
+                    // receiver (`next().is_odd()`) still evaluates once. That is also why
+                    // `abs` / `sign` are NOT here: both need the value twice, so they want
+                    // a temp slot rather than a second lower_expr of the same subtree.
+                    if (c.args.len() == 0 && expr_recv_prim_type(fa.obj, s) == "i32") {
+                        if (fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative") {
+                            var pcmp: LowerState = lower_expr(fa.obj, s);
+                            if (!pcmp.ok) { return pcmp; }
+                            pcmp = pcmp.emit(ir.op_const_i32(0));
+                            if (fa.field == "is_zero") { return pcmp.emit(ir.op_bin("eq", 0, false)); }
+                            if (fa.field == "is_positive") { return pcmp.emit(ir.op_bin("gt_s", 0, false)); }
+                            return pcmp.emit(ir.op_bin("lt_s", 0, false));
+                        }
+                        // Parity via `n & 1`, NOT `n % 2`: two's-complement AND yields 1
+                        // for a NEGATIVE odd n, where rem_s yields -1 and an `== 1` test
+                        // would call -3 even. Matches the AST emitter's `andq $1`.
+                        if (fa.field == "is_even" || fa.field == "is_odd") {
+                            var ppar: LowerState = lower_expr(fa.obj, s);
+                            if (!ppar.ok) { return ppar; }
+                            ppar = ppar.emit(ir.op_const_i32(1));
+                            ppar = ppar.emit(ir.op_bin("and", 0, false));
+                            if (fa.field == "is_even") { ppar = ppar.emit(ir.op_const_i32(0)); }
+                            else { ppar = ppar.emit(ir.op_const_i32(1)); }
+                            return ppar.emit(ir.op_bin("eq", 0, false));
+                        }
+                    }
                     // Associated-function call `Type.f(args)` — a receiver-less
                     // impl method (e.g. a constructor `Point.make(x, y)` or a
                     // derived `Enum.default()`). The callee object is a bare TYPE
