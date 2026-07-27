@@ -56,7 +56,7 @@ representative subset splits it three ways:
 | Reason | Count | What it is | Status |
 |---|---|---|---|
 | `no-funcs` | 39 | SCRIPT-shaped source — top-level statements, no `main`, so nothing for `_start` to `call`. The gate's `funcs.len() == 0` arm fires before the `has_main` one. | **CLOSED** — `asmcore.synth_script_main` desugars it to `function main(): i32 { … }` (guarded by `TestSelfHostScriptMainIRX86_64`) |
-| `ineligible-fn` | 105 | Builtin METHODS the AST emitter intercepts and the IR path does not lower: `n.pow/sign/abs/is_even/is_odd/is_zero/is_negative/is_positive`, `xs.sum/product/min/max`, `s.first_byte/last_byte/is_empty`, `args_count`/`arg_at`. | **OPEN — the dominant blocker** |
+| `ineligible-fn` | 105 | Builtin METHODS the AST emitter intercepts and the IR path did not lower. | **IN PROGRESS.** Landed: `is_zero`/`is_positive`/`is_negative`/`is_even`/`is_odd` (#5659), `abs`/`sign` (#5661), `xs.sum`/`product` (#5664), `n.pow` (#5666), `xs.index_of`/`contains` (#5667), `is_empty` (#5669), `s.first_byte`/`last_byte`. Remaining: `args_count`/`arg_at` (free fns, different dispatch), `xs.min`/`max` (need a `len==0` branch + 16-byte Option box — Option-construction work, not helper plumbing, so LAST). |
 | `over-budget` | 4 | `import "std/array"` and friends push the merged module past the 512-function budget. Same gate as the whole-compiler bundle, reached by ordinary programs. | **OPEN** |
 | `no-main` | 0 | Functions but no `main`. Supported by the desugar; not exercised today. | n/a |
 
