@@ -44,7 +44,7 @@ func TestSelfHostRcStrBoxWasm(t *testing.T) {
 		// A fresh heap string (concatenation) is rc-boxed at rc 1 => unique.
 		{"concat-fresh-unique", "function main(): i32 { var s: string = \"ab\" + \"cd\"; return __fern_rc_is_unique(s); }", 1},
 		// to_upper result is a fresh heap string too.
-		{"upper-fresh-unique", "function main(): i32 { var s: string = \"abc\".to_upper(); return __fern_rc_is_unique(s); }", 1},
+		{"upper-fresh-unique", "function main(): i32 { var s: string = \"abc\".to_ascii_upper(); return __fern_rc_is_unique(s); }", 1},
 		// A static string literal is NOT boxed (data section, below
 		// heap_base) — the address guard reports it as immortal / not unique.
 		{"literal-not-unique", "function main(): i32 { var s: string = \"hello\"; return __fern_rc_is_unique(s); }", 0},
@@ -83,7 +83,7 @@ func TestSelfHostRcStrBoxWasm(t *testing.T) {
 		// per-iteration (StmtVar dec-on-overwrite). detector clean.
 		{"string-rebind-loop-reclaim", "function main(): i32 { var n = 0; var k = 0; while (k < 100000) { var s: string = \"ab\" + \"cd\"; n = n + s.len(); k = k + 1; } return (n % 7) + __fern_rc_underflow_count(); }", 6},
 		// Method / call / slice string results are now counted+swept too.
-		{"string-method-result-swept", "function main(): i32 { var s: string = \"AbC\".to_upper(); return s.len() + __fern_rc_underflow_count(); }", 3},
+		{"string-method-result-swept", "function main(): i32 { var s: string = \"AbC\".to_ascii_upper(); return s.len() + __fern_rc_underflow_count(); }", 3},
 		{"string-fn-result-swept", "function build(): string { return \"x\" + \"yz\"; } function main(): i32 { var s: string = build(); return s.len() + __fern_rc_underflow_count(); }", 3},
 		{"string-slice-result-swept", "function main(): i32 { var src: string = \"abcdef\"; var s: string = src[1:4]; return s.len() + __fern_rc_underflow_count(); }", 3},
 		// Regression: a function returning a BORROWED string field with NO

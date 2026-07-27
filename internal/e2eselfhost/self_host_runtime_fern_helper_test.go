@@ -188,14 +188,14 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			// str_search. The old register-ABI hand-asm (__fern_str_to_upper: /
 			// .Lupper_loop) is gone.
 			"str_to_upper",
-			`function main(): i32 { return "aB".to_upper()[0]; }`,
+			`function main(): i32 { return "aB".to_ascii_upper()[0]; }`,
 			"__fn___fern_str_to_upper",
 			[]string{"\n__fern_str_to_upper:", ".Lupper_loop"},
 		},
 		{
 			// str_to_lower — the lower-case sibling, same str_case-gated migration.
 			"str_to_lower",
-			`function main(): i32 { return "Ab".to_lower()[0]; }`,
+			`function main(): i32 { return "Ab".to_ascii_lower()[0]; }`,
 			"__fn___fern_str_to_lower",
 			[]string{"\n__fern_str_to_lower:", ".Llower_loop"},
 		},

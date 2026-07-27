@@ -2202,8 +2202,8 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                         if (fa.field == "ends_with") { return ty_bool(); }
                         if (fa.field == "index_of") { return ty_i32(); }
                         if (fa.field == "trim") { return ty_string(); }
-                        if (fa.field == "to_upper") { return ty_string(); }
-                        if (fa.field == "to_lower") { return ty_string(); }
+                        if (fa.field == "to_ascii_upper") { return ty_string(); }
+                        if (fa.field == "to_ascii_lower") { return ty_string(); }
                         if (fa.field == "repeat") { return ty_string(); }
                         if (fa.field == "replace") { return ty_string(); }
                     }

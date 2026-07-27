@@ -3296,7 +3296,7 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // `s.to_upper()` / `s.to_lower()` on a string receiver yield a
                     // fresh string (op_str_to_upper / _to_lower), so the result
                     // feeds `.len()` / concat as a string.
-                    if ((cfa.field == "to_upper" || cfa.field == "to_lower" || cfa.field == "trim" || cfa.field == "reverse") && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
+                    if ((cfa.field == "to_ascii_upper" || cfa.field == "to_ascii_lower" || cfa.field == "trim" || cfa.field == "reverse") && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
                     // `s.repeat(n)` on a string receiver yields a fresh string.
                     if (cfa.field == "repeat" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
                     if (cfa.field == "replace" && c.args.len() == 2 && expr_is_str(cfa.obj, s)) { return true; }
@@ -3531,7 +3531,7 @@ pub function str_producer_ownership(e: parser.Expr, s: LowerState): i32 {
                 },
                 parser.ExprFieldAccess(cfa) => {
                     if (cfa.field == "trim" && c.args.len() == 0) { return 2; }   // zero-copy view
-                    if ((cfa.field == "to_upper" || cfa.field == "to_lower" || cfa.field == "reverse")
+                    if ((cfa.field == "to_ascii_upper" || cfa.field == "to_ascii_lower" || cfa.field == "reverse")
                             && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return 0; }
                     if (cfa.field == "repeat" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return 0; }
                     return 1;
@@ -3686,7 +3686,7 @@ function str_local_binding_is_fresh(init: parser.Expr): boolean {
             if (str_free_producer_ident(c)) { return true; }
             match (c.callee) {
                 parser.ExprFieldAccess(cfa) => {
-                    if ((cfa.field == "to_upper" || cfa.field == "to_lower" || cfa.field == "reverse")
+                    if ((cfa.field == "to_ascii_upper" || cfa.field == "to_ascii_lower" || cfa.field == "reverse")
                             && c.args.len() == 0) { return true; }
                     if (cfa.field == "repeat" && c.args.len() == 1) { return true; }
                     return false;
@@ -5876,8 +5876,8 @@ pub function str_free_call_field(name: string): string {
     // str_method_argc(field) at the call site, so a 0-method-arg transform
     // (`str_to_upper(s)`), a 1-arg form (`str_repeat(s, n)`) and the 2-arg
     // `str_replace(s, old, new)` all route through one generalised lowerer.
-    if (name == "str_to_upper") { return "to_upper"; }
-    if (name == "str_to_lower") { return "to_lower"; }
+    if (name == "str_to_upper") { return "to_ascii_upper"; }
+    if (name == "str_to_lower") { return "to_ascii_lower"; }
     if (name == "str_trim") { return "trim"; }
     if (name == "str_repeat") { return "repeat"; }
     if (name == "str_replace") { return "replace"; }
@@ -5891,7 +5891,7 @@ pub function str_free_call_field(name: string): string {
 // ends_with / index_of / contains. The caller checks arity (str_method_argc) +
 // that the receiver is a string before dispatching to lower_str_method.
 pub function is_str_builtin_method(field: string): boolean {
-    return field == "to_upper" || field == "to_lower" || field == "trim"
+    return field == "to_ascii_upper" || field == "to_ascii_lower" || field == "trim"
         || field == "reverse" || field == "repeat" || field == "replace"
         || field == "chars" || field == "lines"
         || field == "split"
@@ -5902,7 +5902,7 @@ pub function is_str_builtin_method(field: string): boolean {
 // str_method_argc gives the argument count of a string builtin method: the case
 // transforms are 0-arg; everything else (split + predicates) is 1-arg.
 pub function str_method_argc(field: string): i32 {
-    if (field == "to_upper" || field == "to_lower" || field == "trim" || field == "reverse" || field == "chars" || field == "lines") { return 0; }
+    if (field == "to_ascii_upper" || field == "to_ascii_lower" || field == "trim" || field == "reverse" || field == "chars" || field == "lines") { return 0; }
     if (field == "replace") { return 2; }
     return 1;
 }
@@ -5916,8 +5916,8 @@ pub function str_method_argc(field: string): i32 {
 pub function lower_str_method(field: string, recv: parser.Expr, args: parser.Expr[], s: LowerState): LowerState {
     var p: LowerState = lower_expr(recv, s);
     if (!p.ok) { return p; }
-    if (field == "to_upper") { return p.emit(ir.op_str_to_upper()); }
-    if (field == "to_lower") { return p.emit(ir.op_str_to_lower()); }
+    if (field == "to_ascii_upper") { return p.emit(ir.op_str_to_upper()); }
+    if (field == "to_ascii_lower") { return p.emit(ir.op_str_to_lower()); }
     if (field == "trim") { return p.emit(ir.op_str_trim()); }
     if (field == "reverse") { return p.emit(ir.op_str_reverse()); }
     if (field == "chars") { return p.emit(ir.op_str_chars()); }
@@ -21046,7 +21046,7 @@ function strarr_expr_unsafe(e: parser.Expr, name: string, borrowable: string[]):
                 parser.ExprFieldAccess(fa) => {
                     if (strarr_elem_read(fa.obj, name)) {
                         // element method receiver: read-only / fresh-copy only.
-                        if (!(fa.field == "len" || fa.field == "to_upper" || fa.field == "to_lower"
+                        if (!(fa.field == "len" || fa.field == "to_ascii_upper" || fa.field == "to_ascii_lower"
                                 || fa.field == "reverse" || fa.field == "repeat"
                                 || fa.field == "starts_with" || fa.field == "ends_with"
                                 || fa.field == "contains" || fa.field == "index_of")) { return true; }
@@ -32050,7 +32050,7 @@ function strfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
                 parser.ExprFieldAccess(cfa) => {
                     // read-only / fresh-copy string methods borrow their
                     // receiver; any other method may retain it.
-                    if (cfa.field == "len" || cfa.field == "to_upper" || cfa.field == "to_lower"
+                    if (cfa.field == "len" || cfa.field == "to_ascii_upper" || cfa.field == "to_ascii_lower"
                         || cfa.field == "reverse" || cfa.field == "repeat"
                         || cfa.field == "starts_with" || cfa.field == "ends_with"
                         || cfa.field == "contains" || cfa.field == "index_of") {

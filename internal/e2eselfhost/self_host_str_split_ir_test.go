@@ -37,10 +37,10 @@ var strSplitIRCases = []struct {
 	{"predicate-param", `function f(s: string, p: string): i32 { if (s.starts_with(p)) { return 1; } return 0; } function main(): i32 { return f("ab", "a"); }`},
 	{"predicate-freecall", `function main(): i32 { return str_index_of("hello", "ll"); }`},
 	// ASCII case transforms (op_str_to_upper / _to_lower) — likewise IR-eligible.
-	{"to-upper", `function main(): i32 { return "Hello".to_upper().len(); }`},
-	{"to-lower", `function main(): i32 { var s = "ABC"; return s.to_lower()[0]; }`},
-	{"case-roundtrip", `function main(): i32 { if ("Hi".to_upper().to_lower() == "hi") { return 1; } return 0; }`},
-	{"case-param", `function up(s: string): i32 { return s.to_upper()[0]; } function main(): i32 { return up("xyz"); }`},
+	{"to-upper", `function main(): i32 { return "Hello".to_ascii_upper().len(); }`},
+	{"to-lower", `function main(): i32 { var s = "ABC"; return s.to_ascii_lower()[0]; }`},
+	{"case-roundtrip", `function main(): i32 { if ("Hi".to_ascii_upper().to_ascii_lower() == "hi") { return 1; } return 0; }`},
+	{"case-param", `function up(s: string): i32 { return s.to_ascii_upper()[0]; } function main(): i32 { return up("xyz"); }`},
 	// String repeat (op_str_repeat) — likewise IR-eligible.
 	{"repeat", `function main(): i32 { return "ab".repeat(3).len(); }`},
 	{"repeat-var", `function main(): i32 { var s = "x"; var n = 4; return s.repeat(n).len(); }`},

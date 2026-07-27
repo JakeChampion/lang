@@ -123,14 +123,14 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			// str_to_upper — migrated on the IR path too. The old hand-written IR
 			// body (__fern_str_to_upper: / .Lir_upper_loop) must be gone.
 			"str_to_upper",
-			`function main(): i32 { return "aB".to_upper()[0]; }`,
+			`function main(): i32 { return "aB".to_ascii_upper()[0]; }`,
 			"__fn___fern_str_to_upper",
 			[]string{"\n__fern_str_to_upper:", ".Lir_upper_loop"},
 		},
 		{
 			// str_to_lower — the lower-case sibling on the IR path.
 			"str_to_lower",
-			`function main(): i32 { return "Ab".to_lower()[0]; }`,
+			`function main(): i32 { return "Ab".to_ascii_lower()[0]; }`,
 			"__fn___fern_str_to_lower",
 			[]string{"\n__fern_str_to_lower:", ".Lir_lower_loop"},
 		},

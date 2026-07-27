@@ -431,7 +431,8 @@ public API is designed to carry over unchanged.
 `is_alnum`, `is_whitespace`, `is_upper`, `is_lower`).
 
 **Why**: closes the July-review "ASCII-only casing" gap —
-`std/string`'s byte-wise `to_upper`/`to_lower` remap only A–Z, so
+the byte fold (now named `to_ascii_upper`/`to_ascii_lower`) remaps
+only A–Z, so
 `café` / `ΑΒΓ` / `привет` were untouched. This maps the full set of
 code points with a **simple (1:1)** mapping (Latin, Greek, Cyrillic,
 Armenian, fullwidth, …), decoding UTF-8 via `std/utf8` and re-encoding.
@@ -516,8 +517,8 @@ think they're free additions to make.
   per the Python rfind / Go LastIndex "match every gap"
   convention.
 - **`s.capitalize()`**: uppercase the first byte, leave the
-  rest unchanged. Different from `to_upper` (which folds
-  every letter) and from Python `str.capitalize` (which
+  rest unchanged. Different from `to_ascii_upper` (which
+  folds every ASCII letter) and from Python `str.capitalize` (which
   ALSO lowercases the tail — our version preserves the
   tail since the lossy fold is rarely what callers want).
 - **i32 bit ops**: `count_ones()`, `leading_zeros()`,

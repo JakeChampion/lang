@@ -443,7 +443,7 @@ This makes the ASCII/Unicode distinction a **type** distinction rather
 than a naming convention, which is the only version of it that survives
 contact with a 144-method stdlib.
 
-### D3 — Unicode by default; `ascii` in the name of the fast path.
+### D3 — Unicode by default; `ascii` in the name of the fast path. — **LANDED for `to_upper`/`to_lower` (#5630)**
 
 Answers §4. Specifically:
 
@@ -456,15 +456,27 @@ Answers §4. Specifically:
 | — | `s.eq_ignore_case(o)` (Unicode, case-*folded* — §2.5) |
 | `s.is_alpha_only()` (ASCII) | `s.is_ascii_alpha_only()`; Unicode via `char.is_alphabetic()` |
 
-Implementation note, load-bearing: `s.to_upper()` is **not** just a
-stdlib function. The self-host compiler intercepts the method name in
-`irlower.fern:5732` and lowers it to `op_str_to_upper` → the
-`__fern_str_to_upper` runtime helper (`asmcore.fern:612`), while the
-native compiler resolves it to `std/string`'s `__string_case_fold`. Two
-implementations of one name that must agree. Changing the semantics of
-`to_upper` without touching the self-host builtin would silently give
-the two compilers different behaviour. Whatever lands must move both,
-and the differential suite must cover it.
+Implementation note, load-bearing — and this is how it was resolved.
+`s.to_upper()` was **not** just a stdlib function: the self-host
+compiler intercepted the method name in `irlower.fern` and lowered it to
+`op_str_to_upper` → the `__fern_str_to_upper` runtime helper, while the
+native compiler resolved it to `std/string`'s `__string_case_fold`. Two
+implementations of one name, which would have silently diverged the
+moment one side became Unicode.
+
+The fix was **not** to delete the interception (the issue's first guess)
+but to *rename what it intercepts*: the runtime helper implements a byte
+fold, so it is now reached by `to_ascii_upper` / `to_ascii_lower`. That
+frees `to_upper` / `to_lower` to fall through to ordinary method
+resolution and land on `std/string`, which delegates to `std/unicode`.
+One implementation per name, the fast path keeps its inline op, and
+nothing was deleted. `std/string` → `std/unicode` → `std/utf8` →
+`std/string` is a genuine import cycle; modload's load-once dedupe
+resolves it, and the self-host loader compiles the whole chain
+(`TestSelfHostStdlibFuncsIR`).
+
+Still ASCII, pending the rest of D3: `swap_case`, `capitalize`,
+`title_case`, `is_alpha_only`, and the `eq_ignore_case` row above.
 
 ### D4 — Full (1→N) case mapping for strings; simple for `char`; locale-independent.
 

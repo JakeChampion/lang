@@ -46,8 +46,8 @@ func TestSelfHostStrReclaimWasmIR(t *testing.T) {
 		// (kept 0); main returns 99 if any string was double-freed (underflow > 0).
 		// "ab"+"cd" = len 4; sum stays a multiple of 4 → % 100 hits 0 at 2000 iters.
 		{"loop-concat", `function churn(n: i32): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < n) { var s: string = "ab" + "cd"; sum = (sum + s.len()) % 100; i = i + 1; } return sum; } function main(): i32 { var r: i32 = churn(2000); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`, 0},
-		// Fresh .to_upper() reclaimed each iteration. base len 3; sum kept mod 100.
-		{"loop-to-upper", `function churn(n: i32): i32 { var base: string = "xyz"; var sum: i32 = 0; var i: i32 = 0; while (i < n) { var s: string = base.to_upper(); sum = (sum + s.len()) % 100; i = i + 1; } return sum; } function main(): i32 { var r: i32 = churn(2000); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`, 0},
+		// Fresh .to_ascii_upper() reclaimed each iteration. base len 3; sum kept mod 100.
+		{"loop-to-upper", `function churn(n: i32): i32 { var base: string = "xyz"; var sum: i32 = 0; var i: i32 = 0; while (i < n) { var s: string = base.to_ascii_upper(); sum = (sum + s.len()) % 100; i = i + 1; } return sum; } function main(): i32 { var r: i32 = churn(2000); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`, 0},
 		// Scope-exit reclaim of a single fresh string (no loop): freed once at return.
 		// A double free would tick underflow → 99. len("hi"+"!") = 3.
 		{"scope-exit", `function churn(): i32 { var s: string = "hi" + "!"; return s.len(); } function main(): i32 { var r: i32 = churn(); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`, 3},

@@ -12,7 +12,7 @@ import (
 // string is a header-less 16-byte box {data@0,len@8} + a separate __fern_alloc'd
 // data buffer (on the asm backends) that previously leaked one box + buffer per
 // iteration — the native backend reclaims it, the self-host did not. The fix
-// classifies `var s: string = <fresh producer>` (concat / .to_upper()/.to_lower()/
+// classifies `var s: string = <fresh producer>` (concat / .to_ascii_upper()/.to_ascii_lower()/
 // .reverse()/.repeat(n) / chr / string_from_bytes / str_to_* / __raw_string) that
 // never escapes (body_unsafe_for) and is never reassigned as reclaimable, then
 // frees it via __fern_str_free (box + data buffer) at the loop-rebind and at scope
@@ -36,10 +36,10 @@ var strReclaimIRCases = []struct {
 	{"loop-concat-nonescaping",
 		`function main(): i32 { var tag: string = "row"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s: string = tag + "!"; sum = sum + s.len(); i = i + 1; } return sum; }`,
 		16, true},
-	// Loop-body fresh .to_upper() (a fresh copy), non-escaping: reclaimed each iter.
+	// Loop-body fresh .to_ascii_upper() (a fresh copy), non-escaping: reclaimed each iter.
 	// base = "abc" (len 3); s.len() = 3; sum over 4 iters = 12.
 	{"loop-to-upper-nonescaping",
-		`function main(): i32 { var base: string = "abc"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s: string = base.to_upper(); sum = sum + s.len(); i = i + 1; } return sum; }`,
+		`function main(): i32 { var base: string = "abc"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s: string = base.to_ascii_upper(); sum = sum + s.len(); i = i + 1; } return sum; }`,
 		12, true},
 	// Loop-body chr(..)+"x" concat: chr produces a fresh 1-char string, +"x" a fresh
 	// 2-char one bound to s. s.len() = 2; sum over 4 iters = 8.
@@ -96,9 +96,9 @@ var strReclaimIRCases = []struct {
 	{"loop-unannotated-concat",
 		`function main(): i32 { var tag: string = "row"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s = tag + "!"; sum = sum + s.len(); i = i + 1; } return sum; }`,
 		16, true},
-	// UN-ANNOTATED string method (`var s = base.to_upper()`): reclaimed. len 3 × 4 = 12.
+	// UN-ANNOTATED string method (`var s = base.to_ascii_upper()`): reclaimed. len 3 × 4 = 12.
 	{"loop-unannotated-to-upper",
-		`function main(): i32 { var base: string = "abc"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s = base.to_upper(); sum = sum + s.len(); i = i + 1; } return sum; }`,
+		`function main(): i32 { var base: string = "abc"; var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var s = base.to_ascii_upper(); sum = sum + s.len(); i = i + 1; } return sum; }`,
 		12, true},
 	// NEGATIVE: an un-annotated INT `var n = a + b` matches the concat SHAPE but is
 	// not is_str, so it is never reclaimed (no __fern_str_free) and stays correct.

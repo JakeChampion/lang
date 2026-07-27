@@ -103,7 +103,7 @@ function main(): i32 {
     return 0;
 }`, "fresh-concat-arg-flat", 0)
 
-	// FRESH PRODUCER-METHOD arg (#4355 slice 7): `readit(src.to_upper())` —
+	// FRESH PRODUCER-METHOD arg (#4355 slice 7): `readit(src.to_ascii_upper())` —
 	// a copying string method's result is a fresh temp; reclaimed after the
 	// call, the receiver survives, churn flat at detector zero.
 	run(t, `function readit(nm: string): i32 { return nm.len(); }
@@ -111,10 +111,10 @@ function main(): i32 {
     var src: string = "AbC" + "d";
     var acc: i32 = 0;
     var i: i32 = 0;
-    while (i < 200) { acc = acc + readit(src.to_upper()); i = i + 1; }
+    while (i < 200) { acc = acc + readit(src.to_ascii_upper()); i = i + 1; }
     var b1: i32 = __heap_bump_bytes();
     var j: i32 = 0;
-    while (j < 2000) { acc = acc + readit(src.to_upper()); j = j + 1; }
+    while (j < 2000) { acc = acc + readit(src.to_ascii_upper()); j = j + 1; }
     var b2: i32 = __heap_bump_bytes();
     if (__rc_underflow() != 0) { return 99; }
     if (src.len() != 4) { return 88; }

@@ -1,16 +1,30 @@
 import "std/string";
 import "std/i32";
+import "std/utf8" as utf8;
 
 // Property-based audit for std/string transforms.
 //
 // Deterministic LCG => identical inputs on every backend. Full byte
-// range, lengths 0..47.
+// range, lengths 0..47 — so most generated strings are NOT valid UTF-8,
+// which is the interesting part: `string` is never validity-checked.
 //
 // Properties:
-//   reverse_bytes . reverse_bytes == id   (involution)
-//   to_lower . to_lower == to_lower       (idempotence)
-//   to_upper . to_upper == to_upper       (idempotence)
-//   len is preserved by all three transforms
+//   reverse_bytes . reverse_bytes == id       (involution)
+//   len is preserved by reverse_bytes
+//
+//   to_ascii_lower / to_ascii_upper: idempotent AND length-preserving.
+//     A byte fold touches only A-Z / a-z, so every other byte — including
+//     every byte of a multibyte or malformed sequence — survives intact.
+//
+//   to_lower / to_upper (Unicode): idempotent, and the result is always
+//     valid UTF-8. Length is deliberately NOT asserted: these decode,
+//     map, and re-encode, so a malformed byte becomes U+FFFD (1 byte in,
+//     3 out) and a code point can change width under case mapping
+//     (U+0130 `İ` is 2 bytes, its simple lowercase `i` is 1). Asserting
+//     length preservation here would be asserting the byte fold.
+//
+//   On ASCII-only input the two families agree byte-for-byte — the
+//   fast path inside to_upper/to_lower must not drift from the fold.
 
 function lcg_next(state: i32): i32 {
     return ((state * 1103515245) + 12345) & 2147483647;
@@ -23,6 +37,19 @@ function gen_bytes(seed: i32, n: i32): u8[] {
     while (i < n) {
         state = lcg_next(state);
         buf = buf.with(i, ((state / 7) % 256) as u8);
+        i = i + 1;
+    }
+    return buf;
+}
+
+// Same generator restricted to printable ASCII, for the agreement property.
+function gen_ascii(seed: i32, n: i32): u8[] {
+    var buf: u8[] = __alloc_u8(n);
+    var state: i32 = seed;
+    var i: i32 = 0;
+    while (i < n) {
+        state = lcg_next(state);
+        buf = buf.with(i, (32 + ((state / 7) % 95)) as u8);
         i = i + 1;
     }
     return buf;
@@ -45,25 +72,58 @@ function main(): i32 {
             return 1;
         }
 
+        // The byte fold: idempotent and length-preserving over any bytes.
+        var alo: string = s.to_ascii_lower();
+        if (alo.to_ascii_lower() != alo) {
+            print("to_ascii_lower idempotence FAILED at trial " + trial.to_string());
+            return 1;
+        }
+        if (alo.len() != s.len()) {
+            print("to_ascii_lower length FAILED at trial " + trial.to_string());
+            return 1;
+        }
+        var aup: string = s.to_ascii_upper();
+        if (aup.to_ascii_upper() != aup) {
+            print("to_ascii_upper idempotence FAILED at trial " + trial.to_string());
+            return 1;
+        }
+        if (aup.len() != s.len()) {
+            print("to_ascii_upper length FAILED at trial " + trial.to_string());
+            return 1;
+        }
+
+        // Unicode: idempotent, and always yields valid UTF-8 even when the
+        // input was arbitrary bytes.
         var lo: string = s.to_lower();
         if (lo.to_lower() != lo) {
             print("to_lower idempotence FAILED at trial " + trial.to_string());
             return 1;
         }
-        if (lo.len() != s.len()) {
-            print("to_lower length FAILED at trial " + trial.to_string());
+        if (!utf8.is_valid_utf8(lo)) {
+            print("to_lower validity FAILED at trial " + trial.to_string());
             return 1;
         }
-
         var up: string = s.to_upper();
         if (up.to_upper() != up) {
             print("to_upper idempotence FAILED at trial " + trial.to_string());
             return 1;
         }
-        if (up.len() != s.len()) {
-            print("to_upper length FAILED at trial " + trial.to_string());
+        if (!utf8.is_valid_utf8(up)) {
+            print("to_upper validity FAILED at trial " + trial.to_string());
             return 1;
         }
+
+        // ASCII input: the Unicode entry points and the fold must agree.
+        var a: string = string_from_bytes(gen_ascii(state, n));
+        if (a.to_lower() != a.to_ascii_lower()) {
+            print("ascii to_lower agreement FAILED at trial " + trial.to_string());
+            return 1;
+        }
+        if (a.to_upper() != a.to_ascii_upper()) {
+            print("ascii to_upper agreement FAILED at trial " + trial.to_string());
+            return 1;
+        }
+
         trial = trial + 1;
     }
     print("OK");

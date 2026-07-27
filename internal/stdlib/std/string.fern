@@ -16,6 +16,13 @@ import "std/i32";
 // `.reverse().join(" ")` in reverse_words, `.take(...)`, and
 // `.index_of(...)` in the trim_chars family.
 import "std/array";
+// `to_upper` / `to_lower` are Unicode, so they delegate to
+// std/unicode's case tables. This closes a std/string →
+// std/unicode → std/utf8 → std/string cycle, which modload
+// resolves by its load-once dedupe (the same mechanism as the
+// std/i32 back-edge above). Programs that never call a Unicode
+// method never pay for the tables — they are DCE'd.
+import "std/unicode" as unicode;
 
 // `s.is_empty()` is a length-zero shorthand. The IR's len fold
 // resolves `len(s)` to a single i32.load at compile time when
@@ -179,8 +186,9 @@ pub function (s: string) rfind(needle: string): Option[i32] {
 }
 
 // `s.capitalize()` — uppercase the first byte, leave the
-// rest unchanged. ASCII-only: non-letter first bytes pass
-// through. Different from `to_upper` (which folds every
+// rest unchanged. ASCII-only (a Unicode `capitalize` is the
+// rest of #5630): non-letter first bytes pass through.
+// Different from `to_ascii_upper` (which folds every ASCII
 // letter) and from Python's str.capitalize (which also
 // LOWERCASES the rest — our version intentionally preserves
 // the tail since the lossy fold is rarely what callers
@@ -1409,7 +1417,7 @@ pub function (s: string) bytes(): u8[] {
     return out;
 }
 
-// __string_case_fold drives `to_lower` / `to_upper`.
+// __string_case_fold drives `to_ascii_lower` / `to_ascii_upper`.
 // Allocates a fresh `u8[]` of the same length, byte-by-byte
 // remaps any A..A+25 source range to dstBase..dstBase+25,
 // passes everything else through. Non-ASCII bytes (>= 0x80)
@@ -1430,35 +1438,68 @@ function __string_case_fold(s: string, srcBase: i32, dstBase: i32): string {
     return string_from_bytes(buf);
 }
 
-// `s.to_lower()` / `s.to_upper()` — ASCII-only case folding, like the
-// byte-level `(b: i32) to_upper()` these are the string-shaped twins of.
+// `s.to_ascii_lower()` / `s.to_ascii_upper()` — the ASCII fast path,
+// the string-shaped twins of the byte-level `(b: i32) to_ascii_upper()`.
 // Only `A-Z` / `a-z` are remapped; every other byte passes through
 // UNCHANGED, including every byte of a multibyte UTF-8 sequence (they are
 // all >= 0x80, outside the folded range). So the result is always valid
 // UTF-8 — non-ASCII text is left alone, not corrupted:
 //
-//     "café".to_upper()  == "CAFé"     // é survives, is not uppercased
-//     "CAFÉ".to_lower()  == "cafÉ"
+//     "café".to_ascii_upper()  == "CAFé"     // é survives, is not uppercased
+//     "CAFÉ".to_ascii_lower()  == "cafÉ"
 //
-// What this cannot do is real Unicode case mapping, which is not a
-// byte-wise operation: `ß` uppercases to `SS` (1 -> 2 codepoints) and
-// Turkish `İ`/`ı` are locale-sensitive. Those need a Unicode-aware
-// implementation with case-mapping tables (#5552); until one exists, treat
-// these as the ASCII fast path they are and don't reach for them to
-// normalise user-submitted text.
-pub function (s: string) to_lower(): string {
+// Reach for these when the input is known-ASCII (a protocol token, a
+// header name, a file extension) and the byte fold is exactly what you
+// mean. For human text use `to_upper` / `to_lower`, which are
+// Unicode-correct.
+pub function (s: string) to_ascii_lower(): string {
     return __string_case_fold(s, 65, 97);     // A-Z → a-z
 }
 
-pub function (s: string) to_upper(): string {
+pub function (s: string) to_ascii_upper(): string {
     return __string_case_fold(s, 97, 65);     // a-z → A-Z
+}
+
+// `s.to_lower()` / `s.to_upper()` — Unicode case mapping over every code
+// point, not a byte fold:
+//
+//     "café".to_upper()  == "CAFÉ"
+//     "ΣΟΦΟΣ".to_lower() == "σοφοσ"
+//     "ΑΒΓ".to_lower()   == "αβγ"
+//
+// Pure-ASCII input never touches a table — `std/unicode` fast-paths it to
+// the same byte fold `to_ascii_upper` does — so the common case costs a
+// scan, not a binary search.
+//
+// SIMPLE (1:1) mapping: a code point maps to exactly one code point. The
+// multi-code-point expansions (`ß` → `SS`, `ﬁ` → `FI`) and the
+// context-sensitive rules (Greek final sigma) are NOT applied yet — see
+// #5630. Locale-independent by design: no Turkish dotless-i tailoring, so
+// `"I".to_lower()` is `"i"` in every locale.
+//
+// Two consequences of decoding rather than folding bytes, both of which
+// `to_ascii_*` does NOT share:
+//   - Length is not preserved. A code point can change width under case
+//     mapping (`İ` U+0130 is 2 bytes; its lowercase `i` is 1).
+//   - `string` is never validity-checked, and a malformed byte decodes to
+//     U+FFFD — so these NORMALISE invalid UTF-8 rather than passing it
+//     through. If you are folding bytes that may not be UTF-8 (a protocol
+//     frame, a filename) and need them back unchanged, use `to_ascii_*`.
+pub function (s: string) to_lower(): string {
+    return unicode.to_lower(s);
+}
+
+pub function (s: string) to_upper(): string {
+    return unicode.to_upper(s);
 }
 
 // `s.swap_case()` — toggle the case of every ASCII letter: `A-Z` become `a-z`
 // and vice versa, everything else (digits, punctuation, non-ASCII bytes)
 // passes through unchanged. Python's `str.swapcase`, ASCII-only like
-// `to_upper` / `to_lower`. `swap_case` is its own inverse: `s.swap_case()
-// .swap_case() == s`.
+// `to_ascii_upper` / `to_ascii_lower` — NOT like `to_upper` / `to_lower`,
+// which are Unicode. A Unicode `swap_case` (and the matching
+// `to_ascii_swap_case` rename) is the rest of #5630. `swap_case` is its
+// own inverse: `s.swap_case().swap_case() == s`.
 pub function (s: string) swap_case(): string {
     var n: i32 = s.len();
     var buf: u8[] = __alloc_u8(n);
