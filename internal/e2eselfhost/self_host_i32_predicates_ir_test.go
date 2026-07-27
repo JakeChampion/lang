@@ -114,6 +114,19 @@ func TestSelfHostI32PredicatesIRX86_64(t *testing.T) {
 		{"contains-true", "function main(): i32 { var xs: i32[] = [7, 8, 9]; if (xs.contains(8)) { return 1; } return 0; }", 1},
 		{"contains-false", "function main(): i32 { var xs: i32[] = [7, 8, 9]; if (xs.contains(3)) { return 1; } return 0; }", 0},
 		{"contains-single", "function main(): i32 { var xs: i32[] = [5]; if (xs.contains(5)) { return 1; } return 0; }", 1},
+		// is_empty desugars to `len() == 0` and re-lowers, so it inherits the `.len()`
+		// arm's receiver dispatch and its fresh-string-receiver reclaim. These cases
+		// pin that it covers every receiver .len() does — the AST guard spans string,
+		// int arrays and string[], so a string-only port would silently leave the
+		// array forms on the AST path.
+		{"is-empty-string-true", "function main(): i32 { var s: string = \"\"; if (s.is_empty()) { return 1; } return 0; }", 1},
+		{"is-empty-string-false", "function main(): i32 { var s: string = \"hi\"; if (s.is_empty()) { return 1; } return 0; }", 0},
+		{"is-empty-i32arr-true", "function main(): i32 { var xs: i32[] = []; if (xs.is_empty()) { return 1; } return 0; }", 1},
+		{"is-empty-i32arr-false", "function main(): i32 { var xs: i32[] = [1, 2]; if (xs.is_empty()) { return 1; } return 0; }", 0},
+		{"is-empty-strarr-true", "function main(): i32 { var ss: string[] = []; if (ss.is_empty()) { return 1; } return 0; }", 1},
+		{"is-empty-strarr-false", "function main(): i32 { var ss: string[] = [\"a\"]; if (ss.is_empty()) { return 1; } return 0; }", 0},
+		// Fresh string-concat receiver: the temp box the `.len()` arm reclaims (#4365).
+		{"is-empty-fresh-concat", "function main(): i32 { var a: string = \"x\"; var b: string = \"y\"; if ((a + b).is_empty()) { return 1; } return 0; }", 0},
 	}
 
 	for _, tc := range cases {
