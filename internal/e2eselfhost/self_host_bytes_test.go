@@ -8,7 +8,7 @@ import (
 // TestSelfHostBytesX86_64 proves the self-hosted x86-64 compiler can
 // compile the real std/hex and std/base64 — which build u8[] buffers
 // via __alloc_u8, fill them with array index-assignment (arr[i] = v),
-// and convert back with string_from_bytes. Each module's encode is
+// and convert back with string_from_bytes_unchecked. Each module's encode is
 // checked against a known vector and round-tripped through decode.
 func TestSelfHostBytesX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)

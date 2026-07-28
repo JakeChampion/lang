@@ -177,7 +177,7 @@ function main(): i32 {
     code = arm64_patch_ldr_off(code, 4, arm64_page_off(answer));
 
     var bin: i32[] = macho_static_executable(code, data, "fern");
-    write(string_from_bytes(bin));
+    write(string_from_bytes_unchecked(bin));
     return 0;
 }
 `

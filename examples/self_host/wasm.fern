@@ -5843,9 +5843,9 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     if (id.name == "random_bytes" && c.args.len() == 1) {
                         return "(call $__fern_random_bytes " + emit_expr(c.args[0], cx, depth + 1) + ")";
                     }
-                    // string_from_bytes(bytes): pack a u8[] (i32[] of byte
+                    // string_from_bytes_unchecked(bytes): pack a u8[] (i32[] of byte
                     // values) into a fresh [len][bytes] string block.
-                    if (id.name == "string_from_bytes" && c.args.len() == 1) {
+                    if (id.name == "string_from_bytes_unchecked" && c.args.len() == 1) {
                         return "(call $__fern_string_from_bytes " + emit_expr(c.args[0], cx, depth + 1) + ")";
                     }
                     // random_i32(): a single i32 of randomness.
@@ -11818,7 +11818,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     if (wasm_ir.need(needs, "print_str")) { out = out + wasm_ir.print_str_helper(); }
     if (wasm_ir.need(needs, "eprint_str")) { out = out + wasm_ir.eprint_str_helper(); }
     if (wasm_ir.need(needs, "str_bytes")) { out = out + wasm_ir.str_bytes_func(); }
-    // string_from_bytes(arr) packs a u8[] into a string block via
+    // string_from_bytes_unchecked(arr) packs a u8[] into a string block via
     // $__fern_string_from_bytes; op_str_from_bytes emits the call, so the
     // helper must be present (its absence left a dangling call -> the wasm
     // module failed to link). Depends on $__fern_alloc / $__fern_str_box,
@@ -11904,7 +11904,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
 
     var has_env: boolean = module_calls(mod, "env");
     var has_random: boolean = module_calls(mod, "random_bytes") || module_calls(mod, "random_i32");
-    var has_sfb: boolean = module_calls(mod, "string_from_bytes");
+    var has_sfb: boolean = module_calls(mod, "string_from_bytes_unchecked");
     var has_args: boolean = module_calls(mod, "args");
     var has_readfile: boolean = module_calls(mod, "read_file");
     var has_writefile: boolean = module_calls(mod, "write_file");

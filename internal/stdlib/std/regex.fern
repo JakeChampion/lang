@@ -612,7 +612,7 @@ function __rx_join(parts: string[], total: i32): string {
         }
         pi = pi + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `regex_replace_all(pattern, text, repl)` — replace every non-overlapping

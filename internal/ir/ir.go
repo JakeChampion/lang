@@ -9741,7 +9741,7 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// above: without this dispatch, `argT` comes back nil
 		// and the `len()` fallback open-codes a `[ptr - 4]`
 		// load, which traps on inline-form strings produced
-		// by $args / $string_from_bytes / $__str_concat / etc.
+		// by $args / $string_from_bytes_unchecked / $__str_concat / etc.
 		if x.IsString {
 			// `s[i]` produces a single byte zero-extended into
 			// an i32. Treat as a generic number type — falls
@@ -9759,7 +9759,7 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// fallback, which traps on inline-form strings
 		// produced by string-returning helpers — most
 		// importantly `int_to_string`, whose 1..3-digit / -1..-99
-		// outputs cascade through `$string_from_bytes`'s
+		// outputs cascade through `$string_from_bytes_unchecked`'s
 		// inline-output path. The callee's return type comes
 		// off `info.FuncSigs` (populated by the checker for
 		// every user fn + every stdlib / builtin signature).

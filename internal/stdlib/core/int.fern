@@ -55,7 +55,7 @@ pub function int_to_string(n: i32): string {
     // assumes a PACKED `u8[]` (one byte per element) — true on the native /
     // wasm backends but NOT on the self-hosted runtime, whose `u8[]` stores
     // each element in an 8-byte slot. The element-wise copy is correct on
-    // every backend because `.with` / indexing / `string_from_bytes` are all
+    // every backend because `.with` / indexing / `string_from_bytes_unchecked` are all
     // layout-aware, so this is the portable shape (and lowers on the
     // self-host IR path, which the `__memcpy` form did not).
     var buf: u8[] = __alloc_u8(n_bytes);
@@ -64,7 +64,7 @@ pub function int_to_string(n: i32): string {
         buf = buf.with(i, scratch[end + i]);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `__int_to_string_u64(mag, neg)` — i64 / u64 cousin. `mag`
@@ -103,7 +103,7 @@ pub function __int_to_string_u64(mag: i64, neg: i32): string {
         buf = buf.with(i, scratch[end + i]);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 pub function __radix_digit(c: i32): i32 {
@@ -178,5 +178,5 @@ pub function int_to_string_radix(n: i32, base: i32): string {
         bi = bi + 1;
         j = j - 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }

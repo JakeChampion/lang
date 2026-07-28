@@ -171,6 +171,6 @@ const arm64MachOSymbolDriverMain = "\n" +
 	"    p = arm64_gas_link(p, tvaddr, dvaddr);\n" +
 	"    var pa2: Arm64Asm = p.asm;\n" +
 	"    var bin: i32[] = macho_static_executable(pa2.code, p.data, \"fern\");\n" +
-	"    write(string_from_bytes(bin));\n" +
+	"    write(string_from_bytes_unchecked(bin));\n" +
 	"    return 0;\n" +
 	"}\n"

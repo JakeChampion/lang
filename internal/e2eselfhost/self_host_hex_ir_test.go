@@ -12,7 +12,7 @@ import (
 // hexIRCases compile the REAL std/hex module (concatenated with a main, the same
 // single-module trick the std/json self-host test uses) through the self-host IR
 // path on x86-64 + wasm, confirming std/hex (`hex_encode` / `hex_decode`) lowers
-// end-to-end. std/hex builds on `__alloc_u8` + `.with` + bit ops + `string_from_bytes`
+// end-to-end. std/hex builds on `__alloc_u8` + `.with` + bit ops + `string_from_bytes_unchecked`
 // — the last of which only started lowering on the wasm IR path with the recent
 // helper-gate fix; this is the module-level confirmation.
 //

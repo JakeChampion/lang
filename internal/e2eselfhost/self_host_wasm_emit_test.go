@@ -1011,7 +1011,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"compound-assign-field", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c.n += 3; c.n *= 2; print_int(c.n); return 0; }", 0, "16"},
 		{"hex-literal", "function main(): i32 { print_int(0xFF); print_int(0x10); return 0; }", 0, "25516"},
 		{"escape-sequences", "function main(): i32 { write(\"a\\tb\\nc\"); return 0; }", 0, "a\tb\nc"},
-		// \xNN hex byte escapes (string + f-string), via string_from_bytes.
+		// \xNN hex byte escapes (string + f-string), via string_from_bytes_unchecked.
 		{"hex-escape", "function main(): i32 { write(\"\\x48\\x69\\x21\"); return 0; }", 0, "Hi!"},
 		{"hex-escape-fstring", "function main(): i32 { var n: i32 = 7; write(f\"\\x41{n}\\x5a\"); return 0; }", 0, "A7Z"},
 		{"deep-nesting", "function main(): i32 { print_int(((1 + 2) * (3 + 4)) - ((5 - 1) / 2)); return 0; }", 0, "19"},

@@ -57,7 +57,7 @@ function __float_int_part(n: f64): string {
         pos = pos - 1;
         n = q;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 
@@ -83,7 +83,7 @@ function bn_to_decimal(a: i64[]): string {
         while (j >= 0) { var cur: i64 = (rem << 32) | w[j]; w = w.with(j, cur / 10); rem = cur % 10; j = j - 1; }
         rev = rev.append(dc[rem as i32] as u8);
         while (n > 1 && w[n - 1] == 0) { n = n - 1; }
-        if (n == 1 && w[0] == 0) { var o: u8[] = []; var mm: i32 = rev.len() - 1; while (mm >= 0) { o = o.append(rev[mm]); mm = mm - 1; } return string_from_bytes(o); }
+        if (n == 1 && w[0] == 0) { var o: u8[] = []; var mm: i32 = rev.len() - 1; while (mm >= 0) { o = o.append(rev[mm]); mm = mm - 1; } return string_from_bytes_unchecked(o); }
     }
     return "";
 }
@@ -109,7 +109,7 @@ function inc_digits(s: string): string {
     var b: u8[] = []; var i: i32 = 0; while (i < s.len()) { b = b.append(s[i] as u8); i = i + 1; }
     var j: i32 = b.len() - 1; var carry: i32 = 1;
     while (j >= 0 && carry == 1) { var d: i32 = (b[j] as i32) - 48 + carry; if (d >= 10) { d = d - 10; carry = 1; } else { carry = 0; } b = b.with(j, (d + 48) as u8); j = j - 1; }
-    var out: string = string_from_bytes(b); if (carry == 1) { out = "1" + out; } return out;
+    var out: string = string_from_bytes_unchecked(b); if (carry == 1) { out = "1" + out; } return out;
 }
 function digits_to_i64(s: string): i64 { var v: i64 = 0; var i: i32 = 0; while (i < s.len()) { v = v * 10 + ((s[i] as i64) - 48); i = i + 1; } return v; }
 

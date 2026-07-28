@@ -92,10 +92,10 @@ pub function (w: BytesWriter) into_bytes(): u8[] {
 }
 
 // `(w: BytesWriter).into_string()` — same as into_bytes
-// followed by `string_from_bytes`. Convenience for the
+// followed by `string_from_bytes_unchecked`. Convenience for the
 // common "build a string buffered" pattern.
 pub function (w: BytesWriter) into_string(): string {
-    return string_from_bytes(w.data);
+    return string_from_bytes_unchecked(w.data);
 }
 
 // `(w: BytesWriter).reset(): BytesWriter` — return a writer with

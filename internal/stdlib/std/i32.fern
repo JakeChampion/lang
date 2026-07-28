@@ -166,7 +166,7 @@ pub function (b: i32) hex_digit(): string {
     var buf: u8[] = __alloc_u8(1);
     if (b < 10) { buf = buf.with(0, (b + 48) as u8); }
     else        { buf = buf.with(0, (b + 87) as u8); }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `(b: i32) digit_value()` — '0'..'9' → 0..9, -1 otherwise.
@@ -196,7 +196,7 @@ pub function (b: i32) to_ascii_string(): string {
     if (b < 0 || b > 255) { return ""; }
     var buf: u8[] = __alloc_u8(1);
     buf = buf.with(0, b as u8);
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // === i32 sign helpers ===

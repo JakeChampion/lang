@@ -3,7 +3,7 @@ import "std/utf8" as utf8;
 import "std/string";
 // examples/tests/utf8_test.fern — std/utf8 codepoint decode / encode /
 // count / validate (#4416). Multibyte inputs are built from explicit
-// byte sequences via string_from_bytes (so decode is tested against
+// byte sequences via string_from_bytes_unchecked (so decode is tested against
 // known bytes, not against encode), and encode is checked by its output
 // byte length + a decode round-trip. Reference values:
 //   'A'  U+0041   [65]                     1 byte
@@ -15,7 +15,7 @@ function mixed(): string {
     // "A" + é + € + 😀 — 10 bytes, 4 codepoints.
     var b: u8[] = [65 as u8, 195 as u8, 169 as u8, 226 as u8, 130 as u8,
         172 as u8, 240 as u8, 159 as u8, 152 as u8, 128 as u8];
-    return string_from_bytes(b);
+    return string_from_bytes_unchecked(b);
 }
 
 function decode_cp(s: string, i: i32): i32 {
@@ -31,17 +31,17 @@ function test_decode_ascii(): test.TestOutcome {
 }
 
 function test_decode_two_byte(): test.TestOutcome {
-    var s: string = string_from_bytes([195 as u8, 169 as u8]);   // é
+    var s: string = string_from_bytes_unchecked([195 as u8, 169 as u8]);   // é
     return test.assert_true(decode_cp(s, 0) == 233 && decode_len(s, 0) == 2);
 }
 
 function test_decode_three_byte(): test.TestOutcome {
-    var s: string = string_from_bytes([226 as u8, 130 as u8, 172 as u8]);  // €
+    var s: string = string_from_bytes_unchecked([226 as u8, 130 as u8, 172 as u8]);  // €
     return test.assert_true(decode_cp(s, 0) == 8364 && decode_len(s, 0) == 3);
 }
 
 function test_decode_four_byte(): test.TestOutcome {
-    var s: string = string_from_bytes([240 as u8, 159 as u8, 152 as u8, 128 as u8]);  // 😀
+    var s: string = string_from_bytes_unchecked([240 as u8, 159 as u8, 152 as u8, 128 as u8]);  // 😀
     return test.assert_true(decode_cp(s, 0) == 128512 && decode_len(s, 0) == 4);
 }
 
@@ -52,25 +52,25 @@ function test_decode_at_offset(): test.TestOutcome {
 
 function test_decode_stray_continuation(): test.TestOutcome {
     // A lone 0x80 continuation byte is invalid.
-    var s: string = string_from_bytes([128 as u8]);
+    var s: string = string_from_bytes_unchecked([128 as u8]);
     return test.assert_eq(decode_cp(s, 0), 0 - 1);
 }
 
 function test_decode_truncated(): test.TestOutcome {
     // First two bytes of a 3-byte sequence — no third byte.
-    var s: string = string_from_bytes([226 as u8, 130 as u8]);
+    var s: string = string_from_bytes_unchecked([226 as u8, 130 as u8]);
     return test.assert_eq(decode_cp(s, 0), 0 - 1);
 }
 
 function test_decode_overlong(): test.TestOutcome {
     // Overlong encoding of U+0000 (C0 80) must be rejected.
-    var s: string = string_from_bytes([192 as u8, 128 as u8]);
+    var s: string = string_from_bytes_unchecked([192 as u8, 128 as u8]);
     return test.assert_eq(decode_cp(s, 0), 0 - 1);
 }
 
 function test_decode_surrogate(): test.TestOutcome {
     // U+D800 encoded as ED A0 80 — a surrogate, not a scalar value.
-    var s: string = string_from_bytes([237 as u8, 160 as u8, 128 as u8]);
+    var s: string = string_from_bytes_unchecked([237 as u8, 160 as u8, 128 as u8]);
     return test.assert_eq(decode_cp(s, 0), 0 - 1);
 }
 
@@ -112,7 +112,7 @@ function test_codepoints_array(): test.TestOutcome {
 
 function test_is_valid(): test.TestOutcome {
     // A well-formed mixed string is valid; a stray continuation isn't.
-    var bad: string = string_from_bytes([65 as u8, 128 as u8]);
+    var bad: string = string_from_bytes_unchecked([65 as u8, 128 as u8]);
     return test.assert_true(utf8.is_valid_utf8(mixed()) && !utf8.is_valid_utf8(bad));
 }
 
@@ -123,9 +123,9 @@ function test_encode_all_roundtrip(): test.TestOutcome {
 
 // The individual characters of mixed(), built from their bytes so the
 // char_at / substring expectations don't depend on encode.
-function e_acute(): string { return string_from_bytes([195 as u8, 169 as u8]); }               // é
-function euro(): string { return string_from_bytes([226 as u8, 130 as u8, 172 as u8]); }        // €
-function emoji(): string { return string_from_bytes([240 as u8, 159 as u8, 152 as u8, 128 as u8]); }  // 😀
+function e_acute(): string { return string_from_bytes_unchecked([195 as u8, 169 as u8]); }               // é
+function euro(): string { return string_from_bytes_unchecked([226 as u8, 130 as u8, 172 as u8]); }        // €
+function emoji(): string { return string_from_bytes_unchecked([240 as u8, 159 as u8, 152 as u8, 128 as u8]); }  // 😀
 
 function cp_or(s: string, i: i32): i32 {
     match (utf8.codepoint_at(s, i)) { Some(c) => { return c as i32; }, None => { return 0 - 1; } }

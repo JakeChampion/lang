@@ -3451,7 +3451,7 @@ func TestEmitMemset(t *testing.T) {
 
 // TestEmitStringFromBytesShort — build a 3-element u8 array
 // ['h', 'i', '!'] at addr 200 (length prefix at 196), call
-// string_from_bytes(200), then assert the result's length is 3
+// string_from_bytes_unchecked(200), then assert the result's length is 3
 // via OpStrLen. Inline-fast-path (len ≤ 7).
 func TestEmitStringFromBytesShort(t *testing.T) {
 	prog := &ir.Program{Funcs: []*ir.Func{{
@@ -3474,9 +3474,9 @@ func TestEmitStringFromBytesShort(t *testing.T) {
 			{Kind: ir.OpConstI32, I32: 202},
 			{Kind: ir.OpConstI32, I32: '!'},
 			{Kind: ir.OpStoreI8},
-			// string_from_bytes(200) → (data, len)
+			// string_from_bytes_unchecked(200) → (data, len)
 			{Kind: ir.OpConstI32, I32: 200},
-			{Kind: ir.OpCallDirect, Str: "string_from_bytes"},
+			{Kind: ir.OpCallDirect, Str: "string_from_bytes_unchecked"},
 			// pop (data, len), then push back data + str_len → 3
 			{Kind: ir.OpStrLen},
 		},
@@ -3486,7 +3486,7 @@ func TestEmitStringFromBytesShort(t *testing.T) {
 		t.Fatalf("Emit: %v", err)
 	}
 	if got := runUnderWasmtime(t, bin, "main"); got != "3" {
-		t.Fatalf("string_from_bytes len = %q, want 3", got)
+		t.Fatalf("string_from_bytes_unchecked len = %q, want 3", got)
 	}
 }
 
@@ -3501,9 +3501,9 @@ func TestEmitStringFromBytesEmpty(t *testing.T) {
 			{Kind: ir.OpConstI32, I32: 196},
 			{Kind: ir.OpConstI32, I32: 0},
 			{Kind: ir.OpCallDirect, Str: "__store_i32"},
-			// string_from_bytes(200)
+			// string_from_bytes_unchecked(200)
 			{Kind: ir.OpConstI32, I32: 200},
-			{Kind: ir.OpCallDirect, Str: "string_from_bytes"},
+			{Kind: ir.OpCallDirect, Str: "string_from_bytes_unchecked"},
 			{Kind: ir.OpStrLen},
 		},
 	}}}
@@ -3512,7 +3512,7 @@ func TestEmitStringFromBytesEmpty(t *testing.T) {
 		t.Fatalf("Emit: %v", err)
 	}
 	if got := runUnderWasmtime(t, bin, "main"); got != "0" {
-		t.Fatalf("string_from_bytes empty len = %q, want 0", got)
+		t.Fatalf("string_from_bytes_unchecked empty len = %q, want 0", got)
 	}
 }
 

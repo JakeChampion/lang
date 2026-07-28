@@ -16,7 +16,7 @@ import (
 // payload size at data-4 — present only when the buffer is allocated through
 // __fern_alloc_rc1. A plain __fern_alloc buffer has no such header, so the drop
 // reads garbage and recycles a still-live cell (the #2817 heap-corruption class
-// fixed for string_from_bytes / env / read_line). These emit through stdlib /
+// fixed for string_from_bytes_unchecked / env / read_line). These emit through stdlib /
 // Reader types the in-package `compile` helper can't resolve, so we drive the
 // runtime emitters directly with the two-word ABI active.
 func TestTwoWordIoStringRuntimesUseRcHeaderedAlloc(t *testing.T) {

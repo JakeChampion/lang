@@ -153,7 +153,7 @@ func asmToMachoDriver(asm string) string {
 	b.WriteString("    p = arm64_gas_link(p, tv, dv);\n")
 	b.WriteString("    var pa2: Arm64Asm = p.asm;\n")
 	b.WriteString("    var bin: i32[] = macho_static_executable(pa2.code, p.data, \"fern\");\n")
-	b.WriteString("    write(string_from_bytes(bin));\n")
+	b.WriteString("    write(string_from_bytes_unchecked(bin));\n")
 	b.WriteString("    return 0;\n}\n")
 	return b.String()
 }

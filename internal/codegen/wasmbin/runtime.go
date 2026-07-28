@@ -4464,7 +4464,7 @@ func buildArrIdx8NCBody(idxs map[string]uint32) []byte { return buildArrIdxStrid
 //	bLen <= 7:  inline-packed (data, len)     no alloc
 //	bLen >  7:  heap-form (out, bLen)         alloc + memory.copy
 //
-// Mirrors the WAT path's $string_from_bytes structure.
+// Mirrors the WAT path's $string_from_bytes_unchecked structure.
 //
 // Locals (after the one param):
 //

@@ -162,6 +162,6 @@ const arm64MachOBitOpsDriverMain = "\n" +
 	"    var a: Arm64Asm = arm64_gas_assemble(asm);\n" +
 	"    var none: i32[] = [];\n" +
 	"    var bin: i32[] = macho_static_executable(a.code, none, \"fern\");\n" +
-	"    write(string_from_bytes(bin));\n" +
+	"    write(string_from_bytes_unchecked(bin));\n" +
 	"    return 0;\n" +
 	"}\n"

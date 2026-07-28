@@ -1509,7 +1509,7 @@ function _ascii_fold(s: string, from: i32, to: i32): string {
         buf = buf.with(i, b as u8);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // _full_case returns the FULL (1->N) mapping of ` + "`cp`" + ` as an already
@@ -1756,7 +1756,7 @@ pub function swap_case(s: string): string {
             buf = buf.with(k, b as u8);
             k = k + 1;
         }
-        return string_from_bytes(buf);
+        return string_from_bytes_unchecked(buf);
     }
     var out: string = "";
     var len: i32 = s.len();

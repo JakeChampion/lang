@@ -83,7 +83,7 @@ var BuiltinCaps = map[string]string{
 // Ungated lists every user-callable builtin known to require NO
 // capability: stdio, argv, process exit, pure math / bit casts, the
 // strbuf scratch buffer, in-heap constructors (map_new / cell_new /
-// string_from_bytes), the readiness helpers whose authority lives on
+// string_from_bytes_unchecked), the readiness helpers whose authority lives on
 // the pollable constructors instead, and the interp's pure stdlib
 // overrides. A builtin absent from both this set and BuiltinCaps
 // fails the inventory-completeness tests.
@@ -111,6 +111,6 @@ var Ungated = map[string]bool{
 	"wasm_pollable_drop": true,
 	"map_new":            true,
 	"cell_new":           true,
-	"string_from_bytes":  true,
+	"string_from_bytes_unchecked":  true,
 	"int_to_string":      true,
 }

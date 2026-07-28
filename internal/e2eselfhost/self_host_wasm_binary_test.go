@@ -143,10 +143,10 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		{"scale-recursion-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(12) - 100; }", 44},
 		{"scale-struct-array-list", "struct Node { v: i32, next_idx: i32 } function main(): i32 { var ns: Node[] = []; ns = ns.append(Node { v: 10, next_idx: 1 }); ns = ns.append(Node { v: 20, next_idx: 2 }); ns = ns.append(Node { v: 12, next_idx: 0 - 1 }); var sum: i32 = 0; var i: i32 = 0; while (i >= 0) { sum = sum + ns[i].v; i = ns[i].next_idx; } return sum; }", 42},
 		{"scale-string-split", "function main(): i32 { var s: string = \"the quick brown fox\"; var words = s.split(\" \"); var total: i32 = 0; for w in words { total = total + w.len(); } return total + words.len(); }", 20},
-		// string_from_bytes: pack a u8[] (i32[] of byte values) into a string
+		// string_from_bytes_unchecked: pack a u8[] (i32[] of byte values) into a string
 		// block. len() * 10 + first byte offset from 'A': 4*10 + (65-65) = 40.
-		{"string-from-bytes", "function main(): i32 { var s: string = string_from_bytes([65, 66, 67, 68]); return s.len() * 10 + (s[0] - 65); }", 40},
-		{"string-from-bytes-write", "function main(): i32 { var s: string = string_from_bytes([104, 105]); write(s); return s.len(); }", 2},
+		{"string-from-bytes", "function main(): i32 { var s: string = string_from_bytes_unchecked([65, 66, 67, 68]); return s.len() * 10 + (s[0] - 65); }", 40},
+		{"string-from-bytes-write", "function main(): i32 { var s: string = string_from_bytes_unchecked([104, 105]); write(s); return s.len(); }", 2},
 		// random_i32(): a single i32 of randomness. Used in self-cancelling
 		// arithmetic so the result is deterministic (42) while still
 		// exercising the builtin's call + helper emission end-to-end.

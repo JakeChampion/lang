@@ -186,13 +186,13 @@ function __bytes_to_hex(b: u8[]): string {
         buf = buf.with(i * 2 + 1, __hex_char(v & 15) as u8);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // sha256_bytes returns the raw 32-byte SHA-256 digest of `s` as a
 // byte string.
 pub function sha256_bytes(s: string): string {
-    return string_from_bytes(__sha256_core(__str_to_bytes(s)));
+    return string_from_bytes_unchecked(__sha256_core(__str_to_bytes(s)));
 }
 
 // sha256_hex returns the SHA-256 digest of `s` as a 64-character
@@ -240,7 +240,7 @@ function __hmac_core(key: u8[], msg: u8[]): u8[] {
 // hmac_sha256_bytes returns the raw 32-byte HMAC-SHA256 digest as a
 // byte string.
 pub function hmac_sha256_bytes(key: string, msg: string): string {
-    return string_from_bytes(__hmac_core(__str_to_bytes(key), __str_to_bytes(msg)));
+    return string_from_bytes_unchecked(__hmac_core(__str_to_bytes(key), __str_to_bytes(msg)));
 }
 
 // hmac_sha256_hex returns the HMAC-SHA256 digest as a 64-character
@@ -339,7 +339,7 @@ function __pbkdf2_core(pw: u8[], salt: u8[], iterations: i32, dk_len: i32): u8[]
 // pbkdf2_sha256(password, salt, iterations, dk_len) — the derived key as
 // a `dk_len`-byte string.
 pub function pbkdf2_sha256(password: string, salt: string, iterations: i32, dk_len: i32): string {
-    return string_from_bytes(__pbkdf2_core(__str_to_bytes(password), __str_to_bytes(salt), iterations, dk_len));
+    return string_from_bytes_unchecked(__pbkdf2_core(__str_to_bytes(password), __str_to_bytes(salt), iterations, dk_len));
 }
 
 // pbkdf2_sha256_hex — the derived key as a lowercase hex string
@@ -420,18 +420,18 @@ function __hkdf_expand(prk: u8[], info: u8[], length: i32): u8[] {
 
 // hkdf_extract(salt, ikm) — the 32-byte PRK.
 pub function hkdf_extract(salt: string, ikm: string): string {
-    return string_from_bytes(__hkdf_extract(__str_to_bytes(salt), __str_to_bytes(ikm)));
+    return string_from_bytes_unchecked(__hkdf_extract(__str_to_bytes(salt), __str_to_bytes(ikm)));
 }
 
 // hkdf_expand(prk, info, length) — `length` output bytes from a PRK.
 pub function hkdf_expand(prk: string, info: string, length: i32): string {
-    return string_from_bytes(__hkdf_expand(__str_to_bytes(prk), __str_to_bytes(info), length));
+    return string_from_bytes_unchecked(__hkdf_expand(__str_to_bytes(prk), __str_to_bytes(info), length));
 }
 
 // hkdf_sha256(salt, ikm, info, length) — the one-shot extract-then-
 // expand: derive `length` bytes of keying material from `ikm`.
 pub function hkdf_sha256(salt: string, ikm: string, info: string, length: i32): string {
-    return string_from_bytes(__hkdf_expand(__hkdf_extract(__str_to_bytes(salt), __str_to_bytes(ikm)), __str_to_bytes(info), length));
+    return string_from_bytes_unchecked(__hkdf_expand(__hkdf_extract(__str_to_bytes(salt), __str_to_bytes(ikm)), __str_to_bytes(info), length));
 }
 
 // hkdf_sha256_hex — the one-shot HKDF as a lowercase hex string.

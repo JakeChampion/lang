@@ -87,18 +87,18 @@ pub function utf8_encode(ch: char): string {
     if (c < 0 || c > 1114111 || (c >= 55296 && c <= 57343)) { c = 65533; }  // U+FFFD
     if (c < 128) {
         var one: u8[] = [c as u8];
-        return string_from_bytes(one);
+        return string_from_bytes_unchecked(one);
     }
     if (c < 2048) {
         var two: u8[] = [(192 + (c >> 6)) as u8, (128 + (c & 63)) as u8];
-        return string_from_bytes(two);
+        return string_from_bytes_unchecked(two);
     }
     if (c < 65536) {
         var three: u8[] = [(224 + (c >> 12)) as u8, (128 + ((c >> 6) & 63)) as u8, (128 + (c & 63)) as u8];
-        return string_from_bytes(three);
+        return string_from_bytes_unchecked(three);
     }
     var four: u8[] = [(240 + (c >> 18)) as u8, (128 + ((c >> 12) & 63)) as u8, (128 + ((c >> 6) & 63)) as u8, (128 + (c & 63)) as u8];
-    return string_from_bytes(four);
+    return string_from_bytes_unchecked(four);
 }
 
 // `codepoints(s)` — decode the whole string to its sequence of
@@ -197,6 +197,31 @@ pub function is_valid_utf8(s: string): boolean {
         }
     }
     return true;
+}
+
+// `from_bytes(b)` — the validating bytes-to-string constructor: the
+// string those bytes spell, or None when they are not well-formed
+// UTF-8. This is the boundary decision D9 (#5634) names — the one place
+// bytes arriving from outside the program (a file, a socket, an
+// environment variable, an FFI return) become text.
+//
+// Its unchecked sibling is the `string_from_bytes_unchecked` builtin,
+// whose contract is that the *caller* already knows the bytes are
+// well-formed. Reach for that one only when validity holds by
+// construction — assembling digits, emitting ASCII you just built,
+// re-encoding a scalar you already validated, or transforming the bytes
+// of a string you were handed. Reach for this one whenever the bytes
+// came from outside.
+//
+// Deliberately ordinary Fern rather than a builtin: the `Option` box is
+// built by normal lowering, so no backend has to learn to box an enum
+// for it. The transiently-unchecked string never escapes — it is either
+// returned inside `Some` after passing the same strict scan
+// `is_valid_utf8` applies, or dropped.
+pub function from_bytes(b: u8[]): Option[string] {
+    var s: string = string_from_bytes_unchecked(b);
+    if (is_valid_utf8(s)) { return Some(s); }
+    return None;
 }
 
 // `encode_all(cps)` — concatenate the UTF-8 encodings of a codepoint

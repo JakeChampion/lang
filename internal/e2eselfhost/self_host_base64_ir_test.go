@@ -13,7 +13,7 @@ import (
 // single-module trick the std/json / std/hex self-host tests use) through the
 // self-host IR path on x86-64 + wasm, confirming `base64_encode` / `base64_decode`
 // lower end-to-end. Like std/hex, std/base64 builds on `__alloc_u8` + `.with` +
-// bit ops + `string_from_bytes` (unblocked on wasm by the recent helper-gate fix).
+// bit ops + `string_from_bytes_unchecked` (unblocked on wasm by the recent helper-gate fix).
 //
 // Each case is oracle-checked against the interpreter, routing-pinned to "ir", and
 // returns a non-negative value <= 126 (cf. #2908).

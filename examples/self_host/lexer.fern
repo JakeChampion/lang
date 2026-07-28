@@ -451,7 +451,7 @@ function apply_escape(l: Lex, esc: i32): EscResult {
         var b: i32 = hex_val(l.src[l.i]) * 16 + hex_val(l.src[l.i + 1]);
         l = l.advance();
         l = l.advance();
-        return EscResult { lex: l, frag: string_from_bytes([b]), hexerr: false, unknown: false };
+        return EscResult { lex: l, frag: string_from_bytes_unchecked([b]), hexerr: false, unknown: false };
     }
     return EscResult { lex: l, frag: "", hexerr: false, unknown: true };
 }

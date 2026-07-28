@@ -415,7 +415,7 @@ function type_of_expr(e: parser.Expr, s: BState): string {
                     if (cid.name == "map_new_i32") { return "Map"; }
                     if (cid.name == "map_new") { return "SMap"; }
                     if (cid.name == "cell_new") { return "cell"; }
-                    if (cid.name == "string_from_bytes") { return "string"; }
+                    if (cid.name == "string_from_bytes_unchecked") { return "string"; }
                     // A call's result has the callee's declared return type
                     // (seeded "gfn:<ret>"). So a struct-returning `foo().field`
                     // resolves, a string-returning call's `.len()` dispatches,
@@ -891,13 +891,13 @@ function build_expr(e: parser.Expr, s: BState): BState {
                         var sqargs: i32[] = [sqa, sqb];
                         return s.emit(SInst { kind_tag: 18, result: s.cur_id(), args: sqargs, imm: 0, str: "" });
                     }
-                    // string_from_bytes(bs) builds a string from an i32 byte
+                    // string_from_bytes_unchecked(bs) builds a string from an i32 byte
                     // array. A string and a byte array share the same length-
                     // prefixed layout, so this is a full-array copy: slice the
                     // whole input (__ssa_arr_slice(bs, 0, bs.len())) into a fresh
                     // array, which IS the resulting string. type_of_expr types
                     // the result "string" so .len() / concat dispatch.
-                    if (cid.name == "string_from_bytes" && c.args.len() == 1) {
+                    if (cid.name == "string_from_bytes_unchecked" && c.args.len() == 1) {
                         s = build_expr(c.args[0], s);
                         if (!s.ok) { return s; }
                         var sbarr: i32 = s.cur_id();

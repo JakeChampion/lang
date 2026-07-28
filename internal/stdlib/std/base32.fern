@@ -48,7 +48,7 @@ pub function base32_encode(s: string): string {
     while (out.len() % 8 != 0) {
         out = out.append(61 as u8);   // '='
     }
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }
 
 // `base32_decode(s)` — inverse of base32_encode. Lenient: stops at the
@@ -75,7 +75,7 @@ pub function base32_decode(s: string): string {
         }
         i = i + 1;
     }
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }
 
 // `base32_decode_strict(s)` — like `base32_decode` but returns `None` on
@@ -135,5 +135,5 @@ pub function base32_decode_strict(s: string): Option[string] {
         }
         i = i + 1;
     }
-    return Some(string_from_bytes(buf));
+    return Some(string_from_bytes_unchecked(buf));
 }

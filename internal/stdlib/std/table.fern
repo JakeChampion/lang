@@ -31,7 +31,7 @@ function __tbl_pad(s: string, width: i32): string {
         out = out.append(32 as u8);
         p = p + 1;
     }
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }
 
 // __tbl_widths returns the per-column max code-point width across `rows`.
@@ -107,7 +107,7 @@ pub function render_with_header(headers: string[], rows: string[][]): string {
         var dashes: u8[] = [];
         var d: i32 = 0;
         while (d < widths[c]) { dashes = dashes.append(45 as u8); d = d + 1; }   // '-'
-        rule = rule.append(string_from_bytes(dashes));
+        rule = rule.append(string_from_bytes_unchecked(dashes));
         c = c + 1;
     }
     lines = lines.append(__tbl_row(rule, widths));

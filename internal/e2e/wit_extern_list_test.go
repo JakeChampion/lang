@@ -41,7 +41,7 @@ function main(): i32 {
 	// A heap allocation before the extern call leaves the bump cursor at an
 	// odd offset, so the wrapper's return area must be aligned (regression
 	// guard for the canonical "pointer not aligned" trap).
-	var pad: string = string_from_bytes([65 as u8]);
+	var pad: string = string_from_bytes_unchecked([65 as u8]);
 	var s: string = rand_bytes(16 as u64);
 	if (pad.len() == 1 && s.len() == 16) { write("len-ok"); } else { write("len-bad"); }
 	return 0;
@@ -118,7 +118,7 @@ function rand_bytes(n: u64): u8[];
 
 function main(): i32 {
 	// Heap-misaligning pre-alloc (return-area alignment guard).
-	var pad: string = string_from_bytes([65 as u8]);
+	var pad: string = string_from_bytes_unchecked([65 as u8]);
 	var a: u8[] = rand_bytes(16 as u64);
 	if (pad.len() == 1 && a.len() == 16) { write("arr-ok"); } else { write("arr-bad"); }
 	return 0;

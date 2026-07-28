@@ -13,12 +13,12 @@ import (
 // a `Map[string, string[]]` (duplicate keys accumulate) — through the self-host
 // IR path on x86-64 + wasm, completing the std/url audit (after url_codec +
 // url_parse). The single-program driver resolves no imports and treats `Map { }`
-// + `string_from_bytes` as self-host builtins, so `query_parse` + `url_decode`
+// + `string_from_bytes_unchecked` as self-host builtins, so `query_parse` + `url_decode`
 // are inlined; this verifies the constructs it lowers to compile on the IR path:
 // a `Map[string, string[]]` (string keys, string-ARRAY values) built via
 // `Map {}` / `.get` / `.insert`, the append-or-create idiom over the map's
 // `string[]` value, `Option[string[]]` `Some`/`None` `match`, `url_decode`'s
-// `u8[]` + `string_from_bytes`, and byte scanning. Each program returns a small
+// `u8[]` + `string_from_bytes_unchecked`, and byte scanning. Each program returns a small
 // deterministic int (kept <= 126), pinned to the `"ir"` path; expectations are
 // hardcoded, verified against the native interp + x86-64 backends. The
 // `dup-keys` case (append to an existing `string[]` map value) is the #3495
@@ -43,7 +43,7 @@ function url_decode(s: string): string {
         if (b == 37 && i + 2 < n) {
             var h1: i32 = url_hex_val(s[i+1]);
             var h2: i32 = url_hex_val(s[i+2]);
-            if (h1 >= 0 && h2 >= 0) { var by: u8[] = [((h1 << 4) | h2) as u8]; emit = string_from_bytes(by); consumed = 3; }
+            if (h1 >= 0 && h2 >= 0) { var by: u8[] = [((h1 << 4) | h2) as u8]; emit = string_from_bytes_unchecked(by); consumed = 3; }
         }
         out = out + emit;
         i = i + consumed;

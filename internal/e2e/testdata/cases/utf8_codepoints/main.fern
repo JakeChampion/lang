@@ -39,11 +39,11 @@ function main(): i32 {
     if (mix.codepoint_count() != mix.codepoints().len()) { print("count/len mismatch FAILED"); return 1; }
 
     // Ill-formed bytes substitute exactly one U+FFFD and resume.
-    var bad: char[] = string_from_bytes([255 as u8, 66 as u8]).codepoints();   // invalid lead, then 'B'
+    var bad: char[] = string_from_bytes_unchecked([255 as u8, 66 as u8]).codepoints();   // invalid lead, then 'B'
     if (bad.len() != 2 || (bad[0] as i32) != 65533 || (bad[1] as i32) != 66) { print("bad-lead FAILED"); return 1; }
-    var trunc: char[] = string_from_bytes([226 as u8]).codepoints();           // truncated 3-byte lead
+    var trunc: char[] = string_from_bytes_unchecked([226 as u8]).codepoints();           // truncated 3-byte lead
     if (trunc.len() != 1 || (trunc[0] as i32) != 65533) { print("truncated FAILED"); return 1; }
-    var stray: char[] = string_from_bytes([65 as u8, 191 as u8, 66 as u8]).codepoints(); // 'A', stray cont, 'B'
+    var stray: char[] = string_from_bytes_unchecked([65 as u8, 191 as u8, 66 as u8]).codepoints(); // 'A', stray cont, 'B'
     if (stray.len() != 3 || (stray[0] as i32) != 65 || (stray[1] as i32) != 65533 || (stray[2] as i32) != 66) { print("stray-cont FAILED"); return 1; }
 
     // Surrogates and out-of-range sanitise to U+FFFD on encode.

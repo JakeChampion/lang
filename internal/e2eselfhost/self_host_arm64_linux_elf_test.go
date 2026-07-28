@@ -76,7 +76,7 @@ function main(): i32 {
     var entry_off: i32 = arm64_asm_label_off(pa2, "_start");
     if (entry_off < 0) { entry_off = 0; }
     var bin: i32[] = elf_image_wx(pa2.code, p.data, elf_em_aarch64(), entry_off, p.bss_size);
-    write(string_from_bytes(to_u8(bin)));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `
@@ -106,7 +106,7 @@ function main(): i32 {
     var entry_off: i32 = arm64_asm_label_off(pa2, "_start");
     if (entry_off < 0) { entry_off = 0; }
     var bin: i32[] = elf_image_pie(pa2.code, p.data, elf_em_aarch64(), entry_off, p.bss_size);
-    write(string_from_bytes(to_u8(bin)));
+    write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
 `

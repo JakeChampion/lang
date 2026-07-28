@@ -187,7 +187,7 @@ function main(): i32 {
     a = arm64_asm_resolve(a);
     var none: i32[] = [];
     var bin: i32[] = macho_static_executable(a.code, none, "fern");
-    write(string_from_bytes(bin));
+    write(string_from_bytes_unchecked(bin));
     return 0;
 }
 `

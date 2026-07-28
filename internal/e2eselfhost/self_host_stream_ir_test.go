@@ -22,7 +22,7 @@ import (
 // elements (`(u8[], Buf)`, `(Option[i32], Buf)`, `(Option[string], Buf)`),
 // tuple destructuring in `let` (`var (bytes, s2) = s.read_all();`), `u8[]`
 // `.append` build with `as u8` element casts, indexed byte reads with `as i32`,
-// the `string_from_bytes` builtin, `Option` `Some`/`None` with a payload-binding
+// the `string_from_bytes_unchecked` builtin, `Option` `Some`/`None` with a payload-binding
 // `match`, and the read_line CRLF/LF + unterminated-tail logic. Each program
 // returns a small deterministic int (<= 126), pinned to the `"ir"` path;
 // expectations are oracle-checked against the native interpreter. FEATURE-AUDIT
@@ -46,7 +46,7 @@ function (s: Buf) read_all(): (u8[], Buf) {
 }
 function (s: Buf) read_all_string(): (string, Buf) {
     var (bytes, s2) = s.read_all();
-    return (string_from_bytes(bytes), s2);
+    return (string_from_bytes_unchecked(bytes), s2);
 }
 function (s: Buf) read_byte(): (Option[i32], Buf) {
     if (s.pos >= s.data.len()) { return (None, s); }
@@ -76,14 +76,14 @@ function (s: Buf) read_line(): (Option[string], Buf) {
                     var stripped: u8[] = [];
                     var i: i32 = 0;
                     while (i < n - 1) { stripped = stripped.append(line_bytes[i]); i = i + 1; }
-                    return (Some(string_from_bytes(stripped)), Buf { ...s, pos: pos });
+                    return (Some(string_from_bytes_unchecked(stripped)), Buf { ...s, pos: pos });
                 }
             }
-            return (Some(string_from_bytes(line_bytes)), Buf { ...s, pos: pos });
+            return (Some(string_from_bytes_unchecked(line_bytes)), Buf { ...s, pos: pos });
         }
         line_bytes = line_bytes.append(b as u8);
     }
-    return (Some(string_from_bytes(line_bytes)), Buf { ...s, pos: pos });
+    return (Some(string_from_bytes_unchecked(line_bytes)), Buf { ...s, pos: pos });
 }
 `
 

@@ -12,7 +12,7 @@ import (
 // value under the two-word ABI, so its OpCallDirect emit must
 // push BOTH x0 (data ptr) and x1 (byte length). Before, the
 // table only listed `random_bytes` / `tcp_recv` /
-// `string_from_bytes` / `__str_slice` — `strbuf_take` went
+// `string_from_bytes_unchecked` / `__str_slice` — `strbuf_take` went
 // through the single-word path, the second-word store loaded
 // garbage from the stack as the string length, and any program
 // using strbuf (notably the asm self-host itself) silently

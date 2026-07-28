@@ -19,7 +19,7 @@ import (
 // array (`BW { ...w, data: … }`), `u8[]` `.append` build with `as u8` casts,
 // indexed string-byte reads (write_string's `s[i] as u8`, standing in for the
 // real module's `s.bytes()`, which is a std/string method the importless driver
-// has no import for), the `string_from_bytes` builtin (via `into_string`), and
+// has no import for), the `string_from_bytes_unchecked` builtin (via `into_string`), and
 // `.len()`. Each program
 // returns a small deterministic int (<= 126), pinned to the `"ir"` path;
 // expectations are oracle-checked against the native interpreter.
@@ -41,7 +41,7 @@ function (w: BW) write_bytes(bs: u8[]): BW {
 function (w: BW) write_byte(b: i32): BW { return BW { ...w, data: w.data.append(b as u8) }; }
 function (w: BW) len(): i32 { return w.data.len(); }
 function (w: BW) is_empty(): boolean { return w.data.len() == 0; }
-function (w: BW) into_string(): string { return string_from_bytes(w.data); }
+function (w: BW) into_string(): string { return string_from_bytes_unchecked(w.data); }
 function (w: BW) reset(): BW { var empty: u8[] = []; return BW { ...w, data: empty }; }
 `
 

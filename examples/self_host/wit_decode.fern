@@ -125,7 +125,7 @@ function wit_read_name(buf: i32[], pos: i32): NameR {
         bytes = bytes.append(buf[p + i] as u8);
         i = i + 1;
     }
-    return NameR { s: string_from_bytes(bytes), next: p + n };
+    return NameR { s: string_from_bytes_unchecked(bytes), next: p + n };
 }
 
 // wit_append_name appends a uleb-length-prefixed name.

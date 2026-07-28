@@ -15,7 +15,7 @@ import (
 // imports, so the two functions are inlined with their byte helpers; this
 // verifies the constructs the codec lowers to compile on the IR path: byte
 // classification, bit ops (`>>` / `&` / `<<` / `|`), `u8[]` array literals with
-// `as u8` element casts, and the `string_from_bytes(u8[])` builtin packing bytes
+// `as u8` element casts, and the `string_from_bytes_unchecked(u8[])` builtin packing bytes
 // into a string. Each program returns a small deterministic int (kept <= 126),
 // pinned to the `"ir"` path; expectations are hardcoded, verified against the
 // native interp + x86-64 backends. FEATURE-AUDIT std/url row.
@@ -38,7 +38,7 @@ function url_encode(s: string): string {
             var hi: i32 = (b >> 4) & 15;
             var lo: i32 = b & 15;
             var trip: u8[] = [37 as u8, url_hex_char(hi) as u8, url_hex_char(lo) as u8];
-            out = out + string_from_bytes(trip);
+            out = out + string_from_bytes_unchecked(trip);
         }
         i = i + 1;
     }
@@ -63,7 +63,7 @@ function url_decode(s: string): string {
             var h2: i32 = url_hex_val(s[i+2]);
             if (h1 >= 0 && h2 >= 0) {
                 var by: u8[] = [((h1 << 4) | h2) as u8];
-                emit = string_from_bytes(by);
+                emit = string_from_bytes_unchecked(by);
                 consumed = 3;
             }
         }

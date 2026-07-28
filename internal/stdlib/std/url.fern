@@ -75,7 +75,7 @@ pub function url_encode(s: string): string {
         }
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 pub function url_decode(s: string): string {
@@ -110,7 +110,7 @@ pub function url_decode(s: string): string {
         }
         pos = pos + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // form_decode is url_decode for `application/x-www-form-urlencoded`:
@@ -151,7 +151,7 @@ pub function form_decode(s: string): string {
         }
         pos = pos + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // form_encode is the inverse of form_decode: url_encode's
@@ -191,7 +191,7 @@ pub function form_encode(s: string): string {
         }
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 pub function url_parse(s: string): Option[Url] {
@@ -491,5 +491,5 @@ pub function query_encode(pairs: (string, string)[]): string {
         while (b < evl) { buf = buf.with(pos, ev[b] as u8); pos = pos + 1; b = b + 1; }
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }

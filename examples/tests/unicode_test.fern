@@ -152,7 +152,7 @@ function test_invalid_utf8_replaced(): test.TestOutcome {
     // utf8.codepoints uses — checked here because the case path decodes
     // independently of `codepoints`.
     var bad: u8[] = [65 as u8, 200 as u8, 66 as u8];
-    return test.assert_eq(unicode.to_lower(string_from_bytes(bad)), "a�b");
+    return test.assert_eq(unicode.to_lower(string_from_bytes_unchecked(bad)), "a�b");
 }
 
 function main(): i32 {

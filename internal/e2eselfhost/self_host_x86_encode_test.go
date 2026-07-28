@@ -213,7 +213,7 @@ func runX86NativeDriver(t *testing.T, name, driverMain string, wantExit int) {
 	}
 
 	// Stage 2: run the WAT under wasmtime; its stdout is the raw ELF binary
-	// the Fern program assembled and wrote via write(string_from_bytes(...)).
+	// the Fern program assembled and wrote via write(string_from_bytes_unchecked(...)).
 	bin, err := exec.Command("wasmtime", "run", watPath).Output()
 	if err != nil {
 		t.Fatalf("wasmtime run (driver): %v", err)
@@ -551,7 +551,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 60); // __NR_exit
     code = x86_syscall(code);
     var bin: i32[] = elf_static_executable_x86(code); // R+X, text-only
-    write(string_from_bytes(bin));
+    write(string_from_bytes_unchecked(bin));
     return 0;
 }
 `
@@ -577,7 +577,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 60);  // __NR_exit
     code = x86_syscall(code);
     var bin: i32[] = elf_static_executable_x86(code);
-    write(string_from_bytes(bin));
+    write(string_from_bytes_unchecked(bin));
     return 0;
 }
 `
@@ -606,7 +606,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 60);
     code = x86_syscall(code);
     var bin: i32[] = elf_static_executable_x86(code);
-    write(string_from_bytes(bin));
+    write(string_from_bytes_unchecked(bin));
     return 0;
 }
 `
@@ -631,7 +631,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 42); // setval: result = 42
     code = x86_ret(code);
     var bin: i32[] = elf_static_executable_x86(code);
-    write(string_from_bytes(bin));
+    write(string_from_bytes_unchecked(bin));
     return 0;
 }
 `
@@ -724,7 +724,7 @@ function main(): i32 {
     a.code = x86_ret(a.code);
     a = x86_resolve(a);
     var bin: i32[] = elf_static_executable_x86(a.code);
-    write(string_from_bytes(bin));
+    write(string_from_bytes_unchecked(bin));
     return 0;
 }
 `
@@ -753,7 +753,7 @@ function main(): i32 {
     code = x86_mov_r32_imm32(code, x86_rax(), 60);
     code = x86_syscall(code);
     var bin: i32[] = elf_static_executable_x86(code);
-    write(string_from_bytes(bin));
+    write(string_from_bytes_unchecked(bin));
     return 0;
 }
 `
@@ -777,7 +777,7 @@ function main(): i32 {
     a = x86_rodata_quad(a, 42, 0);                          // .quad 42
     a = x86_resolve(a);
     var bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
-    write(string_from_bytes(bin));
+    write(string_from_bytes_unchecked(bin));
     return 0;
 }
 `

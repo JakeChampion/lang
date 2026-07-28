@@ -10,7 +10,7 @@ import "std/io_buffered" as io;
 //   reset                                    (functional clear)
 //   chained builds                           (w.write(..).write(..) fluent form)
 // Each write returns a FRESH BytesWriter (immutable `{ ...w, data }` spread), so
-// this exercises struct-spread + u8[] append + string_from_bytes + chained
+// this exercises struct-spread + u8[] append + string_from_bytes_unchecked + chained
 // method dispatch — a distinct self-host shape. The Go-side suite unit-tests
 // these; this is the migration-shaped (pure-Fern, std/test-driven,
 // self-host-gated) companion.

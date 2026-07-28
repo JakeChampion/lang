@@ -3455,7 +3455,7 @@ func TestRunnerStringPreludeMigratedExample(t *testing.T) {
 		"# Suite: string prelude (migrated)",
 		"ok 6 - s.to_upper() returns HELLO",
 		"ok 7 - s.to_lower() returns hello",
-		"ok 8 - string_from_bytes(s.bytes()) round-trips",
+		"ok 8 - string_from_bytes_unchecked(s.bytes()) round-trips",
 		"# pass 8",
 		"# fail 0",
 	} {

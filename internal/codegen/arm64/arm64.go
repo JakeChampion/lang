@@ -248,7 +248,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// `TestDifferential_LangsmithMain`'s seed-level
 	// `t.Parallel` lets one arm64 emit's `defer` restore the
 	// flag to false while another arm64 emit was still in
-	// flight — producing single-word string_from_bytes /
+	// flight — producing single-word string_from_bytes_unchecked /
 	// strcat helpers inside a program the rest of the
 	// codegen built for two-word strings, and SIGSEGV on
 	// the first string op.
@@ -3396,14 +3396,14 @@ func (g *generator) emitAllocU8Runtime() {
 	g.line(".ltorg")
 }
 
-// emitStringFromBytesRuntime emits `string_from_bytes(bs)` —
+// emitStringFromBytesRuntime emits `string_from_bytes_unchecked(bs)` —
 // copy a `u8[]` payload into a fresh length-prefixed string.
 // Round-trip companion to `s.bytes()`.
 func (g *generator) emitStringFromBytesRuntime() {
 	g.line("")
-	g.line(".global string_from_bytes")
-	g.typeDirective("string_from_bytes")
-	g.label("string_from_bytes")
+	g.line(".global string_from_bytes_unchecked")
+	g.typeDirective("string_from_bytes_unchecked")
+	g.label("string_from_bytes_unchecked")
 	if ast.UseTwoWordStrings(8) {
 		// Two-word ABI: take `bs` (u8[] data pointer) in x0,
 		// return `(data, len)` in (x0, x1).
@@ -3440,7 +3440,7 @@ func (g *generator) emitStringFromBytesRuntime() {
 		g.emit("ldp x19, x20, [sp, #16]")
 		g.emit("ldp x29, x30, [sp], #48")
 		g.emit("ret")
-		g.sizeDirective("string_from_bytes")
+		g.sizeDirective("string_from_bytes_unchecked")
 		g.line(".ltorg")
 		return
 	}
@@ -3489,7 +3489,7 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #64")
 	g.emit("ret")
-	g.sizeDirective("string_from_bytes")
+	g.sizeDirective("string_from_bytes_unchecked")
 	g.line(".ltorg")
 }
 
@@ -3731,7 +3731,7 @@ func (g *generator) emitEnvRuntime() {
 		// owned rc string dropped via __fern_str_dec, which reads
 		// that header. A plain __fern_alloc buffer has none, so the
 		// drop reads garbage and corrupts the heap — the same arm64
-		// two-word bug as string_from_bytes (#2817). Length lives in
+		// two-word bug as string_from_bytes_unchecked (#2817). Length lives in
 		// the box len@16 word, so no length prefix is needed.
 		g.emit("mov x0, x2")
 		g.emit("bl __fern_alloc_rc1")
@@ -5407,7 +5407,7 @@ func (g *generator) emitReadLineRuntime() {
 		// data-8, payload size at data-4): the returned Some(string)
 		// is dropped via __fern_str_dec, which reads that header. A
 		// plain __fern_alloc buffer has none — same arm64 two-word
-		// heap-corruption as string_from_bytes (#2817). Length lives
+		// heap-corruption as string_from_bytes_unchecked (#2817). Length lives
 		// in the box len@16 word, so no length prefix is needed.
 		g.emit("mov x0, x20")
 		g.emit("bl __fern_alloc_rc1")
@@ -9085,7 +9085,7 @@ func returnIsString(g *generator, name string) bool {
 		// (e.g. for OpReturn of an aliased string). __fern_str_dec
 		// is deliberately absent — it returns only `data` (x0).
 		return true
-	case "random_bytes", "tcp_recv", "string_from_bytes", "__str_slice", "strbuf_take":
+	case "random_bytes", "tcp_recv", "string_from_bytes_unchecked", "__str_slice", "strbuf_take":
 		// Built-in runtime helpers that return string directly.
 		// NOT in this list: `env` / `read_file` / `read_line` /
 		// `__method_Reader_read_line` / etc — those return
@@ -9199,7 +9199,7 @@ func (g *generator) emitStrLen(dstW, srcX string) {
 // little-endian length prefix at `[dstX - 4]`, where dstX is the
 // new string's *data pointer* (one past the prefix). Inverse of
 // emitStrLen and the second half of the SSO encoding seam:
-// strcat / str_slice / string_from_bytes / random_bytes / env /
+// strcat / str_slice / string_from_bytes_unchecked / random_bytes / env /
 // read_file / tcp_recv / Reader.read_chunk all materialise a
 // fresh string and write its length through this one site, so
 // future encoding changes that affect string construction (e.g.
@@ -9243,7 +9243,7 @@ func (g *generator) emitStrDataPtr(dstX, srcX string, scratchOff int) {
 // as a length-prefixed string with length=0, shared across all
 // callers and the entire program lifetime. Used by the string-
 // constructing runtime helpers (strcat / str_slice /
-// string_from_bytes) to short-circuit the alloc + memcpy + length-
+// string_from_bytes_unchecked) to short-circuit the alloc + memcpy + length-
 // store sequence when the result is zero bytes — the helpers
 // already round-trip through emitStrLenStore / emitStrLen, so the
 // returned pointer is indistinguishable from a freshly allocated
@@ -9379,7 +9379,7 @@ func (g *generator) emitStrDataPtr2W(dstX, dataX, lenX string, scratchOff int) {
 // arrays may diverge from strings under future layout changes
 // (inline u8[], typed-element headers, etc.). Used by
 // __alloc_u8's siblings, the __arr_idx bounds checks (where
-// they exist), and string_from_bytes's input length read.
+// they exist), and string_from_bytes_unchecked's input length read.
 func (g *generator) emitArrayLen(dstW, srcX string) {
 	g.emit("ldur %s, [%s, #-4]", dstW, srcX)
 }
@@ -10990,7 +10990,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__alloc_u8":
 			g.usesAllocU8 = true
 			g.usesAlloc = true
-		case "string_from_bytes":
+		case "string_from_bytes_unchecked":
 			g.usesStringFromBytes = true
 			g.usesAlloc = true
 			g.usesMemcpy = true

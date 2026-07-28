@@ -1890,7 +1890,7 @@ function main(): i32 {
 	}
 }
 
-// `s.bytes(): u8[]` and the inverse `string_from_bytes(bs)`.
+// `s.bytes(): u8[]` and the inverse `string_from_bytes_unchecked(bs)`.
 // Round-trip should preserve content and length.
 func TestWASMStringBytes(t *testing.T) {
 	src := `
@@ -1907,14 +1907,14 @@ function main(): i32 {
     // Mutating the bytes shouldn't affect the source string.
     bs = bs.with(0, 72); // 'H'
     if (s != "hello") { return 7; }
-    var s2: string = string_from_bytes(bs);
+    var s2: string = string_from_bytes_unchecked(bs);
     if (s2 != "Hello") { return 8; }
     if (s2.len() != 5) { return 9; }
     // Empty string round-trip.
     var es: string = "";
     var ebs: u8[] = es.bytes();
     if (ebs.len() != 0) { return 10; }
-    if (string_from_bytes(ebs) != "") { return 11; }
+    if (string_from_bytes_unchecked(ebs) != "") { return 11; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -2139,7 +2139,7 @@ function near(actual: f64, expected: f64, eps: f64): boolean {
 // round-trips set + get + has + delete + update + miss across
 // a mix of inline-form ASCII keys, integer-formatted keys (the
 // canonical cascade through `int_to_string` →
-// `$string_from_bytes` inline output), and a longer heap-form
+// `$string_from_bytes_unchecked` inline output), and a longer heap-form
 // key for the bucket-collision dispatch path.
 func TestWASMMapStringKeysInlineSSO(t *testing.T) {
 	src := `
@@ -4781,7 +4781,7 @@ func TestWASMStringConcatPreservesContent(t *testing.T) {
 
 // runWasmExpectingTrap compiles src, runs the component, and
 // Empty-string sentinel: concat-of-empties, zero-width slices and
-// zero-length string_from_bytes all return the shared static
+// zero-length string_from_bytes_unchecked all return the shared static
 // sentinel rather than allocating a fresh 0-byte buffer. The test
 // pin is behavioural — `len()` returns 0 for the result, the
 // result compares equal to "" via the string-eq runtime, and a
@@ -4836,11 +4836,11 @@ func TestWASMEmptyU8Sentinel(t *testing.T) {
 func TestWASMEmptyStringSentinelFromBytes(t *testing.T) {
 	src := `function main(): i32 {
 		var bs: u8[] = __alloc_u8(0);
-		var s: string = string_from_bytes(bs);
+		var s: string = string_from_bytes_unchecked(bs);
 		return s.len();
 	}`
 	if got := runWasm(t, src); got != 0 {
-		t.Errorf("got %d, want 0 (string_from_bytes of empty u8[])", got)
+		t.Errorf("got %d, want 0 (string_from_bytes_unchecked of empty u8[])", got)
 	}
 }
 

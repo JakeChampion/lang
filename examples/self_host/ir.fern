@@ -290,7 +290,7 @@ pub function op_arr_push_f64(): Op { return op0("arr_push_f64"); }
 // zeroed (a reused freelist block keeps stale bytes — callers zero explicitly).
 pub function op_alloc_u8(): Op { return op0("alloc_u8"); }
 // `str_from_bytes` pops [arr] → a fresh string box packing each slot's low byte
-// via __fern_string_from_bytes (the `string_from_bytes(arr)` builtin).
+// via __fern_string_from_bytes (the `string_from_bytes_unchecked(arr)` builtin).
 pub function op_str_from_bytes(): Op { return op0("str_from_bytes"); }
 // `memcpy` pops [dst, src, n] (raw usize pointers + a byte count) → copies n
 // bytes src→dst and pushes a dummy 0 (the `__memcpy(dst, src, n)` builtin is

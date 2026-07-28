@@ -308,7 +308,7 @@ function main(): i32 {
 
 // x86-64 small-string-optimisation (tagged-pointer inline).
 // Strings of length 1..7 produced by __fern_strcat / __str_slice /
-// string_from_bytes ride in a 64-bit register (LSB tag = 1, bits
+// string_from_bytes_unchecked ride in a 64-bit register (LSB tag = 1, bits
 // 1..3 = length, bytes 1..7 = data) rather than being allocated
 // on the heap. Verified behaviourally: every consumer of the
 // resulting string still sees the correct length and bytes,
@@ -381,13 +381,13 @@ func TestX86_64SsoInline(t *testing.T) {
     if (c == "abcDEF") { return 1; }
     return 0;
 }`, 1},
-		// string_from_bytes: u8[] → string. Inline when ≤ 7.
+		// string_from_bytes_unchecked: u8[] → string. Inline when ≤ 7.
 		{"sfb-inline", `function main(): i32 {
     var bs: u8[] = __alloc_u8(3);
     bs = bs.with(0, 65 as u8); // 'A'
     bs = bs.with(1, 66 as u8); // 'B'
     bs = bs.with(2, 67 as u8); // 'C'
-    var s: string = string_from_bytes(bs);
+    var s: string = string_from_bytes_unchecked(bs);
     if (s == "ABC") { return 1; }
     return 0;
 }`, 1},
@@ -422,7 +422,7 @@ function main(): i32 {
 }
 
 // x86-64 empty-string sentinel: the string-constructing runtime
-// helpers (__fern_strcat, __str_slice, string_from_bytes) skip
+// helpers (__fern_strcat, __str_slice, string_from_bytes_unchecked) skip
 // the alloc + memcpy and return the shared .LStr_Empty sentinel
 // when the result length is 0. Verified behaviourally — mirrors
 // the arm64 + wasm tests of the same shape.
@@ -442,7 +442,7 @@ func TestX86_64EmptyU8Sentinel(t *testing.T) {
 }`, 0},
 		{"string-from-empty-bytes", `function main(): i32 {
     var bs: u8[] = __alloc_u8(0);
-    var s: string = string_from_bytes(bs);
+    var s: string = string_from_bytes_unchecked(bs);
     return s.len();
 }`, 0},
 		{"to-lower-empty-string", `
@@ -477,7 +477,7 @@ func TestX86_64EmptyStringSentinel(t *testing.T) {
 }`, 0},
 		{"from-empty-bytes", `function main(): i32 {
     var bs: u8[] = __alloc_u8(0);
-    return (string_from_bytes(bs)).len();
+    return (string_from_bytes_unchecked(bs)).len();
 }`, 0},
 		{"sentinel-roundtrip", `function main(): i32 {
     var s: string = "world";

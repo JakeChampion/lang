@@ -82,7 +82,7 @@ pub function (s: string) repeat(n: i32): string {
         }
         k = k + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `s.starts_with(prefix)` / `s.ends_with(suffix)` /
@@ -218,7 +218,7 @@ pub function (s: string) to_ascii_capitalize(): string {
     if (first == s[0]) { return s; }
     var buf: u8[] = __alloc_u8(1);
     buf = buf.with(0, first as u8);
-    return string_from_bytes(buf) + s[1:n];
+    return string_from_bytes_unchecked(buf) + s[1:n];
 }
 
 // `s.capitalize()` — uppercase the first CODE POINT, leave the
@@ -291,7 +291,7 @@ pub function (s: string) escape_html(): string {
         else              { buf = buf.with(pos, s[i] as u8); pos = pos + 1; }
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `s.strip_quotes()` — if s starts and ends with the same
@@ -401,7 +401,7 @@ pub function (s: string) escape_c(): string {
         else               { buf = buf.with(pos, s[i] as u8); pos = pos + 1; }
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `(s: string) escape_shell()` — POSIX-shell-safe quoting.
@@ -459,7 +459,7 @@ function __case_separator(s: string, sep_byte: i32): string {
         pos = pos + 1;
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `(s: string) camel_case()` / `pascal_case()` — the inverse of
@@ -526,7 +526,7 @@ function __case_join(s: string, upper_first: boolean): string {
             i = i + 1;
         }
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `(s: string) slugify()` — turn arbitrary text into a URL slug: lower-
@@ -560,7 +560,7 @@ pub function (s: string) slugify(): string {
         }
         i = i + 1;
     }
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }
 
 // `s.is_valid_identifier()` — true if s matches lang's /
@@ -899,7 +899,7 @@ pub function (s: string) shift_byte(delta: i32): string {
         buf = buf.with(i, b as u8);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `__byte_in_set(b, set)` — true iff byte `b` appears anywhere
@@ -941,7 +941,7 @@ pub function (s: string) without_chars(set: string): string {
         out = out.with(k, buf[k]);
         k = k + 1;
     }
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }
 
 // `s.contains_only(set)` — true if every byte in s is in
@@ -1000,7 +1000,7 @@ pub function (s: string) replace_byte(from: i32, to: i32): string {
         if (b == from) { buf = buf.with(i, to as u8); } else { buf = buf.with(i, b as u8); }
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `s.to_acronym()` — first byte of each whitespace-
@@ -1046,7 +1046,7 @@ pub function (s: string) to_ascii_title_case(): string {
         prev_space = (b == 32);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `s.title_case()` — uppercase the first code point of every
@@ -1265,7 +1265,7 @@ pub function (s: string) indent(prefix: string): string {
         }
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `s.dedent()` — remove the longest common leading-whitespace prefix
@@ -1490,7 +1490,7 @@ function __string_case_fold(s: string, srcBase: i32, dstBase: i32): string {
         buf = buf.with(i, b as u8);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `s.to_ascii_lower()` / `s.to_ascii_upper()` — the ASCII fast path,
@@ -1572,7 +1572,7 @@ pub function (s: string) to_ascii_swap_case(): string {
         buf = buf.with(i, b as u8);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `s.swap_case()` — toggle the case of every code point: uppercase
@@ -1895,7 +1895,7 @@ pub function (s: string) pad_start(n: i32, ch: string): string {
     while (i < need) { buf = buf.with(i, c as u8); i = i + 1; }
     var j: i32 = 0;
     while (j < sl) { buf = buf.with(need + j, s[j] as u8); j = j + 1; }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 pub function (s: string) pad_end(n: i32, ch: string): string {
@@ -1911,7 +1911,7 @@ pub function (s: string) pad_end(n: i32, ch: string): string {
     while (j < sl) { buf = buf.with(j, s[j] as u8); j = j + 1; }
     var i: i32 = 0;
     while (i < need) { buf = buf.with(sl + i, c as u8); i = i + 1; }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `s.zfill(width)` — left-pad a NUMERIC string with `'0'` to at least `width`
@@ -1937,7 +1937,7 @@ pub function (s: string) zfill(width: i32): string {
     while (z < need) { buf = buf.with(pos, 48 as u8); pos = pos + 1; z = z + 1; }  // '0'
     var j: i32 = body_start;
     while (j < sl) { buf = buf.with(pos, s[j] as u8); pos = pos + 1; j = j + 1; }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `s.split_once(sep)` — splits at the FIRST occurrence of
@@ -2377,7 +2377,7 @@ pub function string_from_codepoint(ch: char): string {
     var c: i32 = __utf8_sanitise(ch as i32);
     var buf: u8[] = __alloc_u8(__utf8_encoded_len(c));
     buf = __utf8_put(buf, 0, c);
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `string_from_codepoints(cps)` — UTF-8 string for a codepoint array (each
@@ -2402,7 +2402,7 @@ pub function string_from_codepoints(cps: char[]): string {
         pos = pos + __utf8_encoded_len(c);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `s.reverse_bytes()` — fresh string with the byte order
@@ -2420,7 +2420,7 @@ pub function (s: string) reverse_bytes(): string {
         buf = buf.with(i, s[n - 1 - i] as u8);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `s.count(sub)` — number of non-overlapping occurrences of
@@ -2601,7 +2601,7 @@ pub function (s: string) repeat_with_sep(n: i32, sep: string): string {
         }
         k = k + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `s.replace(old, new)` — substitutes every
@@ -2657,7 +2657,7 @@ pub function (s: string) replace(old: string, new: string): string {
         pos = pos + 1;
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `(s: string) parse_bool()` — accepts the canonical
@@ -2977,7 +2977,7 @@ pub function (s: string) parse_float(): Option[f64] {
         var out: u8[] = [];
         var j: i32 = lo;
         while (j <= hi) { out = out.append(db[j]); j = j + 1; }
-        dig = string_from_bytes(out);
+        dig = string_from_bytes_unchecked(out);
     }
 
     var v: f64 = __decimal_to_f64(dig, k);
@@ -2997,7 +2997,7 @@ pub function repeat_char(ch: i32, n: i32): string {
         buf = buf.with(i, ch as u8);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `__is_ascii_ws(b)` — true for SP / TAB / LF / CR / VT / FF
@@ -3042,7 +3042,7 @@ pub function (s: string) without_byte(b: i32): string {
         out = out.with(k, buf[k]);
         k = k + 1;
     }
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }
 
 // `s.repeat_to(target)` — concatenate copies of s until the

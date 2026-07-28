@@ -21,7 +21,7 @@ import "std/utf8" as utf8;
 function mixed(): string {
     var b: u8[] = [65 as u8, 195 as u8, 169 as u8, 226 as u8, 130 as u8,
         172 as u8, 240 as u8, 159 as u8, 152 as u8, 128 as u8];
-    return string_from_bytes(b);
+    return string_from_bytes_unchecked(b);
 }
 
 function main(): i32 {

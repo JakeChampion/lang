@@ -168,7 +168,7 @@ function main(): i32 {
 // (`s.bytes()` / `s.as_bytes()` lower to `__memcpy(out as i32,
 // s.as_bytes() as i32, n)`; `s.to_lower()` / `s.to_upper()`
 // route through `__string_case_fold` which uses `__alloc_u8`
-// + `string_from_bytes`) all need to round-trip the
+// + `string_from_bytes_unchecked`) all need to round-trip the
 // String→Array conversion without leaning on a flat byte
 // address space. This test exercises every helper so a future
 // prelude rewrite that drops a builtin override would surface
@@ -189,7 +189,7 @@ function main(): i32 {
     if (ab[0] != 72) { return 5; }
     if (s.to_upper() != "HELLO") { return 6; }
     if (s.to_lower() != "hello") { return 7; }
-    var rt: string = string_from_bytes(s.bytes());
+    var rt: string = string_from_bytes_unchecked(s.bytes());
     if (rt != "Hello") { return 8; }
     print(rt);
     print(s.to_upper());

@@ -61,7 +61,7 @@ function main(): i32 {
     while (trial < 300) {
         state = lcg_next(state);
         var n: i32 = state % 48;
-        var s: string = string_from_bytes(gen_bytes(state, n));
+        var s: string = string_from_bytes_unchecked(gen_bytes(state, n));
 
         if (s.reverse_bytes().reverse_bytes() != s) {
             print("reverse_bytes involution FAILED at trial " + trial.to_string());
@@ -114,7 +114,7 @@ function main(): i32 {
         }
 
         // ASCII input: the Unicode entry points and the fold must agree.
-        var a: string = string_from_bytes(gen_ascii(state, n));
+        var a: string = string_from_bytes_unchecked(gen_ascii(state, n));
         if (a.to_lower() != a.to_ascii_lower()) {
             print("ascii to_lower agreement FAILED at trial " + trial.to_string());
             return 1;
