@@ -136,13 +136,25 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   `emit_ir_runtime` (asm_ir.fern:831–2897, ~2067 lines of hand-written bodies)
   and `emit_ir_runtime_fern_fn` (5327, IR-compiles the Fern runtime helpers via
   `emit_function_via_ir`). `asm.fern` imports `asm_ir`, not the reverse.
-- **arm64: NOT clean.** `emit_module_ir_unit_arm64` lives in **`asm_arm64.fern`**
-  (3968) and calls **`asm_arm64.emit_runtime`** (4480–9354, ~4870 lines) on the
-  entry unit. That `emit_runtime` compiles the Fern runtime helpers with the
-  **AST `emit_function`** (via `emit_runtime_fern_fn`, 31 interleaved call sites)
-  and uses the AST `emit_ldc` — so the arm64 IR path transitively depends on the
-  AST emitter. (`asm_arm64_ir.fern` — the arm64 IR *instruction selector*,
-  `emit_function_via_ir` — is already free of `asm_arm64`; the runtime is the gap.)
+- **arm64: partly untangled.** `emit_module_ir_unit_arm64` lives in
+  **`asm_arm64.fern`** (3968) and, on the entry unit, calls
+  **`asm_arm64.emit_runtime`** (~4870 lines). That `emit_runtime` compiles the
+  Fern runtime helpers with the **AST `emit_function`** (via
+  `emit_runtime_fern_fn`, 32 call sites) — so the arm64 IR path still
+  transitively depends on the AST emitter through that ONE `emit_runtime` call.
+  **First untangle step DONE (#3457 slice 4):** the IR-path-only reclaim/drop
+  bodies (`emit_arm64_reclaim_drop_bodies` + `_field_reclaim_one` /
+  `_struct_drop_one` / `_struct_arr_elems_drop_one`, ~350 lines) moved verbatim
+  from `asm_arm64.fern` to `asm_arm64_ir.fern` (byte-identical arm64 emit
+  verified), so the remaining coupling of `emit_module_ir_unit_arm64` to the AST
+  file is now just the single `emit_runtime` call. (`asm_arm64_ir.fern` — the
+  arm64 IR *instruction selector*, `emit_function_via_ir` — is free of
+  `asm_arm64`; the runtime is the remaining gap.) **Next:** give the arm64 IR
+  path its own `emit_ir_runtime_fern_fn` using `emit_function_via_ir` (a
+  near-verbatim port of x86 `asm_ir.fern:5609`) — a **behaviour-preserving, NOT
+  byte-preserving** change (AST `emit_function` and IR `emit_function_via_ir`
+  emit different bytes for the same helper), so it needs its own differential
+  validation, not the byte-identity gate.
 - **wasm: NOT clean, and larger.** `wasm_ir.fern` reuses `wasm.fern`'s WAT
   runtime extensively (heap/RC, `str_*_helpers`, `to_string_helpers`,
   `divrem_helpers`), and the per-module IR framing entry points
