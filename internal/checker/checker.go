@@ -5548,6 +5548,24 @@ func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope)
 
 	var overflow ast.Expr
 	switch {
+	case baseOp == "/" || baseOp == "%":
+		// Checked divide / remainder: `None` on a zero divisor, and for
+		// signed operands also on `MIN / -1` (the one overflowing
+		// division). `s` here is Fern's total `a / b` (0 on div-by-zero,
+		// MIN on MIN/-1) — never read on the None path, so computing it is
+		// harmless.
+		zero := bin("==", id(rN), num(0))
+		if unsigned {
+			overflow = zero
+		} else {
+			maxLit := int64(2147483647)
+			if t.NormalWidth() == 64 {
+				maxLit = 9223372036854775807
+			}
+			minExpr := bin("-", bin("-", num(0), num(maxLit)), num(1)) // 0 - MAX - 1
+			overflow = bin("||", zero,
+				bin("&&", bin("==", id(lN), minExpr), bin("==", id(rN), negOne)))
+		}
 	case unsigned && baseOp == "+":
 		overflow = bin("<", id(sN), id(lN))
 	case unsigned && baseOp == "-":
@@ -11563,12 +11581,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				n.IsUnsigned = !common.IsSigned()
 			}
 			return common
-		case "+?", "-?", "*?":
+		case "+?", "-?", "*?", "/?", "%?":
 			// Checked integer arithmetic (#5542): `Some(result)` when the
-			// exact result fits the operand type, `None` on overflow.
-			// Integer only — there is no float form and no composite
-			// overload — and it desugars to a block-expr over ordinary
-			// `Option`, `if`, and wrapping arithmetic, so every backend
+			// exact result fits the operand type, `None` on overflow —
+			// and, for `/?` / `%?`, on a zero divisor or the signed
+			// `MIN / -1`. Integer only — there is no float form and no
+			// composite overload — and it desugars to a block-expr over
+			// ordinary `Option`, `if`, and arithmetic, so every backend
 			// (interp + all codegen) lowers it for free via CheckedLowered.
 			c.requireInteger(n.P, lt, n.Op)
 			c.requireInteger(n.P, rt, n.Op)

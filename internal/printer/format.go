@@ -1089,7 +1089,7 @@ func binaryPrec(op string) int {
 		return precShift
 	case "+", "-", "+|", "-|", "+?", "-?":
 		return precAdd
-	case "*", "/", "%", "*|", "*?":
+	case "*", "/", "%", "*|", "*?", "/?", "%?":
 		return precMul
 	}
 	return precLowest
