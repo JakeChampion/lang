@@ -158,7 +158,7 @@ function main(): i32 {
     var all_strs: string[] = concat_strs(strs_a, strs_b);
     var rc_bodies: string = wasm.emit_ir_rc_bodies_from(im, frt, sdt, aet, wasm_ir.heap_base_for_strs(all_strs));
 
-    write(wasm.emit_ir_module_units(
+    write(wasm_ir.emit_ir_module_units(
         ["", "$u1"],
         [unit_a, unit_b],
         all_strs, [strs_a.len(), strs_b.len()],
