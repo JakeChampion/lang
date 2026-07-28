@@ -50,6 +50,27 @@ func eraseSurfaceTypes(prog *ast.Program, info *checker.Info) {
 			// they have no lowering for.
 			x.Target = eraseStr(x.Target)
 			x.InnerType = eraseStr(x.InnerType)
+		case *ast.ArrayLit:
+			// The checker stamps the settled element type here and the
+			// array lowering reads it. Leaving `str` unerased made the
+			// elements of a `str[]` literal miss the refcount increment
+			// an owned `string` element gets — a view is borrowed, so the
+			// lowering skips it — and the array then held pointers whose
+			// storage was freed underneath it (#5695). Silently wrong on
+			// x86-64, a segfault on arm64.
+			//
+			// Only `str` is rewritten, NOT the whole surface set: `char`
+			// classifies at pointer width here, every other stride site
+			// for a `char[]` agrees with that, and erasing it to i32
+			// narrows the stride to 4 at this site alone — which breaks
+			// `char[]` exactly the way this fixes `str[]`.
+			x.ElemType = eraseStrViewOnly(x.ElemType)
+		case *ast.Index:
+			// Same slot on the read side: the element load has to agree
+			// with how the literal above stored them.
+			x.ElemType = eraseStrViewOnly(x.ElemType)
+		case *ast.SliceExpr:
+			x.ElemType = eraseStrViewOnly(x.ElemType)
 		}
 		return true
 	})
@@ -132,6 +153,33 @@ func eraseStr(t ast.Type) ast.Type {
 			args[i] = eraseStr(x.Args[i])
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
+	}
+	return t
+}
+
+// eraseStrViewOnly rewrites `str` to `string` and leaves every other
+// surface type alone, recursing the same way eraseStr does.
+//
+// It exists for the checker-stamped ElemType slots on expression nodes,
+// where the two surface types must be treated differently: `str` and
+// `string` share a runtime shape so rewriting is a no-op for width and a
+// fix for ownership, while `char` is classified at pointer width by the
+// stride sites that read these slots and rewriting it to i32 would make
+// this one site disagree with the rest (#5695).
+func eraseStrViewOnly(t ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.StrType:
+		return ast.StringType{}
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: eraseStrViewOnly(x.Elem)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: eraseStrViewOnly(x.Elem)}
+	case ast.TupleType:
+		elems := make([]ast.Type, len(x.Elems))
+		for i := range x.Elems {
+			elems[i] = eraseStrViewOnly(x.Elems[i])
+		}
+		return ast.TupleType{Elems: elems}
 	}
 	return t
 }
