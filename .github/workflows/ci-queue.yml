@@ -1,0 +1,96 @@
+name: CI queue
+
+# Admission control for the heavy CI lanes (docs/CI-QUEUE.md).
+#
+# The lanes listed in .github/queue/lanes.json are ~90 jobs between them, so
+# running them for every open PR at once means every PR waits behind every
+# other PR's matrix. This workflow makes exactly one PR's worth of them run at
+# a time: it recomputes a FIFO queue of open PRs from the API, and dispatches
+# the full set for the front PR whenever the lanes go idle.
+#
+# There is no stored queue. Every decision is derived from "open PRs, oldest
+# first" plus the lane runs that already exist, which is what makes it
+# self-healing — a merged or closed PR simply stops appearing.
+#
+# Triggers, all funnelling into the same decision:
+#   pull_request  — a PR joined, changed, or left the queue.
+#   workflow_run  — a lane finished, so the runners may now be free.
+#   schedule      — safety net. Both triggers above can be dropped (a
+#                   `concurrency` group keeps only one pending run, and
+#                   workflow_run is best-effort), and a dropped event would
+#                   otherwise wedge the queue until the next push. The sweep
+#                   costs a few seconds and bounds that at 15 minutes.
+#   workflow_dispatch — kick it by hand.
+#
+# NOTE: workflow_run and schedule only fire for the copy of this file on the
+# default branch, so changes to them are not exercised until merged.
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - converted_to_draft
+      - closed
+  workflow_run:
+    # Keep in sync with .github/queue/lanes.json — internal/ciqueue asserts it.
+    workflows:
+      - Examples
+      - Fuzz differential execution
+      - Fuzz parse round-trip
+      - Test e2e arm64
+      - Test e2e differential
+      - Test e2e other
+      - Test e2e self-host
+      - Test e2e wasm
+      - Test e2e x86_64
+      - Test fernsmith
+      - Test units
+    types: [completed]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write # dispatch the lanes, cancel superseded runs
+  contents: read
+  pull-requests: read
+  statuses: write # publish ci-queue/admission
+
+# Decisions must not race: two deciders reading an idle lane at the same
+# instant would both dispatch. Serialise them, and never cancel one in flight —
+# the decision it is part-way through may already have dispatched. GitHub keeps
+# only the newest pending run per group, which is exactly right here: the
+# queued-up duplicates are all asking the same question, and the last one to
+# arrive sees the freshest state.
+concurrency:
+  group: ci-queue
+  cancel-in-progress: false
+
+jobs:
+  queue:
+    # Fork PRs don't join the queue (their branches can't be dispatched onto a
+    # base-repo ref), so there is nothing for this to decide — and skipping the
+    # event means we never check out a fork's copy of the queue logic and run
+    # it with a token that can dispatch workflows. Their admission status is
+    # set by the scheduled sweep instead.
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # On a `closed` event the default checkout is `refs/pull/N/merge`,
+          # which GitHub stops maintaining once the PR is closed — and the
+          # merge of a merged PR is the one moment the queue most needs to run,
+          # to hand the runners to the next PR. Take the base branch instead:
+          # the queue logic there is the version that just landed anyway.
+          ref: ${{ github.event.pull_request.state == 'closed' && github.event.pull_request.base.ref || '' }}
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { run } = require(`${process.env.GITHUB_WORKSPACE}/.github/queue/runner.js`);
+            await run({ github, context, core });
