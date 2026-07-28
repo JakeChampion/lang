@@ -46,6 +46,32 @@ inspection; it is now measured directly — replace the fallback with
 `exit(<reason>)` and run `internal/e2eselfhost`, and every failing test is by
 construction one that still needs the AST emitter.
 
+**Probe placement matters — put the marker INSIDE the `use_ir` branch.** The
+naive form of this recipe (replace the `emitted == ""` fallback itself with
+`exit(<reason>)`) over-reports, because `emitted` is also `""` when IR was never
+*requested*:
+
+```fern
+if (use_ir) { emitted = asm_ir.emit_module_ir_gated(lm, known); }
+if (emitted == "") { emitted = asm.emit_module(...); }   // <- ALSO the -ir-off route
+```
+
+`TestSelfHostAsmIRPath` runs every case twice — with and without `-ir` — as a
+differential control, so a probe below the `use_ir` branch trips on ~80
+deliberate AST runs that are not declines at all. Instrument inside the branch
+instead:
+
+```fern
+if (use_ir) {
+    emitted = asm_ir.emit_module_ir_gated(lm, known);
+    if (emitted == "") { eprint("ASTFALLBACK\n"); exit(97); }
+}
+```
+
+Also note `eprint` alone is not enough: the e2e harness helpers capture the
+driver's **stdout** only, so driver stderr is discarded unless a bespoke test
+binds `cmd.Stderr`. Aborting (a non-zero exit) is what makes the signal visible.
+
 Result: **27 failures, 24 of them genuine** (the other 3 are unrelated — the
 `wasm-tools validate` component cases and an arm64 `R_AARCH64_CONDBR19`
 relocation overflow). The run hit its 60-minute timeout with
@@ -70,6 +96,29 @@ representative subset splits it three ways:
 
   Also note the entry unit of an arbitrary stdlib-using program is often not per-module-eligible, in which case the concat correctly declines; check with `-per-module-emit <last-unit-index>` before blaming the router. |
 | `no-main` | 0 | Functions but no `main`. Supported by the desugar; not exercised today. | n/a |
+
+### A whole output mode has no IR leg (not a decline reason — a missing path)
+
+The table above enumerates reasons a program *declines* the IR path. That frame
+misses a second class entirely: an output mode with **no IR path to decline**.
+Mapping every remaining `asm.emit_module` / `asm_arm64.emit_module` /
+`wasm.emit_module` call site (2026-07-28) gives:
+
+| target | IR leg? | AST reached when |
+|---|---|---|
+| x86-64 | yes | `asm_ir.emit_module_ir_gated` declines (budget / ineligible fn) |
+| arm64 ELF | yes, and it carries **no 512-function budget** | `all_eligible` false |
+| arm64-darwin | yes — `emit_module_ir(lm, darwin)` threads `darwin` into `emit_runtime` | `all_eligible` false |
+| wasm core | yes | `wasm_ir.should_use_ir_core` false (the `wasm_ir_deferrals_ok` set) |
+| **wasm component** | **none** — `wasm.emit_module_mode` gates it `ir_ok = !component && …` | **always** |
+
+So the raw call-site count badly overstates the work: `asm.emit_module` and
+`asm_arm64.emit_module` are both IR-*preferring shells* (each runs the gate
+first and only falls through), so most of those sites are already IR routes.
+What the table above does NOT cover is the last row: **component-model wasm has
+no IR path at all**, which is why the `emit-target-wasm-component*` cases are
+AST-only. Retiring `wasm.fern` therefore needs an IR leg built for component
+mode — new work, not a decline-reason to close.
 
 Two corrections to the framing that was here before:
 

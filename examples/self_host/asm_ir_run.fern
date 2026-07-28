@@ -138,8 +138,12 @@ function main(): i32 {
     }
     // `-target arm64-darwin`: the arm64-apple-darwin GAS text (@PAGE/@PAGEOFF,
     // _main, BSD syscalls), replacing the retired asm_arm64_darwin_run mirror.
-    // AST-only — the darwin path (`darwinize(emit_module(…, true))`) has no IR
-    // leg, matching the old mirror; the `-ir` flag is ignored here.
+    // `emit_module` picks the path itself — its IR branch carries no `darwin`
+    // exclusion and threads the flag through to `emit_runtime`, so an eligible
+    // module is emitted from IR here exactly as on arm64 ELF. The `-ir` flag is
+    // ignored because it selects nothing: there is no AST-only darwin route to
+    // opt out of. (The comment this replaces claimed darwin had no IR leg,
+    // which would make "build one" look like remaining #3457 work; it is not.)
     if (target == "arm64-darwin") {
         print(asm_arm64.darwinize(asm_arm64.emit_module(parser.module_with_builtins(mod), true)));
         return 0;
