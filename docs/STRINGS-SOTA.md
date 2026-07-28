@@ -741,7 +741,10 @@ These are not edge cases — `base64_decode` of a PNG is the normal use.
 Those APIs take the unchecked constructor today. Making the invariant
 *true* requires migrating them off `string` to `u8[]` — the correct end
 state, and exactly what D8 makes ergonomic, but a larger change than
-the constructor split and tracked separately.
+the constructor split. Tracked as **#5730**, which is also what makes
+slice 4 (the "no stdlib operation produces an invalid `string`"
+property test) satisfiable — today it would fail immediately on
+`sha256_bytes`.
 
 Costs, stated honestly:
 
