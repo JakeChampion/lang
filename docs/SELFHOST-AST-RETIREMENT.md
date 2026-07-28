@@ -748,6 +748,83 @@ tier → leak.
   differential tests (their oracle role ends when the IR path is trusted). Gated
   on all the above + #3425.
 
+## Per-window emit peak: measured (2026-07-28)
+
+The profiling pass the "Recommended order" step 2 asked for. Method: build gen0
+(`fern -target x86-64 -o gen0 asm_modload_run.fern`), per-module-emit-all in
+**batches of 8 units** (unbatched OOMs the host at ~15 units — that limit is
+documented above and reproduced exactly), assemble + link the 36 units into
+gen1, then emit single windows with both binaries while sampling the kernel's
+`VmHWM` (peak RSS). Numbers are peak RSS in MB; `-func-range LO:HI` picks the
+window.
+
+**Window size is not the driver.** Parser (module 2, 407 funcs), gen1:
+
+| window | peak MB | emitted bytes |
+|---|---:|---:|
+| 0:1 | 5438 | 2.0 KB |
+| 0:5 | 5439 | 6.4 KB |
+| 0:25 | 5440 | 23 KB |
+| 0:100 | 5538 | 521 KB |
+| 0:200 | 5879 | 1.9 MB |
+| 0:407 | 7907 | 4.3 MB |
+
+Emitting **one** function costs 5438 MB; emitting 100 costs 5538 MB — a 100×
+increase in work for **+1.8%** peak. The marginal cost of a lowered function is
+only ~6.5 MB (5438 → 7907 across 406 functions). So the ~7.6 GB figure is not
+"what 100 functions cost"; it is a floor that a 1-function window already pays.
+
+**The output buffer is not the driver either** — the largest window here emits
+4.3 MB while peaking at 7.9 GB.
+
+**Parse+modload is only ~1.1 GB of it.** `-per-module-count` (parse + load, no
+emit) peaks 1096 MB; `-per-module-func-counts` 1286 MB. So the *emit call
+itself* adds ~1.9–5.9 GB before lowering anything beyond the first function.
+
+**That per-emit floor is module-dependent, so it is not one whole-program
+constant.** 1-function windows, gen1:
+
+| module | own funcs | peak MB |
+|---|---:|---:|
+| util | 15 | 2955 |
+| lexer | 46 | 2969 |
+| asm | 18 | 4271 |
+| asm_ir | 80 | 4356 |
+| parser | 407 | 5438 |
+| irlower | 928 | 7046 |
+
+It does not track own-function count cleanly either (`asm` has 18 functions and
+a higher floor than `lexer`'s 46), so the earlier "the ~22 whole-program
+side-tables dominate" model is **too simple** — whatever scales here is
+per-emit-call and module-shaped, and this pass measured the shape without yet
+attributing it to a specific allocation site. That attribution is the next step,
+and it is now a much smaller question than "profile the emit".
+
+**The self-host runtime is a multiplier, not the cause.** Same points on gen0
+(native runtime) vs gen1 (self-host runtime):
+
+| point | gen0 | gen1 | ratio |
+|---|---:|---:|---:|
+| parser 0:1 | 3342 | 5438 | 1.63× |
+| parser 0:100 | 3375 | 5538 | 1.64× |
+| parser 0:407 | 3638 | 7907 | 2.17× |
+| irlower 0:1 | 4087 | 7046 | 1.72× |
+
+The flat-in-window-size shape is present on **both** runtimes (gen0 also moves
+only 3342 → 3375 from 1 to 100 functions), so the floor is a property of the
+shared emit path, not of self-host reclamation. The self-host runtime adds a
+consistent ~1.6–2.2× on top — that multiplier is what pushes it over the arena
+ceiling, and it is what #3425-style reclamation work buys back.
+
+**Consequences for the plan.**
+- Windowing harder is ruled out as a lever; the 100-func/300 KB window is
+  already deep into the flat region.
+- An arena checkpoint/reset between windows still helps the *emit-all* batch
+  limit (the ~0.4 GB/unit residue that caps a process at ~15 units), but it
+  cannot touch the per-emit floor, which is paid inside a single window.
+- Halving the floor is worth ~2 GB/window and would matter more than any
+  windowing change; attacking the self-host multiplier is worth ~1.6–2.2×.
+
 ## Recommended order
 
 1. **#3425 — DONE** (large-tier freelist port, x86 #5609 + arm64 #5614; the
@@ -760,11 +837,11 @@ tier → leak.
    the 512-func budget, and streaming the emit with no cache — OOM the self-host
    runtime at stage 2 (see Slice 3). The whole-compiler emit only fits when
    **windowed** (per-module), and a single 100-func window already peaks ~7.6 GB.
-   The next actionable step is a **profiling pass on the per-window emit peak**
-   (side-tables vs the ~470 MB output buffer vs per-function lowering churn) to
-   find what scales to 7.6 GB/100-func, then either shrink it or add an arena
-   checkpoint/reset so one process can window without accumulating. Until that
-   lands, the gen1 per-module fixpoint stays env-gated and the AST emitters stay.
+   **The profiling pass this step called for is DONE (2026-07-28) — see
+   "Per-window emit peak: measured" below. Its headline is that windowing is not
+   a lever at all**: the peak is essentially independent of the window size, so
+   there is nothing to shrink by windowing harder. Until the floor itself moves,
+   the gen1 per-module fixpoint stays env-gated and the AST emitters stay.
 3. **Slice 3 driver repoint + Slice 5 deletion** — mechanical once (2) lands.
 4. **Slice 4a/4b** (arm64/wasm runtime untangle) alongside/after — a ~5k-line,
    qemu-gated duplication that unlocks nothing on its own; avoid until the
