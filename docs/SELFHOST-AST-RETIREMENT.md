@@ -924,7 +924,11 @@ floor, so there is little left to win by windowing harder.
 gen1; 218 MB on gen0), so the emit call itself adds ~1.1 GB of whole-program
 setup. That remainder is now **attributed** — see "The floor, attributed" below:
 it is not spread across the ~24 derivations but concentrated in two
-interprocedural analyses, and mostly in one.
+interprocedural analyses, and mostly in one. **And the dominant cause is now
+FIXED** — see "The floor, fixed" below: the two analyses' cost was a
+substring-slice storm in `param_is_borrowable`, not the fixpoint iteration, and a
+no-alloc byte-compare dropped the gen0 emit-all one-unit peak from 1663 MB to
+520 MB with byte-identical output.
 
 **The self-host runtime is a multiplier.** gen0 (native runtime) vs gen1
 (self-host runtime), parser, `-assume-eligible`: 1654 -> 2217 MB at 0:1, 1763 ->
@@ -997,6 +1001,43 @@ graph actually takes, and that is the obvious next thing to look at.
 - A 2x reduction in `borrowable_params_interproc` alone is worth ~425 MB on
   every window of every module — more than anything windowing can offer.
 
+## The floor, fixed: a substring-slice storm, not the fixpoint (2026-07-28)
+
+The attribution above landed the cost on the two interprocedural analyses and
+guessed the mechanism was "(passes × whole-program walk), allocating each pass."
+That guess was **wrong about the mechanism** — a far cheaper fix than capping or
+memoising the fixpoint was available, because the allocation was not the walk.
+
+An independent per-table sweep (a throwaway `-wpb-bench N` driver mode computing
+only the first N of `compute_wp_bases`' tables; gen0, whole compiler, 2074 funcs)
+reproduced the same split — `borrowable_params_interproc` +862 MB,
+`consume_safe_params_interproc` +337 MB, the other 22 tables ~12 MB combined —
+then a pass-count probe showed the fixpoints converge in only **6** and **3**
+passes. Six passes cannot allocate ~860 MB of *retained* garbage; the peak was a
+single sweep's **transient** churn. The allocator was `param_is_borrowable`,
+which matched a registry key with `e[0:bar] == name` — a substring **slice** that
+allocates a fresh string — scanned linearly across the whole borrowability
+registry per call, and called for every call-arg on every body walk of both
+fixpoints. That is millions of throwaway substrings per emit.
+
+**Fix (this slice):** compare the key prefix by byte, with an O(1) length guard
+first — no allocation. Semantics identical (`e[0:bar] == name` ⟺ `bar ==
+name.len()` && bytes equal). Measured on gen0, whole compiler:
+
+| metric | before | after |
+|---|---:|---:|
+| `borrowable_params_interproc` table peak | +862 MB | **+13 MB** |
+| `consume_safe_params_interproc` table peak | +337 MB | **+0 MB** |
+| emit-all one-unit peak | 1663 MB | **520 MB (−69%)** |
+
+All 36 whole-compiler units emit **byte-identically** before vs after, so this is
+a pure heap win with zero codegen change. The floor is now parse+modload+infmods
+(~390 MB gen0) plus the cheap tables and one window; the emit-side analysis cost
+is no longer the lever. The hypothesised "cap/memoise the fixpoint" and
+"reclaim between passes" work is now unnecessary for this floor. **Next:**
+re-measure the *gen1* floor (the ~1.3–2.6× self-host-runtime multiplier still
+applies on top) and whether the per-module fixpoint can come off its env gate.
+
 ## Recommended order
 
 1. **#3425 — DONE** (large-tier freelist port, x86 #5609 + arm64 #5614; the
@@ -1008,14 +1049,19 @@ graph actually takes, and that is the obvious next thing to look at.
    emit memory.** Both direct ways to make the merged bundle route IR — lifting
    the 512-func budget, and streaming the emit with no cache — OOM the self-host
    runtime at stage 2 (see Slice 3). The whole-compiler emit only fits when
-   **windowed** (per-module), and a single 100-func window already peaks ~7.6 GB.
+   **windowed** (per-module), and a single 100-func window peaked ~7.6 GB.
    **The profiling pass this step called for is DONE (2026-07-28) — see
-   "Per-window emit peak: measured" below, including its same-day correction.**
-   At the 100-func budget the emit actually uses, ~95% of the peak is a
-   whole-program floor that a 1-function window already pays, so windowing
-   harder buys ~5%. The floor (~2.2 GB gen1) is one constant, identical across
-   modules, and is the real target. Until it moves, the gen1 per-module fixpoint
-   stays env-gated and the AST emitters stay.
+   "Per-window emit peak: measured" below, including its same-day correction —
+   and the biggest attributed piece is now FIXED.** At the 100-func budget the
+   emit uses, ~95% of the peak was a whole-program floor a 1-function window
+   already pays. That floor split ~half parse+modload, ~half the
+   `compute_wp_bases` emit setup; the emit-side half was pinned to two
+   interproc-fixpoint tables and a single substring-slice storm in
+   `param_is_borrowable`, whose no-alloc rewrite dropped the **gen0** emit-all
+   one-unit peak from 1663 MB to **520 MB** (byte-identical, all 36 units). The
+   gen1 multiplier (~1.3-2.6x) still applies, so re-measuring the gen1 floor and
+   whether the per-module fixpoint can now come off its env gate is the immediate
+   next step; parse+modload (~390 MB gen0) is the next-largest attributable chunk.
 3. **Slice 3 driver repoint + Slice 5 deletion** — mechanical once (2) lands.
 4. **Slice 4a/4b** (arm64/wasm runtime untangle) alongside/after — a ~5k-line,
    qemu-gated duplication that unlocks nothing on its own; avoid until the
