@@ -386,11 +386,19 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   `$__fern_print_int64` / `$__fern_idiv64`+`irem64` / `$__fern_print_int`); the other 4
   (`str_to_i32` / `arr_push_owned` / `map_w64` / `arr_dec_ptr2`) need parse/reclaim-specific
   triggers and are covered by the verbatim-move guarantee (same cut-paste operation, build +
-  type-check + zero-bare-refs all green). The 4 NON-leaf direct deps stay for a follow-up:
-  `arr_push_f64_helper` / `arr_push_i64_helper` (→ `arr_push_wide`) and `le32_escape` /
-  `wat_escape` (→ `hex_digit`) — their shared callees (`arr_push_wide`, `hex_digit`) must move
-  with them. **Next:** move those 4 + their 2 callees, THEN relocate `emit_ir_module_units`
-  itself (+ the `_p2` import/func component-model variants it dispatches to) to `wasm_ir.fern`.
+  type-check + zero-bare-refs all green). (13) the 4 non-leaf framing deps + their 2 shared
+  callees, moved TOGETHER so the internal calls stay same-module: `arr_push_f64_helper` /
+  `arr_push_i64_helper` + their callee `arr_push_wide` (was private → `pub`), and `le32_escape` /
+  `wat_escape` + their callee `hex_digit` (was private → `pub`). The escapers turned out to have
+  only ~2 call sites each (not the pervasive use feared). Byte-identical WAT for a probe with a
+  special-char string literal (exercises `wat_escape`/`le32_escape`/`hex_digit` — hex `\XX`
+  escapes in the data section, runs correctly under wasmtime) and a `.append()` on `i64[]`/`f64[]`
+  (emits `$__fern_arr_push_i64`/`$__fern_arr_push_f64`, which call the moved `arr_push_wide`).
+  **With this, `emit_ir_module_units` has NO remaining wasm.fern-resident helper dependencies** —
+  every runtime-helper emitter it invokes (gated or direct) now lives in `wasm_ir.fern`.
+  **Next:** relocate `emit_ir_module_units` itself (+ the `_p2` import/func component-model
+  variants it dispatches to) to `wasm_ir.fern` — re-probe it for wasm.fern-resident calls first
+  (the `_p2` siblings and any framing-only helpers), moving that closure alongside it.
   `emit_ir_rc_bodies_from`
   is LAST — it drags `Ctx` / `release_module_ctx` / `collect_method_types` and the
   shared struct predicates (co-owned by the AST emitter → a cycle until that
