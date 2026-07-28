@@ -1,0 +1,38 @@
+// Minimal repro for the loop-append drop leak found while attributing the #3457
+// emit floor (see docs/SELFHOST-AST-RETIREMENT.md, "The load pipeline leaks").
+//
+// An array reassigned by `.append` INSIDE A LOOP is never freed at function
+// exit. One iteration is enough; the array's size is irrelevant to whether it
+// leaks, only to how visible the leak is. The straight-line form of the same
+// reassignment, and a literal array, both reclaim correctly:
+//
+//   var xs: i32[] = [1, 2, 3];                      -> allocs=4  frees=4   ok
+//   var xs: i32[] = []; xs = xs.append(1);          -> allocs=8  frees=8   ok
+//   while (i < 1) { xs = xs.append(i); i = i + 1; } -> allocs=8  frees=4   LEAK
+//
+// Measure exactly with the built-in leak detector rather than RSS (RSS hides
+// small leaks under the baseline, which is what made an earlier version of this
+// probe report a bogus "512 KiB size threshold"):
+//
+//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/loop_append_drop_leak.fern
+//   /tmp/p; # stderr: leakcheck: allocs=N frees=M live_bytes=K
+//
+// Fixed = frees equals allocs and live_bytes is 0. Exit code is 4 either way
+// (4 rounds x (1000 % 7) = 24, and 24 % 5 = 4), so it is not the signal.
+//
+// This is why `lexer.tokenize` leaks its whole Token[] per call (`out =
+// out.append(tok)` in a `while (true)`), which is ~69% of the per-load leak.
+
+function build(n: i32): i32 {
+    var xs: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { xs = xs.append(i); i = i + 1; }
+    return xs.len() % 7;
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 4) { acc = acc + build(1000); r = r + 1; }
+    return acc % 5;
+}
