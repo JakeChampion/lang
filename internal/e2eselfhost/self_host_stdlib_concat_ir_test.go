@@ -24,10 +24,10 @@ type stdlibConcatCase struct {
 }
 
 var cryptoIRCases = []stdlibConcatCase{
-	{"sha256-len", `return sha256_hex("hello").len();`},         // 64 hex chars
-	{"sha256-abc-d0", `return sha256_hex("abc")[0] as i32;`},    // 'b' (0xba...) = 98
-	{"sha256-empty-d0", `return sha256_hex("")[0] as i32;`},     // 'e' (0xe3...) = 101
-	{"sha256-bytes-len", `return sha256_bytes("abc").len();`},   // 32 raw bytes
+	{"sha256-len", `return sha256_hex("hello").len();`},                                     // 64 hex chars
+	{"sha256-abc-d0", `return sha256_hex("abc")[0] as i32;`},                                // 'b' (0xba...) = 98
+	{"sha256-empty-d0", `return sha256_hex("")[0] as i32;`},                                 // 'e' (0xe3...) = 101
+	{"sha256-bytes-len", `return sha256_bytes("abc").len();`},                               // 32 raw bytes
 	{"hmac-len", `return hmac_sha256_hex([107 as u8, 101 as u8, 121 as u8], "msg").len();`}, // 64 hex chars
 }
 

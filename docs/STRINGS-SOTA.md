@@ -741,14 +741,21 @@ These are not edge cases — `base64_decode` of a PNG is the normal use.
 Those APIs took the unchecked constructor when slice 2 landed. Making
 the invariant *true* required migrating them off `string` to `u8[]` —
 the correct end state, and exactly what D8 makes ergonomic, but a larger
-change than the constructor split. That migration is **#5730**, now
-complete across three slices: std/hex decoders (#5743), std/base64 +
-std/base32 decoders (#5746), and the coupled std/crypto + encoder-input
-slice. Digests, derived keys, decoder outputs and encoder inputs are all
-`u8[]`; the `*_hex` variants still return `string`, because hex output
-genuinely is text. That also unblocks slice 4 (the "no stdlib operation
-produces an invalid `string`" property test), which would previously
-have failed immediately on `sha256_bytes`.
+change than the constructor split. That migration is **#5730**, whose
+pure-Fern half is now done in three slices: std/hex decoders (#5743),
+std/base64 + std/base32 decoders (#5746), and the coupled std/crypto +
+encoder-input slice. Digests, derived keys, decoder outputs and encoder
+inputs are all `u8[]`; the `*_hex` variants still return `string`,
+because hex output genuinely is text.
+
+What remains under #5730 is the builtin half — `random_bytes`,
+`tcp_recv`, and `read_file` — which crosses the checker and all four
+backends, and where `read_file` is used pervasively as *text* and so
+likely wants a `read_file_bytes` sibling rather than a signature change.
+Slice 4 (the "no stdlib operation produces an invalid `string`" property
+test) is unblocked for the stdlib modules — it would previously have
+failed immediately on `sha256_bytes` — but must still hold those three
+builtins out until they move.
 
 Costs, stated honestly:
 

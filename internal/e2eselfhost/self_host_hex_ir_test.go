@@ -24,12 +24,12 @@ var hexIRCases = []struct {
 }{
 	// The module is compiled alone (no modload), so std/string's `s.bytes()`
 	// isn't in scope — the u8[] encoder inputs are written as byte literals.
-	{"encode-len", `return hex_encode([104 as u8, 105 as u8]).len();`},                 // "6869" -> 4
-	{"encode-digit", `return hex_encode([65 as u8])[0] as i32;`},                       // 0x41 -> '4' = 52
-	{"decode-len", `return hex_decode("6869").len();`},                                 // -> "hi" len 2
-	{"decode-char", `return hex_decode("7a")[0] as i32;`},                              // -> 'z' = 122
-	{"roundtrip", `return hex_decode(hex_encode([72 as u8, 105 as u8]))[0] as i32;`},   // 'H' = 72
-	{"roundtrip-len", `return hex_decode(hex_encode([104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8])).len();`},           // 5
+	{"encode-len", `return hex_encode([104 as u8, 105 as u8]).len();`},                                                 // "6869" -> 4
+	{"encode-digit", `return hex_encode([65 as u8])[0] as i32;`},                                                       // 0x41 -> '4' = 52
+	{"decode-len", `return hex_decode("6869").len();`},                                                                 // -> "hi" len 2
+	{"decode-char", `return hex_decode("7a")[0] as i32;`},                                                              // -> 'z' = 122
+	{"roundtrip", `return hex_decode(hex_encode([72 as u8, 105 as u8]))[0] as i32;`},                                   // 'H' = 72
+	{"roundtrip-len", `return hex_decode(hex_encode([104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8])).len();`}, // 5
 }
 
 // hexSource reads the real std/hex.fern and appends a main (single-module, no

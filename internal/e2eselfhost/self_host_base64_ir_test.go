@@ -23,12 +23,12 @@ var base64IRCases = []struct {
 }{
 	// The module is compiled alone (no modload), so std/string's `s.bytes()`
 	// isn't in scope — the u8[] encoder inputs are written as byte literals.
-	{"encode-len-pad", `return base64_encode([104 as u8, 105 as u8]).len();`},                    // "aGk=" -> 4
-	{"encode-len-exact", `return base64_encode([77 as u8, 97 as u8, 110 as u8]).len();`},         // "TWFu" -> 4
-	{"encode-digit", `return base64_encode([77 as u8, 97 as u8, 110 as u8])[0] as i32;`},         // 'T' = 84
-	{"decode-len", `return base64_decode("aGk=").len();`},                                        // "hi" -> 2
-	{"roundtrip", `return base64_decode(base64_encode([72 as u8, 105 as u8]))[0] as i32;`},       // 'H' = 72
-	{"roundtrip-len", `return base64_decode(base64_encode([104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8])).len();`},               // 5
+	{"encode-len-pad", `return base64_encode([104 as u8, 105 as u8]).len();`},                                                // "aGk=" -> 4
+	{"encode-len-exact", `return base64_encode([77 as u8, 97 as u8, 110 as u8]).len();`},                                     // "TWFu" -> 4
+	{"encode-digit", `return base64_encode([77 as u8, 97 as u8, 110 as u8])[0] as i32;`},                                     // 'T' = 84
+	{"decode-len", `return base64_decode("aGk=").len();`},                                                                    // "hi" -> 2
+	{"roundtrip", `return base64_decode(base64_encode([72 as u8, 105 as u8]))[0] as i32;`},                                   // 'H' = 72
+	{"roundtrip-len", `return base64_decode(base64_encode([104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8])).len();`}, // 5
 }
 
 // base64Source reads the real std/base64.fern and appends a main (single-module,
