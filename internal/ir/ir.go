@@ -10269,11 +10269,26 @@ func (b *builder) binary(n *ast.Binary) error {
 		// nested chain reclaims. Borrowed operands (idents / fields / index
 		// / literals) are NOT stashed — decing them would free a live value.
 		// Gated on RcFreeEnabled (free-off stays byte-identical).
-		stash := func(e ast.Expr) (int32, error) {
+		//
+		// Better still, when the LEFT operand is such a temp the concat can
+		// GROW it rather than copy-then-free it: `a + b + c` builds the
+		// inner `(a + b)` and then appends `c` into that buffer's slack
+		// (#5637). consumeLeftTemp marks that case — the temp is then not
+		// stashed at all, because __fern_str_append takes ownership of it
+		// and there is no later dec to keep a pointer alive for.
+		//
+		// Ordering is why this is unconditionally safe where the named-
+		// accumulator form needs care: the consumed value is an unnameable
+		// intermediate created by evaluating Left, and the append runs after
+		// BOTH operands are evaluated, so no other expression can observe it
+		// between its creation and its consumption.
+		consumeLeftTemp := ast.RcFreeEnabled && b.strAppendAvailable() &&
+			b.isOwnedStringTemp(n.Left) && ast.Expr(n) != b.selfStrAppendBin
+		stash := func(e ast.Expr, consumed bool) (int32, error) {
 			if err := b.expr(e); err != nil {
 				return -1, err
 			}
-			if !ast.RcFreeEnabled || !b.isOwnedStringTemp(e) {
+			if consumed || !ast.RcFreeEnabled || !b.isOwnedStringTemp(e) {
 				return -1, nil
 			}
 			sl := b.allocSlot()
@@ -10283,11 +10298,11 @@ func (b *builder) binary(n *ast.Binary) error {
 			b.emit(Op{Kind: OpLoadLocal, I32: sl})  // re-push for the concat
 			return sl, nil
 		}
-		slL, err := stash(n.Left)
+		slL, err := stash(n.Left, consumeLeftTemp)
 		if err != nil {
 			return err
 		}
-		slR, err := stash(n.Right)
+		slR, err := stash(n.Right, false)
 		if err != nil {
 			return err
 		}
@@ -10302,9 +10317,18 @@ func (b *builder) binary(n *ast.Binary) error {
 		// operand of that shape is a bare ident, so it is never a stashed
 		// owned temp — only `piece` can be, and its reclaim below is
 		// unchanged.
-		if ast.Expr(n) == b.selfStrAppendBin {
+		//
+		// consumeLeftTemp is the same helper applied to a nested concat's
+		// own intermediate: it grows that buffer instead of allocating a
+		// fresh one and freeing it, so a chain allocates ONCE rather than
+		// once per join. Its release is the __fern_str_dec the helper runs
+		// on its fallback path — exactly the dec the loop below would have
+		// emitted for the stashed temp.
+		if ast.Expr(n) == b.selfStrAppendBin || consumeLeftTemp {
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_append", I32: 2})
-			b.selfStrAppendDone = true
+			if !consumeLeftTemp {
+				b.selfStrAppendDone = true
+			}
 		} else {
 			b.emit(Op{Kind: OpStrConcat})
 		}
@@ -14540,8 +14564,18 @@ func (b *builder) assign(n *ast.Assign) error {
 			//     sources — then drop the returned data ptr. Verified under
 			//     wasmtime (host-independent), so local == CI.
 			//   native single-word x86_64 (ptrW==8, !TwoWordOverride): load
-			//     ptr, __fern_rc_dec (SSO low-bit + sentinel guards keep all
-			//     sources safe), drop. Verified on the native x86_64 runner.
+			//     ptr, __fern_str_dec, drop. Its null / inline-SSO /
+			//     below-heap-literal guards keep every non-heap source safe,
+			//     and at rc==1 it FREES the buffer (box_free at length+1)
+			//     rather than merely decrementing. It used __fern_rc_dec
+			//     until #5637: rc_dec drops the count to zero and stops, so
+			//     every intermediate of the pervasive `s = s + piece`
+			//     accumulator was orphaned outright — 757 KB live at exit for
+			//     500 iterations of a 6-byte-per-iteration chain. Freeing is
+			//     the SAME authorisation the exit sweep already exercises for
+			//     these locals (emitDec's StringType arm calls __fern_str_dec
+			//     on every ptrW) under the SAME freeEligible gate, so this is
+			//     the sweep's rule applied at the overwrite, not a new one.
 			//
 			// arm64 (ptrW==8 + TwoWordOverride, two-word str_dec) is
 			// DELIBERATELY EXCLUDED for now: native-arm64 heap-string
@@ -14563,7 +14597,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpDrop})
 			} else if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
-				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
 		} else if tt, isTup := tupleTypeOfLocal(t.Name, b); isTup && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
@@ -14984,16 +15018,19 @@ func isStringTypeOfLocal(name string, b *builder) bool {
 	return false
 }
 
-// stringOverwriteReleases reports whether assign()'s string branch releases
-// the old buffer on overwrite for this target width. Two ABIs do: wasm's
-// two-word (ptrW==4, __fern_str_dec — which frees at rc==1) and native
-// single-word x86_64 (ptrW==8 with TwoWordOverride off, __fern_rc_dec —
-// which only decrements, so the intermediates leaked until
-// __fern_str_append took the release over). arm64 (ptrW==8 +
-// TwoWordOverride) stays out entirely — its heap-string reclamation is the
-// deferred RC-perceus slice 5g — so a self-append there has no release to
-// take over and its codegen is unchanged.
-func (b *builder) stringOverwriteReleases() bool {
+// strAppendAvailable reports whether this target's backend emits the
+// __fern_str_append helper: wasm's two-word ABI (ptrW==4) and native
+// single-word x86_64 (ptrW==8 with TwoWordOverride off). arm64 (ptrW==8 +
+// TwoWordOverride) has no such helper yet, so it keeps plain OpStrConcat
+// and its codegen is byte-identical.
+//
+// These are also exactly the widths whose assign() string branch releases
+// the old buffer on overwrite (wasm __fern_str_dec, native __fern_rc_dec),
+// which is what makes suppressing that release for a marked self-append
+// balanced rather than a leak — see isSelfStrAppendLocal. arm64 does not
+// release there either (its heap-string reclamation is the deferred
+// RC-perceus slice 5g), so the two facts coincide by construction.
+func (b *builder) strAppendAvailable() bool {
 	return b.ptrW == 4 || (b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW))
 }
 
@@ -15018,7 +15055,7 @@ func (b *builder) stringOverwriteReleases() bool {
 // caller's, so mutating it in place would corrupt a live value — and an ABI
 // that releases on overwrite at all.
 func (b *builder) isSelfStrAppendLocal(value ast.Expr, name string) bool {
-	if !ast.RcFreeEnabled || !b.stringOverwriteReleases() {
+	if !ast.RcFreeEnabled || !b.strAppendAvailable() {
 		return false
 	}
 	bin, ok := value.(*ast.Binary)
