@@ -146,10 +146,24 @@ function needs_ir_only_builtin(mod: parser.Module): boolean {
         }
         var ii: i32 = 0;
         while (ii < ids.len()) {
-            if (util.has_str(wanted, ids[ii])) { return true; }
+            // A program that DECLARES a function of one of these names shadows
+            // the builtin: those calls are ordinary user calls the AST emitter
+            // emits fine, so diverting on the bare name would be a false
+            // positive — and diverting a program the AST emitter handles is the
+            // exact mistake this gate exists to prevent.
+            if (util.has_str(wanted, ids[ii]) && !declares_func(mod, ids[ii])) { return true; }
             ii = ii + 1;
         }
         fi = fi + 1;
+    }
+    return false;
+}
+
+function declares_func(mod: parser.Module, name: string): boolean {
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].name == name) { return true; }
+        i = i + 1;
     }
     return false;
 }
