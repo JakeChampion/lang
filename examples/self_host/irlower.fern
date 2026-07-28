@@ -34837,6 +34837,48 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
         }
         s0 = s0 + 1;
     }
+    // Hoist the reg-INDEPENDENT half of the per-pass work out of the fixpoint.
+    // body_assign_targets / param_consumed_in_body are pure functions of the
+    // function body and the param name — neither consults `reg` — but the loop
+    // below recomputed both on EVERY pass. Measured on the whole-compiler emit:
+    // 6 passes over 2073 functions, so five sixths of that work was redundant,
+    // and the self-host arena reclaims none of it within a process (#3457: this
+    // analysis is ~51% of the per-window emit peak). Precompute one "consumed"
+    // flag string per function and read it in the loop instead. Byte-identical
+    // by construction — same predicate, same inputs, just evaluated once.
+    var consumed: string[] = [];
+    var c0: i32 = 0;
+    while (c0 < funcs.len()) {
+        var cf: string = "";
+        if (funcs[c0].params.len() > 0) {
+            var c_reasgn: string[] = body_assign_targets(funcs[c0].body);
+            var cp: i32 = 0;
+            while (cp < funcs[c0].params.len()) {
+                if (param_consumed_in_body(funcs[c0].body, funcs[c0].params[cp].name, c_reasgn)) { cf = cf + "1"; }
+                else { cf = cf + "0"; }
+                cp = cp + 1;
+            }
+        }
+        consumed = consumed.append(cf);
+        c0 = c0 + 1;
+    }
+    // Monotone skip: a flag only ever goes 1->0 (see the note below), so once a
+    // param is proven non-borrowable it can never come back. Carry the
+    // per-function flag strings across passes and re-run the escape walk ONLY
+    // for params still marked borrowable. Pass 1 is the full sweep; later passes
+    // shrink to the still-live set. Same fixpoint, same registry — it just stops
+    // re-proving what is already settled. `live` is indexed by function POSITION
+    // (one entry per function, "" for a 0-param function) so it stays aligned
+    // with `funcs` regardless of which functions make it into `reg`.
+    var live: string[] = [];
+    var l0: i32 = 0;
+    while (l0 < funcs.len()) {
+        var lf: string = "";
+        var lp: i32 = 0;
+        while (lp < funcs[l0].params.len()) { lf = lf + "1"; lp = lp + 1; }
+        live = live.append(lf);
+        l0 = l0 + 1;
+    }
     var cap: i32 = 64;
     var iter: i32 = 0;
     var prevsig: string = "";
@@ -34844,26 +34886,31 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
     while (iter < cap && sig != prevsig) {
         prevsig = sig;
         var next: string[] = [];
+        var nextlive: string[] = [];
         var i: i32 = 0;
         while (i < funcs.len()) {
+            var flags: string = "";
             if (funcs[i].params.len() > 0) {
-                var flags: string = "";
                 var any: boolean = false;
-                var ip_reasgn: string[] = body_assign_targets(funcs[i].body);
+                var cflags: string = consumed[i];
+                var lflags: string = live[i];
                 var pj: i32 = 0;
                 while (pj < funcs[i].params.len()) {
-                    if (!param_consumed_in_body(funcs[i].body, funcs[i].params[pj].name, ip_reasgn)
+                    if (lflags[pj] == 49   // 49 = '1' — still live; a settled 0 stays 0
+                        && cflags[pj] == 48   // 48 = '0' — not consumed in body
                         && !body_unsafe_for(funcs[i].body, funcs[i].params[pj].name, reg)) { flags = flags + "1"; any = true; }
                     else { flags = flags + "0"; }
                     pj = pj + 1;
                 }
                 if (any) { next = next.append(borrowable_key(funcs[i]) + "|" + flags); }
             }
+            nextlive = nextlive.append(flags);
             i = i + 1;
         }
         // Monotone-DECREASING (flags only go 1->0), so the signature strictly
         // shrinks until the fixpoint; equal signatures = truly converged.
         reg = next;
+        live = nextlive;
         sig = borrowable_sig(reg);
         iter = iter + 1;
     }
