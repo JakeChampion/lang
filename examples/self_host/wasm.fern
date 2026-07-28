@@ -6541,26 +6541,6 @@ function stmts_use_divrem(body: parser.Stmt[]): boolean {
 }
 
 
-// divrem64_helpers mirrors divrem_helpers for 64-bit operands: the
-// guarded `$__fern_idiv64` / `$__fern_irem64` used by i64 `/` and `%`.
-// Same sanitise-divisor-to-1 + select-substitute scheme, with the i64
-// INT_MIN sentinel (-9223372036854775808).
-pub function divrem64_helpers(): string {
-    var bad: string =
-        "(i32.or (i64.eqz (local.get $b))"
-        + " (i32.and (i64.eq (local.get $a) (i64.const -9223372036854775808))"
-        + " (i64.eq (local.get $b) (i64.const -1))))";
-    var out: string = "";
-    out = out + "  (func $__fern_idiv64 (param $a i64) (param $b i64) (result i64)\n";
-    out = out + "    (local $safe i64)\n";
-    out = out + "    (local.set $safe (select (i64.const 1) (local.get $b) " + bad + "))\n";
-    out = out + "    (select (i64.const 0) (i64.div_s (local.get $a) (local.get $safe)) (i64.eqz (local.get $b))))\n";
-    out = out + "  (func $__fern_irem64 (param $a i64) (param $b i64) (result i64)\n";
-    out = out + "    (local $safe i64)\n";
-    out = out + "    (local.set $safe (select (i64.const 1) (local.get $b) " + bad + "))\n";
-    out = out + "    (select (local.get $a) (i64.rem_s (local.get $a) (local.get $safe)) (i64.eqz (local.get $b))))\n";
-    return out;
-}
 
 // clock_imports returns the wasi clock_time_get import (must sit in the
 // import section, before any func). `precision` and the timestamp are
@@ -6613,78 +6593,7 @@ function clock_funcs_p2(has_wall: boolean, has_mono: boolean): string {
     return o;
 }
 
-// print_int64_helper mirrors print_int_helper for i64 values, formatting
-// into a 24-byte scratch buffer at `buf` (i64's widest decimal is 20
-// chars incl. sign). No trailing newline.
-function print_int64_helper(buf: i32): string {
-    var b: string = util.i32_to_string(buf);
-    var be: string = util.i32_to_string(buf + 24);
-    var o: string = "";
-    o = o + "  (func $__fern_print_int64 (param $n i64)\n";
-    o = o + "    (local $i i32)\n";
-    o = o + "    (local $neg i32)\n";
-    o = o + "    (if (i64.eqz (local.get $n)) (then\n";
-    o = o + "      (i32.store8 (i32.const " + b + ") (i32.const 48))\n";
-    o = o + "      (i32.store (i32.const 0) (i32.const " + b + "))\n";
-    o = o + "      (i32.store (i32.const 4) (i32.const 1))\n";
-    o = o + "      (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
-    o = o + "      (return)))\n";
-    o = o + "    (local.set $neg (i64.lt_s (local.get $n) (i64.const 0)))\n";
-    o = o + "    (if (local.get $neg) (then (local.set $n (i64.sub (i64.const 0) (local.get $n)))))\n";
-    o = o + "    (local.set $i (i32.const " + be + "))\n";
-    o = o + "    (block $done (loop $lp\n";
-    o = o + "      (br_if $done (i64.eqz (local.get $n)))\n";
-    o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
-    o = o + "      (i32.store8 (local.get $i) (i32.wrap_i64 (i64.add (i64.const 48) (i64.rem_u (local.get $n) (i64.const 10)))))\n";
-    o = o + "      (local.set $n (i64.div_u (local.get $n) (i64.const 10)))\n";
-    o = o + "      (br $lp)))\n";
-    o = o + "    (if (local.get $neg) (then\n";
-    o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
-    o = o + "      (i32.store8 (local.get $i) (i32.const 45))))\n";
-    o = o + "    (i32.store (i32.const 0) (local.get $i))\n";
-    o = o + "    (i32.store (i32.const 4) (i32.sub (i32.const " + be + ") (local.get $i)))\n";
-    o = o + "    (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8))))\n";
-    return o;
-}
 
-// print_int_helper emits the `$__fern_print_int` runtime: format an i32
-// as decimal into a 16-byte scratch buffer at `buf` (placed above all
-// string data) and fd_write it. Digits are written backwards from the
-// buffer end; negatives get a leading '-'. The magnitude is taken with
-// unsigned div/rem after a (possibly overflowing) negation, which yields
-// the correct digits even for INT_MIN (0 - INT_MIN = INT_MIN, whose
-// unsigned value is exactly 2147483648). No trailing newline — matching
-// the native print_int.
-pub function print_int_helper(buf: i32): string {
-    var b: string = util.i32_to_string(buf);
-    var be: string = util.i32_to_string(buf + 16);
-    var o: string = "";
-    o = o + "  (func $__fern_print_int (param $n i32)\n";
-    o = o + "    (local $i i32)\n";
-    o = o + "    (local $neg i32)\n";
-    o = o + "    (if (i32.eqz (local.get $n)) (then\n";
-    o = o + "      (i32.store8 (i32.const " + b + ") (i32.const 48))\n";
-    o = o + "      (i32.store (i32.const 0) (i32.const " + b + "))\n";
-    o = o + "      (i32.store (i32.const 4) (i32.const 1))\n";
-    o = o + "      (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
-    o = o + "      (return)))\n";
-    o = o + "    (local.set $neg (i32.lt_s (local.get $n) (i32.const 0)))\n";
-    o = o + "    (if (local.get $neg) (then (local.set $n (i32.sub (i32.const 0) (local.get $n)))))\n";
-    o = o + "    (local.set $i (i32.const " + be + "))\n";
-    o = o + "    (block $done (loop $lp\n";
-    o = o + "      (br_if $done (i32.eqz (local.get $n)))\n";
-    o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
-    o = o + "      (i32.store8 (local.get $i) (i32.add (i32.const 48) (i32.rem_u (local.get $n) (i32.const 10))))\n";
-    o = o + "      (local.set $n (i32.div_u (local.get $n) (i32.const 10)))\n";
-    o = o + "      (br $lp)))\n";
-    o = o + "    (if (local.get $neg) (then\n";
-    o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
-    o = o + "      (i32.store8 (local.get $i) (i32.const 45))))\n";
-    o = o + "    (i32.store (i32.const 0) (local.get $i))\n";
-    o = o + "    (i32.store (i32.const 4) (i32.sub (i32.const " + be + ") (local.get $i)))\n";
-    o = o + "    (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8))))\n";
-    return o;
-}
 
 
 
@@ -6771,154 +6680,6 @@ function exit_func(component_io: boolean): string {
     return o;
 }
 
-// heap_alloc_helpers emits the bump allocator: a `$heap` global starting
-// at `heap_base` (above all static data) and `$__fern_alloc` which bumps
-// it. Shared by string concat and array allocation.
-pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): string {
-    var hb: string = util.i32_to_string(heap_base);
-    var flb: string = util.i32_to_string(fl_base);
-    var flc: string = util.i32_to_string(fl_cells);
-    var o: string = "";
-    // The over-release detector global lives here (before $__fern_arr_dec,
-    // which bumps it, and before rc_runtime_helpers, which also reads it).
-    o = o + "  (global $__fern_rc_underflow (mut i32) (i32.const 0))\n";
-    o = o + "  (global $heap (mut i32) (i32.const " + hb + "))\n";
-    // Perceus size-class freelist: a per-class head pointer array at
-    // [fl_base .. fl_base + fl_cells*4), zero-initialised (empty lists) by
-    // wasm's zeroed linear memory. Class = roundup8(blocksize)/8. A freed
-    // block (rc reaching 0 in $__fern_arr_dec) is pushed onto its class;
-    // $__fern_alloc pops a same-class block before bumping. Blocks larger
-    // than fl_cells*8 bytes are bump-only (never recycled).
-    o = o + "  (func $__fern_alloc (param $n i32) (result i32)\n";
-    o = o + "    (local $p i32) (local $cls i32) (local $head i32)\n";
-    o = o + "    (local.set $n (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8)))\n";
-    o = o + "    (local.set $cls (i32.shr_u (local.get $n) (i32.const 3)))\n";
-    o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
-    o = o + "      (local.set $head (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
-    o = o + "      (if (local.get $head) (then\n";
-    o = o + "        (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (i32.load (i32.add (local.get $head) (i32.const 4))))\n";
-    o = o + "        (return (local.get $head))))))\n";
-    o = o + "    (local.set $p (global.get $heap))\n";
-    o = o + "    (global.set $heap (i32.add (global.get $heap) (local.get $n)))\n";
-    // Grow linear memory when the bump pointer passes the current capacity
-    // (memory.size pages * 64KiB). Without this the bump allocator traps
-    // once a program allocates past the initial pages.
-    o = o + "    (if (i32.gt_u (global.get $heap) (i32.mul (memory.size) (i32.const 65536)))\n";
-    o = o + "      (then (drop (memory.grow (i32.div_u (i32.add (i32.sub (global.get $heap) (i32.mul (memory.size) (i32.const 65536))) (i32.const 65535)) (i32.const 65536))))))\n";
-    o = o + "    (local.get $p))\n";
-    // $__fern_arr_box(eb) -> a: allocate an rc-headered array block and
-    // return the DATA pointer `a`. Block layout: [rc@0][bsz@4][len@8]
-    // [cap@12][elems@16..]; a = base+8, so the rc word sits at [a-8]
-    // (matching the asm backends' [data-8] convention) while len@[a],
-    // cap@[a+4], elems@[a+8] keep every a-relative array access unchanged.
-    // rc starts at 1 (the fresh owner). bsz (at [base+4] = [a-4]) records
-    // the rounded block size so $__fern_arr_dec can pick the freelist class
-    // without knowing the element width.
-    o = o + "  (func $__fern_arr_box (param $eb i32) (result i32)\n";
-    o = o + "    (local $base i32) (local $n i32)\n";
-    o = o + "    (local.set $n (i32.and (i32.add (i32.add (i32.const 16) (local.get $eb)) (i32.const 7)) (i32.const -8)))\n";
-    o = o + "    (local.set $base (call $__fern_alloc (local.get $n)))\n";
-    o = o + "    (i32.store (local.get $base) (i32.const 1))\n";
-    o = o + "    (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $n))\n";
-    o = o + "    (i32.add (local.get $base) (i32.const 8)))\n";
-    // $__fern_str_box(p) -> s: rc-header a heap STRING block. `p` is the
-    // string payload size (4-byte len word + bytes); the 8-byte rc+bsz
-    // header is prepended and s = base+8 is returned, so [s] = len,
-    // [s+4..] = bytes keep every s-relative string access unchanged while
-    // the rc word sits at [s-8] and the block size at [s-4]. Static string
-    // literals live in the data section (below heap_base) and are left
-    // unboxed — the rc helpers' address guard treats them as immortal.
-    // Frees through the shared $__fern_arr_dec (size-class freelist), since
-    // a string is flat (no rc-tracked children). Foundation: heap strings
-    // are now rc-boxed; counting + release ride on this in later slices.
-    o = o + "  (func $__fern_str_box (param $p i32) (result i32)\n";
-    o = o + "    (local $base i32) (local $n i32)\n";
-    o = o + "    (local.set $n (i32.and (i32.add (i32.add (i32.const 8) (local.get $p)) (i32.const 7)) (i32.const -8)))\n";
-    o = o + "    (local.set $base (call $__fern_alloc (local.get $n)))\n";
-    o = o + "    (i32.store (local.get $base) (i32.const 1))\n";
-    o = o + "    (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $n))\n";
-    o = o + "    (i32.add (local.get $base) (i32.const 8)))\n";
-    // $__fern_alloc_reuse(token, slots) -> box (#4350): the FBIP reuse-
-    // degrade primitive, wasm twin of the asm __fn___fern_alloc_reuse, adapted
-    // to the str_box layout (rc@box-8, bsz@box-4). A struct box for nf fields
-    // is $__fern_str_box(slots*8) — slots counts every payload word (a struct's
-    // type-id slot + fields = nf+1, a tuple's elements = arity) — i.e. block
-    // size 8 + slots*8 (8-byte header; already 8-aligned). null token -> fresh box; size
-    // match -> hand the SAME block back (rc stays 1 — the caller's
-    // $__fern_rc_is_unique gate guaranteed sole ownership; the caller
-    // overwrites the type-id slot before any read); mismatch -> free the donor
-    // block exactly as $__fern_arr_dec's rc==1 path does (rc=0, next parked in
-    // the bsz slot, pushed onto its size class) and alloc fresh — a mispaired
-    // reuse is only ever slower, never unsound.
-    o = o + "  (func $__fern_alloc_reuse (param $t i32) (param $nf i32) (result i32)\n";
-    o = o + "    (local $want i32) (local $base i32) (local $cls i32)\n";
-    o = o + "    (local.set $want (i32.add (i32.const 8) (i32.mul (local.get $nf) (i32.const 8))))\n";
-    o = o + "    (if (i32.eqz (local.get $t)) (then\n";
-    o = o + "      (return (call $__fern_str_box (i32.mul (local.get $nf) (i32.const 8))))))\n";
-    o = o + "    (local.set $base (i32.sub (local.get $t) (i32.const 8)))\n";
-    o = o + "    (if (i32.eq (i32.load (i32.add (local.get $base) (i32.const 4))) (local.get $want)) (then\n";
-    o = o + "      (return (local.get $t))))\n";
-    o = o + "    (local.set $cls (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3)))\n";
-    o = o + "    (i32.store (local.get $base) (i32.const 0))\n";
-    o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
-    o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
-    o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base))))\n";
-    o = o + "    (call $__fern_str_box (i32.mul (local.get $nf) (i32.const 8))))\n";
-    // $__fern_arr_dec(a) -> a: Perceus array release. Same guard chain as
-    // the rc helpers (null / SSO low-bit / low-addr / sentinel). rc > 1:
-    // decrement. rc <= 0: over-release (detector++), no free. rc == 1:
-    // FREE — clear rc to 0 (a double-free then reads 0 and ticks the
-    // detector instead of corrupting) and push the block onto its size
-    // class (the next pointer is parked in the bsz slot at base+4, which
-    // $__fern_arr_box rewrites on reuse, so rc stays 0 while free).
-    o = o + "  (func $__fern_arr_dec (param $a i32) (result i32)\n";
-    o = o + "    (local $base i32) (local $rc i32) (local $cls i32)\n";
-    o = o + "    (if (i32.eqz (local.get $a)) (then (return (local.get $a))))\n";
-    o = o + "    (if (i32.and (local.get $a) (i32.const 1)) (then (return (local.get $a))))\n";
-    o = o + "    (if (i32.lt_u (local.get $a) (i32.const " + hb + ")) (then (return (local.get $a))))\n";
-    o = o + "    (local.set $base (i32.sub (local.get $a) (i32.const 8)))\n";
-    o = o + "    (local.set $rc (i32.load (local.get $base)))\n";
-    o = o + "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (local.get $a))))\n";
-    o = o + "    (if (i32.gt_s (local.get $rc) (i32.const 1)) (then\n";
-    o = o + "      (i32.store (local.get $base) (i32.sub (local.get $rc) (i32.const 1)))\n";
-    o = o + "      (return (local.get $a))))\n";
-    o = o + "    (if (i32.le_s (local.get $rc) (i32.const 0)) (then\n";
-    o = o + "      (global.set $__fern_rc_underflow (i32.add (global.get $__fern_rc_underflow) (i32.const 1)))\n";
-    o = o + "      (return (local.get $a))))\n";
-    o = o + "    (local.set $cls (i32.shr_u (i32.load (i32.add (local.get $base) (i32.const 4))) (i32.const 3)))\n";
-    o = o + "    (i32.store (local.get $base) (i32.const 0))\n";
-    o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
-    o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
-    o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base))))\n";
-    o = o + "    (local.get $a))\n";
-    // $__fern_arr_dec_ptr(a) -> a: Perceus release of an array whose ELEMENTS
-    // are rc-boxed pointers (string[] / struct[] / array-of-array / tuple[]).
-    // When `a` is the LAST owner (rc word at [a-8] == 1, i.e. about to be
-    // freed) first release every element (a 4-byte i32 slot at [a+8 + i*4],
-    // for i in 0..len at [a]) via the shared $__fern_arr_dec, THEN free the
-    // buffer itself. The rc==1 guard ensures elements are released exactly
-    // once, on the final free (an aliased array at rc>1 just decrements the
-    // buffer, elements untouched — they live on through the other owner). One
-    // level: an element's OWN rc-tracked children leak (a sound known gap,
-    // matching the struct/tuple one-level release). Same null / low-bit /
-    // low-addr guards as $__fern_arr_dec so a non-heap or null array is a
-    // no-op.
-    o = o + "  (func $__fern_arr_dec_ptr (param $a i32) (result i32)\n";
-    o = o + "    (local $i i32) (local $n i32)\n";
-    o = o + "    (if (i32.eqz (local.get $a)) (then (return (local.get $a))))\n";
-    o = o + "    (if (i32.and (local.get $a) (i32.const 1)) (then (return (local.get $a))))\n";
-    o = o + "    (if (i32.lt_u (local.get $a) (i32.const " + hb + ")) (then (return (local.get $a))))\n";
-    o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n";
-    o = o + "      (local.set $n (i32.load (local.get $a)))\n";
-    o = o + "      (local.set $i (i32.const 0))\n";
-    o = o + "      (block $adp_done (loop $adp_lp\n";
-    o = o + "        (br_if $adp_done (i32.ge_u (local.get $i) (local.get $n)))\n";
-    o = o + "        (drop (call $__fern_arr_dec (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))))))\n";
-    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "        (br $adp_lp))))) \n";
-    o = o + "    (call $__fern_arr_dec (local.get $a)))\n";
-    return o;
-}
 
 // arr_dec_ptr2_func emits $__fern_arr_dec_ptr2(a) -> a: the TWO-LEVEL sibling
 // of $__fern_arr_dec_ptr (#4355 slice 9 — string[][] / arr-of-arr-of-pointers
@@ -6933,121 +6694,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
 // (strarr-elem-alias-excluded).
 
 
-pub function arr_dec_ptr2_func(heap_base: i32): string {
-    var hb: string = util.i32_to_string(heap_base);
-    var o: string = "";
-    o = o + "  (func $__fern_arr_dec_ptr2 (param $a i32) (result i32)\n";
-    o = o + "    (local $i i32) (local $n i32)\n";
-    o = o + "    (if (i32.eqz (local.get $a)) (then (return (local.get $a))))\n";
-    o = o + "    (if (i32.and (local.get $a) (i32.const 1)) (then (return (local.get $a))))\n";
-    o = o + "    (if (i32.lt_u (local.get $a) (i32.const " + hb + ")) (then (return (local.get $a))))\n";
-    o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n";
-    o = o + "      (local.set $n (i32.load (local.get $a)))\n";
-    o = o + "      (local.set $i (i32.const 0))\n";
-    o = o + "      (block $adp2_done (loop $adp2_lp\n";
-    o = o + "        (br_if $adp2_done (i32.ge_u (local.get $i) (local.get $n)))\n";
-    o = o + "        (drop (call $__fern_arr_dec_ptr (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))))))\n";
-    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "        (br $adp2_lp))))) \n";
-    o = o + "    (call $__fern_arr_dec (local.get $a)))\n";
-    return o;
-}
 
-// rc_runtime_helpers emits the Perceus reference-counting runtime for the
-// wasm backend — the wasm32 mirror of the x86-64 / arm64 helpers
-// (asm.fern `__fn___fern_rc_*`). The rc word is an i32 at [ptr-8]; the
-// "data pointer" handed to these helpers is base+8 (so the rc precedes
-// the payload). Guard chain matches the asm backends: null → SSO inline
-// low-bit tag → low-address → static sentinel (rc high bit / negative as
-// signed i32, marking an immortal data-section literal). Unlike the asm
-// backends (heap mmap'd high, so a fixed `< 0x10000` guard works), wasm
-// linear memory starts low and the bump heap sits just above the static
-// data, so the low-address threshold is `heap_base` itself: any pointer
-// below it is static data (sentinel-guarded) or a non-pointer small int,
-// and every real heap object is >= heap_base. An over-release (dec at
-// rc <= 0) bumps the `$__fern_rc_underflow` detector rather than
-// corrupting the count, surfaced by __fern_rc_underflow_count(). The
-// low-level memory pokes (__alloc / __load_i32 / __store_i32) are the
-// wasm counterparts of the x86 `__fn___alloc` / `__fn___load_i32` /
-// `__fn___store_i32` runtime funcs: __alloc forwards to the bump heap so
-// the rc tests (and any `core/map` raw-memory source that links) resolve.
-// This is the additive Phase-0c foundation for wasm RC — the array
-// layout migration + inc/dec call sites ride on it in later slices,
-// exactly as on the asm backends.
-pub function rc_runtime_helpers(heap_base: i32): string {
-    var lo: string = util.i32_to_string(heap_base);
-    var o: string = "";
-    // ($__fern_rc_underflow is defined in heap_alloc_helpers, emitted first.)
-    // __alloc(n) -> ptr: forward to the bump allocator.
-    o = o + "  (func $__alloc (param $n i32) (result i32)\n";
-    o = o + "    (call $__fern_alloc (local.get $n)))\n";
-    // __free(p): no-op (bump heap; reclamation is the freelist's job).
-    o = o + "  (func $__free (param $p i32) (result i32)\n";
-    o = o + "    (local.get $p))\n";
-    // __load_i32(a) -> i32.
-    o = o + "  (func $__load_i32 (param $a i32) (result i32)\n";
-    o = o + "    (i32.load (local.get $a)))\n";
-    // __store_i32(a, v) -> a (value-producing so the StmtExpr drop balances).
-    o = o + "  (func $__store_i32 (param $a i32) (param $v i32) (result i32)\n";
-    o = o + "    (i32.store (local.get $a) (local.get $v))\n";
-    o = o + "    (local.get $a))\n";
-    // __fern_rc_inc(p) -> p: retain.
-    o = o + "  (func $__fern_rc_inc (param $p i32) (result i32)\n";
-    o = o + "    (local $rc i32)\n";
-    o = o + "    (if (i32.eqz (local.get $p)) (then (return (local.get $p))))\n";
-    o = o + "    (if (i32.and (local.get $p) (i32.const 1)) (then (return (local.get $p))))\n";
-    o = o + "    (if (i32.lt_u (local.get $p) (i32.const " + lo + ")) (then (return (local.get $p))))\n";
-    o = o + "    (local.set $rc (i32.load (i32.sub (local.get $p) (i32.const 8))))\n";
-    o = o + "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (local.get $p))))\n";
-    o = o + "    (i32.store (i32.sub (local.get $p) (i32.const 8)) (i32.add (local.get $rc) (i32.const 1)))\n";
-    o = o + "    (local.get $p))\n";
-    // __fern_rc_dec(p) -> p: release; over-release bumps the detector.
-    o = o + "  (func $__fern_rc_dec (param $p i32) (result i32)\n";
-    o = o + "    (local $rc i32)\n";
-    o = o + "    (if (i32.eqz (local.get $p)) (then (return (local.get $p))))\n";
-    o = o + "    (if (i32.and (local.get $p) (i32.const 1)) (then (return (local.get $p))))\n";
-    o = o + "    (if (i32.lt_u (local.get $p) (i32.const " + lo + ")) (then (return (local.get $p))))\n";
-    o = o + "    (local.set $rc (i32.load (i32.sub (local.get $p) (i32.const 8))))\n";
-    o = o + "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (local.get $p))))\n";
-    o = o + "    (if (i32.le_s (local.get $rc) (i32.const 0))\n";
-    o = o + "      (then (global.set $__fern_rc_underflow (i32.add (global.get $__fern_rc_underflow) (i32.const 1)))))\n";
-    o = o + "    (i32.store (i32.sub (local.get $p) (i32.const 8)) (i32.sub (local.get $rc) (i32.const 1)))\n";
-    o = o + "    (local.get $p))\n";
-    // __fern_rc_is_unique(p) -> 1 iff a live heap object with rc == 1.
-    o = o + "  (func $__fern_rc_is_unique (param $p i32) (result i32)\n";
-    o = o + "    (local $rc i32)\n";
-    o = o + "    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))\n";
-    o = o + "    (if (i32.and (local.get $p) (i32.const 1)) (then (return (i32.const 0))))\n";
-    o = o + "    (if (i32.lt_u (local.get $p) (i32.const " + lo + ")) (then (return (i32.const 0))))\n";
-    o = o + "    (local.set $rc (i32.load (i32.sub (local.get $p) (i32.const 8))))\n";
-    o = o + "    (if (i32.lt_s (local.get $rc) (i32.const 0)) (then (return (i32.const 0))))\n";
-    o = o + "    (if (i32.eq (local.get $rc) (i32.const 1)) (then (return (i32.const 1))))\n";
-    o = o + "    (i32.const 0))\n";
-    // __fern_rc_underflow_count() -> i32: the over-release detector.
-    o = o + "  (func $__fern_rc_underflow_count (result i32)\n";
-    o = o + "    (global.get $__fern_rc_underflow))\n";
-    // __fern_snapshot_dec(new, old, snap) -> new (#3456 slice 2). REAL now
-    // (Perceus self-host slice 1d): the snapshot-param consume-rebind reclaim.
-    // Frees `old` (the superseded intermediate box) only when it is UNIQUELY
-    // owned (rc == 1) AND differs from BOTH `new` (cow — the rebind kept it) and
-    // `snap` (the caller's borrowed original — never freed). A shared box
-    // (rc > 1) is LEFT untouched, NOT decremented: the snapshot param is borrowed,
-    // so we hold no count to release — matching the x86 body's `cmpl $1 / jne`
-    // (free iff rc==1, else leave). The free reuses $__fern_arr_dec's rc==1 branch
-    // (freelist push by size class) — guarding rc==1 here first means arr_dec only
-    // ever sees the uniquely-owned case, so it frees rather than decrements.
-    // Returns `new`. ($__fern_arr_dec is emitted alongside, in heap_alloc_helpers.)
-    o = o + "  (func $__fern_snapshot_dec (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
-    o = o + "    (if (i32.eq (local.get $old) (local.get $new)) (then (return (local.get $new))))\n";
-    o = o + "    (if (i32.eq (local.get $old) (local.get $snap)) (then (return (local.get $new))))\n";
-    o = o + "    (if (i32.eqz (local.get $old)) (then (return (local.get $new))))\n";
-    o = o + "    (if (i32.and (local.get $old) (i32.const 1)) (then (return (local.get $new))))\n";
-    o = o + "    (if (i32.lt_u (local.get $old) (i32.const " + lo + ")) (then (return (local.get $new))))\n";
-    o = o + "    (if (i32.ne (i32.load (i32.sub (local.get $old) (i32.const 8))) (i32.const 1)) (then (return (local.get $new))))\n";
-    o = o + "    (drop (call $__fern_arr_dec (local.get $old)))\n";
-    o = o + "    (local.get $new))\n";
-    return o;
-}
 
 // module_uses_rcmem reports whether the program calls any of the RC /
 // raw-memory intrinsics, gating both rc_runtime_helpers and (since
@@ -7409,29 +7056,6 @@ function writefile_func_p2(): string {
 
 
 
-// arr_slice8_helper emits ONLY $__fern_arr_slice8 (a fresh array holding
-// a[start:end), 8-byte f64/i64 elements — a raw i64 byte-move). Self-contained
-// apart from $__fern_arr_box, so the IR path can pull in f64[] slicing without
-// the rest of arr_helpers (the wide push variants etc.).
-pub function arr_slice8_helper(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_arr_slice8 (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
-    o = o + "    (local $n i32) (local $na i32) (local $i i32)\n";
-    o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (unreachable)))\n";
-    o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
-    o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
-    o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 8))))\n";
-    o = o + "    (i32.store (local.get $na) (local.get $n))\n";
-    o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $n))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
-    o = o + "      (i64.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8))) (i64.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (i32.add (local.get $start) (local.get $i)) (i32.const 8)))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (local.get $na))\n";
-    return o;
-}
 
 function arr_helpers(): string {
     var o: string = "";
@@ -7568,118 +7192,6 @@ function arr_push_wide(vty: string, sop: string): string {
     return o;
 }
 
-// map_w64_helpers emits the wasm IR runtime for i64/u64-VALUED maps (#5253).
-// The i32-celled value column can't hold an 8-byte value inline, so a wide value
-// is boxed into a fresh 8-byte rc cell and the cell's i32 pointer is stored in the
-// column as an rc-managed value (vis=1, so $__fern_map_release frees the cell like
-// a string value; vconsume=1, so the map takes the fresh cell's sole ref). Reads
-// dereference the cell: $__fern_map_get_or_w64 for a single value,
-// $__fern_map_get_w64 for an Option[i64], $__fern_map_values_w64 for the whole
-// column (into a fresh i64[]), and $__fern_map_iter_w64 / $__fern_mapiter_value_w64
-// for iteration (an i64[] value snapshot + an 8-byte accessor). Depends on
-// $__fern_map_set / $__fern_map_find / $__fern_map_keys / $__fern_str_box /
-// $__fern_arr_box / $__fern_alloc (map_helpers + heap, co-present with maps).
-pub function map_w64_helpers(): string {
-    var o: string = "";
-    // $__fern_map_set_w64(box, k, v, kcons) → box: box v into an 8-byte cell and
-    // store the cell pointer as a vis-managed value the map takes ownership of.
-    o = o + "  (func $__fern_map_set_w64 (param $box i32) (param $k i32) (param $v i64) (param $kcons i32) (result i32)\n";
-    o = o + "    (local $cell i32)\n";
-    o = o + "    (local.set $cell (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "    (i64.store (local.get $cell) (local.get $v))\n";
-    o = o + "    (return (call $__fern_map_set (local.get $box) (local.get $k) (local.get $cell) (i32.const 1) (i32.const 1) (local.get $kcons))))\n";
-    // $__fern_map_get_or_w64(box, k, d) → the 8-byte value at k, or default d on a
-    // miss. vals[idx] holds the cell pointer; deref it with i64.load.
-    o = o + "  (func $__fern_map_get_or_w64 (param $box i32) (param $k i32) (param $d i64) (result i64)\n";
-    o = o + "    (local $idx i32)\n";
-    o = o + "    (local.set $idx (call $__fern_map_find (local.get $box) (local.get $k)))\n";
-    o = o + "    (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (local.get $d))))\n";
-    o = o + "    (i64.load (i32.load (i32.add (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.mul (local.get $idx) (i32.const 4))))))\n";
-    // $__fern_map_get_or_w64's Option sibling: $__fern_map_get_w64(box, k) → a
-    // 16-byte Option[i64] box [tag@0][payload@8] (Some=0, None=1) — the same shape
-    // opt_make/opt_payload use for an 8-byte payload — dereferencing the cell into
-    // payload@8 on a hit.
-    o = o + "  (func $__fern_map_get_w64 (param $box i32) (param $k i32) (result i32)\n";
-    o = o + "    (local $idx i32) (local $bx i32)\n";
-    o = o + "    (local.set $idx (call $__fern_map_find (local.get $box) (local.get $k)))\n";
-    o = o + "    (local.set $bx (call $__fern_str_box (i32.const 16)))\n";
-    o = o + "    (if (i32.lt_s (local.get $idx) (i32.const 0)) (then\n";
-    o = o + "      (i32.store (local.get $bx) (i32.const 1))\n";
-    o = o + "      (i64.store (i32.add (local.get $bx) (i32.const 8)) (i64.const 0))\n";
-    o = o + "      (return (local.get $bx))))\n";
-    o = o + "    (i32.store (local.get $bx) (i32.const 0))\n";
-    o = o + "    (i64.store (i32.add (local.get $bx) (i32.const 8)) (i64.load (i32.load (i32.add (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.mul (local.get $idx) (i32.const 4))))))\n";
-    o = o + "    (local.get $bx))\n";
-    // $__fern_map_values_w64(box) → a fresh i64[] of the live values in probe
-    // order: snapshot the value column (cell pointers) and dereference each cell
-    // into an 8-byte element ([len@0][cap@4][elems@8], 8-byte stride).
-    o = o + "  (func $__fern_map_values_w64 (param $box i32) (result i32)\n";
-    o = o + "    (local $n i32) (local $arr i32) (local $cap i32) (local $used i32) (local $vals i32) (local $i i32) (local $j i32) (local $cell i32)\n";
-    o = o + "    (local.set $n (i32.load (local.get $box)))\n";
-    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 8))))\n";
-    o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
-    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
-    o = o + "    (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
-    o = o + "    (local.set $used (i32.load (i32.add (local.get $box) (i32.const 16))))\n";
-    o = o + "    (local.set $vals (i32.load (i32.add (local.get $box) (i32.const 12))))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (local.set $j (i32.const 0))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $cap)))\n";
-    o = o + "      (if (i32.eq (i32.load (i32.add (local.get $used) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 1)) (then\n";
-    o = o + "        (local.set $cell (i32.load (i32.add (local.get $vals) (i32.mul (local.get $i) (i32.const 4)))))\n";
-    o = o + "        (i64.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $j) (i32.const 8))) (i64.load (local.get $cell)))\n";
-    o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (local.get $arr))\n";
-    // $__fern_map_iter_w64(map) → a MapIter box [keys@0][values@4][cursor@8] whose
-    // VALUE snapshot is a fresh i64[] (values dereferenced from the cells). Mirrors
-    // $__fern_map_iter but swaps $__fern_map_values → $__fern_map_values_w64.
-    o = o + "  (func $__fern_map_iter_w64 (param $map i32) (result i32)\n";
-    o = o + "    (local $box i32)\n";
-    o = o + "    (local.set $box (call $__fern_alloc (i32.const 12)))\n";
-    o = o + "    (i32.store (local.get $box) (call $__fern_map_keys (local.get $map)))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (call $__fern_map_values_w64 (local.get $map)))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (i32.const 0))\n";
-    o = o + "    (local.get $box))\n";
-    // $__fern_mapiter_value_w64(box) → values[cursor] as an 8-byte i64 (values =
-    // box@4 is an i64[]; element at values + 8 + cursor*8).
-    o = o + "  (func $__fern_mapiter_value_w64 (param $box i32) (result i64)\n";
-    o = o + "    (i64.load (i32.add (i32.add (i32.load (i32.add (local.get $box) (i32.const 4))) (i32.const 8)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.const 8)))))\n";
-    return o;
-}
-
-
-
-// block into an i32. Optional leading '-', then decimal digits, stops at the
-// first non-digit; empty block → 0. Allocation-free (no heap dependency) — the
-// wasm companion to asm_ir's __fn___fern_str_to_i32 (the wasm AST backend had no
-// str_to_i32, so this is authored fresh; the IR path is its only consumer).
-pub function str_to_i32_helper(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_str_to_i32 (param $s i32) (result i32)\n";
-    o = o + "    (local $len i32) (local $i i32) (local $acc i32) (local $neg i32) (local $c i32)\n";
-    o = o + "    (local.set $len (i32.load (local.get $s)))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (local.set $acc (i32.const 0))\n";
-    o = o + "    (local.set $neg (i32.const 0))\n";
-    // optional leading '-' (45): only when there is at least one byte.
-    o = o + "    (if (i32.and (i32.gt_s (local.get $len) (i32.const 0)) (i32.eq (i32.load8_u (i32.add (local.get $s) (i32.const 4))) (i32.const 45))) (then\n";
-    o = o + "      (local.set $neg (i32.const 1)) (local.set $i (i32.const 1))))\n";
-    o = o + "    (block $d (loop $l\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-    o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
-    // stop at the first non-digit (< '0'(48) or > '9'(57)).
-    o = o + "      (br_if $d (i32.lt_s (local.get $c) (i32.const 48)))\n";
-    o = o + "      (br_if $d (i32.gt_s (local.get $c) (i32.const 57)))\n";
-    o = o + "      (local.set $acc (i32.add (i32.mul (local.get $acc) (i32.const 10)) (i32.sub (local.get $c) (i32.const 48))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $l)))\n";
-    o = o + "    (if (local.get $neg) (then (local.set $acc (i32.sub (i32.const 0) (local.get $acc)))))\n";
-    o = o + "    (local.get $acc))\n";
-    return o;
-}
 
 
 
@@ -7691,38 +7203,9 @@ pub function str_to_i32_helper(): string {
 
 
 
-// arr_push_owned_helper emits $__fern_arr_push_owned: the sole-owner self-append
-// (irlower's !aliased `a = a.append(v)`). Wraps $__fern_arr_push and, iff the push
-// GREW (reallocated, result != old), frees the dead old buffer via the shared
-// $__fern_arr_dec — which at rc==1 (sole owner) returns the block to its size-class
-// freelist, and is a no-op on null / low-addr / SSO / static-sentinel / rc!=1, so
-// the owned helper inherits all the defensive gating. Sound only because the emit
-// site proved the slot unaliased (no surviving reference to the superseded buffer).
-// wasm analog of asm_ir's __fern_arr_push_owned. Depends on $__fern_arr_push +
-// $__fern_arr_dec, both co-present whenever arr_push_owned is (module_allocates).
-pub function arr_push_owned_helper(heap_base: i32): string {
-    var hb: string = util.i32_to_string(heap_base);
-    var o: string = "";
-    o = o + "  (func $__fern_arr_push_owned (param $a i32) (param $v i32) (result i32)\n";
-    o = o + "    (local $na i32) (local $rc i32)\n";
-    o = o + "    (local.set $na (call $__fern_arr_push (local.get $a) (local.get $v)))\n";
-    // Superseded-old release, REGISTER PARITY (#5325): free the dead old
-    // buffer ONLY when it was the sole owner (rc == 1) — and no-op for any
-    // shared (rc >= 2) old, exactly like asm_ir's .Lapo_ret "not sole owner —
-    // leave (defensive)" gate. Delegating unconditionally to $__fern_arr_dec
-    // DECREMENTED a shared old, eating the caller-side grow bracket's +1: the
-    // bracket's own $__fern_arr_dec then freed the caller's still-referenced
-    // buffer (the WIT-codec SIGABRT that blocked #5138 — outer's
-    // `out = out.append(k)` on a bracketed param, chained tx shape). At
-    // rc == 1 the shared $__fern_arr_dec takes its free path, so the sole-
-    // owner behaviour is unchanged; guards (null/tagged/low/immortal) ride
-    // along inside it.
-    o = o + "    (if (i32.and (i32.ne (local.get $na) (local.get $a)) (i32.and (i32.ge_u (local.get $a) (i32.const " + hb + ")) (i32.eqz (i32.and (local.get $a) (i32.const 1))))) (then\n";
-    o = o + "      (if (i32.eq (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n";
-    o = o + "        (drop (call $__fern_arr_dec (local.get $a)))))))\n";
-    o = o + "    (local.get $na))\n";
-    return o;
-}
+
+
+
 
 
 
@@ -10729,13 +10212,13 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
         di = di + 1;
     }
     if (wasm_ir.need(needs, "@allocates") || wasm_ir.need(needs, "@uses_arr_i32_helpers") || wasm_ir.need(needs, "@uses_i32_to_string") || wasm_ir.need(needs, "@uses_chr") || wasm_ir.need(needs, "@uses_strbuf") || wasm_ir.need(needs, "env") || wasm_ir.need(needs, "stat") || wasm_ir.need(needs, "remove_file") || wasm_ir.need(needs, "read_dir") || wasm_ir.need(needs, "remove_dir_all") || wasm_ir.need(needs, "temp_dir") || wasm_ir.need(needs, "sleep_ms") || wasm_ir.need(needs, "read_chunk") || wasm_ir.need(needs, "reader_close") || wasm_ir.need(needs, "wasm_poll") || wasm_ir.need(needs, "tcp_connect") || wasm_ir.need(needs, "tcp_send") || wasm_ir.need(needs, "tcp_recv") || wasm_ir.need(needs, "tcp_listen") || wasm_ir.need(needs, "tcp_accept") || wasm_ir.need(needs, "udp_send") || wasm_ir.need(needs, "poll")) {
-        out = out + heap_alloc_helpers(wasm_ir.heap_base_for_strs(sv), wasm_ir.fl_base_for_strs(sv), wasm_ir.fl_cells());
-        out = out + rc_runtime_helpers(wasm_ir.heap_base_for_strs(sv));
+        out = out + wasm_ir.heap_alloc_helpers(wasm_ir.heap_base_for_strs(sv), wasm_ir.fl_base_for_strs(sv), wasm_ir.fl_cells());
+        out = out + wasm_ir.rc_runtime_helpers(wasm_ir.heap_base_for_strs(sv));
     }
     // $__fern_arr_dec_ptr2 (string[][] deep reclaim, #4355 slice 9): only
     // when the module lowers a __fern_strarrarr_free call — see
     // arr_dec_ptr2_func for why it must not ride along unconditionally.
-    if (wasm_ir.need(needs, "@calls_strarrarr_free")) { out = out + arr_dec_ptr2_func(wasm_ir.heap_base_for_strs(sv)); }
+    if (wasm_ir.need(needs, "@calls_strarrarr_free")) { out = out + wasm_ir.arr_dec_ptr2_func(wasm_ir.heap_base_for_strs(sv)); }
     if (wasm_ir.need(needs, "@calls_optarrarr_free")) { out = out + wasm_ir.optarrarr_free_func(wasm_ir.heap_base_for_strs(sv)); }
     // $__fern_strbuf_* (global string-builder): a growable bump-heap buffer +
     // reset/append/take. Heap-backed (str_box / alloc), emitted above.
@@ -10750,7 +10233,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     // fields, so non-struct programs are unchanged.
     out = out + rc_bodies;
     if (wasm_ir.need(needs, "@uses_divrem")) { out = out + wasm_ir.divrem_helpers(); }
-    if (wasm_ir.need(needs, "@uses_i64_divrem")) { out = out + divrem64_helpers(); }
+    if (wasm_ir.need(needs, "@uses_i64_divrem")) { out = out + wasm_ir.divrem64_helpers(); }
     // $__fern_exp_f64: e^x via a polynomial (no transcendental wasm
     // instruction). Self-contained f64 math — no imports or heap. fpow (x^y =
     // exp(y·ln x)) reuses it, so its gate folds fpow in (emitted once).
@@ -10873,7 +10356,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     if (wasm_ir.need(needs, "read_chunk")) { out = out + wasm_ir.reader_read_chunk_func(); }
     if (wasm_ir.need(needs, "reader_close")) { out = out + wasm_ir.reader_close_func(); }
     // $__fern_str_to_i32 backs str_to_i32(s); allocation-free, own gate.
-    if (wasm_ir.need(needs, "@uses_str_to_i32")) { out = out + str_to_i32_helper(); }
+    if (wasm_ir.need(needs, "@uses_str_to_i32")) { out = out + wasm_ir.str_to_i32_helper(); }
     // $__fern_chr backs chr(n); allocates (heap gate ORs in module_uses_chr).
     if (wasm_ir.need(needs, "@uses_chr")) { out = out + wasm_ir.chr_helper(); }
     if (wasm_ir.need(needs, "@uses_str_cmp")) { out = out + wasm_ir.strcmp_helper(); }
@@ -10912,7 +10395,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     // String lines — split on \n + trailing-empty trim (IR-only on wasm).
     if (wasm_ir.need(needs, "@uses_str_lines")) { out = out + wasm_ir.str_lines_helper(); }
     if (wasm_ir.need(needs, "@uses_arr_slice")) { out = out + wasm_ir.arr_slice_helper(); }
-    if (wasm_ir.need(needs, "@uses_arr_slice8")) { out = out + arr_slice8_helper(); }
+    if (wasm_ir.need(needs, "@uses_arr_slice8")) { out = out + wasm_ir.arr_slice8_helper(); }
     // `.append` (op_arr_push) emits a call to $__fern_arr_push; the IR path
     // needs the standalone push helper (the AST path's arr_helpers bundle —
     // which also defines arr_slice/slice8 — would double-define those, so use
@@ -10931,14 +10414,14 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     var needs_arr_push: boolean = wasm_ir.need(needs, "arr_push") || wasm_ir.need(needs, "arr_push_owned") || wasm_ir.need(needs, "read_dir") || wasm_ir.need(needs, "remove_dir_all");
     var split_emits_push: boolean = wasm_ir.need(needs, "str_split") || wasm_ir.need(needs, "@uses_str_lines");
     if (needs_arr_push && !split_emits_push) { out = out + wasm_ir.arr_push_helper(); }
-    if (wasm_ir.need(needs, "arr_push_owned")) { out = out + arr_push_owned_helper(wasm_ir.heap_base_for_strs(sv)); }
+    if (wasm_ir.need(needs, "arr_push_owned")) { out = out + wasm_ir.arr_push_owned_helper(wasm_ir.heap_base_for_strs(sv)); }
     if (wasm_ir.need(needs, "arr_push_i64")) { out = out + arr_push_i64_helper(); }
     if (wasm_ir.need(needs, "arr_push_f64")) { out = out + arr_push_f64_helper(); }
     if (wasm_ir.need(needs, "@uses_maps")) { out = out + wasm_ir.map_helpers(); }
     // $__fern_map_set_w64 / $__fern_map_get_or_w64: the i64/u64-VALUED map runtime
     // (#5253), over the map_helpers primitives above. Emitted when a module
     // inserts/reads an 8-byte i64/u64 map value.
-    if (wasm_ir.need(needs, "@uses_map_w64")) { out = out + map_w64_helpers(); }
+    if (wasm_ir.need(needs, "@uses_map_w64")) { out = out + wasm_ir.map_w64_helpers(); }
     // $__fern_map_iter + accessors: the wasm map-iterator runtime (materializes
     // keys/values via map_helpers above, so gated after it). Emitted when the
     // module iterates a map (m.iter() / for-in-map).
@@ -10951,11 +10434,11 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     if (wasm_ir.need(needs, "random_i32")) { out = out + wasm_ir.random_i32_func(); }
     // print_int's $__fern_print_int: digit buffer in the 16-byte scratch past
     // the string blocks (the `+16` in fl_base_for); iovec in the low-24 scratch.
-    if (wasm_ir.need(needs, "print_int")) { out = out + print_int_helper(wasm_ir.str_offset(sv, sv.len())); }
+    if (wasm_ir.need(needs, "print_int")) { out = out + wasm_ir.print_int_helper(wasm_ir.str_offset(sv, sv.len())); }
     // $__fern_print_int64 for print_int(i64): a 24-byte scratch buffer 16 bytes
     // past print_int's (matching the AST path's tab.next + 16 offset) so the two
     // never clobber when a module prints both widths.
-    if (wasm_ir.need(needs, "print_i64")) { out = out + print_int64_helper(wasm_ir.str_offset(sv, sv.len()) + 16); }
+    if (wasm_ir.need(needs, "print_i64")) { out = out + wasm_ir.print_int64_helper(wasm_ir.str_offset(sv, sv.len()) + 16); }
     if (wasm_ir.need(needs, "print_str")) { out = out + wasm_ir.print_str_helper(); }
     if (wasm_ir.need(needs, "eprint_str")) { out = out + wasm_ir.eprint_str_helper(); }
     if (wasm_ir.need(needs, "str_bytes")) { out = out + wasm_ir.str_bytes_func(); }
@@ -11130,14 +10613,14 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     }
     // The print_int scratch buffer sits just above all string data.
     if (module_uses_print_int(mod)) {
-        out = out + print_int_helper(tab.next);
+        out = out + wasm_ir.print_int_helper(tab.next);
     }
     // i64 runtime: the guarded 64-bit div/rem, the clock builtins, and the
     // i64 decimal formatter. print_int64 formats into a 24-byte buffer at
     // tab.next + 16 (just above the 16-byte print_int buffer).
     if (has_i64) {
-        out = out + divrem64_helpers();
-        out = out + print_int64_helper(tab.next + 16);
+        out = out + wasm_ir.divrem64_helpers();
+        out = out + wasm_ir.print_int64_helper(tab.next + 16);
     }
     if (has_clocks) {
         if (io) { out = out + clock_funcs_p2(has_wallclock, has_monoclock); } else { out = out + wasm_ir.clock_funcs(); }
@@ -11169,14 +10652,14 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     var fl_cells: i32 = 65536;
     var heap_base: i32 = fl_base + fl_cells * 4;
     if (needs_heap) {
-        out = out + heap_alloc_helpers(heap_base, fl_base, fl_cells);
+        out = out + wasm_ir.heap_alloc_helpers(heap_base, fl_base, fl_cells);
     }
     // The Perceus RC runtime (__fern_rc_*) + raw-memory pokes (__alloc
     // forwards to the bump heap above). Emitted whenever the heap is — the
     // array counting inc/exit-sweep emit $__fern_rc_inc / $__fern_arr_dec
     // calls, and any heap program may carry array params to count.
     if (needs_heap) {
-        out = out + rc_runtime_helpers(heap_base);
+        out = out + wasm_ir.rc_runtime_helpers(heap_base);
     }
     // Transitive reclamation (Stage A): the per-struct/enum-type drop functions
     // ($__fern_release_<T>) that the struct exit-sweep + cow-dec call, so a

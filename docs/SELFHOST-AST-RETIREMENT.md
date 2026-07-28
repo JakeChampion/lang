@@ -371,12 +371,27 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   triggered by a plain program, so it is covered by the dedicated
   `TestSelfHostOptAarrReclaimWasmIR` (builds a driver from these sources, runs the
   `Option[i32[][]]`-churn reclaim through wasmtime — GREEN) plus a byte-identical WAT for an
-  `Option[i32[][]]` program. **With this, every self-contained IR-only WAT leaf has moved out of
-  `wasm.fern`.** What REMAINS coupling the wasm IR path to `wasm.fern` is the framing itself:
-  `emit_ir_module_units` (the big gated dispatcher — it now calls `wasm_ir.*` for every runtime
-  helper but still LIVES in `wasm.fern`) and its `_p2` component-model sibling emitters, plus
-  `emit_ir_rc_bodies_from`. **Next:** relocate `emit_ir_module_units` (+ the `_p2` import/func
-  variants it dispatches to) to `wasm_ir.fern`. `emit_ir_rc_bodies_from`
+  `Option[i32[][]]` program. **With this, every self-contained IR-only WAT leaf that
+  `emit_ir_module_units` gated via a simple `out = out + X()` had moved out of `wasm.fern`.**
+  (12) the framing's direct helper dependencies: probing `emit_ir_module_units` for
+  wasm.fern-resident calls surfaced 14 MORE runtime-helper emitters it invokes directly
+  (not just the gated ones); 10 are pure leaves and moved here — `print_int_helper` /
+  `print_int64_helper` / `heap_alloc_helpers` / `rc_runtime_helpers` / `divrem64_helpers` /
+  `str_to_i32_helper` / `arr_push_owned_helper` / `arr_slice8_helper` / `map_w64_helpers` /
+  `arr_dec_ptr2_func` (`print_int64_helper` was private → now `pub`). This batch also fixed a
+  latent bug in the relocation methodology: the by-name mover's header regex was `[a-z_]+`
+  (no digits), silently skipping digit-named functions (`divrem64` / `print_int64` /
+  `arr_slice8` / `map_w64` / `str_to_i32` / `arr_dec_ptr2`) — now `[a-z_0-9]+`. Byte-identical
+  WAT confirmed by direct probe for 6 (`$__fern_alloc` / `$__fern_rc_*` / `$__fern_arr_slice8` /
+  `$__fern_print_int64` / `$__fern_idiv64`+`irem64` / `$__fern_print_int`); the other 4
+  (`str_to_i32` / `arr_push_owned` / `map_w64` / `arr_dec_ptr2`) need parse/reclaim-specific
+  triggers and are covered by the verbatim-move guarantee (same cut-paste operation, build +
+  type-check + zero-bare-refs all green). The 4 NON-leaf direct deps stay for a follow-up:
+  `arr_push_f64_helper` / `arr_push_i64_helper` (→ `arr_push_wide`) and `le32_escape` /
+  `wat_escape` (→ `hex_digit`) — their shared callees (`arr_push_wide`, `hex_digit`) must move
+  with them. **Next:** move those 4 + their 2 callees, THEN relocate `emit_ir_module_units`
+  itself (+ the `_p2` import/func component-model variants it dispatches to) to `wasm_ir.fern`.
+  `emit_ir_rc_bodies_from`
   is LAST — it drags `Ctx` / `release_module_ctx` / `collect_method_types` and the
   shared struct predicates (co-owned by the AST emitter → a cycle until that
   shared layer is relocated).
