@@ -103,7 +103,8 @@ The `ineligible-fn` row above says "No `ineligible-fn` items remain". That is
 true of the **builtin methods** it enumerates, and false as a general statement:
 running the corrected probe (inside the `use_ir` branch — see above) over
 `internal/e2eselfhost` aborts **17 subtests across 7 test functions** (**15
-across 6** after #5755 retired return-type inference — see the struck row), none of
+across 6** after #5755 retired return-type inference, then **10 across 5** after
+#5758 closed the tuple-fn struct field — see the struck rows), none of
 them over-budget (they are all small single-module programs), so every one is an
 eligibility decline. `asm_ir_run`'s AST fallback is therefore **live code**, not
 something #3457 can delete yet.
@@ -111,8 +112,8 @@ something #3457 can delete yet.
 | test | subtests | shape |
 |---|---|---|
 | ~~`TestSelfHostReturnInferenceIR`~~ | ~~`option-some`, `option-none`~~ | **GONE (E070, #5755)** — the shape was an UN-ANNOTATED fn whose return type had to infer to `Option[i32]`. Requiring return annotations made those programs *invalid*, so the gate never sees them and the test was deleted. Note what this is NOT: the IR path was not taught anything: 17 declines → 15 by removing programs, not by widening the subset. |
-| `TestSelfHostTupleFnStructFieldX86_64` | `bare`, `arg-elem0`, `two-arg`, `read-then-call`, `churn` | fn-typed TUPLE element in a struct field: `struct S { p: (i32, () => i32) }`, called as `s.p.1()` |
-| `TestSelfHostCloArrayFieldCallIRX86_64` | `capture-multi`, `with-arg` | closure-array struct field, capturing call |
+| ~~`TestSelfHostTupleFnStructFieldX86_64`~~ | ~~`bare`, `arg-elem0`, `two-arg`, `read-then-call`, `churn`~~ | **CLOSED (#5758)** — fn-typed TUPLE element in a struct field, `s.p.1()`. Re-probed 2026-07-28: both the direct form and the via-a-local form (`var t = s.p; t.1()`) now report `module: IR`. |
+| `TestSelfHostCloArrayFieldCallIRX86_64` | `capture-multi`, `with-arg` | closure-ARRAY struct field (`hs: (() => i32)[]`), capturing call. **STILL OPEN** — re-probed after #5758: `main: BAIL lower` → `module: AST`. Do not assume #5758 covered this: the two shapes bail from the same *predicate family* but not the same *type path* — an array-of-fn field is not a tuple-containing-fn field, so the tuple-side `clo` admission does not reach it. |
 | `TestSelfHostStructMatchX86_64` | `expr_form`, `rename_expr` | `return match (p) { … }` over a struct — the match-EXPRESSION form |
 | `TestSelfHostTryOptionPayloadIRX86_64` | `result-option`, `nested-chain` | `?` over an Option payload, incl. nested chains |
 | `TestSelfHostAtBindingX86_64` | `struct_expr_guard_uses_at`, `tuple_expr_guard_uses_at` | `@` binding read from inside a `when` guard |
@@ -128,16 +129,23 @@ splits the list in two:
 
 | shape | `-ir-probe` verdict | status |
 |---|---|---|
-| fn-typed tuple element in a struct field (`s.p.1()`) | `main: BAIL lower` → `module: AST` | **CONFIRMED decline** |
-| closure-array struct field (`r.hs[1]()`) | `main: BAIL lower` → `module: AST` | **CONFIRMED decline** |
+| fn-typed tuple element in a struct field (`s.p.1()`) | was `main: BAIL lower` → `module: AST` | **CLOSED by #5758** |
+| closure-array struct field (`r.hs[1]()`) | `main: BAIL lower` → `module: AST` | **still open** (re-probed after #5758) |
 | struct match-expression + `when` guard | `module: IR` | **NOT the declining construct** |
 | `w @ P { a, b } when w.a > 0` | `module: IR` | **NOT the declining construct** |
 
-So only the two struct-field-of-callable shapes are verified gaps, and they
-share one cause: the lifted closure lowers fine (`main$clo0: ir`) while the
-CALL SITE that reads it back out of a struct field bails. Note this is the
-narrower sibling of the fn-typed-tuple-element gap CLAUDE.md records as closed
-— closed for a tuple in a LOCAL, still open for one read through a struct field.
+So only the two struct-field-of-callable shapes were verified gaps, and both
+present the same way: the lifted closure lowers fine (`main$clo0: ir`) while the
+struct-field form bails.
+
+**They did NOT close together, and the reason is worth keeping.** #5758 closed
+the tuple one by admitting a `clo` element in the wide (`_d`) tuple-field
+predicate. Re-probing afterwards, the closure-ARRAY field still reports
+`main: BAIL lower`: `hs: (() => i32)[]` is an array-of-fn, not a
+tuple-containing-fn, so it never reaches the tuple-side admission. Same
+predicate FAMILY, different type path. Anyone reading "one cause" in an earlier
+revision of this section would reasonably assume #5758 covered both — it does
+not.
 
 For the other rows the case source is IR-eligible, so the `exit(97)` came from
 something else those tests compile, not from the listed program. Do not treat
@@ -158,6 +166,14 @@ the value is BUILT, which is why the local-tuple form lowers. A struct field has
 no slot, so `expr_tuple_elem_tag`'s `p.t.N` arm falls back to
 `decl_field_type` + `tuple_type_elem_tag` — the declared type — and cannot tell
 which it is, so the call site bails.
+
+(That prediction held for the tuple side — #5758 admitted the `clo` element and
+closed it — but note it admitted `clo` in the WIDE `_d` predicate ONLY. The
+narrow `is_leaksafe_tuple_field` also gates CONSTRUCTOR REUSE via
+`struct_fields_reusable_param` / `_cross`, so admitting `clo` there too would
+widen reuse to structs carrying a closure box without the freshness gates the
+adjacent fn-FIELD case requires — unsound, and not caught by any test. Keep the
+two predicates asymmetric.)
 
 The machinery for exactly this already exists one level out:
 `irlower.fnptr_arr_fields_of` scans every function body for how each field is
