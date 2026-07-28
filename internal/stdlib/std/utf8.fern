@@ -204,6 +204,68 @@ pub function char_at(s: string, index: i32): Option[string] {
     return None;
 }
 
+// `is_char_boundary(s, i)` — does byte index `i` sit at the start of a
+// character, rather than inside one? True for `0` and for `s.len()`
+// (both ends of the string are boundaries); false for a negative or
+// past-the-end index; otherwise true iff the byte at `i` is not a UTF-8
+// continuation byte (0x80..0xBF). O(1).
+//
+// This is byte CLASSIFICATION, not validation. On well-formed UTF-8 it
+// means exactly "a codepoint starts here", which is what a slice
+// endpoint needs; it does not claim the sequence starting at `i`
+// decodes — `utf8_decode_at` answers that. Every index into an ASCII
+// string is a boundary.
+pub function is_char_boundary(s: string, i: i32): boolean {
+    var n: i32 = s.len();
+    if (i < 0 || i > n) { return false; }
+    if (i == 0 || i == n) { return true; }
+    var b: i32 = s[i];
+    return b < 128 || b >= 192;
+}
+
+// `floor_char_boundary(s, i)` — the largest index `j <= i` with
+// `is_char_boundary(s, j)`. Always exists (index 0 is a boundary), so
+// unlike the decoders this cannot fail. An index below 0 clamps to 0
+// and one past the end clamps to `s.len()`.
+//
+// Use it to snap a byte offset back to a safe slice start: it never
+// grows the range, so `s[floor_char_boundary(s, a) : b]` keeps every
+// byte `s[a:b]` would have kept. On well-formed UTF-8 the walk is at
+// most 3 steps; on arbitrary bytes it is bounded by the length of the
+// continuation run.
+pub function floor_char_boundary(s: string, i: i32): i32 {
+    var n: i32 = s.len();
+    if (i <= 0) { return 0; }
+    if (i >= n) { return n; }
+    var j: i32 = i;
+    while (j > 0) {
+        var b: i32 = s[j];
+        if (b < 128 || b >= 192) { return j; }
+        j = j - 1;
+    }
+    return 0;
+}
+
+// `ceil_char_boundary(s, i)` — the smallest index `j >= i` with
+// `is_char_boundary(s, j)`. The mirror of `floor_char_boundary`, and
+// likewise total: `s.len()` is a boundary, so the search always
+// terminates. Same clamping at both ends.
+//
+// Snapping a slice END with this never truncates a character that `i`
+// landed inside — it completes it instead.
+pub function ceil_char_boundary(s: string, i: i32): i32 {
+    var n: i32 = s.len();
+    if (i <= 0) { return 0; }
+    if (i >= n) { return n; }
+    var j: i32 = i;
+    while (j < n) {
+        var b: i32 = s[j];
+        if (b < 128 || b >= 192) { return j; }
+        j = j + 1;
+    }
+    return n;
+}
+
 // `substring(s, start, end)` — the text spanning codepoint indices
 // `[start, end)` (0-based, half-open) as a string. Bounds are clamped
 // to `[0, codepoint_count]` and start-past-end yields "", so out-of-

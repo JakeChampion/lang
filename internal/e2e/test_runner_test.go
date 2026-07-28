@@ -868,8 +868,9 @@ func TestRunnerJsonPointerExamplePasses(t *testing.T) {
 // decode (1..4-byte, plus the stray-continuation / truncated / overlong
 // / surrogate rejections), encode (widths + U+FFFD substitution),
 // codepoint_count / codepoints, is_valid_utf8, the encode_all round
-// trip, and the codepoint-indexing layer (codepoint_at / char_at /
-// substring). Passing → exit 0.
+// trip, the codepoint-indexing layer (codepoint_at / char_at /
+// substring), and the byte-boundary layer (is_char_boundary /
+// floor_char_boundary / ceil_char_boundary). Passing → exit 0.
 func TestRunnerUtf8ExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/utf8_test.fern")
@@ -877,7 +878,7 @@ func TestRunnerUtf8ExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/utf8", "# pass 20", "# fail 0", "1..20"} {
+	for _, w := range []string{"# Suite: std/utf8", "# pass 25", "# fail 0", "1..25"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

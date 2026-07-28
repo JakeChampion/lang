@@ -308,8 +308,7 @@ function _final_sigma(s: string, at: i32, sigma_len: i32): boolean {
     var before: boolean = false;
     var k: i32 = at;
     while (k > 0) {
-        var st: i32 = k - 1;
-        while (st > 0 && (s[st] & 192) == 128) { st = st - 1; }
+        var st: i32 = utf8.floor_char_boundary(s, k - 1);
         var cp: i32 = 65533;
         match (utf8.utf8_decode_at(s, st)) {
             Some(pr) => { cp = pr.0; },
