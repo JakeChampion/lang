@@ -313,11 +313,18 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   and the `emit_ir_module_units` gates) are prefixed `wasm_ir.`. Byte-identical WAT
   for a `.split()` / array `.join()` / `.lines()` program (emitting `$__fern_str_split`
   / `$__fern_arr_push` / `$__fern_str_join` / `$__fern_arr_str_join` / `$__fern_str_lines`),
-  running under wasmtime. **Next:** the dual-use `string_from_bytes_helper` (also called
-  from the AST-path `emit_module_mode`), the remaining self-contained leaves (stdio /
-  args / env / reader / divrem / clock / `map_helpers` / `optarrarr_free_func` /
-  `cabi_realloc_helper` / `to_string_helpers` / `strcat_streq_helpers` / `strbuf_helpers` /
-  the file-I/O `*_func`), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
+  running under wasmtime. (7) the stdio / slice / strbuf leaf cluster (`chr_helper` /
+  `print_str_helper` / `eprint_str_helper` / `strbuf_helpers` / `arr_slice_helper`) —
+  5 single-IR-call-site leaves with no Fern-level cross-call. Byte-identical WAT for a
+  `chr()` / `write()` / `eprint()` / `strbuf_reset`+`append`+`take` / array-slice program
+  (emitting `$__fern_chr` / `$__fern_print_str` / `$__fern_eprint_str` /
+  `$__fern_strbuf_*` / `$__fern_arr_slice`), running under wasmtime. **Next:** the dual-use
+  `string_from_bytes_helper` (also called from the AST-path `emit_module_mode`), the
+  remaining self-contained leaves (args / env / reader / divrem / clock / `map_helpers` /
+  `optarrarr_free_func` / `cabi_realloc_helper` / `to_string_helpers` /
+  `strcat_streq_helpers` / the file-I/O `*_func`; several are MULTI-SITE — called from both
+  `emit_ir_module_units` and the AST-path `emit_module_mode`, so every call site gets the
+  `wasm_ir.` prefix), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
   is LAST — it drags `Ctx` / `release_module_ctx` / `collect_method_types` and the
   shared struct predicates (co-owned by the AST emitter → a cycle until that
   shared layer is relocated).
