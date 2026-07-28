@@ -13742,8 +13742,11 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // match). Retain it with the same Perceus dup the bare-ident alias uses so
     // the sweep dec is balanced; a borrowed source simply leaks one count
     // (sound), never over-frees. Fresh producers (array literal, slice,
-    // array-returning call) are moves and stay un-inc'd.
-    if (is_arr && !alias_inc) {
+    // array-returning call) are moves and stay un-inc'd, and a hoisted-closure
+    // capture extract (`var <cap> = __env[1+i]`, registered "ENVCAP:" by
+    // lower_func) is excluded: the sweep already skips it as a BORROW, so a
+    // retain here would have no matching dec and leak one count per call.
+    if (is_arr && !alias_inc && util.index_of_str(se.reclaimable_names, "ENVCAP:" + v.name) < 0) {
         match (v.init) {
             parser.ExprFieldAccess(_) => { alias_inc = true; },
             parser.ExprIndex(_) => { alias_inc = true; },
@@ -14740,8 +14743,11 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     // element) each make the slot a second reference to a buffer the container
     // still points at. The slot is swept at function exit, so without the
     // Perceus dup that dec frees the container's buffer. A borrowed source
-    // leaks one count (sound), never over-frees.
-    if (!reassign_inc && s.is_arr_slot(slot) && slot >= s.n_params) {
+    // leaks one count (sound), never over-frees. An "ENVCAP:" capture extract
+    // is excluded for the same reason as the bind: the sweep skips it as a
+    // borrow, so a retain would leak.
+    if (!reassign_inc && s.is_arr_slot(slot) && slot >= s.n_params
+            && util.index_of_str(s.reclaimable_names, "ENVCAP:" + s.locals[slot].slot_name) < 0) {
         match (a.value) {
             parser.ExprFieldAccess(_) => { reassign_inc = true; },
             parser.ExprIndex(_) => { reassign_inc = true; },
