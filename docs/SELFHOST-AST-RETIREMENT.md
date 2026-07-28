@@ -396,10 +396,20 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   (emits `$__fern_arr_push_i64`/`$__fern_arr_push_f64`, which call the moved `arr_push_wide`).
   **With this, `emit_ir_module_units` has NO remaining wasm.fern-resident helper dependencies** —
   every runtime-helper emitter it invokes (gated or direct) now lives in `wasm_ir.fern`.
-  **Next:** relocate `emit_ir_module_units` itself (+ the `_p2` import/func component-model
-  variants it dispatches to) to `wasm_ir.fern` — re-probe it for wasm.fern-resident calls first
-  (the `_p2` siblings and any framing-only helpers), moving that closure alongside it.
-  `emit_ir_rc_bodies_from`
+  (14) **the framing function `emit_ir_module_units` ITSELF is now relocated to `wasm_ir.fern`.**
+  Re-probing confirmed it had reached ZERO wasm.fern-resident calls and referenced NO wasm.fern-local
+  type (`Ctx` / `StrTable` / `WState`) — the `_p2` component-model variants live in `emit_module_mode`
+  (the AST path), NOT in this IR framing, so nothing extra had to move with it. The relocation had one
+  extra step beyond the leaf moves: the 336 `wasm_ir.`-prefixed calls INSIDE the moved body (to the
+  helpers relocated in slices 1–13) had to be **un-prefixed** to bare same-module calls, since
+  `wasm_ir` cannot name itself. Its three callers were updated: `emit_ir_module` (stays in `wasm.fern`)
+  and the drivers `wasm_modload_run` / `wasm_units_probe` (their `wasm.emit_ir_module_units` →
+  `wasm_ir.emit_ir_module_units`; all three already imported `wasm_ir`). Byte-identical WAT for three
+  diverse programs (i64-array + escaped-string; map for-loop + print_int; random + str_trim), since
+  `wasm_ir.foo()` and `foo()` compile to the same call. **The wasm IR path no longer depends on
+  `wasm.fern` for module emission at all** — `emit_ir_module` (the thin entry that calls
+  `wasm_ir.emit_ir_module_units`) is the only IR-path resident left in `wasm.fern`, and it can move
+  trivially once the AST path retires. `emit_ir_rc_bodies_from`
   is LAST — it drags `Ctx` / `release_module_ctx` / `collect_method_types` and the
   shared struct predicates (co-owned by the AST emitter → a cycle until that
   shared layer is relocated).
