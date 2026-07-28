@@ -1708,6 +1708,7 @@ func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ir.LowerWith: %v", err)
 	}
+	ir.ElideClosurePair(irProg, 8)
 	// Dead-function elimination: lift only the functions reachable from `main`
 	// (transitively, via direct/closure calls). Without this the whole of every
 	// imported stdlib module is lifted, so an `abs`-only program would drag in

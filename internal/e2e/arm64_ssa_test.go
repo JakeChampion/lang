@@ -175,6 +175,29 @@ function main(): i32 {
 			want: 1,
 		},
 		{
+			// A closure capturing [4-byte scalar, pointer] — the shape that used
+			// to SIGSEGV (#5767). The IR emits a `__closure_drop_<name>` thunk
+			// that reads its pointer captures at env-block offsets, but this
+			// path skipped ir.ElideClosurePair (which arm64, x86-64 and wasmbin
+			// all run), so OpMakeClosure survived and the thunk was handed the
+			// 16-byte {fn_idx, env_ptr} cell instead of the env. With the
+			// pointer capture at env offset 4 the thunk loaded 8 bytes across
+			// both cell fields — 0x410028 became 0x0041002800000000 — and
+			// rc.dec'd that. `f` is never called: building the closure is
+			// enough. Other capture orders did not crash only because their
+			// offset happened to land on the env pointer or on fn_idx (below
+			// the heap, so the rc guard swallowed it) — decrementing the wrong
+			// object rather than faulting.
+			name: "closure_scalar_then_pointer_capture",
+			src: `function main(): i32 {
+  var v1: i32 = 1;
+  var o: Option[i32] = Some(7);
+  function f(): i32 { return v1 + (match (o) { Some(e) => 1, None => 2 }); }
+  return 32;
+}`,
+			want: 32,
+		},
+		{
 			// Option Some path via the pair-return convention (CallPair + TRetPair
 			// + match): half(84) = Some(42).
 			name: "option_some",
