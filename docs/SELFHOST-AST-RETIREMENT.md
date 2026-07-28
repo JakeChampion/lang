@@ -305,11 +305,19 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   callees too. `string_from_bytes_helper` is also deferred: it is dual-use (also called
   from the AST-path `emit_module_mode`). Byte-identical WAT for a program exercising
   slice / cmp / trim / reverse / replace / repeat / starts_with / lines / chars /
-  to_ascii_upper+lower, running under wasmtime. **Next:** the deferred entangled trio
-  (pull `arr_push_helper` / `str_join_helper` in alongside `str_split_helper` /
-  `arr_str_join_helper`), the shared dual-use helpers (`string_from_bytes_helper`,
-  the stdio / args / env / reader / divrem / clock leaves), then
-  `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
+  to_ascii_upper+lower, running under wasmtime. (6) the deferred entangled quartet:
+  `str_split_helper` + its callee `arr_push_helper`, and `arr_str_join_helper` + its
+  callee `str_join_helper` — moved TOGETHER so the internal `str_split → arr_push` /
+  `arr_str_join → str_join` calls stay same-module (bare) in `wasm_ir.fern`, and the
+  external callers that remain in `wasm.fern` (`strcat_helpers` → `str_join_helper`,
+  and the `emit_ir_module_units` gates) are prefixed `wasm_ir.`. Byte-identical WAT
+  for a `.split()` / array `.join()` / `.lines()` program (emitting `$__fern_str_split`
+  / `$__fern_arr_push` / `$__fern_str_join` / `$__fern_arr_str_join` / `$__fern_str_lines`),
+  running under wasmtime. **Next:** the dual-use `string_from_bytes_helper` (also called
+  from the AST-path `emit_module_mode`), the remaining self-contained leaves (stdio /
+  args / env / reader / divrem / clock / `map_helpers` / `optarrarr_free_func` /
+  `cabi_realloc_helper` / `to_string_helpers` / `strcat_streq_helpers` / `strbuf_helpers` /
+  the file-I/O `*_func`), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
   is LAST — it drags `Ctx` / `release_module_ctx` / `collect_method_types` and the
   shared struct predicates (co-owned by the AST emitter → a cycle until that
   shared layer is relocated).
