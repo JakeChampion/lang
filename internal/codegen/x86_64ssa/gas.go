@@ -900,7 +900,26 @@ func fConvSeq(in Inst, scratch int) (string, error) {
 		// scope (rare; a follow-up if needed).
 		return fmt.Sprintf("cvtsi2sd xmm0, %s%s\n\tmovq %s, xmm0", d, round, d), nil
 	case ssa.OpFToIS, ssa.OpFToIU:
-		// float -> int, truncating toward zero (Go semantics).
+		// float -> int, truncating toward zero.
+		//
+		// KNOWN GAP: this does NOT saturate, and the language contract says it
+		// must (docs/FLOAT-SEMANTICS.md — NaN → 0, out of range → the
+		// destination's min/max, identically on every backend). `cvttsd2si`
+		// returns the "integer indefinite" INT_MIN for every invalid input —
+		// NaN, ±Inf, out of range — so NaN and +overflow come out wrong, and at
+		// 32-bit width maskFix then sign-extends bit 31 of a 64-bit result,
+		// which wraps rather than clamps.
+		//
+		// ssa.Eval — the oracle this package's tests diff against — DOES
+		// saturate, so a test with an overflowing operand will fail here. The
+		// sibling arm64ssa backend is fixed (its fcvtz{s,u} saturate natively
+		// once the destination register width matches). Closing it here means
+		// porting the native backend's `emitFloatToIntSat`
+		// (internal/codegen/x86_64/x86_64.go): a float-domain compare plus
+		// cmov/branch fixup per signedness and width, with the 2^63 bias trick
+		// for u64. Left undone because this backend has no CLI target — it is
+		// consumed only by arm64ssa for its Inst type — so no program can reach
+		// the wrong sequence today.
 		return fmt.Sprintf("movq xmm0, %s\n\tcvttsd2si %s, xmm0", d, d) + maskFix(in.Dst, in.W), nil
 	default:
 		return "", fmt.Errorf("x86_64ssa: float conversion %v unsupported", in.K)

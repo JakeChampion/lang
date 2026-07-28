@@ -681,13 +681,13 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 		if err != nil {
 			return err
 		}
-		return set(int64(a))
+		return set(satFToIS(a, op.Width))
 	case OpFToIU:
 		a, err := farg(0)
 		if err != nil {
 			return err
 		}
-		return set(int64(uint64(a)))
+		return set(satFToIU(a, op.Width))
 
 	// Bit-reinterprets (no value conversion, just a type change on the same
 	// bits). Floats live in the int64 slots AS their f64 bit pattern, so the

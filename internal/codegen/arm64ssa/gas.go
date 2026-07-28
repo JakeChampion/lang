@@ -4642,11 +4642,31 @@ func fConvSeq(in x86.Inst) ([]string, error) {
 		return append(fround32([]string{fmt.Sprintf("scvtf d0, %s", d)}, in.W), fmt.Sprintf("fmov %s, d0", d)), nil
 	case ssa.OpIToFU:
 		return append(fround32([]string{fmt.Sprintf("ucvtf d0, %s", d)}, in.W), fmt.Sprintf("fmov %s, d0", d)), nil
-	case ssa.OpFToIS:
-		// float -> int, truncating toward zero (Go semantics).
-		return append([]string{fmt.Sprintf("fmov d0, %s", d), fmt.Sprintf("fcvtzs %s, d0", d)}, maskFix(in.Dst, in.W)...), nil
-	case ssa.OpFToIU:
-		return append([]string{fmt.Sprintf("fmov d0, %s", d), fmt.Sprintf("fcvtzu %s, d0", d)}, maskFix(in.Dst, in.W)...), nil
+	case ssa.OpFToIS, ssa.OpFToIU:
+		// float -> int, truncating toward zero and SATURATING: NaN gives 0, out
+		// of range clamps to the destination's min/max (docs/FLOAT-SEMANTICS.md).
+		//
+		// AArch64's fcvtz{s,u} already saturate — but to the width of the
+		// DESTINATION REGISTER, so the register form has to match the
+		// destination type. Converting into `x` and then narrowing with maskFix
+		// saturates to the 64-bit range and sign-extends bit 31 of that, which
+		// is wraparound, not saturation: `(91.23f32 * 1e9) as i32` came out as
+		// 1035689984 where every other backend gives INT32_MAX. The `w` form
+		// clamps to the 32-bit range directly, so maskFix is then a no-op on an
+		// already-in-range value (and is what zero-extends the u32 case into the
+		// sign-extended storage convention).
+		mnem := "fcvtzs"
+		if in.K == ssa.OpFToIU {
+			mnem = "fcvtzu"
+		}
+		dst := wreg(in.Dst)
+		if in.W == 64 {
+			dst = d
+		}
+		return append([]string{
+			fmt.Sprintf("fmov d0, %s", d),
+			fmt.Sprintf("%s %s, d0", mnem, dst),
+		}, maskFix(in.Dst, in.W)...), nil
 	case ssa.OpReinterpretF64ToI64, ssa.OpReinterpretI64ToF64:
 		// Identity, for the same reason OpFPromote is: a float is HELD in a
 		// general register as its raw f64 bit pattern (that is what every

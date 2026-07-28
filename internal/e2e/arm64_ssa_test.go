@@ -132,6 +132,27 @@ function main(): i32 { return addf(90.0f32, 6.55f32) as i32; }`,
 			want: 224,
 		},
 		{
+			// Float-to-int conversion saturates (docs/FLOAT-SEMANTICS.md): NaN
+			// gives 0, out of range clamps to the destination's min/max. AArch64
+			// fcvtz{s,u} saturate to the DESTINATION REGISTER's width, so
+			// converting into `x` and narrowing with maskFix wrapped instead of
+			// clamping — `(91.23f32 * 1e9) as i32` gave 1035689984 where every
+			// other backend gives INT32_MAX. Sums three cases into one byte:
+			// overflow (+1), NaN (+2), underflow (+4) = 7.
+			name: "float_to_int_saturates",
+			src: `function scale(x: f32): f32 { return x * 1000000000.0f32; }
+function main(): i32 {
+  var a: f32 = 91.23f32;
+  var z: f32 = 0.0f32;
+  var n: i32 = 0;
+  if ((scale(a) as i32) == 2147483647) { n = n + 1; }
+  if (((z / z) as i32) == 0) { n = n + 2; }
+  if (((z - scale(a)) as i32) == ((0 - 2147483647) - 1)) { n = n + 4; }
+  return n;
+}`,
+			want: 7,
+		},
+		{
 			// Ordered comparisons against NaN are all false; only `!=` is true.
 			// The renderer emitted the UNSIGNED AArch64 condition codes, which
 			// agree with the IEEE ones on ordered operands but read true on

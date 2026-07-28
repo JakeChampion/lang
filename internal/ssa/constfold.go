@@ -163,7 +163,7 @@ func tryFold(op *Op, defs map[int32]*Op) {
 		if !ok {
 			return
 		}
-		rewriteInt(op, int64(v))
+		rewriteInt(op, satFToIS(v, op.Width))
 		return
 	case OpFToIU:
 		if len(op.Args) != 1 {
@@ -173,7 +173,7 @@ func tryFold(op *Op, defs map[int32]*Op) {
 		if !ok {
 			return
 		}
-		rewriteInt(op, int64(uint64(v)))
+		rewriteInt(op, satFToIU(v, op.Width))
 		return
 	case OpReinterpretF32ToI32:
 		if len(op.Args) != 1 {
