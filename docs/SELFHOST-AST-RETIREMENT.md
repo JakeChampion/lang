@@ -351,10 +351,19 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   calls, leaving the `_p2` / `_imports_p2` siblings (which stay in `wasm.fern`) untouched.
   Byte-identical WAT for an `args()` / `arg_at()` / `env()` / `monotonic_ns()` / `now_unix_ms()`
   program (emitting `$__fern_args` / `$__fern_arg_at` / `$__fern_env` / `$__fern_monotonic_ns`
-  / `$__fern_now_ns` / `$__fern_now_unix_ms`), running under wasmtime. **Next:** the remaining
-  self-contained leaves (reader / stdin / `map_helpers` / `optarrarr_free_func` /
-  `cabi_realloc_helper` / `file_imports` / the file-I/O `*_func`; MULTI-SITE ones use the same
-  base-only prefix approach), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
+  / `$__fern_now_ns` / `$__fern_now_unix_ms`), running under wasmtime. (10) the file-I/O +
+  stdin/reader leaf cluster (`file_imports` / `readfile_func` / `writefile_func` /
+  `open_file_func` / `writer_write_func` / `read_line_func` / `read_int_func` /
+  `read_all_stdin_func` / `reader_read_chunk_func` / `reader_close_func`) — 10 leaves;
+  `readfile_func` / `writefile_func` use the same `if (fs) { …_p2() } else { …() }` split as
+  args/env (base-only prefix, `_p2` siblings untouched). Byte-identity had to be checked with
+  SEPARATE per-op probes: coexisting stdin/file needs suppress each other's helper emission in
+  one program, so `read_file`+`write_file` (→ `$__fern_read_file`/`write_file` + the
+  path_open/fd_read/fd_write/fd_close imports), `open_writer`+`w.write`+`open_reader`+`read_chunk`+`close`
+  (→ `$__fern_open_file`/`writer_write`/`reader_read_chunk`/`reader_close`), and bare `read_line()`
+  / `read_int()` / `read_all_stdin()` were each emitted alone and diffed — all byte-identical.
+  **Next:** the last self-contained leaves (`map_helpers` / `optarrarr_free_func` /
+  `cabi_realloc_helper`), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
   is LAST — it drags `Ctx` / `release_module_ctx` / `collect_method_types` and the
   shared struct predicates (co-owned by the AST emitter → a cycle until that
   shared layer is relocated).
