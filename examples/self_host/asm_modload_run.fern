@@ -162,29 +162,17 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
         pi = pi + 1;
     }
     all_structs = builtin_view(dir, all_structs);
-    // The entry unit emits the ONE shared runtime, but on its own it only knows
-    // its own needs — a library unit calling __fern_tcp_listen / __fern_poll /
-    // __fern_stat would reference a symbol nothing defines. The batched
-    // per-module build can't see its siblings (one unit per process), so it
-    // seeds the entry with the static all_runtime_need_roots superset; this
-    // concat emits every unit in ONE process, so it can compute the EXACT union
-    // instead — no guessing, and no unused helpers dragged into the entry.
+    // The entry unit emits the ONE shared runtime; seed it with every root so a
+    // library unit's `call __fern_*` resolves (asm_ir.all_runtime_need_roots —
+    // the same superset the batched per-module build feeds it).
     //
-    // The static list is not a substitute here: it predates the platform
-    // helpers (tcp_* / poll / timer_fd / stat / read_dir / subprocess / …),
-    // none of which the bootstrap compiler itself marks, so a program using
-    // them links against undefined `__fern_*` if the entry is seeded from it.
-    var needs: string[] = [];
-    var ni: i32 = 0;
-    while (ni < infmods.len()) {
-        var mn: string[] = asm_ir.module_runtime_needs(infmods[ni]);
-        var mi: i32 = 0;
-        while (mi < mn.len()) {
-            if (!util.has_str(needs, mn[mi])) { needs = needs.append(mn[mi]); }
-            mi = mi + 1;
-        }
-        ni = ni + 1;
-    }
+    // The exact union via module_runtime_needs is NOT usable here: it lowers
+    // each module under that module's OWN struct view, so a function needing
+    // the whole-program view to lower at all (std/tcp's __serve_loop, whose
+    // signature is built from the builtin HttpRequest / Platform layouts) is
+    // silently skipped and the needs it would have marked — tcp_send,
+    // tcp_close — go missing, dangling at link.
+    var needs: string[] = asm_ir.all_runtime_need_roots();
     var out: string = "";
     var idx: i32 = 0;
     while (idx < parts.len()) {
