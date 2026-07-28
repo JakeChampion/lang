@@ -117,6 +117,23 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_box_free")
 					needs.add("__fern_rc_dec")
 					needs.add("__fern_str_dec")
+				case "__fern_str_append":
+					// In-place-when-unique string self-append (#5637). Its
+					// fallback path calls __str_concat (which allocates via
+					// alloc_rc1 and reads bytes via str_len / str_byte) and
+					// __fern_str_dec — so pull in both, plus str_dec's own
+					// transitive deps (box_free → __free, rc_dec), which the
+					// flat scan does not close over.
+					needs.add("__fern_str_append")
+					needs.add("__str_concat")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__fern_str_dec")
+					needs.add("__fern_box_free")
+					needs.add("__fern_rc_dec")
+					needs.add("__free")
 				case "__fern_cell_free":
 					// Map boxed-cell reclamation (the column walk frees
 					// each dead K/V cell after str_dec'ing its buffer).
@@ -1623,6 +1640,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildStrConcatBody,
 	},
+	"__fern_str_append": {
+		// (a_data, a_len, b_data, b_len) → (data, len). In-place-when-
+		// unique string self-append; CONSUMES a. See
+		// buildStrAppendBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
+		body:    buildStrAppendBody,
+	},
 	"__http_entry": {
 		// (req, out) → () — wasi:http/incoming-handler wrapper.
 		// Marshals the canonical-ABI incoming-request into the
@@ -2722,6 +2747,126 @@ func buildStrConcatBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Add(body) // total (len)
 	// Four i32 locals: $la, $lb, $dst, $i.
 	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildStrAppendBody assembles wasm bytes for __fern_str_append — the
+// in-place-when-unique string self-append behind `s = s + piece` (#5637).
+//
+// Signature: (param $a_data $a_len $b_data $b_len i32) (result i32 i32)
+// Locals (after params): $la (4), $lb (5), $total (6), $i (7 —
+// strConcatCopyOne's scratch), $out_data (8), $out_len (9).
+//
+// It CONSUMES `a`: the IR only emits it where the assignment was about to
+// overwrite and reclaim that slot, so its dec-on-overwrite is suppressed.
+//
+//   - Fast path — `a` is a uniquely-held heap buffer (heap form, at/above
+//     the rc guard, rc==1) whose grown length still lands in the SAME
+//     16-byte allocator class: copy b's bytes into the slack past a's data
+//     and hand the same buffer back as (a_data, la+lb). No allocation, no
+//     re-copy of the accumulated prefix.
+//   - Slow path — anything else (inline/SSO `a`, a literal, a shared
+//     buffer, the class boundary crossed): __str_concat, then
+//     __fern_str_dec(a) to release the old binding exactly as the
+//     suppressed overwrite dec did.
+//
+// Same-class is the exact capacity test, not a heuristic: an owned heap
+// string is __fern_alloc_rc1(len) — `len + 8` bytes rounded to 16 — and
+// __fern_str_dec frees it at the CURRENT len, so a growth that keeps
+// `(len + 23) & -16` unchanged both fits the block and still frees back to
+// the class it was bumped at. The 16-byte rounding is __fern_alloc's only
+// under ast.RcFreeEnabled (it rounds to 8 with the freelist compiled out),
+// which is fine because the IR only emits calls here under that flag — the
+// same flag that makes the fallback's __fern_str_dec a real reclaim.
+//
+// The slack is the allocator's 16-byte granularity, so an accumulator
+// absorbs ~8-16 short appends per allocation instead of one allocation and
+// a full re-copy each. It is NOT amortised growth — there is no capacity
+// slot in the 8-byte rc header to hold one — so a long accumulator still
+// re-copies once per class step; the geometric fix is the string builder of
+// #5637 option 2.
+func buildStrAppendBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	concat := idxs["__str_concat"]
+	strDec := idxs["__fern_str_dec"]
+	var body []byte
+	// $lb = __fern_str_len(b) — b is commonly an inline/SSO piece, so it
+	// needs the resolving read; a's length is its raw word once the heap
+	// check below passes.
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, 5) // $lb
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	{
+		// Inline/SSO `a` (raw len top bit set): no heap buffer to grow.
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, int32(-0x80000000))
+		body = numeric.InstI32And(body)
+		body = inst.InstBrIf(body, 0)
+		// Below the rc guard: a literal in the data segment (or a static
+		// closure cell), never rc-owned. See rcLowAddrGuard. This floor
+		// is deliberately LOWER than __fern_str_dec's own 0x10000 (a
+		// leftover from the WASI layout, which keeps that helper from
+		// freeing sub-64K heap strings). The asymmetry is safe in this
+		// direction: the fast path frees nothing, it only mutates a
+		// buffer the rc says is uniquely held, and the fallback's
+		// str_dec keeps its existing (leak-not-free) behaviour there.
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, rcLowAddrGuard)
+		body = numeric.InstI32LtU(body)
+		body = inst.InstBrIf(body, 0)
+		// Shared, or the immortal 0x80000000 literal sentinel: rc != 1.
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Ne(body)
+		body = inst.InstBrIf(body, 0)
+		// $la = $a_len (heap form), $total = $la + $lb.
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstLocalTee(body, 4) // $la
+		body = inst.InstLocalGet(body, 5)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 6) // $total
+		// Same 16-byte allocator class? (len + 8 + 15) & -16.
+		roundedClass := func(b []byte, local uint32) []byte {
+			b = inst.InstLocalGet(b, local)
+			b = inst.InstI32Const(b, 23)
+			b = numeric.InstI32Add(b)
+			b = inst.InstI32Const(b, -16)
+			return numeric.InstI32And(b)
+		}
+		body = roundedClass(body, 4)
+		body = roundedClass(body, 6)
+		body = numeric.InstI32Ne(body)
+		body = inst.InstBrIf(body, 0)
+		// In place: copy b's bytes to mem[$a_data + $la ..] and return
+		// (a_data, total). rc stays 1 — the accumulator's sole owner is
+		// still the slot the caller is about to store into.
+		body = strConcatCopyOne(body, strByte, 2, 3, 5, 0, 4, true)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+	// Fallback: (out_data, out_len) = __str_concat(a, b), then release a.
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, concat)
+	body = inst.InstLocalSet(body, 9) // $out_len (top of the pair)
+	body = inst.InstLocalSet(body, 8) // $out_data
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, strDec)
+	body = inst.InstDrop(body)
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstLocalGet(body, 9)
+	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

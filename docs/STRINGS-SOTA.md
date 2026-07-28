@@ -353,11 +353,24 @@ measurement 1), which is why they cost 176 KB and 22 µs/call.
 | Encoding-tagged string | Ruby | — (rightly) |
 | Format/template type | Rust `format_args!`, Python f-strings, JS tagged templates | f-strings |
 
-Two live gaps: the byte view (§2.2) and the scalar type (§2.4). One
-open question: a builder — `s = s + chunk` in a loop is O(n²) with
-immutable strings unless the compiler special-cases accumulation (the IR
-has `rc_str_literal_accum` handling; whether it covers the general case
-needs measuring before adding a type).
+Two live gaps: the byte view (§2.2) and the scalar type (§2.4). The
+builder question has been measured (#5637): `s = s + chunk` in a loop no
+longer allocates per chunk. The IR recognises the self-append shape and
+lowers it to `__fern_str_append`, which grows the accumulator **in place**
+when its buffer is uniquely held (rc==1) and the new length still falls in
+the same allocator size class — so on x86-64 and wasm a chunk lands in the
+buffer's existing 16-byte slack ~8-15 times out of 16, and the intermediate
+buffers are now reclaimed rather than leaked (2000 two-byte appends:
+allocs 1997 → 250, live bytes 4 MB → 0). arm64 is excluded until its
+heap-string reclamation lands (RC-perceus slice 5g).
+
+What that does **not** buy is amortised growth: the 8-byte `[rc][len]`
+header has no capacity slot, so the class step is the allocator's 16-byte
+granularity and a long accumulator still re-copies its prefix once per
+step — Θ(n²/16) bytes rather than Θ(n²). Closing that needs a real builder
+type carrying a capacity, which remains the open question; the in-place
+append is what makes it a throughput question rather than a
+correctness-of-idiom one.
 
 ---
 

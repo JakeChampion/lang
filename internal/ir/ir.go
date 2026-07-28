@@ -4417,6 +4417,19 @@ type builder struct {
 	// (#3425). Node identity keeps nested appends inside the pushed
 	// value on the retaining path.
 	selfPushMoveCall ast.Expr
+	// selfStrAppendBin is the exact `s + rhs` RHS node of a string
+	// self-append assignment (`s = s + rhs`, isSelfStrAppendLocal), set
+	// by the Assign lowering just before it lowers the RHS and cleared
+	// after. The concat lowering consults it (by node identity) to emit
+	// __fern_str_append instead of OpStrConcat — the in-place-when-unique
+	// append that turns the pervasive `var out = ""; loop { out = out +
+	// piece }` stdlib idiom from an allocate-and-copy per piece into a
+	// memcpy into the existing buffer's size-class slack (#5637 option 3).
+	// selfStrAppendDone records that the concat site actually took that
+	// branch, so assign() knows the helper has consumed (and reclaimed)
+	// the old buffer and its own dec-on-overwrite must be skipped.
+	selfStrAppendBin  ast.Expr
+	selfStrAppendDone bool
 	// appendOrder caches the ident-occurrence order of the current
 	// function's body (lazily, per fn) so emitArrayPush can ask whether an
 	// ident append operand is its LAST use without rebuilding the order at
@@ -10278,7 +10291,23 @@ func (b *builder) binary(n *ast.Binary) error {
 		if err != nil {
 			return err
 		}
-		b.emit(Op{Kind: OpStrConcat})
+		// A marked string self-append (`s = s + piece`) takes
+		// __fern_str_append: when `s`'s buffer is uniquely held and the
+		// grown length still classes to the same allocator block, the
+		// piece is memcpy'd into the slack and the SAME buffer comes back
+		// still at rc==1; every other case falls back to the plain concat
+		// and releases the consumed accumulator itself. Either way the
+		// helper owns the old buffer, which is what assign() reads
+		// selfStrAppendDone for. See isSelfStrAppendLocal. The left
+		// operand of that shape is a bare ident, so it is never a stashed
+		// owned temp — only `piece` can be, and its reclaim below is
+		// unchanged.
+		if ast.Expr(n) == b.selfStrAppendBin {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_append", I32: 2})
+			b.selfStrAppendDone = true
+		} else {
+			b.emit(Op{Kind: OpStrConcat})
+		}
 		// Reclaim each stashed owned-temp operand via __fern_str_dec on EVERY
 		// ptrW: two-word ABIs (wasm + arm64-TwoWord) consume the (data,len)
 		// pair, and native single-word (x86_64) frees the buffer at rc==1 (else
@@ -14336,8 +14365,23 @@ func (b *builder) assign(n *ast.Assign) error {
 		if b.isSelfArrayPushLocal(n.Value, t.Name) {
 			b.selfPushMoveCall = n.Value
 		}
+		// Mark a string self-append RHS (`s = s + piece`) the same way, so
+		// the concat lowering emits the in-place-when-unique
+		// __fern_str_append rather than OpStrConcat's unconditional
+		// allocate-and-copy-both (#5637 option 3). Node identity keeps a
+		// nested concat inside `piece` on the plain OpStrConcat path.
+		// Saved / restored around the RHS so an assignment nested INSIDE
+		// `piece` (assignment is an expression here) runs with its own
+		// marking and hands this one's back untouched.
+		prevAppendBin, prevAppendDone := b.selfStrAppendBin, b.selfStrAppendDone
+		b.selfStrAppendBin, b.selfStrAppendDone = nil, false
+		if b.isSelfStrAppendLocal(n.Value, t.Name) {
+			b.selfStrAppendBin = n.Value
+		}
 		err := b.expr(n.Value)
 		b.selfPushMoveCall = nil
+		strAppended := b.selfStrAppendDone
+		b.selfStrAppendBin, b.selfStrAppendDone = prevAppendBin, prevAppendDone
 		if err != nil {
 			return err
 		}
@@ -14469,6 +14513,12 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 				b.emit(Op{Kind: OpDrop})
 			}
+		} else if strAppended {
+			// `s = s + piece` lowered to __fern_str_append, which took over
+			// the old buffer: it either grew it in place (still uniquely
+			// held — nothing to release) or copied into a fresh one and ran
+			// the same __fern_str_dec this branch would have. Dec'ing again
+			// here would over-release. See isSelfStrAppendLocal.
 		} else if isStringTypeOfLocal(t.Name, b) && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
 			// Phase 1e-strings: dec the OLD string buffer before the
 			// overwrite, mirroring the exit-sweep string branch (emitDec)
@@ -14932,6 +14982,53 @@ func isStringTypeOfLocal(name string, b *builder) bool {
 		}
 	}
 	return false
+}
+
+// stringOverwriteReleases reports whether assign()'s string branch releases
+// the old buffer on overwrite for this target width. Two ABIs do: wasm's
+// two-word (ptrW==4, __fern_str_dec — which frees at rc==1) and native
+// single-word x86_64 (ptrW==8 with TwoWordOverride off, __fern_rc_dec —
+// which only decrements, so the intermediates leaked until
+// __fern_str_append took the release over). arm64 (ptrW==8 +
+// TwoWordOverride) stays out entirely — its heap-string reclamation is the
+// deferred RC-perceus slice 5g — so a self-append there has no release to
+// take over and its codegen is unchanged.
+func (b *builder) stringOverwriteReleases() bool {
+	return b.ptrW == 4 || (b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW))
+}
+
+// isSelfStrAppendLocal reports whether `value` is exactly `<name> + rhs` —
+// the string self-append that `__fern_str_append` lowers in place (#5637
+// option 3). `out = out + piece` is the stdlib's universal string builder
+// (`std/unicode`'s _map_case, `std/utf8`'s encode_all, the JSON / CSV
+// encoders), and OpStrConcat gives it an allocate-and-copy-everything per
+// piece — quadratic bytes and, for the short pieces a per-code-point loop
+// appends, allocation-bound at ~600 ns a piece.
+//
+// Why the in-place append is sound here and not for a general concat: the
+// helper CONSUMES the accumulator (the assignment is about to overwrite the
+// slot anyway) and only mutates the buffer when it is uniquely owned
+// (rc==1) and the grown length still classes to the same allocator block.
+// Every other case falls back to the plain concat plus the same
+// __fern_str_dec the overwrite would have emitted, so the reclaim is
+// unchanged — see the backends' __fern_str_append.
+//
+// The guards mirror that ownership transfer: RcFreeEnabled, an OWNED
+// (freeEligible) string local — a borrowed param's buffer is still the
+// caller's, so mutating it in place would corrupt a live value — and an ABI
+// that releases on overwrite at all.
+func (b *builder) isSelfStrAppendLocal(value ast.Expr, name string) bool {
+	if !ast.RcFreeEnabled || !b.stringOverwriteReleases() {
+		return false
+	}
+	bin, ok := value.(*ast.Binary)
+	if !ok || !bin.IsStringConcat {
+		return false
+	}
+	if id, ok := bin.Left.(*ast.Ident); !ok || id.Name != name {
+		return false
+	}
+	return isStringTypeOfLocal(name, b) && b.rc.freeEligible[name]
 }
 
 // tupleTypeOfLocal returns the TupleType of a param / local named
