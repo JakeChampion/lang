@@ -4,27 +4,31 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 )
 
-// TestSelfHostOverBudgetPerModuleIR pins the #3457 over-budget fix: a program
-// whose merged module exceeds the 512-function IR budget — which used to drop
-// the WHOLE program to the AST emitter — now routes the IR path per-module
-// (asm_load_run.emit_per_module_concat: each module is under budget, so each
-// lowers on the IR path, and the units concatenate into one linkable stream).
+// TestSelfHostOverBudgetPerModuleIR pins that a program importing a large slice
+// of stdlib — enough that the RAW merged module is far past the 512-function IR
+// budget, which used to drop the WHOLE program to the legacy AST emitter — still
+// reaches the IR path (#3457).
 //
-// Each module is pruned to the reachable-name set (the treeshaked merged
-// module's funcs) before emit, so an UNUSED stdlib helper that the IR path can't
-// lower yet doesn't drag the program onto the AST emitter — only the reachable
-// closure must be IR-eligible, exactly as the merged treeshaked path requires.
+// MEASURED, and not what the name suggests: this does NOT exercise
+// asm_load_run.emit_per_module_concat. That driver treeshakes its merged module
+// in place BEFORE the concat's size gate is consulted, and the live closure here
+// is 37 functions (`asm_load_run <prog> <stdlib> -ir-probe | wc -l`) — far under
+// 512 — so the ordinary MERGED IR path compiles it and the concat is skipped.
+// The `.S<idx>` assertion below is what states that: whole-program string labels,
+// not the per-unit `.S<ns>_<idx>` pools a per-module unit emits.
 //
-// Forced over budget with -no-treeshake at the merged-decide level is NOT used
-// here (that would leave unreachable ineligible funcs in the closure); instead
-// the program uses enough of std/array + std/string that the TREESHAKED merged
-// still clears 512. Asserts it is genuinely multi-module, routes "ir", and the
-// concatenated units link + run correctly.
+// So this is a genuine regression test for the treeshake-then-merged-IR route,
+// and NOT coverage of the per-module concat, which remains unexercised: entering
+// it needs a program with a >512-function LIVE closure, and nothing in the suite
+// has one. Do not rely on this as proof the concat works — it has a known
+// cross-unit shape defect (units emit `.weak __fern_shp_*` for the LINKER to
+// merge across object files, which a single-file concat cannot carry). See #3457.
 //
 // Native only: the file-loading driver reads stdlib by host path from argv.
 func TestSelfHostOverBudgetPerModuleIR(t *testing.T) {
@@ -48,9 +52,9 @@ func TestSelfHostOverBudgetPerModuleIR(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	// Use many distinct std/array + std/string methods so the treeshaked reachable
-	// closure stays over the 512-func budget (each method drags in its helper +
-	// transitive deps), while every reachable helper is IR-eligible.
+	// Many distinct std/array + std/string methods, so the RAW merged module is
+	// comfortably past 512 functions while every reachable helper stays
+	// IR-eligible. (The treeshaked closure is only 37 — see the note above.)
 	const src = `import "std/array";
 import "std/string";
 function work(ss: string[]): i32 {
@@ -87,19 +91,31 @@ function main(): i32 {
 		}
 	}
 
-	// Routing: over budget + reachable closure eligible ⇒ "ir" (the concat path).
+	// Routing: the reachable closure is IR-eligible ⇒ "ir". Note -decide reports
+	// per-function eligibility on the merged module, so it does NOT distinguish
+	// the merged path from the concat; the `.S<idx>` check below does that.
 	decideOut, err := exec.Command(mmc, prog, stdlibRoot, "-decide").Output()
 	if err != nil {
 		t.Fatalf("-decide failed: %v", err)
 	}
 	if got := strings.TrimSpace(string(decideOut)); got != "ir" {
-		t.Fatalf("over-budget program routed %q, want \"ir\" (per-module concat over the AST emitter)", got)
+		t.Fatalf("over-budget program routed %q, want \"ir\" (IR path over the AST emitter)", got)
 	}
 
-	// Correctness: the per-module-concatenated units link + run to exit 0.
+	// Correctness: the emitted asm links + runs to exit 0.
 	asm, err := exec.Command(mmc, prog, stdlibRoot).Output()
 	if err != nil || len(asm) == 0 {
 		t.Fatalf("over-budget compile failed: %v (len=%d)", err, len(asm))
+	}
+	// WHICH path produced it. Whole-program `.S<idx>` string labels mean the
+	// merged IR emit; per-unit `.S<ns>_<idx>` pools would mean the per-module
+	// concat. Pinning this keeps the test honest about what it covers, and turns a
+	// future change that DOES route the concat into a visible failure here rather
+	// than a silent change of meaning — which matters, because the concat has an
+	// open cross-unit shape defect (see #3457).
+	if !regexp.MustCompile(`(?m)^\.S[0-9]+:`).Match(asm) {
+		t.Errorf("expected whole-program string labels (.S<idx>) — the merged IR path; " +
+			"if this now routes the per-module concat, see #3457 on cross-unit shapes")
 	}
 	bin := buildBin(t, gcc, dir, "overbudget_prog", string(asm))
 	rc := exec.Command(bin)
