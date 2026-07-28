@@ -9,14 +9,15 @@ import "testing"
 // itself when its toolchain is absent.
 const hexUpperProg = `
 import "std/hex" as hex;
+import "std/string";
 function main(): i32 {
-    if (hex.hex_encode_upper("Hi") != "4869") { return 1; }
-    if (hex.hex_encode_upper("z") != "7A") { return 2; }
-    if (hex.hex_encode("z") != "7a") { return 3; }
-    if (hex.hex_encode_upper("ÿ") != "C3BF") { return 4; }
-    if (hex.hex_encode("ÿ") != "c3bf") { return 5; }
-    if (hex.hex_encode_upper("") != "") { return 6; }
-    if (string_from_bytes_unchecked(hex.hex_decode(hex.hex_encode_upper("hello"))) != "hello") { return 7; }
+    if (hex.hex_encode_upper("Hi".bytes()) != "4869") { return 1; }
+    if (hex.hex_encode_upper("z".bytes()) != "7A") { return 2; }
+    if (hex.hex_encode("z".bytes()) != "7a") { return 3; }
+    if (hex.hex_encode_upper("ÿ".bytes()) != "C3BF") { return 4; }
+    if (hex.hex_encode("ÿ".bytes()) != "c3bf") { return 5; }
+    if (hex.hex_encode_upper("".bytes()) != "") { return 6; }
+    if (string_from_bytes_unchecked(hex.hex_decode(hex.hex_encode_upper("hello".bytes()))) != "hello") { return 7; }
     return 42;
 }
 `

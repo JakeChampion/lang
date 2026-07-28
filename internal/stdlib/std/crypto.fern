@@ -2,11 +2,18 @@
 //
 // Pure-Fern, no dependencies — suited to the fast-startup / no-deps
 // posture. All arithmetic is on `u32` (wrapping add, logical `>>`),
-// so the round math is exact on every backend. Inputs are raw byte
-// strings (`s[i]` is a 0..255 byte); outputs come in two shapes:
-// `*_hex` (lowercase 64-char digest) and `*_bytes` (raw 32-byte
-// digest string). Verified against the standard NIST / RFC 4231
-// known-answer vectors.
+// so the round math is exact on every backend. Verified against the
+// standard NIST / RFC 4231 known-answer vectors.
+//
+// Bytes are `u8[]`, not `string` (#5730, decision D9): a digest is
+// arbitrary bytes, so typing it as a `string` would break the
+// invariant that a `string` is well-formed UTF-8. So the `*_bytes`
+// digests, the KDF outputs, and every key / salt / IKM / info input
+// are `u8[]`; the `*_hex` variants still return a `string`, because
+// hex output genuinely is text. Inputs that are legitimately text —
+// the message to hash, the password to stretch — stay `string`;
+// pass a string's bytes to the byte-typed parameters with
+// `std/string`'s `s.bytes()`.
 
 // __crypto_k returns the 64 SHA-256 round constants (the first 32
 // bits of the fractional parts of the cube roots of the first 64
@@ -189,10 +196,9 @@ function __bytes_to_hex(b: u8[]): string {
     return string_from_bytes_unchecked(buf);
 }
 
-// sha256_bytes returns the raw 32-byte SHA-256 digest of `s` as a
-// byte string.
-pub function sha256_bytes(s: string): string {
-    return string_from_bytes_unchecked(__sha256_core(__str_to_bytes(s)));
+// sha256_bytes returns the raw 32-byte SHA-256 digest of `s`.
+pub function sha256_bytes(s: string): u8[] {
+    return __sha256_core(__str_to_bytes(s));
 }
 
 // sha256_hex returns the SHA-256 digest of `s` as a 64-character
@@ -237,28 +243,28 @@ function __hmac_core(key: u8[], msg: u8[]): u8[] {
     return __sha256_core(outer);
 }
 
-// hmac_sha256_bytes returns the raw 32-byte HMAC-SHA256 digest as a
-// byte string.
-pub function hmac_sha256_bytes(key: string, msg: string): string {
-    return string_from_bytes_unchecked(__hmac_core(__str_to_bytes(key), __str_to_bytes(msg)));
+// hmac_sha256_bytes returns the raw 32-byte HMAC-SHA256 digest.
+pub function hmac_sha256_bytes(key: u8[], msg: string): u8[] {
+    return __hmac_core(key, __str_to_bytes(msg));
 }
 
 // hmac_sha256_hex returns the HMAC-SHA256 digest as a 64-character
 // lowercase hex string.
-pub function hmac_sha256_hex(key: string, msg: string): string {
-    return __bytes_to_hex(__hmac_core(__str_to_bytes(key), __str_to_bytes(msg)));
+pub function hmac_sha256_hex(key: u8[], msg: string): string {
+    return __bytes_to_hex(__hmac_core(key, __str_to_bytes(msg)));
 }
 
-// consteq compares two byte strings in CONSTANT TIME with respect to their
+// consteq compares two byte arrays in CONSTANT TIME with respect to their
 // contents — it never short-circuits on the first differing byte, so an
 // attacker can't time a MAC/token check to recover the expected value one
 // byte at a time (#4384). A plain `a == b` bails at the first mismatch and
 // leaks that position. Use this to compare a computed MAC against an
-// attacker-supplied one. The lengths themselves are not secret (MACs are
-// fixed-length), so a length mismatch is folded into the accumulator and
-// returns false; equal-length inputs are compared with no data-dependent
-// branch or exit.
-pub function consteq(a: string, b: string): boolean {
+// attacker-supplied one; to compare two secrets that really are text (an
+// API token, a hex digest), pass `s.bytes()` from `std/string`. The
+// lengths themselves are not secret (MACs are fixed-length), so a length
+// mismatch is folded into the accumulator and returns false; equal-length
+// inputs are compared with no data-dependent branch or exit.
+pub function consteq(a: u8[], b: u8[]): boolean {
     var la: i32 = a.len();
     var lb: i32 = b.len();
     var diff: i32 = la ^ lb;
@@ -266,7 +272,7 @@ pub function consteq(a: string, b: string): boolean {
     if (lb < n) { n = lb; }
     var i: i32 = 0;
     while (i < n) {
-        diff = diff | (a[i] ^ b[i]);
+        diff = diff | ((a[i] as i32) ^ (b[i] as i32));
         i = i + 1;
     }
     return diff == 0;
@@ -276,14 +282,14 @@ pub function consteq(a: string, b: string): boolean {
 // MAC for (key, msg). The comparison is constant-time (consteq), so verifying
 // an attacker-supplied MAC is not a timing oracle — this is the safe way to
 // check a MAC, unlike `hmac_sha256_bytes(key, msg) == mac`.
-pub function hmac_verify(key: string, msg: string, mac: string): boolean {
+pub function hmac_verify(key: u8[], msg: string, mac: u8[]): boolean {
     return consteq(hmac_sha256_bytes(key, msg), mac);
 }
 
 // hmac_verify_hex is hmac_verify for a hex-encoded MAC (64 lowercase hex
 // chars). The constant-time compare runs over the hex text.
-pub function hmac_verify_hex(key: string, msg: string, mac_hex: string): boolean {
-    return consteq(hmac_sha256_hex(key, msg), mac_hex);
+pub function hmac_verify_hex(key: u8[], msg: string, mac_hex: string): boolean {
+    return consteq(__str_to_bytes(hmac_sha256_hex(key, msg)), __str_to_bytes(mac_hex));
 }
 
 // === PBKDF2-HMAC-SHA256 (RFC 8018 / RFC 2898) ===
@@ -336,16 +342,16 @@ function __pbkdf2_core(pw: u8[], salt: u8[], iterations: i32, dk_len: i32): u8[]
     return dk;
 }
 
-// pbkdf2_sha256(password, salt, iterations, dk_len) — the derived key as
-// a `dk_len`-byte string.
-pub function pbkdf2_sha256(password: string, salt: string, iterations: i32, dk_len: i32): string {
-    return string_from_bytes_unchecked(__pbkdf2_core(__str_to_bytes(password), __str_to_bytes(salt), iterations, dk_len));
+// pbkdf2_sha256(password, salt, iterations, dk_len) — the derived key,
+// `dk_len` bytes.
+pub function pbkdf2_sha256(password: string, salt: u8[], iterations: i32, dk_len: i32): u8[] {
+    return __pbkdf2_core(__str_to_bytes(password), salt, iterations, dk_len);
 }
 
 // pbkdf2_sha256_hex — the derived key as a lowercase hex string
 // (`2 * dk_len` characters).
-pub function pbkdf2_sha256_hex(password: string, salt: string, iterations: i32, dk_len: i32): string {
-    return __bytes_to_hex(__pbkdf2_core(__str_to_bytes(password), __str_to_bytes(salt), iterations, dk_len));
+pub function pbkdf2_sha256_hex(password: string, salt: u8[], iterations: i32, dk_len: i32): string {
+    return __bytes_to_hex(__pbkdf2_core(__str_to_bytes(password), salt, iterations, dk_len));
 }
 
 // pbkdf2_verify(password, salt, iterations, expected) — re-derive the key
@@ -357,15 +363,15 @@ pub function pbkdf2_sha256_hex(password: string, salt: string, iterations: i32, 
 // itself. `dk_len` is taken from `expected`'s length. The derivation is
 // already oblivious to the password's byte *values* (SHA-256 word ops
 // only), so this check adds no new leak beyond `expected`'s length.
-pub function pbkdf2_verify(password: string, salt: string, iterations: i32, expected: string): boolean {
+pub function pbkdf2_verify(password: string, salt: u8[], iterations: i32, expected: u8[]): boolean {
     return consteq(pbkdf2_sha256(password, salt, iterations, expected.len()), expected);
 }
 
 // pbkdf2_verify_hex — pbkdf2_verify for a hex-encoded stored key. The
 // constant-time compare runs over the hex text; `dk_len` is
 // `expected_hex.len() / 2`.
-pub function pbkdf2_verify_hex(password: string, salt: string, iterations: i32, expected_hex: string): boolean {
-    return consteq(pbkdf2_sha256_hex(password, salt, iterations, expected_hex.len() / 2), expected_hex);
+pub function pbkdf2_verify_hex(password: string, salt: u8[], iterations: i32, expected_hex: string): boolean {
+    return consteq(__str_to_bytes(pbkdf2_sha256_hex(password, salt, iterations, expected_hex.len() / 2)), __str_to_bytes(expected_hex));
 }
 
 // === HKDF-SHA256 (RFC 5869) ===
@@ -380,9 +386,9 @@ pub function pbkdf2_verify_hex(password: string, salt: string, iterations: i32, 
 // Built on the same HMAC-SHA256 core; verified against the RFC 5869
 // known-answer vectors.
 
-// HKDF-Extract: PRK = HMAC(salt, IKM). An empty salt is replaced by
-// hLen (32) zero bytes, per RFC 5869 §2.2.
-function __hkdf_extract(salt: u8[], ikm: u8[]): u8[] {
+// hkdf_extract(salt, ikm) — the 32-byte PRK. PRK = HMAC(salt, IKM); an
+// empty salt is replaced by hLen (32) zero bytes, per RFC 5869 §2.2.
+pub function hkdf_extract(salt: u8[], ikm: u8[]): u8[] {
     var s: u8[] = salt;
     if (salt.len() == 0) {
         s = __alloc_u8(32);
@@ -392,10 +398,11 @@ function __hkdf_extract(salt: u8[], ikm: u8[]): u8[] {
     return __hmac_core(s, ikm);
 }
 
-// HKDF-Expand: OKM = T(1) || T(2) || … truncated to `length`, where
+// hkdf_expand(prk, info, length) — `length` output bytes from a PRK.
+// OKM = T(1) || T(2) || … truncated to `length`, where
 // T(i) = HMAC(PRK, T(i-1) || info || byte(i)) and T(0) is empty
 // (RFC 5869 §2.3). `length` must be ≤ 255*32 (the counter is one byte).
-function __hkdf_expand(prk: u8[], info: u8[], length: i32): u8[] {
+pub function hkdf_expand(prk: u8[], info: u8[], length: i32): u8[] {
     var hLen: i32 = 32;
     var okm: u8[] = __alloc_u8(length);
     var t: u8[] = [];               // T(0)
@@ -418,25 +425,15 @@ function __hkdf_expand(prk: u8[], info: u8[], length: i32): u8[] {
     return okm;
 }
 
-// hkdf_extract(salt, ikm) — the 32-byte PRK.
-pub function hkdf_extract(salt: string, ikm: string): string {
-    return string_from_bytes_unchecked(__hkdf_extract(__str_to_bytes(salt), __str_to_bytes(ikm)));
-}
-
-// hkdf_expand(prk, info, length) — `length` output bytes from a PRK.
-pub function hkdf_expand(prk: string, info: string, length: i32): string {
-    return string_from_bytes_unchecked(__hkdf_expand(__str_to_bytes(prk), __str_to_bytes(info), length));
-}
-
 // hkdf_sha256(salt, ikm, info, length) — the one-shot extract-then-
 // expand: derive `length` bytes of keying material from `ikm`.
-pub function hkdf_sha256(salt: string, ikm: string, info: string, length: i32): string {
-    return string_from_bytes_unchecked(__hkdf_expand(__hkdf_extract(__str_to_bytes(salt), __str_to_bytes(ikm)), __str_to_bytes(info), length));
+pub function hkdf_sha256(salt: u8[], ikm: u8[], info: u8[], length: i32): u8[] {
+    return hkdf_expand(hkdf_extract(salt, ikm), info, length);
 }
 
 // hkdf_sha256_hex — the one-shot HKDF as a lowercase hex string.
-pub function hkdf_sha256_hex(salt: string, ikm: string, info: string, length: i32): string {
-    return __bytes_to_hex(__hkdf_expand(__hkdf_extract(__str_to_bytes(salt), __str_to_bytes(ikm)), __str_to_bytes(info), length));
+pub function hkdf_sha256_hex(salt: u8[], ikm: u8[], info: u8[], length: i32): string {
+    return __bytes_to_hex(hkdf_expand(hkdf_extract(salt, ikm), info, length));
 }
 
 // === HOTP / TOTP (RFC 4226 / RFC 6238), HMAC-SHA256 ===
@@ -447,10 +444,11 @@ pub function hkdf_sha256_hex(salt: string, ikm: string, info: string, length: i3
 // with std/base32 first). Returns the OTP as an integer; the caller
 // zero-pads it to `digits` for display.
 
-// __hotp_core: HOTP(key, counter) with dynamic truncation (RFC 4226 §5.3
-// / §5.4), using the last nibble of the 32-byte HMAC-SHA256 digest as
-// the offset. Returns a `digits`-digit code.
-function __hotp_core(key: u8[], counter: i64, digits: i32): i32 {
+// hotp_sha256(key, counter, digits) — counter-based one-time password,
+// with dynamic truncation (RFC 4226 §5.3 / §5.4) using the last nibble
+// of the 32-byte HMAC-SHA256 digest as the offset. Returns a
+// `digits`-digit code.
+pub function hotp_sha256(key: u8[], counter: i64, digits: i32): i32 {
     // 8-byte big-endian counter.
     var msg: u8[] = __alloc_u8(8);
     var i: i32 = 0;
@@ -472,15 +470,10 @@ function __hotp_core(key: u8[], counter: i64, digits: i32): i32 {
     return bin % m;
 }
 
-// hotp_sha256(key, counter, digits) — counter-based one-time password.
-pub function hotp_sha256(key: string, counter: i64, digits: i32): i32 {
-    return __hotp_core(__str_to_bytes(key), counter, digits);
-}
-
 // totp_sha256(key, unix_time, period, digits) — time-based one-time
 // password: HOTP over the time-step counter `floor(unix_time / period)`
 // (period is the step in seconds, typically 30).
-pub function totp_sha256(key: string, unix_time: i64, period: i32, digits: i32): i32 {
+pub function totp_sha256(key: u8[], unix_time: i64, period: i32, digits: i32): i32 {
     var counter: i64 = unix_time / (period as i64);
-    return __hotp_core(__str_to_bytes(key), counter, digits);
+    return hotp_sha256(key, counter, digits);
 }

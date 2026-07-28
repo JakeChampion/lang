@@ -1,5 +1,6 @@
 import "std/test";
 import "std/base32" as base32;
+import "std/string";
 
 // base32_decode yields `u8[]` (#5730). These fixtures are ASCII, so
 // `text()` reads the decoded bytes back to assert against a literal; a
@@ -13,13 +14,13 @@ function text(b: u8[]): string {
 // round-trips.
 
 function test_encode_vectors(): test.TestOutcome {
-    if (base32.base32_encode("") != "") { return test.fail("empty"); }
-    if (base32.base32_encode("f") != "MY======") { return test.fail("f"); }
-    if (base32.base32_encode("fo") != "MZXQ====") { return test.fail("fo"); }
-    if (base32.base32_encode("foo") != "MZXW6===") { return test.fail("foo"); }
-    if (base32.base32_encode("foob") != "MZXW6YQ=") { return test.fail("foob"); }
-    if (base32.base32_encode("fooba") != "MZXW6YTB") { return test.fail("fooba"); }
-    return test.assert_eq(base32.base32_encode("foobar"), "MZXW6YTBOI======");
+    if (base32.base32_encode("".bytes()) != "") { return test.fail("empty"); }
+    if (base32.base32_encode("f".bytes()) != "MY======") { return test.fail("f"); }
+    if (base32.base32_encode("fo".bytes()) != "MZXQ====") { return test.fail("fo"); }
+    if (base32.base32_encode("foo".bytes()) != "MZXW6===") { return test.fail("foo"); }
+    if (base32.base32_encode("foob".bytes()) != "MZXW6YQ=") { return test.fail("foob"); }
+    if (base32.base32_encode("fooba".bytes()) != "MZXW6YTB") { return test.fail("fooba"); }
+    return test.assert_eq(base32.base32_encode("foobar".bytes()), "MZXW6YTBOI======");
 }
 
 function test_decode_vectors(): test.TestOutcome {
@@ -30,12 +31,12 @@ function test_decode_vectors(): test.TestOutcome {
 
 function test_roundtrip(): test.TestOutcome {
     var payload: string = "Hello, base32 World! 12345";
-    return test.assert_eq(text(base32.base32_decode(base32.base32_encode(payload))), payload);
+    return test.assert_eq(text(base32.base32_decode(base32.base32_encode(payload.bytes()))), payload);
 }
 
 function test_empty_decode(): test.TestOutcome {
     return test.assert_true(text(base32.base32_decode("")) == "" &&
-                            base32.base32_encode("") == "");
+                            base32.base32_encode("".bytes()) == "");
 }
 
 // Strict decode: RFC vectors round-trip; malformed input rejects.

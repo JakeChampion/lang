@@ -7,17 +7,13 @@
 // raising — partial inputs round-trip cleanly. Companion
 // to base64 with no `=` padding.
 //
-// DECODE yields `u8[]`, not `string` (#5730, decision D9):
-// decoding arbitrary hex produces arbitrary bytes, which are
-// not UTF-8 and so must not be typed as a `string`. Read the
-// result back as text with `std/utf8.from_bytes` when the
-// bytes are supposed to be text.
-//
-// ENCODE still takes a `string` and is still a byte container
-// on that side — it is the other half of the same wart. It
-// stays for now because it is coupled to `std/crypto`, whose
-// digest functions also return bytes as `string`; both move
-// together in a later slice of #5730.
+// Bytes are `u8[]` on both sides (#5730, decision D9):
+// arbitrary hex decodes to arbitrary bytes, which are not
+// UTF-8 and so must not be typed as a `string`, and encoding
+// is the inverse — its job is rendering bytes as text. Read a
+// decode result back as text with `std/utf8.from_bytes` when
+// the bytes are supposed to be text; encode a string's bytes
+// with `std/string`'s `s.bytes()`.
 //
 // No prelude: these are in scope only after a program
 // declares `import "std/hex";` (docs/PRELUDE-TO-MODULES.md,
@@ -40,13 +36,13 @@ function __hex_value(c: i32): i32 {
     return 0 - 1;
 }
 
-pub function hex_encode(s: string): string {
-    var n: i32 = s.len();
+pub function hex_encode(bs: u8[]): string {
+    var n: i32 = bs.len();
     if (n == 0) { return ""; }
     var buf: u8[] = __alloc_u8(n * 2);
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = bs[i] as i32;
         buf = buf.with(i * 2, __hex_lower_char((b >> 4) & 15) as u8);
         buf = buf.with(i * 2 + 1, __hex_lower_char(b & 15) as u8);
         i = i + 1;
@@ -54,18 +50,18 @@ pub function hex_encode(s: string): string {
     return string_from_bytes_unchecked(buf);
 }
 
-// `hex_encode_upper(s)` — like `hex_encode` but emits uppercase
+// `hex_encode_upper(b)` — like `hex_encode` but emits uppercase
 // `0-9A-F`. Useful where a protocol / display convention calls for
 // uppercase hex (MAC addresses, some checksums, fingerprints). Decodes
 // with the same `hex_decode` / `hex_decode_strict` (both accept either
 // case).
-pub function hex_encode_upper(s: string): string {
-    var n: i32 = s.len();
+pub function hex_encode_upper(bs: u8[]): string {
+    var n: i32 = bs.len();
     if (n == 0) { return ""; }
     var buf: u8[] = __alloc_u8(n * 2);
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = bs[i] as i32;
         buf = buf.with(i * 2, __hex_upper_char((b >> 4) & 15) as u8);
         buf = buf.with(i * 2 + 1, __hex_upper_char(b & 15) as u8);
         i = i + 1;

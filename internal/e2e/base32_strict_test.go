@@ -11,6 +11,7 @@ import "testing"
 // check holds. Each leg skips itself when its toolchain is absent.
 const base32StrictProg = `
 import "std/base32" as b32;
+import "std/string";
 function opt(o: Option[u8[]], fb: string): string {
     // The fixtures here are ASCII; a real ingest path would use
     // std/utf8.from_bytes instead of the unchecked read.
@@ -20,9 +21,9 @@ function isnone(o: Option[u8[]]): boolean {
     match (o) { Some(v) => { return false; }, None => { return true; } }
 }
 function main(): i32 {
-    if (opt(b32.base32_decode_strict(b32.base32_encode("Hi")), "X") != "Hi") { return 1; }
-    if (opt(b32.base32_decode_strict(b32.base32_encode("Hello")), "X") != "Hello") { return 2; }
-    if (opt(b32.base32_decode_strict(b32.base32_encode("")), "X") != "") { return 3; }
+    if (opt(b32.base32_decode_strict(b32.base32_encode("Hi".bytes())), "X") != "Hi") { return 1; }
+    if (opt(b32.base32_decode_strict(b32.base32_encode("Hello".bytes())), "X") != "Hello") { return 2; }
+    if (opt(b32.base32_decode_strict(b32.base32_encode("".bytes())), "X") != "") { return 3; }
     if (opt(b32.base32_decode_strict("JBUQ===="), "X") != "Hi") { return 4; }
     if (opt(b32.base32_decode_strict("JBUQ"), "X") != "Hi") { return 5; }
     if (opt(b32.base32_decode_strict(""), "X") != "") { return 6; }

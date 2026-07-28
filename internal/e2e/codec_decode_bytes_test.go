@@ -56,7 +56,7 @@ function main(): i32 {
     // including the 128 that are not valid UTF-8 on their own.
     var i: i32 = 0;
     while (i < 256) {
-        var one: string = string_from_bytes_unchecked([i as u8]);
+        var one: u8[] = [i as u8];
         var b64back: u8[] = b64.base64_decode(b64.base64_encode(one));
         if (b64back.len() != 1) { return 15; }
         if (b64back[0] as i32 != i) { return 16; }

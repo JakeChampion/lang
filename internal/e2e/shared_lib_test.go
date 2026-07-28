@@ -980,9 +980,9 @@ function check(env: usize, cls: usize): i32 {
     var ok: i32 = 0;
     if (("HELLO").to_lower() == "hello") { ok = ok + 1; }
     if (("hello").to_upper() == "HELLO") { ok = ok + 2; }
-    if (base64.base64_encode("Man") == "TWFu") { ok = ok + 4; }
+    if (base64.base64_encode("Man".bytes()) == "TWFu") { ok = ok + 4; }
     if (string_from_bytes_unchecked(base64.base64_decode("TWFu")) == "Man") { ok = ok + 8; }
-    if (hex.hex_encode("AB") == "4142") { ok = ok + 16; }
+    if (hex.hex_encode("AB".bytes()) == "4142") { ok = ok + 16; }
     if (string_from_bytes_unchecked(hex.hex_decode("4142")) == "AB") { ok = ok + 32; }
     return ok;
 }
