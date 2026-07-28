@@ -43,9 +43,8 @@ function main(): i32 {
 // shape symbol defined twice in one stream (the `.weak` merge only happens
 // across separate object files, not within one).
 //
-// It does NOT serve a request: a handler reaching std/tcp's serve loop is a fn
-// value crossing a unit boundary, which miscompiles — see
-// TestSelfHostCrossUnitFnValue below for the isolated repro.
+// TestSelfHostHttpHandlerServesX86_64 below takes it the rest of the way and
+// serves real requests through it.
 func TestSelfHostHttpHandlerRoutesIRX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
@@ -113,7 +112,7 @@ function main(): i32 {
 
 		// std/http is imported to pull in the over-budget closure; the socket
 		// work uses the builtins directly, so no fn value crosses a unit
-		// boundary (that path is still broken — see TestSelfHostCrossUnitFnValue).
+		// boundary — the serve-loop shape is covered by TestSelfHostHttpHandlerServes.
 		src := fmt.Sprintf(`import "std/http";
 function main(): i32 {
     var fd: i32 = tcp_listen(%d);
@@ -166,6 +165,83 @@ function main(): i32 {
 			t.Errorf("server exited %d, want 42", code)
 		}
 	})
+}
+
+// TestSelfHostHttpHandlerServesX86_64 is the end of the line for the flagship
+// program: compiled by the SELF-HOSTED compiler, it answers real HTTP.
+//
+// It is the whole edge-handler stack at once — std/tcp's accept/recv/deadline
+// loop, std/http's request parse and response serialise, the builtin
+// HttpRequest / HttpResponse / Platform layouts, and the handler itself reached
+// as a fn VALUE handed across a per-module unit boundary (#5698). Two requests
+// on separate connections, because the second only answers correctly if the
+// first request's allocations were reclaimed rather than leaked or reused.
+func TestSelfHostHttpHandlerServesX86_64(t *testing.T) {
+	gcc, runner, driverBin := buildModloadDriverX86(t)
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no free TCP port: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	src := fmt.Sprintf(`import "std/http";
+import "std/tcp";
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.http_response_ok("method=" + req.method + " path=" + req.path);
+}
+
+function main(): i32 {
+    return tcp.tcp_serve(%d, handle);
+}
+`, port)
+
+	asm, progDir := compileSourceModload(t, runner, driverBin, src)
+	if !strings.Contains(asm, ".Lir") {
+		t.Fatal("handler program did not route through the IR path")
+	}
+	bin := buildBin(t, gcc, progDir, "http_serve", asm)
+
+	cmd := binCmd(runner, bin)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start server: %v", err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
+
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	get := func(path string) string {
+		deadline := time.Now().Add(15 * time.Second)
+		for time.Now().Before(deadline) {
+			conn, derr := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+			if derr != nil {
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
+			_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+			fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: x\r\n\r\n", path)
+			buf := make([]byte, 512)
+			n, _ := bufio.NewReader(conn).Read(buf)
+			conn.Close()
+			return string(buf[:n])
+		}
+		return ""
+	}
+	for _, want := range []string{"method=GET path=/hello", "method=GET path=/second"} {
+		path := "/hello"
+		if strings.HasSuffix(want, "/second") {
+			path = "/second"
+		}
+		if resp := get(path); !strings.Contains(resp, want) {
+			t.Errorf("GET %s response = %q, want it to contain %q", path, resp, want)
+		}
+	}
+	// The server must still be running: tcp_serve loops, and a crash mid-request
+	// is exactly the #5698 failure this pins.
+	if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+		t.Errorf("server exited (code %d) instead of continuing to serve", cmd.ProcessState.ExitCode())
+	}
 }
 
 func binCmd(runner []string, bin string) *exec.Cmd {
