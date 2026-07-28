@@ -6509,49 +6509,8 @@ function clock_imports(): string {
     return "  (import \"wasi_snapshot_preview1\" \"clock_time_get\" (func $clock_time_get (param i32 i64 i32) (result i32)))\n";
 }
 
-// clock_imports_p2 emits the preview2 clock imports actually used: wall-clock
-// `now` (a datetime record {seconds: u64, nanoseconds: u32} written to a
-// return area) backs now_ns / now_unix_ms; monotonic-clock `now` (a u64
-// instant returned directly) backs monotonic_ns. Imported precisely so the
-// core's import set matches the corresponding component framing.
-function clock_imports_p2(has_wall: boolean, has_mono: boolean): string {
-    var o: string = "";
-    if (has_wall) {
-        o = o + "  (import \"wasi:clocks/wall-clock@0.2.0\" \"now\" (func $wall_now (param i32)))\n";
-    }
-    if (has_mono) {
-        o = o + "  (import \"wasi:clocks/monotonic-clock@0.2.0\" \"now\" (func $mono_now (result i64)))\n";
-    }
-    return o;
-}
 
 
-// clock_funcs_p2 emits the preview2 clock builtins actually used. wall-clock
-// `now` writes seconds (i64 @ 0) + nanoseconds (i32 @ 8) to an 8-aligned
-// return area: now_ns = seconds*1e9 + nanos; now_unix_ms = seconds*1000 +
-// nanos/1e6. monotonic-clock `now` returns the nanosecond instant directly.
-// Each emitted function matches its preview1 counterpart's i64 result, so
-// every call site is unchanged.
-function clock_funcs_p2(has_wall: boolean, has_mono: boolean): string {
-    var o: string = "";
-    if (has_wall) {
-        o = o + "  (func $__fern_now_ns (result i64)\n";
-        o = o + "    (local $ra i32)\n";
-        o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 16)) (i32.const 7)) (i32.const -8)))\n";
-        o = o + "    (call $wall_now (local.get $ra))\n";
-        o = o + "    (i64.add (i64.mul (i64.load (local.get $ra)) (i64.const 1000000000)) (i64.extend_i32_u (i32.load (i32.add (local.get $ra) (i32.const 8))))))\n";
-        o = o + "  (func $__fern_now_unix_ms (result i64)\n";
-        o = o + "    (local $ra i32)\n";
-        o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 16)) (i32.const 7)) (i32.const -8)))\n";
-        o = o + "    (call $wall_now (local.get $ra))\n";
-        o = o + "    (i64.add (i64.mul (i64.load (local.get $ra)) (i64.const 1000)) (i64.div_u (i64.extend_i32_u (i32.load (i32.add (local.get $ra) (i32.const 8)))) (i64.const 1000000))))\n";
-    }
-    if (has_mono) {
-        o = o + "  (func $__fern_monotonic_ns (result i64)\n";
-        o = o + "    (call $mono_now))\n";
-    }
-    return o;
-}
 
 
 
@@ -6743,11 +6702,6 @@ function random_helpers(): string {
     return "  (import \"wasi_snapshot_preview1\" \"random_get\" (func $random_get (param i32 i32) (result i32)))\n";
 }
 
-// random_imports_p2 is the preview2 counterpart: wasi:random/random's
-// get-random-u64 (a u64 of randomness per call, no return area / list).
-function random_imports_p2(): string {
-    return "  (import \"wasi:random/random@0.2.0\" \"get-random-u64\" (func $get_random_u64 (result i64)))\n";
-}
 
 
 function random_func(): string {
@@ -6773,31 +6727,6 @@ function random_func(): string {
     return o;
 }
 
-// random_func_p2 is the preview2 $__fern_random_bytes: same i32[] array
-// block result ([len][cap][bytes-as-i32]), but the byte source is
-// get-random-u64 — one u64 (8 bytes) fetched per 8 output bytes, each byte
-// sliced out with a shift+mask. Matches random_func's return shape so every
-// random_bytes call site is unchanged.
-function random_func_p2(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_random_bytes (param $n i32) (result i32)\n";
-    o = o + "    (local $arr i32) (local $i i32) (local $r i64)\n";
-    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
-    o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
-    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))\n";
-    o = o + "      (if (i32.eqz (i32.and (local.get $i) (i32.const 7))) (then (local.set $r (call $get_random_u64))))\n";
-    o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.and (i32.wrap_i64 (i64.shr_u (local.get $r) (i64.extend_i32_u (i32.mul (i32.and (local.get $i) (i32.const 7)) (i32.const 8))))) (i32.const 255)))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (local.get $arr))\n";
-    // random_i32(): the low 32 bits of one get-random-u64 call.
-    o = o + "  (func $__fern_random_i32 (result i32)\n";
-    o = o + "    (i32.wrap_i64 (call $get_random_u64)))\n";
-    return o;
-}
 
 
 // args_imports_p2 is the preview2 counterpart: wasi:cli/environment's
@@ -10077,8 +10006,8 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // filesystem — so the core's import set matches the component framing for
     // any combination (single-import shapes are unaffected: each lone import
     // still lands right after the stdout pair).
-    if (has_random) { if (io) { out = out + random_imports_p2(); } else { out = out + random_helpers(); } }
-    if (has_clocks) { if (io) { out = out + clock_imports_p2(has_wallclock, has_monoclock); } else { out = out + clock_imports(); } }
+    if (has_random) { if (io) { out = out + wasm_ir.random_imports_p2(); } else { out = out + random_helpers(); } }
+    if (has_clocks) { if (io) { out = out + wasm_ir.clock_imports_p2(has_wallclock, has_monoclock); } else { out = out + clock_imports(); } }
     if (has_args) { if (io) { out = out + args_imports_p2(); } else { out = out + wasm_ir.args_helpers(); } }
     if (has_env) { if (io) { out = out + env_imports_p2(); } else { out = out + wasm_ir.env_helpers(); } }
     // component-io-fs: the preview2 filesystem imports (read and/or write).
@@ -10116,7 +10045,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         out = out + wasm_ir.print_int64_helper(tab.next + 16);
     }
     if (has_clocks) {
-        if (io) { out = out + clock_funcs_p2(has_wallclock, has_monoclock); } else { out = out + wasm_ir.clock_funcs(); }
+        if (io) { out = out + wasm_ir.clock_funcs_p2(has_wallclock, has_monoclock); } else { out = out + wasm_ir.clock_funcs(); }
     }
     // The bump heap (for string concat + array allocation) starts above
     // all static data: past the blocks, the 16-byte print_int buffer, and
@@ -10206,7 +10135,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         if (io) { out = out + env_func_p2(); } else { out = out + wasm_ir.env_func(); }
     }
     if (has_random) {
-        if (io) { out = out + random_func_p2(); } else { out = out + random_func(); }
+        if (io) { out = out + wasm_ir.random_func_p2(); } else { out = out + random_func(); }
     }
     if (has_args) {
         if (io) { out = out + args_func_p2(); } else { out = out + wasm_ir.args_func(); }

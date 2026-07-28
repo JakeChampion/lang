@@ -117,15 +117,43 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		{"io-exit", true, `function main(): i32 { write("bye"); exit(0); return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/exit@0.2.0 exit"}},
 
+		// The preview2-backed builtins. Their helper bodies (*_p2) define the
+		// same $__fern_* functions the IR already calls, so mode 2 swaps the
+		// import + body and every call site is unchanged. Import order follows
+		// the AST path's canonical interface order — random, wall-clock,
+		// monotonic-clock — after the stdout pair, because the framings alias
+		// positionally.
+		{"io-random-i32", true, `function main(): i32 { if (random_i32() != 0) { write("r"); } return 0; }`, true,
+			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:random/random@0.2.0 get-random-u64"}},
+		{"io-random-bytes", true, `function main(): i32 { var b: i32[] = random_bytes(4); if (b.len() == 4) { write("b"); } return 0; }`, true,
+			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:random/random@0.2.0 get-random-u64"}},
+		{"io-clock-wall", true, `function main(): i32 { if (now_unix_ms() > 0) { write("w"); } return 0; }`, true,
+			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/wall-clock@0.2.0 now"}},
+		{"io-clock-mono", true, `function main(): i32 { if (monotonic_ns() > 0) { write("m"); } return 0; }`, true,
+			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/monotonic-clock@0.2.0 now"}},
+		// A no-I/O component has no import to satisfy the byte source, so the
+		// gate refuses random there and it stays on the AST path. Note what
+		// the AST fallback then emits: a PREVIEW1 random_get, which no
+		// component framing can wire — its `if (io)` split treats "not io" as
+		// "preview1 command core". That combination is unreachable through the
+		// CLI (component_shape sends every random program to the io wrap, so
+		// emit_module_run never sees one), which is why it has gone unnoticed;
+		// the import list below records what happens today and is deliberately
+		// NOT a contract worth preserving.
+		{"noio-random-falls-back", false, `function main(): i32 { return random_i32() & 1; }`, false,
+			[]string{"wasi_snapshot_preview1 random_get"}},
+
 		// Out of subset — these must keep falling through to the AST emitter,
 		// whose preview2 helper bodies are the only implementation they have.
 		{"env-falls-back", true, `function main(): i32 { match (env("HOME")) { Some(v) => { write(v); }, None => { write("none"); } } return 0; }`, false,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-environment"}},
 		{"args-falls-back", true, `function main(): i32 { var a: string[] = args(); write(a[0]); return 0; }`, false,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-arguments"}},
-		{"random-falls-back", true, `function main(): i32 { write(random_i32().to_string()); return 0; }`, false,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:random/random@0.2.0 get-random-u64"}},
-		{"clock-falls-back", true, `function main(): i32 { write(now_unix_ms().to_string()); return 0; }`, false,
+		// i64.to_string() is outside the per-function IR subset (equally so on
+		// the preview1 command core), so this one falls back for a reason that
+		// has nothing to do with component mode — worth pinning, since it is
+		// the shape most likely to be misread as a component-gate rejection.
+		{"clock-tostring-falls-back", true, `function main(): i32 { write(now_unix_ms().to_string()); return 0; }`, false,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/wall-clock@0.2.0 now"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1472,10 +1472,18 @@ pub function component_needs_ok(needs: string[], io: boolean): boolean {
     var i: i32 = 0;
     while (i < needs.len()) {
         var n: string = needs[i];
-        if (n == "@uses_random") { return false; }
+        // @uses_random is the one WASI-backed `@` predicate: it gates the byte
+        // source's IMPORT. Under io that is wasi:random's get-random-u64,
+        // which mode 2 emits; with no io there is no import to satisfy it.
+        if (n == "@uses_random") { if (io) { i = i + 1; continue; } return false; }
         if (n[0] == 64) { i = i + 1; continue; }   // 64 = '@': a pure predicate
         if (io && (n == "print_int" || n == "print_i64" || n == "print_str"
             || n == "eprint_str" || n == "putchar" || n == "exit")) { i = i + 1; continue; }
+        // The preview2-backed builtins: their helper BODIES are the *_p2
+        // emitters below, which define the same $__fern_* functions the IR
+        // already calls, so admitting them costs only the import + body swap.
+        if (io && (n == "now_ns" || n == "now_unix_ms" || n == "monotonic_ns"
+            || n == "random_bytes" || n == "random_i32")) { i = i + 1; continue; }
         if (n == "arr_push" || n == "arr_push_owned" || n == "arr_push_i64"
             || n == "arr_push_f64" || n == "map_iter" || n == "str_split"
             || n == "str_bytes" || n == "str_from_bytes" || n == "fexp"
@@ -1483,6 +1491,81 @@ pub function component_needs_ok(needs: string[], io: boolean): boolean {
         return false;
     }
     return true;
+}
+
+// clock_imports_p2 emits the preview2 clock imports actually used: wall-clock
+// `now` (a datetime record {seconds: u64, nanoseconds: u32} written to a
+// return area) backs now_ns / now_unix_ms; monotonic-clock `now` (a u64
+// instant returned directly) backs monotonic_ns. Imported precisely so the
+// core's import set matches the corresponding component framing.
+pub function clock_imports_p2(has_wall: boolean, has_mono: boolean): string {
+    var o: string = "";
+    if (has_wall) {
+        o = o + "  (import \"wasi:clocks/wall-clock@0.2.0\" \"now\" (func $wall_now (param i32)))\n";
+    }
+    if (has_mono) {
+        o = o + "  (import \"wasi:clocks/monotonic-clock@0.2.0\" \"now\" (func $mono_now (result i64)))\n";
+    }
+    return o;
+}
+
+// clock_funcs_p2 emits the preview2 clock builtins actually used. wall-clock
+// `now` writes seconds (i64 @ 0) + nanoseconds (i32 @ 8) to an 8-aligned
+// return area: now_ns = seconds*1e9 + nanos; now_unix_ms = seconds*1000 +
+// nanos/1e6. monotonic-clock `now` returns the nanosecond instant directly.
+// Each emitted function matches its preview1 counterpart's i64 result, so
+// every call site is unchanged.
+pub function clock_funcs_p2(has_wall: boolean, has_mono: boolean): string {
+    var o: string = "";
+    if (has_wall) {
+        o = o + "  (func $__fern_now_ns (result i64)\n";
+        o = o + "    (local $ra i32)\n";
+        o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 16)) (i32.const 7)) (i32.const -8)))\n";
+        o = o + "    (call $wall_now (local.get $ra))\n";
+        o = o + "    (i64.add (i64.mul (i64.load (local.get $ra)) (i64.const 1000000000)) (i64.extend_i32_u (i32.load (i32.add (local.get $ra) (i32.const 8))))))\n";
+        o = o + "  (func $__fern_now_unix_ms (result i64)\n";
+        o = o + "    (local $ra i32)\n";
+        o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 16)) (i32.const 7)) (i32.const -8)))\n";
+        o = o + "    (call $wall_now (local.get $ra))\n";
+        o = o + "    (i64.add (i64.mul (i64.load (local.get $ra)) (i64.const 1000)) (i64.div_u (i64.extend_i32_u (i32.load (i32.add (local.get $ra) (i32.const 8)))) (i64.const 1000000))))\n";
+    }
+    if (has_mono) {
+        o = o + "  (func $__fern_monotonic_ns (result i64)\n";
+        o = o + "    (call $mono_now))\n";
+    }
+    return o;
+}
+
+// random_imports_p2 is the preview2 counterpart: wasi:random/random's
+// get-random-u64 (a u64 of randomness per call, no return area / list).
+pub function random_imports_p2(): string {
+    return "  (import \"wasi:random/random@0.2.0\" \"get-random-u64\" (func $get_random_u64 (result i64)))\n";
+}
+
+// random_func_p2 is the preview2 $__fern_random_bytes: same i32[] array
+// block result ([len][cap][bytes-as-i32]), but the byte source is
+// get-random-u64 — one u64 (8 bytes) fetched per 8 output bytes, each byte
+// sliced out with a shift+mask. Matches random_func's return shape so every
+// random_bytes call site is unchanged.
+pub function random_func_p2(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_random_bytes (param $n i32) (result i32)\n";
+    o = o + "    (local $arr i32) (local $i i32) (local $r i64)\n";
+    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+    o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
+    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (if (i32.eqz (i32.and (local.get $i) (i32.const 7))) (then (local.set $r (call $get_random_u64))))\n";
+    o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.and (i32.wrap_i64 (i64.shr_u (local.get $r) (i64.extend_i32_u (i32.mul (i32.and (local.get $i) (i32.const 7)) (i32.const 8))))) (i32.const 255)))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $arr))\n";
+    // random_i32(): the low 32 bits of one get-random-u64 call.
+    o = o + "  (func $__fern_random_i32 (result i32)\n";
+    o = o + "    (i32.wrap_i64 (call $get_random_u64)))\n";
+    return o;
 }
 
 // component_io_imports emits the preview2 import section of a mode-2 core. The
@@ -1506,7 +1589,22 @@ pub function component_io_imports(needs: string[]): string {
     if (need(needs, "exit")) {
         o = o + "  (import \"wasi:cli/exit@0.2.0\" \"exit\" (func $exit (param i32)))\n";
     }
+    // Then the preview2 interfaces in the native compiler's canonical order —
+    // random, wall-clock, monotonic-clock — which is the order the AST path
+    // emits and therefore the order component_full_io_random /
+    // component_full_io_clock / _clock_mono alias positionally.
+    if (need(needs, "@uses_random")) { o = o + random_imports_p2(); }
+    if (needs_wall_clock(needs) || need(needs, "monotonic_ns")) {
+        o = o + clock_imports_p2(needs_wall_clock(needs), need(needs, "monotonic_ns"));
+    }
     return o;
+}
+
+// needs_wall_clock reports whether the module reads the WALL clock (now_ns /
+// now_unix_ms), the pair that shares wasi:clocks/wall-clock's `now`.
+// monotonic_ns is the separate interface, so the two are gated apart.
+pub function needs_wall_clock(needs: string[]): boolean {
+    return need(needs, "now_ns") || need(needs, "now_unix_ms");
 }
 
 // component_io_shims emits the two preview1-shaped functions a mode-2 core
@@ -1558,6 +1656,15 @@ pub function component_io_shims(needs: string[]): string {
         o = o + "    (call $exit (local.get $c))\n";
         o = o + "    (unreachable))\n";
     }
+    // The preview2 clock / random bodies. These are not shims over a preview1
+    // signature like the two above — they REPLACE the preview1 helper bodies
+    // ($__fern_now_ns and friends, emitted for mode 0), keeping the same
+    // function names and i64/i32 results so the IR's call sites are identical
+    // either way. Same substitution the AST path makes via its `if (io)` split.
+    if (needs_wall_clock(needs) || need(needs, "monotonic_ns")) {
+        o = o + clock_funcs_p2(needs_wall_clock(needs), need(needs, "monotonic_ns"));
+    }
+    if (need(needs, "random_bytes") || need(needs, "random_i32")) { o = o + random_func_p2(); }
     return o;
 }
 
@@ -6714,7 +6821,7 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // clock builtins (each result i64), reading the preview1 clock_time_get
     // import into the 8-byte scratch at addr 16 — emitted as a trio (the AST
     // path does the same) when the module reads any clock.
-    if (need(needs, "monotonic_ns") || need(needs, "now_unix_ms") || need(needs, "now_ns") || need(needs, "temp_dir")) { out = out + clock_funcs(); }
+    if (mode != 2 && (need(needs, "monotonic_ns") || need(needs, "now_unix_ms") || need(needs, "now_ns") || need(needs, "temp_dir"))) { out = out + clock_funcs(); }
     // $__fern_args builds the argv string[] via the wasi args_get import +
     // the heap runtime (module_allocates pulls the heap in for an args
     // module — op_allocates admits "args"). Emitted when the module reads argv.
@@ -6886,8 +6993,11 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // string block; str_bytes returns a u8[]; both reference the heap runtime
     // ($__fern_str_box / $__fern_arr_box) that module_allocates pulls in.
     // random_i32 is heap-free. The import is emitted above.
-    if (need(needs, "random_bytes")) { out = out + random_bytes_ir_func(); }
-    if (need(needs, "random_i32")) { out = out + random_i32_func(); }
+    // mode 2 defines these three from the preview2 interfaces instead (see
+    // component_io_shims); emitting the preview1 bodies too would duplicate
+    // the function names.
+    if (mode != 2 && need(needs, "random_bytes")) { out = out + random_bytes_ir_func(); }
+    if (mode != 2 && need(needs, "random_i32")) { out = out + random_i32_func(); }
     // print_int's $__fern_print_int: digit buffer in the 16-byte scratch past
     // the string blocks (the `+16` in fl_base_for); iovec in the low-24 scratch.
     if (need(needs, "print_int")) { out = out + print_int_helper(str_offset(sv, sv.len())); }
