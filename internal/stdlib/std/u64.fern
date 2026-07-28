@@ -423,3 +423,28 @@ pub function (n: u64) toggle_bit(i: i32): u64 {
     if (i < 0 || i >= 64) { return n; }
     return n ^ ((1 as u64) << (i as u64));
 }
+
+// `(n: u64) div_ceil(d)` / `div_floor(d)` — division rounding up / down;
+// unsigned `div_floor` is `/`. `d == 0` returns 0. The u64 siblings of
+// std/u32's.
+pub function (n: u64) div_ceil(d: u64): u64 {
+    if (d == 0) { return 0; }
+    if (n % d == 0) { return n / d; }
+    return n / d + 1;
+}
+pub function (n: u64) div_floor(d: u64): u64 {
+    if (d == 0) { return 0; }
+    return n / d;
+}
+// `(n: u64) next_multiple_of(d)` — smallest multiple of `d` that is
+// `>= n`; `div_ceil(d) * d`, wrapping on overflow. `d == 0` → 0.
+pub function (n: u64) next_multiple_of(d: u64): u64 {
+    if (d == 0) { return 0; }
+    return n.div_ceil(d) * d;
+}
+// `(n: u64) is_multiple_of(d)` — true iff `d` divides `n` evenly; `d ==
+// 0` is false.
+pub function (n: u64) is_multiple_of(d: u64): boolean {
+    if (d == 0) { return false; }
+    return n % d == 0;
+}

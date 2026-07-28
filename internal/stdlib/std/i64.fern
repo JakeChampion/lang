@@ -679,3 +679,27 @@ pub function (n: i64) toggle_bit(i: i32): i64 {
     var mask: u64 = (1 as u64) << (i as u64);
     return ((n as u64) ^ mask) as i64;
 }
+
+// `(n: i64) div_ceil(d)` / `div_floor(d)` — division rounding toward
+// +inf / -inf (`/` truncates toward zero). `d == 0` returns 0. The i64
+// siblings of std/i32's.
+pub function (n: i64) div_ceil(d: i64): i64 {
+    if (d == 0) { return 0; }
+    var q: i64 = n / d;
+    var r: i64 = n % d;
+    if ((r > 0 && d > 0) || (r < 0 && d < 0)) { return q + 1; }
+    return q;
+}
+pub function (n: i64) div_floor(d: i64): i64 {
+    if (d == 0) { return 0; }
+    var q: i64 = n / d;
+    var r: i64 = n % d;
+    if ((r > 0 && d < 0) || (r < 0 && d > 0)) { return q - 1; }
+    return q;
+}
+// `(n: i64) next_multiple_of(d)` — the smallest multiple of `d` that is
+// `>= n`; `div_ceil(d) * d`, wrapping on overflow. `d == 0` → 0.
+pub function (n: i64) next_multiple_of(d: i64): i64 {
+    if (d == 0) { return 0; }
+    return n.div_ceil(d) * d;
+}

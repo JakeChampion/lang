@@ -1146,3 +1146,30 @@ pub function (n: i32) to_rgb_hex(): string {
 // this module.
 pub function (n: i32) is_one(): boolean { return n == 1; }
 pub function (n: i32) is_minus_one(): boolean { return n == (0 - 1); }
+
+// `(n: i32) div_ceil(d)` / `div_floor(d)` — division rounding toward
+// +inf / -inf, unlike `/` which truncates toward zero:
+// `div_ceil(7, 2) == 4`, `div_floor(-7, 2) == -4`. Signed, so the
+// truncated quotient is adjusted by the sign of the remainder relative
+// to the divisor. `d == 0` returns 0 (Fern's division is total).
+pub function (n: i32) div_ceil(d: i32): i32 {
+    if (d == 0) { return 0; }
+    var q: i32 = n / d;
+    var r: i32 = n % d;
+    if ((r > 0 && d > 0) || (r < 0 && d < 0)) { return q + 1; }
+    return q;
+}
+pub function (n: i32) div_floor(d: i32): i32 {
+    if (d == 0) { return 0; }
+    var q: i32 = n / d;
+    var r: i32 = n % d;
+    if ((r > 0 && d < 0) || (r < 0 && d > 0)) { return q - 1; }
+    return q;
+}
+// `(n: i32) next_multiple_of(d)` — the smallest multiple of `d` that is
+// `>= n` (`next_multiple_of(7, 5) == 10`, `next_multiple_of(10, 5) ==
+// 10`). `div_ceil(d) * d`; wraps on overflow like `*`. `d == 0` → 0.
+pub function (n: i32) next_multiple_of(d: i32): i32 {
+    if (d == 0) { return 0; }
+    return n.div_ceil(d) * d;
+}
