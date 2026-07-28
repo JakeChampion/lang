@@ -558,15 +558,18 @@ binaries and has a binary-size epic. Shipped as:
 - Roc's advice is carried as *documentation* in the `graphemes` doc
   comment: wanting the n-th grapheme is usually a design smell.
 
-**`graphemes` returns `string[]`, not the `str[]` sketched above.** That
-is a concession to two backend bugs, not a design change: reading a
-`str` element back out of a `str[]` returns garbage on arm64 and is
-rejected outright by the wasm valtype seam. Both reproduce with no
-stdlib involved on an unmodified tree — a three-element split whose
-element lengths are then summed already gets the wrong answer on arm64 —
-so they are backend bugs to fix rather than something segmentation can
-work around. The views are the better shape and this should become
-`str[]` once they are fixed.
+**`graphemes` returns `str[]` — views, not copies.** It shipped as
+`string[]` initially, because holding `str` in a container was broken:
+the elements missed the retain an owned `string` element gets, so the
+container held pointers whose storage was freed underneath it. Silently
+wrong on x86-64, a segfault on arm64. That was a compiler bug, not a
+segmentation one (#5695, fixed by #5703 and #5708 — three type slots the
+checker stamps onto expressions that the surface-type erasure never
+walked), and `graphemes` was switched to `str[]` once it was fixed.
+
+The clusters are contiguous runs of the input, so the split now copies
+no text. Binary size is unchanged at 33.8 KB — the win is the per-cluster
+allocation, not code size.
 
 **Sizing note, correcting the epic's framing.** D6 was expected to be
 the largest table in the epic. Measured, it is not: Grapheme_Cluster_Break
@@ -767,7 +770,7 @@ Tracked as epic #5626; issue numbers below.
 | 4 | **D3 + D4** (#5630) — flip the default, full case mapping | 1, 3 | Touches the self-host builtin (`irlower.fern` / `asmcore.fern`) **and** the native stdlib — see D3's implementation note. Differential coverage required. |
 | 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
 | 6 | **D8** (#5632) — `[u8]` string view — **DONE** | — | Builtin already existed; #5632 added the migrated consumer, the four-backend differential, and the docs. Borrow rule still open (#4814). |
-| 7 | **D6** (#5633) — grapheme segmentation — **DONE** | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `string[]` pending the arm64/wasm `str[]` element bugs. |
+| 7 | **D6** (#5633) — grapheme segmentation — **DONE** | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `str[]` views (was `string[]` until #5695 was fixed). |
 | 8 | **D9** (#5634) — the UTF-8 validity invariant | 6 | Largest blast radius; do last, after `[u8]` makes "raw bytes" ergonomic. |
 | 9 | **D10** (#5635) — document the path assumption — **DONE** | — | Doc-only. Stated in `std/path`, `std/io`, and `read_dir`'s builtin signature. |
 

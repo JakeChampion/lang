@@ -357,7 +357,9 @@ grapheme cluster, not a byte and not a code point: `e`+combining-acute,
 a family emoji ZWJ sequence, a flag, and a Hangul syllable are each one
 cluster. Opt-in, and DCE'd to nothing unless called.
 
-- `graphemes(s): string[]` — split into extended grapheme clusters
+- `graphemes(s): str[]` — split into extended grapheme clusters. The
+  elements are non-copying **views** into `s`, so the split allocates no
+  cluster text; they borrow, so keep them in a scope where `s` is live.
 - `grapheme_count(s): i32` — a separate scan, so counting does not
   allocate the array
 - `reverse_graphemes(s): string` — reverse by cluster. This is the
