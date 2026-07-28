@@ -7765,385 +7765,17 @@ pub function writer_write_func(): string {
 }
 
 
-// stat_func emits $__fern_stat(path, fstype) -> Result[FileStat, IoError] box.
-// path_filestat_get(preopen fd 3, symlink_follow, path bytes @path+4 / len @[path],
-// into a 64-byte heap buffer); on error push Result.Err [tag1, payload0] (the same
-// null-IoError the register backends use). On success read filetype@buf+16 (WASI:
-// 3=directory, 4=regular_file) + size@buf+32 (i64 -> low i32), build the FileStat
-// struct box [type_id@0, is_file@8, is_dir@16, size@24] (the IR struct layout; the
-// type-id is the module-specific struct_type_id passed in by the op handler), and
-// wrap it Result.Ok [tag0, payload=structptr]. Boxes via $__fern_str_box (the same
-// rc-boxed [tag@0,payload@4] / struct shapes opt_make / struct_make build).
-pub function stat_func(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_stat (param $path i32) (param $fstype i32) (result i32)\n";
-    o = o + "    (local $err i32) (local $buf i32) (local $ft i32) (local $sz i64) (local $fs i32) (local $res i32)\n";
-    o = o + "    (local.set $buf (call $__fern_alloc (i32.const 64)))\n";
-    o = o + "    (local.set $err (call $path_filestat_get (i32.const 3) (i32.const 1) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path)) (local.get $buf)))\n";
-    o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
-    o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
-    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
-    o = o + "      (return (local.get $res))))\n";
-    o = o + "    (local.set $ft (i32.load8_u (i32.add (local.get $buf) (i32.const 16))))\n";
-    // WASI filestat size is an i64 at buf+32; FileStat.size is i64, so load the
-    // full 8 bytes and i64.store it into the size@24 slot (a >2 GiB file would
-    // truncate under the old low-32-bit i32 load/store).
-    o = o + "    (local.set $sz (i64.load (i32.add (local.get $buf) (i32.const 32))))\n";
-    o = o + "    (local.set $fs (call $__fern_str_box (i32.const 32)))\n";
-    o = o + "    (i32.store (local.get $fs) (local.get $fstype))\n";
-    o = o + "    (i32.store (i32.add (local.get $fs) (i32.const 8)) (i32.eq (local.get $ft) (i32.const 4)))\n";
-    o = o + "    (i32.store (i32.add (local.get $fs) (i32.const 16)) (i32.eq (local.get $ft) (i32.const 3)))\n";
-    o = o + "    (i64.store (i32.add (local.get $fs) (i32.const 24)) (local.get $sz))\n";
-    o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
-    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (local.get $fs))\n";
-    o = o + "    (local.get $res))\n";
-    return o;
-}
-
-
-// remove_file_func emits $__fern_remove_file(path) -> Option[IoError] box.
-// path_unlink_file(preopen fd 3, path bytes @path+4 / len @[path]) unlinks the
-// file; on success (errno 0) push Option.None [tag1, payload0], else push
-// Option.Some(IoError) [tag0, payload=0] with the same null-IoError placeholder
-// the register backends and $__fern_stat's Err arm use (the match binds the
-// payload with a wildcard, so its exact value is never read). Option's tag
-// convention matches opt_make / $__fern_env: Some=0, None=1. Boxes via
-// $__fern_str_box (the rc-boxed [tag@0,payload@4] shape).
-pub function remove_file_func(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_remove_file (param $path i32) (result i32)\n";
-    o = o + "    (local $err i32) (local $res i32)\n";
-    o = o + "    (local.set $err (call $path_unlink_file (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
-    o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "    (if (i32.eq (local.get $err) (i32.const 0)) (then\n";
-    o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
-    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.const 0))\n";
-    o = o + "      (return (local.get $res))))\n";
-    o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
-    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
-    o = o + "    (local.get $res))\n";
-    return o;
-}
-
-
-// read_dir_func emits $__fern_read_dir(path) -> Result[string[], IoError] box.
-// path_open(preopen fd 3, FD_READDIR right) the directory, then loop fd_readdir
-// over the WASI dirent stream (dirent header is 24 bytes: d_next u64 @0, d_ino
-// u64 @8, d_namlen u32 @16, d_type u8 @20; the name's d_namlen bytes follow),
-// skipping "." / "..", building a string[] via $__fern_arr_push (each entry a
-// fresh [len][bytes] block). The cookie loop pages through large directories and
-// resumes from the last COMPLETE entry when fd_readdir truncates the trailing
-// name (bufused == buflen). On path_open failure push Result.Err [tag1, errno];
-// otherwise Result.Ok [tag0, arrayptr]. The readdir buffer is alloc'd once before
-// the loop, so the name/array allocations that follow it never overlap the bytes
-// a later fd_readdir page overwrites. Needs the heap runtime + $__fern_arr_push.
-pub function read_dir_func(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_read_dir (param $path i32) (result i32)\n";
-    o = o + "    (local $err i32) (local $fd i32) (local $arr i32) (local $buf i32)\n";
-    o = o + "    (local $cookie i64) (local $lastnext i64) (local $used i32) (local $pos i32)\n";
-    o = o + "    (local $namlen i32) (local $nameptr i32) (local $blk i32) (local $i i32) (local $skip i32) (local $res i32)\n";
-    // path_open: dirflags = symlink_follow (1), oflags = 0, rights_base =
-    // FD_READDIR (1<<14 = 16384). fd written to scratch addr 16.
-    o = o + "    (local.set $err (call $path_open (i32.const 3) (i32.const 1) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path)) (i32.const 0) (i64.const 16384) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
-    o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
-    o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
-    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
-    o = o + "      (return (local.get $res))))\n";
-    o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
-    // Empty string[] (len = cap = 0); $__fern_arr_push grows it.
-    o = o + "    (local.set $arr (call $__fern_arr_box (i32.const 0)))\n";
-    o = o + "    (i32.store (local.get $arr) (i32.const 0))\n";
-    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (i32.const 0))\n";
-    o = o + "    (local.set $buf (call $__fern_alloc (i32.const 4096)))\n";
-    o = o + "    (local.set $cookie (i64.const 0))\n";
-    o = o + "    (block $rdone (loop $rloop\n";
-    o = o + "      (drop (call $fd_readdir (local.get $fd) (local.get $buf) (i32.const 4096) (local.get $cookie) (i32.const 8)))\n";
-    o = o + "      (local.set $used (i32.load (i32.const 8)))\n";
-    o = o + "      (br_if $rdone (i32.eqz (local.get $used)))\n";
-    o = o + "      (local.set $pos (i32.const 0))\n";
-    o = o + "      (local.set $lastnext (local.get $cookie))\n";
-    o = o + "      (block $pdone (loop $ploop\n";
-    // Need a full 24-byte dirent header.
-    o = o + "        (br_if $pdone (i32.gt_u (i32.add (local.get $pos) (i32.const 24)) (local.get $used)))\n";
-    o = o + "        (local.set $lastnext (i64.load (i32.add (local.get $buf) (local.get $pos))))\n";
-    o = o + "        (local.set $namlen (i32.load (i32.add (local.get $buf) (i32.add (local.get $pos) (i32.const 16)))))\n";
-    // Name must be fully present, else fd_readdir truncated it — stop and resume.
-    o = o + "        (br_if $pdone (i32.gt_u (i32.add (i32.add (local.get $pos) (i32.const 24)) (local.get $namlen)) (local.get $used)))\n";
-    o = o + "        (local.set $nameptr (i32.add (local.get $buf) (i32.add (local.get $pos) (i32.const 24))))\n";
-    // Skip "." and "..".
-    o = o + "        (local.set $skip (i32.const 0))\n";
-    o = o + "        (if (i32.and (i32.eq (local.get $namlen) (i32.const 1)) (i32.eq (i32.load8_u (local.get $nameptr)) (i32.const 46))) (then (local.set $skip (i32.const 1))))\n";
-    o = o + "        (if (i32.and (i32.eq (local.get $namlen) (i32.const 2)) (i32.and (i32.eq (i32.load8_u (local.get $nameptr)) (i32.const 46)) (i32.eq (i32.load8_u (i32.add (local.get $nameptr) (i32.const 1))) (i32.const 46)))) (then (local.set $skip (i32.const 1))))\n";
-    o = o + "        (if (i32.eqz (local.get $skip)) (then\n";
-    o = o + "          (local.set $blk (call $__fern_alloc (i32.add (i32.const 4) (local.get $namlen))))\n";
-    o = o + "          (i32.store (local.get $blk) (local.get $namlen))\n";
-    o = o + "          (local.set $i (i32.const 0))\n";
-    o = o + "          (block $cd (loop $cc\n";
-    o = o + "            (br_if $cd (i32.ge_u (local.get $i) (local.get $namlen)))\n";
-    o = o + "            (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (local.get $nameptr) (local.get $i))))\n";
-    o = o + "            (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "            (br $cc)))\n";
-    o = o + "          (local.set $arr (call $__fern_arr_push (local.get $arr) (local.get $blk)))))\n";
-    o = o + "        (local.set $pos (i32.add (i32.add (local.get $pos) (i32.const 24)) (local.get $namlen)))\n";
-    o = o + "        (br $ploop)))\n";
-    // bufused < buflen => the whole directory fit; otherwise resume from the last
-    // complete entry's cookie.
-    o = o + "      (br_if $rdone (i32.lt_u (local.get $used) (i32.const 4096)))\n";
-    o = o + "      (local.set $cookie (local.get $lastnext))\n";
-    o = o + "      (br $rloop)))\n";
-    o = o + "    (drop (call $fd_close (local.get $fd)))\n";
-    o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
-    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (local.get $arr))\n";
-    o = o + "    (local.get $res))\n";
-    return o;
-}
-
-
-// remove_dir_func emits $__fern_remove_dir_all(path) -> Option[IoError] box — a
-// recursive rm -rf, the wasm sibling of asm_ir's __fern_remove_dir_all. It first
-// path_open(oflags = O_DIRECTORY 2, FD_READDIR right)s the path: success => it's a
-// directory; ENOTDIR (54) => it's a file, path_unlink_file it; ENOENT (44) => it
-// is already gone (None — rm -rf ignores a missing path); any other errno => Some.
-// For a directory it enumerates ALL child base names via an fd_readdir cookie loop
-// (skipping . / ..) into a string[] FIRST and fd_closes — so the directory is not
-// mutated while it is being iterated — then for each child builds `path + "/" +
-// name` and RECURSES (the recursion classifies file vs dir itself), and finally
-// path_remove_directorys the now-empty path. Child / rmdir results are best-effort
-// (ignored), matching the register backends. Recursion is scratch-safe: the addr-8
-// (bufused) and addr-16 (fd) scratch are only live during this frame's enumeration
-// phase, which finishes before any recursive call. Two tiny $__rda_none /
-// $__rda_some helpers build the Option box (None = tag1, Some = tag0, matching
-// opt_make / remove_file). Needs the heap runtime + $__fern_arr_push.
-pub function remove_dir_func(): string {
-    var o: string = "";
-    // Option-box constructors (shared by every return site).
-    o = o + "  (func $__rda_none (result i32)\n";
-    o = o + "    (local $r i32)\n";
-    o = o + "    (local.set $r (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "    (i32.store (local.get $r) (i32.const 1))\n";
-    o = o + "    (i32.store (i32.add (local.get $r) (i32.const 4)) (i32.const 0))\n";
-    o = o + "    (local.get $r))\n";
-    o = o + "  (func $__rda_some (param $e i32) (result i32)\n";
-    o = o + "    (local $r i32)\n";
-    o = o + "    (local.set $r (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "    (i32.store (local.get $r) (i32.const 0))\n";
-    o = o + "    (i32.store (i32.add (local.get $r) (i32.const 4)) (local.get $e))\n";
-    o = o + "    (local.get $r))\n";
-    o = o + "  (func $__fern_remove_dir_all (param $path i32) (result i32)\n";
-    o = o + "    (local $err i32) (local $fd i32) (local $names i32) (local $buf i32)\n";
-    o = o + "    (local $cookie i64) (local $lastnext i64) (local $used i32) (local $pos i32)\n";
-    o = o + "    (local $namlen i32) (local $nameptr i32) (local $blk i32) (local $i i32) (local $skip i32)\n";
-    o = o + "    (local $plen i32) (local $nm i32) (local $child i32) (local $j i32)\n";
-    // Try to open as a directory (oflags = O_DIRECTORY = 2, rights = FD_READDIR).
-    o = o + "    (local.set $err (call $path_open (i32.const 3) (i32.const 1) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path)) (i32.const 2) (i64.const 16384) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
-    o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
-    o = o + "      (if (i32.eq (local.get $err) (i32.const 44)) (then (return (call $__rda_none))))\n";
-    o = o + "      (if (i32.eq (local.get $err) (i32.const 54)) (then\n";
-    o = o + "        (drop (call $path_unlink_file (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
-    o = o + "        (return (call $__rda_none))))\n";
-    o = o + "      (return (call $__rda_some (call $__fern_build_io_error (local.get $err) (local.get $path))))))\n";
-    o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
-    // Enumerate all child names into a string[] (empty to grow).
-    o = o + "    (local.set $names (call $__fern_arr_box (i32.const 0)))\n";
-    o = o + "    (i32.store (local.get $names) (i32.const 0))\n";
-    o = o + "    (i32.store (i32.add (local.get $names) (i32.const 4)) (i32.const 0))\n";
-    o = o + "    (local.set $buf (call $__fern_alloc (i32.const 4096)))\n";
-    o = o + "    (local.set $cookie (i64.const 0))\n";
-    o = o + "    (block $rdone (loop $rloop\n";
-    o = o + "      (drop (call $fd_readdir (local.get $fd) (local.get $buf) (i32.const 4096) (local.get $cookie) (i32.const 8)))\n";
-    o = o + "      (local.set $used (i32.load (i32.const 8)))\n";
-    o = o + "      (br_if $rdone (i32.eqz (local.get $used)))\n";
-    o = o + "      (local.set $pos (i32.const 0))\n";
-    o = o + "      (local.set $lastnext (local.get $cookie))\n";
-    o = o + "      (block $pdone (loop $ploop\n";
-    o = o + "        (br_if $pdone (i32.gt_u (i32.add (local.get $pos) (i32.const 24)) (local.get $used)))\n";
-    o = o + "        (local.set $lastnext (i64.load (i32.add (local.get $buf) (local.get $pos))))\n";
-    o = o + "        (local.set $namlen (i32.load (i32.add (local.get $buf) (i32.add (local.get $pos) (i32.const 16)))))\n";
-    o = o + "        (br_if $pdone (i32.gt_u (i32.add (i32.add (local.get $pos) (i32.const 24)) (local.get $namlen)) (local.get $used)))\n";
-    o = o + "        (local.set $nameptr (i32.add (local.get $buf) (i32.add (local.get $pos) (i32.const 24))))\n";
-    o = o + "        (local.set $skip (i32.const 0))\n";
-    o = o + "        (if (i32.and (i32.eq (local.get $namlen) (i32.const 1)) (i32.eq (i32.load8_u (local.get $nameptr)) (i32.const 46))) (then (local.set $skip (i32.const 1))))\n";
-    o = o + "        (if (i32.and (i32.eq (local.get $namlen) (i32.const 2)) (i32.and (i32.eq (i32.load8_u (local.get $nameptr)) (i32.const 46)) (i32.eq (i32.load8_u (i32.add (local.get $nameptr) (i32.const 1))) (i32.const 46)))) (then (local.set $skip (i32.const 1))))\n";
-    o = o + "        (if (i32.eqz (local.get $skip)) (then\n";
-    o = o + "          (local.set $blk (call $__fern_alloc (i32.add (i32.const 4) (local.get $namlen))))\n";
-    o = o + "          (i32.store (local.get $blk) (local.get $namlen))\n";
-    o = o + "          (local.set $i (i32.const 0))\n";
-    o = o + "          (block $cd (loop $cc\n";
-    o = o + "            (br_if $cd (i32.ge_u (local.get $i) (local.get $namlen)))\n";
-    o = o + "            (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (local.get $nameptr) (local.get $i))))\n";
-    o = o + "            (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "            (br $cc)))\n";
-    o = o + "          (local.set $names (call $__fern_arr_push (local.get $names) (local.get $blk)))))\n";
-    o = o + "        (local.set $pos (i32.add (i32.add (local.get $pos) (i32.const 24)) (local.get $namlen)))\n";
-    o = o + "        (br $ploop)))\n";
-    o = o + "      (br_if $rdone (i32.lt_u (local.get $used) (i32.const 4096)))\n";
-    o = o + "      (local.set $cookie (local.get $lastnext))\n";
-    o = o + "      (br $rloop)))\n";
-    o = o + "    (drop (call $fd_close (local.get $fd)))\n";
-    // Remove each child: build `path + "/" + name`, recurse (file -> unlink, dir
-    // -> recurse), ignoring the per-child result (best effort).
-    o = o + "    (local.set $plen (i32.load (local.get $path)))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (block $dd (loop $dc\n";
-    o = o + "      (br_if $dd (i32.ge_s (local.get $i) (i32.load (local.get $names))))\n";
-    o = o + "      (local.set $nm (i32.load (i32.add (i32.add (local.get $names) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
-    o = o + "      (local.set $namlen (i32.load (local.get $nm)))\n";
-    o = o + "      (local.set $child (call $__fern_alloc (i32.add (i32.const 4) (i32.add (i32.add (local.get $plen) (i32.const 1)) (local.get $namlen)))))\n";
-    o = o + "      (i32.store (local.get $child) (i32.add (i32.add (local.get $plen) (i32.const 1)) (local.get $namlen)))\n";
-    o = o + "      (local.set $j (i32.const 0))\n";
-    o = o + "      (block $p1d (loop $p1c\n";
-    o = o + "        (br_if $p1d (i32.ge_u (local.get $j) (local.get $plen)))\n";
-    o = o + "        (i32.store8 (i32.add (i32.add (local.get $child) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (i32.add (local.get $path) (i32.const 4)) (local.get $j))))\n";
-    o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
-    o = o + "        (br $p1c)))\n";
-    o = o + "      (i32.store8 (i32.add (i32.add (local.get $child) (i32.const 4)) (local.get $plen)) (i32.const 47))\n";
-    o = o + "      (local.set $j (i32.const 0))\n";
-    o = o + "      (block $p2d (loop $p2c\n";
-    o = o + "        (br_if $p2d (i32.ge_u (local.get $j) (local.get $namlen)))\n";
-    o = o + "        (i32.store8 (i32.add (i32.add (i32.add (local.get $child) (i32.const 4)) (i32.add (local.get $plen) (i32.const 1))) (local.get $j)) (i32.load8_u (i32.add (i32.add (local.get $nm) (i32.const 4)) (local.get $j))))\n";
-    o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
-    o = o + "        (br $p2c)))\n";
-    o = o + "      (drop (call $__fern_remove_dir_all (local.get $child)))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $dc)))\n";
-    o = o + "    (drop (call $path_remove_directory (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
-    o = o + "    (call $__rda_none))\n";
-    return o;
-}
-
-// map_iter_helpers emits the wasm IR map-iterator runtime: $__fern_map_iter +
-// the four accessors $__fern_mapiter_has_next / _key / _value / _advance. The
-// register backends (x86-64 / arm64) iterate their PARALLEL-ARRAY maps lazily
-// (cursor straight into the live keys[]/vals[]); a wasm map is a HASH map with
-// gaps, so instead the iterator MATERIALIZES the live entries up front via the
-// existing $__fern_map_keys / $__fern_map_values (which $__fern_map_snapshot
-// compacts in matching slot order, so keys[j] pairs with values[j]). The
-// iterator box is [keys@0, vals@4, cursor@8] (12 bytes); has_next compares the
-// cursor to keys.len (len @ keys+0), key/value index the snapshot arrays (elems
-// @ arr+8, 4-byte slots — i32 or string pointer alike), and advance bumps the
-// stored cursor in place (the box is re-read each loop turn). Reuses map_helpers
-// (emitted for any map module), so it pulls in no new structural runtime.
-pub function map_iter_helpers(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_map_iter (param $map i32) (result i32)\n";
-    o = o + "    (local $box i32)\n";
-    o = o + "    (local.set $box (call $__fern_alloc (i32.const 12)))\n";
-    o = o + "    (i32.store (local.get $box) (call $__fern_map_keys (local.get $map)))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (call $__fern_map_values (local.get $map)))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (i32.const 0))\n";
-    o = o + "    (local.get $box))\n";
-    // has_next: cursor (box@8) < keys.len (len @ keys+0, keys = box@0)
-    o = o + "  (func $__fern_mapiter_has_next (param $box i32) (result i32)\n";
-    o = o + "    (i32.lt_s (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.load (i32.load (local.get $box)))))\n";
-    // key: keys[cursor] — keys = box@0, element at keys + 8 + cursor*4
-    o = o + "  (func $__fern_mapiter_key (param $box i32) (result i32)\n";
-    o = o + "    (i32.load (i32.add (i32.add (i32.load (local.get $box)) (i32.const 8)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.const 4)))))\n";
-    // value: values[cursor] — values = box@4
-    o = o + "  (func $__fern_mapiter_value (param $box i32) (result i32)\n";
-    o = o + "    (i32.load (i32.add (i32.add (i32.load (i32.add (local.get $box) (i32.const 4))) (i32.const 8)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.const 4)))))\n";
-    // advance: box@8 += 1; push a dummy (the statement drops it)
-    o = o + "  (func $__fern_mapiter_advance (param $box i32) (result i32)\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (i32.add (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.const 1)))\n";
-    o = o + "    (i32.const 0))\n";
-    return o;
-}
 
 
 
-// sleep_ms_func emits $__fern_sleep_ms(ms) -> i32 (a dummy the statement drops,
-// mirroring the x86 push). Where the register backends nanosleep a timespec, wasm
-// preview1 has no sleep syscall — but a bare timed block needs only poll_oneoff
-// with a SINGLE monotonic-clock subscription (NOT the wasi:io/poll multiplexer the
-// reactor needs). ms <= 0 returns immediately. Builds one preview1 `subscription`
-// in a fresh heap buffer (userdata u64 @0, eventtype tag u8 @8 = 0/clock, then the
-// subscription_clock at @16: clockid u32 @16 = 1/monotonic, timeout u64 @24 =
-// ms·1e6 ns, precision u64 @32 = 0, subclockflags u16 @40 = 0/RELATIVE), with the
-// 32-byte event-out at @48 and the nevents slot at @80, and poll_oneoff blocks for
-// the timeout. Heap-backed (the buffer), so gated into the heap runtime.
-pub function sleep_ms_func(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_sleep_ms (param $ms i32) (result i32)\n";
-    o = o + "    (local $buf i32)\n";
-    o = o + "    (if (i32.gt_s (local.get $ms) (i32.const 0)) (then\n";
-    o = o + "      (local.set $buf (call $__fern_alloc (i32.const 88)))\n";
-    o = o + "      (i64.store (local.get $buf) (i64.const 0))\n";
-    o = o + "      (i32.store8 (i32.add (local.get $buf) (i32.const 8)) (i32.const 0))\n";
-    o = o + "      (i32.store (i32.add (local.get $buf) (i32.const 16)) (i32.const 1))\n";
-    o = o + "      (i64.store (i32.add (local.get $buf) (i32.const 24)) (i64.mul (i64.extend_i32_s (local.get $ms)) (i64.const 1000000)))\n";
-    o = o + "      (i64.store (i32.add (local.get $buf) (i32.const 32)) (i64.const 0))\n";
-    o = o + "      (i32.store16 (i32.add (local.get $buf) (i32.const 40)) (i32.const 0))\n";
-    o = o + "      (drop (call $poll_oneoff (local.get $buf) (i32.add (local.get $buf) (i32.const 48)) (i32.const 1) (i32.add (local.get $buf) (i32.const 80))))))\n";
-    o = o + "    (i32.const 0))\n";
-    return o;
-}
 
-// temp_dir_func emits $__fern_temp_dir(prefix) -> Result[string, IoError] box.
-// Builds a unique name `<prefix>-<monotonic_ns>` and path_create_directorys it
-// under the preopen (fd 3), returning Ok(name) / Err(IoError). Mirrors asm_ir's
-// __fern_temp_dir EXCEPT it drops the absolute "/tmp/" prefix: wasm has no global
-// /tmp, only the preopen, so the returned path is preopen-RELATIVE — exactly the
-// model every other wasm fs op (stat / read_dir / remove_file / remove_dir_all)
-// already uses, so the name round-trips through those ops within the sandbox. The
-// ns suffix is converted to decimal inline (count digits, then write right-to-
-// left). Needs the heap runtime ($__fern_str_box / $__fern_alloc), the clock
-// runtime ($__fern_monotonic_ns) and path_create_directory.
-pub function temp_dir_func(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_temp_dir (param $prefix i32) (result i32)\n";
-    o = o + "    (local $ns i64) (local $tmp i64) (local $nd i32) (local $plen i32) (local $tot i32)\n";
-    o = o + "    (local $blk i32) (local $base i32) (local $i i32) (local $err i32) (local $res i32)\n";
-    o = o + "    (local.set $ns (call $__fern_monotonic_ns))\n";
-    o = o + "    (local.set $plen (i32.load (local.get $prefix)))\n";
-    // Count decimal digits of ns (>= 1).
-    o = o + "    (local.set $tmp (local.get $ns))\n";
-    o = o + "    (local.set $nd (i32.const 1))\n";
-    o = o + "    (block $cd (loop $cl\n";
-    o = o + "      (local.set $tmp (i64.div_u (local.get $tmp) (i64.const 10)))\n";
-    o = o + "      (br_if $cd (i64.eqz (local.get $tmp)))\n";
-    o = o + "      (local.set $nd (i32.add (local.get $nd) (i32.const 1)))\n";
-    o = o + "      (br $cl)))\n";
-    o = o + "    (local.set $tot (i32.add (i32.add (local.get $plen) (i32.const 1)) (local.get $nd)))\n";
-    // String block [len][bytes].
-    o = o + "    (local.set $blk (call $__fern_alloc (i32.add (i32.const 4) (local.get $tot))))\n";
-    o = o + "    (i32.store (local.get $blk) (local.get $tot))\n";
-    // Copy prefix bytes.
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (block $pd (loop $pl\n";
-    o = o + "      (br_if $pd (i32.ge_u (local.get $i) (local.get $plen)))\n";
-    o = o + "      (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $prefix) (i32.const 4)) (local.get $i))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $pl)))\n";
-    // Separator '-'.
-    o = o + "    (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $plen)) (i32.const 45))\n";
-    // ns decimal digits, written right-to-left into [base .. base+nd).
-    o = o + "    (local.set $base (i32.add (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $plen)) (i32.const 1)))\n";
-    o = o + "    (local.set $tmp (local.get $ns))\n";
-    o = o + "    (local.set $i (local.get $nd))\n";
-    o = o + "    (block $wd (loop $wl\n";
-    o = o + "      (br_if $wd (i32.eqz (local.get $i)))\n";
-    o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
-    o = o + "      (i32.store8 (i32.add (local.get $base) (local.get $i)) (i32.add (i32.const 48) (i32.wrap_i64 (i64.rem_u (local.get $tmp) (i64.const 10)))))\n";
-    o = o + "      (local.set $tmp (i64.div_u (local.get $tmp) (i64.const 10)))\n";
-    o = o + "      (br $wl)))\n";
-    // mkdir under the preopen.
-    o = o + "    (local.set $err (call $path_create_directory (i32.const 3) (i32.add (local.get $blk) (i32.const 4)) (local.get $tot)))\n";
-    o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
-    o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
-    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $blk)))\n";
-    o = o + "      (return (local.get $res))))\n";
-    // Ok(path).
-    o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
-    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (local.get $blk))\n";
-    o = o + "    (local.get $res))\n";
-    return o;
-}
+
+
+
+
+
+
+
 
 
 // read_line_func emits $__fern_read_line (no args -> Option[string]): one line of
@@ -12797,23 +12429,23 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     // $__fern_stat(path, fstype): path_filestat_get -> FileStat struct +
     // Result box. Heap-backed (allocates the buffer + boxes), so folded into
     // the heap gate above.
-    if (wasm_ir.need(needs, "stat")) { out = out + stat_func(); }
+    if (wasm_ir.need(needs, "stat")) { out = out + wasm_ir.stat_func(); }
     // $__fern_remove_file(path): path_unlink_file -> Option[IoError] box.
     // Heap-backed (allocates the box), so folded into the heap gate above.
-    if (wasm_ir.need(needs, "remove_file")) { out = out + remove_file_func(); }
+    if (wasm_ir.need(needs, "remove_file")) { out = out + wasm_ir.remove_file_func(); }
     // $__fern_read_dir(path): path_open + fd_readdir loop -> Result[string[],
     // IoError] box. Heap-backed (allocates names + array + box) and uses
     // $__fern_arr_push (emitted by the arr_push gate below, which folds
     // read_dir in).
-    if (wasm_ir.need(needs, "read_dir")) { out = out + read_dir_func(); }
+    if (wasm_ir.need(needs, "read_dir")) { out = out + wasm_ir.read_dir_func(); }
     // $__fern_remove_dir_all(path): recursive rm -rf -> Option[IoError] box.
     // Heap-backed + uses $__fern_arr_push (both folded into the gates above).
-    if (wasm_ir.need(needs, "remove_dir_all")) { out = out + remove_dir_func(); }
+    if (wasm_ir.need(needs, "remove_dir_all")) { out = out + wasm_ir.remove_dir_func(); }
     // $__fern_temp_dir(prefix): mkdir a unique `<prefix>-<ns>` dir under the
     // preopen -> Result[string, IoError]. Heap-backed + uses the clock helper.
-    if (wasm_ir.need(needs, "temp_dir")) { out = out + temp_dir_func(); }
+    if (wasm_ir.need(needs, "temp_dir")) { out = out + wasm_ir.temp_dir_func(); }
     // $__fern_sleep_ms(ms): block via poll_oneoff. Heap-backed (scratch buffer).
-    if (wasm_ir.need(needs, "sleep_ms")) { out = out + sleep_ms_func(); }
+    if (wasm_ir.need(needs, "sleep_ms")) { out = out + wasm_ir.sleep_ms_func(); }
     // wasm_poll returns a list<u32>, which the canonical ABI materialises in
     // GUEST memory via the exported cabi_realloc — without it `component new`
     // fails with "module does not export a function named cabi_realloc".
@@ -12942,7 +12574,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     // $__fern_map_iter + accessors: the wasm map-iterator runtime (materializes
     // keys/values via map_helpers above, so gated after it). Emitted when the
     // module iterates a map (m.iter() / for-in-map).
-    if (wasm_ir.need(needs, "map_iter")) { out = out + map_iter_helpers(); }
+    if (wasm_ir.need(needs, "map_iter")) { out = out + wasm_ir.map_iter_helpers(); }
     // Byte-source helpers (issue #2747). random_bytes returns a [len][bytes]
     // string block; str_bytes returns a u8[]; both reference the heap runtime
     // ($__fern_str_box / $__fern_arr_box) that module_allocates pulls in.

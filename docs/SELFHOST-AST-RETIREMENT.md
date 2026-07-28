@@ -240,11 +240,20 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   $random_get` / `$__fern_str_box` / `$__fern_arr_box` at the WAT level, no
   cross-helper Fern calls), one gated call each in `emit_ir_module_units`. Moved
   verbatim; byte-identical WAT for `random_bytes` / `random_i32` / `as_bytes`
-  programs, wasmtime exits 8/9/5. **Next:** the remaining IR-only `*_func`
-  runtime helpers (many are self-contained; some — e.g. `str_split_helper` →
-  shared `arr_push_helper` — must relocate their shared callees too, or leave a
-  `wasm_ir`→`wasm` back-reference, so batch by dependency closure), then
-  `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
+  programs, wasmtime exits 8/9/5. (4) the filesystem / map-iter `*_func` /
+  `*_helpers` group (`stat_func` / `remove_file_func` / `read_dir_func` /
+  `remove_dir_func` / `temp_dir_func` / `sleep_ms_func` / `map_iter_helpers`) —
+  each a pure `o = o + "…"` WAT string-builder with no Fern-level cross-helper
+  call (the IoError box is emitted separately via the already-moved
+  `wasm_ir.build_io_error_func`; everything else is a WAT-level `call $path_*` /
+  `call $fd_readdir` / `call $poll_oneoff`), one IR-only call site each in
+  `emit_ir_module_units`. Moved verbatim; byte-identical WAT for an FS-builtins
+  program (stat/read_dir/remove_file/remove_dir_all/temp_dir/sleep_ms) and a
+  `for (k,v) in m` map-iter program, both running under wasmtime. **Next:** the
+  remaining IR-only `*_func` runtime helpers (many are self-contained; some —
+  e.g. `str_split_helper` → shared `arr_push_helper` — must relocate their
+  shared callees too, or leave a `wasm_ir`→`wasm` back-reference, so batch by
+  dependency closure), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
   is LAST — it drags `Ctx` / `release_module_ctx` / `collect_method_types` and the
   shared struct predicates (co-owned by the AST emitter → a cycle until that
   shared layer is relocated).
