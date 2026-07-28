@@ -362,8 +362,21 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   path_open/fd_read/fd_write/fd_close imports), `open_writer`+`w.write`+`open_reader`+`read_chunk`+`close`
   (→ `$__fern_open_file`/`writer_write`/`reader_read_chunk`/`reader_close`), and bare `read_line()`
   / `read_int()` / `read_all_stdin()` were each emitted alone and diffed — all byte-identical.
-  **Next:** the last self-contained leaves (`map_helpers` / `optarrarr_free_func` /
-  `cabi_realloc_helper`), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
+  (11) the last self-contained leaves (`map_helpers` — the full `$__fern_map_*` runtime;
+  `optarrarr_free_func` — the `$__fern_optarrarr_free` #4365 reclaim; `cabi_realloc_helper` —
+  `$cabi_realloc`). `optarrarr_free_func` took an `heap_base: i32` arg (call site's arg
+  preserved); `cabi_realloc_helper` was PRIVATE (`function`) and is now `pub`. `map_helpers` +
+  `cabi_realloc_helper` byte-verified by direct probe (a `Map[i32,i32]` for-loop and a
+  `tcp_connect`+`tcp_send`+`tcp_close` program); `optarrarr_free_func`'s reclaim path isn't
+  triggered by a plain program, so it is covered by the dedicated
+  `TestSelfHostOptAarrReclaimWasmIR` (builds a driver from these sources, runs the
+  `Option[i32[][]]`-churn reclaim through wasmtime — GREEN) plus a byte-identical WAT for an
+  `Option[i32[][]]` program. **With this, every self-contained IR-only WAT leaf has moved out of
+  `wasm.fern`.** What REMAINS coupling the wasm IR path to `wasm.fern` is the framing itself:
+  `emit_ir_module_units` (the big gated dispatcher — it now calls `wasm_ir.*` for every runtime
+  helper but still LIVES in `wasm.fern`) and its `_p2` component-model sibling emitters, plus
+  `emit_ir_rc_bodies_from`. **Next:** relocate `emit_ir_module_units` (+ the `_p2` import/func
+  variants it dispatches to) to `wasm_ir.fern`. `emit_ir_rc_bodies_from`
   is LAST — it drags `Ctx` / `release_module_ctx` / `collect_method_types` and the
   shared struct predicates (co-owned by the AST emitter → a cycle until that
   shared layer is relocated).

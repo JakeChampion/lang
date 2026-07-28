@@ -6932,41 +6932,6 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
 // allocating module and trip the negative WAT-grep contracts
 // (strarr-elem-alias-excluded).
 
-// optarrarr_free_func: the $__fern_optarrarr_free WAT body (#4365) — the
-// Option[<scalar-arr>][] reclaim, wasm sibling of the x86/arm64
-// __fn___fern_optarrarr_free bodies. Per element (an 8-byte rc-headered
-// [tag@0, payload@4] option box from opt_make/opt_none): a UNIQUELY-owned box
-// (rc@e-8 == 1) with tag 0 (Some/Ok) first decs its payload buffer, then the
-// box itself is $__fern_arr_dec'd (rc-guarded), then the outer buffer. Only
-// emitted when the module lowers a __fern_optarrarr_free call
-// (module_calls_optarrarr_free), matching the arr_dec_ptr2 gating.
-pub function optarrarr_free_func(heap_base: i32): string {
-    var hb: string = util.i32_to_string(heap_base);
-    var o: string = "";
-    o = o + "  (func $__fern_optarrarr_free (param $a i32) (result i32)\n";
-    o = o + "    (local $i i32) (local $n i32) (local $e i32)\n";
-    o = o + "    (if (i32.eqz (local.get $a)) (then (return (local.get $a))))\n";
-    o = o + "    (if (i32.and (local.get $a) (i32.const 1)) (then (return (local.get $a))))\n";
-    o = o + "    (if (i32.lt_u (local.get $a) (i32.const " + hb + ")) (then (return (local.get $a))))\n";
-    o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $a) (i32.const 8))) (i32.const 1)) (then\n";
-    o = o + "      (local.set $n (i32.load (local.get $a)))\n";
-    o = o + "      (local.set $i (i32.const 0))\n";
-    o = o + "      (block $oaf_done (loop $oaf_lp\n";
-    o = o + "        (br_if $oaf_done (i32.ge_u (local.get $i) (local.get $n)))\n";
-    o = o + "        (local.set $e (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
-    o = o + "        (block $oaf_skip\n";
-    o = o + "          (br_if $oaf_skip (i32.eqz (local.get $e)))\n";
-    o = o + "          (br_if $oaf_skip (i32.and (local.get $e) (i32.const 1)))\n";
-    o = o + "          (br_if $oaf_skip (i32.lt_u (local.get $e) (i32.const " + hb + ")))\n";
-    o = o + "          (if (i32.and (i32.eq (i32.load (i32.sub (local.get $e) (i32.const 8))) (i32.const 1))\n";
-    o = o + "                       (i32.eqz (i32.load (local.get $e))))\n";
-    o = o + "            (then (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $e) (i32.const 4)))))))\n";
-    o = o + "          (drop (call $__fern_arr_dec (local.get $e))))\n";
-    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "        (br $oaf_lp))))) \n";
-    o = o + "    (call $__fern_arr_dec (local.get $a)))\n";
-    return o;
-}
 
 pub function arr_dec_ptr2_func(heap_base: i32): string {
     var hb: string = util.i32_to_string(heap_base);
@@ -7309,17 +7274,6 @@ function fs_imports_p2(has_readfile: boolean, has_writefile: boolean): string {
     return o;
 }
 
-// cabi_realloc_helper emits the canonical-ABI realloc the runtime calls when
-// lowering the lists returned by get-directories / blocking-read: align the
-// bump pointer to `align`, then bump by `new_size`.
-function cabi_realloc_helper(): string {
-    var o: string = "";
-    o = o + "  (func $cabi_realloc (param $op i32) (param $os i32) (param $al i32) (param $ns i32) (result i32)\n";
-    o = o + "    (global.set $heap (i32.and (i32.add (global.get $heap) (i32.sub (local.get $al) (i32.const 1))) (i32.sub (i32.const 0) (local.get $al))))\n";
-    o = o + "    (call $__fern_alloc (local.get $ns)))\n";
-    o = o + "  (export \"cabi_realloc\" (func $cabi_realloc))\n";
-    return o;
-}
 
 // readfile_func_p2 is the preview2 $__fern_read_file: get-directories ->
 // first preopen descriptor -> open-at(path) -> read-via-stream ->
@@ -7696,388 +7650,6 @@ pub function map_w64_helpers(): string {
     return o;
 }
 
-// map_helpers emits the i32-keyed / i32-valued hash-map runtime. The map
-// box is 24 bytes: [count@0][cap@4][keys@8][vals@12][used@16][pad@20];
-// keys / vals / used are three separate cap*4 regions (open addressing,
-// linear probing; `used[i]` is 0 = empty, 1 = occupied). count sits at
-// offset 0 so the generic `.len()` (load word @0) returns the entry
-// count. Fresh bump-allocated memory is already zero, so a new `used`
-// region reads as all-empty. Depends on $__fern_alloc.
-pub function map_helpers(): string {
-    var o: string = "";
-    // $__fern_str_hash(ptr) → 32-bit FNV-1a over a string block's bytes
-    // ([len@0][bytes@4]).
-    o = o + "  (func $__fern_str_hash (param $p i32) (result i32)\n";
-    o = o + "    (local $h i32) (local $n i32) (local $i i32)\n";
-    o = o + "    (local.set $h (i32.const -2128831035))\n";
-    o = o + "    (local.set $n (i32.load (local.get $p)))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
-    o = o + "      (local.set $h (i32.mul (i32.xor (local.get $h) (i32.load8_u (i32.add (i32.add (local.get $p) (i32.const 4)) (local.get $i)))) (i32.const 16777619)))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (local.get $h))\n";
-    // $__fern_map_hk(k, cap, kis) → bucket. String keys (kis=1) hash their
-    // bytes; i32 keys use a Fibonacci-ish multiply. Masked to cap-1 (cap is
-    // always a power of two).
-    o = o + "  (func $__fern_map_hk (param $k i32) (param $cap i32) (param $kis i32) (param $hashidx i32) (result i32)\n";
-    o = o + "    (if (result i32) (i32.eq (local.get $kis) (i32.const 2))\n";
-    // Struct/enum key (kis 2): the derived hash via the funcref table (#2671).
-    o = o + "      (then (i32.and (call_indirect (type $fn1) (local.get $k) (local.get $hashidx)) (i32.sub (local.get $cap) (i32.const 1))))\n";
-    o = o + "      (else (if (result i32) (local.get $kis)\n";
-    o = o + "        (then (i32.and (call $__fern_str_hash (local.get $k)) (i32.sub (local.get $cap) (i32.const 1))))\n";
-    o = o + "        (else (i32.and (i32.mul (local.get $k) (i32.const -1640531527)) (i32.sub (local.get $cap) (i32.const 1))))))))\n";
-    // $__fern_map_keq(a, b, kis) → key equality. String keys (kis=1) compare
-    // by content via $__fern_streq; i32 keys by value.
-    o = o + "  (func $__fern_map_keq (param $a i32) (param $b i32) (param $kis i32) (param $eqidx i32) (result i32)\n";
-    o = o + "    (if (result i32) (i32.eq (local.get $kis) (i32.const 2))\n";
-    // Struct/enum key (kis 2): the derived eq via the funcref table (#2671).
-    o = o + "      (then (call_indirect (type $fn2) (local.get $a) (local.get $b) (local.get $eqidx)))\n";
-    o = o + "      (else (if (result i32) (local.get $kis)\n";
-    o = o + "        (then (call $__fern_streq (local.get $a) (local.get $b)))\n";
-    o = o + "        (else (i32.eq (local.get $a) (local.get $b)))))))\n";
-    // $__fern_map_new(hint) → empty i32-keyed box with cap 8 (kis=0 @ +20).
-    o = o + "  (func $__fern_map_new (param $hint i32) (result i32)\n";
-    o = o + "    (return (call $__fern_map_new_k (local.get $hint) (i32.const 0) (i32.const 0) (i32.const 0))))\n";
-    // $__fern_map_new_str(hint) → empty string-keyed box (kis=1 @ +20).
-    o = o + "  (func $__fern_map_new_str (param $hint i32) (result i32)\n";
-    o = o + "    (return (call $__fern_map_new_k (local.get $hint) (i32.const 1) (i32.const 0) (i32.const 0))))\n";
-    // $__fern_map_new_struct(hint, hashidx, eqidx) → struct/enum-keyed box
-    // (kis=2 @ +20); the derived hash/eq funcref-table slots are stored at
-    // +32 / +36 so hk/keq can call_indirect them. #2671.
-    o = o + "  (func $__fern_map_new_struct (param $hint i32) (param $hashidx i32) (param $eqidx i32) (result i32)\n";
-    o = o + "    (return (call $__fern_map_new_k (local.get $hint) (i32.const 2) (local.get $hashidx) (local.get $eqidx))))\n";
-    // The box is 32 bytes: [count@0][cap@4][keys@8][vals@12][used@16]
-    // [kis@20][tombs@24][vis@28]; `used[i]` is 0 = empty, 1 = occupied, 2 =
-    // tombstone (a deleted slot the probe must skip past). vis (value-is-
-    // string) mirrors kis: set by $__fern_map_set when a string value is
-    // inserted, read by $__fern_map_release to release the values.
-    o = o + "  (func $__fern_map_new_k (param $hint i32) (param $kis i32) (param $hashidx i32) (param $eqidx i32) (result i32)\n";
-    o = o + "    (local $box i32) (local $zi i32)\n";
-    // The map box is rc-headered via $__fern_str_box (returns base+8, so every
-    // box-relative field [box+N] is unchanged) so a map local can be counted
-    // and freed; the 32-byte payload holds [count@0][cap@4][keys@8][vals@12]
-    // [used@16][kis@20][tombs@24][vis@28].
-    o = o + "    (local.set $box (call $__fern_str_box (i32.const 40)))\n";
-    o = o + "    (i32.store (local.get $box) (i32.const 0))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (i32.const 8))\n";
-    // keys/vals/used are rc-boxed via $__fern_str_box (flat: data ptr at
-    // base+8, so [arr + i*4] addressing is unchanged) so $__fern_map_grow can
-    // free the old arrays on resize (and the map free, later, can release
-    // them). Each holds cap (=8) i32 slots = 32 payload bytes.
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (call $__fern_str_box (i32.const 32)))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 12)) (call $__fern_str_box (i32.const 32)))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 16)) (call $__fern_str_box (i32.const 32)))\n";
-    // Zero the `used` array: a $__fern_str_box block recycled from the freelist
-    // (since map_grow now frees old arrays) carries STALE occupancy flags, and
-    // an unzeroed used[] makes $__fern_map_find probe forever. (keys/vals need
-    // no zeroing — only occupied slots, gated by used[], are ever read.)
-    o = o + "    (local.set $zi (i32.const 0))\n";
-    o = o + "    (block $zd (loop $zl\n";
-    o = o + "      (br_if $zd (i32.ge_u (local.get $zi) (i32.const 8)))\n";
-    o = o + "      (i32.store (i32.add (i32.load (i32.add (local.get $box) (i32.const 16))) (i32.mul (local.get $zi) (i32.const 4))) (i32.const 0))\n";
-    o = o + "      (local.set $zi (i32.add (local.get $zi) (i32.const 1)))\n";
-    o = o + "      (br $zl)))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 20)) (local.get $kis))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 24)) (i32.const 0))\n";
-    // vis starts 0 (no string value seen yet); $__fern_map_set sets it on the
-    // first string-value insert. A freelist-recycled box carries stale bytes,
-    // so the explicit zero matters.
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 28)) (i32.const 0))\n";
-    // Struct/enum-key funcref-table slots (kis 2); 0 / unused for i32/string.
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 32)) (local.get $hashidx))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 36)) (local.get $eqidx))\n";
-    o = o + "    (local.get $box))\n";
-    // $__fern_map_grow(box): double the capacity and rehash live entries.
-    o = o + "  (func $__fern_map_grow (param $box i32)\n";
-    o = o + "    (local $oc i32) (local $ok i32) (local $ov i32) (local $ou i32)\n";
-    o = o + "    (local $nc i32) (local $nk i32) (local $nv i32) (local $nu i32)\n";
-    o = o + "    (local $i i32) (local $idx i32) (local $key i32) (local $kis i32) (local $zi i32)\n";
-    o = o + "    (local.set $kis (i32.load (i32.add (local.get $box) (i32.const 20))))\n";
-    o = o + "    (local.set $oc (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
-    o = o + "    (local.set $ok (i32.load (i32.add (local.get $box) (i32.const 8))))\n";
-    o = o + "    (local.set $ov (i32.load (i32.add (local.get $box) (i32.const 12))))\n";
-    o = o + "    (local.set $ou (i32.load (i32.add (local.get $box) (i32.const 16))))\n";
-    o = o + "    (local.set $nc (i32.mul (local.get $oc) (i32.const 2)))\n";
-    o = o + "    (local.set $nk (call $__fern_str_box (i32.mul (local.get $nc) (i32.const 4))))\n";
-    o = o + "    (local.set $nv (call $__fern_str_box (i32.mul (local.get $nc) (i32.const 4))))\n";
-    o = o + "    (local.set $nu (call $__fern_str_box (i32.mul (local.get $nc) (i32.const 4))))\n";
-    // Zero the new `used` array — a freelist-recycled block holds stale flags;
-    // the rehash below only sets the LIVE slots to 1, so unzeroed gaps would
-    // read as occupied and hang $__fern_map_find.
-    o = o + "    (local.set $zi (i32.const 0))\n";
-    o = o + "    (block $zd (loop $zl\n";
-    o = o + "      (br_if $zd (i32.ge_u (local.get $zi) (local.get $nc)))\n";
-    o = o + "      (i32.store (i32.add (local.get $nu) (i32.mul (local.get $zi) (i32.const 4))) (i32.const 0))\n";
-    o = o + "      (local.set $zi (i32.add (local.get $zi) (i32.const 1)))\n";
-    o = o + "      (br $zl)))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (local.get $nc))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 8)) (local.get $nk))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 12)) (local.get $nv))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 16)) (local.get $nu))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 24)) (i32.const 0))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $oc)))\n";
-    o = o + "      (if (i32.eq (i32.load (i32.add (local.get $ou) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 1)) (then\n";
-    o = o + "        (local.set $key (i32.load (i32.add (local.get $ok) (i32.mul (local.get $i) (i32.const 4)))))\n";
-    o = o + "        (local.set $idx (call $__fern_map_hk (local.get $key) (local.get $nc) (local.get $kis) (i32.load (i32.add (local.get $box) (i32.const 32)))))\n";
-    o = o + "        (block $id (loop $il\n";
-    o = o + "          (if (i32.eqz (i32.load (i32.add (local.get $nu) (i32.mul (local.get $idx) (i32.const 4))))) (then\n";
-    o = o + "            (i32.store (i32.add (local.get $nk) (i32.mul (local.get $idx) (i32.const 4))) (local.get $key))\n";
-    o = o + "            (i32.store (i32.add (local.get $nv) (i32.mul (local.get $idx) (i32.const 4))) (i32.load (i32.add (local.get $ov) (i32.mul (local.get $i) (i32.const 4)))))\n";
-    o = o + "            (i32.store (i32.add (local.get $nu) (i32.mul (local.get $idx) (i32.const 4))) (i32.const 1))\n";
-    o = o + "            (br $id)))\n";
-    o = o + "          (local.set $idx (i32.and (i32.add (local.get $idx) (i32.const 1)) (i32.sub (local.get $nc) (i32.const 1))))\n";
-    o = o + "          (br $il)))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    // The old keys/vals/used buffers are now fully rehashed into the new ones
-    // (the string key/value pointers were COPIED, so they survive in $nk/$nv) —
-    // free the old array buffers (flat) instead of leaking them on every grow.
-    o = o + "    (drop (call $__fern_arr_dec (local.get $ok)))\n";
-    o = o + "    (drop (call $__fern_arr_dec (local.get $ov)))\n";
-    o = o + "    (drop (call $__fern_arr_dec (local.get $ou))))\n";
-    // $__fern_map_set(box, k, v) → box. Grows at load factor 3/4.
-    o = o + "  (func $__fern_map_set (param $box i32) (param $k i32) (param $v i32) (param $vis i32) (param $vconsume i32) (param $kconsume i32) (result i32)\n";
-    o = o + "    (local $cap i32) (local $keys i32) (local $vals i32) (local $used i32) (local $idx i32) (local $kis i32) (local $ff i32) (local $u i32) (local $slot i32)\n";
-    // Record value-is-string on the box (homogeneous value type, so always the
-    // same flag) so $__fern_map_release knows to release the value column.
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 28)) (local.get $vis))\n";
-    // Grow when (live + tombstones + 1) crosses load factor 3/4, so a run
-    // of delete+insert can't fill the table with tombstones and loop.
-    o = o + "    (if (i32.gt_s (i32.mul (i32.add (i32.add (i32.load (local.get $box)) (i32.load (i32.add (local.get $box) (i32.const 24)))) (i32.const 1)) (i32.const 4)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 4))) (i32.const 3))) (then\n";
-    o = o + "      (call $__fern_map_grow (local.get $box))))\n";
-    o = o + "    (local.set $kis (i32.load (i32.add (local.get $box) (i32.const 20))))\n";
-    o = o + "    (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
-    o = o + "    (local.set $keys (i32.load (i32.add (local.get $box) (i32.const 8))))\n";
-    o = o + "    (local.set $vals (i32.load (i32.add (local.get $box) (i32.const 12))))\n";
-    o = o + "    (local.set $used (i32.load (i32.add (local.get $box) (i32.const 16))))\n";
-    o = o + "    (local.set $idx (call $__fern_map_hk (local.get $k) (local.get $cap) (local.get $kis) (i32.load (i32.add (local.get $box) (i32.const 32)))))\n";
-    o = o + "    (local.set $ff (i32.const -1))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (local.set $u (i32.load (i32.add (local.get $used) (i32.mul (local.get $idx) (i32.const 4)))))\n";
-    // Empty slot ends the probe chain: insert here, or into the first
-    // tombstone seen along the way (reclaiming it).
-    o = o + "      (if (i32.eqz (local.get $u)) (then\n";
-    o = o + "        (local.set $slot (select (local.get $ff) (local.get $idx) (i32.ge_s (local.get $ff) (i32.const 0))))\n";
-    o = o + "        (i32.store (i32.add (local.get $keys) (i32.mul (local.get $slot) (i32.const 4))) (local.get $k))\n";
-    // Perceus map key construction-inc: a NEW string-keyed entry retains its
-    // key (the map co-owns it alongside the source), so $__fern_map_release can
-    // release it on the map's death; the inc is a guard no-op for an immortal
-    // string literal. (A literal key is the common case; a heap key — e.g. a
-    // word read from input — now reclaims.) i32 keys (kis 0) carry no rc.
-    // EXCEPTION ($kconsume): a FRESH key temp has no source local to sweep, so the
-    // map TAKES its single ref (no inc) and release's dec balances it — the key-
-    // column twin of $vconsume (#4353 wasm bug 2). kconsume implies a string key.
-    o = o + "        (if (i32.and (i32.eq (local.get $kis) (i32.const 1)) (i32.eqz (local.get $kconsume))) (then (drop (call $__fern_rc_inc (local.get $k)))))\n";
-    o = o + "        (i32.store (i32.add (local.get $vals) (i32.mul (local.get $slot) (i32.const 4))) (local.get $v))\n";
-    // Perceus map value construction-inc: a NEW string-valued entry retains its
-    // value (the map co-owns it alongside the source) so $__fern_map_release
-    // can release it on the map's death; the source local's own sweep balances
-    // it. A guard no-op for an immortal literal; i32 values (vis 0) carry no rc.
-    // EXCEPTION ($vconsume): a FRESH value temp has no source local to sweep, so
-    // retaining would leave rc at 2 and release's dec would strand it at 1 (the
-    // #4353 wasm bug 2 leak). When $vconsume is set the map TAKES the temp's
-    // single ref (no inc); release's dec then reclaims it. vis still gates the
-    // release-side dec, so vconsume implies vis.
-    o = o + "        (if (i32.and (local.get $vis) (i32.eqz (local.get $vconsume))) (then (drop (call $__fern_rc_inc (local.get $v)))))\n";
-    o = o + "        (i32.store (i32.add (local.get $used) (i32.mul (local.get $slot) (i32.const 4))) (i32.const 1))\n";
-    o = o + "        (i32.store (local.get $box) (i32.add (i32.load (local.get $box)) (i32.const 1)))\n";
-    o = o + "        (if (i32.ge_s (local.get $ff) (i32.const 0)) (then\n";
-    o = o + "          (i32.store (i32.add (local.get $box) (i32.const 24)) (i32.sub (i32.load (i32.add (local.get $box) (i32.const 24))) (i32.const 1)))))\n";
-    o = o + "        (br $d)))\n";
-    o = o + "      (if (i32.eq (local.get $u) (i32.const 1)) (then\n";
-    o = o + "        (if (call $__fern_map_keq (i32.load (i32.add (local.get $keys) (i32.mul (local.get $idx) (i32.const 4)))) (local.get $k) (local.get $kis) (i32.load (i32.add (local.get $box) (i32.const 36)))) (then\n";
-    // Overwrite: the slot already co-owns the OLD string value — release it
-    // before storing, then construction-inc the NEW one, so the net rc is
-    // balanced (no leak of the replaced value, no over-release of the new).
-    o = o + "          (if (local.get $vis) (then\n";
-    o = o + "            (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4))))))\n";
-    // Same $vconsume exception as the insert path: a fresh replacement value is
-    // TAKEN by the map (no inc) so release's dec balances it; the OLD value is
-    // released above unconditionally when vis.
-    o = o + "            (if (i32.eqz (local.get $vconsume)) (then (drop (call $__fern_rc_inc (local.get $v)))))))\n";
-    o = o + "          (i32.store (i32.add (local.get $vals) (i32.mul (local.get $idx) (i32.const 4))) (local.get $v))\n";
-    // Overwrite discards the incoming KEY (the slot keeps its existing key). A
-    // FRESH new-key temp ($kconsume) is sole-owned and now dead, so free it —
-    // otherwise the classic word-count `m.set(computed_key, n)` on a recurring
-    // key leaks one key box per overwrite. An aliased key (kconsume=0) is left
-    // untouched (its source local's sweep owns it); an immortal literal key
-    // arr_dec's as a guarded no-op.
-    o = o + "          (if (local.get $kconsume) (then (drop (call $__fern_arr_dec (local.get $k)))))\n";
-    o = o + "          (br $d)))))\n";
-    // Remember the first tombstone so we can reclaim it once the chain ends.
-    o = o + "      (if (i32.and (i32.eq (local.get $u) (i32.const 2)) (i32.lt_s (local.get $ff) (i32.const 0))) (then (local.set $ff (local.get $idx))))\n";
-    o = o + "      (local.set $idx (i32.and (i32.add (local.get $idx) (i32.const 1)) (i32.sub (local.get $cap) (i32.const 1))))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (local.get $box))\n";
-    // $__fern_map_find(box, k) → entry index, or -1 if absent.
-    o = o + "  (func $__fern_map_find (param $box i32) (param $k i32) (result i32)\n";
-    o = o + "    (local $cap i32) (local $keys i32) (local $used i32) (local $idx i32) (local $start i32) (local $kis i32)\n";
-    o = o + "    (local.set $kis (i32.load (i32.add (local.get $box) (i32.const 20))))\n";
-    o = o + "    (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
-    o = o + "    (local.set $keys (i32.load (i32.add (local.get $box) (i32.const 8))))\n";
-    o = o + "    (local.set $used (i32.load (i32.add (local.get $box) (i32.const 16))))\n";
-    o = o + "    (local.set $idx (call $__fern_map_hk (local.get $k) (local.get $cap) (local.get $kis) (i32.load (i32.add (local.get $box) (i32.const 32)))))\n";
-    o = o + "    (local.set $start (local.get $idx))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.eqz (i32.load (i32.add (local.get $used) (i32.mul (local.get $idx) (i32.const 4))))))\n";
-    // Only a live (used==1) slot can match; skip tombstones (their stale
-    // key must not compare equal).
-    o = o + "      (if (i32.eq (i32.load (i32.add (local.get $used) (i32.mul (local.get $idx) (i32.const 4)))) (i32.const 1)) (then\n";
-    o = o + "        (if (call $__fern_map_keq (i32.load (i32.add (local.get $keys) (i32.mul (local.get $idx) (i32.const 4)))) (local.get $k) (local.get $kis) (i32.load (i32.add (local.get $box) (i32.const 36)))) (then\n";
-    o = o + "          (return (local.get $idx))))))\n";
-    o = o + "      (local.set $idx (i32.and (i32.add (local.get $idx) (i32.const 1)) (i32.sub (local.get $cap) (i32.const 1))))\n";
-    o = o + "      (br_if $d (i32.eq (local.get $idx) (local.get $start)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (i32.const -1))\n";
-    // $__fern_map_get(box, k) → Option box [tag@0][payload@4] (Some=0).
-    o = o + "  (func $__fern_map_get (param $box i32) (param $k i32) (result i32)\n";
-    o = o + "    (local $idx i32) (local $bx i32)\n";
-    o = o + "    (local.set $idx (call $__fern_map_find (local.get $box) (local.get $k)))\n";
-    o = o + "    (local.set $bx (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "    (if (i32.lt_s (local.get $idx) (i32.const 0)) (then\n";
-    o = o + "      (i32.store (local.get $bx) (i32.const 1))\n";
-    o = o + "      (i32.store (i32.add (local.get $bx) (i32.const 4)) (i32.const 0))\n";
-    o = o + "      (return (local.get $bx))))\n";
-    o = o + "    (i32.store (local.get $bx) (i32.const 0))\n";
-    o = o + "    (i32.store (i32.add (local.get $bx) (i32.const 4)) (i32.load (i32.add (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.mul (local.get $idx) (i32.const 4)))))\n";
-    o = o + "    (local.get $bx))\n";
-    // $__fern_map_get_or(box, k, d) → value or default d.
-    o = o + "  (func $__fern_map_get_or (param $box i32) (param $k i32) (param $d i32) (result i32)\n";
-    o = o + "    (local $idx i32)\n";
-    o = o + "    (local.set $idx (call $__fern_map_find (local.get $box) (local.get $k)))\n";
-    o = o + "    (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (return (local.get $d))))\n";
-    o = o + "    (i32.load (i32.add (i32.load (i32.add (local.get $box) (i32.const 12))) (i32.mul (local.get $idx) (i32.const 4)))))\n";
-    // $__fern_map_has(box, k) → bool.
-    o = o + "  (func $__fern_map_has (param $box i32) (param $k i32) (result i32)\n";
-    o = o + "    (i32.ge_s (call $__fern_map_find (local.get $box) (local.get $k)) (i32.const 0)))\n";
-    // $__fern_map_delete(box, k) → 2-element tuple box [map, existed].
-    // Tombstones the slot (used := 2) and bumps count down / tombstone count up;
-    // no-op if the key is absent. `.without(k)` is typed (Map[K,V], boolean), so
-    // this returns a tuple box (rc-boxed via $__fern_str_box) matching the
-    // register backends' [map, existed] — a bare-box return made
-    // `var (m2, e) = m.without(k)` read box[0]/box[1] of the MAP (its keys/values
-    // pointers) instead. #2933.
-    //
-    // Two tuple consumers, two strides: the AST path reads element i at offset
-    // i*4, the IR path at i*8 (8-byte slots, matching the register backends).
-    // `map` (a 4-byte wasm32 pointer) sits at offset 0 and is i32-loaded as
-    // element 0 by both. `existed` is written at BOTH offset 4 (AST element 1)
-    // and offset 8 (IR element 1), so the one shared helper satisfies either
-    // destructure — the unread slot is ignored by the other path. Payload is 12
-    // bytes (the IR element 1 ends at offset 12).
-    o = o + "  (func $__fern_map_delete (param $box i32) (param $k i32) (result i32)\n";
-    o = o + "    (local $idx i32) (local $existed i32) (local $tup i32)\n";
-    o = o + "    (local.set $idx (call $__fern_map_find (local.get $box) (local.get $k)))\n";
-    o = o + "    (if (i32.ge_s (local.get $idx) (i32.const 0)) (then\n";
-    o = o + "      (i32.store (i32.add (i32.load (i32.add (local.get $box) (i32.const 16))) (i32.mul (local.get $idx) (i32.const 4))) (i32.const 2))\n";
-    o = o + "      (i32.store (local.get $box) (i32.sub (i32.load (local.get $box)) (i32.const 1)))\n";
-    o = o + "      (i32.store (i32.add (local.get $box) (i32.const 24)) (i32.add (i32.load (i32.add (local.get $box) (i32.const 24))) (i32.const 1)))\n";
-    o = o + "      (local.set $existed (i32.const 1))))\n";
-    o = o + "    (local.set $tup (call $__fern_str_box (i32.const 12)))\n";
-    o = o + "    (i32.store (local.get $tup) (local.get $box))\n";
-    o = o + "    (i32.store (i32.add (local.get $tup) (i32.const 4)) (local.get $existed))\n";
-    o = o + "    (i32.store (i32.add (local.get $tup) (i32.const 8)) (local.get $existed))\n";
-    o = o + "    (local.get $tup))\n";
-    // $__fern_map_keys(box) / $__fern_map_values(box) → a fresh array block
-    // ([len][cap][elems]) of the live keys / values, in probe order. count
-    // sits at box+0; keys at box+8, vals at box+12 — $src selects which.
-    o = o + "  (func $__fern_map_snapshot (param $box i32) (param $src i32) (result i32)\n";
-    o = o + "    (local $n i32) (local $arr i32) (local $cap i32) (local $used i32) (local $base i32) (local $i i32) (local $j i32)\n";
-    o = o + "    (local.set $n (i32.load (local.get $box)))\n";
-    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
-    o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
-    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
-    o = o + "    (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
-    o = o + "    (local.set $used (i32.load (i32.add (local.get $box) (i32.const 16))))\n";
-    o = o + "    (local.set $base (i32.load (i32.add (local.get $box) (local.get $src))))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (local.set $j (i32.const 0))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $cap)))\n";
-    o = o + "      (if (i32.eq (i32.load (i32.add (local.get $used) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 1)) (then\n";
-    o = o + "        (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $j) (i32.const 4))) (i32.load (i32.add (local.get $base) (i32.mul (local.get $i) (i32.const 4)))))\n";
-    o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (local.get $arr))\n";
-    o = o + "  (func $__fern_map_keys (param $box i32) (result i32)\n";
-    o = o + "    (return (call $__fern_map_snapshot (local.get $box) (i32.const 8))))\n";
-    o = o + "  (func $__fern_map_values (param $box i32) (result i32)\n";
-    o = o + "    (return (call $__fern_map_snapshot (local.get $box) (i32.const 12))))\n";
-    // $__fern_map_snapshot_inc: the RETAINING snapshot (#4353 slice 3) — the
-    // same probe-order copy as $__fern_map_snapshot, but each copied STRING
-    // element is $__fern_rc_inc'd, so the fresh array co-owns its elements
-    // and the deep post-loop release ($__fern_arr_dec_ptr — dec each element
-    // then the buffer) balances exactly. The map keeps its construction-incs.
-    // Emitted for every flag-2 (string-column) read: the `for`-loop positions
-    // pair it with irlower's post-loop deep release; a var/expr-position read
-    // (#5335, the un-clamped `var ks = m.keys()`) leaks the retained copy
-    // (bounded per read) until a SARR-credited release lands.
-    o = o + "  (func $__fern_map_snapshot_inc (param $box i32) (param $src i32) (result i32)\n";
-    o = o + "    (local $arr i32) (local $i i32) (local $n i32)\n";
-    o = o + "    (local.set $arr (call $__fern_map_snapshot (local.get $box) (local.get $src)))\n";
-    o = o + "    (local.set $n (i32.load (local.get $arr)))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
-    o = o + "      (drop (call $__fern_rc_inc (i32.load (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (local.get $arr))\n";
-    o = o + "  (func $__fern_map_keys_inc (param $box i32) (result i32)\n";
-    o = o + "    (return (call $__fern_map_snapshot_inc (local.get $box) (i32.const 8))))\n";
-    o = o + "  (func $__fern_map_values_inc (param $box i32) (result i32)\n";
-    o = o + "    (return (call $__fern_map_snapshot_inc (local.get $box) (i32.const 12))))\n";
-    // $__fern_map_release(box) -> box: Perceus map free. When `box` is the LAST
-    // owner ([box-8]==1, about to free) release its three structural arrays —
-    // keys ([box+8]), vals ([box+12]), used ([box+16]) — FLAT via the shared
-    // $__fern_arr_dec, then free the box itself. The string KEYS (kis@+20) and
-    // VALUES (vis@+28) held in those arrays are construction-inc'd by
-    // $__fern_map_set, so each occupied slot's key / value is released here
-    // (balancing the inc) before the buffer is freed. Guarded like
-    // $__fern_arr_dec (null / low-bit / low-addr); an aliased map (rc>1) just
-    // decrements the box, its arrays untouched.
-    o = o + "  (func $__fern_map_release (param $box i32) (result i32)\n";
-    o = o + "    (local $i i32) (local $cap i32) (local $keys i32) (local $used i32) (local $vals i32)\n";
-    o = o + "    (if (i32.eqz (local.get $box)) (then (return (local.get $box))))\n";
-    o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $box) (i32.const 8))) (i32.const 1)) (then\n";
-    // String-keyed map (kis@[box+20]==1): release each occupied slot's key
-    // (construction-inc'd on insert) before freeing the keys buffer.
-    o = o + "      (if (i32.eq (i32.load (i32.add (local.get $box) (i32.const 20))) (i32.const 1)) (then\n";
-    o = o + "        (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
-    o = o + "        (local.set $keys (i32.load (i32.add (local.get $box) (i32.const 8))))\n";
-    o = o + "        (local.set $used (i32.load (i32.add (local.get $box) (i32.const 16))))\n";
-    o = o + "        (local.set $i (i32.const 0))\n";
-    o = o + "        (block $mkd (loop $mkl\n";
-    o = o + "          (br_if $mkd (i32.ge_u (local.get $i) (local.get $cap)))\n";
-    o = o + "          (if (i32.eq (i32.load (i32.add (local.get $used) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 1)) (then\n";
-    o = o + "            (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $keys) (i32.mul (local.get $i) (i32.const 4))))))))\n";
-    o = o + "          (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "          (br $mkl))))) \n";
-    // String-valued map (vis@[box+28]==1): release each occupied slot's value
-    // (construction-inc'd on insert) before freeing the vals buffer. Mirrors
-    // the key loop + native __drop_map_str_values.
-    o = o + "      (if (i32.load (i32.add (local.get $box) (i32.const 28))) (then\n";
-    o = o + "        (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
-    o = o + "        (local.set $vals (i32.load (i32.add (local.get $box) (i32.const 12))))\n";
-    o = o + "        (local.set $used (i32.load (i32.add (local.get $box) (i32.const 16))))\n";
-    o = o + "        (local.set $i (i32.const 0))\n";
-    o = o + "        (block $mvd (loop $mvl\n";
-    o = o + "          (br_if $mvd (i32.ge_u (local.get $i) (local.get $cap)))\n";
-    o = o + "          (if (i32.eq (i32.load (i32.add (local.get $used) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 1)) (then\n";
-    o = o + "            (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $vals) (i32.mul (local.get $i) (i32.const 4))))))))\n";
-    o = o + "          (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "          (br $mvl))))) \n";
-    o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 8)))))\n";
-    o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 12)))))\n";
-    o = o + "      (drop (call $__fern_arr_dec (i32.load (i32.add (local.get $box) (i32.const 16)))))))\n";
-    o = o + "    (call $__fern_arr_dec (local.get $box)))\n";
-    return o;
-}
 
 
 // block into an i32. Optional leading '-', then decimal digits, stops at the
@@ -11164,7 +10736,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     // when the module lowers a __fern_strarrarr_free call — see
     // arr_dec_ptr2_func for why it must not ride along unconditionally.
     if (wasm_ir.need(needs, "@calls_strarrarr_free")) { out = out + arr_dec_ptr2_func(wasm_ir.heap_base_for_strs(sv)); }
-    if (wasm_ir.need(needs, "@calls_optarrarr_free")) { out = out + optarrarr_free_func(wasm_ir.heap_base_for_strs(sv)); }
+    if (wasm_ir.need(needs, "@calls_optarrarr_free")) { out = out + wasm_ir.optarrarr_free_func(wasm_ir.heap_base_for_strs(sv)); }
     // $__fern_strbuf_* (global string-builder): a growable bump-heap buffer +
     // reset/append/take. Heap-backed (str_box / alloc), emitted above.
     if (wasm_ir.need(needs, "@uses_strbuf")) { out = out + wasm_ir.strbuf_helpers(); }
@@ -11264,7 +10836,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     // test paired it with tcp_recv, whose own gate satisfied the
     // requirement and hid it; a send-only program failed to compose.
     // One shared gate, so it is emitted exactly once.
-    if (wasm_ir.need(needs, "wasm_poll") || wasm_ir.need(needs, "tcp_recv") || wasm_ir.need(needs, "poll") || wasm_ir.need(needs, "tcp_send") || wasm_ir.need(needs, "udp_send")) { out = out + cabi_realloc_helper(); }
+    if (wasm_ir.need(needs, "wasm_poll") || wasm_ir.need(needs, "tcp_recv") || wasm_ir.need(needs, "poll") || wasm_ir.need(needs, "tcp_send") || wasm_ir.need(needs, "udp_send")) { out = out + wasm_ir.cabi_realloc_helper(); }
     // $__fern_network_handle is shared by every socket op; emitted with
     // whichever one pulls it in.
     if (wasm_ir.need(needs, "tcp_connect") || wasm_ir.need(needs, "tcp_listen") || wasm_ir.need(needs, "udp_send")) { out = out + wasm_ir.network_handle_func(); }
@@ -11362,7 +10934,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     if (wasm_ir.need(needs, "arr_push_owned")) { out = out + arr_push_owned_helper(wasm_ir.heap_base_for_strs(sv)); }
     if (wasm_ir.need(needs, "arr_push_i64")) { out = out + arr_push_i64_helper(); }
     if (wasm_ir.need(needs, "arr_push_f64")) { out = out + arr_push_f64_helper(); }
-    if (wasm_ir.need(needs, "@uses_maps")) { out = out + map_helpers(); }
+    if (wasm_ir.need(needs, "@uses_maps")) { out = out + wasm_ir.map_helpers(); }
     // $__fern_map_set_w64 / $__fern_map_get_or_w64: the i64/u64-VALUED map runtime
     // (#5253), over the map_helpers primitives above. Emitted when a module
     // inserts/reads an 8-byte i64/u64 map value.
@@ -11652,7 +11224,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         out = out + wasm_ir.string_from_bytes_helper();
     }
     if (has_maps) {
-        out = out + map_helpers();
+        out = out + wasm_ir.map_helpers();
     }
     if (has_env) {
         if (io) { out = out + env_func_p2(); } else { out = out + wasm_ir.env_func(); }
@@ -11686,7 +11258,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // component-io-fs: the canonical-ABI realloc the fs lists need; a
     // string/list<u8>-returning extern (P4c) needs it too so the host can
     // materialize the returned bytes.
-    if (fs || (io && (has_env || has_args)) || has_extern_str || export_needs_realloc(mod)) { out = out + cabi_realloc_helper(); }
+    if (fs || (io && (has_env || has_args)) || has_extern_str || export_needs_realloc(mod)) { out = out + wasm_ir.cabi_realloc_helper(); }
     // P4c: the lift wrappers for string/list<u8>-returning `@import` externs.
     if (needs_extern_wrappers) { out = out + extern_wrappers(mod); }
 
@@ -11730,7 +11302,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // shared call_indirect signature types ($clos<N> = env + N i32 args → i32),
     // the map hash/eq signature types ($fn1 = key→hash, $fn2 = (a,b)→eq — the
     // derived struct/enum-key Hash/Eq dispatch, #2671), and the function table +
-    // elem segment indexing the lambdas. map_helpers() emits `call_indirect
+    // elem segment indexing the lambdas. wasm_ir.map_helpers() emits `call_indirect
     // (type $fn1/$fn2)` for ANY map module (the branch is dead for i32/string
     // keys, but wasm still validates the type + table), so a map-using module
     // with no closures MUST still declare $fn1/$fn2 and a (≥1-slot) table or the
