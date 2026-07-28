@@ -1881,6 +1881,29 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 	case tI32:
 		fmt.Fprintf(b, "%di32", g.ch.intN(1000))
 	case tI64:
+		// A quarter of i64 literals land ABOVE the int32 range, so the wide
+		// half of the type is actually exercised. While every i64 literal was
+		// drawn from 0..999, no generated program could tell an i64 from an
+		// i32, and a backend that narrowed i64 values to 32 bits agreed with
+		// the interpreter on every seed — which is exactly how the arm64-ssa
+		// i64[] corruption fixed in #5729 slipped through the differential
+		// oracle on all three backends.
+		//
+		// The three magnitudes are the ones that discriminate: just past
+		// 2^31 (bit 31 set, so a sign-extending narrow reads negative),
+		// 0xFFFFFFFF (a narrow reads -1), and past 2^32 (a truncating narrow
+		// loses the top half outright).
+		if g.flip(0.25) {
+			switch g.ch.intN(3) {
+			case 0:
+				fmt.Fprintf(b, "%di64", 2147483648+int64(g.ch.intN(1000)))
+			case 1:
+				fmt.Fprintf(b, "%di64", 4294967295-int64(g.ch.intN(1000)))
+			default:
+				fmt.Fprintf(b, "%di64", 1099511627776+int64(g.ch.intN(1000)))
+			}
+			return
+		}
 		fmt.Fprintf(b, "%di64", g.ch.intN(1000))
 	case tBool:
 		if g.flip(0.5) {
