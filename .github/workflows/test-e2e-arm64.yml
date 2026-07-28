@@ -24,11 +24,6 @@ name: Test e2e arm64
 # the 16 GiB arm64 arena).
 
 on:
-  # Same-repo PRs reach this lane through the CI queue (ci-queue.yml), which
-  # dispatches it once the PR is at the front. The `pull_request` trigger is
-  # kept for FORK PRs only — a fork's branch can't be dispatched onto a
-  # base-repo ref — and the gate job below skips everything else. See
-  # docs/CI-QUEUE.md.
   pull_request:
   workflow_dispatch:
 
@@ -47,12 +42,6 @@ jobs:
   # slow to run on a dev box), so signing this off is discouraged unless you
   # genuinely ran it on arm64 hardware. Fork PRs can't sign off; gate fails open.
   gate:
-    # Queue admission: on `pull_request` this lane runs for fork PRs only.
-    # Same-repo PRs are dispatched by ci-queue.yml when they reach the front
-    # of the queue; skipping the gate skips every job that needs it.
-    if: >-
-      github.event_name != 'pull_request'
-      || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
