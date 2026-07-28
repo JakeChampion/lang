@@ -60,6 +60,50 @@ func TestSelfHostHttpHandlerRoutesIRX86_64(t *testing.T) {
 	buildBin(t, gcc, progDir, "http_handler", asm)
 }
 
+// TestSelfHostOverBudgetRoutesIRArm64 pins that `-target arm64` reaches the IR
+// path for the same over-budget programs, so the arm64 half of #3457 does NOT
+// need the per-module concat.
+//
+// Worth pinning because the shape invites the opposite conclusion: the driver's
+// arm64 branch returns `asm_arm64.emit_module` directly, with none of the
+// budget arithmetic or concat rescue the x86 branch below carries, which reads
+// like an unconditional drop to the AST emitter. It is not — `emit_module`
+// tries `all_eligible` first, and unlike x86 the arm64 merged IR path has no
+// 512-function budget, so it takes programs the x86 path has to rescue.
+// (It emits the whole closure rather than the treeshaken subset, so its output
+// is several times larger; that is a size difference, not a routing one.)
+//
+// Only the x86-built driver is needed — asserting the ROUTING reads the emitted
+// assembly, so no aarch64 cross toolchain is involved.
+func TestSelfHostOverBudgetRoutesIRArm64(t *testing.T) {
+	_, runner, driverBin := buildModloadDriverX86(t)
+
+	for _, tc := range []struct{ name, src string }{
+		{"http-handler", httpHandlerSrc},
+		{"http-parse", `import "std/http";
+function main(): i32 {
+    var raw: string = "GET /abc HTTP/1.1\r\nHost: x\r\n\r\n";
+    match (http.http_parse_request(raw)) {
+        Some(req) => { return req.path.len(); },
+        None => { return 7; }
+    }
+}
+`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asm, _ := compileSourceModload(t, runner, driverBin, tc.src, "-target", "arm64")
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes for -target arm64")
+			}
+			if !strings.Contains(asm, ".Lir") {
+				t.Error("routed through the arm64 AST emitter: the merged arm64 IR path " +
+					"carries no function budget, so an over-budget program should still " +
+					"reach it (#3457)")
+			}
+		})
+	}
+}
+
 // TestSelfHostOverBudgetProgramsRunX86_64 pins the per-module rescue on two
 // programs that pull in the same ~925-function stdlib closure:
 //
