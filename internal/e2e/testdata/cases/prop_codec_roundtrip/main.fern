@@ -41,7 +41,7 @@ function main(): i32 {
             print("base64 roundtrip FAILED at trial " + trial.to_string());
             return 1;
         }
-        if (hex.hex_decode(hex.hex_encode(s)) != s) {
+        if (string_from_bytes_unchecked(hex.hex_decode(hex.hex_encode(s))) != s) {
             print("hex roundtrip FAILED at trial " + trial.to_string());
             return 1;
         }

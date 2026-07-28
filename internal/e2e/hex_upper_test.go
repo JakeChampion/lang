@@ -16,7 +16,7 @@ function main(): i32 {
     if (hex.hex_encode_upper("ÿ") != "C3BF") { return 4; }
     if (hex.hex_encode("ÿ") != "c3bf") { return 5; }
     if (hex.hex_encode_upper("") != "") { return 6; }
-    if (hex.hex_decode(hex.hex_encode_upper("hello")) != "hello") { return 7; }
+    if (string_from_bytes_unchecked(hex.hex_decode(hex.hex_encode_upper("hello"))) != "hello") { return 7; }
     return 42;
 }
 `

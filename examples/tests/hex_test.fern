@@ -6,6 +6,16 @@ import "std/hex" as hex;
 // non-hex char or odd-length tail stops without raising). The Go-side
 // suites unit-test the prelude origin; this is the migration-shaped
 // (pure-Fern, std/test-driven) companion.
+//
+// hex_decode yields `u8[]` (#5730). These fixtures are all ASCII, so
+// `text()` reads the decoded bytes back to assert against a literal.
+
+// The decoded bytes in this file are ASCII by construction, so reading
+// them back is safe without the `std/utf8.from_bytes` check a real
+// ingest path would use.
+function text(b: u8[]): string {
+    return string_from_bytes_unchecked(b);
+}
 
 function test_encode(): test.TestOutcome {
     // 'A'=0x41 'B'=0x42 'C'=0x43.
@@ -17,46 +27,50 @@ function test_encode_empty(): test.TestOutcome {
 }
 
 function test_decode(): test.TestOutcome {
-    return test.assert_eq(hex.hex_decode("414243"), "ABC");
+    return test.assert_eq(text(hex.hex_decode("414243")), "ABC");
 }
 
 function test_decode_empty(): test.TestOutcome {
-    return test.assert_eq(hex.hex_decode(""), "");
+    return test.assert_eq(text(hex.hex_decode("")), "");
 }
 
 function test_decode_uppercase(): test.TestOutcome {
     // Decode accepts upper-case hex digits ('4A' = 0x4A = 'J').
-    return test.assert_eq(hex.hex_decode("4A"), "J");
+    return test.assert_eq(text(hex.hex_decode("4A")), "J");
 }
 
 function test_decode_lowercase(): test.TestOutcome {
-    return test.assert_eq(hex.hex_decode("4a"), "J");
+    return test.assert_eq(text(hex.hex_decode("4a")), "J");
 }
 
 function test_decode_stops_at_nonhex(): test.TestOutcome {
     // First non-hex character terminates: only "41" is consumed.
-    return test.assert_eq(hex.hex_decode("41ZZ"), "A");
+    return test.assert_eq(text(hex.hex_decode("41ZZ")), "A");
 }
 
 function test_decode_odd_tail(): test.TestOutcome {
     // An odd-length tail is dropped (3 nibbles → 1 byte).
-    return test.assert_eq(hex.hex_decode("414"), "A");
+    return test.assert_eq(text(hex.hex_decode("414")), "A");
 }
 
 function test_roundtrip(): test.TestOutcome {
-    return test.assert_eq(hex.hex_decode(hex.hex_encode("Hello, Fern!")), "Hello, Fern!");
+    return test.assert_eq(text(hex.hex_decode(hex.hex_encode("Hello, Fern!"))), "Hello, Fern!");
 }
 
 function test_encode_lowercase_digits(): test.TestOutcome {
     // 0xFF is emitted lowercase ('ff', not 'FF'). chr(255) via a
     // round-trip through decode keeps this byte-exact.
-    return test.assert_eq(hex.hex_encode(hex.hex_decode("ff")), "ff");
+    //
+    // 0xFF is not valid UTF-8, so feeding it back to the still-string-
+    // typed encoder needs the unchecked read: that is the encode-side
+    // half of the wart #5730 has yet to fix.
+    return test.assert_eq(hex.hex_encode(text(hex.hex_decode("ff"))), "ff");
 }
 
 // hex_decode_strict returns Some(bytes) on well-formed input.
 function test_decode_strict_valid(): test.TestOutcome {
     match (hex.hex_decode_strict("48656c6c6f")) {
-        Some(v) => { return test.assert_eq(v, "Hello"); },
+        Some(v) => { return test.assert_eq(text(v), "Hello"); },
         None => { return test.assert_true(false); },
     }
 }
@@ -74,7 +88,7 @@ function test_encode_upper(): test.TestOutcome {
     if (hex.hex_encode_upper("z") != "7A") { return test.fail("7A"); }
     if (hex.hex_encode_upper("") != "") { return test.fail("empty"); }
     // Round-trips through the case-insensitive decoder.
-    return test.assert_eq(hex.hex_decode(hex.hex_encode_upper("Hello")), "Hello");
+    return test.assert_eq(text(hex.hex_decode(hex.hex_encode_upper("Hello"))), "Hello");
 }
 
 function main(): i32 {

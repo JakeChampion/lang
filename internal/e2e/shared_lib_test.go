@@ -983,7 +983,7 @@ function check(env: usize, cls: usize): i32 {
     if (base64.base64_encode("Man") == "TWFu") { ok = ok + 4; }
     if (base64.base64_decode("TWFu") == "Man") { ok = ok + 8; }
     if (hex.hex_encode("AB") == "4142") { ok = ok + 16; }
-    if (hex.hex_decode("4142") == "AB") { ok = ok + 32; }
+    if (string_from_bytes_unchecked(hex.hex_decode("4142")) == "AB") { ok = ok + 32; }
     return ok;
 }
 function main(): i32 { return 0; }`

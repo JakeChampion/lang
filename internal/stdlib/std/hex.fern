@@ -1,11 +1,23 @@
 // std/hex — lowercase hex encode / decode.
 //
-// `hex_encode(s)` / `hex_decode(s)` — round-trip
+// `hex_encode(b)` / `hex_decode(s)` — round-trip
 // content-preserving on raw bytes. Encode emits lowercase
 // `0-9a-f`. Decode accepts both cases; terminates at the
 // first non-hex character or at an odd-length tail without
 // raising — partial inputs round-trip cleanly. Companion
 // to base64 with no `=` padding.
+//
+// DECODE yields `u8[]`, not `string` (#5730, decision D9):
+// decoding arbitrary hex produces arbitrary bytes, which are
+// not UTF-8 and so must not be typed as a `string`. Read the
+// result back as text with `std/utf8.from_bytes` when the
+// bytes are supposed to be text.
+//
+// ENCODE still takes a `string` and is still a byte container
+// on that side — it is the other half of the same wart. It
+// stays for now because it is coupled to `std/crypto`, whose
+// digest functions also return bytes as `string`; both move
+// together in a later slice of #5730.
 //
 // No prelude: these are in scope only after a program
 // declares `import "std/hex";` (docs/PRELUDE-TO-MODULES.md,
@@ -61,7 +73,7 @@ pub function hex_encode_upper(s: string): string {
     return string_from_bytes_unchecked(buf);
 }
 
-pub function hex_decode(s: string): string {
+pub function hex_decode(s: string): u8[] {
     var sLen: i32 = s.len();
     // Walk forward to count consecutive valid hex chars;
     // first non-hex (or odd-length tail) terminates.
@@ -71,7 +83,7 @@ pub function hex_decode(s: string): string {
         n = n + 1;
     }
     var pairs: i32 = n / 2;
-    if (pairs == 0) { return ""; }
+    if (pairs == 0) { return []; }
     var buf: u8[] = __alloc_u8(pairs);
     var i: i32 = 0;
     while (i < pairs) {
@@ -80,7 +92,7 @@ pub function hex_decode(s: string): string {
         buf = buf.with(i, ((hi << 4) | lo) as u8);
         i = i + 1;
     }
-    return string_from_bytes_unchecked(buf);
+    return buf;
 }
 
 // `hex_decode_strict(s)` — like `hex_decode` but returns `None` on malformed
@@ -89,8 +101,8 @@ pub function hex_decode(s: string): string {
 // hides tampering (a bad nibble just shortens the output); the strict variant
 // makes malformed input observable (#4384). Every character must be a hex
 // digit (either case) and the length must be even (an odd tail can't form a
-// byte). `""` decodes to `Some("")`.
-pub function hex_decode_strict(s: string): Option[string] {
+// byte). `""` decodes to `Some([])`.
+pub function hex_decode_strict(s: string): Option[u8[]] {
     var sLen: i32 = s.len();
     var k: i32 = 0;
     while (k < sLen) {
@@ -98,7 +110,7 @@ pub function hex_decode_strict(s: string): Option[string] {
         k = k + 1;
     }
     if (sLen % 2 != 0) { return None; }
-    if (sLen == 0) { return Some(""); }
+    if (sLen == 0) { return Some([]); }
     var pairs: i32 = sLen / 2;
     var buf: u8[] = __alloc_u8(pairs);
     var i: i32 = 0;
@@ -108,5 +120,5 @@ pub function hex_decode_strict(s: string): Option[string] {
         buf = buf.with(i, ((hi << 4) | lo) as u8);
         i = i + 1;
     }
-    return Some(string_from_bytes_unchecked(buf));
+    return Some(buf);
 }
