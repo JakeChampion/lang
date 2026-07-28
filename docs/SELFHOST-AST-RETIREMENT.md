@@ -1230,7 +1230,45 @@ So ~69% of it is the **lexer** (`Token[]`) and ~31% the parser's AST, scaling at
 ~1.6 KB leaked per source line. `load_imports` is not itself at fault — it just
 calls the pair 16 times.
 
-### ROOT CAUSE: an array reassigned by `.append` inside a LOOP is never dropped
+### A loop-append reclamation bug (real; a fix was tried and REVERTED)
+
+**CORRECTION, and the third time this section has over-generalised from a
+probe.** Everything below reproduces. It is *not* the cause of the per-load leak
+this section set out to explain: with a candidate fix in (`rhsTainted`'s
+receiver-only arm for `__method_Array_push`), the probe goes to allocs==frees,
+and the whole-compiler load leak is **unchanged** — 218/428/632 MB before,
+221/429/637 MB after, still +208 MB per load, and `tokenize`-only on
+`irlower.fern` stays at 40 MB per call either way.
+
+**That candidate fix is also UNSOUND at compiler scale, and was reverted.** It
+passes `internal/ir`, `internal/e2e` (1560 s, 0 failures), and every unit suite —
+then breaks `TestSelfHostStdTestE2EArm64` with 7 failures whose signature is
+freed-and-reused memory inside the self-host compiler: truncated symbols
+(`unknown mnemonic '__fn_m'`, `symbol '__fn_' is already defined`), a
+definition missing while its call site survives (`undefined reference to
+__fn_test__assert_eq__i32`), and two segfaults in the compiler itself. Suspected
+mechanism, unproven: `escapeOwned` deliberately does NOT taint a consuming-match
+binding, so once the receiver stops inheriting the element's taint, the buffer's
+deep drop and the binding's own exit sweep can both dec the same element.
+
+**Method note for the next attempt: `internal/e2e` is not the gate for an RC
+change — `internal/e2eselfhost` is.** Compiling the whole self-host compiler is
+what exercises RC at a scale where an over-release shows; the native e2e suite
+passed this change cleanly.
+
+The probe and the lexer share a *symptom* (an array built by `xs =
+xs.append(...)` in a loop, leaking one buffer per call) but not a *mechanism* —
+`lexer.tokenize` RETURNS its `out`, so the array escapes and is legitimately
+tainted in the callee; its leak is at whoever drops the returned value, which is
+still unattributed. I never checked that the two shared a mechanism before
+writing "ROOT CAUSE" at the top of this section.
+
+**Method note, since this keeps recurring:** a minimal repro that reproduces the
+symptom is not evidence about the original program until you fix it and re-measure
+the ORIGINAL. That check takes one driver rebuild and would have caught this, the
+"512 KiB threshold", and the struct-vs-enum framing.
+
+### The loop-append bug itself
 
 Minimal repro: `examples/probes/loop_append_drop_leak.fern`.
 
@@ -1253,9 +1291,24 @@ blocks in 4 calls; only `live_bytes` scales, 49 KB / 393 KB / 6.3 MB). The
 growth reallocs are all freed correctly; it is the function-exit drop of the
 loop-carried binding that never happens.
 
-That is why the lexer dominates the per-load leak: `tokenize` is
-`out = out.append(tok)` inside a `while (true)`, so every call leaks the entire
-`Token[]`.
+`lexer.tokenize` is `out = out.append(tok)` inside a `while (true)`, which is
+what drew attention here — but see the correction above: its leak survives this
+fix, because it RETURNS `out`. Same surface shape, different mechanism.
+
+**What the candidate fix was.** `rhsTainted` treating `__method_Array_push` as
+aliasing its RECEIVER only, joining `__method_Array_set` (and `Map_set`) which were already
+special-cased for exactly this. Without it, a loop counter's own `i = i + 1` — a
+`Binary` RHS, tainted by the conservative default — was passed as the appended
+element and tainted the receiving array, so the exit sweep fell through
+`__fern_arr_dec` (which returns the buffer) to a flat `__fern_rc_dec` (which does
+not). Sound for the same reason `set` is: the ELEMENT's aliasing is handled by
+the escape sink, which documents Args[0] as "the receiver array (threaded /
+reassigned), not retained" and runs `escapeOwned` on Args[1].
+
+Measured on the two shapes whose IR-level baselines this changes, both still
+exiting 3 against `fern -interp`: frees 600 -> 800 of 1000 allocs
+(`out.append(src[0])`), and 200 -> 400 of 600 (`out.append(row)`), live_bytes
+16000 -> 6400 in both.
 
 **Three of this section's earlier claims were RSS artifacts, now retracted:**
 
