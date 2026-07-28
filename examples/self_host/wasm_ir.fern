@@ -6217,3 +6217,88 @@ pub function arr_push_owned_helper(heap_base: i32): string {
     o = o + "    (local.get $na))\n";
     return o;
 }
+
+// digits_to_i32 now lives in util.fern (imported as `util`). See SH-020.
+pub function hex_digit(d: i32): string {
+    if (d == 0) { return "0"; } else if (d == 1) { return "1"; }
+    else if (d == 2) { return "2"; } else if (d == 3) { return "3"; }
+    else if (d == 4) { return "4"; } else if (d == 5) { return "5"; }
+    else if (d == 6) { return "6"; } else if (d == 7) { return "7"; }
+    else if (d == 8) { return "8"; } else if (d == 9) { return "9"; }
+    else if (d == 10) { return "a"; } else if (d == 11) { return "b"; }
+    else if (d == 12) { return "c"; } else if (d == 13) { return "d"; }
+    else if (d == 14) { return "e"; } else { return "f"; }
+}
+// wat_escape renders a string's bytes for a WAT `(data …)` payload:
+// printable ASCII passes through (except `"` and `\`), everything else
+// becomes a `\HH` hex escape — so embedded newlines / quotes survive.
+pub function wat_escape(s: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var b: i32 = s[i];
+        if (b >= 32 && b <= 126 && b != 34 && b != 92) {
+            out = out + s[i:i + 1];
+        } else {
+            out = out + "\\" + hex_digit(b / 16) + hex_digit(b % 16);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+// le32_escape renders a non-negative i32 as four little-endian bytes in
+// WAT `\HH` escape form — the length prefix of a string block.
+pub function le32_escape(n: i32): string {
+    var b0: i32 = n % 256;
+    var b1: i32 = (n / 256) % 256;
+    var b2: i32 = (n / 65536) % 256;
+    var b3: i32 = (n / 16777216) % 256;
+    return "\\" + hex_digit(b0 / 16) + hex_digit(b0 % 16)
+        + "\\" + hex_digit(b1 / 16) + hex_digit(b1 % 16)
+        + "\\" + hex_digit(b2 / 16) + hex_digit(b2 % 16)
+        + "\\" + hex_digit(b3 / 16) + hex_digit(b3 % 16);
+}
+// arr_push_wide emits a geometric-growth push for an 8-byte-slot array.
+// `vty` is the wasm value type of the appended element (i64 / f64);
+// `sop` its store op. Existing elements are copied with a raw i64 move
+// (8 bytes, element-type-agnostic).
+// arr_push_i64_helper emits $__fern_arr_push_i64 standalone for the IR path
+// (the AST path gets it bundled inside arr_helpers). 8-byte-slot geometric-
+// growth push — the i64[] / u64[] companion to arr_push_helper's 4-byte
+// $__fern_arr_push. Depends only on $__fern_arr_box (module_allocates).
+pub function arr_push_i64_helper(): string {
+    return arr_push_wide("i64", "i64");
+}
+// arr_push_f64_helper emits $__fern_arr_push_f64 — the f64[] companion to
+// arr_push_i64_helper. Same 8-byte-slot geometric-growth push, but the value
+// param + final store are f64 (the existing-element copy loop stays i64.load /
+// i64.store, which is bit-preserving for the raw 8-byte slots). Lowered from
+// `a = a.append(v)` on an f64[].
+pub function arr_push_f64_helper(): string {
+    return arr_push_wide("f64", "f64");
+}
+pub function arr_push_wide(vty: string, sop: string): string {
+    var o: string = "";
+    o = o + "  (func $__fern_arr_push_" + vty + " (param $a i32) (param $v " + vty + ") (result i32)\n";
+    o = o + "    (local $len i32) (local $cap i32) (local $na i32) (local $ncap i32) (local $i i32)\n";
+    o = o + "    (local.set $len (i32.load (local.get $a)))\n";
+    o = o + "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
+    o = o + "    (if (i32.lt_s (local.get $len) (local.get $cap)) (then\n";
+    o = o + "      (" + sop + ".store (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $len) (i32.const 8))) (local.get $v))\n";
+    o = o + "      (i32.store (local.get $a) (i32.add (local.get $len) (i32.const 1)))\n";
+    o = o + "      (return (local.get $a))))\n";
+    o = o + "    (local.set $ncap (i32.const 4))\n";
+    o = o + "    (if (i32.gt_s (local.get $cap) (i32.const 0)) (then (local.set $ncap (i32.mul (local.get $cap) (i32.const 2)))))\n";
+    o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $ncap) (i32.const 8))))\n";
+    o = o + "    (i32.store (local.get $na) (i32.add (local.get $len) (i32.const 1)))\n";
+    o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $ncap))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
+    o = o + "      (i64.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8))) (i64.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 8)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (" + sop + ".store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $len) (i32.const 8))) (local.get $v))\n";
+    o = o + "    (local.get $na))\n";
+    return o;
+}
