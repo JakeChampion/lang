@@ -4647,6 +4647,32 @@ func fConvSeq(in x86.Inst) ([]string, error) {
 		return append([]string{fmt.Sprintf("fmov d0, %s", d), fmt.Sprintf("fcvtzs %s, d0", d)}, maskFix(in.Dst, in.W)...), nil
 	case ssa.OpFToIU:
 		return append([]string{fmt.Sprintf("fmov d0, %s", d), fmt.Sprintf("fcvtzu %s, d0", d)}, maskFix(in.Dst, in.W)...), nil
+	case ssa.OpReinterpretF64ToI64, ssa.OpReinterpretI64ToF64:
+		// Identity, for the same reason OpFPromote is: a float is HELD in a
+		// general register as its raw f64 bit pattern (that is what every
+		// `fmov d0, x` above moves), so asking for those bits as an i64 — or
+		// handing an i64 pattern back as an f64 — is already what the
+		// register contains. Mirrors x86_64ssa's model (model.go's
+		// "identity: floats live as their f64 bit pattern already").
+		return nil, nil
+	case ssa.OpReinterpretF32ToI32:
+		// f32 bits as an i32. The register holds an f64 pattern, so narrow to
+		// f32 first, then move the 32-bit half out. `fmov w, s` transfers the
+		// raw bits (no conversion); maskFix sign-extends to the i32 storage
+		// convention.
+		return append([]string{
+			fmt.Sprintf("fmov d0, %s", d),
+			"fcvt s0, d0",
+			fmt.Sprintf("fmov %s, s0", wreg(in.Dst)),
+		}, maskFix(in.Dst, 32)...), nil
+	case ssa.OpReinterpretI32ToF32:
+		// The inverse: read the low 32 bits as an f32 pattern, then widen to
+		// the f64 pattern the register convention stores.
+		return []string{
+			fmt.Sprintf("fmov s0, %s", wreg(in.Dst)),
+			"fcvt d0, s0",
+			fmt.Sprintf("fmov %s, d0", d),
+		}, nil
 	}
 	return nil, fmt.Errorf("arm64ssa: float conversion %v not supported yet", in.K)
 }
