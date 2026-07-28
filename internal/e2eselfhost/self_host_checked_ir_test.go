@@ -74,6 +74,27 @@ var checkedIRCases = []struct {
 	{"i64-rem-ok", `function main(): i32 { var a: i64 = 85; var b: i64 = 43; match (a %? b) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 42},
 	{"u64-div-zero", `function main(): i32 { var m: u64 = 100; var z: u64 = 0; match (m /? z) { Some(v) => { return 9; }, None => { return 50; } } }`, 50},
 	{"u64-div-ok", `function main(): i32 { var m: u64 = 84; var z: u64 = 2; match (m /? z) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 42},
+
+	// <<? and >>?: None on an out-of-range shift count (< 0 or >= width);
+	// the value is masked to the operand width (`255u8 <<? 1 == 254`).
+	{"i32-shl-ok", `function main(): i32 { var a: i32 = 1; var b: i32 = 4; match (a <<? b) { Some(v) => { return v; }, None => { return 99; } } }`, 16},
+	{"i32-shl-oor", `function main(): i32 { var a: i32 = 1; var b: i32 = 32; match (a <<? b) { Some(v) => { return 1; }, None => { return 41; } } }`, 41},
+	{"i32-shl-neg", `function main(): i32 { var a: i32 = 1; var b: i32 = 0 - 1; match (a <<? b) { Some(v) => { return 2; }, None => { return 42; } } }`, 42},
+	{"i32-shr-ok", `function main(): i32 { var a: i32 = 256; var b: i32 = 4; match (a >>? b) { Some(v) => { return v; }, None => { return 99; } } }`, 16},
+	{"i32-shr-oor", `function main(): i32 { var a: i32 = 256; var b: i32 = 33; match (a >>? b) { Some(v) => { return 3; }, None => { return 43; } } }`, 43},
+	{"i32-shr-arith", `function main(): i32 { var a: i32 = 0 - 16; var b: i32 = 2; match (a >>? b) { Some(v) => { if (v == (0 - 4)) { return 44; } return 88; }, None => { return 89; } } }`, 44},
+	{"u32-shl-ok", `function main(): i32 { var a: u32 = 8; var b: u32 = 2; match (a <<? b) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 32},
+	{"u32-shl-oor", `function main(): i32 { var a: u32 = 1; var b: u32 = 32; match (a <<? b) { Some(v) => { return 4; }, None => { return 45; } } }`, 45},
+	{"u32-shl-wrap", `function main(): i32 { var a: u32 = 4294967295; match (a <<? (1 as u32)) { Some(v) => { if (v == 4294967294) { return 46; } return 88; }, None => { return 89; } } }`, 46},
+	{"u32-shr-logical", `function main(): i32 { var a: u32 = 4294967288; match (a >>? (2 as u32)) { Some(v) => { if (v == 1073741822) { return 47; } return 88; }, None => { return 89; } } }`, 47},
+	{"u8-shl-ok", `function main(): i32 { var a: u8 = 1; var b: u8 = 3; match (a <<? b) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 8},
+	{"u8-shl-oor", `function main(): i32 { var a: u8 = 1; var b: u8 = 8; match (a <<? b) { Some(v) => { return 5; }, None => { return 48; } } }`, 48},
+	{"u8-shl-wrap", `function main(): i32 { var a: u8 = 255; match (a <<? (1 as u8)) { Some(v) => { if ((v as i32) == 254) { return 49; } return 88; }, None => { return 89; } } }`, 49},
+	{"i64-shl-ok", `function main(): i32 { var a: i64 = 1; var b: i64 = 40; match (a <<? b) { Some(v) => { if (v == 1099511627776) { return 50; } return 88; }, None => { return 89; } } }`, 50},
+	{"i64-shl-oor", `function main(): i32 { var a: i64 = 1; var b: i64 = 64; match (a <<? b) { Some(v) => { return 6; }, None => { return 51; } } }`, 51},
+	{"i64-shr-ok", `function main(): i32 { var a: i64 = 1024; var b: i64 = 4; match (a >>? b) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 64},
+	{"u64-shl-oor", `function main(): i32 { var a: u64 = 1; var b: u64 = 64; match (a <<? b) { Some(v) => { return 7; }, None => { return 52; } } }`, 52},
+	{"u64-shr-ok", `function main(): i32 { var a: u64 = 1024; var b: u64 = 5; match (a >>? b) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 32},
 }
 
 // TestSelfHostCheckedX86IR pins the checked operators on the x86-64 IR backend

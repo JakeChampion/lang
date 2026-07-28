@@ -1085,7 +1085,7 @@ func binaryPrec(op string) int {
 		return precBitXor
 	case "&":
 		return precBitAnd
-	case "<<", ">>", "<<|":
+	case "<<", ">>", "<<|", "<<?", ">>?":
 		return precShift
 	case "+", "-", "+|", "-|", "+?", "-?":
 		return precAdd

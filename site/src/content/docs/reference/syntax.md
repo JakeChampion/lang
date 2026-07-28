@@ -54,7 +54,7 @@ except where noted.
 | 2          | `!` `-` (unary)                 | right         |
 | 3          | `*` `/` `%` `*\|` `*?` `/?` `%?` | left         |
 | 4          | `+` `-` `+\|` `-\|` `+?` `-?`   | left          |
-| 5          | `<<` `>>`                       | left          |
+| 5          | `<<` `>>` `<<\|` `<<?` `>>?`     | left          |
 | 6          | `&`                             | left          |
 | 7          | `^`                             | left          |
 | 8          | `\|`                            | left          |
@@ -67,9 +67,10 @@ except where noted.
 
 `+|` / `-|` / `*|` are the **saturating** integer operators: they clamp to
 the operand type's `[MIN, MAX]` instead of wrapping. `+?` / `-?` / `*?` /
-`/?` / `%?` are the **checked** integer operators: they evaluate to
-`Some(result)` when it fits the operand type and `None` on overflow (and,
-for `/?` / `%?`, on a zero divisor or the signed `MIN / -1`). Both families are
+`/?` / `%?` / `<<?` / `>>?` are the **checked** integer operators: they
+evaluate to `Some(result)` when it fits the operand type and `None` on
+overflow (for `/?` / `%?`, on a zero divisor or the signed `MIN / -1`;
+for `<<?` / `>>?`, on an out-of-range shift count). Both families are
 integer-only and otherwise behave exactly like their wrapping
 counterparts — see
 [Integer semantics](https://github.com/JakeChampion/lang/blob/main/docs/INTEGER-SEMANTICS.md).

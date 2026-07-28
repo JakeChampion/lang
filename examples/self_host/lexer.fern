@@ -131,6 +131,7 @@ function match_multipunct(src: string, i: i32, n: i32): string {
     if (i + 3 <= n) {
         var s3: str = src[i:i + 3];
         if (s3 == "<<=" || s3 == ">>=" || s3 == "<<|"
+            || s3 == "<<?" || s3 == ">>?"
             || s3 == "..." || s3 == "..=") { return s3 + ""; }
     }
     if (i + 2 <= n) {
