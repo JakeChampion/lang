@@ -110,6 +110,28 @@ function main(): i32 { return addf(90.0f32, 6.55f32) as i32; }`,
 			want: 96,
 		},
 		{
+			// f32 arithmetic must round to f32 after EVERY operation, including
+			// when the whole chain is constant and folds at compile time. The
+			// SSA path lost the f32 width at the lift, so both constant folders
+			// (SCCP and Fold) evaluated the chain at f64 precision and produced
+			// -360517687 — a value f32 cannot represent, its ulp at that
+			// magnitude being 32 — where the interpreter and both native
+			// backends produce -360517664. Masked to a byte the two differ as
+			// 201 vs 224, so the exit code discriminates.
+			name: "float32_precision",
+			src: `function main(): i32 {
+  var a: f32 = 73.46f32;
+  var b: f32 = 12.68f32;
+  var c: f32 = 34.42f32;
+  var d: f32 = 99.49f32;
+  var e: f32 = 27.06f32;
+  var g: f32 = 27.89f32;
+  var h: f32 = 91.90f32;
+  return ((((a - b) * c) * (d * (e * (g - h)))) as i32) & 255;
+}`,
+			want: 224,
+		},
+		{
 			// Ordered comparisons against NaN are all false; only `!=` is true.
 			// The renderer emitted the UNSIGNED AArch64 condition codes, which
 			// agree with the IEEE ones on ordered operands but read true on
