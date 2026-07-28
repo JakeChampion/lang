@@ -140,15 +140,43 @@ Mapping every remaining `asm.emit_module` / `asm_arm64.emit_module` /
 | arm64 ELF | yes, and it carries **no 512-function budget** | `all_eligible` false |
 | arm64-darwin | yes — `emit_module_ir(lm, darwin)` threads `darwin` into `emit_runtime` | `all_eligible` false |
 | wasm core | yes | `wasm_ir.should_use_ir_core` false (the `wasm_ir_deferrals_ok` set) |
-| **wasm component** | **none** — `wasm.emit_module_mode` gates it `ir_ok = !component && …` | **always** |
+| wasm component | yes, for the no-I/O + stdout/stderr/exit shapes | `component_needs_ok` false (any other WASI category) |
 
 So the raw call-site count badly overstates the work: `asm.emit_module` and
 `asm_arm64.emit_module` are both IR-*preferring shells* (each runs the gate
 first and only falls through), so most of those sites are already IR routes.
-What the table above does NOT cover is the last row: **component-model wasm has
-no IR path at all**, which is why the `emit-target-wasm-component*` cases are
-AST-only. Retiring `wasm.fern` therefore needs an IR leg built for component
-mode — new work, not a decline-reason to close.
+
+**The last row was `none` until 2026-07-28** — `wasm.emit_module_mode` gated the
+IR leg on `ir_ok = !component && …`, so every `emit-target-wasm-component*` case
+was AST-only *unconditionally*, an output mode with no IR path to decline rather
+than a decline reason to close. It now has one, for the subset the fixed
+component framings can serve:
+
+| shape | mode | core imports | framing |
+|---|---|---|---|
+| no I/O | 1 | none | `component_full` |
+| stdout | 2 | get-stdout, blocking-write-and-flush | `component_full_io` |
+| stderr | 2 | get-stderr, blocking-write-and-flush, get-stdout | `component_full_io_eprint` |
+| exit | 2 | get-stdout, blocking-write-and-flush, wasi:cli/exit | `component_full_io_exit` |
+
+The leg is a fork at two points inside `wasm_ir.emit_ir_module_units_mode`, not
+a second emitter: the import section, and the entry (`_start` → `main` +
+`_lang_run`). Everything between — memory, literals, type-id globals, heap + RC
+runtime, every helper body, the funcref table — is mode-independent. What makes
+that possible is that the preview1 surface the IR already emits is shimmable:
+mode 2 *defines* `$fd_write` over `blocking-write-and-flush` and `$proc_exit`
+over `wasi:cli/exit`, so every emitted call site links unchanged. The mode-2
+`$fd_write` dispatches on its `fd` argument (2 → stderr, else stdout), which is
+why eprint and print share one shim where the AST path needs a separate
+`$__fern_eprint` body.
+
+What remains AST-only is the rest of `component_shape`: fs / env / args /
+random / clock. Those are not gated by the framing but by the *helpers* —
+`readfile_func_p2`, `env_func_p2`, `args_func_p2`, `clock_funcs_p2`,
+`random_func_p2` are preview2 rewrites living only in `wasm.fern`, with no IR
+sibling. Each is an independent, well-scoped port against a working reference;
+`component_needs_ok` is an allowlist over need names and fails closed, so a
+shape stays on the AST path until its helper is ported and the name is added.
 
 Two corrections to the framing that was here before:
 
