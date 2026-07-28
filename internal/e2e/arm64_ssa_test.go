@@ -132,6 +132,27 @@ function main(): i32 { return addf(90.0f32, 6.55f32) as i32; }`,
 			want: 224,
 		},
 		{
+			// Float-to-int conversion saturates (docs/FLOAT-SEMANTICS.md): NaN
+			// gives 0, out of range clamps to the destination's min/max. AArch64
+			// fcvtz{s,u} saturate to the DESTINATION REGISTER's width, so
+			// converting into `x` and narrowing with maskFix wrapped instead of
+			// clamping — `(91.23f32 * 1e9) as i32` gave 1035689984 where every
+			// other backend gives INT32_MAX. Sums three cases into one byte:
+			// overflow (+1), NaN (+2), underflow (+4) = 7.
+			name: "float_to_int_saturates",
+			src: `function scale(x: f32): f32 { return x * 1000000000.0f32; }
+function main(): i32 {
+  var a: f32 = 91.23f32;
+  var z: f32 = 0.0f32;
+  var n: i32 = 0;
+  if ((scale(a) as i32) == 2147483647) { n = n + 1; }
+  if (((z / z) as i32) == 0) { n = n + 2; }
+  if (((z - scale(a)) as i32) == ((0 - 2147483647) - 1)) { n = n + 4; }
+  return n;
+}`,
+			want: 7,
+		},
+		{
 			// Ordered comparisons against NaN are all false; only `!=` is true.
 			// The renderer emitted the UNSIGNED AArch64 condition codes, which
 			// agree with the IEEE ones on ordered operands but read true on
@@ -152,6 +173,29 @@ function main(): i32 { return addf(90.0f32, 6.55f32) as i32; }`,
   return n;
 }`,
 			want: 1,
+		},
+		{
+			// A closure capturing [4-byte scalar, pointer] — the shape that used
+			// to SIGSEGV (#5767). The IR emits a `__closure_drop_<name>` thunk
+			// that reads its pointer captures at env-block offsets, but this
+			// path skipped ir.ElideClosurePair (which arm64, x86-64 and wasmbin
+			// all run), so OpMakeClosure survived and the thunk was handed the
+			// 16-byte {fn_idx, env_ptr} cell instead of the env. With the
+			// pointer capture at env offset 4 the thunk loaded 8 bytes across
+			// both cell fields — 0x410028 became 0x0041002800000000 — and
+			// rc.dec'd that. `f` is never called: building the closure is
+			// enough. Other capture orders did not crash only because their
+			// offset happened to land on the env pointer or on fn_idx (below
+			// the heap, so the rc guard swallowed it) — decrementing the wrong
+			// object rather than faulting.
+			name: "closure_scalar_then_pointer_capture",
+			src: `function main(): i32 {
+  var v1: i32 = 1;
+  var o: Option[i32] = Some(7);
+  function f(): i32 { return v1 + (match (o) { Some(e) => 1, None => 2 }); }
+  return 32;
+}`,
+			want: 32,
 		},
 		{
 			// Option Some path via the pair-return convention (CallPair + TRetPair
