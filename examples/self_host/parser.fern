@@ -5573,6 +5573,19 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "" });
         structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
     }
+    // Platform — the capability bag threaded as every handler's second
+    // parameter, and so a component of every `(HttpRequest, Platform) =>
+    // HttpResponse` signature in std/tcp. builtins.fern declares it for the
+    // import-driven driver; this entry covers the paths that never read that
+    // file (asm_load_run's stdlib-root loading), where its absence made
+    // std/tcp's __serve_loop bail to the AST emitter — which cannot emit
+    // tcp_listen / poll, so the failure surfaced as a link error (#5686).
+    // Phase 1 carries the single `version: i32` placeholder native registers.
+    if (!struct_declared(structs, "Platform")) {
+        var pltf: StructFieldDecl[] = [];
+        pltf = pltf.append(StructFieldDecl { name: "version", type_name: "i32", fn_ret: "" });
+        structs = structs.append(StructDecl { name: "Platform", fields: pltf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+    }
     // std/time's seven date/time types are compiler built-ins (registered in
     // the Go checker, not `struct`-declared in std/time), so the self-host's
     // shape-pointer dispatch + field-offset resolution need their layouts here

@@ -22,6 +22,9 @@ func WriteSelfHostModloadProject(t *testing.T) string {
 		"ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "asm_arm64_ir.fern",
 		"flatten.fern", "modloader.fern", "fern_toml.fern", "builtins.fern", "asm_modload_run.fern",
 		"asm_arm64.fern",
+		// treeshake backs the over-budget per-module rescue: the driver derives
+		// the reachable-name set from it before pruning each unit.
+		"treeshake.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
