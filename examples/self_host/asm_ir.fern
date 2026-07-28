@@ -5901,7 +5901,24 @@ pub function all_runtime_need_roots(): string[] {
         "read_int", "sleep_ms", "str_bytes", "str_case", "str_chars", "str_cmp",
         "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
         "str_read_line", "str_repeat", "str_replace", "str_reverse", "str_search",
-        "optarrarr_free", "str_split", "str_to_i32", "str_trim", "strarrarr_free", "strbuf"
+        "optarrarr_free", "str_split", "str_to_i32", "str_trim", "strarrarr_free", "strbuf",
+        // The platform helpers. These were absent for as long as the list
+        // existed, which made the "closed set" claim above false: the
+        // bootstrap compiler marks none of them, so nothing noticed until a
+        // per-module build of a REAL program — the std/http + std/tcp
+        // edge-handler — linked its library units against undefined
+        // __fern_tcp_listen / __fern_tcp_send / __fern_poll / … (#5686).
+        // Filesystem + process:
+        "stat", "read_dir", "remove_file", "remove_dir_all", "write_file",
+        "temp_dir", "open_file", "reader", "subprocess",
+        // stdin / argv:
+        "read_all_stdin", "arg_at",
+        // sockets + readiness (the edge-handler serve loop):
+        "tcp_listen", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv",
+        "tcp_close", "tcp_pollable", "poll", "timer_fd",
+        "wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll",
+        // wide-int stringifiers + the Option-returning i32 min/max:
+        "i64_to_string", "u64_to_string", "arr_i32_min_max_opt"
     ];
 }
 
