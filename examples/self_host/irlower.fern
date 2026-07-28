@@ -14616,7 +14616,27 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                             // (#3452 / #3425). An ALIASED target keeps the plain
                             // arr_push (leaky but sound), mirroring the `.with`
                             // aliased gate above (#3599).
-                            if (s.is_aliased_name(a.target)) {
+                            //
+                            // A PARAM target is never a sole owner (#3457): its
+                            // buffer belongs to the CALLER, which sweeps it at its
+                            // own exit, so reclaiming it here is a double free.
+                            // `is_aliased_name` only sees aliases created INSIDE
+                            // this function, so it cannot catch the caller's
+                            // reference — hence the explicit slot < n_params gate.
+                            // Found via `slice_escape_diags`/`e065_diags`, which
+                            // pass a fresh `string[]` local into a walker that does
+                            // `xs = xs.append(name)`: the walker reclaimed the
+                            // caller's buffer, the caller's exit sweep dec'd the
+                            // freed block, and the recycled 16-byte block was
+                            // handed to the next `__fern_str_box` — so the "E063" /
+                            // "E065" diagnostic code boxes came back with a data
+                            // pointer one byte low (" E06" / ")E06"). Only the
+                            // FIRST append can see the caller's buffer, but that is
+                            // not statically knowable, so the whole reassign takes
+                            // the plain push: arrays grow geometrically, so this
+                            // leaks O(log n) pre-grow buffers per call, the same
+                            // profile the aliased branch already accepts.
+                            if (s.is_aliased_name(a.target) || slot < s.n_params) {
                                 aps = aps.emit(ir.op_arr_push());
                             } else {
                                 aps = aps.emit(ir.op_arr_push_owned());

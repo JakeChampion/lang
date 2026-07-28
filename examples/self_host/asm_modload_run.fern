@@ -31,7 +31,6 @@ import "./asm_arm64";
 import "./asm_ir";
 import "./modloader";
 import "./treeshake";
-import "./astwalk";
 
 // builtin_view returns `base` (the union of every per-module unit's structs)
 // extended with the built-in TYPE layouts the compiler's own code references:
@@ -100,72 +99,6 @@ function dedupe_shape_defs(asm_text: string): string {
         i = j + 1;
     }
     return strbuf_take();
-}
-
-// needs_ir_only_builtin reports whether `mod` calls a builtin that ONLY the IR
-// path can emit — the x86-64 AST emitter (asm.fern's try_emit_builtin) has no
-// case for it, so it falls through to the generic user-call path and emits
-// `call __fn_<name>` against a symbol nothing defines. Such a program does not
-// link, whatever else is true of it.
-//
-// This is the gate on the over-budget per-module rescue below, and it is
-// deliberately narrow. The rescue routes a program that would otherwise reach
-// the AST emitter through a DIFFERENT backend, so switching one on for programs
-// the AST emitter already compiles correctly is a regression risk with no
-// upside — and a real one: the self-host CHECKER driver is itself built by this
-// driver and sits in the same size window, so an unconditional rescue silently
-// recompiled it through the concat path (where #5698's cross-unit fn-value
-// miscompile then broke its answers). Programs the AST emitter can express keep
-// routing to it, byte-identically.
-//
-// The list is the set difference "names irlower lowers" minus "names
-// asm.fern's try_emit_builtin intercepts": the sockets, the readiness /
-// pollable family, the streaming file openers, and the three scalar helpers
-// the legacy backend never grew. Adding an AST case for one of these is what
-// removes it from here.
-function ir_only_builtin_names(): string[] {
-    return [
-        "tcp_listen", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv",
-        "tcp_close", "tcp_pollable", "udp_send",
-        "poll", "timer_fd", "wasm_timer_pollable", "wasm_pollable_drop",
-        "wasm_block", "wasm_poll",
-        "open_reader", "open_writer", "open_appender",
-        "putchar", "random_i32", "stdout", "stderr"
-    ];
-}
-
-function needs_ir_only_builtin(mod: parser.Module): boolean {
-    var wanted: string[] = ir_only_builtin_names();
-    var fi: i32 = 0;
-    while (fi < mod.funcs.len()) {
-        var ids: string[] = [];
-        var si: i32 = 0;
-        while (si < mod.funcs[fi].body.len()) {
-            ids = astwalk.collect_idents_stmt(mod.funcs[fi].body[si], ids);
-            si = si + 1;
-        }
-        var ii: i32 = 0;
-        while (ii < ids.len()) {
-            // A program that DECLARES a function of one of these names shadows
-            // the builtin: those calls are ordinary user calls the AST emitter
-            // emits fine, so diverting on the bare name would be a false
-            // positive — and diverting a program the AST emitter handles is the
-            // exact mistake this gate exists to prevent.
-            if (util.has_str(wanted, ids[ii]) && !declares_func(mod, ids[ii])) { return true; }
-            ii = ii + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
-}
-
-function declares_func(mod: parser.Module, name: string): boolean {
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        if (mod.funcs[i].name == name) { return true; }
-        i = i + 1;
-    }
-    return false;
 }
 
 // prune_to_reachable keeps only `mod`'s funcs whose mangled name is in `reach`
@@ -710,7 +643,7 @@ function main(): i32 {
             // program that routed AST before routes AST byte-identically now.
             var mwb: parser.Module = parser.module_with_builtins(merged);
             var nfuncs: i32 = asm_ir.lift_lambdas(mwb).funcs.len();
-            if (nfuncs > 512 && nfuncs < 1500 && needs_ir_only_builtin(merged)) {
+            if (nfuncs > 512 && nfuncs < 1500) {
                 var shaken: parser.Module = treeshake.treeshake(merged);
                 var reach: string[] = [];
                 var ri: i32 = 0;
