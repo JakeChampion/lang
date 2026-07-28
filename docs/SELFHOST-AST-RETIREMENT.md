@@ -1162,6 +1162,83 @@ maintained forever against a bar no cheap test can enforce (see below). Recorded
 here so the option is closed by measurement instead of being re-derived a third
 time.
 
+## The load pipeline leaks, on BOTH runtimes (2026-07-28)
+
+Following the section above's "the next real target is module loading", the
+1121 MB is **not** a parsing algorithm being expensive, and **not** (only) a
+self-host representation cost. Loading leaks essentially all of it, on the
+native runtime too.
+
+Method: a throwaway `-load-bench N` driver mode running the full
+read→tokenize→parse→`load_imports`→`bundle_per_module` pipeline N times, each
+result dropped before the next. A runtime that reclaims holds a flat peak.
+
+| loads | gen0 (native runtime) | gen1 (self-host runtime) |
+|---|---:|---:|
+| 1 | 218 MB | 1120 MB |
+| 2 | 428 MB | 2239 MB |
+| 3 | 632 MB | 3358 MB |
+
+Exactly linear on both: **+210 MB per load native, +1119 MB per load
+self-host, zero reuse.** So there are two independent facts, and the second one
+is the one that had been assumed to be the whole story:
+
+1. the load's working set is never reclaimed on **either** runtime; and
+2. separately, the self-host runtime allocates ~5.3x the bytes for the same
+   work (the emit call, by contrast, sits at 1.66x — inside the documented
+   1.3-2.6x band, so the multiplier is concentrated in loading).
+
+**Where it leaks.** Per-load leak by stage, gen0, measured on large inputs
+(a small entry file leaks under 1 MB and rounds to zero — the first version of
+this bisect used the ~700-line driver as its input and wrongly read
+tokenize/parse as leak-free):
+
+| stage | `irlower.fern` (41k lines) | `parser.fern` (14k lines) |
+|---|---:|---:|
+| tokenize only | 44 MB | 16 MB |
+| + `parse_module` | 64 MB | 24 MB |
+
+So ~69% of it is the **lexer** (`Token[]`) and ~31% the parser's AST, scaling at
+~1.6 KB leaked per source line. `load_imports` is not itself at fault — it just
+calls the pair 16 times.
+
+**Minimal repro, and the shape that matters** (`examples/probes/
+large_array_drop_leak.fern`). Build an array, drop it, repeat. Two hypotheses
+died on the way, both worth recording because each looked obvious:
+
+- "array of structs with a string field" — does NOT leak (800k allocations, flat
+  peak). `Token` is an **enum**, not a struct.
+- "array of enum values with heap payloads" — does NOT leak either, *at small
+  sizes*. That was the real variable.
+
+The leak is **size-dependent**, per round, exact peak via `getrusage`:
+
+| array | rounds 1 -> 16 | leak/round |
+|---|---:|---:|
+| 39 KB | 9 -> 10 MB | 0.07 MB |
+| 156 KB (-> 256 KiB class) | 9 -> 10 MB | 0.07 MB |
+| 390 KB (-> 512 KiB class) | 10 -> 17 MB | **0.47 MB** |
+| 781 KB (-> 1 MiB) | 10 -> 34 MB | **1.60 MB** |
+| 1562 KB (-> 2 MiB) | 14 -> 69 MB | **3.67 MB** |
+
+Nothing measurable up to the 256 KiB class; from the 512 KiB class up it leaks
+~1.2-2.4x the array size per round (more than the array itself, so the
+geometric-growth cast-offs are going too). That is why the lexer dominates:
+`irlower.fern` produces ~500k tokens, a multi-MB array well past the threshold.
+
+**Scope — this is not a self-host-only concern.** It reproduces on the native
+backend, so it affects `fern` itself and anything that parses repeatedly in one
+process. `fern-lsp` re-loads on every edit, which is exactly the long-running,
+allocation-heavy workload CLAUDE.md now puts in scope.
+
+**Not yet root-caused, deliberately.** `__fern_free`'s large tier bins to 3
+significant bits up to 1 GiB and looks correct on inspection, so the fault is
+somewhere else — the prime suspect is the one this doc already lists as open:
+`__fern_alloc_reuse`'s oversize-donor discard (`.Lsarelo`), still leaking on
+both backends. Naming a cause without proving it is what cost this doc two
+attempts in the checker-miscompile section; the repro above is the tool for
+whoever picks it up.
+
 **Small-program tests cannot guard these analyses — measured.** Building a driver
 with the borrowable fixpoint's cap forced to 1 (un-converged, hence unsound in
 the over-borrow direction) *does* change the registry — a param forwarded to a

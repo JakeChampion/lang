@@ -1,0 +1,34 @@
+// Minimal repro for the large-block drop leak found while attributing the
+// #3457 emit floor (see docs/SELFHOST-AST-RETIREMENT.md, "The load pipeline
+// leaks"). Each round builds an enum-payload array, drops it, and builds
+// another; a runtime that reclaims correctly holds a flat peak, since every
+// round's blocks should be recycled by the next.
+//
+// It does not. On the NATIVE x86-64 backend the peak grows ~3.7 MB per round
+// here, and the leak is size-dependent: nothing measurable up to the 256 KiB
+// size class, then ~1.2-2.4x the array size per round from the 512 KiB class
+// up. Exit code is (rounds * (n % 7)) % 5 = 3, so a run that still exits 3
+// while peaking flat is the fix landing.
+//
+//   fern -target x86-64 -o /tmp/p examples/probes/large_array_drop_leak.fern
+//   # then compare peak RSS at rounds=1 vs rounds=16
+//
+enum Tok { Ident(string), Num(i32), Eof }
+
+function build(n: i32): i32 {
+    var xs: Tok[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        var t: string = "tok" + "abcdefghij"[0:(i % 10) + 1];
+        xs = xs.append(Ident(t));
+        i = i + 1;
+    }
+    return xs.len() % 7;
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 16) { acc = acc + build(200000); r = r + 1; }
+    return acc % 5;
+}
