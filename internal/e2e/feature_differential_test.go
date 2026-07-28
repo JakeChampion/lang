@@ -523,7 +523,7 @@ import "std/base64";
 function main(): i32 {
     print(hex.hex_encode("AB"));
     print(base64.base64_encode("Hello"));
-    print(base64.base64_decode("TWFu"));
+    print(string_from_bytes_unchecked(base64.base64_decode("TWFu")));
     print(string_from_bytes_unchecked(hex.hex_decode("4142")));
     return 0;
 }`},

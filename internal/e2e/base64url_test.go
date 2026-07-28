@@ -13,13 +13,13 @@ import "std/string";
 function main(): i32 {
     var enc: string = b64.base64url_encode("Hello, World!");
     if (enc.contains("+") || enc.contains("/") || enc.contains("=")) { return 1; }
-    if (b64.base64url_decode(enc) != "Hello, World!") { return 2; }
+    if (string_from_bytes_unchecked(b64.base64url_decode(enc)) != "Hello, World!") { return 2; }
     var s2: string = string_from_bytes_unchecked([255 as u8, 255 as u8, 255 as u8]);
     if (b64.base64url_encode(s2) != "____") { return 3; }
-    if (b64.base64url_decode("____") != s2) { return 4; }
+    if (string_from_bytes_unchecked(b64.base64url_decode("____")) != s2) { return 4; }
     if (b64.base64url_encode("Hi") != "SGk") { return 5; }
-    if (b64.base64url_decode("SGk") != "Hi" || b64.base64url_decode("SGk=") != "Hi") { return 6; }
-    if (b64.base64url_encode("") != "" || b64.base64url_decode("") != "") { return 7; }
+    if (string_from_bytes_unchecked(b64.base64url_decode("SGk")) != "Hi" || string_from_bytes_unchecked(b64.base64url_decode("SGk=")) != "Hi") { return 6; }
+    if (b64.base64url_encode("") != "" || string_from_bytes_unchecked(b64.base64url_decode("")) != "") { return 7; }
     return 42;
 }
 `

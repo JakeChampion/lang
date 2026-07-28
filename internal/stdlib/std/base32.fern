@@ -8,6 +8,16 @@
 // nor `=`, returning the bytes decoded so far. Round-trips
 // `base32_encode` on any byte content. Base32's case-insensitive,
 // digit-safe alphabet suits TOTP secrets, filenames, and DNS labels.
+//
+// DECODE yields `u8[]`, not `string` (#5730, decision D9): decoding
+// arbitrary input produces arbitrary bytes, which are not UTF-8 and so
+// must not be typed as a `string`. Read the result back with
+// `std/utf8.from_bytes` when the bytes are supposed to be text.
+//
+// ENCODE still takes a `string` and is still a byte container on that
+// side — the other half of the same wart. It stays for now because it
+// is coupled to `std/crypto`, whose digest functions also return bytes
+// as `string`; both move together in a later slice of #5730.
 
 // __b32_alphabet maps a 5-bit value (0..31) to its character byte:
 // 0..25 → 'A'..'Z', 26..31 → '2'..'7'.
@@ -54,7 +64,7 @@ pub function base32_encode(s: string): string {
 // `base32_decode(s)` — inverse of base32_encode. Lenient: stops at the
 // first non-base32 / non-`=` character (so trailing `=` padding needs no
 // special handling), returning the bytes decoded up to that point.
-pub function base32_decode(s: string): string {
+pub function base32_decode(s: string): u8[] {
     // Count the leading run of valid base32 digits (stop at '=' / junk).
     var n: i32 = 0;
     var sLen: i32 = s.len();
@@ -75,7 +85,7 @@ pub function base32_decode(s: string): string {
         }
         i = i + 1;
     }
-    return string_from_bytes_unchecked(out);
+    return out;
 }
 
 // `base32_decode_strict(s)` — like `base32_decode` but returns `None` on
@@ -92,7 +102,7 @@ pub function base32_decode(s: string): string {
 // or 6 characters can't form whole bytes, so it rejects. Unpadded input
 // with an otherwise-valid data length is accepted (padding-optional,
 // matching `base64_decode_strict`). `""` decodes to `Some("")`.
-pub function base32_decode_strict(s: string): Option[string] {
+pub function base32_decode_strict(s: string): Option[u8[]] {
     var sLen: i32 = s.len();
     var n: i32 = 0;
     while (n < sLen) {
@@ -111,7 +121,7 @@ pub function base32_decode_strict(s: string): Option[string] {
     if (pad > 6) { return None; }
     if (n == 0) {
         if (pad > 0) { return None; }
-        return Some("");
+        return Some([]);
     }
     // A final data group of 1, 3, or 6 chars can't form whole bytes.
     var rem: i32 = n % 8;
@@ -119,7 +129,7 @@ pub function base32_decode_strict(s: string): Option[string] {
     // When padded, the total must fill an 8-char group.
     if (pad > 0 && (n + pad) % 8 != 0) { return None; }
     var out_len: i32 = (n * 5) / 8;
-    if (out_len == 0) { return Some(""); }
+    if (out_len == 0) { return Some([]); }
     var buf: u8[] = __alloc_u8(out_len);
     var i: i32 = 0;
     var j: i32 = 0;
@@ -135,5 +145,5 @@ pub function base32_decode_strict(s: string): Option[string] {
         }
         i = i + 1;
     }
-    return Some(string_from_bytes_unchecked(buf));
+    return Some(buf);
 }

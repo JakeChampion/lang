@@ -14,13 +14,17 @@ import (
 func TestSelfHostBytesX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
-	// hex_decode yields u8[] (#5730), so its result needs reading back
-	// as text before `write`; base64_decode still returns a string.
+	// hex_decode and base64_decode both yield u8[] (#5730), so each
+	// result needs reading back as text before `write`. Note the
+	// failure mode if this is wrong: the self-host compiler accepts
+	// `write(u8[])` and silently emits NOTHING rather than raising a
+	// type error (#5742), so the decode half just vanishes from the
+	// output.
 	cases := []struct {
 		mod, input, encoded, decodeFmt string
 	}{
 		{"hex", "Hello, World!", "48656c6c6f2c20576f726c6421", "string_from_bytes_unchecked(%s)"},
-		{"base64", "Hello, World!", "SGVsbG8sIFdvcmxkIQ==", "%s"},
+		{"base64", "Hello, World!", "SGVsbG8sIFdvcmxkIQ==", "string_from_bytes_unchecked(%s)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.mod, func(t *testing.T) {
@@ -59,13 +63,17 @@ func TestSelfHostBytesArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 
-	// hex_decode yields u8[] (#5730), so its result needs reading back
-	// as text before `write`; base64_decode still returns a string.
+	// hex_decode and base64_decode both yield u8[] (#5730), so each
+	// result needs reading back as text before `write`. Note the
+	// failure mode if this is wrong: the self-host compiler accepts
+	// `write(u8[])` and silently emits NOTHING rather than raising a
+	// type error (#5742), so the decode half just vanishes from the
+	// output.
 	cases := []struct {
 		mod, input, encoded, decodeFmt string
 	}{
 		{"hex", "Hello, World!", "48656c6c6f2c20576f726c6421", "string_from_bytes_unchecked(%s)"},
-		{"base64", "Hello, World!", "SGVsbG8sIFdvcmxkIQ==", "%s"},
+		{"base64", "Hello, World!", "SGVsbG8sIFdvcmxkIQ==", "string_from_bytes_unchecked(%s)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.mod, func(t *testing.T) {

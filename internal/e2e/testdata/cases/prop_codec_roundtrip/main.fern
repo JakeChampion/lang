@@ -37,7 +37,7 @@ function main(): i32 {
         var n: i32 = state % 48;
         var s: string = string_from_bytes_unchecked(gen_bytes(state, n));
 
-        if (base64.base64_decode(base64.base64_encode(s)) != s) {
+        if (string_from_bytes_unchecked(base64.base64_decode(base64.base64_encode(s))) != s) {
             print("base64 roundtrip FAILED at trial " + trial.to_string());
             return 1;
         }

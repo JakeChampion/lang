@@ -1,6 +1,13 @@
 import "std/test";
 import "std/base64" as base64;
 
+// base64_decode yields `u8[]` (#5730). These fixtures are ASCII, so
+// `text()` reads the decoded bytes back to assert against a literal; a
+// real ingest path would use `std/utf8.from_bytes` and handle None.
+function text(b: u8[]): string {
+    return string_from_bytes_unchecked(b);
+}
+
 // examples/tests/base64_test.fern — exercise the deterministic
 // std/base64 encoder/decoder through the test runner. std/base64 had
 // only Go-side coverage; this is the pure-Fern, std/test-driven shape,
@@ -31,31 +38,31 @@ function test_encode_empty(): test.TestOutcome {
 }
 
 function test_decode_no_pad(): test.TestOutcome {
-    return test.assert_eq(base64.base64_decode("TWFu"), "Man");
+    return test.assert_eq(text(base64.base64_decode("TWFu")), "Man");
 }
 
 function test_decode_one_pad(): test.TestOutcome {
-    return test.assert_eq(base64.base64_decode("TWE="), "Ma");
+    return test.assert_eq(text(base64.base64_decode("TWE=")), "Ma");
 }
 
 function test_decode_two_pad(): test.TestOutcome {
-    return test.assert_eq(base64.base64_decode("TQ=="), "M");
+    return test.assert_eq(text(base64.base64_decode("TQ==")), "M");
 }
 
 function test_decode_empty(): test.TestOutcome {
-    return test.assert_eq(base64.base64_decode(""), "");
+    return test.assert_eq(text(base64.base64_decode("")), "");
 }
 
 // decode . encode is the identity on arbitrary text.
 function test_roundtrip(): test.TestOutcome {
     var s = "The quick brown fox jumps over the lazy dog.";
-    return test.assert_eq(base64.base64_decode(base64.base64_encode(s)), s);
+    return test.assert_eq(text(base64.base64_decode(base64.base64_encode(s))), s);
 }
 
 // base64_decode_strict returns Some(bytes) on well-formed input.
 function test_decode_strict_valid(): test.TestOutcome {
     match (base64.base64_decode_strict("Zm9vYmFy")) {
-        Some(v) => { return test.assert_eq(v, "foobar"); },
+        Some(v) => { return test.assert_eq(text(v), "foobar"); },
         None => { return test.assert_true(false); },
     }
 }
@@ -88,13 +95,13 @@ function test_url_roundtrip(): test.TestOutcome {
     var payload: string = "Hello, World! ~ tokens+need/url-safety";
     var enc: string = base64.base64url_encode(payload);
     // Decoding accepts the unpadded url-safe form back to the original.
-    return test.assert_true(base64.base64url_decode(enc) == payload &&
-                            base64.base64url_decode("SGk=") == "Hi");  // padded input tolerated
+    return test.assert_true(text(base64.base64url_decode(enc)) == payload &&
+                            text(base64.base64url_decode("SGk=")) == "Hi");  // padded input tolerated
 }
 
 // base64url_decode_strict: url round-trips; malformed / non-url-safe rejects.
-function b64url_opt(o: Option[string], fb: string): string {
-    match (o) { Some(v) => { return v; }, None => { return fb; } }
+function b64url_opt(o: Option[u8[]], fb: string): string {
+    match (o) { Some(v) => { return text(v); }, None => { return fb; } }
 }
 function b64url_is_none(s: string): boolean {
     match (base64.base64url_decode_strict(s)) { Some(v) => { return false; }, None => { return true; } }
