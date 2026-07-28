@@ -319,13 +319,18 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   5 single-IR-call-site leaves with no Fern-level cross-call. Byte-identical WAT for a
   `chr()` / `write()` / `eprint()` / `strbuf_reset`+`append`+`take` / array-slice program
   (emitting `$__fern_chr` / `$__fern_print_str` / `$__fern_eprint_str` /
-  `$__fern_strbuf_*` / `$__fern_arr_slice`), running under wasmtime. **Next:** the dual-use
-  `string_from_bytes_helper` (also called from the AST-path `emit_module_mode`), the
-  remaining self-contained leaves (args / env / reader / divrem / clock / `map_helpers` /
-  `optarrarr_free_func` / `cabi_realloc_helper` / `to_string_helpers` /
-  `strcat_streq_helpers` / the file-I/O `*_func`; several are MULTI-SITE — called from both
-  `emit_ir_module_units` and the AST-path `emit_module_mode`, so every call site gets the
-  `wasm_ir.` prefix), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
+  `$__fern_strbuf_*` / `$__fern_arr_slice`), running under wasmtime. (8) the compute/format
+  leaf cluster (`to_string_helpers` / `strcat_streq_helpers` / `divrem_helpers` /
+  `string_from_bytes_helper`) — 4 leaves, most MULTI-SITE (called from both
+  `emit_ir_module_units` and the AST-path `emit_module_mode` / `strcat_helpers`), so EVERY
+  bare call site in `wasm.fern` is prefixed `wasm_ir.` (verified: zero bare refs remain,
+  no double-prefix). This validates the multi-site prefix approach the remaining leaves need.
+  Byte-identical WAT for an int-div/rem + f-string + string `+`/`==` + `string_from_bytes`
+  program (emitting `$__fern_idiv` / `$__fern_irem` / `$__fern_strcat` / `$__fern_streq` /
+  `$__fern_string_from_bytes`), running under wasmtime. **Next:** the remaining self-contained
+  leaves (args / env / reader / clock / `map_helpers` / `optarrarr_free_func` /
+  `cabi_realloc_helper` / `file_imports` / the file-I/O `*_func`; MULTI-SITE ones use the same
+  prefix-every-call-site approach), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
   is LAST — it drags `Ctx` / `release_module_ctx` / `collect_method_types` and the
   shared struct predicates (co-owned by the AST emitter → a cycle until that
   shared layer is relocated).
