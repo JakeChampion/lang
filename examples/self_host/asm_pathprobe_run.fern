@@ -22,8 +22,11 @@ function main(): i32 {
     // builtin-enum injection), then checks all_eligible on lift_lambdas of
     // THAT. The probe must run the same pipeline or it sees un-monomorphised
     // generics and under-reports IR eligibility.
+    // asm_ir.script_normalized is part of that pipeline: a SCRIPT-shaped source
+    // has its `main` synthesised inside emit_module_ir_gated, so judging the raw
+    // module here reported "ast" for a program the emitter routes through IR.
     var bm: parser.Module = parser.module_with_builtins(mod);
-    var lm: parser.Module = asm_ir.lift_lambdas(bm);
+    var lm: parser.Module = asm_ir.script_normalized(asm_ir.lift_lambdas(bm));
     if (asm_ir.all_eligible(lm)) {
         print("ir\n");
     } else {

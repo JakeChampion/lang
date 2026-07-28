@@ -5916,6 +5916,24 @@ pub function emit_module_ir(mod: parser.Module): string {
     return emit_module_ir_unit(im, true, false, "", [], im.funcs, im.structs, 0, 0 - 1, []);
 }
 
+// script_normalized returns the module the whole-program IR emit actually
+// lowers. A SCRIPT-shaped module (top-level statements, no `main`) is desugared
+// into `function main(): i32 { … }` so the emit has an entry to call — see
+// asmcore.synth_script_main. Lambdas are lifted again afterwards because the
+// caller lifted while the statements were still top-level, so a lambda in a
+// script body has not been hoisted yet; lift_lambdas returns a lambda-free
+// module unchanged, making the second pass inert for everything else. A
+// function-shaped module is returned untouched.
+//
+// The eligibility PROBES must normalise through this too, not just the emitter:
+// judging the raw script module asks "does it have a `main`?" of a module whose
+// main has not been synthesised yet, so `-decide` / asm_pathprobe_run printed
+// "ast" for a script that emit_module_ir_gated then lowered through the IR path.
+pub function script_normalized(mod: parser.Module): parser.Module {
+    if (!asmcore.is_script_module(mod)) { return mod; }
+    return lift_lambdas(asmcore.synth_script_main(mod));
+}
+
 // emit_module_ir_gated is the FUSED eligibility-gate + whole-program emit (#4394
 // lever 3): it replaces the driver's two-call `if (all_eligible_known(m, known))
 // { emit_module_ir(m) }` — which lowered every function TWICE (once in the gate's
@@ -5934,15 +5952,7 @@ pub function emit_module_ir(mod: parser.Module): string {
 // "" is an unambiguous "ineligible" sentinel: an eligible module always emits at
 // least `.globl _start\n    .text\n…`, never the empty string.
 pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
-    // A SCRIPT-shaped module (top-level statements, no `main`) is desugared into
-    // `function main(): i32 { … }` first, so the whole-program emit below has an
-    // entry to call — see asmcore.synth_script_main. Lambdas are lifted again
-    // afterwards because the caller lifted while the statements were still
-    // top-level, so a lambda in a script body has not been hoisted yet;
-    // lift_lambdas returns a lambda-free module unchanged, making the second pass
-    // inert for everything else.
-    var sm: parser.Module = mod;
-    if (asmcore.is_script_module(mod)) { sm = lift_lambdas(asmcore.synth_script_main(mod)); }
+    var sm: parser.Module = script_normalized(mod);
     // Module-level gates, mirroring eligible_core_known_main's pre-checks: no
     // functions / over the merged-bundle size budget (#3425) / no `main` (the
     // whole-program emit writes `_start` → `call __fn_main`) all fall back to AST.

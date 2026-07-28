@@ -9308,9 +9308,12 @@ function annotate_func(fd: parser.FuncDecl, mt: ModuleTables): parser.FuncDecl {
     return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: annotate_block(fd.body, s), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str };
 }
 
-// annotate_module stamps every function body's call expressions with their
-// checker-inferred result type. Top-level statements are left unannotated for
-// now (they lower rarely and via a distinct path); a later slice can extend.
+// annotate_module stamps every call expression — in a function body and at the
+// TOP LEVEL — with its checker-inferred result type. Top-level statements walk
+// from the bare module scope, threading statement-to-statement exactly as
+// check_module's own top_stmts loop does, so a script-shaped module (which now
+// lowers through the IR path, #5657) gets the same annotation coverage a
+// function body does.
 pub function annotate_module(mod: parser.Module): parser.Module {
     var mt: ModuleTables = build_module_tables(mod);
     var nfuncs: parser.FuncDecl[] = [];
@@ -9319,5 +9322,6 @@ pub function annotate_module(mod: parser.Module): parser.Module {
         nfuncs = nfuncs.append(annotate_func(mod.funcs[i], mt));
         i = i + 1;
     }
-    return parser.Module { funcs: nfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    var ntop: parser.Stmt[] = annotate_block(mod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods));
+    return parser.Module { funcs: nfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: ntop, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
 }
