@@ -430,6 +430,13 @@ pub function (x: f64) is_finite(): boolean {
     if (x != 0.0 && x * 2.0 == x) { return false; }
     return true;
 }
+// `(x: f64) is_sign_negative()` / `is_sign_positive()` — test the IEEE-754
+// sign BIT, so they classify `-0.0` as negative and `+0.0` as positive
+// (unlike `x < 0.0`, which is false for both zeros and for any NaN). A
+// NaN's sign is whatever bit it carries. Read via `f64_bits` (bit 63),
+// so no comparison-with-zero rounding is involved.
+pub function (x: f64) is_sign_negative(): boolean { return f64_bits(x) < 0; }
+pub function (x: f64) is_sign_positive(): boolean { return f64_bits(x) >= 0; }
 pub function (x: f64) is_inf(): boolean {
     if (x != x) { return false; }
     if (x == 0.0) { return false; }
@@ -592,6 +599,10 @@ pub function (x: f32) is_finite(): boolean {
     if (x != (0.0 as f32) && x * (2.0 as f32) == x) { return false; }
     return true;
 }
+// `(x: f32) is_sign_negative()` / `is_sign_positive()` — the f32 siblings;
+// the sign is bit 31 of `f32_bits`. See the f64 forms above.
+pub function (x: f32) is_sign_negative(): boolean { return f32_bits(x) < 0; }
+pub function (x: f32) is_sign_positive(): boolean { return f32_bits(x) >= 0; }
 pub function (x: f32) is_inf(): boolean {
     if (x != x) { return false; }
     if (x == (0.0 as f32)) { return false; }
