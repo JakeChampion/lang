@@ -9192,10 +9192,11 @@ function annotate_expr(e: parser.Expr, s: Scope): parser.Expr {
 }
 
 // annotate_block rebuilds a statement list, threading scope statement-to-statement
-// via annotate_advance. Nested control-flow bodies are rebuilt with the enclosing
-// scope; a for-loop variable / match-arm payload binding is NOT re-introduced, so
-// a call over one stays unannotated ("") and falls back to the structural walk —
-// a later slice can thread those bindings to widen coverage.
+// via annotate_advance. A nested control-flow body is rebuilt in the scope that
+// body actually sees: a for-loop's body binds the loop variable and a match arm's
+// body binds its variant payloads (annotate_for_scope / annotate_arm_scope), so a
+// call whose type depends on one is annotated rather than falling back to the
+// structural walk.
 function annotate_block(body: parser.Stmt[], s: Scope): parser.Stmt[] {
     var out: parser.Stmt[] = [];
     var cur: Scope = s;
@@ -9206,6 +9207,56 @@ function annotate_block(body: parser.Stmt[], s: Scope): parser.Stmt[] {
         i = i + 1;
     }
     return out;
+}
+
+// annotate_for_scope returns the scope a for-loop BODY sees — `s` plus the loop
+// variable — reproducing check_stmt's StmtFor binding: a range form (`for i in
+// a..b`, the synthetic `__range` call) binds i32; an array iter binds the element
+// type. A non-array iter leaves the variable unbound, so a call over it annotates
+// "" and takes the structural fallback exactly as before.
+function annotate_for_scope(fr: parser.StmtFor, s: Scope): Scope {
+    if (for_iter_is_range(fr.iter)) { return s.bind(fr.var_name, t_i32()); }
+    var it: Type = check_expr(fr.iter, s);
+    match (it) {
+        TypeArray(ta) => { return s.bind(fr.var_name, ta.elem); },
+        _ => { return s; }
+    }
+    return s;
+}
+
+// annotate_variant_struct resolves a match pattern's variant name to the name its
+// struct sig is registered under, or "" when none is. A pattern that still carries
+// a dot here is qualified by its ENUM (`E.A` — flatten mangled module qualifiers
+// to `__` long before this), and parse_enum_decl registers the variant struct
+// under the BARE name, so the suffix is what resolves — the same strip irlower
+// does when it lowers the arm. The qualifier must actually name an enum owning
+// that variant, so a dotted name that is not an enum-qualified variant resolves
+// to "" (its payloads stay unbound) rather than to a same-named plain struct.
+function annotate_variant_struct(name: string, s: Scope): string {
+    if (s.lookup_struct(name).name.len() > 0) { return name; }
+    var d: i32 = dot_index(name);
+    if (d < 0) { return ""; }
+    var bare: string = name[d + 1 : name.len()] + "";
+    if (!is_variant_of(bare, name[0 : d] + "", s.unions)) { return ""; }
+    if (s.lookup_struct(bare).name.len() > 0) { return bare; }
+    return "";
+}
+
+// annotate_arm_scope returns the scope a match ARM (its guard and body) sees — `s`
+// plus the arm's variant payload bindings, typed as check_stmt's StmtMatch types
+// them. A wildcard arm, an unresolvable variant, and the `_` / bare-name bindings
+// bind_variant_payloads skips all keep the enclosing scope — their calls annotate
+// "" and take the structural fallback.
+function annotate_arm_scope(arm: parser.MatchArm, s: Scope): Scope {
+    match (arm.pattern) {
+        parser.PatVariant(pv) => {
+            var vn: string = annotate_variant_struct(pv.type_name, s);
+            if (vn.len() == 0) { return s; }
+            return bind_variant_payloads(s, s, parser.PatVariant { ...pv, type_name: vn });
+        },
+        parser.PatWildcard(_) => { return s; }
+    }
+    return s;
 }
 
 function annotate_stmt(st: parser.Stmt, s: Scope): parser.Stmt {
@@ -9233,13 +9284,16 @@ function annotate_stmt(st: parser.Stmt, s: Scope): parser.Stmt {
             var i: i32 = 0;
             while (i < m.arms.len()) {
                 var arm: parser.MatchArm = m.arms[i];
-                narms = narms.append(parser.MatchArm { pattern: arm.pattern, body: annotate_block(arm.body, s), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
+                var asc: Scope = annotate_arm_scope(arm, s);
+                var g: parser.Expr = arm.guard;
+                if (arm.has_guard) { g = annotate_expr(arm.guard, asc); }
+                narms = narms.append(parser.MatchArm { pattern: arm.pattern, body: annotate_block(arm.body, asc), line: arm.line, col: arm.col, guard: g, has_guard: arm.has_guard });
                 i = i + 1;
             }
             return parser.StmtMatch { scrutinee: annotate_expr(m.scrutinee, s), arms: narms, line: m.line, col: m.col, origin: m.origin };
         },
         parser.StmtFor(fr) => {
-            return parser.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, s), label: fr.label };
+            return parser.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, annotate_for_scope(fr, s)), label: fr.label };
         },
         parser.StmtDefer(d) => {
             return parser.StmtDefer { action: annotate_stmt(d.action, s), on_error: d.on_error };
