@@ -995,11 +995,16 @@ graph actually takes, and that is the obvious next thing to look at.
   `compute_wp_bases` **once per process** and shares the bases across every unit
   (`emit_module_ir_unit_flat`'s `b` param), so the 1.2 GB is paid once instead of
   per unit. The per-process `-per-module-emit` path pays it 36 times over.
-- Cheapest wins, in rough order: cap or memoise the fixpoint's repeated walks;
-  reclaim between passes; or persist the computed bases across processes so the
-  per-process path pays what emit-all pays.
-- A 2x reduction in `borrowable_params_interproc` alone is worth ~425 MB on
-  every window of every module — more than anything windowing can offer.
+- ~~Cheapest wins, in rough order: cap or memoise the fixpoint's repeated walks;
+  reclaim between passes~~ — **both closed, and by measurement, not argument**:
+  the next section found the cost was never the walks, and the section after that
+  built the memoised variant anyway and priced it. What remains of this bullet is
+  the last clause: persist the computed bases across processes so the per-process
+  path pays what emit-all pays.
+- ~~A 2x reduction in `borrowable_params_interproc` alone is worth ~425 MB on
+  every window of every module~~ — this framing is what sent the memoisation
+  attempt down the wrong road; the analysis was never allocating what the
+  attribution implied.
 
 ## The floor, fixed: a substring-slice storm, not the fixpoint (2026-07-28)
 
@@ -1038,6 +1043,94 @@ is no longer the lever. The hypothesised "cap/memoise the fixpoint" and
 re-measure the *gen1* floor (the ~1.3–2.6× self-host-runtime multiplier still
 applies on top) and whether the per-module fixpoint can come off its env gate.
 
+## The gen1 floor, and the memoisation priced (2026-07-28)
+
+Answering the "Next" above, and closing the memoisation hypothesis with a built
+variant rather than an estimate. Same method throughout (`-assume-eligible`;
+gen1 = a compiler linked from gen0's own `-per-module-emit-all` units, so it runs
+the self-host runtime).
+
+**The gen1 floor followed gen0 down.** Parser module, gen1:
+
+| window | before the slice fix | now |
+|---|---:|---:|
+| `0:1` (the floor) | 2241 | **1602** |
+| `0:100` (the budget in use) | 2347 | **1706** |
+| `0:407` (whole module) | 5388 | **2436** |
+
+`irlower` at `0:1` measures 1601 MB against parser's 1602, so the floor is still
+the module-independent constant the side-table model predicts.
+
+**Parse+modload is now the floor.** `-per-module-count` alone (parse + modload,
+no emit) peaks **1122 MB** on gen1 — **70%** of the 1602 MB floor, leaving only
+~480 MB for the whole emit call. The doc's earlier ~390 MB gen0 figure has become
+the dominant term on gen1. Anything further spent on emit-side analysis is
+chasing the remaining 30%; **the next real target is module loading**, not the
+side tables.
+
+Note also how much the 407-function window fell (5388 → 2436). The old warning
+that "windowing is very much what keeps a large module affordable" is now much
+weaker — a whole 407-func module costs 1.5x the floor, where it used to cost 2.4x.
+
+**The gen1 emit-all fixpoint is now cheap enough to reconsider its env gate.**
+Driving gen1 `-per-module-emit-all` over the whole compiler in batches, and
+diffing against gen0's units:
+
+| batch size | wall | max per-batch peak | result |
+|---|---:|---:|---|
+| 8 (what `TestSelfHostPerModuleEmitAllFixpointX86_64` uses) | **118 s** | **7909 MB** | gen0 == gen1, all 36 units |
+| 4 | 154 s | 6754 MB | gen0 == gen1, all 36 units |
+
+118 s for the gen1 half, against the ~9 min the whole test cost when it was
+env-gated (`RUN_EMITALL_FIXPOINT`). **But look at the peak before de-gating it:**
+batch=8 reaches 7909 MB against the **8 GiB arena** — ~99% of the ceiling, i.e.
+the configuration is one compiler-source addition away from the exit-137 wall
+again. Halving the batch costs +36 s and buys only 1.15 GB (the accumulation is
+dominated by the largest units, not the count). The per-unit floor is no longer
+what limits batching — the bump arena's never-retreating pointer is, exactly as
+the 2026-07-27 entry concluded.
+
+Note what that does *not* mean: **do not just lower
+`TestSelfHostPerModuleEmitAllFixpointX86_64` to batch=4.** Its batch=8 is
+load-bearing — the test exists to hold `-assume-eligible` against *the exact
+configuration that OOM'd without it*, and re-tuning the batch deletes the
+regression it guards. If the fixpoint is de-gated for routine CI, add a batch=4
+run for that and leave the batch=8 A/B env-gated as the backstop.
+
+**The memoisation, priced (rejected).** The "cap or memoise the fixpoint's
+repeated walks" bullet was implemented and measured rather than left open. Both
+fixpoints carry a settled per-param flag forward (sound: borrowable flags are
+monotone 1->0 as its registry shrinks, consume-safe 0->1 as its grows), so a
+settled param is never re-walked. On top of the slice fix, byte-identical
+throughout:
+
+| configuration | peak MB | note |
+|---|---:|---|
+| current main | 508 | parser `0:1`, gen0 |
+| + drop the quadratic `borrowable_sig` convergence signature | 507 | no effect |
+| + memoise both fixpoints' settled flags | **477** | −6% |
+| current main, whole-compiler emit-all | 3358 / 21 s | |
+| + memoisation | 3326 / 20 s | −1% |
+
+So the whole memoisation is worth ~30 MB and ~1 s, and deleting the quadratic
+signature build is worth nothing measurable. **Not landed** — a monotonicity
+invariant spanning two fixpoints, for 6% on a 1-function window and 1% on the
+emit that matters, is not a trade this floor needs; it would also have to be
+maintained forever against a bar no cheap test can enforce (see below). Recorded
+here so the option is closed by measurement instead of being re-derived a third
+time.
+
+**Small-program tests cannot guard these analyses — measured.** Building a driver
+with the borrowable fixpoint's cap forced to 1 (un-converged, hence unsound in
+the over-borrow direction) *does* change the registry — a param forwarded to a
+callee stays borrowable because pass 1 still sees the optimistic seed — yet a
+suite of targeted probes (borrow cycle, forward-declared callee, direct escape,
+escape through a forwarder, consume-rebind cycle, and a variant stashing a
+loop-local into a container that outlives it) all pass, on **byte-identical**
+asm. At that program size the flag has no codegen effect. The gate that catches a
+wrong registry is whole-compiler byte-identity plus the checker corpus; do not
+accept a small-program test as evidence for a change to these fixpoints.
+
 ## Recommended order
 
 1. **#3425 — DONE** (large-tier freelist port, x86 #5609 + arm64 #5614; the
@@ -1059,9 +1152,13 @@ applies on top) and whether the per-module fixpoint can come off its env gate.
    interproc-fixpoint tables and a single substring-slice storm in
    `param_is_borrowable`, whose no-alloc rewrite dropped the **gen0** emit-all
    one-unit peak from 1663 MB to **520 MB** (byte-identical, all 36 units). The
-   gen1 multiplier (~1.3-2.6x) still applies, so re-measuring the gen1 floor and
-   whether the per-module fixpoint can now come off its env gate is the immediate
-   next step; parse+modload (~390 MB gen0) is the next-largest attributable chunk.
+   gen1 multiplier (~1.3-2.6x) still applies. **Both follow-ups are now DONE —
+   see "The gen1 floor, and the memoisation priced".** The gen1 floor fell 2241 ->
+   **1602 MB**, of which **1122 MB is parse+modload alone**, so module loading —
+   not the emit-side side tables — is what is left to attack. The gen1 emit-all
+   fixpoint now takes **118 s** and stays byte-identical to gen0, cheap enough to
+   de-gate, except that at its current batch=8 it peaks **7909 MB against the
+   8 GiB arena**; de-gate at batch=4 (154 s, 6754 MB) rather than at batch=8.
 3. **Slice 3 driver repoint + Slice 5 deletion** — mechanical once (2) lands.
 4. **Slice 4a/4b** (arm64/wasm runtime untangle) alongside/after — a ~5k-line,
    qemu-gated duplication that unlocks nothing on its own; avoid until the
