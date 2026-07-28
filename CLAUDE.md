@@ -366,20 +366,26 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   composer emits a sibling-nested structure). Running them under an older
   wasmtime (e.g. a system v37/v39) fails with `invalid leading byte (0x43)` or
   `cannot enter component instance` — use the pinned v46.
-  **Pass `-timeout 30m` when running a *whole* e2e package in one `go test`
-  invocation:** the e2e suite is split (#4398 part 3) into
-  `internal/e2eselfhost` (the `TestSelfHost*` suite, ~575 files) and
-  `internal/e2e` (everything else + ~30 residual `TestSelfHost*` legs in
-  mixed native/selfhost fixture files), with the shared harness in
-  `internal/e2eharness` (each package re-binds the harness names via its
-  `harness_aliases_test.go`, so test code keeps bare identifiers like
-  `buildSelfHostBin`). Either package run unsharded takes ~10+ minutes
-  (incl. arm64/qemu + wasm), just over `go test`'s default 600s `-timeout`,
-  so the default aborts it with a `panic: test timed out` that reads like a
-  failure but is not one. CI doesn't hit this — it shards by test-name
-  regex across the `test-e2e-*` workflows (the selfhost lane round-robins
-  the union of both packages' `TestSelfHost*` lists), each well under its
-  10-min job timeout.
+  **Do NOT run `internal/e2eselfhost` unsharded — shard it.** The e2e suite
+  is split (#4398 part 3) into `internal/e2eselfhost` (the `TestSelfHost*`
+  suite, ~575 files) and `internal/e2e` (everything else + ~30 residual
+  `TestSelfHost*` legs in mixed native/selfhost fixture files), with the
+  shared harness in `internal/e2eharness` (each package re-binds the harness
+  names via its `harness_aliases_test.go`, so test code keeps bare
+  identifiers like `buildSelfHostBin`).
+  **Measured 2026-07-28: `internal/e2eselfhost` unsharded exceeds 90
+  MINUTES** — `-timeout 90m` still panicked with tests queued
+  (`TestSelfHostStdTestE2EArm64` 16s in). The old "~10+ minutes, pass
+  `-timeout 30m`" advice here was ~9× stale and costs you a wasted
+  hour-and-a-half per attempt; it is what this note replaces. Use
+  `scripts/selfhost-shard-tests SHARD NSHARD < test-list`, the same
+  duration-weighted LPT partition CI uses — max-shard wall-clock is
+  ≈ the single slowest test, which is the floor for any partition. A
+  4-way split is a reasonable local default.
+  `internal/e2e` is still fine in one invocation at `-timeout 45m`
+  (measured ~1760 s / ~30 min).
+  CI doesn't hit the wall — it shards across the `test-e2e-*` workflows,
+  each well under its job timeout.
 - **Self-host driver builds are memory-heavy but the harness now self-limits
   — swap is generally NOT needed.** Every `buildSelfHostBin` / `buildBin` of
   a self-host driver (`asm_run.fern` / `asm_load_run.fern` / `asm_ir_run.fern`
