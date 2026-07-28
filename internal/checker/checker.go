@@ -5560,11 +5560,29 @@ func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope)
 	num := func(v int64) ast.Expr { return &ast.NumberLit{P: p, Value: v} }
 	bin := func(op string, l, r ast.Expr) ast.Expr { return &ast.Binary{P: p, Op: op, Left: l, Right: r} }
 	negOne := bin("-", num(0), num(1))
-	baseOp := n.Op[:1] // "+?" -> "+", "-?" -> "-", "*?" -> "*"
+	baseOp := n.Op[:1] // "+?" -> "+", "/?" -> "/", …
+	if len(n.Op) == 3 {
+		baseOp = n.Op[:2] // "<<?" -> "<<", ">>?" -> ">>"
+	}
 	unsigned := !t.IsSigned()
 
 	var overflow ast.Expr
 	switch {
+	case n.Op == "<<?" || n.Op == ">>?":
+		// Checked shift: `None` when the shift count is out of range —
+		// negative (signed operands only) or `>= width`. `s` is Fern's
+		// masked shift (`a << (b & (width-1))`), which never traps, so it
+		// is computed up front like the other non-div cases; on the None
+		// path it just isn't read. `>=` picks the operand's signed /
+		// unsigned comparison, so an unsigned count only needs the upper
+		// bound.
+		wLit := int64(t.NormalWidth())
+		hiOOR := bin(">=", id(rN), num(wLit))
+		if unsigned {
+			overflow = hiOOR
+		} else {
+			overflow = bin("||", bin("<", id(rN), num(0)), hiOOR)
+		}
 	case baseOp == "/" || baseOp == "%":
 		// Checked divide / remainder: `None` on a zero divisor, and for
 		// signed operands also on `MIN / -1` (the one overflowing
@@ -11622,11 +11640,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				n.IsUnsigned = !common.IsSigned()
 			}
 			return common
-		case "+?", "-?", "*?", "/?", "%?":
+		case "+?", "-?", "*?", "/?", "%?", "<<?", ">>?":
 			// Checked integer arithmetic (#5542): `Some(result)` when the
 			// exact result fits the operand type, `None` on overflow —
-			// and, for `/?` / `%?`, on a zero divisor or the signed
-			// `MIN / -1`. Integer only — there is no float form and no
+			// for `/?` / `%?` on a zero divisor or the signed `MIN / -1`,
+			// and for `<<?` / `>>?` on an out-of-range shift count
+			// (`< 0` or `>= width`). Integer only — no float form, no
 			// composite overload — and it desugars to a block-expr over
 			// ordinary `Option`, `if`, and arithmetic, so every backend
 			// (interp + all codegen) lowers it for free via CheckedLowered.

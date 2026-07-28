@@ -174,7 +174,7 @@ func Keywords() []string {
 // shifts (`<<=`, `>>=`) sit before the 2-char shifts so the
 // longest-prefix rule picks the right one.
 var multiPunct = []string{
-	"<<=", ">>=", "<<|", "...",
+	"<<=", ">>=", "<<|", "<<?", ">>?", "...",
 	"..=", "..",
 	"==", "!=", "<=", ">=", "&&", "||", "<<", ">>", "=>", "|>",
 	"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",

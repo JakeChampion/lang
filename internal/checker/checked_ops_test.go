@@ -40,6 +40,9 @@ func TestCheckedOperatorTyping(t *testing.T) {
 	// Checked divide / remainder yield Option[T] too.
 	mustOK(`function main(): i32 { var a: i32 = 84; var b: i32 = 2; match (a /? b) { Some(v) => { return v; }, None => { return 0; } } }`)
 	mustOK(`function main(): i32 { var a: u32 = 85; var b: u32 = 43; match (a %? b) { Some(v) => { return v as i32; }, None => { return 0; } } }`)
+	// Checked shifts yield Option[T].
+	mustOK(`function main(): i32 { var a: i32 = 1; var b: i32 = 4; match (a <<? b) { Some(v) => { return v; }, None => { return 0; } } }`)
+	mustOK(`function main(): i32 { var a: u32 = 256; var b: u32 = 2; match (a >>? b) { Some(v) => { return v as i32; }, None => { return 0; } } }`)
 
 	// Assigning the Option[T] to the wrong element type is a type error.
 	mustErr(`function main(): i32 { var a: i32 = 1; var b: i32 = 2; var c: Option[i64] = a +? b; return 0; }`,

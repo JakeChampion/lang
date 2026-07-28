@@ -90,16 +90,65 @@ function main(): i32 {
 }
 `
 
+// checkedShiftProgram exercises `<<?` / `>>?` (#5542): `None` when the shift
+// count is out of range (`< 0` or `>= width`), else `Some(a << b)` with the
+// value masked to the operand width exactly like `<<` (`255u8 <<? 1 == 254`).
+// `>>` stays arithmetic for signed and logical for unsigned. Returns 0 on
+// all-pass, else the failing case index.
+const checkedShiftProgram = `
+function main(): i32 {
+    match (1 <<? 4)         { Some(v) => { if (v != 16) { return 1; } }, None => { return 2; } }
+    match (1 <<? 31)        { Some(v) => { if (v != (0 - 2147483647 - 1)) { return 3; } }, None => { return 4; } }
+    match (1 <<? 32)        { Some(v) => { return 5; }, None => {} }
+    match (1 <<? (0 - 1))   { Some(v) => { return 6; }, None => {} }
+    match (256 >>? 4)       { Some(v) => { if (v != 16) { return 7; } }, None => { return 8; } }
+    match (256 >>? 33)      { Some(v) => { return 9; }, None => {} }
+    // signed >> is arithmetic.
+    match ((0 - 16) >>? 2)  { Some(v) => { if (v != (0 - 4)) { return 10; } }, None => { return 11; } }
+
+    // u8: value wraps to the width, count range is [0, 8).
+    var b: u8 = 255;
+    match (b <<? (1 as u8)) { Some(v) => { if ((v as i32) != 254) { return 20; } }, None => { return 21; } }
+    match (b <<? (8 as u8)) { Some(v) => { return 22; }, None => {} }
+
+    // u32: value wraps, >> is logical.
+    var p: u32 = 4294967295;
+    match (p <<? (1 as u32)) { Some(v) => { if (v != 4294967294) { return 30; } }, None => { return 31; } }
+    match (p <<? (32 as u32)) { Some(v) => { return 32; }, None => {} }
+    var q: u32 = 4294967288;
+    match (q >>? (2 as u32)) { Some(v) => { if (v != 1073741822) { return 33; } }, None => { return 34; } }
+
+    // i64 / u64: width 64.
+    var x: i64 = 1;
+    match (x <<? (40 as i64)) { Some(v) => { if (v != 1099511627776) { return 40; } }, None => { return 41; } }
+    match (x <<? (64 as i64)) { Some(v) => { return 42; }, None => {} }
+    var m: u64 = 1;
+    match (m <<? (64 as u64)) { Some(v) => { return 43; }, None => {} }
+    match (m <<? (10 as u64)) { Some(v) => { if (v != 1024) { return 44; } }, None => { return 45; } }
+    return 0;
+}
+`
+
 func TestInterpCheckedArith(t *testing.T) {
-	bin := buildLangBinForInterp(t)
-	cmd := exec.Command(bin, "-interp", "-")
-	cmd.Stdin = bytes.NewReader([]byte(checkedArithProgram))
-	var out, errb bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errb
-	_ = cmd.Run()
-	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Fatalf("interp exit = %d, want 0 (case %d failed)\nstderr: %s", code, code, errb.String())
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{"arith", checkedArithProgram},
+		{"shift", checkedShiftProgram},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := buildLangBinForInterp(t)
+			cmd := exec.Command(bin, "-interp", "-")
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			var out, errb bytes.Buffer
+			cmd.Stdout = &out
+			cmd.Stderr = &errb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("interp exit = %d, want 0 (case %d failed)\nstderr: %s", code, code, errb.String())
+			}
+		})
 	}
 }
 
@@ -107,16 +156,25 @@ func TestX86_64CheckedArith(t *testing.T) {
 	if _, code := compileAndRunX86_64(t, checkedArithProgram); code != 0 {
 		t.Errorf("x86-64 checked arith: exit = %d, want 0 (case %d failed)", code, code)
 	}
+	if _, code := compileAndRunX86_64(t, checkedShiftProgram); code != 0 {
+		t.Errorf("x86-64 checked shift: exit = %d, want 0 (case %d failed)", code, code)
+	}
 }
 
 func TestArm64CheckedArith(t *testing.T) {
 	if _, code := compileAndRunArm64(t, checkedArithProgram); code != 0 {
 		t.Errorf("arm64 checked arith: exit = %d, want 0 (case %d failed)", code, code)
 	}
+	if _, code := compileAndRunArm64(t, checkedShiftProgram); code != 0 {
+		t.Errorf("arm64 checked shift: exit = %d, want 0 (case %d failed)", code, code)
+	}
 }
 
 func TestWASMCheckedArith(t *testing.T) {
 	if code := runWasm(t, checkedArithProgram); code != 0 {
 		t.Errorf("wasm checked arith: exit = %d, want 0 (case %d failed)", code, code)
+	}
+	if code := runWasm(t, checkedShiftProgram); code != 0 {
+		t.Errorf("wasm checked shift: exit = %d, want 0 (case %d failed)", code, code)
 	}
 }

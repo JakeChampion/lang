@@ -4106,7 +4106,7 @@ function sat_arith(k: string, kind: string, w: i32, s: LowerState): LowerState {
 // `-?` / `*?`, #5542): integer-only, yielding `Some(result)` when it fits the
 // operand type and `None` on overflow.
 pub function is_chk_op(op: string): boolean {
-    return op == "+?" || op == "-?" || op == "*?" || op == "/?" || op == "%?";
+    return op == "+?" || op == "-?" || op == "*?" || op == "/?" || op == "%?" || op == "<<?" || op == ">>?";
 }
 
 // chk_opt_type_tag is the "Option[T]" tag a checked binary (`+?` / `-?` / `*?`)
@@ -4139,8 +4139,32 @@ pub function chk_opt_type_tag(b: parser.ExprBinary, s: LowerState): string {
 //     signed   +?  (r > 0 && l > MAX - r) || (r < 0 && l < MIN - r)
 //     signed   -?  (r < 0 && l > MAX + r) || (r > 0 && l < MIN + r)
 //     signed   *?  l != 0 && (s / l != r || (l == -1 && r == MIN))   (s = l * r wrapped)
+// chk_norm masks a value to the operand width — the same normalisation
+// sat_arith applies after add/sub/mul, reused for the `<<?` result (which
+// sat_arith leaves un-masked).
+function chk_norm(kind: string, s: LowerState): LowerState {
+    if (kind == "u32") { return s.emit(ir.op_u32_wrap()); }
+    if (kind == "i32") { return s.emit(ir.op_int_cast("i32")); }
+    if (kind == "u8") { return s.emit(ir.op_int_cast("u8")); }
+    return s;
+}
+
 function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32, rslot: i32, sslot: i32, s: LowerState): LowerState {
     var p: LowerState = s;
+    // Checked shift: fail on an out-of-range count — `>= width` (spelled
+    // `> width-1` so gt_u / gt_s suffice) and, for signed operands, `< 0`.
+    if (op == "<<?" || op == ">>?") {
+        var wm1: i32 = 31;
+        if (kind == "u8") { wm1 = 7; } else if (w == 64) { wm1 = 63; }
+        p = sat_load(rslot, p);
+        if (w == 64) { p = p.emit(ir.op_const_i64_text("63")); } else { p = p.emit(ir.op_const_i32(wm1)); }
+        if (uns) { return p.emit(ir.op_bin("gt_u", w, false)); }
+        p = p.emit(ir.op_bin("gt_s", w, false));   // r > width-1
+        p = sat_load(rslot, p);
+        p = sat_const(kind, "zero", p);
+        p = p.emit(ir.op_bin("lt_s", w, false));    // r < 0
+        return p.emit(ir.op_bin("or", 0, false));
+    }
     // Checked divide / remainder: fail on a zero divisor, and for signed
     // operands also on `MIN / -1` (the one overflowing division). Same
     // condition for `/?` and `%?`.
@@ -4277,6 +4301,8 @@ function lower_checked_binary(b: parser.ExprBinary, e: parser.Expr, s: LowerStat
     if (b.op == "*?") { basek = "mul"; }
     if (b.op == "/?") { if (uns) { basek = "div_u"; } else { basek = "div_s"; } }
     if (b.op == "%?") { if (uns) { basek = "rem_u"; } else { basek = "rem_s"; } }
+    if (b.op == "<<?") { basek = "shl"; }
+    if (b.op == ">>?") { if (uns) { basek = "shr_u"; } else { basek = "shr_s"; } }
     // The wrapped result `s`. `+?` / `-?` / `*?` compute it UP FRONT — signed
     // `*?`'s overflow check divides it back. `/?` / `%?` must NOT: a `84 /? 0`
     // would divide by zero here, which traps on the wasm IR path (op_bin div is
@@ -4292,6 +4318,11 @@ function lower_checked_binary(b: parser.ExprBinary, e: parser.Expr, s: LowerStat
         p = sat_load(lslot, p);
         p = sat_load(rslot, p);
         p = sat_arith(basek, kind, w, p);
+        // `<<?`'s value can exceed the type width (`255u8 <<? 1 == 254`);
+        // sat_arith doesn't mask a `shl` result (only add/sub/mul), so wrap
+        // it to the operand width here — matching Fern's ordinary `<<` and
+        // the native desugar. `>>?` never grows the value, so it needs none.
+        if (b.op == "<<?") { p = chk_norm(kind, p); }
         p = p.emit(ir.op_store_local(sslot));
     }
     // The Option result rides a default (un-i64-marked) pointer slot.

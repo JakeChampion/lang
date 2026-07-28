@@ -158,14 +158,15 @@ than guessing one.
 
 ## Checked arithmetic (opt-in)
 
-`+?`, `-?`, `*?`, `/?`, and `%?` are the **checked** counterparts of
-`+`, `-`, `*`, `/`, and `%`: they evaluate to `Some(result)` when the
-exact result fits the operand type and `None` on overflow, so overflow
-becomes a value the caller handles rather than a silent wrap. `/?` and
-`%?` additionally return `None` on a zero divisor and, for signed
-operands, on the one overflowing division `MIN / -1`. Also additive
-surface — a program that never writes `?` after an arithmetic operator
-is unchanged.
+`+?`, `-?`, `*?`, `/?`, `%?`, `<<?`, and `>>?` are the **checked**
+counterparts of `+`, `-`, `*`, `/`, `%`, `<<`, and `>>`: they evaluate
+to `Some(result)` when the exact result fits the operand type and `None`
+on overflow, so overflow becomes a value the caller handles rather than
+a silent wrap. `/?` and `%?` additionally return `None` on a zero
+divisor and, for signed operands, on the one overflowing division
+`MIN / -1`; `<<?` and `>>?` return `None` when the shift count is out of
+range (`< 0` or `>= width`). Also additive surface — a program that
+never writes `?` after an arithmetic operator is unchanged.
 
 ```
 2147483647 +? 1  == None          // i32 overflows high
@@ -175,11 +176,13 @@ is unchanged.
 84 /? 0          == None           // zero divisor, no trap
 (-2147483648) /? -1 == None        // signed MIN / -1 overflow
 85 %? 43         == Some(42)
+1 <<? 32         == None           // shift count >= width
+255u8 <<? 1      == Some(254)      // count in range; value wraps at u8
 ```
 
 They sit in the same arithmetic tiers as the wrapping and saturating
 operators: `+?` / `-?` bind like `+` / `-`, `*?` / `/?` / `%?` bind
-like `*` / `/` / `%`. They
+like `*` / `/` / `%`, `<<?` / `>>?` bind like `<<` / `>>`. They
 are **integer-only** — no string or float form, no composite overload —
 and `usize` is rejected (E009) because its overflow bound is
 target-width-dependent. The result composes with the postfix `?`
@@ -218,6 +221,7 @@ unsigned a *? b  overflowed ⇔ a != 0 && s / a != b
 signed   a +? b  overflowed ⇔ (a^b) >= 0 && (s^a) < 0     (native desugar)
 signed   a *? b  overflowed ⇔ a != 0 && (s / a != b || (a == -1 && b == MIN))
          a /? b  failed     ⇔ b == 0 || (signed && a == MIN && b == -1)
+         a <<? b failed     ⇔ b >= width || (signed && b < 0)
 ```
 
 The signed `*?` division round-trip agrees spuriously on exactly the
@@ -237,10 +241,10 @@ Those same modules also carry the full checked family — `checked_add` /
 `checked_sub` / `checked_mul` / `checked_div` / `checked_rem` /
 `checked_pow` / `checked_shl` / `checked_shr`, all returning `Option[T]`
 — alongside the `saturating_*` method forms. The operators above spell
-the five most common cases (`+? -? *? /? %?`); `checked_pow` and the
-checked shifts stay method-only. There is still no aborting-on-overflow
-build mode, so the never-trapping contract at the top of this document
-holds unconditionally.
+the seven binary cases (`+? -? *? /? %? <<? >>?`); `checked_pow` and the
+unary `checked_neg` / `checked_abs` stay method-only. There is still no
+aborting-on-overflow build mode, so the never-trapping contract at the
+top of this document holds unconditionally.
 
 ## Conversions
 
