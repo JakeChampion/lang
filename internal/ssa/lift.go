@@ -625,6 +625,17 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			kind = OpLoad
 		}
 		v := l.out.AddOp(l.cur, kind, addr)
+		// Carry the width onto the SSA op, not just into the choice of kind, so
+		// the backend does not narrow the loaded word back to i32 with its
+		// maskFix — the same hazard the OpFToIS/OpFToIU conversions below spell
+		// out. Without it every i64[] element load emitted a full `ldr x`
+		// followed by `sxtw`, so any element outside int32 range was silently
+		// corrupted: 2576980379 read back as -1717986917, 1234567890123 as
+		// 1912276171. A 4-byte load keeps Width 0 — its value is stored
+		// sign-extended, so the maskFix is correct there.
+		if kind == OpLoad {
+			l.cur.Ops[len(l.cur.Ops)-1].Width = 64
+		}
 		l.stack = append(l.stack, v)
 	case ir.OpStore:
 		if len(l.stack) < 2 {
