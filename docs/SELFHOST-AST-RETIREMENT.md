@@ -165,10 +165,26 @@ The leak this trades for is the one the aliased branch already accepts: arrays
 grow geometrically, so a param-receiver append leaks O(log n) pre-grow buffers
 per call.
 
-**A synthetic regression test could not reproduce either symptom** — several
-shapes that model the aliasing exactly still exit 0 without the fix, because
-the corruption needs the real allocation order. The pin is the checker corpus
-itself, which now compiles on the IR path because the rescue gate is gone.
+**A synthetic regression test CAN reproduce the param-append symptom, and now
+does** (`TestSelfHostParamAppendReclaimIRX86_64` / `…Wasm`) — correcting the
+earlier finding that only the checker corpus could pin it. Modelling the
+aliasing is genuinely not enough, which is what the first attempts hit: freeing
+the caller's buffer is harmless on its own (no rc underflow — the caller's count
+really does reach zero, and nothing has been handed the recycled block yet). The
+missing ingredient is that the callee must ALLOCATE AGAIN after the append and
+that allocation must be the value it RETURNS. Then the returned object sits in
+the block the param append released, and the caller's exit-sweep dec of its own
+stale pointer frees the value it was just handed — the `Diag[]` that `slc_walk`
+/ `e065_stmts` build while appending to `localarr` / `sbacked`. With that
+ingredient a standalone ~25-line program exits 3 instead of 4 without the fix,
+on both x86-64 and wasm.
+
+The checker corpus stays the broad pin (it covers the container-read over-free
+too, which has no synthetic case yet). The direct test is worth having beside it:
+it fails in seconds on a standalone program rather than via a multi-minute
+checker build reporting garbled diagnostic codes, and it covers wasm, which the
+x86-only corpus does not. The aliasing-only shape is kept as a third case that
+passes even unfixed, so the distinction stays documented in the test itself.
 
 **Method note for the next bug of this shape.** Stubbing `emit_dec_sweep_except`
 / `_except_list` to a no-op is the fastest bisector: every divergence went green,
