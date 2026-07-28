@@ -68,9 +68,17 @@ jobs:
           gotestsum: "true"
       - name: go test (arm64 e2e)
         # `^TestArm64` covers internal/e2e/arm64_test.go +
-        # cross_module_variant_test.go's Arm64 subset. Anchored at
-        # the top so it doesn't pick up `TestX86_64`-named tests
-        # that happen to mention arm64 in subtest names.
+        # cross_module_variant_test.go's Arm64 subset + arm64_ssa_test.go
+        # (the experimental `-target arm64-ssa` round-trip). Anchored at
+        # the top so it doesn't pick up `TestX86_64`-named tests that
+        # happen to mention arm64 in subtest names.
+        #
+        # The arm64-ssa round-trip ran NOWHERE until it learned to exec
+        # its binaries natively: it required qemu-aarch64, which this
+        # native lane has no reason to install, and no other lane matches
+        # the prefix. It silently asserted unmet behaviour for as long as
+        # it existed — missing float bit-reinterprets (#5725) and i64[]
+        # element corruption (#5729) both slipped past it.
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestArm64' ./internal/e2e/
 
   # The seven cross-compiler-on-host tests — see the header comment. The

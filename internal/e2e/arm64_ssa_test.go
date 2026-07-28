@@ -1,11 +1,18 @@
 // E2E tests for the experimental SSA-direct arm64 backend
 // (`-target arm64-ssa`). Builds the fern CLI from this checkout,
 // compiles small Fern programs with the new target, and runs the
-// resulting static AArch64 ELF under qemu-aarch64, asserting the
-// process exit code (main's return value, low byte).
+// resulting static AArch64 ELF, asserting the process exit code
+// (main's return value, low byte).
 //
-// SKIPs when qemu-aarch64 isn't on PATH so the suite stays green on
-// machines without the emulator.
+// The binary runs NATIVELY on an arm64 Linux host and under
+// qemu-aarch64 elsewhere; only a host with neither SKIPs. Requiring
+// qemu unconditionally is what kept this file out of CI entirely:
+// the test-e2e-arm64 lane runs `^TestArm64` on ubuntu-24.04-arm,
+// which needs no emulator and therefore has none installed, and no
+// other lane matches the prefix (test-e2e-other skips it). So these
+// cases asserted unmet behaviour unnoticed — they caught neither the
+// missing float bit-reinterprets (#5725) nor the i64[] element
+// corruption (#5729), both of which they should have failed on.
 package e2e
 
 import (
@@ -20,22 +27,28 @@ import (
 
 // TestArm64SSACliRoundtrip drives the whole parse → check → ir →
 // ssa.LiftFromIR → arm64ssa.EmitAsmModule → linkNative pipeline through
-// the CLI and runs each binary under qemu, exercising the SSA register
-// allocator's real output on cross-function calls, recursion, control
-// flow, memory, and strings.
+// the CLI and runs each binary, exercising the SSA register allocator's
+// real output on cross-function calls, recursion, control flow, memory,
+// and strings.
 func TestArm64SSACliRoundtrip(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")
 	}
+	// Empty qemu means "run it directly" — see e2eharness.RunArm64Bin, which
+	// owns that dispatch, and Arm64Tooling, which makes the same native-host
+	// call for the tests that also need a C linker (this one does not: the CLI
+	// assembles and links the arm64 ELF in-process).
 	qemu := ""
-	for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
-		if p, err := exec.LookPath(c); err == nil {
-			qemu = p
-			break
+	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
+		for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
+			if p, err := exec.LookPath(c); err == nil {
+				qemu = p
+				break
+			}
 		}
-	}
-	if qemu == "" {
-		t.Skip("qemu-aarch64 not on PATH; skipping arm64-ssa e2e")
+		if qemu == "" {
+			t.Skip("not an arm64 Linux host and qemu-aarch64 not on PATH; skipping arm64-ssa e2e")
+		}
 	}
 
 	dir := t.TempDir()
@@ -288,8 +301,9 @@ function main(): i32 {
 		},
 		{
 			// tcp_listen(0) binds an ephemeral port on 0.0.0.0 — a real
-			// socket(2)/bind(2)/listen(2) round-trip under qemu-user (the syscalls pass
-			// through to the host). A non-negative fd means success; then tcp_close it.
+			// socket(2)/bind(2)/listen(2) round-trip against the host, whether the
+			// binary runs natively or under qemu-user (which passes the syscalls
+			// through). A non-negative fd means success; then tcp_close it.
 			name: "tcp_listen_close",
 			src: `function main(): i32 {
   var fd = tcp_listen(0);
@@ -995,10 +1009,10 @@ function main(): i32 {
 			if err := emit.Run(); err != nil {
 				t.Fatalf("fern -target arm64-ssa: %v\nstderr:\n%s", err, eb.String())
 			}
-			run := exec.Command(qemu, out)
-			// qemu-user forwards the host environment to the guest, so a known
-			// variable makes the env() Some-path deterministic. Harmless to the
-			// cases that don't read it.
+			run := runArm64Bin(qemu, out)
+			// The child inherits this environment either way (qemu-user forwards
+			// it to the guest), so a known variable makes the env() Some-path
+			// deterministic. Harmless to the cases that don't read it.
 			run.Env = append(os.Environ(), "FERN_E2E_VAR=hi")
 			err := run.Run()
 			got := 0
@@ -1007,7 +1021,7 @@ function main(): i32 {
 				if errors.As(err, &ee) {
 					got = ee.ExitCode()
 				} else {
-					t.Fatalf("run under qemu: %v", err)
+					t.Fatalf("run %s: %v", out, err)
 				}
 			}
 			if got != c.want {
