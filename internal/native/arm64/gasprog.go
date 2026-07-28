@@ -5,6 +5,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/jakechampion/lang/internal/native/gasstr"
 )
 
 // AssembleProgram is the section-aware assembler: like Assemble, but it
@@ -250,7 +252,7 @@ func appendRodataDirective(a *Assembler, d, rest string) error {
 		a.AppendRodata(make([]byte, n))
 		return nil
 	case ".ascii", ".asciz", ".string":
-		s, err := strconv.Unquote(strings.TrimSpace(rest))
+		s, err := gasstr.Unquote(strings.TrimSpace(rest))
 		if err != nil {
 			return fmt.Errorf("bad string literal: %v", err)
 		}
