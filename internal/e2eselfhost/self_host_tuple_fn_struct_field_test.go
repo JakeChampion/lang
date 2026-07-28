@@ -1,14 +1,27 @@
 package e2eselfhost
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
 // tupleFnStructFieldCases pin the DIRECT call of a fn-valued TUPLE ELEMENT that
-// lives in a struct field — `s.p.N(args)`. The struct-field tuple makes the
-// enclosing function IR-ineligible, so it bails to the legacy AST emitter
-// (asm.fern / asm_arm64.fern). There, emit_call routed an ExprFieldAccess
+// lives in a struct field — `s.p.N(args)`.
+//
+// These now lower on the IR path (#3457). They used to make the enclosing
+// function IR-ineligible, and the reason was narrower than it looked: a
+// callable tuple element made `is_leaksafe_tuple_field` reject the FIELD TYPE,
+// so the struct-literal admission gate failed the whole function — even when
+// the callable was never read, and even when it was a plain non-capturing named
+// fn. Admitting a "clo"/"fn" element (one heap pointer in one leak-only tuple
+// slot, exactly like the leak-safe array element beside it) closes all of it.
+// TestSelfHostTupleFnStructFieldRoutesIR below pins the routing so a
+// regression shows up as a routing change rather than as silent AST fallback.
+//
+// The AST emitter still handles them, and that path stays correct: emit_call
 // callee straight to emit_method_call; a NUMERIC field ("N", a tuple index) is
 // not a method name, so it found no method and returned the -1 sentinel (exit
 // 255) — silently miscompiling the call. emit_call now recognises an all-digit
@@ -91,6 +104,32 @@ func TestSelfHostTupleFnStructFieldArm64(t *testing.T) {
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+}
+
+// TestSelfHostTupleFnStructFieldRoutesIR pins that these shapes reach the IR
+// path rather than being served by the AST fallback. The behaviour tests above
+// pass either way — the AST emitter compiles them correctly — so without a
+// routing assertion a regression here would be invisible (#3457).
+func TestSelfHostTupleFnStructFieldRoutesIR(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_ir_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_ir_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_ir_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_ir_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	for _, tc := range tupleFnStructFieldCases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := runCapture(t, gcc, runner, driverBin, []byte(tc.src+"\n"), "-ir-probe")
+			if !strings.Contains(string(out), "module: IR") {
+				t.Errorf("routed to the AST emitter, want the IR path:\n%s", out)
 			}
 		})
 	}

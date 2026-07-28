@@ -1988,6 +1988,14 @@ pub function is_leaksafe_tuple_field(t: string): boolean {
         // `structs` view to classify, so a tuple field carrying one still
         // bails — rarer, a later increment.)
         if (!elem_ok && (tag == "string[]" || tag == "f64[]" || tag == "i64[]" || is_leaksafe_array_field(tag))) { elem_ok = true; }
+        // A CALLABLE element — a closure box ("clo", what tuple_elem_tags maps
+        // every declared `fn` segment to) or a raw fn pointer — is one heap
+        // pointer in one tuple slot, exactly like the leak-safe array element
+        // above, and leaks with the (leak-only) tuple field. Without this a
+        // struct field whose tuple type carries a callable was not leak-safe,
+        // so the struct-literal admission gate failed the whole function to the
+        // AST emitter — even when the callable was never read (#3457).
+        if (!elem_ok && (tag == "clo" || tag == "fn")) { elem_ok = true; }
         // A NESTED tuple element is itself a leak-only heap-tuple pointer; recurse.
         if (!elem_ok && tag.len() >= 2 && tag[0:1] == "(") { elem_ok = is_leaksafe_tuple_field(tag); }
         if (!elem_ok) { return false; }
@@ -2022,6 +2030,14 @@ pub function is_leaksafe_tuple_field_d(structs: parser.StructDecl[], t: string):
         if (!elem_ok && (is_struct_array_field_type(structs, tag) || is_enum_array_field_type(structs, tag))) { elem_ok = true; }
         // A NESTED tuple element recurses through THIS predicate so an inner
         // struct-/enum-array element is admitted at any depth.
+        // A CALLABLE element — a closure box ("clo", what tuple_elem_tags maps
+        // every declared `fn` segment to) or a raw fn pointer — is one heap
+        // pointer in one tuple slot, exactly like the leak-safe array element
+        // above, and leaks with the (leak-only) tuple field. Without this a
+        // struct field whose tuple type carries a callable was not leak-safe,
+        // so the struct-literal admission gate failed the whole function to the
+        // AST emitter — even when the callable was never read (#3457).
+        if (!elem_ok && (tag == "clo" || tag == "fn")) { elem_ok = true; }
         if (!elem_ok && tag.len() >= 2 && tag[0:1] == "(") { elem_ok = is_leaksafe_tuple_field_d(structs, tag); }
         if (!elem_ok) { return false; }
         any = true;
