@@ -14176,6 +14176,17 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 var ctet: string = expr_tuple_elem_tag(ctfa.obj, util.digits_to_i32(ctfa.field), sb);
                 if (ctet == "clo") { sb = sb.mark_closure_local(v.name); }
                 else if (ctet.len() >= 2 && ctet[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctet)); }
+            } else {
+                // `var t = s.p` where struct field `p` is a TUPLE type: transfer the
+                // field's tuple element tags onto t (the struct-field sibling of the
+                // digit-field and array-element binds above), so `t.N` reads and a
+                // `t.N(args)` closure-element call resolve. Without it t was untyped
+                // and `t.1()` on an fn (`clo`) element bailed the module on `call`.
+                var sfoty: string = expr_struct_type(ctfa.obj, sb);
+                if (sfoty != "") {
+                    var sfft: string = decl_field_type(sb.structs, sfoty, ctfa.field);
+                    if (sfft.len() >= 2 && sfft[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(sfft)); }
+                }
             }
         },
         // A tuple ELEMENT of an array-of-tuples (`var t = a[0]` where a's
