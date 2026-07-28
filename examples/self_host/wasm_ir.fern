@@ -4555,3 +4555,138 @@ pub function arr_str_join_helper(): string {
     o = o + "    (call $__fern_str_join (local.get $xs) (local.get $sep)))\n";
     return o;
 }
+
+// print_str_helper emits the `$__fern_print_str` runtime: given a string-block
+// pointer `[len@0][bytes@4]`, set the iovec (buf = ptr+4, len = load(ptr)) in the
+// low-24 scratch (memory 0/4, nwritten at 8) and fd_write it to stdout (fd 1).
+pub function print_str_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_print_str (param $p i32)\n";
+    o = o + "    (i32.store (i32.const 0) (i32.add (local.get $p) (i32.const 4)))\n";
+    o = o + "    (i32.store (i32.const 4) (i32.load (local.get $p)))\n";
+    o = o + "    (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8))))\n";
+    return o;
+}
+// eprint_str_helper is print_str_helper to STDERR (fd 2): the IR path's eprint.
+// `eprint` is the stderr line-printer — it appends a trailing newline (mirroring
+// `print` and the Go-backend / interp / AST-path `eprint`). The newline byte is
+// materialised at scratch addr 12 and flushed as a second 1-byte fd_write.
+pub function eprint_str_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_eprint_str (param $p i32)\n";
+    o = o + "    (i32.store (i32.const 0) (i32.add (local.get $p) (i32.const 4)))\n";
+    o = o + "    (i32.store (i32.const 4) (i32.load (local.get $p)))\n";
+    o = o + "    (drop (call $fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+    o = o + "    (i32.store8 (i32.const 12) (i32.const 10))\n";
+    o = o + "    (i32.store (i32.const 0) (i32.const 12))\n";
+    o = o + "    (i32.store (i32.const 4) (i32.const 1))\n";
+    o = o + "    (drop (call $fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 8))))\n";
+    return o;
+}
+// arr_helpers emits the array runtime: $__fern_arr_push appends v to the
+// array, growing geometrically (cap 0 → 4, else ×2) into a fresh block
+// and copying the elements when full. Returns the (possibly new) pointer,
+// matching `xs = xs.append(v)`. Depends on $__fern_alloc.
+// arr_slice_helper emits ONLY $__fern_arr_slice (a fresh array holding
+// a[start:end), 4-byte i32 elements). Self-contained apart from $__fern_arr_box
+// (always emitted with the heap runtime), so the IR path can pull in array
+// slicing without the rest of arr_helpers (push / wide variants).
+pub function arr_slice_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_arr_slice (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $na i32) (local $i i32)\n";
+    o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (unreachable)))\n";
+    o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
+    o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
+    o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+    o = o + "    (i32.store (local.get $na) (local.get $n))\n";
+    o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $n))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
+    o = o + "      (i32.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (i32.add (local.get $start) (local.get $i)) (i32.const 4)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $na))\n";
+    return o;
+}
+// to_string_helpers emits the integer→string runtime backing
+// `(n).to_string()` (the desugaring of an f-string interpolant): format
+// str_to_i32_helper emits $__fern_str_to_i32: parse a `[len@0][bytes@4]` string
+// strbuf_helpers emits the wasm global string-builder runtime (strbuf_reset /
+// strbuf_append / strbuf_take) — the wasm sibling of asm_ir's __fern_strbuf_*
+// (asm_ir.fern, a .bss buffer). The wasm AST backend never had strbuf, so this
+// is authored fresh and the IR path is its only consumer. A growable byte buffer
+// lives in the bump heap: $__fern_strbuf_ptr / _len / _cap track it; ensure()
+// doubles the capacity (alloc a bigger block + copy, the old one leaks into the
+// bump heap, matching the bump-heap norm) when an append would overflow. append
+// copies a wasm string's bytes ([s+4 .. s+4+[s]]) onto the buffer; take snapshots
+// the buffer into a fresh rc-boxed string ($__fern_str_box: [s]=len, bytes@[s+4])
+// and resets len to 0. Heap-backed (str_box / alloc), so emitted only with the
+// heap runtime (module_uses_strbuf folds into the heap gate).
+pub function strbuf_helpers(): string {
+    var o: string = "";
+    o = o + "  (global $__fern_strbuf_ptr (mut i32) (i32.const 0))\n";
+    o = o + "  (global $__fern_strbuf_len (mut i32) (i32.const 0))\n";
+    o = o + "  (global $__fern_strbuf_cap (mut i32) (i32.const 0))\n";
+    // reset: clear length (the buffer + capacity persist for reuse).
+    o = o + "  (func $__fern_strbuf_reset\n";
+    o = o + "    (global.set $__fern_strbuf_len (i32.const 0)))\n";
+    // ensure(need): grow the buffer to hold at least `need` total bytes.
+    o = o + "  (func $__fern_strbuf_ensure (param $need i32)\n";
+    o = o + "    (local $ncap i32) (local $np i32) (local $i i32)\n";
+    o = o + "    (if (i32.le_u (local.get $need) (global.get $__fern_strbuf_cap)) (then (return)))\n";
+    o = o + "    (local.set $ncap (global.get $__fern_strbuf_cap))\n";
+    o = o + "    (if (i32.eqz (local.get $ncap)) (then (local.set $ncap (i32.const 256))))\n";
+    o = o + "    (block $gd (loop $gl (br_if $gd (i32.ge_u (local.get $ncap) (local.get $need))) (local.set $ncap (i32.mul (local.get $ncap) (i32.const 2))) (br $gl)))\n";
+    o = o + "    (local.set $np (call $__fern_alloc (local.get $ncap)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $cd (loop $cl (br_if $cd (i32.ge_u (local.get $i) (global.get $__fern_strbuf_len)))\n";
+    o = o + "      (i32.store8 (i32.add (local.get $np) (local.get $i)) (i32.load8_u (i32.add (global.get $__fern_strbuf_ptr) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $cl)))\n";
+    o = o + "    (global.set $__fern_strbuf_ptr (local.get $np))\n";
+    o = o + "    (global.set $__fern_strbuf_cap (local.get $ncap)))\n";
+    // append(s): copy wasm string s's bytes ([s]=len, bytes@[s+4]) onto the buffer.
+    o = o + "  (func $__fern_strbuf_append (param $s i32)\n";
+    o = o + "    (local $sl i32) (local $i i32) (local $d i32)\n";
+    o = o + "    (local.set $sl (i32.load (local.get $s)))\n";
+    o = o + "    (call $__fern_strbuf_ensure (i32.add (global.get $__fern_strbuf_len) (local.get $sl)))\n";
+    o = o + "    (local.set $d (i32.add (global.get $__fern_strbuf_ptr) (global.get $__fern_strbuf_len)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $ad (loop $al (br_if $ad (i32.ge_u (local.get $i) (local.get $sl)))\n";
+    o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $al)))\n";
+    o = o + "    (global.set $__fern_strbuf_len (i32.add (global.get $__fern_strbuf_len) (local.get $sl))))\n";
+    // take(): snapshot the buffer into a fresh rc-boxed string, reset len to 0.
+    o = o + "  (func $__fern_strbuf_take (result i32)\n";
+    o = o + "    (local $len i32) (local $box i32) (local $i i32)\n";
+    o = o + "    (local.set $len (global.get $__fern_strbuf_len))\n";
+    o = o + "    (local.set $box (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
+    o = o + "    (i32.store (local.get $box) (local.get $len))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $td (loop $tl (br_if $td (i32.ge_u (local.get $i) (local.get $len)))\n";
+    o = o + "      (i32.store8 (i32.add (i32.add (local.get $box) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (global.get $__fern_strbuf_ptr) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $tl)))\n";
+    o = o + "    (global.set $__fern_strbuf_len (i32.const 0))\n";
+    o = o + "    (local.get $box))\n";
+    return o;
+}
+// chr_helper emits $__fern_chr: an i32 byte value to a fresh 1-char
+// `[len@0][bytes@4]` string block (len 1, the low byte at +4). The wasm
+// companion to asm_ir's __fn___fern_chr (the wasm AST backend had no chr, so
+// this is authored fresh). Depends on $__fern_alloc (module_allocates is pulled
+// in by the chr gate alongside this).
+pub function chr_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_chr (param $n i32) (result i32)\n";
+    o = o + "    (local $blk i32)\n";
+    // rc-header the 1-char block via $__fern_str_box (like every other heap
+    // string), so a fresh non-escaping `chr(..)` local is reclaimable through
+    // $__fern_arr_dec (#2649). The header is transparent to consumers: the block
+    // still exposes [len@0][bytes@4] at the returned pointer.
+    o = o + "    (local.set $blk (call $__fern_str_box (i32.const 5)))\n";
+    o = o + "    (i32.store (local.get $blk) (i32.const 1))\n";
+    o = o + "    (i32.store8 (i32.add (local.get $blk) (i32.const 4)) (local.get $n))\n";
+    o = o + "    (local.get $blk))\n";
+    return o;
+}
