@@ -1026,7 +1026,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 
 		// Hardening pass 8: void calls, short-circuit &&/||, nested closures.
 		{"void-function", "function greet(name: string): void { write(\"hi \"); write(name); } function main(): i32 { greet(\"sam\"); return 0; }", 0, "hi sam"},
-		{"void-method", "struct L { } function (l: L) log(n: i32) { print_int(n); } function main(): i32 { var l = L {}; l.log(5); l.log(6); return 0; }", 0, "56"},
+		{"void-method", "struct L { } function (l: L) log(n: i32): void { print_int(n); } function main(): i32 { var l = L {}; l.log(5); l.log(6); return 0; }", 0, "56"},
 		{"short-circuit-and-or", "function side(): boolean { print_int(9); return true; } function main(): i32 { if (false && side()) { print_int(1); } if (true || side()) { print_int(2); } return 0; }", 0, "2"},
 		{"short-circuit-guard", "function main(): i32 { var xs = [10, 20]; var i: i32 = 5; if (i < xs.len() && xs[i] > 0) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},
 		{"nested-closure", "function main(): i32 { var add = function(a: i32): i32 { var inner = function(b: i32): i32 { return a + b; }; return inner(10); }; print_int(add(5)); return 0; }", 0, "15"},
