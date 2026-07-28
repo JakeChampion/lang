@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/ir"
+
 	arm64ssa "github.com/jakechampion/lang/internal/codegen/arm64ssa"
 	"github.com/jakechampion/lang/internal/ssa"
 )
@@ -113,5 +116,69 @@ func TestReinterpretF32RoundTrip(t *testing.T) {
 
 	if got := assembleRunArmModule(t, map[string]*ssa.Func{"r": f}, "r", 1); got != 0x20 {
 		t.Errorf("f32 bit round-trip = %d, want %d (0x40200000 >> 16 & 0xff)", got, 0x20)
+	}
+}
+
+// TestWideMemRoundTrip: a full-word (8-byte) load must survive the trip from
+// the legacy IR through the lift and out of the backend without being narrowed
+// back to i32. memLoadSeq renders `ldr x` and then applies maskFix(dst, in.W),
+// which sign-extends from bit 31 unless the width is 64 — so when the lift set
+// the 8-byte KIND but left Width 0, every wide value read out of memory lost
+// its top half. That corrupted i64[] elements (std/float's bignum limbs among
+// them): 2576980379 came back as -1717986917, 1234567890123 as its own low 32
+// bits, 1912276171.
+//
+// Built from ir.Func and lifted here rather than hand-assembled as ssa.Func,
+// because the defect was the LIFT dropping the width — a test that stamps
+// Width 64 on the SSA op directly passes either way and guards nothing.
+//
+// The values cover the three ways the stray sxtw showed up: bit 31 set
+// (becomes negative), all-ones in the low word (becomes -1), and a value wider
+// than 32 bits (truncated outright).
+func TestWideMemRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		val   int64
+		shift int64
+		want  int
+	}{
+		// Every case reads a byte at or above bit 32 — exactly the half the
+		// stray sxtw destroyed. The first two are 32-bit values whose high
+		// word must read back as ZERO; sign-extension turns it into 0xff.
+		{"bit31 set", 2576980379, 32, 0x00},         // 0x9999999B -> 0xff when sxtw'd
+		{"low word all ones", 4294967295, 32, 0x00}, // 0xFFFFFFFF -> 0xff when sxtw'd
+		{"wider than 32 bits", 1234567890123, 32, 0x1F},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// buf = alloc(16); buf[0] = val; return (buf[0] >> shift) & 0xff
+			in := &ir.Func{
+				Name: "r",
+				Ops: []ir.Op{
+					{Kind: ir.OpConstI32, I32: 16},
+					{Kind: ir.OpAlloc},
+					{Kind: ir.OpStoreLocal, I32: 0},
+
+					{Kind: ir.OpLoadLocal, I32: 0},
+					{Kind: ir.OpConstI64, I64: tc.val, Width: 64},
+					{Kind: ir.OpStore, Width: 64},
+
+					{Kind: ir.OpLoadLocal, I32: 0},
+					{Kind: ir.OpLoad, Width: 64},
+					{Kind: ir.OpConstI64, I64: tc.shift, Width: 64},
+					{Kind: ir.OpShrS, Width: 64},
+					{Kind: ir.OpConstI64, I64: 0xff, Width: 64},
+					{Kind: ir.OpAnd, Width: 64},
+					{Kind: ir.OpReturn},
+				},
+				Locals: []*ast.Var{{Name: "buf"}},
+			}
+			f, err := ssa.LiftFromIR(in)
+			if err != nil {
+				t.Fatalf("LiftFromIR: %v", err)
+			}
+			if got := assembleRunArmModule(t, map[string]*ssa.Func{"r": f}, "r", 1); got != tc.want {
+				t.Errorf("(%d >> %d) & 0xff = %d, want %d — the wide value was narrowed on the way out of memory", tc.val, tc.shift, got, tc.want)
+			}
+		})
 	}
 }
