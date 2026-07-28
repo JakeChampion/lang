@@ -19,16 +19,7 @@ import (
 // to end through the native backend: rodata string + the write-syscall
 // runtime. stdout must be exactly the printed text.
 func TestArm64NativePrintRunsUnderQemu(t *testing.T) {
-	qemu := ""
-	for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
-		if p, err := exec.LookPath(c); err == nil {
-			qemu = p
-			break
-		}
-	}
-	if qemu == "" {
-		t.Skip("qemu-aarch64 not on PATH")
-	}
+	qemu := arm64QemuOrEmpty(t)
 	cases := []struct {
 		name string
 		src  string
@@ -57,7 +48,7 @@ func TestArm64NativePrintRunsUnderQemu(t *testing.T) {
 			if err := os.WriteFile(path, elf.StaticExecutableData(text, data), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			out, err := exec.Command(qemu, path).Output()
+			out, err := runArm64Bin(qemu, path).Output()
 			if err != nil {
 				t.Fatalf("run: %v", err)
 			}
@@ -72,7 +63,8 @@ func TestArm64NativePrintRunsUnderQemu(t *testing.T) {
 // Go-side native backend: compile a Fern program to assembly with the
 // real arm64 code generator, then assemble + link it entirely
 // in-process (internal/native/arm64 + internal/native/elf) — no gcc,
-// no external assembler — and run the produced ELF under qemu. main()'s
+// no external assembler — and run the produced ELF (natively on an arm64
+// host, else under qemu-aarch64). main()'s
 // return value becomes the process exit code (via _start's exit_group),
 // so the exit code is the assertion.
 //
@@ -82,16 +74,7 @@ func TestArm64NativePrintRunsUnderQemu(t *testing.T) {
 // instruction the assembler doesn't cover yet would fail to assemble —
 // surfacing the next gap to fill.
 func TestArm64NativeBackendRunsUnderQemu(t *testing.T) {
-	qemu := ""
-	for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
-		if p, err := exec.LookPath(c); err == nil {
-			qemu = p
-			break
-		}
-	}
-	if qemu == "" {
-		t.Skip("qemu-aarch64 not on PATH")
-	}
+	qemu := arm64QemuOrEmpty(t)
 
 	cases := []struct {
 		name string
@@ -150,7 +133,7 @@ func TestArm64NativeBackendRunsUnderQemu(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := 0
-			if err := exec.Command(qemu, path).Run(); err != nil {
+			if err := runArm64Bin(qemu, path).Run(); err != nil {
 				ee, ok := err.(*exec.ExitError)
 				if !ok {
 					t.Fatalf("run failed: %v", err)
@@ -167,18 +150,9 @@ func TestArm64NativeBackendRunsUnderQemu(t *testing.T) {
 // TestCmdFernNativeArm64 drives the user-facing `-native` flag through
 // the actual fern CLI: `fern -target arm64 -native -o out src.fern`
 // must produce a static ELF with no external toolchain, which then
-// exits with main()'s return value under qemu.
+// exits with main()'s return value (run natively on arm64, else under qemu).
 func TestCmdFernNativeArm64(t *testing.T) {
-	qemu := ""
-	for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
-		if p, err := exec.LookPath(c); err == nil {
-			qemu = p
-			break
-		}
-	}
-	if qemu == "" {
-		t.Skip("qemu-aarch64 not on PATH")
-	}
+	qemu := arm64QemuOrEmpty(t)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "n.fern")
 	if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 6 * 7; }"), 0o644); err != nil {
@@ -191,7 +165,7 @@ func TestCmdFernNativeArm64(t *testing.T) {
 		t.Fatalf("fern -native failed: %v\n%s", err, out)
 	}
 	got := 0
-	if err := exec.Command(qemu, outPath).Run(); err != nil {
+	if err := runArm64Bin(qemu, outPath).Run(); err != nil {
 		ee, ok := err.(*exec.ExitError)
 		if !ok {
 			t.Fatalf("run failed: %v", err)

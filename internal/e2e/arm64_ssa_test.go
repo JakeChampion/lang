@@ -34,22 +34,8 @@ func TestArm64SSACliRoundtrip(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("arm64-ssa not exercised on windows")
 	}
-	// Empty qemu means "run it directly" — see e2eharness.RunArm64Bin, which
-	// owns that dispatch, and Arm64Tooling, which makes the same native-host
-	// call for the tests that also need a C linker (this one does not: the CLI
-	// assembles and links the arm64 ELF in-process).
-	qemu := ""
-	if runtime.GOOS != "linux" || runtime.GOARCH != "arm64" {
-		for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
-			if p, err := exec.LookPath(c); err == nil {
-				qemu = p
-				break
-			}
-		}
-		if qemu == "" {
-			t.Skip("not an arm64 Linux host and qemu-aarch64 not on PATH; skipping arm64-ssa e2e")
-		}
-	}
+	// "" = run it directly (already on arm64); otherwise the qemu path.
+	qemu := arm64QemuOrEmpty(t)
 
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "fern")

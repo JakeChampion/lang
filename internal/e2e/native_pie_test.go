@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"debug/elf"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -34,21 +33,13 @@ import (
 )
 
 // TestArm64NativePIERelocFree builds reloc-free programs as static PIEs and
-// runs them under qemu-aarch64. No `.quad <symbol>` tables means no
+// runs them (natively on arm64, else under qemu-aarch64). No `.quad <symbol>`
+// tables means no
 // relocations, so the binary is correct at any load base without a
 // self-relocation prologue. The exit code proves PC-relative code (adrp +
 // :lo12: rodata access, branches, calls) runs at the kernel-chosen base.
 func TestArm64NativePIERelocFree(t *testing.T) {
-	qemu := ""
-	for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
-		if p, err := exec.LookPath(c); err == nil {
-			qemu = p
-			break
-		}
-	}
-	if qemu == "" {
-		t.Skip("qemu-aarch64 not on PATH")
-	}
+	qemu := arm64QemuOrEmpty(t)
 	cases := []struct {
 		name string
 		src  string
@@ -79,7 +70,7 @@ function main(): i32 { return fib(10); }`, 55, ""},
 			if err := os.WriteFile(path, bin, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			cmd := exec.Command(qemu, path)
+			cmd := runArm64Bin(qemu, path)
 			out, _ := cmd.CombinedOutput()
 			code := cmd.ProcessState.ExitCode()
 			if string(out) != c.out || code != c.exit {
@@ -155,21 +146,13 @@ func assertPIELayout(t *testing.T, bin []byte) {
 // TestArm64NativePIESelfReloc is the stage-3 gate: programs that DO carry
 // relocations (function values → __closure_cell_<fn>: .quad <fn>) are
 // compiled with the PIE self-relocation prologue (Options.PIE) and run as
-// static PIEs under qemu-aarch64. The prologue applies .rela.dyn at startup,
+// static PIEs (natively on arm64, else under qemu-aarch64). The prologue
+// applies .rela.dyn at startup,
 // so the function-pointer slots hold the correct runtime address despite the
 // kernel-chosen load base. Reloc-free programs are included to prove the
 // prologue's empty-loop path is harmless.
 func TestArm64NativePIESelfReloc(t *testing.T) {
-	qemu := ""
-	for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
-		if p, err := exec.LookPath(c); err == nil {
-			qemu = p
-			break
-		}
-	}
-	if qemu == "" {
-		t.Skip("qemu-aarch64 not on PATH")
-	}
+	qemu := arm64QemuOrEmpty(t)
 	cases := []struct {
 		name      string
 		src       string
@@ -208,7 +191,7 @@ function main(): i32 { var d: dyn Shape = Sq { s: 7 }; return d.area(); }`, 49, 
 			if err := os.WriteFile(path, bin, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			cmd := exec.Command(qemu, path)
+			cmd := runArm64Bin(qemu, path)
 			out, _ := cmd.CombinedOutput()
 			if code := cmd.ProcessState.ExitCode(); code != c.exit {
 				t.Fatalf("PIE self-reloc run exit = %d, want %d (out=%q)", code, c.exit, out)
