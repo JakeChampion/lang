@@ -60,14 +60,14 @@ func TestSelfHostHttpHandlerRoutesIRX86_64(t *testing.T) {
 	buildBin(t, gcc, progDir, "http_handler", asm)
 }
 
-// TestSelfHostOverBudgetProgramsRunX86_64 pins BOTH sides of the rescue's gate,
-// on two programs that pull in the same ~925-function stdlib closure:
+// TestSelfHostOverBudgetProgramsRunX86_64 pins the per-module rescue on two
+// programs that pull in the same ~925-function stdlib closure:
 //
-//   - http-parse calls no builtin the AST emitter is missing, so it keeps
-//     routing to the AST emitter exactly as it did before the rescue existed —
-//     and still runs correctly. This is the regression guard for the gate: an
-//     ungated rescue swept programs like this onto the concat path, which is
-//     how it broke the self-host checker driver (see the gate's comment).
+//   - http-parse calls no builtin the AST emitter is missing. It used to be
+//     held back from the concat by a gate, because routing it through IR hit
+//     two IR-path over-frees (the container-read alias and the param-receiver
+//     append, both fixed). The gate is gone, so it now takes the concat like
+//     every other over-budget program — and must still run correctly.
 //   - raw-socket-serve drives a real socket, which the AST emitter cannot emit
 //     at all, so it takes the concat — and serves.
 func TestSelfHostOverBudgetProgramsRunX86_64(t *testing.T) {
@@ -87,10 +87,9 @@ function main(): i32 {
 }
 `
 		asm, progDir := compileSourceModload(t, runner, driverBin, src)
-		if strings.Contains(asm, ".Lir") {
-			t.Error("http-parse took the per-module concat: the rescue's gate should only " +
-				"divert programs the AST emitter cannot compile (it calls no socket / " +
-				"readiness / opener builtin)")
+		if !strings.Contains(asm, ".Lir") {
+			t.Error("http-parse dropped to the AST emitter: with the rescue's gate removed, " +
+				"every over-budget program in the window routes per-module IR (#3457)")
 		}
 		bin := buildBin(t, gcc, progDir, "http_parse", asm)
 		out, exit := runBin(binCmd(runner, bin), "")
