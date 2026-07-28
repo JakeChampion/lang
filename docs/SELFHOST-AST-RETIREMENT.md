@@ -249,11 +249,23 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   `call $fd_readdir` / `call $poll_oneoff`), one IR-only call site each in
   `emit_ir_module_units`. Moved verbatim; byte-identical WAT for an FS-builtins
   program (stat/read_dir/remove_file/remove_dir_all/temp_dir/sleep_ms) and a
-  `for (k,v) in m` map-iter program, both running under wasmtime. **Next:** the
-  remaining IR-only `*_func` runtime helpers (many are self-contained; some —
-  e.g. `str_split_helper` → shared `arr_push_helper` — must relocate their
-  shared callees too, or leave a `wasm_ir`→`wasm` back-reference, so batch by
-  dependency closure), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
+  `for (k,v) in m` map-iter program, both running under wasmtime. (5) the
+  string-transform cluster (`substr_helper` / `strcmp_helper` / `str_trim_helper` /
+  `str_reverse_helper` / `str_replace_helper` / `str_repeat_helper` /
+  `str_predicate_helpers` / `str_lines_helper` / `str_chars_helper` /
+  `str_case_helpers`) — 10 pure IR-only string-builder leaves, each with a single
+  IR-framing call site and no Fern-level cross-call. Verified by a dependency-graph
+  scan of the ~42 remaining IR-append helpers: all are leaves EXCEPT `str_split_helper`
+  (→ `arr_push_helper`) and `arr_str_join_helper` (→ `str_join_helper`), whose shared
+  callees stay in wasm.fern — those two are DEFERRED to a follow-up that moves their
+  callees too. `string_from_bytes_helper` is also deferred: it is dual-use (also called
+  from the AST-path `emit_module_mode`). Byte-identical WAT for a program exercising
+  slice / cmp / trim / reverse / replace / repeat / starts_with / lines / chars /
+  to_ascii_upper+lower, running under wasmtime. **Next:** the deferred entangled trio
+  (pull `arr_push_helper` / `str_join_helper` in alongside `str_split_helper` /
+  `arr_str_join_helper`), the shared dual-use helpers (`string_from_bytes_helper`,
+  the stdio / args / env / reader / divrem / clock leaves), then
+  `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
   is LAST — it drags `Ctx` / `release_module_ctx` / `collect_method_types` and the
   shared struct predicates (co-owned by the AST emitter → a cycle until that
   shared layer is relocated).
