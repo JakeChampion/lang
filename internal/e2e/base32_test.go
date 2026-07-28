@@ -15,10 +15,10 @@ function main(): i32 {
     if (b32.base32_encode("foob") != "MZXW6YQ=") { return 4; }
     if (b32.base32_encode("fooba") != "MZXW6YTB") { return 5; }
     if (b32.base32_encode("foobar") != "MZXW6YTBOI======") { return 6; }
-    if (b32.base32_decode("MZXW6YTBOI======") != "foobar") { return 7; }
-    if (b32.base32_decode("") != "" || b32.base32_encode("") != "") { return 8; }
+    if (string_from_bytes_unchecked(b32.base32_decode("MZXW6YTBOI======")) != "foobar") { return 7; }
+    if (string_from_bytes_unchecked(b32.base32_decode("")) != "" || b32.base32_encode("") != "") { return 8; }
     var raw: string = string_from_bytes_unchecked([0 as u8, 255 as u8, 128 as u8, 1 as u8, 254 as u8]);
-    if (b32.base32_decode(b32.base32_encode(raw)) != raw) { return 9; }
+    if (string_from_bytes_unchecked(b32.base32_decode(b32.base32_encode(raw))) != raw) { return 9; }
     return 42;
 }
 `

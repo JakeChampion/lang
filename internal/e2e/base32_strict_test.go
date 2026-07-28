@@ -11,10 +11,12 @@ import "testing"
 // check holds. Each leg skips itself when its toolchain is absent.
 const base32StrictProg = `
 import "std/base32" as b32;
-function opt(o: Option[string], fb: string): string {
-    match (o) { Some(v) => { return v; }, None => { return fb; } }
+function opt(o: Option[u8[]], fb: string): string {
+    // The fixtures here are ASCII; a real ingest path would use
+    // std/utf8.from_bytes instead of the unchecked read.
+    match (o) { Some(v) => { return string_from_bytes_unchecked(v); }, None => { return fb; } }
 }
-function isnone(o: Option[string]): boolean {
+function isnone(o: Option[u8[]]): boolean {
     match (o) { Some(v) => { return false; }, None => { return true; } }
 }
 function main(): i32 {
@@ -30,7 +32,7 @@ function main(): i32 {
     if (!isnone(b32.base32_decode_strict("JBUQ====X"))) { return 10; }
     if (!isnone(b32.base32_decode_strict("A"))) { return 11; }
     if (!isnone(b32.base32_decode_strict("JB======="))) { return 12; }
-    if (b32.base32_decode("JBU0") != b32.base32_decode("JBU")) { return 13; }
+    if (string_from_bytes_unchecked(b32.base32_decode("JBU0")) != string_from_bytes_unchecked(b32.base32_decode("JBU"))) { return 13; }
     return 42;
 }
 `

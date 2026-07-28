@@ -1,5 +1,12 @@
 import "std/test";
 import "std/base32" as base32;
+
+// base32_decode yields `u8[]` (#5730). These fixtures are ASCII, so
+// `text()` reads the decoded bytes back to assert against a literal; a
+// real ingest path would use `std/utf8.from_bytes` and handle None.
+function text(b: u8[]): string {
+    return string_from_bytes_unchecked(b);
+}
 // examples/tests/base32_test.fern — std/base32 against the RFC 4648 §10
 // known-answer vectors (the "" / f / fo / foo / foob / fooba / foobar
 // progression that exercises every padding length) plus decode
@@ -16,26 +23,26 @@ function test_encode_vectors(): test.TestOutcome {
 }
 
 function test_decode_vectors(): test.TestOutcome {
-    if (base32.base32_decode("MY======") != "f") { return test.fail("f"); }
-    if (base32.base32_decode("MZXW6===") != "foo") { return test.fail("foo"); }
-    return test.assert_eq(base32.base32_decode("MZXW6YTBOI======"), "foobar");
+    if (text(base32.base32_decode("MY======")) != "f") { return test.fail("f"); }
+    if (text(base32.base32_decode("MZXW6===")) != "foo") { return test.fail("foo"); }
+    return test.assert_eq(text(base32.base32_decode("MZXW6YTBOI======")), "foobar");
 }
 
 function test_roundtrip(): test.TestOutcome {
     var payload: string = "Hello, base32 World! 12345";
-    return test.assert_eq(base32.base32_decode(base32.base32_encode(payload)), payload);
+    return test.assert_eq(text(base32.base32_decode(base32.base32_encode(payload))), payload);
 }
 
 function test_empty_decode(): test.TestOutcome {
-    return test.assert_true(base32.base32_decode("") == "" &&
+    return test.assert_true(text(base32.base32_decode("")) == "" &&
                             base32.base32_encode("") == "");
 }
 
 // Strict decode: RFC vectors round-trip; malformed input rejects.
-function b32_opt(o: Option[string], fb: string): string {
-    match (o) { Some(v) => { return v; }, None => { return fb; } }
+function b32_opt(o: Option[u8[]], fb: string): string {
+    match (o) { Some(v) => { return text(v); }, None => { return fb; } }
 }
-function b32_is_none(o: Option[string]): boolean {
+function b32_is_none(o: Option[u8[]]): boolean {
     match (o) { Some(v) => { return false; }, None => { return true; } }
 }
 
