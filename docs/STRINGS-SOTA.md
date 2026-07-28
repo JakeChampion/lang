@@ -671,6 +671,15 @@ Costs, stated honestly:
   (`floor_char_boundary`), or return `Option[str]`. Recommend
   `Option[str]` — Fern already prefers `Option` over trapping, and the
   hazard becomes visible in the type.
+
+  The snapping half of this **has landed** (#5634 slice 1):
+  `std/utf8` ships `is_char_boundary` / `floor_char_boundary` /
+  `ceil_char_boundary`. They are additive and say nothing yet about
+  what `s[a:b]` does — a caller can snap safely today, but nothing
+  forces one to. `floor` never grows an index and `ceil` never shrinks
+  one, so snapping a pair widens the slice to whole characters rather
+  than truncating it, and both are total (0 and `len` are always
+  boundaries) rather than `Option`-returning.
 - Ingest paths pay a validation scan. Cheap (ASCII fast scan; §2.8), but
   not free, and it lands on exactly the request path the language cares
   about — measure it before committing.
