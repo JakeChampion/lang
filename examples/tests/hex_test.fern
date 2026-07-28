@@ -1,5 +1,6 @@
 import "std/test";
 import "std/hex" as hex;
+import "std/string";
 // examples/tests/hex_test.fern — pure-Fern coverage of std/hex's
 // lowercase hex encode / decode: round-trip fidelity, empty input,
 // case-insensitive decode, and the lenient decode termination (first
@@ -7,8 +8,9 @@ import "std/hex" as hex;
 // suites unit-test the prelude origin; this is the migration-shaped
 // (pure-Fern, std/test-driven) companion.
 //
-// hex_decode yields `u8[]` (#5730). These fixtures are all ASCII, so
-// `text()` reads the decoded bytes back to assert against a literal.
+// std/hex carries bytes as `u8[]` on both sides (#5730). These fixtures
+// are all ASCII, so `text()` reads decoded bytes back to assert against
+// a literal, and `s.bytes()` feeds a literal into the encoder.
 
 // The decoded bytes in this file are ASCII by construction, so reading
 // them back is safe without the `std/utf8.from_bytes` check a real
@@ -19,11 +21,11 @@ function text(b: u8[]): string {
 
 function test_encode(): test.TestOutcome {
     // 'A'=0x41 'B'=0x42 'C'=0x43.
-    return test.assert_eq(hex.hex_encode("ABC"), "414243");
+    return test.assert_eq(hex.hex_encode("ABC".bytes()), "414243");
 }
 
 function test_encode_empty(): test.TestOutcome {
-    return test.assert_eq(hex.hex_encode(""), "");
+    return test.assert_eq(hex.hex_encode("".bytes()), "");
 }
 
 function test_decode(): test.TestOutcome {
@@ -54,17 +56,14 @@ function test_decode_odd_tail(): test.TestOutcome {
 }
 
 function test_roundtrip(): test.TestOutcome {
-    return test.assert_eq(text(hex.hex_decode(hex.hex_encode("Hello, Fern!"))), "Hello, Fern!");
+    return test.assert_eq(text(hex.hex_decode(hex.hex_encode("Hello, Fern!".bytes()))), "Hello, Fern!");
 }
 
 function test_encode_lowercase_digits(): test.TestOutcome {
-    // 0xFF is emitted lowercase ('ff', not 'FF'). chr(255) via a
-    // round-trip through decode keeps this byte-exact.
-    //
-    // 0xFF is not valid UTF-8, so feeding it back to the still-string-
-    // typed encoder needs the unchecked read: that is the encode-side
-    // half of the wart #5730 has yet to fix.
-    return test.assert_eq(hex.hex_encode(text(hex.hex_decode("ff"))), "ff");
+    // 0xFF is emitted lowercase ('ff', not 'FF'). A round-trip through
+    // decode keeps this byte-exact — and since #5730 both sides carry
+    // `u8[]`, so the 0xFF byte never has to masquerade as a `string`.
+    return test.assert_eq(hex.hex_encode(hex.hex_decode("ff")), "ff");
 }
 
 // hex_decode_strict returns Some(bytes) on well-formed input.
@@ -85,10 +84,10 @@ function test_decode_strict_rejects(): test.TestOutcome {
 
 // hex_encode_upper emits uppercase A-F; decode accepts it (either case).
 function test_encode_upper(): test.TestOutcome {
-    if (hex.hex_encode_upper("z") != "7A") { return test.fail("7A"); }
-    if (hex.hex_encode_upper("") != "") { return test.fail("empty"); }
+    if (hex.hex_encode_upper("z".bytes()) != "7A") { return test.fail("7A"); }
+    if (hex.hex_encode_upper("".bytes()) != "") { return test.fail("empty"); }
     // Round-trips through the case-insensitive decoder.
-    return test.assert_eq(text(hex.hex_decode(hex.hex_encode_upper("Hello"))), "Hello");
+    return test.assert_eq(text(hex.hex_decode(hex.hex_encode_upper("Hello".bytes()))), "Hello");
 }
 
 function main(): i32 {

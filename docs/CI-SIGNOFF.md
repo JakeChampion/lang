@@ -82,6 +82,19 @@ actually ran the suite on arm64 hardware (an Apple Silicon Mac, a Graviton box,
 etc.). The two backends share their entire frontend, so an x86-64-green change
 is almost always arm64-green — but "almost always" is why CI runs it by default.
 
+## Sign-off and the CI queue
+
+Every gated lane except `Lint` is also a **queued** lane
+([`docs/CI-QUEUE.md`](CI-QUEUE.md)): it runs when the CI queue dispatches it,
+not the moment you push. Sign-off still works exactly as described above —
+the queue dispatches the lane, its `gate` job reads your status, and the work
+skips. A fully signed-off PR passes through the front of the queue in seconds
+instead of hours, so it costs the PRs behind it almost nothing.
+
+What sign-off does *not* do is jump the queue. If a PR ahead of you is
+mid-matrix, your signed-off lanes wait for it like anything else — and then
+finish immediately.
+
 ## The trust model, plainly
 
 A sign-off is you telling CI "I ran this and it passed." CI believes you. That's

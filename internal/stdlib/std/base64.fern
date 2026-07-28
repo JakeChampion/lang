@@ -1,22 +1,19 @@
 // std/base64 — RFC 4648 (standard alphabet) base64 encode /
 // decode.
 //
-// `base64_encode(s)` / `base64_decode(s)` — round-trip
+// `base64_encode(b)` / `base64_decode(s)` — round-trip
 // content-preserving on raw bytes. Encode emits `=` padding
 // to align to a 4-character group. Decode terminates at the
 // first non-base64 character (so trailing `=` padding works
 // without special handling), preserving the bytes
 // successfully decoded up to that point.
 //
-// DECODE yields `u8[]`, not `string` (#5730, decision D9): decoding
-// arbitrary input produces arbitrary bytes, which are not UTF-8 and so
-// must not be typed as a `string`. Read the result back with
-// `std/utf8.from_bytes` when the bytes are supposed to be text.
-//
-// ENCODE still takes a `string` and is still a byte container on that
-// side — the other half of the same wart. It stays for now because it
-// is coupled to `std/crypto`, whose digest functions also return bytes
-// as `string`; both move together in a later slice of #5730.
+// Bytes are `u8[]` on both sides (#5730, decision D9): arbitrary input
+// decodes to arbitrary bytes, which are not UTF-8 and so must not be
+// typed as a `string`, and encoding is the inverse — its job is
+// rendering bytes as text. Read a decode result back with
+// `std/utf8.from_bytes` when the bytes are supposed to be text; encode
+// a string's bytes with `std/string`'s `s.bytes()`.
 //
 // No prelude: these are in scope only after a program
 // declares `import "std/base64";` (docs/PRELUDE-TO-MODULES.md,
@@ -39,8 +36,8 @@ function __b64_decode_char(c: i32): i32 {
     return 0 - 1;
 }
 
-pub function base64_encode(s: string): string {
-    var n: i32 = s.len();
+pub function base64_encode(bs: u8[]): string {
+    var n: i32 = bs.len();
     if (n == 0) { return ""; }
     var out_len: i32 = ((n + 2) / 3) * 4;
     var buf: u8[] = __alloc_u8(out_len);
@@ -54,9 +51,9 @@ pub function base64_encode(s: string): string {
     var b1: i32 = 0;
     var b2: i32 = 0;
     while (i + 3 <= n) {
-        b0 = s[i];
-        b1 = s[i + 1];
-        b2 = s[i + 2];
+        b0 = bs[i] as i32;
+        b1 = bs[i + 1] as i32;
+        b2 = bs[i + 2] as i32;
         buf = buf.with(j, __b64_alphabet(b0 >> 2) as u8);
         buf = buf.with(j + 1, __b64_alphabet(((b0 & 3) << 4) | (b1 >> 4)) as u8);
         buf = buf.with(j + 2, __b64_alphabet(((b1 & 15) << 2) | (b2 >> 6)) as u8);
@@ -66,14 +63,14 @@ pub function base64_encode(s: string): string {
     }
     var rem: i32 = n - i;
     if (rem == 1) {
-        b0 = s[i];
+        b0 = bs[i] as i32;
         buf = buf.with(j, __b64_alphabet(b0 >> 2) as u8);
         buf = buf.with(j + 1, __b64_alphabet((b0 & 3) << 4) as u8);
         buf = buf.with(j + 2, 61 as u8);                      // '='
         buf = buf.with(j + 3, 61 as u8);
     } else if (rem == 2) {
-        b0 = s[i];
-        b1 = s[i + 1];
+        b0 = bs[i] as i32;
+        b1 = bs[i + 1] as i32;
         buf = buf.with(j, __b64_alphabet(b0 >> 2) as u8);
         buf = buf.with(j + 1, __b64_alphabet(((b0 & 3) << 4) | (b1 >> 4)) as u8);
         buf = buf.with(j + 2, __b64_alphabet((b1 & 15) << 2) as u8);
@@ -202,9 +199,9 @@ function __b64_url_to_std(s: string): string {
     return string_from_bytes_unchecked(out);
 }
 
-// `base64url_encode(s)` — URL-safe base64 of `s`, no `=` padding.
-pub function base64url_encode(s: string): string {
-    return __b64_std_to_url(base64_encode(s));
+// `base64url_encode(b)` — URL-safe base64 of `b`, no `=` padding.
+pub function base64url_encode(bs: u8[]): string {
+    return __b64_std_to_url(base64_encode(bs));
 }
 
 // `base64url_decode(s)` — inverse of `base64url_encode`. Accepts input

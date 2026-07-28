@@ -10,8 +10,9 @@ import "testing"
 // itself when its toolchain is absent.
 const totpProg = `
 import "std/crypto" as crypto;
+import "std/string";
 function main(): i32 {
-    var key: string = "12345678901234567890123456789012";
+    var key: u8[] = "12345678901234567890123456789012".bytes();
     if (crypto.totp_sha256(key, 59, 30, 8) != 46119246) { return 1; }
     if (crypto.totp_sha256(key, 1111111109, 30, 8) != 68084774) { return 2; }
     if (crypto.totp_sha256(key, 1111111111, 30, 8) != 67062674) { return 3; }

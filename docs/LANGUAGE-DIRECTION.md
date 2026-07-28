@@ -1357,12 +1357,13 @@ the Fern's abstraction layers.
   shape as struct literal syntax. Heterogeneous-typed literals
   monomorphise through the auto-injected `Map[K, V]` decl.
 
-- **~~`Bytes` vs `[u8]`~~ — settled no nominal type.** Strings
-  are treated as raw byte arrays at the `base64_encode` /
-  `hex_encode` / `random_bytes` boundary (their round-trip
-  semantics are content-preserving without UTF-8 validation),
-  and `u8[]` / `[u8]` handle the literal-bytes case directly.
-  No standalone `Bytes` newtype.
+- **~~`Bytes` vs `[u8]`~~ — settled no nominal type.** `u8[]` is
+  the bytes type: owned byte arrays for the codec / crypto /
+  `random_bytes` boundary, and `[u8]` for a borrowed view. No
+  standalone `Bytes` newtype. (`base64_encode` / `hex_encode`
+  and friends originally took a `string` used as a raw byte bag;
+  #5730 moved them to `u8[]` so a `string` can carry the D9
+  invariant that it is well-formed UTF-8.)
 
 - **~~Closure capture semantics~~ — settled by-value at closure-
   creation time.** The closureconv pass evaluates each

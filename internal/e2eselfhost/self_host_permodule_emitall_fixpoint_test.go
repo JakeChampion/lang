@@ -26,10 +26,20 @@ import (
 // batch of 8 now fits. This test is that A/B made permanent: same batch size,
 // with `-assume-eligible`, must run green AND byte-identically (gen0 == gen1).
 //
-// Two whole-compiler emit-all passes (~12 min), so env-gated (RUN_EMITALL_FIXPOINT=1).
+// Two whole-compiler emit-all passes. Measured 2026-07-28 at **273 s** — the
+// "~12 min" this comment used to claim predates the param_is_borrowable no-alloc
+// fix, which cut the per-unit emit peak ~3x and the wall with it.
+//
+// That is now cheap enough to consider de-gating, but DON'T de-gate this test as
+// it stands: at batch=8 the gen1 emit peaks 7909 MB against the 8 GiB arena
+// (~99% of the ceiling), so it would start failing with exit-137 on the next
+// compiler-source growth. batch=4 costs +36 s and buys 1.15 GB of headroom — but
+// this test's batch=8 is load-bearing (it is the exact pre-`-assume-eligible`
+// OOM config it exists to hold), so de-gating means ADDING a batch=4 run, not
+// re-tuning this one. See docs/SELFHOST-AST-RETIREMENT.md.
 func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 	if os.Getenv("RUN_EMITALL_FIXPOINT") == "" {
-		t.Skip("set RUN_EMITALL_FIXPOINT=1 to run the emit-all self-reproduction proof (~12 min; #3457 slice 2 / #5668)")
+		t.Skip("set RUN_EMITALL_FIXPOINT=1 to run the emit-all self-reproduction proof (~4.5 min; #3457 slice 2 / #5668)")
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)

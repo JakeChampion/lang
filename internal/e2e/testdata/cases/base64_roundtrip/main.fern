@@ -1,8 +1,9 @@
 import "std/base64";
+import "std/string";
 // base64 encode/decode round-trip from the prelude.
 function main(): i32 {
     var s: string = "Fern!";
-    if (string_from_bytes_unchecked(base64.base64_decode(base64.base64_encode(s))) == s) {
+    if (string_from_bytes_unchecked(base64.base64_decode(base64.base64_encode(s.bytes()))) == s) {
         return 42;
     }
     return 1;

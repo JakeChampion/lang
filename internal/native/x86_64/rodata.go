@@ -5,6 +5,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/jakechampion/lang/internal/native/gasstr"
 )
 
 func (a *Assembler) appendRodata(b []byte) { a.rodata = append(a.rodata, b...) }
@@ -37,7 +39,7 @@ func (a *Assembler) appendRodataDirective(d, rest string) error {
 	case ".float", ".single", ".dc.s":
 		return a.emitFloats(rest, 4)
 	case ".ascii", ".asciz", ".string":
-		s, err := strconv.Unquote(strings.TrimSpace(rest))
+		s, err := gasstr.Unquote(strings.TrimSpace(rest))
 		if err != nil {
 			return fmt.Errorf("bad string literal %q: %v", rest, err)
 		}

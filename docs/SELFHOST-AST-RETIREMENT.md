@@ -102,14 +102,15 @@ representative subset splits it three ways:
 The `ineligible-fn` row above says "No `ineligible-fn` items remain". That is
 true of the **builtin methods** it enumerates, and false as a general statement:
 running the corrected probe (inside the `use_ir` branch — see above) over
-`internal/e2eselfhost` aborts **17 subtests across 7 test functions**, none of
+`internal/e2eselfhost` aborts **17 subtests across 7 test functions** (**15
+across 6** after #5755 retired return-type inference — see the struck row), none of
 them over-budget (they are all small single-module programs), so every one is an
 eligibility decline. `asm_ir_run`'s AST fallback is therefore **live code**, not
 something #3457 can delete yet.
 
 | test | subtests | shape |
 |---|---|---|
-| `TestSelfHostReturnInferenceIR` | `option-some`, `option-none` | UN-ANNOTATED fn whose return type must infer to `Option[i32]`: `function find(n: i32) { … return Some(n); … return None; }` |
+| ~~`TestSelfHostReturnInferenceIR`~~ | ~~`option-some`, `option-none`~~ | **GONE (E070, #5755)** — the shape was an UN-ANNOTATED fn whose return type had to infer to `Option[i32]`. Requiring return annotations made those programs *invalid*, so the gate never sees them and the test was deleted. Note what this is NOT: the IR path was not taught anything: 17 declines → 15 by removing programs, not by widening the subset. |
 | `TestSelfHostTupleFnStructFieldX86_64` | `bare`, `arg-elem0`, `two-arg`, `read-then-call`, `churn` | fn-typed TUPLE element in a struct field: `struct S { p: (i32, () => i32) }`, called as `s.p.1()` |
 | `TestSelfHostCloArrayFieldCallIRX86_64` | `capture-multi`, `with-arg` | closure-array struct field, capturing call |
 | `TestSelfHostStructMatchX86_64` | `expr_form`, `rename_expr` | `return match (p) { … }` over a struct — the match-EXPRESSION form |
@@ -121,11 +122,52 @@ Note the last row in context: the other ~80 `TestSelfHostAsmIRPath` subtests
 pass under the probe, which is the control proving the probe placement is right
 (they are the deliberate `-ir`-off differential runs, not declines).
 
-The cluster is Option/closure/tuple-fn shaped rather than builtin-method shaped
-— i.e. the remaining `ineligible-fn` work is *inference and composite-value*
-lowering, not another round of intercepted builtins. Naming the exact
-`all_eligible` predicate that rejects each one is the next step; re-run the
-probe and read `asm_ir.eligibility_report` for the failing module.
+**Attribution caveat — the table names TESTS, not verified declining shapes.**
+Re-probing the exact case sources with `asm_ir_run -ir-probe` (2026-07-28)
+splits the list in two:
+
+| shape | `-ir-probe` verdict | status |
+|---|---|---|
+| fn-typed tuple element in a struct field (`s.p.1()`) | `main: BAIL lower` → `module: AST` | **CONFIRMED decline** |
+| closure-array struct field (`r.hs[1]()`) | `main: BAIL lower` → `module: AST` | **CONFIRMED decline** |
+| struct match-expression + `when` guard | `module: IR` | **NOT the declining construct** |
+| `w @ P { a, b } when w.a > 0` | `module: IR` | **NOT the declining construct** |
+
+So only the two struct-field-of-callable shapes are verified gaps, and they
+share one cause: the lifted closure lowers fine (`main$clo0: ir`) while the
+CALL SITE that reads it back out of a struct field bails. Note this is the
+narrower sibling of the fn-typed-tuple-element gap CLAUDE.md records as closed
+— closed for a tuple in a LOCAL, still open for one read through a struct field.
+
+For the other rows the case source is IR-eligible, so the `exit(97)` came from
+something else those tests compile, not from the listed program. Do not treat
+them as known gaps without re-deriving the abort; all five test functions PASS
+normally, so whatever declines there is served correctly by the fallback.
+
+The lesson repeats the one above: an abort tells you a test's process reached
+the fallback, not WHICH program did. Confirm each shape with `-ir-probe` before
+building on it.
+
+**Root cause of the two confirmed gaps, and the shape of the fix.** A callable
+behind a struct field has an ambiguous REPRESENTATION that its declared type
+cannot resolve: `() => i32` is spelled the same whether the value is a raw code
+pointer or a `__mkclo$` env box, and the two dispatch differently (env-first vs
+plain `call_indirect`). For a LOCAL the ambiguity is settled by slot metadata —
+`mark_closurearr` / `mark_fnarr` / the `"clo"` element tag are recorded where
+the value is BUILT, which is why the local-tuple form lowers. A struct field has
+no slot, so `expr_tuple_elem_tag`'s `p.t.N` arm falls back to
+`decl_field_type` + `tuple_type_elem_tag` — the declared type — and cannot tell
+which it is, so the call site bails.
+
+The machinery for exactly this already exists one level out:
+`irlower.fnptr_arr_fields_of` scans every function body for how each field is
+POPULATED and emits a module-level `"FNPTR:<Type>.<field>"` registry, which
+`field_access_is_fnarr` then reads at the use site (`#5235`). The fix is the
+same construction one level deeper — a registry keyed by field *and tuple
+element index*, populated from the struct-literal site (a `__mkclo$` value ⇒
+closure box, a bare named fn ⇒ pointer), read by `expr_tuple_elem_tag`'s
+struct-field arm and by the closure-array-field call path. Note both confirmed
+shapes share this one cause, so one registry closes both.
 
 ### A whole output mode has no IR leg (not a decline reason — a missing path)
 
@@ -140,15 +182,43 @@ Mapping every remaining `asm.emit_module` / `asm_arm64.emit_module` /
 | arm64 ELF | yes, and it carries **no 512-function budget** | `all_eligible` false |
 | arm64-darwin | yes — `emit_module_ir(lm, darwin)` threads `darwin` into `emit_runtime` | `all_eligible` false |
 | wasm core | yes | `wasm_ir.should_use_ir_core` false (the `wasm_ir_deferrals_ok` set) |
-| **wasm component** | **none** — `wasm.emit_module_mode` gates it `ir_ok = !component && …` | **always** |
+| wasm component | yes, for the no-I/O + stdout/stderr/exit shapes | `component_needs_ok` false (any other WASI category) |
 
 So the raw call-site count badly overstates the work: `asm.emit_module` and
 `asm_arm64.emit_module` are both IR-*preferring shells* (each runs the gate
 first and only falls through), so most of those sites are already IR routes.
-What the table above does NOT cover is the last row: **component-model wasm has
-no IR path at all**, which is why the `emit-target-wasm-component*` cases are
-AST-only. Retiring `wasm.fern` therefore needs an IR leg built for component
-mode — new work, not a decline-reason to close.
+
+**The last row was `none` until 2026-07-28** — `wasm.emit_module_mode` gated the
+IR leg on `ir_ok = !component && …`, so every `emit-target-wasm-component*` case
+was AST-only *unconditionally*, an output mode with no IR path to decline rather
+than a decline reason to close. It now has one, for the subset the fixed
+component framings can serve:
+
+| shape | mode | core imports | framing |
+|---|---|---|---|
+| no I/O | 1 | none | `component_full` |
+| stdout | 2 | get-stdout, blocking-write-and-flush | `component_full_io` |
+| stderr | 2 | get-stderr, blocking-write-and-flush, get-stdout | `component_full_io_eprint` |
+| exit | 2 | get-stdout, blocking-write-and-flush, wasi:cli/exit | `component_full_io_exit` |
+
+The leg is a fork at two points inside `wasm_ir.emit_ir_module_units_mode`, not
+a second emitter: the import section, and the entry (`_start` → `main` +
+`_lang_run`). Everything between — memory, literals, type-id globals, heap + RC
+runtime, every helper body, the funcref table — is mode-independent. What makes
+that possible is that the preview1 surface the IR already emits is shimmable:
+mode 2 *defines* `$fd_write` over `blocking-write-and-flush` and `$proc_exit`
+over `wasi:cli/exit`, so every emitted call site links unchanged. The mode-2
+`$fd_write` dispatches on its `fd` argument (2 → stderr, else stdout), which is
+why eprint and print share one shim where the AST path needs a separate
+`$__fern_eprint` body.
+
+What remains AST-only is the rest of `component_shape`: fs / env / args /
+random / clock. Those are not gated by the framing but by the *helpers* —
+`readfile_func_p2`, `env_func_p2`, `args_func_p2`, `clock_funcs_p2`,
+`random_func_p2` are preview2 rewrites living only in `wasm.fern`, with no IR
+sibling. Each is an independent, well-scoped port against a working reference;
+`component_needs_ok` is an allowlist over need names and fails closed, so a
+shape stays on the AST path until its helper is ported and the name is added.
 
 Two corrections to the framing that was here before:
 
@@ -995,11 +1065,16 @@ graph actually takes, and that is the obvious next thing to look at.
   `compute_wp_bases` **once per process** and shares the bases across every unit
   (`emit_module_ir_unit_flat`'s `b` param), so the 1.2 GB is paid once instead of
   per unit. The per-process `-per-module-emit` path pays it 36 times over.
-- Cheapest wins, in rough order: cap or memoise the fixpoint's repeated walks;
-  reclaim between passes; or persist the computed bases across processes so the
-  per-process path pays what emit-all pays.
-- A 2x reduction in `borrowable_params_interproc` alone is worth ~425 MB on
-  every window of every module — more than anything windowing can offer.
+- ~~Cheapest wins, in rough order: cap or memoise the fixpoint's repeated walks;
+  reclaim between passes~~ — **both closed, and by measurement, not argument**:
+  the next section found the cost was never the walks, and the section after that
+  built the memoised variant anyway and priced it. What remains of this bullet is
+  the last clause: persist the computed bases across processes so the per-process
+  path pays what emit-all pays.
+- ~~A 2x reduction in `borrowable_params_interproc` alone is worth ~425 MB on
+  every window of every module~~ — this framing is what sent the memoisation
+  attempt down the wrong road; the analysis was never allocating what the
+  attribution implied.
 
 ## The floor, fixed: a substring-slice storm, not the fixpoint (2026-07-28)
 
@@ -1038,6 +1113,187 @@ is no longer the lever. The hypothesised "cap/memoise the fixpoint" and
 re-measure the *gen1* floor (the ~1.3–2.6× self-host-runtime multiplier still
 applies on top) and whether the per-module fixpoint can come off its env gate.
 
+## The gen1 floor, and the memoisation priced (2026-07-28)
+
+Answering the "Next" above, and closing the memoisation hypothesis with a built
+variant rather than an estimate. Same method throughout (`-assume-eligible`;
+gen1 = a compiler linked from gen0's own `-per-module-emit-all` units, so it runs
+the self-host runtime).
+
+**The gen1 floor followed gen0 down.** Parser module, gen1:
+
+| window | before the slice fix | now |
+|---|---:|---:|
+| `0:1` (the floor) | 2241 | **1602** |
+| `0:100` (the budget in use) | 2347 | **1706** |
+| `0:407` (whole module) | 5388 | **2436** |
+
+`irlower` at `0:1` measures 1601 MB against parser's 1602, so the floor is still
+the module-independent constant the side-table model predicts.
+
+**Parse+modload is now the floor.** `-per-module-count` alone (parse + modload,
+no emit) peaks **1122 MB** on gen1 — **70%** of the 1602 MB floor, leaving only
+~480 MB for the whole emit call. The doc's earlier ~390 MB gen0 figure has become
+the dominant term on gen1. Anything further spent on emit-side analysis is
+chasing the remaining 30%; **the next real target is module loading**, not the
+side tables.
+
+Note also how much the 407-function window fell (5388 → 2436). The old warning
+that "windowing is very much what keeps a large module affordable" is now much
+weaker — a whole 407-func module costs 1.5x the floor, where it used to cost 2.4x.
+
+**The gen1 emit-all fixpoint is now cheap enough to reconsider its env gate.**
+Driving gen1 `-per-module-emit-all` over the whole compiler in batches, and
+diffing against gen0's units:
+
+| batch size | wall | max per-batch peak | result |
+|---|---:|---:|---|
+| 8 (what `TestSelfHostPerModuleEmitAllFixpointX86_64` uses) | **118 s** | **7909 MB** | gen0 == gen1, all 36 units |
+| 4 | 154 s | 6754 MB | gen0 == gen1, all 36 units |
+
+118 s for the gen1 half, against the ~9 min the whole test cost when it was
+env-gated (`RUN_EMITALL_FIXPOINT`). **But look at the peak before de-gating it:**
+batch=8 reaches 7909 MB against the **8 GiB arena** — ~99% of the ceiling, i.e.
+the configuration is one compiler-source addition away from the exit-137 wall
+again. Halving the batch costs +36 s and buys only 1.15 GB (the accumulation is
+dominated by the largest units, not the count). The per-unit floor is no longer
+what limits batching — the bump arena's never-retreating pointer is, exactly as
+the 2026-07-27 entry concluded.
+
+Note what that does *not* mean: **do not just lower
+`TestSelfHostPerModuleEmitAllFixpointX86_64` to batch=4.** Its batch=8 is
+load-bearing — the test exists to hold `-assume-eligible` against *the exact
+configuration that OOM'd without it*, and re-tuning the batch deletes the
+regression it guards. If the fixpoint is de-gated for routine CI, add a batch=4
+run for that and leave the batch=8 A/B env-gated as the backstop.
+
+**The memoisation, priced (rejected).** The "cap or memoise the fixpoint's
+repeated walks" bullet was implemented and measured rather than left open. Both
+fixpoints carry a settled per-param flag forward (sound: borrowable flags are
+monotone 1->0 as its registry shrinks, consume-safe 0->1 as its grows), so a
+settled param is never re-walked. On top of the slice fix, byte-identical
+throughout:
+
+| configuration | peak MB | note |
+|---|---:|---|
+| current main | 508 | parser `0:1`, gen0 |
+| + drop the quadratic `borrowable_sig` convergence signature | 507 | no effect |
+| + memoise both fixpoints' settled flags | **477** | −6% |
+| current main, whole-compiler emit-all | 3358 / 21 s | |
+| + memoisation | 3326 / 20 s | −1% |
+
+So the whole memoisation is worth ~30 MB and ~1 s, and deleting the quadratic
+signature build is worth nothing measurable. **Not landed** — a monotonicity
+invariant spanning two fixpoints, for 6% on a 1-function window and 1% on the
+emit that matters, is not a trade this floor needs; it would also have to be
+maintained forever against a bar no cheap test can enforce (see below). Recorded
+here so the option is closed by measurement instead of being re-derived a third
+time.
+
+## The load pipeline leaks, on BOTH runtimes (2026-07-28)
+
+Following the section above's "the next real target is module loading", the
+1121 MB is **not** a parsing algorithm being expensive, and **not** (only) a
+self-host representation cost. Loading leaks essentially all of it, on the
+native runtime too.
+
+Method: a throwaway `-load-bench N` driver mode running the full
+read→tokenize→parse→`load_imports`→`bundle_per_module` pipeline N times, each
+result dropped before the next. A runtime that reclaims holds a flat peak.
+
+| loads | gen0 (native runtime) | gen1 (self-host runtime) |
+|---|---:|---:|
+| 1 | 218 MB | 1120 MB |
+| 2 | 428 MB | 2239 MB |
+| 3 | 632 MB | 3358 MB |
+
+Exactly linear on both: **+210 MB per load native, +1119 MB per load
+self-host, zero reuse.** So there are two independent facts, and the second one
+is the one that had been assumed to be the whole story:
+
+1. the load's working set is never reclaimed on **either** runtime; and
+2. separately, the self-host runtime allocates ~5.3x the bytes for the same
+   work (the emit call, by contrast, sits at 1.66x — inside the documented
+   1.3-2.6x band, so the multiplier is concentrated in loading).
+
+**Where it leaks.** Per-load leak by stage, gen0, measured on large inputs
+(a small entry file leaks under 1 MB and rounds to zero — the first version of
+this bisect used the ~700-line driver as its input and wrongly read
+tokenize/parse as leak-free):
+
+| stage | `irlower.fern` (41k lines) | `parser.fern` (14k lines) |
+|---|---:|---:|
+| tokenize only | 44 MB | 16 MB |
+| + `parse_module` | 64 MB | 24 MB |
+
+So ~69% of it is the **lexer** (`Token[]`) and ~31% the parser's AST, scaling at
+~1.6 KB leaked per source line. `load_imports` is not itself at fault — it just
+calls the pair 16 times.
+
+### ROOT CAUSE: an array reassigned by `.append` inside a LOOP is never dropped
+
+Minimal repro: `examples/probes/loop_append_drop_leak.fern`.
+
+**Measure this class of bug with `FERN_LEAKCHECK=1`, not RSS.** The native
+backend already has an exact leak detector (#5362 slice 1) that prints
+`leakcheck: allocs=N frees=M live_bytes=K` at exit. Every RSS-derived conclusion
+in the first two versions of this section was wrong in some way, and each one
+collapsed the moment the counters were used instead:
+
+| shape, 4 calls | allocs / frees | verdict |
+|---|---|---|
+| `var xs: i32[] = [1, 2, 3];` | 4 / 4 | reclaims |
+| `xs = xs.append(1);` straight-line | 8 / 8 | reclaims |
+| `var ys: i32[] = xs.append(1);` (new binding) | 8 / 8 | reclaims |
+| **`while (i < 1) { xs = xs.append(i); i = i + 1; }`** | **8 / 4** | **1 block leaked per call** |
+
+One iteration is enough. The leak is exactly **one block per call** — the
+array's final buffer — at every size tested (n=2000/20000/200000 all leak 4
+blocks in 4 calls; only `live_bytes` scales, 49 KB / 393 KB / 6.3 MB). The
+growth reallocs are all freed correctly; it is the function-exit drop of the
+loop-carried binding that never happens.
+
+That is why the lexer dominates the per-load leak: `tokenize` is
+`out = out.append(tok)` inside a `while (true)`, so every call leaks the entire
+`Token[]`.
+
+**Three of this section's earlier claims were RSS artifacts, now retracted:**
+
+- ~~"nothing leaks up to the 256 KiB class, then ~1.2-2.4x the array size per
+  round from 512 KiB up"~~ — there is **no size threshold**. Small leaks were
+  simply invisible under a ~9 MB baseline.
+- ~~"an array of structs with a string field does not leak, `Token` is an enum"~~
+  — shape is irrelevant; struct and enum leak identically at equal size.
+- ~~"the leak is dominated by element payloads, `i32[]` leaks 14x less"~~ — the
+  payload objects leak only because they are elements of a buffer that is never
+  dropped, so their drop never runs. `i32[]` leaks the same *one block*; it just
+  has no payloads riding on it.
+
+**Suspects eliminated along the way.** `__fern_free`'s large tier bins to 3
+significant bits up to 1 GiB and is fine. `__fern_alloc_reuse` is cleared for the
+native backend — its class-mismatch path calls `__fern_free` before allocating,
+so it cannot leak the donor. (The self-host runtime's `.Lsarelo` remains open,
+but this leak reproduces natively, so it is not the cause.) The fault is in RC
+insertion for a loop-carried owned binding, not in the allocator.
+
+**Scope — not self-host-only.** It reproduces on the native backend, so it
+affects `fern` itself and anything that parses repeatedly in one process.
+`fern-lsp` re-loads on every edit, which is exactly the long-running,
+allocation-heavy workload CLAUDE.md now puts in scope. `internal/ir` already has
+a `loop_var_drop_test.go`, so this is adjacent to analysis that exists — start
+there.
+
+**Small-program tests cannot guard these analyses — measured.** Building a driver
+with the borrowable fixpoint's cap forced to 1 (un-converged, hence unsound in
+the over-borrow direction) *does* change the registry — a param forwarded to a
+callee stays borrowable because pass 1 still sees the optimistic seed — yet a
+suite of targeted probes (borrow cycle, forward-declared callee, direct escape,
+escape through a forwarder, consume-rebind cycle, and a variant stashing a
+loop-local into a container that outlives it) all pass, on **byte-identical**
+asm. At that program size the flag has no codegen effect. The gate that catches a
+wrong registry is whole-compiler byte-identity plus the checker corpus; do not
+accept a small-program test as evidence for a change to these fixpoints.
+
 ## Recommended order
 
 1. **#3425 — DONE** (large-tier freelist port, x86 #5609 + arm64 #5614; the
@@ -1059,9 +1315,13 @@ applies on top) and whether the per-module fixpoint can come off its env gate.
    interproc-fixpoint tables and a single substring-slice storm in
    `param_is_borrowable`, whose no-alloc rewrite dropped the **gen0** emit-all
    one-unit peak from 1663 MB to **520 MB** (byte-identical, all 36 units). The
-   gen1 multiplier (~1.3-2.6x) still applies, so re-measuring the gen1 floor and
-   whether the per-module fixpoint can now come off its env gate is the immediate
-   next step; parse+modload (~390 MB gen0) is the next-largest attributable chunk.
+   gen1 multiplier (~1.3-2.6x) still applies. **Both follow-ups are now DONE —
+   see "The gen1 floor, and the memoisation priced".** The gen1 floor fell 2241 ->
+   **1602 MB**, of which **1122 MB is parse+modload alone**, so module loading —
+   not the emit-side side tables — is what is left to attack. The gen1 emit-all
+   fixpoint now takes **118 s** and stays byte-identical to gen0, cheap enough to
+   de-gate, except that at its current batch=8 it peaks **7909 MB against the
+   8 GiB arena**; de-gate at batch=4 (154 s, 6754 MB) rather than at batch=8.
 3. **Slice 3 driver repoint + Slice 5 deletion** — mechanical once (2) lands.
 4. **Slice 4a/4b** (arm64/wasm runtime untangle) alongside/after — a ~5k-line,
    qemu-gated duplication that unlocks nothing on its own; avoid until the

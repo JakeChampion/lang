@@ -1,5 +1,6 @@
 import "std/test";
 import "std/base64" as base64;
+import "std/string";
 
 // base64_decode yields `u8[]` (#5730). These fixtures are ASCII, so
 // `text()` reads the decoded bytes back to assert against a literal; a
@@ -17,24 +18,24 @@ function text(b: u8[]): string {
 
 // Three-byte groups encode to four base64 chars with no padding.
 function test_encode_no_pad(): test.TestOutcome {
-    return test.assert_eq(base64.base64_encode("Man"), "TWFu");
+    return test.assert_eq(base64.base64_encode("Man".bytes()), "TWFu");
 }
 
 // A two-byte tail leaves one `=` pad; a one-byte tail leaves two.
 function test_encode_one_pad(): test.TestOutcome {
-    return test.assert_eq(base64.base64_encode("Ma"), "TWE=");
+    return test.assert_eq(base64.base64_encode("Ma".bytes()), "TWE=");
 }
 
 function test_encode_two_pad(): test.TestOutcome {
-    return test.assert_eq(base64.base64_encode("M"), "TQ==");
+    return test.assert_eq(base64.base64_encode("M".bytes()), "TQ==");
 }
 
 function test_encode_longer(): test.TestOutcome {
-    return test.assert_eq(base64.base64_encode("hello"), "aGVsbG8=");
+    return test.assert_eq(base64.base64_encode("hello".bytes()), "aGVsbG8=");
 }
 
 function test_encode_empty(): test.TestOutcome {
-    return test.assert_eq(base64.base64_encode(""), "");
+    return test.assert_eq(base64.base64_encode("".bytes()), "");
 }
 
 function test_decode_no_pad(): test.TestOutcome {
@@ -56,7 +57,7 @@ function test_decode_empty(): test.TestOutcome {
 // decode . encode is the identity on arbitrary text.
 function test_roundtrip(): test.TestOutcome {
     var s = "The quick brown fox jumps over the lazy dog.";
-    return test.assert_eq(text(base64.base64_decode(base64.base64_encode(s))), s);
+    return test.assert_eq(text(base64.base64_decode(base64.base64_encode(s.bytes()))), s);
 }
 
 // base64_decode_strict returns Some(bytes) on well-formed input.
@@ -82,18 +83,19 @@ function test_decode_strict_rejects(): test.TestOutcome {
 // URL-safe variant: the `-`/`_` alphabet, no `=` padding.
 function test_url_alphabet(): test.TestOutcome {
     // 0xFFFFFF → standard "////" → url-safe "____"; no '+' '/' '=' anywhere.
-    var s: string = string_from_bytes_unchecked([255 as u8, 255 as u8, 255 as u8]);
-    return test.assert_eq(base64.base64url_encode(s), "____");
+    // Three 0xFF bytes are not valid UTF-8 anywhere — since #5730 the
+    // encoder takes them as `u8[]` and they never pose as a `string`.
+    return test.assert_eq(base64.base64url_encode([255 as u8, 255 as u8, 255 as u8]), "____");
 }
 
 function test_url_no_padding(): test.TestOutcome {
     // "Hi" is 2 bytes → standard "SGk=" (one pad); url-safe drops it.
-    return test.assert_eq(base64.base64url_encode("Hi"), "SGk");
+    return test.assert_eq(base64.base64url_encode("Hi".bytes()), "SGk");
 }
 
 function test_url_roundtrip(): test.TestOutcome {
     var payload: string = "Hello, World! ~ tokens+need/url-safety";
-    var enc: string = base64.base64url_encode(payload);
+    var enc: string = base64.base64url_encode(payload.bytes());
     // Decoding accepts the unpadded url-safe form back to the original.
     return test.assert_true(text(base64.base64url_decode(enc)) == payload &&
                             text(base64.base64url_decode("SGk=")) == "Hi");  // padded input tolerated
@@ -110,7 +112,7 @@ function b64url_is_none(s: string): boolean {
 function test_url_decode_strict_valid(): test.TestOutcome {
     // Unpadded "Hi" → "SGk"; empty → Some("").
     if (b64url_opt(base64.base64url_decode_strict("SGk"), "X") != "Hi") { return test.fail("SGk"); }
-    if (b64url_opt(base64.base64url_decode_strict(base64.base64url_encode("Hello")), "X") != "Hello") { return test.fail("roundtrip"); }
+    if (b64url_opt(base64.base64url_decode_strict(base64.base64url_encode("Hello".bytes())), "X") != "Hello") { return test.fail("roundtrip"); }
     return test.assert_eq(b64url_opt(base64.base64url_decode_strict(""), "X"), "");
 }
 

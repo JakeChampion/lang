@@ -24,11 +24,19 @@ name: PR Status Comment
 #                              baseline) as soon as the PR opens / is pushed
 #                              to / reopens.
 #
-# NOTE: the `workflows:` list below must name every workflow that runs on
-# pull_request. When you add a new PR-triggered workflow, add its `name:` here
-# too, otherwise this comment won't re-evaluate when that workflow finishes.
-# (`workflow_run` has no wildcard.) This workflow deliberately does NOT list
-# itself, so it can't trigger itself recursively.
+# NOTE: the `workflows:` list below must name every workflow that reports on a
+# pull request — whether it runs on `pull_request` or is dispatched by the CI
+# queue (docs/CI-QUEUE.md). Add a new one's `name:` here or this comment won't
+# re-evaluate when it finishes (`workflow_run` has no wildcard); for a queued
+# lane, internal/sourcelint's TestCIQueueTriggerListsMatchManifest enforces it.
+# This workflow deliberately does NOT list itself, so it can't trigger itself
+# recursively.
+#
+# The `ci-queue/admission` commit status is picked up for free: the tally below
+# counts commit statuses as well as check runs, so a PR still waiting its turn
+# in the queue reports ⏳ instead of a misleading ✅ (its heavy lanes have not
+# run at all, and the skipped fork-fallback runs they leave behind count as
+# passes on their own).
 #
 # workflow_run runs in the context of the base repo, so the GITHUB_TOKEN has
 # write scope even for pull requests opened from forks.

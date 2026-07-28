@@ -45,7 +45,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 256) {
         var one: u8[] = [i as u8];
-        var enc: string = hex.hex_encode(string_from_bytes_unchecked(one));
+        var enc: string = hex.hex_encode(one);
         if (enc.len() != 2) { return 9; }
         var back: u8[] = hex.hex_decode(enc);
         if (back.len() != 1) { return 10; }

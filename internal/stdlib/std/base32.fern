@@ -1,7 +1,7 @@
 // std/base32 — RFC 4648 base32 encode / decode (standard alphabet
 // `A–Z 2–7`, `=` padding).
 //
-// `base32_encode(s)` groups the input into 5-bit chunks, each mapped to
+// `base32_encode(b)` groups the input into 5-bit chunks, each mapped to
 // one of 32 characters, padding to 8-character groups with `=`.
 // `base32_decode(s)` is the inverse; like base64_decode it is lenient —
 // decoding stops at the first character that is neither a base32 digit
@@ -9,15 +9,12 @@
 // `base32_encode` on any byte content. Base32's case-insensitive,
 // digit-safe alphabet suits TOTP secrets, filenames, and DNS labels.
 //
-// DECODE yields `u8[]`, not `string` (#5730, decision D9): decoding
-// arbitrary input produces arbitrary bytes, which are not UTF-8 and so
-// must not be typed as a `string`. Read the result back with
-// `std/utf8.from_bytes` when the bytes are supposed to be text.
-//
-// ENCODE still takes a `string` and is still a byte container on that
-// side — the other half of the same wart. It stays for now because it
-// is coupled to `std/crypto`, whose digest functions also return bytes
-// as `string`; both move together in a later slice of #5730.
+// Bytes are `u8[]` on both sides (#5730, decision D9): arbitrary input
+// decodes to arbitrary bytes, which are not UTF-8 and so must not be
+// typed as a `string`, and encoding is the inverse — its job is
+// rendering bytes as text. Read a decode result back with
+// `std/utf8.from_bytes` when the bytes are supposed to be text; encode
+// a string's bytes with `std/string`'s `s.bytes()`.
 
 // __b32_alphabet maps a 5-bit value (0..31) to its character byte:
 // 0..25 → 'A'..'Z', 26..31 → '2'..'7'.
@@ -34,15 +31,15 @@ function __b32_decode_char(c: i32): i32 {
     return 0 - 1;
 }
 
-// `base32_encode(s)` — RFC 4648 base32, `=`-padded to 8-char groups.
-pub function base32_encode(s: string): string {
+// `base32_encode(b)` — RFC 4648 base32, `=`-padded to 8-char groups.
+pub function base32_encode(bs: u8[]): string {
     var out: u8[] = [];
     var acc: i32 = 0;
     var bits: i32 = 0;
     var i: i32 = 0;
-    var n: i32 = s.len();
+    var n: i32 = bs.len();
     while (i < n) {
-        acc = (acc << 8) | (s[i] as i32);
+        acc = (acc << 8) | (bs[i] as i32);
         bits = bits + 8;
         while (bits >= 5) {
             bits = bits - 5;

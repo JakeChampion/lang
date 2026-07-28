@@ -3,8 +3,21 @@ package e2eselfhost
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 	"testing"
 )
+
+// u8ArrayLit renders a byte string as a Fern `u8[]` literal. The
+// encoders take `u8[]` (#5730) and these programs are compiled with only
+// the module under test in scope, so std/string's `s.bytes()` is not
+// available to convert a literal.
+func u8ArrayLit(s string) string {
+	parts := make([]string, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		parts = append(parts, fmt.Sprintf("%d as u8", s[i]))
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
 
 // TestSelfHostBytesX86_64 proves the self-hosted x86-64 compiler can
 // compile the real std/hex and std/base64 — which build u8[] buffers
@@ -31,7 +44,7 @@ func TestSelfHostBytesX86_64(t *testing.T) {
 			// encode → write the encoded form, then `|`, then decode.
 			mainSrc := "import \"./" + tc.mod + "\";\n" +
 				"function main(): i32 {\n" +
-				"    var e: string = " + tc.mod + "." + tc.mod + "_encode(\"" + tc.input + "\");\n" +
+				"    var e: string = " + tc.mod + "." + tc.mod + "_encode(" + u8ArrayLit(tc.input) + ");\n" +
 				"    write(e); write(\"|\");\n" +
 				"    write(" + fmt.Sprintf(tc.decodeFmt, tc.mod+"."+tc.mod+"_decode(e)") + ");\n" +
 				"    return 0;\n" +
@@ -79,7 +92,7 @@ func TestSelfHostBytesArm64(t *testing.T) {
 		t.Run(tc.mod, func(t *testing.T) {
 			mainSrc := "import \"./" + tc.mod + "\";\n" +
 				"function main(): i32 {\n" +
-				"    var e: string = " + tc.mod + "." + tc.mod + "_encode(\"" + tc.input + "\");\n" +
+				"    var e: string = " + tc.mod + "." + tc.mod + "_encode(" + u8ArrayLit(tc.input) + ");\n" +
 				"    write(e); write(\"|\");\n" +
 				"    write(" + fmt.Sprintf(tc.decodeFmt, tc.mod+"."+tc.mod+"_decode(e)") + ");\n" +
 				"    return 0;\n" +

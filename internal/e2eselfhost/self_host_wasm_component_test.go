@@ -346,6 +346,11 @@ func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 		{"return42", "function main(): i32 { return 42; }", false},
 		{"compute-zero", "function main(): i32 { var x: i32 = 5; var y: i32 = 5; return x - y; }", true},
 		{"compute-nonzero", "function main(): i32 { var n: i32 = 3; return n * 7; }", false},
+		// Allocating no-I/O programs: the mode-1 core carries the heap + RC
+		// runtime with no imports at all to reach it, the one shape where a
+		// missing allocator surfaces as a trap rather than a link error.
+		{"alloc-string", `function main(): i32 { var s: string = "ab" + "cd"; if (s.len() == 4) { return 0; } return 1; }`, true},
+		{"alloc-array", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var t: i32 = 0; var i: i32 = 0; while (i < xs.len()) { t = t + xs[i]; i = i + 1; } return t - 6; }", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// source -> preview2 core WAT
