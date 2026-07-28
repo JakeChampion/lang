@@ -57,6 +57,50 @@ function builtin_view(dir: string, base: parser.StructDecl[]): parser.StructDecl
     return parser.inject_builtin_enums(out);
 }
 
+// dedupe_shape_defs drops repeated shape-symbol DEFINITIONS from a concatenated
+// unit stream.
+//
+// Per-module units intern a struct/enum shape as a `.weak` global
+// (`__fern_shp_<name>`, asmcore.shape_sym) so two units referencing the same
+// shape resolve to ONE address and pointer-equality discrimination holds across
+// the module boundary. That relies on the LINKER merging the weak copies, which
+// only happens when each unit is its own object file — the batched per-module
+// build. Concatenating units into a single assembly stream instead hands `as`
+// two definitions of one symbol in one file, which is an error
+// (`symbol __fern_shp_HttpRequest is already defined`), not a merge.
+//
+// So keep the first definition of each shape and drop the rest; every unit's
+// REFERENCES (leaq __fern_shp_X) then bind to that one definition, which is
+// exactly the address the weak merge would have produced. The emitter writes
+// each definition as an exact two-line pair — `.weak SYM` then `SYM: .ascii …`
+// (see emit_module_ir_unit_flat's shape_lits block) — so dropping a duplicate
+// means dropping that line and the one after it.
+function dedupe_shape_defs(asm_text: string): string {
+    // Accumulate through the global strbuf (O(1) amortised per append): every
+    // unit has already been emitted into `asm_text`, so no emitter is using it,
+    // and `out = out + line` would be O(N²) over a ~400 KB stream.
+    strbuf_reset();
+    var seen: string[] = [];
+    var i: i32 = 0;
+    var n: i32 = asm_text.len();
+    var skip_next: boolean = false;
+    while (i < n) {
+        var j: i32 = i;
+        while (j < n && asm_text[j] != 10) { j = j + 1; }   // 10 = '\n'
+        var line: string = asm_text[i:j] + "";
+        var drop: boolean = false;
+        if (skip_next) { drop = true; skip_next = false; }
+        else if (line.len() > 17 && line[0:17] == ".weak __fern_shp_") {
+            var sym: string = line[6:line.len()] + "";
+            if (util.has_str(seen, sym)) { drop = true; skip_next = true; }
+            else { seen = seen.append(sym); }
+        }
+        if (!drop) { strbuf_append(line); strbuf_append("\n"); }
+        i = j + 1;
+    }
+    return strbuf_take();
+}
+
 // prune_to_reachable keeps only `mod`'s funcs whose mangled name is in `reach`
 // (the reachable-name set derived from the treeshaked merged module). Both
 // flatten.bundle (the merged path) and flatten.bundle_per_module mangle a
@@ -118,7 +162,29 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
         pi = pi + 1;
     }
     all_structs = builtin_view(dir, all_structs);
-    var needs: string[] = asm_ir.all_runtime_need_roots();
+    // The entry unit emits the ONE shared runtime, but on its own it only knows
+    // its own needs — a library unit calling __fern_tcp_listen / __fern_poll /
+    // __fern_stat would reference a symbol nothing defines. The batched
+    // per-module build can't see its siblings (one unit per process), so it
+    // seeds the entry with the static all_runtime_need_roots superset; this
+    // concat emits every unit in ONE process, so it can compute the EXACT union
+    // instead — no guessing, and no unused helpers dragged into the entry.
+    //
+    // The static list is not a substitute here: it predates the platform
+    // helpers (tcp_* / poll / timer_fd / stat / read_dir / subprocess / …),
+    // none of which the bootstrap compiler itself marks, so a program using
+    // them links against undefined `__fern_*` if the entry is seeded from it.
+    var needs: string[] = [];
+    var ni: i32 = 0;
+    while (ni < infmods.len()) {
+        var mn: string[] = asm_ir.module_runtime_needs(infmods[ni]);
+        var mi: i32 = 0;
+        while (mi < mn.len()) {
+            if (!util.has_str(needs, mn[mi])) { needs = needs.append(mn[mi]); }
+            mi = mi + 1;
+        }
+        ni = ni + 1;
+    }
     var out: string = "";
     var idx: i32 = 0;
     while (idx < parts.len()) {
@@ -145,7 +211,7 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
         out = out + asm_ir.emit_module_ir_unit(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_structs, 0, 0 - 1, []);
         idx = idx + 1;
     }
-    return out;
+    return dedupe_shape_defs(out);
 }
 
 // run_per_module drives the per-module build of the loaded program (#3451 step 4
