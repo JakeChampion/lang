@@ -7396,11 +7396,23 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 		return
 	}
 
+	// Every named function declares its return type — `: void` when it
+	// returns nothing. Omitting it is an error rather than an inference
+	// request: a signature is the one part of a function its callers read,
+	// so it is written, not derived. (Lambdas are unaffected; they are
+	// checked through the synthesized-decl path, and the arrow form
+	// `(x: i32) => e` has no annotation slot at all.)
+	if fn.ReturnUnannotated {
+		c.errfCode(fn.P, "E070", "missing return type on function %q; declare it explicitly (use `: void` if it returns nothing)", fn.Name)
+	}
+
 	// Return-type inference: a plain (non-method, non-generic) function
 	// that wrote no `: Type` accumulates its return-expression types
 	// while the body is checked, then unifies them into a concrete
-	// return type (replacing the defaulted void). Methods / generics /
-	// associated functions are out of scope for now and keep void.
+	// return type (replacing the defaulted void). Retained ONLY to keep
+	// the diagnostics that follow sane on the erroneous path above — an
+	// unannotated function is already rejected, so this no longer decides
+	// any accepted program's meaning.
 	infer := fn.ReturnUnannotated && fn.Receiver == nil && fn.MethodRecv == "" && fn.AssocType == "" && len(fn.TypeParams) == 0
 	prevInfer := c.inferReturns
 	var rets []ast.Type

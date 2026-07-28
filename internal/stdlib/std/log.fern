@@ -34,15 +34,15 @@ import "std/i32";
 // don't pay for the encoder/parser.
 import "std/json";
 
-pub function log_info(msg: string) {
+pub function log_info(msg: string): void {
     eprint("[INFO] " + msg);
 }
 
-pub function log_warn(msg: string) {
+pub function log_warn(msg: string): void {
     eprint("[WARN] " + msg);
 }
 
-pub function log_error(msg: string) {
+pub function log_error(msg: string): void {
     eprint("[ERROR] " + msg);
 }
 
@@ -158,7 +158,7 @@ pub function (e: LogEntry) render(msg: string): string {
 
 // `entry.emit(msg)` — render and write to stderr (nothing when
 // filtered out by the threshold).
-pub function (e: LogEntry) emit(msg: string) {
+pub function (e: LogEntry) emit(msg: string): void {
     var line: string = e.render(msg);
     if (line.len() > 0) { eprint(line); }
 }

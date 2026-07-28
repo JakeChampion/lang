@@ -349,9 +349,9 @@ func TestTypeErrors(t *testing.T) {
 		{`function f(): i32 { return true; }`, "return type mismatch"},
 		{`function f(): i32 { return 1 + true; }`, "requires an integer type"},
 		{`function f(): boolean { return 1; }`, "return type mismatch"},
-		{`function f() { x; }`, "undefined identifier"},
+		{`function f(): void { x; }`, "undefined identifier"},
 		{`function f(n: i32): i32 { if (n) { return 0; } return 1; }`, "if condition must be boolean"},
-		{`function f() { var x: i32 = true; }`, "cannot assign boolean"},
+		{`function f(): void { var x: i32 = true; }`, "cannot assign boolean"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, c.src)
@@ -823,10 +823,10 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 }
 
 func TestBuiltinPutchar(t *testing.T) {
-	if err := checkSource(t, `function f() { putchar(65); }`); err != nil {
+	if err := checkSource(t, `function f(): void { putchar(65); }`); err != nil {
 		t.Errorf("putchar(65) should type-check: %v", err)
 	}
-	if err := checkSource(t, `function f() { putchar(true); }`); err == nil {
+	if err := checkSource(t, `function f(): void { putchar(true); }`); err == nil {
 		t.Errorf("putchar(true) should fail")
 	}
 }
@@ -1788,7 +1788,7 @@ func TestMissingReturnAcceptsDivergentForms(t *testing.T) {
 			match (n) { 0 => { return 0; }, _ => { return 1; } }
 		}`,
 		// void function may fall through
-		`function v(n: i32) { var x = n + 1; }`,
+		`function v(n: i32): void { var x = n + 1; }`,
 		// plain trailing return
 		`function id(n: i32): i32 { return n; }`,
 	} {
@@ -2792,7 +2792,7 @@ func TestCheckContextBackgroundBehavesLikeOldCheck(t *testing.T) {
 func TestSynthesisedHandleMainRunsInitFirst(t *testing.T) {
 	prog, err := parser.Parse(`function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
 function __port_from_env(name: string, def: i32): i32 { return def; }
-function init() { print("starting"); }
+function init(): void { print("starting"); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
 }`)
@@ -2864,7 +2864,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // entirely. User's main has the freedom to call init() (or
 // not) wherever they choose.
 func TestUserDefinedMainSkipsSynthEvenWithInit(t *testing.T) {
-	prog, err := parser.Parse(`function init() { print("starting"); }
+	prog, err := parser.Parse(`function init(): void { print("starting"); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
 }
@@ -4773,7 +4773,7 @@ func hasCode(err error, code string) bool {
 func TestStrViewBorrowAllowed(t *testing.T) {
 	for _, src := range []string{
 		// string → str var init (borrow)
-		`function f() { var s: string = "x"; var v: str = s; }`,
+		`function f(): void { var s: string = "x"; var v: str = s; }`,
 		// string literal → str param
 		`function g(v: str): i32 { return v.len(); } function f(): i32 { return g("abc"); }`,
 		// str → string param (borrowed position)
@@ -4866,14 +4866,14 @@ func TestStrEscapeAllowed(t *testing.T) {
 // only through an explicit copy.
 func TestStrSliceProducesView(t *testing.T) {
 	for _, src := range []string{
-		`function f() { var s: string = "abcd"; var v: str = s[1:3]; }`,
+		`function f(): void { var s: string = "abcd"; var v: str = s[1:3]; }`,
 		`function f(s: string): str { return s[1:3]; }`,
-		`function f() { var s: string = "abcd"; var o: string = s[1:3] + ""; }`,
+		`function f(): void { var s: string = "abcd"; var o: string = s[1:3] + ""; }`,
 		`function f(s: string): i32 { return s[1:3].len(); }`,
 		`function f(s: string): boolean { return s[0:2] == "ab"; }`,
 		// a view prints as its bytes (print/write/eprint accept str)
-		`function f(s: string) { print(s[1:3]); }`,
-		`function f(v: str) { print(v); }`,
+		`function f(s: string): void { print(s[1:3]); }`,
+		`function f(v: str): void { print(v); }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%q: expected OK, got %v", src, err)

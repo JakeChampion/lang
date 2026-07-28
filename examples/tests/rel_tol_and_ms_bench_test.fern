@@ -84,7 +84,7 @@ function test_rel_tol_f32_mirror(): test.TestOutcome {
     return test.assert_eq_f32_rel(actual, expected, 0.01 as f32);
 }
 
-function workload_tiny() {
+function workload_tiny(): void {
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < 100) { sum = sum + i; i = i + 1; }

@@ -97,14 +97,14 @@ func TestSelfHostConstFuncGen2(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"fn-value", "function work() { var i: i32 = 0; }\n" +
+		{"fn-value", "function work(): void { var i: i32 = 0; }\n" +
 			"function run(f: () => void): i32 { f(); return 0; }\n" +
 			"function main(): i32 { return run(work); }\n"},
-		{"two-fn-values", "function work() { var i: i32 = 0; }\n" +
-			"function work2() { var j: i32 = 1; }\n" +
+		{"two-fn-values", "function work(): void { var i: i32 = 0; }\n" +
+			"function work2(): void { var j: i32 = 1; }\n" +
 			"function run(f: () => void): i32 { f(); return 0; }\n" +
 			"function main(): i32 { return run(work) + run(work2); }\n"},
-		{"control-direct-call", "function work() { var i: i32 = 0; }\n" +
+		{"control-direct-call", "function work(): void { var i: i32 = 0; }\n" +
 			"function main(): i32 { work(); return 0; }\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

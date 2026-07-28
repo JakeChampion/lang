@@ -5970,6 +5970,18 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
         }
         en = en + 1;
     }
+    // E070: a named function that declares no return type. Every function
+    // writes its return type — `: void` when it returns nothing — so an
+    // omitted one is an error, not an inference request. Body-less `@import`
+    // externs are exempt (they carry a signature, not a definition). Mirrors
+    // the native checkFunction rule.
+    var rt0: i32 = 0;
+    while (rt0 < mod.funcs.len()) {
+        if (mod.funcs[rt0].ret_type == "" && mod.funcs[rt0].body.len() > 0) {
+            out = out.append(dg_at("E070", "missing return type on function \"" + mod.funcs[rt0].name + "\"; declare it explicitly (use `: void` if it returns nothing)", mod.funcs[rt0].line, mod.funcs[rt0].col));
+        }
+        rt0 = rt0 + 1;
+    }
     // E016: a `type X = …` union alias whose name collides with a declared
     // struct of the same name, reported at the alias's `type` keyword (the
     // struct wins; the alias is otherwise dropped). A collision with an

@@ -511,7 +511,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"break-in-loop-ok", "function main(): i32 { while (1 < 2) { break; } return 0; }\n", nil},
 		{"break-in-match-outside-loop", "enum E { A, B }\nfunction main(): i32 { var e: E = A; match (e) { A => { break; }, B => { } } return 0; }\n", []string{"E011"}},
 		{"return-no-value-nonvoid", "function f(): i32 { return; }\nfunction main(): i32 { return 0; }\n", []string{"E012"}},
-		{"return-no-value-void-ok", "function f() { return; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"return-no-value-void-ok", "function f(): void { return; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-no-value-nested", "function f(): i32 { if (1 < 2) { return; } return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E012"}},
 		{"dup-var-same-block", "function main(): i32 { var x: i32 = 1; var x: i32 = 2; return x; }\n", []string{"E013"}},
 		{"dup-var-nested-shadow-ok", "function main(): i32 { var x: i32 = 1; if (1 < 2) { var x: i32 = 2; } return x; }\n", nil},
@@ -817,7 +817,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// that gap.
 		{"lambda-ret-mismatch", "function main(): i32 { var f = function(): i32 { return \"x\"; }; return f(); }\n", []string{"E002"}},
 		{"lambda-ret-ok", "function main(): i32 { var f = function(): i32 { return 5; }; return f(); }\n", nil},
-		{"lambda-in-void-fn", "function g() { var f = function(): i32 { return \"x\"; }; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"lambda-in-void-fn", "function g(): void { var f = function(): i32 { return \"x\"; }; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"lambda-nested-if-mismatch", "function main(): i32 { var f = function(): i32 { if (1 < 2) { return \"x\"; } return 1; }; return f(); }\n", []string{"E002"}},
 		{"lambda-bare-return", "function main(): i32 { var f = function(): i32 { return; }; return f(); }\n", []string{"E012"}},
 		{"lambda-arg-mismatch", "function run(fn: () => i32): i32 { return fn(); }\nfunction main(): i32 { return run(function(): i32 { return \"x\"; }); }\n", []string{"E002"}},

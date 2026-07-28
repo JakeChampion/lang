@@ -477,9 +477,9 @@ function main(): i32 {
 		// self-host ret-type inferencer had no ExprArray arm, so these never
 		// entered the element-kind registries and a[i] took the 4-byte
 		// default stride there. Native must agree everywhere.
-		{"unannotated_arr_ret_fn", `import "std/i32";
-function mk2() { return [1.5, 2.5]; }
-function mk3() { return ["ab", "cde"]; }
+		{"arr_ret_fn", `import "std/i32";
+function mk2(): f64[] { return [1.5, 2.5]; }
+function mk3(): string[] { return ["ab", "cde"]; }
 function main(): i32 {
     var a = mk2();
     print((((a[0] + a[1]) * 2.0) as i32).to_string());
@@ -553,7 +553,7 @@ function main(): i32 {
 		// there is visible to the caller (the deliberate shared-mutable-state
 		// semantics) — 10 bumped three times → 13.
 		{"cell_shared_mutation", `import "std/i32";
-function bump(c: Cell[i32]) { c.set(c.get() + 1); }
+function bump(c: Cell[i32]): void { c.set(c.get() + 1); }
 function main(): i32 {
     var c: Cell[i32] = cell_new(10);
     bump(c); bump(c); bump(c);

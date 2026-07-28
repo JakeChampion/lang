@@ -1098,7 +1098,7 @@ function main(): i32 {
 import "core/int";
 import "core/map";
 import "std/string";
-function add_pair(m: Map[i32, i32[]], k: i32) {
+function add_pair(m: Map[i32, i32[]], k: i32): void {
     var arr: i32[] = [k * 10, k * 10 + 1];
     m = m.insert(k, arr);
 }
