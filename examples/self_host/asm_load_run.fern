@@ -394,10 +394,12 @@ function main(): i32 {
     // types are stamped (e.g. a `f().N` tuple-element read whose element is a
     // struct, resolved via expr_tuple_elem_tag's c.ty read). Without annotating
     // here `-decide` under-reported those as "ast", diverging from what
-    // emit_module actually does.
+    // emit_module actually does. asm_ir.script_normalized closes the other half
+    // of that divergence: a script's `main` is synthesised inside the emit, so
+    // judging the raw module reported "ast" for a program that in fact lowers IR.
     if (do_decide) {
         var dm: parser.Module = asm_ir.lift_lambdas(parser.module_with_builtins(checker.annotate_module(merged)));
-        if (asm_ir.all_eligible(dm)) { print("ir\n"); } else { print("ast\n"); }
+        if (asm_ir.all_eligible(asm_ir.script_normalized(dm))) { print("ir\n"); } else { print("ast\n"); }
         return 0;
     }
 
