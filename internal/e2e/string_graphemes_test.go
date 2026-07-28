@@ -60,7 +60,7 @@ function main(): i32 {
 
     // The clusters themselves are the right slices, not just the right
     // count: a combining pair is 3 bytes, the following ASCII 1.
-    var gs: string[] = unicode.graphemes("e" + cp(769) + "x");
+    var gs: str[] = unicode.graphemes("e" + cp(769) + "x");
     if (gs.len() != 2) { return 18; }
     if (gs[0].len() != 3) { return 19; }
     if (gs[1].len() != 1) { return 20; }

@@ -2320,15 +2320,9 @@ function _pict_next(pict: i32, cls: i32, cur_pict: boolean): i32 {
 // reader would call "characters". Combining sequences, emoji ZWJ
 // sequences, flags and Hangul syllables each stay whole.
 //
-// Elements are owned strings. A ` + "`str[]`" + ` of VIEWS would be the better
-// shape -- the clusters are contiguous slices of s and copying them is
-// pure overhead -- but reading a ` + "`str`" + ` element back out of a ` + "`str[]`" + ` is
-// currently broken on two backends: arm64 returns garbage (a bare
-// three-element split then summing the element lengths already gets the
-// wrong answer) and the wasm valtype seam rejects the type outright.
-// Both reproduce with no stdlib involved and on an unmodified tree, so
-// they are backend bugs to fix, not something segmentation can work
-// around. Switch this to ` + "`str[]`" + ` once they are.
+// Elements are ` + "`str`" + ` VIEWS into s, sliced by byte offset, so the split
+// itself copies no text -- the clusters are contiguous runs of the
+// input and materialising them as owned strings would be pure overhead.
 //
 // A WARNING WORTH HEEDING, and the reason this is opt-in: reaching for
 // the n-th grapheme is usually a design smell. It is O(n) to find, and
@@ -2336,8 +2330,8 @@ function _pict_next(pict: i32, cls: i32, cur_pict: boolean): i32 {
 // iterating this result, or an operation that does not need to know
 // about clusters at all. Fern keeps ` + "`s.len()`" + ` in BYTES and ` + "`s[i]`" + ` a byte
 // index precisely so that the cheap operations stay visibly cheap.
-pub function graphemes(s: string): string[] {
-    var out: string[] = [];
+pub function graphemes(s: string): str[] {
+    var out: str[] = [];
     var n: i32 = s.len();
     if (n == 0) { return out; }
     var start: i32 = 0;
@@ -2406,7 +2400,7 @@ pub function grapheme_count(s: string): i32 {
 // ` + "`reverse_bytes`" + ` keeps its name and its place: it is the honest one,
 // carrying the hazard in the name for callers who really do want bytes.
 pub function reverse_graphemes(s: string): string {
-    var gs: string[] = graphemes(s);
+    var gs: str[] = graphemes(s);
     var out: string = "";
     var i: i32 = gs.len() - 1;
     while (i >= 0) {
