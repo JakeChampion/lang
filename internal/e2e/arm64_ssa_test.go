@@ -96,6 +96,42 @@ function main(): i32 { return scale(3.5) as i32; }`,
 			want: 7,
 		},
 		{
+			// The f32 sibling of float_call, and NOT redundant with it: a float
+			// lives in a general register as its f64 bit pattern, so an f32
+			// return whose width is 32 used to be sign-extended from bit 31 at
+			// the call boundary (ssa.AnnotateCallWidths only looked at
+			// ReturnWidth, never ReturnFloat). That kept the low mantissa half
+			// and dropped the sign + exponent, so every f32 crossing a call
+			// arrived as a denormal that reads back as 0 — this returned 0
+			// instead of 96. Covers a param, a return, and arithmetic on both.
+			name: "float32_call",
+			src: `function addf(a: f32, b: f32): f32 { return a + b; }
+function main(): i32 { return addf(90.0f32, 6.55f32) as i32; }`,
+			want: 96,
+		},
+		{
+			// Ordered comparisons against NaN are all false; only `!=` is true.
+			// The renderer emitted the UNSIGNED AArch64 condition codes, which
+			// agree with the IEEE ones on ordered operands but read true on
+			// unordered (fcmp marks NaN with C=1, so `hi`/`hs` fired). Sums the
+			// six predicates' 0/1 so a single exit code pins all of them: only
+			// `!=` contributes, hence 1.
+			name: "float_nan_compare",
+			src: `function main(): i32 {
+  var z: f32 = 0.0f32;
+  var nan: f32 = z / z;
+  var n: i32 = 0;
+  if (nan == 1.0f32) { n = n + 1; }
+  if (nan != 1.0f32) { n = n + 1; }
+  if (nan < 1.0f32) { n = n + 1; }
+  if (nan <= 1.0f32) { n = n + 1; }
+  if (nan > 1.0f32) { n = n + 1; }
+  if (nan >= 1.0f32) { n = n + 1; }
+  return n;
+}`,
+			want: 1,
+		},
+		{
 			// Option Some path via the pair-return convention (CallPair + TRetPair
 			// + match): half(84) = Some(42).
 			name: "option_some",

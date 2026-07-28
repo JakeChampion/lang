@@ -342,6 +342,17 @@ func widthOfAstType(t ast.Type) int8 {
 // call. Callees absent from the map (runtime helpers emitted by the backend) are
 // left unchanged — their i32/pointer returns need no 64-bit annotation. Call
 // this after lifting all functions of a module and before emit.
+//
+// An f32 return needs the same treatment as an f64 one even though its width is
+// 32. The backends hold every float in a general register as its f64 BIT
+// PATTERN — that is the whole convention `fmov d0, x` and OpFPromote rest on —
+// so a float value is 64 bits wide in the register regardless of whether its
+// semantic type is f32. Masking one to 32 bits keeps the low half of the
+// mantissa and throws away the sign and exponent, which reads back as a
+// denormal indistinguishable from zero: before this, EVERY f32 passed to or
+// returned from a call arrived as 0.0 on arm64-ssa, so `idf32(96.55f32) as i32`
+// printed 0 where the interpreter and the native backends print 96. ReturnFloat
+// is therefore checked alongside ReturnWidth.
 func AnnotateCallWidths(funcs map[string]*Func) {
 	for _, f := range funcs {
 		for _, b := range f.Blocks {
@@ -349,7 +360,7 @@ func AnnotateCallWidths(funcs map[string]*Func) {
 				if op.Kind != OpCall {
 					continue
 				}
-				if callee, ok := funcs[op.Str]; ok && callee.ReturnWidth == 64 {
+				if callee, ok := funcs[op.Str]; ok && (callee.ReturnWidth == 64 || callee.ReturnFloat) {
 					op.Width = 64
 				}
 			}

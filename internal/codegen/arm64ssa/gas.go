@@ -4701,9 +4701,25 @@ func fbinMnemonic(k ssa.OpKind) (string, bool) {
 	return "", false
 }
 
-// fcondCode maps a float comparison to its AArch64 condition mnemonic. fcmp's
-// C/Z flags follow the unsigned interpretation for ordered finite operands, so
-// these mirror the integer unsigned codes (and x86's ucomisd setcc choices).
+// fcondCode maps a float comparison to its AArch64 condition mnemonic.
+//
+// These are the canonical IEEE codes, NOT the unsigned integer ones. On
+// ordered operands the two sets agree exactly (lo≡mi, hi≡gt, hs≡ge), which
+// is why the unsigned codes this used to emit passed every finite-valued
+// test. They diverge on NaN: `fcmp` marks unordered with N=0 Z=0 C=1 V=1, so
+// `hi` (C && !Z) and `hs` (C) both read TRUE where every ordered comparison
+// against a NaN must be false. `0.0/0.0 <= x` therefore printed "T" here and
+// "F" under the interpreter and both native backends.
+//
+// The codes below are false-on-unordered by construction — `mi` tests N,
+// `ls` tests !C||Z, `gt` tests !Z && N==V, `ge` tests N==V — leaving `ne` as
+// the one comparison that is correctly true for NaN.
+//
+// The source-level symptom showed up on `<` / `<=` rather than the `>` / `>=`
+// that map to `hi` / `hs` directly, because ssa/canon.go's
+// flipDirectionalCmp rewrites `a < b` to `b > a` when that lets an operand
+// commute. The flip itself is IEEE-sound (both forms are ordered, both false
+// on NaN); only the condition code it landed on was not.
 func fcondCode(k ssa.OpKind) (string, bool) {
 	switch k {
 	case ssa.OpFEq:
@@ -4711,13 +4727,13 @@ func fcondCode(k ssa.OpKind) (string, bool) {
 	case ssa.OpFNe:
 		return "ne", true
 	case ssa.OpFLt:
-		return "lo", true
+		return "mi", true
 	case ssa.OpFLe:
 		return "ls", true
 	case ssa.OpFGt:
-		return "hi", true
+		return "gt", true
 	case ssa.OpFGe:
-		return "hs", true
+		return "ge", true
 	}
 	return "", false
 }
