@@ -205,6 +205,25 @@ import (
 // its operand-stack inputs and pushes its result. The lift
 // maintains a runtime stack of SSA Values mirroring that
 // shape — pop N for an N-arg op, push the new Result.
+// ssaHelperName maps a runtime-helper name the legacy IR emits onto the
+// equivalent this backend family actually provides.
+//
+// Only __fern_str_append needs it (#5637). On the reclaiming backends that
+// helper grows a uniquely-held accumulator in place, CONSUMING its left
+// operand — the IR suppresses the release that would otherwise pair with it.
+// The SSA backends allocate from a bump heap that never reclaims, so a plain
+// __str_concat is a correct implementation of the same contract: the result
+// bytes are identical, and the consumed operand is simply left behind, which
+// is what this heap does with every dead allocation anyway. Emitting the real
+// helper here would buy nothing (there are no size classes to have slack in)
+// and would require a third copy of it in each SSA backend.
+func ssaHelperName(name string) string {
+	if name == "__fern_str_append" {
+		return "__str_concat"
+	}
+	return name
+}
+
 func LiftFromIR(in *ir.Func) (*Func, error) {
 	if in == nil {
 		return nil, fmt.Errorf("ssa.LiftFromIR: nil func")
@@ -706,7 +725,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		args := append([]Value(nil), l.stack[len(l.stack)-argc:]...)
 		l.stack = l.stack[:len(l.stack)-argc]
 		result := l.out.AddOp(l.cur, OpCall, args...)
-		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
+		l.cur.Ops[len(l.cur.Ops)-1].Str = ssaHelperName(op.Str)
 		l.stack = append(l.stack, result)
 	case ir.OpCallIndirect:
 		argc := int(op.I32)

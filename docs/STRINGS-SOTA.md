@@ -364,6 +364,14 @@ buffers are now reclaimed rather than leaked (2000 two-byte appends:
 allocs 1997 → 250, live bytes 4 MB → 0). arm64 is excluded until its
 heap-string reclamation lands (RC-perceus slice 5g).
 
+The same helper covers **chains**: in `a + b + c`, the inner join's
+intermediate is an owned temp the outer join used to copy and then free, so
+it is grown instead — a chain allocates once rather than once per join
+(`out = out + "a" + "bb" + "ccc"`, 500 iterations: allocs 1496 → 686, live
+bytes 757 KB → 0). That shape is the stdlib's other common one — 25 sites,
+including `std/http`'s response-header assembly — against 711 single-join
+self-appends.
+
 What that does **not** buy is amortised growth: the 8-byte `[rc][len]`
 header has no capacity slot, so the class step is the allocator's 16-byte
 granularity and a long accumulator still re-copies its prefix once per

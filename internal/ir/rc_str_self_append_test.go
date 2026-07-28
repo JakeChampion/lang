@@ -159,10 +159,10 @@ func TestLowerStrSelfAppendSkipsArm64(t *testing.T) {
 	}
 }
 
-// TestLowerStrSelfAppendOnlyOuterConcat: only the assignment's OWN top-level
-// concat is the self-append. A nested concat inside the appended piece
-// (`out = out + (a + b)`) is a fresh temp with no accumulator to grow, so it
-// stays on OpStrConcat — node identity, not shape matching, is what selects it.
+// TestLowerStrSelfAppendOnlyOuterConcat: the appended PIECE is not itself an
+// append target. In `out = out + (a + b)` the inner concat's own left operand
+// is `a` — a borrowed ident, not an owned temp — so it has nothing to grow and
+// stays on OpStrConcat.
 func TestLowerStrSelfAppendOnlyOuterConcat(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
@@ -186,6 +186,91 @@ function main(): i32 { return build(3, "a", "b").len(); }`
 		}
 		if got := countOpKind(prog, "build", OpStrConcat); got != 1 {
 			t.Errorf("ptrW=%d: OpStrConcat = %d, want 1 (the inner `a + b`)", ptrW, got)
+		}
+	}
+}
+
+// TestLowerConcatChainGrowsIntermediate: a CHAIN (`a + b + c + d`) allocates
+// once and grows that buffer, instead of allocating and freeing a fresh one
+// per join. The leftmost join has a borrowed left operand so it must still
+// allocate (OpStrConcat); every join above it inherits an owned temp and
+// appends into it.
+//
+// This is independent of any assignment — the consumed value is the previous
+// join's unnameable intermediate, which is exactly the operand the old code
+// stashed and __fern_str_dec'd. Nothing else can name it, and the append runs
+// after BOTH operands are evaluated, so there is no window in which the
+// consumption is observable. Hence zero stashed decs survive.
+func TestLowerConcatChainGrowsIntermediate(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	src := `function j(a: string, b: string, c: string): string { return a + b + c + "!"; }
+function main(): i32 { return j("a", "b", "c").len(); }`
+
+	for _, ptrW := range []int{4, 8} {
+		prog := lowerSourceWith(t, src, ptrW)
+		if got := countOpKind(prog, "j", OpStrConcat); got != 1 {
+			t.Errorf("ptrW=%d: OpStrConcat in j = %d, want 1 (only the leftmost join allocates)", ptrW, got)
+		}
+		if got := countFnCallDirect(prog, "j", "__fern_str_append"); got != 2 {
+			t.Errorf("ptrW=%d: __fern_str_append calls in j = %d, want 2 (the two joins above the leftmost)", ptrW, got)
+		}
+		if got := countStringDecs(prog, "j"); got != 0 {
+			t.Errorf("ptrW=%d: string decs in j = %d, want 0 (each intermediate is consumed by the append above it, not copied-then-freed)", ptrW, got)
+		}
+	}
+}
+
+// TestLowerConcatChainSkipsArm64: arm64 has no __fern_str_append helper, so a
+// chain keeps the copy-then-__fern_str_dec shape and its codegen is unchanged.
+func TestLowerConcatChainSkipsArm64(t *testing.T) {
+	prevFree, prevOverride := ast.RcFreeEnabled, ast.TwoWordOverride
+	ast.RcFreeEnabled = true
+	ast.TwoWordOverride = true
+	defer func() { ast.RcFreeEnabled, ast.TwoWordOverride = prevFree, prevOverride }()
+
+	src := `function j(a: string, b: string, c: string): string { return a + b + c + "!"; }
+function main(): i32 { return j("a", "b", "c").len(); }`
+
+	prog := lowerSourceWith(t, src, 8)
+	if got := countFnCallDirect(prog, "j", "__fern_str_append"); got != 0 {
+		t.Errorf("arm64: __fern_str_append calls = %d, want 0", got)
+	}
+	if got := countOpKind(prog, "j", OpStrConcat); got != 3 {
+		t.Errorf("arm64: OpStrConcat = %d, want 3 (one per join)", got)
+	}
+}
+
+// TestLowerStringOverwriteFrees: the native single-word overwrite releases the
+// old buffer through __fern_str_dec, which FREES at rc==1. It used
+// __fern_rc_dec, which only decrements — so every intermediate of a string
+// accumulator was orphaned (#5637). Both reclaiming ABIs now name the same
+// helper; the arm64 exclusion is covered above.
+func TestLowerStringOverwriteFrees(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	src := `function build(n: i32, piece: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        out = piece + "!";
+        i = i + 1;
+    }
+    return out;
+}
+function main(): i32 { return build(3, "ab").len(); }`
+
+	for _, ptrW := range []int{4, 8} {
+		prog := lowerSourceWith(t, src, ptrW)
+		if got := countFnCallDirect(prog, "build", "__fern_str_dec"); got == 0 {
+			t.Errorf("ptrW=%d: no __fern_str_dec in build — the string overwrite is not releasing its old buffer through the freeing helper", ptrW)
+		}
+		if got := countFnCallDirect(prog, "build", "__fern_rc_dec"); got != 0 {
+			t.Errorf("ptrW=%d: __fern_rc_dec calls in build = %d, want 0 (rc_dec decrements without freeing — that is the leak)", ptrW, got)
 		}
 	}
 }

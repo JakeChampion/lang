@@ -153,3 +153,118 @@ func TestX86_64StrSelfAppendCorrect(t *testing.T) {
 		t.Errorf("frees=%d > allocs=%d — the append over-released a buffer", frees, allocs)
 	}
 }
+
+// strConcatChainSrc builds a string through a CHAIN of joins per iteration —
+// `hdr_block = hdr_block + name + ": " + value + "\r\n"` is the shape, straight
+// from std/http's response assembly. Only the leftmost join has a borrowed left
+// operand and must allocate; the rest grow that buffer.
+const strConcatChainSrc = `function main(): i32 {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < 500) {
+        out = out + "a" + "bb" + "ccc";
+        i = i + 1;
+    }
+    if (out.len() != 3000) { return 1; }
+    return 0;
+}`
+
+// TestX86_64StrConcatChainAllocsBounded pins both halves of #5637's follow-up
+// on this exact program:
+//
+//	before -> allocs=1496 frees=998 live_bytes=756960
+//	after  -> allocs= 686 frees=686 live_bytes=0
+//
+// Allocations fall because each join above the leftmost now grows the previous
+// join's intermediate instead of allocating a fresh buffer and freeing it.
+// live_bytes falls to zero because the accumulator's dec-on-overwrite routes
+// through __fern_str_dec (which frees at rc==1) rather than __fern_rc_dec
+// (which decrements to zero and stops) — the chain shape takes the ordinary
+// overwrite branch, so it kept leaking after the self-append landed.
+func TestX86_64StrConcatChainAllocsBounded(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	stdout, stderr, code := runLeakCheckX86_64(t, strConcatChainSrc)
+	if code != 0 {
+		t.Fatalf("chained concat loop exited %d (want 0 — the accumulated length was wrong); stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	// 500 iterations x 3 joins allocated 3 buffers each before; now the two
+	// upper joins grow the first one's. Anything at or above the old 1496
+	// means the chain is not being grown in place.
+	if allocs > 900 {
+		t.Errorf("allocs = %d for 500 three-join iterations, want <= 900 (~one per iteration); the chain is not growing its intermediate", allocs)
+	}
+	if allocs != frees || live != 0 {
+		t.Errorf("heap unbalanced after the chain loop: allocs=%d frees=%d live_bytes=%d, want allocs==frees and live_bytes==0 (the accumulator's overwrite must FREE, not just decrement)", allocs, frees, live)
+	}
+}
+
+// strConcatChainCorrectnessSrc covers the shapes the chain path must get right:
+// a plain multi-join expression, a chained self-append in a loop, an aliased
+// accumulator across a chained append (must copy, not mutate), and a chain
+// whose operands are string SLICES — the other isOwnedStringTemp shape, so the
+// consumed intermediate is a slice buffer rather than a concat buffer.
+const strConcatChainCorrectnessSrc = `function join3(a: string, b: string, c: string): string { return a + b + c; }
+
+function main(): i32 {
+    print(join3("aa", "bb", "cc"));
+    print("<" + "x" + "|" + "yy" + ">");
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < 8) {
+        out = out + "[" + "*" + "]";
+        i = i + 1;
+    }
+    print(out);
+    var d: string = "";
+    var k: i32 = 0;
+    while (k < 5) {
+        var alias: string = d;
+        d = d + "q" + "r";
+        print(alias + "/" + d);
+        k = k + 1;
+    }
+    var s: string = "abcdefghij";
+    print(s[0:3] + s[3:6] + s[6:9] + "!");
+    return 0;
+}`
+
+const strConcatChainWant = `aabbcc
+<x|yy>
+[*][*][*][*][*][*][*][*]
+/qr
+qr/qrqr
+qrqr/qrqrqr
+qrqrqr/qrqrqrqr
+qrqrqrqr/qrqrqrqrqr
+abcdefghi!`
+
+func TestWASMStrConcatChainCorrect(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	if got := runWasmCapturingStdout(t, strConcatChainCorrectnessSrc); got != strConcatChainWant {
+		t.Errorf("wasm chained concat output =\n%q\nwant\n%q", got, strConcatChainWant)
+	}
+}
+
+func TestX86_64StrConcatChainCorrect(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+
+	stdout, stderr, code := runLeakCheckX86_64(t, strConcatChainCorrectnessSrc)
+	if code != 0 {
+		t.Fatalf("exited %d, want 0; stderr=%q", code, stderr)
+	}
+	if stdout != strConcatChainWant+"\n" {
+		t.Errorf("x86-64 chained concat output =\n%q\nwant\n%q", stdout, strConcatChainWant+"\n")
+	}
+	if allocs, frees, _ := parseLeakCheckLine(t, stderr); frees > allocs {
+		t.Errorf("frees=%d > allocs=%d — the chain over-released an intermediate", frees, allocs)
+	}
+}
