@@ -139,6 +139,18 @@ for the user on a genuine fork (an ambiguous review comment, an
 architectural decision) — never for permission to open, merge, or
 continue.
 
+**The heavy lanes are queued, so "no checks yet" is normal.** An admission
+queue (`docs/CI-QUEUE.md`) runs one PR's worth of the ~90-job matrix at a
+time, oldest PR first; only `Lint` starts immediately. A fresh PR whose
+heavy lanes are absent is *waiting its turn*, not broken — read the
+`ci-queue/admission` commit status (`waiting … position N` / `full CI
+running` / `full CI ran for this commit`) before concluding anything about
+CI. **Never read absent-or-skipped heavy lanes as green**: a skipped check
+counts as a pass, so `ci-queue/admission` is the signal that says whether
+the matrix has actually run for that commit. Don't try to jump the queue by
+dispatching lanes by hand; if it looks stuck, the 15-minute sweep or a
+manual `CI queue` dispatch is the fix.
+
 **Every PR check covers BOTH halves: is CI green, and is it still
 mergeable?** A PR can be perfectly green and unmergeable, and webhooks do
 not reliably announce the transition — main moves under you. So on every
