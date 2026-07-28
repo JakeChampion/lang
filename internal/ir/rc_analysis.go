@@ -1096,29 +1096,13 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 			case "__method_Map_set", "__method_Map_clear":
 				// Aliases the receiver (Args[0]) only.
 				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
-			case "__method_Array_set", "__method_Array_push":
-				// `arr.with(i, v)` / `arr.append(v)` return the receiver
-				// buffer (cow / grown), aliasing Args[0] only — never the
-				// index/value args. The generic any-arg-tainted rule below
-				// would taint the result via a tainted scalar-binary value
-				// (`b.with(0, i % 200)`), leaving the buffer permanently
-				// ineligible and unreclaimed at loop scope (the wasm
-				// LiteralAllocReclaim / OwnInplaceSort leak).
-				//
-				// push was missing here, which leaked the buffer of EVERY
-				// array built by the `xs = xs.append(v)`-in-a-loop idiom: the
-				// loop counter's own `i = i + 1` is a Binary RHS, tainted by
-				// the conservative default, and passing it as the element
-				// tainted the receiver — so the exit sweep fell through
-				// __fern_arr_dec (which returns the buffer) to a flat
-				// __fern_rc_dec (which does not). One block per call, at any
-				// size; `lexer.tokenize` leaked its whole Token[] per call
-				// (docs/SELFHOST-AST-RETIREMENT.md, "ROOT CAUSE").
-				//
-				// Sound for the same reason `set` is: the ELEMENT's aliasing
-				// is handled by the escape sink above, which documents
-				// Args[0] as "the receiver array (threaded / reassigned), not
-				// retained" and runs escapeOwned on Args[1].
+			case "__method_Array_set":
+				// `arr.with(i, v)` returns the receiver buffer (cow), aliasing
+				// Args[0] only — never the index/value args. The generic
+				// any-arg-tainted rule below would taint the result via a
+				// tainted scalar-binary value (`b.with(0, i % 200)`), leaving
+				// the buffer permanently ineligible and unreclaimed at loop
+				// scope (the wasm LiteralAllocReclaim / OwnInplaceSort leak).
 				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
 			case "random_bytes":
 				// random_bytes returns a string the two-word backends

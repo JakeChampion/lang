@@ -1202,15 +1202,31 @@ So ~69% of it is the **lexer** (`Token[]`) and ~31% the parser's AST, scaling at
 ~1.6 KB leaked per source line. `load_imports` is not itself at fault — it just
 calls the pair 16 times.
 
-### A loop-append reclamation bug (real, fixed) — but NOT the load leak
+### A loop-append reclamation bug (real; a fix was tried and REVERTED)
 
 **CORRECTION, and the third time this section has over-generalised from a
-probe.** Everything below reproduces and is fixed. It is *not* the cause of the
-per-load leak this section set out to explain: with the fix in
-(`rhs_tainted`'s receiver-only arm for `__method_Array_push`), the probe goes to
-allocs==frees, and the whole-compiler load leak is **unchanged** — 218/428/632 MB
-before, 221/429/637 MB after, still +208 MB per load, and `tokenize`-only on
+probe.** Everything below reproduces. It is *not* the cause of the per-load leak
+this section set out to explain: with a candidate fix in (`rhsTainted`'s
+receiver-only arm for `__method_Array_push`), the probe goes to allocs==frees,
+and the whole-compiler load leak is **unchanged** — 218/428/632 MB before,
+221/429/637 MB after, still +208 MB per load, and `tokenize`-only on
 `irlower.fern` stays at 40 MB per call either way.
+
+**That candidate fix is also UNSOUND at compiler scale, and was reverted.** It
+passes `internal/ir`, `internal/e2e` (1560 s, 0 failures), and every unit suite —
+then breaks `TestSelfHostStdTestE2EArm64` with 7 failures whose signature is
+freed-and-reused memory inside the self-host compiler: truncated symbols
+(`unknown mnemonic '__fn_m'`, `symbol '__fn_' is already defined`), a
+definition missing while its call site survives (`undefined reference to
+__fn_test__assert_eq__i32`), and two segfaults in the compiler itself. Suspected
+mechanism, unproven: `escapeOwned` deliberately does NOT taint a consuming-match
+binding, so once the receiver stops inheriting the element's taint, the buffer's
+deep drop and the binding's own exit sweep can both dec the same element.
+
+**Method note for the next attempt: `internal/e2e` is not the gate for an RC
+change — `internal/e2eselfhost` is.** Compiling the whole self-host compiler is
+what exercises RC at a scale where an over-release shows; the native e2e suite
+passed this change cleanly.
 
 The probe and the lexer share a *symptom* (an array built by `xs =
 xs.append(...)` in a loop, leaking one buffer per call) but not a *mechanism* —
@@ -1251,8 +1267,8 @@ loop-carried binding that never happens.
 what drew attention here — but see the correction above: its leak survives this
 fix, because it RETURNS `out`. Same surface shape, different mechanism.
 
-**What the fix is.** `rhsTainted` treats `__method_Array_push` as aliasing its
-RECEIVER only, joining `__method_Array_set` (and `Map_set`) which were already
+**What the candidate fix was.** `rhsTainted` treating `__method_Array_push` as
+aliasing its RECEIVER only, joining `__method_Array_set` (and `Map_set`) which were already
 special-cased for exactly this. Without it, a loop counter's own `i = i + 1` — a
 `Binary` RHS, tainted by the conservative default — was passed as the appended
 element and tainted the receiving array, so the exit sweep fell through

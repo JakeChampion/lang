@@ -38,16 +38,8 @@ func TestArrayPushProjectionSourceFreeEligible(t *testing.T) {
 	// Two owned ptr-element arrays sweep deeply: `out` (always was) and
 	// `src` (the point of #4399 sink 1 — tainted to a plain, never-freeing
 	// dec before the counted-store migration).
-	//
-	// Raised 2 -> 4 when push joined Array_set as a receiver-only alias in
-	// rhsTainted: `out`'s own buffer now deep-drops on both the reassignment
-	// overwrite and the exit sweep instead of falling through to a flat,
-	// never-freeing rc_dec. Verified at runtime, not just in op counts —
-	// this shape still exits 3 (matching `fern -interp`) and frees rise
-	// 600 -> 800 of 1000 allocs, live_bytes 16000 -> 6400. Strictly more
-	// reclamation, same answer.
-	if drops != 4 {
-		t.Errorf("want 4 deep array drops (src + out, each overwrite + exit), got %d — the push-projection source must stay free-eligible:\n%s", drops, p)
+	if drops != 2 {
+		t.Errorf("want 2 deep array drops (src + out), got %d — the push-projection source must stay free-eligible:\n%s", drops, p)
 	}
 	// A direct-Ident element keeps the taint (escapeOwned): its moveSites
 	// shape transfers instead of inc'ing — same rule as StructLit fields.
@@ -73,16 +65,12 @@ func TestArrayPushProjectionSourceFreeEligible(t *testing.T) {
 			deep++
 		}
 	}
-	// Direct-ident element: `row` stays tainted (escapeOwned, since the
-	// moveSites shape transfers instead of inc'ing). `out` no longer inherits
-	// that taint — push is a receiver-only alias in rhsTainted, so the
-	// element's taint reaches `row` alone, which is what escapeOwned is for.
-	// `out` therefore deep-drops, freeing the moved-in element exactly once;
-	// `row` stays tainted and is never swept, so there is no double free.
-	// Confirmed at runtime: this shape exits 3 (matching `fern -interp`) with
-	// frees 200 -> 400 of 600 allocs and live_bytes 16000 -> 6400.
-	if deep != 2 {
-		t.Errorf("want 2 deep array drops (out reclaims; row stays tainted so it is never swept), got %d:\n%s", deep, p2)
+	// Direct-ident element: row stays tainted (escapeOwned), and `out` is
+	// tainted transitively — rhsTainted sees the append call carrying the
+	// tainted row — so NEITHER array deep-drops. The conservative
+	// direct-ident baseline is unchanged by the sink migration.
+	if deep != 0 {
+		t.Errorf("want 0 deep array drops (direct-ident element keeps row and, transitively, out tainted), got %d:\n%s", deep, p2)
 	}
 }
 
