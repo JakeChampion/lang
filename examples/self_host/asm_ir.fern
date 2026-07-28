@@ -5237,7 +5237,15 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
 // it the IR path can't resolve built-in struct layouts (e.g. std/time's Date)
 // and bails every function that uses one.
 pub function lift_lambdas(mod: parser.Module): parser.Module {
-    var lifted: parser.Module = irlower.lift_lambdas(mod);
+    return lift_lambdas_view(mod, []);
+}
+
+// lift_lambdas_view threads a whole-program signature view into the lift pass —
+// see irlower.lift_lambdas_view. A per-module build must pass one or a fn value
+// handed to a SIBLING module's function is not boxed at the call site (#5698);
+// an empty view keeps the module-only behaviour every other caller has.
+pub function lift_lambdas_view(mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
+    var lifted: parser.Module = irlower.lift_lambdas_view(mod, view);
     return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports, impls: lifted.impls, trait_reqs: lifted.trait_reqs };
 }
 
