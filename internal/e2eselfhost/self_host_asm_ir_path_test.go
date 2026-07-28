@@ -290,6 +290,15 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// tuple: 3+4 = 7.
 		{"matchexpr-struct", "struct P { x: i32 } function main(): i32 { var p = P { x: 5 }; var r = match (p) { P { x: v } => v + 1 }; return r; }"},
 		{"matchexpr-tuple", "function main(): i32 { var t = (3, 4); var r = match (t) { (a, b) => a + b }; return r; }"},
+		// A struct field whose type is a TUPLE containing an fn element
+		// (`(i32, () => i32)`). The fn element is a leak-only closure box (one
+		// pointer slot, like an Option box), but is_leaksafe_tuple_field_d had no
+		// arm for a "clo" element, so the whole struct bailed the IR path to the AST
+		// emitter — even reading only the i32 element (#3457 slice 3, #5749's
+		// "fn-typed tuple element in a struct field" shape). Admitting a clo tuple
+		// element (wide predicate only → IR-eligible, reuse conservatively skipped)
+		// closes it: s.p.0 (=3) + s.p.1() (=7) = 10.
+		{"structfield-tuple-fn", "struct S { p: (i32, () => i32) } function main(): i32 { var s = S { p: (3, () => 7) }; return s.p.0 + s.p.1(); }"},
 		// A struct-array (P[]) / enum-array (E[]) value as a TUPLE element. The
 		// buffer is a heap pointer in the slot (leak mode — elements leak with the
 		// leak-only tuple); the destructure binds mark_arr + the element struct/enum

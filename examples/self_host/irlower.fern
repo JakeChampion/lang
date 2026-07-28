@@ -2020,6 +2020,16 @@ pub function is_leaksafe_tuple_field_d(structs: parser.StructDecl[], t: string):
         // The struct-view additions over the plain gate: a struct-array / enum-
         // array element.
         if (!elem_ok && (is_struct_array_field_type(structs, tag) || is_enum_array_field_type(structs, tag))) { elem_ok = true; }
+        // A fn-typed element (tuple_type_elem_tag maps "fn" -> "clo") holds a
+        // `__mkclo$` closure BOX at runtime — one leak-only pointer slot, like an
+        // Option box — so a struct field carrying it is IR-eligible. Reading the
+        // slot (`s.p.N`) and calling it (`s.p.N(args)`, the "clo" env-first
+        // dispatch) already lower; only this gate rejected the field. Admitted in
+        // the wide (`_d`) predicate ONLY, so the struct routes IR but conservatively
+        // skips constructor reuse (the narrow predicate the reuse pass consults
+        // still declines) — sound, just unoptimised, exactly like the struct-array
+        // element case above.
+        if (!elem_ok && tag == "clo") { elem_ok = true; }
         // A NESTED tuple element recurses through THIS predicate so an inner
         // struct-/enum-array element is admitted at any depth.
         if (!elem_ok && tag.len() >= 2 && tag[0:1] == "(") { elem_ok = is_leaksafe_tuple_field_d(structs, tag); }
