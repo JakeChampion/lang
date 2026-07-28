@@ -62,7 +62,7 @@ representative subset splits it three ways:
   * The two predicted hazards: `all_structs` is seeded with the identical `builtin_view(dir, all_structs)` call (not merely builtins-appended-last), and cross-unit shapes are handled by `dedupe_shape_defs` — keep the FIRST `.weak __fern_shp_*` definition and drop the rest, since the references then bind to exactly the address the linker's weak merge would have produced.
   * A module pruned to ZERO reachable functions read as ineligible and aborted the whole concat (`core/map` in an HTTP program). Empty units are skipped.
   * `all_runtime_need_roots` was NOT the closed set it claims to be: 27 roots were missing — every socket / readiness / filesystem / process / stdin / wide-int-stringifier helper — so library units linked against undefined `__fern_tcp_send` etc. Nothing had noticed because the only program ever built per-module is the compiler, which marks none of them.
-  * **The rescue must be gated.** Diverting *every* over-budget program swept in the self-host CHECKER driver (built by this same driver, and in the window), routing it through IR and straight into the defect documented below — which is now FIXED (the container-read over-free), so this gate can be re-measured rather than assumed. The gate is now "does the program call a builtin `asm.fern` cannot emit" — sockets, readiness/pollables, streaming openers, `putchar` / `random_i32` / `stdout` / `stderr`. Programs the AST emitter can express keep routing to it byte-identically. This is the load-bearing lesson: **the concat is not yet a safe default, only a rescue for programs that otherwise cannot link.**
+  * **The rescue WAS gated, and no longer is.** Diverting *every* over-budget program swept in the self-host CHECKER driver (built by this same driver, and in the window), routing it through IR and straight into the two IR-path over-frees documented below. Both are now fixed, the gate (`needs_ir_only_builtin` + its builtin-name table) is DELETED, and every over-budget program in the window routes per-module IR. `TestSelfHostCheckerCodesX86_64` / `TestSelfHostCheckerDifferentialX86_64` are now the pin: they build the checker driver through this driver, so they compile the checker on the IR path and fail loudly if either over-free comes back.
   * A fn value handed to a SIBLING module's function was passed unboxed while the callee always dereferenced a box (#5698) — the caller's boxing decision looked the callee up in `mod.funcs`. `irlower.lift_lambdas_view` threads a whole-program signature view through that lookup; an empty view keeps every other caller byte-identical.
 
   Net: the flagship edge-handler program (`std/http` + `std/tcp` + a `handle` function, ~925 merged functions) is compiled by the self-hosted compiler and **serves real HTTP** (`TestSelfHostHttpHandlerServesX86_64`).
@@ -134,12 +134,56 @@ exits 99 (rc underflow) without it — and by
 goes from 2 divergences to 0. Do NOT spend time hardening the treeshake or the
 concat against this; it was never their bug.
 
+### The second over-free: a param-receiver `.append` reclaiming the CALLER's buffer
+
+Widening the `asm_modload_run` rescue gate (so the checker itself routes IR)
+left exactly **two** failures once the container-read retain landed — measured
+across `TestSelfHostCheckerCodesX86_64` + `TestSelfHostCheckerDifferentialX86_64`
+with the gate widened: **36 sub-test failures before the retain, 2 after.**
+
+Both printed a mangled diagnostic CODE — `" E06"` for `E063`, `")E06"` for
+`E065`: length 4 (correct), data pointer one byte LOW, message field intact.
+One byte low lands on the last byte of the preceding `.rodata` literal, so the
+16-byte `__fern_str_box` cell for the code had been freed and re-handed out.
+
+Root cause: `xs = xs.append(v)` where `xs` is a **PARAM** took the sole-owner
+reclaiming push (`arr_push_owned`), which frees the pre-grow buffer on a
+grow-realloc. That buffer belongs to the CALLER — which sweeps it at its own
+exit — so the callee freed it, the caller dec'd the freed block, and the
+recycled block came back from the next `__fern_str_box`. The existing gate,
+`is_aliased_name`, only sees aliases created INSIDE the function, so it cannot
+see the caller's reference; the fix adds an explicit `slot < n_params`.
+
+`slice_escape_diags` and `e065_diags` are the two call sites: each builds a
+fresh `string[]` local and hands it to a walker that appends to it
+(`localarr = localarr.append(v.name)`). Only programs that made the walker take
+the append branch were affected, which is why the sibling corpus cases stayed
+green.
+
+The leak this trades for is the one the aliased branch already accepts: arrays
+grow geometrically, so a param-receiver append leaks O(log n) pre-grow buffers
+per call.
+
+**A synthetic regression test could not reproduce either symptom** — several
+shapes that model the aliasing exactly still exit 0 without the fix, because
+the corruption needs the real allocation order. The pin is the checker corpus
+itself, which now compiles on the IR path because the rescue gate is gone.
+
 **Method note for the next bug of this shape.** Stubbing `emit_dec_sweep_except`
 / `_except_list` to a no-op is the fastest bisector: every divergence went green,
 which localised the fault to RC accounting in one step and turned the search from
 "which of 763 functions miscompiles" into "which slot is decced without a
 matching inc". Path-probing (`-decide` / `-ir-probe`) cannot find this class —
 it reports WHERE a program lowers, not whether the lowered code is right.
+
+The second over-free was found by continuing the same bisection past the sweep
+into its individual loops (array / struct / string / map), then down to the
+single `__fern_rc_dec` branch, and finally to the FUNCTION: gate the dec on
+`st.cur_fn.len() % N` and halve N each round until the candidate set is small
+enough to `eprint(st.cur_fn)`. Four two-minute rounds narrowed 763 functions to
+~40 names, and the two culprits were obvious by inspection from there. Note
+that `cur_fn` is the MANGLED name (`checker__slice_escape_diags`), which is
+what the length arithmetic sees.
 
 **The helper lowerings are shared, but the helper BODIES are not — a debt these
 slices accrued (found + paid 2026-07-27).** `irlower.fern` feeds all three
