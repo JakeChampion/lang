@@ -102,14 +102,15 @@ representative subset splits it three ways:
 The `ineligible-fn` row above says "No `ineligible-fn` items remain". That is
 true of the **builtin methods** it enumerates, and false as a general statement:
 running the corrected probe (inside the `use_ir` branch — see above) over
-`internal/e2eselfhost` aborts **17 subtests across 7 test functions**, none of
+`internal/e2eselfhost` aborts **17 subtests across 7 test functions** (**15
+across 6** after #5755 retired return-type inference — see the struck row), none of
 them over-budget (they are all small single-module programs), so every one is an
 eligibility decline. `asm_ir_run`'s AST fallback is therefore **live code**, not
 something #3457 can delete yet.
 
 | test | subtests | shape |
 |---|---|---|
-| `TestSelfHostReturnInferenceIR` | `option-some`, `option-none` | UN-ANNOTATED fn whose return type must infer to `Option[i32]`: `function find(n: i32) { … return Some(n); … return None; }` |
+| ~~`TestSelfHostReturnInferenceIR`~~ | ~~`option-some`, `option-none`~~ | **GONE (E070, #5755)** — the shape was an UN-ANNOTATED fn whose return type had to infer to `Option[i32]`. Requiring return annotations made those programs *invalid*, so the gate never sees them and the test was deleted. Note what this is NOT: the IR path was not taught anything: 17 declines → 15 by removing programs, not by widening the subset. |
 | `TestSelfHostTupleFnStructFieldX86_64` | `bare`, `arg-elem0`, `two-arg`, `read-then-call`, `churn` | fn-typed TUPLE element in a struct field: `struct S { p: (i32, () => i32) }`, called as `s.p.1()` |
 | `TestSelfHostCloArrayFieldCallIRX86_64` | `capture-multi`, `with-arg` | closure-array struct field, capturing call |
 | `TestSelfHostStructMatchX86_64` | `expr_form`, `rename_expr` | `return match (p) { … }` over a struct — the match-EXPRESSION form |
@@ -121,11 +122,52 @@ Note the last row in context: the other ~80 `TestSelfHostAsmIRPath` subtests
 pass under the probe, which is the control proving the probe placement is right
 (they are the deliberate `-ir`-off differential runs, not declines).
 
-The cluster is Option/closure/tuple-fn shaped rather than builtin-method shaped
-— i.e. the remaining `ineligible-fn` work is *inference and composite-value*
-lowering, not another round of intercepted builtins. Naming the exact
-`all_eligible` predicate that rejects each one is the next step; re-run the
-probe and read `asm_ir.eligibility_report` for the failing module.
+**Attribution caveat — the table names TESTS, not verified declining shapes.**
+Re-probing the exact case sources with `asm_ir_run -ir-probe` (2026-07-28)
+splits the list in two:
+
+| shape | `-ir-probe` verdict | status |
+|---|---|---|
+| fn-typed tuple element in a struct field (`s.p.1()`) | `main: BAIL lower` → `module: AST` | **CONFIRMED decline** |
+| closure-array struct field (`r.hs[1]()`) | `main: BAIL lower` → `module: AST` | **CONFIRMED decline** |
+| struct match-expression + `when` guard | `module: IR` | **NOT the declining construct** |
+| `w @ P { a, b } when w.a > 0` | `module: IR` | **NOT the declining construct** |
+
+So only the two struct-field-of-callable shapes are verified gaps, and they
+share one cause: the lifted closure lowers fine (`main$clo0: ir`) while the
+CALL SITE that reads it back out of a struct field bails. Note this is the
+narrower sibling of the fn-typed-tuple-element gap CLAUDE.md records as closed
+— closed for a tuple in a LOCAL, still open for one read through a struct field.
+
+For the other rows the case source is IR-eligible, so the `exit(97)` came from
+something else those tests compile, not from the listed program. Do not treat
+them as known gaps without re-deriving the abort; all five test functions PASS
+normally, so whatever declines there is served correctly by the fallback.
+
+The lesson repeats the one above: an abort tells you a test's process reached
+the fallback, not WHICH program did. Confirm each shape with `-ir-probe` before
+building on it.
+
+**Root cause of the two confirmed gaps, and the shape of the fix.** A callable
+behind a struct field has an ambiguous REPRESENTATION that its declared type
+cannot resolve: `() => i32` is spelled the same whether the value is a raw code
+pointer or a `__mkclo$` env box, and the two dispatch differently (env-first vs
+plain `call_indirect`). For a LOCAL the ambiguity is settled by slot metadata —
+`mark_closurearr` / `mark_fnarr` / the `"clo"` element tag are recorded where
+the value is BUILT, which is why the local-tuple form lowers. A struct field has
+no slot, so `expr_tuple_elem_tag`'s `p.t.N` arm falls back to
+`decl_field_type` + `tuple_type_elem_tag` — the declared type — and cannot tell
+which it is, so the call site bails.
+
+The machinery for exactly this already exists one level out:
+`irlower.fnptr_arr_fields_of` scans every function body for how each field is
+POPULATED and emits a module-level `"FNPTR:<Type>.<field>"` registry, which
+`field_access_is_fnarr` then reads at the use site (`#5235`). The fix is the
+same construction one level deeper — a registry keyed by field *and tuple
+element index*, populated from the struct-literal site (a `__mkclo$` value ⇒
+closure box, a bare named fn ⇒ pointer), read by `expr_tuple_elem_tag`'s
+struct-field arm and by the closure-array-field call path. Note both confirmed
+shapes share this one cause, so one registry closes both.
 
 ### A whole output mode has no IR leg (not a decline reason — a missing path)
 
