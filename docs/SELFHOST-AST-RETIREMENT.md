@@ -155,11 +155,22 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   byte-preserving** change (AST `emit_function` and IR `emit_function_via_ir`
   emit different bytes for the same helper), so it needs its own differential
   validation, not the byte-identity gate.
-- **wasm: NOT clean, and larger.** `wasm_ir.fern` reuses `wasm.fern`'s WAT
-  runtime extensively (heap/RC, `str_*_helpers`, `to_string_helpers`,
-  `divrem_helpers`), and the per-module IR framing entry points
-  `wasm.emit_ir_module_units` / `wasm.emit_ir_rc_bodies_from`
+- **wasm: NOT clean, and larger — but hand-WAT, so movable byte-preservingly.**
+  `wasm_ir.fern` reuses `wasm.fern`'s WAT runtime extensively (heap/RC,
+  `str_*_helpers`, `to_string_helpers`, `divrem_helpers`), and the per-module IR
+  framing entry points `wasm.emit_ir_module_units` / `wasm.emit_ir_rc_bodies_from`
   (`wasm_modload_run.fern:336-337`) **live in `wasm.fern`**, not `wasm_ir.fern`.
+  Unlike arm64, the wasm runtime is hand-written WAT (no `emit_function`), so
+  each IR-path-only helper block moves to `wasm_ir.fern` byte-preservingly.
+  **First step DONE:** the transcendental f64-math block (`exp_func` / `log_func`
+  / `pow_func` / `trig_reduce_and_polys` / `sin_func` / `cos_func`, ~140 lines,
+  called only by `emit_ir_module_units`) moved verbatim to `wasm_ir.fern`
+  (byte-identical wasm emit verified locally). **Next:** the other IR-only WAT
+  helper groups (`str_*_helper`, `arr_*_helper`, the wasi `*_import`/`*_func`
+  clusters), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
+  is LAST — it drags `Ctx` / `release_module_ctx` / `collect_method_types` and the
+  shared struct predicates (co-owned by the AST emitter → a cycle until that
+  shared layer is relocated).
 
 ## The gate: #3425 (self-host runtime memory) — CLOSED
 
