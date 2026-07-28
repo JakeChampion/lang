@@ -7309,18 +7309,6 @@ function random_imports_p2(): string {
     return "  (import \"wasi:random/random@0.2.0\" \"get-random-u64\" (func $get_random_u64 (result i64)))\n";
 }
 
-// random_get_import / random_bytes_ir_func / random_i32_func / str_bytes_func
-// are the IR-path byte-source helpers (issue #2747). They are kept SEPARATE
-// from random_helpers / random_func (the AST path's bundle, whose
-// $__fern_random_bytes returns a u8[] array) because the IR path types
-// random_bytes as a string: random_bytes_ir_func builds a `[len][bytes]` string
-// block so str_index / str_len read it correctly, matching the register
-// backends. The wasm_ir_run driver emits these gated by module_emits_op; a
-// single compile picks one path, so the shared $__fern_random_* symbols never
-// clash.
-pub function random_get_import(): string {
-    return "  (import \"wasi_snapshot_preview1\" \"random_get\" (func $random_get (param i32 i32) (result i32)))\n";
-}
 
 // $__fern_random_bytes(n) -> a fresh `[len][bytes]` string block of n CSPRNG
 // bytes. Allocates 4+n bytes via $__fern_str_box, stores len@0, fills bytes@4
@@ -7822,12 +7810,6 @@ pub function writer_write_func(): string {
     return o;
 }
 
-// stat_import emits the preview1 path_filestat_get import (separate from
-// file_imports, which read_file/write_file own, so a stat-only module doesn't
-// pull path_open/fd_read).
-pub function stat_import(): string {
-    return "  (import \"wasi_snapshot_preview1\" \"path_filestat_get\" (func $path_filestat_get (param i32 i32 i32 i32 i32) (result i32)))\n";
-}
 
 // stat_func emits $__fern_stat(path, fstype) -> Result[FileStat, IoError] box.
 // path_filestat_get(preopen fd 3, symlink_follow, path bytes @path+4 / len @[path],
@@ -7866,11 +7848,6 @@ pub function stat_func(): string {
     return o;
 }
 
-// remove_file_import emits the preview1 path_unlink_file import (separate from
-// file_imports, so a remove_file-only module doesn't pull in path_open/fd_read).
-pub function remove_file_import(): string {
-    return "  (import \"wasi_snapshot_preview1\" \"path_unlink_file\" (func $path_unlink_file (param i32 i32 i32) (result i32)))\n";
-}
 
 // remove_file_func emits $__fern_remove_file(path) -> Option[IoError] box.
 // path_unlink_file(preopen fd 3, path bytes @path+4 / len @[path]) unlinks the
@@ -7896,13 +7873,6 @@ pub function remove_file_func(): string {
     return o;
 }
 
-// readdir_fd_import emits the preview1 fd_readdir import that $__fern_read_dir
-// uses. path_open / fd_close come from file_imports (emitted once for any module
-// doing path-based file I/O OR read_dir — an unused fd_read import there is valid
-// wasm), so this adds only the fd_readdir entry, avoiding a double import.
-pub function readdir_fd_import(): string {
-    return "  (import \"wasi_snapshot_preview1\" \"fd_readdir\" (func $fd_readdir (param i32 i32 i32 i64 i32) (result i32)))\n";
-}
 
 // read_dir_func emits $__fern_read_dir(path) -> Result[string[], IoError] box.
 // path_open(preopen fd 3, FD_READDIR right) the directory, then loop fd_readdir
@@ -7979,15 +7949,6 @@ pub function read_dir_func(): string {
     return o;
 }
 
-// remove_dir_import emits the preview1 path_remove_directory import that
-// $__fern_remove_dir_all uses to rmdir a now-empty directory. path_open /
-// fd_close (file_imports), fd_readdir (readdir_fd_import) and path_unlink_file
-// (remove_file_import) are shared with the other fs ops; the caller emits each of
-// those bundles once across the union of ops that need them, so this adds only the
-// path_remove_directory entry.
-pub function remove_dir_import(): string {
-    return "  (import \"wasi_snapshot_preview1\" \"path_remove_directory\" (func $path_remove_directory (param i32 i32 i32) (result i32)))\n";
-}
 
 // remove_dir_func emits $__fern_remove_dir_all(path) -> Option[IoError] box — a
 // recursive rm -rf, the wasm sibling of asm_ir's __fern_remove_dir_all. It first
@@ -8138,17 +8099,7 @@ pub function map_iter_helpers(): string {
     return o;
 }
 
-// temp_dir_import emits the preview1 path_create_directory import that
-// $__fern_temp_dir uses to mkdir the unique directory under the preopen.
-pub function temp_dir_import(): string {
-    return "  (import \"wasi_snapshot_preview1\" \"path_create_directory\" (func $path_create_directory (param i32 i32 i32) (result i32)))\n";
-}
 
-// sleep_ms_import emits the preview1 poll_oneoff import that $__fern_sleep_ms
-// uses to block on a monotonic-clock timeout.
-pub function sleep_ms_import(): string {
-    return "  (import \"wasi_snapshot_preview1\" \"poll_oneoff\" (func $poll_oneoff (param i32 i32 i32 i32) (result i32)))\n";
-}
 
 // sleep_ms_func emits $__fern_sleep_ms(ms) -> i32 (a dummy the statement drops,
 // mirroring the x86 push). Where the register backends nanosleep a timespec, wasm
@@ -8240,13 +8191,6 @@ pub function temp_dir_func(): string {
     return o;
 }
 
-// stdin_fd_read_import emits the standalone wasi fd_read import that read_line /
-// read_int use to read stdin (fd 0). file_imports ALSO imports fd_read for
-// read_file, so the caller (wasm_ir_run) must emit only one of the two — this
-// one when the module reads stdin but does NOT do path-based file I/O.
-pub function stdin_fd_read_import(): string {
-    return "  (import \"wasi_snapshot_preview1\" \"fd_read\" (func $fd_read (param i32 i32 i32 i32) (result i32)))\n";
-}
 
 // read_line_func emits $__fern_read_line (no args -> Option[string]): one line of
 // stdin INCLUDING its trailing '\n', Some(line) / None at EOF (#4369 — matches
@@ -8326,13 +8270,6 @@ pub function read_all_stdin_func(): string {
     return o;
 }
 
-// reader_fd_close_import emits the standalone wasi fd_close import that
-// $__fern_reader_close uses. file_imports ALSO imports fd_close (for path I/O),
-// so the caller (wasm_ir_run) emits this one ONLY when a reader-closing module
-// does NOT do path-based file I/O — otherwise fd_close would be imported twice.
-pub function reader_fd_close_import(): string {
-    return "  (import \"wasi_snapshot_preview1\" \"fd_close\" (func $fd_close (param i32) (result i32)))\n";
-}
 
 // reader_read_chunk_func emits $__fern_reader_read_chunk(fd, n) -> Option[string]
 // — the wasm sibling of asm_ir's __fern_reader_read_chunk (x86 uses sys_read;
@@ -12691,7 +12628,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
     // wasi random_get import (issue #2747) — must precede the function
     // section. Emitted when the module uses random_bytes / random_i32.
-    if (wasm_ir.need(needs, "@uses_random")) { out = out + random_get_import(); }
+    if (wasm_ir.need(needs, "@uses_random")) { out = out + wasm_ir.random_get_import(); }
     // print_int / print_str / eprint_str / putchar write via WASI fd_write
     // — import it only when the module writes to stdout or stderr.
     if (wasm_ir.need(needs, "print_int") || wasm_ir.need(needs, "print_i64") || wasm_ir.need(needs, "print_str") || wasm_ir.need(needs, "eprint_str") || wasm_ir.need(needs, "putchar") || wasm_ir.need(needs, "write_file") || wasm_ir.need(needs, "writer_write")) {
@@ -12709,20 +12646,20 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     // read_dir / remove_dir_all list a directory via fd_readdir (path_open /
     // fd_close come from file_imports above) — emit the standalone fd_readdir
     // import once across both.
-    if (wasm_ir.need(needs, "read_dir") || wasm_ir.need(needs, "remove_dir_all")) { out = out + readdir_fd_import(); }
+    if (wasm_ir.need(needs, "read_dir") || wasm_ir.need(needs, "remove_dir_all")) { out = out + wasm_ir.readdir_fd_import(); }
     // read_line / read_int / read_chunk read stdin (fd 0) via fd_read.
     // file_imports above already imports fd_read for path-based file I/O, so
     // emit the standalone fd_read import ONLY when the module reads stdin but
     // does NOT do file I/O — otherwise fd_read would be imported twice (an
     // invalid module).
     if ((wasm_ir.need(needs, "read_line") || wasm_ir.need(needs, "read_int") || wasm_ir.need(needs, "read_chunk") || wasm_ir.need(needs, "read_all_stdin")) && !(wasm_ir.need(needs, "read_file") || wasm_ir.need(needs, "write_file") || wasm_ir.need(needs, "read_dir") || wasm_ir.need(needs, "remove_dir_all") || wasm_ir.need(needs, "open_file"))) {
-        out = out + stdin_fd_read_import();
+        out = out + wasm_ir.stdin_fd_read_import();
     }
     // reader_close calls preview1 fd_close. file_imports supplies fd_close for
     // path I/O, so emit the standalone fd_close import ONLY for a reader that
     // does no file I/O — otherwise fd_close would be imported twice.
     if (wasm_ir.need(needs, "reader_close") && !(wasm_ir.need(needs, "read_file") || wasm_ir.need(needs, "write_file") || wasm_ir.need(needs, "read_dir") || wasm_ir.need(needs, "remove_dir_all") || wasm_ir.need(needs, "open_file"))) {
-        out = out + reader_fd_close_import();
+        out = out + wasm_ir.reader_fd_close_import();
     }
     // The clock builtins (monotonic_ns / now_unix_ms / now_ns) wrap the
     // preview1 wasi clock_time_get import — emitted (before the function
@@ -12740,18 +12677,18 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     if (wasm_ir.need(needs, "env")) { out = out + env_helpers(); }
     // stat(path) uses the preview1 path_filestat_get import (must precede the
     // function section), emitted when the module stats a file.
-    if (wasm_ir.need(needs, "stat")) { out = out + stat_import(); }
+    if (wasm_ir.need(needs, "stat")) { out = out + wasm_ir.stat_import(); }
     // remove_file / remove_dir_all use the preview1 path_unlink_file import
     // (remove_dir_all unlinks the regular files it finds) — emit it once across
     // both (must precede the function section).
-    if (wasm_ir.need(needs, "remove_file") || wasm_ir.need(needs, "remove_dir_all")) { out = out + remove_file_import(); }
+    if (wasm_ir.need(needs, "remove_file") || wasm_ir.need(needs, "remove_dir_all")) { out = out + wasm_ir.remove_file_import(); }
     // remove_dir_all also rmdirs each emptied directory via path_remove_directory.
-    if (wasm_ir.need(needs, "remove_dir_all")) { out = out + remove_dir_import(); }
+    if (wasm_ir.need(needs, "remove_dir_all")) { out = out + wasm_ir.remove_dir_import(); }
     // temp_dir(prefix) mkdirs a unique dir under the preopen via
     // path_create_directory (must precede the function section).
-    if (wasm_ir.need(needs, "temp_dir")) { out = out + temp_dir_import(); }
+    if (wasm_ir.need(needs, "temp_dir")) { out = out + wasm_ir.temp_dir_import(); }
     // sleep_ms blocks on a monotonic-clock timeout via poll_oneoff.
-    if (wasm_ir.need(needs, "sleep_ms")) { out = out + sleep_ms_import(); }
+    if (wasm_ir.need(needs, "sleep_ms")) { out = out + wasm_ir.sleep_ms_import(); }
     // Preview-2 timer-pollable ops (#4317): direct component-model imports.
     // A module using them composes to a component (see wasm_ir helpers).
     if (wasm_ir.need(needs, "wasm_timer_pollable")) { out = out + wasm_ir.wasi_subscribe_duration_import(); }

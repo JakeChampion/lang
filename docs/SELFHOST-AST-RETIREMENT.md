@@ -227,12 +227,18 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   (`wasm_modload_run.fern:336-337`) **live in `wasm.fern`**, not `wasm_ir.fern`.
   Unlike arm64, the wasm runtime is hand-written WAT (no `emit_function`), so
   each IR-path-only helper block moves to `wasm_ir.fern` byte-preservingly.
-  **First step DONE:** the transcendental f64-math block (`exp_func` / `log_func`
-  / `pow_func` / `trig_reduce_and_polys` / `sin_func` / `cos_func`, ~140 lines,
-  called only by `emit_ir_module_units`) moved verbatim to `wasm_ir.fern`
-  (byte-identical wasm emit verified locally). **Next:** the other IR-only WAT
-  helper groups (`str_*_helper`, `arr_*_helper`, the wasi `*_import`/`*_func`
-  clusters), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
+  **Steps DONE (each byte-identical, verified locally + CI wasmtime):** (1) the
+  transcendental f64-math block (`exp_func` / `log_func` / `pow_func` /
+  `trig_reduce_and_polys` / `sin_func` / `cos_func`); (2) the 9 IR-only wasi
+  `*_import` declarations (`random_get_import` / `stat_import` /
+  `remove_file_import` / `readdir_fd_import` / `remove_dir_import` /
+  `temp_dir_import` / `sleep_ms_import` / `stdin_fd_read_import` /
+  `reader_fd_close_import`) — pure `(import …)` WAT strings, one gated call each in
+  `emit_ir_module_units`. Both moved verbatim to `wasm_ir.fern`. **Next:** the
+  IR-only `*_func` runtime helpers (many are self-contained; some — e.g.
+  `str_split_helper` → shared `arr_push_helper` — must relocate their shared
+  callees too, or leave a `wasm_ir`→`wasm` back-reference, so batch by dependency
+  closure), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
   is LAST — it drags `Ctx` / `release_module_ctx` / `collect_method_types` and the
   shared struct predicates (co-owned by the AST emitter → a cycle until that
   shared layer is relocated).
