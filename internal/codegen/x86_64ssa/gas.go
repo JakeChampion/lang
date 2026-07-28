@@ -782,18 +782,7 @@ func asmInst(in Inst, scratch int) (string, error) {
 	case FBin:
 		return fBinSeq(in), nil
 	case FCmp:
-		cc, ok := fcmpSetcc(in.K)
-		if !ok {
-			return "", fmt.Errorf("x86_64ssa: float compare %v unsupported", in.K)
-		}
-		// Shuttle both operands into xmm, ordered-compare, materialise 0/1.
-		return strings.Join([]string{
-			fmt.Sprintf("movq xmm0, %s", reg(in.Dst)),
-			fmt.Sprintf("movq xmm1, %s", reg(in.Src)),
-			"ucomisd xmm0, xmm1",
-			fmt.Sprintf("%s %s", cc, reg8n(in.Dst)),
-			fmt.Sprintf("movzx %s, %s", reg(in.Dst), reg8n(in.Dst)),
-		}, "\n\t"), nil
+		return fCmpSeq(in, scratch)
 	case FConv:
 		return fConvSeq(in, scratch)
 	default:
@@ -831,26 +820,61 @@ func fBinSeq(in Inst) string {
 	return strings.Join(lines, "\n\t")
 }
 
-// fcmpSetcc maps a float comparison to its ordered setcc (ucomisd flags). NaN
-// operands are out of scope: for finite values these match ssa.Eval's Go
-// comparisons.
-func fcmpSetcc(k ssa.OpKind) (string, bool) {
-	switch k {
-	case ssa.OpFEq:
-		return "sete", true
-	case ssa.OpFNe:
-		return "setne", true
-	case ssa.OpFLt:
-		return "setb", true
-	case ssa.OpFLe:
-		return "setbe", true
-	case ssa.OpFGt:
-		return "seta", true
-	case ssa.OpFGe:
-		return "setae", true
-	default:
-		return "", false
+// fCmpSeq renders a scalar float comparison as a 0/1 in Dst, with IEEE
+// unordered semantics: every ordered predicate is false when either operand is
+// NaN, and only `!=` is true.
+//
+// `ucomisd` reports unordered as ZF=1 PF=1 CF=1, which is indistinguishable
+// from "equal" (ZF=1) or "below" (CF=1) if you read ZF/CF alone. The mapping
+// this used to emit did exactly that — sete/setne/setb/setbe — so four of the
+// six predicates were wrong on NaN. Only seta (!CF && !ZF) and setae (!CF) are
+// unordered-safe as written.
+//
+// So: the two `>`-family predicates keep their setcc, the two `<`-family ones
+// reach the same answer by comparing the operands in the opposite order
+// (a < b ⟺ b > a, which holds under IEEE — both are false on NaN), and
+// equality consults PF, the only flag that distinguishes unordered from equal.
+func fCmpSeq(in Inst, scratch int) (string, error) {
+	d, s := reg(in.Dst), reg(in.Src)
+	d8, sc8 := reg8n(in.Dst), reg8n(scratch)
+	load := []string{
+		fmt.Sprintf("movq xmm0, %s", d),
+		fmt.Sprintf("movq xmm1, %s", s),
 	}
+	var body []string
+	switch in.K {
+	case ssa.OpFGt:
+		body = []string{"ucomisd xmm0, xmm1", fmt.Sprintf("seta %s", d8)}
+	case ssa.OpFGe:
+		body = []string{"ucomisd xmm0, xmm1", fmt.Sprintf("setae %s", d8)}
+	case ssa.OpFLt:
+		// Operands reversed: `a < b` becomes `b > a`, so the unordered-safe
+		// seta does the work.
+		body = []string{"ucomisd xmm1, xmm0", fmt.Sprintf("seta %s", d8)}
+	case ssa.OpFLe:
+		body = []string{"ucomisd xmm1, xmm0", fmt.Sprintf("setae %s", d8)}
+	case ssa.OpFEq:
+		// Equal AND ordered. PF is set only when unordered, so ZF && !PF.
+		body = []string{
+			"ucomisd xmm0, xmm1",
+			fmt.Sprintf("sete %s", d8),
+			fmt.Sprintf("setnp %s", sc8),
+			fmt.Sprintf("and %s, %s", d8, sc8),
+		}
+	case ssa.OpFNe:
+		// The negation: not-equal OR unordered.
+		body = []string{
+			"ucomisd xmm0, xmm1",
+			fmt.Sprintf("setne %s", d8),
+			fmt.Sprintf("setp %s", sc8),
+			fmt.Sprintf("or %s, %s", d8, sc8),
+		}
+	default:
+		return "", fmt.Errorf("x86_64ssa: float compare %v unsupported", in.K)
+	}
+	lines := append(load, body...)
+	lines = append(lines, fmt.Sprintf("movzx %s, %s", d, d8))
+	return strings.Join(lines, "\n\t"), nil
 }
 
 // fConvSeq renders a float conversion / unary op. Integer results are
