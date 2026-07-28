@@ -307,6 +307,17 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// tags onto t (the struct-field sibling of its digit-field / array-element
 		// binds). Same value: 3 + 7 = 10.
 		{"structfield-tuple-fn-local", "struct S { p: (i32, () => i32) } function main(): i32 { var s = S { p: (3, () => 7) }; var t = s.p; return t.0 + t.1(); }"},
+		// DESTRUCTURING a tuple read from an array-of-tuples whose element is a
+		// STRUCT / STRING / ENUM: `var (p, n) = a[i]` over `(P, i32)[]`. Direct
+		// access (`a[i].0.x`) already resolved via the array slot's arrarr_elem,
+		// but the destructure's dtag resolution had no ExprIndex arm, so the
+		// binding fell through untyped and `p.x` read an unmarked slot → bail. The
+		// new arm reads element k's tag from arrarr_elem (the destructure sibling
+		// of expr_tuple_elem_tag's ExprIndex arm). struct: 3+4=7; string: 2+4=6;
+		// enum: G->5+10=15.
+		{"destr-tuparr-struct", "struct P { x: i32 } function main(): i32 { var a: (P, i32)[] = []; a = a.append((P { x: 3 }, 4)); var (p, n) = a[0]; return p.x + n; }"},
+		{"destr-tuparr-string", "function main(): i32 { var a: (string, i32)[] = []; a = a.append((\"hi\", 4)); var (s, n) = a[0]; return s.len() + n; }"},
+		{"destr-tuparr-enum", "enum C { R, G, B } function main(): i32 { var a: (C, i32)[] = []; a = a.append((G, 5)); var (c, n) = a[0]; match (c) { R => { return 1; }, G => { return n + 10; }, B => { return 3; } } return 0; }"},
 		// A struct-array (P[]) / enum-array (E[]) value as a TUPLE element. The
 		// buffer is a heap pointer in the slot (leak mode — elements leak with the
 		// leak-only tuple); the destructure binds mark_arr + the element struct/enum
