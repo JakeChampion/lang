@@ -524,7 +524,7 @@ function main(): i32 {
     print(hex.hex_encode("AB"));
     print(base64.base64_encode("Hello"));
     print(base64.base64_decode("TWFu"));
-    print(hex.hex_decode("4142"));
+    print(string_from_bytes_unchecked(hex.hex_decode("4142")));
     return 0;
 }`},
 		{"stdlib_array_combinators", `import "std/i32";

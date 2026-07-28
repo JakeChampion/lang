@@ -2,7 +2,7 @@ import "std/hex";
 // hex encode/decode round-trip from the prelude.
 function main(): i32 {
     var s: string = "Hi there";
-    if (hex.hex_decode(hex.hex_encode(s)) == s) {
+    if (string_from_bytes_unchecked(hex.hex_decode(hex.hex_encode(s))) == s) {
         return 42;
     }
     return 1;
