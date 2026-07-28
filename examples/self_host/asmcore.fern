@@ -2934,8 +2934,59 @@ pub function parse_unknown_errors_module(mod: parser.Module): string {
     return errs;
 }
 
+// display_arg_errs gates the single argument of `print` / `write` /
+// `eprint` on its type — the self-host half of native's "Display spine"
+// (#2696, the `case "print", "write", "eprint"` block in
+// internal/checker/checker.go).
+//
+// Native passes a `string` straight through, REWRITES any other `Display`
+// type to `arg.to_string()`, and raises E038 for the rest. The self-hosted
+// backends implement none of that: they hand the argument to the
+// string-only runtime helper, which reads it as a `(ptr, len)` box. So a
+// `u8[]` printed nothing at all, and a struct carrying a `to_string`
+// printed its own raw bytes with the length read out of a field — both
+// silent wrong answers on programs the compiler accepted (#5742).
+//
+// Anything that is not already a string is rejected here rather than
+// miscompiled. That is deliberately stricter than native for a `Display`
+// type, whose auto-stringify the self-host does not implement yet: a loud
+// error naming the fix beats emitting a struct's raw memory. Every
+// `print` / `write` / `eprint` in examples/self_host passes a string, so
+// the bootstrap is unaffected.
+//
+// A type the partial `Ty` union cannot model comes back unknown; those
+// are skipped rather than mis-flagged, the same discipline the E038 /
+// E003 argument passes already use.
+function display_arg_errs(e: parser.Expr, fname: string, st: EmitState): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if ((id.name == "print" || id.name == "write" || id.name == "eprint")
+                            && c.args.len() == 1) {
+                        var at: Ty = infer_expr_type(c.args[0], st);
+                        if (ty_is_unknown(at) || ty_is_string(at)) { return ""; }
+                        return "error[E038]: in fn '" + fname + "': argument 1 to "
+                            + id.name + ": " + ty_friendly(at)
+                            + " is not a string — add an explicit .to_string()"
+                            + " (the self-hosted compiler does not apply the"
+                            + " Display auto-stringify that native does)\n";
+                    }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx): CheckCtx {
     match (st) {
+        parser.StmtExpr(ex) => {
+            return CheckCtx { st: ctx.st, errs: ctx.errs + display_arg_errs(ex.value, fname, ctx.st) };
+        },
         parser.StmtReturn(r) => {
             var got: Ty = infer_expr_type(r.value, ctx.st);
             if (!assignable(want, got)) {
@@ -2962,7 +3013,14 @@ pub function check_stmt(st: parser.Stmt, want: Ty, fname: string, ctx: CheckCtx)
             var bind_ty: Ty = got;
             if (v.type_name.len() > 0) {
                 var declared: Ty = ty_from_name(v.type_name);
-                bind_ty = declared;
+                // Bind through struct_local_tag, which resolves a declared
+                // struct name to TyStructNamed where ty_from_name collapses
+                // it to unknown — the same tag params already get in
+                // check_func. `declared` itself stays ty_from_name so the
+                // E003 comparison below is unchanged; only the recorded
+                // local type gets sharper, which is what lets the
+                // print/write/eprint gate see a struct argument (#5742).
+                bind_ty = struct_local_tag(v.type_name, ctx.st);
                 if (!assignable(declared, got)) {
                     ctx = CheckCtx {
                         st: ctx.st,
