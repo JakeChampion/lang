@@ -7409,10 +7409,23 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	// Return-type inference: a plain (non-method, non-generic) function
 	// that wrote no `: Type` accumulates its return-expression types
 	// while the body is checked, then unifies them into a concrete
-	// return type (replacing the defaulted void). Retained ONLY to keep
-	// the diagnostics that follow sane on the erroneous path above — an
-	// unannotated function is already rejected, so this no longer decides
-	// any accepted program's meaning.
+	// return type (replacing the defaulted void).
+	//
+	// Since E070 this decides no ACCEPTED program's meaning — an
+	// unannotated function is already rejected above. It is kept as ERROR
+	// RECOVERY, and it earns that keep: without it the function defaults to
+	// void and the void propagates, so one missing annotation becomes three
+	// errors, two of them pointing at innocent CALL SITES. Measured on
+	// `function greet() { return "hi"; } … greet().len()`:
+	//
+	//	with:    E070 at the declaration.
+	//	without: E070, plus "returns void but expression is string" at the
+	//	         return, plus "field access on non-struct value of type
+	//	         void" at `.len()` — which blames the caller for the
+	//	         callee's missing annotation.
+	//
+	// So do not delete this as dead code; TestUnannotatedFunctionReportsOnce
+	// pins the single-error property.
 	infer := fn.ReturnUnannotated && fn.Receiver == nil && fn.MethodRecv == "" && fn.AssocType == "" && len(fn.TypeParams) == 0
 	prevInfer := c.inferReturns
 	var rets []ast.Type
