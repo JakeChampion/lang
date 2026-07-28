@@ -1202,7 +1202,29 @@ So ~69% of it is the **lexer** (`Token[]`) and ~31% the parser's AST, scaling at
 ~1.6 KB leaked per source line. `load_imports` is not itself at fault — it just
 calls the pair 16 times.
 
-### ROOT CAUSE: an array reassigned by `.append` inside a LOOP is never dropped
+### A loop-append reclamation bug (real, fixed) — but NOT the load leak
+
+**CORRECTION, and the third time this section has over-generalised from a
+probe.** Everything below reproduces and is fixed. It is *not* the cause of the
+per-load leak this section set out to explain: with the fix in
+(`rhs_tainted`'s receiver-only arm for `__method_Array_push`), the probe goes to
+allocs==frees, and the whole-compiler load leak is **unchanged** — 218/428/632 MB
+before, 221/429/637 MB after, still +208 MB per load, and `tokenize`-only on
+`irlower.fern` stays at 40 MB per call either way.
+
+The probe and the lexer share a *symptom* (an array built by `xs =
+xs.append(...)` in a loop, leaking one buffer per call) but not a *mechanism* —
+`lexer.tokenize` RETURNS its `out`, so the array escapes and is legitimately
+tainted in the callee; its leak is at whoever drops the returned value, which is
+still unattributed. I never checked that the two shared a mechanism before
+writing "ROOT CAUSE" at the top of this section.
+
+**Method note, since this keeps recurring:** a minimal repro that reproduces the
+symptom is not evidence about the original program until you fix it and re-measure
+the ORIGINAL. That check takes one driver rebuild and would have caught this, the
+"512 KiB threshold", and the struct-vs-enum framing.
+
+### The loop-append bug itself
 
 Minimal repro: `examples/probes/loop_append_drop_leak.fern`.
 
@@ -1225,9 +1247,24 @@ blocks in 4 calls; only `live_bytes` scales, 49 KB / 393 KB / 6.3 MB). The
 growth reallocs are all freed correctly; it is the function-exit drop of the
 loop-carried binding that never happens.
 
-That is why the lexer dominates the per-load leak: `tokenize` is
-`out = out.append(tok)` inside a `while (true)`, so every call leaks the entire
-`Token[]`.
+`lexer.tokenize` is `out = out.append(tok)` inside a `while (true)`, which is
+what drew attention here — but see the correction above: its leak survives this
+fix, because it RETURNS `out`. Same surface shape, different mechanism.
+
+**What the fix is.** `rhsTainted` treats `__method_Array_push` as aliasing its
+RECEIVER only, joining `__method_Array_set` (and `Map_set`) which were already
+special-cased for exactly this. Without it, a loop counter's own `i = i + 1` — a
+`Binary` RHS, tainted by the conservative default — was passed as the appended
+element and tainted the receiving array, so the exit sweep fell through
+`__fern_arr_dec` (which returns the buffer) to a flat `__fern_rc_dec` (which does
+not). Sound for the same reason `set` is: the ELEMENT's aliasing is handled by
+the escape sink, which documents Args[0] as "the receiver array (threaded /
+reassigned), not retained" and runs `escapeOwned` on Args[1].
+
+Measured on the two shapes whose IR-level baselines this changes, both still
+exiting 3 against `fern -interp`: frees 600 -> 800 of 1000 allocs
+(`out.append(src[0])`), and 200 -> 400 of 600 (`out.append(row)`), live_bytes
+16000 -> 6400 in both.
 
 **Three of this section's earlier claims were RSS artifacts, now retracted:**
 
