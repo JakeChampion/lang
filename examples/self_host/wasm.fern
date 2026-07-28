@@ -7310,52 +7310,6 @@ function random_imports_p2(): string {
 }
 
 
-// $__fern_random_bytes(n) -> a fresh `[len][bytes]` string block of n CSPRNG
-// bytes. Allocates 4+n bytes via $__fern_str_box, stores len@0, fills bytes@4
-// from random_get.
-pub function random_bytes_ir_func(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_random_bytes (param $n i32) (result i32)\n";
-    o = o + "    (local $s i32)\n";
-    o = o + "    (local.set $s (call $__fern_str_box (i32.add (i32.const 4) (local.get $n))))\n";
-    o = o + "    (i32.store (local.get $s) (local.get $n))\n";
-    o = o + "    (drop (call $random_get (i32.add (local.get $s) (i32.const 4)) (local.get $n)))\n";
-    o = o + "    (local.get $s))\n";
-    return o;
-}
-
-// $__fern_random_i32() -> one CSPRNG i32: fill 4 bytes at the low-memory scratch
-// (addr 16, inside the reserved 24-byte scratch region) and load them.
-pub function random_i32_func(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_random_i32 (result i32)\n";
-    o = o + "    (drop (call $random_get (i32.const 16) (i32.const 4)))\n";
-    o = o + "    (i32.load (i32.const 16)))\n";
-    return o;
-}
-
-// $__fern_str_bytes(s) -> a fresh u8[] (`[len][cap][i32 elems]`) holding the
-// bytes of string block `s`. Backs both bytes() and as_bytes() (the slot-array
-// model has no zero-copy slice view). Reads bytes from s+4+i (the [len][bytes]
-// layout), stores each zero-extended into the array's 4-byte slot at arr+8+i*4.
-pub function str_bytes_func(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_str_bytes (param $s i32) (result i32)\n";
-    o = o + "    (local $n i32) (local $arr i32) (local $i i32)\n";
-    o = o + "    (local.set $n (i32.load (local.get $s)))\n";
-    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
-    o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
-    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))\n";
-    o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (local.get $arr))\n";
-    return o;
-}
-
 function random_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_random_bytes (param $n i32) (result i32)\n";
@@ -12993,8 +12947,8 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     // string block; str_bytes returns a u8[]; both reference the heap runtime
     // ($__fern_str_box / $__fern_arr_box) that module_allocates pulls in.
     // random_i32 is heap-free. The import is emitted above.
-    if (wasm_ir.need(needs, "random_bytes")) { out = out + random_bytes_ir_func(); }
-    if (wasm_ir.need(needs, "random_i32")) { out = out + random_i32_func(); }
+    if (wasm_ir.need(needs, "random_bytes")) { out = out + wasm_ir.random_bytes_ir_func(); }
+    if (wasm_ir.need(needs, "random_i32")) { out = out + wasm_ir.random_i32_func(); }
     // print_int's $__fern_print_int: digit buffer in the 16-byte scratch past
     // the string blocks (the `+16` in fl_base_for); iovec in the low-24 scratch.
     if (wasm_ir.need(needs, "print_int")) { out = out + print_int_helper(wasm_ir.str_offset(sv, sv.len())); }
@@ -13004,7 +12958,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     if (wasm_ir.need(needs, "print_i64")) { out = out + print_int64_helper(wasm_ir.str_offset(sv, sv.len()) + 16); }
     if (wasm_ir.need(needs, "print_str")) { out = out + print_str_helper(); }
     if (wasm_ir.need(needs, "eprint_str")) { out = out + eprint_str_helper(); }
-    if (wasm_ir.need(needs, "str_bytes")) { out = out + str_bytes_func(); }
+    if (wasm_ir.need(needs, "str_bytes")) { out = out + wasm_ir.str_bytes_func(); }
     // string_from_bytes(arr) packs a u8[] into a string block via
     // $__fern_string_from_bytes; op_str_from_bytes emits the call, so the
     // helper must be present (its absence left a dangling call -> the wasm
