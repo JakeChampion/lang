@@ -81,20 +81,14 @@ func TestX86_64NativeWX(t *testing.T) {
 	}
 }
 
-// TestArm64NativeWX is the arm64 counterpart of TestX86_64NativeWX, run
-// under qemu-aarch64.
+// TestArm64NativeWX is the arm64 counterpart of TestX86_64NativeWX. Runs the
+// binaries natively on an arm64 host, under qemu-aarch64 elsewhere.
 func TestArm64NativeWX(t *testing.T) {
-	qemu := ""
-	for _, c := range []string{"qemu-aarch64", "qemu-aarch64-static"} {
-		if p, err := exec.LookPath(c); err == nil {
-			qemu = p
-			break
-		}
+	qemu := arm64QemuOrEmpty(t)
+	var runner []string
+	if qemu != "" {
+		runner = []string{qemu}
 	}
-	if qemu == "" {
-		t.Skip("qemu-aarch64 not on PATH")
-	}
-	runner := []string{qemu}
 	for _, c := range wxCases {
 		t.Run(c.name, func(t *testing.T) {
 			asm := compileToArm64Asm(t, c.src)

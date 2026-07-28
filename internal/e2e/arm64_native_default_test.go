@@ -74,12 +74,12 @@ func TestArm64NativeIsCLIDefault(t *testing.T) {
 	t.Run("run_flag_native", func(t *testing.T) {
 		// --run links a temp binary (created 0600 by CreateTemp) and
 		// executes it; regression guard for the chmod-to-executable fix.
-		// The CLI shells out to qemu-aarch64 for --run on a cross host.
-		if qemu == "" {
-			if _, err := exec.LookPath("qemu-aarch64"); err != nil {
-				t.Skip("--run on this host needs qemu-aarch64")
-			}
-		}
+		// No emulator check here: the CLI execs the binary DIRECTLY when
+		// the target matches the host arch (cmd/fern's runIt path) and only
+		// shells out to qemu-aarch64 for the cross case — and
+		// arm64QemuOrEmpty above already skipped a host that can do
+		// neither. The check this replaced tested `qemu == ""`, i.e. it
+		// skipped exactly the native host that needs no emulator at all.
 		cmd := exec.Command(bin, "-target", "arm64", "--run", src)
 		_ = cmd.Run()
 		if code := cmd.ProcessState.ExitCode(); code != 42 {
