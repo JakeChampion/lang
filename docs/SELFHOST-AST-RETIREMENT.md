@@ -82,7 +82,7 @@ representative subset splits it three ways:
 | Reason | Count | What it is | Status |
 |---|---|---|---|
 | `no-funcs` | 39 | SCRIPT-shaped source — top-level statements, no `main`, so nothing for `_start` to `call`. The gate's `funcs.len() == 0` arm fires before the `has_main` one. | **CLOSED** — `asmcore.synth_script_main` desugars it to `function main(): i32 { … }` (guarded by `TestSelfHostScriptMainIRX86_64`) |
-| `ineligible-fn` | 105 | Builtin METHODS the AST emitter intercepts and the IR path did not lower. | **CLOSED.** Landed: `is_zero`/`is_positive`/`is_negative`/`is_even`/`is_odd` (#5659), `abs`/`sign` (#5661), `xs.sum`/`product` (#5664), `n.pow` (#5666), `xs.index_of`/`contains` (#5667), `is_empty` (#5669), `s.first_byte`/`last_byte` (#5671), `args_count` (desugared to `args().len()`), `arg_at` (a real op, kind 210 — the `args()[i]` desugar was rejected because it would allocate all of argv per loop iteration, O(1)→O(n); the register backends call a new rc-headered `__fern_arg_at_rc`, wasm a new `$__fern_arg_at` sharing the wasi args imports), `xs.min`/`max` (the `len==0` branch + the Option box moved INTO Fern-source helpers — `asmcore.rt_src_arr_i32_min_max_opt` — so the call site is a plain `call_direct` like `sum`; the helper's composite return type is registered for the scrutinee resolvers via `irlower.builtin_arr_opt_ret_type`, since `opt_ret_fns_of` cannot see a runtime helper). **No `ineligible-fn` items remain** — every builtin the AST emitter intercepts now lowers on the IR path. |
+| `ineligible-fn` | 105 | Builtin METHODS the AST emitter intercepts and the IR path did not lower. | **CLOSED.** Landed: `is_zero`/`is_positive`/`is_negative`/`is_even`/`is_odd` (#5659), `abs`/`sign` (#5661), `xs.sum`/`product` (#5664), `n.pow` (#5666), `xs.index_of`/`contains` (#5667), `is_empty` (#5669), `s.first_byte`/`last_byte` (#5671), `args_count` (desugared to `args().len()`), `arg_at` (a real op, kind 210 — the `args()[i]` desugar was rejected because it would allocate all of argv per loop iteration, O(1)→O(n); the register backends call a new rc-headered `__fern_arg_at_rc`, wasm a new `$__fern_arg_at` sharing the wasi args imports), `xs.min`/`max` (the `len==0` branch + the Option box moved INTO Fern-source helpers — `asmcore.rt_src_arr_i32_min_max_opt` — so the call site is a plain `call_direct` like `sum`; the helper's composite return type is registered for the scrutinee resolvers via `irlower.builtin_arr_opt_ret_type`, since `opt_ret_fns_of` cannot see a runtime helper). **No `ineligible-fn` items remain** *of the builtin-method kind listed here* — every builtin the AST emitter intercepts now lowers on the IR path. This does NOT mean the category is empty: 17 subtests still decline on non-builtin grounds — see "`ineligible-fn` is NOT closed" below. |
 | `over-budget` | 4 | `import "std/array"` and friends push the merged module past the 512-function budget. Same gate as the whole-compiler bundle, reached by ordinary programs. | **IN PROGRESS.** `asm_load_run`'s default merged path now routes an over-budget-but-eligible program (`512 < merged funcs < 1500`) through a per-module IR concat instead of the AST emitter (`emit_per_module_concat` + `prune_to_reachable`, #5676; guarded by `TestSelfHostOverBudgetPerModuleIR`). The `< 1500` bound keeps the whole-compiler self-compile out (single-process concat of ~2040 funcs OOMs the arena). Remaining: `asm_ir_run`'s AST fallback (single-module — the concat's per-module split does not map) and lifting the budget for the whole-compiler bundle itself (needs the batched file-based per-module emit — slice 2). **`asm_modload_run` now has the concat too** (#5699 / #5704), with both predicted hazards resolved and three more that only showed up once a real program went through it. What landed:
 
   * The two predicted hazards: `all_structs` is seeded with the identical `builtin_view(dir, all_structs)` call (not merely builtins-appended-last), and cross-unit shapes are handled by `dedupe_shape_defs` — keep the FIRST `.weak __fern_shp_*` definition and drop the rest, since the references then bind to exactly the address the linker's weak merge would have produced.
@@ -96,6 +96,36 @@ representative subset splits it three ways:
 
   Also note the entry unit of an arbitrary stdlib-using program is often not per-module-eligible, in which case the concat correctly declines; check with `-per-module-emit <last-unit-index>` before blaming the router. |
 | `no-main` | 0 | Functions but no `main`. Supported by the desugar; not exercised today. | n/a |
+
+### `ineligible-fn` is NOT closed — 17 subtests still decline (measured 2026-07-28)
+
+The `ineligible-fn` row above says "No `ineligible-fn` items remain". That is
+true of the **builtin methods** it enumerates, and false as a general statement:
+running the corrected probe (inside the `use_ir` branch — see above) over
+`internal/e2eselfhost` aborts **17 subtests across 7 test functions**, none of
+them over-budget (they are all small single-module programs), so every one is an
+eligibility decline. `asm_ir_run`'s AST fallback is therefore **live code**, not
+something #3457 can delete yet.
+
+| test | subtests | shape |
+|---|---|---|
+| `TestSelfHostReturnInferenceIR` | `option-some`, `option-none` | UN-ANNOTATED fn whose return type must infer to `Option[i32]`: `function find(n: i32) { … return Some(n); … return None; }` |
+| `TestSelfHostTupleFnStructFieldX86_64` | `bare`, `arg-elem0`, `two-arg`, `read-then-call`, `churn` | fn-typed TUPLE element in a struct field: `struct S { p: (i32, () => i32) }`, called as `s.p.1()` |
+| `TestSelfHostCloArrayFieldCallIRX86_64` | `capture-multi`, `with-arg` | closure-array struct field, capturing call |
+| `TestSelfHostStructMatchX86_64` | `expr_form`, `rename_expr` | `return match (p) { … }` over a struct — the match-EXPRESSION form |
+| `TestSelfHostTryOptionPayloadIRX86_64` | `result-option`, `nested-chain` | `?` over an Option payload, incl. nested chains |
+| `TestSelfHostAtBindingX86_64` | `struct_expr_guard_uses_at`, `tuple_expr_guard_uses_at` | `@` binding read from inside a `when` guard |
+| `TestSelfHostAsmIRPath` | `asc-none-opt-nested` | nested `None` in an ascribed Option position |
+
+Note the last row in context: the other ~80 `TestSelfHostAsmIRPath` subtests
+pass under the probe, which is the control proving the probe placement is right
+(they are the deliberate `-ir`-off differential runs, not declines).
+
+The cluster is Option/closure/tuple-fn shaped rather than builtin-method shaped
+— i.e. the remaining `ineligible-fn` work is *inference and composite-value*
+lowering, not another round of intercepted builtins. Naming the exact
+`all_eligible` predicate that rejects each one is the next step; re-run the
+probe and read `asm_ir.eligibility_report` for the failing module.
 
 ### A whole output mode has no IR leg (not a decline reason — a missing path)
 
