@@ -280,6 +280,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// `.N` direct access: Green -> t.1+10 = 15.
 		{"enum-tuple-elem", "enum E { A(i32), B } function mk(): (E, i32) { return (A(3), 5); } function main(): i32 { var (e, n) = mk(); match (e) { A(x) => { return x + n; }, B => { return n; } } return 0; }"},
 		{"enum-tuple-dotn", "enum Color { Red, Green, Blue } function mk(): (Color, i32) { return (Green, 5); } function main(): i32 { var t = mk(); match (t.0) { Red => { return 1; }, Green => { return t.1 + 10; }, Blue => { return 3; } } return 0; }"},
+		// A match-EXPRESSION (value position) over a STRUCT / TUPLE scrutinee.
+		// Both desugar to a done-flag if-chain wrapped in an IIFE; unlike the enum
+		// (StmtMatch) / literal (`_`-terminated chain) forms, that chain has no
+		// terminal return, so the IIFE lambda used to fall through and bail the IR
+		// path to the AST emitter (#3457 slice 3, #5749's "match-expr over struct"
+		// shape). parse_match_expr now flags these (needs_default_return) so the
+		// IIFE gets a synthetic terminal return and lowers. struct: 5+1 = 6;
+		// tuple: 3+4 = 7.
+		{"matchexpr-struct", "struct P { x: i32 } function main(): i32 { var p = P { x: 5 }; var r = match (p) { P { x: v } => v + 1 }; return r; }"},
+		{"matchexpr-tuple", "function main(): i32 { var t = (3, 4); var r = match (t) { (a, b) => a + b }; return r; }"},
 		// A struct-array (P[]) / enum-array (E[]) value as a TUPLE element. The
 		// buffer is a heap pointer in the slot (leak mode — elements leak with the
 		// leak-only tuple); the destructure binds mark_arr + the element struct/enum
