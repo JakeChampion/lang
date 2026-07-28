@@ -32,10 +32,12 @@ import (
 //     decides which shapes the IR leg may serve at all.
 //
 // The out-of-subset half of the table is as load-bearing as the in-subset
-// half: env / args / random / clock / read_file component shapes have preview2
-// helper bodies only on the AST path (wasm.env_func_p2 and friends), so they
-// MUST keep falling through. A gate that widened to admit them would emit a
-// core calling helpers nothing defines.
+// half: env / args / read_file component shapes have preview2 helper bodies
+// only on the AST path (wasm.env_func_p2 and friends), so they MUST keep
+// falling through. A gate that widened to admit them would emit a core calling
+// helpers nothing defines. (random and clock USED to sit in that half; their
+// *_p2 bodies now live in wasm_ir.fern and mode 2 emits them, so they lower —
+// which is exactly the migration each remaining shape still has ahead of it.)
 func TestSelfHostWasmComponentIRPath(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
