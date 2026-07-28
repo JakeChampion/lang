@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostCrossUnitFnValue pins the cross-unit fn-value miscompile on the
-// per-module IR path (#5697), found while making the flagship std/http +
+// per-module IR path (#5698), found while making the flagship std/http +
 // std/tcp handler compile: a function passed as a VALUE into another module and
 // invoked there segfaults.
 //
@@ -31,7 +31,7 @@ import (
 // spawned binary rather than a wrong answer, and a skip states the gap without
 // leaving a red suite. Delete the skip with the fix.
 func TestSelfHostCrossUnitFnValue(t *testing.T) {
-	t.Skip("#5697: a fn value passed across a per-module unit boundary is not boxed by the caller; the callee dereferences it as a box and segfaults")
+	t.Skip("#5698: a fn value passed across a per-module unit boundary is not boxed by the caller; the callee dereferences it as a box and segfaults")
 
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
