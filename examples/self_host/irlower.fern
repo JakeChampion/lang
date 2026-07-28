@@ -13075,6 +13075,24 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     if (dl.elements.len() == dn) { dtag = elem_type_tag(dl.elements[dk], s); }
                 },
                 parser.ExprIdent(did) => { dtag = s.tuple_elem_tag(s.slot_of(did.name), dk); },
+                parser.ExprIndex(dix) => {
+                    // `var (a, b, …) = arr[i]` over a `(tuple)[]` array-of-tuples
+                    // local: the element TUPLE TYPE is recorded on the (is_arr)
+                    // slot's arrarr_elem (#4365). Read element dk's tag out of it —
+                    // the destructure sibling of expr_tuple_elem_tag's ExprIndex arm,
+                    // so a struct / nested-tuple element binds typed instead of
+                    // untyped (which read `p.x` off an unmarked slot and bailed).
+                    match (dix.array) {
+                        parser.ExprIdent(daid) => {
+                            var dasl: i32 = s.slot_of(daid.name);
+                            if (dasl >= 0 && s.is_arr_slot(dasl)) {
+                                var det: string = s.arrarr_elem_of_slot(dasl);
+                                if (det.len() >= 2 && det[0:1] == "(") { dtag = tuple_type_elem_tag(det, dk); }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
                 parser.ExprCall(dcl) => {
                     // `var (a, b, …) = f()` / `= obj.f()` — recover element
                     // dk's tag from the tuple-returning function's registry
