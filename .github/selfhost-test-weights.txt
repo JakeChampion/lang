@@ -87,9 +87,10 @@ TestSelfHostStructFreshRetFieldIRX86_64 4
 # the x86 leg gcc-links every subtest, the wasm leg wasmtime-runs every subtest.
 TestSelfHostSaturatingX86IR 25
 TestSelfHostSaturatingWasmIR 25
-# Checked arithmetic (#5542): same shape — ~22 subtests each, one warm driver.
-TestSelfHostCheckedX86IR 22
-TestSelfHostCheckedWasmIR 22
+# Checked arithmetic (#5542): same shape — ~40 subtests each (incl. /? %?),
+# one warm driver.
+TestSelfHostCheckedX86IR 35
+TestSelfHostCheckedWasmIR 35
 # Append-fresh reclaim (#5608): one program through two warm drivers
 # (asm_run + asm_pathprobe_run), plus a native cross-check.
 TestSelfHostAppendFreshReclaimIRX86_64 6

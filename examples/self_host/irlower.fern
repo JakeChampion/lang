@@ -4098,7 +4098,7 @@ function sat_arith(k: string, kind: string, w: i32, s: LowerState): LowerState {
 // `-?` / `*?`, #5542): integer-only, yielding `Some(result)` when it fits the
 // operand type and `None` on overflow.
 pub function is_chk_op(op: string): boolean {
-    return op == "+?" || op == "-?" || op == "*?";
+    return op == "+?" || op == "-?" || op == "*?" || op == "/?" || op == "%?";
 }
 
 // chk_opt_type_tag is the "Option[T]" tag a checked binary (`+?` / `-?` / `*?`)
@@ -4133,6 +4133,23 @@ pub function chk_opt_type_tag(b: parser.ExprBinary, s: LowerState): string {
 //     signed   *?  l != 0 && (s / l != r || (l == -1 && r == MIN))   (s = l * r wrapped)
 function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32, rslot: i32, sslot: i32, s: LowerState): LowerState {
     var p: LowerState = s;
+    // Checked divide / remainder: fail on a zero divisor, and for signed
+    // operands also on `MIN / -1` (the one overflowing division). Same
+    // condition for `/?` and `%?`.
+    if (op == "/?" || op == "%?") {
+        p = sat_load(rslot, p);
+        p = sat_const(kind, "zero", p);
+        p = p.emit(ir.op_bin("eq", w, false));   // r == 0
+        if (uns) { return p; }
+        p = sat_load(lslot, p);
+        p = sat_const(kind, "min", p);
+        p = p.emit(ir.op_bin("eq", w, false));    // l == MIN
+        p = sat_load(rslot, p);
+        p = sat_const(kind, "negone", p);
+        p = p.emit(ir.op_bin("eq", w, false));    // r == -1
+        p = p.emit(ir.op_bin("and", 0, false));
+        return p.emit(ir.op_bin("or", 0, false)); // (r==0) || (l==MIN && r==-1)
+    }
     if (uns) {
         if (op == "+?") {
             p = sat_load(lslot, p);
@@ -4247,18 +4264,28 @@ function lower_checked_binary(b: parser.ExprBinary, e: parser.Expr, s: LowerStat
     if (wide) { p = lower_i64(b.right, p); } else { p = lower_expr(b.right, p); }
     if (!p.ok) { return p; }
     p = p.emit(ir.op_store_local(rslot));
-    // Wrapped result: the Some payload, and the dividend for signed `*?`.
+    var basek: string = "add";
+    if (b.op == "-?") { basek = "sub"; }
+    if (b.op == "*?") { basek = "mul"; }
+    if (b.op == "/?") { if (uns) { basek = "div_u"; } else { basek = "div_s"; } }
+    if (b.op == "%?") { if (uns) { basek = "rem_u"; } else { basek = "rem_s"; } }
+    // The wrapped result `s`. `+?` / `-?` / `*?` compute it UP FRONT — signed
+    // `*?`'s overflow check divides it back. `/?` / `%?` must NOT: a `84 /? 0`
+    // would divide by zero here, which traps on the wasm IR path (op_bin div is
+    // the raw, un-guarded division). Their overflow check needs only l / r, so
+    // the division is deferred into the Some branch below, where the divisor is
+    // provably non-zero (and not the signed `MIN / -1`) and so can't trap.
+    var is_divrem: boolean = b.op == "/?" || b.op == "%?";
     var sname: string = "$chks" + util.i32_to_string(p.locals.len());
     p = p.add_local(sname);
     var sslot: i32 = p.slot_of(sname);
     if (wide) { p = p.mark_i64(sslot, true); }
-    var basek: string = "add";
-    if (b.op == "-?") { basek = "sub"; }
-    if (b.op == "*?") { basek = "mul"; }
-    p = sat_load(lslot, p);
-    p = sat_load(rslot, p);
-    p = sat_arith(basek, kind, w, p);
-    p = p.emit(ir.op_store_local(sslot));
+    if (!is_divrem) {
+        p = sat_load(lslot, p);
+        p = sat_load(rslot, p);
+        p = sat_arith(basek, kind, w, p);
+        p = p.emit(ir.op_store_local(sslot));
+    }
     // The Option result rides a default (un-i64-marked) pointer slot.
     var oname: string = "$chko" + util.i32_to_string(p.locals.len());
     p = p.add_local(oname);
@@ -4269,7 +4296,13 @@ function lower_checked_binary(b: parser.ExprBinary, e: parser.Expr, s: LowerStat
     p = p.emit(ir.op_opt_none());
     p = p.emit(ir.op_store_local(oslot));
     p = p.emit(ir.op_else());
-    p = sat_load(sslot, p);
+    if (is_divrem) {
+        p = sat_load(lslot, p);
+        p = sat_load(rslot, p);
+        p = sat_arith(basek, kind, w, p);
+    } else {
+        p = sat_load(sslot, p);
+    }
     if (wide) { p = p.emit(ir.op_opt_make_w(0, 64, true)); } else { p = p.emit(ir.op_opt_make(0)); }
     p = p.emit(ir.op_store_local(oslot));
     p = p.emit(ir.op_end());

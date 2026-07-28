@@ -1522,7 +1522,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             // no string or float form. The coarse Type collapses widths to
             // i32, so the element is t_i32() (asmcore's Ty carries the real
             // width for lowering).
-            if (b.op == "+?" || b.op == "-?" || b.op == "*?") {
+            if (b.op == "+?" || b.op == "-?" || b.op == "*?" || b.op == "/?" || b.op == "%?") {
                 if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
                     var chkoa: Type[] = [t_i32()];
                     return t_union_g("Option", chkoa);
@@ -4728,7 +4728,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             }
             // E009: checked arithmetic (`+?` `-?` `*?`) is integer-only too —
             // it yields Option[T]. Same requireInteger pair as saturating (#5542).
-            if (b.op == "+?" || b.op == "-?" || b.op == "*?") {
+            if (b.op == "+?" || b.op == "-?" || b.op == "*?" || b.op == "/?" || b.op == "%?") {
                 var klt: Type = check_expr(b.left, s);
                 var krt: Type = check_expr(b.right, s);
                 if (!is_unknown(klt) && !is_unknown(krt)) {

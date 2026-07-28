@@ -184,11 +184,13 @@ var multiPunct = []string{
 	// `<<|` sits up with the 3-char punctuators so it beats `<<`.
 	"+|", "-|", "*|",
 	// Checked arithmetic (#5542) — `Some(result)` when it fits the
-	// operand type, `None` on overflow. Each lexes as one two-char
-	// punctuator; the trailing `?` never merges with the postfix
-	// try `?` because that only follows a completed operand, never
-	// an arithmetic operator.
-	"+?", "-?", "*?",
+	// operand type, `None` on overflow (and, for `/?` / `%?`, on a
+	// zero divisor or the signed `MIN / -1`). Each lexes as one
+	// two-char punctuator; the trailing `?` never merges with the
+	// postfix try `?` because that only follows a completed operand,
+	// never an arithmetic operator. `/?` is distinct from the `//`
+	// line comment (skipped in trivia before operators tokenize).
+	"+?", "-?", "*?", "/?", "%?",
 	"::",
 }
 

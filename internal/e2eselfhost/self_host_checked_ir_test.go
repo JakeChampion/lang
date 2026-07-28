@@ -54,6 +54,26 @@ var checkedIRCases = []struct {
 	{"u64-add-overflow", `function main(): i32 { var m: u64 = 18446744073709551615; var n: u64 = 1; match (m +? n) { Some(v) => { return 50; }, None => { return 51; } } }`, 51},
 	{"u64-sub-underflow", `function main(): i32 { var m: u64 = 0; var n: u64 = 1; match (m -? n) { Some(v) => { return 52; }, None => { return 53; } } }`, 53},
 	{"u64-add-ok", `function main(): i32 { var m: u64 = 21; var n: u64 = 21; match (m +? n) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 42},
+
+	// /? and %?: None on a zero divisor and (signed) on MIN / -1. The
+	// division is deferred into the Some branch so a `84 /? 0` never traps.
+	{"i32-div-ok", `function main(): i32 { var a: i32 = 84; var b: i32 = 2; match (a /? b) { Some(v) => { return v; }, None => { return 99; } } }`, 42},
+	{"i32-div-zero", `function main(): i32 { var a: i32 = 84; var b: i32 = 0; match (a /? b) { Some(v) => { return 1; }, None => { return 41; } } }`, 41},
+	{"i32-div-minneg1", `function main(): i32 { var a: i32 = 0 - 2147483647 - 1; var b: i32 = 0 - 1; match (a /? b) { Some(v) => { return 2; }, None => { return 43; } } }`, 43},
+	{"i32-rem-ok", `function main(): i32 { var a: i32 = 85; var b: i32 = 43; match (a %? b) { Some(v) => { return v; }, None => { return 99; } } }`, 42},
+	{"i32-rem-zero", `function main(): i32 { var a: i32 = 85; var b: i32 = 0; match (a %? b) { Some(v) => { return 3; }, None => { return 44; } } }`, 44},
+	{"i32-rem-minneg1", `function main(): i32 { var a: i32 = 0 - 2147483647 - 1; var b: i32 = 0 - 1; match (a %? b) { Some(v) => { return 4; }, None => { return 45; } } }`, 45},
+	{"u32-div-ok", `function main(): i32 { var a: u32 = 100; var b: u32 = 4; match (a /? b) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 25},
+	{"u32-div-zero", `function main(): i32 { var a: u32 = 100; var b: u32 = 0; match (a /? b) { Some(v) => { return 5; }, None => { return 46; } } }`, 46},
+	{"u32-rem-ok", `function main(): i32 { var a: u32 = 100; var b: u32 = 7; match (a %? b) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 2},
+	{"u8-div-ok", `function main(): i32 { var a: u8 = 84; var b: u8 = 2; match (a /? b) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 42},
+	{"u8-div-zero", `function main(): i32 { var a: u8 = 84; var b: u8 = 0; match (a /? b) { Some(v) => { return 6; }, None => { return 47; } } }`, 47},
+	{"i64-div-ok", `function main(): i32 { var a: i64 = 84; var b: i64 = 2; match (a /? b) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 42},
+	{"i64-div-zero", `function main(): i32 { var a: i64 = 84; var b: i64 = 0; match (a /? b) { Some(v) => { return 7; }, None => { return 48; } } }`, 48},
+	{"i64-div-minneg1", `function main(): i32 { var a: i64 = 0 - 9223372036854775807 - 1; var b: i64 = 0 - 1; match (a /? b) { Some(v) => { return 8; }, None => { return 49; } } }`, 49},
+	{"i64-rem-ok", `function main(): i32 { var a: i64 = 85; var b: i64 = 43; match (a %? b) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 42},
+	{"u64-div-zero", `function main(): i32 { var m: u64 = 100; var z: u64 = 0; match (m /? z) { Some(v) => { return 9; }, None => { return 50; } } }`, 50},
+	{"u64-div-ok", `function main(): i32 { var m: u64 = 84; var z: u64 = 2; match (m /? z) { Some(v) => { return v as i32; }, None => { return 99; } } }`, 42},
 }
 
 // TestSelfHostCheckedX86IR pins the checked operators on the x86-64 IR backend

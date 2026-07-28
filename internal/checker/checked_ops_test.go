@@ -37,6 +37,9 @@ func TestCheckedOperatorTyping(t *testing.T) {
 	mustOK(`function main(): i32 { var a: u64 = 1; var b: u64 = 2; match (a -? b) { Some(v) => { return v as i32; }, None => { return 0; } } }`)
 	// A pair of bare literals defaults to i32, like every other integer op.
 	mustOK(`function main(): i32 { match (40 +? 2) { Some(v) => { return v; }, None => { return 0; } } }`)
+	// Checked divide / remainder yield Option[T] too.
+	mustOK(`function main(): i32 { var a: i32 = 84; var b: i32 = 2; match (a /? b) { Some(v) => { return v; }, None => { return 0; } } }`)
+	mustOK(`function main(): i32 { var a: u32 = 85; var b: u32 = 43; match (a %? b) { Some(v) => { return v as i32; }, None => { return 0; } } }`)
 
 	// Assigning the Option[T] to the wrong element type is a type error.
 	mustErr(`function main(): i32 { var a: i32 = 1; var b: i32 = 2; var c: Option[i64] = a +? b; return 0; }`,
@@ -52,5 +55,10 @@ func TestCheckedOperatorTyping(t *testing.T) {
 		`share an integer type`)
 	// usize is rejected: the overflow bound is target-width-dependent.
 	mustErr(`function main(): i32 { var a: usize = 1; var b: usize = 2; match (a +? b) { Some(v) => { return v as i32; }, None => { return 0; } } }`,
+		"not supported on `usize`")
+	// /? and %? are integer-only and usize-rejecting too.
+	mustErr(`function main(): i32 { var a: f64 = 1.0; var b: f64 = 2.0; var c: Option[f64] = a /? b; return 0; }`,
+		`requires an integer type`)
+	mustErr(`function main(): i32 { var a: usize = 1; var b: usize = 2; match (a %? b) { Some(v) => { return v as i32; }, None => { return 0; } } }`,
 		"not supported on `usize`")
 }

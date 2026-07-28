@@ -12,10 +12,15 @@ func TestCheckedOperatorPrecedence(t *testing.T) {
 		{"a +? b", "(+? a b)"},
 		{"a -? b", "(-? a b)"},
 		{"a *? b", "(*? a b)"},
+		{"a /? b", "(/? a b)"},
+		{"a %? b", "(%? a b)"},
 		// `*` binds tighter than `+?`.
 		{"a +? b * c", "(+? a (* b c))"},
 		// `*?` binds tighter than `+`.
 		{"a + b *? c", "(+ a (*? b c))"},
+		// `/?` / `%?` bind in the multiplicative tier, like `/` / `%`.
+		{"a + b /? c", "(+ a (/? b c))"},
+		{"a /? b + c", "(+ (/? a b) c)"},
 		// Same tier as the wrapping additive ops, left-associative.
 		{"a + b -? c", "(-? (+ a b) c)"},
 		{"a *? b / c", "(/ (*? a b) c)"},

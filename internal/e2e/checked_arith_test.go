@@ -71,8 +71,21 @@ function main(): i32 {
     match (m *? 2)          { Some(v) => { return 52; }, None => {} }
     match ((21 as u64) +? 21) { Some(v) => { if ((v as i32) != 42) { return 53; } }, None => { return 54; } }
 
+    // /? and %?: None on a zero divisor and (signed) on MIN / -1.
+    match (84 /? 2)         { Some(v) => { if (v != 42) { return 55; } }, None => { return 56; } }
+    match (84 /? 0)         { Some(v) => { return 57; }, None => {} }
+    match (85 %? 43)        { Some(v) => { if (v != 42) { return 58; } }, None => { return 59; } }
+    match (85 %? 0)         { Some(v) => { return 62; }, None => {} }
+    match (i32min /? (0 - 1)) { Some(v) => { return 63; }, None => {} }
+    match (i32min %? (0 - 1)) { Some(v) => { return 64; }, None => {} }
+    var uz: u32 = 0;
+    match (p /? uz)         { Some(v) => { return 65; }, None => {} }
+    match (p /? q)          { Some(v) => { if ((v as i64) != 429496729) { return 66; } }, None => { return 67; } }
+    match (x /? (0 as i64)) { Some(v) => { return 68; }, None => {} }
+    match (x /? (5 as i64)) { Some(v) => { if (v != 1844674407370955161) { return 69; } }, None => { return 70; } }
+
     // The wrapping operators are unchanged.
-    if ((i32max + 1) != i32min) { return 60; }
+    if ((i32max + 1) != i32min) { return 71; }
     return 0;
 }
 `
