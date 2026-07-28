@@ -17286,14 +17286,26 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): bo
 // param i is borrowable). Defaults false (unknown callee / out-of-range index →
 // conservative escape). Mirrors the "name|flags" lookup of callee_param_is_fn.
 function param_is_borrowable(borrowable: string[], name: string, idx: i32): boolean {
+    var nl: i32 = name.len();
     var i: i32 = 0;
     while (i < borrowable.len()) {
         var e: string = borrowable[i];
         var bar: i32 = 0;
         while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0:bar] == name) {
-            var pos: i32 = bar + 1 + idx;
-            return pos < e.len() && e[pos] == 49;   // 49 = '1'
+        // Match the key e[0:bar] against `name` by byte comparison — NOT `e[0:bar]
+        // == name`, whose substring slice allocated a fresh string on every one of
+        // the ~N registry entries scanned per call. This runs for every call-arg on
+        // every body walk of both interproc fixpoints (~6 + ~3 passes), and that
+        // per-entry slice churn was ~800 MB of the whole-program emit floor (#3457
+        // step 2). The length guard rejects the common mismatch in O(1).
+        if (bar < e.len() && bar == nl) {
+            var eq: boolean = true;
+            var k: i32 = 0;
+            while (eq && k < nl) { if (e[k] != name[k]) { eq = false; } k = k + 1; }
+            if (eq) {
+                var pos: i32 = bar + 1 + idx;
+                return pos < e.len() && e[pos] == 49;   // 49 = '1'
+            }
         }
         i = i + 1;
     }
