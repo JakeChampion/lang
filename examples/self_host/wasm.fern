@@ -9934,11 +9934,19 @@ pub function emit_module_run_io_fs(mod: parser.Module): string {
 // entry point every existing caller uses, and the byte-identity invariant for
 // #5331 step 4b — its output must not change at all.
 pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[]): string {
+    return emit_ir_module_mode(mod, ir_cache, 0);
+}
+
+// emit_ir_module_mode is emit_ir_module for a chosen wasm emit mode (0 preview1
+// command, 1 component run, 2 component run + stdout — see
+// wasm_ir.emit_ir_module_units_mode). Mode 0 delegates unchanged, so the
+// byte-identity invariant for #5331 step 4b is untouched.
+pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResult[], mode: i32): string {
     var sv: string[] = wasm_ir.str_values(ir_cache);
     var ft: string[] = wasm_ir.fn_value_table(ir_cache);
     var unit: string = wasm_ir.emit_functions_ns("", mod, ir_cache);
-    return wasm_ir.emit_ir_module_units([""], [unit], sv, [sv.len()], ft, [ft.len()], mod,
-        wasm_ir.needs_of(ir_cache), wasm_ir.indirect_arities(ir_cache), emit_ir_rc_bodies(mod, ir_cache));
+    return wasm_ir.emit_ir_module_units_mode([""], [unit], sv, [sv.len()], ft, [ft.len()], mod,
+        wasm_ir.needs_of(ir_cache), wasm_ir.indirect_arities(ir_cache), emit_ir_rc_bodies(mod, ir_cache), mode);
 }
 
 function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, fs: boolean): string {
@@ -9949,9 +9957,18 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // memory layout + the SAME Perceus array RC). The IR emits FLAT WAT, which
     // both wasmtime and the self-host watbin encoder now assemble. The heap/RC
     // runtime is emitted from HERE (this module's heap_alloc_helpers /
-    // rc_runtime_helpers), so wasm_ir does NOT import wasm — no cycle. Component
-    // modes and out-of-subset modules (strings, structs, methods, …) fall
-    // through to the AST emitter below, so the bootstrap is unaffected.
+    // rc_runtime_helpers), so wasm_ir does NOT import wasm — no cycle.
+    // Out-of-subset modules (strings, structs, methods, …) fall through to the
+    // AST emitter below, so the bootstrap is unaffected.
+    //
+    // The COMPONENT modes route through the IR too, for the subset whose core
+    // imports the fixed component framings can satisfy: no I/O at all (mode 1)
+    // or preview2 stdout/stderr/exit (mode 2). The fs / env / args / random /
+    // clock component shapes keep falling through — their preview2 helper
+    // bodies (readfile_func_p2, env_func_p2, args_func_p2, clock_funcs_p2,
+    // random_func_p2, all below) exist only on the AST path. `fs` is refused
+    // outright: emit_module_run_io_fs is only ever selected for an fs shape, so
+    // there is nothing for the IR leg to serve there.
     var lm: parser.Module = wasm_ir.lift_lambdas(mod);
     // Lower every function ONCE into `ir_cache` and thread it through the whole
     // IR emit path (the gate deferral checks + all the module_uses_* / str_values
@@ -9960,17 +9977,24 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // self-host wasm compile of large modules (#4652). The cheap AST-only
     // should_use_ir_core gate runs FIRST so an ineligible bootstrap module is
     // never lowered here; only an eligible module pays the single lowering.
-    var ir_ok: boolean = !component && wasm_ir.should_use_ir_core(lm);
+    var mode: i32 = 0;
+    if (component) {
+        mode = 1;
+        if (io) { mode = 2; }
+    }
+    var ir_ok: boolean = wasm_ir.should_use_ir_core(lm)
+        && (!component || (!fs && wasm_ir.component_ir_core_ok(lm)));
     var ir_cache: irlower.LowerResult[] = [];
     if (ir_ok) {
         ir_cache = wasm_ir.lower_all_for(lm);
-        ir_ok = wasm_ir.wasm_ir_deferrals_ok(ir_cache);
+        ir_ok = wasm_ir.wasm_ir_deferrals_ok(ir_cache)
+            && (!component || wasm_ir.component_needs_ok(wasm_ir.needs_of(ir_cache), io));
     }
     if (ir_ok) {
         // Hoist no-capture lambda call-args (closures slice 2a) before emit;
         // lambda-free modules are unchanged, and the AST path below keeps `mod`.
         mod = lm;
-        return emit_ir_module(mod, ir_cache);
+        return emit_ir_module_mode(mod, ir_cache, mode);
     }
     // Intern every string literal in the module into the data section.
     var tab: StrTable = new_str_table();

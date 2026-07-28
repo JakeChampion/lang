@@ -201,6 +201,11 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "arr_push_owned")) { out = out.append("arr_push_owned"); }
     if (module_emits_op_cached(cache, "env")) { out = out.append("env"); }
     if (module_emits_op_cached(cache, "eprint_str")) { out = out.append("eprint_str"); }
+    // exit's `call $proc_exit` needs no import gate on the command core (mode 0
+    // imports proc_exit unconditionally for _start), but a component core has
+    // no proc_exit at all — mode 2 defines it as a shim over wasi:cli/exit, and
+    // mode 1 rejects the module outright. Recorded here so both can see it.
+    if (module_emits_op_cached(cache, "exit")) { out = out.append("exit"); }
     if (module_emits_op_cached(cache, "fcos")) { out = out.append("fcos"); }
     if (module_emits_op_cached(cache, "fexp")) { out = out.append("fexp"); }
     if (module_emits_op_cached(cache, "flog")) { out = out.append("flog"); }
@@ -1426,6 +1431,134 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // rejects them with a clean diagnostic before emit (wasm_unsupported_builtin,
         // wasm_unsupported_message). No exclusion here.
         ;
+}
+
+// component_ir_core_ok is the AST-side half of the component-mode IR gate: the
+// module declares no `@import` extern and no `@export` binding. Both are pure
+// AST-emitter surface (wasm.extern_imports / extern_wrappers / extern_exports
+// build the canonical-ABI bridge from the declaration), with no IR sibling — an
+// extern-declaring module routed through the IR would emit a body for the
+// import and no import for the call. Cheap enough to run before lowering.
+pub function component_ir_core_ok(mod: parser.Module): boolean {
+    if (mod.exports.len() > 0) { return false; }
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].import_iface.len() > 0) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// component_needs_ok reports whether a lowered module's need set is inside the
+// component-mode IR subset. Unlike the command core — which imports whatever
+// preview1 op it likes — a component core may only import what its framing
+// supplies, and the framings (watbin.component_full / component_full_io /
+// _eprint / _exit) wire a FIXED import list: nothing at all for the no-I/O
+// wrap, the preview2 stdout/stderr/exit trio for the I/O wraps. So `io` = false
+// admits a purely computational module, and `io` = true additionally admits the
+// writers plus exit, which the $fd_write / $proc_exit shims serve.
+//
+// Every other WASI op (files, stdin, clocks, args, env, random, sockets, poll)
+// has a preview2 body only on the AST path — wasm.readfile_func_p2,
+// env_func_p2, args_func_p2, clock_funcs_p2, random_func_p2 — so a module
+// needing one stays there until those bodies grow IR siblings.
+//
+// The check is an ALLOWLIST over op-needs and so fails closed: a need added to
+// needs_of later is rejected here until it is listed, rather than silently
+// producing a core whose imports the framing cannot satisfy. `@`-prefixed needs
+// are the pure predicates (heap / strings / maps / arithmetic), which import
+// nothing; @uses_random is the sole WASI-backed one and is named explicitly.
+pub function component_needs_ok(needs: string[], io: boolean): boolean {
+    var i: i32 = 0;
+    while (i < needs.len()) {
+        var n: string = needs[i];
+        if (n == "@uses_random") { return false; }
+        if (n[0] == 64) { i = i + 1; continue; }   // 64 = '@': a pure predicate
+        if (io && (n == "print_int" || n == "print_i64" || n == "print_str"
+            || n == "eprint_str" || n == "putchar" || n == "exit")) { i = i + 1; continue; }
+        if (n == "arr_push" || n == "arr_push_owned" || n == "arr_push_i64"
+            || n == "arr_push_f64" || n == "map_iter" || n == "str_split"
+            || n == "str_bytes" || n == "str_from_bytes" || n == "fexp"
+            || n == "flog" || n == "fpow" || n == "fsin" || n == "fcos") { i = i + 1; continue; }
+        return false;
+    }
+    return true;
+}
+
+// component_io_imports emits the preview2 import section of a mode-2 core. The
+// order is load-bearing: the component framings alias imports positionally, so
+// it mirrors wasm.emit_module_mode's AST ordering exactly — get-stderr, the
+// shared blocking-write-and-flush, then get-stdout when the module eprints
+// (component_full_io_eprint's shape), otherwise get-stdout then the write, with
+// wasi:cli/exit last (component_full_io_exit's shape). stdout is imported
+// either way, so an eprint-only program carries an unused stdout import and
+// still matches the eprint framing.
+pub function component_io_imports(needs: string[]): string {
+    var o: string = "";
+    if (need(needs, "eprint_str")) {
+        o = o + "  (import \"wasi:cli/stderr@0.2.0\" \"get-stderr\" (func $get_stderr (result i32)))\n";
+        o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-write-and-flush\" (func $bwf (param i32 i32 i32 i32)))\n";
+        o = o + "  (import \"wasi:cli/stdout@0.2.0\" \"get-stdout\" (func $get_stdout (result i32)))\n";
+    } else {
+        o = o + "  (import \"wasi:cli/stdout@0.2.0\" \"get-stdout\" (func $get_stdout (result i32)))\n";
+        o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-write-and-flush\" (func $bwf (param i32 i32 i32 i32)))\n";
+    }
+    if (need(needs, "exit")) {
+        o = o + "  (import \"wasi:cli/exit@0.2.0\" \"exit\" (func $exit (param i32)))\n";
+    }
+    return o;
+}
+
+// component_io_shims emits the two preview1-shaped functions a mode-2 core
+// defines instead of importing, so the emitted bodies need no mode awareness:
+//
+//   $fd_write — the preview1 signature over the preview2 stream. Every IR
+//     writer ($__fern_print_str / $__fern_print_int / $__fern_eprint_str /
+//     putchar) already routes through it with the fd in hand, so unlike the AST
+//     path's stdout-only shim this one DISPATCHES on fd: 2 takes the stderr
+//     handle, anything else stdout. That is what lets eprint and print share
+//     one shim rather than needing a separate $__fern_eprint body.
+//   $proc_exit — over wasi:cli/exit, whose status is a result discriminant
+//     (0 = ok, 1 = err; > 1 is an invalid discriminant and traps, mirroring the
+//     native compiler). The import diverges, so the trailing `unreachable`
+//     keeps the void function well-formed with no fallthrough.
+//
+// Each handle is fetched once and cached (-1 = unfetched). The result area
+// blocking-write-and-flush writes into must be aligned to its result type's
+// alignment (a stream-error variant holds an own<error> handle) and the bump
+// pointer is not, so it over-allocates 24 bytes and rounds up to 8.
+pub function component_io_shims(needs: string[]): string {
+    var stderr: boolean = need(needs, "eprint_str");
+    var o: string = "  (global $__stdout_handle (mut i32) (i32.const -1))\n";
+    if (stderr) { o = o + "  (global $__stderr_handle (mut i32) (i32.const -1))\n"; }
+    o = o + "  (func $fd_write (param $fd i32) (param $iovs i32) (param $iovn i32) (param $nw i32) (result i32)\n";
+    o = o + "    (local $h i32) (local $len i32) (local $ret i32)\n";
+    if (stderr) {
+        o = o + "    (if (i32.eq (local.get $fd) (i32.const 2))\n";
+        o = o + "      (then\n";
+        o = o + "        (if (i32.eq (global.get $__stderr_handle) (i32.const -1))\n";
+        o = o + "          (then (global.set $__stderr_handle (call $get_stderr))))\n";
+        o = o + "        (local.set $h (global.get $__stderr_handle)))\n";
+        o = o + "      (else\n";
+        o = o + "        (if (i32.eq (global.get $__stdout_handle) (i32.const -1))\n";
+        o = o + "          (then (global.set $__stdout_handle (call $get_stdout))))\n";
+        o = o + "        (local.set $h (global.get $__stdout_handle))))\n";
+    } else {
+        o = o + "    (if (i32.eq (global.get $__stdout_handle) (i32.const -1))\n";
+        o = o + "      (then (global.set $__stdout_handle (call $get_stdout))))\n";
+        o = o + "    (local.set $h (global.get $__stdout_handle))\n";
+    }
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $iovs) (i32.const 4))))\n";
+    o = o + "    (local.set $ret (i32.and (i32.add (call $__fern_alloc (i32.const 24)) (i32.const 7)) (i32.const -8)))\n";
+    o = o + "    (call $bwf (local.get $h) (i32.load (local.get $iovs)) (local.get $len) (local.get $ret))\n";
+    o = o + "    (i32.store (local.get $nw) (local.get $len))\n";
+    o = o + "    (i32.const 0))\n";
+    if (need(needs, "exit")) {
+        o = o + "  (func $proc_exit (param $c i32)\n";
+        o = o + "    (call $exit (local.get $c))\n";
+        o = o + "    (unreachable))\n";
+    }
+    return o;
 }
 
 // should_use_ir_core is the CHEAP gate the emit dispatch (wasm.emit_module)
@@ -6303,55 +6436,14 @@ pub function arr_push_wide(vty: string, sop: string): string {
     return o;
 }
 
-// emit_ir_module emits the complete preview1 command core module for an
-// IR-eligible program: the wasi imports, memory + data section, the heap/RC
-// runtime, every gated runtime helper, the lowered function bodies and the
-// _start export.
-//
-// It is the SINGLE source of truth for wasm IR-path module emission. It used
-// to be two hand-maintained copies — this function's body here in
-// emit_module_mode, and a near-identical one inlined in the differential
-// wasm_ir_run.fern driver — which silently drifted: the emit_module_mode copy
-// never grew the WASI env / args / clock / write_file / stat / read_dir /
-// temp_dir / sleep_ms / stdin-reader surface, nor map_iter / str_bytes / the
-// f64 transcendentals, that the driver copy had. A module using any of them
-// that reached THIS path emitted a `call $__fern_env` (etc.) with no matching
-// definition or import, so wasmtime rejected the module with
-// `unknown func: failed to find name $__fern_env` (#4801). Both callers now
-// share this one body, so the drift cannot recur.
-//
-// `ir_cache` must be the lowering the caller also passes to emit_functions —
-// the gates below and the emitted bodies have to agree on the same lowering.
-// emit_ir_module_units links N per-module units into one core module (#5331
-// step 4b). It owns everything a unit does NOT: the imports, the memory, the
-// base/type-id globals, the data section, the runtime helper bodies, the funcref
-// table, and _start. A unit (wasm_ir.emit_functions_ns) owns only its function
-// bodies, emitted against `$__str_base<ns>` / `$__fn_base<ns>` — which this
-// function defines, and which is what makes a unit cacheable independently of
-// its siblings.
-//
-// The per-unit inputs are flat parallel arrays rather than nested ones: `nss`
-// holds each unit's namespace, `unit_texts` its emitted bodies, and
-// (all_strs, str_counts) / (all_fns, fn_counts) the concatenation of the
-// per-unit literal and address-taken-function tables with their lengths. Unit i
-// therefore owns [sum(counts[0..i]), +counts[i]) in each, which is exactly the
-// relative numbering its bodies were emitted against.
-//
-// Laying the literals out contiguously in that flat order means str_offset over
-// the flat list already yields every literal's absolute address, so the data section
-// and heap-base arithmetic are unchanged from whole-program emit — only their
-// input differs.
-//
-// `mod` supplies the struct table (type ids must agree across all units, hence
-// step 3's by-name globals) and `ir_cache` the combined lowering that gates
-// which runtime helpers are needed. Both are whole-program views; keeping the
-// gating exact here preserves the byte-identity invariant for the single-unit
-// case. Deciding the helper set WITHOUT a combined cache is the out-of-process
-// driver's problem (step 4c), where the asm side's precedent is a sound
-// over-approximation (asm_ir.all_runtime_need_roots) rather than an exact union,
-// because the exact aggregation re-lowers every module and OOMs (#3425).
-pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, needs: string[], arities: i32[], rc_bodies: string): string {
-    var out: string = "(module\n";
+// preview1_imports emits the wasi_snapshot_preview1 import section of the
+// COMMAND core: proc_exit (which _start calls) plus one import per WASI op the
+// module actually lowers. Split out of emit_ir_module_units so the component
+// modes — which import nothing at all (no-I/O) or the preview2 stdout/stderr/
+// exit trio instead — skip the whole section wholesale rather than threading a
+// mode flag through sixty individual gates.
+function preview1_imports(needs: string[]): string {
+    var out: string = "";
     out = out + "  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))\n";
     // wasi random_get import (issue #2747) — must precede the function
     // section. Emitted when the module uses random_bytes / random_i32.
@@ -6454,6 +6546,73 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
     // op that owns it, since a duplicate import is invalid.
     if (need(needs, "poll") && !need(needs, "wasm_timer_pollable")) { out = out + wasi_subscribe_duration_import(); }
     if (need(needs, "poll") && !need(needs, "wasm_pollable_drop") && !need(needs, "tcp_connect") && !need(needs, "tcp_accept")) { out = out + wasi_pollable_drop_import(); }
+    return out;
+}
+
+// emit_ir_module_units links N per-module units into one core module (#5331
+// step 4b). It owns everything a unit does NOT: the imports, the memory, the
+// base/type-id globals, the data section, the runtime helper bodies, the funcref
+// table, and _start. A unit (wasm_ir.emit_functions_ns) owns only its function
+// bodies, emitted against `$__str_base<ns>` / `$__fn_base<ns>` — which this
+// function defines, and which is what makes a unit cacheable independently of
+// its siblings.
+//
+// The per-unit inputs are flat parallel arrays rather than nested ones: `nss`
+// holds each unit's namespace, `unit_texts` its emitted bodies, and
+// (all_strs, str_counts) / (all_fns, fn_counts) the concatenation of the
+// per-unit literal and address-taken-function tables with their lengths. Unit i
+// therefore owns [sum(counts[0..i]), +counts[i]) in each, which is exactly the
+// relative numbering its bodies were emitted against.
+//
+// Laying the literals out contiguously in that flat order means str_offset over
+// the flat list already yields every literal's absolute address, so the data section
+// and heap-base arithmetic are unchanged from whole-program emit — only their
+// input differs.
+//
+// `mod` supplies the struct table (type ids must agree across all units, hence
+// step 3's by-name globals) and `ir_cache` the combined lowering that gates
+// which runtime helpers are needed. Both are whole-program views; keeping the
+// gating exact here preserves the byte-identity invariant for the single-unit
+// case. Deciding the helper set WITHOUT a combined cache is the out-of-process
+// driver's problem (step 4c), where the asm side's precedent is a sound
+// over-approximation (asm_ir.all_runtime_need_roots) rather than an exact union,
+// because the exact aggregation re-lowers every module and OOMs (#3425).
+//
+// It is also the SINGLE source of truth for wasm IR-path module emission. The
+// body used to be two hand-maintained copies — one inside wasm.emit_module_mode
+// and a near-identical one inlined in the differential wasm_ir_run.fern driver
+// — which silently drifted: the emit_module_mode copy never grew the WASI env /
+// args / clock / write_file / stat / read_dir / temp_dir / sleep_ms / stdin-
+// reader surface, nor map_iter / str_bytes / the f64 transcendentals, that the
+// driver copy had. A module using any of them emitted a `call $__fern_env`
+// (etc.) with no matching definition or import, and wasmtime rejected it with
+// `unknown func: failed to find name $__fern_env` (#4801). Every caller now
+// shares this one body — including the component modes, via the _mode sibling
+// below — so the drift cannot recur.
+pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, needs: string[], arities: i32[], rc_bodies: string): string {
+    return emit_ir_module_units_mode(nss, unit_texts, all_strs, str_counts, all_fns, fn_counts, mod, needs, arities, rc_bodies, 0);
+}
+
+// emit_ir_module_units_mode is emit_ir_module_units parameterised by the wasm
+// EMIT MODE, the one axis on which the three cores differ:
+//
+//   0 — preview1 command core: the wasi_snapshot_preview1 imports and a
+//       `_start` that proc_exits main()'s result.
+//   1 — Component-Model run core, no I/O: import-free, exporting `main` and
+//       `_lang_run` (0 = ok) for watbin.component_full to lift.
+//   2 — Component-Model run core with stdout: mode 1 plus the preview2
+//       stdout/stderr/exit imports and the $fd_write / $proc_exit shims over
+//       them, so every call site the IR already emits works unchanged.
+//
+// Everything between the imports and the entry — memory, literals, type-id
+// globals, the heap + RC runtime, every helper body, the funcref table — is
+// mode-independent, which is why the component leg is a fork at two points
+// rather than a second emitter (wasm.fern's AST component path is a full
+// parallel copy; this is not).
+pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, needs: string[], arities: i32[], rc_bodies: string, mode: i32): string {
+    var out: string = "(module\n";
+    if (mode == 0) { out = out + preview1_imports(needs); }
+    if (mode == 2) { out = out + component_io_imports(needs); }
     out = out + "  (memory (export \"memory\") 16)\n";
     // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
     // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
@@ -6501,10 +6660,17 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
             + le32_escape(sv[di].len()) + wat_escape(sv[di]) + "\")\n";
         di = di + 1;
     }
-    if (need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "remove_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
+    // mode 2 folds into the heap gate: the $fd_write shim allocates its
+    // canonical-ABI return area through $__fern_alloc, so a component-io core
+    // needs the heap even when the program itself never allocates.
+    if (mode == 2 || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "remove_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
         out = out + heap_alloc_helpers(heap_base_for_strs(sv), fl_base_for_strs(sv), fl_cells());
         out = out + rc_runtime_helpers(heap_base_for_strs(sv));
     }
+    // The preview2 shims stand in for the preview1 imports mode 0 supplies, so
+    // every $fd_write / $proc_exit call site the IR emits links unchanged.
+    // Placed after the heap runtime they call into (as the AST path does).
+    if (mode == 2) { out = out + component_io_shims(needs); }
     // $__fern_arr_dec_ptr2 (string[][] deep reclaim, #4355 slice 9): only
     // when the module lowers a __fern_strarrarr_free call — see
     // arr_dec_ptr2_func for why it must not ride along unconditionally.
@@ -6746,7 +6912,15 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
         out = out + unit_texts[ui];
         ui = ui + 1;
     }
-    out = out + "  (func $_start (call $proc_exit (call $main)))\n";
-    out = out + "  (export \"_start\" (func $_start)))\n";
+    if (mode == 0) {
+        out = out + "  (func $_start (call $proc_exit (call $main)))\n";
+        out = out + "  (export \"_start\" (func $_start)))\n";
+        return out;
+    }
+    // Component run entry: export main, and _lang_run = (main() == 0) mapped to
+    // the 0 = ok / 1 = err result the canon lift expects.
+    out = out + "  (export \"main\" (func $main))\n";
+    out = out + "  (func $_lang_run (result i32) (i32.eqz (i32.eqz (call $main))))\n";
+    out = out + "  (export \"_lang_run\" (func $_lang_run)))\n";
     return out;
 }
