@@ -32,7 +32,8 @@ function main(): i32 { if (crypto.sha256_hex("") == "e3b0c44298fc1c149afbf4c8996
 function main(): i32 { return crypto.sha256_hex("The quick brown fox jumps over the lazy dog").len(); }`},
 	// HMAC-SHA256("key", pangram) = f7bc83f4…2d1a3cd8 (well-known RFC-shaped vector).
 	{"hmac-known", `import "std/crypto";
-function main(): i32 { if (crypto.hmac_sha256_hex("key", "The quick brown fox jumps over the lazy dog") == "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8") { return 42; } return 0; }`},
+import "std/string";
+function main(): i32 { if (crypto.hmac_sha256_hex("key".bytes(), "The quick brown fox jumps over the lazy dog") == "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8") { return 42; } return 0; }`},
 }
 
 func TestSelfHostCryptoModuleIR(t *testing.T) {

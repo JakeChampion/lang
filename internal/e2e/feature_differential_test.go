@@ -520,9 +520,10 @@ function main(): i32 {
 }`},
 		{"stdlib_hex_base64", `import "std/hex";
 import "std/base64";
+import "std/string";
 function main(): i32 {
-    print(hex.hex_encode("AB"));
-    print(base64.base64_encode("Hello"));
+    print(hex.hex_encode("AB".bytes()));
+    print(base64.base64_encode("Hello".bytes()));
     print(string_from_bytes_unchecked(base64.base64_decode("TWFu")));
     print(string_from_bytes_unchecked(hex.hex_decode("4142")));
     return 0;

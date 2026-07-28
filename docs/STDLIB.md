@@ -613,18 +613,18 @@ APIs carry the name through unmodified.
 
 ### `std/base64`
 
-- `base64_encode(s)` / `base64_decode(s)` / `base64_decode_strict(s)` — standard RFC 4648 alphabet, `=` padding.
-- `base64url_encode(s)` / `base64url_decode(s)` / `base64url_decode_strict(s)` — URL-safe variant (`-`/`_` alphabet, no padding; decode tolerates padded input). The JWT / URL-token encoding; the strict decoder returns `Option` (`None` on malformed input or a non-url-safe `+`/`/`).
+- `base64_encode(b: u8[])` / `base64_decode(s): u8[]` / `base64_decode_strict(s): Option[u8[]]` — standard RFC 4648 alphabet, `=` padding. Bytes are `u8[]` on both sides (#5730): encoded output is text, the payload is not. Encode a string's bytes with `std/string`'s `s.bytes()`.
+- `base64url_encode(b: u8[])` / `base64url_decode(s): u8[]` / `base64url_decode_strict(s): Option[u8[]]` — URL-safe variant (`-`/`_` alphabet, no padding; decode tolerates padded input). The JWT / URL-token encoding; the strict decoder returns `Option` (`None` on malformed input or a non-url-safe `+`/`/`).
 
 ### `std/base32`
 
 RFC 4648 base32 (standard `A–Z 2–7` alphabet, `=` padding).
 
-- `base32_encode(s)` / `base32_decode(s)` — decode is lenient (stops at
-  the first non-base32 / non-`=` byte). Round-trips any content; the
-  case-insensitive, digit-safe alphabet suits TOTP secrets, filenames,
-  and DNS labels.
-- `base32_decode_strict(s): Option[string]` — `None` on malformed input
+- `base32_encode(b: u8[])` / `base32_decode(s): u8[]` — decode is lenient
+  (stops at the first non-base32 / non-`=` byte). Round-trips any
+  content; the case-insensitive, digit-safe alphabet suits TOTP secrets,
+  filenames, and DNS labels.
+- `base32_decode_strict(s): Option[u8[]]` — `None` on malformed input
   (bad char, wrong padding, impossible group) instead of truncating;
   the strict variant to use for a security-sensitive secret / token,
   matching `base64_decode_strict` / `hex_decode_strict`.
@@ -633,39 +633,49 @@ RFC 4648 base32 (standard `A–Z 2–7` alphabet, `=` padding).
 
 Hex round-trip.
 
-- `hex_encode(s)` (lowercase `0-9a-f`), `hex_encode_upper(s)`
+- `hex_encode(b: u8[])` (lowercase `0-9a-f`), `hex_encode_upper(b: u8[])`
   (uppercase `0-9A-F`).
-- `hex_decode(s)` (lenient, either case), `hex_decode_strict(s)`
-  (`Option`, `None` on malformed input).
+- `hex_decode(s): u8[]` (lenient, either case),
+  `hex_decode_strict(s): Option[u8[]]` (`None` on malformed input).
 
 ### `std/crypto`
 
 From-scratch SHA-256 (FIPS 180-4) and HMAC-SHA256 (RFC 2104), verified
 against NIST / RFC 4231 known-answer vectors.
 
-- `sha256_bytes(s)` / `sha256_hex(s)`.
-- `hmac_sha256_bytes(key, msg)` / `hmac_sha256_hex(key, msg)`.
-- `consteq(a, b)` — constant-time byte-string compare; `hmac_verify` /
+Bytes are `u8[]`, not `string` (#5730): digests, derived keys, and every
+key / salt / IKM / info input. The `*_hex` variants still return a
+`string` — hex output genuinely is text — and the message to hash / the
+password to stretch stay `string`. Pass a string's bytes to a byte-typed
+parameter with `std/string`'s `s.bytes()`.
+
+- `sha256_bytes(s: string): u8[]` / `sha256_hex(s: string): string`.
+- `hmac_sha256_bytes(key: u8[], msg: string): u8[]` /
+  `hmac_sha256_hex(key: u8[], msg: string): string`.
+- `consteq(a: u8[], b: u8[])` — constant-time byte compare; `hmac_verify` /
   `hmac_verify_hex` — the timing-safe way to check a MAC.
-- `pbkdf2_sha256(password, salt, iterations, dk_len)` /
-  `pbkdf2_sha256_hex(...)` — PBKDF2-HMAC-SHA256 (RFC 8018) password-based
-  key derivation. Use a random per-password salt and a high iteration
-  count for password storage.
-- `pbkdf2_verify(password, salt, iterations, expected)` /
+- `pbkdf2_sha256(password: string, salt: u8[], iterations, dk_len): u8[]` /
+  `pbkdf2_sha256_hex(...): string` — PBKDF2-HMAC-SHA256 (RFC 8018)
+  password-based key derivation. Use a random per-password salt and a
+  high iteration count for password storage.
+- `pbkdf2_verify(password, salt, iterations, expected: u8[])` /
   `pbkdf2_verify_hex(...)` — re-derive and compare against a stored key
-  in constant time (`consteq`). Use these to verify a password, never a
-  plain `pbkdf2_sha256(...) == stored` (a timing oracle).
-- `hkdf_extract(salt, ikm)` / `hkdf_expand(prk, info, length)` /
-  `hkdf_sha256(salt, ikm, info, length)` / `hkdf_sha256_hex(...)` —
+  in constant time (`consteq`). Use these to verify a password; the
+  short-circuiting `pbkdf2_sha256(...) == stored` that used to be the
+  timing-oracle hazard here no longer even compiles, since `u8[]` has no
+  structural `==` (E041).
+- `hkdf_extract(salt: u8[], ikm: u8[]): u8[]` /
+  `hkdf_expand(prk: u8[], info: u8[], length): u8[]` /
+  `hkdf_sha256(salt, ikm, info, length): u8[]` / `hkdf_sha256_hex(...): string` —
   HKDF-SHA256 (RFC 5869) key derivation for high-entropy input keying
   material (a shared secret / random key), for key separation and
   subkey derivation. Distinct from PBKDF2, which stretches a low-entropy
   password.
-- `hotp_sha256(key, counter, digits)` /
-  `totp_sha256(key, unix_time, period, digits)` — one-time passwords for
-  2FA (RFC 4226 / RFC 6238, SHA-256 mode). `key` is the raw secret bytes
-  (base32-decode a base32 secret via `std/base32` first); returns the
-  code as an integer to zero-pad to `digits`.
+- `hotp_sha256(key: u8[], counter, digits)` /
+  `totp_sha256(key: u8[], unix_time, period, digits)` — one-time
+  passwords for 2FA (RFC 4226 / RFC 6238, SHA-256 mode). `key` is the raw
+  secret bytes, so `base32.base32_decode(secret)` feeds it directly;
+  returns the code as an integer to zero-pad to `digits`.
 
 ### `std/uuid`
 

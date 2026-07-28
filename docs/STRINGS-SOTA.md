@@ -738,13 +738,17 @@ digest is essentially never valid UTF-8, so under a validating
 constructor `sha256_bytes` would return `None` for almost every input.
 These are not edge cases — `base64_decode` of a PNG is the normal use.
 
-Those APIs take the unchecked constructor today. Making the invariant
-*true* requires migrating them off `string` to `u8[]` — the correct end
-state, and exactly what D8 makes ergonomic, but a larger change than
-the constructor split. Tracked as **#5730**, which is also what makes
-slice 4 (the "no stdlib operation produces an invalid `string`"
-property test) satisfiable — today it would fail immediately on
-`sha256_bytes`.
+Those APIs took the unchecked constructor when slice 2 landed. Making
+the invariant *true* required migrating them off `string` to `u8[]` —
+the correct end state, and exactly what D8 makes ergonomic, but a larger
+change than the constructor split. That migration is **#5730**, now
+complete across three slices: std/hex decoders (#5743), std/base64 +
+std/base32 decoders (#5746), and the coupled std/crypto + encoder-input
+slice. Digests, derived keys, decoder outputs and encoder inputs are all
+`u8[]`; the `*_hex` variants still return `string`, because hex output
+genuinely is text. That also unblocks slice 4 (the "no stdlib operation
+produces an invalid `string`" property test), which would previously
+have failed immediately on `sha256_bytes`.
 
 Costs, stated honestly:
 

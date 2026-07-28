@@ -2703,15 +2703,16 @@ func TestWASMBase64(t *testing.T) {
 	src := `
 import "core/int";
 import "std/base64";
+import "std/string";
 function main(): i32 {
-    if (base64.base64_encode("") != "") { return 1; }
-    if (base64.base64_encode("f") != "Zg==") { return 2; }
-    if (base64.base64_encode("fo") != "Zm8=") { return 3; }
-    if (base64.base64_encode("foo") != "Zm9v") { return 4; }
-    if (base64.base64_encode("foob") != "Zm9vYg==") { return 5; }
-    if (base64.base64_encode("fooba") != "Zm9vYmE=") { return 6; }
-    if (base64.base64_encode("foobar") != "Zm9vYmFy") { return 7; }
-    if (base64.base64_encode("hello world") != "aGVsbG8gd29ybGQ=") { return 8; }
+    if (base64.base64_encode("".bytes()) != "") { return 1; }
+    if (base64.base64_encode("f".bytes()) != "Zg==") { return 2; }
+    if (base64.base64_encode("fo".bytes()) != "Zm8=") { return 3; }
+    if (base64.base64_encode("foo".bytes()) != "Zm9v") { return 4; }
+    if (base64.base64_encode("foob".bytes()) != "Zm9vYg==") { return 5; }
+    if (base64.base64_encode("fooba".bytes()) != "Zm9vYmE=") { return 6; }
+    if (base64.base64_encode("foobar".bytes()) != "Zm9vYmFy") { return 7; }
+    if (base64.base64_encode("hello world".bytes()) != "aGVsbG8gd29ybGQ=") { return 8; }
     if (string_from_bytes_unchecked(base64.base64_decode("")) != "") { return 9; }
     if (string_from_bytes_unchecked(base64.base64_decode("Zg==")) != "f") { return 10; }
     if (string_from_bytes_unchecked(base64.base64_decode("Zm8=")) != "fo") { return 11; }
@@ -6233,17 +6234,18 @@ func TestWASMHex(t *testing.T) {
 	src := `
 import "core/int";
 import "std/hex";
+import "std/string";
 function main(): i32 {
 		// empty round-trips to empty
-		if ((hex.hex_encode("")).len() != 0) { return 1; }
+		if ((hex.hex_encode("".bytes())).len() != 0) { return 1; }
 		if ((hex.hex_decode("")).len() != 0) { return 2; }
 
 		// "hi" -> "6869"
-		if (hex.hex_encode("hi") != "6869") { return 3; }
+		if (hex.hex_encode("hi".bytes()) != "6869") { return 3; }
 		if (string_from_bytes_unchecked(hex.hex_decode("6869")) != "hi") { return 4; }
 
 		// every nibble: byte 0xab -> "ab"
-		if (hex.hex_encode("hello world") != "68656c6c6f20776f726c64") { return 5; }
+		if (hex.hex_encode("hello world".bytes()) != "68656c6c6f20776f726c64") { return 5; }
 		if (string_from_bytes_unchecked(hex.hex_decode("68656c6c6f20776f726c64")) != "hello world") { return 6; }
 
 		// uppercase hex digits decode the same
