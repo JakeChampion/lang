@@ -148,6 +148,27 @@ The lesson repeats the one above: an abort tells you a test's process reached
 the fallback, not WHICH program did. Confirm each shape with `-ir-probe` before
 building on it.
 
+**Root cause of the two confirmed gaps, and the shape of the fix.** A callable
+behind a struct field has an ambiguous REPRESENTATION that its declared type
+cannot resolve: `() => i32` is spelled the same whether the value is a raw code
+pointer or a `__mkclo$` env box, and the two dispatch differently (env-first vs
+plain `call_indirect`). For a LOCAL the ambiguity is settled by slot metadata —
+`mark_closurearr` / `mark_fnarr` / the `"clo"` element tag are recorded where
+the value is BUILT, which is why the local-tuple form lowers. A struct field has
+no slot, so `expr_tuple_elem_tag`'s `p.t.N` arm falls back to
+`decl_field_type` + `tuple_type_elem_tag` — the declared type — and cannot tell
+which it is, so the call site bails.
+
+The machinery for exactly this already exists one level out:
+`irlower.fnptr_arr_fields_of` scans every function body for how each field is
+POPULATED and emits a module-level `"FNPTR:<Type>.<field>"` registry, which
+`field_access_is_fnarr` then reads at the use site (`#5235`). The fix is the
+same construction one level deeper — a registry keyed by field *and tuple
+element index*, populated from the struct-literal site (a `__mkclo$` value ⇒
+closure box, a bare named fn ⇒ pointer), read by `expr_tuple_elem_tag`'s
+struct-field arm and by the closure-array-field call path. Note both confirmed
+shapes share this one cause, so one registry closes both.
+
 ### A whole output mode has no IR leg (not a decline reason — a missing path)
 
 The table above enumerates reasons a program *declines* the IR path. That frame
