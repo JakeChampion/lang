@@ -9,7 +9,7 @@ import (
 
 // TestSelfHostRcStrBoxWasm proves the Phase-1e string rc-box layout
 // foundation: HEAP strings (concat / to_upper / to_lower / repeat / substr
-// / join / string_from_bytes / i32_to_str) are now allocated through
+// / join / string_from_bytes_unchecked / i32_to_str) are now allocated through
 // $__fern_str_box, so they carry an rc word at [s-8] (rc 1 for a fresh
 // owner) while static string LITERALS stay in the data section, unboxed —
 // the rc helpers' address guard treats them as immortal. Observed through

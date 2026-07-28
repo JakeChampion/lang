@@ -452,7 +452,7 @@ PRs #351–#364 landed the single-i32 tiny SSO encoding (top-bit
 flag + 3-bit length + up-to-3 inline bytes, see
 `fernstring.PackTinyWasm`) without widening the operand-stack
 ABI. Producer flips on `$__str_concat` / `$__str_slice` /
-`$string_from_bytes` / `$__bytes_to_lang_string` / `$args` /
+`$string_from_bytes_unchecked` / `$__bytes_to_lang_string` / `$args` /
 `$__stream_read_line` / `Reader.read_chunk` / `$tcp_recv` /
 `OpConstStr` literals + HTTP wrapper method preinterns. Stream-
 write seam (`$__fern_str_data_ptr`) skips the promote-to-heap

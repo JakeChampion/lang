@@ -182,7 +182,7 @@ function test_parse_string_decode_paths(): test.TestOutcome {
     }
     // A lone high surrogate with no following low → U+FFFD (replacement char,
     // UTF-8 EF BF BD).
-    var fffd: string = string_from_bytes([239 as u8, 191 as u8, 189 as u8]);
+    var fffd: string = string_from_bytes_unchecked([239 as u8, 191 as u8, 189 as u8]);
     var lone: string = __reencode("\"a\\ud83db\"");
     if (lone != "\"a" + fffd + "b\"") { return test.fail("lone surrogate decode: " + lone); }
     // A long literal run (buffer grows across reallocations) decodes intact.
@@ -355,7 +355,7 @@ function test_escape_named(): test.TestOutcome {
 
 function test_escape_control_bytes(): test.TestOutcome {
     // 0x01 and 0x1f are C0 controls without named escapes → lowercase \u00XX.
-    var s: string = string_from_bytes([1 as u8, 31 as u8]);
+    var s: string = string_from_bytes_unchecked([1 as u8, 31 as u8]);
     return test.assert_eq(json.json_escape(s), "\\u0001\\u001f");
 }
 

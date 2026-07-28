@@ -48,7 +48,7 @@ import "./arm64_native";
 import "./elf";
 
 // to_u8 copies an i32[] byte buffer (values 0..255, as the wasm binary
-// encoder produces) into a u8[] so string_from_bytes can pack it into a
+// encoder produces) into a u8[] so string_from_bytes_unchecked can pack it into a
 // string whose bytes are written verbatim (incl. 0x00 / high bytes) by
 // write_file. Used by the -target wasm-bin path.
 function to_u8(b: i32[]): u8[] {
@@ -84,7 +84,7 @@ function arm64_elf_binary(asm: string): string {
     var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
     if (eoff < 0) { eoff = 0; }
     var bin: i32[] = elf.elf_image_wx(pa2.code, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
-    return string_from_bytes(to_u8(bin));
+    return string_from_bytes_unchecked(to_u8(bin));
 }
 
 // arm64_elf_binary_pie is arm64_elf_binary as a static position-independent
@@ -112,7 +112,7 @@ function arm64_elf_binary_pie(asm: string): string {
     var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
     if (eoff < 0) { eoff = 0; }
     var bin: i32[] = elf.elf_image_pie(pa2.code, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
-    return string_from_bytes(to_u8(bin));
+    return string_from_bytes_unchecked(to_u8(bin));
 }
 
 // last_slash returns the index of the final '/' in p, or -1.
@@ -672,7 +672,7 @@ function main(): i32 {
         var dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), prog.data.len());
         prog = arm64_native.arm64_gas_link(prog, tv, dv);
         var pa2: arm64_native.Arm64Asm = prog.asm;
-        out_asm = string_from_bytes(to_u8(arm64_native.macho_static_executable(pa2.code, prog.data, "fern")));
+        out_asm = string_from_bytes_unchecked(to_u8(arm64_native.macho_static_executable(pa2.code, prog.data, "fern")));
     } else if (target == "wasm") {
         // WASI core module in text format (WAT). Runnable directly by
         // `wasmtime run`; main()'s result becomes the process exit code.
@@ -683,7 +683,7 @@ function main(): i32 {
         // WAT->binary assembler (watbin). The binary bytes (an i32[] of
         // 0..255) are packed into a string whose bytes write_file / write
         // emit verbatim, so the output file is a runnable `.wasm`.
-        out_asm = string_from_bytes(to_u8(watbin.wat_to_binary(wasm.emit_module(full))));
+        out_asm = string_from_bytes_unchecked(to_u8(watbin.wat_to_binary(wasm.emit_module(full))));
     } else if (target == "wasm-component") {
         // A Component-Model `wasi:cli/run` component. Pick the framing from
         // the program's WASI usage: no-I/O (component_full), stdout/exit
@@ -733,7 +733,7 @@ function main(): i32 {
         } else {
             comp = watbin.component_full(watbin.wat_to_binary(wasm.emit_module_run(full)));
         }
-        out_asm = string_from_bytes(to_u8(comp));
+        out_asm = string_from_bytes_unchecked(to_u8(comp));
     } else {
         out_asm = asm.emit_module(full);
     }

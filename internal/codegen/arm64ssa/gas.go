@@ -475,7 +475,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_arr_push_grow_str":   emitArrPushGrowAliasHelper("__fern_arr_push_grow_str"),
 	"__alloc_u8":                 emitAllocU8Helper,
 	"__fern_arr_cow_inplace":     emitArrCowInplaceHelper,
-	"string_from_bytes":          emitStringFromBytesHelper,
+	"string_from_bytes_unchecked":          emitStringFromBytesHelper,
 	"__str_slice":                emitStrSliceHelper,
 	"args":                       emitArgsHelper,
 	"env":                        emitEnvHelper,
@@ -1589,7 +1589,7 @@ var helperReturns64 = map[string]bool{
 	"__fern_arr_push_grow_str":   true,
 	"__alloc_u8":                 true,
 	"__fern_arr_cow_inplace":     true,
-	"string_from_bytes":          true,
+	"string_from_bytes_unchecked":          true,
 	"__str_slice":                true,
 	"args":                       true,
 	"strbuf_take":                true,
@@ -1645,7 +1645,7 @@ var heapUsingHelpers = map[string]bool{
 	"__fern_arr_push_grow_str":   true,
 	"__alloc_u8":                 true,
 	"__fern_arr_cow_inplace":     true,
-	"string_from_bytes":          true,
+	"string_from_bytes_unchecked":          true,
 	"__str_slice":                true,
 	"args":                       true,
 	"strbuf_take":                true,
@@ -3633,7 +3633,7 @@ func emitStrSliceHelper(w func(string, ...any)) {
 	w("\tsvc #0")
 }
 
-// emitStringFromBytesHelper writes string_from_bytes(bs) -> data: copy a u8[]
+// emitStringFromBytesHelper writes string_from_bytes_unchecked(bs) -> data: copy a u8[]
 // payload into a fresh length-prefixed string and return its data pointer — the
 // round-trip companion to s.bytes(). arm64ssa strings are single-word and
 // rc-headered (rc=1@base+0, len@base+4, data@base+8 — the same layout ConstStr
@@ -3642,7 +3642,7 @@ func emitStrSliceHelper(w func(string, ...any)) {
 // its byte length is at [bs-4]. x0=bs; returns x0=data.
 func emitStringFromBytesHelper(w func(string, ...any)) {
 	w("")
-	w("%s:", fnLabel("string_from_bytes"))
+	w("%s:", fnLabel("string_from_bytes_unchecked"))
 	w("\tldur w1, [x0, #-4]") // w1 = byte length of bs (zero-extends into x1)
 	// Bump-allocate len+8: rc=1@base, len@base+4, data@base+8.
 	w("\tadrp x2, %s", heapPtrSym)

@@ -1089,7 +1089,7 @@ func TestLowerLenOnStringEmitsOpStrLen(t *testing.T) {
 // through to the array-shape `[ptr - 4]; load` fallback, which
 // traps on inline-form strings produced by string-returning
 // helpers — most importantly `int_to_string`, whose 1..3-digit
-// outputs cascade through `$string_from_bytes`'s inline path.
+// outputs cascade through `$string_from_bytes_unchecked`'s inline path.
 // Pin the lowering here so the regression can't slip back in.
 func TestLowerLenOnStringCallEmitsOpStrLen(t *testing.T) {
 	prog := lowerSource(t, `function g(): string { return "abcd"; }
@@ -1164,7 +1164,7 @@ func TestLowerLenOnStringLiteralFolds(t *testing.T) {
 // OpStrLen — same SSO seam reason as `len(s)`. Latent bug:
 // before exprType learned about *ast.Index, the dispatch fell
 // to the array-shape `[ptr - 4]; load` fallback, which traps
-// for inline-form strings produced by $args / $string_from_bytes
+// for inline-form strings produced by $args / $string_from_bytes_unchecked
 // / $__str_concat. Pin the lowering here so the fallback can't
 // silently slip back in.
 func TestLowerLenOnStringArrayIndexEmitsOpStrLen(t *testing.T) {

@@ -648,7 +648,7 @@ function __cookie_clean(s: string, drop_eq: boolean): string {
         if (keep) { out = out.append(b as u8); }
         i = i + 1;
     }
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }
 
 // `(c: SetCookie).serialize()` — the `Set-Cookie` header VALUE

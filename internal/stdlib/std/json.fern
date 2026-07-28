@@ -96,7 +96,7 @@ pub function json_escape(s: string): string {
         }
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 pub function json_encode(v: JsonValue): string {
@@ -139,7 +139,7 @@ pub function json_encode(v: JsonValue): string {
                 i = i + 1;
             }
             buf = buf.append(93 as u8);   // ']'
-            return string_from_bytes(buf);
+            return string_from_bytes_unchecked(buf);
         },
         JObject(m) => {
             // Keys are emitted straight off the map's iteration
@@ -178,7 +178,7 @@ pub function json_encode(v: JsonValue): string {
                 iter.advance();
             }
             buf = buf.append(125 as u8);   // '}'
-            return string_from_bytes(buf);
+            return string_from_bytes_unchecked(buf);
         }
     }
 }
@@ -201,7 +201,7 @@ function __json_spaces(n: i32): string {
         b = b.append(32 as u8);
         i = i + 1;
     }
-    return string_from_bytes(b);
+    return string_from_bytes_unchecked(b);
 }
 
 // __json_append_str appends `s`'s bytes onto `buf` (the same local-u8[]
@@ -243,7 +243,7 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
             buf = __json_append_str(buf, "\n");
             buf = __json_append_str(buf, close);
             buf = buf.append(93 as u8);           // ']'
-            return string_from_bytes(buf);
+            return string_from_bytes_unchecked(buf);
         },
         JObject(m) => {
             if (m.len() == 0) { return "{}"; }
@@ -268,7 +268,7 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
             buf = __json_append_str(buf, "\n");
             buf = __json_append_str(buf, close);
             buf = buf.append(125 as u8);          // '}'
-            return string_from_bytes(buf);
+            return string_from_bytes_unchecked(buf);
         }
     }
 }
@@ -458,7 +458,7 @@ function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
     while (true) {
         b = __json_p_byte(p);
         if (b == 0) { return ("", __JsonParser { ...p, error: 1 }); }
-        if (b == 34) { return (string_from_bytes(out), __JsonParser { ...p, pos: p.pos + 1 }); }
+        if (b == 34) { return (string_from_bytes_unchecked(out), __JsonParser { ...p, pos: p.pos + 1 }); }
         if (b == 92) {                                  // '\\'
             p = __JsonParser { ...p, pos: p.pos + 1 };
             var esc: i32 = __json_p_byte(p);
@@ -1103,5 +1103,5 @@ pub function (xs: T[]) to_json[T: Json](): string {
         i = i + 1;
     }
     out = out.append(93 as u8);   // ']'
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }

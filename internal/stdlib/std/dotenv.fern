@@ -32,7 +32,7 @@ function __de_slice(s: string, a: i32, b: i32): string {
         out = out.append(s[i] as u8);
         i = i + 1;
     }
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }
 
 // __de_trim strips leading/trailing ASCII whitespace (incl. CR).
@@ -65,7 +65,7 @@ function __de_unescape(s: string): string {
             i = i + 1;
         }
     }
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }
 
 // `parse(s)` — the dotenv document `s` as a Map[string, string].

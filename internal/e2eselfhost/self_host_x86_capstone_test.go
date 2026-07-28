@@ -158,7 +158,7 @@ function main(): i32 {
                 return 2;
             }
             var entry: i32 = x86_label_off(a, "_start");
-            write(string_from_bytes(elf_static_executable_bss_x86_at(a.code, a.rodata, a.bss_size, entry)));
+            write(string_from_bytes_unchecked(elf_static_executable_bss_x86_at(a.code, a.rodata, a.bss_size, entry)));
             return 0;
         }
     }

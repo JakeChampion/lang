@@ -4,7 +4,7 @@ import "core/int";
 
 // Exercises std/io_buffered's in-memory BytesWriter (data: u8[]) across all
 // four native backends: functional struct-spread append via write_string /
-// write_byte / write_bytes, len, into_string (string_from_bytes), reset, and
+// write_byte / write_bytes, len, into_string (string_from_bytes_unchecked), reset, and
 // is_empty. FEATURE-AUDIT std/io_buffered row.
 function main(): i32 {
     var w: BytesWriter = io_buffered.bytes_writer_new();

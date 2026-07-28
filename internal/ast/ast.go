@@ -1208,7 +1208,7 @@ const RcPoison = 0x7EEDFACE
 // Before this mutex existed, parallel arm64 emits could
 // stack their toggles such that one goroutine's defer
 // restored the flag to `false` while another goroutine was
-// still mid-emit — producing single-word `string_from_bytes`
+// still mid-emit — producing single-word `string_from_bytes_unchecked`
 // inside an arm64 program that otherwise expects two-word
 // strings. Symptom: SIGSEGV on the first f-string / string
 // concat that landed in the same diff-oracle batch as

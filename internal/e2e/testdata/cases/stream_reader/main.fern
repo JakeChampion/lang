@@ -29,7 +29,7 @@ function main(): i32 {
         None => { print("none"); },
     }
     var (chunk, b3) = b2.read_n(2);             // "YZ"
-    print(string_from_bytes(chunk));
+    print(string_from_bytes_unchecked(chunk));
     print(b3.remaining().to_string());          // 3 left: "123"
     var (rest, b4) = b3.read_all_string();
     print(rest);                                // "123"

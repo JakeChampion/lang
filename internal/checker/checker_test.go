@@ -5019,3 +5019,55 @@ func TestFloatAliasAndDefaultWidth(t *testing.T) {
 	mustErr(`function f(a: double): i32 { return 0; } function main(): i32 { return 0; }`,
 		"did you mean `f64`?")
 }
+
+// TestRetiredNameSuggestsReplacement pins the migration hint for a name
+// the language has retired (#5634, D9). `string_from_bytes` was split
+// into the unchecked builtin and the validating `std/utf8.from_bytes`,
+// and the old name was removed outright rather than aliased — so the
+// error a caller hits has to point at both halves.
+//
+// The generic near-miss scan cannot do this: `string_from_bytes` ->
+// `string_from_bytes_unchecked` is ten characters of edit distance,
+// well past the respelling threshold, so without the retired-name
+// table the retirement is a dead end.
+func TestRetiredNameSuggestsReplacement(t *testing.T) {
+	prog, err := parser.Parse(`function f(): string {
+		return string_from_bytes([65 as u8]);
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Check(prog)
+	if err == nil {
+		t.Fatal("expected error: string_from_bytes is retired")
+	}
+	es, ok := err.(diag.Errors)
+	if !ok || len(es) == 0 {
+		t.Fatalf("expected diag.Errors, got %T", err)
+	}
+	ce, ok := es[0].(*Error)
+	if !ok {
+		t.Fatalf("expected *Error, got %T", es[0])
+	}
+	if ce.ErrCode != "E001" {
+		t.Errorf("code = %q, want E001", ce.ErrCode)
+	}
+	if ce.Fix == nil {
+		t.Fatal("expected a machine-applicable fix for a retired name")
+	}
+	// The replacement stays mechanical — it compiles to exactly what
+	// the old name compiled to, so applying the fix is behaviour-
+	// preserving.
+	if ce.Fix.Replacement != "string_from_bytes_unchecked" {
+		t.Errorf("fix replacement = %q, want %q", ce.Fix.Replacement, "string_from_bytes_unchecked")
+	}
+	// ...but the help line also has to mention the checked half, or the
+	// fix quietly steers every caller onto the unchecked path.
+	if !strings.Contains(ce.Fix.Title, "std/utf8.from_bytes") {
+		t.Errorf("fix title = %q, want it to mention std/utf8.from_bytes", ce.Fix.Title)
+	}
+	if ce.Fix.Length != len("string_from_bytes") || ce.Fix.Pos != ce.Pos {
+		t.Errorf("fix span = (%v, %d), want the error's own (%v, %d)",
+			ce.Fix.Pos, ce.Fix.Length, ce.Pos, len("string_from_bytes"))
+	}
+}

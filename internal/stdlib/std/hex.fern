@@ -39,7 +39,7 @@ pub function hex_encode(s: string): string {
         buf = buf.with(i * 2 + 1, __hex_lower_char(b & 15) as u8);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `hex_encode_upper(s)` — like `hex_encode` but emits uppercase
@@ -58,7 +58,7 @@ pub function hex_encode_upper(s: string): string {
         buf = buf.with(i * 2 + 1, __hex_upper_char(b & 15) as u8);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 pub function hex_decode(s: string): string {
@@ -80,7 +80,7 @@ pub function hex_decode(s: string): string {
         buf = buf.with(i, ((hi << 4) | lo) as u8);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `hex_decode_strict(s)` — like `hex_decode` but returns `None` on malformed
@@ -108,5 +108,5 @@ pub function hex_decode_strict(s: string): Option[string] {
         buf = buf.with(i, ((hi << 4) | lo) as u8);
         i = i + 1;
     }
-    return Some(string_from_bytes(buf));
+    return Some(string_from_bytes_unchecked(buf));
 }

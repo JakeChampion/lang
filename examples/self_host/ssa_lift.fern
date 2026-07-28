@@ -74,7 +74,7 @@
 //     can't themselves be lifted. arr_push_owned collapses to the copying push
 //     (the bump heap never frees), and str_slice copies a fresh substring rather
 //     than the native zero-copy immortal-view box — one leak-only memory model.
-//   - slice 16: `str_from_bytes` (string_from_bytes(bs)) ->
+//   - slice 16: `str_from_bytes` (string_from_bytes_unchecked(bs)) ->
 //     `__ssa_arr_slice(bs, 0, bs.len())`, a full-array copy that IS the string
 //     (byte array and string share the layout), reusing the slice-15 helper.
 //   - slice 17: i64 — `const_i64` (source text -> movabsq / ldr =), i64
@@ -796,10 +796,10 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 stack = stack.append(slr);
             }
         } else if (k == "str_from_bytes") {
-            // string_from_bytes(bs) → __ssa_arr_slice(bs, 0, bs.len()): a full-
+            // string_from_bytes_unchecked(bs) → __ssa_arr_slice(bs, 0, bs.len()): a full-
             // array copy into a fresh array, which IS the string (a byte array
             // and a string share the [len, byte-per-word] SSA layout), exactly as
-            // build_func lowers the `string_from_bytes` builtin. Operand stack is
+            // build_func lowers the `string_from_bytes_unchecked` builtin. Operand stack is
             // [arr] (the byte array on top). One shared const 0 serves as both the
             // length-slot index and the slice's lo bound.
             if (stack.len() < 1) { ok = false; }

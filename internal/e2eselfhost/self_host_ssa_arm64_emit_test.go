@@ -165,9 +165,9 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 		// Call result carries the callee's return type (struct field / string).
 		{"call-result-struct-field", "struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a * 2 }; } function main(): i32 { return mk(7).x + mk(7).y; }", 21},
 		{"call-result-string", "function greet(): string { return \"hello\"; } function main(): i32 { return greet().len() + (greet() + \"!\").len(); }", 11},
-		// string_from_bytes(i32[]) → a string (copy; shared byte-array layout).
-		{"string-from-bytes", "function main(): i32 { var s = string_from_bytes([72, 105]); var t = \"x\" + string_from_bytes([89]) + \"z\"; return s.len() * 100 + t.len() + s[1]; }", 52},
-		{"string-from-bytes-eq", "function main(): i32 { var s = string_from_bytes([65, 66, 67, 68]); if (s == \"ABCD\") { return s.len() + 90; } return 0; }", 94},
+		// string_from_bytes_unchecked(i32[]) → a string (copy; shared byte-array layout).
+		{"string-from-bytes", "function main(): i32 { var s = string_from_bytes_unchecked([72, 105]); var t = \"x\" + string_from_bytes_unchecked([89]) + \"z\"; return s.len() * 100 + t.len() + s[1]; }", 52},
+		{"string-from-bytes-eq", "function main(): i32 { var s = string_from_bytes_unchecked([65, 66, 67, 68]); if (s == \"ABCD\") { return s.len() + 90; } return 0; }", 94},
 		// __new_array(n): runtime-sized allocation (alloc op size in args[0]).
 		{"new-array-fixed", "function main(): i32 { var b = __new_array(3); b[0] = 10; b[1] = 20; b[2] = 30; return b[0] + b[1] + b[2] + b.len(); }", 63},
 		{"new-array-dynamic", "function main(): i32 { var n = 5; var b = __new_array(n); var i = 0; while (i < n) { b[i] = i * i; i = i + 1; } var s = 0; var j = 0; while (j < b.len()) { s = s + b[j]; j = j + 1; } return s; }", 30},

@@ -528,7 +528,7 @@ pub function (s: EmitState) mark_str_from_bytes(): EmitState {
     return s.need("heap").need("str_from_bytes");
 }
 
-// rt_src_string_from_bytes backs `string_from_bytes(arr)` (#2649) — pack each
+// rt_src_string_from_bytes backs `string_from_bytes_unchecked(arr)` (#2649) — pack each
 // array element's low byte into a fresh string, via the raw-memory intrinsic
 // floor. The parameter is typed i32[] (all self-host arrays use 8-byte element
 // slots, so a u8[] argument round-trips identically): a[i] reads the slot,
@@ -2091,7 +2091,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "arg_at") { return ty_string(); }
                     if (id.name == "args") { return ty_array_string(); }
                     if (id.name == "__alloc_u8") { return ty_array_i32(); }
-                    if (id.name == "string_from_bytes") { return ty_string(); }
+                    if (id.name == "string_from_bytes_unchecked") { return ty_string(); }
                     if (id.name == "random_bytes") { return ty_string(); }
                     if (id.name == "map_new") { return ty_map_str(ty_unknown()); }
                     if (id.name == "map_new_i32") { return ty_map_i32(ty_unknown()); }
@@ -2640,7 +2640,7 @@ pub function escape_for_ascii(s: string): string {
         else { out = out.append(s[i] as u8); }
         i = i + 1;
     }
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }
 
 pub function is_value_fn_name(s: EmitState, name: string): boolean {

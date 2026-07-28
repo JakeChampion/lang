@@ -10,7 +10,7 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > **Status update (2026-07): the intrinsics below shipped and the Tier-2
 > migration is complete.** `chr`, `str_concat`, `i32_to_string`,
 > `str_to_upper`/`_lower`, `str_repeat`, `str_reverse`, `str_replace`,
-> `string_from_bytes` and `str_split` all lower as Fern functions via these
+> `string_from_bytes_unchecked` and `str_split` all lower as Fern functions via these
 > raw-memory intrinsics.
 >
 > **Status update (2026-07, syscall sub-floor): in progress.** The `__syscall3`

@@ -260,7 +260,7 @@ pub function (n: i64) to_string_radix(base: i32): string {
         bi = bi + 1;
         j = j - 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // === i64 saturating / checked arithmetic ===

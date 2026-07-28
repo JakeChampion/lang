@@ -92,12 +92,15 @@ pub function (s: Stream) read_all(): (u8[], Stream) {
 
 // `(s: Stream).read_all_string()` — consume the remaining
 // bytes as a UTF-8 string, returning `(string, advancedStream)`.
-// Convenience over `string_from_bytes` on `read_all`'s bytes.
-// Non-UTF-8 input round-trips through the string as raw bytes
-// (lang's string doesn't enforce UTF-8 validity today).
+// Convenience over `string_from_bytes_unchecked` on `read_all`'s bytes,
+// and so UNCHECKED: non-UTF-8 input round-trips through the string as
+// raw bytes rather than being rejected. A reader is a genuine ingest
+// boundary, so callers who need the bytes to actually be text should
+// take `read_all` and pass the bytes to `std/utf8.from_bytes`, which
+// validates and returns `Option[string]` (#5634, D9).
 pub function (s: Stream) read_all_string(): (string, Stream) {
     var (bytes, s2) = s.read_all();
-    return (string_from_bytes(bytes), s2);
+    return (string_from_bytes_unchecked(bytes), s2);
 }
 
 // ============================================================
@@ -173,12 +176,12 @@ pub function (s: Stream) read_line(): (Option[string], Stream) {
                         stripped = stripped.append(line_bytes[i]);
                         i = i + 1;
                     }
-                    return (Some(string_from_bytes(stripped)), Stream { ...s, pos: pos });
+                    return (Some(string_from_bytes_unchecked(stripped)), Stream { ...s, pos: pos });
                 }
             }
-            return (Some(string_from_bytes(line_bytes)), Stream { ...s, pos: pos });
+            return (Some(string_from_bytes_unchecked(line_bytes)), Stream { ...s, pos: pos });
         }
         line_bytes = line_bytes.append(b as u8);
     }
-    return (Some(string_from_bytes(line_bytes)), Stream { ...s, pos: pos });
+    return (Some(string_from_bytes_unchecked(line_bytes)), Stream { ...s, pos: pos });
 }

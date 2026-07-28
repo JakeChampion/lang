@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// stringFromBytesIRCases exercise `string_from_bytes(u8[])` through the self-host
+// stringFromBytesIRCases exercise `string_from_bytes_unchecked(u8[])` through the self-host
 // IR path on x86-64 + wasm.
 //
 // The wasm IR backend emitted `op_str_from_bytes` as a `call
@@ -33,7 +33,7 @@ function hexenc(s: string): string {
         buf = buf.with(i * 2 + 1, hex_lc(b & 15) as u8);
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 `
 
@@ -42,9 +42,9 @@ var stringFromBytesIRCases = []struct {
 	main string
 }{
 	// Minimal direct use: pack [72, 105] ("Hi") -> length 2.
-	{"direct-len", `function main(): i32 { var b: u8[] = __alloc_u8(2); b = b.with(0, 72 as u8); b = b.with(1, 105 as u8); return string_from_bytes(b).len(); }`},
+	{"direct-len", `function main(): i32 { var b: u8[] = __alloc_u8(2); b = b.with(0, 72 as u8); b = b.with(1, 105 as u8); return string_from_bytes_unchecked(b).len(); }`},
 	// Round-trip a byte through the packed string: [65]("A")[0] = 65.
-	{"direct-byte", `function main(): i32 { var b: u8[] = __alloc_u8(1); b = b.with(0, 65 as u8); return string_from_bytes(b)[0] as i32; }`},
+	{"direct-byte", `function main(): i32 { var b: u8[] = __alloc_u8(1); b = b.with(0, 65 as u8); return string_from_bytes_unchecked(b)[0] as i32; }`},
 	// hex_encode: "A" -> "41"; first digit '4' = 52.
 	{"hex-digit0", stringFromBytesPrelude + `function main(): i32 { return hexenc("A")[0] as i32; }`},
 	// hex_encode: "z" (0x7a) -> "7a"; second digit 'a' = 97.
@@ -102,7 +102,7 @@ func TestSelfHostStringFromBytesIRX86_64(t *testing.T) {
 // backend — the path the missing-helper bug affected.
 func TestSelfHostStringFromBytesIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host string_from_bytes wasm IR e2e")
+		t.Skip("wasmtime not on PATH; skipping self-host string_from_bytes_unchecked wasm IR e2e")
 	}
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -146,7 +146,7 @@ func TestSelfHostStringFromBytesIRWasm(t *testing.T) {
 				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
 			}
 			if code := run.ProcessState.ExitCode(); code != want {
-				t.Errorf("string_from_bytes wasm IR %q = %d, want %d (interp oracle)", tc.name, code, want)
+				t.Errorf("string_from_bytes_unchecked wasm IR %q = %d, want %d (interp oracle)", tc.name, code, want)
 			}
 		})
 	}

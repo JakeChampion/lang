@@ -75,7 +75,7 @@ function test_decode_strict_rejects(): test.TestOutcome {
 // URL-safe variant: the `-`/`_` alphabet, no `=` padding.
 function test_url_alphabet(): test.TestOutcome {
     // 0xFFFFFF → standard "////" → url-safe "____"; no '+' '/' '=' anywhere.
-    var s: string = string_from_bytes([255 as u8, 255 as u8, 255 as u8]);
+    var s: string = string_from_bytes_unchecked([255 as u8, 255 as u8, 255 as u8]);
     return test.assert_eq(base64.base64url_encode(s), "____");
 }
 

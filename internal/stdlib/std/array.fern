@@ -381,7 +381,7 @@ pub function __method_Array_join(arr: string[], sep: string): string {
         }
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `arr.index_of(s)` — first index of `s` in `arr`, or -1 if
@@ -704,7 +704,7 @@ pub function __method_Array_join_with_last(arr: string[], sep: string, last_sep:
         }
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `(arr: i32[]) sum_abs()` — sum of |x| for each element.

@@ -3262,8 +3262,8 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // arg_at(i) boxes argv[i] into a fresh string, so it str-tracks
                     // the same way — the element of the string[] that args() builds.
                     if (cid.name == "arg_at" && c.args.len() == 1) { return true; }
-                    // string_from_bytes(arr) packs bytes into a fresh string box.
-                    if (cid.name == "string_from_bytes") { return true; }
+                    // string_from_bytes_unchecked(arr) packs bytes into a fresh string box.
+                    if (cid.name == "string_from_bytes_unchecked") { return true; }
                     // read_line() returns Option[string] now (#4369), opt-tracked via
                     // the asmcore Option type + opt_ret_type, not str-tracked here.
                     // The string-returning str_* free builtins (transform family) —
@@ -3467,7 +3467,7 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
 //     buffer, min 1 byte; no already-cased identity short-circuit)
 //   - `s.repeat(n)`             (always a fresh buffer; n <= 0 → fresh empty box)
 //   - the free-function spellings `str_to_upper` / `str_to_lower` / `str_repeat`
-//   - the alloc BUILTINS `chr(n)` (fresh 1-char box) and `string_from_bytes(arr)`
+//   - the alloc BUILTINS `chr(n)` (fresh 1-char box) and `string_from_bytes_unchecked(arr)`
 //     (packs into a fresh box) — fixed fresh-allocating semantics, no user override
 //     (unlike `.to_string()`, whose derived/hand-written body may return an aliased
 //     field, so it stays excluded).
@@ -3496,7 +3496,7 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
 // which a borrowed alias, which a zero-copy VIEW, which an immortal literal.
 // Codes mirror native ast.Ownership: 0 = Owned, 1 = Borrowed, 2 = View, 3 = Static.
 //   - a fresh producer — a concat `a + b`, the alloc builtins chr /
-//     string_from_bytes / __raw_string, the str_to_upper / str_to_lower /
+//     string_from_bytes_unchecked / __raw_string, the str_to_upper / str_to_lower /
 //     str_repeat free-fns, and the .to_upper / .to_lower / .reverse / .repeat
 //     methods — is OWNED: a fresh rc=1 box the field-drop reclaims;
 //   - a slice `s[a:b]` / `.trim()` is a VIEW: a zero-copy immortal box (rc=-1,
@@ -3520,7 +3520,7 @@ pub function str_producer_ownership(e: parser.Expr, s: LowerState): i32 {
                 parser.ExprIdent(cid) => {
                     if (cid.name == "str_to_upper" || cid.name == "str_to_lower"
                             || cid.name == "str_repeat") { return 0; }
-                    if (cid.name == "chr" || cid.name == "string_from_bytes") { return 0; }
+                    if (cid.name == "chr" || cid.name == "string_from_bytes_unchecked") { return 0; }
                     // __raw_string boxes a freshly-__raw_alloc'd buffer → a fresh
                     // owned string (#2649 Tier-2 floor).
                     if (cid.name == "__raw_string" && c.args.len() == 2) { return 0; }
@@ -3635,7 +3635,7 @@ pub function str_expr_ownership(e: parser.Expr, s: LowerState): i32 {
 // is unambiguous by NAME (no operand-type inference needed), so it is admitted
 // regardless of the binding annotation (the un-annotated widening, mirroring the
 // tuple `(i, 1)` arc):
-//   - chr(n) / string_from_bytes(a)           — alloc builtins, fresh box
+//   - chr(n) / string_from_bytes_unchecked(a)           — alloc builtins, fresh box
 //   - str_to_upper/str_to_lower/str_repeat(s) — free-fn spellings, fresh copy
 //   - i32_to_string(n)                         — decimal-text builtin. Also Owned
 //     in str_producer_ownership / expr_is_fresh_str since #4355 (the historical
@@ -3653,7 +3653,7 @@ pub function str_expr_ownership(e: parser.Expr, s: LowerState): i32 {
 function str_free_producer_ident(c: parser.ExprCall): boolean {
     match (c.callee) {
         parser.ExprIdent(cid) => {
-            if (cid.name == "chr" || cid.name == "string_from_bytes") { return true; }
+            if (cid.name == "chr" || cid.name == "string_from_bytes_unchecked") { return true; }
             if (cid.name == "str_to_upper" || cid.name == "str_to_lower"
                     || cid.name == "str_repeat") { return true; }
             if (cid.name == "i32_to_string" && c.args.len() == 1) { return true; }
@@ -3675,7 +3675,7 @@ function str_free_producer_ident(c: parser.ExprCall): boolean {
 // reclaimed even though it matches syntactically. The admitted shapes each allocate
 // a fresh buffer + box when they ARE strings:
 //   - an UNAMBIGUOUS named producer (str_free_producer_ident) — chr /
-//     string_from_bytes / str_to_upper / str_to_lower / str_repeat / i32_to_string
+//     string_from_bytes_unchecked / str_to_upper / str_to_lower / str_repeat / i32_to_string
 //     / __raw_string;
 //   - an `a + b` CONCAT (fresh buffer + box when either side is a string);
 //   - a `.to_upper()` / `.to_lower()` / `.reverse()` / `.repeat(n)` method (each
@@ -4683,8 +4683,8 @@ pub function lower_array_to_json(arr: parser.Expr, s: LowerState): LowerState {
     // $tjout = $tjout.append(93 as u8);  — ']'
     s2 = lower_stmt(to_json_append_stmt(on, parser.ExprNumber { text: "93", suffix: "", is_float: false, line: 0, col: 0 }), s2);
     if (!s2.ok) { return s2; }
-    // result expression: string_from_bytes($tjout)
-    var result: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "string_from_bytes", line: 0, col: 0 }, args: [parser.ExprIdent { name: on, line: 0, col: 0 }], line: 0, col: 0, type_argc: 0, ty: "" };
+    // result expression: string_from_bytes_unchecked($tjout)
+    var result: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "string_from_bytes_unchecked", line: 0, col: 0 }, args: [parser.ExprIdent { name: on, line: 0, col: 0 }], line: 0, col: 0, type_argc: 0, ty: "" };
     return lower_expr(result, s2);
 }
 
@@ -6430,7 +6430,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // concat `a + b`, the case/shape transforms `.to_upper()` /
                     // `.to_lower()` / `.reverse()` / `.repeat(n)` (and their str_*
                     // free-fn spellings), and the alloc builtins `chr` /
-                    // `string_from_bytes` — each allocating a fresh buffer + rc=1 box
+                    // `string_from_bytes_unchecked` — each allocating a fresh buffer + rc=1 box
                     // used only for this field. Owned by the struct with no inc, so the
                     // field-drop reclaims it — the actual heap-leak win.
                     // EVERY other value is inc'd so the field-drop only decs the dup:
@@ -7268,7 +7268,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         return s.emit(ir.op_call_direct("__fern_heap_used", 0));
                     }
                     // __alloc_u8(n): a fresh n-element byte array (8-byte slots,
-                    // len = n; contents NOT zeroed). string_from_bytes(arr) packs
+                    // len = n; contents NOT zeroed). string_from_bytes_unchecked(arr) packs
                     // each slot's low byte into a string box. Both lower to a
                     // dedicated op the IR backends emit as the same __fern_* call
                     // the AST path uses.
@@ -7442,7 +7442,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!f3f.ok) { return f3f; }
                         return f3f.emit(ir.op_f32_from_bits());
                     }
-                    if (cid.name == "string_from_bytes" && c.args.len() == 1) {
+                    if (cid.name == "string_from_bytes_unchecked" && c.args.len() == 1) {
                         var sfb: LowerState = lower_expr(c.args[0], s);
                         if (!sfb.ok) { return sfb; }
                         return sfb.emit(ir.op_str_from_bytes());
@@ -31395,7 +31395,7 @@ function str_leaf_is_string(e: parser.Expr, funcs: parser.FuncDecl[], depth: i32
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
-                    if (cid.name == "random_bytes" || cid.name == "string_from_bytes") { return true; }
+                    if (cid.name == "random_bytes" || cid.name == "string_from_bytes_unchecked") { return true; }
                     var ni: i32 = 0;
                     while (ni < funcs.len()) {
                         if (funcs[ni].name == cid.name) {

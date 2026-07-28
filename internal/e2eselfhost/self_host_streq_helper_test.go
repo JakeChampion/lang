@@ -13,7 +13,7 @@ import (
 // must still emit the string runtime. Before the fix, `has_strings` was gated
 // solely on the string-literal table, so this program referenced an undefined
 // `$__fern_streq` and wasmtime rejected the module. The program gets its
-// strings from string_from_bytes + string-typed declarations (no literals),
+// strings from string_from_bytes_unchecked + string-typed declarations (no literals),
 // then compares them.
 func TestSelfHostStreqHelperGap(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -37,10 +37,10 @@ func TestSelfHostStreqHelperGap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read watbin.fern: %v", err)
 	}
-	// No string literals anywhere; strings come from string_from_bytes and
+	// No string literals anywhere; strings come from string_from_bytes_unchecked and
 	// string-typed values, and are compared with ==.
 	const prog = `
-function mk(c: i32): string { return string_from_bytes([c as u8]); }
+function mk(c: i32): string { return string_from_bytes_unchecked([c as u8]); }
 function streq(a: string, b: string): boolean { return a == b; }
 function main(): i32 {
     var a: string = mk(120);

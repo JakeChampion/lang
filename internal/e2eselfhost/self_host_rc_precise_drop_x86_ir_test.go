@@ -1181,8 +1181,8 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		//
 		// `chr(n)`: fresh 1-char box, freed once.
 		{"strdrop-chr-field-detector", `struct P { name: string } function go(): i32 { var p = P { name: chr(65) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 1) { return 99; } return __rc_underflow(); }`, 0},
-		// `string_from_bytes(arr)`: packs bytes into a fresh box, freed once.
-		{"strdrop-string-from-bytes-field-detector", `struct P { name: string } function go(): i32 { var b: u8[] = [104, 105]; var p = P { name: string_from_bytes(b) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow(); }`, 0},
+		// `string_from_bytes_unchecked(arr)`: packs bytes into a fresh box, freed once.
+		{"strdrop-string-from-bytes-field-detector", `struct P { name: string } function go(): i32 { var b: u8[] = [104, 105]; var p = P { name: string_from_bytes_unchecked(b) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow(); }`, 0},
 		// `i32_to_string(n)` is deliberately EXCLUDED (stays inc'd → leaks): its box's
 		// `data` points into the MIDDLE of a 32-byte scratch buffer, not at an alloc
 		// boundary, so reclaiming it over-releases. This case proves the EXCLUSION is

@@ -128,7 +128,7 @@ pub function format(fmt: string, args: string[]): string {
             i = i + 1;
         }
     }
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }
 
 // __format_apply_spec applies a `:`-prefixed format spec to an
@@ -238,7 +238,7 @@ function __repeat_char(s: string, count: i32): string {
         }
         k = k + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `format_bytes(n)` — render an i32 byte count as "N B" /

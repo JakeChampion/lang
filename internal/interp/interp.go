@@ -495,7 +495,7 @@ func New() *Interp {
 	// alloc / memcpy / store-byte sequences. The interpreter
 	// implements them directly so stdlib functions that lean
 	// on them (`__string_case_fold` for `to_upper`/`to_lower`,
-	// `s.bytes()`, `string_from_bytes`, etc.) round-trip
+	// `s.bytes()`, `string_from_bytes_unchecked`, etc.) round-trip
 	// through the script-mode + playground path. Map runtime
 	// primitives (`__alloc`, `__load_ptr`, `__store_ptr`,
 	// `__memcpy`, `__memset`, `__store_i32`, `__load_i32`,
@@ -503,7 +503,7 @@ func New() *Interp {
 	// be a flat byte address space the interpreter doesn't
 	// model, so Map operations stay codegen-only for now.
 	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocU8}
-	i.Builtins["string_from_bytes"] = &Builtin{Fn: builtinStringFromBytes}
+	i.Builtins["string_from_bytes_unchecked"] = &Builtin{Fn: builtinStringFromBytes}
 	// `s.bytes()` and `s.as_bytes()` round-trip bytes through
 	// raw memory in the stdlib / wat-emitted helper (the
 	// former does `__memcpy(out as i32, s.as_bytes() as i32, n)`,
@@ -1334,7 +1334,7 @@ func builtinMapIterAdvance(_ *Interp, args []Value) (Value, error) {
 // `__alloc_u8(n: i32): u8[]` — codegen lowers to `__fern_alloc(n)
 // + length-prefix poke`; the interp returns a fresh Array of n
 // Number(0) values. The stdlib uses this as the staging buffer
-// for `__string_case_fold`, `string_from_bytes`'s round-trip
+// for `__string_case_fold`, `string_from_bytes_unchecked`'s round-trip
 // counterpart, and any user code that wants a zero-initialised
 // byte slab.
 func builtinAllocU8(_ *Interp, args []Value) (Value, error) {
@@ -1355,7 +1355,7 @@ func builtinAllocU8(_ *Interp, args []Value) (Value, error) {
 	return out, nil
 }
 
-// `string_from_bytes(bs: u8[]): string` — joins the byte
+// `string_from_bytes_unchecked(bs: u8[]): string` — joins the byte
 // values into a fresh String. Codegen path mmap-allocates a
 // length-prefixed string buffer and memcpys; the interp
 // builds the string directly from the Number values in the
@@ -1364,17 +1364,17 @@ func builtinAllocU8(_ *Interp, args []Value) (Value, error) {
 // result.
 func builtinStringFromBytes(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
-		return nil, fmt.Errorf("string_from_bytes: expected 1 arg (bs), got %d", len(args))
+		return nil, fmt.Errorf("string_from_bytes_unchecked: expected 1 arg (bs), got %d", len(args))
 	}
 	arr, ok := args[0].(Array)
 	if !ok {
-		return nil, fmt.Errorf("string_from_bytes: arg must be array, got %T", args[0])
+		return nil, fmt.Errorf("string_from_bytes_unchecked: arg must be array, got %T", args[0])
 	}
 	buf := make([]byte, len(arr))
 	for i, v := range arr {
 		n, ok := v.(Number)
 		if !ok {
-			return nil, fmt.Errorf("string_from_bytes: element %d not a number (%T)", i, v)
+			return nil, fmt.Errorf("string_from_bytes_unchecked: element %d not a number (%T)", i, v)
 		}
 		buf[i] = byte(int64(n) & 0xff)
 	}

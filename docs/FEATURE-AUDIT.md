@@ -212,20 +212,20 @@ per-function bugs in the audit log.
 | `std/csv` | ✅ | ✅ | ✅ | ✅ | | ✅ | parse_line/join/escape — `audit_std_textfmt`; self-host via the IR path (x86-64 + wasm): `csv_parse_line` (`TestSelfHostCsvParseLineIR`) + `csv_escape`/`csv_join` (`TestSelfHostCsvEscapeIR`, oracle-checked — `index_of`/`replace` lower as `op_str_index_of`/`op_str_replace`) |
 | `std/log` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | leveled `Logger`/`LogEntry` (#2683) plain-text + JSON-lines `render` — native via `log_leveled` fixture (all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostLogLeveledIR` — structs with i32/boolean/string fields, chained struct-returning receiver methods, the threshold-filter branch, byte-indexed JSON escaping (hardcoded expectations: `.to_string()` is a self-host builtin the importless interp can't resolve, cf. format_bytes) |
 | `std/io` | | | | | | ⬜ | |
-| `std/io_buffered` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | in-memory `BytesWriter` (`data: u8[]`) — `write_string` / `write_bytes` / `write_byte` / `len` / `is_empty` / `into_string` / `reset` — native via the `bytes_writer` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostBytesWriterIR` — struct with a `u8[]` field, functional struct-spread append, `u8[].append` with `as u8` casts, indexed string-byte reads, and `string_from_bytes` via `into_string` (inlined as `BW`, since `BytesWriter` is a reserved builtin type name; `write_string` uses `s[i] as u8` in place of the module's `s.bytes()`, a std/string method the importless driver can't import). The fd-backed buffered Reader/Writer is Phase 2 (effectful, separate) |
+| `std/io_buffered` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | in-memory `BytesWriter` (`data: u8[]`) — `write_string` / `write_bytes` / `write_byte` / `len` / `is_empty` / `into_string` / `reset` — native via the `bytes_writer` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostBytesWriterIR` — struct with a `u8[]` field, functional struct-spread append, `u8[].append` with `as u8` casts, indexed string-byte reads, and `string_from_bytes_unchecked` via `into_string` (inlined as `BW`, since `BytesWriter` is a reserved builtin type name; `write_string` uses `s[i] as u8` in place of the module's `s.bytes()`, a std/string method the importless driver can't import). The fd-backed buffered Reader/Writer is Phase 2 (effectful, separate) |
 | `std/path` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | join/file_name/extension — `audit_std_path_numeric` + `self_host_audit_stdpath_test` |
 | `std/base64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip` — 300 random inputs, full byte range; self-host IR path: `base64_encode`/`base64_decode` lower end-to-end (real std/base64 source, routing-pinned `TestSelfHostBase64IR`, x86-64 + wasm + arm64 oracle-checked) |
-| `std/hex` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip`; self-host IR path: `hex_encode`/`hex_decode` lower end-to-end (real std/hex source, routing-pinned `TestSelfHostHexIR`, x86-64 + wasm + arm64 oracle-checked) — unblocked by the wasm `string_from_bytes` helper-gate fix |
+| `std/hex` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip`; self-host IR path: `hex_encode`/`hex_decode` lower end-to-end (real std/hex source, routing-pinned `TestSelfHostHexIR`, x86-64 + wasm + arm64 oracle-checked) — unblocked by the wasm `string_from_bytes_unchecked` helper-gate fix |
 | `std/crypto` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | SHA-256 vectors ✅ native (`audit_std_crypto`); self-host now correct via the IR path — u32 wrapping + array builders + byte builtins ([#2861](https://github.com/JakeChampion/lang/issues/2861) fixed, #2891; `TestSelfHostU32WrapIR`) |
 | `std/uuid` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | v4 length/dashes/version/uniqueness — `audit_std_uuid`; self-host v4 + v7 via the IR path (`TestSelfHostUuidIR`) |
-| `std/url` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_url_roundtrip` — 300 inputs, all four backends; the arm64 heap-corruption ([#2817](https://github.com/JakeChampion/lang/issues/2817)) is fixed (two-word `string_from_bytes` now uses `__fern_alloc_rc1`); self-host via the IR path (x86-64 + wasm): `url_encode`/`url_decode` percent-coding (`TestSelfHostUrlCodecIR`) + `url_parse` URL decomposition (`TestSelfHostUrlParseIR` — 6-field struct w/ mixed string+i32 fields, repeated struct-spread updates, `Option[Url]` + payload `match`) + `query_parse` (`TestSelfHostUrlQueryIR` — `Map[string, string[]]` w/ string-ARRAY values via `Map {}`/`.get`/`.insert`, incl. the duplicate-key append-to-existing case) — byte classification, bit ops, `u8[]` literals + `as u8` casts, and the `string_from_bytes` builtin all lower; native via the `url_codec` fixture (encode/decode + `url_parse` + `query_parse` incl. dup-key accumulation). (The dup-key wasm-IR map miscompile [#3495](https://github.com/JakeChampion/lang/issues/3495) is now fixed — `op_map_set` threads value-pointerness into the wasm `vis` flag — and the dup-key case is the regression guard.) |
+| `std/url` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_url_roundtrip` — 300 inputs, all four backends; the arm64 heap-corruption ([#2817](https://github.com/JakeChampion/lang/issues/2817)) is fixed (two-word `string_from_bytes_unchecked` now uses `__fern_alloc_rc1`); self-host via the IR path (x86-64 + wasm): `url_encode`/`url_decode` percent-coding (`TestSelfHostUrlCodecIR`) + `url_parse` URL decomposition (`TestSelfHostUrlParseIR` — 6-field struct w/ mixed string+i32 fields, repeated struct-spread updates, `Option[Url]` + payload `match`) + `query_parse` (`TestSelfHostUrlQueryIR` — `Map[string, string[]]` w/ string-ARRAY values via `Map {}`/`.get`/`.insert`, incl. the duplicate-key append-to-existing case) — byte classification, bit ops, `u8[]` literals + `as u8` casts, and the `string_from_bytes_unchecked` builtin all lower; native via the `url_codec` fixture (encode/decode + `url_parse` + `query_parse` incl. dup-key accumulation). (The dup-key wasm-IR map miscompile [#3495](https://github.com/JakeChampion/lang/issues/3495) is now fixed — `op_map_set` threads value-pointerness into the wasm `vis` flag — and the dup-key case is the regression guard.) |
 | `std/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | parse → get_i32/get_string → encode → re-parse — `audit_std_json` + `self_host_json_test`; `@derive(Json)` incl. **array fields** (`T[]`) — native all backends (`derive_json` fixture), self-host i32/string/struct arrays via the IR path ([#2766](https://github.com/JakeChampion/lang/issues/2766); `TestSelfHostJsonArrayIR`) |
 | `std/error` | ✅ | ✅ | ✅ | ✅ | | ✅ | canonical `Error` supertype (`message()`) for heterogeneous errors: `Result[_, dyn error.Error]` + `?` boxes any concrete error that `impl error.Error for …` (`std_error_test`, all four backends) — caps the dyn-error story (#3216 dispatch fix + #3242 `?`-conversion; #2707) |
 | `std/convert` | ✅ | ✅ | ✅ | ✅ | | ✅ | canonical `From[T]` / `Into[T]` conversion traits (on generic traits, #3254): `impl convert.From[i32] for Celsius` + `Celsius.from(20)`, `impl convert.Into[F] for Celsius` + `c.into()` (`std_convert_test`, all four backends; #2691) — generic use over a bound awaits bounded-generics-over-generic-traits |
 | `std/http` | | | | | | ⬜ | |
 | `std/tcp` | | | | | | ⬜ | |
 | `std/headers` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `HeaderMap` case-insensitive get/get_all/append/set over two parallel string[] fields — native via `headers_map` fixture (all four backends); self-host via the IR path (x86-64 + wasm): `TestSelfHostHeadersIR` — struct with string[] fields, functional struct-spread update, `string[].append`, indexed string-field compares, `Option[string]` `Some`/`None` + payload-binding `match`, chained struct-returning receiver methods, and the `(h) len()` receiver method (the `append-len` case — pins the [#3478](https://github.com/JakeChampion/lang/issues/3478) fix) (inlined as `Headers` + a lookup-slice `lower`, since `HeaderMap` is a reserved builtin name + the importless driver has no `.to_lower()`) |
-| `std/stream` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | in-memory byte `Stream` (`data: u8[]` + `pos` cursor) — the value-threaded CURSOR IDIOM: `len`/`remaining`/`read_byte`/`read_n`/`read_all_string`/`read_line` (CRLF/LF + unterminated tail) — native via the `stream_reader` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostStreamIR` — struct with a `u8[]` field + i32 cursor, struct-spread update, tuple-returning methods with pointer + `Option` elements, tuple destructuring in `let`, `u8[].append` with `as u8` casts, `string_from_bytes`, `Option` `Some`/`None` + payload-binding `match` (inlined as `Buf`, since `Stream` is a reserved builtin type + the importless driver has no imports) |
+| `std/stream` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | in-memory byte `Stream` (`data: u8[]` + `pos` cursor) — the value-threaded CURSOR IDIOM: `len`/`remaining`/`read_byte`/`read_n`/`read_all_string`/`read_line` (CRLF/LF + unterminated tail) — native via the `stream_reader` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostStreamIR` — struct with a `u8[]` field + i32 cursor, struct-spread update, tuple-returning methods with pointer + `Option` elements, tuple destructuring in `let`, `u8[].append` with `as u8` casts, `string_from_bytes_unchecked`, `Option` `Some`/`None` + payload-binding `match` (inlined as `Buf`, since `Stream` is a reserved builtin type + the importless driver has no imports) |
 | `std/time` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods) + `date_parse_iso` `Option[Date]` parse (`TestSelfHostTimeParseIR`, `Some`/`None` ctor + payload-binding `match`) + `format_rfc3339` / `instant_parse_rfc3339` (`TestSelfHostTimeRfc3339IR`, **i64 `sec` struct field** — i64 arithmetic/casts + `Some(Instant{ sec: <i64> })`) + `add_span` / `add_duration` / `duration_since` / `days_until` (`TestSelfHostTimeSpanIR`, **8-field Span by-value param** + i64+nsec carry/borrow) + the Zoned / TimeZone surface (`in_zone` / `to_datetime` / `timezone_iana` — `TestSelfHostTimeZonedIR`, **nested structs** `Zoned{instant,zone}` / `DateTime{date,time}` + `Option[TimeZone]`) |
 | `std/task` | | | | | | ⬜ | |
 | `std/mock_platform` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | call-recording log (`MockPlatform` holds a `MockCall[]`) — `record` / `call_count` / `reset` / `has_call` / `find_call` — native via the `mock_platform_log` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostMockPlatformIR` — struct with an array-of-struct field, functional struct-spread append, indexed array-of-struct field reads (`m.calls[i].name`), membership scan, and `find_call`'s `Option[MockCall]` (Option of a struct) + payload-binding `match` (inlined as `MPlat`/`MCall`, since both are reserved builtin type names) |
@@ -236,7 +236,7 @@ per-function bugs in the audit log.
 
 | Module | I | X | A | W | S | Status | Notes |
 |--------|---|---|---|---|---|--------|-------|
-| `core/int` | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | radix **parse** direction (`parse_int_radix` / `__radix_digit`, bases 2–36, sign handling) — native via the `core_int_parse` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostCoreIntParseIR` — `Option[i32]` `Some`/`None` + payload-binding `match`, string indexing with char-class compares, multiply-accumulate loop, sign + negation. The **to-string radix** direction (`int_to_string_radix`) ALSO lowers on the IR path — it builds via `__alloc_u8` + `.with` + `string_from_bytes` (no `__memcpy`/`usize`), the same builder std/hex / std/base64 use — native via the `core_int_radix` fixture, self-host via `TestSelfHostCoreIntRadixIR` (x86-64 + wasm, oracle-checked). Only `int_to_string` / `__int_to_string_u64` (decimal) stay AST — those poke raw memory via `__memcpy` over a `usize` pointer (same caveat as std/u64 `to_string`) |
+| `core/int` | ✅ | ✅ | ✅ | ✅ | 🔧 | 🔧 | radix **parse** direction (`parse_int_radix` / `__radix_digit`, bases 2–36, sign handling) — native via the `core_int_parse` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostCoreIntParseIR` — `Option[i32]` `Some`/`None` + payload-binding `match`, string indexing with char-class compares, multiply-accumulate loop, sign + negation. The **to-string radix** direction (`int_to_string_radix`) ALSO lowers on the IR path — it builds via `__alloc_u8` + `.with` + `string_from_bytes_unchecked` (no `__memcpy`/`usize`), the same builder std/hex / std/base64 use — native via the `core_int_radix` fixture, self-host via `TestSelfHostCoreIntRadixIR` (x86-64 + wasm, oracle-checked). Only `int_to_string` / `__int_to_string_u64` (decimal) stay AST — those poke raw memory via `__memcpy` over a `usize` pointer (same caveat as std/u64 `to_string`) |
 | `core/cmp` (traits) | ✅ | ✅ | | | ✅ | 🔧 | Trait foundation (`Display`/`Eq`/`Ord`/`Hash`/`Default`/`Debug`) + primitive impls, used by `std/test`. **Generic `Ord` helpers** added — `min`/`max`/`clamp`/`lt`/`lte`/`gt`/`gte`/`cmp`, plus `sort[T: Ord](arr): T[]` (stable bottom-up merge sort, O(n log n) — #4387 item 3) and `is_sorted[T: Ord](arr): boolean` — and **`Eq` helpers** `contains`/`index_of`/`distinct[T: Eq]` (#3699) + `eq_arrays[T: Eq](a, b)`, all derived from the single `cmp`/`eq` primitives — work over the primitive impls AND any user/`@derive` type, on native (interp/x86-64/wasm) AND the self-host **IR path** (`TestNativeCmpHelpers{,Arm64}` + `TestNativeCmpModule` + `TestSelfHostCmpHelpersIR{X86_64,Wasm}`, routing-pinned to `ir`). **#5348** made `core/cmp` the single home for these generic verbs — the duplicate `sort`/`contains`/`index_of`/`distinct`/`equal` copies that had grown up in `std/array` were removed, and `index_of` now returns `Option[i32]` (the modern out-of-band shape) rather than a `-1` sentinel; `std/array`'s method forms (`xs.equal`, `xs.sort_by`) delegate to `core/cmp`/`std/sort`. Full trait/derive audit of the rest is a follow-up |
 | `core/iter` (Iterator trait) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **Generic** `Iterator[T]` protocol + integer `Range` (`impl Iterator[i32]`) + eager drivers ([#2686](https://github.com/JakeChampion/lang/issues/2686) / tail of [#2699](https://github.com/JakeChampion/lang/issues/2699)). Value-semantic `next(self): Option[(T, Self)]`. `count[T, I: Iterator[T]]`, `to_array[T, I: Iterator[T]]: T[]` (+ the `collect[T, I: Iterator[T]]: T[]` chain-terminal alias, #2709), and `fold[T, A, I: Iterator[T]](it, init: A, f: (A, T) => A): A` (the fundamental left reduction, generic over both element and accumulator type, taking a closure combiner) are generic over the element type. Closure-free adapters `nth`/`last[T, I: Iterator[T]]: Option[T]`, `min`/`max`/`product[I: Iterator[i32]]`, `position`/`count_value[I: Iterator[i32]](it, target)`, and `contains[I: Iterator[i32]](it, target): boolean` round out the set (the i32-bound ones need `+`/`*`/`<`/`==`). Works on native (interp / x86-64 / arm64 / wasm) AND the self-host **IR path** (x86-64 + wasm): parametrised-trait bounds parse on the self-host (#3558) and the native checker recovers the bound-only `T` by bound-driven inference (#3596). Coverage: `TestNativeIteratorTrait{,Module,ModuleGeneric,Arm64}`, `TestSelfHostIteratorTraitIR{X86_64,Wasm}`, `TestNativeGenericIteratorCollector{,Arm64}` + `TestSelfHostGenericCollectorIR{X86_64,Wasm}` (incl. a `boolean`-element impl + `to_array` returning a generic `T[]`), all routing-pinned to `ir` on the self-host |
 | `core/map` | | | | | | ⬜ | |
@@ -528,7 +528,7 @@ basename), and `resolve_prefix` maps qualifier → prefix at both rewrite points
 the self-host's own sources use no aliases, so the bootstrap fixpoint is preserved.
 
 `io_buffered` (a previously-untested module: `BytesWriter` — RC-backed byte buffer,
-struct-spread `{ ...w, data }`, `u8[]` append, `string_from_bytes`, chained fluent
+struct-spread `{ ...w, data }`, `u8[]` append, `string_from_bytes_unchecked`, chained fluent
 dispatch) flips AST → IR, **9/9 passing**, with no further changes needed. Gated by
 `TestSelfHostImportAliasIR` (alias ≠ basename → asm calls `io_buffered__bytes_writer_new`,
 runs exit 0) + `io_buffered` added to the `TestSelfHostStdTestE2E` differential
@@ -1823,7 +1823,7 @@ example-suite layer (only `is_uuid` of the predicate set appeared anywhere, via
 `uuid_test`).
 
 On the self-host **differential** gate (both x86 + arm64), not just interp: this
-exercises the byte-level string machinery (`__alloc_u8` / `string_from_bytes` /
+exercises the byte-level string machinery (`__alloc_u8` / `string_from_bytes_unchecked` /
 slice `s[a:b]` / `with` / `to_upper` / `is_digit` / `is_alpha`) through the
 self-host IR path on real stdlib bodies, so a regression in any of those
 primitives surfaces here. Gated by
@@ -2013,14 +2013,14 @@ copy tail both functions share:
 var scratch_ptr: usize = scratch as usize;
 var buf: u8[] = __alloc_u8(n_bytes);
 __memcpy(buf as usize, scratch_ptr + end, n_bytes);   // packed-byte copy
-return string_from_bytes(buf);
+return string_from_bytes_unchecked(buf);
 ```
 
 A raw `__memcpy` of `n_bytes` contiguous bytes is correct only if `u8[]` is
 **packed** (one byte per element) — true on the native / wasm runtimes. But the
 self-hosted runtime (`asm_ir.fern` / `asm.fern`, `__fern_arr_box`) stores every
 array element in an **8-byte slot**: a `u8[]` value points at the length word,
-element `i` lives at `+8 + i*8`, and `string_from_bytes` is itself slot-aware
+element `i` lives at `+8 + i*8`, and `string_from_bytes_unchecked` is itself slot-aware
 (it packs each slot's low byte). So `scratch as usize` is the length word, the
 contiguous copy reads the wrong memory, and the result string is empty. Confirmed
 by dumping the live layout (`__load_i32` at `arr+0`=len, `+8`=elem0, `+16`=elem1).
@@ -2028,7 +2028,7 @@ by dumping the live layout (`__load_i32` at `arr+0`=len, `+8`=elem0, `+16`=elem1
 **Fix (stdlib, not the backend):** replace the `__memcpy` tail in
 `core/int.fern`'s `int_to_string` + `__int_to_string_u64` with a slot-aware
 element copy — `buf = buf.with(i, scratch[end + i])`. `.with` / indexing /
-`string_from_bytes` are all layout-aware, so the new shape is correct on *every*
+`string_from_bytes_unchecked` are all layout-aware, so the new shape is correct on *every*
 backend AND lowers on the self-host IR path (the raw-pointer form did not). With
 it, **`int_to_string` (i32) and `u32.to_string()` now self-host-compile to the
 correct decimal string** — verified across interp / native x86-64 / self-host
@@ -2123,14 +2123,14 @@ crash is **`u32.to_string()`** — the `int.__int_to_string_u64((n as i64) & mas
 `std/u32` / `std/u64` (whose `to_string` routes there) crash. `std/crypto`
 crashes for a *separate, not-yet-isolated* reason — it uses none of the
 above-passing ops nor `to_string`, so the likely culprit is the SHA-256
-length-padding `u64` math or `string_from_bytes` over computed bytes (left for a
+length-padding `u64` math or `string_from_bytes_unchecked` over computed bytes (left for a
 follow-up probe). The deterministic-stdlib self-host gaps, restated precisely:
 
 - **`__int_to_string_u64` from an unsigned cast** — blocks `std/u32` /
   `std/u64` `to_string` (and any unsigned decimal formatting). Basic `u32` ops
   themselves lower fine.
 - **a separate `std/crypto` path** — not `to_string`; un-isolated (SHA-256
-  `u64` length math / computed-byte `string_from_bytes` are the suspects).
+  `u64` length math / computed-byte `string_from_bytes_unchecked` are the suspects).
 - **trait-generic reducers** — `std/num`'s `sum`/`product`/`sum_with`/… crash
   (exit -1) despite the module note claiming they lower; the bounded-generic
   monomorphisation over `Add`/`Mul`/`Zero` doesn't fully lower yet.
@@ -2270,7 +2270,7 @@ differential gate (`TestSelfHostStdTestE2E/hex`), which compiles the suite with
 the self-hosted x86-64 compiler and oracle-checks TAP-13 stdout + exit code
 against the interpreter **byte-for-byte**. Notable: this is the first migration
 suite whose stdlib path exercises the `u8[]` / `__alloc_u8` / `.with()` /
-`string_from_bytes` byte-buffer surface end-to-end through the self-host IR —
+`string_from_bytes_unchecked` byte-buffer surface end-to-end through the self-host IR —
 no AST fallback.
 
 ### 2026-06-21 — std/path: pure-Fern std/test migration coverage (`path_join` / `path_parent` / `path_file_name` / `path_extension`)
@@ -2896,14 +2896,14 @@ Follow-up to the radix-**parse** audit (#3515): that entry put the whole
 to-string direction on the AST path, but only the **decimal** `int_to_string` /
 `__int_to_string_u64` actually stay AST (they `__memcpy` over a `usize` pointer).
 `int_to_string_radix` builds its result with `__alloc_u8` + `.with` +
-`string_from_bytes` — no `__memcpy`, no `usize` — the same IR-eligible builder
+`string_from_bytes_unchecked` — no `__memcpy`, no `usize` — the same IR-eligible builder
 std/hex / std/base64 use, so it lowers through the IR path too.
 
 - **Native** — `core_int_radix` fixture (interp / x86-64 / arm64 / wasm): hex,
   binary, base-36, zero, negative, and a multi-digit value.
 - **Self-host IR** — `TestSelfHostCoreIntRadixIR{X86_64,Wasm}` run nine cases
   through the x86-64 + wasm IR drivers (i64-magnitude `mag % b64` / `mag / b64`,
-  `__alloc_u8` + `.with` build, `string_from_bytes`, plus a round-trip back
+  `__alloc_u8` + `.with` build, `string_from_bytes_unchecked`, plus a round-trip back
   through the IR-audited `parse_int_radix`), pinned to the `"ir"` path and
   oracle-checked against the interpreter (results ≤ 120 for the wasm clamp,
   #2908). All already lower, so **no compiler change**.
@@ -2942,7 +2942,7 @@ wasm IR drivers, pinned to the `"ir"` path (return value = a small deterministic
 int, oracle-checked against the interpreter). It exercises a struct with a
 `u8[]` field, functional struct-spread update appending to that array
 (`BW { ...w, data: … }`), `u8[].append` with `as u8` element casts, indexed
-byte reads, and the `string_from_bytes` builtin via `into_string` — all already
+byte reads, and the `string_from_bytes_unchecked` builtin via `into_string` — all already
 lower, so no compiler change. The type is inlined as `BW` (`BytesWriter` is a
 reserved builtin type name + the single-program driver resolves no imports);
 `write_string` extracts bytes via `s[i] as u8` in place of the module's
@@ -2983,7 +2983,7 @@ exercises a struct with a `u8[]` field + an i32 cursor, functional struct-spread
 update (`Buf { ...s, pos: … }`), tuple-returning methods with pointer + `Option`
 elements (`(u8[], Buf)`, `(Option[i32], Buf)`, `(Option[string], Buf)`), tuple
 destructuring in `let`, `u8[].append` with `as u8` element casts, indexed byte
-reads with `as i32`, the `string_from_bytes` builtin, and `Option` `Some`/`None`
+reads with `as i32`, the `string_from_bytes_unchecked` builtin, and `Option` `Some`/`None`
 with a payload-binding `match` — all already lower, so no compiler change. The
 type is inlined as `Buf` (`Stream` is a reserved builtin type name + the
 single-program driver resolves no imports). `std/stream` row flipped to ✅.
@@ -3024,7 +3024,7 @@ the x86-64 + wasm IR drivers, pinned to the `"ir"` path. It exercises a `Map`
 with string keys and **string-ARRAY values** built via `Map {}` / `.get` /
 `.insert`, the append-or-create idiom over the map's `string[]` value,
 `Option[string[]]` `Some`/`None` `match`, and `url_decode`'s `u8[]` +
-`string_from_bytes` — all already lower, so no compiler change. The native
+`string_from_bytes_unchecked` — all already lower, so no compiler change. The native
 `url_codec` fixture also exercises `query_parse` incl. duplicate-key
 accumulation.
 
@@ -3059,7 +3059,7 @@ Audited the `std/url` self-host column (was blank). `url_encode` / `url_decode`
 verified against native interp + x86-64) and have a native `url_codec` fixture
 (interp / x86-64 / arm64 / wasm). It exercises byte classification, bit ops
 (`>>` / `&` / `<<` / `|`), `u8[]` array literals with `as u8` element casts, and
-the `string_from_bytes(u8[])` builtin — all already lower, so no compiler change.
+the `string_from_bytes_unchecked(u8[])` builtin — all already lower, so no compiler change.
 (`url_parse` / `query_parse`, which build a `Map`, are left for a later slice.)
 
 ### 2026-06-21 — std/sort: `sort_by_i32_key` (sort by a numeric projection) ([#2686](https://github.com/JakeChampion/lang/issues/2686))
@@ -3485,7 +3485,7 @@ change. std/base64 S column flipped to ✅.
 ### 2026-06-14 — std/hex via the self-host IR path (coverage)
 
 Confirmed `std/hex` (`hex_encode` / `hex_decode`) lowers through the self-host IR
-path end-to-end, now that the wasm `string_from_bytes` / `arr_push` helper-gate
+path end-to-end, now that the wasm `string_from_bytes_unchecked` / `arr_push` helper-gate
 fixes unblocked the byte→string primitives it builds on. `TestSelfHostHexIR`
 compiles the REAL `internal/stdlib/std/hex.fern` source concatenated with a main
 (the single-module trick the std/json self-host test uses — std/hex has no
@@ -3495,7 +3495,7 @@ encode→decode round-trips. Coverage-only, no compiler change. std/hex S column
 flipped to ✅.
 ### 2026-06-14 — fix: `.append` (arr_push) missing helper on the wasm IR path
 
-Same class of bug as the `string_from_bytes` fix: the wasm IR backend lowered
+Same class of bug as the `string_from_bytes_unchecked` fix: the wasm IR backend lowered
 `op_arr_push` to `call $__fern_arr_push`, but `wasm_ir_run` had no gate to emit
 that helper — so any IR-path program using `arr.append(v)` produced a wasm module
 with a dangling call that failed to link. x86-64 / arm64 already emitted it. Fix:
@@ -3509,13 +3509,13 @@ New routing-pinned `TestSelfHostArrPushIR` (x86-64 + wasm, oracle-checked: appen
 realloc, and a loop-built array summed). Verified end-to-end on x86-64, wasm, and
 arm64; x86-64 + stage2 fixpoint hold. (Found by cross-checking every `call
 $__fern_*` the wasm IR backend emits against the helper gates in `wasm_ir_run` —
-`arr_push` and `string_from_bytes` were the two missing.)
-### 2026-06-14 — fix: `string_from_bytes` missing helper on the wasm IR path
+`arr_push` and `string_from_bytes_unchecked` were the two missing.)
+### 2026-06-14 — fix: `string_from_bytes_unchecked` missing helper on the wasm IR path
 
 The wasm IR backend lowered `op_str_from_bytes` to `call
 $__fern_string_from_bytes`, but `wasm_ir_run` had no gate to emit that helper
 (its sibling `str_bytes` did) — so any IR-path program packing a `u8[]` into a
-string (`string_from_bytes(buf)`) produced a wasm module with a dangling call that
+string (`string_from_bytes_unchecked(buf)`) produced a wasm module with a dangling call that
 failed to link (`unknown func $__fern_string_from_bytes`). x86-64 / arm64 already
 emitted the helper. Fix: export `wasm.string_from_bytes_helper` and gate it on
 `module_emits_op(mod, "str_from_bytes")` in `wasm_ir_run`, mirroring the
@@ -3524,7 +3524,7 @@ emitted the helper. Fix: export `wasm.string_from_bytes_helper` and gate it on
 
 New routing-pinned `TestSelfHostStringFromBytesIR` (x86-64 + wasm, oracle-checked:
 direct pack + length / byte round-trip, plus a `hex_encode` built on
-`__alloc_u8` + `.with` + `string_from_bytes`). Verified end-to-end on x86-64,
+`__alloc_u8` + `.with` + `string_from_bytes_unchecked`). Verified end-to-end on x86-64,
 wasm, and arm64; x86-64 + stage2 fixpoint hold. (Found while probing pure-Fern
 stdlib modules — `std/hex` etc. — for self-host IR coverage.)
 ### 2026-06-14 — `dyn Trait[]` LOCAL element dispatch via the self-host IR path
@@ -4218,7 +4218,7 @@ different iterations (state-dependent), so it is **not** a logic error in
 
 **Minimal reproducer** (self-contained single module; fails arm64, passes interp/x86-64):
 the mix of a string-slice branch (`out = out + s[i:i+1]`) and a
-`string_from_bytes` branch inside an encode loop, followed by a decode loop that
+`string_from_bytes_unchecked` branch inside an encode loop, followed by a decode loop that
 reads the result — driven cumulatively over several LCG-generated inputs.
 `internal/e2e/testdata/cases/prop_url_roundtrip/main.fern` reproduces it directly
 on arm64 (drop the `backends` sidecar to see the arm64 leg fail).
@@ -4228,7 +4228,7 @@ backends** (arm64 re-added to its `backends` sidecar).
 
 **Actual root cause** (the earlier "instruction-selection / liveness" narrowing
 was on the wrong layer — the *helpers* were the problem after all): on the
-two-word string ABI (arm64-`TwoWordOverride`), `string_from_bytes` allocated its
+two-word string ABI (arm64-`TwoWordOverride`), `string_from_bytes_unchecked` allocated its
 heap buffer with **plain `__fern_alloc`** instead of `__fern_alloc_rc1`
 (`internal/codegen/arm64/arm64.go`, the `UseTwoWordStrings` branch). A plain
 buffer carries **no rc header** (no live rc at `data-8`, no payload size at
@@ -4237,14 +4237,14 @@ buffer carries **no rc header** (no live rc at `data-8`, no payload size at
 `data-4` — it read **garbage**: either `rc_dec`'d a neighbouring cell's bytes
 (the single-bit `0x90→0x80` corruption) or `box_free`'d a wrong-sized block that
 overlapped a still-live cell, recycling it through the freelist. It only
-surfaced under the *mixed* slice + `string_from_bytes` churn because the
+surfaced under the *mixed* slice + `string_from_bytes_unchecked` churn because the
 interleaved `__str_slice` (rc-headered) allocations left a `1` in the word just
-below a `string_from_bytes` buffer, steering `__fern_str_dec` down the
+below a `string_from_bytes_unchecked` buffer, steering `__fern_str_dec` down the
 `box_free` path. `__str_slice` and `__fern_strcat` already used
 `__fern_alloc_rc1` on this path, and the wasm two-word backend's
-`string_from_bytes` always did — arm64's was the lone outlier.
+`string_from_bytes_unchecked` always did — arm64's was the lone outlier.
 
-**Fix:** one line — `string_from_bytes` (two-word path) now allocates via
+**Fix:** one line — `string_from_bytes_unchecked` (two-word path) now allocates via
 `__fern_alloc_rc1`, matching `__str_slice` / `__fern_strcat` and the wasm
 mirror. Guarded by `prop_url_roundtrip` running on arm64 again.
 
@@ -4253,7 +4253,7 @@ mirror. Guarded by `prop_url_roundtrip` running on arm64 again.
 Added five property fixtures under `internal/e2e/testdata/cases/prop_*`:
 
 - `prop_codec_roundtrip` — `base64` + `hex` decode∘encode round-trip. ✅ all 4 backends.
-- `prop_url_roundtrip` — `url` decode∘encode round-trip. ✅ all 4 backends (the arm64 `string_from_bytes` rc-header bug above is fixed).
+- `prop_url_roundtrip` — `url` decode∘encode round-trip. ✅ all 4 backends (the arm64 `string_from_bytes_unchecked` rc-header bug above is fixed).
 - `prop_sort_i32` — `sort_i32_asc` ordering + permutation (per-value histogram) +
   idempotence. ✅ all 4 backends.
 - `prop_string_involution` — `reverse_bytes` involution, `to_lower`/`to_upper`

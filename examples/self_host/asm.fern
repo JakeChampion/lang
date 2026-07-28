@@ -752,9 +752,9 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.write("    pushq $0\n");
         return CallOut { state: s, done: true };
     }
-    // string_from_bytes(arr) — pack each element's low byte
+    // string_from_bytes_unchecked(arr) — pack each element's low byte
     // into a fresh string. Round-trips s.bytes() / a u8[] build.
-    if (name == "string_from_bytes" && c.args.len() == 1) {
+    if (name == "string_from_bytes_unchecked" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);   // arr (stays on the stack = param[0])
         s = s.write("    call __fn___fern_string_from_bytes\n    addq $8, %rsp\n");
         s = s.write("    pushq %rax\n");
@@ -941,7 +941,7 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
     // `int.int_to_string(n)` — modload mangles the qualified
     // call to `int__int_to_string`. Route it to the native
     // runtime helper rather than core/int's pure-Fern body,
-    // which uses raw __memcpy / string_from_bytes through
+    // which uses raw __memcpy / string_from_bytes_unchecked through
     // u8[] memory and silently misbehaves under the self-
     // host's u8[] layout. std/http's response serializer
     // chains `... + int.int_to_string(resp.status) + ...`.

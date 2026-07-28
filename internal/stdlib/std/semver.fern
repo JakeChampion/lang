@@ -57,7 +57,7 @@ function __sv_slice(s: string, start: i32, end: i32): string {
         b = b.append(s[i] as u8);
         i = i + 1;
     }
-    return string_from_bytes(b);
+    return string_from_bytes_unchecked(b);
 }
 
 // __sv_str_cmp compares two strings by ASCII byte order: -1 / 0 / 1.

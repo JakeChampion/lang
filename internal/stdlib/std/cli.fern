@@ -306,7 +306,7 @@ pub function cli_color_enabled(): boolean {
 function __cli_sgr(code: string, s: string): string {
     if (!cli_color_enabled()) { return s; }
     var escb: u8[] = [27 as u8];
-    var esc: string = string_from_bytes(escb);
+    var esc: string = string_from_bytes_unchecked(escb);
     return esc + "[" + code + "m" + s + esc + "[0m";
 }
 

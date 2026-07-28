@@ -12,7 +12,7 @@ import (
 // arrPushIRCases exercise `arr.append(v)` (op_arr_push) through the self-host IR
 // path on x86-64 + wasm.
 //
-// Like string_from_bytes, the wasm IR backend emitted `op_arr_push` as a `call
+// Like string_from_bytes_unchecked, the wasm IR backend emitted `op_arr_push` as a `call
 // $__fern_arr_push` but `wasm_ir_run` had no gate to emit that helper — so any
 // IR-path program using `.append` produced a wasm module with a dangling call that
 // failed to link. x86-64 / arm64 already emitted it. The fix gates the standalone

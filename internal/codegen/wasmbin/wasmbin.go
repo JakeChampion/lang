@@ -2535,7 +2535,7 @@ var CallDirectAliases = map[string]string{
 	"__method_Writer_close":      "__fern_writer_close",
 
 	// String / bytes round-trip.
-	"string_from_bytes": "__fern_string_from_bytes",
+	"string_from_bytes_unchecked": "__fern_string_from_bytes",
 
 	// File I/O. `read_file` / `write_file` read or truncate-write
 	// in one shot; `open_reader` / `open_writer` / `open_appender`

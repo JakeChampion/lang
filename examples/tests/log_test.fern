@@ -66,7 +66,7 @@ function test_json_escaping_whitespace(): test.TestOutcome {
 // through raw, producing invalid JSON.
 function test_json_escaping_control(): test.TestOutcome {
     var raw: u8[] = [65 as u8, 1 as u8, 66 as u8, 31 as u8];   // "A", 0x01, "B", 0x1F
-    var msg: string = string_from_bytes(raw);
+    var msg: string = string_from_bytes_unchecked(raw);
     var lg: log.Logger = log.new_json_logger(log.level_trace());
     var line: string = lg.info_().render(msg);
     return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"A\\u0001B\\u001f\"}\n");

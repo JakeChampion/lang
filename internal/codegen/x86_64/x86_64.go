@@ -1056,7 +1056,7 @@ func (g *generator) recordUse(target string) {
 	case "__alloc_u8":
 		g.usesAllocU8 = true
 		g.usesAlloc = true
-	case "string_from_bytes":
+	case "string_from_bytes_unchecked":
 		g.usesStringFromBytes = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
@@ -3249,7 +3249,7 @@ func (g *generator) emitStrDataPtr(dstReg, srcReg, scratchMem string) {
 // the new string's *data pointer* (one past the prefix). Inverse
 // of emitStrLen and the second half of the SSO encoding seam:
 // string-producing runtime helpers (strcat / str_slice /
-// string_from_bytes / random_bytes / env / tcp_recv / read_line)
+// string_from_bytes_unchecked / random_bytes / env / tcp_recv / read_line)
 // all flow through this one site so future encoding changes that
 // affect string construction (e.g. tagged-pointer inline-when-
 // short) have a single function to update per backend. Array-
@@ -3264,7 +3264,7 @@ func (g *generator) emitStrLenStore(srcReg, dstReg string) {
 // .rodata as a length-prefixed string with length=0, shared
 // across all callers and the program lifetime. Used by the
 // string-constructing runtime helpers (strcat / str_slice /
-// string_from_bytes) to short-circuit the alloc + memcpy +
+// string_from_bytes_unchecked) to short-circuit the alloc + memcpy +
 // length-store sequence when the result is zero bytes — the
 // helpers already round-trip through emitStrLenStore /
 // emitStrLen, so the returned pointer is indistinguishable from
@@ -3279,7 +3279,7 @@ func (g *generator) emitStrEmpty(dstReg string) {
 // 4-byte little-endian load from `[srcReg - 4]`. Centralised seam
 // for arrays: parallels emitStrLen but stays distinct because
 // arrays may diverge from strings under future layout changes.
-// Used by __alloc_u8's siblings and string_from_bytes's input
+// Used by __alloc_u8's siblings and string_from_bytes_unchecked's input
 // length read.
 func (g *generator) emitArrayLen(dstReg, srcReg string) {
 	g.emit(fmt.Sprintf("mov %s, [%s - 4]", dstReg, srcReg))
@@ -3928,7 +3928,7 @@ func (g *generator) emitDataSections() {
 		if needsEmpty {
 			// Empty-string sentinel. String-constructing runtime
 			// helpers (__fern_strcat, __str_slice,
-			// string_from_bytes) skip the alloc + memcpy when the
+			// string_from_bytes_unchecked) skip the alloc + memcpy when the
 			// result is zero bytes and return this static data
 			// pointer instead. L2 layout w/ rc-sentinel header: 8-byte
 			// rc-sentinel header + length=0 + trailing NUL.
@@ -7476,14 +7476,14 @@ func (g *generator) emitAllocU8Runtime() {
 	g.line(".size __alloc_u8, .-__alloc_u8")
 }
 
-// emitStringFromBytesRuntime emits `string_from_bytes(bs)` —
+// emitStringFromBytesRuntime emits `string_from_bytes_unchecked(bs)` —
 // copies a `u8[]` payload into a fresh length-prefixed
 // string. Round-trip companion to `s.bytes()`.
 func (g *generator) emitStringFromBytesRuntime() {
 	g.line("")
-	g.line(".globl string_from_bytes")
-	g.line(".type string_from_bytes, @function")
-	g.label("string_from_bytes")
+	g.line(".globl string_from_bytes_unchecked")
+	g.line(".type string_from_bytes_unchecked, @function")
+	g.label("string_from_bytes_unchecked")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")
@@ -7535,7 +7535,7 @@ func (g *generator) emitStringFromBytesRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size string_from_bytes, .-string_from_bytes")
+	g.line(".size string_from_bytes_unchecked, .-string_from_bytes_unchecked")
 }
 
 // emitStrSliceRuntime emits `__str_slice(base, low, high)` —

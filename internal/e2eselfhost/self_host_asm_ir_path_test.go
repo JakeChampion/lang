@@ -164,7 +164,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"cast-u8-mask", "function main(): i32 { return (300 as u8) as i32; }"}, // 300 & 255 = 44
 		{"cast-chain", "function main(): i32 { var x: i32 = 65; return ((x as u8) as i32); }"},
 		// Array builder methods: .with (reassign-self -> in-place arr_set) and
-		// .append (-> __fern_arr_push), plus __alloc_u8 / string_from_bytes. These
+		// .append (-> __fern_arr_push), plus __alloc_u8 / string_from_bytes_unchecked. These
 		// don't overflow u32, so IR matches the AST path.
 		{"with-reassign", "function main(): i32 { var a = [10, 20, 30]; a = a.with(1, 99); return a[0] + a[1] + a[2]; }"},
 		// __memcpy(dst, src, n): raw byte copy — op_memcpy (rep movsb on x86-64).
@@ -203,7 +203,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// nonexistent string.chr -> BAIL). This is the std/string case_separator /
 		// to_acronym shape (i32.to_lower vs string.to_lower). f(64): 64+1 -> char
 		// 65 'A' -> s[0] -> 65.
-		{"method-name-collision", "function (n: i32) bump(): i32 { return n + 1; } function (s: string) bump(): string { return s + \"!\"; } function (n: i32) chr(): string { var a: u8[] = __alloc_u8(1); a = a.with(0, n as u8); return string_from_bytes(a); } function f(b: i32): i32 { var s: string = b.bump().chr(); return s[0] as i32; } function main(): i32 { return f(64); }"},
+		{"method-name-collision", "function (n: i32) bump(): i32 { return n + 1; } function (s: string) bump(): string { return s + \"!\"; } function (n: i32) chr(): string { var a: u8[] = __alloc_u8(1); a = a.with(0, n as u8); return string_from_bytes_unchecked(a); } function f(b: i32): i32 { var s: string = b.bump().chr(); return s[0] as i32; } function main(): i32 { return f(64); }"},
 		// Chained ARRAY-method call `arr.m().n()` where the inner m returns an
 		// array — `__method_Array_rev` (-> i32[]) then `.sum2()`. Was BAIL call:
 		// expr_is_arr_src didn't recognise an array-RETURNING array-method call
@@ -327,7 +327,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"append-return", "function build(a: i32[], v: i32): i32[] { return a.append(v); } function main(): i32 { var a: i32[] = []; a = a.append(10); var b = build(a, 20); return b[0] + b[1]; }"},
 		{"append-varinit", "function main(): i32 { var a: i32[] = []; a = a.append(7); var b = a.append(35); return b[0] + b[1]; }"},
 		{"append-return-loop", "function trail(xs: i32[]): i32[] { var out: i32[] = []; var i = 0; while (i < xs.len()) { if (xs[i] > 2) { out = out.append(xs[i]); } i = i + 1; } return out.append(99); } function main(): i32 { var a: i32[] = []; a = a.append(1); a = a.append(5); a = a.append(3); var r = trail(a); return r.len() * 100 + r[r.len() - 1]; }"},
-		// NB: __alloc_u8 / string_from_bytes programs are NOT differential cases —
+		// NB: __alloc_u8 / string_from_bytes_unchecked programs are NOT differential cases —
 		// the standalone asm_ir_run AST fallback references __fern_alloc_u8 without
 		// emitting it (a legacy-driver gap), so the AST side won't link. The IR
 		// path compiles them correctly; they're validated against the native

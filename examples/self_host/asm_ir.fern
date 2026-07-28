@@ -6352,7 +6352,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_replace(), all_structs, s);
     }
-    // string_from_bytes — now a Fern runtime function (#2649), lowered through the
+    // string_from_bytes_unchecked — now a Fern runtime function (#2649), lowered through the
     // IR pipeline: pack each array element's low byte into a fresh string box via
     // the raw-memory intrinsics. Heap-dependent (present above).
     if (s.has_need("str_from_bytes")) {

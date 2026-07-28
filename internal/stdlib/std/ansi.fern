@@ -24,7 +24,7 @@ import "std/i32";
 // __esc() — the ESC (0x1B) control byte as a one-character string.
 function __esc(): string {
     var b: u8[] = [27 as u8];
-    return string_from_bytes(b);
+    return string_from_bytes_unchecked(b);
 }
 
 // `sgr(code, s)` — wrap `s` in `ESC[<code>m … ESC[0m`. The primitive
@@ -123,5 +123,5 @@ pub function strip(s: string): string {
             i = i + 1;
         }
     }
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }

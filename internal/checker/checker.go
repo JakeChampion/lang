@@ -1771,7 +1771,24 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// future SSO pass can change the encoding in one place.
 	registerStringMethod("len", nil, ast.NumberType{})
 
-	c.info.FuncSigs["string_from_bytes"] = &ast.FuncType{
+	// `string_from_bytes_unchecked(bs: u8[]): string` — build a
+	// string from bytes WITHOUT validating them. The contract is
+	// that the caller guarantees the bytes are well-formed UTF-8;
+	// nothing here checks, and an invalid `string` built this way
+	// will misbehave in every code-point-aware operation.
+	//
+	// Correct uses are the ones where validity holds by
+	// construction: digit assembly, ASCII an encoder just emitted,
+	// re-encoding an already-validated scalar, or a transform that
+	// preserves the bytes of a string it was handed. Bytes coming
+	// from outside the program go through `std/utf8.from_bytes`,
+	// which validates and returns `Option[string]` (#5634, D9).
+	//
+	// The unqualified name `string_from_bytes` deliberately no
+	// longer exists: naming is the only enforcement available
+	// here, so the unchecked constructor has to be the one that
+	// reads as unchecked at the call site.
+	c.info.FuncSigs["string_from_bytes_unchecked"] = &ast.FuncType{
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.StringType{},
 	}
@@ -7147,9 +7164,33 @@ func (c *checker) needCoreMap(pos ast.Position) {
 // MACHINE-APPLICABLE (diag.Suggestion, Rec §3) — replacing the ident
 // with the candidate always re-parses, so the renderer's `help:` line
 // doubles as the future LSP CodeAction seed.
+// retiredNames maps a name the language used to have to the
+// behaviour-preserving replacement it was renamed to, so retiring a
+// name stays a migration rather than a dead end. `diag.Suggest`'s
+// near-miss scan cannot reach these: `string_from_bytes` ->
+// `string_from_bytes_unchecked` is ten characters of edit distance,
+// far past the respelling threshold, yet it is exactly the case where
+// a caller most needs pointing somewhere.
+//
+// The mapped-to name is the MECHANICAL migration — it compiles to what
+// the old name compiled to. Where the retirement exists to make a
+// hazard visible, `retiredHints` carries the other half of the story.
+var retiredNames = map[string]string{
+	"string_from_bytes": "string_from_bytes_unchecked",
+}
+
+// retiredHints is the "and think about which one you want" note
+// appended to a retired name's help line (#5634, D9).
+var retiredHints = map[string]string{
+	"string_from_bytes": " (or `std/utf8.from_bytes`, which validates and returns `Option[string]`)",
+}
+
 func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 	cands := c.collectNames(s)
 	suggestion := diag.Suggest(n.Name, cands)
+	if r, ok := retiredNames[n.Name]; ok {
+		suggestion = r
+	}
 	e := &Error{
 		Pos:     n.P,
 		Span:    len(n.Name),
@@ -7162,7 +7203,7 @@ func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 			Pos:         n.P,
 			Length:      len(n.Name),
 			Replacement: suggestion,
-			Title:       fmt.Sprintf("replace `%s` with `%s`", n.Name, suggestion),
+			Title:       fmt.Sprintf("replace `%s` with `%s`%s", n.Name, suggestion, retiredHints[n.Name]),
 		}
 	}
 	c.errors = append(c.errors, e)

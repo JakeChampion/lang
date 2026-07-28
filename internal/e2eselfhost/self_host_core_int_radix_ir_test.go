@@ -13,7 +13,7 @@ import (
 // on the self-host IR path (x86-64 + wasm). This is the to-string direction the
 // parse-only audit (#3515) left on the AST path — but int_to_string_radix does
 // NOT use __memcpy / usize (unlike int_to_string / __int_to_string_u64): it
-// builds its result with __alloc_u8 + .with + string_from_bytes, the same
+// builds its result with __alloc_u8 + .with + string_from_bytes_unchecked, the same
 // IR-eligible builder std/hex / std/base64 use. So it lowers through IR, and
 // these cases prove it (routing-pinned to "ir", oracle-checked against the
 // interpreter). A round-trip case threads the result back through
@@ -55,7 +55,7 @@ function int_to_string_radix(n: i32, base: i32): string {
     if (neg) { buf = buf.with(0, 45 as u8); bi = 1; }
     var j: i32 = k - 1;
     while (j >= 0) { buf = buf.with(bi, digits[j]); bi = bi + 1; j = j - 1; }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 function parse_int_radix(s: string, base: i32): Option[i32] {
     if (base < 2 || base > 36) { return None; }

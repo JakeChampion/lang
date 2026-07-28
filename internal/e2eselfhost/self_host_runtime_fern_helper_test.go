@@ -230,12 +230,12 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_replace:", ".Lrepl_walk"},
 		},
 		{
-			// string_from_bytes(arr) — pack each element's low byte into a string,
+			// string_from_bytes_unchecked(arr) — pack each element's low byte into a string,
 			// Tier-2 via the raw-memory intrinsics (#2649). The old register-ABI
 			// hand-asm (a bare __fern_string_from_bytes: label + .Lsfb_loop) is gone;
 			// the call site targets __fn___fern_string_from_bytes via the stack ABI.
-			"string_from_bytes",
-			`function main(): i32 { var b: u8[] = [104 as u8, 105 as u8]; return string_from_bytes(b).len(); }`,
+			"string_from_bytes_unchecked",
+			`function main(): i32 { var b: u8[] = [104 as u8, 105 as u8]; return string_from_bytes_unchecked(b).len(); }`,
 			"__fn___fern_string_from_bytes",
 			[]string{"\n__fern_string_from_bytes:", ".Lsfb_loop"},
 		},

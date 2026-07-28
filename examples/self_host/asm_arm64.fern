@@ -798,9 +798,9 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.write("    str x0, [sp, #-16]!\n");
         return CallOut { state: s, done: true };
     }
-    // string_from_bytes(arr) — pack each element's low byte
+    // string_from_bytes_unchecked(arr) — pack each element's low byte
     // into a fresh string.
-    if (name == "string_from_bytes" && c.args.len() == 1) {
+    if (name == "string_from_bytes_unchecked" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);   // arr (stays on the stack = param[0])
         s = s.write("    bl __fn___fern_string_from_bytes\n    add sp, sp, #16\n");
         s = s.write("    str x0, [sp, #-16]!\n");

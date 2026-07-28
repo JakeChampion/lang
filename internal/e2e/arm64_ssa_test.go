@@ -513,7 +513,7 @@ function main(): i32 {
 		{
 			// Integer to_string — the full digit-formatting chain: __alloc_u8
 			// (byte buffer), __fern_arr_cow_inplace (arr[i] = digit), and
-			// string_from_bytes (u8[] -> string). len("123456") = 6.
+			// string_from_bytes_unchecked (u8[] -> string). len("123456") = 6.
 			name: "int_to_string_len",
 			src: `import "std/i32";
 function main(): i32 { return (123456).to_string().len(); }`,

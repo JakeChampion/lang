@@ -31,13 +31,13 @@ func helperBody(asm, sym string) string {
 // still-live cell, recycling it through the freelist (the arm64-only
 // heap-corruption #2817 surfaced via std/url).
 //
-// string_from_bytes (fixed in #2907), env, and read_line all return owned
+// string_from_bytes_unchecked (fixed in #2907), env, and read_line all return owned
 // strings and all used plain __fern_alloc on this path before the fix. This
 // pins the rc-headered allocation in all three two-word bodies and fails loudly
 // if any regresses to a bare __fern_alloc for the string payload.
 func TestTwoWordStringRuntimesUseRcHeaderedAlloc(t *testing.T) {
 	src := `function main(): i32 {
-    var a: string = string_from_bytes([65 as u8, 66 as u8]);
+    var a: string = string_from_bytes_unchecked([65 as u8, 66 as u8]);
     var n: i32 = a.len();
     match (env("FERN_X")) { Some(v) => { n = n + v.len(); }, None => {} }
     match (read_line()) { Some(l) => { n = n + l.len(); }, None => {} }
@@ -45,7 +45,7 @@ func TestTwoWordStringRuntimesUseRcHeaderedAlloc(t *testing.T) {
 }`
 	asm := compile(t, src, Options{})
 
-	for _, sym := range []string{"string_from_bytes", "__fern_env", "__fern_read_line"} {
+	for _, sym := range []string{"string_from_bytes_unchecked", "__fern_env", "__fern_read_line"} {
 		body := helperBody(asm, sym)
 		if body == "" {
 			t.Fatalf("%s runtime was not emitted; cannot verify its allocation path", sym)

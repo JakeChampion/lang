@@ -69,7 +69,7 @@ pub function base64_encode(s: string): string {
         buf = buf.with(j + 2, __b64_alphabet((b1 & 15) << 2) as u8);
         buf = buf.with(j + 3, 61 as u8);
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 pub function base64_decode(s: string): string {
@@ -99,7 +99,7 @@ pub function base64_decode(s: string): string {
         }
         i = i + 1;
     }
-    return string_from_bytes(buf);
+    return string_from_bytes_unchecked(buf);
 }
 
 // `base64_decode_strict(s)` — like `base64_decode` but returns `None` on
@@ -151,7 +151,7 @@ pub function base64_decode_strict(s: string): Option[string] {
         }
         i = i + 1;
     }
-    return Some(string_from_bytes(buf));
+    return Some(string_from_bytes_unchecked(buf));
 }
 
 // std/base64 url-safe variant (RFC 4648 §5): the same base64 with the
@@ -176,7 +176,7 @@ function __b64_std_to_url(s: string): string {
         else { out = out.append(s[i] as u8); }
         i = i + 1;
     }
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }
 
 function __b64_url_to_std(s: string): string {
@@ -189,7 +189,7 @@ function __b64_url_to_std(s: string): string {
         else { out = out.append(s[i] as u8); }
         i = i + 1;
     }
-    return string_from_bytes(out);
+    return string_from_bytes_unchecked(out);
 }
 
 // `base64url_encode(s)` — URL-safe base64 of `s`, no `=` padding.

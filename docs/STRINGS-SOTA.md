@@ -681,9 +681,70 @@ as `str`'s escape rule (#4814) and is tracked there, not solved here.
 ### D9 — Guarantee UTF-8 validity on `string`. (Biggest change; sequence it last.)
 
 The §2.8 invariant. `string` means *well-formed UTF-8*; arbitrary bytes
-live in `u8[]`/`[u8]` (which D8 makes ergonomic). Validation happens at
-a small, enumerable set of boundaries: `string_from_bytes`, file/socket
-reads, env/args, FFI returns.
+live in `u8[]`/`[u8]` (which D8 makes ergonomic).
+
+#### The constructor is a split, not a signature change — **LANDED** (slice 2)
+
+The obvious reading of "validate at `string_from_bytes`" is to change
+its result to `Option[string]`. Measured against the tree, that is the
+wrong shape. There were **378 standalone `string_from_bytes` call
+sites** across `internal/`, `examples/` and `cmd/` — 102 in the stdlib,
+43 in the self-host compiler, the rest Go-side registrations, backend
+recognisers, example programs and test fixtures. By category:
+
+| Category | Examples | Can the bytes be invalid? |
+|---|---|---|
+| Digit assembly | `core/int`, `std/i32`, `std/i64`, `std/float` | No — ASCII it just built |
+| Encoder output | base64/base32/hex **encode**, `url` percent-encode, `json` escape, `ansi`, `table`, `format`, `regex` | No — ASCII by construction |
+| Byte-preserving transforms | `std/string` case/pad/trim/repeat/replace | No — reassembles bytes of an already-valid string |
+| Scalar re-encoding | `std/utf8`'s own encoder | No — it just validated the scalar |
+| **Byte containers** | `crypto` digests, base64/base32/hex **decode** | Yes, and *legitimately so* |
+| **Genuine ingest** | `stream.read_all_string`, reader/socket bytes | Yes |
+
+The first four categories are the overwhelming majority and are valid
+*by construction*. Returning `Option` from their constructor forces
+hundreds of unwraps of something that cannot fail — which in practice
+becomes `.unwrap()` noise and buys no safety at all.
+
+So the constructor splits, on the Rust `from_utf8` /
+`from_utf8_unchecked` model:
+
+- **`string_from_bytes_unchecked(u8[]) -> string`** — the builtin,
+  renamed from `string_from_bytes`. Same signature, same codegen, no
+  validation. Its contract is that *the caller guarantees the bytes are
+  well-formed UTF-8*.
+- **`std/utf8.from_bytes(u8[]) -> Option[string]`** — validating.
+  Ordinary Fern, deliberately *not* a builtin, so no backend has to
+  learn to box an `Option` for it.
+
+The old name is retired outright rather than kept as an alias, so
+reaching for `string_from_bytes` is a compile error carrying a
+migration hint at both replacements. That retirement is the actual
+deliverable: naming is the only enforcement mechanism Fern has here
+(there are no `unsafe` blocks), so leaving the hazard under the
+attractive name would make this decision decorative.
+
+#### What slice 2 does *not* do
+
+It does not make the invariant true, and the boundary list this
+decision originally carried — "`string_from_bytes`, file/socket reads,
+env/args, FFI returns" — is incomplete in a way that matters. It misses
+the stdlib's own **byte-container APIs**, which use `string` as a raw
+byte bag and routinely hold bytes that are not UTF-8 at all:
+`crypto.sha256_bytes` / `hmac_sha256_bytes` / `pbkdf2_sha256` /
+`hkdf_*`, `base64_decode`, `base32_decode`, `hex_decode`, and the
+`random_bytes` / `tcp_recv` / `read_file` builtins. A 32-byte SHA-256
+digest is essentially never valid UTF-8, so under a validating
+constructor `sha256_bytes` would return `None` for almost every input.
+These are not edge cases — `base64_decode` of a PNG is the normal use.
+
+Those APIs take the unchecked constructor today. Making the invariant
+*true* requires migrating them off `string` to `u8[]` — the correct end
+state, and exactly what D8 makes ergonomic, but a larger change than
+the constructor split. Tracked as **#5730**, which is also what makes
+slice 4 (the "no stdlib operation produces an invalid `string`"
+property test) satisfiable — today it would fail immediately on
+`sha256_bytes`.
 
 Costs, stated honestly:
 
@@ -701,9 +762,29 @@ Costs, stated honestly:
   one, so snapping a pair widens the slice to whole characters rather
   than truncating it, and both are total (0 and `len` are always
   boundaries) rather than `Option`-returning.
-- Ingest paths pay a validation scan. Cheap (ASCII fast scan; §2.8), but
-  not free, and it lands on exactly the request path the language cares
-  about — measure it before committing.
+- **Ingest paths pay a validation scan — measured, and the cost was an
+  artifact.** This decision assumed the scan was near-free. As written
+  it was not: `is_valid_utf8` looped over `utf8_decode_at`, whose
+  `Option[(i32, i32)]` result allocates and refcounts a tuple box *per
+  code point*. Validating a 346 KB ASCII JSON body cost **~48 ms** —
+  1.9× the cost of *parsing* the same body — which would have been a
+  bad thing to discover after committing every ingest path to it.
+
+  The overhead was the boxed return, not the validation. Scanning
+  continuation bytes inline (same strictness, same accepted language)
+  took it to **~1.5 ms**, ~31× (#5723). Against a handler that reads a
+  body and parses JSON (x86-64, native):
+
+  | Body | validate | `json_parse` | validation overhead |
+  |---|---|---|---|
+  | 1 KB | 4 µs | 71 µs | **+5%** |
+  | 16 KB | 72 µs | 1,190 µs | **+6%** |
+  | 340 KB | 1.6 ms | 25.5 ms | **+6%** |
+
+  A flat ~5–6% of parse time, which is the "cheap" this decision
+  assumed. Still short of `simdutf`-class multi-GB/s — that needs SIMD
+  and this is a scalar loop — but the right order of magnitude, and the
+  scan is no longer the reason not to validate.
 - Non-UTF-8 filesystem paths become unrepresentable. See D10.
 
 The payoff: `std/utf8`'s `is_valid_utf8` stops being something callers

@@ -64,7 +64,7 @@ func CompileAndRunWasmbinMain(t *testing.T, src string) int {
 		//   - "unknown callee" — OpCallDirect targets the IR
 		//     emits for builtins that haven't been wired through
 		//     callDirectAlias or runtime helpers yet (e.g.
-		//     `string_from_bytes`).
+		//     `string_from_bytes_unchecked`).
 		// Both are tracking signal, not miscompilation bugs.
 		if strings.Contains(msg, "unsupported") ||
 			strings.Contains(msg, "unknown callee") {
