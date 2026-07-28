@@ -318,6 +318,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"destr-tuparr-struct", "struct P { x: i32 } function main(): i32 { var a: (P, i32)[] = []; a = a.append((P { x: 3 }, 4)); var (p, n) = a[0]; return p.x + n; }"},
 		{"destr-tuparr-string", "function main(): i32 { var a: (string, i32)[] = []; a = a.append((\"hi\", 4)); var (s, n) = a[0]; return s.len() + n; }"},
 		{"destr-tuparr-enum", "enum C { R, G, B } function main(): i32 { var a: (C, i32)[] = []; a = a.append((G, 5)); var (c, n) = a[0]; match (c) { R => { return 1; }, G => { return n + 10; }, B => { return 3; } } return 0; }"},
+		// A RECURSIVE struct — a self-referential `next: Option[Node]` field (linked
+		// list / tree / AST shape). The leak-safe eligibility proof recursed
+		// decl_is_leaksafe_d -> is_leaksafe_opt_field_d -> opt_payload_ok_d ->
+		// decl_is_leaksafe (fresh, visiting reset) -> … forever and SIGSEGV'd the
+		// compiler on a valid program. Threading the proof's visiting set through the
+		// Option/tuple field predicates lets the back-edge short-circuit (leak-only,
+		// safe), admitting recursive structs onto the IR path. Construction +
+		// field-read: 5; recursive Option-match sum over a 3-node list: 1+2+3=6.
+		{"recursive-struct-opt", "struct Node { v: i32, next: Option[Node] } function main(): i32 { var n = Node { v: 5, next: None }; return n.v; }"},
+		{"recursive-list-sum", "struct Node { v: i32, next: Option[Node] } function sum(n: Option[Node]): i32 { match (n) { Some(nd) => { return nd.v + sum(nd.next); }, None => { return 0; } } return 0; } function main(): i32 { var l = Some(Node { v: 1, next: Some(Node { v: 2, next: Some(Node { v: 3, next: None }) }) }); return sum(l); }"},
 		// A struct-array (P[]) / enum-array (E[]) value as a TUPLE element. The
 		// buffer is a heap pointer in the slot (leak mode — elements leak with the
 		// leak-only tuple); the destructure binds mark_arr + the element struct/enum
