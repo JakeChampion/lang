@@ -34,15 +34,15 @@ import "std/i32";
 // don't pay for the encoder/parser.
 import "std/json";
 
-pub function log_info(msg: string) {
+pub function log_info(msg: string): void {
     eprint("[INFO] " + msg);
 }
 
-pub function log_warn(msg: string) {
+pub function log_warn(msg: string): void {
     eprint("[WARN] " + msg);
 }
 
-pub function log_error(msg: string) {
+pub function log_error(msg: string): void {
     eprint("[ERROR] " + msg);
 }
 

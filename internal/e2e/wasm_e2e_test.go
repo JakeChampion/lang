@@ -10042,7 +10042,7 @@ func TestCmdLangComponentWrapCliVoidMain(t *testing.T) {
 	}
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "void.fern")
-	src := []byte(`function main() {
+	src := []byte(`function main(): void {
     var t: i64 = monotonic_ns();
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
@@ -11504,7 +11504,7 @@ func TestCmdLangComponentWrapVoidMain(t *testing.T) {
 	}
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "void.fern")
-	src := []byte(`function main() {
+	src := []byte(`function main(): void {
     var t: i64 = monotonic_ns();
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {

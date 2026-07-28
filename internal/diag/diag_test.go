@@ -42,7 +42,7 @@ func TestFormatRendersSnippetAndCaret(t *testing.T) {
 }
 
 func TestFormatIncludesFilename(t *testing.T) {
-	src := "function f() {}\n"
+	src := "function f(): void {}\n"
 	out := Format("foo.fern", src, &fakeErr{pos: ast.Position{Line: 1, Col: 1}, msg: "boom"})
 	if !strings.HasPrefix(out, "foo.fern:1:1: error: boom\n") {
 		t.Errorf("expected filename prefix in:\n%s", out)

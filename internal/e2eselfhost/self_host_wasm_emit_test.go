@@ -341,7 +341,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// i32 arrays (read side): literal, index, .len(), while-sum.
 		{"arr-len", "function main(): i32 { var a = [10, 20, 30]; return a.len(); }", 3, ""},
 		{"cell-get-set", "function main(): i32 { var c: Cell[i32] = cell_new(0); c.set(c.get() + 5); c.set(c.get() * 2); return c.get(); }", 10, ""},
-		{"cell-shared", "function bump(c: Cell[i32]) { c.set(c.get() + 1); } function main(): i32 { var c: Cell[i32] = cell_new(10); bump(c); bump(c); bump(c); return c.get(); }", 13, ""},
+		{"cell-shared", "function bump(c: Cell[i32]): void { c.set(c.get() + 1); } function main(): i32 { var c: Cell[i32] = cell_new(10); bump(c); bump(c); bump(c); return c.get(); }", 13, ""},
 		// Cell[string] — a string is a single pointer on the self-host wasm
 		// backend, so the cell slot is one word (same as i32). Overwrite then
 		// read back through get().
@@ -1025,7 +1025,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"enum-fn-arg", "enum Dir { N, S, E, W } function rank(d: Dir): i32 { match (d) { N => { return 1; }, S => { return 2; }, E => { return 3; }, W => { return 4; } } return 0; } function main(): i32 { print_int(rank(Dir.E)); print_int(rank(Dir.W)); return 0; }", 0, "34"},
 
 		// Hardening pass 8: void calls, short-circuit &&/||, nested closures.
-		{"void-function", "function greet(name: string) { write(\"hi \"); write(name); } function main(): i32 { greet(\"sam\"); return 0; }", 0, "hi sam"},
+		{"void-function", "function greet(name: string): void { write(\"hi \"); write(name); } function main(): i32 { greet(\"sam\"); return 0; }", 0, "hi sam"},
 		{"void-method", "struct L { } function (l: L) log(n: i32) { print_int(n); } function main(): i32 { var l = L {}; l.log(5); l.log(6); return 0; }", 0, "56"},
 		{"short-circuit-and-or", "function side(): boolean { print_int(9); return true; } function main(): i32 { if (false && side()) { print_int(1); } if (true || side()) { print_int(2); } return 0; }", 0, "2"},
 		{"short-circuit-guard", "function main(): i32 { var xs = [10, 20]; var i: i32 = 5; if (i < xs.len() && xs[i] > 0) { print_int(1); } else { print_int(0); } return 0; }", 0, "0"},

@@ -980,7 +980,7 @@ func TestInterpScriptCivilDateArith(t *testing.T) {
 		{
 			name: "add_days crosses month + year boundaries",
 			source: `import "std/time";
-function show(d: Date) {
+function show(d: Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
@@ -994,7 +994,7 @@ function main(): i32 {
 		{
 			name: "add_days respects leap years",
 			source: `import "std/time";
-function show(d: Date) {
+function show(d: Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
@@ -1055,7 +1055,7 @@ function main(): i32 {
 		{
 			name: "is_valid rejects bad month/day/feb-30",
 			source: `import "std/time";
-function show_v(d: Date) {
+function show_v(d: Date): void {
     if (d.is_valid()) { print("valid"); } else { print("invalid"); }
 }
 function main(): i32 {
@@ -1074,7 +1074,7 @@ function main(): i32 {
 		{
 			name: "leap year rule (4 / 100 / 400)",
 			source: `import "std/time";
-function show(y: i32) {
+function show(y: i32): void {
     if (time.is_leap_year(y)) { print(y.to_string() + " leap"); } else { print(y.to_string() + " no"); }
 }
 function main(): i32 {
@@ -1091,7 +1091,7 @@ function main(): i32 {
 		{
 			name: "pre-epoch dates round-trip through add_days",
 			source: `import "std/time";
-function show(d: Date) {
+function show(d: Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
@@ -1154,7 +1154,7 @@ function main(): i32 {
 		{
 			name: "date_parse_iso accepts canonical form",
 			source: `import "std/time";
-function show(opt: Option[Date]) {
+function show(opt: Option[Date]): void {
     match (opt) {
         Some(d) => { print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string()); },
         None => { print("none"); }
@@ -1171,7 +1171,7 @@ function main(): i32 {
 		{
 			name: "date_parse_iso rejects malformed input",
 			source: `import "std/time";
-function show(s: string) {
+function show(s: string): void {
     match (time.date_parse_iso(s)) {
         Some(_) => { print("ACCEPTED " + s); },
         None => { print("rejected " + s); }
@@ -1211,7 +1211,7 @@ function main(): i32 {
 		{
 			name: "instant_parse_rfc3339 round-trips through format",
 			source: `import "std/time";
-function show(s: string) {
+function show(s: string): void {
     match (time.instant_parse_rfc3339(s)) {
         Some(p) => { print(p.format_rfc3339()); },
         None => { print("rejected"); }
@@ -1230,7 +1230,7 @@ function main(): i32 {
 		{
 			name: "instant_parse_rfc3339 rejects malformed input",
 			source: `import "std/time";
-function show(s: string) {
+function show(s: string): void {
     match (time.instant_parse_rfc3339(s)) {
         Some(_) => { print("ACCEPTED"); },
         None => { print("rejected"); }
@@ -1330,7 +1330,7 @@ function main(): i32 {
 		{
 			name: "Zoned round-trip parse / format",
 			source: `import "std/time";
-function show(s: string) {
+function show(s: string): void {
     match (time.instant_zoned_parse_rfc3339(s)) {
         Some(z) => { print(z.format_rfc3339()); },
         None => { print("rejected"); }
@@ -1372,7 +1372,7 @@ function main(): i32 {
 		{
 			name: "Parser rejects malformed zoned input",
 			source: `import "std/time";
-function show(s: string) {
+function show(s: string): void {
     match (time.instant_zoned_parse_rfc3339(s)) {
         Some(_) => { print("ACCEPTED"); },
         None => { print("rejected"); }
@@ -1429,7 +1429,7 @@ func TestInterpScriptSpanDurationArith(t *testing.T) {
 		{
 			name: "add_span months clamps day-end overflow",
 			source: `import "std/time";
-function show(d: Date) {
+function show(d: Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
@@ -1448,7 +1448,7 @@ function main(): i32 {
 		{
 			name: "add_span years clamps Feb 29 in non-leap target",
 			source: `import "std/time";
-function show(d: Date) {
+function show(d: Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
@@ -1466,7 +1466,7 @@ function main(): i32 {
 		{
 			name: "add_span composes months + days",
 			source: `import "std/time";
-function show(d: Date) {
+function show(d: Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
@@ -1488,7 +1488,7 @@ function main(): i32 {
 		{
 			name: "add_span with negative months walks backward",
 			source: `import "std/time";
-function show(d: Date) {
+function show(d: Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
@@ -1603,7 +1603,7 @@ func TestInterpScriptTimezoneIana(t *testing.T) {
 		{
 			name: "UTC aliases all map to offset zero",
 			source: `import "std/time";
-function show(zone_name: string) {
+function show(zone_name: string): void {
     match (time.timezone_iana(zone_name)) {
         Some(tz) => { print(zone_name + " -> " + tz.name); },
         None => { print(zone_name + " -> none"); }
@@ -1622,7 +1622,7 @@ function main(): i32 {
 		{
 			name: "North American zones map to standard-time offsets",
 			source: `import "std/time";
-function show(zone_name: string) {
+function show(zone_name: string): void {
     match (time.timezone_iana(zone_name)) {
         Some(tz) => { print(zone_name + " -> " + tz.offset_seconds.to_string()); },
         None => { print(zone_name + " -> none"); }
@@ -1642,7 +1642,7 @@ function main(): i32 {
 		{
 			name: "Asia zones cover half-hour offset for India",
 			source: `import "std/time";
-function show(zone_name: string) {
+function show(zone_name: string): void {
     match (time.timezone_iana(zone_name)) {
         Some(tz) => { print(zone_name + " -> " + tz.name); },
         None => { print(zone_name + " -> none"); }

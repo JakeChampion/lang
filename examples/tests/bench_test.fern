@@ -11,13 +11,13 @@ import "std/test";
 // single GC pause inflates the mean but leaves the median
 // honest.
 
-function workload_tiny() {
+function workload_tiny(): void {
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < 100) { sum = sum + i; i = i + 1; }
 }
 
-function workload_string_build() {
+function workload_string_build(): void {
     var s: string = "";
     var i: i32 = 0;
     while (i < 50) { s = s + "x"; i = i + 1; }

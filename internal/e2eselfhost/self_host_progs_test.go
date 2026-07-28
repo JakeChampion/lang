@@ -34,7 +34,7 @@ var selfHostProgCases = []struct {
 	// Cell[i32] — single-slot mutable box. (0+5)*2 = 10.
 	{"cell-get-set", `function main(): i32 { var c: Cell[i32] = cell_new(0); c.set(c.get() + 5); c.set(c.get() * 2); return c.get(); }`, 10},
 	// Cell shared mutation through a function param: 10 bumped 3× = 13.
-	{"cell-shared", `function bump(c: Cell[i32]) { c.set(c.get() + 1); } function main(): i32 { var c: Cell[i32] = cell_new(10); bump(c); bump(c); bump(c); return c.get(); }`, 13},
+	{"cell-shared", `function bump(c: Cell[i32]): void { c.set(c.get() + 1); } function main(): i32 { var c: Cell[i32] = cell_new(10); bump(c); bump(c); bump(c); return c.get(); }`, 13},
 	// Cell[string] — single-pointer string slot (self-host strings are
 	// single-pointer, heap is leak-everything), so it reuses the i32 cell
 	// machinery. "A" then overwritten to "Z"; first byte 'Z' = 90.
@@ -45,7 +45,7 @@ var selfHostProgCases = []struct {
 	// Cell[string] field mutated through a function PARAM (shared mutation) —
 	// exactly how lam_ctr/lamdefs thread through the lambda emitter. "hi" →
 	// "hi!" → "hi!!", len 4.
-	{"cell-string-shared", `struct Box { c: Cell[string] } function bump(b: Box) { b.c.set(b.c.get() + "!"); } function main(): i32 { var b: Box = Box { c: cell_new("hi") }; bump(b); bump(b); return b.c.get().len(); }`, 4},
+	{"cell-string-shared", `struct Box { c: Cell[string] } function bump(b: Box): void { b.c.set(b.c.get() + "!"); } function main(): i32 { var b: Box = Box { c: cell_new("hi") }; bump(b); bump(b); return b.c.get().len(); }`, 4},
 	// Cell[i64] — 8-byte element, exercises lower_i64's cell-get case + the
 	// width-64 store: 5e9 + 1e9 = 6e9, /1e9 = 6 (#5510).
 	{"cell-i64", `function main(): i32 { var c: Cell[i64] = cell_new(5000000000i64); c.set(c.get() + 1000000000i64); return (c.get() / 1000000000i64) as i32; }`, 6},

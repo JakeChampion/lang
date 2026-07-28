@@ -320,7 +320,7 @@ func TestArrayLitAndIndex(t *testing.T) {
 }
 
 func TestAssignToCallIsError(t *testing.T) {
-	_, err := Parse("function f() { f() = 1; }")
+	_, err := Parse("function f(): void { f() = 1; }")
 	if err == nil {
 		t.Fatal("expected parse error for assign-to-call")
 	}
@@ -3311,7 +3311,7 @@ func TestParseStrViewType(t *testing.T) {
 	}
 	// A module-qualified struct reference `str.Foo` stays on the nominal
 	// path (the `str.` guard) rather than parsing as the view type.
-	prog2, err := Parse(`function h(x: str.Foo) {}`)
+	prog2, err := Parse(`function h(x: str.Foo): void {}`)
 	if err != nil {
 		t.Fatalf("str.Foo: %v", err)
 	}

@@ -553,7 +553,7 @@ function main(): i32 {
 		// there is visible to the caller (the deliberate shared-mutable-state
 		// semantics) — 10 bumped three times → 13.
 		{"cell_shared_mutation", `import "std/i32";
-function bump(c: Cell[i32]) { c.set(c.get() + 1); }
+function bump(c: Cell[i32]): void { c.set(c.get() + 1); }
 function main(): i32 {
     var c: Cell[i32] = cell_new(10);
     bump(c); bump(c); bump(c);

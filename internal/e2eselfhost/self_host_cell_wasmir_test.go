@@ -28,7 +28,7 @@ var cellWasmIRCases = []struct {
 	{"read-modify-write", `function main(): i32 { var c: Cell[i32] = cell_new(0); c.set(c.get() + 5); c.set(c.get() * 2); return c.get(); }`, 10},
 	// A Cell passed to a function is shared, not copied — the mutation is
 	// visible to the caller. This is the whole point of the type.
-	{"shared-through-call", `function bump(c: Cell[i32]) { c.set(c.get() + 1); } function main(): i32 { var c: Cell[i32] = cell_new(10); bump(c); bump(c); bump(c); return c.get(); }`, 13},
+	{"shared-through-call", `function bump(c: Cell[i32]): void { c.set(c.get() + 1); } function main(): i32 { var c: Cell[i32] = cell_new(10); bump(c); bump(c); bump(c); return c.get(); }`, 13},
 	// A Cell living in a struct field: the receiver is a field access rather
 	// than a bare ident.
 	{"struct-field", `struct Box { c: Cell[i32] } function main(): i32 { var b: Box = Box { c: cell_new(5) }; b.c.set(b.c.get() + 1); return b.c.get(); }`, 6},

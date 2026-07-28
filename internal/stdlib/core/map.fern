@@ -310,7 +310,7 @@ function __map_val_stride(buf: usize): i32 {
 // rc-aware — frees only at the value's last reference, so an
 // outstanding inc-on-get borrow stays alive. No-op for scalar /
 // non-array values.
-function __map_dec_value(buf: usize, v: usize) {
+function __map_dec_value(buf: usize, v: usize): void {
     var vk: i32 = __map_val_kind(buf);
     if (vk != 2 && vk != 3) { return; }
     var stride: i32 = __map_val_stride(buf);
@@ -602,7 +602,7 @@ pub function __map_delete_impl(m: usize, k: usize): boolean {
     return __map_delete_keyed_impl(m, k, __map_hash_str, __map_eq_str);
 }
 
-pub function __map_clear_impl(m: usize) {
+pub function __map_clear_impl(m: usize): void {
     var buf: usize = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
     __store_i32(buf + 4, 0);
@@ -844,7 +844,7 @@ pub function __mapiter_value_impl(it: usize): usize {
     return __map_retain_val(__load_ptr(it), __load_ptr(__mapiter_entry_addr(it) + __ptr_width()));
 }
 
-pub function __mapiter_advance_impl(it: usize) {
+pub function __mapiter_advance_impl(it: usize): void {
     __store_i32(it + 8, __load_i32(it + 8) + 1);
 }
 

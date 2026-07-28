@@ -311,7 +311,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"struct Foo { n: i32 } " +
 				"pub function (f: Foo) call_one(fn: () => void): Foo { " +
 				"fn(); return Foo { n: f.n + 99 }; } " +
-				"function noop() { } " +
+				"function noop(): void { } " +
 				"function main(): i32 { var f: Foo = Foo { n: 0 }; " +
 				"f = f.call_one(noop); return f.n; }",
 			99,
