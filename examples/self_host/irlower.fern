@@ -13728,6 +13728,31 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // DECLARED type. Keeps a reassign-self `w = w.with(...)` eligible
     // without threading arr_ret_fns through the probe.
     if (is_array_type_name(v.type_name)) { is_arr = true; }
+    // Perceus alias-inc for a CONTAINER READ (#3457): an is_arr binding whose
+    // init reads the buffer out of a container it does not own —
+    // `var vn: string[] = mod.enums[en].variant_names;` (struct field),
+    // `var xs: i32[] = t.0;` (tuple element), `var row: i32[] = grid[i];`
+    // (array-of-array element) — is a second reference to a LIVE buffer the
+    // container still points at. The slot is swept at function exit
+    // (emit_dec_sweep_except_list decs every is_arr slot), so without a retain
+    // that dec frees the field out from under its owner: the enum table's
+    // variant_names buffer was released while the checker still read it, so a
+    // later allocation recycled it and unit-variant lookups started failing
+    // (a bogus E001 on `return (A, 1)`, a missing E030 on a guarded-only
+    // match). Retain it with the same Perceus dup the bare-ident alias uses so
+    // the sweep dec is balanced; a borrowed source simply leaks one count
+    // (sound), never over-frees. Fresh producers (array literal, slice,
+    // array-returning call) are moves and stay un-inc'd, and a hoisted-closure
+    // capture extract (`var <cap> = __env[1+i]`, registered "ENVCAP:" by
+    // lower_func) is excluded: the sweep already skips it as a BORROW, so a
+    // retain here would have no matching dec and leak one count per call.
+    if (is_arr && !alias_inc && util.index_of_str(se.reclaimable_names, "ENVCAP:" + v.name) < 0) {
+        match (v.init) {
+            parser.ExprFieldAccess(_) => { alias_inc = true; },
+            parser.ExprIndex(_) => { alias_inc = true; },
+            _ => {}
+        }
+    }
     // Closure-array: `var fns = [<closure>, ...]` — an array literal whose
     // elements are function VALUES (lambdas or calls to closure-returning
     // fns). Mark the slot so a later `var c = fns[i]` / `for f in fns`
@@ -14710,6 +14735,24 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
             if (afft != "" || asaft != "") { reassign_inc = true; }
         },
         _ => {}
+    }
+    // Container-READ alias on REASSIGN (#3457) — the assign sibling of the
+    // bind-side retain in lower_stmt_var. `xs = h.names` over a `string[]`
+    // field (neither scalar_arr_field_type nor struct/enum_arr_field_read_type
+    // claims it), `xs = t.0` (tuple element), and `xs = g[i]` (array-of-array
+    // element) each make the slot a second reference to a buffer the container
+    // still points at. The slot is swept at function exit, so without the
+    // Perceus dup that dec frees the container's buffer. A borrowed source
+    // leaks one count (sound), never over-frees. An "ENVCAP:" capture extract
+    // is excluded for the same reason as the bind: the sweep skips it as a
+    // borrow, so a retain would leak.
+    if (!reassign_inc && s.is_arr_slot(slot) && slot >= s.n_params
+            && util.index_of_str(s.reclaimable_names, "ENVCAP:" + s.locals[slot].slot_name) < 0) {
+        match (a.value) {
+            parser.ExprFieldAccess(_) => { reassign_inc = true; },
+            parser.ExprIndex(_) => { reassign_inc = true; },
+            _ => {}
+        }
     }
     // A reclaimable REASSIGNED array-payload ENUM local (`b = V([..])`, ENUMRE)
     // whose enum has UNIFORM variant layout: reuse b's existing box IN PLACE —
