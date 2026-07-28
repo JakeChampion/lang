@@ -1202,16 +1202,21 @@ So ~69% of it is the **lexer** (`Token[]`) and ~31% the parser's AST, scaling at
 ~1.6 KB leaked per source line. `load_imports` is not itself at fault — it just
 calls the pair 16 times.
 
-**Minimal repro, and the shape that matters** (`examples/probes/
-large_array_drop_leak.fern`). Build an array, drop it, repeat. Two hypotheses
-died on the way, both worth recording because each looked obvious:
+**Minimal repro** (`examples/probes/large_array_drop_leak.fern`). Build an array,
+drop it, repeat.
 
-- "array of structs with a string field" — does NOT leak (800k allocations, flat
-  peak). `Token` is an **enum**, not a struct.
-- "array of enum values with heap payloads" — does NOT leak either, *at small
-  sizes*. That was the real variable.
+**CORRECTION (same day).** The first version of this section framed the repro as
+shape-dependent — "an array of structs with a string field does NOT leak; `Token`
+is an **enum**, not a struct" — and that is **wrong**. Measured at equal size
+(n=200000), the struct and enum versions leak *identically*, 3.67 MB/round each.
+The struct test that showed a flat peak was run at n=20000, below where the leak
+appears at all; the shape never mattered, only the size did. Element **payloads**
+do matter, though: a payload-free `i32[]` of the same length leaks 0.27 MB/round
+against 3.67 for either payload shape, so the leak is dominated by the elements'
+heap contents rather than the array buffer.
 
-The leak is **size-dependent**, per round, exact peak via `getrusage`:
+The leak is **size-dependent**, per round, exact peak via `getrusage`
+(enum-payload array; the struct-payload array matches it):
 
 | array | rounds 1 -> 16 | leak/round |
 |---|---:|---:|
@@ -1231,13 +1236,22 @@ backend, so it affects `fern` itself and anything that parses repeatedly in one
 process. `fern-lsp` re-loads on every edit, which is exactly the long-running,
 allocation-heavy workload CLAUDE.md now puts in scope.
 
-**Not yet root-caused, deliberately.** `__fern_free`'s large tier bins to 3
-significant bits up to 1 GiB and looks correct on inspection, so the fault is
-somewhere else — the prime suspect is the one this doc already lists as open:
-`__fern_alloc_reuse`'s oversize-donor discard (`.Lsarelo`), still leaking on
-both backends. Naming a cause without proving it is what cost this doc two
-attempts in the checker-miscompile section; the repro above is the tool for
-whoever picks it up.
+**Not yet root-caused, and two suspects are already eliminated.** `__fern_free`'s
+large tier bins to 3 significant bits up to 1 GiB and looks correct on
+inspection. The suspect this doc originally nominated — `__fern_alloc_reuse`'s
+oversize-donor discard — is **cleared for the native backend**: x86-64's
+`__fern_alloc_reuse` calls `__fern_free` on the class-mismatch path before
+allocating, so it cannot leak the donor. (The self-host runtime's `.Lsarelo`
+remains open, but the leak reproduces natively, so it is not the cause here.)
+
+What the evidence points at instead is the reclamation of an array's ELEMENT
+payloads on drop: payload-free `i32[]` leaks ~14x less than the same array with
+a string in each element. But note the leak is not a flat per-element cost
+either — 18.4 B/element at n=200000 versus 3.5 B/element at n=20000 — so a
+simple "the element drop loop is missing" story does not fit the numbers, and
+whoever picks this up should re-measure before assuming one. Naming a cause
+without proving it is what cost this doc two attempts in the
+checker-miscompile section; the repro is the tool.
 
 **Small-program tests cannot guard these analyses — measured.** Building a driver
 with the borrowable fixpoint's cap forced to 1 (un-converged, hence unsound in
