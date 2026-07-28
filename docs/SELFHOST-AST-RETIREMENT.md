@@ -890,11 +890,11 @@ implied. So windowing very much *is* what keeps a large module affordable — th
 correct statement is narrow: *at or below the current budget* the peak is ~95%
 floor, so there is little left to win by windowing harder.
 
-**Parse+modload is ~1.1 GB of the 2.2 GB floor** (`-per-module-count` 1096 MB),
-so the emit call itself adds ~1.1 GB of whole-program setup — consistent with the
-~24 side-table derivations in `compute_wp_bases`, each an O(all_funcs) scan.
-Attributing the remainder to specific tables is the next step and is now a
-well-posed question: it is one constant, not a per-module mystery.
+**Parse+modload is ~1.1 GB of the 2.2 GB floor** (`-per-module-count` 1096 MB on
+gen1; 218 MB on gen0), so the emit call itself adds ~1.1 GB of whole-program
+setup. That remainder is now **attributed** — see "The floor, attributed" below:
+it is not spread across the ~24 derivations but concentrated in two
+interprocedural analyses, and mostly in one.
 
 **The self-host runtime is a multiplier.** gen0 (native runtime) vs gen1
 (self-host runtime), parser, `-assume-eligible`: 1654 -> 2217 MB at 0:1, 1763 ->
@@ -909,6 +909,63 @@ work buys back.
   expensive (407 funcs costs 2.4x the floor). Leave the budget where it is.
 - `-assume-eligible` is load-bearing: without it every per-window peak roughly
   doubles. Any new per-module driver path must pass it.
+
+## The floor, attributed: one interprocedural analysis (2026-07-28)
+
+The section above measured the per-window peak as a whole-program floor and left
+"attribute it to specific code" as the next step. Done — and it is **not** spread
+across the ~24 side-table derivations. It is essentially **two functions**, and
+mostly **one**.
+
+Method: bisect by stubbing derivations in `compute_wp_bases` and re-measuring
+peak RSS. gen0, `-per-module-emit 2 -func-range 0:1 -assume-eligible` (parser,
+a 1-function window, so the floor is all that is being measured):
+
+| configuration | peak MB | delta |
+|---|---:|---:|
+| baseline | 1650 | — |
+| all 24 derivations stubbed empty | 463 | −1187 |
+| the LAST 12 derivations stubbed | 1636 | −14 |
+| `borrowable_params_interproc` + `consume_safe_params_interproc` stubbed | 469 | −1181 |
+| `consume_safe_params_interproc` alone stubbed | 1317 | −333 |
+
+So the split is:
+
+| component | MB | share of peak |
+|---|---:|---:|
+| `irlower.borrowable_params_interproc` | ~848 | 51% |
+| `irlower.consume_safe_params_interproc` | ~333 | 20% |
+| the other 22 derivations, combined | ~6 | 0.4% |
+| rest of the emit call | ~245 | 15% |
+| parse + modload | ~218 | 13% |
+
+The same bisect on `irlower` (module 11) gives the same numbers to within ~50 MB
+(1604 baseline, 415 all-stubbed), consistent with the floor being
+module-independent.
+
+**Why these two.** `borrowable_params_interproc` is a *greatest-fixpoint*
+analysis: it seeds every param optimistically borrowable, then re-runs a
+whole-program escape walker until the registry signature stops changing (its own
+header explains the from-above design and why it replaced the from-below one).
+`consume_safe_params_interproc` runs over the same corpus with the result. Each
+pass walks every function body and allocates; the self-host arena reclaims none
+of it within a process, so the cost is (passes x whole-program walk), paid on
+every `compute_wp_bases` call. Note the measurement establishes the *cost*, not
+the pass count — nobody has instrumented how many passes the whole-compiler call
+graph actually takes, and that is the obvious next thing to look at.
+
+**Consequences.**
+- The floor is not a diffuse "side-table" cost to be shaved 24 ways. It is one
+  iterative analysis to make cheaper, reclaim inside, or avoid re-running.
+- This is exactly what `-per-module-emit-all` already buys: it calls
+  `compute_wp_bases` **once per process** and shares the bases across every unit
+  (`emit_module_ir_unit_flat`'s `b` param), so the 1.2 GB is paid once instead of
+  per unit. The per-process `-per-module-emit` path pays it 36 times over.
+- Cheapest wins, in rough order: cap or memoise the fixpoint's repeated walks;
+  reclaim between passes; or persist the computed bases across processes so the
+  per-process path pays what emit-all pays.
+- A 2x reduction in `borrowable_params_interproc` alone is worth ~425 MB on
+  every window of every module — more than anything windowing can offer.
 
 ## Recommended order
 
