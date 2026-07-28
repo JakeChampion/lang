@@ -1202,56 +1202,58 @@ So ~69% of it is the **lexer** (`Token[]`) and ~31% the parser's AST, scaling at
 ~1.6 KB leaked per source line. `load_imports` is not itself at fault — it just
 calls the pair 16 times.
 
-**Minimal repro** (`examples/probes/large_array_drop_leak.fern`). Build an array,
-drop it, repeat.
+### ROOT CAUSE: an array reassigned by `.append` inside a LOOP is never dropped
 
-**CORRECTION (same day).** The first version of this section framed the repro as
-shape-dependent — "an array of structs with a string field does NOT leak; `Token`
-is an **enum**, not a struct" — and that is **wrong**. Measured at equal size
-(n=200000), the struct and enum versions leak *identically*, 3.67 MB/round each.
-The struct test that showed a flat peak was run at n=20000, below where the leak
-appears at all; the shape never mattered, only the size did. Element **payloads**
-do matter, though: a payload-free `i32[]` of the same length leaks 0.27 MB/round
-against 3.67 for either payload shape, so the leak is dominated by the elements'
-heap contents rather than the array buffer.
+Minimal repro: `examples/probes/loop_append_drop_leak.fern`.
 
-The leak is **size-dependent**, per round, exact peak via `getrusage`
-(enum-payload array; the struct-payload array matches it):
+**Measure this class of bug with `FERN_LEAKCHECK=1`, not RSS.** The native
+backend already has an exact leak detector (#5362 slice 1) that prints
+`leakcheck: allocs=N frees=M live_bytes=K` at exit. Every RSS-derived conclusion
+in the first two versions of this section was wrong in some way, and each one
+collapsed the moment the counters were used instead:
 
-| array | rounds 1 -> 16 | leak/round |
-|---|---:|---:|
-| 39 KB | 9 -> 10 MB | 0.07 MB |
-| 156 KB (-> 256 KiB class) | 9 -> 10 MB | 0.07 MB |
-| 390 KB (-> 512 KiB class) | 10 -> 17 MB | **0.47 MB** |
-| 781 KB (-> 1 MiB) | 10 -> 34 MB | **1.60 MB** |
-| 1562 KB (-> 2 MiB) | 14 -> 69 MB | **3.67 MB** |
+| shape, 4 calls | allocs / frees | verdict |
+|---|---|---|
+| `var xs: i32[] = [1, 2, 3];` | 4 / 4 | reclaims |
+| `xs = xs.append(1);` straight-line | 8 / 8 | reclaims |
+| `var ys: i32[] = xs.append(1);` (new binding) | 8 / 8 | reclaims |
+| **`while (i < 1) { xs = xs.append(i); i = i + 1; }`** | **8 / 4** | **1 block leaked per call** |
 
-Nothing measurable up to the 256 KiB class; from the 512 KiB class up it leaks
-~1.2-2.4x the array size per round (more than the array itself, so the
-geometric-growth cast-offs are going too). That is why the lexer dominates:
-`irlower.fern` produces ~500k tokens, a multi-MB array well past the threshold.
+One iteration is enough. The leak is exactly **one block per call** — the
+array's final buffer — at every size tested (n=2000/20000/200000 all leak 4
+blocks in 4 calls; only `live_bytes` scales, 49 KB / 393 KB / 6.3 MB). The
+growth reallocs are all freed correctly; it is the function-exit drop of the
+loop-carried binding that never happens.
 
-**Scope — this is not a self-host-only concern.** It reproduces on the native
-backend, so it affects `fern` itself and anything that parses repeatedly in one
-process. `fern-lsp` re-loads on every edit, which is exactly the long-running,
-allocation-heavy workload CLAUDE.md now puts in scope.
+That is why the lexer dominates the per-load leak: `tokenize` is
+`out = out.append(tok)` inside a `while (true)`, so every call leaks the entire
+`Token[]`.
 
-**Not yet root-caused, and two suspects are already eliminated.** `__fern_free`'s
-large tier bins to 3 significant bits up to 1 GiB and looks correct on
-inspection. The suspect this doc originally nominated — `__fern_alloc_reuse`'s
-oversize-donor discard — is **cleared for the native backend**: x86-64's
-`__fern_alloc_reuse` calls `__fern_free` on the class-mismatch path before
-allocating, so it cannot leak the donor. (The self-host runtime's `.Lsarelo`
-remains open, but the leak reproduces natively, so it is not the cause here.)
+**Three of this section's earlier claims were RSS artifacts, now retracted:**
 
-What the evidence points at instead is the reclamation of an array's ELEMENT
-payloads on drop: payload-free `i32[]` leaks ~14x less than the same array with
-a string in each element. But note the leak is not a flat per-element cost
-either — 18.4 B/element at n=200000 versus 3.5 B/element at n=20000 — so a
-simple "the element drop loop is missing" story does not fit the numbers, and
-whoever picks this up should re-measure before assuming one. Naming a cause
-without proving it is what cost this doc two attempts in the
-checker-miscompile section; the repro is the tool.
+- ~~"nothing leaks up to the 256 KiB class, then ~1.2-2.4x the array size per
+  round from 512 KiB up"~~ — there is **no size threshold**. Small leaks were
+  simply invisible under a ~9 MB baseline.
+- ~~"an array of structs with a string field does not leak, `Token` is an enum"~~
+  — shape is irrelevant; struct and enum leak identically at equal size.
+- ~~"the leak is dominated by element payloads, `i32[]` leaks 14x less"~~ — the
+  payload objects leak only because they are elements of a buffer that is never
+  dropped, so their drop never runs. `i32[]` leaks the same *one block*; it just
+  has no payloads riding on it.
+
+**Suspects eliminated along the way.** `__fern_free`'s large tier bins to 3
+significant bits up to 1 GiB and is fine. `__fern_alloc_reuse` is cleared for the
+native backend — its class-mismatch path calls `__fern_free` before allocating,
+so it cannot leak the donor. (The self-host runtime's `.Lsarelo` remains open,
+but this leak reproduces natively, so it is not the cause.) The fault is in RC
+insertion for a loop-carried owned binding, not in the allocator.
+
+**Scope — not self-host-only.** It reproduces on the native backend, so it
+affects `fern` itself and anything that parses repeatedly in one process.
+`fern-lsp` re-loads on every edit, which is exactly the long-running,
+allocation-heavy workload CLAUDE.md now puts in scope. `internal/ir` already has
+a `loop_var_drop_test.go`, so this is adjacent to analysis that exists — start
+there.
 
 **Small-program tests cannot guard these analyses — measured.** Building a driver
 with the borrowable fixpoint's cap forced to 1 (un-converged, hence unsound in
