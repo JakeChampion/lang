@@ -379,6 +379,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesStrcat {
 		g.emitStrcatRuntime()
 	}
+	if g.usesStrAppend {
+		g.emitStrAppendRuntime()
+	}
 	if g.usesStrcmp {
 		g.emitStrcmpRuntime()
 	}
@@ -580,10 +583,15 @@ type generator struct {
 	usesCCallF32 [5]bool
 	usesCCallF64 [5]bool
 	usesStrcat   bool
-	usesStrcmp   bool
-	usesPuts     bool
-	usesWrite    bool
-	usesPutchar  bool
+	// usesStrAppend gates `__fern_str_append` — the in-place-when-unique
+	// string self-append the IR emits for `s = s + piece` (#5637). Pulls in
+	// __fern_strcat (its copy path) and __fern_str_dec (the release it
+	// takes over from the assignment's dec-on-overwrite).
+	usesStrAppend bool
+	usesStrcmp    bool
+	usesPuts      bool
+	usesWrite     bool
+	usesPutchar   bool
 	// usesEprint / usesExit — eprint(s) → stderr write+newline;
 	// exit(code) → direct exit_group syscall. Both mirror arm64.
 	usesEprint bool
@@ -884,6 +892,15 @@ func (g *generator) recordUse(target string) {
 		g.usesFree = true    // box_free → __fern_free
 		g.usesAlloc = true   // shares the freelist BSS
 		g.usesRcDec = true   // deferred to otherwise
+	case "__fern_str_append":
+		g.usesStrAppend = true
+		g.usesStrcat = true  // the copy path calls it
+		g.usesMemcpy = true  // both paths copy bytes
+		g.usesAlloc = true   // strcat's fresh buffer + the freelist BSS
+		g.usesStrDec = true  // releases the consumed accumulator
+		g.usesBoxFree = true // str_dec → box_free at rc==1
+		g.usesFree = true
+		g.usesRcDec = true
 	case "__fern_rc_underflow_count":
 		g.usesRcUnderflowCount = true
 	case "__fern_heap_bump_bytes":
@@ -5885,6 +5902,105 @@ func (g *generator) emitStrcatRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_strcat, .-__fern_strcat")
+}
+
+// emitStrAppendRuntime emits `__fern_str_append(a, b) -> data` — the
+// in-place-when-unique string self-append behind `s = s + piece` (#5637).
+// It CONSUMES `a` (the IR only emits it where the assignment was about to
+// overwrite and reclaim that slot, so its dec-on-overwrite is suppressed):
+//
+//   - Fast path — `a` is a uniquely-held heap buffer (LSB clear, at/above
+//     the heap base, rc==1) whose grown length still lands in the SAME
+//     allocator size class: memcpy b's bytes into the slack past a's data,
+//     restamp the length prefix + trailing NUL, and hand the same buffer
+//     back. No allocation, no re-copy of the accumulated prefix.
+//   - Slow path — anything else (inline SSO / literal / shared / the class
+//     boundary crossed): plain __fern_strcat, then __fern_str_dec(a) to end
+//     the old binding. Note __fern_str_dec, not the __fern_rc_dec the
+//     suppressed overwrite used: rc_dec decrements without freeing, so the
+//     accumulator's intermediates were leaked outright on this ABI. Freeing
+//     is the same authorisation the exit sweep already has for these
+//     locals (freeEligible, which the IR checks before emitting the call).
+//
+// Same-class is the exact capacity test rather than a heuristic: every heap
+// string is __fern_alloc_rc1(len + 1) (data + NUL) and __fern_str_dec frees
+// it at the CURRENT len, so a growth that keeps `(len + 9 + 15) & -16`
+// unchanged both fits the block and still frees back to the class it was
+// bumped at. This is the same rounded-size class match __fern_alloc_reuse
+// uses, so alloc / free / reuse / append all agree by construction. (The IR
+// only emits calls here under ast.RcFreeEnabled, which is also what makes
+// the trailing __fern_str_dec a real reclaim rather than a bare decrement.)
+//
+// The slack is the allocator's 16-byte granularity, so an accumulator
+// absorbs ~8-16 short appends per allocation instead of one allocation and
+// a full re-copy each. It is NOT amortised growth — there is no capacity
+// slot in the 8-byte [rc][len] header to hold one — so a long accumulator
+// still re-copies once per class step; the geometric fix is the string
+// builder of #5637 option 2.
+//
+// System V: rdi = a, rsi = b. Returns the data pointer in rax.
+func (g *generator) emitStrAppendRuntime() {
+	g.line("")
+	g.line(".globl __fern_str_append")
+	g.line(".type __fern_str_append, @function")
+	g.label("__fern_str_append")
+	// Frame: rbp + rbx + r12 saves, then 16 bytes of scratch —
+	//   [rbp - 24]: emitStrDataPtr spill slot for an inline `b`
+	//   [rbp - 32]: total length, held across the __fern_memcpy call
+	// 8 (ret) + 8 (rbp) + 16 (saves) + 16 (scratch) = 48, so rsp is
+	// 16-aligned at every call below.
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx")
+	g.emit("push r12")
+	g.emit("sub rsp, 16")
+	g.emit("mov rbx, rdi") // rbx = a
+	g.emit("mov r12, rsi") // r12 = b
+	// --- in-place eligibility on `a` (mirrors __fern_str_dec's guards) ---
+	g.emit("test dil, 1") // inline SSO packed value → not a heap buffer
+	g.emit("jnz .Lstrapp_copy")
+	g.emit("cmp rdi, 0x10000000") // below the heap base → .rodata literal
+	g.emit("jb .Lstrapp_copy")
+	g.emit("mov eax, dword ptr [rdi - 8]") // rc
+	g.emit("cmp eax, 1")
+	g.emit("jne .Lstrapp_copy") // shared, sentinel, or already released
+	g.emitStrLen("rcx", "rdi")  // la
+	g.emitStrLen("rdx", "rsi")  // lb (b may still be inline)
+	g.emit("mov r8d, ecx")
+	g.emit("add r8d, edx") // total = la + lb
+	// Same size class? class(len) = (len + 1 + 8 + 15) & -16.
+	g.emit("lea r9d, [rcx + 24]")
+	g.emit("and r9d, -16")
+	g.emit("lea r10d, [r8 + 24]")
+	g.emit("and r10d, -16")
+	g.emit("cmp r9d, r10d")
+	g.emit("jne .Lstrapp_copy")
+	// --- in place: memcpy(a + la, b_data, lb) ---
+	g.emit("mov [rbp - 32], r8") // total survives the call
+	g.emitStrDataPtr("rsi", "r12", "[rbp - 24]")
+	g.emit("lea rdi, [rbx + rcx]") // dst = a + la; rdx already holds lb
+	g.emit("call __fern_memcpy")
+	g.emit("mov r8, [rbp - 32]")
+	g.emitStrLenStore("r8d", "rbx") // [a - 4] = total
+	g.emit("lea rdi, [rbx + r8]")
+	g.emit("mov byte ptr [rdi], 0") // trailing NUL
+	g.emit("mov rax, rbx")
+	g.emit("jmp .Lstrapp_ret")
+	g.label(".Lstrapp_copy")
+	g.emit("mov rdi, rbx")
+	g.emit("mov rsi, r12")
+	g.emit("call __fern_strcat")
+	g.emit("mov r12, rax") // out
+	g.emit("mov rdi, rbx")
+	g.emit("call __fern_str_dec") // release the consumed accumulator
+	g.emit("mov rax, r12")
+	g.label(".Lstrapp_ret")
+	g.emit("add rsp, 16")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_str_append, .-__fern_str_append")
 }
 
 // emitStrcmpRuntime emits `__fern_strcmp(a, b)` — returns 0
