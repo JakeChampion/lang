@@ -57,7 +57,7 @@ representative subset splits it three ways:
 |---|---|---|---|
 | `no-funcs` | 39 | SCRIPT-shaped source — top-level statements, no `main`, so nothing for `_start` to `call`. The gate's `funcs.len() == 0` arm fires before the `has_main` one. | **CLOSED** — `asmcore.synth_script_main` desugars it to `function main(): i32 { … }` (guarded by `TestSelfHostScriptMainIRX86_64`) |
 | `ineligible-fn` | 105 | Builtin METHODS the AST emitter intercepts and the IR path did not lower. | **CLOSED.** Landed: `is_zero`/`is_positive`/`is_negative`/`is_even`/`is_odd` (#5659), `abs`/`sign` (#5661), `xs.sum`/`product` (#5664), `n.pow` (#5666), `xs.index_of`/`contains` (#5667), `is_empty` (#5669), `s.first_byte`/`last_byte` (#5671), `args_count` (desugared to `args().len()`), `arg_at` (a real op, kind 210 — the `args()[i]` desugar was rejected because it would allocate all of argv per loop iteration, O(1)→O(n); the register backends call a new rc-headered `__fern_arg_at_rc`, wasm a new `$__fern_arg_at` sharing the wasi args imports), `xs.min`/`max` (the `len==0` branch + the Option box moved INTO Fern-source helpers — `asmcore.rt_src_arr_i32_min_max_opt` — so the call site is a plain `call_direct` like `sum`; the helper's composite return type is registered for the scrutinee resolvers via `irlower.builtin_arr_opt_ret_type`, since `opt_ret_fns_of` cannot see a runtime helper). **No `ineligible-fn` items remain** — every builtin the AST emitter intercepts now lowers on the IR path. |
-| `over-budget` | 4 | `import "std/array"` and friends push the merged module past the 512-function budget. Same gate as the whole-compiler bundle, reached by ordinary programs. | **IN PROGRESS.** `asm_load_run`'s default merged path now routes an over-budget-but-eligible program (`512 < merged funcs < 1500`) through a per-module IR concat instead of the AST emitter (`emit_per_module_concat` + `prune_to_reachable`, #5676; guarded by `TestSelfHostOverBudgetPerModuleIR`). The `< 1500` bound keeps the whole-compiler self-compile out (single-process concat of ~2040 funcs OOMs the arena). Remaining: `asm_ir_run`'s AST fallback (single-module — the concat's per-module split does not map) and lifting the budget for the whole-compiler bundle itself (needs the batched file-based per-module emit — slice 2). **`asm_modload_run` is NOT a drop-in**, and the reason is NOT what #5680/#5687 concluded — see "The checker miscompile" below: the treeshake is innocent, and the blocker is an IR-path bug. Two real port-level hazards remain when porting the concat: (1) seeding the concat's `all_structs` with `builtin_view` FIRST (vs `run_per_module`'s builtins-LAST) shifts position-based struct type-IDs — note `inject_builtin_enums` both appends AND dedups, so the fix is to make the identical `builtin_view(dir, all_structs)` call, not merely to append builtins last; (2) the concat cannot carry cross-unit SHAPES — each unit emits `.weak __fern_shp_*` for the LINKER to merge across object files, and one assembly file cannot hold two definitions (`symbol '__fern_shp_parser__ExprIndex' is already defined`). Also note the entry unit of an arbitrary stdlib-using program is often not per-module-eligible, in which case the concat correctly declines; check with `-per-module-emit <last-unit-index>` before blaming the router. |
+| `over-budget` | 4 | `import "std/array"` and friends push the merged module past the 512-function budget. Same gate as the whole-compiler bundle, reached by ordinary programs. | **IN PROGRESS.** `asm_load_run`'s default merged path now routes an over-budget-but-eligible program (`512 < merged funcs < 1500`) through a per-module IR concat instead of the AST emitter (`emit_per_module_concat` + `prune_to_reachable`, #5676; guarded by `TestSelfHostOverBudgetPerModuleIR`). The `< 1500` bound keeps the whole-compiler self-compile out (single-process concat of ~2040 funcs OOMs the arena). Remaining: `asm_ir_run`'s AST fallback (single-module — the concat's per-module split does not map) and lifting the budget for the whole-compiler bundle itself (needs the batched file-based per-module emit — slice 2). **`asm_modload_run` is NOT a drop-in**, and the reason is NOT what #5680/#5687 concluded — see "The checker miscompile" below: the treeshake is innocent, and the blocker was an IR-path container-read over-free, now FIXED. Re-measure before assuming this row is still blocked. Two real port-level hazards remain when porting the concat: (1) seeding the concat's `all_structs` with `builtin_view` FIRST (vs `run_per_module`'s builtins-LAST) shifts position-based struct type-IDs — note `inject_builtin_enums` both appends AND dedups, so the fix is to make the identical `builtin_view(dir, all_structs)` call, not merely to append builtins last; (2) the concat cannot carry cross-unit SHAPES — each unit emits `.weak __fern_shp_*` for the LINKER to merge across object files, and one assembly file cannot hold two definitions (`symbol '__fern_shp_parser__ExprIndex' is already defined`). Also note the entry unit of an arbitrary stdlib-using program is often not per-module-eligible, in which case the concat correctly declines; check with `-per-module-emit <last-unit-index>` before blaming the router. |
 | `no-main` | 0 | Functions but no `main`. Supported by the desugar; not exercised today. | n/a |
 
 Two corrections to the framing that was here before:
@@ -76,10 +76,10 @@ Two corrections to the framing that was here before:
   each of them. So this is a bounded port against an existing reference, not new
   design — but it is the work that actually gates deleting `asm.fern`.
 
-## The checker miscompile: the IR path, not the treeshake (measured 2026-07-28)
+## The checker miscompile: a container-read over-free (found + fixed 2026-07-28)
 
 #5680 and #5687 concluded that treeshaking `asm_modload_run`'s merged module
-corrupts the compiled output. **That is a misattribution**, and it cost two
+corrupts the compiled output. **That was a misattribution**, and it cost two
 attempts. Measured:
 
 | build of the checker | module funcs | `.Lir_*` markers | emitted via | result |
@@ -89,24 +89,47 @@ attempts. Measured:
 
 The treeshake removes ~265 dead functions, which drops the checker **under the
 512-function IR budget** — so it stops falling back to the AST emitter and routes
-IR. The mis-diagnoses follow the PATH, not the pruning; every intermediate point
-agrees (`funcs=507/515/523`, all IR, all wrong).
-
-Confirmed with **zero** functions removed: change both `> 512` gates in
-`asm_ir.fern` to `> 9999` and compile the full 763-function checker — the same
-two failures appear. So:
+IR. The mis-diagnoses followed the PATH, not the pruning; every intermediate point
+agreed (`funcs=507/515/523`, all IR, all wrong). Confirmed with **zero** functions
+removed: changing both `> 512` gates in `asm_ir.fern` to `> 9999` and compiling
+the full 763-function checker reproduced the same two failures —
 
 - **spurious `E001`** on `enum E { A, B } function f(): (E, i32) { return (A, 1); }`
   (a bare variant in a tuple return), and
-- **missing `E030`** on a match whose only guarded arm is `Red when 1 == 2`,
+- **missing `E030`** on a match whose only guarded arm is `Red when 1 == 2`.
 
-are a **self-host IR-path defect**, latent only because the checker is normally
-over budget and therefore always AST-compiled. `TestSelfHostCheckerDifferentialX86_64`
-catches it the moment anything routes the checker through IR.
+**Root cause: a missing Perceus retain on a CONTAINER READ.** An array-typed
+`var` binding whose init reads a buffer out of a container it does not own was
+marked `is_arr` (folded in from the *declared* type) but took no alias-inc, while
+`emit_dec_sweep_except_list` decs **every** `is_arr` slot at function exit. So
+`var vn: string[] = mod.enums[en].variant_names;` — in `check_module`'s E017 walk
+and in `ambiguous_variants` — freed the enum table's variant-name buffer on the
+first call; the next allocation recycled it, after which unit-variant lookups read
+garbage. That is exactly the pair of symptoms above: a variant that no longer
+resolves (`E001`) and a coverage set that no longer matches (`E030`).
 
-This blocks #3457 directly — retiring the AST emitters means everything routes IR
-— and it is independent of the over-budget routing that surfaced it. Do NOT spend
-time hardening the treeshake or the concat against it; fix the IR lowering.
+The scalar-element and struct/enum-element field reads had carried this retain
+since the RC-frontier slices (the `scalar_arr_field_type` /
+`struct_arr_field_read_type` early paths in `lower_stmt_var`). Three shapes fell
+through to the generic path, which had none: a **`string[]` field**, a **tuple
+element** (`var xs: i32[] = t.0;`), and an **array-of-array element**
+(`var row: i32[] = g[i];`). `lower_stmt_assign` had the matching hole on the
+reassign side — its field-read arm was gated on the same three type predicates.
+
+Both are now closed by a generic container-read retain (`ExprFieldAccess` /
+`ExprIndex` init on an `is_arr` slot) in `lower_stmt_var` and
+`lower_stmt_assign`, pinned by `TestSelfHostContainerReadAliasIRX86_64` — which
+exits 99 (rc underflow) without it — and by
+`TestSelfHostCheckerDifferentialX86_64` run with both budget gates lifted, which
+goes from 2 divergences to 0. Do NOT spend time hardening the treeshake or the
+concat against this; it was never their bug.
+
+**Method note for the next bug of this shape.** Stubbing `emit_dec_sweep_except`
+/ `_except_list` to a no-op is the fastest bisector: every divergence went green,
+which localised the fault to RC accounting in one step and turned the search from
+"which of 763 functions miscompiles" into "which slot is decced without a
+matching inc". Path-probing (`-decide` / `-ir-probe`) cannot find this class —
+it reports WHERE a program lowers, not whether the lowered code is right.
 
 **The helper lowerings are shared, but the helper BODIES are not — a debt these
 slices accrued (found + paid 2026-07-27).** `irlower.fern` feeds all three
