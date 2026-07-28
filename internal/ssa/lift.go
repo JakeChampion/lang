@@ -540,10 +540,23 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		}
 		v := l.out.AddOp(l.cur, kind, lhs, rhs)
 		// Propagate width from the IR op so backends can choose
-		// between i32 and i64 opcodes. Floats carry width in their
-		// kind (OpFAdd etc.); Width stays 0 for them.
-		if op.Width == 64 {
+		// between i32 and i64 opcodes. For INTEGER ops width 32 is
+		// the default and stays 0 — that is the convention maskFix
+		// reads. Float arithmetic is the exception: a float value
+		// is held as an f64 bit pattern whatever its type, so f32
+		// ops are distinguished only by Width, and the backends
+		// round to f32 precision (`fround32` / `f32round`) exactly
+		// when they see 32. Dropping it left every f32 expression
+		// computed at f64 precision on the SSA path, so a chain
+		// like `((a - b) * c) * (d * (e * (g - h)))` returned
+		// -360517687 where the interpreter and both native
+		// backends return -360517664 — a value that is not even
+		// representable in f32 (the ulp at that magnitude is 32).
+		switch {
+		case op.Width == 64:
 			l.cur.Ops[len(l.cur.Ops)-1].Width = 64
+		case op.Width == 32 && isFloatArith(kind):
+			l.cur.Ops[len(l.cur.Ops)-1].Width = 32
 		}
 		l.stack = append(l.stack, v)
 	case ir.OpNot:
@@ -1476,4 +1489,15 @@ func mapBinaryArith(k ir.OpKind) OpKind {
 		return OpFGe
 	}
 	return OpInvalid
+}
+
+// isFloatArith reports whether an SSA op is float ARITHMETIC — the ops whose
+// result carries a float value and therefore needs f32 rounding at width 32.
+// The float comparisons produce a 0/1 int, so they are deliberately excluded.
+func isFloatArith(k OpKind) bool {
+	switch k {
+	case OpFAdd, OpFSub, OpFMul, OpFDiv:
+		return true
+	}
+	return false
 }

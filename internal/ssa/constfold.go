@@ -312,6 +312,16 @@ func constFloat(v Value, defs map[int32]*Op) (float64, bool) {
 // fold, no need to gate on rhs == 0 for FDiv — IEEE-754
 // division by zero is well-defined (produces ±Inf or NaN)
 // so the runtime trap question doesn't apply.
+//
+// An f32 op (Width 32) rounds its result back to f32 through
+// `roundW`. Folding at f64 precision and keeping the extra bits
+// does NOT match what the same expression computes at runtime,
+// where every f32 op rounds — the backends emit an fcvt round
+// trip for exactly this reason. Skipping it made constant
+// folding observable: `((a - b) * c) * (d * (e * (g - h)))` over
+// f32 literals folded to -360517687, a value f32 cannot even
+// represent (the ulp at that magnitude is 32), where the
+// interpreter and both native backends produce -360517664.
 func tryFoldFloat(op *Op, defs map[int32]*Op) {
 	if len(op.Args) != 2 {
 		return
@@ -321,15 +331,21 @@ func tryFoldFloat(op *Op, defs map[int32]*Op) {
 	if !lok || !rok {
 		return
 	}
+	roundW := func(v float64) float64 {
+		if op.Width == 32 {
+			return float64(float32(v))
+		}
+		return v
+	}
 	switch op.Kind {
 	case OpFAdd:
-		rewriteFloat(op, lhs+rhs)
+		rewriteFloat(op, roundW(lhs+rhs))
 	case OpFSub:
-		rewriteFloat(op, lhs-rhs)
+		rewriteFloat(op, roundW(lhs-rhs))
 	case OpFMul:
-		rewriteFloat(op, lhs*rhs)
+		rewriteFloat(op, roundW(lhs*rhs))
 	case OpFDiv:
-		rewriteFloat(op, lhs/rhs)
+		rewriteFloat(op, roundW(lhs/rhs))
 	case OpFEq:
 		rewriteBool(op, lhs == rhs)
 	case OpFNe:

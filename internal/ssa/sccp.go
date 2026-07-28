@@ -377,14 +377,20 @@ func evalPureOp(op *Op, val map[int32]latticeVal, defs map[int32]*Op) latticeVal
 			return latticeTop()
 		}
 	}
-	return foldOp(op.Kind, op.Width == 64, args)
+	return foldOp(op.Kind, op.Width, args)
 }
 
 // foldOp evaluates a pure op with all-Const args. Mirrors the
 // per-Kind logic in constfold.go but operates on lattice values
-// rather than mutating an Op in place. w64 is true for i64-width
-// integer ops; it selects 64-bit folding semantics (see foldint.go).
-func foldOp(k OpKind, w64 bool, args []latticeVal) latticeVal {
+// rather than mutating an Op in place.
+//
+// `width` is the op's raw width, not a widened bool, because the
+// integer and float paths read it differently: integers only care
+// whether it is 64 (see foldint.go), while floats must distinguish
+// f32 from f64 to round the folded result to the precision the
+// backend would produce at runtime.
+func foldOp(k OpKind, width int8, args []latticeVal) latticeVal {
+	w64 := width == 64
 	switch k {
 	case OpNeg:
 		if len(args) == 1 && args[0].kind == OpConstInt {
@@ -423,7 +429,7 @@ func foldOp(k OpKind, w64 bool, args []latticeVal) latticeVal {
 		return foldBoolBinary(k, args[0].imm != 0, args[1].imm != 0)
 	}
 	if args[0].kind == OpConstFloat && args[1].kind == OpConstFloat {
-		return foldFloatBinary(k, args[0].f64, args[1].f64)
+		return foldFloatBinary(k, width, args[0].f64, args[1].f64)
 	}
 	return latticeBottom()
 }
@@ -444,16 +450,34 @@ func foldBoolBinary(k OpKind, a, b bool) latticeVal {
 	return latticeBottom()
 }
 
-func foldFloatBinary(k OpKind, a, b float64) latticeVal {
+// foldFloatBinary folds a binary float op. An f32 op (width 32)
+// rounds its result back to f32: folding at f64 precision and
+// keeping the extra bits does not match what the expression
+// computes at runtime, where every f32 op rounds (the backends
+// emit an fcvt round trip for exactly this reason). Without it
+// SCCP turned `((a - b) * c) * (d * (e * (g - h)))` over f32
+// literals into -360517687, a value f32 cannot represent — its
+// ulp at that magnitude is 32 — where the interpreter and both
+// native backends produce -360517664.
+//
+// The comparisons need no rounding: they consume the operands as
+// given and yield a bool.
+func foldFloatBinary(k OpKind, width int8, a, b float64) latticeVal {
+	round := func(v float64) float64 {
+		if width == 32 {
+			return float64(float32(v))
+		}
+		return v
+	}
 	switch k {
 	case OpFAdd:
-		return latticeConstFloat(a + b)
+		return latticeConstFloat(round(a + b))
 	case OpFSub:
-		return latticeConstFloat(a - b)
+		return latticeConstFloat(round(a - b))
 	case OpFMul:
-		return latticeConstFloat(a * b)
+		return latticeConstFloat(round(a * b))
 	case OpFDiv:
-		return latticeConstFloat(a / b)
+		return latticeConstFloat(round(a / b))
 	case OpFEq:
 		return latticeConstBool(a == b)
 	case OpFNe:

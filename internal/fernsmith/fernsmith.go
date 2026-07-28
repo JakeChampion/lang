@@ -1835,13 +1835,59 @@ func (g *Generator) leaf(b *strings.Builder, sc *scope, t gtype, depth int) {
 // the same numeric type so the checker doesn't see a width mismatch.
 // Division and modulo are skipped: division by zero traps and we
 // want every emitted program to be runnable, not just type-correct.
+//
+// For i32 it sometimes produces the HIGH half of an i64 instead —
+// see emitI64HighHalf.
 func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth int) {
+	if t == tI32 && g.flip(0.15) {
+		g.emitI64HighHalf(b, sc, depth)
+		return
+	}
 	op := []string{"+", "-", "*"}[g.ch.intN(3)]
 	b.WriteByte('(')
 	g.expr(b, sc, t, depth+1)
 	fmt.Fprintf(b, " %s ", op)
 	g.expr(b, sc, t, depth+1)
 	b.WriteByte(')')
+}
+
+// emitI64HighHalf writes `((<i64 expr> >> 32i64) as i32)`, routing the top
+// 32 bits of an i64 down into the i32 return path.
+//
+// Without it the exit-code oracle cannot observe the high half of an i64 at
+// all, which makes it blind to a whole class of miscompile. `main` returns a
+// byte, and the two ways an i64 reaches that byte both discard the top half:
+// a truncating `as i32` keeps the low word by definition, and a wrong
+// sign-extension — the actual shape of the #5729 i64[] corruption — only ever
+// rewrites bits 32..63, so the low 8 bits are identical either way. The one
+// existing channel that does observe the high half is a comparison in
+// boolExpr, and it needs a wide value to land on the specific operand that
+// differs, which is rare enough to miss the bug entirely: reintroducing #5729
+// and sweeping the exit-byte corpus through arm64-ssa changed ZERO of 150
+// runnable seeds' exit codes, where the printable corpus (whole stdout, via
+// `.to_string()`) diverged on 3 of 201.
+//
+// A right shift is the cheapest fix: it is total in Fern, needs no new type,
+// and any wide value anywhere in the expression — including an `i64[]`
+// element load — can now reach the returned byte.
+//
+// The operand prefers a value that has been through memory — an `i64[]`
+// element, else an in-scope i64 var — over a fresh sub-expression, because a
+// literal-only operand is constant-folded and so cannot expose a codegen bug
+// no matter how wide it is. Observing a load is the whole point.
+func (g *Generator) emitI64HighHalf(b *strings.Builder, sc *scope, depth int) {
+	b.WriteString("(((")
+	switch {
+	case len(sc.inScope(tArrI64)) > 0:
+		arrs := sc.inScope(tArrI64)
+		fmt.Fprintf(b, "%s[0i32]", arrs[g.ch.intN(len(arrs))])
+	case len(sc.inScope(tI64)) > 0:
+		vars := sc.inScope(tI64)
+		b.WriteString(vars[g.ch.intN(len(vars))])
+	default:
+		g.expr(b, sc, tI64, depth+1)
+	}
+	b.WriteString(") >> 32i64) as i32)")
 }
 
 // boolExpr picks one of: unary `!`, binary `&&`/`||` over booleans,
