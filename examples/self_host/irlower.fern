@@ -40567,6 +40567,28 @@ function unwrap_sole_iife_return(fd: parser.FuncDecl): parser.FuncDecl {
 }
 
 pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
+    // Empty view = "this module is the whole program", the historical behaviour
+    // every caller but the per-module concat wants.
+    return lift_lambdas_view(raw_mod, []);
+}
+
+// lift_lambdas_view is lift_lambdas with an explicit whole-program SIGNATURE
+// view: `view` supplies the function declarations the pass consults to answer
+// "is this callee's parameter fn-typed?" (lift_callee_param_is_fn), "how many
+// params does this fn-name take?" (lift_module_fn_arity) and "what is this
+// wrap trampoline's target signature?" (make_wrap_named_func), while the
+// functions actually LIFTED remain the module's own.
+//
+// Those questions decide whether a fn-VALUE argument gets env-boxed at the call
+// site. Answering them from the module's own functions is correct only when the
+// callee lives in the module. In a per-module build it does not: the caller saw
+// no declaration for `srv.apply(f, n)`, so it passed `f` as a raw code address
+// while the callee — which always dereferences a box — read slot 1 of that
+// address and jumped through garbage (#5698).
+//
+// An empty `view` means "use the module's own functions", so every caller that
+// does not thread a view is byte-identical to before.
+pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
     // Fill omitted trailing arguments from default parameter values before the
     // IR path inspects the module, so `f(5)` to `f(a, b = 128)` reaches the IR
     // as `f(5, 128)`. No-op for default-free modules.
@@ -40577,10 +40599,15 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
     // the same rewritten module; the slice-B.1 lower_func registration then
     // resolves the call-result struct.
     var mod: parser.Module = parser.infer_fnvalue_locals_module(parser.fill_default_args_module(raw_mod));
+    // sigs is the signature table every "what does this callee look like?" query
+    // below reads. It is the whole-program view when one was threaded in, else
+    // the module's own functions (identical to the pre-view behaviour).
+    var sigs: parser.FuncDecl[] = mod.funcs;
+    if (view.len() > 0) { sigs = view; }
     var gfns: string[] = [];
     var gi: i32 = 0;
-    while (gi < mod.funcs.len()) {
-        if (mod.funcs[gi].receiver_type.len() == 0) { gfns = gfns.append(mod.funcs[gi].name); }
+    while (gi < sigs.len()) {
+        if (sigs[gi].receiver_type.len() == 0) { gfns = gfns.append(sigs[gi].name); }
         gi = gi + 1;
     }
     var acc: LiftAcc = LiftAcc { funcs: [], counter: 0 };
@@ -40631,7 +40658,7 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
         // a closure's write to a captured outer scalar is shared by reference
         // (#2850). Must run BEFORE the closure lifts so they see the boxed cell
         // (an `i32[]` capture passed by pointer) instead of a by-value scalar.
-        fd = box_mutated_scalar_captures(fd, gfns, mod.structs, mod.funcs);
+        fd = box_mutated_scalar_captures(fd, gfns, mod.structs, sigs);
         var before: i32 = acc.funcs.len();
         // 0b. Capturing inline lambdas in array-element / struct-field-value
         // position (#2994): hoist each to a unique `<fd>$cloN` and rewrite the
@@ -40640,7 +40667,7 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
         // not a bare ExprLambda they'd skip. The hoisted funcs join `acc` so the
         // drain below re-processes them (their own nested lambdas lift in a later
         // round); a body with no such closure is returned unchanged (fixpoint-safe).
-        var ic: InlineCloStmts = lift_inline_closures(fd, gfns, mod.structs, mod.funcs);
+        var ic: InlineCloStmts = lift_inline_closures(fd, gfns, mod.structs, sigs);
         if (ic.funcs.len() > 0) {
             fd = parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: ic.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, ret_str: fd.ret_str };
             var ici: i32 = 0;
@@ -40657,7 +40684,7 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
             var lgfns: string[] = gfns;
             var gj: i32 = 0;
             while (gj < acc.funcs.len()) { lgfns = lgfns.append(acc.funcs[gj].name); gj = gj + 1; }
-            var cl: ClosureLift = closure_lift_one(cbody, fd, acc, lgfns, mod.structs, mod.funcs);
+            var cl: ClosureLift = closure_lift_one(cbody, fd, acc, lgfns, mod.structs, sigs);
             cbody = cl.body;
             acc = cl.acc;
             more = cl.changed;
@@ -40670,7 +40697,7 @@ pub function lift_lambdas(raw_mod: parser.Module): parser.Module {
         // 3. First-class (escaping) closure: a `return <capturing lambda>` hoists
         // its body to `<fd>$clo`. The lambda stays in the body (irlower lowers it
         // to a make_closure box); only the hoisted target is appended here.
-        var hc: HoistResult = hoist_escaping_closure(fd, gfns, mod.structs, mod.funcs);
+        var hc: HoistResult = hoist_escaping_closure(fd, gfns, mod.structs, sigs);
         if (hc.ok) { acc = LiftAcc { funcs: acc.funcs.append(hc.func), counter: acc.counter + 1 }; }
         // Drain the functions lifted by THIS iteration onto the worklist so their
         // OWN nested lambdas lift in a later round, then clear them (the counter

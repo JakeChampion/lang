@@ -71,6 +71,23 @@ func eraseSurfaceTypes(prog *ast.Program, info *checker.Info) {
 			x.ElemType = eraseStrViewOnly(x.ElemType)
 		case *ast.SliceExpr:
 			x.ElemType = eraseStrViewOnly(x.ElemType)
+		case *ast.Call:
+			// The third checker-stamped type slot on an expression. For
+			// the rewritten builtin-method calls the checker emits
+			// (`__method_Array_push`, the `__method_Map_*` family) these
+			// are the container's element / key / value types, and the
+			// lowering reads them as RUNTIME-SHAPE classifiers: which
+			// grow helper retains the copied elements, which store width
+			// the tail write uses, whether a value needs boxing across
+			// the Map helper boundary. Every one of those tests is a
+			// `.(ast.StringType)` type assertion, so an unerased `str`
+			// falls through all of them and the element is stored
+			// without the retain an owned `string` element gets — the
+			// same use-after-free as the ElemType slots above, reached
+			// through `append` instead of a literal (#5695).
+			for i := range x.TypeArgs {
+				x.TypeArgs[i] = eraseStrViewOnly(x.TypeArgs[i])
+			}
 		}
 		return true
 	})

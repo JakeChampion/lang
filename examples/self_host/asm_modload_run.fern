@@ -211,9 +211,24 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
     var all_funcs: parser.FuncDecl[] = [];
     var all_structs: parser.StructDecl[] = [];
     var known: string[] = [];
+    // Whole-program SIGNATURE view, collected from the pruned parts BEFORE any
+    // lifting: the lift pass decides whether a fn-value argument is env-boxed by
+    // looking the CALLEE up, so a call into a sibling module needs that sibling's
+    // declaration or the value is passed as a raw code address the callee then
+    // dereferences as a box (#5698). Collecting pre-lift is sound because lifting
+    // only ADDS `$wrap` / `__lam_` / `$clo` functions — it never changes the
+    // signature of one already there.
+    var sig_view: parser.FuncDecl[] = [];
+    var si0: i32 = 0;
+    while (si0 < parts.len()) {
+        var pm: parser.Module = prune_to_reachable(parts[si0].mod, reach);
+        var sf: i32 = 0;
+        while (sf < pm.funcs.len()) { sig_view = sig_view.append(pm.funcs[sf]); sf = sf + 1; }
+        si0 = si0 + 1;
+    }
     var pi: i32 = 0;
     while (pi < parts.len()) {
-        var im: parser.Module = parser.infer_ret_types_module(asm_ir.lift_lambdas(prune_to_reachable(parts[pi].mod, reach)));
+        var im: parser.Module = parser.infer_ret_types_module(asm_ir.lift_lambdas_view(prune_to_reachable(parts[pi].mod, reach), sig_view));
         infmods = infmods.append(im);
         var fk: i32 = 0;
         while (fk < im.funcs.len()) {

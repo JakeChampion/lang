@@ -27,12 +27,10 @@ import (
 // always dereferences a box (a bounds-checked element read). So it reads slot 1
 // of a code address and jumps through garbage.
 //
-// The test is SKIPPED until the fix lands, because the failure is a SIGSEGV in a
-// spawned binary rather than a wrong answer, and a skip states the gap without
-// leaving a red suite. Delete the skip with the fix.
+// Fixed by threading a whole-program signature view through the lift pass
+// (irlower.lift_lambdas_view): the caller now sees the sibling module's
+// declaration, so it boxes the argument exactly as it does for a local callee.
 func TestSelfHostCrossUnitFnValue(t *testing.T) {
-	t.Skip("#5698: a fn value passed across a per-module unit boundary is not boxed by the caller; the callee dereferences it as a box and segfaults")
-
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
 	// std/http is imported only to push the program over the 512-function
