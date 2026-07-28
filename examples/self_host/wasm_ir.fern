@@ -4837,3 +4837,174 @@ pub function strcat_streq_helpers(): string {
     o = o + "    (i32.const 1))\n";
     return o;
 }
+
+// clock_funcs emits the i64 clock builtins. clock_time_get(clockid,
+// precision, out) writes an 8-byte nanosecond timestamp at `out`; we
+// reuse the 8-byte scratch at addr 16 (write-then-load, no concurrent
+// use). now_unix_ms = realtime ns / 1_000_000; monotonic_ns = the raw
+// monotonic clock; now_ns = the raw realtime clock.
+pub function clock_funcs(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_now_ns (result i64)\n";
+    o = o + "    (drop (call $clock_time_get (i32.const 0) (i64.const 1000) (i32.const 16)))\n";
+    o = o + "    (i64.load (i32.const 16)))\n";
+    o = o + "  (func $__fern_now_unix_ms (result i64)\n";
+    o = o + "    (drop (call $clock_time_get (i32.const 0) (i64.const 1000) (i32.const 16)))\n";
+    o = o + "    (i64.div_u (i64.load (i32.const 16)) (i64.const 1000000)))\n";
+    o = o + "  (func $__fern_monotonic_ns (result i64)\n";
+    o = o + "    (drop (call $clock_time_get (i32.const 1) (i64.const 1000) (i32.const 16)))\n";
+    o = o + "    (i64.load (i32.const 16)))\n";
+    return o;
+}
+// env_helpers emits the wasi environ imports + $__fern_env(name): the
+// preview-1 two-call environ pattern (sizes_get then get) into bump-heap
+// scratch, a linear scan for a `NAME=` entry, and an Option[string] tag
+// box result (Some(value) / None). Value bytes are copied into a fresh
+// string block. Uses the iovec scratch (addr 0 / 4) for the two sizes —
+// safe because env() completes before any write/print reuses them.
+pub function env_helpers(): string {
+    var o: string = "";
+    o = o + "  (import \"wasi_snapshot_preview1\" \"environ_sizes_get\" (func $environ_sizes_get (param i32 i32) (result i32)))\n";
+    o = o + "  (import \"wasi_snapshot_preview1\" \"environ_get\" (func $environ_get (param i32 i32) (result i32)))\n";
+    return o;
+}
+// env_func emits the $__fern_env body (separate from env_helpers so the
+// imports can be placed in the import section, before functions).
+pub function env_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_env (param $np i32) (result i32)\n";
+    o = o + "    (local $count i32) (local $bufsz i32) (local $ptrs i32) (local $buf i32)\n";
+    o = o + "    (local $nlen i32) (local $i i32) (local $e i32) (local $j i32) (local $ok i32)\n";
+    o = o + "    (local $vstart i32) (local $vlen i32) (local $res i32) (local $tmp i32)\n";
+    o = o + "    (local.set $nlen (i32.load (local.get $np)))\n";
+    o = o + "    (drop (call $environ_sizes_get (i32.const 0) (i32.const 4)))\n";
+    o = o + "    (local.set $count (i32.load (i32.const 0)))\n";
+    o = o + "    (local.set $bufsz (i32.load (i32.const 4)))\n";
+    o = o + "    (local.set $ptrs (call $__fern_alloc (i32.mul (local.get $count) (i32.const 4))))\n";
+    o = o + "    (local.set $buf (call $__fern_alloc (local.get $bufsz)))\n";
+    o = o + "    (drop (call $environ_get (local.get $ptrs) (local.get $buf)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $done (loop $cont\n";
+    o = o + "      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))\n";
+    o = o + "      (local.set $e (i32.load (i32.add (local.get $ptrs) (i32.mul (local.get $i) (i32.const 4)))))\n";
+    o = o + "      (local.set $ok (i32.const 1))\n";
+    o = o + "      (local.set $j (i32.const 0))\n";
+    o = o + "      (block $md (loop $mc\n";
+    o = o + "        (br_if $md (i32.ge_u (local.get $j) (local.get $nlen)))\n";
+    o = o + "        (if (i32.ne (i32.load8_u (i32.add (i32.add (local.get $np) (i32.const 4)) (local.get $j))) (i32.load8_u (i32.add (local.get $e) (local.get $j)))) (then (local.set $ok (i32.const 0)) (br $md)))\n";
+    o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "        (br $mc)))\n";
+    o = o + "      (if (i32.and (local.get $ok) (i32.eq (i32.load8_u (i32.add (local.get $e) (local.get $nlen))) (i32.const 61))) (then\n";
+    o = o + "        (local.set $vstart (i32.add (i32.add (local.get $e) (local.get $nlen)) (i32.const 1)))\n";
+    o = o + "        (local.set $vlen (i32.const 0))\n";
+    o = o + "        (block $vd (loop $vc\n";
+    o = o + "          (br_if $vd (i32.eqz (i32.load8_u (i32.add (local.get $vstart) (local.get $vlen)))))\n";
+    o = o + "          (local.set $vlen (i32.add (local.get $vlen) (i32.const 1)))\n";
+    o = o + "          (br $vc)))\n";
+    o = o + "        (local.set $res (call $__fern_alloc (i32.add (i32.const 4) (local.get $vlen))))\n";
+    o = o + "        (i32.store (local.get $res) (local.get $vlen))\n";
+    o = o + "        (local.set $j (i32.const 0))\n";
+    o = o + "        (block $cd (loop $cc\n";
+    o = o + "          (br_if $cd (i32.ge_u (local.get $j) (local.get $vlen)))\n";
+    o = o + "          (i32.store8 (i32.add (i32.add (local.get $res) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $vstart) (local.get $j))))\n";
+    o = o + "          (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "          (br $cc)))\n";
+    o = o + "        (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "        (i32.store (local.get $tmp) (i32.const 0))\n";
+    o = o + "        (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $res))\n";
+    o = o + "        (return (local.get $tmp))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $cont)))\n";
+    o = o + "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (i32.store (local.get $tmp) (i32.const 1))\n";
+    o = o + "    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (i32.const 0))\n";
+    o = o + "    (local.get $tmp))\n";
+    return o;
+}
+// args_helpers / args_func emit the wasi args imports + $__fern_args():
+// the two-call sizes-then-get pattern, building a string[] array whose
+// elements are fresh string blocks copied from each NUL-terminated argv
+// entry (argv[0] is the program name, matching the native backends).
+pub function args_helpers(): string {
+    var o: string = "";
+    o = o + "  (import \"wasi_snapshot_preview1\" \"args_sizes_get\" (func $args_sizes_get (param i32 i32) (result i32)))\n";
+    o = o + "  (import \"wasi_snapshot_preview1\" \"args_get\" (func $args_get (param i32 i32) (result i32)))\n";
+    return o;
+}
+pub function args_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_args (result i32)\n";
+    o = o + "    (local $argc i32) (local $bufsz i32) (local $ptrs i32) (local $buf i32)\n";
+    o = o + "    (local $arr i32) (local $i i32) (local $e i32) (local $len i32) (local $j i32) (local $blk i32)\n";
+    o = o + "    (drop (call $args_sizes_get (i32.const 0) (i32.const 4)))\n";
+    o = o + "    (local.set $argc (i32.load (i32.const 0)))\n";
+    o = o + "    (local.set $bufsz (i32.load (i32.const 4)))\n";
+    o = o + "    (local.set $ptrs (call $__fern_alloc (i32.mul (local.get $argc) (i32.const 4))))\n";
+    o = o + "    (local.set $buf (call $__fern_alloc (local.get $bufsz)))\n";
+    o = o + "    (drop (call $args_get (local.get $ptrs) (local.get $buf)))\n";
+    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $argc) (i32.const 4))))\n";
+    o = o + "    (i32.store (local.get $arr) (local.get $argc))\n";
+    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $argc))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $argc)))\n";
+    o = o + "      (local.set $e (i32.load (i32.add (local.get $ptrs) (i32.mul (local.get $i) (i32.const 4)))))\n";
+    o = o + "      (local.set $len (i32.const 0))\n";
+    o = o + "      (block $ld (loop $lc\n";
+    o = o + "        (br_if $ld (i32.eqz (i32.load8_u (i32.add (local.get $e) (local.get $len)))))\n";
+    o = o + "        (local.set $len (i32.add (local.get $len) (i32.const 1)))\n";
+    o = o + "        (br $lc)))\n";
+    o = o + "      (local.set $blk (call $__fern_alloc (i32.add (i32.const 4) (local.get $len))))\n";
+    o = o + "      (i32.store (local.get $blk) (local.get $len))\n";
+    o = o + "      (local.set $j (i32.const 0))\n";
+    o = o + "      (block $cd (loop $cc\n";
+    o = o + "        (br_if $cd (i32.ge_u (local.get $j) (local.get $len)))\n";
+    o = o + "        (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $e) (local.get $j))))\n";
+    o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "        (br $cc)))\n";
+    o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (local.get $blk))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $arr))\n";
+    return o;
+}
+// arg_at_func emits $__fern_arg_at(i): the single-element sibling of
+// $__fern_args. Same sizes-then-get pattern, but it copies only argv[i] into
+// one fresh [len][bytes] block instead of building the whole string[] — the
+// point of arg_at being a real op rather than an `args()[i]` desugar, which
+// would rebuild all of argv per call. An out-of-range index yields the empty
+// string, matching what the register backends' bounds-free load would read
+// past argv only if the caller ignored args_count(); returning empty is the
+// safe answer here because wasi hands us argc directly.
+pub function arg_at_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_arg_at (param $idx i32) (result i32)\n";
+    o = o + "    (local $argc i32) (local $bufsz i32) (local $ptrs i32) (local $buf i32)\n";
+    o = o + "    (local $e i32) (local $len i32) (local $j i32) (local $blk i32)\n";
+    o = o + "    (drop (call $args_sizes_get (i32.const 0) (i32.const 4)))\n";
+    o = o + "    (local.set $argc (i32.load (i32.const 0)))\n";
+    o = o + "    (local.set $bufsz (i32.load (i32.const 4)))\n";
+    o = o + "    (if (i32.ge_u (local.get $idx) (local.get $argc)) (then\n";
+    o = o + "      (local.set $blk (call $__fern_alloc (i32.const 4)))\n";
+    o = o + "      (i32.store (local.get $blk) (i32.const 0))\n";
+    o = o + "      (return (local.get $blk))))\n";
+    o = o + "    (local.set $ptrs (call $__fern_alloc (i32.mul (local.get $argc) (i32.const 4))))\n";
+    o = o + "    (local.set $buf (call $__fern_alloc (local.get $bufsz)))\n";
+    o = o + "    (drop (call $args_get (local.get $ptrs) (local.get $buf)))\n";
+    o = o + "    (local.set $e (i32.load (i32.add (local.get $ptrs) (i32.mul (local.get $idx) (i32.const 4)))))\n";
+    o = o + "    (local.set $len (i32.const 0))\n";
+    o = o + "    (block $ld (loop $lc\n";
+    o = o + "      (br_if $ld (i32.eqz (i32.load8_u (i32.add (local.get $e) (local.get $len)))))\n";
+    o = o + "      (local.set $len (i32.add (local.get $len) (i32.const 1)))\n";
+    o = o + "      (br $lc)))\n";
+    o = o + "    (local.set $blk (call $__fern_alloc (i32.add (i32.const 4) (local.get $len))))\n";
+    o = o + "    (i32.store (local.get $blk) (local.get $len))\n";
+    o = o + "    (local.set $j (i32.const 0))\n";
+    o = o + "    (block $cd (loop $cc\n";
+    o = o + "      (br_if $cd (i32.ge_u (local.get $j) (local.get $len)))\n";
+    o = o + "      (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $e) (local.get $j))))\n";
+    o = o + "      (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "      (br $cc)))\n";
+    o = o + "    (local.get $blk))\n";
+    return o;
+}

@@ -327,10 +327,18 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   no double-prefix). This validates the multi-site prefix approach the remaining leaves need.
   Byte-identical WAT for an int-div/rem + f-string + string `+`/`==` + `string_from_bytes`
   program (emitting `$__fern_idiv` / `$__fern_irem` / `$__fern_strcat` / `$__fern_streq` /
-  `$__fern_string_from_bytes`), running under wasmtime. **Next:** the remaining self-contained
-  leaves (args / env / reader / clock / `map_helpers` / `optarrarr_free_func` /
+  `$__fern_string_from_bytes`), running under wasmtime. (9) the process-environment leaf
+  cluster (`args_func` / `arg_at_func` / `args_helpers` / `env_func` / `env_helpers` /
+  `clock_funcs`) — 6 leaves, all MULTI-SITE (IR framing + AST `emit_module_mode`). The
+  AST-path callers use an `if (io) { …_p2() } else { …() }` split for the component-model
+  variant, so the prefix targets ONLY the base `args_func()` / `env_func()` / `clock_funcs()`
+  calls, leaving the `_p2` / `_imports_p2` siblings (which stay in `wasm.fern`) untouched.
+  Byte-identical WAT for an `args()` / `arg_at()` / `env()` / `monotonic_ns()` / `now_unix_ms()`
+  program (emitting `$__fern_args` / `$__fern_arg_at` / `$__fern_env` / `$__fern_monotonic_ns`
+  / `$__fern_now_ns` / `$__fern_now_unix_ms`), running under wasmtime. **Next:** the remaining
+  self-contained leaves (reader / stdin / `map_helpers` / `optarrarr_free_func` /
   `cabi_realloc_helper` / `file_imports` / the file-I/O `*_func`; MULTI-SITE ones use the same
-  prefix-every-call-site approach), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
+  base-only prefix approach), then `emit_ir_module_units`'s framing itself. `emit_ir_rc_bodies_from`
   is LAST — it drags `Ctx` / `release_module_ctx` / `collect_method_types` and the
   shared struct predicates (co-owned by the AST emitter → a cycle until that
   shared layer is relocated).
