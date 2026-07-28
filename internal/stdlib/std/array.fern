@@ -1465,6 +1465,26 @@ pub function chunks[T](xs: T[], size: i32): T[][] {
     return out;
 }
 
+// `chunks_exact(xs, size)` — like `chunks`, but only the full-length
+// groups: any trailing `< size` remainder is dropped
+// (`chunks_exact([1,2,3,4,5], 2)` is `[[1,2],[3,4]]`). `size <= 0`
+// yields empty. Mirrors Rust's `slice::chunks_exact`; the guarantee
+// that every group has exactly `size` elements is what SIMD-style and
+// fixed-record loops want. Each group is a fresh `slice` (a reused
+// loop-local buffer is miscompiled by the self-host RC reuse pass — see
+// `chunks`).
+pub function chunks_exact[T](xs: T[], size: i32): T[][] {
+    var out: T[][] = [];
+    if (size <= 0) { return out; }
+    var n: i32 = xs.len();
+    var i: i32 = 0;
+    while (i + size <= n) {
+        out = out.append(slice(xs, i, i + size));
+        i = i + size;
+    }
+    return out;
+}
+
 // `windows(xs, size)` — every contiguous length-`size` sub-slice,
 // sliding one element at a time: `windows([1,2,3,4], 2)` is
 // `[[1,2],[2,3],[3,4]]`. `size <= 0` or `size > len` yields empty (no
@@ -1577,6 +1597,22 @@ pub function intersperse[T](xs: T[], sep: T): T[] {
     }
     return out;
 }
+
+// `step_by(xs, n)` — a fresh array of every `n`-th element starting at
+// index 0 (`step_by([10,20,30,40], 2) == [10, 30]`). `n <= 0` yields an
+// empty array (there is no sensible non-positive stride). Mirrors Rust's
+// `Iterator::step_by`, minus its panic on a zero step.
+pub function step_by[T](xs: T[], n: i32): T[] {
+    var out: T[] = [];
+    if (n <= 0) { return out; }
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        out = out.append(xs[i]);
+        i = i + n;
+    }
+    return out;
+}
+
 
 // `reduce(xs, f)` — left fold with no explicit seed: the first element
 // is the initial accumulator and `f` combines it with each remaining
@@ -1840,6 +1876,9 @@ pub function (xs: T[]) concat(other: T[]): T[] { return concat(xs, other); }
 // `xs.zip(other)` — positional pairing, truncated to the shorter input.
 pub function (xs: T[]) zip[U](other: U[]): (T, U)[] { return zip(xs, other); }
 
+// `xs.step_by(n)` — every n-th element from index 0; empty for `n <= 0`.
+pub function (xs: T[]) step_by(n: i32): T[] { return step_by(xs, n); }
+
 // `xs.flat_map(f)` — map to `U[]` per element, then flatten.
 pub function (xs: T[]) flat_map[U](f: (T) => U[]): U[] { return flat_map(xs, f); }
 
@@ -1932,4 +1971,7 @@ pub function (xs: T[]) scan[T, A](init: A, f: (A, T) => A): A[] { return scan(xs
 // (last group shorter); `windows` yields every contiguous length-`size`
 // sub-slice, sliding one element at a time. Both return `T[][]`.
 pub function (xs: T[]) chunks[T](size: i32): T[][] { return chunks(xs, size); }
+
+// `xs.chunks_exact(size)` — full-length groups only; drops a short tail.
+pub function (xs: T[]) chunks_exact[T](size: i32): T[][] { return chunks_exact(xs, size); }
 pub function (xs: T[]) windows[T](size: i32): T[][] { return windows(xs, size); }
