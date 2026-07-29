@@ -343,6 +343,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// and bailed to AST even though the `t.N.field` read already lowers. Admitted
 		// when the element struct is leak-safe (visiting-threaded for recursion). = 7.
 		{"structfield-tuple-struct", "struct A { v: i32 } struct Pair { both: (A, A) } function main(): i32 { var p = Pair { both: (A { v: 3 }, A { v: 4 }) }; return p.both.0.v + p.both.1.v; }"},
+		// A struct field whose type is an Option of a TUPLE / a NESTED Option:
+		// `H { t: Option[(i32, i32)] }` / `H { o: Option[Option[i32]] }`. The
+		// struct-field leak-safe proof (opt_payload_ok_d) admitted a scalar or
+		// struct Option payload but not a tuple or a nested Option — both leak-only
+		// one-pointer payloads the local-position path already lowers. Adding those
+		// two arms closes it. tuple: 3+4=7; nested: 7.
+		{"structfield-opt-tuple", "struct H { t: Option[(i32, i32)] } function main(): i32 { var h = H { t: Some((3, 4)) }; match (h.t) { Some(pr) => { return pr.0 + pr.1; }, None => { return 0; } } return 0; }"},
+		{"structfield-opt-opt", "struct H { o: Option[Option[i32]] } function main(): i32 { var h = H { o: Some(Some(7)) }; match (h.o) { Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 1; } } }, None => { return 2; } } return 0; }"},
 		// A struct-array (P[]) / enum-array (E[]) value as a TUPLE element. The
 		// buffer is a heap pointer in the slot (leak mode — elements leak with the
 		// leak-only tuple); the destructure binds mark_arr + the element struct/enum
