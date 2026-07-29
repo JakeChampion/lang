@@ -230,10 +230,16 @@ func unsignedOperandNear(src, suffix, op string, lit *regexp.Regexp) bool {
 		if src[i:i+len(op)] != op {
 			continue
 		}
-		if strings.HasSuffix(src[:i], suffix) {
+		// Skip the parentheses the generator wraps sub-expressions in, so
+		// `(460i64) +? (...)` counts the same as a bare `460i64 +? ...`.
+		// Without this the checked-fold production, whose operands are
+		// always parenthesised, reads as having no wide operand at all.
+		left := strings.TrimRight(src[:i], "( )")
+		if strings.HasSuffix(left, suffix) {
 			return true
 		}
-		if m := lit.FindStringIndex(src[i+len(op):]); m != nil && m[0] == 0 {
+		right := strings.TrimLeft(src[i+len(op):], "( ")
+		if m := lit.FindStringIndex(right); m != nil && m[0] == 0 {
 			return true
 		}
 	}
@@ -323,6 +329,12 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"saturating multiply":          false,
 		"saturating shift":             false,
 		"saturating at i64 or u64":     false,
+		"checked add or subtract":      false,
+		"checked multiply":             false,
+		"checked divide or remainder":  false,
+		"checked shift":                false,
+		"checked at i64 or u64":        false,
+		"checked None arm taken":       false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := fernsmith.GenMain(seed)
@@ -606,6 +618,34 @@ func TestGenFeatureCoverage(t *testing.T) {
 			if wideOperandNear(src, op) {
 				want["saturating at i64 or u64"] = true
 			}
+		}
+		// Checked arithmetic, folded back to a bare integer through a
+		// match. Tracked per operator group because the desugars differ:
+		// a carry / sign-pattern test for +? and -?, a division
+		// round-trip for *?, divisor and MIN/-1 guards for /? and %?,
+		// a count-range test for the shifts.
+		if strings.Contains(src, " +? ") || strings.Contains(src, " -? ") {
+			want["checked add or subtract"] = true
+		}
+		if strings.Contains(src, " *? ") {
+			want["checked multiply"] = true
+		}
+		if strings.Contains(src, " /? ") || strings.Contains(src, " %? ") {
+			want["checked divide or remainder"] = true
+		}
+		if strings.Contains(src, " <<? ") || strings.Contains(src, " >>? ") {
+			want["checked shift"] = true
+		}
+		for _, op := range []string{" +? ", " -? ", " *? ", " /? ", " %? ", " <<? ", " >>? "} {
+			if wideOperandNear(src, op) {
+				want["checked at i64 or u64"] = true
+			}
+		}
+		// The None arm is the half that only runs on an actual
+		// overflow; its presence in the source is what makes the
+		// operator observable rather than a Some passthrough.
+		if strings.Contains(src, "None => ") && strings.Contains(src, "__chk_v") {
+			want["checked None arm taken"] = true
 		}
 	}
 	for feature, ok := range want {
