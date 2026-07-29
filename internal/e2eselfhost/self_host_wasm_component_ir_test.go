@@ -32,12 +32,12 @@ import (
 //     decides which shapes the IR leg may serve at all.
 //
 // The out-of-subset half of the table is as load-bearing as the in-subset
-// half: env / args / read_file component shapes have preview2 helper bodies
-// only on the AST path (wasm.env_func_p2 and friends), so they MUST keep
-// falling through. A gate that widened to admit them would emit a core calling
-// helpers nothing defines. (random and clock USED to sit in that half; their
+// half: the filesystem component shapes have preview2 helper bodies only on the
+// AST path (wasm.readfile_func_p2 and friends), so they MUST keep falling
+// through. A gate that widened to admit them would emit a core calling helpers
+// nothing defines. (random, clock, env and args USED to sit in that half; their
 // *_p2 bodies now live in wasm_ir.fern and mode 2 emits them, so they lower —
-// which is exactly the migration each remaining shape still has ahead of it.)
+// which is exactly the migration the filesystem shapes still have ahead.)
 func TestSelfHostWasmComponentIRPath(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -145,12 +145,28 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		{"noio-random-falls-back", false, `function main(): i32 { return random_i32() & 1; }`, false,
 			[]string{"wasi_snapshot_preview1 random_get"}},
 
+		// env / args read a preview2 LIST, so their cores also export
+		// cabi_realloc — the guest allocator the canonical ABI materialises the
+		// list into, without which `component new` rejects the module.
+		{"io-env", true, `function main(): i32 { match (env("HOME")) { Some(v) => { write(v); }, None => { write("none"); } } return 0; }`, true,
+			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-environment"}},
+		{"io-args", true, `function main(): i32 { var a: string[] = args(); write(a[0]); return 0; }`, true,
+			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-arguments"}},
+		// arg_at (read ONE argument) has no *_p2 body on either path, so the
+		// allowlist refuses it and it falls to the AST emitter. Note what that
+		// emitter produces: a `call $arg_at` with neither a definition nor an
+		// import — an invalid module. Unlike the no-I/O random case below, this
+		// one IS reachable from the CLI: component_shape classifies the args
+		// category as module_calls(mod, "args") and never looks at arg_at, so an
+		// arg_at program is misread as plain-stdout (shape 1) and wrapped by
+		// component_full_io. Fixing it needs a classification change plus an
+		// arg_at_func_p2 — a routing decision, not a mechanical port, so it is
+		// recorded here rather than bundled in.
+		{"arg-at-falls-back", true, `function main(): i32 { write(arg_at(1)); return 0; }`, false,
+			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
+
 		// Out of subset — these must keep falling through to the AST emitter,
 		// whose preview2 helper bodies are the only implementation they have.
-		{"env-falls-back", true, `function main(): i32 { match (env("HOME")) { Some(v) => { write(v); }, None => { write("none"); } } return 0; }`, false,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-environment"}},
-		{"args-falls-back", true, `function main(): i32 { var a: string[] = args(); write(a[0]); return 0; }`, false,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-arguments"}},
 		// i64.to_string() is outside the per-function IR subset (equally so on
 		// the preview1 command core), so this one falls back for a reason that
 		// has nothing to do with component mode — worth pinning, since it is
