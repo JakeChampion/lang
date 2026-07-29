@@ -386,3 +386,71 @@ func TestLeakCheckRetainedParamArm64(t *testing.T) {
 		t.Errorf("retaining callee frees %d of %d, inline form frees %d: the call leaks the caller's reference", hf, ha, iff)
 	}
 }
+
+// The result-struct field-extraction threading that costs lexer.tokenize ~4
+// blocks per token (docs/SELFHOST-AST-RETIREMENT.md): a scanner returns
+// `Res { lex, tok }`, the caller extracts `l = r.lex` to thread the cursor and
+// `out.append(r.tok)` to accumulate. `l = r.lex` — a FieldAccess read out of a
+// struct LOCAL — used to taint `l` conservatively, stranding the whole `l`/`r`
+// cluster (never freed) every iteration. It is a COUNTED alias (the bind inc's
+// it and both `l` and `r` deep-drop), so it reclaims; rc_analysis.go un-taints
+// a field read whose source is a struct local. Standalone probe:
+// examples/probes/result_thread_leak.fern. Pinned by a FULL reclaim
+// (allocs == frees, live_bytes == 0) — before the fix this shape freed 200 of
+// 2400 (92% leaked).
+const resultThreadReclaimSrc = `struct Lx { src: string, i: i32 }
+struct TId { text: string }
+struct TEof {}
+type Tok = TId | TEof;
+struct Res { lex: Lx, tok: Tok }
+function scan(l: Lx): Res {
+    var t: Tok = TId { text: l.src[l.i : l.i + 1] + "" };
+    return Res { lex: Lx { src: l.src, i: l.i + 1 }, tok: t };
+}
+function run(src: string): i32 {
+    var l: Lx = Lx { src: src, i: 0 };
+    var out: Tok[] = [];
+    while (l.i < 5) {
+        var r = scan(l);
+        l = r.lex;
+        out = out.append(r.tok);
+    }
+    return out.len();
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var n: i32 = 0;
+    while (n < 100) {
+        acc = acc + run("abcdefgh");
+        n = n + 1;
+    }
+    return acc % 7;
+}`
+
+func TestLeakCheckResultThreadReclaimX86_64(t *testing.T) {
+	_, stderr, code := runLeakCheckX86_64(t, resultThreadReclaimSrc)
+	if code != 3 {
+		t.Fatalf("exit code %d, want 3", code)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs == 0 {
+		t.Fatalf("no allocations recorded — fixture drift")
+	}
+	if frees != allocs || live != 0 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want fully reclaimed (allocs==frees, live==0): the l = r.lex result-struct threading strands its cluster", allocs, frees, live)
+	}
+}
+
+func TestLeakCheckResultThreadReclaimArm64(t *testing.T) {
+	_, stderr, code := runLeakCheckArm64(t, resultThreadReclaimSrc)
+	if code != 3 {
+		t.Fatalf("exit code %d, want 3", code)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs == 0 {
+		t.Fatalf("no allocations recorded — fixture drift")
+	}
+	if frees != allocs || live != 0 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want fully reclaimed (allocs==frees, live==0): the l = r.lex result-struct threading strands its cluster", allocs, frees, live)
+	}
+}
