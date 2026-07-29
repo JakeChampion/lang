@@ -8960,9 +8960,9 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = s.write("    mov x21, x2\n");           // end
         s = s.write("    ldr x3, [x19]\n");         // src len
         s = s.write("    cmp x21, x3\n");
-        s = s.write("    b.hi __fern_oob_abort\n"); // end > src len (unsigned) → abort
+        s = s.write("    b.ls 1f\n    b __fern_oob_abort\n1:\n"); // end > src len (unsigned) → abort
         s = s.write("    cmp x20, x21\n");
-        s = s.write("    b.hi __fern_oob_abort\n"); // start > end (unsigned) → abort
+        s = s.write("    b.ls 1f\n    b __fern_oob_abort\n1:\n"); // start > end (unsigned) → abort
         s = s.write("    sub x22, x21, x20\n");     // new len = end - start
         s = s.write("    mov x0, x22\n");            // cap = new len
         s = s.write("    bl __fern_arr_box\n");       // -> data ptr in x0 (cap + len written)

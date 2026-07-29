@@ -154,9 +154,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    mov x19, x3\n    mov x20, x4\n    mov x21, x5\n");
         s = s.write("    ldr x1, [x21, #8]\n");       // src len
         s = s.write("    cmp x19, x1\n");
-        s = s.write("    b.hi __fern_oob_abort\n");   // end > src len (unsigned) → abort
+        s = s.write("    b.ls 1f\n    b __fern_oob_abort\n1:\n");   // end > src len (unsigned) → abort
         s = s.write("    cmp x20, x19\n");
-        s = s.write("    b.hi __fern_oob_abort\n");   // start > end (unsigned) → abort
+        s = s.write("    b.ls 1f\n    b __fern_oob_abort\n1:\n");   // start > end (unsigned) → abort
         s = s.write("    mov x0, #24\n    bl __fern_alloc\n");
         s = s.write("    mov x1, #-1\n    str x1, [x0]\n");
         s = s.write("    ldr x1, [x21]\n    add x1, x1, x20\n    str x1, [x0, #8]\n");
@@ -487,12 +487,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             if (o.i32_imm == 1) {
                 s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x1, x1, #1\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
             } else {
-                s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x2, [x0]\n    cmp x1, x2\n    b.hs __fern_oob_abort\n    add x1, x1, #1\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
+                s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x2, [x0]\n    cmp x1, x2\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    add x1, x1, #1\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
             }
         } else if (o.kind_tag == 89) {  // arr_set
             // pop val (top), idx, base; store at [data + (idx+1)*8]. Same bounds
             // check as arr_get: an out-of-range write aborts, never corrupts.
-            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x3, [x0]\n    cmp x1, x3\n    b.hs __fern_oob_abort\n    add x1, x1, #1\n    str x2, [x0, x1, lsl #3]\n");
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x3, [x0]\n    cmp x1, x3\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    add x1, x1, #1\n    str x2, [x0, x1, lsl #3]\n");
         } else if (o.kind_tag == 90) {  // arr_len
             // pop base; length header at [data].
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
