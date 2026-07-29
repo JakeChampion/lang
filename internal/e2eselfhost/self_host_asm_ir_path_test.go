@@ -328,6 +328,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// field-read: 5; recursive Option-match sum over a 3-node list: 1+2+3=6.
 		{"recursive-struct-opt", "struct Node { v: i32, next: Option[Node] } function main(): i32 { var n = Node { v: 5, next: None }; return n.v; }"},
 		{"recursive-list-sum", "struct Node { v: i32, next: Option[Node] } function sum(n: Option[Node]): i32 { match (n) { Some(nd) => { return nd.v + sum(nd.next); }, None => { return 0; } } return 0; } function main(): i32 { var l = Some(Node { v: 1, next: Some(Node { v: 2, next: Some(Node { v: 3, next: None }) }) }); return sum(l); }"},
+		// A NESTED Option whose innermost payload is a struct: `Option[Option[P]]`,
+		// constructed into a local (`Some(Some(P))`) then matched two levels deep.
+		// some_opt_type inferred the local's type by elem_type_tag'ing the inner
+		// `Some(P)`, which defaults a nested Some to "i32" — collapsing the type to
+		// `Option[i32]`, so the outer match bound `inner` as i32 and `match (inner)`
+		// bailed to AST. Recursing some_opt_type recovers `Option[Option[P]]`. = 9.
+		{"nested-opt-struct", "struct P { x: i32 } function main(): i32 { var x: Option[Option[P]] = Some(Some(P { x: 9 })); match (x) { Some(inner) => { match (inner) { Some(p) => { return p.x; }, None => { return 1; } } }, None => { return 2; } } return 0; }"},
 		// A struct-array (P[]) / enum-array (E[]) value as a TUPLE element. The
 		// buffer is a heap pointer in the slot (leak mode — elements leak with the
 		// leak-only tuple); the destructure binds mark_arr + the element struct/enum
