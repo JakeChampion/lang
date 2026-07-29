@@ -1950,6 +1950,10 @@ func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth in
 		g.emitUnsignedAsI32(b, sc, depth)
 		return
 	}
+	if t != tF32 && t != tF64 && depth < 2 && g.flip(0.15) {
+		g.emitCheckedFold(b, sc, t, depth)
+		return
+	}
 	ops := []string{"+", "-", "*", "/"}
 	if t != tF32 && t != tF64 {
 		// Integer-only. `%` and the bit operators are all well-defined
@@ -1974,6 +1978,44 @@ func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth in
 	fmt.Fprintf(b, " %s ", op)
 	g.expr(b, sc, t, depth+1)
 	b.WriteByte(')')
+}
+
+// emitCheckedFold writes `match (a <op>? b) { Some(v) => v, None => c }` for
+// one of the CHECKED operators — `+?` / `-?` / `*?` / `/?` / `%?` / `<<?` /
+// `>>?`, which evaluate to `Some(result)` when the exact result fits the
+// operand type and `None` on overflow, a zero divisor, the signed `MIN / -1`,
+// or an out-of-range shift count (docs/INTEGER-SEMANTICS.md).
+//
+// A checked op cannot substitute for its base operator the way a saturating
+// one can: it yields `Option[T]`, not `T`. Folding it back through a match is
+// what makes it usable anywhere an integer is expected, and it is also the
+// honest shape — the operator exists so a caller HANDLES the overflow, so the
+// corpus should be generating the handling too.
+//
+// Worth generating for the same reason as the saturating family, only more so:
+// there is no checked IR opcode either, and the desugar is a wider spread of
+// per-operator predicates — a carry-out test for unsigned `+?`, a sign-pattern
+// test for signed `+?`, a division round-trip for `*?`, divisor and `MIN / -1`
+// guards for `/?` / `%?`, a range test for the shifts.
+//
+// Verified identical on interp / x86-64 / arm64 / wasm before adding, values
+// matching those documented: `MAX +? 1` → None, `40 +? 2` → Some(42),
+// `84 /? 0` → None, `1 <<? 32` → None, `256 >>? 2` → Some(64).
+//
+// Depth-gated because each fold nests three sub-expressions (both operands and
+// the None fallback); left ungated the corpus grows programs that take far
+// longer to compile than they are worth.
+func (g *Generator) emitCheckedFold(b *strings.Builder, sc *scope, t gtype, depth int) {
+	op := []string{"+?", "-?", "*?", "/?", "%?", "<<?", ">>?"}[g.ch.intN(7)]
+	bind := fmt.Sprintf("__chk_v%d", g.optBindCounter)
+	g.optBindCounter++
+	b.WriteString("(match ((")
+	g.expr(b, sc, t, depth+1)
+	fmt.Fprintf(b, ") %s (", op)
+	g.expr(b, sc, t, depth+1)
+	fmt.Fprintf(b, ")) { Some(%s) => %s, None => ", bind, bind)
+	g.expr(b, sc, t, depth+1)
+	b.WriteString(" })")
 }
 
 // maybeSaturating sometimes swaps an arithmetic operator for its SATURATING

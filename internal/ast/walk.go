@@ -184,6 +184,14 @@ func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 		for i := range x.Args {
 			x.Args[i] = rewriteExpr(x.Args[i], fn)
 		}
+	case *Lambda:
+		// Same as the nested-FuncDecl case in rewriteStmtChildren: an
+		// anonymous function's body is ordinary code and needs the
+		// post-check rewrites. Reached before closureconv hoists the
+		// Lambda into a top-level FuncDecl.
+		if x.Body != nil {
+			rewriteStmtChildren(x.Body, fn)
+		}
 	case *MakeClosure:
 		for i := range x.Captures {
 			x.Captures[i] = rewriteExpr(x.Captures[i], fn)
@@ -277,6 +285,22 @@ func rewriteStmtChildren(n Node, fn func(Expr) Expr) {
 			if x.Arms[ai].Body != nil {
 				rewriteStmtChildren(x.Arms[ai].Body, fn)
 			}
+		}
+	case *FuncDecl:
+		// A nested function is a FuncDecl in STATEMENT position, and its
+		// body is ordinary code that the post-check rewrites apply to
+		// just as much as any other: the checked-arithmetic desugar
+		// (Binary.CheckedLowered), composite operator overloads
+		// (ArithCall / NegCall / EqCall / CmpCall), the error-converting
+		// `?` (TryOp.Lowered), and the default-i32 width stamp.
+		//
+		// Omitting this case did not lose the rewrite quietly — it made
+		// the IR reject the un-desugared node ("unsupported binary
+		// `+?`"), so a checked operator or an overloaded `+` inside a
+		// nested function failed to COMPILE while the interpreter, which
+		// evaluates the original AST, ran it fine.
+		if x.Body != nil {
+			rewriteStmtChildren(x.Body, fn)
 		}
 	case *Break, *Continue:
 		// leaves
