@@ -1350,6 +1350,24 @@ mechanism, unproven: `escapeOwned` deliberately does NOT taint a consuming-match
 binding, so once the receiver stops inheriting the element's taint, the buffer's
 deep drop and the binding's own exit sweep can both dec the same element.
 
+**The load leak, measured EXACTLY (2026-07-29) — it is not "a buffer per call".**
+Every earlier figure in this section came from RSS. Rebuilding the load-bench
+driver with `FERN_LEAKCHECK=1` gives block counts instead, and they say something
+much blunter (both scale exactly x2 at N=2, so this is per-load, not startup):
+
+| workload | allocs | frees | leaked | freed |
+|---|---:|---:|---:|---:|
+| `tokenize` only, `irlower.fern` | 1,275,345 | 106,086 | **1,169,259** | 8.3% |
+| full load, whole compiler | 6,517,275 | 1,137,197 | **5,380,078** | 17.4% |
+
+**Over 80% of every allocation in the lex/parse path is never freed** — ~28
+blocks per source line, which is the whole token population (each token is an
+enum box plus a payload string), not merely the `Token[]` buffer holding them.
+So the target is not a single missing drop site: it is that element reclamation
+for the token/AST graph essentially does not happen. Anyone picking this up
+should start from these counters, not RSS, and watch the FREED FRACTION rather
+than megabytes.
+
 **Method note for the next attempt: `internal/e2e` is not the gate for an RC
 change — `internal/e2eselfhost` is.** Compiling the whole self-host compiler is
 what exercises RC at a scale where an over-release shows; the native e2e suite
