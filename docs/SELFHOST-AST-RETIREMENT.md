@@ -1862,6 +1862,48 @@ tier → leak.
   just from a driver flag the test harness passes. That is the real slice-3 task;
   the error swap is the step AFTER it, not instead of it.
 
+  **CORRECTION (2026-07-29): the `< 1500` cap is NOT the OOM the paragraph above
+  says it is.** Raising it to 2500 and running `TestSelfHostStage2Compiler` (1958
+  merged funcs) produces **21 duplicate-symbol errors and ZERO memory
+  indicators** — no `signal: killed`, no exit 137, no allocation failure. The
+  17.6 MB stream assembles fine once the symbols are fixed. So the batched-emit
+  work this paragraph scopes is aimed at a wall that isn't there at 1958 funcs.
+  Two real blockers sit behind that bound instead, and they are different from
+  each other:
+
+  1. **A symbol collision in the concat's dedup — FIXED.** A unit emits four
+     kinds of one-per-PROGRAM `.weak` symbol: `__fern_shp_<T>`,
+     `__fn___struct_drop_<T>`, `__fn___struct_arr_elems_drop_<T>`,
+     `__fn___field_reclaim_<T>`. `dedupe_shape_defs` special-cased the first and
+     dropped exactly ONE following line — correct for a shape (the two-line
+     `.weak SYM` / `SYM: .ascii …` pair), useless for the other three, which are
+     multi-line function BODIES. All 21 errors were those helpers (and their
+     `.Lstd_*` / `.Lsaed_*` local labels) for three `parser__` struct types the
+     stage-2 compiler's units share. Replaced by one uniform rule — on a
+     duplicate `.weak SYM`, skip the whole definition, stopping at the next
+     column-0 non-`.L` line — which deletes the special case rather than adding
+     to it, and is renamed `dedupe_weak_defs` since it was never shape-specific.
+     **Soundness checked, not assumed**: extracting every duplicate definition
+     from the emitted stream shows 13 duplicated symbols and **0 whose copies
+     differ**, so keeping the first loses nothing. (That mattered: unlike an
+     interned shape string, a struct-drop BODY depends on the emitting unit's
+     struct-decl view, so identical copies is a property to verify rather than
+     take for granted.)
+  2. **A runtime segfault in the built compiler — OPEN, and the actual gate.**
+     With the symbols deduped the stage-2 asm assembles and links, and the
+     resulting compiler *segfaults* (`TestSelfHostStage2Bootstrap`: "stage 1:
+     self-hosted compiler asm = 17635180 bytes" then `signal: segmentation
+     fault`; every `TestSelfHostStage2Compiler` case fails). That is a
+     correctness bug in the >=1500 per-module concat path, unrelated to symbols
+     and unrelated to memory.
+
+  **So the bound stays at `< 1500` for now** and the dedup fix lands on its own:
+  it is a live latent bug at ANY size (a program in the current 512..1500 band
+  whose modules share a struct type hits the same assembler error today), it is
+  necessary for lifting the bound, and it is not sufficient. The next attempt
+  should start from blocker 2 with the bound temporarily raised, not from the
+  batched-emit plan — and should not re-derive the OOM story.
+
   **What the attempt did establish**, and what survives it: exactly three callers
   needed the opt-out, and one is a ROUTINE test — step 7 of
   `TestSelfHostModloadPerModuleWholeCompilerX86_64` drives the per-module-built

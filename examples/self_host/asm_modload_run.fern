@@ -57,25 +57,41 @@ function builtin_view(dir: string, base: parser.StructDecl[]): parser.StructDecl
     return parser.inject_builtin_enums(out);
 }
 
-// dedupe_shape_defs drops repeated shape-symbol DEFINITIONS from a concatenated
-// unit stream.
+// dedupe_weak_defs drops repeated `.weak` DEFINITIONS from a concatenated unit
+// stream, keeping the first of each.
 //
-// Per-module units intern a struct/enum shape as a `.weak` global
-// (`__fern_shp_<name>`, asmcore.shape_sym) so two units referencing the same
-// shape resolve to ONE address and pointer-equality discrimination holds across
-// the module boundary. That relies on the LINKER merging the weak copies, which
-// only happens when each unit is its own object file — the batched per-module
-// build. Concatenating units into a single assembly stream instead hands `as`
-// two definitions of one symbol in one file, which is an error
-// (`symbol __fern_shp_HttpRequest is already defined`), not a merge.
+// A per-module unit emits four kinds of symbol that are one-per-PROGRAM but that
+// any unit needing them emits for itself, each marked `.weak` so the linker
+// merges the copies:
 //
-// So keep the first definition of each shape and drop the rest; every unit's
-// REFERENCES (leaq __fern_shp_X) then bind to that one definition, which is
-// exactly the address the weak merge would have produced. The emitter writes
-// each definition as an exact two-line pair — `.weak SYM` then `SYM: .ascii …`
-// (see emit_module_ir_unit_flat's shape_lits block) — so dropping a duplicate
-// means dropping that line and the one after it.
-function dedupe_shape_defs(asm_text: string): string {
+//   __fern_shp_<T>                     interned struct/enum shape (asmcore.shape_sym)
+//   __fn___struct_drop_<T>             per-type deep struct drop (asm_ir.fern)
+//   __fn___struct_arr_elems_drop_<T>   its element-walking sibling
+//   __fn___field_reclaim_<T>
+//
+// The weak merge only happens when each unit is its own object file — the
+// batched per-module build. Concatenating units into a single assembly stream
+// instead hands `as` two definitions of one symbol in one file, which is an
+// error (`symbol __fern_shp_HttpRequest is already defined`), not a merge.
+// Keeping the first definition and dropping the rest gives every unit's
+// REFERENCES one definition to bind to, which is exactly the address the weak
+// merge would have produced.
+//
+// This used to special-case `__fern_shp_` alone and drop exactly ONE following
+// line, because a shape definition is the two-line pair `.weak SYM` / `SYM:
+// .ascii …`. The three drop/reclaim helpers are multi-line function BODIES, so
+// they collided anyway: that is what capped the per-module rescue below at
+// nfuncs < 1500 — a program whose modules share struct types (three `parser__`
+// types across the stage-2 compiler's units) hit
+// `symbol __fn___struct_drop_parser__ParamDecl is already defined`, which reads
+// like the memory wall this file long attributed the bound to and is not.
+//
+// So skip the whole definition, whatever its length. After a duplicate
+// `.weak SYM` comes the `SYM:` line, then indented instructions and `.L…:`
+// local labels; the first other column-0 line starts the next definition and
+// ends the skip. The emitter writes no blank lines inside these bodies, and a
+// blank line dropped at a boundary is whitespace either way.
+function dedupe_weak_defs(asm_text: string): string {
     // Accumulate through the global strbuf (O(1) amortised per append): every
     // unit has already been emitted into `asm_text`, so no emitter is using it,
     // and `out = out + line` would be O(N²) over a ~400 KB stream.
@@ -83,16 +99,23 @@ function dedupe_shape_defs(asm_text: string): string {
     var seen: string[] = [];
     var i: i32 = 0;
     var n: i32 = asm_text.len();
-    var skip_next: boolean = false;
+    // 0 = emitting, 1 = drop the `SYM:` line of a duplicate, 2 = drop its body.
+    var state: i32 = 0;
     while (i < n) {
         var j: i32 = i;
         while (j < n && asm_text[j] != 10) { j = j + 1; }   // 10 = '\n'
         var line: string = asm_text[i:j] + "";
         var drop: boolean = false;
-        if (skip_next) { drop = true; skip_next = false; }
-        else if (line.len() > 17 && line[0:17] == ".weak __fern_shp_") {
+        if (state == 1) { drop = true; state = 2; }
+        else if (state == 2) {
+            if (line.len() == 0) { drop = true; }
+            else if (line[0:1] == " " || line[0:1] == "\t") { drop = true; }
+            else if (line.len() > 2 && line[0:2] == ".L") { drop = true; }
+            else { state = 0; }
+        }
+        if (state == 0 && !drop && line.len() > 6 && line[0:6] == ".weak ") {
             var sym: string = line[6:line.len()] + "";
-            if (util.has_str(seen, sym)) { drop = true; skip_next = true; }
+            if (util.has_str(seen, sym)) { drop = true; state = 1; }
             else { seen = seen.append(sym); }
         }
         if (!drop) { strbuf_append(line); strbuf_append("\n"); }
@@ -214,7 +237,7 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
         out = out + asm_ir.emit_module_ir_unit(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_structs, 0, 0 - 1, []);
         idx = idx + 1;
     }
-    return dedupe_shape_defs(out);
+    return dedupe_weak_defs(out);
 }
 
 // run_per_module drives the per-module build of the loaded program (#3451 step 4
