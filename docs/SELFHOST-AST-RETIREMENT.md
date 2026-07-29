@@ -1636,13 +1636,53 @@ is WRONG OUTPUT rather than a segfault (`(a * 2.0) as i64` prints `0`, want
 `5000000000`), and once the driver binary is built each case fails in
 0.02-0.13 s instead of a ~5-minute compile. Build the driver once, then iterate.
 
+**The drop-order culprit is ONE function: `parser__parse_primary`.** Found by
+bisection rather than by guessing at shapes, and worth recreating the same way
+if this is picked up again. Gate the reversal on a hash of the function name —
+`fnv32a(fn.Name) % 1000` in `[LO,HI)` from two env vars, neutral (byte-identical
+to main) when unset — then binary-search the range against the fast reproducer
+above. Ten driver builds, ~20 minutes, converges to a single bucket:
+
+    [0,1000) FAILS -> [0,500) FAILS -> [0,250) FAILS -> [0,125) passes
+    -> [125,187) FAILS -> [156,171) FAILS -> [163,167) FAILS -> bucket 166
+
+Bucket 166 holds exactly two functions, and reversing each ALONE separates them
+cleanly: `parser__mono_stmt` reversed is **fine** (`ok  104.987s`);
+`parser__parse_primary` reversed **fails** (`FAIL  108.160s`). Everything else in
+the compiler can have its sweep reversed without breaking the build.
+
+**What its sweep looks like.** `parse_primary` is 306 lines with **58 distinct
+rc-tracked locals** in the exit sweep, 22 of them `eligible=true`. The
+structural feature is that a destructuring `var (a, b, c) = f()` emits a hidden
+`__destruct_<line>_<col>` TUPLE local that is `eligible=true` (a deep walk that
+decs elements and frees the buffer) declared IMMEDIATELY BEFORE its component
+locals, which are `eligible=false` (plain, non-freeing decs):
+
+    [6] __destruct_1600_29  eligible=true   (ParamDecl, string, i32, i32, Par)
+    [7] ltpr_param          eligible=false  ParamDecl
+    [8] ltpr_destr_names    eligible=false  string
+    [9] ltpr_p              eligible=false  Par
+
+That is an owner-before-views ordering encoded in DECLARATION ORDER — the deep
+walk runs first, the plain decs after. It is the same owner/view relationship as
+the counted-view leak in the table above, but wanting the OPPOSITE order, which
+is a plausible reason a blanket reversal cannot satisfy both. It also has six
+locals declared twice in disjoint branches (`elems`, `iife`, `look`, `no_args`,
+`er_expr`, `er_p`); since `b.locals` is keyed by NAME they share one slot and are
+swept once.
+
+**Small-program extraction has now failed five times.** Neither a struct holding
+an owned array, nor that shape split across mutually-exclusive branches, nor a
+`var (a, b) = f()` destructuring of a `(string, i32[])` diverges between forward
+and reverse — all match their interp oracle with identical leakcheck totals. The
+effect needs `parse_primary`'s scale, so the next attempt should bisect WITHIN
+the function (drop-index ranges rather than function-name buckets) instead of
+trying to write the small program from the outside.
+
 **What is still unknown:** what the escape taint protects BEYOND the exit sweep,
-and why RELEASE ORDER among a function's locals is load-bearing at all. Both
-break only at self-host-driver scale — no small program has yet been found that
-diverges, which is why the probe suite, every unit suite, and most of
-`internal/e2e` miss them entirely. A future attempt should hunt that small
-program using the fast reproducer above, rather than re-deriving the leak
-mechanism, which is fully characterised above.
+and why `parse_primary` specifically depends on release order. The remaining
+suspects, in order, are the eligible-tuple/ineligible-component pairs above and
+the six name-shared slots.
 
 **Method note for the next attempt: `internal/e2e` is not the gate for an RC
 change — `internal/e2eselfhost` is.** Compiling the whole self-host compiler is
