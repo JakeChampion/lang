@@ -97,7 +97,8 @@ Looked, with the flag: probe each shape that can yield an `Option`, run it under
 the interpreter oracle.
 
 **Six shapes lower correctly** — `bs[i].o`, `x.i.o`, `bs[i].o?`, `t.N.o`,
-`b.method()`, `Some(f())`. **Four gaps, all with SAFE AST fallbacks** — the AST
+`b.method()`, `Some(f())`. **Four gaps, three since closed, all with SAFE AST
+fallbacks** — the AST
 emitter compiles each of them correctly, so unlike #5642 nothing is
 miscompiled; only the routing is wrong:
 
@@ -105,13 +106,43 @@ miscompiled; only the routing is wrong:
 |---|---|
 | `aoa[i][j]` — index whose base is an index | **closed** — shared `arr_tag_of` |
 | `t.N[i]` — index whose base is a tuple element | **closed** — same |
-| `fs[i]()` — call of a fn-typed array element returning `Option` | **open**, and deeper than a resolver arm: even `var f = fs[i]` bails, so the element's fn type is not recovered at all |
-| `None as Option[T]` — an ascription scrutinee | **open** — the `ExprUnary` arm handles the `as?_` downcast tag but not a plain ascription |
+| `match (f())` where `f` is a closure LOCAL | **open** — see below; first recorded as `fs[i]()`, which was the wrong characterisation |
+| `None as Option[T]` — an ascription scrutinee | **closed** — shared `unary_opt_type` |
 
-Two things worth carrying forward. First, **`TestSelfHostAsmIRPath` is 79/80
-clean under the flag** (the one bail is the ascription case, which that suite
-already runs `ir=false`) — independent evidence the per-function IR subset is as
-mature as CLAUDE.md claims, measured rather than asserted. Second, **a
+#### The one that is still open, characterised properly
+
+It was first written down as "calling a fn-typed array element returning
+`Option`". **The array is incidental.** Measured on the merged tree, with
+`FERN_STRICT_IR` as the oracle for routing and the interpreter for the answer:
+
+| shape | |
+|---|---|
+| `var f: () => Option[i32] = <lambda>; match (f())` | **bails** |
+| `var f: () => Option[i32] = g;` (a NAMED fn) `match (f())` | lowers — `try_opt_type` resolves it via `opt_ret_type` |
+| `function call(f: () => Option[i32])` … `match (f())` | lowers — the `closure_opt_rets` param seeding |
+| `var o: Option[i32] = f(); match (o)` | **lowers** — so the call itself is fine |
+| `var fs: (() => i32)[]; fs[0]()` | lowers — non-`Option` closure arrays are fine |
+
+So it is not "fn-typed locals are unsupported", not "`Option` through a closure
+is unsupported", and not about arrays. It is specifically **a match whose
+scrutinee is a call through a closure local**, and binding the result to an
+annotated local first is a working rewrite.
+
+**Do not assume the fix is a `closure_opt_rets` entry for the local.** That was
+tried — `mark_closure_opt_ret` recorded at the `mark_closure_local` site, with
+the return recovered from the lambda's own `ret_type` — and it is **completely
+inert**: byte-identical verdicts on every probe above, so the change was
+reverted rather than landed. `clo_init` *is* true for a lambda init
+(`irlower.fern`, the `ExprLambda(_) => { clo_init = true; }` arm), so the code
+runs; the read side simply is not what declines. Whatever bails is upstream of
+the scrutinee-type recovery, and the next attempt should **instrument the bail**
+rather than reason about which resolver arm is missing — three successive
+hypotheses about that were wrong.
+
+Two things worth carrying forward. First, **`TestSelfHostAsmIRPath` is 80/80
+clean under the flag** once the ascription case closed — independent evidence the
+per-function IR subset is as mature as CLAUDE.md claims, measured rather than
+asserted. Second, **a
 safe-fallback gap is invisible to the differential suites by construction**: the
 exit codes agree, so only a routing assertion or the flag can see it. That is
 the class of finding the flag exists for, and it is the opposite of #5642's
