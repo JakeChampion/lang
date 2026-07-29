@@ -28,6 +28,11 @@ import (
 // The split was ARITY, not nesting: a one-param named fn and a lambda were
 // already boxed and already correct, in both the plain and array-nested forms.
 // All four are pinned here so a future change cannot fix one and regress another.
+//
+// The Option / Result cases below are the same disagreement one container over —
+// the variant-constructor walk skips a zero-arg payload for the same const
+// reason, while the match-arm bind dispatches it env-first regardless — and take
+// the same annotation-resolves-it fix.
 var tupleFnZeroArgCases = []struct {
 	name string
 	src  string
@@ -57,6 +62,27 @@ var tupleFnZeroArgCases = []struct {
 	// UNANNOTATED tuple carrying a const — no declared fn segment, so the
 	// pre-pass must not fire at all.
 	{"unannotated-tuple-const", "const K: i32 = 9;\nfunction main(): i32 { var t = (K, 4); return t.0 + t.1; }", 13},
+
+	// ---- the same disagreement one container over: Option / Result payloads ----
+	// `Some(f)` / `Ok(f)` / `Err(f)` are boxed by the variant-constructor walk
+	// when the payload has >= 1 param, and skipped when it is zero-arg, for the
+	// same const reason — while the match-arm bind dispatches the payload
+	// env-first regardless. Same annotation-resolves-it fix.
+	{"option-zeroarg", "function a1(): i32 { return 3; }\nfunction main(): i32 { var o: Option[() => i32] = Some(a1); match (o) { Some(f) => { return f(); }, None => { return 0; } } return 9; }", 3},
+	{"result-ok-zeroarg", "function a1(): i32 { return 3; }\nfunction main(): i32 { var r: Result[() => i32, string] = Ok(a1); match (r) { Ok(f) => { return f(); }, Err(e) => { return 0; } } return 9; }", 3},
+	// Err takes Result's SECOND type arg — a fix that always indexes arg 0 passes
+	// the two rows above and fails this one.
+	{"result-err-zeroarg", "function a1(): i32 { return 3; }\nfunction main(): i32 { var r: Result[i32, () => i32] = Err(a1); match (r) { Ok(v) => { return v; }, Err(f) => { return f(); } } return 9; }", 3},
+	// Already-working payload shapes.
+	{"option-onearg", "function a1(x: i32): i32 { return x + 3; }\nfunction main(): i32 { var o: Option[(i32) => i32] = Some(a1); match (o) { Some(f) => { return f(1); }, None => { return 0; } } return 9; }", 4},
+	{"option-lambda", "function main(): i32 { var o: Option[() => i32] = Some(() => 3); match (o) { Some(f) => { return f(); }, None => { return 0; } } return 9; }", 3},
+	// A fn-typed Option that is NONE — the pre-pass must not choke on a payloadless
+	// initialiser.
+	{"option-none", "function a1(): i32 { return 3; }\nfunction main(): i32 { var o: Option[() => i32] = None; match (o) { Some(f) => { return f(); }, None => { return 5; } } return 9; }", 5},
+	// Const-read regressions for the variant pre-pass, mirroring the tuple ones.
+	{"option-const-payload", "const K: i32 = 9;\nfunction main(): i32 { var o: Option[i32] = Some(K); match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 9},
+	{"result-const-payload", "const K: i32 = 9;\nfunction main(): i32 { var r: Result[i32, string] = Ok(K); match (r) { Ok(v) => { return v; }, Err(e) => { return 0; } } return 9; }", 9},
+	{"option-unannotated-const", "const K: i32 = 9;\nfunction main(): i32 { var o = Some(K); match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 9},
 }
 
 func TestSelfHostTupleFnZeroArgIRX86_64(t *testing.T) {

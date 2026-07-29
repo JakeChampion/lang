@@ -40929,6 +40929,68 @@ function wrap_one_ann_tuple(e: parser.Expr, tty: string, bound: string[], fd: pa
     return InlineCloRes { expr: e, funcs: funcs, counter: counter };
 }
 
+// wrap_ann_fn_variant_payload is wrap_ann_fn_tuple_elems for an Option/Result
+// PAYLOAD: `var o: Option[() => i32] = Some(a1)` where `a1` is a bare ZERO-ARG
+// module fn.
+//
+// Same disagreement, same resolution. The match-arm bind dispatches the payload
+// env-first, so it must be a box; the variant-constructor walk boxes a payload
+// with >= 1 param but skips a zero-arg one, because a bare zero-arg name is how
+// a `const` reads. The ANNOTATION settles it — `Option[() => i32]` says the
+// payload is a fn value, so no const reading exists — and it is available here at
+// the binding.
+//
+// `Ok` takes Result's first type arg, `Err` its second; `Some` takes Option's
+// only one. A payload that is not a bare unshadowed zero-arg module fn is left
+// to the ordinary walk, which already handles lambdas and >= 1-param names.
+function wrap_ann_fn_variant_payload(e: parser.Expr, ann: string, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: parser.FuncDecl[], structs: parser.StructDecl[]): InlineCloRes {
+    var r: parser.TypeRef = parser.parse_type_ref(ann);
+    if (r.array_depth != 0 || r.is_tuple) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+    if (r.base != "Option" && r.base != "Result") { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+    match (e) {
+        parser.ExprCall(call) => {
+            if (call.args.len() != 1) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+            var cn: string = "";
+            match (call.callee) {
+                parser.ExprIdent(cid) => { cn = cid.name; },
+                _ => {}
+            }
+            var argi: i32 = 0 - 1;
+            if (cn == "Some" && r.base == "Option") { argi = 0; }
+            if (cn == "Ok" && r.base == "Result") { argi = 0; }
+            if (cn == "Err" && r.base == "Result") { argi = 1; }
+            if (argi < 0 || argi >= r.args.len()) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+            // A generic ARG is not coarsened the way a tuple segment is, so the
+            // payload can render either as the coarse "fn" or as its full
+            // spelling ("() => i32"). Accept both — an arrow is unambiguous.
+            var pty: string = parser.render_type_ref(r.args[argi]);
+            if (pty != "fn" && !util.contains(pty, "=>")) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+            match (call.args[0]) {
+                parser.ExprIdent(id) => {
+                    var bound: string[] = [];
+                    var bp: i32 = 0;
+                    while (bp < fd.params.len()) { bound = bound.append(fd.params[bp].name); bp = bp + 1; }
+                    var bs: i32 = 0;
+                    while (bs < fd.body.len()) { bound = astwalk.collect_bound_stmt(fd.body[bs], bound); bs = bs + 1; }
+                    if (util.index_of_str(bound, id.name) >= 0 || lift_module_fn_arity(mfuncs, id.name) != 0) {
+                        return InlineCloRes { expr: e, funcs: funcs, counter: counter };
+                    }
+                    var wr: InlineCloRes = try_fn_field_value(call.args[0], fd, funcs, counter, gfns, mfuncs, structs);
+                    match (wr.expr) {
+                        parser.ExprCall(_) => {
+                            return InlineCloRes { expr: parser.ExprCall { callee: call.callee, args: [wr.expr], line: call.line, col: call.col, type_argc: call.type_argc, ty: call.ty }, funcs: wr.funcs, counter: wr.counter };
+                        },
+                        _ => { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+                    }
+                },
+                _ => { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+            }
+        },
+        _ => { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+    }
+    return InlineCloRes { expr: e, funcs: funcs, counter: counter };
+}
+
 function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloStmts {
     var fs: parser.FuncDecl[] = funcs;
     var ct: i32 = counter;
@@ -41006,6 +41068,11 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                     var pre: parser.Expr = v.init;
                     var prer: InlineCloRes = wrap_ann_fn_tuple_elems(pre, v.type_name, fd, fs, ct, gfns, mfuncs, structs);
                     fs = prer.funcs; ct = prer.counter; pre = prer.expr;
+                    // The same disagreement one container over: `var o:
+                    // Option[() => i32] = Some(a1)` left the zero-arg payload
+                    // unboxed while the match-arm bind dispatches it env-first.
+                    var pver: InlineCloRes = wrap_ann_fn_variant_payload(pre, v.type_name, fd, fs, ct, gfns, mfuncs, structs);
+                    fs = pver.funcs; ct = pver.counter; pre = pver.expr;
                     var er: InlineCloRes = lift_inline_closures_expr(pre, fd, fs, ct, gfns, structs, mfuncs);
                     fs = er.funcs; ct = er.counter;
                     out = out.append(parser.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col, is_str: v.is_str });

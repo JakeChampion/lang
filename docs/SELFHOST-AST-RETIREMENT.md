@@ -767,13 +767,21 @@ the same annotated tuple, and an unannotated tuple carrying a const) next to the
 crash cases — an over-eager version of this fix breaks those four, so they are the
 real gate on it.
 
-A related shape found in the same sweep, recorded so it is not re-probed:
+The Option/Result sibling found in the same sweep is **also CLOSED**, by the same
+fix one container over: `var o: Option[() => i32] = Some(a1)` (and `Ok` / `Err`)
+left a zero-arg payload unboxed while the match-arm bind dispatches it env-first.
+`wrap_ann_fn_variant_payload` is the variant twin of the tuple pre-pass — `Some`
+and `Ok` read the first type argument, `Err` the SECOND, which is the case a fix
+that always indexes argument 0 silently gets wrong. One wrinkle worth recording:
+a generic ARG is not coarsened to `"fn"` the way a tuple segment is, so the
+payload renders either as `"fn"` or as its full `"() => i32"` spelling and the
+test has to accept both — the first version of this fix looked correct and did
+nothing at all because it only matched `"fn"`.
+
+Still out of scope, recorded so it is not re-probed:
 `var g: (() => i32)[][] = [[a1]]; g[0][0]()` is interp 3, self-host SIGSEGV — but
 it routes **AST**, so per the project rule (a legacy-AST-only gap needs no fix) it
-is out of scope until the IR path admits it. `Option[() => i32]` carrying a bare
-zero-arg fn (`Some(a1)`, matched, then called) is interp 3 / SIGSEGV and routes
-**IR** — the same value-vs-tag disagreement one container over, and the same fix
-shape should cover it.
+waits until the IR path admits it.
 
 ### Rebinding an `fn[]` LOCAL: one direction fixed, the cross-representation ones open
 
