@@ -554,7 +554,8 @@ figure from 32 to 96 bytes, which identifies the leaked block as **the array**,
 not the container box.
 
 Three shapes isolate the cause, and only one line differs between the first two
-(`examples/probes/loop_construction_move_leak.fern` runs all three):
+(`examples/probes/loop_construction_move_leak.fern` runs all three; the figures
+below are the pre-fix ones, and all three are balanced now):
 
 | shape | result |
 |---|---|
@@ -587,14 +588,44 @@ there corresponds to the move-on-construction behaviour that is leak-free. The
 order of work is: fix the native move-on-construction dominance gap first, then
 re-ask what those 6 rows should assert.
 
-Not attempted here, deliberately. The obvious minimal fix — have the loop-body
+##### Fixed for the array-into-tuple shape; four sibling shapes remain
+
+`markLoopBodyConstructionMoves` (#5879) extends move-on-construction into loop
+bodies under three guards the top-level walk does not need: the ident must name
+a var declared **earlier in the same body** (one declared outside the loop lives
+across iterations, and moving it would be a use-after-free rather than a leak),
+the body must contain no `return` / `break` / `continue` (which would make the
+construction conditional), and the name must be declared exactly once in the
+function (`moved` is name-keyed). Array-into-tuple is now balanced at 100 000
+iterations — allocs=200 000 frees=200 000 live_bytes=0, from 3.2 MB leaked.
+
+The shortcut that looks equivalent is **not**: having the loop-body
 re-declaration drop (`emitVarReinitDropOld`) mirror the exit sweep instead of
-bailing on `!freeEligible` — is unsafe as stated: an alias-WITHOUT-inc loop var
-(`var a1: i32[] = a0;`, measured clean at allocs=1 frees=1) would be released
-once per iteration and over-release the shared buffer. Closing this needs the
-move-on-construction dominance analysis extended into loop bodies, which is a
-native Perceus change with a self-compile byte-identity blast radius, not a
-drive-by.
+bailing on `!freeEligible` would release an alias-WITHOUT-inc loop var
+(`var a1: i32[] = a0;`, measured clean at allocs=1 frees=1) once per iteration
+and over-release the shared buffer. That shape is now a fixture in
+`TestX86_64LeakCheckLoopConstructionMove` precisely so the shortcut cannot be
+reintroduced silently.
+
+Four of the eight measured shapes still leak, and they are **not** the same gap
+one level over — the move analysis was verified to fire (or not) for each:
+
+| shape | move fires? | why it still leaks |
+|---|---|---|
+| array into Option | **no** | `markConstructionMoves` has no `*ast.Call` case, so an enum-variant construction (`Some(xs)` / `Ok(xs)`) is never a move site |
+| string into Option | **no** | same, and strings are excluded from the eligible set by design (two-word retain/release diverges per backend) |
+| tuple into array | yes | the move is marked, but the container's drop does not release a tuple-valued element |
+| tuple into tuple | yes | same |
+
+The last two are the interesting pair: `movedLocals` and `moveSites` are both
+set, and the leak is unchanged before and after the fix, which means the inc was
+never being emitted for a tuple-valued element in the first place — so skipping
+it is a no-op and the missing half is the container-side release. Closing those
+is a drop-side change, not a move-side one. The Option rows are a move-side gap
+and the more valuable of the two (Option payloads are everywhere), but adding a
+`*ast.Call` case needs the same verification this slice got: that the variant
+box's drop actually releases the payload, or the move converts a leak into a
+use-after-free.
 
 Two caveats on reading this. It is **one shard of eight**, so it is a sample, not
 the whole suite. And a test failing here means its program bails *somewhere* —
