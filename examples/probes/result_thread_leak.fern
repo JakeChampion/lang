@@ -1,0 +1,70 @@
+// The FIRST minimal reproducer of the #3457 load leak
+// (docs/SELFHOST-AST-RETIREMENT.md). The three earlier mimics
+// (lexer_shape_control.fern and two others) all reclaimed 100%; this one
+// does NOT, and it isolates the shape that costs `lexer.tokenize` ~4 blocks
+// per token (464073 of 508639 on parser.fern, 91%).
+//
+//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/result_thread_leak.fern
+//   /tmp/p    # stderr: leakcheck: allocs=2400 frees=200 live_bytes=68800
+//
+// The shape is the lexer's token loop, reduced to its essentials: a scanner
+// returns a RESULT STRUCT bundling the advanced cursor and the scanned token
+// (`Res { lex, tok }`), and the caller extracts BOTH fields — the cursor to
+// thread state (`l = r.lex`) and the token into an accumulator
+// (`out = out.append(r.tok)`). See `run` below.
+//
+// Two independent leak mechanisms are at work; the taint trace and the two
+// controls in the doc separate them:
+//
+//   1. `l = r.lex` — reading a pointer field OUT of the result struct.
+//      rhsTainted(FieldAccess) is unconditionally true, so `l` is tainted;
+//      `l` tainted makes `r = scan(l)` tainted (scan's struct param is not
+//      counted-retain), which loops back to taint `l`. The whole `l`/`r`
+//      cluster is mutually tainted and NEVER freed. This is the dominant
+//      mechanism: strip the accumulator entirely and it still leaks 100%
+//      (`frees=0`). It is why the `Array_push` receiver-only arm freed only
+//      one block — the tokens are held alive by the leaked result structs,
+//      not by the accumulator buffer.
+//
+//   2. `out = out.append(r.tok)` — the tainted element taints `out` (Array_push
+//      is absent from rhsTainted's receiver-only-alias switch), so `out` is
+//      released buffer-only and its elements are never walked. Secondary here.
+//
+// Fixing the lexer needs BOTH parts of one coupled change, and neither alone
+// moves `tokenize` (measured — see the doc): part 1 makes scan's struct param
+// counted-retain so `r` is no longer tainted, and part 2 incs `l = r.lex` so
+// `l` owns its reference and `r` can be dropped. Part 1 without part 2 leaves
+// `l` tainted through the FieldAccess and reclaims nothing here.
+//
+// Exit code 3, matching the interpreter.
+struct Lx { src: string, i: i32 }
+struct TId { text: string }
+struct TEof {}
+type Tok = TId | TEof;
+struct Res { lex: Lx, tok: Tok }
+
+function scan(l: Lx): Res {
+    var t: Tok = TId { text: l.src[l.i : l.i + 1] + "" };
+    return Res { lex: Lx { src: l.src, i: l.i + 1 }, tok: t };
+}
+
+function run(src: string): i32 {
+    var l: Lx = Lx { src: src, i: 0 };
+    var out: Tok[] = [];
+    while (l.i < 5) {
+        var r = scan(l);
+        l = r.lex;
+        out = out.append(r.tok);
+    }
+    return out.len();
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var n: i32 = 0;
+    while (n < 100) {
+        acc = acc + run("abcdefgh");
+        n = n + 1;
+    }
+    return acc % 7;
+}
