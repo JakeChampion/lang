@@ -1393,12 +1393,20 @@ per-module path and then DELETING the AST emitters is only safe while something
 proves a self-host-BUILT compiler emits the same units the Go-built one does, and
 while that proof was gated it only ran when someone remembered it.
 
-Measured on the ungated run (2026-07-29, 4-core host, cold driver build): 36
-units in 9 batches, gen0 59.4 s + gen1 160.9 s, whole test 363.7 s, gen0 == gen1.
-With the modload driver warm — which is what the CI lane sees — the build drops
-out and it costs ~230 s, which is its entry in `.github/selfhost-test-weights.txt`.
-That makes it the heaviest weighted test, so LPT gives it its own bucket and the
-max-shard wall-clock tracks it rather than stacking it behind another fixpoint.
+Measured 2026-07-29, 36 units in 9 batches, gen0 == gen1 both times:
+
+| host | gen0 | gen1 | whole test |
+|---|---:|---:|---:|
+| 4-core dev box, cold driver build | 59.4 s | 160.9 s | 363.7 s |
+| x86_64 CI lane, modload driver warm | 40.1 s | 79.3 s | **130.2 s** |
+
+The CI number is its entry in `.github/selfhost-test-weights.txt` — note that an
+unlisted test defaults to weight **1**, so without an entry a two-minute test
+would be scheduled as trivial and stack behind another fixpoint. At 130 it sits
+just under `TestSelfHostModloadPerModuleWholeCompilerX86_64` (210), so LPT gives
+it its own bucket without it becoming the max-shard wall: on the first ungated
+run it landed alone in shard 0 (`shard 0/20: 1 selfhost-pkg + 0 residual tests`),
+which finished in 177 s against a ~9.7 min slowest shard.
 
 **The memoisation, priced (rejected).** The "cap or memoise the fixpoint's
 repeated walks" bullet was implemented and measured rather than left open. Both
