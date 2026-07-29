@@ -2760,12 +2760,36 @@ recycled bytes come back as a short or empty name. A name that recycles to ""
 also explains the third row: the definition is emitted under a corrupted symbol,
 so the call sites' correct name resolves to nothing.
 
-That narrows the bisect enormously. The next step is to find which array of
-names the emitter builds with `xs = xs.append(name)` (the shape the arm
-untaints) and whose elements are still live when the buffer's deep drop now
-walks them — `asm_arm64.fern` / `asmcore.fern`'s symbol and function-name
-collections are the place to look, and the failing units (map, array, option,
-result combinators) share the generic-instantiation naming path. #5854's 4x
+**Narrowed to the emit site (2026-07-29).** `emit_function`
+(`asm_arm64.fern:3806`) writes the symbol as
+
+    s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
+
+and `sanitize_label` (`asmcore.fern:17`) is a scan over its argument:
+
+    var out: string = "";
+    while (i < name.len()) { ... out = out + name[i : i + 1]; ... }
+
+A truncated `__fn_m` and an empty `__fn_` are precisely what that emits when
+`name`'s BUFFER HAS BEEN FREED AND RECYCLED — the length word reads back 1 or 0
+and the loop copies that many bytes. So the corruption is in the INPUT name, read
+after free, not in the emitter's own accumulator, and not in `sanitize_label`
+itself.
+
+`label_name` is `fd.name` (or `base_type_name(fd.receiver_type) + "." + fd.name`),
+i.e. a string owned by the module AST's `FuncDecl`. The hypothesis to test first
+is therefore that the arm lets some array of names or decls deep-drop elements
+the module still owns — `asmcore.fern:3634`
+(`names = names.append(mod.funcs[fi].name)`) and its siblings at `:3433` / `:3436`
+are the exact `xs = xs.append(<projection>)` shape the arm untaints, over
+`mod.funcs`.
+
+A cheap discriminator before any bisect: build the arm, run the 312 s local
+repro, and dump `fd.name.len()` at the top of `emit_function`. If the first
+corrupted symbol is preceded by a name whose length reads 0 or 1, the
+read-after-free reading is confirmed and the search is over which of those
+arrays was dropped; if the lengths are all sane, the corruption is downstream in
+`write` / the EmitState buffer instead, and the candidates above are wrong. #5854's 4x
 stays blocked on this, but it is now a search with a named target rather than an
 open question.
 
