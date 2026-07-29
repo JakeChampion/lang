@@ -1044,6 +1044,11 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // without its body → "undefined reference to __fn___fern_u32_to_string"
             // at link (e.g. u32_arith through the self-host arm64 stdtest gate).
             if (o.str == "__fern_u32_to_string") { s = s.mark_u32_to_string(); }
+            // The WIDE siblings (#5826). asm_arm64.emit_runtime already emits
+            // both bodies gated on these needs; only the IR-path mark was
+            // missing, exactly as it was for u32 above.
+            if (o.str == "__fern_i64_to_string") { s = s.mark_i64_to_string(); }
+            if (o.str == "__fern_u64_to_string") { s = s.mark_u64_to_string(); }
             // str_to_i32(s)'s decimal-parse helper — gated on this need (the
             // stack-ABI __fn___fern_str_to_i32 wrapper in asm_arm64.emit_runtime).
             if (o.str == "__fern_str_to_i32") { s = s.mark_str_to_i32(); }

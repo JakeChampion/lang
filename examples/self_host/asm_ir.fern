@@ -153,6 +153,11 @@ pub function is_fern_helper(name: string): boolean {
         // Fern runtime fn under __fn___fern_u32_to_string; the ir_helper_symbol
         // default (__fn_ + name) targets it. Heap-dep.
         || name == "__fern_u32_to_string"
+        // wide-int stringifiers (#5826): the i64/u64 siblings, backed by
+        // asmcore.rt_src_i64_to_string / rt_src_u64_to_string via
+        // emit_ir_runtime_fern_fn, exactly as the 32-bit pair is.
+        || name == "__fern_i64_to_string"
+        || name == "__fern_u64_to_string"
         // str_to_i32(s)'s decimal-parse helper (allocation-free stack-arg body
         // under __fn___fern_str_to_i32, also from emit_ir_runtime).
         || name == "__fern_str_to_i32"
@@ -3856,6 +3861,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique",
         "__fn___fern_alloc_reuse",
         "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
+        "__fn___fern_i64_to_string", "__fn___fern_u64_to_string",
         "__fn___fern_str_to_i32", "__fn___fern_str_cmp", "__fn___fern_chr", "__fn___fern_snapshot_dec",
         // string RC reclaim (#2649): a LIBRARY module that reclaims a fresh string
         // (`var b = a + a` → __fern_str_free) references this symbol; the entry
@@ -4852,6 +4858,10 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             if (o.str == "__fern_i32_to_string") { s = s.need("heap"); s = s.need("i32_to_string"); }
             // __fern_u32_to_string likewise allocates its result box (#2649).
             if (o.str == "__fern_u32_to_string") { s = s.need("heap"); s = s.need("u32_to_string"); }
+            // The WIDE siblings (#5826) — same shape: each allocates its result
+            // box, so each needs the heap runtime plus its own body.
+            if (o.str == "__fern_i64_to_string") { s = s.need("heap"); s = s.need("i64_to_string"); }
+            if (o.str == "__fern_u64_to_string") { s = s.need("heap"); s = s.need("u64_to_string"); }
             // str_to_i32 is allocation-free (parses in registers), so it needs
             // only its own body — not the heap runtime.
             if (o.str == "__fern_str_to_i32") { s = s.need("str_to_i32"); }
@@ -6472,6 +6482,17 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("u32_to_string")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_u32_to_string(), all_structs, s);
+    }
+    // i64_to_string / u64_to_string — the WIDE siblings (#5826). Heap-dep. The
+    // unsigned one is not optional: __fern_i64_to_string renders a u64 with bit
+    // 63 set as negative.
+    if (s.has_need("i64_to_string")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_i64_to_string(), all_structs, s);
+    }
+    if (s.has_need("u64_to_string")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_u64_to_string(), all_structs, s);
     }
     // arr_i32_sum / arr_i32_product — back xs.sum() / xs.product() (#3457).
     // Allocation-free (they fold into a register), so they are emitted

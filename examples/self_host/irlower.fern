@@ -9512,6 +9512,31 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!t2s.ok) { return t2s; }
                             return t2s.emit(ir.op_call_direct("__fern_i32_to_string", 1));
                         }
+                        // The WIDE receivers (#5826). Without these an i64/u64
+                        // `.to_string()` fell through to the method paths, which
+                        // resolve an `i64.to_string` label that only exists with
+                        // `import "std/i64"` — so the call matched nothing and the
+                        // whole MODULE bailed to the AST emitter. f-strings desugar
+                        // to `.to_string()`, so `f"{n}"` over any wide value bailed
+                        // too, which is what made this one of the broader remaining
+                        // subset holes.
+                        //
+                        // u64 first, for the same reason u32 precedes i32 above: a
+                        // u64 is also width-64, and the SIGNED formatter renders a
+                        // value with bit 63 set as negative. expr_recv_prim_type
+                        // already orders its own u64-before-i64 check, so reading it
+                        // once and comparing is enough.
+                        var wrt: string = expr_recv_prim_type(fa.obj, s);
+                        if (wrt == "u64") {
+                            var u6s: LowerState = lower_expr(fa.obj, s);
+                            if (!u6s.ok) { return u6s; }
+                            return u6s.emit(ir.op_call_direct("__fern_u64_to_string", 1));
+                        }
+                        if (wrt == "i64") {
+                            var i6s: LowerState = lower_expr(fa.obj, s);
+                            if (!i6s.ok) { return i6s; }
+                            return i6s.emit(ir.op_call_direct("__fern_i64_to_string", 1));
+                        }
                     }
                     // Built-in zero-arg i32 predicates. The AST emitter lowered these
                     // inline (asm.fern's ty_is_i32 block) and the IR path did not, which
