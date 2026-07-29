@@ -1706,8 +1706,20 @@ the compiler is far worse (8.3% freed for `tokenize`) than this probe (68.5%),
 so the probe is a starting point, not the whole story — verify any fix against
 BOTH, per the method note above.
 
-**Four leak shapes characterised, two causes found, and BOTH fixes proven
-UNSOUND (2026-07-29). Nothing here is fixed — read this before trying again.**
+**RESOLVED, the drop-ORDER half (2026-07-29) — read "The drop order half,
+solved" below before anything else in this section.** Cause 2 ("drop ORDER")
+was never a cause: it was the visible symptom of a one-reference under-count
+in `computeConsumedParams`, which excluded ENUM (union) params from the
+consumed-threaded promotion while their reassignment still emitted the
+overwrite dec. Admitting `ast.EnumType` there fixes it; every claim below
+about the sweep's order being load-bearing, and about reverse declaration
+order being "independently unsound", is superseded. The LEAK half (cause 1,
+the escape taint) is still open, and the load leak this section set out to
+explain is unchanged by the fix.
+
+**Four leak shapes characterised, two causes found, and both fixes proven
+UNSOUND (2026-07-29). The LEAK half is still unfixed — read this before trying
+again; the ORDER half is answered by the header above.**
 
 Probing out from this section's probe found four distinct shapes that strand
 elements, measured with `FERN_LEAKCHECK=1` on x86-64:
@@ -1753,11 +1765,13 @@ main (319s) and fails with each. Bisected across full runs of that gate:
 | **reverse-order sweep alone** (re-run ISOLATED on an idle host) | **segfault, stage 1** |
 
 So the two taint sinks fail independently of each other AND of the ordering
-change, and reverse declaration order — the standard scope-exit order — is
-independently unsound here too. The last row was re-run with nothing else on the
-machine (0/15 GB used) to rule out contention; CLAUDE.md's note that arena
-exhaustion reports exit 137 rather than SIGSEGV also argues against an OOM
-reading.
+change. The last row was re-run with nothing else on the machine (0/15 GB used)
+to rule out contention; CLAUDE.md's note that arena exhaustion reports exit 137
+rather than SIGSEGV also argues against an OOM reading. (The reading this row
+was given at the time — "reverse declaration order is independently unsound" —
+is WRONG, and "The drop order half, solved" below says why: the reversal only
+exposed an under-count that the forward order left as a silent leak. With that
+under-count fixed, an all-functions reverse sweep is behaviourally inert.)
 
 **Hypotheses tested and REFUTED**, so they need not be re-tried:
 - *Constructor-reuse donation.* `computeReuseSources` requires `freeEligible`
@@ -1805,6 +1819,10 @@ sweep, and they beat `TestSelfHostLoadFixpointX86_64` on both axes: the symptom
 is WRONG OUTPUT rather than a segfault (`(a * 2.0) as i64` prints `0`, want
 `5000000000`), and once the driver binary is built each case fails in
 0.02-0.13 s instead of a ~5-minute compile. Build the driver once, then iterate.
+(Superseded by the parse-only probe in "The drop order half, solved": a
+lexer+parser+util+astwalk driver rebuilds in ~3 s, so the DRIVER BUILD stops
+being the bottleneck too — and it detects the corruption in the AST directly
+rather than through the emitted code.)
 
 **The drop-order culprit is ONE function: `parser__parse_primary`.** Found by
 bisection rather than by guessing at shapes, and worth recreating the same way
@@ -1841,7 +1859,9 @@ locals declared twice in disjoint branches (`elems`, `iife`, `look`, `no_args`,
 `er_expr`, `er_p`); since `b.locals` is keyed by NAME they share one slot and are
 swept once.
 
-**Small-program extraction has now failed five times.** Neither a struct holding
+**Small-program extraction has now failed five times.** (It succeeded on the
+seventh, once the search moved from the destructuring function to its CALLEE —
+see "The drop order half, solved".) Neither a struct holding
 an owned array, nor that shape split across mutually-exclusive branches, nor a
 `var (a, b) = f()` destructuring of a `(string, i32[])` diverges between forward
 and reverse — all match their interp oracle with identical leakcheck totals. The
@@ -1875,6 +1895,12 @@ direct-Ident source at an INC-ing sink, so the **escape taint** is what makes
 the component ineligible, and that ineligibility is what makes the **drop
 order** matter. They are not two independent bugs.
 
+(Half right. The taint IS what selects the plain dec, but the reason either
+order can be wrong is the under-count established in "The drop order half,
+solved" — and it is inherited from the OTHER branch of this same `if`, the
+`return parse_postfix(p, inner_expr)` at line 1767, not from the `append` two
+lines up.)
+
 **A 15-line repro of the leak, with attribution** —
 `examples/probes/destructure_taint_leak.fern`. It carries the identical
 eligibility signature (`__destruct` eligible tuple at [0], tainted component at
@@ -1891,11 +1917,88 @@ needs something `parse_primary` has and a 15-line function does not; the
 signature reproduces the leak, not the crash. Six small-program extractions of
 the ordering effect have now failed.
 
-**What is still unknown:** what the escape taint protects BEYOND the exit sweep,
-and what `parse_primary` supplies beyond the two-drop signature — the ~25 return
-sites that each re-emit the full sweep, and the six name-shared slots, are the
-remaining suspects. A future attempt has a two-line target now, not a
-5000-line one.
+**What was still unknown** — what the escape taint protects BEYOND the exit
+sweep, and what `parse_primary` supplies beyond the two-drop signature — is
+answered in the next subsection. Neither of the two suspects named here (the
+~25 return sites, the six name-shared slots) was it: the sweep is byte-for-byte
+the same 58 entries at all 25 sites, `exclude` is `""` at every one, and the
+difference was never in `parse_primary` at all. It was in its CALLEE.
+
+### The drop order half, solved (2026-07-29)
+
+**One missing entry inc, in `computeConsumedParams`.** `parse_postfix` takes
+`base: Expr` — a BORROWED union param — and rebinds it into a node that keeps
+the old value:
+
+    base = e_unary_at("as_" + tyname, base, asline, ascol);
+
+`e_unary_at` incs `operand` when it stores it in the returned `ExprUnary` (+1),
+and the reassignment's overwrite dec releases the slot's old value (−1). That
+pair is only balanced when the SLOT owns a reference — true for a `var`, and
+true for a param the consumed-threaded promotion entry-incs. It was NOT true
+here: `computeConsumedParams` promoted `StructType` / `TupleType` params only,
+so a reassigned ENUM param stayed on the borrow baseline and the dec released a
+reference the caller never handed over.
+
+Measured with `__rc_get` spliced into a copy of `parser.fern`, compiling
+`return (a) as i32;`:
+
+    RC before postfix inner=2      <- tuple element + destructure bind inc
+    PF base rc=2  (before e_unary_at)
+    PF new base rc=1
+    RC after postfix inner=2       <- want 3: the ExprUnary node is a third owner
+
+So the box carried 3 live references at rc 2. `parse_primary`'s sweep then
+decs it twice, and the SIGN of the bug is decided purely by which dec runs
+last: forward order leaves rc 0 on a live box (a leak, and the program is
+correct by luck), reversed order lets the tuple's deep walk see rc 1, take the
+`is_unique` branch, and FREE a box the returned AST still points at. That is
+the whole "ordering is load-bearing" effect — one under-count, two ways to be
+wrong.
+
+**The fix** is one line: admit `ast.EnumType` alongside `StructType` /
+`TupleType` in `computeConsumedParams`. The comment there had explicitly parked
+enums ("the self-host accumulators are all structs"), yet the paragraph
+immediately below it already describes this exact failure mode for scalar-only
+structs and closes it via the borrow-verdict escape hatch.
+
+**Verification, in both directions.** With the fix, reversing EVERY function's
+entire exit sweep (not just the [38,40) window) is byte-for-byte behaviourally
+inert on the parser: `parser.fern` parses to the same 408 funcs / 17656 idents /
+same checksum, and the f64 program that segfaulted parses identically. Without
+the fix the same all-reversed build gives 17652 idents, a different checksum,
+and a SIGSEGV. Sweep order is no longer load-bearing.
+
+**A 40-line repro that miscompiles on `main`, no probe harness needed** —
+`internal/e2e/rc_self_reassign_field_test.go`'s `unionThreadedParamSrc`
+(x86-64 / arm64 / wasm). A union-typed param rebound into a node that keeps it
+reads back a payload the interpreter gets right and the native backends do not:
+pre-fix the fixture returns its value-mismatch code 100 on x86-64 and arm64 and
+traps on wasm; post-fix all three return 0. This is the shape the six earlier
+extraction attempts missed: they varied
+the SINK (`append`, a struct field) inside the destructuring function, when the
+under-count is in the CALLEE that rebinds a borrowed param.
+
+**Methodology that made the difference: probe the PARSER, not the compiler.**
+Every previous attempt used `wasm_run` / the load fixpoint — a ~4 min emit per
+data point. A driver importing only `lexer` + `parser` + `util` + `astwalk`
+builds in **~3 s** and detects AST corruption directly: walk every function
+body with `astwalk.collect_idents_stmt` and checksum the names. A use-after-free
+in the parser changes the ident count or the checksum, and on the tiny f64 input
+it segfaults outright. Two further instruments finished the job:
+`FERN_RC_FREE_DEBUG=1` (now settable from the CLI, needs `-cc gcc` — the
+in-process assembler has no `ud2`) quarantines freed blocks instead of recycling
+them, so a corrupted run that turns CORRECT under it proves "freed and reused"
+rather than "leaked"; and `__rc_get(x)` spliced into a scratch copy of
+`parser.fern` reads the refcount directly (its checker signature is
+`(u8[]) -> i32`, so measuring a struct / union value needs the E038 arg check
+waived for that one callee — a throwaway edit, not committed).
+
+**What this does NOT fix.** The load leak. Same `FERN_LEAKCHECK` counters on a
+full `parser.fern` parse before and after (allocs 904802 both; frees 178756 →
+174230 — slightly FEWER, since the over-releases that used to free early are
+gone). Cause 1 (the escape taint) and the four/five leak shapes above are
+untouched and still open.
 
 **Method note for the next attempt: `internal/e2e` is not the gate for an RC
 change — `internal/e2eselfhost` is.** Compiling the whole self-host compiler is

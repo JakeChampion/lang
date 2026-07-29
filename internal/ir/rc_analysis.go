@@ -436,12 +436,17 @@ func (b *builder) computeConsumedParams() map[string]bool {
 		if !reassigned[p.Name] {
 			continue
 		}
-		// Structs / tuples only. Enum params are left on the borrow baseline:
-		// the self-host accumulators are all structs, and an array-payload enum
-		// has the deep-drop / self-overwrite-reuse interaction owned-by-default
-		// (sub-slice 2a) deliberately keeps out of scope.
+		// Structs / tuples / enums (incl. unions). Whatever the shape, a
+		// reassignment of a param slot emits the overwrite dec — so leaving a
+		// reassigned param on the borrow baseline releases a reference the
+		// caller never handed over. Enums were excluded here until the
+		// parse_postfix under-count (`base = e_unary_at(op, base, …)` on a
+		// borrowed `Expr` param, whose new node KEEPS the old value) showed the
+		// exclusion is exactly the escape hatch the paragraph below closes for
+		// scalar-only structs: same one-reference undercount, same early free
+		// through a live alias. See TestX86_64UnionThreadedParam.
 		switch p.Type.(type) {
-		case ast.StructType, ast.TupleType:
+		case ast.StructType, ast.TupleType, ast.EnumType:
 		default:
 			continue
 		}

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/ir"
 )
 
 // Phase 5e enum drop-reuse. A self-overwrite of an owned enum local with
@@ -120,10 +121,19 @@ function main(): i32 { return churn(3); }`)
 }
 
 // A borrowed parameter can be rc==1 while the caller still holds it, so
-// reusing its box would corrupt the caller's value. Params are always
-// tainted (never free-eligible), so reuse stays off — the same UAF guard
-// the struct case and the array-free overwrite path use.
-func TestEnumReuseSkipsBorrowedParam(t *testing.T) {
+// reusing its box in place would corrupt the caller's value. For a REASSIGNED
+// param the guard is not "never emit the reuse" but the pair that makes it
+// sound: computeConsumedParams promotes such a param, the promotion's entry inc
+// holds the slot at rc>=2 for as long as the caller holds the value, and the
+// reuse's runtime is_unique gate therefore declines and allocates fresh. The
+// gate only opens from the second overwrite on — on a box the callee itself
+// built, which is the loop-accumulator case reuse exists for.
+//
+// The same entry inc is what balances the reassignment's overwrite dec; without
+// it that dec releases a reference the caller never handed over, and the
+// caller's value is freed early through a live alias
+// (TestX86_64UnionThreadedParam).
+func TestEnumReuseParamGuardedByEntryInc(t *testing.T) {
 	ip := lowerForTest(t, `enum Bag { Keep(i32[]), Swap(i32[]) }
 function bump(b: Bag): Bag {
     b = Keep([1]);
@@ -134,8 +144,23 @@ function main(): i32 { return 0; }`)
 	if f == nil {
 		t.Fatal("no func bump")
 	}
-	if got := allocReuseCount(f); got != 0 {
-		t.Errorf("borrowed param must not reuse in place, got %d __alloc_reuse", got)
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("want the is_unique-gated reuse on the reassigned param, got %d __alloc_reuse", got)
+	}
+	gated, inced := false, false
+	for _, op := range f.Ops {
+		if op.Kind == ir.OpRcIsUnique {
+			gated = true
+		}
+		if op.Kind == ir.OpRcInc {
+			inced = true
+		}
+	}
+	if !gated {
+		t.Error("param reuse must be is_unique-gated at runtime; found no OpRcIsUnique")
+	}
+	if !inced {
+		t.Error("promoted param must be entry-inc'd to balance its overwrite dec; found no OpRcInc")
 	}
 }
 
