@@ -559,16 +559,34 @@ func boolSliceEqual(a, b []bool) bool {
 	return true
 }
 
+// pureReadReceiverBuiltin names the builtin methods that READ their receiver
+// (Args[0]) and return a scalar / fresh value without retaining it — so a
+// pointer argument in receiver position is not aliased out and does not
+// disqualify a counted-retain param. Mutating / receiver-returning builtins
+// (`__method_Array_push` / `_set`, `__method_Map_set` / `_clear`) are
+// deliberately absent — those DO thread the receiver.
+func pureReadReceiverBuiltin(name string) bool {
+	switch name {
+	case "__method_string_len", "__method_Array_len", "__method_slice_len",
+		"__method_Array_sum":
+		return true
+	}
+	return false
+}
+
 // stringParamCounted reports whether string parameter `pn` of fn is retained
-// only through counted constructions — every appearance is a bare-ident value
-// of a StructLit / TupleLit / ArrayLit slot.
+// only through counted constructions or non-retaining reads — every appearance
+// is a bare-ident value of a StructLit / TupleLit / ArrayLit slot, or the
+// receiver of a pure-read builtin (`s.len()`). Conservative: a param qualifies
+// only when every occurrence is credited.
 func stringParamCounted(fn *ast.FuncDecl, pn string) bool {
-	total, counted := 0, 0
-	countIn := func(e ast.Expr) {
+	safe := map[*ast.Ident]bool{}
+	mark := func(e ast.Expr) {
 		if id, ok := e.(*ast.Ident); ok && id.Name == pn {
-			counted++
+			safe[id] = true
 		}
 	}
+	total := 0
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Ident:
@@ -577,20 +595,26 @@ func stringParamCounted(fn *ast.FuncDecl, pn string) bool {
 			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
-				countIn(f.Value)
+				mark(f.Value)
 			}
 		case *ast.TupleLit:
 			for _, el := range x.Elems {
-				countIn(el)
+				mark(el)
 			}
 		case *ast.ArrayLit:
 			for _, el := range x.Elems {
-				countIn(el)
+				mark(el)
+			}
+		case *ast.Call:
+			// `s.len()` — a pure-read builtin reads the receiver and returns a
+			// scalar, retaining nothing, so the receiver occurrence is safe.
+			if id, ok := x.Callee.(*ast.Ident); ok && pureReadReceiverBuiltin(id.Name) && len(x.Args) > 0 {
+				mark(x.Args[0])
 			}
 		}
 		return true
 	})
-	return total > 0 && total == counted
+	return total > 0 && total == len(safe)
 }
 
 // structParamProjectionsSafe reports whether every occurrence of struct
@@ -699,6 +723,9 @@ func structParamProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.I
 			// A builtin / external callee is absent from `summary`, so its
 			// arguments stay uncredited (the map-mutator receiver guard).
 			if id, ok := x.Callee.(*ast.Ident); ok {
+				if pureReadReceiverBuiltin(id.Name) && len(x.Args) > 0 {
+					markSlotValue(x.Args[0])
+				}
 				if cs, ok := summary[id.Name]; ok {
 					for i, a := range x.Args {
 						if i < len(cs) && cs[i] {

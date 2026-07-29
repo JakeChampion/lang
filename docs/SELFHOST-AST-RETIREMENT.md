@@ -3434,11 +3434,24 @@ sweep, and the batch=4 whole-compiler byte-identity fixpoint (gen0==gen1, 36
 units, no OOM — the change is byte-identity-preserving on the self-host
 compiler, which is dense with `return p` and struct-threading).
 
-**Residual: the lexer is 3× better, not closed.** 24000/60200 still leaks, so
-tokenize strands blocks beyond the scanner-result threading — candidates are the
-`FStringPart[]` sub-arrays and the token payload strings, a separate mechanism
-to localise with the same `FERN_LEAKCHECK` + emitted-code method used above.
-That is the next slice; the interprocedural summary itself is now complete.
+**Residual, localised and mostly closed (2026-07-29).** The 24000/60200 was not
+the FStringPart sub-arrays — it was a CALLER-side taint: `var toks =
+tokenize(src)` left `toks` tainted, so its tokens stranded at the caller. Cause:
+`tokenize`'s `src` param is `Lex { src: src, n: src.len() }`, and the `src.len()`
+occurrence — a pure scalar read — disqualified the counted-retain summary
+(string params only credited construction slots), so `tokenize(src)` re-tainted
+its result whenever `src` was tainted (which it always is, being passed to a
+user function). The fix: a pure-read builtin (`__method_string_len` /
+`_Array_len` / `_slice_len` / `_Array_sum`) reads its receiver and returns a
+scalar without retaining it, so a receiver occurrence no longer disqualifies —
+credited in both the string-param summary and the struct classifier's Call arm.
+The lexer bench goes **24000 → 49800 freed of 60200** (live 1318 KB → 333 KB), a
+further 2× on top of the 3× above (8000 → 49800 cumulative, ~6×). Pinned
+differentially by `TestLeakCheckPureReadLen{X86_64,Arm64}` (a builder using
+`s.len()` must free as much as one without it). The remaining ~10 K blocks are a
+smaller tail for a follow-up; the counted-retain summary now covers
+constructions, scalar/slice/index reads, counted call arguments, method-receiver
+retention, returned borrows, and pure-read builtins.
 
 The rest of the widening list is unaffected by that refutation but is now
 UNMOTIVATED until the leak is localised — none of it is known to touch the
