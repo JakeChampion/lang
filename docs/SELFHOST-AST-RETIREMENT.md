@@ -1111,9 +1111,26 @@ tier → leak.
 
   `internal/`-vs-self-host convergence item (#4451).
 
-- **Slice 3 — replace the now-unreachable AST fallbacks. BLOCKED on self-host
-  whole-program emit memory (2026-07-27 investigation; two direct fixes ruled
-  out).** Grounding the call graph in code: `asm.emit_module` is a *dispatcher* —
+- **Slice 3 — replace the now-unreachable AST fallbacks. UNBLOCKED.** This
+  header read "BLOCKED on self-host whole-program emit memory" long after its own
+  body recorded the unblock: `-assume-eligible` (#5668) halved the per-window
+  peak, the gen1 emit-all fixpoint went green, and since #5804 it runs ungated on
+  every lane. The blocker was real and the investigation below stands — but it is
+  history, not current state. What remains is the mechanical part named at the end
+  of this slice: repoint the drivers off the merged bundle, swap
+  `asm.emit_module` for per-module-or-error, then delete.
+
+  The one construct that still reaches the AST emitter on x86 is the
+  whole-compiler self-compile: `asm_modload_run.fern`'s per-module rescue is
+  bounded `nfuncs > 512 && nfuncs < 1500`, and the compiler's ~2040 merged
+  functions fall past the upper bound to `write(asm.emit_module(mwb))`. Raising
+  that bound is NOT the fix — a single-process concat of that many functions OOMs,
+  which is why the batched `-per-module-emit-all` exists. The swap has to make
+  that fall-through an error and repoint its callers, which also retires the
+  env-gated `RUN_MERGED_FIXPOINT` backstops; that is slice 5's call, not a
+  drive-by.
+
+  Grounding the call graph in code: `asm.emit_module` is a *dispatcher* —
   it calls `asm_ir.emit_module_ir_gated`, which returns IR asm when the whole
   module is eligible, else `""` → the AST emit loop. For a normal program every
   function is IR-eligible, so `emit_module_ir_gated` already returns IR and the
