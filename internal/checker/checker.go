@@ -13429,6 +13429,17 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 		switch x.Op {
 		case "==", "!=", "<", "<=", ">", ">=":
 			return ast.BoolType{}
+		case "+?", "-?", "*?", "/?", "%?", "<<?", ">>?":
+			// Checked arithmetic, the same shape one operator family
+			// over: `IntWidth` is the OPERAND width (the desugar's
+			// overflow predicate needs it), while the result is
+			// `Option[T]`. Re-typing it from IntWidth made `a +? b`
+			// read as a bare `i32` wherever a destination type exists
+			// — an annotated `var`, a `return`, a call argument — so
+			// the very shapes the operator is for were rejected, while
+			// an unannotated `var a = x +? 1` type-checked fine
+			// because nothing triggered the settle path.
+			return prior
 		}
 		if x.IntWidth != 0 {
 			return ast.NumberType{Width: x.IntWidth, Signed: !x.IsUnsigned}
