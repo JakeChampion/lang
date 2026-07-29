@@ -8,11 +8,14 @@
 // scalar values, encode scalar values back to UTF-8 bytes, count, and
 // validate.
 //
-// A "codepoint" here is a Unicode scalar value carried in an i32 (0 ..
-// 0x10FFFF, excluding the UTF-16 surrogate range 0xD800..0xDFFF).
-// There is no dedicated `Char` type yet (#4416); an i32 is the honest
-// representation. U+FFFD (65533) is the REPLACEMENT CHARACTER the lossy
-// decoders substitute for malformed input.
+// A "codepoint" here is a Unicode scalar value: 0..0x10FFFF, excluding
+// the UTF-16 surrogate range 0xD800..0xDFFF. That domain has its own
+// type — `char` (#5629) — so the decoders hand back `char`, not a bare
+// i32, and a byte read off a string is a `u8`. Build one from an integer
+// with `char_from_i32` (checked, `Option[char]`) or `as char` (an
+// unchecked reinterpret; a LITERAL outside the range is E071).
+// U+FFFD (65533) is the REPLACEMENT CHARACTER the lossy decoders
+// substitute for malformed input.
 
 import "std/string";
 
@@ -78,10 +81,33 @@ pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)] {
 // result is always valid UTF-8. Inverse of `utf8_decode_at` for a valid
 // scalar value.
 //
-// Takes a `char` (#5629). The range check stays because `as char` is not
-// yet validating: a `char` built by casting an arbitrary i32 can still
-// hold a surrogate or an out-of-range value, so this is the last line of
-// defence for "the output is always well-formed UTF-8".
+// `char_from_i32(n)` — the CHECKED way to turn an integer into a `char`
+// (#5629). `Some(c)` when n is a Unicode scalar value, `None` when it is
+// negative, above 0x10FFFF, or one of the UTF-16 surrogates 0xD800..0xDFFF
+// (a lone surrogate only means something as half of a pair, so it is not a
+// character).
+//
+// This is the counterpart to `n as char`, which is the deliberately
+// unchecked reinterpret hatch: the cast rejects an out-of-range LITERAL at
+// compile time (E071), but a runtime integer casts through unvalidated,
+// because std/unicode's table lookups produce values already known to be
+// scalars and should not pay for a re-check. Reach for the cast when you
+// can prove the value; reach for this when you cannot.
+//
+//     utf8.char_from_i32(65)      // Some('A')
+//     utf8.char_from_i32(0xD800)  // None — surrogate
+//     utf8.char_from_i32(-1)      // None
+pub function char_from_i32(n: i32): Option[char] {
+    if (n < 0 || n > 1114111) { return None; }
+    if (n >= 55296 && n <= 57343) { return None; }   // UTF-16 surrogate
+    return Some(n as char);
+}
+
+// Takes a `char` (#5629). The range check stays even though `n as char`
+// now rejects an out-of-range LITERAL: a cast of a runtime i32 is still
+// unchecked by design, so a `char` reaching here can hold a surrogate or
+// an out-of-range value. This is the last line of defence for "the output
+// is always well-formed UTF-8".
 pub function utf8_encode(ch: char): string {
     var c: i32 = ch as i32;
     if (c < 0 || c > 1114111 || (c >= 55296 && c <= 57343)) { c = 65533; }  // U+FFFD

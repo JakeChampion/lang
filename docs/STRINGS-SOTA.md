@@ -454,7 +454,14 @@ table. Today a byte and a code point are both `i32` (§2.4), which is why
 types.
 
 - `char` = a Unicode scalar value (0..0x10FFFF minus surrogates),
-  stored in an i32 slot, distinct in the checker.
+  stored in an i32 slot, distinct in the checker — **LANDED** (#5629).
+  The domain is enforced on construction: `<lit> as char` outside the
+  range, or naming a surrogate, is **E071**, and `utf8.char_from_i32`
+  returns `Option[char]` for an integer only known at run time. A cast
+  of a NON-literal stays unchecked on purpose — it is the reinterpret
+  hatch `std/unicode` uses on values its tables have already proven are
+  scalars, and `utf8_encode` keeps its own sanitiser as the last line of
+  defence for "the output is always well-formed UTF-8".
 - `u8` stays the byte type; `s[i]` yields `u8` — **LANDED** (#5629).
 - `std/utf8`'s `codepoints() → i32[]` becomes `char[]`;
   `unicode.to_upper_char(cp: i32)` becomes `char.to_upper()` — **both

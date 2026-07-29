@@ -118,6 +118,40 @@ function t_i64(): Type { return TypeI32 { tag: 0, width: 64, unsigned: false }; 
 function t_u32(): Type { return TypeI32 { tag: 0, width: 32, unsigned: true }; }
 function t_u64(): Type { return TypeI32 { tag: 0, width: 64, unsigned: true }; }
 function t_u8(): Type { return TypeI32 { tag: 0, width: 8, unsigned: true }; }
+
+// lit_is_scalar_value reports whether an integer literal's SOURCE TEXT names a
+// Unicode scalar value — 0..0x10FFFF minus the UTF-16 surrogates D800..DFFF.
+// Drives E071 on `<lit> as char` (#5629 slice 5).
+//
+// util.lit_to_i32 accumulates in i32, so a literal past 2^31 wraps and could
+// land back inside the range. The digit-count guard runs FIRST for that
+// reason: any decimal longer than 7 digits, or hex longer than 6, already
+// exceeds 0x10FFFF, so it is rejected without trusting the wrapped value.
+function lit_is_scalar_value(text: string): boolean {
+    var off: i32 = 0;
+    if (text.len() > 0 && text[0] == 45) { off = 1; }
+    var digits: i32 = text.len() - off;
+    var is_hex: boolean = digits > 1 && text[off] == 48 && (text[off + 1] == 120 || text[off + 1] == 88);
+    if (is_hex) {
+        if (digits - 2 > 6) { return false; }
+    } else {
+        if (digits > 7) { return false; }
+    }
+    var v: i32 = util.lit_to_i32(text);
+    if (v < 0 || v > 1114111) { return false; }
+    if (v >= 55296 && v <= 57343) { return false; }
+    return true;
+}
+
+// lit_scalar_msg mirrors the Go checker's E071 wording, including the
+// surrogate clause, so the differential compares equal on message as well as
+// code.
+function lit_scalar_msg(text: string): string {
+    var v: i32 = util.lit_to_i32(text);
+    var hint: string = "";
+    if (v >= 55296 && v <= 57343) { hint = " (this is a surrogate)"; }
+    return util.i32_to_string(v) + " is not a Unicode scalar value, so it cannot be cast to `char`: the range is 0..0x10FFFF excluding the surrogates 0xD800..0xDFFF" + hint + " — use `utf8.char_from_i32` for a value that is only known at run time";
+}
 // int_label recovers the source spelling of an integer TypeI32 from its
 // (width, unsigned) so method dispatch + diagnostics name the right type.
 // int_label is this checker's methodTypeName: the width-aware name a
@@ -4781,6 +4815,23 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             // at the `as` keyword to match the Go checker (whose CastExpr
             // position is the `as` token).
             if (u.op.len() > 3 && u.op[0:3] == "as_") {
+                // E071 (#5629 slice 5): a LITERAL cast to `char` must name a
+                // Unicode scalar value. Keyed on the op text, not the target
+                // Type, because this port resolves `char` to i32 and so cannot
+                // tell `as_char` from `as_i32` by type alone. A non-literal
+                // operand stays unchecked, matching the Go checker — `as char`
+                // is the reinterpret hatch for values already known to be
+                // scalars.
+                if (u.op == "as_char") {
+                    match (u.operand) {
+                        parser.ExprNumber(cn) => {
+                            if (!cn.is_float && !lit_is_scalar_value(cn.text)) {
+                                out = out.append(dg_at("E071", lit_scalar_msg(cn.text), u.line, u.col));
+                            }
+                        },
+                        _ => {}
+                    }
+                }
                 var tgt: Type = type_from_name(u.op[3:u.op.len()]);
                 var cot: Type = check_expr(u.operand, s);
                 if (is_primitive_type(tgt) && is_primitive_type(cot)) {

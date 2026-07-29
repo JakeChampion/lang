@@ -2727,6 +2727,24 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 // mirrors the receiver-hoist switch so impl-conformance lookups land
 // on the same key the hoist registered. Returns false for types that
 // can't carry methods.
+// validScalarValue reports whether v is a Unicode scalar value: in
+// 0..0x10FFFF and not one of the UTF-16 surrogates 0xD800..0xDFFF. This is
+// `char`'s domain (#5629) — the surrogates are excluded because they only
+// mean anything as a UTF-16 pair, so a lone one is not a character.
+func validScalarValue(v int64) bool {
+	return v >= 0 && v <= 0x10FFFF && (v < 0xD800 || v > 0xDFFF)
+}
+
+// surrogateHint adds a clause naming the surrogate case, so the diagnostic
+// says which of the two rules a value broke rather than making the reader
+// compare it against both bounds.
+func surrogateHint(v int64) string {
+	if v >= 0xD800 && v <= 0xDFFF {
+		return " (this is a surrogate)"
+	}
+	return ""
+}
+
 func methodTypeName(t ast.Type) (string, bool) {
 	switch rt := t.(type) {
 	case ast.StructType:
@@ -10431,9 +10449,19 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// since a byte and a code point sharing `i32` is what made
 		// `s[i].to_upper()` and `to_upper_char(cp)` indistinguishable.
 		// `c as i32` yields the scalar value; `n as char` reinterprets an
-		// integer as one. Range / surrogate validation on the inbound
-		// direction rides the producer slice (#5629 slice 5).
+		// integer as one.
+		//
+		// A LITERAL operand is validated here (#5629 slice 5): the scalar
+		// range is 0..0x10FFFF minus the D800..DFFF surrogates, and a
+		// constant outside it is a typo, not a decision. A non-constant
+		// operand stays unchecked — `as char` is the deliberate
+		// reinterpret hatch std/unicode uses on values its tables have
+		// already proven valid. The checked path for a runtime integer is
+		// utf8.char_from_i32, which returns Option[char].
 		if _, tgtIsChar := n.Target.(ast.CharType); tgtIsChar && innerIsNum {
+			if lit, ok := n.Inner.(*ast.NumberLit); ok && !validScalarValue(lit.Value) {
+				c.errfCode(n.P, "E071", "%d is not a Unicode scalar value, so it cannot be cast to `char`: the range is 0..0x10FFFF excluding the surrogates 0xD800..0xDFFF%s — use `utf8.char_from_i32` for a value that is only known at run time", lit.Value, surrogateHint(lit.Value))
+			}
 			return n.Target
 		}
 		if _, innerIsChar := inner.(ast.CharType); innerIsChar && targetIsNum {
