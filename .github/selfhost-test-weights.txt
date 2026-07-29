@@ -26,6 +26,10 @@ TestSelfHostModloadPerModuleWholeCompilerX86_64 210
 # behind another fixpoint; still under the entry above, so it does not set the
 # max-shard wall.
 TestSelfHostPerModuleEmitAllFixpointBatch4X86_64 130
+# Two warm drivers (asm_ir_run + wasm_ir_run), 14 subtests that are ~0.01s each —
+# the cost is almost entirely the driver restore.
+TestSelfHostFnArrayFieldGateX86_64 12
+TestSelfHostFnArrayFieldGateWasm 12
 TestSelfHostAsmX86_64 90
 TestSelfHostModloadPerModuleWholeCompilerArm64 80
 TestSelfHostLoadFixpointX86_64 75
