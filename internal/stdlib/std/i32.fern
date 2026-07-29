@@ -1173,3 +1173,22 @@ pub function (n: i32) next_multiple_of(d: i32): i32 {
     if (d == 0) { return 0; }
     return n.div_ceil(d) * d;
 }
+
+
+// `i32.gcd_all(xs)` / `lcm_all(xs)` — the gcd / lcm folded over a whole
+// array (`gcd_all([12,18,24]) == 6`, `lcm_all([2,3,4]) == 12`). `gcd_all`
+// seeds at 0 (`gcd(0, x) == |x|`), so an empty array yields 0 — the additive
+// identity of gcd; `lcm_all` seeds at 1 and an empty array yields 1. The
+// whole-array siblings of the pairwise `(n: i32) gcd` / `lcm`.
+pub function gcd_all(xs: i32[]): i32 {
+    var g: i32 = 0;
+    var i: i32 = 0;
+    while (i < xs.len()) { g = g.gcd(xs[i]); i = i + 1; }
+    return g;
+}
+pub function lcm_all(xs: i32[]): i32 {
+    var l: i32 = 1;
+    var i: i32 = 0;
+    while (i < xs.len()) { l = l.lcm(xs[i]); i = i + 1; }
+    return l;
+}
