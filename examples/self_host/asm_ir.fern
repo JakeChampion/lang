@@ -3280,10 +3280,37 @@ pub function eligible_core_known_main(mod: parser.Module, known: string[], requi
     var cnf: string[] = irlower.const_fns_of(mod.funcs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (!func_eligible(mod.funcs[i], mod, mod.structs, known, arf, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs))) { return false; }
+        if (!func_eligible(mod.funcs[i], mod, mod.structs, known, arf, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs))) {
+            if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name); }
+            return false;
+        }
         i = i + 1;
     }
     return true;
+}
+
+// strict_ir_on reports whether FERN_STRICT_IR is set (#5646). The IR lowerer's
+// bail-to-AST path is only SAFE when the AST emitter can express the construct;
+// when it cannot, the fallback emits wrong code rather than failing, and nothing
+// notices until a differential test disagrees at a runtime exit code — #5642 cost
+// 46 failing subtests that looked like several unrelated bugs but were one
+// unlowerable operator handed to a backend that does not know it. With this set,
+// a bail is a hard error naming what bailed instead of a silent fall-through, so
+// a newly-unsupported construct fails AT the bail. Off by default: the fallback is
+// still legitimate for constructs the AST emitter genuinely handles.
+function strict_ir_on(): boolean {
+    match (env("FERN_STRICT_IR")) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+}
+
+// strict_ir_refuse reports an IR bail as a hard error and exits. Called only when
+// strict_ir_on(); `what` names the function (or module-level gate) that bailed.
+function strict_ir_refuse(what: string): i32 {
+    eprint("FERN_STRICT_IR: " + what + " — the IR path bailed to the AST emitter; strict mode refuses the silent fall-through (#5646)\n");
+    exit(3);
+    return 0;
 }
 
 // eligible_core_known_main_view is the per-module twin of
@@ -3335,7 +3362,10 @@ pub function eligible_core_known_main_view(mod: parser.Module, known: string[], 
     var cnf: string[] = irlower.const_fns_of(all_funcs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (!func_eligible(mod.funcs[i], mod, all_structs, known, arf, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs))) { return false; }
+        if (!func_eligible(mod.funcs[i], mod, all_structs, known, arf, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs))) {
+            if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name); }
+            return false;
+        }
         i = i + 1;
     }
     return true;
@@ -5982,7 +6012,10 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     // functions / over the merged-bundle size budget (#3425) / no `main` (the
     // whole-program emit writes `_start` → `call __fn_main`) all fall back to AST.
     if (sm.funcs.len() == 0) { return ""; }
-    if (sm.funcs.len() > 512) { return ""; }
+    if (sm.funcs.len() > 512) {
+        if (strict_ir_on()) { strict_ir_refuse("module over the 512-function merged-bundle budget (#3425)"); }
+        return "";
+    }
     if (!asmcore.has_main(sm)) { return ""; }
     // Infer ret types BEFORE lowering the cache so the side-tables see inferred
     // return types (emit_module_ir_unit re-infers idempotently, keeping the cache
@@ -6022,14 +6055,23 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var i: i32 = 0;
     while (i < im.funcs.len()) {
         var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], arf, im.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(im.funcs, im.structs), cnf, bparams, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf, false);
-        if (!r.ok) { return ""; }
+        if (!r.ok) {
+            if (strict_ir_on()) { strict_ir_refuse(im.funcs[i].name); }
+            return "";
+        }
         var j: i32 = 0;
         while (j < r.ops.len()) {
             var o: ir.Op = r.ops[j];
             if (o.kind_tag == 149) {  // call_direct
-                if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(im, o.str) && !known_includes(known, o.str)) { return ""; }
+                if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(im, o.str) && !known_includes(known, o.str)) {
+                    if (strict_ir_on()) { strict_ir_refuse(im.funcs[i].name + " (call to unknown symbol " + o.str + ")"); }
+                    return "";
+                }
             } else if (o.kind_tag == 6) {  // const_func
-                if (!module_has_func(im, o.str) && !known_includes(known, o.str)) { return ""; }
+                if (!module_has_func(im, o.str) && !known_includes(known, o.str)) {
+                    if (strict_ir_on()) { strict_ir_refuse(im.funcs[i].name + " (function value " + o.str + " not defined)"); }
+                    return "";
+                }
             }
             j = j + 1;
         }

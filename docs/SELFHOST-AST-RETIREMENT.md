@@ -42,35 +42,41 @@ The sections below reason about the AST emitter's *call sites*. That is the
 wrong granularity for the x86 endgame: `asm.emit_module` is a thin shell whose
 body is reached only when `asm_ir.emit_module_ir_gated` declines, so the
 question is which PROGRAMS still make it decline. That had been re-derived by
-inspection; it is now measured directly — replace the fallback with
-`exit(<reason>)` and run `internal/e2eselfhost`, and every failing test is by
-construction one that still needs the AST emitter.
+inspection; it is now measured directly — run `internal/e2eselfhost` with
+**`FERN_STRICT_IR=1`**, and every failing test is by construction one that still
+needs the AST emitter.
 
-**Probe placement matters — put the marker INSIDE the `use_ir` branch.** The
-naive form of this recipe (replace the `emitted == ""` fallback itself with
-`exit(<reason>)`) over-reports, because `emitted` is also `""` when IR was never
-*requested*:
+That flag is in-tree (`asm_ir.fern`, #5646). It turns every bail site into an
+`exit(3)` naming what bailed, instead of the silent fall-through; off by
+default. It replaces the hand-patch-and-rebuild recipe this section used to
+carry, and it also fixes that recipe's two footguns:
 
-```fern
-if (use_ir) { emitted = asm_ir.emit_module_ir_gated(lm, known); }
-if (emitted == "") { emitted = asm.emit_module(...); }   // <- ALSO the -ir-off route
-```
+- **Placement.** The naive hand-patch instruments the `emitted == ""` fallback
+  itself, which over-reports: `emitted` is also `""` when IR was never
+  *requested*, and `TestSelfHostAsmIRPath` runs every case twice — with and
+  without `-ir` — as a differential control, so such a probe trips on ~80
+  deliberate AST runs that are not declines at all. The flag is checked inside
+  `emit_module_ir_gated`, i.e. inside the `use_ir` branch, so it cannot see
+  those.
+- **Visibility.** `eprint` alone is not enough — the e2e harness helpers capture
+  the driver's **stdout** only, so driver stderr is discarded unless a bespoke
+  test binds `cmd.Stderr`. The flag aborts, which is what makes the signal
+  survive.
 
-`TestSelfHostAsmIRPath` runs every case twice — with and without `-ir` — as a
-differential control, so a probe below the `use_ir` branch trips on ~80
-deliberate AST runs that are not declines at all. Instrument inside the branch
-instead:
-
-```fern
-if (use_ir) {
-    emitted = asm_ir.emit_module_ir_gated(lm, known);
-    if (emitted == "") { eprint("ASTFALLBACK\n"); exit(97); }
-}
-```
-
-Also note `eprint` alone is not enough: the e2e harness helpers capture the
-driver's **stdout** only, so driver stderr is discarded unless a bespoke test
-binds `cmd.Stderr`. Aborting (a non-zero exit) is what makes the signal visible.
+Beyond probing, the flag exists because the fallback's premise is not free.
+Falling back is only SAFE when the AST emitter can express what the IR path
+declined; when it can't, the fallback emits wrong code rather than failing.
+#5642 is the worked example — `match (a +? b)` had no `ExprBinary` case in
+`lower_match`'s scrutinee-type recovery, so the enclosing function bailed to an
+emitter with no checked-operator lowering at all, and the 46 resulting failures
+read like several unrelated bugs (wrong match arm, payload read as zero,
+SIGABRT) rather than one unsupported construct. Verified against that exact
+regression: with #5642's `lower_match` fix reverted, the checked-operator case
+in `TestSelfHostStrictIRX86_64` silently emits AST asm that exits **1** instead
+of 10, and under the flag the same driver refuses with `FERN_STRICT_IR: f — the
+IR path bailed to the AST emitter`.
+`TestSelfHostStrictIR*` (`internal/e2eselfhost`) is the standing tripwire: a
+corpus that must NOT refuse, plus an over-budget program that must.
 
 Result: **27 failures, 24 of them genuine** (the other 3 are unrelated — the
 `wasm-tools validate` component cases and an arm64 `R_AARCH64_CONDBR19`
