@@ -1568,12 +1568,39 @@ turns 6 `internal/e2e` tests red that pass on main —
 `TestFetchDeadlineX86_64`. Their surface (wasm float coercion, a fetch
 DEADLINE) looks unrelated to refcounting and is not; do not dismiss them.
 
+**Narrowing the drop-ORDER half (follow-up, same day).** Two further negative
+results, both worth not re-deriving.
+
+FIRST — a TRAP in the obvious implementation, which is NOT the cause but will
+cost a cycle if hit. `info.Locals` can hold SEVERAL entries under one name
+(shadowing — the reason `localNameUnique` exists); they share a slot, and their
+TYPES can differ. The exit sweep's `seen` map means forward iteration lets the
+FIRST entry pick the drop helper, so iterating the raw slice BACKWARDS silently
+lets the LAST one win and a shadowed slot is dropped as the WRONG TYPE. That is
+not a reordering at all — it changes which helper each slot gets, and is by
+itself an adequate cause for a segfault. Any attempt must SELECT forward and
+EMIT in reverse, as two separate loops.
+
+SECOND — doing exactly that does NOT fix it. With selection identical to main
+and only the emission order reversed, the counted-view leak is still repaired
+(3000/3000 allocs/frees vs main's 3000/2000, exit code unchanged) and the
+self-host driver is STILL miscompiled. So it is genuinely the ORDER of the
+releases that is load-bearing — not the choice of helper, and not shadowing.
+
+**Use this reproducer, not the load fixpoint.** `TestWasmSelfHostF64ToI64/expr`
+and all five `TestWasmSelfHostF64Coerce` cases fail under a reverse-emission
+sweep, and they beat `TestSelfHostLoadFixpointX86_64` on both axes: the symptom
+is WRONG OUTPUT rather than a segfault (`(a * 2.0) as i64` prints `0`, want
+`5000000000`), and once the driver binary is built each case fails in
+0.02-0.13 s instead of a ~5-minute compile. Build the driver once, then iterate.
+
 **What is still unknown:** what the escape taint protects BEYOND the exit sweep,
-and what the declaration-order sweep protects at all. Both are load-bearing for
-the self-host compile in ways the probe suite, the unit suites, and
-`internal/e2e` all fail to express. A future attempt should start by finding a
-SMALL program whose behaviour changes under each, rather than re-deriving the
-leak mechanism, which is now fully characterised above.
+and why RELEASE ORDER among a function's locals is load-bearing at all. Both
+break only at self-host-driver scale — no small program has yet been found that
+diverges, which is why the probe suite, every unit suite, and most of
+`internal/e2e` miss them entirely. A future attempt should hunt that small
+program using the fast reproducer above, rather than re-deriving the leak
+mechanism, which is fully characterised above.
 
 **Method note for the next attempt: `internal/e2e` is not the gate for an RC
 change — `internal/e2eselfhost` is.** Compiling the whole self-host compiler is
