@@ -7298,6 +7298,24 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             while (i < n) {
                 sa = lower_expr(arr.elements[i], sa);
                 if (!sa.ok) { return sa; }
+                // Perceus alias-inc, mirroring lower_opt_make_payload: an element
+                // that is a bare ident on an array slot is a NEW reference to that
+                // buffer, so retain it. Without it `var both = [a, b]` left a's rc
+                // at 1, and __fern_rc_is_unique reported a container-retained array
+                // as UNIQUE on both IR backends where both AST emitters report it
+                // shared — silently degrading the constructor-reuse guard (#4350),
+                // whose whole job is to answer "sole owner?" before an in-place
+                // write. A fresh-literal element is not a local, so this never
+                // fires for it and the fresh-arrarr deep-free paths
+                // (discardable_scalar_arrarr_lit et al) are unaffected.
+                match (arr.elements[i]) {
+                    parser.ExprIdent(eid) => {
+                        if (sa.is_arr_slot(sa.slot_of(eid.name))) {
+                            sa = sa.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                        }
+                    },
+                    _ => {}
+                }
                 i = i + 1;
             }
             return sa.emit(ir.op_arr_make(n, ewidth));
