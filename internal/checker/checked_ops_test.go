@@ -44,6 +44,25 @@ func TestCheckedOperatorTyping(t *testing.T) {
 	mustOK(`function main(): i32 { var a: i32 = 1; var b: i32 = 4; match (a <<? b) { Some(v) => { return v; }, None => { return 0; } } }`)
 	mustOK(`function main(): i32 { var a: u32 = 256; var b: u32 = 2; match (a >>? b) { Some(v) => { return v as i32; }, None => { return 0; } } }`)
 
+	// A DESTINATION TYPE must not re-type the result. Every positive case
+	// above reaches the operator with no expected type — through `match` or a
+	// `?` unwrap — and that is exactly why this went unnoticed: the checked
+	// ops stamp `IntWidth` with the OPERAND width for their desugar, and
+	// postSettleType re-read it as the result type, so `a +? b` came back as a
+	// bare `i32` in precisely the positions the operator exists to serve.
+	mustOK(`function main(): i32 { var a: i32 = 1; var b: i32 = 2; var c: Option[i32] = a +? b; return match (c) { Some(v) => v, None => 0 }; }`)
+	mustOK(`function f(): Option[i32] { var a: i32 = 1; var b: i32 = 2; return a +? b; }
+function main(): i32 { return match (f()) { Some(v) => v, None => 0 }; }`)
+	mustOK(`function g(o: Option[i32]): i32 { return match (o) { Some(v) => v, None => 0 }; }
+function main(): i32 { var a: i32 = 1; var b: i32 = 2; return g(a +? b); }`)
+	// The same three shapes at a non-default width and unsigned, so the guard
+	// isn't accidentally specific to i32.
+	mustOK(`function main(): i32 { var a: i64 = 1; var b: i64 = 2; var c: Option[i64] = a *? b; return match (c) { Some(v) => v as i32, None => 0 }; }`)
+	mustOK(`function f(): Option[u32] { var a: u32 = 1; var b: u32 = 2; return a -? b; }
+function main(): i32 { return match (f()) { Some(v) => v as i32, None => 0 }; }`)
+	// Every operator in the family, not just the one that surfaced it.
+	mustOK(`function main(): i32 { var a: i32 = 8; var b: i32 = 2; var c: Option[i32] = a /? b; var d: Option[i32] = a %? b; var e: Option[i32] = a <<? b; var f: Option[i32] = a >>? b; return match (c) { Some(v) => v, None => 0 }; }`)
+
 	// Assigning the Option[T] to the wrong element type is a type error.
 	mustErr(`function main(): i32 { var a: i32 = 1; var b: i32 = 2; var c: Option[i64] = a +? b; return 0; }`,
 		`Option`)
