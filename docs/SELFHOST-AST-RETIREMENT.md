@@ -2164,6 +2164,79 @@ distinction is exactly the one `escapeOwned` already draws at the `Array_push` /
 `Array_set` sinks, so the shape of the rule is precedented; what is new is
 carrying it across a function boundary.
 
+**FIXED for the counted case (2026-07-29, same day).** `inferParamCountedRetain`
+is the summary this section called for, in its narrowest form: a STRING
+parameter every one of whose appearances is a field / element value of a
+StructLit, TupleLit or ArrayLit is retained only through counted constructions,
+so a caller may release its own reference. Two sites read it — the escape walk's
+blanket string taint (an argument in such a position is no longer tainted) and
+`rhsTainted`'s Call arm (a result whose only param-aliasing is counted is a
+fresh owned value, the sibling of the `findReturnsNoParamEscape` rule, which
+demands the strictly stronger "aliases NO param" and so can never admit a node
+constructor).
+
+Both halves are needed and neither is sufficient: lifting only the argument
+taint emits the caller's `str_dec` but frees nothing, because the STRUCT that
+received the counted reference is itself still tainted through the call result
+and never dropped.
+
+**The scalar-argument rule is where this gets subtle, and the naive version is
+UNSOUND — measured, not theorised.** A scalar parameter carries no heap, so an
+`i32` argument looks like it should never disqualify a call; without that, a
+tainted scalar (params are tainted by default) re-taints every call result and
+the whole lift does nothing. But exempting scalars unconditionally frees a value
+the caller still shares:
+
+    function grow(m: Map[i32, i32], k: i32): Map[i32, i32] { m = m.insert(k, k * 7); return m; }
+    var g: Map[i32, i32] = grow(base, i + 2);
+
+`base` is untainted, so the ONLY thing keeping `g` ineligible was the tainted
+scalar `i + 2` — and `g` shares `base`'s buffer. Exempt the scalar and `g`'s drop
+frees it under the caller (`TestX86_64MapIntermediateReclaim`'s
+param-receiver negative, plus its arm64 and wasm siblings — the wasm one traps
+with "pointer not aligned"). So the exemption is conditioned on EVERY
+pointer-shaped parameter of the callee being counted-retained too.
+
+That condition is what bounds the win. Measured on `parser.fern`, parse output
+byte-identical (same 408 funcs / 17656 idents / same checksum / same underflow
+count):
+
+| workload | frees before | frees after |
+|---|---:|---:|
+| `tokenize` only (117315 tokens) | 44463 / 511278 | 44566 / 508639 |
+| full load (tokenize + parse) | 174230 / 904802 | 175664 / 901734 |
+
+That is +1434 blocks on the full load — real, and the targeted shape is fully
+fixed (the probe goes 1000 → 2000 freed of 3000), but a fraction of a percent of
+the leak, not the near-doubling the unsound version showed. **The 40k-block
+version of this number was the unsound one**; it is recorded here because the
+gap between the two is exactly the value sitting behind a more precise
+result-aliasing analysis (below), and because a future attempt will otherwise
+re-derive the same too-good measurement and ship it.
+
+**What the narrowness costs, and the obvious widenings.** One `name.len()`, one
+`var s = name`, one `xs.append(name)`, one onward call — any use outside a
+construction literal — and the summary is false, which also drags down the
+scalar exemption for that whole callee.
+
+The highest-value widening is the one the scalar rule exposed: the real question
+is not "are ALL pointer params counted" but "can the RESULT alias an unproven
+pointer param". `l = l.advance()` — a `Lex` param read field-by-field into a
+fresh `Lex { src: l.src, i: l.i + 1, … }` — is safe (every field init incs) yet
+fails the occurrence test, because `l.src` is a FieldAccess and the summary only
+recognises a bare ident in a construction slot. Teaching it that a param read
+THROUGH a projection into a counted slot is still counted would cover the
+lexer's and parser's threading style, which is where the 40k blocks live.
+
+After that, in rough order: pure reads (`len`, indexing, comparison) should not
+disqualify; `append` into an array the callee returns IS a counted store
+(emitArrayPush incs) and needs only the same treatment; locals that merely carry
+the param into a construction want the taint-propagation fixpoint
+`paramEscapesInFn` already has; and variant-constructor payloads are counted
+under `EnumRcPayloads`. Each is additive — the summary is a per-(fn, param) bit —
+but each also needs re-running the map negatives above, which are the sharpest
+soundness probe this area has.
+
 **Do not re-try the `rhsTainted` `Array_push` receiver-only arm as the fix for
 this.** Re-measured on the parse probe with the entry-inc under-count fixed: it
 is no longer obviously unsound, but it moves frees on a full `parser.fern` parse

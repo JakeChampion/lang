@@ -413,6 +413,126 @@ func computeReadOnlyComparators(info *checker.Info) map[string]bool {
 // caller still passes the arg borrowed), so calleeParamOwnedByDefault stays
 // false and no caller-side coordination is needed. TRMC functions are excluded
 // (their exit bypasses the param sweep).
+// inferParamCountedRetain computes, per user function, which STRING parameters
+// are retained ONLY through counted constructions — i.e. every appearance of the
+// parameter in the body is as a field / element value of a StructLit, TupleLit
+// or ArrayLit, each of which inc's what it stores (needsRcIncOnAlias at the
+// construction site; a param is never a moveSite, since markConstructionMoves
+// only marks owned rc LOCALS).
+//
+// This is what lets computeFreeEligible stop tainting a string argument passed
+// to such a callee. That blanket taint exists because a callee may retain an
+// argument UNCOUNTED — stored into a container it returns, which the
+// intraprocedural analysis cannot see — so freeing it caller-side would dangle
+// the retained copy. When every retention is counted, the callee's construction
+// holds a reference of its own and the caller's release is balanced: the value
+// stays at rc>=1 for exactly as long as the constructed value does.
+//
+// Deliberately narrow. The parameter must appear ONLY in counted-construction
+// value positions: one bare `return name`, one `var s = name`, one
+// `xs.append(name)`, one call passing it on, even one `name.len()` — anything
+// else at all — and the summary is false and the caller keeps the conservative
+// taint. That is enough for the shape this targets: the lexer's eight `*_tok`
+// helpers and the parser's `e_*` node constructors, each of which does nothing
+// with its string parameter but store it in the node it returns. Widening it
+// (transitive calls, pure reads, locals that only flow into constructions,
+// variant-constructor payloads) needs its own fixpoint and is a follow-up.
+//
+// A parameter shadowed by a local / match binding of the same name disqualifies
+// it: the occurrence counting below cannot tell the two apart.
+func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][]bool {
+	out := map[string][]bool{}
+	for _, fn := range prog.Funcs {
+		if fn.Body == nil {
+			continue
+		}
+		flags := make([]bool, len(fn.Params))
+		shadowed := map[string]bool{}
+		for _, v := range info.Locals[fn] {
+			shadowed[v.Name] = true
+		}
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.Match:
+				for _, arm := range x.Arms {
+					for _, nm := range arm.Bindings {
+						shadowed[nm] = true
+					}
+				}
+			case *ast.MatchExpr:
+				for _, arm := range x.Arms {
+					for _, nm := range arm.Bindings {
+						shadowed[nm] = true
+					}
+				}
+			}
+			return true
+		})
+		ptrAllCounted := true
+		for i, p := range fn.Params {
+			// A parameter carrying no heap (i32 / bool / f64 / …) can never be
+			// retained at all, counted or otherwise — mark it so a scalar
+			// argument doesn't disqualify a call the way a pointer one would.
+			// Conditioned below on EVERY pointer param being counted too: a
+			// scalar can't alias, but the RESULT can still alias an unproven
+			// pointer param, and a tainted scalar argument is what was keeping
+			// such a call's result tainted (`grow(m, i + 2)` returning a Map
+			// that shares the caller's buffer — TestX86_64MapIntermediateReclaim's
+			// param-receiver negative).
+			if !rcTrackedSlotType(p.Type) {
+				flags[i] = true
+				continue
+			}
+			if _, isStr := p.Type.(ast.StringType); !isStr || p.Own || shadowed[p.Name] {
+				continue
+			}
+			total, counted := 0, 0
+			countIn := func(e ast.Expr) {
+				if id, ok := e.(*ast.Ident); ok && id.Name == p.Name {
+					counted++
+				}
+			}
+			ast.Walk(fn.Body, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.Ident:
+					if x.Name == p.Name {
+						total++
+					}
+				case *ast.StructLit:
+					for _, f := range x.Fields {
+						countIn(f.Value)
+					}
+				case *ast.TupleLit:
+					for _, el := range x.Elems {
+						countIn(el)
+					}
+				case *ast.ArrayLit:
+					for _, el := range x.Elems {
+						countIn(el)
+					}
+				}
+				return true
+			})
+			flags[i] = total > 0 && total == counted
+		}
+		for i, p := range fn.Params {
+			if rcTrackedSlotType(p.Type) && !flags[i] {
+				ptrAllCounted = false
+				break
+			}
+		}
+		if !ptrAllCounted {
+			for i, p := range fn.Params {
+				if !rcTrackedSlotType(p.Type) {
+					flags[i] = false
+				}
+			}
+		}
+		out[fn.Name] = flags
+	}
+	return out
+}
+
 func (b *builder) computeConsumedParams() map[string]bool {
 	res := map[string]bool{}
 	if !ast.RcFreeEnabled || b.fn.Body == nil || b.trmcFuncs[b.fn.Name] {
@@ -797,9 +917,25 @@ func (b *builder) computeFreeEligible() map[string]bool {
 							if strings.HasPrefix(id.Name, "__method_") {
 								argStart = 1
 							}
-							for _, a := range s.Args[argStart:] {
+							counted := b.paramCountedRetain[id.Name]
+							for ai, a := range s.Args[argStart:] {
 								if aid, ok := a.(*ast.Ident); ok {
 									if _, isStr := b.exprType(aid).(ast.StringType); isStr {
+										// ...unless the callee retains this
+										// parameter only through counted
+										// constructions, which hold a reference
+										// of their own — then the caller's
+										// release is balanced, not a dangle.
+										// This is the lexer's per-token leak:
+										// eight `*_tok` helpers each store their
+										// string param into the Token they
+										// return, and the blanket taint stranded
+										// the caller's reference on every one
+										// (docs/SELFHOST-AST-RETIREMENT.md).
+										pi := ai + argStart
+										if pi < len(counted) && counted[pi] {
+											continue
+										}
 										tainted[aid.Name] = true
 									}
 								}
@@ -1145,8 +1281,24 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		if fa, ok := x.Callee.(*ast.FieldAccess); ok && b.rhsTainted(fa.Target, tainted) {
 			return true // method receiver is tainted
 		}
-		for _, a := range x.Args {
-			if b.rhsTainted(a, tainted) {
+		// The counted-retain sibling of the rule above: findReturnsNoParamEscape
+		// demands the result alias NO param, which a node constructor
+		// (`mkTok(name, line) -> Tok { name: name, … }`) can never satisfy — yet
+		// its result IS a fresh owned box, because the only param it carries out
+		// is carried by a counted construction that inc'd it. Untaint when every
+		// tainted argument sits in such a position: the result then owns its
+		// references, and dropping it decs them exactly once.
+		var counted []bool
+		if id, ok := x.Callee.(*ast.Ident); ok {
+			if _, isLocal := b.locals[id.Name]; !isLocal {
+				counted = b.paramCountedRetain[id.Name]
+			}
+		}
+		for i, a := range x.Args {
+			if !b.rhsTainted(a, tainted) {
+				continue
+			}
+			if i >= len(counted) || !counted[i] {
 				return true
 			}
 		}
