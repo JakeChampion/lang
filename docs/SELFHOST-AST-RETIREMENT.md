@@ -2553,8 +2553,23 @@ So the strand is the `Token[]` ELEMENTS, independent of escape and of payload: a
 array built by `out = out.append(tok)` in a loop whose deep drop never walks its
 elements. That is the shape "A loop-append reclamation bug" above describes, and
 whose `rhsTainted` `Array_push` receiver-only candidate was measured at +0.3% on
-the full parse (#5830) — worth re-measuring on `tokenize` ALONE, which no one has
-done, before assuming it is as marginal here as it was there.
+the full parse (#5830).
+
+**Re-measured on `tokenize` ALONE (2026-07-29), and it is marginal there too:
+frees 44566 -> 44567 of 508639. ONE BLOCK.** The reasoning that it should matter
+more where the elements are 91% of the strand does not survive contact with the
+number, so the buffer's escape taint is not what is holding the elements either.
+Along with the escape and payload rows above, that closes off every mechanism
+this section has proposed for the lexer strand: not the return escape, not the
+payload strings, not the buffer taint, and not the threading shape.
+
+What has NOT been tried on `tokenize`: reading the emitted drop for `out` at its
+exit sites and confirming from the ASM whether it is `__fern_drop_arr_ptr` (the
+element-walking form) or a flat `__fern_rc_dec` — i.e. establishing what the
+compiler actually emits before proposing another analysis to change it. Every
+attempt in this section so far has reasoned forward from an analysis to a
+predicted number; the one that worked (#5820) went the other way, from the
+emitted code back. Start there.
 
 The map-intermediate negatives remain the sharpest soundness probe in this area;
 run them on every iteration of anything that touches the taint.
