@@ -46,9 +46,14 @@ function main(): i32 {
     var stray: char[] = string_from_bytes_unchecked([65 as u8, 191 as u8, 66 as u8]).codepoints(); // 'A', stray cont, 'B'
     if (stray.len() != 3 || (stray[0] as i32) != 65 || (stray[1] as i32) != 65533 || (stray[2] as i32) != 66) { print("stray-cont FAILED"); return 1; }
 
-    // Surrogates and out-of-range sanitise to U+FFFD on encode.
-    if (string.string_from_codepoint(55296 as char) != string.string_from_codepoint(65533 as char)) { print("surrogate FAILED"); return 1; }
-    if (string.string_from_codepoint(1114112 as char) != string.string_from_codepoint(65533 as char)) { print("oor FAILED"); return 1; }
+    // Surrogates and out-of-range sanitise to U+FFFD on encode. The bad
+    // values go through i32 LOCALS: a literal outside the scalar range is
+    // E071 now (#5629 slice 5), and what this checks is the RUNTIME
+    // sanitiser, which a cast of a runtime value still reaches unchecked.
+    var surrogate: i32 = 55296;
+    var oor: i32 = 1114112;
+    if (string.string_from_codepoint(surrogate as char) != string.string_from_codepoint(65533 as char)) { print("surrogate FAILED"); return 1; }
+    if (string.string_from_codepoint(oor as char) != string.string_from_codepoint(65533 as char)) { print("oor FAILED"); return 1; }
 
     // Empty string: no codepoints.
     if ("".codepoints().len() != 0 || "".codepoint_count() != 0) { print("empty FAILED"); return 1; }
