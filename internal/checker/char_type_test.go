@@ -96,3 +96,72 @@ func TestCharIsContextualNotReserved(t *testing.T) {
 		})
 	}
 }
+
+// A LITERAL cast to `char` is range-checked (#5629 slice 5). `char`'s domain
+// is the Unicode scalar values — 0..0x10FFFF minus the UTF-16 surrogates
+// 0xD800..0xDFFF — and a constant outside it is a typo, not a decision, so it
+// is rejected at compile time rather than producing a `char` that no encoder
+// can represent.
+func TestCharCastRejectsInvalidLiteral(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"above max", `function main(): i32 { var c: char = 1114112 as char; return 0; }`},
+		{"far above max", `function main(): i32 { var c: char = 2147483647 as char; return 0; }`},
+		{"first surrogate", `function main(): i32 { var c: char = 55296 as char; return 0; }`},
+		{"last surrogate", `function main(): i32 { var c: char = 57343 as char; return 0; }`},
+		{"mid surrogate", `function main(): i32 { var c: char = 56000 as char; return 0; }`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			_, err = Check(prog)
+			if err == nil {
+				t.Fatalf("expected E071, got no error")
+			}
+			if !hasCode(err, "E071") {
+				t.Fatalf("expected E071, got: %v", err)
+			}
+		})
+	}
+}
+
+// The boundaries themselves are scalar values and must stay accepted — an
+// off-by-one in either bound would show up here rather than as a mysteriously
+// rejected emoji.
+func TestCharCastAcceptsValidLiteral(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"zero", `function main(): i32 { var c: char = 0 as char; return 0; }`},
+		{"ascii", `function main(): i32 { var c: char = 65 as char; return 0; }`},
+		{"just below surrogates", `function main(): i32 { var c: char = 55295 as char; return 0; }`},
+		{"just above surrogates", `function main(): i32 { var c: char = 57344 as char; return 0; }`},
+		{"replacement char", `function main(): i32 { var c: char = 65533 as char; return 0; }`},
+		{"astral emoji", `function main(): i32 { var c: char = 128512 as char; return 0; }`},
+		{"max scalar", `function main(): i32 { var c: char = 1114111 as char; return 0; }`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if _, err := Check(prog); err != nil {
+				t.Fatalf("check: %v", err)
+			}
+		})
+	}
+}
+
+// A NON-literal cast stays unchecked on purpose: `as char` is the reinterpret
+// hatch std/unicode uses on values its tables have already proven are scalars,
+// and re-validating them on every lookup would be pure cost. The checked path
+// for a runtime integer is utf8.char_from_i32, which returns Option[char].
+func TestCharCastFromRuntimeValueUnchecked(t *testing.T) {
+	src := `function main(): i32 { var n: i32 = 1114112; var c: char = n as char; return 0; }`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("a runtime cast must stay unchecked, got: %v", err)
+	}
+}

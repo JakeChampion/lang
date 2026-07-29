@@ -92,10 +92,29 @@ function test_encode_decode_roundtrip(): test.TestOutcome {
 
 function test_encode_invalid_is_replacement(): test.TestOutcome {
     // Out-of-range / surrogate codepoints encode as U+FFFD (65533).
+    // The bad values go through i32 LOCALS, not literal `as char` casts:
+    // a literal outside the scalar range is E071 now (#5629 slice 5), and
+    // the point here is the runtime sanitiser, which still has to hold —
+    // a cast of a runtime value stays unchecked on purpose.
+    var neg: i32 = 0 - 1;
+    var surrogate: i32 = 55296;
+    var too_big: i32 = 1114112;
     return test.assert_true(
-        decode_cp(utf8.utf8_encode((0 - 1) as char), 0) == 65533
-        && decode_cp(utf8.utf8_encode((55296) as char), 0) == 65533
-        && decode_cp(utf8.utf8_encode((1114112) as char), 0) == 65533);
+        decode_cp(utf8.utf8_encode(neg as char), 0) == 65533
+        && decode_cp(utf8.utf8_encode(surrogate as char), 0) == 65533
+        && decode_cp(utf8.utf8_encode(too_big as char), 0) == 65533);
+}
+
+function test_char_from_i32(): test.TestOutcome {
+    // The checked constructor: Some for a scalar value, None for the two
+    // ways an integer can fail to be one.
+    var ok_ascii: boolean = match (utf8.char_from_i32(65)) { Some(c) => { c as i32 == 65 }, None => { false } };
+    var ok_max: boolean = match (utf8.char_from_i32(1114111)) { Some(c) => { c as i32 == 1114111 }, None => { false } };
+    var no_big: boolean = match (utf8.char_from_i32(1114112)) { Some(_) => { false }, None => { true } };
+    var no_lo: boolean = match (utf8.char_from_i32(55296)) { Some(_) => { false }, None => { true } };
+    var no_hi: boolean = match (utf8.char_from_i32(57343)) { Some(_) => { false }, None => { true } };
+    var no_neg: boolean = match (utf8.char_from_i32(0 - 1)) { Some(_) => { false }, None => { true } };
+    return test.assert_true(ok_ascii && ok_max && no_big && no_lo && no_hi && no_neg);
 }
 
 function test_codepoint_count(): test.TestOutcome {
@@ -260,6 +279,7 @@ function main(): i32 {
     r = r.it("encode lengths",          test_encode_lengths());
     r = r.it("encode/decode round trip", test_encode_decode_roundtrip());
     r = r.it("encode invalid -> U+FFFD", test_encode_invalid_is_replacement());
+    r = r.it("char_from_i32",           test_char_from_i32());
     r = r.it("codepoint count",         test_codepoint_count());
     r = r.it("codepoints array",        test_codepoints_array());
     r = r.it("is_valid_utf8",           test_is_valid());

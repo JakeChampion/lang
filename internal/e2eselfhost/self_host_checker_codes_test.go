@@ -1268,6 +1268,26 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 
 	progs := []struct{ name, src string }{
+		// `<lit> as char` range/surrogate validation (E071, #5629 slice 5).
+		// Both checkers must agree on which literals name a Unicode scalar
+		// value. The self-host resolves `char` to i32, so it keys the rule on
+		// the op text rather than the target type — these hold the two
+		// implementations to the same answer, including the hex spelling and
+		// both boundary values.
+		{"char-lit-ok-ascii", "function main(): i32 { var c: char = 65 as char; return 0; }\n"},
+		{"char-lit-ok-max", "function main(): i32 { var c: char = 1114111 as char; return 0; }\n"},
+		{"char-lit-ok-below-surrogates", "function main(): i32 { var c: char = 55295 as char; return 0; }\n"},
+		{"char-lit-ok-above-surrogates", "function main(): i32 { var c: char = 57344 as char; return 0; }\n"},
+		{"char-lit-ok-hex", "function main(): i32 { var c: char = 0x10FFFF as char; return 0; }\n"},
+		{"char-lit-e071-above-max", "function main(): i32 { var c: char = 1114112 as char; return 0; }\n"},
+		{"char-lit-e071-huge", "function main(): i32 { var c: char = 2147483647 as char; return 0; }\n"},
+		{"char-lit-e071-surrogate-lo", "function main(): i32 { var c: char = 55296 as char; return 0; }\n"},
+		{"char-lit-e071-surrogate-hi", "function main(): i32 { var c: char = 57343 as char; return 0; }\n"},
+		{"char-lit-e071-hex", "function main(): i32 { var c: char = 0x110000 as char; return 0; }\n"},
+		// A runtime operand stays unchecked in BOTH — `as char` is the
+		// reinterpret hatch, and a checker that flagged this would break
+		// std/unicode's table lookups.
+		{"char-runtime-cast-unchecked", "function main(): i32 { var n: i32 = 1114112; var c: char = n as char; return 0; }\n"},
 		// Valid string-method calls (user-defined methods in std/string, not
 		// builtins): both checkers must agree they are well-typed.
 		{"string-contains-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"abc\"; if (s.contains(\"b\")) { return 1; } return 0; }\n"},
