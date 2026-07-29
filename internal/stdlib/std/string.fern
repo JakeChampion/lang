@@ -2509,6 +2509,28 @@ pub function (s: string) find_all(sub: string): i32[] {
     return out;
 }
 
+// `(s: string) count_matches(sub)` — how many non-overlapping occurrences
+// of `sub` are in `s` (`"aaaa".count_matches("aa") == 2`, counting from the
+// left). The same scan as `find_all` but without allocating the positions
+// array, so it is the cheap answer when you only need the tally. An empty
+// `sub` counts 0. Mirrors Rust's `s.matches(pat).count()`.
+pub function (s: string) count_matches(sub: string): i32 {
+    var subLen: i32 = sub.len();
+    if (subLen == 0) { return 0; }
+    var n: i32 = s.len();
+    var count: i32 = 0;
+    var i: i32 = 0;
+    while (i + subLen <= n) {
+        if (__substr_eq(s, i, sub, subLen)) {
+            count = count + 1;
+            i = i + subLen;
+        } else {
+            i = i + 1;
+        }
+    }
+    return count;
+}
+
 // `s.count_byte(b)` — number of bytes equal to b. O(n)
 // single-pass; cheaper than count(byte.to_ascii_string())
 // when the needle is known to be a single byte.
