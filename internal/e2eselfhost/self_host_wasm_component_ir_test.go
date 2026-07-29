@@ -31,13 +31,13 @@ import (
 //     the whole compose pipeline is assembled, and it is the constraint that
 //     decides which shapes the IR leg may serve at all.
 //
-// The out-of-subset half of the table is as load-bearing as the in-subset
-// half: the filesystem component shapes have preview2 helper bodies only on the
-// AST path (wasm.readfile_func_p2 and friends), so they MUST keep falling
-// through. A gate that widened to admit them would emit a core calling helpers
-// nothing defines. (random, clock, env and args USED to sit in that half; their
-// *_p2 bodies now live in wasm_ir.fern and mode 2 emits them, so they lower —
-// which is exactly the migration the filesystem shapes still have ahead.)
+// The out-of-subset rows are as load-bearing as the in-subset ones: each pins a
+// shape that must KEEP falling through, because admitting it would emit a core
+// calling helpers nothing defines. Every WASI category component_shape knows
+// has now migrated — stdout/stderr/exit, clock, random, env, args, and finally
+// the filesystem pair — so what remains out of subset is the per-function IR
+// gaps (i64.to_string) and the two shapes with no preview2 body at all
+// (arg_at, and random without I/O).
 func TestSelfHostWasmComponentIRPath(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -164,6 +164,16 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// recorded here rather than bundled in.
 		{"arg-at-falls-back", true, `function main(): i32 { write(arg_at(1)); return 0; }`, false,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
+
+		// The filesystem pair, last of component_shape's categories to move.
+		// Their mode-2 bodies box a real IoError variant rather than the raw
+		// wasi error code the AST fallback still stores (#5795), and fs sits
+		// last in the import order, which is the slot component_full_io_fs /
+		// _fs_write / _fs_rw alias.
+		{"io-read-file", true, `function main(): i32 { match (read_file("in.txt")) { Ok(s) => { write(s); return 0; }, Err(e) => { return 1; } } return 2; }`, true,
+			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:filesystem/preopens@0.2.0 get-directories", "wasi:filesystem/types@0.2.0 [method]descriptor.open-at", "wasi:filesystem/types@0.2.0 [method]descriptor.read-via-stream", "wasi:io/streams@0.2.0 [method]input-stream.blocking-read"}},
+		{"io-write-file", true, `function main(): i32 { match (write_file("o.txt", "x")) { Some(e) => { return 1; }, None => { return 0; } } return 2; }`, true,
+			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:filesystem/preopens@0.2.0 get-directories", "wasi:filesystem/types@0.2.0 [method]descriptor.open-at", "wasi:filesystem/types@0.2.0 [method]descriptor.write-via-stream"}},
 
 		// Out of subset — these must keep falling through to the AST emitter,
 		// whose preview2 helper bodies are the only implementation they have.
