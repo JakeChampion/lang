@@ -20,6 +20,10 @@
 
 # Whole-compiler self-builds / fixpoints — the genuine multi-minute tail.
 TestSelfHostModloadPerModuleWholeCompilerX86_64 210
+# Two whole-compiler emit-all passes (gen0 ~59 s + gen1 ~161 s at batch=4,
+# measured 2026-07-29) with the modload driver warm. The heaviest entry here,
+# so LPT gives it its own bucket and the max-shard wall tracks it.
+TestSelfHostPerModuleEmitAllFixpointBatch4X86_64 230
 TestSelfHostAsmX86_64 90
 TestSelfHostModloadPerModuleWholeCompilerArm64 80
 TestSelfHostLoadFixpointX86_64 75

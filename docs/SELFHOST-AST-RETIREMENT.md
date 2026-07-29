@@ -1104,8 +1104,10 @@ tier → leak.
   advance halved the per-batch accumulation, so batch=8 fits. Bonus: skipping the
   redundant eligibility lowering also makes it **~3.3× faster** (gen0 emit-all
   ~80 s vs ~270 s pre-fix; whole test ~9 min vs the ~16.6 min serial fixpoint).
-  Env-gated (`RUN_EMITALL_FIXPOINT=1`) — the gen1 self-reproduction proof is now
-  cheap enough to consider de-gating, but 9 min is still heavy for every lane.
+  Env-gated (`RUN_EMITALL_FIXPOINT=1`), because its batch=8 is the A/B it exists
+  to hold. The gen1 self-reproduction proof itself now runs on every lane as the
+  ungated `TestSelfHostPerModuleEmitAllFixpointBatch4X86_64` — same fixpoint,
+  batch=4 for the arena headroom.
 
   **So the slice-3 memory blocker is resolved for the per-module path.** The
   remaining work to retire the AST emitters is the mechanical part: repoint the
@@ -1382,6 +1384,21 @@ load-bearing — the test exists to hold `-assume-eligible` against *the exact
 configuration that OOM'd without it*, and re-tuning the batch deletes the
 regression it guards. If the fixpoint is de-gated for routine CI, add a batch=4
 run for that and leave the batch=8 A/B env-gated as the backstop.
+
+**DONE.** `TestSelfHostPerModuleEmitAllFixpointBatch4X86_64` is that batch=4 run
+and it is UNGATED; the batch=8 sibling keeps `RUN_EMITALL_FIXPOINT`. Both drive
+the shared `runEmitAllFixpoint`, so the batch size is the only difference between
+them. This is the guard slices 3 and 5 rest on: repointing the driver at the
+per-module path and then DELETING the AST emitters is only safe while something
+proves a self-host-BUILT compiler emits the same units the Go-built one does, and
+while that proof was gated it only ran when someone remembered it.
+
+Measured on the ungated run (2026-07-29, 4-core host, cold driver build): 36
+units in 9 batches, gen0 59.4 s + gen1 160.9 s, whole test 363.7 s, gen0 == gen1.
+With the modload driver warm — which is what the CI lane sees — the build drops
+out and it costs ~230 s, which is its entry in `.github/selfhost-test-weights.txt`.
+That makes it the heaviest weighted test, so LPT gives it its own bucket and the
+max-shard wall-clock tracks it rather than stacking it behind another fixpoint.
 
 **The memoisation, priced (rejected).** The "cap or memoise the fixpoint's
 repeated walks" bullet was implemented and measured rather than left open. Both
@@ -1700,6 +1717,10 @@ accept a small-program test as evidence for a change to these fixpoints.
    de-gate, except that at its current batch=8 it peaks **7909 MB against the
    8 GiB arena**; de-gate at batch=4 (154 s, 6754 MB) rather than at batch=8.
 3. **Slice 3 driver repoint + Slice 5 deletion** — mechanical once (2) lands.
+   The safety net it needs is now standing: the gen1 self-reproduction fixpoint
+   runs UNGATED as `TestSelfHostPerModuleEmitAllFixpointBatch4X86_64`, so a
+   repoint that breaks byte-identity fails CI instead of waiting for someone to
+   remember `RUN_EMITALL_FIXPOINT=1`.
 4. **Slice 4a/4b** (arm64/wasm runtime untangle) alongside/after — a ~5k-line,
    qemu-gated duplication that unlocks nothing on its own; avoid until the
    endgame is reachable.
