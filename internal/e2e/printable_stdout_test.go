@@ -29,11 +29,23 @@ import (
 	"github.com/jakechampion/lang/internal/fernsmith"
 )
 
-// printableStdoutSeeds is the deterministic sweep size. Kept modest
-// because each seed compiles + runs across three external backends
-// (gcc/qemu ×2 + wasmtime); the fuzz target below expands the search
-// on demand. Drops to 1/8th under -short for the dev loop.
-const printableStdoutSeeds = 256
+// printableStdoutSeeds is the deterministic sweep size. Each seed
+// compiles + runs across three external backends (gcc/qemu ×2 +
+// wasmtime), so it is not free; drops to 1/8th under -short for the
+// dev loop.
+//
+// Raised 256 → 1024 once the sweep started honouring DIFF_ORACLE_SHARD
+// (below), which makes the increase cost-NEUTRAL per CI cell: 256 seeds
+// unsharded measured 47s, and 1024 split four ways is the same 256 per
+// shard. Before that every one of the differential workflow's eight
+// cells ran the identical 256 seeds — the same work eight times.
+//
+// 256 was demonstrably too narrow. #5796 — a generic-inference bug that
+// rejected a valid program — lives at seed 603, and this oracle
+// t.Fatals on a checker error by design, so the corpus could not even
+// reach it. Seeds 0..2047 are verified clean on x86-64 and on wasm, so
+// 2048 is available if the per-cell budget ever allows.
+const printableStdoutSeeds = 1024
 
 func printableSeeds(t *testing.T) uint64 {
 	t.Helper()
@@ -46,9 +58,17 @@ func printableSeeds(t *testing.T) uint64 {
 // TestDifferential_PrintableStdout is the deterministic seeded sweep:
 // for each seed, generate a printable `main` and assert every backend's
 // stdout matches the interpreter's. Per-seed subtests run in parallel.
+//
+// Honours DIFF_ORACLE_SHARD like the exit-byte oracle, so the four
+// shards of each arch split the corpus instead of each running all of
+// it.
 func TestDifferential_PrintableStdout(t *testing.T) {
+	shardIdx, shardCount := diffOracleShard(t)
 	seedCount := printableSeeds(t)
 	for seed := uint64(0); seed < seedCount; seed++ {
+		if seed%shardCount != shardIdx {
+			continue
+		}
 		seed := seed
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()
