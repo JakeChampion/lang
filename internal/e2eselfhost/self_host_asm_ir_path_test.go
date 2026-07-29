@@ -351,6 +351,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// two arms closes it. tuple: 3+4=7; nested: 7.
 		{"structfield-opt-tuple", "struct H { t: Option[(i32, i32)] } function main(): i32 { var h = H { t: Some((3, 4)) }; match (h.t) { Some(pr) => { return pr.0 + pr.1; }, None => { return 0; } } return 0; }"},
 		{"structfield-opt-opt", "struct H { o: Option[Option[i32]] } function main(): i32 { var h = H { o: Some(Some(7)) }; match (h.o) { Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 1; } } }, None => { return 2; } } return 0; }"},
+		// A DOUBLE-index read of a struct field that is an array-of-struct-arrays:
+		// `h.g[i][j].x` over `H { g: P[][] }`. The field is eligible and `h.g[i]`
+		// (single index) tracks the P[] element, but expr_struct_type resolved the
+		// SECOND index (`h.g[i][j]`) only for a LOCAL arrarr, not a FIELD one — so
+		// `.x` had no element type and bailed. The new ExprFieldAccess arm strips
+		// both `[]` off the field type to the element struct. 1+2+3=6.
+		{"structfield-arr2d-struct", "struct P { x: i32 } struct H { g: P[][] } function main(): i32 { var h = H { g: [[P { x: 1 }, P { x: 2 }], [P { x: 3 }]] }; var s = 0; var i = 0; while (i < h.g.len()) { var j = 0; while (j < h.g[i].len()) { s = s + h.g[i][j].x; j = j + 1; } i = i + 1; } return s; }"},
 		// A struct-array (P[]) / enum-array (E[]) value as a TUPLE element. The
 		// buffer is a heap pointer in the slot (leak mode — elements leak with the
 		// leak-only tuple); the destructure binds mark_arr + the element struct/enum
