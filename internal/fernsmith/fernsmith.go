@@ -1968,11 +1968,48 @@ func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth in
 		ops = append(ops, "%", "<<", ">>", "&", "|", "^")
 	}
 	op := ops[g.ch.intN(len(ops))]
+	op = g.maybeSaturating(op, t)
 	b.WriteByte('(')
 	g.expr(b, sc, t, depth+1)
 	fmt.Fprintf(b, " %s ", op)
 	g.expr(b, sc, t, depth+1)
 	b.WriteByte(')')
+}
+
+// maybeSaturating sometimes swaps an arithmetic operator for its SATURATING
+// counterpart — `+|` / `-|` / `*|` / `<<|`, which clamp to the operand type's
+// [MIN, MAX] instead of wrapping (docs/INTEGER-SEMANTICS.md).
+//
+// Worth generating because there is no saturating IR opcode: each one expands
+// to a clamp over ordinary IR ops, and the expansions are not uniform. The
+// signed pre-checks test against MAX - b / MIN - b, unsigned `-|` against
+// `a < b`, while signed `*|` and `<<|` cannot use a cheap pre-check at all and
+// instead post-check the WRAPPED result with a division — including a special
+// case for `a == -1 && b == MIN`, needed precisely because division is total
+// here, so `MIN / -1` yields `MIN` and the round-trip spuriously agrees on
+// exactly that pair. None of that was reachable from the corpus.
+//
+// Verified identical on interp / x86-64 / arm64 / wasm before adding, across
+// i32 / i64 / u32 / u64: clamping at both ends, `MIN *| -1` → MAX,
+// `(-2) <<| 31` → MIN, unsigned clamping low at 0, and in-range operands
+// unaffected.
+//
+// Substituted rather than appended to the operator list: four more entries
+// among ten would make saturating arithmetic nearly a third of every integer
+// expression, crowding out the wrapping paths that the corpus already covers.
+// The swap keeps the base operator distribution and adds a saturating variant
+// often enough to be hit many times per sweep.
+func (g *Generator) maybeSaturating(op string, t gtype) string {
+	if t == tF32 || t == tF64 {
+		return op // integer-only: floats already saturate to +/-Inf
+	}
+	switch op {
+	case "+", "-", "*", "<<":
+		if g.flip(0.25) {
+			return op + "|"
+		}
+	}
+	return op
 }
 
 // emitUnsignedAsI32 routes an unsigned result into the i32 path at full
