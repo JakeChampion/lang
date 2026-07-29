@@ -5849,17 +5849,25 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
 
 // method_recv_tyname returns the base type name to use when forming a
 // "<Type>.<method>" key for a method-call receiver. A struct/enum receiver
-// uses its declared type; an i64/u64 PRIM receiver (e.g. `n.gcd(m)` on a
-// `(n: i64) gcd` method) has no struct type, so recover "u64"/"i64" from its
-// value width — i64_ret_fns_of keys those methods as "i64.<m>"/"u64.<m>"
-// (base_type_name of the receiver type), and without this the lookup misses
-// and the call bails to the AST path.
+// uses its declared type; a PRIMITIVE receiver has none, so recover the
+// scalar type name — i64_ret_fns_of keys those methods as "<prim>.<m>"
+// (base_type_name of the receiver type), and without this the lookup misses,
+// so a WIDE return goes untracked and the result is truncated to 32 bits.
+//
+// The primitive half delegates to expr_recv_prim_type (which itself returns ""
+// for struct / enum / array / tuple / map receivers, and the scalar type name
+// otherwise). That subsumes the u64 and width-64 arms this used to carry
+// open-coded — expr_scalar_type behind it applies the SAME u64-before-i64
+// ordering, and its comment already noted it mirrored them — and additionally
+// resolves string / f64 / f32 / u32 / boolean / i32 receivers, which returned
+// "" here. That gap silently truncated an i64 returned from a method on any of
+// those: `(n: f64) m(): i64` called as `a.m()` yielded only the low 32 bits,
+// while the same body as a free function was correct, and a struct receiver was
+// correct too (it resolved via expr_struct_type).
 pub function method_recv_tyname(obj: parser.Expr, s: LowerState): string {
     var st: string = expr_struct_type(obj, s);
     if (st != "") { return st; }
-    if (expr_is_u64(obj, s)) { return "u64"; }
-    if (infer_expr_width(obj, s) == 64) { return "i64"; }
-    return "";
+    return expr_recv_prim_type(obj, s);
 }
 
 // lower_i64 lowers `e` as an i64 VALUE (pushing an i64). Integer literals become
