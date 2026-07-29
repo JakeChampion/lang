@@ -1476,9 +1476,14 @@ function emit_method_call(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: asm
         s = s.write("    str x0, [sp, #-16]!\n");
         return s;
     }
-    // Built-in i32 numeric methods. Inline — no
-    // runtime helper needed.
-    if (asmcore.ty_is_i32(prim_recv)) {
+    // Built-in scalar methods. Inline — no runtime helper needed.
+    // Both receiver widths enter here: the numeric ones (abs / gcd /
+    // is_even / …) are i32's, the ascii classifiers are u8's. The
+    // checker has already rejected the wrong pairing, so the gate only
+    // has to admit both tags rather than re-split them — and it must,
+    // because `s[i]` is a u8 now and every classifier call site reads
+    // one (#5629).
+    if (asmcore.ty_is_i32(prim_recv) || asmcore.ty_is_u8(prim_recv)) {
         if (fa.field == "abs" && c.args.len() == 0) {
             s = emit_expr(fa.obj, s);
             s = s.write("    ldr x0, [sp], #16\n");
