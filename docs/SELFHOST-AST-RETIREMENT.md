@@ -2629,7 +2629,41 @@ And the escape is NOT why: re-emitting the `tokenize_local` variant (all 6
 SAME 8 `__fern_arr_dec` and no walk. So `out` is tainted by something inside
 `tokenize` other than its return.
 
-That is the one question the lexer's 91% now reduces to: **what taints `out`?**
+**ANSWERED (2026-07-29), and the prize is quantified.** Instrumenting the taint
+sites (a `note(rule, name)` call at each, env-gated) says `out` is tainted by the
+**assign-RHS** rule — `out = out.append(tok)`, where `rhsTainted`'s any-arg rule
+carries the ELEMENT's taint onto the buffer. Applying the `Array_push`
+receiver-only arm clears it, and an element-walking `__drop_arr_enum_lexer__…`
+appears in the asm.
+
+But that alone is worth ONE block at runtime (#5847), because of the second
+half: at the 6 real `return out;` sites the array is MOVED to the caller
+(move-on-return excludes it from the sweep entirely), so the only walking drop
+the arm buys sits on the fall-through exit that never executes.
+
+Both conditions together are what unlock it. On `parser.fern`, `tokenize` with
+the arm AND `out` rewritten not to escape (`return out.len();`):
+
+| build | frees of 508639 | live |
+|---|---:|---|
+| baseline | 44566 (8.7%) | 18.6 MB |
+| arm only, `out` escapes | 44567 | 18.6 MB |
+| arm + `out` non-escaping | **179100 (35%)** | **12.75 MB** |
+
+**4x the frees.** That is the size of this one shape, and it explains why every
+single-variable probe in this section read flat: neither condition moves
+anything without the other, so escape-only and taint-only experiments both
+measure noise.
+
+What it means for a real fix: `tokenize` legitimately returns its array, so the
+callee-side rewrite is not available. The site that must become eligible is the
+CALLER's binding of the returned `Token[]` — the value the caller receives and
+drops. Note also that the `Array_push` arm is a PREREQUISITE here but was once
+judged unsound; that judgement predates #5820's under-count fix and has not been
+re-tested against the gates, so it needs its own verification before any of this
+is landable.
+
+(The original question, kept for the record: **what taints `out`?**)
 It is worth answering with the rcPlan dump rather than by guessing — print
 `freeEligible` / the taint set for `lexer__tokenize` (the `RcPlanHook` in
 `internal/ir/rc_dump.go` gives it in-process; the same hook the #4482 harness
