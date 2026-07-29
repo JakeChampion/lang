@@ -1030,6 +1030,28 @@ pub function module_uses_i32_to_string(cache: irlower.LowerResult[]): boolean {
 // runtime call (a call_direct to __fern_arr_str_join, #5328) — so needs_of can
 // pull in the $__fern_str_join WAT helper (@uses_arr_str_join). (module_emits_op
 // keys on op.kind, not the call_direct symbol, so this needs its own scan.)
+// module_calls_wide_to_string reports whether any function lowers a
+// `.to_string()` on an i64/u64 receiver (#5826). The register backends serve
+// these by compiling asmcore.rt_src_i64_to_string / rt_src_u64_to_string
+// through the IR pipeline; wasm has no such mechanism (its runtime helpers are
+// hand-written WAT), so a wasm module reaching one would emit a call to an
+// undefined function. Deferring keeps it on the AST emitter until the WAT
+// siblings of $__fern_i32_to_str exist — the wasm half of #5826.
+pub function module_calls_wide_to_string(cache: irlower.LowerResult[]): boolean {
+    var fi: i32 = 0;
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind_tag == 149
+                    && (r.ops[i].str == "__fern_i64_to_string" || r.ops[i].str == "__fern_u64_to_string")) { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
 pub function module_calls_arr_str_join(cache: irlower.LowerResult[]): boolean {
     var fi: i32 = 0;
     while (fi < cache.len()) {
@@ -1364,6 +1386,10 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // the AST path, so the op-blocklist below need not be exhaustive (#6).
         && all_lowered_ok(cache)
         && !module_erased_wide(cache)
+        // i64/u64 `.to_string()` (#5826): lowered as a call_direct the register
+        // backends compile from Fern source, which wasm cannot do. See
+        // module_calls_wide_to_string.
+        && !module_calls_wide_to_string(cache)
         // The i32 builtin helpers (sum / product / pow / index_of / contains /
         // min / max) are NO LONGER deferred: wasm_ir.arr_i32_helpers emits WAT
         // bodies for them, gated on @uses_arr_i32_helpers. Deferring them was
