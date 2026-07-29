@@ -475,10 +475,16 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.emitArrPushGrowRuntime()
 	}
 	if g.usesArrPushGrowPtr {
-		g.emitArrPushGrowPtrRuntime()
+		g.emitArrPushGrowPtrRuntime(false)
+	}
+	if g.usesArrPushGrowMovePtr {
+		g.emitArrPushGrowPtrRuntime(true)
 	}
 	if g.usesArrPushGrowStr {
-		g.emitArrPushGrowStrRuntime()
+		g.emitArrPushGrowStrRuntime(false)
+	}
+	if g.usesArrPushGrowMoveStr {
+		g.emitArrPushGrowStrRuntime(true)
 	}
 	if g.usesArrCowInPlace {
 		g.emitArrCowInPlaceRuntime()
@@ -2129,27 +2135,36 @@ func (g *generator) emitArrPushGrowRuntime() {
 // rc==1 freed elements the grown copy still referenced (use-after-
 // free). Mirrors __fern_arr_cow_inplace_ptr's retain loop (#4187).
 //
+// moveForm emits `__fern_arr_push_grow_move_ptr` instead: the same
+// helper with the retain loop SKIPPED when the incoming rc is 1 — the
+// self-append form's contract. See the x86-64 mirror for why "the old
+// buffer survives this grow" is exactly the rc != 1 test (#3457).
+//
 // AAPCS64 inputs: x0 = arr, x1 = oldLen (i32), x2 = stride (i32).
 // Returns new data pointer in x0.
-func (g *generator) emitArrPushGrowPtrRuntime() {
+func (g *generator) emitArrPushGrowPtrRuntime(moveForm bool) {
+	name, lbl := "__fern_arr_push_grow_ptr", ".Lpushp"
+	if moveForm {
+		name, lbl = "__fern_arr_push_grow_move_ptr", ".Lpushmp"
+	}
 	g.line("")
-	g.line(".global __fern_arr_push_grow_ptr")
-	g.typeDirective("__fern_arr_push_grow_ptr")
-	g.label("__fern_arr_push_grow_ptr")
+	g.line(".global " + name)
+	g.typeDirective(name)
+	g.label(name)
 	// Fast path: rc==1 and oldLen < cap → in place (rc=2, len++).
 	g.emit("ldur w3, [x0, #-8]")
 	g.emit("cmp w3, #1")
-	g.emit("b.ne .Lpushp_copy")
+	g.emit("b.ne %s_copy", lbl)
 	g.emit("ldur w4, [x0, #-12]")
 	g.emit("cmp w1, w4")
-	g.emit("b.ge .Lpushp_copy")
+	g.emit("b.ge %s_copy", lbl)
 	g.emit("mov w3, #2")
 	g.emit("stur w3, [x0, #-8]")
 	g.emit("add w4, w1, #1")
 	g.emit("stur w4, [x0, #-4]")
 	g.emit("ret")
 	// Copy path — same frame plan as __fern_arr_push_grow.
-	g.label(".Lpushp_copy")
+	g.label(lbl + "_copy")
 	g.emit("stp x29, x30, [sp, #-80]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
@@ -2189,20 +2204,29 @@ func (g *generator) emitArrPushGrowPtrRuntime() {
 	g.emit("mov x1, x19")
 	g.emit("mul w2, w20, w21")
 	g.emit("bl __fern_memcpy")
+	if moveForm {
+		// The copy path leaves the OLD buffer's rc untouched, so x19 (still
+		// arr) reads the incoming count. rc==1 means the assign's
+		// buffer-only __fern_arr_dec is about to free it and the elements
+		// transfer; skip the retain. w22 (newLen) is dead — already stored.
+		g.emit("ldur w22, [x19, #-8]")
+		g.emit("cmp w22, #1")
+		g.emit("b.eq %s_inc_done", lbl)
+	}
 	// Element-retain loop: inc each copied pointer element. x25 =
 	// new_data, w20 = oldLen, w21 = stride survive __fern_rc_inc
 	// (callee-saved); w26 = i.
 	g.emit("mov w26, #0")
-	g.label(".Lpushp_inc_loop")
+	g.label(lbl + "_inc_loop")
 	g.emit("cmp w26, w20")
-	g.emit("b.ge .Lpushp_inc_done")
+	g.emit("b.ge %s_inc_done", lbl)
 	g.emit("mul w0, w26, w21")
 	g.emit("add x0, x25, w0, uxtw")
 	g.emit("ldr x0, [x0]")     // element pointer (8-byte)
 	g.emit("bl __fern_rc_inc") // guards null / low / sentinel
 	g.emit("add w26, w26, #1")
-	g.emit("b .Lpushp_inc_loop")
-	g.label(".Lpushp_inc_done")
+	g.emit("b %s_inc_loop", lbl)
+	g.label(lbl + "_inc_done")
 	g.emit("mov x0, x25") // return new_data
 	g.emit("ldp x25, x26, [sp, #64]")
 	g.emit("ldp x23, x24, [sp, #48]")
@@ -2210,7 +2234,7 @@ func (g *generator) emitArrPushGrowPtrRuntime() {
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
-	g.sizeDirective("__fern_arr_push_grow_ptr")
+	g.sizeDirective(name)
 	g.line(".ltorg")
 }
 
@@ -2222,25 +2246,33 @@ func (g *generator) emitArrPushGrowPtrRuntime() {
 // __fern_drop_arr_str walk that releases them, so a grow copy and the
 // old buffer's eventual element walk stay balanced.
 //
+// moveForm emits `__fern_arr_push_grow_move_str` instead: the same
+// helper with the retain loop SKIPPED when the incoming rc is 1 — the
+// self-append form's contract (#3457, see the _ptr sibling).
+//
 // AAPCS64 inputs: x0 = arr, x1 = oldLen (i32), x2 = stride (i32).
 // Returns new data pointer in x0.
-func (g *generator) emitArrPushGrowStrRuntime() {
+func (g *generator) emitArrPushGrowStrRuntime(moveForm bool) {
+	name, lbl := "__fern_arr_push_grow_str", ".Lpushs"
+	if moveForm {
+		name, lbl = "__fern_arr_push_grow_move_str", ".Lpushms"
+	}
 	g.line("")
-	g.line(".global __fern_arr_push_grow_str")
-	g.typeDirective("__fern_arr_push_grow_str")
-	g.label("__fern_arr_push_grow_str")
+	g.line(".global " + name)
+	g.typeDirective(name)
+	g.label(name)
 	g.emit("ldur w3, [x0, #-8]")
 	g.emit("cmp w3, #1")
-	g.emit("b.ne .Lpushs_copy")
+	g.emit("b.ne %s_copy", lbl)
 	g.emit("ldur w4, [x0, #-12]")
 	g.emit("cmp w1, w4")
-	g.emit("b.ge .Lpushs_copy")
+	g.emit("b.ge %s_copy", lbl)
 	g.emit("mov w3, #2")
 	g.emit("stur w3, [x0, #-8]")
 	g.emit("add w4, w1, #1")
 	g.emit("stur w4, [x0, #-4]")
 	g.emit("ret")
-	g.label(".Lpushs_copy")
+	g.label(lbl + "_copy")
 	g.emit("stp x29, x30, [sp, #-80]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
@@ -2276,21 +2308,30 @@ func (g *generator) emitArrPushGrowStrRuntime() {
 	g.emit("mov x1, x19")
 	g.emit("mul w2, w20, w21")
 	g.emit("bl __fern_memcpy")
+	if moveForm {
+		// The copy path leaves the OLD buffer's rc untouched, so x19 (still
+		// arr) reads the incoming count. rc==1 means the assign's
+		// buffer-only __fern_arr_dec is about to free it and the elements
+		// transfer; skip the retain. w22 (newLen) is dead — already stored.
+		g.emit("ldur w22, [x19, #-8]")
+		g.emit("cmp w22, #1")
+		g.emit("b.eq %s_inc_done", lbl)
+	}
 	// Element-retain loop: __fern_str_inc each copied (data, len)
 	// pair — data at [new_data + i*stride], len 8 bytes above. str_inc
 	// no-ops on inline-tagged / null / literal-tagged values, mirroring
 	// the __fern_drop_arr_str walk's __fern_str_dec.
 	g.emit("mov w26, #0")
-	g.label(".Lpushs_inc_loop")
+	g.label(lbl + "_inc_loop")
 	g.emit("cmp w26, w20")
-	g.emit("b.ge .Lpushs_inc_done")
+	g.emit("b.ge %s_inc_done", lbl)
 	g.emit("mul w0, w26, w21")
 	g.emit("add x2, x25, w0, uxtw")
 	g.emit("ldp x0, x1, [x2]") // (data, len) pair
 	g.emit("bl __fern_str_inc")
 	g.emit("add w26, w26, #1")
-	g.emit("b .Lpushs_inc_loop")
-	g.label(".Lpushs_inc_done")
+	g.emit("b %s_inc_loop", lbl)
+	g.label(lbl + "_inc_done")
 	g.emit("mov x0, x25")
 	g.emit("ldp x25, x26, [sp, #64]")
 	g.emit("ldp x23, x24, [sp, #48]")
@@ -2298,7 +2339,7 @@ func (g *generator) emitArrPushGrowStrRuntime() {
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
-	g.sizeDirective("__fern_arr_push_grow_str")
+	g.sizeDirective(name)
 	g.line(".ltorg")
 }
 
@@ -8057,6 +8098,14 @@ type generator struct {
 	// __fern_arr_cow_inplace_ptr (#4187), the `.with` sibling.
 	usesArrPushGrowPtr bool
 	usesArrPushGrowStr bool
+	// usesArrPushGrowMovePtr / usesArrPushGrowMoveStr gate the self-append
+	// (`a = a.append(v)`) siblings of the two above. They retain the copied
+	// elements only when the incoming rc != 1, i.e. only when the assign's
+	// buffer-only __fern_arr_dec will leave the old buffer alive under an
+	// alias; at rc==1 that dec frees it without walking, so the elements
+	// transfer and a retain would leak one reference each (#3457).
+	usesArrPushGrowMovePtr bool
+	usesArrPushGrowMoveStr bool
 	// usesArrCowInPlace gates `__fern_arr_cow_inplace` — the
 	// Phase 2b helper called by the IR's `arr[i] = v` lowering
 	// for local-ident array targets. Returns the buffer the
@@ -10905,6 +10954,16 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRcInc = true
 		case "__fern_arr_push_grow_str":
 			g.usesArrPushGrowStr = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+			g.usesStrInc = true
+		case "__fern_arr_push_grow_move_ptr":
+			g.usesArrPushGrowMovePtr = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+			g.usesRcInc = true
+		case "__fern_arr_push_grow_move_str":
+			g.usesArrPushGrowMoveStr = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
 			g.usesStrInc = true

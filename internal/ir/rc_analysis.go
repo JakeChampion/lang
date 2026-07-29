@@ -1468,6 +1468,22 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// the buffer permanently ineligible and unreclaimed at loop
 				// scope (the wasm LiteralAllocReclaim / OwnInplaceSort leak).
 				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
+			case "__method_Array_push":
+				// `arr.append(v)` is `.with`'s sibling: the result is the
+				// receiver buffer (grown in place at rc==1, else a fresh copy),
+				// aliasing Args[0] only. The pushed element is a COUNTED store
+				// — emitArrayPush inc's an aliased element and the buffer's deep
+				// drop decs it — so an element's taint says nothing about the
+				// buffer's own provenance. Without this, `var out = []` followed
+				// by `out = out.append(tok)` in a loop tainted `out` from the
+				// first append onward, stranding the whole accumulated buffer;
+				// it is what leaves lexer.tokenize reclaiming 8.8% of its blocks
+				// (docs/SELFHOST-AST-RETIREMENT.md). Sound only alongside the
+				// _move_ grow helpers: an ALIASED receiver (`var lg = g; lg =
+				// lg.append(v)`) makes both halves reclaimable, and the plain
+				// helper's non-retaining copy then let both walk-drops release
+				// the same elements (#3457).
+				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
 			case "random_bytes":
 				// random_bytes returns a string the two-word backends
 				// (arm64 / wasm) allocate as RAW n bytes with NO rc header
