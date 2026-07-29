@@ -717,6 +717,54 @@ pub function (s: LowerState) mark_closure_local(name: string): LowerState {
     return LowerState { ...s, closure_locals: s.closure_locals.append(name) };
 }
 
+// mark_closure_opt_ret records an Option/Result return type for a closure LOCAL,
+// the sibling of the closure_opt_rets seeding that runs over fn-typed PARAMS
+// (ParamDecl.fn_ret). Without it `var f: () => Option[i32] = <lambda>; match
+// (f()) { … }` had no way to name its scrutinee type and bailed the enclosing
+// function to the AST emitter — while the same shape through a param, or
+// through a NAMED function (which opt_ret_type resolves), lowered fine.
+pub function (s: LowerState) mark_closure_opt_ret(name: string, ty: string): LowerState {
+    return LowerState { ...s, closure_opt_rets: s.closure_opt_rets.append(name + "|" + ty) };
+}
+
+// closure_init_opt_ret is the Option/Result return type of a closure-valued
+// initialiser, or "".
+//
+// The load-bearing case is the `__mkclo$<cloname>` env-box constructor, because
+// the lift runs BEFORE lowering: by the time a `var f = <lambda>` reaches here
+// its init is no longer an ExprLambda but that marker call, whose callee ident
+// is NOT a module function — `<cloname>` after the 8-char prefix is. Reading the
+// callee name directly yields "" and the whole helper goes inert, which is
+// exactly the dead end recorded in docs/SELFHOST-AST-RETIREMENT.md.
+//
+// An array-element init (`var f = fns[i]`) is still not covered: the element's
+// fn type is not tracked anywhere to recover a return type from.
+function closure_init_opt_ret(init: parser.Expr, s: LowerState): string {
+    match (init) {
+        parser.ExprLambda(lam) => {
+            if (lam.ret_type.len() >= 8 && (lam.ret_type[0:7] == "Option[" || lam.ret_type[0:7] == "Result[")) { return lam.ret_type + ""; }
+            return "";
+        },
+        parser.ExprIdent(iid) => {
+            var viaclo: string = s.closure_opt_ret(iid.name);
+            if (viaclo != "") { return viaclo; }
+            return s.opt_ret_type(iid.name);
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name.len() > 8 && cid.name[0:8] == "__mkclo$") {
+                        return s.opt_ret_type(cid.name[8 : cid.name.len()] + "");
+                    }
+                    return s.opt_ret_type(cid.name);
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+}
+
 // add_clo_cap_kinds (#4354): record a closure local's per-capture kinds
 // ("<name>|<kinds>") in the capture-RC registry — see the field doc.
 pub function (s: LowerState) add_clo_cap_kinds(entry: string): LowerState {
@@ -13026,6 +13074,10 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         var cslot: i32 = cvb.slot_of(v.name);
         cvb = cvb.mark_arr(cslot, true);
         cvb = cvb.mark_closure_local(v.name);
+        // Record an Option/Result return so a later `match (f())` can name its
+        // scrutinee type — the closure-LOCAL sibling of the fn-param seeding.
+        var cv_optret: string = closure_init_opt_ret(v.init, cvb);
+        if (cv_optret != "") { cvb = cvb.mark_closure_opt_ret(v.name, cv_optret); }
         // #5281: carry the RETCLO fact forward so `var h = g()` (g bound here from
         // a RETCLO2 factory call) recognises g()'s result as a closure.
         if (init_retclo) { cvb = cvb.mark_closure_local("RETCLO$" + v.name); }

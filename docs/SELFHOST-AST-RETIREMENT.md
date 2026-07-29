@@ -106,7 +106,7 @@ miscompiled; only the routing is wrong:
 |---|---|
 | `aoa[i][j]` — index whose base is an index | **closed** — shared `arr_tag_of` |
 | `t.N[i]` — index whose base is a tuple element | **closed** — same |
-| `match (f())` where `f` is a closure LOCAL | **open** — see below; first recorded as `fs[i]()`, which was the wrong characterisation |
+| `match (f())` where `f` is a closure LOCAL | **partly closed** — the alias shape lowers; the direct shape is a LIFT gap, not a recovery one (see below). First recorded as `fs[i]()`, which was the wrong characterisation |
 | `None as Option[T]` — an ascription scrutinee | **closed** — shared `unary_opt_type` |
 
 #### The one that is still open, characterised properly
@@ -128,16 +128,35 @@ is unsupported", and not about arrays. It is specifically **a match whose
 scrutinee is a call through a closure local**, and binding the result to an
 annotated local first is a working rewrite.
 
-**Do not assume the fix is a `closure_opt_rets` entry for the local.** That was
-tried — `mark_closure_opt_ret` recorded at the `mark_closure_local` site, with
-the return recovered from the lambda's own `ret_type` — and it is **completely
-inert**: byte-identical verdicts on every probe above, so the change was
-reverted rather than landed. `clo_init` *is* true for a lambda init
-(`irlower.fern`, the `ExprLambda(_) => { clo_init = true; }` arm), so the code
-runs; the read side simply is not what declines. Whatever bails is upstream of
-the scrutinee-type recovery, and the next attempt should **instrument the bail**
-rather than reason about which resolver arm is missing — three successive
-hypotheses about that were wrong.
+**Resolved by instrumentation (2026-07-29) — it is NOT an `Option` recovery gap
+at all.** Putting an `eprint` on the scrutinee-type bail
+(`if (srt == "") { return s.fail(); }` in `lower_stmt_match`) shows that site is
+**never reached**. The direct shape bails in `emit_module_ir_gated`'s
+`const_func` check instead:
+
+```
+FERN_STRICT_IR: main (function value main$clo not defined)
+```
+
+The lowered IR references a hoisted closure `<fn>$clo` that the lift did **not**
+append to the module. So the remaining work is in the lift's
+registration of the hoisted closure, not in any resolver arm — which is exactly
+why a scrutinee-side fix leaves the direct shape untouched.
+
+That correction cost four wrong hypotheses about which resolver arm was missing,
+every one of them plausible from reading the code. The lesson generalises: when
+`FERN_STRICT_IR` says a function bailed, **instrument to find WHICH bail** before
+theorising, because the flag names the function, not the site — and the four
+sites in `emit_module_ir_gated` (lowering, unknown call symbol, undefined
+function value, budget) fail for completely unrelated reasons.
+
+What the closure-local `closure_opt_rets` entry DOES close is the alias shape
+(`var g = f; match (g())`), landed with `mark_closure_opt_ret`. The detail that
+makes it work is that the lift runs BEFORE lowering, so the init is a
+`__mkclo$<cloname>` marker call whose callee ident is not a module function —
+`<cloname>`, after the 8-char prefix, is. Reading the callee name directly
+recovers nothing and the whole helper goes inert; an earlier revision did
+exactly that and was reverted for being byte-identical on every probe.
 
 Two things worth carrying forward. First, **`TestSelfHostAsmIRPath` is 80/80
 clean under the flag** once the ascription case closed — independent evidence the
