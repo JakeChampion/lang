@@ -1998,7 +1998,80 @@ waived for that one callee — a throwaway edit, not committed).
 full `parser.fern` parse before and after (allocs 904802 both; frees 178756 →
 174230 — slightly FEWER, since the over-releases that used to free early are
 gone). Cause 1 (the escape taint) and the four/five leak shapes above are
-untouched and still open.
+untouched and still open — see the next subsection, which attributes the
+biggest of them.
+
+**And it is NOT a self-host bug.** The self-host's `consumed_params_of`
+(`irlower.fern`) carries the same struct/tuple restriction the native side just
+lifted, so it is tempting to conclude the self-host compiler has the same
+under-count. It does not, and the tables are not the place to look:
+`consumed_params_of` / `free_eligible_of` / `array_set_incs_of` feed ONLY
+`rc_plan_dump` (the #4482 differential harness) — nothing in self-host lowering
+reads them. Measured, not inferred: an `asm_ir_run` driver compiles
+`unionThreadedParamSrc` to a binary that exits 0, the interpreter's answer. The
+self-host's own reclamation is gated on the much more conservative
+`slot_is_reclaimable_*` predicates, which never admit a param slot, so it emits
+no param overwrite dec to be unbalanced. What the restriction DOES produce is a
+dump-level divergence, which is what `TestSelfHostRcPlanDiff` exists to pin.
+
+### The load leak, attributed: a callee that retains its parameter (2026-07-29)
+
+The biggest single shape behind "over 80% of every allocation in the lex/parse
+path is never freed" is now pinned to one rule, with a 13-line probe —
+`examples/probes/retained_param_leak.fern`. Passing an owned value to a function
+that RETAINS it into what it returns leaks **exactly one reference per call**:
+the caller's.
+
+    function mkT(name: string, line: i32): Tk { return Tk { name: name, line: line }; }
+    var s: string = "id" + r.to_string();
+    var t: Tk = mkT(s, r);                   // <- leaks one reference, every call
+
+The `Tk { name: name }` field init is a COUNTED store (the StructLit alias inc),
+so the returned struct owns a reference. The caller's own reference is then
+escape-tainted out of every release site — `computeFreeEligible` taints an
+argument that flows into a call — so nothing decs it, and the string's rc sits
+one above its true owner count forever.
+
+Measured with `FERN_LEAKCHECK=1` on 1000 rounds, 3 allocs per round (the
+`to_string` buffer, the concat, the struct box):
+
+| shape | leaked |
+|---|---:|
+| `var t = Tk { name: s, line: r };` — inline literal | 1000 (baseline) |
+| `var t = mkT(s, r);` — via the retaining helper | **2000** |
+| `var t = mkT("id" + r.to_string(), r);` — fresh arg, no local | **2000** |
+| `mkT` stores `name + ""` (a fresh copy) instead of the param | 1000 |
+
+So it is the CALL that leaks, not the binding (a fresh argument expression leaks
+identically to a bound local), and it leaks exactly when the callee retains the
+PARAMETER ITSELF — swapping the sink for a copy takes it back to the baseline.
+Marking the param `own` does not help either: the leak is on the caller's side
+of the boundary, not in the ownership transfer.
+
+**Why this is most of the lexer's leak.** `tokenize` builds every token through
+one of eight `*_tok` helpers (`ident_tok(name, line, col)`, `punct_tok`,
+`string_tok`, …), each of which retains its string param into the returned
+`Token`. Tokenizing `parser.fern` (117315 tokens) leaks **466815 of 511278
+blocks — 91.3%**. The four leak shapes in the table further up are all
+variations on the same missing release; this is the one that scales with the
+token count.
+
+**Where a fix has to go.** Not at the call site: the caller's local must live to
+ITS last use, so the release belongs to the normal precise-drop / exit-sweep
+path, which means the argument must stop being escape-tainted. That needs an
+interprocedural summary the analysis does not have yet — "for callee f,
+parameter i is retained only through COUNTED constructions (or not at all)" —
+which is `findReturnsNoParamEscape`'s neighbourhood (it already computes the
+strictly stronger "returns nothing aliasing a param"). The counted-store
+distinction is exactly the one `escapeOwned` already draws at the `Array_push` /
+`Array_set` sinks, so the shape of the rule is precedented; what is new is
+carrying it across a function boundary.
+
+**Do not re-try the `rhsTainted` `Array_push` receiver-only arm as the fix for
+this.** Re-measured on the parse probe with the entry-inc under-count fixed: it
+is no longer obviously unsound, but it moves frees on a full `parser.fern` parse
+by 174230 → 177213 out of 904802 allocs (+0.3%). It is not the load leak, which
+is what the earlier attempt also concluded from RSS.
 
 **Method note for the next attempt: `internal/e2e` is not the gate for an RC
 change — `internal/e2eselfhost` is.** Compiling the whole self-host compiler is
@@ -2120,7 +2193,11 @@ accept a small-program test as evidence for a change to these fixpoints.
    gen1 multiplier (~1.3-2.6x) still applies. **Both follow-ups are now DONE —
    see "The gen1 floor, and the memoisation priced".** The gen1 floor fell 2241 ->
    **1602 MB**, of which **1122 MB is parse+modload alone**, so module loading —
-   not the emit-side side tables — is what is left to attack. The gen1 emit-all
+   not the emit-side side tables — is what is left to attack. That load cost is
+   now attributed: see "The load leak, attributed: a callee that retains its
+   parameter" — one missing release per retaining call, ~91% of `tokenize`'s
+   blocks, with a 13-line probe and a named (not yet built) interprocedural
+   summary as the fix. The gen1 emit-all
    fixpoint now takes **118 s** and stays byte-identical to gen0, cheap enough to
    de-gate, except that at its current batch=8 it peaks **7909 MB against the
    8 GiB arena**; de-gate at batch=4 (154 s, 6754 MB) rather than at batch=8.

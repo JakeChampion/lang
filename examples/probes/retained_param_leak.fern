@@ -1,0 +1,47 @@
+// A 13-line reproduction of the LEAK half of #3457 (docs/SELFHOST-AST-RETIREMENT.md,
+// "The load pipeline leaks"): passing an owned value to a function that RETAINS it
+// into the value it returns leaks exactly one reference per call — the caller's.
+//
+// `mkT` stores its borrowed `name` param into the returned struct, which is a
+// COUNTED store (the StructLit field inc). The caller's own reference is then
+// escape-tainted out of every release site (computeFreeEligible taints an
+// argument that flows into a call), so nothing ever decs it: the string's rc
+// stays one above its true owner count forever.
+//
+//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/retained_param_leak.fern
+//   /tmp/p; # stderr: leakcheck: allocs=3000 frees=1000 live_bytes=64000
+//
+// Attribution, measured on this shape (3 allocs per round — the to_string buffer,
+// the concat, the struct box):
+//
+//   var t = Tk { name: s, line: r };          inline literal   1000 leaked (baseline)
+//   var t = mkT(s, r);                        via the helper   2000 leaked
+//   var t = mkT("id" + r.to_string(), r);     fresh arg        2000 leaked
+//   mkT stores `name + ""` (a fresh copy)     copy at the sink 1000 leaked
+//
+// So it is the CALL that leaks, not the binding, and it leaks exactly when the
+// callee retains the parameter itself. `own name: string` does not help: the leak
+// is on the caller's side of the boundary, not in the ownership transfer.
+//
+// This is the lexer's per-token shape — `ident_tok(text, line, col)` and its seven
+// siblings each retain their string param into the returned Token — which is why
+// `lexer.tokenize` on parser.fern leaks 466815 of 511278 blocks (91.3%).
+//
+// Exit code 0 either way, matching the interpreter: the leak is silent.
+import "std/i32";
+
+struct Tk { name: string, line: i32 }
+
+function mkT(name: string, line: i32): Tk { return Tk { name: name, line: line }; }
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 1000) {
+        var s: string = "id" + r.to_string();
+        var t: Tk = mkT(s, r);
+        acc = acc + t.name.len();
+        r = r + 1;
+    }
+    return acc % 5;
+}
