@@ -1885,8 +1885,20 @@ func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth in
 	}
 	ops := []string{"+", "-", "*", "/"}
 	if t != tF32 {
-		// `%` is integer-only.
-		ops = append(ops, "%")
+		// Integer-only. `%` and the bit operators are all well-defined
+		// and agree across every backend, verified before adding them:
+		// the shift COUNT is masked (`1 << 32` is 1, `1i64 << 64` is 1,
+		// `1 << -1` is INT_MIN via -1 & 31), and `>>` is arithmetic
+		// (`-8 >> 1` is -4).
+		//
+		// Shifts and `&`/`|`/`^` are worth generating for the same
+		// reason `/` was: each backend reaches the shared contract by a
+		// different route. The count masking is implicit in x86's `shl`,
+		// explicit in wasm, and a register-width property on arm64; and
+		// arm64 has to encode an arbitrary `&` constant into its
+		// logical-immediate format, which nothing in the corpus was
+		// exercising with varied values.
+		ops = append(ops, "%", "<<", ">>", "&", "|", "^")
 	}
 	op := ops[g.ch.intN(len(ops))]
 	b.WriteByte('(')

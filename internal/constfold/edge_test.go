@@ -126,8 +126,9 @@ function main(): boolean { return EQ; }`)
 }
 
 // Bitwise and shift operators fold over integer consts: AND, OR, XOR,
-// left/right shift. Each row resolves to a NumberLit with the Go
-// semantics the pass mirrors.
+// left/right shift. Each row resolves to a NumberLit. The bitwise ops
+// take Go's semantics directly; the shifts deliberately do not, because
+// Go does not mask the count.
 func TestFoldBitwiseAndShift(t *testing.T) {
 	cases := []struct {
 		name string
@@ -139,6 +140,14 @@ func TestFoldBitwiseAndShift(t *testing.T) {
 		{"xor", "0x0F ^ 0x03", 0x0C},
 		{"shl", "1 << 4", 16},
 		{"shr", "256 >> 2", 64},
+		// A shift masks its count to the operand width, so a count at or past
+		// the width wraps rather than annihilating the value. The pass folds in
+		// int64, so the rule here is `& 63`. Go's own `1 << 64` is 0, which is
+		// what this used to compile `const A: i32 = 1 << 64` to while the same
+		// expression evaluated to 1 at runtime.
+		{"shl_count_64", "1 << 64", 1},
+		{"shl_count_65", "1 << 65", 2},
+		{"shr_count_65", "256 >> 65", 128},
 	}
 	for _, c := range cases {
 		c := c

@@ -1454,15 +1454,25 @@ func shiftSeq(in Inst) string {
 	case ssa.OpShrU:
 		mnem = "shr" // logical (unsigned) right shift
 	}
-	// A logical right shift at 32-bit width must operate on the 32-bit register:
-	// a u32 with bit 31 set is stored sign-extended (1s in bits 32-63), so a
-	// 64-bit `shr` would drag those bits into the result (the u32 `>>` bug that
-	// miscompiled SHA-256). The 32-bit form reads only the low 32 bits and zero-
-	// extends; the caller's trailing maskFix re-sign-extends to the storage
-	// convention. `shl`/`sar` are correct on the full register (shl's excess bits
-	// are masked off by maskFix; sar wants the sign-extended operand).
+	// EVERY shift at 32-bit width must operate on the 32-bit register, for two
+	// independent reasons.
+	//
+	// Operand: a logical right shift on a u32 with bit 31 set would drag in the
+	// sign-extended high bits (1s in bits 32-63), which is the u32 `>>` bug that
+	// miscompiled SHA-256.
+	//
+	// COUNT: x86 masks a shift count to the width of its destination — `shl r32,
+	// cl` uses cl & 31, `shl r64, cl` uses cl & 63. So `460 << 124` at i32 width
+	// is `460 << 28` = -1073741824, but on the full register it becomes
+	// `460 << 60`, whose low 32 bits are 0. shl/sar previously took the full
+	// register on the grounds that "shl's excess bits are masked off by maskFix"
+	// and "sar wants the sign-extended operand" — both true of the VALUE, and
+	// neither says anything about the count.
+	//
+	// The 32-bit form reads only the low 32 bits; the caller's trailing maskFix
+	// re-sign-extends to the storage convention.
 	dst := reg(in.Dst)
-	if in.K == ssa.OpShrU && in.W != 64 {
+	if in.W != 64 {
 		dst = reg32[in.Dst]
 	}
 	return strings.Join([]string{

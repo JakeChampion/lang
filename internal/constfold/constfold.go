@@ -194,6 +194,14 @@ func foldBinary(n *ast.Binary, left, right ast.Expr) (ast.Expr, error) {
 // integers, returning either a NumberLit or BoolLit depending on
 // the operator. Division and modulo by zero are caught here so the
 // program never compiles with a poison value baked in.
+//
+// A shift masks its count to the operand width, and the pass runs before the
+// checker so no width is known yet — it folds in int64 throughout (which is
+// why `1 << 32` folds to 4294967296 and is then rejected for an i32 const
+// rather than wrapping). The shifts therefore mask to 63, the i64 rule. Go
+// would instead yield 0 for any count at or above the width and for every
+// negative count, so `const A: i32 = 1 << 64` folded to 0 where the same
+// expression evaluates to 1 at runtime.
 func foldNumberBinary(n *ast.Binary, l, r int64) (ast.Expr, error) {
 	switch n.Op {
 	case "+":
@@ -219,9 +227,9 @@ func foldNumberBinary(n *ast.Binary, l, r int64) (ast.Expr, error) {
 	case "^":
 		return &ast.NumberLit{P: n.P, Value: l ^ r}, nil
 	case "<<":
-		return &ast.NumberLit{P: n.P, Value: l << uint64(r)}, nil
+		return &ast.NumberLit{P: n.P, Value: l << (uint64(r) & 63)}, nil
 	case ">>":
-		return &ast.NumberLit{P: n.P, Value: l >> uint64(r)}, nil
+		return &ast.NumberLit{P: n.P, Value: l >> (uint64(r) & 63)}, nil
 	case "==":
 		return &ast.BoolLit{P: n.P, Value: l == r}, nil
 	case "!=":
