@@ -41,6 +41,10 @@ var cloArrayFieldCallCases = []struct {
 	src  string
 	exit int
 }{
+	// A local-built closure array stored into the field. NEW capability: the
+	// closure side of the scan credits a local proven bound to an all-`__mkclo$`
+	// array literal, so this is now proven rather than inferred by elimination.
+	{"clo-local-built", "struct R { hs: (() => i32)[] }\nfunction main(): i32 { var n: i32 = 3; var c: (() => i32)[] = [() => n]; var r = R { hs: c }; return r.hs[0](); }", 3},
 	// No-capture closure element, direct call.
 	{"nocap", "struct Reg { hs: (() => i32)[] } function main(): i32 { var r = Reg { hs: [() => 40] }; return r.hs[0](); }", 40},
 	// Capturing closures, two elements, both called directly.

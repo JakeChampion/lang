@@ -2493,7 +2493,16 @@ pub function field_access_is_closurearr(e: parser.Expr, s: LowerState): boolean 
         parser.ExprFieldAccess(fa) => {
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty.len() == 0) { return false; }
-            return decl_field_type(s.structs, oty, fa.field) == "fn[]";
+            if (decl_field_type(s.structs, oty, fa.field) != "fn[]") { return false; }
+            // POSITIVE evidence (#3457): the field must be PROVEN to hold env
+            // boxes — an all-`__mkclo$` array literal, or a local bound to one,
+            // at every construction site program-wide. The former test was
+            // "fn[]" AND not-FNPTR, i.e. closure-by-elimination, which claimed
+            // every field the pointer scan could not prove: a param-built or
+            // loop-built POINTER array then dispatched env-first on a raw code
+            // address. A field with neither marker is unproven and declines
+            // here, so the dispatch falls through instead of guessing.
+            return util.has_str(s.closure_fns, "CLOARR:" + oty + "." + fa.field);
         },
         _ => { return false; }
     }
@@ -32996,7 +33005,7 @@ function clofld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], a
 // across functions) and dropped on ANY assignment to the name, so a later
 // rebind to a closure array can never leave a stale credit behind — crediting a
 // closure array as fn-POINTERS would call an env box as raw code.
-struct FnptrAcc { cand: string[], bad: string[], fnloc: string[] }
+struct FnptrAcc { cand: string[], bad: string[], fnloc: string[], ccand: string[], cbad: string[], cloc: string[] }
 
 // remove_str returns `xs` without any element equal to `name`. Used by the
 // fnptr scan to retract a local's all-fn-value proof on shadowing or
@@ -33092,10 +33101,28 @@ function fnptr_scan(e: parser.Expr, funcs: parser.FuncDecl[], structs: parser.St
                             _ => {}
                         }
                     }
-                    if (fv_ok) {
-                        a = FnptrAcc { cand: push_str_unique(a.cand, key), bad: a.bad, fnloc: a.fnloc };
+                    // Closure side, symmetric: credit the field when the value is a
+                    // proven all-box array literal or a local bound to one, else
+                    // mark it bad. This is POSITIVE evidence — the read side then
+                    // needs no "not a pointer array ⇒ closure" negation (#3457).
+                    var cv_ok: boolean = clo_array_lit_all_box(sl2.field_values[i]);
+                    if (!cv_ok) {
+                        match (sl2.field_values[i]) {
+                            parser.ExprIdent(cvid) => {
+                                if (util.has_str(a.cloc, cvid.name)) { cv_ok = true; }
+                            },
+                            _ => {}
+                        }
+                    }
+                    if (cv_ok) {
+                        a = FnptrAcc { cand: a.cand, bad: a.bad, fnloc: a.fnloc, ccand: push_str_unique(a.ccand, key), cbad: a.cbad, cloc: a.cloc };
                     } else {
-                        a = FnptrAcc { cand: a.cand, bad: push_str_unique(a.bad, key), fnloc: a.fnloc };
+                        a = FnptrAcc { cand: a.cand, bad: a.bad, fnloc: a.fnloc, ccand: a.ccand, cbad: push_str_unique(a.cbad, key), cloc: a.cloc };
+                    }
+                    if (fv_ok) {
+                        a = FnptrAcc { cand: push_str_unique(a.cand, key), bad: a.bad, fnloc: a.fnloc, ccand: a.ccand, cbad: a.cbad, cloc: a.cloc };
+                    } else {
+                        a = FnptrAcc { cand: a.cand, bad: push_str_unique(a.bad, key), fnloc: a.fnloc, ccand: a.ccand, cbad: a.cbad, cloc: a.cloc };
                     }
                 }
                 a = fnptr_scan(sl2.field_values[i], funcs, structs, a);
@@ -33129,9 +33156,9 @@ function fnptr_scan_stmts(stmts: parser.Stmt[], funcs: parser.FuncDecl[], struct
                 // literal; a re-declaration that is NOT one drops any prior
                 // credit for the name (shadowing must not inherit it).
                 if (fnptr_array_lit_all_fnval(v.init, funcs)) {
-                    a = FnptrAcc { cand: a.cand, bad: a.bad, fnloc: push_str_unique(a.fnloc, v.name) };
+                    a = FnptrAcc { cand: a.cand, bad: a.bad, fnloc: push_str_unique(a.fnloc, v.name), ccand: a.ccand, cbad: a.cbad, cloc: remove_str(a.cloc, v.name) };
                 } else {
-                    a = FnptrAcc { cand: a.cand, bad: a.bad, fnloc: remove_str(a.fnloc, v.name) };
+                    a = FnptrAcc { cand: a.cand, bad: a.bad, fnloc: remove_str(a.fnloc, v.name), ccand: a.ccand, cbad: a.cbad, cloc: clo_bind_update(a.cloc, v) };
                 }
             },
             parser.StmtAssign(as2) => {
@@ -33140,7 +33167,7 @@ function fnptr_scan_stmts(stmts: parser.Stmt[], funcs: parser.FuncDecl[], struct
                 // rebind to a closure array both land here. Conservative on
                 // purpose: a stale credit would be UNSOUND, a missing one only
                 // routes the field to the AST fallback as before.
-                a = FnptrAcc { cand: a.cand, bad: a.bad, fnloc: remove_str(a.fnloc, as2.target) };
+                a = FnptrAcc { cand: a.cand, bad: a.bad, fnloc: remove_str(a.fnloc, as2.target), ccand: a.ccand, cbad: a.cbad, cloc: remove_str(a.cloc, as2.target) };
             },
             parser.StmtExpr(ex) => { a = fnptr_scan(ex.value, funcs, structs, a); },
             parser.StmtReturn(r) => { a = fnptr_scan(r.value, funcs, structs, a); },
@@ -33174,6 +33201,56 @@ function fnptr_scan_stmts(stmts: parser.Stmt[], funcs: parser.FuncDecl[], struct
     return a;
 }
 
+
+// clo_elem_is_box reports whether array element `e` is a `__mkclo$…(caps)` call
+// — the env-box constructor the lift pass rewrites every CAPTURING lambda to.
+// Post-lift this is the positive signature of a closure element, exactly as a
+// bare fn ident is the positive signature of a pointer element
+// (fnptr_elem_is_fnval). The two are disjoint by construction: the lift turns a
+// no-capture lambda into a hoisted `__lam_N` IDENT and a capturing one into this
+// CALL, so no element satisfies both.
+function clo_elem_is_box(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    return id.name.len() > 8 && id.name[0:8] == "__mkclo$";
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+
+// clo_bind_update credits `v.name` when the binding is a proven all-box array
+// literal, and retracts it otherwise — the closure twin of the fnloc update, so
+// shadowing by a non-closure value cannot leave a stale proof behind.
+function clo_bind_update(cloc: string[], v: parser.StmtVar): string[] {
+    if (clo_array_lit_all_box(v.init)) { return push_str_unique(cloc, v.name); }
+    return remove_str(cloc, v.name);
+}
+
+// clo_array_lit_all_box: `e` is a non-empty array literal whose EVERY element is
+// a closure box — the closure twin of fnptr_array_lit_all_fnval.
+function clo_array_lit_all_box(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprArray(a) => {
+            if (a.elements.len() == 0) { return false; }
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                if (!clo_elem_is_box(a.elements[i])) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // fnptr_arr_fields_of returns "FNPTR:<sty>.<field>" markers for every "fn[]"
 // struct field that is constructed ONLY from all-fn-value array literals
 // program-wide — i.e. a PLAIN fn-pointer array, never a closure array. A field
@@ -33185,12 +33262,12 @@ function fnptr_scan_stmts(stmts: parser.Stmt[], funcs: parser.FuncDecl[], struct
 // box array on reclamation (its elements are raw code addresses). Runs on the
 // LIFTED module (all_funcs/all_structs), so lambda elements are already resolved.
 pub function fnptr_arr_fields_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
-    var acc: FnptrAcc = FnptrAcc { cand: [], bad: [], fnloc: [] };
+    var acc: FnptrAcc = FnptrAcc { cand: [], bad: [], fnloc: [], ccand: [], cbad: [], cloc: [] };
     var i: i32 = 0;
     while (i < funcs.len()) {
         // Local names are per-function: a proof from an earlier function must
         // not credit a same-named local here.
-        acc = FnptrAcc { cand: acc.cand, bad: acc.bad, fnloc: [] };
+        acc = FnptrAcc { cand: acc.cand, bad: acc.bad, fnloc: [], ccand: acc.ccand, cbad: acc.cbad, cloc: [] };
         acc = fnptr_scan_stmts(funcs[i].body, funcs, structs, acc);
         i = i + 1;
     }
@@ -33199,6 +33276,15 @@ pub function fnptr_arr_fields_of(funcs: parser.FuncDecl[], structs: parser.Struc
     while (j < acc.cand.len()) {
         if (!util.has_str(acc.bad, acc.cand[j])) { out = out.append("FNPTR:" + acc.cand[j]); }
         j = j + 1;
+    }
+    // CLOARR:<sty>.<field> — the closure twin, emitted from the same scan so the
+    // read side can ask "is this field PROVEN to hold env boxes" instead of
+    // inferring it from the absence of a FNPTR marker. A field with neither
+    // marker is simply unproven, and the dispatch declines rather than guessing.
+    var k: i32 = 0;
+    while (k < acc.ccand.len()) {
+        if (!util.has_str(acc.cbad, acc.ccand[k])) { out = out.append("CLOARR:" + acc.ccand[k]); }
+        k = k + 1;
     }
     return out;
 }
