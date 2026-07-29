@@ -1795,7 +1795,7 @@ func (b *builder) markConstructionMoves(val ast.Expr, order identOrder, moved ma
 	case *ast.TupleLit:
 		// A tuple with rc-tracked elements: each is inc'd on
 		// construction and dec'd by __drop_tuple_<...> at the tuple's
-		// drop (tupleNeedsDrop / dropFnNameFor), so a moved element
+		// drop (dropFnNameFor), so a moved element
 		// balances — same shape as the struct/array cases. Only mark
 		// owned rc locals; mark self-filters non-pointer elements via
 		// isOwnedRcLocal.

@@ -2593,9 +2593,8 @@ function build(): i32 {
 // helper whose body dec's via __fern_str_dec under the two-word ABI.
 // Originally an exclusion (the helper symbol existed only on wasm);
 // post-#1665 the arm64 string-runtime port (and the four prior arm64
-// slice widenings) made tupleNeedsDrop's two-word string branch a
-// safe one-line widening — wasm and arm64-TwoWordOverride now share
-// one codegen path.
+// slice widenings) made the two-word string element a safe one-line
+// widening — wasm and arm64-TwoWordOverride now share one codegen path.
 func TestLowerNestedTupleStringReclaimOnArm64TwoWord(t *testing.T) {
 	prevOverride := ast.TwoWordOverride
 	ast.TwoWordOverride = true

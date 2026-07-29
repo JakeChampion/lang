@@ -708,16 +708,16 @@ func TestLeakCheckPureReadLenArm64(t *testing.T) {
 //
 // An array of tuples routed its per-element release through the flat
 // __fern_drop_arr_ptr (per-element __fern_rc_dec), because
-// arrElemStructDropName gated the generated per-element walk on
-// tupleNeedsDrop — false for a tuple of plain scalars, whose drop body has no
-// element to traverse. But the tuple BOX still has to be freed, and a flat
+// arrElemStructDropName gated the generated per-element walk on a
+// "does this tuple need a deep drop?" predicate — false for a tuple of plain
+// scalars, whose drop body has no element to traverse. But the tuple BOX still has to be freed, and a flat
 // rc_dec only decrements: freeing needs the size, which only the generated
 // __drop_arr_tuple_<mangled> loop supplies. So `[t]` leaked exactly one tuple
 // box per iteration (16 bytes for `(i32, i32)` — 8 rc header + 8 payload),
 // linear and unbounded.
 //
-// The scalar tuple is the subject: a tuple carrying a string was already
-// covered (tupleNeedsDrop is true there), and it is the control — if it ever
+// The scalar tuple is the subject; a tuple carrying a string was already
+// covered before the gate came out, so it is the control — if it ever
 // regresses, the cause is the walk itself, not the gate.
 const tupleElemArrayScalarSrc = `function main(): i32 {
     var total: i32 = 0;
@@ -786,6 +786,87 @@ func TestArm64LeakCheckTupleElemArray(t *testing.T) {
 			allocs, frees, live := parseLeakCheckLine(t, stderr)
 			if allocs == 0 {
 				t.Fatalf("no allocations recorded — fixture drift")
+			}
+			if frees != allocs || live != 0 {
+				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+			}
+		})
+	}
+}
+
+// --- Tuple-valued element of a tuple (#5879 cause B, nested half) ---
+//
+// The sibling #5899 left open. dropFnNameFor's TupleType arm carried the same
+// "needs a deep drop?" bail as arrElemStructDropName did, so a tuple-valued
+// element of a generated __drop_tuple_ fell through dropStructField to a flat
+// decValueOnStack dec — decrementing the inner box's rc but never freeing it,
+// since freeing needs the size only the generated body has. 16 bytes per
+// iteration for `(i32, i32)`, linear and unbounded.
+//
+// Removing that bail leaves tupleNeedsDrop with no callers, so it is gone; a
+// scalar tuple now reaches genTupleDropFn and emits an is_unique-gated
+// box_free with no element drops, which is exactly the free that was missing.
+const tupleInTupleScalarSrc = `function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 50) {
+        var t = (k, k + 1);
+        var o = (t, 99);
+        total = total + o.0.1 + o.1;
+        k = k + 1;
+    }
+    return total % 251;
+}`
+
+// A tuple-valued element nested in a STRUCT field, the third routing into the
+// same per-element drop (dropStructField reaches it via __drop_struct_*).
+const tupleInStructScalarSrc = `struct Holder { pair: (i32, i32), n: i32 }
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 50) {
+        var t = (k, k + 1);
+        var h = Holder { pair: t, n: 3 };
+        total = total + h.pair.1 + h.n;
+        k = k + 1;
+    }
+    return total % 251;
+}`
+
+func TestX86_64LeakCheckNestedTupleElem(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{"tuple-in-tuple", tupleInTupleScalarSrc},
+		{"tuple-in-struct", tupleInStructScalarSrc},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckX86_64(t, tc.src)
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations recorded — fixture drift (exit %d)", code)
+			}
+			if frees != allocs || live != 0 {
+				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+			}
+		})
+	}
+}
+
+func TestArm64LeakCheckNestedTupleElem(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{"tuple-in-tuple", tupleInTupleScalarSrc},
+		{"tuple-in-struct", tupleInStructScalarSrc},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckArm64(t, tc.src)
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations recorded — fixture drift (exit %d)", code)
 			}
 			if frees != allocs || live != 0 {
 				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
