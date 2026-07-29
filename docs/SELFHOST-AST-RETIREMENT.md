@@ -2793,7 +2793,8 @@ callee-side rewrite is not available. The site that must become eligible is the
 CALLER's binding of the returned `Token[]` — the value the caller receives and
 drops. **The `Array_push` arm is a PREREQUISITE here — it was UNSOUND for a
 specific reason (2026-07-29), and that reason is now fixed; the arm is IN and
-the caller-side condition is all that remains. See "DONE — option 1 landed"
+the caller-side condition is all that remains — which #5880 has since landed;
+see "THE 4x IS DONE" and "DONE — option 1 landed"
 below.** The chase is kept because the wrong turns in it are the point.
 Re-applying it used to fail
 `TestArrayPushProjectionSourceFreeEligible`
@@ -3046,10 +3047,52 @@ helpers are what make the arm sound, not a coincidence of the fixture.
 44565 → 44566 frees of 508638, exactly the "ONE BLOCK" predicted above — the
 arm is only the *first* of the two conditions. `out` still escapes through the
 six `return out;` sites, so move-on-return keeps it out of the sweep and the
-walking drop the arm buys sits on a fall-through that never runs. The 4x
-(179100 frees, 35%) needs the second condition: the CALLER's binding of the
-returned `Token[]` becoming eligible. That is now the only thing left in this
-strand, and it is no longer blocked on an unsound prerequisite.
+walking drop the arm buys sits on a fall-through that never runs.
+
+### THE 4x IS DONE — #5880 landed it, not the arm (2026-07-29)
+
+**Do not go looking for the caller-side half. It is already banked.** #5884's
+own body says "the 4x needs the CALLER's binding of the returned `Token[]`
+becoming eligible … the only thing left in this strand"; that was written
+against a stale baseline and is **wrong**. `perceus: interprocedural
+counted-retain fixpoint credits method-receiver threading (#5880)` landed in
+parallel and delivered it. Bisected by building each commit and running the
+same driver (`var toks = lexer.tokenize(io.read_all_stdin()); return
+toks.len() % 7;`) over `parser.fern` under `FERN_LEAKCHECK=1`:
+
+| commit | frees of 509152 | live |
+|---|---:|---|
+| `e1f21613` (before both perceus PRs) | 44594 (8.8%) | 18.6 MB |
+| `0edb78b7` #5878 move-on-construction-in-a-loop | 44594 — **no change** | 18.6 MB |
+| **`2123ff75` #5880 interprocedural counted-retain fixpoint** | **184869 (36.3%)** | **14.2 MB** |
+| `70de2db4` main, with the `Array_push` arm | 184870 (**+1**) | 14.2 MB |
+
+That is the 4x this section spent so long pricing (it predicted 179100 / 35%;
+the real figure is 184869 / 36.3%). The last row is the same one-block delta the
+arm measures everywhere else, confirmed a second way: disabling the arm on
+current main gives 184869, enabling it 184870.
+
+**Two consequences for whoever reads this next.**
+
+- Every "44566 / 8.7%" and "464073 of 508639 stranded (91.2%)" figure ABOVE this
+  heading is pre-#5880 and must not be used as a current baseline. The
+  measurement recipe is still good; the numbers are two PRs stale.
+- A **zero-param short-circuit in `findReturnsNoParamEscape` is worth nothing**
+  and should not be built. The reasoning is sound and the gap is real —
+  `io__read_all_stdin` has 0 parameters yet `returnsNoParamEscape` is `false`,
+  because the pass tests every return expression (`return chunks.join("")` is
+  not a recognised fresh construction) without ever noticing there is no
+  parameter to alias — but adding `if len(fn.Params) == 0 { continue }` changes
+  the number by **0 blocks**: measured 184870 with and without. #5880 already
+  reaches these bindings by another route. (It is also not obviously safe: the
+  pass is consumed downstream as "safe to free this result", and a zero-param
+  function returning `random_bytes(n)` — a header-less raw buffer `rhsTainted`
+  special-cases as permanently tainted — would break that. Vacuous-on-params is
+  not the same claim as freeable.)
+
+The rcPlan dump is what settled where the remaining taint sits, and it is worth
+repeating rather than reasoning about: with the arm in, `lexer__tokenize` reports
+`freeEligible: l,out,rf,ri,rn,rs,text` — `out` IS reclaimable in the callee now.
 
 **Gates for that work, in order** (the first two are seconds, and the last two
 are the ones that have historically disagreed):
