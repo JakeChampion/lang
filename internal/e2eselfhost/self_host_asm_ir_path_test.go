@@ -335,6 +335,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// `Option[i32]`, so the outer match bound `inner` as i32 and `match (inner)`
 		// bailed to AST. Recursing some_opt_type recovers `Option[Option[P]]`. = 9.
 		{"nested-opt-struct", "struct P { x: i32 } function main(): i32 { var x: Option[Option[P]] = Some(Some(P { x: 9 })); match (x) { Some(inner) => { match (inner) { Some(p) => { return p.x; }, None => { return 1; } } }, None => { return 2; } } return 0; }"},
+		// A struct field whose type is a TUPLE with a bare STRUCT element:
+		// `Pair { both: (A, A) }`, read `p.both.N.v`. is_leaksafe_tuple_field_d
+		// classified scalar / Option / array / struct-array / enum-array / clo /
+		// nested-tuple elements but had no arm for a bare struct (or enum) element —
+		// a leak-only pointer slot like the others — so the struct field was rejected
+		// and bailed to AST even though the `t.N.field` read already lowers. Admitted
+		// when the element struct is leak-safe (visiting-threaded for recursion). = 7.
+		{"structfield-tuple-struct", "struct A { v: i32 } struct Pair { both: (A, A) } function main(): i32 { var p = Pair { both: (A { v: 3 }, A { v: 4 }) }; return p.both.0.v + p.both.1.v; }"},
 		// A struct-array (P[]) / enum-array (E[]) value as a TUPLE element. The
 		// buffer is a heap pointer in the slot (leak mode — elements leak with the
 		// leak-only tuple); the destructure binds mark_arr + the element struct/enum

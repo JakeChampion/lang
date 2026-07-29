@@ -2066,6 +2066,16 @@ pub function is_leaksafe_tuple_field_dv(structs: parser.StructDecl[], t: string,
         // still declines) — sound, just unoptimised, exactly like the struct-array
         // element case above.
         if (!elem_ok && tag == "clo") { elem_ok = true; }
+        // A bare STRUCT element (`(A, i32)` — element A) is a leak-only pointer
+        // slot like a struct-array / Option element: the tuple stores the struct
+        // box, `t.N.field` reads it (expr_tuple_elem_tag tags element N with the
+        // struct name). Admitted when the element struct is itself leak-safe;
+        // decl_is_leaksafe_d is threaded with depth + visiting so a self-
+        // referential element short-circuits instead of recursing forever.
+        if (!elem_ok && decl_is_struct(structs, tag) && decl_is_leaksafe_d(structs, tag, depth + 1, visiting)) { elem_ok = true; }
+        // A bare nominal-ENUM element is leak-only on the IR path (the exit sweep
+        // never frees an enum box), like an enum-array / Option element.
+        if (!elem_ok && is_enum_like_name(tag, structs)) { elem_ok = true; }
         // A NESTED tuple element recurses through THIS predicate so an inner
         // struct-/enum-array element is admitted at any depth.
         if (!elem_ok && tag.len() >= 2 && tag[0:1] == "(") { elem_ok = is_leaksafe_tuple_field_dv(structs, tag, depth, visiting); }
