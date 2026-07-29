@@ -183,12 +183,36 @@ keeps precedence, then accepts on the `"fn[]"` field spelling. The fix was one
 `else if` in the element-call dispatch, not a new registry.
 
 The negation ("absent from the FNPTR registry ⇒ closure box") *is* relied on
-here, and it is sound for the documented reason: a struct-field array of BARE
-named fns is already miscompiled at CONSTRUCTION (a separate open gap), so the
-negation cannot spoil a shape that currently works. Pinned on both sides —
-`TestSelfHostCloArrayFieldCallIRX86_64` (closure elements) and
-`TestSelfHostFnptrArrayFieldIRX86_64` (`direct`, `rc-soundness`) — so a
-closure arm that wrongly claimed a raw-pointer array would fail loudly.
+here, and it is sound only because of the construction gap below. Pinned on
+both sides — `TestSelfHostCloArrayFieldCallIRX86_64` (closure elements) and
+`TestSelfHostFnptrArrayFieldIRX86_64` (`direct`, `rc-soundness`).
+
+### Open, self-host-only: a LOCAL-BUILT fn-pointer array field miscompiles
+
+Differential-probed 2026-07-28 (interp / native x86-64 / self-host):
+
+| construction | interp | native x86-64 | self-host |
+|---|---|---|---|
+| `R { hs: [seven] }` — array LITERAL | 7 | 7 | 7 |
+| `var a = [seven]; R { hs: a }` | 7 | 7 | **crash** |
+| `var a = []; a = a.append(seven); R { hs: a }` | 7 | 7 | **crash** |
+
+`fnptr_scan` only credits a field constructed from an all-fn-value array
+LITERAL; any other store marks it `bad`, so a local-built pointer array is
+absent from the FNPTR registry. `field_access_is_closurearr` then claims it by
+negation and the call dispatches env-first on a raw code pointer.
+
+This is the "already miscompiled at construction" gap that
+`field_access_is_closurearr`'s header refers to — confirmed real, and NOT
+stale as it first appeared: the LITERAL form works (it is registered), which is
+what makes the header look wrong until you probe the non-literal one.
+
+It failed on the AST path too, so #5783 did not introduce it — but #5783 moved
+the shape onto the IR path, i.e. onto the path being kept. Fixing it means
+positive evidence rather than negation: either widen `fnptr_scan` to credit a
+local bound to an all-fn-value literal, or add the `CLOARR:<Type>.<field>`
+registry populated from `__mkclo$` elements. The first is narrower and fixes
+both paths at once.
 
 **Root cause of the tuple gap (closed by #5758), and the shape of that fix.** A callable
 behind a struct field has an ambiguous REPRESENTATION that its declared type
