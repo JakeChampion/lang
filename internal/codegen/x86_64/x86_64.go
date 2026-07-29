@@ -353,7 +353,10 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.emitArrPushGrowRuntime()
 	}
 	if g.usesArrPushGrowPtr {
-		g.emitArrPushGrowPtrRuntime()
+		g.emitArrPushGrowPtrRuntime(false)
+	}
+	if g.usesArrPushGrowMovePtr {
+		g.emitArrPushGrowPtrRuntime(true)
 	}
 	if g.usesArrCowInPlace {
 		g.emitArrCowInPlaceRuntime()
@@ -749,6 +752,14 @@ type generator struct {
 	// #3425 self-host-driver heap corruption (poison-mode-confirmed
 	// use-after-free on EmitState.needed's "struct_drop:<T>" keys).
 	usesArrPushGrowPtr bool
+	// usesArrPushGrowMovePtr gates `__fern_arr_push_grow_move_ptr` — the
+	// self-append (`a = a.append(v)`) sibling of __fern_arr_push_grow_ptr.
+	// It retains the copied elements only when the incoming rc != 1, i.e.
+	// only when the assign's buffer-only __fern_arr_dec will leave the old
+	// buffer alive under an alias. At rc==1 that dec frees the old buffer
+	// without walking, so the elements transfer and a retain would leak
+	// one reference each (#3457).
+	usesArrPushGrowMovePtr bool
 	// usesArrCowInPlace gates `__fern_arr_cow_inplace` — the
 	// Phase 2b helper called by the IR's `arr[i] = v` lowering
 	// for local-ident array targets. See arm64's mirror.
@@ -912,6 +923,11 @@ func (g *generator) recordUse(target string) {
 		g.usesMemcpy = true
 	case "__fern_arr_push_grow_ptr":
 		g.usesArrPushGrowPtr = true
+		g.usesAlloc = true
+		g.usesMemcpy = true
+		g.usesRcInc = true
+	case "__fern_arr_push_grow_move_ptr":
+		g.usesArrPushGrowMovePtr = true
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesRcInc = true
@@ -5265,26 +5281,42 @@ func (g *generator) emitArrPushGrowRuntime() {
 // heap corruption. Mirrors __fern_arr_cow_inplace_ptr's element-retain
 // loop (#4187), which fixed the same gap for `.with`.
 //
+// moveForm emits `__fern_arr_push_grow_move_ptr` instead: the same
+// helper with the retain loop SKIPPED when the incoming rc is 1. That
+// is the self-append form's contract (`a = a.append(v)`), whose
+// overwrite reclaim is a buffer-only __fern_arr_dec: at rc==1 that dec
+// frees the old buffer without walking, so the copy legitimately
+// inherits its element references and a retain would leak one per
+// element. At rc>1 the old buffer SURVIVES that dec — an alias still
+// owns it — so the two buffers share every element pointer under a
+// single count and both walk-drops release it, which is the #3457
+// over-release. "The old buffer survives this grow" is exactly the
+// rc != 1 test, so one helper covers both.
+//
 // System V inputs: rdi=arr, esi=oldLen, edx=stride. Returns new data
 // pointer in rax.
-func (g *generator) emitArrPushGrowPtrRuntime() {
+func (g *generator) emitArrPushGrowPtrRuntime(moveForm bool) {
+	name, lbl := "__fern_arr_push_grow_ptr", ".Lpushp"
+	if moveForm {
+		name, lbl = "__fern_arr_push_grow_move_ptr", ".Lpushmp"
+	}
 	g.line("")
-	g.line(".globl __fern_arr_push_grow_ptr")
-	g.line(".type __fern_arr_push_grow_ptr, @function")
-	g.label("__fern_arr_push_grow_ptr")
+	g.line(".globl " + name)
+	g.line(".type " + name + ", @function")
+	g.label(name)
 	// Fast path: rc == 1 AND oldLen < cap → in place (rc = 2, len++).
 	g.emit("mov eax, dword ptr [rdi - 8]") // rc
 	g.emit("cmp eax, 1")
-	g.emit("jne .Lpushp_copy")
+	g.emit("jne " + lbl + "_copy")
 	g.emit("mov eax, dword ptr [rdi - 12]") // cap
 	g.emit("cmp esi, eax")
-	g.emit("jge .Lpushp_copy")
+	g.emit("jge " + lbl + "_copy")
 	g.emit("mov dword ptr [rdi - 8], 2")
 	g.emit("lea eax, [rsi + 1]")
 	g.emit("mov dword ptr [rdi - 4], eax")
 	g.emit("mov rax, rdi")
 	g.emit("ret")
-	g.label(".Lpushp_copy")
+	g.label(lbl + "_copy")
 	// Copy path — same register plan as __fern_arr_push_grow.
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
@@ -5303,15 +5335,15 @@ func (g *generator) emitArrPushGrowPtrRuntime() {
 	g.emit("mov r15d, r14d")
 	g.emit("shl r15d, 1")
 	g.emit("cmp r15d, 4")
-	g.emit("jge .Lpushp_cap_ok")
+	g.emit("jge " + lbl + "_cap_ok")
 	g.emit("mov r15d, 4")
-	g.label(".Lpushp_cap_ok")
+	g.label(lbl + "_cap_ok")
 	// headerBytes = max(16, stride).
 	g.emit("mov ecx, 16")
 	g.emit("cmp r13d, 16")
-	g.emit("jle .Lpushp_hdr_set")
+	g.emit("jle " + lbl + "_hdr_set")
 	g.emit("mov ecx, r13d")
-	g.label(".Lpushp_hdr_set")
+	g.label(lbl + "_hdr_set")
 	g.emit("push rcx")   // stash headerBytes
 	g.emit("sub rsp, 8") // re-pad to 16 alignment
 	// allocSize = headerBytes + newCap * stride.
@@ -5336,21 +5368,32 @@ func (g *generator) emitArrPushGrowPtrRuntime() {
 	g.emit("mov edx, eax")
 	g.emit("mov qword ptr [rsp], r11") // stash new_data across the call
 	g.emit("call __fern_memcpy")
+	if moveForm {
+		// The copy path leaves the OLD buffer's rc untouched, so rbx (still
+		// arr here) reads the incoming count. rc==1 means the caller's
+		// buffer-only __fern_arr_dec is about to free it and the elements
+		// transfer; skip the retain. r14d (newLen) is dead — already stored.
+		g.emit("mov r14d, dword ptr [rbx - 8]")
+	}
 	g.emit("mov rbx, qword ptr [rsp]") // rbx = new_data (survives rc_inc)
+	if moveForm {
+		g.emit("cmp r14d, 1")
+		g.emit("je " + lbl + "_inc_done")
+	}
 	// Element-retain loop: inc each copied pointer element so the fresh
 	// buffer owns its own reference. r12 = oldLen, r13 = stride survive
 	// __fern_rc_inc (callee-saved). r15 = i.
 	g.emit("xor r15, r15")
-	g.label(".Lpushp_inc_loop")
+	g.label(lbl + "_inc_loop")
 	g.emit("cmp r15d, r12d")
-	g.emit("jge .Lpushp_inc_done")
+	g.emit("jge " + lbl + "_inc_done")
 	g.emit("mov rax, r15")
 	g.emit("imul rax, r13")
 	g.emit("mov rdi, qword ptr [rbx + rax]") // element pointer (8-byte)
 	g.emit("call __fern_rc_inc")             // guards null / SSO / low / sentinel
 	g.emit("inc r15")
-	g.emit("jmp .Lpushp_inc_loop")
-	g.label(".Lpushp_inc_done")
+	g.emit("jmp " + lbl + "_inc_loop")
+	g.label(lbl + "_inc_done")
 	g.emit("mov rax, rbx") // return new_data
 	// Tear down: three 8-byte slots above the callee-saves (prolog pad
 	// + pushed headerBytes + inner pad).
@@ -5362,7 +5405,7 @@ func (g *generator) emitArrPushGrowPtrRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __fern_arr_push_grow_ptr, .-__fern_arr_push_grow_ptr")
+	g.line(".size " + name + ", .-" + name)
 }
 
 // emitArrCowInPlaceRuntime emits `__fern_arr_cow_inplace(arr,

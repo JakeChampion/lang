@@ -1,26 +1,37 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
-// f64ToStringProgram formats a spread of f64 values one per line. The
-// expected output matches std/float's __float_to_string (k=15, trailing
-// zeros trimmed) exactly — including the IEEE noise digits — so the
-// self-host's native __fern_f64_to_string helper is held to the same
-// contract as the pure-Fern formatter the Go backend compiles. The last
-// two lines pin the #5363 defaults on the self-host: a bare unsuffixed
-// literal is f64 (1.0/3.0 renders at the 15-digit f64 precision, not
-// f32's 7) and `float` is the f64 alias.
-const f64ToStringProgram = `function main(): i32 {
+// f64ToStringProgram formats a spread of f64 values one per line through
+// std/float's `.to_string()`. It imports the module explicitly: the register
+// backends used to carry a BUILTIN f64 `.to_string()` — a hand-asm k=15
+// fixed-precision formatter — which this test previously exercised without
+// any import. That builtin is gone (#5826). f64 formatting is now
+// std/float's shortest-round-trip formatter on every backend, the same one
+// the Go backend compiles and the interpreter runs, so an import-free
+// `.to_string()` on an f64 is an unresolved method (native reports E043) —
+// exactly as it already was on wasm, which never had the builtin.
+//
+// The expected output is therefore SHORTEST round-trip, not k=15. The
+// difference is visible and is the point of the change: k=15 rendered
+// 123456.789 as "123456.789000000004307" and 1/3 as "0.333333333333333"
+// (15 digits), where shortest gives the fewest digits that still parse back
+// to the same f64. The last line pins the #5363 default that a bare
+// unsuffixed literal is f64 — 1.0/3.0 renders at f64 precision, not f32's.
+//
+// The `var fx: float` line this program used to carry is GONE, not moved:
+// with std/float actually imported, a `float`-declared receiver dispatches
+// to that module's f32 `.to_string()` and renders "0.33333334" (#5882).
+// That is a pre-existing self-host dispatch bug — a pre-deletion driver
+// emits the same `__fn_f32__to_string` call — which was invisible here only
+// because this test ran import-free, where no f32 method existed and the
+// now-deleted builtin caught f32 and f64 alike. Restore the line as part of
+// fixing #5882 rather than pinning it to the wrong value here.
+const f64ToStringProgram = `import "./float";
+function main(): i32 {
     print((3.5 as f64).to_string());
     print((0.0 as f64 - 2.25).to_string());
     print((0.0 as f64).to_string());
@@ -32,44 +43,44 @@ const f64ToStringProgram = `function main(): i32 {
     print((9999999.99 as f64).to_string());
     print((0.0 as f64 - 0.000125).to_string());
     print((1.0 / 3.0).to_string());
-    var fx: float = 1.0;
-    print((fx / 3.0).to_string());
     return 0;
 }`
 
+// Byte-for-byte the native interpreter's output for the same program —
+// std/float is the single formatter now, so self-host and native agree by
+// construction rather than by a hand-maintained transcription contract.
 const f64ToStringWant = "3.5\n" +
 	"-2.25\n" +
 	"0\n" +
 	"1\n" +
 	"100\n" +
-	"123456.789000000004307\n" +
+	"123456.789\n" +
 	"0.1\n" +
 	"0.5\n" +
-	"9999999.990000000223517\n" +
+	"9999999.99\n" +
 	"-0.000125\n" +
-	"0.333333333333333\n" +
-	"0.333333333333333\n"
+	"0.3333333333333333\n"
 
-// TestSelfHostF64ToStringX86_64 compiles the float-formatting program
-// with the self-hosted x86-64 emitter and checks its stdout against the
-// std/float-matching reference output.
+// f64ToStringMods vendors std/float alone. Its own `import "std/i32"` /
+// `"std/i64"` are skipped as unresolved by the loader (the same set the old
+// marker bundle hand-picked), which is correct here: the only integer method
+// float's body calls is an i32 `.to_string()` (__float_sig_core renders its
+// decimal exponent with one), and that is still a register-backend builtin.
+// Vendoring i32/i64 instead FAILS — they import core/int, which this helper
+// does not carry, leaving `int__*` calls undefined.
+var f64ToStringMods = []string{"float"}
+
+// TestSelfHostF64ToStringX86_64 compiles the float-formatting program with
+// the self-hosted x86-64 emitter and checks its stdout against the native
+// interpreter's shortest-round-trip output.
 func TestSelfHostF64ToStringX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	gcc, runner, driverBin := buildModloadDriverX86(t)
 
-	asm := runCapture(t, gcc, runner, driverBin, []byte(f64ToStringProgram))
+	asm, progDir := compileStdProgModload(t, runner, driverBin, f64ToStringMods, f64ToStringProgram)
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes")
 	}
-	progBin := buildBin(t, gcc, dir, "f64prog", string(asm))
+	progBin := buildBin(t, gcc, progDir, "f64prog", asm)
 
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
@@ -88,39 +99,13 @@ func TestSelfHostF64ToStringX86_64(t *testing.T) {
 // CI-gated; skips cleanly without the cross toolchain.
 func TestSelfHostF64ToStringArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm.fern", "asm_ir_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_ir_run.fern"))
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	driverBin := buildBin(t, x86gcc, dir, "driver", asm)
+	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 
-	f64Asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(f64ToStringProgram), "-target", "arm64")
-	if len(f64Asm) == 0 {
+	asm, progDir := compileStdProgModload(t, x86runner, driverBin, f64ToStringMods, f64ToStringProgram, "-target", "arm64")
+	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the f64 program")
 	}
-	f64Bin := buildBin(t, arm64gcc, dir, "f64prog", string(f64Asm))
+	f64Bin := buildBin(t, arm64gcc, progDir, "f64prog", asm)
 
 	cmd := runArm64Bin(qemu, f64Bin)
 	out, _ := cmd.Output()

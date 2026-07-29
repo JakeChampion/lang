@@ -15184,8 +15184,10 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 // still-live buffer. A general `x = f(x)` has no such guarantee (f may return a
 // borrowed buffer at rc==1 that the result still aliases → buffer-UAF), which is
 // why the broad form segfaulted the self-compile; the push form does not.
-// __fern_arr_dec is buffer-only (never walks elements), so a shared string /
-// struct element is never over-released either.
+// __fern_arr_dec is buffer-only (never walks elements), so the overwrite itself
+// never releases a shared element — but at rc>1 the old buffer SURVIVES it,
+// leaving two live buffers over one set of element references. That is what the
+// _move_ grow helpers' rc != 1 retain covers (#3457, emitArrayPush).
 func (b *builder) isSelfArrayPushLocal(value ast.Expr, name string) bool {
 	// Locals qualify. A BORROWED param never does — its buffer belongs to the
 	// caller and is still live, so an in-place grow / orphan-free would UAF the
@@ -16892,31 +16894,38 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	// Gated on RcFreeEnabled: free-off never walk-frees elements, so the
 	// plain helper keeps that baseline byte-identical.
 	//
-	// EXCEPTION — the self-append form `a = a.append(v)` keeps the plain
-	// MOVE-semantics helper. Its overwrite reclaim (the Assign array
-	// branch, isSelfArrayPushLocal) frees the old buffer with a
-	// buffer-only __fern_arr_dec that never walks elements, deliberately
-	// pairing with a non-retaining copy ("the old buffer's pointer
-	// elements were transferred to the new buffer"). Routing it through
-	// the retaining variant would add one uncompensated +1 per element
-	// per grow (nothing ever walk-decs that old buffer), leaking every
-	// element — the O(1)-heap self-append gate
-	// (TestX86_64ArrayPushPtrElemReclaim) catches it. The assign lowering
-	// marks the exact RHS call node before lowering it (selfPushMoveCall),
-	// so nested appends inside the pushed value still retain.
+	// The self-append form `a = a.append(v)` takes the _move_ siblings
+	// instead. Its overwrite reclaim (the Assign array branch,
+	// isSelfArrayPushLocal) frees the old buffer with a buffer-only
+	// __fern_arr_dec that never walks elements — but that dec only FREES
+	// when the buffer was uniquely owned. At rc==1 the copy legitimately
+	// inherits the element references and an unconditional retain would
+	// leak one per element per grow (the O(1)-heap self-append gate,
+	// TestX86_64ArrayPushPtrElemReclaim, catches that). At rc>1 an alias
+	// still owns the old buffer, so both buffers hold the same element
+	// pointers under a single count and both walk-drops release them —
+	// the #3457 over-release. The _move_ helpers retain exactly when the
+	// incoming rc != 1, which is precisely "the old buffer survives this
+	// grow". The assign lowering marks the exact RHS call node before
+	// lowering it (selfPushMoveCall), so nested appends inside the pushed
+	// value still take the unconditionally-retaining variants.
 	growHelper := "__fern_arr_push_grow"
-	if ast.RcFreeEnabled && ast.Expr(n) != b.selfPushMoveCall {
+	if ast.RcFreeEnabled {
+		suffix := ""
+		if ast.Expr(n) == b.selfPushMoveCall {
+			suffix = "_move"
+		}
 		if _, isStr := elemType.(ast.StringType); isStr {
 			if b.twoWordStrings() {
 				// Two-word (data, len) elements: pair-walking retain.
-				growHelper = "__fern_arr_push_grow_str"
+				growHelper += suffix + "_str"
 			} else if b.ptrW == 8 {
 				// Native single-word string elements: plain pointer
 				// retain (rc_inc guards SSO / literal / sentinel).
-				growHelper = "__fern_arr_push_grow_ptr"
+				growHelper += suffix + "_ptr"
 			}
 		} else if arrElemIsRcTracked(elemType) {
-			growHelper = "__fern_arr_push_grow_ptr"
+			growHelper += suffix + "_ptr"
 		}
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})

@@ -898,10 +898,53 @@ payload renders either as `"fn"` or as its full `"() => i32"` spelling and the
 test has to accept both — the first version of this fix looked correct and did
 nothing at all because it only matched `"fn"`.
 
+**Two further positions had the identical split, found by continuing the same
+sweep, and are closed the same way:**
+
+| position | evidence used |
+|---|---|
+| a fn-typed RETURN — `function get(): () => i32 { return a1; }` | `fd.ret_type` |
+| a USER-enum variant field — `enum E { Wrap(() => i32) }` + `Wrap(a1)` | the variant's struct decl |
+
+The user-enum one is the cleanest of the family: the variant's field is already
+declared `"fn"` in `structs`, which is strictly better evidence than any
+annotation, and the walk was ALREADY consulting it — only the shared
+`lift_arg_is_fn_value` arity gate stood in the way. Splitting off
+`lift_arg_is_fn_value_declared` for positions whose declared type is known to be
+a fn is the whole fix there.
+
+So the family is four positions and one cause: a fn value's REPRESENTATION is
+decided by whoever writes it, the dispatch is decided by the declared type, and
+wherever those two were derived independently they disagreed for exactly the
+zero-arg case. Each fix is the same move — read the declared type at the site
+that already has it.
+
 Still out of scope, recorded so it is not re-probed:
-`var g: (() => i32)[][] = [[a1]]; g[0][0]()` is interp 3, self-host SIGSEGV — but
-it routes **AST**, so per the project rule (a legacy-AST-only gap needs no fix) it
-waits until the IR path admits it.
+`var g: (() => i32)[][] = [[a1]]; g[0][0]()` is interp 3, self-host SIGSEGV, and
+`Option[((() => i32), i32)]` carrying `Some((a1, 4))` is interp 7 / SIGSEGV — but
+BOTH route **AST**, so per the project rule (a legacy-AST-only gap needs no fix)
+they wait until the IR path admits them.
+
+Positions PROBED CLEAN in the same sweep, so they need no work: a plain struct
+field (`S { f: a1 }`), a call argument (`takes(a1)`), a fn-value local
+(`var g: () => i32 = a1`), and a fn-POINTER array (`var xs: (() => i32)[] = [a1]`,
+which goes through the const_func path instead).
+
+**The sweep was then widened AWAY from fn values and came back empty** (2026-07-29,
+22 programs, differential against the interpreter, all routing IR). Recorded as a
+negative result so the next probing pass starts somewhere else: nested
+struct-in-array field reads, struct update syntax (`S { ...s, b: 5 }`),
+slice-of-slice and string-slice chains, `defer`, match guards over enum payloads,
+multi-element tuple returns, arrays of tuples, `Option` struct fields, i64
+arithmetic, method chaining, closures returned from a function, closures captured
+per-iteration in a loop, string building in a loop, struct array-field iteration,
+struct-payload enums, and deep recursion.
+
+That is worth stating plainly: the fn-value REPRESENTATION ambiguity was a
+concentrated cluster, not a sample of a broadly buggy IR path. Eight miscompiles
+came out of it (#5799, #5850, #5865, #5881 and the #5001/#5007/#5009/#5026
+closure-dispatch group before them), and everything probed outside it agreed with
+the oracle first time.
 
 ### Rebinding an `fn[]` LOCAL: one direction fixed, the cross-representation ones open
 
@@ -2795,9 +2838,12 @@ measure noise.
 What it means for a real fix: `tokenize` legitimately returns its array, so the
 callee-side rewrite is not available. The site that must become eligible is the
 CALLER's binding of the returned `Token[]` — the value the caller receives and
-drops. **The `Array_push` arm is a PREREQUISITE here, and it is UNSOUND for a specific
-reason — now pinned by a 0.3-SECOND unit test rather than a 5-minute self-host
-compile (2026-07-29).** Re-applying it fails
+drops. **The `Array_push` arm is a PREREQUISITE here — it was UNSOUND for a
+specific reason (2026-07-29), and that reason is now fixed; the arm is IN and
+the caller-side condition is all that remains — which #5880 has since landed;
+see "THE 4x IS DONE" and "DONE — option 1 landed"
+below.** The chase is kept because the wrong turns in it are the point.
+Re-applying it used to fail
 `TestArrayPushProjectionSourceFreeEligible`
 (`internal/ir/push_counted_store_test.go`), whose second half is exactly this
 invariant:
@@ -2848,7 +2894,11 @@ property. If the self-host gate agrees, the correct change is to UPDATE that tes
 to the reclaiming counts rather than to gate the arm — and the caller-side half
 of #5854's 4x becomes the only thing left between here and the lexer's number.
 
-**SETTLED — the original verdict was RIGHT, and the arm is UNSOUND (2026-07-29).**
+**SETTLED — the original verdict was RIGHT, and the arm is UNSOUND *as it stood*
+(2026-07-29).** (Superseded later the same day: the arm is unsound only on top of
+the non-retaining grow copy, which is now fixed, and the arm is IN — see "DONE —
+option 1 landed" below. The failure and its signature are kept here because they
+are what the fix has to keep green.)
 Applying it and pushing to CI reproduces the historical signature EXACTLY:
 `TestSelfHostStdTestE2EArm64`, **7 failures**, `undefined reference to
 __fn_test__assert_eq__i32` — a definition missing while its call sites survive,
@@ -3017,16 +3067,115 @@ dies. Two shapes fix it, both in `internal/ir`:
   extra retain is compensated.
 
 Either one is a three-backend change (x86-64 / arm64 / wasm runtime helper plus
-the need-registration) and needs the gate list below. Until it lands the arm
-stays out — but it is now a bounded piece of work, not an unknown.
+the need-registration) and needs the gate list below.
+
+**DONE — option 1 landed, and the arm is IN (2026-07-29).**
+`__fern_arr_push_grow_move_ptr` / `_move_str` exist on all three backends
+(x86-64 `_move_ptr` only — native single-word strings take the pointer form) as
+a `moveForm` parameter on the existing `_ptr` / `_str` emitters, so the copy
+path is shared and only the retain is gated:
+
+    // the copy path leaves the OLD buffer's rc untouched
+    if incoming_rc == 1 { skip the element-retain loop }
+
+`emitArrayPush` routes `selfPushMoveCall` to them (previously: to the plain,
+never-retaining `__fern_arr_push_grow`), and `rhsTainted` grew the
+`__method_Array_push` receiver-only arm next to its `__method_Array_set`
+sibling. `appendForcesCopy` already returns false for `selfPushMoveCall`, so
+the forceCopy rc bump never reaches these helpers and there is no interaction to
+reason about.
+
+The causal check, since the arm's own probe had been passing for the wrong
+reason before: with the arm applied and the routing reverted to the plain
+helper, `alias_grow_uaf.fern` exits **1**; with both, **0**. The `_move_`
+helpers are what make the arm sound, not a coincidence of the fixture.
+
+**What the arm is worth today: one block.** `tokenize` on `parser.fern` goes
+44565 → 44566 frees of 508638, exactly the "ONE BLOCK" predicted above — the
+arm is only the *first* of the two conditions. `out` still escapes through the
+six `return out;` sites, so move-on-return keeps it out of the sweep and the
+walking drop the arm buys sits on a fall-through that never runs.
+
+### THE 4x IS DONE — #5880 landed it, not the arm (2026-07-29)
+
+**Do not go looking for the caller-side half. It is already banked.** #5884's
+own body says "the 4x needs the CALLER's binding of the returned `Token[]`
+becoming eligible … the only thing left in this strand"; that was written
+against a stale baseline and is **wrong**. `perceus: interprocedural
+counted-retain fixpoint credits method-receiver threading (#5880)` landed in
+parallel and delivered it. Bisected by building each commit and running the
+same driver (`var toks = lexer.tokenize(io.read_all_stdin()); return
+toks.len() % 7;`) over `parser.fern` under `FERN_LEAKCHECK=1`:
+
+| commit | frees of 509152 | live |
+|---|---:|---|
+| `e1f21613` (before both perceus PRs) | 44594 (8.8%) | 18.6 MB |
+| `0edb78b7` #5878 move-on-construction-in-a-loop | 44594 — **no change** | 18.6 MB |
+| **`2123ff75` #5880 interprocedural counted-retain fixpoint** | **184869 (36.3%)** | **14.2 MB** |
+| `70de2db4` main, with the `Array_push` arm | 184870 (**+1**) | 14.2 MB |
+
+That is the 4x this section spent so long pricing (it predicted 179100 / 35%;
+the real figure is 184869 / 36.3%). The last row is the same one-block delta the
+arm measures everywhere else, confirmed a second way: disabling the arm on
+current main gives 184869, enabling it 184870.
+
+**Two consequences for whoever reads this next.**
+
+- Every "44566 / 8.7%" and "464073 of 508639 stranded (91.2%)" figure ABOVE this
+  heading is pre-#5880 and must not be used as a current baseline. The
+  measurement recipe is still good; the numbers are two PRs stale.
+- A **zero-param short-circuit in `findReturnsNoParamEscape` is worth nothing**
+  and should not be built. The reasoning is sound and the gap is real —
+  `io__read_all_stdin` has 0 parameters yet `returnsNoParamEscape` is `false`,
+  because the pass tests every return expression (`return chunks.join("")` is
+  not a recognised fresh construction) without ever noticing there is no
+  parameter to alias — but adding `if len(fn.Params) == 0 { continue }` changes
+  the number by **0 blocks**: measured 184870 with and without. #5880 already
+  reaches these bindings by another route. (It is also not obviously safe: the
+  pass is consumed downstream as "safe to free this result", and a zero-param
+  function returning `random_bytes(n)` — a header-less raw buffer `rhsTainted`
+  special-cases as permanently tainted — would break that. Vacuous-on-params is
+  not the same claim as freeable.)
+
+The rcPlan dump is what settled where the remaining taint sits, and it is worth
+repeating rather than reasoning about: with the arm in, `lexer__tokenize` reports
+`freeEligible: l,out,rf,ri,rn,rs,text` — `out` IS reclaimable in the callee now.
 
 **Gates for that work, in order** (the first two are seconds, and the last two
 are the ones that have historically disagreed):
-`examples/probes/alias_grow_uaf.fern` (exit 0 compiled == interp, x86-64 and
-arm64) → `internal/ir` `TestArrayPushProjectionSourceFreeEligible` →
+`examples/probes/alias_grow_uaf.fern` (exit 0 compiled == interp, x86-64,
+arm64 and wasm) → `internal/ir` `TestArrayPushProjectionSourceFreeEligible` →
 `MapIntermediateReclaim` on all three backends →
 `TestSelfHostStdTestE2EArm64` (312 s local, REQUIRED) →
 `TestSelfHostLoadFixpointX86_64`.
+
+**Found on the way, NOT fixed here: wasm two-word `string[]` self-append does
+not reclaim.** `TestX86_64ArrayPushPtrElemReclaim` (`a = a.append("item")` 300
+times, `build` called N times, working set measured with `__heap_bump_bytes`)
+gained an arm64 leg here — green — and a wasm leg, which fails and always has:
+
+| backend | `struct[]` | `string[]` (20 iters -> 400 iters) |
+|---|---|---|
+| x86-64 | O(1) | O(1) |
+| arm64 | O(1) | O(1) |
+| wasm | O(1) | **64480 -> 1231840 bytes** |
+
+Identical numbers with and without this change's `_move_` routing, so it is not
+caused by it — the two-word `string[]` grow's old buffer is simply never
+reclaimed on wasm, where the single-word `struct[]` sibling is. The wasm leg was
+removed rather than landed failing; adding it back is the acceptance test for
+that fix. Two consequences to know before touching this area: the wasm side of
+`_move_str` is CORRECT-BY-CONSTRUCTION but not yet exercised (disabling its
+retain leaves `alias_grow_uaf.fern`'s wasm leg passing, because with no old
+buffer freed there is no second walk-drop to over-release), and any measurement
+of this shape on wasm is currently measuring the gap, not the contract.
+
+`TestArrayPushProjectionSourceFreeEligible` was UPDATED rather than gated: its
+projection half goes 2 → 4 deep-drop sites (`src` and `out`, reinit + sweep
+each) and its direct-ident half 0 → 2 (`out` reclaims; `row` stays
+escape-tainted, so the element it moved in is released exactly once). The
+earlier reading that those extra drops might be an over-release is settled —
+they reclaim, and the self-host gates agree now that the grow copy retains.
 
 **Reusable method, since this class keeps coming back.** The two tools that
 cracked it are cheap and general:
@@ -3182,18 +3331,50 @@ same "does not touch the lexer" reason; the finding here is that a teeth-having
 reproducer (`scalar_thread_leak.fern`) does not change that verdict — the shape
 it fixes is a REDUCTION of the lexer, not the lexer.
 
-**So part 1 was NOT landed in isolation**, matching the prior judgment: it is
-byte-identity-affecting (it un-taints call results compiler-wide) and its
-motivating case stays unfixed without the next piece. The motivated full fix is
-the projection summary PLUS a **method-receiver-retention summary** — a call
-`l.m()` does not retain `l` when `m`'s receiver param is itself counted-retain,
-which is the SAME `structParamProjectionsSafe` applied one level down, closed to
-a fixpoint. `l = l.advance()` then also settles: `advance`'s `l` is
-projection-safe (it returns `Lx { src: l.src, … }`), so the self-reassign is a
-consume of a fresh-owned value. That fixpoint is the next slice; the classifier
-above is its building block, recorded here rather than landed so it is rebuilt
-with the receiver summary and validated against the real lexer, not a synthetic
-reduction of it.
+**Part 1 was not landed in isolation** — but the motivated full fix now is.
+
+#### Landed: the interprocedural counted-retain fixpoint (2026-07-29)
+
+`inferParamCountedRetain` is now a least-fixpoint. `structParamProjectionsSafe`
+gained the interprocedural **arg-position rule** — a `p` passed as argument i to
+a call whose callee parameter i is counted-retain is inc'd (or read) there, not
+aliased out, so it is safe exactly like a construction slot. Since a method call
+`l.at_end()` lowers to `__method_Lex_at_end(l)` with the receiver as `Args[0]`,
+this is the method-receiver-retention summary for free: `at_end` / `peek_byte`
+read only `l.i` / `l.n` / `l.src[..]`, so they are projection-safe, so a caller's
+`l.at_end()` is credited. Two more cases closed the real cursor threading:
+
+- **Reassignment target** (`l = l.advance_to(..)`): the rebind is not a
+  retention of the old value; the RHS is classified normally and the overwrite
+  dec comes from `computeConsumedParams`.
+- **Returned borrow** (`return l`): a borrowed value returned is inc'd on the
+  way out, so the result holds a COUNTED reference to the param — creditable.
+  This is the one that unblocked `advance` / `advance_to`, whose early path is
+  `if (end <= l.i) { return l; }`. It is sound because returning a borrow inc's:
+  measured with an adversarial `pick(m: Map, k): Map { return m; }` called with a
+  tainted scalar and the result dropped every iteration — the caller's map stays
+  live (no over-release), and the map-mutator negatives still exclude a builder
+  whose `m.insert(..)` reaches a builtin argument first.
+
+The fixpoint starts all-false and only adds credits (monotone, grounded), so a
+mutual-recursion cycle with no grounding stays uncredited — the conservative
+direction.
+
+Measured: both reproducers reclaim fully (`result_thread_leak.fern` 2400/2400,
+`scalar_thread_leak.fern` 3400/3400), and unlike part-1-in-isolation this DOES
+touch the real lexer — the tokenize bench goes from **8000 to 24000 freed of
+60200** (a 3× reduction in stranded blocks). Pinned by
+`TestLeakCheckScalarThreadReclaim{X86_64,Arm64}`. Validated through the map
+negatives, the full leakcheck suite, the broad RC/reuse/drop/container e2e
+sweep, and the batch=4 whole-compiler byte-identity fixpoint (gen0==gen1, 36
+units, no OOM — the change is byte-identity-preserving on the self-host
+compiler, which is dense with `return p` and struct-threading).
+
+**Residual: the lexer is 3× better, not closed.** 24000/60200 still leaks, so
+tokenize strands blocks beyond the scanner-result threading — candidates are the
+`FStringPart[]` sub-arrays and the token payload strings, a separate mechanism
+to localise with the same `FERN_LEAKCHECK` + emitted-code method used above.
+That is the next slice; the interprocedural summary itself is now complete.
 
 The rest of the widening list is unaffected by that refutation but is now
 UNMOTIVATED until the leak is localised — none of it is known to touch the

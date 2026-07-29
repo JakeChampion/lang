@@ -35,14 +35,19 @@ func TestArrayPushProjectionSourceFreeEligible(t *testing.T) {
 			drops++
 		}
 	}
-	// Two owned ptr-element arrays sweep deeply: `out` (always was) and
-	// `src` (the point of #4399 sink 1 — tainted to a plain, never-freeing
-	// dec before the counted-store migration).
-	if drops != 2 {
-		t.Errorf("want 2 deep array drops (src + out), got %d — the push-projection source must stay free-eligible:\n%s", drops, p)
+	// Four deep-drop SITES: `src` and `out` are both owned ptr-element
+	// arrays, and each appears at its decl-site reinit drop (a null-guarded
+	// static no-op) and its exit sweep. `src` is #4399 sink 1 — tainted to a
+	// plain, never-freeing dec before the counted-store migration. `out`
+	// joined it with the #3457 receiver-only arm: `out.append(v)` aliases the
+	// RECEIVER buffer only, so the element's taint no longer strands the
+	// accumulator.
+	if drops != 4 {
+		t.Errorf("want 4 deep array drops (src + out, reinit + sweep each), got %d — the push-projection source and the accumulator must both stay free-eligible:\n%s", drops, p)
 	}
-	// A direct-Ident element keeps the taint (escapeOwned): its moveSites
-	// shape transfers instead of inc'ing — same rule as StructLit fields.
+	// A direct-Ident element keeps the taint (escapeOwned): it is stored
+	// uninc'd, so the source must not also release it — same rule as
+	// StructLit fields. The accumulator it was pushed into is unaffected.
 	p2 := lowerSource(t, `function keep(k: i32): i32 {
     var row: i32[] = [k, k + 1];
     var out: i32[][] = [];
@@ -65,12 +70,14 @@ func TestArrayPushProjectionSourceFreeEligible(t *testing.T) {
 			deep++
 		}
 	}
-	// Direct-ident element: row stays tainted (escapeOwned), and `out` is
-	// tainted transitively — rhsTainted sees the append call carrying the
-	// tainted row — so NEITHER array deep-drops. The conservative
-	// direct-ident baseline is unchanged by the sink migration.
-	if deep != 0 {
-		t.Errorf("want 0 deep array drops (direct-ident element keeps row and, transitively, out tainted), got %d:\n%s", deep, p2)
+	// Direct-ident element: `row` stays tainted (escapeOwned) and is never
+	// released by its own name — the buffer it moved into owns it now. `out`
+	// deep-drops at its reinit + sweep (2 sites), releasing the element
+	// exactly once. Before the #3457 receiver-only arm, rhsTainted saw the
+	// append call carrying the tainted `row` and stranded `out` too, so the
+	// moved-in element leaked with the whole accumulator.
+	if deep != 2 {
+		t.Errorf("want 2 deep array drops (out reinit + sweep; row is transferred, not co-owned), got %d:\n%s", deep, p2)
 	}
 }
 

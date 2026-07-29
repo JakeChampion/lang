@@ -441,96 +441,294 @@ func computeReadOnlyComparators(info *checker.Info) map[string]bool {
 // A parameter shadowed by a local / match binding of the same name disqualifies
 // it: the occurrence counting below cannot tell the two apart.
 func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][]bool {
+	// Precompute the shadowed-name set per function once (match / match-expr
+	// bindings that reuse a parameter name).
+	type fnCtx struct {
+		fn       *ast.FuncDecl
+		shadowed map[string]bool
+	}
+	ctxs := make([]fnCtx, 0, len(prog.Funcs))
 	out := map[string][]bool{}
 	for _, fn := range prog.Funcs {
 		if fn.Body == nil {
 			continue
 		}
-		flags := make([]bool, len(fn.Params))
-		shadowed := map[string]bool{}
+		sh := map[string]bool{}
 		for _, v := range info.Locals[fn] {
-			shadowed[v.Name] = true
+			sh[v.Name] = true
 		}
 		ast.Walk(fn.Body, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.Match:
 				for _, arm := range x.Arms {
 					for _, nm := range arm.Bindings {
-						shadowed[nm] = true
+						sh[nm] = true
 					}
 				}
 			case *ast.MatchExpr:
 				for _, arm := range x.Arms {
 					for _, nm := range arm.Bindings {
-						shadowed[nm] = true
+						sh[nm] = true
 					}
 				}
 			}
 			return true
 		})
-		ptrAllCounted := true
-		for i, p := range fn.Params {
-			// A parameter carrying no heap (i32 / bool / f64 / …) can never be
-			// retained at all, counted or otherwise — mark it so a scalar
-			// argument doesn't disqualify a call the way a pointer one would.
-			// Conditioned below on EVERY pointer param being counted too: a
-			// scalar can't alias, but the RESULT can still alias an unproven
-			// pointer param, and a tainted scalar argument is what was keeping
-			// such a call's result tainted (`grow(m, i + 2)` returning a Map
-			// that shares the caller's buffer — TestX86_64MapIntermediateReclaim's
-			// param-receiver negative).
-			if !rcTrackedSlotType(p.Type) {
-				flags[i] = true
-				continue
-			}
-			if _, isStr := p.Type.(ast.StringType); !isStr || p.Own || shadowed[p.Name] {
-				continue
-			}
-			total, counted := 0, 0
-			countIn := func(e ast.Expr) {
-				if id, ok := e.(*ast.Ident); ok && id.Name == p.Name {
-					counted++
-				}
-			}
-			ast.Walk(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.Ident:
-					if x.Name == p.Name {
-						total++
-					}
-				case *ast.StructLit:
-					for _, f := range x.Fields {
-						countIn(f.Value)
-					}
-				case *ast.TupleLit:
-					for _, el := range x.Elems {
-						countIn(el)
-					}
-				case *ast.ArrayLit:
-					for _, el := range x.Elems {
-						countIn(el)
-					}
-				}
-				return true
-			})
-			flags[i] = total > 0 && total == counted
-		}
-		for i, p := range fn.Params {
-			if rcTrackedSlotType(p.Type) && !flags[i] {
-				ptrAllCounted = false
-				break
-			}
-		}
-		if !ptrAllCounted {
+		ctxs = append(ctxs, fnCtx{fn, sh})
+		out[fn.Name] = make([]bool, len(fn.Params))
+	}
+	// Least-fixpoint: struct-param crediting consults the summary for the
+	// arg-position rule (a `p` passed as argument i to callee C is counted iff
+	// C's parameter i is counted), so a param credited this round can credit a
+	// caller next round. Start all-false and only ever add credits — the
+	// classifier marks a use safe only on positive local evidence or a
+	// callee already proven counted — so the iteration is monotone and
+	// converges to the grounded fixpoint (a mutual-recursion cycle with no
+	// grounding stays uncredited, the conservative direction).
+	for {
+		changed := false
+		for _, c := range ctxs {
+			fn, sh := c.fn, c.shadowed
+			flags := make([]bool, len(fn.Params))
 			for i, p := range fn.Params {
+				// A parameter carrying no heap (i32 / bool / f64 / …) can never
+				// be retained at all — mark it so a scalar argument doesn't
+				// disqualify a call the way a pointer one would. Conditioned
+				// below on EVERY pointer param being counted too: a scalar can't
+				// alias, but the RESULT can still alias an unproven pointer
+				// param, and a tainted scalar argument is what was keeping such a
+				// call's result tainted (`grow(m, i + 2)` returning a Map that
+				// shares the caller's buffer — TestX86_64MapIntermediateReclaim's
+				// param-receiver negative).
 				if !rcTrackedSlotType(p.Type) {
-					flags[i] = false
+					flags[i] = true
+					continue
+				}
+				if p.Own || sh[p.Name] {
+					continue
+				}
+				switch pt := p.Type.(type) {
+				case ast.StringType:
+					flags[i] = stringParamCounted(fn, p.Name)
+				case ast.StructType:
+					// Struct-param generalisation: credit `p` when every one of
+					// its appearances is a counted store, a non-retaining read,
+					// or a counted call argument — so a result built from it
+					// holds only counted references. This is what lets the
+					// scalar-arg exemption fire for a scanner threaded through
+					// field projections and pure-read methods (lexer.tokenize;
+					// docs/SELFHOST-AST-RETIREMENT.md).
+					flags[i] = structParamProjectionsSafe(fn, p.Name, pt.Name, info, out)
 				}
 			}
+			ptrAllCounted := true
+			for i, p := range fn.Params {
+				if rcTrackedSlotType(p.Type) && !flags[i] {
+					ptrAllCounted = false
+					break
+				}
+			}
+			if !ptrAllCounted {
+				for i, p := range fn.Params {
+					if !rcTrackedSlotType(p.Type) {
+						flags[i] = false
+					}
+				}
+			}
+			if !boolSliceEqual(out[fn.Name], flags) {
+				out[fn.Name] = flags
+				changed = true
+			}
 		}
-		out[fn.Name] = flags
+		if !changed {
+			break
+		}
 	}
 	return out
+}
+
+func boolSliceEqual(a, b []bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// stringParamCounted reports whether string parameter `pn` of fn is retained
+// only through counted constructions — every appearance is a bare-ident value
+// of a StructLit / TupleLit / ArrayLit slot.
+func stringParamCounted(fn *ast.FuncDecl, pn string) bool {
+	total, counted := 0, 0
+	countIn := func(e ast.Expr) {
+		if id, ok := e.(*ast.Ident); ok && id.Name == pn {
+			counted++
+		}
+	}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Ident:
+			if x.Name == pn {
+				total++
+			}
+		case *ast.StructLit:
+			for _, f := range x.Fields {
+				countIn(f.Value)
+			}
+		case *ast.TupleLit:
+			for _, el := range x.Elems {
+				countIn(el)
+			}
+		case *ast.ArrayLit:
+			for _, el := range x.Elems {
+				countIn(el)
+			}
+		}
+		return true
+	})
+	return total > 0 && total == counted
+}
+
+// structParamProjectionsSafe reports whether every occurrence of struct
+// parameter `pn` (declared struct type `sn`) in fn is a COUNTED store, a
+// NON-RETAINING read, or a COUNTED call argument — the struct-param
+// generalisation of the string counted-retain summary, closed over the
+// interprocedural `summary` for the arg-position rule. Conservative by
+// construction: a p-occurrence is credited only when the walk positively
+// proves it safe, and the param qualifies only when EVERY occurrence is
+// credited (`total == len(safe)`), so any unhandled or escaping use
+// disqualifies the whole param.
+//
+// Credited (safe) occurrences:
+//   - a bare `p` or `p.field` stored as a StructLit / TupleLit / ArrayLit slot
+//     value — the construction inc's a pointer field / copies a scalar;
+//   - a SCALAR field read `p.scalarField` anywhere — a value copy;
+//   - the SOURCE of a string slice `p.strField[a:b]` / string index
+//     `p.strField[i]` — a copying read;
+//   - a bare `p` / `p.field` passed as argument i to a call whose callee
+//     parameter i is itself counted-retain (`summary[C][i]`) — the method
+//     receiver `l.at_end()` and the self-reassign source `l.advance()`;
+//   - `p` as the TARGET of an assignment (`p = …`) — a rebind, not a retention;
+//     the old value's fate is decided by the RHS classification and the
+//     reassigned-param overwrite dec (computeConsumedParams).
+//
+// Everything else (a bare `p` outside a slot, a pointer field read that
+// escapes, `p` passed to an UNCOUNTED / builtin argument, `x = p`, `return p`,
+// an array-slice source) is left uncredited and disqualifies — which is what
+// keeps `grow(m, k): Map { m = m.insert(k, …); return m; }` out: `m` reaches a
+// builtin `__method_Map_set` argument (never in `summary`) and a bare
+// `return m`, so it is never credited and its scalar `k` is never exempted.
+func structParamProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.Info, summary map[string][]bool) bool {
+	sd, ok := info.Structs[sn]
+	if !ok {
+		return false
+	}
+	fieldType := func(name string) (ast.Type, bool) {
+		for _, f := range sd.Fields {
+			if f.Name == name {
+				return f.Type, true
+			}
+		}
+		return nil, false
+	}
+	safe := map[*ast.Ident]bool{}
+	// markSlotValue credits a p-use that sits directly in a counted position —
+	// a construction slot or a counted call argument: a bare `p` (the whole
+	// struct is inc'd in) or a `p.field` (a pointer field is inc'd, a scalar is
+	// copied).
+	markSlotValue := func(e ast.Expr) {
+		switch v := e.(type) {
+		case *ast.Ident:
+			if v.Name == pn {
+				safe[v] = true
+			}
+		case *ast.FieldAccess:
+			if id, ok := v.Target.(*ast.Ident); ok && id.Name == pn {
+				safe[id] = true
+			}
+		}
+	}
+	total := 0
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Ident:
+			if x.Name == pn {
+				total++
+			}
+		case *ast.StructLit:
+			for _, f := range x.Fields {
+				markSlotValue(f.Value)
+			}
+		case *ast.TupleLit:
+			for _, el := range x.Elems {
+				markSlotValue(el)
+			}
+		case *ast.ArrayLit:
+			for _, el := range x.Elems {
+				markSlotValue(el)
+			}
+		case *ast.FieldAccess:
+			// A scalar field read is a pure value copy — safe wherever it
+			// appears, not only in a slot.
+			if id, ok := x.Target.(*ast.Ident); ok && id.Name == pn {
+				if ft, ok := fieldType(x.Field); ok && !ast.IsPointerType(ft) {
+					safe[id] = true
+				}
+			}
+		case *ast.SliceExpr:
+			// A string slice copies into a fresh buffer, so its source read
+			// retains nothing. An array/other slice is a view that shares the
+			// buffer — left uncredited.
+			if x.IsString {
+				markSlotValue(x.Source)
+			}
+		case *ast.Index:
+			// A string byte read yields a scalar — the source read retains
+			// nothing.
+			if x.IsString {
+				markSlotValue(x.Array)
+			}
+		case *ast.Call:
+			// A `p` / `p.field` passed as argument i to a call whose callee
+			// parameter i is counted-retain is inc'd (or read) there, not
+			// aliased out — so it is safe, exactly like a construction slot.
+			// A builtin / external callee is absent from `summary`, so its
+			// arguments stay uncredited (the map-mutator receiver guard).
+			if id, ok := x.Callee.(*ast.Ident); ok {
+				if cs, ok := summary[id.Name]; ok {
+					for i, a := range x.Args {
+						if i < len(cs) && cs[i] {
+							markSlotValue(a)
+						}
+					}
+				}
+			}
+		case *ast.Assign:
+			// A rebind of the param slot (`p = p.advance()`) is not a
+			// retention of the OLD value — the RHS is classified normally and
+			// the overwrite dec is emitted by computeConsumedParams.
+			if id, ok := x.Target.(*ast.Ident); ok && id.Name == pn {
+				safe[id] = true
+			}
+		case *ast.Return:
+			// Returning the bare param (or a field of it) is a COUNTED
+			// retention: a borrowed value returned is inc'd on the way out
+			// (the caller receives an owned reference while the original
+			// borrower keeps its own), so the result holds a counted — not
+			// uncounted — reference to the param. This is what credits the
+			// cursor methods whose early path returns the receiver unchanged
+			// (`advance_to(l): if (end <= l.i) { return l; }`). The map-mutator
+			// negatives still exclude a builder that returns a param-derived
+			// map, because its `m.insert(...)` reaches a builtin argument first.
+			markSlotValue(x.Value)
+		}
+		return true
+	})
+	return total > 0 && total == len(safe)
 }
 
 func (b *builder) computeConsumedParams() map[string]bool {
@@ -1269,6 +1467,22 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// tainted scalar-binary value (`b.with(0, i % 200)`), leaving
 				// the buffer permanently ineligible and unreclaimed at loop
 				// scope (the wasm LiteralAllocReclaim / OwnInplaceSort leak).
+				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
+			case "__method_Array_push":
+				// `arr.append(v)` is `.with`'s sibling: the result is the
+				// receiver buffer (grown in place at rc==1, else a fresh copy),
+				// aliasing Args[0] only. The pushed element is a COUNTED store
+				// — emitArrayPush inc's an aliased element and the buffer's deep
+				// drop decs it — so an element's taint says nothing about the
+				// buffer's own provenance. Without this, `var out = []` followed
+				// by `out = out.append(tok)` in a loop tainted `out` from the
+				// first append onward, stranding the whole accumulated buffer;
+				// it is what leaves lexer.tokenize reclaiming 8.8% of its blocks
+				// (docs/SELFHOST-AST-RETIREMENT.md). Sound only alongside the
+				// _move_ grow helpers: an ALIASED receiver (`var lg = g; lg =
+				// lg.append(v)`) makes both halves reclaimable, and the plain
+				// helper's non-retaining copy then let both walk-drops release
+				// the same elements (#3457).
 				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
 			case "random_bytes":
 				// random_bytes returns a string the two-word backends

@@ -11,11 +11,15 @@
 // The caller's strings are freed while it still holds them.
 //
 // The trap needs BOTH locals reclaimable, which is why no single-variable
-// probe in this area ever reproduced it. Today `lg = lg.append(..)` taints
-// `lg` out of freeEligible, so the second walk-drop never happens and this
-// program is correct; it goes wrong the moment an analysis change makes an
-// appended-to array local reclaimable (the `rhsTainted` `__method_Array_push`
-// receiver-only arm — see docs/SELFHOST-AST-RETIREMENT.md).
+// probe in this area ever reproduced it.
+//
+// FIXED: the self-append now routes to `__fern_arr_push_grow_move_ptr` /
+// `_move_str`, which retain the copied elements exactly when the incoming
+// rc != 1 — precisely "the old buffer survives this grow". With that in place
+// the `rhsTainted` `__method_Array_push` receiver-only arm is sound and IS
+// applied, so `lg` here IS reclaimable and this probe exercises the live
+// shape. Reverting either the routing (`emitArrayPush`) or the helper bodies
+// makes it exit 1. See docs/SELFHOST-AST-RETIREMENT.md.
 //
 // Names must exceed the SSO inline-string threshold: a short name has no heap
 // block, hence no refcount to over-release, and the probe reads clean.

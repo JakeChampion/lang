@@ -455,6 +455,79 @@ func TestLeakCheckResultThreadReclaimArm64(t *testing.T) {
 	}
 }
 
+// The scalar-poisoned sibling of the result-struct threading: the scanner also
+// takes a SCALAR argument (`start_line`) the caller taints by storing it into a
+// token literal, and a tainted scalar argument re-taints the whole result
+// struct — so the FieldAccess un-taint (result_thread) alone leaves it leaking.
+// The interprocedural counted-retain fixpoint closes it: the struct cursor
+// param is credited (its uses are projections, counted stores, pure-read method
+// calls, and a returned-borrow), which enables the scalar-arg exemption. Probe:
+// examples/probes/scalar_thread_leak.fern. Pinned by a FULL reclaim — before
+// the fixpoint this freed 1000 of 3400 (70% leaked).
+const scalarThreadReclaimSrc = `struct Lx { src: string, i: i32, line: i32 }
+struct TId { text: string, line: i32 }
+struct TPunct { text: string, line: i32 }
+struct TEof { line: i32 }
+type Tok = TId | TPunct | TEof;
+struct Res { lex: Lx, tok: Tok }
+function scan(l: Lx, start_line: i32): Res {
+    var t: Tok = TId { text: l.src[l.i : l.i + 1] + "", line: start_line };
+    return Res { lex: Lx { src: l.src, i: l.i + 1, line: l.line + 1 }, tok: t };
+}
+function run(src: string): i32 {
+    var l: Lx = Lx { src: src, i: 0, line: 1 };
+    var out: Tok[] = [];
+    while (l.i < 8) {
+        var start_line: i32 = l.line;
+        if (l.src[l.i] == 46) {
+            out = out.append(TPunct { text: ".", line: start_line });
+            l = Lx { src: l.src, i: l.i + 1, line: l.line };
+            continue;
+        }
+        var r = scan(l, start_line);
+        l = r.lex;
+        out = out.append(r.tok);
+    }
+    return out.len();
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var n: i32 = 0;
+    while (n < 100) {
+        acc = acc + run("abc.def.g");
+        n = n + 1;
+    }
+    return acc % 7;
+}`
+
+func TestLeakCheckScalarThreadReclaimX86_64(t *testing.T) {
+	_, stderr, code := runLeakCheckX86_64(t, scalarThreadReclaimSrc)
+	if code != 2 {
+		t.Fatalf("exit code %d, want 2", code)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs == 0 {
+		t.Fatalf("no allocations recorded — fixture drift")
+	}
+	if frees != allocs || live != 0 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want fully reclaimed: the scalar-arg exemption must credit the projection-threaded cursor param", allocs, frees, live)
+	}
+}
+
+func TestLeakCheckScalarThreadReclaimArm64(t *testing.T) {
+	_, stderr, code := runLeakCheckArm64(t, scalarThreadReclaimSrc)
+	if code != 2 {
+		t.Fatalf("exit code %d, want 2", code)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs == 0 {
+		t.Fatalf("no allocations recorded — fixture drift")
+	}
+	if frees != allocs || live != 0 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want fully reclaimed: the scalar-arg exemption must credit the projection-threaded cursor param", allocs, frees, live)
+	}
+}
+
 // --- Move-on-construction in a loop body (#5879) -------------------
 //
 // A bare-ident heap value consumed by a container literal at its last use is
