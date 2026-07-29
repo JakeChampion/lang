@@ -39,9 +39,8 @@ import (
 // shape that must KEEP falling through, because admitting it would emit a core
 // calling helpers nothing defines. Every WASI category component_shape knows
 // has now migrated — stdout/stderr/exit, clock, random, env, args, and finally
-// the filesystem pair — so what remains out of subset is the per-function IR
-// gaps (i64.to_string) and random without I/O, which has no import any
-// component framing can wire.
+// the filesystem pair — so what remains out of subset is random without I/O,
+// which has no import any component framing can wire.
 func TestSelfHostWasmComponentIRPath(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -178,13 +177,11 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		{"io-write-file", true, `function main(): i32 { match (write_file("o.txt", "x")) { Some(e) => { return 1; }, None => { return 0; } } return 2; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:filesystem/preopens@0.2.0 get-directories", "wasi:filesystem/types@0.2.0 [method]descriptor.open-at", "wasi:filesystem/types@0.2.0 [method]descriptor.write-via-stream"}},
 
-		// Out of subset — these must keep falling through to the AST emitter,
-		// whose preview2 helper bodies are the only implementation they have.
-		// i64.to_string() is outside the per-function IR subset (equally so on
-		// the preview1 command core), so this one falls back for a reason that
-		// has nothing to do with component mode — worth pinning, since it is
-		// the shape most likely to be misread as a component-gate rejection.
-		{"clock-tostring-falls-back", true, `function main(): i32 { write(now_unix_ms().to_string()); return 0; }`, false,
+		// now_unix_ms() is an i64, so this composes the clock import with the
+		// wide `.to_string()` formatter ($__fern_i64_to_str, #5826) — the last
+		// per-function IR gap a component core hit. It used to be the one
+		// out-of-subset row here that had nothing to do with component mode.
+		{"clock-tostring", true, `function main(): i32 { write(now_unix_ms().to_string()); return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/wall-clock@0.2.0 now"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

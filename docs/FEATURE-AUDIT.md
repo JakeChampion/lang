@@ -252,6 +252,39 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-07-29 — self-host: `.to_string()` on an i64 / u64 receiver, on every backend ([#5826](https://github.com/JakeChampion/lang/issues/5826))
+
+`irlower.fern` had a `to_string` arm for an i32 receiver only, so a wide
+receiver bailed the whole module to the legacy AST emitter. Two halves:
+
+- **Register backends.** The arm now inspects the receiver's primitive type and
+  lowers `__fern_i64_to_string` / `__fern_u64_to_string` (u64 checked first —
+  `expr_scalar_type` orders it ahead of i64). The bodies already existed as Fern
+  source in `asmcore.fern` (`rt_src_i64_to_string` / `rt_src_u64_to_string`,
+  doing the digit arithmetic in *unsigned* so INT64_MIN renders exactly), so
+  x86-64 and arm64 only needed the need marks + the runtime gate.
+- **wasm.** Its runtime helpers are hand-written WAT with no compile-from-Fern
+  mechanism, so it deferred (`module_calls_wide_to_string`) rather than call an
+  undefined function. It now has `$__fern_i64_to_str` / `$__fern_u64_to_str`
+  (`i64_to_string_helper` / `u64_to_string_helper` in `wasm_ir.fern`), each
+  gated on its own need — a module formatting one width carries one formatter,
+  where folding all three onto the existing `@uses_i32_to_string` gate would
+  have put two dead bodies in every i32 program. The u64 body drops the sign
+  branch, so a high-bit value renders as 18446744073709551615, not -1.
+
+Fixed on the way: the i64 body's zero early-return allocated its "0" block with
+`$__fern_alloc`, so — unlike every other string block, and unlike the i32 body
+since #2649 — it had no rc header, and a reclaim would have read the rc word out
+of whatever preceded it.
+
+Verified against the native interpreter on all three backends (the digits
+`1234567890123` / `-9223372036854775808` / `18446744073709551615` / `0`). Gated
+by six differential + three IR-only rows in `TestSelfHostAsmIRPath`,
+`TestSelfHostWideToStringWasmIR` (routing, digits, f-string, one-formatter-per-
+need, and a 20k-iteration zero-churn loop for the header fix), and the
+`clock-tostring` row in `TestSelfHostWasmComponentIRPath`, which now asserts IR
+where it used to assert the fallback.
+
 ### 2026-07-19 — de-duplicate the Eq/Ord generic verbs: `core/cmp` is the single home ([#5348](https://github.com/JakeChampion/lang/issues/5348))
 
 The same generic verbs had grown up in BOTH `core/cmp` and `std/array`, with a

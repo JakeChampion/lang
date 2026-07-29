@@ -288,7 +288,7 @@ AST-fallback dependents:
 | `TestSelfHostRcConstructContainersX86_64` | 3 | the only x86 cluster |
 | `TestSelfHostStdTestE2EArm64` | 2 | |
 | `TestSelfHostSortArm64`, `…PerModuleWholeCompilerX86_64` | parent-level | the whole-compiler one is the known over-budget bootstrap |
-| `TestSelfHostWasmComponentIRPath/clock-tostring-falls-back` | 1 | **not a gap** — the case is named for, and asserts, an AST fallback |
+| `TestSelfHostWasmComponentIRPath/clock-tostring-falls-back` | 1 | **not a gap** — the case was named for, and asserted, an AST fallback. Closed 2026-07-29 (#5826): wide `.to_string()` lowers, so the case is now `clock-tostring` and asserts IR |
 
 **61 of the 66 leaves are wasm.** The AST fallback is far more load-bearing on
 the wasm IR path than on x86, which fits `wasm_ir_deferrals_ok` sitting as an
