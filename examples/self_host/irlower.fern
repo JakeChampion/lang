@@ -33140,12 +33140,18 @@ function fnptr_scan(e: parser.Expr, funcs: parser.FuncDecl[], structs: parser.St
             while (i < t.elements.len()) { a = fnptr_scan(t.elements[i], funcs, structs, a); i = i + 1; }
             return a;
         },
-        parser.ExprLambda(lm) => { return fnptr_scan_stmts(lm.body, funcs, structs, a); },
+        parser.ExprLambda(lm) => { return fnptr_scan_stmts(lm.body, funcs, structs, a, false); },
         _ => { return a; }
     }
     return a;
 }
-function fnptr_scan_stmts(stmts: parser.Stmt[], funcs: parser.FuncDecl[], structs: parser.StructDecl[], acc: FnptrAcc): FnptrAcc {
+// `top` marks the function body's OWN statement list — the one list whose
+// statements each execute exactly once, in order, before every statement after
+// them. Only there can an ASSIGNMENT hand its proof forward: a rebind nested in
+// an if / loop / match arm / lambda body may not run at all, so a credit from it
+// would be a claim about a value the program never stored. Nested lists are
+// walked with `top` false, where an assignment only ever retracts.
+function fnptr_scan_stmts(stmts: parser.Stmt[], funcs: parser.FuncDecl[], structs: parser.StructDecl[], acc: FnptrAcc, top: boolean): FnptrAcc {
     var a: FnptrAcc = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -33163,37 +33169,57 @@ function fnptr_scan_stmts(stmts: parser.Stmt[], funcs: parser.FuncDecl[], struct
             },
             parser.StmtAssign(as2) => {
                 a = fnptr_scan(as2.value, funcs, structs, a);
-                // Any assignment invalidates the proof — `a = a.append(f)` or a
-                // rebind to a closure array both land here. Conservative on
-                // purpose: a stale credit would be UNSOUND, a missing one only
-                // routes the field to the AST fallback as before.
-                a = FnptrAcc { cand: a.cand, bad: a.bad, fnloc: remove_str(a.fnloc, as2.target), ccand: a.ccand, cbad: a.cbad, cloc: remove_str(a.cloc, as2.target) };
+                // An assignment retracts whatever the name was proven to hold —
+                // `a = a.append(f)` and a rebind between the two shapes both land
+                // here — and, on the function's own statement list, re-proves the
+                // CLOSURE side from the assigned value. That re-proof is what makes
+                // `var a = [seven]; a = [() => n];` land somewhere rather than
+                // nowhere: the pointer proof is retracted and the closure one
+                // credited, so the field it is then stored into is PROVEN a closure
+                // array instead of falling through unclassified into the AST
+                // fallback (which miscompiles it on wasm).
+                //
+                // The POINTER side is deliberately NOT re-proved by an assignment.
+                // A local's element representation is fixed by its DECLARATION, not
+                // by what is later stored into it, so the mirror-image rebind
+                // (`var a = [() => n]; a = [seven];`) does not actually leave raw
+                // code addresses in the buffer — crediting it would route a shape
+                // the local rebind itself still miscompiles onto the IR path. It
+                // stays unproven until that rebind is fixed.
+                //
+                // Nested assignments re-prove nothing: a branch or loop body may
+                // not run, so a credit from one would claim a store the program
+                // never made.
+                var nfl: string[] = remove_str(a.fnloc, as2.target);
+                var ncl: string[] = remove_str(a.cloc, as2.target);
+                if (top && clo_array_lit_all_box(as2.value)) { ncl = push_str_unique(ncl, as2.target); }
+                a = FnptrAcc { cand: a.cand, bad: a.bad, fnloc: nfl, ccand: a.ccand, cbad: a.cbad, cloc: ncl };
             },
             parser.StmtExpr(ex) => { a = fnptr_scan(ex.value, funcs, structs, a); },
             parser.StmtReturn(r) => { a = fnptr_scan(r.value, funcs, structs, a); },
             parser.StmtIf(iff) => {
                 a = fnptr_scan(iff.cond, funcs, structs, a);
-                a = fnptr_scan_stmts(iff.then_body, funcs, structs, a);
-                a = fnptr_scan_stmts(iff.else_body, funcs, structs, a);
+                a = fnptr_scan_stmts(iff.then_body, funcs, structs, a, false);
+                a = fnptr_scan_stmts(iff.else_body, funcs, structs, a, false);
             },
             parser.StmtWhile(w) => {
                 a = fnptr_scan(w.cond, funcs, structs, a);
-                a = fnptr_scan_stmts(w.body, funcs, structs, a);
+                a = fnptr_scan_stmts(w.body, funcs, structs, a, false);
             },
             parser.StmtFor(fo) => {
                 a = fnptr_scan(fo.iter, funcs, structs, a);
-                a = fnptr_scan_stmts(fo.body, funcs, structs, a);
+                a = fnptr_scan_stmts(fo.body, funcs, structs, a, false);
             },
             parser.StmtMatch(m) => {
                 a = fnptr_scan(m.scrutinee, funcs, structs, a);
                 var ai: i32 = 0;
                 while (ai < m.arms.len()) {
                     if (m.arms[ai].has_guard) { a = fnptr_scan(m.arms[ai].guard, funcs, structs, a); }
-                    a = fnptr_scan_stmts(m.arms[ai].body, funcs, structs, a);
+                    a = fnptr_scan_stmts(m.arms[ai].body, funcs, structs, a, false);
                     ai = ai + 1;
                 }
             },
-            parser.StmtDefer(d) => { a = fnptr_scan_stmts([d.action], funcs, structs, a); },
+            parser.StmtDefer(d) => { a = fnptr_scan_stmts([d.action], funcs, structs, a, false); },
             _ => {}
         }
         i = i + 1;
@@ -33268,7 +33294,7 @@ pub function fnptr_arr_fields_of(funcs: parser.FuncDecl[], structs: parser.Struc
         // Local names are per-function: a proof from an earlier function must
         // not credit a same-named local here.
         acc = FnptrAcc { cand: acc.cand, bad: acc.bad, fnloc: [], ccand: acc.ccand, cbad: acc.cbad, cloc: [] };
-        acc = fnptr_scan_stmts(funcs[i].body, funcs, structs, acc);
+        acc = fnptr_scan_stmts(funcs[i].body, funcs, structs, acc, true);
         i = i + 1;
     }
     var out: string[] = [];
