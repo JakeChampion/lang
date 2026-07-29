@@ -1377,6 +1377,87 @@ the compiler is far worse (8.3% freed for `tokenize`) than this probe (68.5%),
 so the probe is a starting point, not the whole story — verify any fix against
 BOTH, per the method note above.
 
+**Four leak shapes characterised, two causes found, and BOTH fixes proven
+UNSOUND (2026-07-29). Nothing here is fixed — read this before trying again.**
+
+Probing out from this section's probe found four distinct shapes that strand
+elements, measured with `FERN_LEAKCHECK=1` on x86-64:
+
+| shape | freed |
+|---|---:|
+| `var t = <heap str>; xs = xs.append(t)` | 35.6% |
+| ...the same, into an enum payload (this section's probe) | 69.1% |
+| `var e = out[0]` — a counted view outliving its owner | 66.7% |
+| a builder fn returning an appended array | 37.1% |
+
+Inlining the element (`xs.append(<expr>)`) is clean in every case; binding it to
+a local first is what leaks.
+
+**Cause 1 (shapes 1, 2, 4) — the escape taint.** `computeFreeEligible` taints a
+direct-Ident source at an INC-ing sink (`escapeOwned`, and the `Array_push`
+arm), justified by the move-on-construction pairing. That justification does not
+hold in a loop: `markConstructionMoves` only fires under its dominance guards
+(top-level statement, no preceding return), and for `Array_push` there is no
+`markConstructionMoves` case at all — `b.rc.moveSites` is never set for a push
+element, so the sink's inc ALWAYS fires and the taint strands it. Via
+`rhsTainted`'s any-arg rule the taint also reaches the BUFFER through `xs =
+xs.append(t)`, downgrading its deep `__fern_drop_arr_str` to a shallow dec that
+frees no elements at all.
+
+**Cause 2 (shape 3) — drop ORDER.** Locals are swept in DECLARATION order, so a
+counted view (declared after the container it reads from, not freeEligible, so
+released with a plain non-freeing dec) outlives the owner whose deep walk would
+free the element: the walk decs the element to rc 1 and frees the buffer, then
+the view's plain dec takes it to rc 0 with nothing able to free it.
+
+**Both fixes take the probes to 100% freed, pass the ENTIRE non-e2e suite — and
+segfault the self-host compile.** `TestSelfHostLoadFixpointX86_64` passes on
+main (319s) and fails with each. Bisected across full runs of that gate:
+
+| configuration | result |
+|---|---|
+| main | pass |
+| taint fix + reverse-order sweep + `computeFreshLocals` unfold | segfault, stage 2 |
+| minus the `computeFreshLocals` unfold | segfault, stage 2 |
+| the two taint sinks only | segfault, stage 1 |
+| the `Array_push` taint sink alone | segfault, stage 2 |
+| **reverse-order sweep alone** (re-run ISOLATED on an idle host) | **segfault, stage 1** |
+
+So the two taint sinks fail independently of each other AND of the ordering
+change, and reverse declaration order — the standard scope-exit order — is
+independently unsound here too. The last row was re-run with nothing else on the
+machine (0/15 GB used) to rule out contention; CLAUDE.md's note that arena
+exhaustion reports exit 137 rather than SIGSEGV also argues against an OOM
+reading.
+
+**Hypotheses tested and REFUTED**, so they need not be re-tried:
+- *Constructor-reuse donation.* `computeReuseSources` requires `freeEligible`
+  and already excludes `movedLocals` because a box moved into a live container
+  stays reachable through it. Adding the equivalent guard for the COUNTED case
+  (a `sinkEscaped` set, keeping the dec but blocking donation) does NOT rescue
+  the compile.
+- *`StructLit` not inc'ing string fields.* It does — the inc site is exactly
+  `needsRcIncOnAlias(f.Value) && !moveSites[f.Value]`, with no field-type gate,
+  and escaping-container probes come back 100% freed with interp-matching exit
+  codes.
+- *A borrowed string param becoming overwrite-droppable.* Plain borrowed params
+  never enter `freeEligible` at all — that loop gates on
+  `own` / owned-by-default / `consumedParams`.
+
+**The e2e signature of the taint fix**, useful for recognising a repeat: it
+turns 6 `internal/e2e` tests red that pass on main —
+`TestWasmSelfHostF64Coerce`, `TestWasmSelfHostF64ToI64`,
+`TestSelfHostFloatBitsIR{X86_64,Wasm}`, `TestX86_64TrmcDeepStack`,
+`TestFetchDeadlineX86_64`. Their surface (wasm float coercion, a fetch
+DEADLINE) looks unrelated to refcounting and is not; do not dismiss them.
+
+**What is still unknown:** what the escape taint protects BEYOND the exit sweep,
+and what the declaration-order sweep protects at all. Both are load-bearing for
+the self-host compile in ways the probe suite, the unit suites, and
+`internal/e2e` all fail to express. A future attempt should start by finding a
+SMALL program whose behaviour changes under each, rather than re-deriving the
+leak mechanism, which is now fully characterised above.
+
 **Method note for the next attempt: `internal/e2e` is not the gate for an RC
 change — `internal/e2eselfhost` is.** Compiling the whole self-host compiler is
 what exercises RC at a scale where an over-release shows; the native e2e suite
