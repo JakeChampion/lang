@@ -3281,7 +3281,7 @@ pub function eligible_core_known_main(mod: parser.Module, known: string[], requi
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (!func_eligible(mod.funcs[i], mod, mod.structs, known, arf, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs))) {
-            if (strict_ir_on()) { var sr: i32 = strict_ir_refuse(mod.funcs[i].name); }
+            if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name); }
             return false;
         }
         i = i + 1;
@@ -3363,7 +3363,7 @@ pub function eligible_core_known_main_view(mod: parser.Module, known: string[], 
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (!func_eligible(mod.funcs[i], mod, all_structs, known, arf, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, cnf, irlower.fn_names_of(mod.funcs))) {
-            if (strict_ir_on()) { var sr: i32 = strict_ir_refuse(mod.funcs[i].name); }
+            if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name); }
             return false;
         }
         i = i + 1;
@@ -6013,7 +6013,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     // whole-program emit writes `_start` → `call __fn_main`) all fall back to AST.
     if (sm.funcs.len() == 0) { return ""; }
     if (sm.funcs.len() > 512) {
-        if (strict_ir_on()) { var sb: i32 = strict_ir_refuse("module over the 512-function merged-bundle budget (#3425)"); }
+        if (strict_ir_on()) { strict_ir_refuse("module over the 512-function merged-bundle budget (#3425)"); }
         return "";
     }
     if (!asmcore.has_main(sm)) { return ""; }
@@ -6056,7 +6056,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     while (i < im.funcs.len()) {
         var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], arf, im.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(im.funcs, im.structs), cnf, bparams, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf, false);
         if (!r.ok) {
-            if (strict_ir_on()) { var sr0: i32 = strict_ir_refuse(im.funcs[i].name); }
+            if (strict_ir_on()) { strict_ir_refuse(im.funcs[i].name); }
             return "";
         }
         var j: i32 = 0;
@@ -6064,12 +6064,12 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
             var o: ir.Op = r.ops[j];
             if (o.kind_tag == 149) {  // call_direct
                 if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(im, o.str) && !known_includes(known, o.str)) {
-                    if (strict_ir_on()) { var sr1: i32 = strict_ir_refuse(im.funcs[i].name + " (call to unknown symbol " + o.str + ")"); }
+                    if (strict_ir_on()) { strict_ir_refuse(im.funcs[i].name + " (call to unknown symbol " + o.str + ")"); }
                     return "";
                 }
             } else if (o.kind_tag == 6) {  // const_func
                 if (!module_has_func(im, o.str) && !known_includes(known, o.str)) {
-                    if (strict_ir_on()) { var sr2: i32 = strict_ir_refuse(im.funcs[i].name + " (function value " + o.str + " not defined)"); }
+                    if (strict_ir_on()) { strict_ir_refuse(im.funcs[i].name + " (function value " + o.str + " not defined)"); }
                     return "";
                 }
             }

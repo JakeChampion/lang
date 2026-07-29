@@ -39,13 +39,19 @@ import (
 // The flag is checked in asm_ir.fern, which both backends' eligibility runs
 // through (wasm_ir's `wasm_eligible` calls `asm_ir.eligible_core`), so the
 // x86-64 and wasm legs cover the same per-function gate.
+//
+// Every `want` must be in [0, 126): the wasm leg exits through WASI, which
+// rejects anything above that with `exit with invalid exit status`, whereas an
+// ELF exit code is simply taken mod 256. A case that returns 160 therefore
+// passes on x86-64 and traps on wasm, which reads like a backend miscompile.
 var strictIRCorpus = []struct {
 	name string
 	src  string
 	want int
 }{
 	// The #5642 shape itself: checked operators in a match scrutinee, the
-	// construct whose missing recovery case motivated the issue.
+	// construct whose missing recovery case motivated the issue. Both arms are
+	// exercised — f(100, 3) fits u8, f(250, 10) overflows.
 	{"checked-operators", `
 function f(a: u8, b: u8): i32 {
     match (a +? b) { Some(v) => { return v as i32; }, None => { return 99; } }
@@ -53,8 +59,8 @@ function f(a: u8, b: u8): i32 {
 function g(a: i32, b: i32): i32 {
     match (a *? b) { Some(v) => { return v; }, None => { return 7; } }
 }
-function main(): i32 { return f(250, 3) + g(2, 3) - 99; }
-`, 160},
+function main(): i32 { return f(100, 3) + g(2, 3) - f(250, 10); }
+`, 10},
 	// Closures with captures, held in an array and dispatched through a
 	// fn-typed param.
 	{"closures", `

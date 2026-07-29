@@ -72,9 +72,9 @@ emitter with no checked-operator lowering at all, and the 46 resulting failures
 read like several unrelated bugs (wrong match arm, payload read as zero,
 SIGABRT) rather than one unsupported construct. Verified against that exact
 regression: with #5642's `lower_match` fix reverted, the checked-operator case
-in `TestSelfHostStrictIRX86_64` silently emits AST asm that exits **1** instead of 160,
-and under the flag the same driver refuses with `FERN_STRICT_IR: f — the IR path
-bailed to the AST emitter`.
+in `TestSelfHostStrictIRX86_64` silently emits AST asm that exits **1** instead
+of 10, and under the flag the same driver refuses with `FERN_STRICT_IR: f — the
+IR path bailed to the AST emitter`.
 `TestSelfHostStrictIR*` (`internal/e2eselfhost`) is the standing tripwire: a
 corpus that must NOT refuse, plus an over-budget program that must.
 
