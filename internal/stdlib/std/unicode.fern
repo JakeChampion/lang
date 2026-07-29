@@ -191,7 +191,7 @@ function _dig(c: i32): i32 {
 
 // _fld reads the 24-bit field at character offset `i`.
 function _fld(t: string, i: i32): i32 {
-    return (_dig((t[i] as i32)) << 18) | (_dig((t[i + 1] as i32)) << 12) | (_dig((t[i + 2] as i32)) << 6) | _dig((t[i + 3] as i32));
+    return (_dig(t[i] as i32) << 18) | (_dig(t[i + 1] as i32) << 12) | (_dig(t[i + 2] as i32) << 6) | _dig(t[i + 3] as i32);
 }
 
 // _case_apply maps `cp` through the case table — uppercase when
