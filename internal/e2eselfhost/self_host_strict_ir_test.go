@@ -129,6 +129,26 @@ function main(): i32 {
     match (chain("ok")) { Ok(v) => { return v + first(t); }, Err(_) => { return 0; } }
 }
 `, 43},
+	// A match whose scrutinee is a call through a capture-free / capturing
+	// closure LOCAL returning Option: the lambda must lift to a hoisted __lam_N
+	// so the call resolves and the scrutinee's Option type recovers. Before the
+	// StmtMatch arm in irlower's subst_fcall_stmts, the leftover `f` reference in
+	// `match (f())` blocked the binding lift, so the lambda fell to the inline
+	// escaping-closure path (const_func(<fn>$clo)) and bailed the module to AST
+	// (#3457 slice 3). Under the flag these must route IR (no exit-3 bail).
+	{"match-closure-local-opt", `
+function main(): i32 {
+    var f: () => Option[i32] = () => Some(7);
+    match (f()) { Some(v) => { return v; }, None => { return 0; } }
+}
+`, 7},
+	{"match-capturing-closure-local-opt", `
+function main(): i32 {
+    var n: i32 = 7;
+    var f: () => Option[i32] = () => Some(n);
+    match (f()) { Some(v) => { return v; }, None => { return 0; } }
+}
+`, 7},
 }
 
 // runDriver runs a self-host driver over `src`, optionally with FERN_STRICT_IR

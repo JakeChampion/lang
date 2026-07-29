@@ -39665,6 +39665,31 @@ function subst_fcall_stmts(stmts: parser.Stmt[], fname: string, lname: string, c
             parser.StmtIf(f) => { var ns: parser.Stmt = parser.StmtIf { cond: subst_fcall_expr(f.cond, fname, lname, capargs), then_body: subst_fcall_stmts(f.then_body, fname, lname, capargs), else_body: subst_fcall_stmts(f.else_body, fname, lname, capargs) }; out = out.append(ns); },
             parser.StmtWhile(w) => { var ns: parser.Stmt = parser.StmtWhile { cond: subst_fcall_expr(w.cond, fname, lname, capargs), body: subst_fcall_stmts(w.body, fname, lname, capargs), label: w.label }; out = out.append(ns); },
             parser.StmtFor(fr) => { var ns: parser.Stmt = parser.StmtFor { var_name: fr.var_name, iter: subst_fcall_expr(fr.iter, fname, lname, capargs), body: subst_fcall_stmts(fr.body, fname, lname, capargs), label: fr.label }; out = out.append(ns); },
+            // A `match` whose scrutinee / arm bodies / guards call `f`: rewrite
+            // each to the hoisted `__lam_N(…)`. Without this arm the match passed
+            // through untouched, so an `f()` inside `match (f())` stayed a
+            // reference to the binding — the caller's leftover-fname guard then
+            // declined the lift and the capture-free lambda fell to the inline
+            // escaping-closure path (`const_func(<fn>$clo)`), bailing the module
+            // to AST (#3457 slice 3).
+            parser.StmtMatch(mm) => {
+                var narms: parser.MatchArm[] = [];
+                var q: i32 = 0;
+                while (q < mm.arms.len()) {
+                    // NB: bind `marm`, not `a` — reusing the StmtAssign arm's
+                    // local name `a` (a different struct type) makes the native
+                    // IR field resolver mis-key `a.target` to MatchArm and abort
+                    // codegen ("MatchArm has no field target"). A distinct name
+                    // sidesteps that latent collision.
+                    var marm: parser.MatchArm = mm.arms[q];
+                    var ng: parser.Expr = marm.guard;
+                    if (marm.has_guard) { ng = subst_fcall_expr(marm.guard, fname, lname, capargs); }
+                    narms = narms.append(parser.MatchArm { pattern: marm.pattern, body: subst_fcall_stmts(marm.body, fname, lname, capargs), line: marm.line, col: marm.col, guard: ng, has_guard: marm.has_guard });
+                    q = q + 1;
+                }
+                var ns: parser.Stmt = parser.StmtMatch { scrutinee: subst_fcall_expr(mm.scrutinee, fname, lname, capargs), arms: narms, line: mm.line, col: mm.col, origin: mm.origin };
+                out = out.append(ns);
+            },
             _ => { out = out.append(stmts[i]); }
         }
         i = i + 1;
