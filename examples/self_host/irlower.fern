@@ -1949,6 +1949,13 @@ function opt_payload_ok_d(structs: parser.StructDecl[], p: string): boolean {
 function opt_payload_ok_dv(structs: parser.StructDecl[], p: string, depth: i32, visiting: string[]): boolean {
     if (is_leaksafe_payload(p)) { return true; }
     if (decl_is_struct(structs, p) && decl_is_leaksafe_d(structs, p, depth + 1, visiting)) { return true; }
+    // A leak-safe TUPLE payload (`Option[(i32, i32)]` as a struct field): the
+    // Option box holds one tuple pointer, leak-only like a struct payload. The
+    // local-position path already admits it; this is the struct-field twin. A
+    // nested Option payload (`Option[Option[P]]`) recurses through the same
+    // predicate. (visiting-threaded for recursion safety.)
+    if (is_leaksafe_tuple_field_dv(structs, p, depth, visiting)) { return true; }
+    if (p.len() >= 8 && (p[0:7] == "Option[" || p[0:7] == "Result[") && is_leaksafe_opt_field_dv(structs, p, depth, visiting)) { return true; }
     return false;
 }
 
