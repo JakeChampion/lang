@@ -2670,20 +2670,32 @@ invariant:
     out = out.append(row);      // DIRECT IDENT element -> moved, NOT inc'd
     var e: i32[] = out[0];
 
-A direct-Ident element takes the moveSites shape: `emitArrayPush` transfers the
-reference instead of inc'ing it, so exactly ONE owner exists. The old any-arg
-rule made `out` transitively tainted, which is what kept the buffer from
-deep-freeing an element `row` still points at. Clear that taint and `out`'s deep
-walk frees `row`'s buffer while `row` is live — and `row`'s own (plain,
-non-freeing) release then writes an rc word into a freed block. That is the
-use-after-free the "judged unsound" verdict recorded, without the mechanism.
+**CORRECTION, same day, before anyone acts on it.** The first version of this
+entry said a direct-Ident element "takes the moveSites shape: `emitArrayPush`
+transfers the reference instead of inc'ing it". **That is wrong.**
+`markConstructionMoves` has cases for StructLit / ArrayLit / TupleLit /
+MakeClosure and NONE for `Array_push`, so a pushed element is never a moveSite
+and `emitArrayPush`'s `needsRcIncOnAlias(Args[1]) && !moveSites[Args[1]]` inc
+ALWAYS fires for an aliased element. The escape-sink comment at
+`rc_analysis.go`'s `__method_Array_push` case says the same thing in the source.
+So the "moved element" mechanism, and the moveSite gate proposed from it, are
+both fiction.
 
-So the arm is sound only where the pushed element was actually INC'd — a
-projection source (`out.append(rows[i])`, the test's first half, which wants 2
-deep drops) — and unsound where it was moved. The condition it needs is the same
-one `escapeOwned` already draws at that sink: gate the receiver-only aliasing on
-the element NOT being a moveSite. That is a real change to write and gate, not a
-one-line flip, and it is the true cost of the 4x above.
+What is actually known, and no more than this: re-applying the arm flips
+`TestArrayPushProjectionSourceFreeEligible`'s direct-Ident half from 0 deep array
+drops to 2, and its projection half from 2 to 4. Whether those extra drops are an
+over-release or merely a conservative baseline the test pins by convention is
+NOT established — the test's own comment calls it "the conservative direct-ident
+baseline", which is the language of a convention, not of a proven UAF. Nobody has
+run the arm's emitted code and observed a corruption; the original "unsound"
+verdict came from 7 self-host failures whose mechanism was never traced.
+
+So the honest next step is to determine which it is, before writing any gate:
+build the arm, run `TestArrayPushProjectionSourceFreeEligible`'s two fixtures as
+real programs under `FERN_LEAKCHECK=1` and against `-interp`, and see whether the
+extra drops produce an over-release (frees > allocs, or a wrong answer) or just
+reclaim more. That is a ten-minute experiment and it decides whether the 4x above
+is one gate away or blocked on something real.
 
 (The original question, kept for the record: **what taints `out`?**)
 It is worth answering with the rcPlan dump rather than by guessing — print
