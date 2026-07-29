@@ -8493,6 +8493,21 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         // which miscompiled it.
                         parser.ExprFieldAccess(_) => {
                             if (field_access_is_fnarr(cidx.array, s)) { idx_is_arr = true; }
+                            // …and the CLOSURE-box sibling (`R { hs: [() => n] }`,
+                            // then `r.hs[0]()`): same "fn[]" field spelling, but the
+                            // elements are `__mkclo$` env boxes, so it needs the
+                            // env-first form above, not the raw-pointer one. Without
+                            // this arm the shape matched NEITHER flag and fell to `_`
+                            // → s.fail() → AST fallback, even though construction,
+                            // `.len()`, and the same call through a LOCAL clo-array
+                            // all lowered fine (#3457).
+                            //
+                            // field_access_is_closurearr already declines a registered
+                            // fn-POINTER field, so the pointer arm above keeps
+                            // precedence and this cannot claim a raw-pointer array —
+                            // the same precedence the bind / whole-array-alias read
+                            // sites use (#5160 defect #2, #5235).
+                            else if (field_access_is_closurearr(cidx.array, s)) { is_clo_arr = true; }
                         },
                         _ => {}
                     }

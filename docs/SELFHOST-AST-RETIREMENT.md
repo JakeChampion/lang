@@ -130,7 +130,7 @@ splits the list in two:
 | shape | `-ir-probe` verdict | status |
 |---|---|---|
 | fn-typed tuple element in a struct field (`s.p.1()`) | was `main: BAIL lower` → `module: AST` | **CLOSED by #5758** |
-| closure-array struct field (`r.hs[1]()`) | `main: BAIL lower` → `module: AST` | **still open** — localized below |
+| closure-array struct field (`r.hs[1]()`) | was `main: BAIL lower` | **CLOSED** — see below |
 | struct match-expression + `when` guard | `module: IR` | **NOT the declining construct** |
 | `w @ P { a, b } when w.a > 0` | `module: IR` | **NOT the declining construct** |
 
@@ -175,13 +175,20 @@ struct-field closure array bails. It is `irlower.fern`'s element-call dispatch
 fn-POINTER array (#5235). A field holding env BOXES matches neither
 `is_clo_arr` nor `idx_is_arr`, falls through to `_` → `s.fail()` → AST.
 
-**Why the obvious fix is unsound.** "Not in the FNPTR registry ⇒ closure box"
-inverts a conservative predicate: `fnptr_arr_fields_of` drops any candidate it
-cannot prove (its `bad` set), so a genuine pointer array can be absent from the
-registry, and env-first dispatch on a raw code pointer crashes. The sound shape
-is positive evidence — a `CLOARR:<Type>.<field>` registry populated at the
-struct-literal site (element is a `__mkclo$` box), read here — i.e. the same
-construction #5235 built for pointers, not its negation.
+**CLOSED — and the "build a CLOARR registry" plan an earlier revision of this
+section proposed was wrong.** `field_access_is_closurearr` already existed for
+exactly this question, used by the bind / whole-array-alias read sites (#5160
+defect #2): it declines a registered fn-POINTER field first, so the pointer arm
+keeps precedence, then accepts on the `"fn[]"` field spelling. The fix was one
+`else if` in the element-call dispatch, not a new registry.
+
+The negation ("absent from the FNPTR registry ⇒ closure box") *is* relied on
+here, and it is sound for the documented reason: a struct-field array of BARE
+named fns is already miscompiled at CONSTRUCTION (a separate open gap), so the
+negation cannot spoil a shape that currently works. Pinned on both sides —
+`TestSelfHostCloArrayFieldCallIRX86_64` (closure elements) and
+`TestSelfHostFnptrArrayFieldIRX86_64` (`direct`, `rc-soundness`) — so a
+closure arm that wrongly claimed a raw-pointer array would fail loudly.
 
 **Root cause of the tuple gap (closed by #5758), and the shape of that fix.** A callable
 behind a struct field has an ambiguous REPRESENTATION that its declared type
