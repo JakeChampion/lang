@@ -2217,6 +2217,22 @@ func TestSelfHostWasmComponentArgs(t *testing.T) {
 		}
 	})
 
+	// arg_at(i) reads ONE argument rather than materialising the whole vector.
+	// It shares the get-arguments import with args(), but had no preview2 body
+	// of its own until #5818 — so the emitted core called an undefined
+	// $arg_at, and component_shape (which classified the args category as
+	// module_calls(mod, "args") only) wrapped it in the plain-stdout framing,
+	// which has no get-arguments to satisfy it either.
+	t.Run("arg-at", func(t *testing.T) {
+		comp := build(t, `function main(): i32 { write(arg_at(1)); write("|"); write(arg_at(3)); write("|"); write(arg_at(9)); return 0; }`)
+		out, _ := exec.Command(wasmtime, "run", comp, "aa", "bb", "cc").Output()
+		// argv[0] is the program name, so 1..3 are the passed args and 9 is
+		// out of range — an empty string, matching preview1 arg_at.
+		if string(out) != "aa|cc|" {
+			t.Errorf("arg-at: stdout = %q, want %q", string(out), "aa|cc|")
+		}
+	})
+
 	t.Run("values", func(t *testing.T) {
 		// Print every arg after argv[0] (the program name).
 		comp := build(t, `function main(): i32 { var a: string[] = args(); var i: i32 = 1; while (i < a.len()) { write(a[i]); write("|"); i = i + 1; } return 0; }`)

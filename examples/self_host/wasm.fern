@@ -9194,7 +9194,11 @@ pub function component_shape(mod: parser.Module): i32 {
     var rd: boolean = module_calls(mod, "read_file");
     var wr: boolean = module_calls(mod, "write_file");
     var env: boolean = module_calls(mod, "env");
-    var args: boolean = module_calls(mod, "args");
+    // arg_at reads argv just as args() does, so it belongs to the args
+    // category. Omitting it classified an arg_at program as plain-stdout and
+    // wrapped it in component_full_io — a framing with no get-arguments to
+    // satisfy the call (#5818).
+    var args: boolean = module_calls(mod, "args") || module_calls(mod, "arg_at");
     var rnd: boolean = module_calls(mod, "random_bytes") || module_calls(mod, "random_i32");
     var clkw: boolean = module_calls(mod, "now_unix_ms") || module_calls(mod, "now_ns");
     var clkm: boolean = module_calls(mod, "monotonic_ns");
@@ -9705,7 +9709,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     var has_env: boolean = module_calls(mod, "env");
     var has_random: boolean = module_calls(mod, "random_bytes") || module_calls(mod, "random_i32");
     var has_sfb: boolean = module_calls(mod, "string_from_bytes_unchecked");
-    var has_args: boolean = module_calls(mod, "args");
+    var has_args: boolean = module_calls(mod, "args") || module_calls(mod, "arg_at");
     var has_readfile: boolean = module_calls(mod, "read_file");
     var has_writefile: boolean = module_calls(mod, "write_file");
     var has_clocks: boolean = module_uses_clocks(mod);
