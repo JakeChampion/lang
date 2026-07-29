@@ -30,6 +30,8 @@ TestSelfHostPerModuleEmitAllFixpointBatch4X86_64 130
 # the cost is almost entirely the driver restore.
 TestSelfHostFnArrayFieldGateX86_64 12
 TestSelfHostFnArrayFieldGateWasm 12
+TestSelfHostTupleFnZeroArgIRX86_64 12
+TestSelfHostTupleFnZeroArgIRWasm 12
 TestSelfHostAsmX86_64 90
 TestSelfHostModloadPerModuleWholeCompilerArm64 80
 TestSelfHostLoadFixpointX86_64 75

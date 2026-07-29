@@ -40843,6 +40843,92 @@ function stmts_value_use(stmts: parser.Stmt[], name: string): boolean {
 // accumulator + per-function counter through the expression positions that can
 // hold an array / struct literal (var-init, return, expr-stmt, assign) and
 // recursing nested bodies.
+// wrap_ann_fn_tuple_elems boxes the bare ZERO-ARG module-fn elements of an
+// ANNOTATED tuple literal (or of an annotated ARRAY of tuple literals) into
+// `__mkclo$…$wrapN()` markers — the same uniform env box every other fn value
+// carries.
+//
+// Only an element the ANNOTATION calls a fn is touched: `tuple_type_elem_tag`
+// returns "clo" for a declared fn segment, and that is exactly the case where the
+// `const X` reading is impossible, so boxing cannot change what a const read
+// means. Elements with >= 1 param are already boxed by the ordinary tuple walk;
+// this closes the zero-arg hole it deliberately leaves open (#5834).
+//
+// A name bound by a param or anywhere in the body shadows the module function and
+// is left alone, mirroring the shadowing test the tuple walk makes.
+function wrap_ann_fn_tuple_elems(e: parser.Expr, ann: string, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: parser.FuncDecl[], structs: parser.StructDecl[]): InlineCloRes {
+    var tty: string = ann;
+    var is_arr: boolean = false;
+    if (tty.len() > 2 && tty[tty.len() - 2 : tty.len()] == "[]") {
+        tty = tty[0 : tty.len() - 2] + "";
+        is_arr = true;
+    }
+    // Nothing to do unless the annotation is a tuple with at least one declared
+    // fn element.
+    if (tuple_type_elem_tag(tty, 0) == "") { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+    var bound: string[] = [];
+    var bp: i32 = 0;
+    while (bp < fd.params.len()) { bound = bound.append(fd.params[bp].name); bp = bp + 1; }
+    var bs: i32 = 0;
+    while (bs < fd.body.len()) { bound = astwalk.collect_bound_stmt(fd.body[bs], bound); bs = bs + 1; }
+    if (is_arr) {
+        match (e) {
+            parser.ExprArray(arr) => {
+                var afs: parser.FuncDecl[] = funcs;
+                var act: i32 = counter;
+                var aels: parser.Expr[] = [];
+                var ai: i32 = 0;
+                while (ai < arr.elements.len()) {
+                    var ar: InlineCloRes = wrap_one_ann_tuple(arr.elements[ai], tty, bound, fd, afs, act, gfns, mfuncs, structs);
+                    afs = ar.funcs; act = ar.counter; aels = aels.append(ar.expr);
+                    ai = ai + 1;
+                }
+                return InlineCloRes { expr: parser.ExprArray { elements: aels }, funcs: afs, counter: act };
+            },
+            _ => { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+        }
+    }
+    return wrap_one_ann_tuple(e, tty, bound, fd, funcs, counter, gfns, mfuncs, structs);
+}
+
+// wrap_one_ann_tuple applies the boxing to ONE tuple literal against the tuple
+// type `tty`. A non-tuple expression passes through untouched.
+function wrap_one_ann_tuple(e: parser.Expr, tty: string, bound: string[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: parser.FuncDecl[], structs: parser.StructDecl[]): InlineCloRes {
+    match (e) {
+        parser.ExprTuple(tl) => {
+            var fs: parser.FuncDecl[] = funcs;
+            var ct: i32 = counter;
+            var els: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < tl.elements.len()) {
+                var did: boolean = false;
+                if (tuple_type_elem_tag(tty, i) == "clo") {
+                    match (tl.elements[i]) {
+                        parser.ExprIdent(id) => {
+                            // Zero-arg ONLY: the >= 1 case is already boxed by the
+                            // ordinary tuple walk, and re-boxing it here would
+                            // hoist two wrappers for one element.
+                            if (util.index_of_str(bound, id.name) < 0 && lift_module_fn_arity(mfuncs, id.name) == 0) {
+                                var wr: InlineCloRes = try_fn_field_value(tl.elements[i], fd, fs, ct, gfns, mfuncs, structs);
+                                match (wr.expr) {
+                                    parser.ExprCall(_) => { fs = wr.funcs; ct = wr.counter; els = els.append(wr.expr); did = true; },
+                                    _ => {}
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+                if (!did) { els = els.append(tl.elements[i]); }
+                i = i + 1;
+            }
+            return InlineCloRes { expr: parser.ExprTuple { elements: els, line: tl.line, col: tl.col }, funcs: fs, counter: ct };
+        },
+        _ => { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+    }
+    return InlineCloRes { expr: e, funcs: funcs, counter: counter };
+}
+
 function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloStmts {
     var fs: parser.FuncDecl[] = funcs;
     var ct: i32 = counter;
@@ -40905,7 +40991,22 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                     _ => {}
                 }
                 if (!boxed) {
-                    var er: InlineCloRes = lift_inline_closures_expr(v.init, fd, fs, ct, gfns, structs, mfuncs);
+                    // ANNOTATED fn-typed tuple elements (#5834): a bare ZERO-ARG
+                    // module fn in a tuple element is normally left alone, because
+                    // `const X = expr` desugars to a zero-arg function and a bare
+                    // `X` must read as the const's VALUE, not its address. But an
+                    // annotation naming the element a fn — `((() => i32), i32)` —
+                    // rules that reading out, and the tag side already assumes a
+                    // box there (tuple_type_elem_tag maps an "fn" segment to
+                    // "clo"), so leaving the value unboxed made `t.0()` dispatch
+                    // env-first on a const-CALL result and SIGSEGV. Wrap it here,
+                    // where the declared type is in hand, so the value side agrees
+                    // with the tag side. Unannotated tuples keep their exact
+                    // behaviour, which is what keeps every const read intact.
+                    var pre: parser.Expr = v.init;
+                    var prer: InlineCloRes = wrap_ann_fn_tuple_elems(pre, v.type_name, fd, fs, ct, gfns, mfuncs, structs);
+                    fs = prer.funcs; ct = prer.counter; pre = prer.expr;
+                    var er: InlineCloRes = lift_inline_closures_expr(pre, fd, fs, ct, gfns, structs, mfuncs);
                     fs = er.funcs; ct = er.counter;
                     out = out.append(parser.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col, is_str: v.is_str });
                 }
