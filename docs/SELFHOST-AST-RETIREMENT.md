@@ -1368,6 +1368,15 @@ for the token/AST graph essentially does not happen. Anyone picking this up
 should start from these counters, not RSS, and watch the FREED FRACTION rather
 than megabytes.
 
+**And it has a 12-line repro** — `examples/probes/enum_array_element_leak.fern`.
+An array of enum values carrying heap payloads, built and dropped: `allocs=19024
+frees=13024` (68.5% freed, ~3000 blocks leaked per 5000 elements per round). So
+element non-reclamation does NOT need the whole compiler to demonstrate, which
+makes this a seconds-long edit/measure loop rather than a multi-minute one. Note
+the compiler is far worse (8.3% freed for `tokenize`) than this probe (68.5%),
+so the probe is a starting point, not the whole story — verify any fix against
+BOTH, per the method note above.
+
 **Method note for the next attempt: `internal/e2e` is not the gate for an RC
 change — `internal/e2eselfhost` is.** Compiling the whole self-host compiler is
 what exercises RC at a scale where an over-release shows; the native e2e suite

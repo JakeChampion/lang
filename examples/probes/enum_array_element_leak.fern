@@ -1,0 +1,40 @@
+// Minimal repro for element non-reclamation (#3457) — the sibling of
+// loop_append_drop_leak.fern, and the shape that actually dominates the
+// module-load leak (docs/SELFHOST-AST-RETIREMENT.md, "The load leak, measured
+// exactly": >80% of lex/parse allocations are never freed, ~28 blocks per
+// source line — the token population, not the Token[] buffer).
+//
+// Each round builds an array of enum values carrying heap payloads, then drops
+// it. A runtime that reclaims deeply frees every element with the buffer, so
+// allocs should equal frees. Measured on the native x86-64 backend:
+//
+//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/enum_array_element_leak.fern
+//   /tmp/p    # stderr: leakcheck: allocs=19024 frees=13024 live_bytes=192000
+//
+// 68.5% freed — ~3000 blocks leaked per 5000 elements, per round. Watch the
+// FREED FRACTION, not live_bytes: it is scale-free, so it says immediately
+// whether a change moved anything. RSS hid this class of leak three separate
+// times in the doc's earlier entries.
+//
+// Exit code is 4 either way ((2 rounds x (5000 % 7)) % 5), so it is not the
+// signal. Fixed = allocs equals frees.
+
+enum Tok { Ident(string), Eof }
+
+function build(n: i32): i32 {
+    var xs: Tok[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        var t: string = "tok" + "abcdefghij"[0:(i % 10) + 1];
+        xs = xs.append(Ident(t));
+        i = i + 1;
+    }
+    return xs.len() % 7;
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 2) { acc = acc + build(5000); r = r + 1; }
+    return acc % 5;
+}
