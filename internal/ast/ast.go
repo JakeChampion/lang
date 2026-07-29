@@ -1180,7 +1180,11 @@ var LeakCheckEnabled = os.Getenv("FERN_LEAKCHECK") == "1"
 // over-released buffer — so a gdb backtrace pinpoints the holder the
 // rc undercounted. Chases the residual array over-release that
 // blocks the step-5 flip (see RC-PERCEUS-PLAN.md).
-var RcFreeDebug = false
+//
+// Settable via FERN_RC_FREE_DEBUG=1 (the LeakCheckEnabled precedent) so a
+// probe binary can be built with the detector without a fork — the leak
+// counters say a block was never freed, this says a live block was.
+var RcFreeDebug = os.Getenv("FERN_RC_FREE_DEBUG") == "1"
 
 // TrmcEnabled gates tail-recursion-modulo-cons. A function whose recursive
 // call sits in the LAST payload position of a constructor in tail position

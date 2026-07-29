@@ -229,3 +229,80 @@ func TestArm64SSAAccumThreadedParam(t *testing.T) {
 		t.Errorf("threaded-param accumulator: got %d, want 0 (over-release)", code)
 	}
 }
+
+// unionThreadedParamSrc is the same threaded-param shape with a UNION-typed
+// accumulator instead of a struct — the self-host parser's `parse_postfix`
+// shape: `base = e_unary_at(op, base, …)` rebinds a borrowed `Expr` param into
+// a node that KEEPS the old value as a payload, and the node is returned.
+//
+// Before the enum admission in computeConsumedParams the union param stayed on
+// the borrow baseline while its reassignment still emitted the overwrite dec,
+// so the caller's box lost a reference it never gave away: rc undercounted by
+// one per wrap. The value survived only because the caller's own releases
+// happened to be non-freeing — with the payload's box at rc 0 while live, any
+// drop that reached it freed memory the returned node still pointed at, and the
+// recycled block came back as the WRONG VALUE (acc != 1225 here; in the
+// self-host compiler, a silently corrupted AST).
+const unionThreadedParamSrc = `struct Leaf { v: i32[] }
+struct Wrap { operand: Ex, n: i32 }
+type Ex = Leaf | Wrap;
+
+function mkwrap(operand: Ex, n: i32): Ex { return Wrap { operand: operand, n: n }; }
+
+function post(base: Ex): Ex {
+    base = mkwrap(base, 1);
+    return base;
+}
+
+function build(seed: i32): Ex {
+    var l: Ex = Leaf { v: [seed, seed + 1, seed + 2] };
+    return post(l);
+}
+
+function inner(x: Ex): i32 {
+    match (x) {
+        Leaf(lf) => { return lf.v[0]; },
+        Wrap(w2) => { return -1; },
+    }
+}
+
+function payload(e: Ex): i32 {
+    match (e) {
+        Wrap(w) => { return inner(w.operand); },
+        Leaf(lf) => { return -2; },
+    }
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var e: Ex = build(i);
+        var junk: i32[] = [9, 9, 9];
+        acc = acc + payload(e);
+        i = i + 1;
+    }
+    if (acc != 1225) { return 100; }
+    return __rc_underflow_count();
+}`
+
+func TestX86_64UnionThreadedParam(t *testing.T) {
+	if _, code := compileAndRunX86_64FreeOn(t, unionThreadedParamSrc); code != 0 {
+		t.Errorf("union threaded param: got %d, want 0 (100=corrupted payload, >0=over-release)", code)
+	}
+}
+
+func TestArm64UnionThreadedParam(t *testing.T) {
+	if _, code := compileAndRunArm64FreeOn(t, unionThreadedParamSrc); code != 0 {
+		t.Errorf("union threaded param: got %d, want 0 (100=corrupted payload, >0=over-release)", code)
+	}
+}
+
+func TestWASMUnionThreadedParam(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	if got := runWasm(t, unionThreadedParamSrc); got != 0 {
+		t.Errorf("union threaded param: got %d, want 0 (100=corrupted payload, >0=over-release)", got)
+	}
+}
