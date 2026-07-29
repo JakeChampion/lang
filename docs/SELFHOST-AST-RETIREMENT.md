@@ -216,12 +216,28 @@ Pinned by `local-built` and `rebind-retracts-proof` in
 `TestSelfHostFnptrArrayFieldIRX86_64`, the latter being the case an unsound
 implementation fails.
 
-**The negation this justifies is still load-bearing.** `field_access_is_closurearr`
-remains "not FNPTR ⇒ closure", so a construction the widened scan STILL cannot
-prove (e.g. an array passed in as a parameter, or built across a loop) falls to
-the closure arm. Those shapes now route AST via other gates rather than
-crashing, but the general fix remains positive evidence on the closure side —
-a `CLOARR:<Type>.<field>` registry populated from `__mkclo$` elements.
+**The negation this justifies is still load-bearing, and the shapes it cannot
+prove still MISCOMPILE.** An earlier revision of this paragraph claimed they
+"route AST rather than crashing". Probed 2026-07-28 — that was wrong:
+
+| construction | interp | self-host (IR) | self-host (closure arm disabled → AST) |
+|---|---|---|---|
+| `mk(a: (() => i32)[]) { R { hs: a } }` — field from a PARAM | 7 | **crash** | **crash** |
+| `a = a.append(seven)` in a loop, then `R { hs: a }` | 7 | **crash** | **crash** |
+
+So they are pre-existing on BOTH paths — #5783 did not worsen them, and falling
+through to the AST emitter does not rescue them.
+
+**Neither dispatch default is safe without evidence**, which is why this cannot
+be fixed by picking a better fallback: a raw pointer called env-first crashes,
+and an env box called as a plain pointer crashes too. A `CLOARR` registry does
+not close it either — the param case has no construction visible at the struct
+literal to credit. The sound options are (a) positive evidence on BOTH sides
+with anything unproven becoming a clean compile ERROR rather than a silent
+miscompile (the `wasm_unsupported_builtin` pattern), or (b) making the field's
+representation uniform so the question disappears. Until then, an `fn[]` struct
+field is only safe when its construction is provable — which after #5786 means
+an array literal, or a local bound to one.
 
 **Root cause of the tuple gap (closed by #5758), and the shape of that fix.** A callable
 behind a struct field has an ambiguous REPRESENTATION that its declared type
