@@ -1619,6 +1619,22 @@ pub function (s: string) split(sep: string): string[] {
     return out.append(s[start:n]);
 }
 
+// `s.rsplit(sep)` — like `split`, but the pieces come out in reverse
+// order, as if the string were scanned from the end
+// (`"a.b.c".rsplit(".")` is `["c", "b", "a"]`). Mirrors Rust's
+// `str::rsplit`; for a symmetric separator it is `split` reversed. Pairs
+// with `rsplit_once` (the first split from the end) already in this module.
+pub function (s: string) rsplit(sep: string): string[] {
+    var fwd: string[] = s.split(sep);
+    var out: string[] = [];
+    var i: i32 = fwd.len() - 1;
+    while (i >= 0) {
+        out = out.append(fwd[i]);
+        i = i - 1;
+    }
+    return out;
+}
+
 // `s.splitn(sep, n)` — like split but caps the result at n
 // pieces; the last piece carries the unsplit tail. n <= 0
 // returns the empty array; n == 1 returns [s] unchanged.
