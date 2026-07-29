@@ -2,9 +2,12 @@ package fernsmith_test
 
 import (
 	"encoding/binary"
+	"math"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -209,6 +212,33 @@ func TestGenBytesIsDeterministic(t *testing.T) {
 // surface when someone notices a backend stopped crashing.
 // Walks 1024 seeds and asserts each landmark feature appears in
 // at least one program.
+// u32LiteralRE matches a `<digits>u32` suffixed literal.
+var u32LiteralRE = regexp.MustCompile(`\b(\d+)u32\b`)
+
+// u32OperandNear reports whether op appears with a `u32` literal directly on
+// one side of it. Substring-matching the operator alone would credit the
+// signed corpus, since `/` and `<` are generated at i32 and i64 too; anchoring
+// on a `<digits>u32` token is a cheap way to be sure the UNSIGNED opcode is
+// the one being reached.
+func u32OperandNear(src, op string) bool {
+	for i := 0; i+len(op) <= len(src); i++ {
+		if src[i:i+len(op)] != op {
+			continue
+		}
+		if strings.HasSuffix(src[:i], "u32") {
+			return true
+		}
+		if m := u32LiteralRE.FindStringIndex(src[i+len(op):]); m != nil && m[0] == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// u32AsI32RE matches emitU32AsI32's cast with a u32 token inside it, so a
+// plain `(<i64 expr> >> 32i64) as i32` from emitI64HighHalf doesn't count.
+var u32AsI32RE = regexp.MustCompile(`u32[^()]*\) as i32\)`)
+
 func TestGenFeatureCoverage(t *testing.T) {
 	want := map[string]bool{
 		"function call":                false,
@@ -257,6 +287,12 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"Err literal":                  false,
 		"Result match-with-binding":    false,
 		"Result try (?)":               false,
+		"u32 var declaration":          false,
+		"u32 literal above i32::MAX":   false,
+		"unsigned comparison":          false,
+		"unsigned divide or remainder": false,
+		"unsigned shift":               false,
+		"u32 reinterpreted as i32":     false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := fernsmith.GenMain(seed)
@@ -459,6 +495,38 @@ func TestGenFeatureCoverage(t *testing.T) {
 		// program (a stronger signal that Result paths fired).
 		if strings.Contains(src, "?)") && strings.Contains(src, "Result[i32, i32]") {
 			want["Result try (?)"] = true
+		}
+		// u32 — the corpus's only unsigned type. Reaching the unsigned
+		// opcodes is not enough on its own: div_u / rem_u / shr_u and
+		// the unsigned condition codes only diverge from their signed
+		// siblings on an operand with bit 31 set, so the above-i32::MAX
+		// literal is tracked as its own feature.
+		if strings.Contains(src, ": u32 ") {
+			want["u32 var declaration"] = true
+		}
+		for _, m := range u32LiteralRE.FindAllStringSubmatch(src, -1) {
+			if n, err := strconv.ParseUint(m[1], 10, 64); err == nil && n > math.MaxInt32 {
+				want["u32 literal above i32::MAX"] = true
+				break
+			}
+		}
+		for _, op := range []string{" < ", " > ", " <= ", " >= "} {
+			if u32OperandNear(src, op) {
+				want["unsigned comparison"] = true
+			}
+		}
+		for _, op := range []string{" / ", " % "} {
+			if u32OperandNear(src, op) {
+				want["unsigned divide or remainder"] = true
+			}
+		}
+		if u32OperandNear(src, " >> ") || u32OperandNear(src, " << ") {
+			want["unsigned shift"] = true
+		}
+		// emitU32AsI32's `((<u32 expr>) as i32)` — the channel that
+		// carries a full 32-bit unsigned result into the exit byte.
+		if u32AsI32RE.MatchString(src) {
+			want["u32 reinterpreted as i32"] = true
 		}
 	}
 	for feature, ok := range want {
