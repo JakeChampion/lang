@@ -1134,29 +1134,40 @@ tier → leak.
   that bound is NOT the fix — a single-process concat of that many functions OOMs,
   which is why the batched `-per-module-emit-all` exists.
 
-  **The swap is DONE, in its reversible form.** Past both bounds the driver now
-  ERRORS, naming `-per-module-emit-all` as the way to compile something that size,
-  with `-merged` as an explicit opt-out. Deleting the AST path outright is still
-  slice 5's call — the env-gated `RUN_MERGED_FIXPOINT` backstops need it until
-  then — but the default is no longer a silent drop to AST, so a new caller cannot
-  land on the AST emitter without saying `-merged`.
+  **The per-module-or-error swap was ATTEMPTED and REVERTED (2026-07-29). Its
+  premise — "only the whole-compiler self-compile lands past 1500" — is FALSE.**
+  The refusal was implemented (error past both bounds, `-merged` opt-out, both
+  halves pinned by a test) and CI broke on two tests that are neither the
+  bootstrap nor a fixpoint — `TestSelfHostStage2Compiler` and
+  `TestSelfHostStage2Bootstrap`, on different shards. Both build a **stdin-driven
+  Fern compiler** out of the library modules (`lexer` + `parser` + `asm` and their
+  closure) and compile a table of small programs with it. Measured: **1958 merged
+  functions**, past both bounds, compiling correctly through the AST emitter
+  before the change.
 
-  Scoped to the OVER-1500 band deliberately. A module in 512..1500 whose
-  per-module rescue returns nothing still falls through to AST, and a module under
-  the budget never reaches the check, so nothing that compiles today stops
-  compiling. Widening the refusal to *every* bail site is what `FERN_STRICT_IR`
-  (#5793) already does, opt-in.
+  So the merged AST emitter is still load-bearing for ORDINARY large programs, not
+  just for the bootstrap. Refusing by function count regresses any user program
+  whose merged closure crosses 1500 — the count cannot distinguish "the compiler
+  compiling itself" from "a big program". Adding `-merged` to that test too would
+  have kept CI green while leaving the regression in place for real callers, which
+  is why the change was reverted rather than patched.
 
-  **What the swap flushed out:** exactly three callers needed `-merged`, and one
-  of them was a ROUTINE test — step 7 of
-  `TestSelfHostModloadPerModuleWholeCompilerX86_64`, which drives the
-  per-module-built compiler over the whole compiler source with no flags. Two
-  places in this document claimed no routine test exercised the merged default;
-  both are corrected above. The remaining AST consumers on x86 are now greppable
-  by that flag: that smoke run plus the two env-gated fixpoints. Pinned by
-  `TestSelfHostMergedBundleRefusedByDefaultX86_64`, which asserts both halves —
-  the default refuses and emits nothing, and `-merged` still produces a real
-  whole-compiler emit.
+  **What has to happen first:** the per-module rescue must COVER the >=1500 band
+  before the fall-through can become an error. Today it is bounded `< 1500`
+  because `emit_per_module_concat` runs single-process and a concat that large
+  OOMs — so the batched path (`-per-module-emit-all`, which already exists and is
+  self-reproducing) has to become reachable from the ordinary compile path, not
+  just from a driver flag the test harness passes. That is the real slice-3 task;
+  the error swap is the step AFTER it, not instead of it.
+
+  **What the attempt did establish**, and what survives it: exactly three callers
+  needed the opt-out, and one is a ROUTINE test — step 7 of
+  `TestSelfHostModloadPerModuleWholeCompilerX86_64` drives the per-module-built
+  compiler over the whole compiler source with no flags. Two places in this
+  document claimed no routine test exercised the merged default; both are
+  corrected above. So the merged AST emitter has at least THREE live non-bootstrap
+  consumers on x86 — that smoke run plus both stage-2 compiler tests — where the
+  docs previously implied it had none.
 
   Grounding the call graph in code: `asm.emit_module` is a *dispatcher* —
   it calls `asm_ir.emit_module_ir_gated`, which returns IR asm when the whole

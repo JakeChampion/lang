@@ -26,9 +26,6 @@ TestSelfHostModloadPerModuleWholeCompilerX86_64 210
 # behind another fixpoint; still under the entry above, so it does not set the
 # max-shard wall.
 TestSelfHostPerModuleEmitAllFixpointBatch4X86_64 130
-# Two whole-compiler merged drives (refuse ~2s + -merged emit ~7s) on top of a
-# warm modload driver.
-TestSelfHostMergedBundleRefusedByDefaultX86_64 15
 TestSelfHostAsmX86_64 90
 TestSelfHostModloadPerModuleWholeCompilerArm64 80
 TestSelfHostLoadFixpointX86_64 75

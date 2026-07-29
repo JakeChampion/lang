@@ -560,12 +560,6 @@ function main(): i32 {
     // smoke-run (a miscompiled unit fails to link or diverges), so skipping the
     // pre-check there is safe. Default OFF preserves the clean "not IR-eligible"
     // diagnostic for arbitrary per-module use.
-    // -merged opts a WHOLE-COMPILER-sized merged bundle back onto the legacy AST
-    // emitter. Without it, a module too big for both the merged IR budget and the
-    // single-process per-module rescue is an ERROR rather than a silent drop to
-    // AST — see the refusal below (#3457 slice 3). The env-gated merged-bundle
-    // fixpoints pass it; nothing else should.
-    var merged_ok: boolean = false;
     var assume_eligible: boolean = false;
     var ai: i32 = 1;
     while (ai < a.len()) {
@@ -577,7 +571,6 @@ function main(): i32 {
         else if (a[ai] == "-per-module-emit" && ai + 1 < a.len()) { pm_mode = "emit"; pm_index = util.digits_to_i32(a[ai + 1]); ai = ai + 1; }
         else if (a[ai] == "-per-module-emit-all") { pm_mode = "emit-all"; }
         else if (a[ai] == "-assume-eligible") { assume_eligible = true; }
-        else if (a[ai] == "-merged") { merged_ok = true; }
         else if (a[ai] == "-out-dir" && ai + 1 < a.len()) { out_dir = a[ai + 1]; ai = ai + 1; }
         else if (a[ai] == "-func-budget" && ai + 1 < a.len()) { func_budget = util.digits_to_i32(a[ai + 1]); ai = ai + 1; }
         else if (a[ai] == "-unit-range" && ai + 1 < a.len()) {
@@ -657,27 +650,6 @@ function main(): i32 {
                 while (ri < shaken.funcs.len()) { reach = reach.append(shaken.funcs[ri].name); ri = ri + 1; }
                 var pmc: string = emit_per_module_concat(dir, entry, loaded, reach);
                 if (pmc.len() > 0) { write(pmc); return 0; }
-            }
-            // Past BOTH bounds: too big for the merged IR budget and too big for
-            // the single-process per-module rescue. The whole-compiler self-compile
-            // (~2040 merged funcs) is the only thing that lands here, and it is the
-            // last construct on x86 that still reaches the legacy AST emitter
-            // (#3457 slice 3). Refuse rather than emit AST silently — the batched
-            // `-per-module-emit-all` is the supported way to compile something this
-            // size, and a caller that meant to exercise the AST path can say so with
-            // `-merged`.
-            //
-            // Scoped to the OVER-1500 band on purpose. A module in the 512..1500
-            // band whose per-module rescue returns nothing still falls through to
-            // AST, and a module UNDER the budget never reaches here at all — those
-            // keep their exact current behaviour, so no program that compiles today
-            // stops compiling. Widening the refusal to every bail site is what
-            // FERN_STRICT_IR (#5793) already does, opt-in.
-            if (nfuncs >= 1500 && !merged_ok) {
-                eprint("asm_modload_run: " + util.i32_to_string(nfuncs) + " functions is past the merged IR budget and the per-module rescue.\n");
-                eprint("  Use -per-module-emit-all -out-dir DIR (batched) to compile a module this size,\n");
-                eprint("  or pass -merged to fall back to the legacy AST emitter.\n");
-                return 1;
             }
             write(asm.emit_module(mwb));
             return 0;
