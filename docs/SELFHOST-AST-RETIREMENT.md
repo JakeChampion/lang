@@ -2658,10 +2658,32 @@ measure noise.
 What it means for a real fix: `tokenize` legitimately returns its array, so the
 callee-side rewrite is not available. The site that must become eligible is the
 CALLER's binding of the returned `Token[]` — the value the caller receives and
-drops. Note also that the `Array_push` arm is a PREREQUISITE here but was once
-judged unsound; that judgement predates #5820's under-count fix and has not been
-re-tested against the gates, so it needs its own verification before any of this
-is landable.
+drops. **The `Array_push` arm is a PREREQUISITE here, and it is UNSOUND for a specific
+reason — now pinned by a 0.3-SECOND unit test rather than a 5-minute self-host
+compile (2026-07-29).** Re-applying it fails
+`TestArrayPushProjectionSourceFreeEligible`
+(`internal/ir/push_counted_store_test.go`), whose second half is exactly this
+invariant:
+
+    var row: i32[] = [k, k + 1];
+    var out: i32[][] = [];
+    out = out.append(row);      // DIRECT IDENT element -> moved, NOT inc'd
+    var e: i32[] = out[0];
+
+A direct-Ident element takes the moveSites shape: `emitArrayPush` transfers the
+reference instead of inc'ing it, so exactly ONE owner exists. The old any-arg
+rule made `out` transitively tainted, which is what kept the buffer from
+deep-freeing an element `row` still points at. Clear that taint and `out`'s deep
+walk frees `row`'s buffer while `row` is live — and `row`'s own (plain,
+non-freeing) release then writes an rc word into a freed block. That is the
+use-after-free the "judged unsound" verdict recorded, without the mechanism.
+
+So the arm is sound only where the pushed element was actually INC'd — a
+projection source (`out.append(rows[i])`, the test's first half, which wants 2
+deep drops) — and unsound where it was moved. The condition it needs is the same
+one `escapeOwned` already draws at that sink: gate the receiver-only aliasing on
+the element NOT being a moveSite. That is a real change to write and gate, not a
+one-line flip, and it is the true cost of the 4x above.
 
 (The original question, kept for the record: **what taints `out`?**)
 It is worth answering with the rcPlan dump rather than by guessing — print
