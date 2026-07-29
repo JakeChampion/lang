@@ -217,12 +217,24 @@ an explicit return) already routes IR. The **annotated** named-fn-bound form
 fn-typed local, so `closure_opt_ret` at the match recovery names the payload.
 Pinned by `match-fnlocal-named-opt` / `match-fnlocal-named-result` (x86-64 AND
 wasm); fixpoint stays gen0==gen1. **The seed is GATED on the fn-type annotation**
-because the bare unannotated `var f = g` form has no fn-value slot metadata — its
-`f()` call miscompiles on the IR path (raw-pointer dispatch → SIGSEGV, caught
-pre-landing) — so it deliberately stays on the AST fallback. **Genuinely still
-open** (goal-1 debt, correct via AST fallback): the unannotated `var f = g;
-match (f())` form, blocked on that fn-value-local call-dispatch miscompile, not
-on type recovery.
+because the bare unannotated `var f = g` form miscompiles on the IR path
+(SIGSEGV, caught pre-landing), so the match form deliberately stays on the AST
+fallback.
+
+**The bare `var f = g` miscompile is BROADER than the match, and it is a
+WRONG-ANSWER bug, not goal-1 debt** (characterised 2026-07-29, asm-verified).
+Even `var f = g; return f()` with NO match routes IR (no bail) and SIGSEGVs,
+while native interp and the annotated form both return correctly. Root cause is
+the `const_fns` design (#2954): a bare 0-arg receiver-less fn-name is a *const
+accessor*, auto-CALLED, so `var f = g` lowers to `call __fn_g` (f = g()'s result)
+instead of `leaq __fn_g` / `const_func` (g's address). The later `f()` then
+calls that result as a code pointer → SIGSEGV. The checker types `f` as
+`() => i32` (a fn value) while the `const_fns` lowering treats it as a call —
+a checker↔lowering disagreement. It is latent only because the compiler's own
+sources annotate fn-value locals (the self-compile fixpoint never hits it). The
+fix must align the checker's fn-value inference with the `const_fns` lowering
+(deep, byte-identity-risky — touches the #2954 const-accessor semantics), so it
+is a focused follow-up, not part of the match-recovery work.
 
 Two things worth carrying forward. First, **`TestSelfHostAsmIRPath` is 80/80
 clean under the flag** once the ascription case closed — independent evidence the
