@@ -40410,6 +40410,22 @@ function lift_arg_is_fn_value(arg: parser.Expr, mfuncs: parser.FuncDecl[]): bool
     return false;
 }
 
+// lift_arg_is_fn_value_declared is lift_arg_is_fn_value for a position whose
+// DECLARED type is already known to be a fn — a user-enum variant field typed
+// "fn". There the zero-arg exclusion the plain predicate makes is unnecessary:
+// it exists so a bare `const X` (which desugars to a zero-arg function) keeps
+// reading as its VALUE, and a declared fn field rules that reading out. Without
+// this, `enum E { Wrap(() => i32) }` + `Wrap(a1)` left the payload unboxed while
+// the match-arm bind dispatched it env-first, and SIGSEGV'd (#5834's family).
+function lift_arg_is_fn_value_declared(arg: parser.Expr, mfuncs: parser.FuncDecl[]): boolean {
+    match (arg) {
+        parser.ExprLambda(_) => { return true; },
+        parser.ExprIdent(id) => { return lift_module_fn_arity(mfuncs, id.name) >= 0; },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // lift_method_arg_is_fn decides whether a METHOD-call argument (`recv.m(arg)`)
 // should be wrapped into an env box. Scoped to the map-value slice (#3445): an
 // inline lambda whose method param is NOT a declared user fn-param. The negation
@@ -40499,7 +40515,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                     fs = ofr.funcs; ct = ofr.counter; nargs = nargs.append(ofr.expr);
                 } else if (!is_mkclo && cnm.len() > 0 && decl_is_struct(structs, cnm)
                            && decl_field_type_at(structs, cnm, ai) == "fn"
-                           && lift_arg_is_fn_value(call.args[ai], mfuncs)) {
+                           && lift_arg_is_fn_value_declared(call.args[ai], mfuncs)) {
                     // A USER-ENUM variant constructor (`Wrap(f)`, `Pending(n, k)`)
                     // whose field at position ai is fn-typed: wrap the fn-value
                     // payload into the uniform env box — exactly like the
@@ -41097,7 +41113,32 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                 }
             },
             parser.StmtReturn(r) => {
-                var er: InlineCloRes = lift_inline_closures_expr(r.value, fd, fs, ct, gfns, structs, mfuncs);
+                // `function get(): () => i32 { return a1; }` — the declared RETURN
+                // type is the annotation, and it rules out the const reading the
+                // same way a tuple element's or an Option payload's does. The
+                // caller binds the result as a fn value and dispatches it
+                // env-first, so a bare zero-arg name has to be boxed here.
+                var rpre: parser.Expr = r.value;
+                if (fd.ret_type == "fn" || util.contains(fd.ret_type, "=>")) {
+                    match (rpre) {
+                        parser.ExprIdent(rid) => {
+                            var rbound: string[] = [];
+                            var rbp: i32 = 0;
+                            while (rbp < fd.params.len()) { rbound = rbound.append(fd.params[rbp].name); rbp = rbp + 1; }
+                            var rbs: i32 = 0;
+                            while (rbs < fd.body.len()) { rbound = astwalk.collect_bound_stmt(fd.body[rbs], rbound); rbs = rbs + 1; }
+                            if (util.index_of_str(rbound, rid.name) < 0 && lift_module_fn_arity(mfuncs, rid.name) == 0) {
+                                var rwr: InlineCloRes = try_fn_field_value(rpre, fd, fs, ct, gfns, mfuncs, structs);
+                                match (rwr.expr) {
+                                    parser.ExprCall(_) => { fs = rwr.funcs; ct = rwr.counter; rpre = rwr.expr; },
+                                    _ => {}
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+                var er: InlineCloRes = lift_inline_closures_expr(rpre, fd, fs, ct, gfns, structs, mfuncs);
                 fs = er.funcs; ct = er.counter;
                 out = out.append(parser.StmtReturn { value: er.expr, line: r.line, col: r.col });
             },

@@ -32,7 +32,10 @@ import (
 // The Option / Result cases below are the same disagreement one container over —
 // the variant-constructor walk skips a zero-arg payload for the same const
 // reason, while the match-arm bind dispatches it env-first regardless — and take
-// the same annotation-resolves-it fix.
+// the same annotation-resolves-it fix. So do a fn-typed RETURN and a USER-enum
+// variant field: four positions, one cause. The user-enum one needs no annotation
+// at all, because the variant's struct decl already types the field "fn" — there
+// only the arity gate was in the way.
 var tupleFnZeroArgCases = []struct {
 	name string
 	src  string
@@ -83,6 +86,21 @@ var tupleFnZeroArgCases = []struct {
 	{"option-const-payload", "const K: i32 = 9;\nfunction main(): i32 { var o: Option[i32] = Some(K); match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 9},
 	{"result-const-payload", "const K: i32 = 9;\nfunction main(): i32 { var r: Result[i32, string] = Ok(K); match (r) { Ok(v) => { return v; }, Err(e) => { return 0; } } return 9; }", 9},
 	{"option-unannotated-const", "const K: i32 = 9;\nfunction main(): i32 { var o = Some(K); match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 9},
+
+	// ---- two more positions with the same split ----
+	// The declared RETURN type is the annotation: the caller binds the result as a
+	// fn value and dispatches env-first, so a bare zero-arg name must be boxed.
+	{"returned-zeroarg", "function a1(): i32 { return 3; }\nfunction get(): () => i32 { return a1; }\nfunction main(): i32 { var g: () => i32 = get(); return g(); }", 3},
+	{"returned-onearg", "function a1(x: i32): i32 { return x + 3; }\nfunction get(): (i32) => i32 { return a1; }\nfunction main(): i32 { var g: (i32) => i32 = get(); return g(1); }", 4},
+	{"returned-lambda", "function get(): () => i32 { return () => 3; }\nfunction main(): i32 { var g: () => i32 = get(); return g(); }", 3},
+	// A USER-enum variant field declared "fn" needs no annotation at all — the
+	// struct decl already says it, which is strictly better evidence. Only the
+	// arity gate was blocking it.
+	{"user-enum-zeroarg", "enum E { Wrap(() => i32), Nil }\nfunction a1(): i32 { return 3; }\nfunction main(): i32 { var e: E = Wrap(a1); match (e) { Wrap(f) => { return f(); }, Nil => { return 0; } } return 9; }", 3},
+	{"user-enum-lambda", "enum E { Wrap(() => i32), Nil }\nfunction main(): i32 { var e: E = Wrap(() => 3); match (e) { Wrap(f) => { return f(); }, Nil => { return 0; } } return 9; }", 3},
+	// Const-read regressions for those two positions.
+	{"const-return", "const K: i32 = 9;\nfunction get(): i32 { return K; }\nfunction main(): i32 { return get() + 1; }", 10},
+	{"const-enum-payload", "enum E { Wrap(i32), Nil }\nconst K: i32 = 9;\nfunction main(): i32 { var e: E = Wrap(K); match (e) { Wrap(v) => { return v; }, Nil => { return 0; } } return 9; }", 9},
 }
 
 func TestSelfHostTupleFnZeroArgIRX86_64(t *testing.T) {
