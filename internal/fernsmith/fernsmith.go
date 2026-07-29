@@ -432,13 +432,21 @@ const (
 	// Status (payload-less) and Option (single payload variant)
 	// can't reach.
 	tResI32I32
+	// tTupI32I64 = (i32, i64). A tuple is neither a struct nor an
+	// enum: it has its own box layout and its own element
+	// stride/offset arithmetic (`tupleElemLayout`), and a
+	// heterogeneous one mixes a 4-byte and an 8-byte element so a
+	// backend that assumed a uniform stride is caught. Nothing else
+	// in the corpus produced a tuple at all, despite fn-typed tuple
+	// elements having been a real bug cluster.
+	tTupI32I64
 	numTypes
 )
 
 var allTypes = [numTypes]gtype{
 	tI32, tI64, tBool, tF32, tString,
 	tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32, tMapI32I32,
-	tXyz, tStatus, tResI32I32,
+	tXyz, tStatus, tResI32I32, tTupI32I64,
 }
 
 // gtypeNames is the source-level name for each builtin gtype, in
@@ -464,6 +472,7 @@ var gtypeNames = [numTypes]string{
 	tXyz:       "Xyz",
 	tStatus:    "Status",
 	tResI32I32: "Result[i32, i32]",
+	tTupI32I64: "(i32, i64)",
 }
 
 // String reports the source-level name for a builtin gtype.
@@ -822,7 +831,7 @@ var mainVarTypes = []gtype{
 	tI32, tI64, tBool, tString,
 	tArrI32, tArrI64, tArrBool,
 	tPair, tColor, tOptI32,
-	tXyz, tStatus, tResI32I32,
+	tXyz, tStatus, tResI32I32, tTupI32I64,
 	// tMapI32I32 is now included since the interp grew a Map
 	// runtime — `map_new`, `__method_Map_*`, and `*ast.MapLit`
 	// evaluation all live in internal/interp/interp.go now,
@@ -1473,6 +1482,23 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
+	// Tuple element access. `t.0` is i32, `t.1` is i64 — the read
+	// side of the only heterogeneous-stride box in the corpus.
+	// Without a read production the generator would construct
+	// tuples and never observe one, which is exactly how `i64[]`
+	// values sat in the corpus unread throughout #5729.
+	if t == tI32 || t == tI64 {
+		tups := sc.inScope(tTupI32I64)
+		if len(tups) > 0 {
+			name := tups[g.ch.intN(len(tups))]
+			if t == tI32 {
+				fmt.Fprintf(b, "%s.0", name)
+			} else {
+				fmt.Fprintf(b, "%s.1", name)
+			}
+			return true
+		}
+	}
 	// Xyz field access. `Xyz.n` is i32, `Xyz.valid` is bool.
 	if t == tI32 {
 		xyzs := sc.inScope(tXyz)
@@ -2009,6 +2035,15 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 			g.expr(b, sc, tI32, depth+1)
 			b.WriteString("))")
 		}
+	case tTupI32I64:
+		// `(<i32>, <i64>)` — heterogeneous on purpose, so the 4-byte
+		// and 8-byte elements sit at different offsets and a backend
+		// that assumed a uniform stride is caught.
+		b.WriteString("(")
+		g.expr(b, sc, tI32, depth+1)
+		b.WriteString(", ")
+		g.expr(b, sc, tI64, depth+1)
+		b.WriteString(")")
 	default:
 		// Dynamic nominal types — struct lit or enum-variant
 		// pick based on which sidecar map t belongs to.
@@ -2136,7 +2171,7 @@ func (g *Generator) typePool() []gtype {
 		pool = []gtype{
 			tI32, tI64, tBool, tString,
 			tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32,
-			tXyz, tStatus, tMapI32I32, tResI32I32,
+			tXyz, tStatus, tMapI32I32, tResI32I32, tTupI32I64,
 		}
 	} else {
 		pool = append(pool, allTypes[:]...)
