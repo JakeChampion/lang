@@ -15013,6 +15013,44 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
         var ip: LowerState = emit_enum_inplace_reassign(a.value, slot, ere_ip, s);
         if (ip.ok) { return ip; }
     }
+    // Whole-literal REBIND of a fn-POINTER array local (#3457):
+    // `var a: (() => i32)[] = [seven]; a = [nine]; a[0]()` SIGSEGV'd. A bare fn
+    // NAME reached the generic expression path, which const-CALLS it and stores
+    // the RESULT — so the buffer held integers where code addresses belong, and
+    // the plain `call_indirect` the is_fnarr slot dispatches through jumped to 9.
+    // Emit const_func per element, exactly as the DECLARATION and the `.append`
+    // path already do; this is the third construction site for the same array and
+    // the only one that was missing it.
+    //
+    // Representation-preserving on purpose: the slot is already is_fnarr and stays
+    // so, which is what makes this safe inside a branch or a loop body. A rebind
+    // that CHANGES the representation (`[seven]` <-> `[() => n]` in either
+    // direction) is a separate, still-open defect — the slot's flag is set at the
+    // declaration and the lowering here cannot tell whether the assignment
+    // dominates the reads. See docs/SELFHOST-AST-RETIREMENT.md.
+    if (s.is_fnarr_slot(slot) && !s.is_closurearr_slot(slot) && slot >= s.n_params) {
+        match (a.value) {
+            parser.ExprArray(fra) => {
+                var fr_allfn: boolean = fra.elements.len() > 0;
+                var fri: i32 = 0;
+                while (fri < fra.elements.len()) {
+                    if (fn_value_arg_name(fra.elements[fri], s) == "") { fr_allfn = false; }
+                    fri = fri + 1;
+                }
+                if (fr_allfn) {
+                    var frs: LowerState = s;
+                    var frj: i32 = 0;
+                    while (frj < fra.elements.len()) {
+                        frs = frs.emit(ir.op_const_func(0, fn_value_arg_name(fra.elements[frj], s)));
+                        frj = frj + 1;
+                    }
+                    frs = frs.emit(ir.op_arr_make(fra.elements.len(), 32));
+                    return emit_arr_store(frs, slot, false, true);
+                }
+            },
+            _ => {}
+        }
+    }
     var target_is_arr: boolean = s.is_arr_slot(slot) && slot >= s.n_params;
     var se: LowerState = lower_expr(a.value, s);
     if (!se.ok) { return se; }
@@ -33189,14 +33227,13 @@ function fnptr_scan_stmts(stmts: parser.Stmt[], funcs: parser.FuncDecl[], struct
             parser.StmtAssign(as2) => {
                 a = fnptr_scan(as2.value, funcs, structs, a);
                 // An assignment retracts whatever the name was proven to hold —
-                // `a = a.append(f)` and a rebind between the two shapes both land
-                // here — and, on the function's own statement list, re-proves the
-                // CLOSURE side from the assigned value. That re-proof is what makes
-                // `var a = [seven]; a = [() => n];` land somewhere rather than
-                // nowhere: the pointer proof is retracted and the closure one
-                // credited, so the field it is then stored into is PROVEN a closure
-                // array instead of falling through unclassified into the AST
-                // fallback (which miscompiles it on wasm).
+                // `a = a.append(f)` lands here — and, on the function's own
+                // statement list, re-proves it from the assigned value. That
+                // re-proof is what makes a REBIND land somewhere rather than
+                // nowhere: `var a = [seven]; a = [() => n];` retracts the pointer
+                // proof and credits the closure one, so the field it is then stored
+                // into is PROVEN a closure array instead of falling through
+                // unclassified into the AST fallback (which miscompiles it on wasm).
                 //
                 // The POINTER side is deliberately NOT re-proved by an assignment.
                 // A local's element representation is fixed by its DECLARATION, not

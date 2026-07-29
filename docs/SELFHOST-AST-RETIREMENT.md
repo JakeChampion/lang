@@ -279,27 +279,58 @@ side from the assigned value. Two limits are deliberate:
   see the next section. Crediting it routed that shape onto the IR path and it
   trapped (measured); it stays unproven.
 
-### Open: rebinding a LOCAL between the two `fn[]` representations miscompiles
+### Rebinding an `fn[]` LOCAL: one direction fixed, the cross-representation ones open
 
-Probed 2026-07-29 (wasm IR path, no struct field involved):
+Probed 2026-07-29 on the x86-64 IR path (no struct field involved; the wasm IR
+path traps where x86-64 SIGSEGVs):
 
-| program | interp | self-host wasm IR |
+| program | interp | before | after |
+|---|---|---|---|
+| `var a = [seven]; a = [nine]; a[0]()` | 9 | **SIGSEGV** | 9 |
+| `var a = [() => n]; a = [() => m]; a[0]()` | 6 | 6 | 6 |
+| `var a = [() => n]; a = [seven]; a[0]()` | 7 | **SIGSEGV** | SIGSEGV |
+| `var a = [seven]; a = [() => n]; a[0]()` | 5 | **SIGSEGV** | SIGSEGV |
+
+Three of the four directions were broken, for two different reasons.
+
+**Fixed: the pointer-to-pointer rebind.** A bare fn NAME is only lowered to a fn
+POINTER (`const_func`) at the sites that know the slot's `is_fnarr` flag — the
+declaration and `.append`. The whole-literal reassignment is the third
+construction site for the same array and had no such handling, so its elements
+fell through to the generic expression path, which const-CALLS a 0-arg fn name
+and stores the RESULT. The buffer then held integers where code addresses belong
+and the plain `call_indirect` jumped to 9. `lower_stmt_assign` now emits
+`const_func` per element, mirroring the other two sites. The fix is
+representation-PRESERVING — the slot is already `is_fnarr` and stays so — which
+is why it is also correct with the rebind inside a branch or a loop body: the
+lowering never has to decide whether the assignment dominates the reads.
+
+**Still open: a rebind that CHANGES the representation.** The slot metadata
+(`mark_closurearr` / `mark_fnarr`) is recorded where the local is DECLARED and
+the read dispatches on it, while the assignment stores the new literal in its own
+natural representation. So after a cross-representation rebind the slot says one
+thing and the buffer holds the other.
+
+Re-marking the slot at the assignment was implemented and **reverted**: it fixes
+the straight-line rebind but is flow-INsensitive, and measured on a branch that
+does not run it turns two currently-correct programs into SIGSEGVs —
+
+| program | interp | with re-marking |
 |---|---|---|
-| `var a: (() => i32)[] = [() => n]; a = [seven]; return a[0]();` | 7 | **trap (134)** |
-| `var a: (() => i32)[] = [seven]; a = [() => n]; return a[0]();` | 5 | **trap (134)** |
+| `var a = [seven]; if (n > 100) { a = [() => n]; } a[0]()` | 7 | **SIGSEGV** (was 7) |
+| `var a = [() => n]; if (n > 100) { a = [seven]; } a[0]()` | 5 | **SIGSEGV** (was 5) |
 
-Both directions lower on the IR path and both trap. The local's slot metadata
-(`mark_closurearr` / `mark_fnarr`) is recorded where the local is DECLARED, and
-the read dispatches on it; the assignment stores the new literal in its own
-natural representation without reconciling the two. So after a rebind the slot
-says one thing and the buffer holds the other.
+Those two work today only because the untaken branch's mis-lowered store never
+runs. Closing this properly needs either dominance information at the lowering
+site or a uniform `fn[]` representation — the same two options #5787 lists for
+the struct-field side, which is not a coincidence: it is the same ambiguity one
+level out.
 
-This is why #5790's assignment re-proof credits the closure side only: the
-struct-field marker describes the buffer, and for the pointer direction the
-buffer's contents cannot be inferred from the assigned literal while the local
-itself is still miscompiled. Fixing the local rebind — either by re-marking the
-slot at the assignment or by rejecting a representation-changing rebind — is
-what would let the pointer side be re-proved too.
+This is also why #5790's assignment re-proof credits the closure side only. The
+symmetric version was implemented and measured: with the pointer side re-proved,
+`var a = [() => n]; a = [seven]; R { hs: a }` returns the correct 7 — but only
+because the local re-marking was in the tree at the time. Without it the field
+would be credited `FNPTR` over a buffer of boxes.
 
 **The negation this justifies is still load-bearing, and the shapes it cannot
 prove still MISCOMPILE.** An earlier revision of this paragraph claimed they
