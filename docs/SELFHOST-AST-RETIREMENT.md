@@ -1752,10 +1752,53 @@ effect needs `parse_primary`'s scale, so the next attempt should bisect WITHIN
 the function (drop-index ranges rather than function-name buckets) instead of
 trying to write the small program from the outside.
 
+**Narrowed again: the order of exactly TWO drops.** Bisecting WITHIN
+`parse_primary` — reverse only the `[lo,hi)` slice of its 58-entry sweep, keep
+the rest forward, then binary-search each edge — converges in twelve builds:
+
+    [0,58) FAILS -> [29,58) FAILS -> [43,58) passes -> [36,58) FAILS
+    -> [38,58) FAILS -> max LO = 38; then [38,48) -> [38,43) -> [38,40) FAILS,
+    [38,39) passes  =>  MINIMAL FAILING WINDOW = [38,40)
+
+Two adjacent drops, and they are the predicted pair:
+
+    [38] __destruct_1751_17  eligible=true   (Expr, Par)  <- hidden tuple, deep walk
+    [39] inner_expr          eligible=false  Expr         <- its component, plain dec
+
+Swapping ONLY those two miscompiles the compiler. Everything else in the sweep,
+and every other function, tolerates reversal. The source site is
+`parser.fern:1751`:
+
+    var (inner_expr, inner_p) = parse_expr(p);
+    ...
+    elems = elems.append(inner_expr);
+
+which is what ties the two causes together: `append(inner_expr)` is a
+direct-Ident source at an INC-ing sink, so the **escape taint** is what makes
+the component ineligible, and that ineligibility is what makes the **drop
+order** matter. They are not two independent bugs.
+
+**A 15-line repro of the leak, with attribution** —
+`examples/probes/destructure_taint_leak.fern`. It carries the identical
+eligibility signature (`__destruct` eligible tuple at [0], tainted component at
+[1]) and leaks 1500 of 3500 allocations (48000 bytes live) while exiting 4, the
+same as the interpreter. Attribution is exact: rewriting the sink as
+`elems.append(E{ v: inner_expr.v })` — same work, no direct Ident at the sink —
+frees 4000/4000. That is a **fifth** leak shape for the table above, and the
+first with a one-line proof of its own cause.
+
+**But the eligibility signature is NOT sufficient for the miscompile.**
+Reversing the probe's `[0,2)` — the exact analogue of the failing window —
+changes nothing (3500/2000, exit 4 either way). So the ordering sensitivity
+needs something `parse_primary` has and a 15-line function does not; the
+signature reproduces the leak, not the crash. Six small-program extractions of
+the ordering effect have now failed.
+
 **What is still unknown:** what the escape taint protects BEYOND the exit sweep,
-and why `parse_primary` specifically depends on release order. The remaining
-suspects, in order, are the eligible-tuple/ineligible-component pairs above and
-the six name-shared slots.
+and what `parse_primary` supplies beyond the two-drop signature — the ~25 return
+sites that each re-emit the full sweep, and the six name-shared slots, are the
+remaining suspects. A future attempt has a two-line target now, not a
+5000-line one.
 
 **Method note for the next attempt: `internal/e2e` is not the gate for an RC
 change — `internal/e2eselfhost` is.** Compiling the whole self-host compiler is
