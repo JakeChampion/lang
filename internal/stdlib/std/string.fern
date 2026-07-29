@@ -437,8 +437,8 @@ function __case_separator(s: string, sep_byte: i32): string {
     var total: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i] as i32;
-        if ((b as u8).is_ascii_upper() && i > 0) { total = total + 2; }
+        var b: u8 = s[i];
+        if (b.is_ascii_upper() && i > 0) { total = total + 2; }
         else { total = total + 1; }
         i = i + 1;
     }
@@ -446,15 +446,15 @@ function __case_separator(s: string, sep_byte: i32): string {
     var pos: i32 = 0;
     i = 0;
     while (i < n) {
-        var b: i32 = s[i] as i32;
-        if ((b as u8).is_ascii_upper() && i > 0) {
+        var b: u8 = s[i];
+        if (b.is_ascii_upper() && i > 0) {
             buf = buf.with(pos, sep_byte as u8);
             pos = pos + 1;
         }
         if (b == 32) {
             buf = buf.with(pos, sep_byte as u8);
         } else {
-            buf = buf.with(pos, (b as u8).to_ascii_lower() as u8);
+            buf = buf.with(pos, b.to_ascii_lower());
         }
         pos = pos + 1;
         i = i + 1;
@@ -495,7 +495,7 @@ function __case_join(s: string, upper_first: boolean): string {
     var total: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i] as i32;
+        var b: u8 = s[i];
         if (b != 95 && b != 45 && b != 32) { total = total + 1; }
         i = i + 1;
     }
@@ -505,21 +505,21 @@ function __case_join(s: string, upper_first: boolean): string {
     var emitted_any: boolean = false;    // has any non-separator byte been written
     i = 0;
     while (i < n) {
-        var b: i32 = s[i] as i32;
+        var b: u8 = s[i];
         if (b == 95 || b == 45 || b == 32) {
             at_word_start = true;
             i = i + 1;
         } else {
-            var out_b: i32 = (b as u8).to_ascii_lower() as i32;
+            var out_b: u8 = b.to_ascii_lower();
             if (at_word_start) {
                 if (!emitted_any) {
                     // First word's initial: PascalCase upper, camelCase lower.
-                    if (upper_first) { out_b = (b as u8).to_ascii_upper() as i32; }
+                    if (upper_first) { out_b = b.to_ascii_upper(); }
                 } else {
-                    out_b = (b as u8).to_ascii_upper() as i32;
+                    out_b = b.to_ascii_upper();
                 }
             }
-            buf = buf.with(pos, out_b as u8);
+            buf = buf.with(pos, out_b);
             pos = pos + 1;
             at_word_start = false;
             emitted_any = true;
@@ -570,8 +570,8 @@ pub function (s: string) slugify(): string {
 pub function (s: string) is_valid_identifier(): boolean {
     var n: i32 = s.len();
     if (n == 0) { return false; }
-    var first: i32 = s[0] as i32;
-    if (!(first as u8).is_ascii_alpha() && first != 95) { return false; }
+    var first: u8 = s[0];
+    if (!first.is_ascii_alpha() && first != 95) { return false; }
     var i: i32 = 1;
     while (i < n) {
         if (!s[i].is_ascii_alnum() && s[i] != 95) { return false; }
@@ -603,9 +603,9 @@ pub function (s: string) is_ipv4(): boolean {
         var v: i32 = 0;
         var j: i32 = 0;
         while (j < plen) {
-            var b: i32 = p[j] as i32;
-            if (!(b as u8).is_ascii_digit()) { return false; }
-            v = v * 10 + (b - 48);
+            var b: u8 = p[j];
+            if (!b.is_ascii_digit()) { return false; }
+            v = v * 10 + ((b as i32) - 48);
             j = j + 1;
         }
         if (v < 0 || v > 255) { return false; }
@@ -1015,8 +1015,8 @@ pub function (s: string) to_acronym(): string {
     while (i < n) {
         var t: string = toks[i];
         if (t.len() > 0) {
-            var b: i32 = t[0] as i32;
-            out = out + ((b as u8).to_ascii_upper()).to_ascii_string();
+            var b: u8 = t[0];
+            out = out + b.to_ascii_upper().to_ascii_string();
         }
         i = i + 1;
     }
@@ -1037,11 +1037,11 @@ pub function (s: string) to_ascii_title_case(): string {
     var prev_space: boolean = true;
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i] as i32;
+        var b: u8 = s[i];
         if (prev_space) {
-            buf = buf.with(i, (b as u8).to_ascii_upper() as u8);
+            buf = buf.with(i, b.to_ascii_upper());
         } else {
-            buf = buf.with(i, b as u8);
+            buf = buf.with(i, b);
         }
         prev_space = (b == 32);
         i = i + 1;

@@ -5818,12 +5818,14 @@ function dup_name_before(names: string[], idx: i32): boolean {
 // port resolves coarsely). The base name is taken modulo `[...]`.
 function receiver_type_ok(rt: string, mod: parser.Module): boolean {
     if (rt.len() == 0) { return true; }
-    // `char` belongs here for the same reason the integers do: it is a
-    // built-in the native checker accepts as a receiver. std/unicode
-    // declares seven `char` methods (#5629), so leaving it out made EVERY
-    // program that transitively imports std/unicode — which is every
-    // program importing std/string — draw a spurious E021 per method.
-    if (rt == "i32" || rt == "i64" || rt == "u32" || rt == "u64" || rt == "bool" || rt == "boolean" || rt == "string" || rt == "f64" || rt == "f32" || rt == "float" || rt == "char") { return true; }
+    // Every name native's methodTypeName accepts belongs here, or the
+    // width is a spurious E021 on every method declared with it — and,
+    // because the receiver never registers, an E043 at every call site
+    // too. `char` was added when std/unicode declared seven `char`
+    // methods; `u8` when std/i32's 21 ascii classifiers moved onto the
+    // byte type (both #5629). That is the same bug twice, so the whole
+    // integer family is listed now rather than one width at a time.
+    if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "bool" || rt == "boolean" || rt == "string" || rt == "f64" || rt == "f32" || rt == "float" || rt == "char") { return true; }
     var bi: i32 = 0;
     while (bi < rt.len()) { if (rt[bi] == 91) { return true; } bi = bi + 1; }   // '[' → generic/Map/array
     if (rt.len() >= 4 && rt[0:4] == "dyn ") { return true; }
