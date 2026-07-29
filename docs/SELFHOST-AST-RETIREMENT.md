@@ -588,7 +588,7 @@ there corresponds to the move-on-construction behaviour that is leak-free. The
 order of work is: fix the native move-on-construction dominance gap first, then
 re-ask what those 6 rows should assert.
 
-##### Fixed for the array-into-tuple shape; four sibling shapes remain
+##### Fixed where the construction is the source's last use; two causes remain
 
 `markLoopBodyConstructionMoves` (#5879) extends move-on-construction into loop
 bodies under three guards the top-level walk does not need: the ident must name
@@ -607,25 +607,51 @@ and over-release the shared buffer. That shape is now a fixture in
 `TestX86_64LeakCheckLoopConstructionMove` precisely so the shortcut cannot be
 reintroduced silently.
 
-Four of the eight measured shapes still leak, and they are **not** the same gap
-one level over — the move analysis was verified to fire (or not) for each:
+**Correction — the per-shape table that stood here was wrong.** It claimed the
+Option rows leak because `markConstructionMoves` "has no `*ast.Call` case, so an
+enum-variant construction is never a move site". There **is** an `*ast.Call`
+case (`rc_analysis.go`, the Slice-1b variant-constructor arm, gated on
+`lookupVariant` + `enumRcPayloadsEligible`), and after #5879 the move does fire
+for `Some(xs)`: `movedLocals: xs`, `moveSites` set. The original table was read
+off the eight-shape sweep, where the *container type* happened to correlate with
+the real discriminator; it does not.
 
-| shape | move fires? | why it still leaks |
+The real discriminator is **whether the construction is the source's last use**,
+and it cuts across container kinds. A controlled pair at 1 000 iterations —
+identical but for what the loop body reads afterwards:
+
+| shape | reads after | result |
 |---|---|---|
-| array into Option | **no** | `markConstructionMoves` has no `*ast.Call` case, so an enum-variant construction (`Some(xs)` / `Ok(xs)`) is never a move site |
-| string into Option | **no** | same, and strings are excluded from the eligible set by design (two-word retain/release diverges per backend) |
-| tuple into array | yes | the move is marked, but the container's drop does not release a tuple-valued element |
-| tuple into tuple | yes | same |
+| `var o = Some(xs);` | `1` | allocs=2000 frees=2000 live_bytes=0 |
+| `var o = Some(xs);` | `xs[1]` | allocs=2000 frees=1001 **live_bytes=31968** |
+| `var o = (xs, 99);` | `o.0[2]` | allocs=2000 frees=2000 live_bytes=0 |
+| `var o = (xs, 99);` | `xs[1]` | allocs=2000 frees=1001 **live_bytes=31968** |
 
-The last two are the interesting pair: `movedLocals` and `moveSites` are both
-set, and the leak is unchanged before and after the fix, which means the inc was
-never being emitted for a tuple-valued element in the first place — so skipping
-it is a no-op and the missing half is the container-side release. Closing those
-is a drop-side change, not a move-side one. The Option rows are a move-side gap
-and the more valuable of the two (Option payloads are everywhere), but adding a
-`*ast.Call` case needs the same verification this slice got: that the variant
-box's drop actually releases the payload, or the move converts a leak into a
-use-after-free.
+Option and tuple behave identically. Reading the source *after* the construction
+makes it genuinely aliased, so the inc is correct and the move is not available
+— and nothing releases the source's own reference per iteration. That is the
+same asymmetry #5879 fixed, in the one configuration where a move cannot be the
+answer.
+
+So there are exactly **two** remaining causes, not four shapes:
+
+**A. Source read after the construction.** The inc is right; the missing half is
+a per-iteration release of the alias-inc'd source. This is precisely where
+`emitVarReinitDropOld` bails on `!freeEligible`, and precisely why the shortcut
+above is unsafe — the fix has to distinguish an alias-inc'd source from an
+alias-WITHOUT-inc one, which is what the two shapes look like from the drop
+site.
+
+**B. A tuple-VALUED element.** `var t = (3, 4); var c = [t];` leaks
+allocs=2000 frees=1000 live_bytes=16000 **whether or not** `t` is at its last
+use — last-use is irrelevant because neither path releases it. The container's
+drop simply does not release a tuple-valued element. Drop-side, independent of
+the move analysis.
+
+Both were found by probing the *mechanism* rather than re-reading the sweep: the
+first table inferred cause from which tests were red, which is how the container
+type got mistaken for the discriminator. Dumping `movedLocals` / `moveSites` and
+then building a controlled pair that varies one line settled it in two runs.
 
 Two caveats on reading this. It is **one shard of eight**, so it is a sample, not
 the whole suite. And a test failing here means its program bails *somewhere* —

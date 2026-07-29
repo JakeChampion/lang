@@ -1840,101 +1840,6 @@ func (b *builder) markConstructionMoves(val ast.Expr, order identOrder, moved ma
 // A receiver at its last use, a non-ident receiver (a fresh temp), or a
 // reassign-to-self is a MOVE — left to the in-place rc==1 fast path, so the
 // canonical allocation-free idiom is unaffected (#2832).
-// markLoopBodyConstructionMoves extends move-on-construction into loop bodies
-// (#5879). `markConstructionMoves`'s own dominance guard is "top-level
-// statement, no preceding return", so before this a container built inside a
-// loop from a bare ident at its last use kept the construction alias-inc while
-// nothing released the source's reference per iteration:
-//
-//	while (k < n) {
-//	    var xs: i32[] = [1, 2, 3];
-//	    var t = (xs, 99);        // xs inc'd here, never dec'd per iteration
-//	    …
-//	}
-//
-// The function-exit sweep emits the flat dec the loop body is missing, so only
-// the FINAL iteration was reclaimed and the leak was (n-1) elements, linear and
-// unbounded. Replacing the same element with a fresh literal (`([1,2,3], 99)`)
-// was already clean, because a literal names no local and so takes no inc.
-//
-// The move is sound here for exactly the reason it is at top level — the
-// source's single reference passes to the container, whose drop releases it
-// once — but the per-iteration lifetime needs guards the top-level walk does
-// not:
-//
-//   - The ident must name a var DECLARED EARLIER IN THIS BODY. A var declared
-//     OUTSIDE the loop lives across iterations: moving it would let the first
-//     iteration's container drop free a buffer the second iteration still
-//     reads (a use-after-free, not a leak).
-//   - The body must contain no `return` / `break` / `continue`. Those make the
-//     construction conditional, so the exit sweep suppression `moved` implies
-//     could outlive a path on which no construction ran.
-//   - The name must be declared exactly once in the function (localNameUnique).
-//     `moved` is name-keyed, so a shadowed name would suppress the exit-sweep
-//     dec of an unrelated same-name local.
-//
-// Nested loops are covered: ast.Walk visits every loop, and each body is
-// judged against the vars declared in THAT body.
-func (b *builder) markLoopBodyConstructionMoves(order identOrder, moved map[string]bool) {
-	ast.Walk(b.fn.Body, func(n ast.Node) bool {
-		var body ast.Stmt
-		switch x := n.(type) {
-		case *ast.While:
-			body = x.Body
-		case *ast.Loop:
-			body = x.Body
-		case *ast.For:
-			body = x.Body
-		case *ast.ForEach:
-			body = x.Body
-		default:
-			return true
-		}
-		blk, ok := body.(*ast.Block)
-		if !ok || blockHasEarlyExit(blk) {
-			return true
-		}
-		// Vars declared so far in THIS body — the only names a construction
-		// here may move, and only once their declaration precedes it.
-		declared := map[string]bool{}
-		allow := func(name string) bool {
-			return declared[name] && b.localNameUnique(name)
-		}
-		for _, st := range blk.Stmts {
-			switch s := st.(type) {
-			case *ast.Var:
-				if s.Init != nil {
-					b.markConstructionMoves(s.Init, order, moved, allow)
-				}
-				declared[s.Name] = true
-			case *ast.ExprStmt:
-				if a, ok := s.Expr.(*ast.Assign); ok {
-					b.markConstructionMoves(a.Value, order, moved, allow)
-				}
-			}
-		}
-		return true
-	})
-}
-
-// blockHasEarlyExit reports whether `blk` contains a `return`, `break` or
-// `continue` anywhere within it, including nested statements. Used as the
-// loop-body dominance guard: with any of them present a construction later in
-// the body is conditional, so its move cannot be assumed to happen on every
-// iteration.
-func blockHasEarlyExit(blk *ast.Block) bool {
-	found := false
-	ast.Walk(blk, func(n ast.Node) bool {
-		switch n.(type) {
-		case *ast.Return, *ast.Break, *ast.Continue:
-			found = true
-			return false
-		}
-		return !found
-	})
-	return found
-}
-
 func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 	incs := map[*ast.Call]bool{}
 	if b.fn.Body == nil {
@@ -2045,6 +1950,102 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 //     — and any path that DOESN'T reach C — null-guards to a no-op / drops D
 //     normally. A mispaired or shared D degrades to dec-then-fresh-alloc
 //     (never unsound, never a leak — the same invariant as __alloc_reuse).
+//
+// markLoopBodyConstructionMoves extends move-on-construction into loop bodies
+// (#5879). `markConstructionMoves`'s own dominance guard is "top-level
+// statement, no preceding return", so before this a container built inside a
+// loop from a bare ident at its last use kept the construction alias-inc while
+// nothing released the source's reference per iteration:
+//
+//	while (k < n) {
+//	    var xs: i32[] = [1, 2, 3];
+//	    var t = (xs, 99);        // xs inc'd here, never dec'd per iteration
+//	    …
+//	}
+//
+// The function-exit sweep emits the flat dec the loop body is missing, so only
+// the FINAL iteration was reclaimed and the leak was (n-1) elements, linear and
+// unbounded. Replacing the same element with a fresh literal (`([1,2,3], 99)`)
+// was already clean, because a literal names no local and so takes no inc.
+//
+// The move is sound here for exactly the reason it is at top level — the
+// source's single reference passes to the container, whose drop releases it
+// once — but the per-iteration lifetime needs guards the top-level walk does
+// not:
+//
+//   - The ident must name a var DECLARED EARLIER IN THIS BODY. A var declared
+//     OUTSIDE the loop lives across iterations: moving it would let the first
+//     iteration's container drop free a buffer the second iteration still
+//     reads (a use-after-free, not a leak).
+//   - The body must contain no `return` / `break` / `continue`. Those make the
+//     construction conditional, so the exit sweep suppression `moved` implies
+//     could outlive a path on which no construction ran.
+//   - The name must be declared exactly once in the function (localNameUnique).
+//     `moved` is name-keyed, so a shadowed name would suppress the exit-sweep
+//     dec of an unrelated same-name local.
+//
+// Nested loops are covered: ast.Walk visits every loop, and each body is
+// judged against the vars declared in THAT body.
+func (b *builder) markLoopBodyConstructionMoves(order identOrder, moved map[string]bool) {
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		var body ast.Stmt
+		switch x := n.(type) {
+		case *ast.While:
+			body = x.Body
+		case *ast.Loop:
+			body = x.Body
+		case *ast.For:
+			body = x.Body
+		case *ast.ForEach:
+			body = x.Body
+		default:
+			return true
+		}
+		blk, ok := body.(*ast.Block)
+		if !ok || blockHasEarlyExit(blk) {
+			return true
+		}
+		// Vars declared so far in THIS body — the only names a construction
+		// here may move, and only once their declaration precedes it.
+		declared := map[string]bool{}
+		allow := func(name string) bool {
+			return declared[name] && b.localNameUnique(name)
+		}
+		for _, st := range blk.Stmts {
+			switch s := st.(type) {
+			case *ast.Var:
+				if s.Init != nil {
+					b.markConstructionMoves(s.Init, order, moved, allow)
+				}
+				declared[s.Name] = true
+			case *ast.ExprStmt:
+				if a, ok := s.Expr.(*ast.Assign); ok {
+					b.markConstructionMoves(a.Value, order, moved, allow)
+				}
+			}
+		}
+		return true
+	})
+}
+
+// blockHasEarlyExit reports whether `blk` contains a `return`, `break` or
+// `continue` anywhere within it, including nested statements. Used as the
+// loop-body dominance guard: with any of them present a construction later in
+// the body is conditional, so its move cannot be assumed to happen on every
+// iteration.
+func blockHasEarlyExit(blk *ast.Block) bool {
+	found := false
+	ast.Walk(blk, func(n ast.Node) bool {
+		switch n.(type) {
+		case *ast.Return, *ast.Break, *ast.Continue:
+			found = true
+			return false
+		}
+		return !found
+	})
+	return found
+}
+
 func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 	sources := map[ast.Expr]string{}
 	consumed := map[string]bool{}
