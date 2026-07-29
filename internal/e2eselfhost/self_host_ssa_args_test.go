@@ -57,7 +57,7 @@ func TestSelfHostSSAArgs(t *testing.T) {
 		{"argc-three-extras", "function main(): i32 { return args().len(); }", []string{"a", "b", "c"}, 4},
 		// args()[1] is the first user argument; verify its string content
 		// (length and bytes) materialised correctly: len*10 + first byte.
-		{"arg1-content", "function main(): i32 { var a = args(); if (a.len() < 2) { return 99; } var s = a[1]; return s.len() * 10 + s[0]; }", []string{"hello"}, 154}, // 5*10 + 'h'(104)
+		{"arg1-content", "function main(): i32 { var a = args(); if (a.len() < 2) { return 99; } var s = a[1]; return s.len() * 10 + (s[0] as i32); }", []string{"hello"}, 154}, // 5*10 + 'h'(104)
 		// Iterate the args, summing their lengths (skips argv[0] via a guard on
 		// index): exercises args()[i] across the whole vector.
 		{"sum-extra-lens", "function main(): i32 { var a = args(); var s = 0; var i = 1; while (i < a.len()) { s = s + a[i].len(); i = i + 1; } return s; }", []string{"ab", "cde", "f"}, 6},

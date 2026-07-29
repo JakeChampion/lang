@@ -196,9 +196,9 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"eprint", `function main(): i32 { eprint("err"); return 7; }`},
 		// String indexing over real irlower output (slice 10): a single byte
 		// read, a loop summing bytes, and indexing a string literal.
-		{"strindex", `function main(): i32 { var s: string = "ABC"; return s[1]; }`},
-		{"strsum", `function main(): i32 { var s: string = "AB"; var sum = 0; var i = 0; while (i < s.len()) { sum = sum + s[i]; i = i + 1; } return sum; }`},
-		{"strlit0", `function main(): i32 { return ("XY")[0]; }`},
+		{"strindex", `function main(): i32 { var s: string = "ABC"; return s[1] as i32; }`},
+		{"strsum", `function main(): i32 { var s: string = "AB"; var sum = 0; var i = 0; while (i < s.len()) { sum = sum + (s[i] as i32); i = i + 1; } return sum; }`},
+		{"strlit0", `function main(): i32 { return ("XY")[0] as i32; }`},
 		// Option / Result over real irlower output (slice 11): a Some payload
 		// bind, a None arm, a function returning Option matched at the call site,
 		// and a Result (Ok/Err) match.

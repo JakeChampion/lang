@@ -181,9 +181,9 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"new-array-dynamic", "function main(): i32 { var n = 5; var b = __new_array(n); var i = 0; while (i < n) { b[i] = i * i; i = i + 1; } var s = 0; var j = 0; while (j < b.len()) { s = s + b[j]; j = j + 1; } return s; }", 30},
 		// Strings: a byte sequence lowered to the same length-prefixed array.
 		{"str-len", "function main(): i32 { var s = \"hello\"; return s.len(); }", 5},
-		{"str-index", "function main(): i32 { var s = \"ABC\"; return s[0]; }", 65},
-		{"str-index-2", "function main(): i32 { var s = \"hi\"; return s[1]; }", 105},
-		{"str-byte-sum", "function main(): i32 { var s = \"AAA\"; var i = 0; var t = 0; while (i < s.len()) { t = t + s[i]; i = i + 1; } return t; }", 195},
+		{"str-index", "function main(): i32 { var s = \"ABC\"; return s[0] as i32; }", 65},
+		{"str-index-2", "function main(): i32 { var s = \"hi\"; return s[1] as i32; }", 105},
+		{"str-byte-sum", "function main(): i32 { var s = \"AAA\"; var i = 0; var t = 0; while (i < s.len()) { t = t + (s[i] as i32); i = i + 1; } return t; }", 195},
 		{"str-empty", "function main(): i32 { var s = \"\"; return s.len(); }", 0},
 		// Structs: heap-allocated, fields at declaration-order word offsets.
 		{"struct-field", "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 7, y: 9 }; return p.x; }", 7},
@@ -214,7 +214,7 @@ func TestSelfHostSSARoundTrip(t *testing.T) {
 		{"streq-after-concat", "function main(): i32 { var a = \"foo\"; var b = \"bar\"; if (a + b == \"foobar\") { return 5; } return 0; }", 5},
 		// String concatenation (`+` on strings → a new heap string).
 		{"concat-len", "function main(): i32 { var a = \"foo\"; var b = \"bar\"; var c = a + b; return c.len(); }", 6},
-		{"concat-index", "function main(): i32 { var a = \"X\"; var b = \"YZ\"; var c = a + b; return c[2]; }", 90},
+		{"concat-index", "function main(): i32 { var a = \"X\"; var b = \"YZ\"; var c = a + b; return c[2] as i32; }", 90},
 		{"concat-chained", "function main(): i32 { var s = \"a\" + \"bc\" + \"def\"; return s.len(); }", 6},
 		// (Struct spread `T { ...base, f: v }` builds through SSA and runs
 		// correctly on all backends — see the TestSelfHostSSAEmit* suites; it's

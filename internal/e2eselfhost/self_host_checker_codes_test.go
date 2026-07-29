@@ -634,7 +634,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"array-elem-homogeneous-string-ok", "function main(): i32 { var a = [\"p\", \"q\"]; return 0; }\n", nil},
 		// E034 (index variant): an array / string index must be an i32.
 		{"index-string", "function main(): i32 { var a = [1, 2, 3]; return a[\"x\"]; }\n", []string{"E034"}},
-		{"index-string-on-string", "function main(): i32 { var s = \"abc\"; return s[\"x\"]; }\n", []string{"E034"}},
+		{"index-string-on-string", "function main(): i32 { var s = \"abc\"; return s[\"x\"] as i32; }\n", []string{"E034"}},
 		{"index-bool", "function main(): i32 { var a = [1, 2, 3]; var b = true; return a[b]; }\n", []string{"E034"}},
 		{"index-i32-ok", "function main(): i32 { var a = [1, 2, 3]; var i = 1; return a[i]; }\n", nil},
 		// E034 / E037 (non-array/string source): indexing or slicing a value
@@ -642,7 +642,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"index-non-array", "function main(): i32 { var x = 5; return x[0]; }\n", []string{"E034"}},
 		{"index-struct", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; return p[0]; }\n", []string{"E034"}},
 		{"slice-non-array", "function main(): i32 { var x = 5; var y = x[1:2]; return 0; }\n", []string{"E037"}},
-		{"index-string-source-ok", "function main(): i32 { var s = \"ab\"; return s[0]; }\n", nil},
+		{"index-string-source-ok", "function main(): i32 { var s = \"ab\"; return s[0] as i32; }\n", nil},
 		{"slice-array-source-ok", "function main(): i32 { var a = [1, 2, 3, 4]; var b = a[1:3]; return b[0]; }\n", nil},
 		{"slice-string-source-ok", "function main(): i32 { var s = \"abcd\"; var t = s[1:3]; return t.len(); }\n", nil},
 		{"match-variant-on-i32", "enum E { A, B }\nfunction main(): i32 { var n: i32 = 5; match (n) { A => { return 1; }, _ => { return 0; } } }\n", []string{"E035"}},

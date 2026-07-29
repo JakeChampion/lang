@@ -150,12 +150,12 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		// params. The IR path reuses asm_arm64's 16-byte `[data@0,len@8]` box +
 		// __fern_str_concat/_eq helpers; exit codes must match the AST path.
 		{"str-len", `function main(): i32 { var s = "hello"; return s.len(); }`},
-		{"str-index-local", `function main(): i32 { var s = "hello"; return s[0]; }`},
-		{"str-index-loop", `function main(): i32 { var s = "abc"; var sum = 0; var i = 0; while (i < 3) { sum = sum + s[i]; i = i + 1; } return sum % 200; }`},
-		{"str-index-param", `function first(s: string): i32 { return s[0]; } function main(): i32 { return first("Z"); }`},
+		{"str-index-local", `function main(): i32 { var s = "hello"; return s[0] as i32; }`},
+		{"str-index-loop", `function main(): i32 { var s = "abc"; var sum = 0; var i = 0; while (i < 3) { sum = sum + (s[i] as i32); i = i + 1; } return sum % 200; }`},
+		{"str-index-param", `function first(s: string): i32 { return s[0] as i32; } function main(): i32 { return first("Z"); }`},
 		{"str-slice-len", `function main(): i32 { var s = "hello"; var t = s[1:4]; return t.len(); }`},
-		{"str-slice-idx0", `function main(): i32 { var s = "hello"; var t = s[1:4]; return t[0]; }`},
-		{"str-slice-chain", `function main(): i32 { return "hello"[1:4][2]; }`},
+		{"str-slice-idx0", `function main(): i32 { var s = "hello"; var t = s[1:4]; return t[0] as i32; }`},
+		{"str-slice-chain", `function main(): i32 { return "hello"[1:4][2] as i32; }`},
 		{"str-literal-len", `function main(): i32 { return "world!".len(); }`},
 		{"str-empty-len", `function main(): i32 { var s = ""; return s.len(); }`},
 		{"str-concat-len", `function main(): i32 { var a = "ab"; var b = "cde"; var c = a + b; return c.len(); }`},

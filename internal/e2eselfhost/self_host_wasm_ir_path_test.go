@@ -167,12 +167,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// layout shifts off the empty-table base); concat/eq lower to wasm.fern's
 		// $__fern_strcat / $__fern_streq. Exit codes must match the AST path.
 		{"str-len", `function main(): i32 { var s = "hello"; return s.len(); }`},
-		{"str-index-local", `function main(): i32 { var s = "hello"; return s[0]; }`},
-		{"str-index-loop", `function main(): i32 { var s = "abc"; var sum = 0; var i = 0; while (i < 3) { sum = sum + s[i]; i = i + 1; } return sum % 200; }`},
-		{"str-index-param", `function first(s: string): i32 { return s[0]; } function main(): i32 { return first("Z"); }`},
+		{"str-index-local", `function main(): i32 { var s = "hello"; return s[0] as i32; }`},
+		{"str-index-loop", `function main(): i32 { var s = "abc"; var sum = 0; var i = 0; while (i < 3) { sum = sum + (s[i] as i32); i = i + 1; } return sum % 200; }`},
+		{"str-index-param", `function first(s: string): i32 { return s[0] as i32; } function main(): i32 { return first("Z"); }`},
 		{"str-slice-len", `function main(): i32 { var s = "hello"; var t = s[1:4]; return t.len(); }`},
-		{"str-slice-idx0", `function main(): i32 { var s = "hello"; var t = s[1:4]; return t[0]; }`},
-		{"str-slice-chain", `function main(): i32 { return "hello"[1:4][2]; }`},
+		{"str-slice-idx0", `function main(): i32 { var s = "hello"; var t = s[1:4]; return t[0] as i32; }`},
+		{"str-slice-chain", `function main(): i32 { return "hello"[1:4][2] as i32; }`},
 		{"str-literal-len", `function main(): i32 { return "world!".len(); }`},
 		{"str-empty-len", `function main(): i32 { var s = ""; return s.len(); }`},
 		{"str-concat-len", `function main(): i32 { var a = "ab"; var b = "cde"; var c = a + b; return c.len(); }`},
@@ -796,12 +796,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// f-string interpolation (`f"...{expr}..."`) → desugared `+`-chain of
 		// literal parts and `(expr).to_string()`; AST and IR wasm paths must agree.
 		{"fstring-i32", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s.len(); }`},
-		{"fstring-i32-char", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s[2]; }`},
+		{"fstring-i32-char", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s[2] as i32; }`},
 		{"fstring-str", `function main(): i32 { var w = "xy"; var s = f"[{w}]"; return s.len(); }`},
-		{"fstring-expr", `function main(): i32 { var a = 10; var s = f"v={a * 2}"; return s[2]; }`},
+		{"fstring-expr", `function main(): i32 { var a = 10; var s = f"v={a * 2}"; return s[2] as i32; }`},
 		{"fstring-method", `function main(): i32 { var w = "hi"; return f"v={w.len()}".len(); }`},
 		{"fstring-multi", `function main(): i32 { var a = 1; var b = 2; return f"{a}{b}".len(); }`},
-		{"fstring-esc-brace", `function main(): i32 { var s = f"a{{b"; return s[1]; }`},
+		{"fstring-esc-brace", `function main(): i32 { var s = f"a{{b"; return s[1] as i32; }`},
 		// ASCII case transforms → fresh string (op_str_to_upper / _to_lower). The
 		// wasm IR path emits the narrow str_case_helpers ($__fern_str_upper /
 		// _lower); the AST path gets them from strcat_helpers — must agree.

@@ -107,7 +107,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		{"i64-mul-cmp", "function main(): i32 { var a: i64 = 1000000; var b: i64 = 1000000; var p: i64 = a * b; if (p > 999999999999) { return 1; } return 0; }", 1},
 		// Strings (including stdout via write()).
 		{"str-len", "function main(): i32 { var s: string = \"hello\"; return s.len(); }", 5},
-		{"str-index", "function main(): i32 { var s: string = \"abcdef\"; return s[3]; }", 100},
+		{"str-index", "function main(): i32 { var s: string = \"abcdef\"; return s[3] as i32; }", 100},
 		{"str-concat-len", "function main(): i32 { var a: string = \"foo\"; var b: string = a + \"barbaz\"; return b.len(); }", 9},
 		{"str-compare", "function main(): i32 { if (\"apple\" < \"banana\") { return 7; } return 0; }", 7},
 		{"str-write", "function main(): i32 { write(\"hello world\"); return 0; }", 0},

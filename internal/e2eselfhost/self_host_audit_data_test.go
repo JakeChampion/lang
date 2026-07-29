@@ -23,7 +23,7 @@ var auditDataCases = []struct {
 	{"string-len", `function main(): i32 { var s: string = "hello"; return s.len(); }`, 5},
 	{"string-concat", `function main(): i32 { var s: string = "ab" + "cde"; return s.len(); }`, 5},
 	{"string-eq", `function main(): i32 { if ("abc" == "abc" && "abc" != "abd") { return 5; } return 0; }`, 5},
-	{"string-index", `function main(): i32 { var s: string = "ABC"; return s[0] + s[2]; }`, 132},
+	{"string-index", `function main(): i32 { var s: string = "ABC"; return (s[0] as i32) + (s[2] as i32); }`, 132},
 	{"string-slice", `function main(): i32 { var s: string = "hello"; var t: string = s[1:4] + ""; return t.len(); }`, 3},
 	// arrays
 	{"array-literal-index", `function main(): i32 { var a: i32[] = [10, 20, 30]; return a[0] + a[2]; }`, 40},

@@ -431,12 +431,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// reuses asm.fern's 16-byte `[data@0,len@8]` box + __fern_str_concat/_eq
 		// helpers, so exit codes must match the AST path exactly.
 		{"str-len", `function main(): i32 { var s = "hello"; return s.len(); }`},
-		{"str-index-local", `function main(): i32 { var s = "hello"; return s[0]; }`},
-		{"str-index-loop", `function main(): i32 { var s = "abc"; var sum = 0; var i = 0; while (i < 3) { sum = sum + s[i]; i = i + 1; } return sum % 200; }`},
-		{"str-index-param", `function first(s: string): i32 { return s[0]; } function main(): i32 { return first("Z"); }`},
+		{"str-index-local", `function main(): i32 { var s = "hello"; return s[0] as i32; }`},
+		{"str-index-loop", `function main(): i32 { var s = "abc"; var sum = 0; var i = 0; while (i < 3) { sum = sum + (s[i] as i32); i = i + 1; } return sum % 200; }`},
+		{"str-index-param", `function first(s: string): i32 { return s[0] as i32; } function main(): i32 { return first("Z"); }`},
 		{"str-slice-len", `function main(): i32 { var s = "hello"; var t = s[1:4]; return t.len(); }`},
-		{"str-slice-idx0", `function main(): i32 { var s = "hello"; var t = s[1:4]; return t[0]; }`},
-		{"str-slice-chain", `function main(): i32 { return "hello"[1:4][2]; }`},
+		{"str-slice-idx0", `function main(): i32 { var s = "hello"; var t = s[1:4]; return t[0] as i32; }`},
+		{"str-slice-chain", `function main(): i32 { return "hello"[1:4][2] as i32; }`},
 		{"str-literal-len", `function main(): i32 { return "world!".len(); }`},
 		{"str-empty-len", `function main(): i32 { var s = ""; return s.len(); }`},
 		{"str-concat-len", `function main(): i32 { var a = "ab"; var b = "cde"; var c = a + b; return c.len(); }`},
@@ -1309,16 +1309,16 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// / expression / method-call / negation interpolants, adjacent interpolants,
 		// an interpolant-then-literal, the `{{` brace escape, and empty / plain.
 		{"fstring-i32", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s.len(); }`},
-		{"fstring-i32-char", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s[2]; }`},
+		{"fstring-i32-char", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s[2] as i32; }`},
 		{"fstring-str", `function main(): i32 { var w = "xy"; var s = f"[{w}]"; return s.len(); }`},
-		{"fstring-expr", `function main(): i32 { var a = 10; var s = f"v={a * 2}"; return s[2]; }`},
+		{"fstring-expr", `function main(): i32 { var a = 10; var s = f"v={a * 2}"; return s[2] as i32; }`},
 		{"fstring-method", `function main(): i32 { var w = "hi"; return f"v={w.len()}".len(); }`},
 		{"fstring-neg", `function main(): i32 { var a = 5; return f"v={0 - a}".len(); }`},
 		{"fstring-multi", `function main(): i32 { var a = 1; var b = 2; return f"{a}{b}".len(); }`},
 		{"fstring-interp-lit", `function main(): i32 { var n = 42; return f"{n} apples".len(); }`},
 		{"fstring-empty", `function main(): i32 { return f"".len(); }`},
 		{"fstring-plain", `function main(): i32 { return f"plain".len(); }`},
-		{"fstring-esc-brace", `function main(): i32 { var s = f"a{{b"; return s[1]; }`},
+		{"fstring-esc-brace", `function main(): i32 { var s = f"a{{b"; return s[1] as i32; }`},
 		// ASCII case transforms → fresh string (op_str_to_upper / _to_lower). The
 		// AST path emits __fern_str_to_upper/_lower (str_search runtime); the IR
 		// path emits its own emit_ir_str_case bodies — lengths/bytes must match.
@@ -1629,9 +1629,9 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// returned byte proves the interpolant text actually landed: `f"n={7}!"`
 		// → "n=7!" (s[2]='7'=55); `f"v={10*2}"` → "v=20" (s[2]='2'=50); the `{{`
 		// escape → "a{b" (s[1]='{'=123).
-		{"fstring-i32-val", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s[2]; }`, 55},
-		{"fstring-expr-val", `function main(): i32 { var a = 10; var s = f"v={a * 2}"; return s[2]; }`, 50},
-		{"fstring-esc-brace-val", `function main(): i32 { var s = f"a{{b"; return s[1]; }`, 123},
+		{"fstring-i32-val", `function main(): i32 { var n = 7; var s = f"n={n}!"; return s[2] as i32; }`, 55},
+		{"fstring-expr-val", `function main(): i32 { var a = 10; var s = f"v={a * 2}"; return s[2] as i32; }`, 50},
+		{"fstring-esc-brace-val", `function main(): i32 { var s = f"a{{b"; return s[1] as i32; }`, 123},
 		{"fstring-len-val", `function main(): i32 { var n = 42; return f"{n} apples".len(); }`, 9},
 		// boolean-element tuple returns, pinned to the absolute IR-path value (the
 		// AST==IR differential is blind to a both-paths-wrong result). The boolean
