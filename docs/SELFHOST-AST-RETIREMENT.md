@@ -507,6 +507,95 @@ Landing it needs the `is_unique` disagreement resolved first. The x86 half is
 already clean, so whoever picks this up gets 64 subtests of IR-path rc coverage
 essentially for free once wasm agrees.
 
+##### The array row is fixed; the remaining 6 are NOT the same gap
+
+The array-into-array leaf is closed (#5861): the IR array-literal lowering now
+alias-incs a bare-ident array element, so `is_unique` reports a
+container-retained array as shared on both IR backends, matching both AST
+emitters. The other 6 `*-retained` rows — array/string/tuple into a TUPLE, tuple
+into an array, string into an array/Option — were reverted with it, and they are
+**not** the same missing retain one level over. Tuple construction is explicit
+that storing the pointer with no alias-inc is deliberate: `op_tuple_make_k`
+leaves the box leak-mode and excludes the source slot from the exit sweep
+(`returned_moved_arr_slots`), citing #4598 — a use-after-free from getting
+exactly that interaction wrong. Two coherent pairings exist here, and each is
+balanced on its own terms:
+
+| pairing | construction | release | used by |
+|---|---|---|---|
+| (A) | alias-inc | container deep-drops the element | struct fields, array literals |
+| (B) | no inc (move) | container deep-drops the element | tuple elements |
+
+Adding incs across the (B) sites without moving them to (A) wholesale is how
+#4598 comes back.
+
+##### Before adopting (A) anywhere else: native's (A) LEAKS in a loop body
+
+Which pairing to converge on is not a free choice, because the AST/native answer
+the 6 rows encode — `is_unique == 0`, i.e. pairing (A) — is measurably leaky on
+the reference implementation. `FERN_LEAKCHECK=1` on x86-64 at HEAD `9e27eda5`,
+100 000 iterations of a loop body that builds a container from a bare ident:
+
+| shape | allocs | frees | live_bytes |
+|---|---|---|---|
+| array into array | 300 000 | 300 000 | **0** |
+| string into array | 100 000 | 100 000 | **0** |
+| string into tuple | 100 000 | 100 000 | **0** |
+| array into tuple | 200 000 | 100 001 | 3 199 968 |
+| array into Option | 200 000 | 100 001 | 3 199 968 |
+| tuple into array | 200 000 | 100 000 | 1 600 000 |
+| tuple into tuple | 200 000 | 100 000 | 1 600 000 |
+| string into Option | 100 000 | 0 | 3 200 000 |
+
+Linear in the iteration count — 1 000 / 10 000 / 100 000 iterations give
+31 968 / 319 968 / 3 199 968 live bytes — so it is unbounded growth, not a fixed
+overhead. Sizing the array up from 3 to 20 elements moves the per-iteration
+figure from 32 to 96 bytes, which identifies the leaked block as **the array**,
+not the container box.
+
+Three shapes isolate the cause, and only one line differs between the first two
+(`examples/probes/loop_construction_move_leak.fern` runs all three):
+
+| shape | result |
+|---|---|
+| `var xs = [1,2,3]; var t = (xs, 99);` in a loop body | allocs=6 frees=4 **live_bytes=64** |
+| `var t = ([1,2,3], 99);` in a loop body | allocs=6 frees=6 live_bytes=0 |
+| `var xs = [1,2,3]; var t = (xs, 99);` at top level | allocs=2 frees=2 live_bytes=0 |
+
+A bare ident at its last use is *supposed* to be moved into the construction —
+the inc is skipped and `__drop_tuple` releases the element, which is pairing (B)
+— but `markConstructionMoves` only walks the function's **top-level**
+statements ("The caller has already established the dominance guards (top-level
+statement, no preceding return)"). Inside a loop body the move never fires, so
+the alias-inc is emitted and nothing releases the source's own reference per
+iteration. Reading the lowered IR confirms it exactly: the loop body emits
+`__fern_rc_inc` on `xs` and `__drop_tuple_…` on the previous iteration's tuple,
+whose `__fern_arr_dec` takes the array 2 → 1 and never frees it; the function
+exit emits the flat `__fern_rc_dec` on `xs` that the loop body is missing, which
+is why only the *final* iteration is reclaimed and the leak is (n−1), not n.
+
+The existing churn tests do not catch this because they build the container in a
+called function (`tuple-array-churn-clean`'s `mk()`), and a function-scoped
+construction is reclaimed at that function's exit. The leaking shape — construct
+in the loop body itself — is untested on every backend.
+
+So the conclusion the previous section reaches ("fix the IR path — retain on a
+container store") holds for the array row that landed, but **must not be applied
+mechanically to the other 6**: for the tuple/Option rows it would import
+native's leak rather than fix a self-host gap. The IR path's `is_unique == 1`
+there corresponds to the move-on-construction behaviour that is leak-free. The
+order of work is: fix the native move-on-construction dominance gap first, then
+re-ask what those 6 rows should assert.
+
+Not attempted here, deliberately. The obvious minimal fix — have the loop-body
+re-declaration drop (`emitVarReinitDropOld`) mirror the exit sweep instead of
+bailing on `!freeEligible` — is unsafe as stated: an alias-WITHOUT-inc loop var
+(`var a1: i32[] = a0;`, measured clean at allocs=1 frees=1) would be released
+once per iteration and over-release the shared buffer. Closing this needs the
+move-on-construction dominance analysis extended into loop bodies, which is a
+native Perceus change with a self-compile byte-identity blast radius, not a
+drive-by.
+
 Two caveats on reading this. It is **one shard of eight**, so it is a sample, not
 the whole suite. And a test failing here means its program bails *somewhere* —
 not that the feature in its name is unsupported; an incidental helper can be the
