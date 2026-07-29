@@ -1113,6 +1113,8 @@ pub struct TyU64 { tag: i32 }
 
 pub struct TyI64 { tag: i32 }
 
+pub struct TyU8 { tag: i32 }
+
 pub struct TyUsize { tag: i32 }
 
 pub struct TyBool { tag: i32 }
@@ -1162,7 +1164,7 @@ pub struct TyCell { val: Ty }
 
 pub struct TyStructNamed { name: string }
 
-pub type Ty = TyI32 | TyU32 | TyU64 | TyI64 | TyUsize | TyBool
+pub type Ty = TyI32 | TyU8 | TyU32 | TyU64 | TyI64 | TyUsize | TyBool
             | TyString | TyF64 | TyStruct | TyTuple | TyUnknown |
             TyArray | TyArrayI32 | TyArrayU32 | TyArrayU64 | TyArrayI64
             | TyArrayString | TyFnAny | TyMapAny | TyOption | TyResult |
@@ -1185,6 +1187,8 @@ pub function ty_u32(): Ty { return TyU32 { tag: 0 }; }
 pub function ty_u64(): Ty { return TyU64 { tag: 0 }; }
 
 pub function ty_i64(): Ty { return TyI64 { tag: 0 }; }
+
+pub function ty_u8(): Ty { return TyU8 { tag: 0 }; }
 
 pub function ty_usize(): Ty { return TyUsize { tag: 0 }; }
 
@@ -1270,6 +1274,7 @@ pub function ty_ord(t: Ty): i32 {
         TyArrayI64(_) => { return 15; },
         TyArrayString(_) => { return 16; },
         TyFnAny(_) => { return 17; },
+        TyU8(_) => { return 27; },
         TyMapAny(_) => { return 18; },
         TyOption(_) => { return 19; },
         TyResult(_) => { return 20; },
@@ -1291,6 +1296,7 @@ pub function is_int_tag(t: Ty): boolean {
         TyU64(_) => { return true; },
         TyI64(_) => { return true; },
         TyUsize(_) => { return true; },
+        TyU8(_) => { return true; },
         _ => { return false; }
     }
     return false;
@@ -1312,6 +1318,7 @@ pub function is_unsigned_tag(t: Ty): boolean {
         TyU32(_) => { return true; },
         TyU64(_) => { return true; },
         TyUsize(_) => { return true; },
+        TyU8(_) => { return true; },
         _ => { return false; }
     }
     return false;
@@ -1625,6 +1632,7 @@ pub function ty_tag(t: Ty): string {
         TyU32(_) => { return "u32"; },
         TyU64(_) => { return "u64"; },
         TyI64(_) => { return "i64"; },
+        TyU8(_) => { return "u8"; },
         TyUsize(_) => { return "usize"; },
         TyBool(_) => { return "bool"; },
         TyString(_) => { return "string"; },
@@ -1752,6 +1760,10 @@ pub function ty_from_ref(t: parser.TypeRef): Ty {
     // backends get from ir/erase_surface.go. Without this a `char` receiver
     // or parameter types as ty_unknown and its methods fail to dispatch.
     if (t.base == "char") { return ty_i32(); }
+    // `u8` is the BYTE type (#5629): distinct from i32 so a byte receiver
+    // dispatches to the u8 method surface rather than i32's. It still occupies
+    // an i32-sized slot -- only the dispatch key differs.
+    if (t.base == "u8") { return ty_u8(); }
     if (t.base == "u32") { return ty_u32(); }
     if (t.base == "u64") { return ty_u64(); }
     if (t.base == "i64") { return ty_i64(); }
@@ -1947,7 +1959,8 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                 // u64 values with setl. Type the cast truthfully; u8/usize
                 // stay on the i32 tag (subword/pointer-size — no distinct
                 // dispatch surface).
-                if (ct == "i32" || ct == "u8" || ct == "usize" || ct == "char") { return ty_i32(); }
+                if (ct == "u8") { return ty_u8(); }
+                if (ct == "i32" || ct == "usize" || ct == "char") { return ty_i32(); }
                 if (ct == "u32") { return ty_u32(); }
                 if (ct == "i64") { return ty_i64(); }
                 if (ct == "u64") { return ty_u64(); }
@@ -2259,12 +2272,12 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
         },
         parser.ExprIndex(x) => {
             // Container type drives element type:
-            //   string → "i32" (byte)
+            //   string → "u8"  (the byte type, #5629)
             //   array_string → "string"
             //   array_u64 → "u64" (so element compares pick unsigned)
             //   array_u32 → "u32"; array_i64 → "i64"; else → "i32"
             var at: Ty = infer_expr_type(x.array, s);
-            if (ty_is_string(at)) { return ty_i32(); }
+            if (ty_is_string(at)) { return ty_u8(); }
             if (ty_is_array_string(at)) { return ty_string(); }
             if (ty_is_array_u64(at)) { return ty_u64(); }
             if (ty_is_array_u32(at)) { return ty_u32(); }
