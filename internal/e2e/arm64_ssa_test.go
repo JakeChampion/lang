@@ -110,6 +110,71 @@ function main(): i32 { return addf(90.0f32, 6.55f32) as i32; }`,
 			want: 96,
 		},
 		{
+			// `?` inside an array literal. The try desugar carries an early
+			// `return`, so the container construction splits across blocks —
+			// and the dead arm used to abandon a value on the lift's operand
+			// stack, shadowing the element address pushed before the split.
+			// The store then took the abandoned value as its address, which
+			// lifted to a use its def does not dominate and SIGSEGV'd here
+			// while every other backend ran the program (#5903).
+			//
+			// `return v` is load-bearing in all three of these. A version
+			// returning something DERIVED from the container
+			// (`return Some(arr[0])`) compiles and runs fine even with the fix
+			// reverted — the later reads consume the abandoned value harmlessly
+			// — so it pins nothing. Which means the array's contents can't also
+			// be asserted through the exit code here: observing them is exactly
+			// what stops the bug reproducing. The assertion is that the shape
+			// compiles and runs at all; unfixed it is a hard `ssa.Verify` error
+			// and the harness fails on the compile.
+			name: "try_in_array_literal",
+			src: `function f(): Option[i32] {
+    var v: Option[i32] = Some(184i32);
+    var arr: i32[] = [(v?)];
+    return v;
+}
+function main(): i32 { return match (f()) { Some(x) => x - 142, None => 1 }; }`,
+			want: 42,
+		},
+		{
+			// The tuple-literal form of the same shape.
+			name: "try_in_tuple_literal",
+			src: `function f(): Option[i32] {
+    var v: Option[i32] = Some(184i32);
+    var t: (i32, i32) = ((v?), 7i32);
+    return v;
+}
+function main(): i32 { return match (f()) { Some(x) => x - 142, None => 1 }; }`,
+			want: 42,
+		},
+		{
+			// Both elements read afterwards, so the array really is built and
+			// indexed rather than dead-coded away — and this still reproduces,
+			// unlike the variant that RETURNS the sum.
+			name: "try_in_array_literal_read_back",
+			src: `function f(): Option[i32] {
+    var v: Option[i32] = Some(184i32);
+    var arr: i32[] = [(v?), 7i32];
+    var s: i32 = arr[0] + arr[1];
+    return v;
+}
+function main(): i32 { return match (f()) { Some(x) => x - 142, None => 1 }; }`,
+			want: 42,
+		},
+		{
+			// The None path: the try must still take its early exit. Does not
+			// reproduce the bug (nothing is abandoned when the arm is the one
+			// that runs), but pins that the fix didn't break the exit itself.
+			name: "try_in_array_literal_none",
+			src: `function f(): Option[i32] {
+    var v: Option[i32] = None;
+    var arr: i32[] = [(v?)];
+    return v;
+}
+function main(): i32 { return match (f()) { Some(x) => 99, None => 7 }; }`,
+			want: 7,
+		},
+		{
 			// float32_call's INDIRECT sibling. A nested function is never
 			// called by name — the enclosing function builds a closure cell and
 			// calls through it — so the callee-name lookup that widens a direct
@@ -1157,54 +1222,6 @@ function main(): i32 {
 			}
 			if got != c.want {
 				t.Errorf("%s: exit=%d, want %d", c.name, got, c.want)
-			}
-		})
-	}
-}
-
-// The same experimental-backend contract for a lift gap rather than a missing
-// runtime builtin: `?` inside an array (or tuple) literal makes LiftFromIR
-// produce a use its def does not dominate — the try desugar carries an early
-// `return`, so the container construction is split across blocks with a partly
-// built address left behind.
-//
-// It must ERROR. Before ssa.Verify was called on the build path it did not:
-// invalid SSA went through regalloc and emit and produced a binary that
-// SIGSEGVs, while interp / x86-64 / arm64 / wasm all ran the program correctly.
-// Verify already detected it; nothing on a build path was calling it.
-//
-// Found by the differential oracle at seed 216, once a corpus reshuffle put a
-// `?` inside a generated array literal.
-func TestArm64SSAInvalidSSAErrorsNotSegfaults(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("arm64-ssa not exercised on windows")
-	}
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "fern")
-	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build fern: %v\n%s", err, out)
-	}
-	for _, c := range []struct{ name, src string }{
-		{"try_in_array_literal", `function f(): Option[i32] { var v: Option[i32] = Some(184i32); var arr: i32[] = [(v?)]; return v; }
-function main(): i32 { return match (f()) { Some(x) => 0, None => 1 }; }`},
-		{"try_in_tuple_literal", `function f(): Option[i32] { var v: Option[i32] = Some(184i32); var t: (i32, i32) = ((v?), 7i32); return v; }
-function main(): i32 { return match (f()) { Some(x) => 0, None => 1 }; }`},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			srcPath := filepath.Join(dir, c.name+".fern")
-			if err := os.WriteFile(srcPath, []byte(c.src), 0o644); err != nil {
-				t.Fatalf("write src: %v", err)
-			}
-			out := filepath.Join(dir, c.name+".bin")
-			emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
-			var eb bytes.Buffer
-			emit.Stderr = &eb
-			if err := emit.Run(); err == nil {
-				t.Fatalf("expected an error for invalid SSA, got success (a binary that segfaults at runtime)")
-			}
-			if !bytes.Contains(eb.Bytes(), []byte("ssa.Verify")) {
-				t.Errorf("error should name ssa.Verify, so the failure is attributed to the lift rather than read as a coverage gap:\n%s", eb.String())
 			}
 		})
 	}

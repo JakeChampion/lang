@@ -1685,14 +1685,10 @@ func buildWasmSSA(prog *ast.Program, info *checker.Info) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ssa.LiftFromIR: %v", err)
 	}
-	// Same contract as buildArm64SSA: invalid SSA must be an error, not a
-	// miscompile. See the comment there.
-	if err := ssa.Verify(f); err != nil {
-		return nil, fmt.Errorf("ssa.Verify (after lift): %v", err)
-	}
 	ssa.Optimize(f)
+	// Same contract as buildArm64SSA, and after Optimize for the same reason.
 	if err := ssa.Verify(f); err != nil {
-		return nil, fmt.Errorf("ssa.Verify (after optimize): %v", err)
+		return nil, fmt.Errorf("ssa.Verify: %v", err)
 	}
 	return wasmssa.EmitModule(f, "main")
 }
@@ -1746,22 +1742,23 @@ func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("ssa.LiftFromIR %s: %v", fn.Name, err)
 		}
-		// Verify the SSA before and after Optimize. This backend promises
-		// that an unsupported construct ERRORS rather than miscompiles, and
-		// without this check that promise did not hold: a lift that produced
-		// a use its def does not dominate — `?` inside an array or tuple
-		// literal did exactly that — sailed through regalloc and emit and
-		// yielded a binary that SIGSEGVs. Verify already catches it; nothing
-		// on a build path was calling it.
-		//
-		// Both sides of Optimize, so a lift bug is reported as a lift bug
-		// rather than blamed on (or accidentally papered over by) a pass.
-		if err := ssa.Verify(f); err != nil {
-			return "", fmt.Errorf("ssa.Verify %s (after lift): %v", fn.Name, err)
-		}
 		ssa.Optimize(f)
+		// Verify AFTER Optimize, not before. This backend promises that an
+		// unsupported construct ERRORS rather than miscompiles, and without
+		// any Verify call on a build path that promise did not hold: invalid
+		// SSA sailed through regalloc and emit and yielded a binary that
+		// SIGSEGVs.
+		//
+		// After-Optimize only, because the lifter deliberately leaves blocks
+		// unreachable — endBlockScope / endLoopScope say so explicitly, for
+		// PruneUnreachable to drop — and Verify's use-before-def rule wants a
+		// def in an ancestor block, which nothing in an unreachable block has.
+		// Checking before Optimize would therefore reject programs the lifter
+		// considers well-formed, and it buys no detection: an invalid lift
+		// survives the passes, which is how it reached emit in the first
+		// place.
 		if err := ssa.Verify(f); err != nil {
-			return "", fmt.Errorf("ssa.Verify %s (after optimize): %v", fn.Name, err)
+			return "", fmt.Errorf("ssa.Verify %s: %v", fn.Name, err)
 		}
 		funcs[fn.Name] = f
 	}

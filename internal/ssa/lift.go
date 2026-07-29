@@ -1051,8 +1051,11 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			top.thenSlots = append([]Value(nil), l.slots...)
 		} else {
 			// Then-arm exited via OpBr/OpReturn — no fall-through
-			// merge source. Leave thenSlots nil as sentinel.
+			// merge source. Leave thenSlots nil as sentinel, and
+			// drop whatever the dead arm left on the operand stack
+			// so the else arm isn't lifted on top of it.
 			top.thenSlots = nil
+			l.dropAbandonedStack(*top)
 		}
 		l.slots = append([]Value(nil), top.preSlots...)
 		l.cur = top.elseB
@@ -1258,6 +1261,13 @@ func (l *lifter) endIfScope(top scope) error {
 		return fmt.Errorf("ssa.LiftFromIR: value-producing OpIf needs both arms to fall through")
 	}
 
+	// Only a DEAD arm's leftovers are dropped — see dropAbandonedStack. When
+	// there is no OpElse the then-arm is l.cur; with one, l.cur is the else
+	// arm and a dead then-arm was already handled at OpElse.
+	if l.cur == nil {
+		l.dropAbandonedStack(top)
+	}
+
 	// Value-producing if: phi the per-source stack-tops.
 	if top.blockType != ir.BlockTypeVoid {
 		args := make([]Value, len(sources))
@@ -1280,6 +1290,28 @@ func (l *lifter) endIfScope(top scope) error {
 // sources; if any source differs in that slot, emit a phi at
 // `postB` with args in source order; otherwise the slot takes
 // the common value.
+// dropAbandonedStack restores the operand stack to the height recorded when the
+// scope opened. Call it ONLY for a path that is dead (l.cur == nil).
+//
+// A path that TERMINATES — OpReturn, or an OpBr past this scope — never reaches
+// the pop that a falling-through arm performs, so whatever it pushed stays on
+// the stack and shadows operands pushed BEFORE the scope. `?` inside an array
+// or tuple literal is exactly that shape: the container's element address is
+// pushed, the try desugar's early `return` abandons a value on top of it, and
+// the following store reads the abandoned value as its address. That lifted to
+// SSA with a use its def does not dominate, which arm64-ssa turned into a
+// SIGSEGV (#5903).
+//
+// A LIVE fall-through is left alone: a value pushed inside a void scope and
+// still on the stack at OpEnd legitimately flows out to the enclosing code
+// (TestLiftBlockLinear pins that), so truncating unconditionally would discard
+// a real operand.
+func (l *lifter) dropAbandonedStack(top scope) {
+	if len(l.stack) > top.stackHeight {
+		l.stack = l.stack[:top.stackHeight]
+	}
+}
+
 // undefValue returns a `const 0` in the entry block, created on first use, for
 // filling phi args on unreachable edges where a slot is undefined. Entry
 // dominates every block, so it is a valid incoming value for any phi.
@@ -1363,6 +1395,9 @@ func (l *lifter) mergeSlotsViaPhi(postB *Block, sources []mergeSource) {
 // source — that would put an unreachable Pred into the outer
 // merge and pull in Values that don't dominate it.
 func (l *lifter) endLoopScope(top scope) {
+	if l.cur == nil {
+		l.dropAbandonedStack(top)
+	}
 	if l.cur != nil {
 		l.out.SetBr(l.cur, top.postB)
 		l.cur = top.postB
@@ -1381,6 +1416,9 @@ func (l *lifter) endLoopScope(top scope) {
 // brSources were SetBr'd at their OpBr sites earlier in time;
 // the fall-through (if alive) is SetBr'd now and appended last.
 func (l *lifter) endBlockScope(top scope) {
+	if l.cur == nil {
+		l.dropAbandonedStack(top)
+	}
 	var sources []mergeSource
 	for _, br := range top.brSources {
 		sources = append(sources, mergeSource{slots: br.slots, stackTop: br.stackTop})
