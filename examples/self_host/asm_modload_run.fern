@@ -80,17 +80,28 @@ function builtin_view(dir: string, base: parser.StructDecl[]): parser.StructDecl
 // This used to special-case `__fern_shp_` alone and drop exactly ONE following
 // line, because a shape definition is the two-line pair `.weak SYM` / `SYM:
 // .ascii …`. The three drop/reclaim helpers are multi-line function BODIES, so
-// they collided anyway: that is what capped the per-module rescue below at
-// nfuncs < 1500 — a program whose modules share struct types (three `parser__`
-// types across the stage-2 compiler's units) hit
+// they collided anyway: that is one of the two things behind the per-module
+// rescue's `nfuncs < 1500` cap below — a program whose modules share struct
+// types (three `parser__` types across the stage-2 compiler's units) hit
 // `symbol __fn___struct_drop_parser__ParamDecl is already defined`, which reads
-// like the memory wall this file long attributed the bound to and is not.
+// like a memory wall and is not one. (The cap's OTHER reason IS memory, but for
+// a different program: see the bound's own comment.)
 //
 // So skip the whole definition, whatever its length. After a duplicate
-// `.weak SYM` comes the `SYM:` line, then indented instructions and `.L…:`
-// local labels; the first other column-0 line starts the next definition and
-// ends the skip. The emitter writes no blank lines inside these bodies, and a
-// blank line dropped at a boundary is whitespace either way.
+// `.weak SYM` comes the `SYM:` line, then the body: INSTRUCTIONS (indented, and
+// never starting with `.`) and `.L…:` local labels. Anything else ends the skip.
+//
+// "Indented" alone is NOT a safe body test, and getting that wrong is what makes
+// this function delicate: the emitter indents its DIRECTIVES too, and a unit's
+// prologue is `    .globl _start` / `    .text` (asm_ir.emit_module_ir_unit_flat).
+// A duplicate `.weak` at the tail of one unit's shape block sits immediately
+// before the next unit's prologue, so a skip that eats indented lines
+// indiscriminately swallows that `.globl` + `.text` — which silently drops the
+// entry unit's code into the previous unit's `.rodata`, leaving `_start` a LOCAL
+// rodata symbol (`nm`: `r _start`), the linker unable to find an entry
+// (`cannot find entry symbol _start`), and the built compiler jumping to a
+// garbage address (observed: RIP=0x1 with the initial argv/envp stack
+// untouched). Hence the "indented AND not a directive" test below.
 function dedupe_weak_defs(asm_text: string): string {
     // Accumulate through the global strbuf (O(1) amortised per append): every
     // unit has already been emitted into `asm_text`, so no emitter is using it,
@@ -108,10 +119,15 @@ function dedupe_weak_defs(asm_text: string): string {
         var drop: boolean = false;
         if (state == 1) { drop = true; state = 2; }
         else if (state == 2) {
-            if (line.len() == 0) { drop = true; }
-            else if (line[0:1] == " " || line[0:1] == "\t") { drop = true; }
-            else if (line.len() > 2 && line[0:2] == ".L") { drop = true; }
-            else { state = 0; }
+            // First non-blank column, so a directive is recognised whether or
+            // not the emitter indented it.
+            var k: i32 = 0;
+            while (k < line.len() && (line[k:k + 1] == " " || line[k:k + 1] == "\t")) { k = k + 1; }
+            var body: string = line[k:line.len()] + "";
+            if (body.len() == 0) { drop = true; }                                  // blank
+            else if (body.len() > 2 && body[0:2] == ".L") { drop = true; }          // local label
+            else if (k > 0 && body[0:1] != ".") { drop = true; }                    // instruction
+            else { state = 0; }                                                    // directive / label
         }
         if (state == 0 && !drop && line.len() > 6 && line[0:6] == ".weak ") {
             var sym: string = line[6:line.len()] + "";
@@ -664,6 +680,27 @@ function main(): i32 {
             // cannot lower yet) from dragging a module onto the AST emitter. The
             // AST fallback below still sees the untouched merged module, so a
             // program that routed AST before routes AST byte-identically now.
+            // MEASURED upper-bound rationale (2026-07-29), since the comment
+            // above and docs/SELFHOST-AST-RETIREMENT.md both used to attribute
+            // this cap to one cause and there are two:
+            //
+            //   * The 21 duplicate-symbol errors a >=1500 concat used to hit are
+            //     FIXED (dedupe_weak_defs). At 1958 merged funcs — the stage-2
+            //     compiler — the concat now assembles, links, and self-hosts a
+            //     `return 7` program end to end. No memory failure at all there.
+            //   * The WHOLE-COMPILER self-compile is still out of reach, and that
+            //     one really is memory: raising this bound past it routes step 7
+            //     of TestSelfHostModloadPerModuleWholeCompilerX86_64 (the
+            //     per-module-built compiler over the whole compiler source) into
+            //     a single-process concat, which exits 137 — __fern_alloc's arena
+            //     bounds check, not a host OOM-kill. Function count is a poor
+            //     proxy for that (1958 fits, ~2040 does not) because what
+            //     exhausts the arena is the COMPILE WORKLOAD, not the emitted
+            //     function count.
+            //
+            // So the bound stays until the batched -per-module-emit-all path is
+            // reachable from here; that is the remaining slice-3 task, and it is
+            // narrower than it looked — only the whole-compiler case needs it.
             var mwb: parser.Module = parser.module_with_builtins(merged);
             var nfuncs: i32 = asm_ir.lift_lambdas(mwb).funcs.len();
             if (nfuncs > 512 && nfuncs < 1500) {
