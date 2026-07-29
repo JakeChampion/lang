@@ -2675,9 +2675,11 @@ measure noise.
 What it means for a real fix: `tokenize` legitimately returns its array, so the
 callee-side rewrite is not available. The site that must become eligible is the
 CALLER's binding of the returned `Token[]` — the value the caller receives and
-drops. **The `Array_push` arm is a PREREQUISITE here, and it is UNSOUND for a specific
-reason — now pinned by a 0.3-SECOND unit test rather than a 5-minute self-host
-compile (2026-07-29).** Re-applying it fails
+drops. **The `Array_push` arm is a PREREQUISITE here — it was UNSOUND for a
+specific reason (2026-07-29), and that reason is now fixed; the arm is IN and
+the caller-side condition is all that remains. See "DONE — option 1 landed"
+below.** The chase is kept because the wrong turns in it are the point.
+Re-applying it used to fail
 `TestArrayPushProjectionSourceFreeEligible`
 (`internal/ir/push_counted_store_test.go`), whose second half is exactly this
 invariant:
@@ -2728,7 +2730,11 @@ property. If the self-host gate agrees, the correct change is to UPDATE that tes
 to the reclaiming counts rather than to gate the arm — and the caller-side half
 of #5854's 4x becomes the only thing left between here and the lexer's number.
 
-**SETTLED — the original verdict was RIGHT, and the arm is UNSOUND (2026-07-29).**
+**SETTLED — the original verdict was RIGHT, and the arm is UNSOUND *as it stood*
+(2026-07-29).** (Superseded later the same day: the arm is unsound only on top of
+the non-retaining grow copy, which is now fixed, and the arm is IN — see "DONE —
+option 1 landed" below. The failure and its signature are kept here because they
+are what the fix has to keep green.)
 Applying it and pushing to CI reproduces the historical signature EXACTLY:
 `TestSelfHostStdTestE2EArm64`, **7 failures**, `undefined reference to
 __fn_test__assert_eq__i32` — a definition missing while its call sites survive,
@@ -2897,16 +2903,73 @@ dies. Two shapes fix it, both in `internal/ir`:
   extra retain is compensated.
 
 Either one is a three-backend change (x86-64 / arm64 / wasm runtime helper plus
-the need-registration) and needs the gate list below. Until it lands the arm
-stays out — but it is now a bounded piece of work, not an unknown.
+the need-registration) and needs the gate list below.
+
+**DONE — option 1 landed, and the arm is IN (2026-07-29).**
+`__fern_arr_push_grow_move_ptr` / `_move_str` exist on all three backends
+(x86-64 `_move_ptr` only — native single-word strings take the pointer form) as
+a `moveForm` parameter on the existing `_ptr` / `_str` emitters, so the copy
+path is shared and only the retain is gated:
+
+    // the copy path leaves the OLD buffer's rc untouched
+    if incoming_rc == 1 { skip the element-retain loop }
+
+`emitArrayPush` routes `selfPushMoveCall` to them (previously: to the plain,
+never-retaining `__fern_arr_push_grow`), and `rhsTainted` grew the
+`__method_Array_push` receiver-only arm next to its `__method_Array_set`
+sibling. `appendForcesCopy` already returns false for `selfPushMoveCall`, so
+the forceCopy rc bump never reaches these helpers and there is no interaction to
+reason about.
+
+The causal check, since the arm's own probe had been passing for the wrong
+reason before: with the arm applied and the routing reverted to the plain
+helper, `alias_grow_uaf.fern` exits **1**; with both, **0**. The `_move_`
+helpers are what make the arm sound, not a coincidence of the fixture.
+
+**What the arm is worth today: one block.** `tokenize` on `parser.fern` goes
+44565 → 44566 frees of 508638, exactly the "ONE BLOCK" predicted above — the
+arm is only the *first* of the two conditions. `out` still escapes through the
+six `return out;` sites, so move-on-return keeps it out of the sweep and the
+walking drop the arm buys sits on a fall-through that never runs. The 4x
+(179100 frees, 35%) needs the second condition: the CALLER's binding of the
+returned `Token[]` becoming eligible. That is now the only thing left in this
+strand, and it is no longer blocked on an unsound prerequisite.
 
 **Gates for that work, in order** (the first two are seconds, and the last two
 are the ones that have historically disagreed):
-`examples/probes/alias_grow_uaf.fern` (exit 0 compiled == interp, x86-64 and
-arm64) → `internal/ir` `TestArrayPushProjectionSourceFreeEligible` →
+`examples/probes/alias_grow_uaf.fern` (exit 0 compiled == interp, x86-64,
+arm64 and wasm) → `internal/ir` `TestArrayPushProjectionSourceFreeEligible` →
 `MapIntermediateReclaim` on all three backends →
 `TestSelfHostStdTestE2EArm64` (312 s local, REQUIRED) →
 `TestSelfHostLoadFixpointX86_64`.
+
+**Found on the way, NOT fixed here: wasm two-word `string[]` self-append does
+not reclaim.** `TestX86_64ArrayPushPtrElemReclaim` (`a = a.append("item")` 300
+times, `build` called N times, working set measured with `__heap_bump_bytes`)
+gained an arm64 leg here — green — and a wasm leg, which fails and always has:
+
+| backend | `struct[]` | `string[]` (20 iters -> 400 iters) |
+|---|---|---|
+| x86-64 | O(1) | O(1) |
+| arm64 | O(1) | O(1) |
+| wasm | O(1) | **64480 -> 1231840 bytes** |
+
+Identical numbers with and without this change's `_move_` routing, so it is not
+caused by it — the two-word `string[]` grow's old buffer is simply never
+reclaimed on wasm, where the single-word `struct[]` sibling is. The wasm leg was
+removed rather than landed failing; adding it back is the acceptance test for
+that fix. Two consequences to know before touching this area: the wasm side of
+`_move_str` is CORRECT-BY-CONSTRUCTION but not yet exercised (disabling its
+retain leaves `alias_grow_uaf.fern`'s wasm leg passing, because with no old
+buffer freed there is no second walk-drop to over-release), and any measurement
+of this shape on wasm is currently measuring the gap, not the contract.
+
+`TestArrayPushProjectionSourceFreeEligible` was UPDATED rather than gated: its
+projection half goes 2 → 4 deep-drop sites (`src` and `out`, reinit + sweep
+each) and its direct-ident half 0 → 2 (`out` reclaims; `row` stays
+escape-tainted, so the element it moved in is released exactly once). The
+earlier reading that those extra drops might be an over-release is settled —
+they reclaim, and the self-host gates agree now that the grow copy retains.
 
 **Reusable method, since this class keeps coming back.** The two tools that
 cracked it are cheap and general:

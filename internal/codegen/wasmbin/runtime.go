@@ -559,6 +559,17 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__memcpy")
 					needs.add("__fern_str_inc")
 					needs.add("__fern_rc_inc") // str_inc's heap path calls it
+				case "__fern_arr_push_grow_move_ptr":
+					needs.add("__fern_arr_push_grow_move_ptr")
+					needs.add("__fern_alloc")
+					needs.add("__memcpy")
+					needs.add("__fern_rc_inc")
+				case "__fern_arr_push_grow_move_str":
+					needs.add("__fern_arr_push_grow_move_str")
+					needs.add("__fern_alloc")
+					needs.add("__memcpy")
+					needs.add("__fern_str_inc")
+					needs.add("__fern_rc_inc") // str_inc's heap path calls it
 				case "__fern_arr_cow_inplace":
 					needs.add("__fern_arr_cow_inplace")
 					needs.add("__fern_alloc")
@@ -1303,6 +1314,29 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildArrPushGrowStrBody,
+	},
+	"__fern_arr_push_grow_move_ptr": {
+		// (arr, oldLen, stride) → new_data. The self-append
+		// (`a = a.append(v)`) sibling of __fern_arr_push_grow_ptr: the
+		// grow COPY retains the copied elements only when the incoming
+		// rc != 1. At rc==1 the assign's buffer-only __fern_arr_dec frees
+		// the old buffer without walking, so its element references
+		// transfer and a retain would leak one each; at rc>1 an alias
+		// still owns that buffer and both walk-drops would otherwise
+		// release the shared elements twice (#3457). See
+		// buildArrPushGrowMovePtrBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrPushGrowMovePtrBody,
+	},
+	"__fern_arr_push_grow_move_str": {
+		// (arr, oldLen, stride) → new_data. Two-word string[] sibling of
+		// __fern_arr_push_grow_move_ptr — same rc != 1 retain gate, with
+		// __fern_str_inc over the (data, len) pairs (#3457). See
+		// buildArrPushGrowMoveStrBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrPushGrowMoveStrBody,
 	},
 	"__fern_arr_cow_inplace": {
 		// (arr, stride) → new_data. Phase 2b mutate-or-copy
@@ -3335,6 +3369,18 @@ func buildArrPushGrowBody(helperIdxs map[string]uint32) []byte {
 // Locals: 0=arr, 1=oldLen, 2=stride (params); 3=newLen, 4=newCap,
 // 5=headerBytes, 6=base, 7=i.
 func buildArrPushGrowPtrBody(helperIdxs map[string]uint32) []byte {
+	return arrPushGrowPtrBody(helperIdxs, false)
+}
+
+// buildArrPushGrowMovePtrBody — the self-append (`a = a.append(v)`)
+// sibling of buildArrPushGrowPtrBody: the retain loop is skipped when
+// the incoming rc is 1. See the x86-64 mirror for why "the old buffer
+// survives this grow" is exactly the rc != 1 test (#3457).
+func buildArrPushGrowMovePtrBody(helperIdxs map[string]uint32) []byte {
+	return arrPushGrowPtrBody(helperIdxs, true)
+}
+
+func arrPushGrowPtrBody(helperIdxs map[string]uint32, moveForm bool) []byte {
 	alloc := helperIdxs["__fern_alloc"]
 	memcpy := helperIdxs["__memcpy"]
 	rcinc := helperIdxs["__fern_rc_inc"]
@@ -3428,6 +3474,18 @@ func buildArrPushGrowPtrBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = numeric.InstI32Mul(body)
 	body = inst.InstCall(body, memcpy)
+	if moveForm {
+		// rc==1: the assign's buffer-only __fern_arr_dec frees the old
+		// buffer without walking, so its element references transfer and a
+		// retain would leak one each. The copy path left the old rc alone.
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Ne(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	}
 	// Element-retain loop: __fern_rc_inc each copied pointer element.
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 7) // i = 0
@@ -3457,6 +3515,9 @@ func buildArrPushGrowPtrBody(helperIdxs map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body) // loop
 	body = inst.InstEnd(body) // block
+	if moveForm {
+		body = inst.InstEnd(body) // if rc != 1
+	}
 	// return base
 	body = inst.InstLocalGet(body, 6)
 	locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32)
@@ -3472,6 +3533,16 @@ func buildArrPushGrowPtrBody(helperIdxs map[string]uint32) []byte {
 // Locals: 0=arr, 1=oldLen, 2=stride (params); 3=newLen, 4=newCap,
 // 5=headerBytes, 6=base, 7=i.
 func buildArrPushGrowStrBody(helperIdxs map[string]uint32) []byte {
+	return arrPushGrowStrBody(helperIdxs, false)
+}
+
+// buildArrPushGrowMoveStrBody — the self-append sibling of
+// buildArrPushGrowStrBody: retain loop skipped at incoming rc 1 (#3457).
+func buildArrPushGrowMoveStrBody(helperIdxs map[string]uint32) []byte {
+	return arrPushGrowStrBody(helperIdxs, true)
+}
+
+func arrPushGrowStrBody(helperIdxs map[string]uint32, moveForm bool) []byte {
 	alloc := helperIdxs["__fern_alloc"]
 	memcpy := helperIdxs["__memcpy"]
 	strinc := helperIdxs["__fern_str_inc"]
@@ -3558,6 +3629,16 @@ func buildArrPushGrowStrBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = numeric.InstI32Mul(body)
 	body = inst.InstCall(body, memcpy)
+	if moveForm {
+		// rc==1 → the old buffer dies buffer-only; its pairs transfer.
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Ne(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	}
 	// Element-retain loop: __fern_str_inc each copied (data, len) pair.
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 7) // i = 0
@@ -3594,6 +3675,9 @@ func buildArrPushGrowStrBody(helperIdxs map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body) // loop
 	body = inst.InstEnd(body) // block
+	if moveForm {
+		body = inst.InstEnd(body) // if rc != 1
+	}
 	// return base
 	body = inst.InstLocalGet(body, 6)
 	locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32)

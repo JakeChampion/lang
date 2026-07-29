@@ -3,6 +3,8 @@ package e2e
 import (
 	"os"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/ast"
 )
 
 // Two `string[]` locals that alias one buffer, both reclaimable, one appended
@@ -21,10 +23,12 @@ import (
 // no second owner) hit rc 0 and are recycled, so `emit_function` writes
 // `__fn_` + garbage. See docs/SELFHOST-AST-RETIREMENT.md.
 //
-// On main the appended-to local is taint-excluded from freeEligible, so only
-// one walk-drop runs and the probe is correct — this pins that it STAYS
-// correct when the eligibility rules widen (the shape is unreachable today,
-// which is why it takes a probe rather than a failing test to hold the line).
+// FIXED by routing the self-append through `__fern_arr_push_grow_move_ptr` /
+// `_move_str`, which retain the copied elements exactly when the incoming
+// rc != 1 — precisely "the old buffer survives this grow". With that in place
+// the receiver-only arm is sound and IS applied, so this probe now exercises a
+// REACHABLE shape: reverting either the helper routing (`emitArrayPush`) or the
+// helper bodies makes it exit 1.
 // Names must exceed the SSO inline-string threshold: a short name has no heap
 // block and so no refcount to over-release.
 func TestAliasGrowNoOverRelease(t *testing.T) {
@@ -48,6 +52,20 @@ func TestAliasGrowNoOverRelease(t *testing.T) {
 	t.Run("arm64", func(t *testing.T) {
 		_, code := compileAndRunArm64(t, src)
 		if code != 0 {
+			t.Errorf("exit %d, want 0: a name was reclaimed under its owner (shared-buffer grow copied its elements without a retain)", code)
+		}
+	})
+	t.Run("wasm", func(t *testing.T) {
+		// A regression guard, NOT proof the _move_str retain fires: this leg
+		// also passes with that retain disabled, because the shape is inert on
+		// wasm today — a two-word `string[]` self-append never reclaims its
+		// old buffer there (the pre-existing gap recorded in
+		// docs/SELFHOST-AST-RETIREMENT.md), so there is no second walk-drop to
+		// over-release. The x86-64 leg is the one that flips.
+		prev := ast.RcFreeEnabled
+		ast.RcFreeEnabled = true
+		defer func() { ast.RcFreeEnabled = prev }()
+		if code := runWasm(t, src); code != 0 {
 			t.Errorf("exit %d, want 0: a name was reclaimed under its owner (shared-buffer grow copied its elements without a retain)", code)
 		}
 	})

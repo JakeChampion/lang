@@ -22,6 +22,22 @@ import (
 //
 // build(300) over string[] / struct[] grows past 2048 B and drops every
 // iteration; a leak would scale the bump pointer with the iteration count.
+//
+// This is also the SKIP half of the `_move_` grow helpers' contract (#3457).
+// `__fern_arr_push_grow_move_ptr` / `_move_str` retain the copied elements only
+// when the incoming rc != 1; here every grow is uniquely owned, so the retain
+// must NOT fire — the assign's buffer-only `__fern_arr_dec` frees the old
+// buffer without walking it and the elements transfer. An unconditional retain
+// leaks one reference per element per grow, which shows up here as a working
+// set that scales with the iteration count. The RETAIN half (rc != 1, the
+// shared-alias pair) is `TestAliasGrowNoOverRelease`.
+//
+// x86-64 and arm64 only (arm64 is new here; only x86-64 was covered before).
+// On wasm the `string[]` leg fails and has ALWAYS failed — 20 iters -> 64480
+// bytes, 400 -> 1231840, identical with and without the `_move_` routing — so
+// it is a pre-existing gap in the two-word `string[]` self-append reclaim, not
+// this contract. The `struct[]` leg passes there. Recorded in
+// docs/SELFHOST-AST-RETIREMENT.md; adding the wasm leg belongs to fixing that.
 
 func strArrPushSrc(iters string) string {
 	return `
@@ -68,8 +84,8 @@ function main(): i32 {
 }`
 }
 
-func TestX86_64ArrayPushPtrElemReclaim(t *testing.T) {
-	ast.RcFreeEnabled = true
+func runArrayPushPtrElemChecks(t *testing.T, run func(*testing.T, string) int) {
+	t.Helper()
 	for _, c := range []struct {
 		name string
 		src  func(string) string
@@ -78,8 +94,8 @@ func TestX86_64ArrayPushPtrElemReclaim(t *testing.T) {
 		{"struct", structArrPushSrc},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			small := mustRunX86_64FreeOn(t, c.src("20"))
-			large := mustRunX86_64FreeOn(t, c.src("400"))
+			small := run(t, c.src("20"))
+			large := run(t, c.src("400"))
 			if small == 201 || small == 202 || large == 201 || large == 202 {
 				t.Fatalf("value-incorrect run: small=%d large=%d", small, large)
 			}
@@ -91,4 +107,14 @@ func TestX86_64ArrayPushPtrElemReclaim(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestX86_64ArrayPushPtrElemReclaim(t *testing.T) {
+	ast.RcFreeEnabled = true
+	runArrayPushPtrElemChecks(t, mustRunX86_64FreeOn)
+}
+
+func TestArm64ArrayPushPtrElemReclaim(t *testing.T) {
+	ast.RcFreeEnabled = true
+	runArrayPushPtrElemChecks(t, mustRunArm64FreeOn)
 }
