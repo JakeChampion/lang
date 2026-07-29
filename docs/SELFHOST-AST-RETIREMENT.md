@@ -146,7 +146,8 @@ true of the **builtin methods** it enumerates, and false as a general statement:
 running the corrected probe (inside the `use_ir` branch — see above) over
 `internal/e2eselfhost` aborts **17 subtests across 7 test functions** (**15
 across 6** after #5755 retired return-type inference, then **10 across 5** after
-#5758 closed the tuple-fn struct field — see the struck rows), none of
+#5758 closed the tuple-fn struct field, then **8 across 4** after #5790 closed
+the closure-array struct field — see the struck rows), none of
 them over-budget (they are all small single-module programs), so every one is an
 eligibility decline. `asm_ir_run`'s AST fallback is therefore **live code**, not
 something #3457 can delete yet.
@@ -155,7 +156,7 @@ something #3457 can delete yet.
 |---|---|---|
 | ~~`TestSelfHostReturnInferenceIR`~~ | ~~`option-some`, `option-none`~~ | **GONE (E070, #5755)** — the shape was an UN-ANNOTATED fn whose return type had to infer to `Option[i32]`. Requiring return annotations made those programs *invalid*, so the gate never sees them and the test was deleted. Note what this is NOT: the IR path was not taught anything: 17 declines → 15 by removing programs, not by widening the subset. |
 | ~~`TestSelfHostTupleFnStructFieldX86_64`~~ | ~~`bare`, `arg-elem0`, `two-arg`, `read-then-call`, `churn`~~ | **CLOSED (#5758)** — fn-typed TUPLE element in a struct field, `s.p.1()`. Re-probed 2026-07-28: both the direct form and the via-a-local form (`var t = s.p; t.1()`) now report `module: IR`. |
-| `TestSelfHostCloArrayFieldCallIRX86_64` | `capture-multi`, `with-arg` | closure-ARRAY struct field (`hs: (() => i32)[]`), capturing call. **STILL OPEN** — re-probed after #5758: `main: BAIL lower` → `module: AST`. Do not assume #5758 covered this: the two shapes bail from the same *predicate family* but not the same *type path* — an array-of-fn field is not a tuple-containing-fn field, so the tuple-side `clo` admission does not reach it. |
+| ~~`TestSelfHostCloArrayFieldCallIRX86_64`~~ | ~~`capture-multi`, `with-arg`~~ | **CLOSED (#5790)** — closure-ARRAY struct field (`hs: (() => i32)[]`), capturing call. This row read `STILL OPEN` after #5758 (correctly — the tuple-side `clo` admission does not reach an array-of-fn field), but #5790 closed it separately by proving the field positively (`CLOARR:<Type>.<field>`) rather than by elimination. See "The closure-ARRAY gap is a DISPATCH gap" below. The param-built / loop-built construction shapes (#5787) still decline, but for **soundness** — they are unprovable at the struct literal — not as a subset gap. |
 | `TestSelfHostStructMatchX86_64` | `expr_form`, `rename_expr` | `return match (p) { … }` over a struct — the match-EXPRESSION form |
 | `TestSelfHostTryOptionPayloadIRX86_64` | `result-option`, `nested-chain` | `?` over an Option payload, incl. nested chains |
 | `TestSelfHostAtBindingX86_64` | `struct_expr_guard_uses_at`, `tuple_expr_guard_uses_at` | `@` binding read from inside a `when` guard |
@@ -197,6 +198,37 @@ normally, so whatever declines there is served correctly by the fallback.
 The lesson repeats the one above: an abort tells you a test's process reached
 the fallback, not WHICH program did. Confirm each shape with `-ir-probe` before
 building on it.
+
+### Composite-type IR gaps closed by differential probing (2026-07-29)
+
+The strict-IR table above enumerates the whole-suite declines; a parallel line
+of work found and closed a family of per-function IR-lowering gaps that the
+suite never surfaced as declines, via **differential probing** (native `-interp`
+exit vs the self-host-IR-compiled binary's — the methodology CLAUDE.md flags as
+the one probe placement misses, since it catches WRONG lowering, not just WHERE
+a program lowers). Each is pinned by a `TestSelfHostAsmIRPath` differential case
+asserting equal exit codes on the AST and IR paths:
+
+| PR | shape now lowering on the IR path |
+|---|---|
+| #5752 | `return match (p) { … }` — match-EXPRESSION over a struct / tuple scrutinee |
+| #5758 | fn-typed TUPLE element read from a struct field (`s.p.1()`), direct and via a local |
+| #5776 | N-element destructure of an array-of-tuples element |
+| #5778 | recursive-struct field predicate (a self-referential struct crashed the compiler; now cycle-guarded with a `visiting` set + depth cap), plus tuple / nested-Option payload arms in `opt_payload_ok_dv` |
+| #5779 | nested-`Option` type spelling (`Option[Option[…]]`) resolved by `some_opt_type` recursion |
+| #5781 | bare struct / bare enum as a tuple element inside a struct field |
+| #5784 | `Option`-of-tuple and nested-`Option` struct fields |
+| #5792 | struct field of array-of-arrays (`P[][]`), double-index read |
+| #5797 | enum variant with an `Option` / `Result` payload, matched |
+
+After these, a 7-cycle probe sweep over advanced composite shapes (closures,
+nested matches with guards, generics, `dyn`, `try`/`?`, tuples, iterators) came
+up clean — every shape routed IR. **Probe-driven per-function slice-3 gap
+discovery has reached diminishing returns**: the remaining per-function
+declines are the two documented soundness declines (param/loop-built `fn[]`
+struct fields, #5787 — see below), not subset gaps. The remaining #3457 frontier
+is slice 2 (CI-affordability of the gen1 per-module fixpoint) and slice 5, not
+further per-function widening.
 
 **The closure-ARRAY gap is a DISPATCH gap, not an eligibility one** (probed
 2026-07-28, after #5758). Do not reason about it by analogy with the tuple
