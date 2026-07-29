@@ -690,7 +690,7 @@ The three legacy emitters are still reached through these entry points
 |---|---|---|
 | `asm_run.fern:23` | merged AST (x86) | `TestSelfHostBootstrapsItself` / `TestSelfHostAsmRunX86_64` pipe programs through it |
 | `asm_load_run.fern:376` (arm64 373) | merged AST | `TestSelfHostStage2FixedPoint{,Arm64}` fixpoint on this driver |
-| `asm_modload_run.fern:335` (arm64 332) | merged AST default | ~~`TestSelfHostModloadFixpointX86_64`~~ **retired from routine CI (env-gated `RUN_MERGED_FIXPOINT`, #3457 slice 2)** — the x86 whole-compiler self-compile gate now runs `TestSelfHostModloadPerModuleWholeCompilerX86_64` (per-module IR). No routine test (x86 OR arm64) exercises the merged default: `TestSelfHostFixpointArm64` is env-gated the same way, with `TestSelfHostModloadPerModuleWholeCompilerArm64` the routine arm64 gate |
+| `asm_modload_run.fern:335` (arm64 332) | merged AST default | ~~`TestSelfHostModloadFixpointX86_64`~~ **retired from routine CI (env-gated `RUN_MERGED_FIXPOINT`, #3457 slice 2)** — the x86 whole-compiler self-compile gate now runs `TestSelfHostModloadPerModuleWholeCompilerX86_64` (per-module IR). **CORRECTED (2026-07-29):** this row used to claim "no routine test (x86 OR arm64) exercises the merged default". That was wrong — `TestSelfHostModloadPerModuleWholeCompilerX86_64`'s step 7 drives the per-module-BUILT compiler over the whole compiler source with no flags, which IS the merged default. Retiring the *fixpoints* from routine CI did not retire the merged path from routine CI. Since #3457 slice 3 the driver REFUSES a merged bundle this size unless `-merged` is passed, so the remaining AST consumers are greppable: that smoke run, plus the two env-gated fixpoints (`TestSelfHostFixpointArm64` / `TestSelfHostModloadFixpointX86_64`). The arm64 routine gate is `TestSelfHostModloadPerModuleWholeCompilerArm64` |
 | `asm_ir_run.fern:158` (arm64 135/144) | AST *fallback* of the IR differential | reached when `emit_module_ir_gated` returns "" (an ineligible program) |
 | inline `main.fern` | AST | `TestSelfHostStage2Bootstrap` / `…Stage2Compiler` build a one-off compiler over `asm.emit_module` |
 
@@ -987,9 +987,16 @@ tier → leak.
     `TestSelfHostPerModuleEmitAllFixpointX86_64` (#5672). The merged fixpoint stays
     runnable on demand as a backstop until slice 5 deletes `asm.fern`. The arm64
     sibling `TestSelfHostFixpointArm64` is env-gated the same way, with
-    `TestSelfHostModloadPerModuleWholeCompilerArm64` its routine gate — so **no
-    routine test (either backend) now compiles the whole compiler through the
-    merged AST emitter.**
+    `TestSelfHostModloadPerModuleWholeCompilerArm64` its routine gate.
+
+    **CORRECTION (2026-07-29).** This bullet used to end "so **no routine test
+    (either backend) now compiles the whole compiler through the merged AST
+    emitter**". That did not hold: step 7 of
+    `TestSelfHostModloadPerModuleWholeCompilerX86_64` runs the per-module-BUILT
+    compiler over the whole compiler source with no flags, which is exactly the
+    merged default. Retiring the *fixpoints* from routine CI retired the fixpoints,
+    not the merged path. Found by making the driver refuse that bundle (slice 3,
+    below) and watching which tests needed the `-merged` opt-out.
   - **gen0 parallel per-module is already CI-affordable (~3.3 min)** — the fast
     guard `TestSelfHostModloadPerModuleWholeCompilerX86_64` already exists; only
     the gen1 self-reproduction proof needs the hoist to become CI-cheap.
@@ -1125,10 +1132,31 @@ tier → leak.
   bounded `nfuncs > 512 && nfuncs < 1500`, and the compiler's ~2040 merged
   functions fall past the upper bound to `write(asm.emit_module(mwb))`. Raising
   that bound is NOT the fix — a single-process concat of that many functions OOMs,
-  which is why the batched `-per-module-emit-all` exists. The swap has to make
-  that fall-through an error and repoint its callers, which also retires the
-  env-gated `RUN_MERGED_FIXPOINT` backstops; that is slice 5's call, not a
-  drive-by.
+  which is why the batched `-per-module-emit-all` exists.
+
+  **The swap is DONE, in its reversible form.** Past both bounds the driver now
+  ERRORS, naming `-per-module-emit-all` as the way to compile something that size,
+  with `-merged` as an explicit opt-out. Deleting the AST path outright is still
+  slice 5's call — the env-gated `RUN_MERGED_FIXPOINT` backstops need it until
+  then — but the default is no longer a silent drop to AST, so a new caller cannot
+  land on the AST emitter without saying `-merged`.
+
+  Scoped to the OVER-1500 band deliberately. A module in 512..1500 whose
+  per-module rescue returns nothing still falls through to AST, and a module under
+  the budget never reaches the check, so nothing that compiles today stops
+  compiling. Widening the refusal to *every* bail site is what `FERN_STRICT_IR`
+  (#5793) already does, opt-in.
+
+  **What the swap flushed out:** exactly three callers needed `-merged`, and one
+  of them was a ROUTINE test — step 7 of
+  `TestSelfHostModloadPerModuleWholeCompilerX86_64`, which drives the
+  per-module-built compiler over the whole compiler source with no flags. Two
+  places in this document claimed no routine test exercised the merged default;
+  both are corrected above. The remaining AST consumers on x86 are now greppable
+  by that flag: that smoke run plus the two env-gated fixpoints. Pinned by
+  `TestSelfHostMergedBundleRefusedByDefaultX86_64`, which asserts both halves —
+  the default refuses and emits nothing, and `-merged` still produces a real
+  whole-compiler emit.
 
   Grounding the call graph in code: `asm.emit_module` is a *dispatcher* —
   it calls `asm_ir.emit_module_ir_gated`, which returns IR asm when the whole

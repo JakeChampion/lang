@@ -54,21 +54,21 @@ func TestSelfHostModloadFixpointX86_64(t *testing.T) {
 	entry := filepath.Join(dir, "asm_modload_run.fern")
 
 	// stage 1: driver compiles the compiler's own source -> mmc.
-	mmcAsm := runDriverFile(t, runner, driverBin, entry)
+	mmcAsm := runDriverFile(t, runner, driverBin, entry, "-merged")
 	if len(mmcAsm) == 0 {
 		t.Fatal("stage 1: driver emitted 0 bytes compiling the compiler source")
 	}
 	mmcBin := buildBin(t, gcc, dir, "mmc", string(mmcAsm))
 
 	// stage 2: mmc compiles the same source -> gen2.
-	gen2Asm := runDriverFile(t, runner, mmcBin, entry)
+	gen2Asm := runDriverFile(t, runner, mmcBin, entry, "-merged")
 	if len(gen2Asm) == 0 {
 		t.Fatal("stage 2: mmc emitted 0 bytes compiling the compiler source")
 	}
 	gen2Bin := buildBin(t, gcc, dir, "gen2", string(gen2Asm))
 
 	// stage 3: gen2 compiles the same source -> gen3.
-	gen3Asm := runDriverFile(t, runner, gen2Bin, entry)
+	gen3Asm := runDriverFile(t, runner, gen2Bin, entry, "-merged")
 	if len(gen3Asm) == 0 {
 		t.Fatal("stage 3: gen2 emitted 0 bytes compiling the compiler source")
 	}

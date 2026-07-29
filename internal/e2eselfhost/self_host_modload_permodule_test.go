@@ -313,10 +313,16 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	// a real `call __fn_main` (not the no-main fallback) guards the fix.
 	selfCompileStart := time.Now()
 	var scmd *exec.Cmd
+	// `-merged` because this step deliberately drives the WHOLE compiler through
+	// the merged bundle, which is past both the merged IR budget and the
+	// single-process per-module rescue — the driver now refuses that by default
+	// rather than dropping to the AST emitter silently (#3457 slice 3). This is
+	// the one routine test that still goes through the legacy AST emitter; the
+	// flag makes that greppable instead of implicit.
 	if len(runner) == 0 {
-		scmd = exec.Command(binPath, entry)
+		scmd = exec.Command(binPath, entry, "-merged")
 	} else {
-		scmd = exec.Command(runner[0], append(append(runner[1:], binPath), entry)...)
+		scmd = exec.Command(runner[0], append(append(runner[1:], binPath), entry, "-merged")...)
 	}
 	gen2, err := scmd.Output()
 	if err != nil {
