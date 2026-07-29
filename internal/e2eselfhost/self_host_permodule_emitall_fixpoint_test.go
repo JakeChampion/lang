@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -121,16 +122,31 @@ func runEmitAllFixpoint(t *testing.T, batchUnits int, label string) {
 // the driver windows internally so -unit-range [b,hi) emits exactly jobs[b:hi].
 func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir, label string, batchUnits int) map[string]string {
 	t.Helper()
-	drive := func(args ...string) (string, error) {
+	build := func(args ...string) *exec.Cmd {
 		full := append([]string{entry}, args...)
-		var cmd *exec.Cmd
 		if len(runner) == 0 {
-			cmd = exec.Command(compilerBin, full...)
-		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), compilerBin), full...)...)
+			return exec.Command(compilerBin, full...)
 		}
-		out, err := cmd.Output()
+		return exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), compilerBin), full...)...)
+	}
+	drive := func(args ...string) (string, error) {
+		out, err := build(args...).Output()
 		return string(out), err
+	}
+	// driveRSS runs a batch and returns the child's peak RSS (ru_maxrss, KB on
+	// Linux). batch=4's gen1 peak sits ~1.4 GB under the fixed 8 GiB arena, so
+	// logging it turns a future arena-growth regression into a visible creep in
+	// the CI output instead of a silent jump to exit-137.
+	driveRSS := func(args ...string) (int64, error) {
+		cmd := build(args...)
+		_, err := cmd.Output()
+		var rss int64
+		if cmd.ProcessState != nil {
+			if ru, ok := cmd.ProcessState.SysUsage().(*syscall.Rusage); ok {
+				rss = ru.Maxrss
+			}
+		}
+		return rss, err
 	}
 
 	countOut, err := drive("-per-module-count")
@@ -172,14 +188,19 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 
 	start := time.Now()
 	batches := 0
+	var peakRSSKB int64
 	for b := 0; b < totalUnits; b += batchUnits {
 		hi := b + batchUnits
 		if hi > totalUnits {
 			hi = totalUnits
 		}
-		if _, derr := drive("-per-module-emit-all", "-assume-eligible", "-out-dir", outDir,
+		rss, derr := driveRSS("-per-module-emit-all", "-assume-eligible", "-out-dir", outDir,
 			"-func-budget", strconv.Itoa(shardThreshold),
-			"-unit-range", strconv.Itoa(b)+":"+strconv.Itoa(hi)); derr != nil {
+			"-unit-range", strconv.Itoa(b)+":"+strconv.Itoa(hi))
+		if rss > peakRSSKB {
+			peakRSSKB = rss
+		}
+		if derr != nil {
 			hint := ""
 			if ee, ok := derr.(*exec.ExitError); ok && ee.ExitCode() == 137 {
 				hint = " — arena OOM (exit 137); -assume-eligible did not bound the batch"
@@ -209,7 +230,8 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 	if len(units) != totalUnits {
 		t.Fatalf("[%s] emit-all wrote %d units, plan has %d", label, len(units), totalUnits)
 	}
-	t.Logf("[%s] emit-all: %d units in %d batches of <=%d, %.1fs", label, len(units), batches, batchUnits, time.Since(start).Seconds())
+	t.Logf("[%s] emit-all: %d units in %d batches of <=%d, %.1fs, peak %.2f GB (arena ceiling 8 GiB)",
+		label, len(units), batches, batchUnits, time.Since(start).Seconds(), float64(peakRSSKB)/(1024*1024))
 	return units
 }
 
