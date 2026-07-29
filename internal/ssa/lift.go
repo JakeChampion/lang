@@ -353,6 +353,10 @@ func widthOfAstType(t ast.Type) int8 {
 // returned from a call arrived as 0.0 on arm64-ssa, so `idf32(96.55f32) as i32`
 // printed 0 where the interpreter and the native backends print 96. ReturnFloat
 // is therefore checked alongside ReturnWidth.
+//
+// This covers OpCall only. An INDIRECT call has no callee name to look up, so
+// its width is set during the lift instead, from the signature the IR op
+// carries — see the ir.OpCallIndirect case below.
 func AnnotateCallWidths(funcs map[string]*Func) {
 	for _, f := range funcs {
 		for _, b := range f.Blocks {
@@ -775,6 +779,23 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		l.stack = l.stack[:len(l.stack)-argc-1]
 		all := append([]Value{callee}, args...)
 		result := l.out.AddOp(l.cur, OpCallIndirect, all...)
+		// Result width, for the same reason AnnotateCallWidths sets it on a
+		// direct call: a 64-bit return (i64, or ANY float, which lives in a
+		// general register as its f64 bit pattern) must not be masked back to
+		// 32 bits. There is no callee name to resolve here, but the IR op
+		// carries the call site's static signature, which is strictly better —
+		// it is right whether the callee is a nested function reached through
+		// a closure cell or a function value arriving in a parameter.
+		//
+		// Before this, an `f32`-returning nested function returned 0.0 on
+		// arm64-ssa (the mask keeps the low mantissa half and drops the sign
+		// and exponent, reading back as a denormal) while every other backend
+		// returned the value.
+		if sig := op.Sig(); sig != nil && sig.Result != nil {
+			if widthOfAstType(sig.Result) == 64 || isFloatAstType(sig.Result) {
+				l.cur.Ops[len(l.cur.Ops)-1].Width = 64
+			}
+		}
 		l.stack = append(l.stack, result)
 	case ir.OpConstFunc:
 		// A bare function value is a zero-capture closure: it produces the
