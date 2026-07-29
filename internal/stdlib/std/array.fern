@@ -1300,6 +1300,22 @@ pub function position[T](xs: T[], pred: (T) => boolean): Option[i32] {
     return None;
 }
 
+// `find_indices(xs, pred)` — the indices (ascending) of every element that
+// satisfies `pred`, as a plain `i32[]`: the "all matches" plural of
+// `position`, which returns only the first. `find_indices([1,2,3,4], is_even)`
+// is `[1, 3]`; none matching yields the empty array. Pairs with `filter`
+// (which keeps the values) when it is the positions you need — a selection
+// mask, later `swap` / `remove_at` targets, gap analysis.
+pub function find_indices[T](xs: T[], pred: (T) => boolean): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (pred(xs[i])) { out = out.append(i); }
+        i = i + 1;
+    }
+    return out;
+}
+
 // `rposition(xs, pred)` — `Some(i)` for the LAST index whose element
 // satisfies `pred`, scanning from the end, else `None`. The right-to-left
 // mirror of `position` (first matching index) and the predicate sibling of
