@@ -13226,7 +13226,14 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         // An f32 local is ALSO f32-tagged (overlay on f64) so its method
         // calls dispatch "f32.<m>" — by annotation (`var x: f32`) or an
         // f32-valued init (`var x = y as f32` / another f32 value).
-        if (v.type_name == "f32" || v.type_name == "float" || expr_is_f32(v.init, s)) {
+        // `float` is NOT one of them: it is the f64 alias (parser builds
+        // FloatType{Width:64} for it, #5363), and expr_is_f32 below already
+        // states the rule — "Only `as f32` yields f32; `as f64` / `as float`
+        // are f64". Tagging it f32 made `var x: float` compute at f32
+        // precision, since f32 arithmetic rounds through a demote/promote
+        // pair, and the tag propagated into any f64 local assigned from it
+        // (#5882).
+        if (v.type_name == "f32" || expr_is_f32(v.init, s)) {
             fvb = fvb.mark_f32(fslot, true);
         }
         return fvb.emit(ir.op_store_local(fslot));
@@ -30774,7 +30781,8 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         if (r_is_map) { mapty = mapty.append(fn.receiver_type); } else { mapty = mapty.append(""); }
         isi64 = isi64.append(rbase == "i64");
         isf64 = isf64.append(is_f64_scalar_type_name(rbase));
-        isf32 = isf32.append(rbase == "f32" || rbase == "float");
+        // `float` excluded — the f64 alias, not f32 (#5882); isf64 covers it.
+        isf32 = isf32.append(rbase == "f32");
         isf64arr = isf64arr.append(false);
         isi64arr = isi64arr.append(false);
         isu32 = isu32.append(is_u32_type_name(fn.receiver_type));
@@ -30871,7 +30879,9 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         isi64 = isi64.append(fn.params[i].type_name == "i64"
             || (for_wasm && is_erased_typevar(fn.params[i].type_name, structs) && erased_widenable(fn, structs)));
         isf64 = isf64.append(is_f64_scalar_type_name(fn.params[i].type_name));
-        isf32 = isf32.append(fn.params[i].type_name == "f32" || fn.params[i].type_name == "float");
+        // `float` is excluded deliberately — it is the f64 alias, not f32
+        // (#5882). isf64 above already covers it via is_f64_scalar_type_name.
+        isf32 = isf32.append(fn.params[i].type_name == "f32");
         // An f64[] param is element-width-tracked (a[i] reads an 8-byte f64);
         // the array itself rides the same 8-byte-stride layout every f64 array
         // literal in this (whole-module-IR) program uses, so passing one is safe.
