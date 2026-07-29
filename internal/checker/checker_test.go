@@ -5071,3 +5071,64 @@ func TestRetiredNameSuggestsReplacement(t *testing.T) {
 			ce.Fix.Pos, ce.Fix.Length, ce.Pos, len("string_from_bytes"))
 	}
 }
+
+// A generic call whose argument is an ARGLESS enum — `Ok(8)` leaves the error
+// type free, unlike `Some(8)` which pins `Option[i32]` — must type-check the
+// same in every position. It did not: as a METHOD-CALL RECEIVER it was
+// rejected with E038 ("expected T, got Result") while the identical
+// expression passed as a `var` initialiser, a bare statement, an operand, and
+// a call argument.
+//
+// The receiver is checked twice (the method-dispatch path types it, then falls
+// through to the generic callee check) and a generic call memoises its
+// inferred TypeArgs, so the second pass arrived with `T` already bound to
+// `Result[i32, i32]` and compared it against the argument's still-argless
+// `Result`. Re-checking has to be idempotent; unifying an argless enum against
+// an existing binding of the same enum is now allowed, since argless is the
+// deliberate "resolve me from context" form and so conflicts with nothing.
+//
+// Found by sweeping fernsmith printable seeds past CI's range (seed 603).
+func TestGenericArglessEnumArgInMethodReceiver(t *testing.T) {
+	// `g` returns a Box so the receiver position can use a user-defined
+	// method — checkSource resolves no stdlib, so `.to_string()` is not
+	// available here, and using it would test the stdlib rather than the
+	// receiver position.
+	const prelude = `struct Box { n: i32 }
+function (b: Box) get(): i32 { return b.n; }
+function id[T](x: T): T { return x; }
+function g(p: Result[i32, i32]): Box { return Box { n: 1 }; }
+`
+	positions := []struct {
+		name string
+		body string
+	}{
+		{"method receiver", `function main(): i32 { return (g(id(Ok(8i32)))).get(); }`},
+		{"var with annotation", `function main(): i32 { var x: Box = g(id(Ok(8i32))); return 0; }`},
+		{"var without annotation", `function main(): i32 { var x = g(id(Ok(8i32))); return 0; }`},
+		{"bare statement", `function main(): i32 { g(id(Ok(8i32))); return 0; }`},
+		{"field access", `function main(): i32 { return (g(id(Ok(8i32)))).n; }`},
+		{"call argument", `function h(v: Box): i32 { return 0; }
+function main(): i32 { return h(g(id(Ok(8i32)))); }`},
+	}
+	for _, p := range positions {
+		t.Run(p.name, func(t *testing.T) {
+			if err := checkSource(t, prelude+p.body); err != nil {
+				t.Errorf("%s: unexpected error: %v", p.name, err)
+			}
+		})
+	}
+
+	// The relaxation must not swallow a REAL conflict: two arguments that pin
+	// the same type parameter to genuinely different instantiations still fail.
+	t.Run("genuine conflict still rejected", func(t *testing.T) {
+		src := `function pair[T](a: T, b: T): i32 { return 0; }
+function main(): i32 {
+  var x: Result[i32, i32] = Ok(1i32);
+  var y: Result[string, i32] = Ok("s");
+  return pair(x, y);
+}`
+		if err := checkSource(t, src); err == nil {
+			t.Errorf("expected a conflict between Result[i32,i32] and Result[string,i32], got nil")
+		}
+	})
+}

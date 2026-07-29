@@ -6273,7 +6273,34 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 	}
 	if p, ok := expected.(ast.ParamType); ok {
 		if existing, bound := sub[p.Name]; bound {
-			return ast.Equal(existing, actual)
+			if ast.Equal(existing, actual) {
+				return true
+			}
+			// An ARGLESS enum is the deliberate "not yet resolved" form the
+			// variant-call path returns when the args can't be filled from
+			// the payload alone (`Ok(8)` leaves the error type free) — see
+			// the "Leave Args nil so `assignable` flows the type into
+			// whatever the surrounding context expects" case. It is strictly
+			// LESS specific than any instantiation of the same enum, so it
+			// conflicts with nothing; the existing, more specific binding
+			// stands.
+			//
+			// This matters because re-checking an expression must be
+			// idempotent, and a generic call memoises its inferred TypeArgs
+			// on the AST node. A method-call receiver IS checked twice (the
+			// dispatch path types it, then falls through to the generic
+			// callee check), so on the second pass `sub` arrives already
+			// bound while the argument still reports its argless form:
+			// `(g(id(Ok(8i32)))).to_string()` bound T := Result[i32, i32] on
+			// the first pass and then rejected bare `Result` on the second,
+			// while the identical call in any other position — `var`, bare
+			// statement, operand, argument — checked once and passed.
+			if ae, ok := actual.(ast.EnumType); ok && len(ae.Args) == 0 {
+				if ee, ok := existing.(ast.EnumType); ok && ee.Name == ae.Name {
+					return true
+				}
+			}
+			return false
 		}
 		sub[p.Name] = actual
 		return true
