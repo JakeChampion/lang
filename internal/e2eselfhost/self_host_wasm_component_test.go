@@ -913,6 +913,40 @@ func TestSelfHostWasmComponentReadFile(t *testing.T) {
 		}
 	})
 
+	// The Err payload must be a real, matchable IoError variant carrying the
+	// path — the same thing every other target produces. The preview2 helper
+	// stored the RAW wasi error code there until the fs shapes moved onto the
+	// IR leg, so matching a variant on it dereferenced an integer as a variant
+	// box. The sibling missing-file-err case above cannot see that: it takes
+	// the Err branch but never inspects `e`, which is how it survived (#5795).
+	t.Run("missing-file-err-variant", func(t *testing.T) {
+		comp := build(t, `function main(): i32 {
+			match (read_file("nope.txt")) {
+				Ok(s) => { write("OK"); return 0; },
+				Err(e) => {
+					match (e) {
+						NotFound(p) => { write("notfound:"); write(p); return 0; },
+						PermissionDenied(p) => { write("denied"); return 1; },
+						AlreadyExists(p) => { write("exists"); return 1; },
+						InvalidUtf8(p) => { write("utf8"); return 1; },
+						Interrupted => { write("intr"); return 1; },
+						Unsupported => { write("unsup"); return 1; },
+						Other(p, m) => { write("other:"); write(p); return 1; }
+					}
+				}
+			}
+			return 2;
+		}`)
+		cmd := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp)
+		out, _ := cmd.Output()
+		if string(out) != "notfound:nope.txt" {
+			t.Errorf("missing-file variant = %q, want %q", string(out), "notfound:nope.txt")
+		}
+		if code := cmd.ProcessState.ExitCode(); code != 0 {
+			t.Errorf("missing-file variant: exit = %d, want 0", code)
+		}
+	})
+
 	t.Run("large-file-loop", func(t *testing.T) {
 		comp := build(t, `function main(): i32 { match (read_file("big.txt")) { Ok(s) => { print_int(s.len()); return 0; }, Err(e) => { return 1; } } return 2; }`)
 		if err := os.WriteFile(filepath.Join(dir, "big.txt"), make([]byte, 10000), 0o644); err != nil {
