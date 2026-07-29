@@ -899,6 +899,22 @@ field (`S { f: a1 }`), a call argument (`takes(a1)`), a fn-value local
 (`var g: () => i32 = a1`), and a fn-POINTER array (`var xs: (() => i32)[] = [a1]`,
 which goes through the const_func path instead).
 
+**The sweep was then widened AWAY from fn values and came back empty** (2026-07-29,
+22 programs, differential against the interpreter, all routing IR). Recorded as a
+negative result so the next probing pass starts somewhere else: nested
+struct-in-array field reads, struct update syntax (`S { ...s, b: 5 }`),
+slice-of-slice and string-slice chains, `defer`, match guards over enum payloads,
+multi-element tuple returns, arrays of tuples, `Option` struct fields, i64
+arithmetic, method chaining, closures returned from a function, closures captured
+per-iteration in a loop, string building in a loop, struct array-field iteration,
+struct-payload enums, and deep recursion.
+
+That is worth stating plainly: the fn-value REPRESENTATION ambiguity was a
+concentrated cluster, not a sample of a broadly buggy IR path. Eight miscompiles
+came out of it (#5799, #5850, #5865, #5881 and the #5001/#5007/#5009/#5026
+closure-dispatch group before them), and everything probed outside it agreed with
+the oracle first time.
+
 ### Rebinding an `fn[]` LOCAL: one direction fixed, the cross-representation ones open
 
 Probed 2026-07-29 on the x86-64 IR path (no struct field involved; the wasm IR
