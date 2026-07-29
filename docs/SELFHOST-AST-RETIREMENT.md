@@ -945,11 +945,40 @@ wherever those two were derived independently they disagreed for exactly the
 zero-arg case. Each fix is the same move — read the declared type at the site
 that already has it.
 
-Still out of scope, recorded so it is not re-probed:
-`var g: (() => i32)[][] = [[a1]]; g[0][0]()` is interp 3, self-host SIGSEGV, and
-`Option[((() => i32), i32)]` carrying `Some((a1, 4))` is interp 7 / SIGSEGV — but
-BOTH route **AST**, so per the project rule (a legacy-AST-only gap needs no fix)
-they wait until the IR path admits them.
+The two remaining crashes route **AST**, so by the project rule they need no AST
+fix — but they are worth ADMITTING to the IR path, because the four fixes above
+would then make them correct rather than crashing. Both are now localised, with
+`FERN_STRICT_IR=1` (#5793) naming the bail and minimal contrast pairs isolating
+the trigger. No rebuild was needed for any of this, so do not re-derive it:
+
+**(1) `t.0()` on a tuple bound from a MATCH PAYLOAD.**
+`FERN_STRICT_IR` says: `main (call to unknown symbol i32.0)` — the callee fell
+through to method dispatch on the element's *type*. The contrast pairs place it
+exactly:
+
+| program | verdict |
+|---|---|
+| `Option[(i32, i32)]` → `t.0 + t.1` | IR, correct |
+| `Option[((() => i32), i32)]` → `t.1` (read the NON-fn element) | **IR, correct** |
+| `Option[((() => i32), i32)]` → `t.0()` (CALL the fn element) | **bails** |
+| `var t: ((() => i32), i32) = (a1, 4); t.0()` (a LOCAL, not a payload) | IR, correct |
+
+Row 2 is the informative one: the bound slot's `mark_tuple_elems` tags ARE being
+recorded, since reading the non-fn element resolves its width correctly. And row 4
+shows the `"clo"`-element CALL path works for a var-bound tuple. So neither the
+tagging nor the call lowering is missing in general — what fails is only the
+combination, a `"clo"` element call on a slot bound from a match payload. Note the
+payload is BORROWED from the Option box (the arm-bind comments say so), where a
+var-bound tuple is owned; that asymmetry is the first thing to check.
+
+**(2) A fn element in a NESTED array.** `FERN_STRICT_IR` names only `main`, no
+reason. `var g: i32[][] = [[3]]; g[0][0]` lowers fine, so it is not the nesting —
+it is the element type, i.e. the array-of-array element classifier
+(`mark_arrarr_elem` / `arrarr_elem`) not admitting a fn/`"clo"` element the way
+`tuple_elems_lowerable` already admits one.
+
+Both are IR-WIDENING work (goal 1), not AST work, and both are small enough to be
+worth doing before reaching for the uniform-representation rewrite.
 
 Positions PROBED CLEAN in the same sweep, so they need no work: a plain struct
 field (`S { f: a1 }`), a call argument (`takes(a1)`), a fn-value local
