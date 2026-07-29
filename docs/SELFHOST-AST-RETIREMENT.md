@@ -407,7 +407,7 @@ accounting for arrays, **whose safety impact is unestablished**. It is not
 demonstrably reachable by constructor reuse, and nothing here shows a live
 corruption.
 
-##### Reachability: hunted, not found — and the IR answer may be the correct one
+##### Reachability: hunted, not found
 
 The obvious way for a missing retain to bite is a free-while-still-referenced:
 the container keeps a pointer, the original binding's sweep frees the buffer.
@@ -425,17 +425,35 @@ builtins**, all against the interpreter as oracle:
 but it is four independent attempts at the specific failure the missing retain
 predicts.
 
-It also raises a reading worth taking seriously before "fixing" the IR path: if
-an array is **moved** into the container rather than aliased, then after the
-store the container holds the only live reference, rc is genuinely 1, and
-`is_unique` answering **1 is correct** — with the AST path over-counting (which
-leaks rather than corrupts, i.e. errs safe). Nothing here settles which side is
-right; it settles that the IR side is not obviously the wrong one.
+##### Settled: the array is ALIASED, so the IR answer is the wrong one
 
-Consequence for the alias: the 7 failing wasm rows assert `is_unique == 0`, and
-that expectation may itself be AST-specific rather than a specification. Landing
-the alias might therefore be a matter of **correcting those expectations for
-wasm**, not of changing the backend. Establish which before writing code.
+An earlier revision of this section floated the opposite — that if the array were
+**moved** into the container, the container would hold the only live reference,
+rc would genuinely be 1, and the IR answer of 1 would be *correct* with the AST
+path over-counting. That reading is **disproven**, and the test is one line:
+
+```fern
+var a: i32[] = [11, 22];
+var both: i32[][] = [a];
+return a[1] + both[0][1];        // 44 — BOTH references readable
+```
+
+44 on the interpreter and on the wasm IR path. `a` is still live after the
+store, so `a` and `both[0]` are two simultaneous references to one buffer: an
+**alias**, not a move. Two live references means `__fern_rc_is_unique(a)` must be
+**0** — the AST path is right and the wasm IR path is wrong.
+
+Copy-on-write is unaffected and correct (`a = a.with(1, 50)` then
+`a[1] + both[0][1]` gives 72 on both wasm paths — the container's view is
+untouched), which is why the reachability probes above find no miscompile: the
+operations that would corrupt do not consult this answer. The
+**constructor-reuse guard does**, so the degradation is real even while
+currently unreachable.
+
+So the job is to **fix the wasm IR path** — retain on a container store — not to
+adjust the 7 wasm expectations, which are correct as written. That is the
+opposite of what the previous revision suggested; it was written before this
+probe existed.
 
 **The alias is therefore reverted, not landed**: it would turn those 7 wasm
 cases red, and hiding them behind a skip would bury a real backend disagreement.
