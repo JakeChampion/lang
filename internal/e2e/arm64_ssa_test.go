@@ -1162,6 +1162,54 @@ function main(): i32 {
 	}
 }
 
+// The same experimental-backend contract for a lift gap rather than a missing
+// runtime builtin: `?` inside an array (or tuple) literal makes LiftFromIR
+// produce a use its def does not dominate — the try desugar carries an early
+// `return`, so the container construction is split across blocks with a partly
+// built address left behind.
+//
+// It must ERROR. Before ssa.Verify was called on the build path it did not:
+// invalid SSA went through regalloc and emit and produced a binary that
+// SIGSEGVs, while interp / x86-64 / arm64 / wasm all ran the program correctly.
+// Verify already detected it; nothing on a build path was calling it.
+//
+// Found by the differential oracle at seed 216, once a corpus reshuffle put a
+// `?` inside a generated array literal.
+func TestArm64SSAInvalidSSAErrorsNotSegfaults(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("arm64-ssa not exercised on windows")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "fern")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build fern: %v\n%s", err, out)
+	}
+	for _, c := range []struct{ name, src string }{
+		{"try_in_array_literal", `function f(): Option[i32] { var v: Option[i32] = Some(184i32); var arr: i32[] = [(v?)]; return v; }
+function main(): i32 { return match (f()) { Some(x) => 0, None => 1 }; }`},
+		{"try_in_tuple_literal", `function f(): Option[i32] { var v: Option[i32] = Some(184i32); var t: (i32, i32) = ((v?), 7i32); return v; }
+function main(): i32 { return match (f()) { Some(x) => 0, None => 1 }; }`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srcPath := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(srcPath, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			out := filepath.Join(dir, c.name+".bin")
+			emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
+			var eb bytes.Buffer
+			emit.Stderr = &eb
+			if err := emit.Run(); err == nil {
+				t.Fatalf("expected an error for invalid SSA, got success (a binary that segfaults at runtime)")
+			}
+			if !bytes.Contains(eb.Bytes(), []byte("ssa.Verify")) {
+				t.Errorf("error should name ssa.Verify, so the failure is attributed to the lift rather than read as a coverage gap:\n%s", eb.String())
+			}
+		})
+	}
+}
+
 // TestArm64SSACoverageGapErrors confirms a program needing a runtime builtin the
 // arm64-ssa path doesn't emit yet (here the `subprocess` builtin, which reaches
 // the still-unported `subprocess` helper) fails with a clean compile/link error
