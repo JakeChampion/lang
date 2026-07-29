@@ -2876,8 +2876,49 @@ So the split is: **part 2 = the `FieldAccess`-on-struct-local un-taint (landed,
 reclaims the threading cluster); part 1 = the scalar-arg exemption via a
 struct-param counted-retain summary (still open, the map-negative-delicate half,
 needed for tokenize's scalar-poisoned result structs).** `result_thread_leak.fern`
-is the part-2 pin (`TestLeakCheckResultThreadReclaim{X86_64,Arm64}`); a scalar-
-carrying reproducer is the part-1 pin to add when it lands.
+is the part-2 pin (`TestLeakCheckResultThreadReclaim{X86_64,Arm64}`);
+`scalar_thread_leak.fern` is the part-1 reproducer (still leaking 3400/1000).
+
+#### Part 1 built and measured — it reclaims the projection shape but STILL not the lexer (2026-07-29)
+
+The struct-param generalisation was implemented: `inferParamCountedRetain` grows
+a `structParamProjectionsSafe` classifier that credits a struct param whose
+every appearance is a COUNTED store (bare `p` / `p.field` in a StructLit /
+TupleLit / ArrayLit slot) or a NON-RETAINING read (a scalar field `p.i`, a
+string-slice source `p.src[a:b]`, a string byte `p.src[i]`), disqualifying
+anything else. With the cursor param credited, `scan`'s `ptrAllCounted` holds,
+the scalar param `start_line` is exempted, and the tainted scalar argument no
+longer re-taints the result struct.
+
+Measured, and it splits cleanly along the doc's own prediction:
+
+| workload | before | after part 1 |
+|---|---|---|
+| `scalar_thread_leak.fern` (projection-only cursor) | 3400 / **1000** | 3400 / **3400** — full reclaim |
+| the real lexer bench (200× tokenize of a mixed source) | 60200 / 8000 | 60200 / **8000** — unchanged |
+
+Green on the fast soundness gates (`internal/ir` + `internal/checker` units, the
+map-intermediate reclaim negatives, the full leakcheck suite). But it does **not
+touch the real lexer**, for exactly the reason the widening-list section above
+gives: the real scanners use `l` as a METHOD RECEIVER (`l.at_end()`,
+`l.peek_byte()`) and self-reassignment (`l = l.advance()`), which the projection
+classifier disqualifies. The projection rule alone was held once before for this
+same "does not touch the lexer" reason; the finding here is that a teeth-having
+reproducer (`scalar_thread_leak.fern`) does not change that verdict — the shape
+it fixes is a REDUCTION of the lexer, not the lexer.
+
+**So part 1 was NOT landed in isolation**, matching the prior judgment: it is
+byte-identity-affecting (it un-taints call results compiler-wide) and its
+motivating case stays unfixed without the next piece. The motivated full fix is
+the projection summary PLUS a **method-receiver-retention summary** — a call
+`l.m()` does not retain `l` when `m`'s receiver param is itself counted-retain,
+which is the SAME `structParamProjectionsSafe` applied one level down, closed to
+a fixpoint. `l = l.advance()` then also settles: `advance`'s `l` is
+projection-safe (it returns `Lx { src: l.src, … }`), so the self-reassign is a
+consume of a fresh-owned value. That fixpoint is the next slice; the classifier
+above is its building block, recorded here rather than landed so it is rebuilt
+with the receiver summary and validated against the real lexer, not a synthetic
+reduction of it.
 
 The rest of the widening list is unaffected by that refutation but is now
 UNMOTIVATED until the leak is localised — none of it is known to touch the

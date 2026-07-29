@@ -1,0 +1,74 @@
+// The SECOND half of the lexer load leak (docs/SELFHOST-AST-RETIREMENT.md),
+// the part #5864 (the FieldAccess-on-struct-local un-taint, "part 2") does NOT
+// close. Where result_thread_leak.fern reclaims fully after part 2, this one
+// still strands its result structs — because the scanner takes a SCALAR
+// argument that the caller taints.
+//
+//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/scalar_thread_leak.fern
+//   /tmp/p    # stderr: leakcheck: allocs=3400 frees=1000 live_bytes=76800
+//
+// The one structural addition over result_thread_leak.fern is `start_line`: a
+// scalar the caller reads from the cursor AND stores directly into a token
+// literal in its own body (the `TPunct { line: start_line }` branch). That
+// store taints `start_line` (escapeOwned marks a value moved into a
+// construction), and a tainted SCALAR argument to `scan(l, start_line)`
+// re-taints the whole result struct via rhsTainted's generic arg loop — so
+// `r` is never freed even though part 2 un-taints the `l = r.lex` threading.
+//
+// The fix is the scalar-arg EXEMPTION: a tainted scalar carries no heap and
+// cannot be retained, so it should not taint a call result — PROVIDED every
+// pointer parameter of the callee is itself counted-retain (the condition that
+// keeps `grow(m, i + 2)` returning a map that shares the caller's buffer from
+// being freed early; TestX86_64MapIntermediateReclaim). For `scan`, the only
+// pointer param is the struct cursor `l`, threaded purely through field
+// projections (`l.src` into a construction, `l.i`/`l.line` scalar reads,
+// `l.src[a:b]` a copying slice) — the struct-param generalisation of the
+// string counted-retain summary (inferParamCountedRetain, string-only today).
+//
+// Measured: crediting `scan`'s `l` and exempting `start_line` takes this probe
+// to full reclaim (3400/3400). It does NOT close the REAL lexer, whose
+// scanners use `l` as a METHOD RECEIVER (`l.at_end()`, `l.peek_byte()`) and
+// self-reassignment (`l = l.advance()`), which the projection classifier
+// disqualifies — so the motivated fix is the projection summary PLUS a
+// method-receiver-retention summary (a method whose receiver param is itself
+// counted-retain does not retain it). See the doc.
+//
+// Exit code 2, matching the interpreter.
+struct Lx { src: string, i: i32, line: i32 }
+struct TId { text: string, line: i32 }
+struct TPunct { text: string, line: i32 }
+struct TEof { line: i32 }
+type Tok = TId | TPunct | TEof;
+struct Res { lex: Lx, tok: Tok }
+
+function scan(l: Lx, start_line: i32): Res {
+    var t: Tok = TId { text: l.src[l.i : l.i + 1] + "", line: start_line };
+    return Res { lex: Lx { src: l.src, i: l.i + 1, line: l.line + 1 }, tok: t };
+}
+
+function run(src: string): i32 {
+    var l: Lx = Lx { src: src, i: 0, line: 1 };
+    var out: Tok[] = [];
+    while (l.i < 8) {
+        var start_line: i32 = l.line;
+        if (l.src[l.i] == 46) {   // '.' — a punct token built INLINE here, tainting start_line
+            out = out.append(TPunct { text: ".", line: start_line });
+            l = Lx { src: l.src, i: l.i + 1, line: l.line };
+            continue;
+        }
+        var r = scan(l, start_line);
+        l = r.lex;
+        out = out.append(r.tok);
+    }
+    return out.len();
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var n: i32 = 0;
+    while (n < 100) {
+        acc = acc + run("abc.def.g");
+        n = n + 1;
+    }
+    return acc % 7;
+}
