@@ -44,11 +44,11 @@ function main(): i32 { return "  hi  ".trim().len(); }`},
 	// (70); "Foo_bar".camel_case() lower-cases the first initial to 'f'
 	// (102); "__foo__bar__".camel_case() == "fooBar" (len 6).
 	{"camel_case-boundary", `import "std/string";
-function main(): i32 { return "foo_bar".camel_case()[3]; }`},
+function main(): i32 { return "foo_bar".camel_case()[3] as i32; }`},
 	{"pascal_case-initial", `import "std/string";
-function main(): i32 { return "foo_bar".pascal_case()[0]; }`},
+function main(): i32 { return "foo_bar".pascal_case()[0] as i32; }`},
 	{"camel_case-first-lower", `import "std/string";
-function main(): i32 { return "Foo_bar".camel_case()[0]; }`},
+function main(): i32 { return "Foo_bar".camel_case()[0] as i32; }`},
 	{"camel_case-collapse-len", `import "std/string";
 function main(): i32 { return "__foo__bar__".camel_case().len(); }`},
 	// is_camel_case / is_pascal_case predicates, oracle-checked. Return

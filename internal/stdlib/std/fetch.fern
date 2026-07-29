@@ -188,7 +188,7 @@ pub function http_status(resp: string): i32 {
     var code: i32 = 0;
     var have: boolean = false;
     while (i < resp.len()) {
-        var ch: i32 = resp[i];
+        var ch: i32 = resp[i] as i32;
         if (ch < 48 || ch > 57) {
             break;
         }
@@ -223,7 +223,7 @@ pub function parse_ipv4(s: string): i32 {
     var have: boolean = false;
     var i: i32 = 0;
     while (i < s.len()) {
-        var ch: i32 = s[i];
+        var ch: i32 = s[i] as i32;
         if (ch == 46) { // '.'
             if (!have) { return -1; }
             octets = octets.append(cur);
@@ -289,7 +289,7 @@ pub function get_url(url: string): string {
         port = 0;
         var i: i32 = 0;
         while (i < portstr.len()) {
-            var ch: i32 = portstr[i];
+            var ch: i32 = portstr[i] as i32;
             if (ch < 48 || ch > 57) { return ""; }
             port = port * 10 + (ch - 48);
             i = i + 1;

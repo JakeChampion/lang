@@ -29,7 +29,7 @@ function parse_one(s: string, i: i32): PS {
         if (pos < s.len() && s[pos] == 41) { pos = pos + 1; }
         return PS { node: inner.node, pos: pos };
     }
-    return PS { node: One(s[i]), pos: i + 1 };
+    return PS { node: One(s[i] as i32), pos: i + 1 };
 }
 function parse_many(s: string, i: i32): PS {
     var items: Tok[] = [];

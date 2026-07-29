@@ -28,7 +28,7 @@ function quote_string(s: string): string {
     var out: string = "\"";
     var i: i32 = 0;
     while (i < s.len()) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b == 34) { out = out + "\\\""; }
         else if (b == 92) { out = out + "\\\\"; }
         else if (b == 10) { out = out + "\\n"; }

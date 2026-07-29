@@ -109,7 +109,7 @@ function main(): i32 {
 
     // --- for-in string (byte iteration) ---
     var bs: i32 = 0;
-    for b in "abc" { bs = bs + b; }
+    for b in "abc" { bs = bs + (b as i32); }
     if (bs != 294) { print("FAIL forin-str"); return 47; }
 
     // --- inclusive + half-open ranges ---

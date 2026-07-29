@@ -1434,7 +1434,7 @@ function _dig(c: i32): i32 {
 
 // _fld reads the 24-bit field at character offset ` + "`i`" + `.
 function _fld(t: string, i: i32): i32 {
-    return (_dig(t[i]) << 18) | (_dig(t[i + 1]) << 12) | (_dig(t[i + 2]) << 6) | _dig(t[i + 3]);
+    return (_dig(t[i] as i32) << 18) | (_dig(t[i + 1] as i32) << 12) | (_dig(t[i + 2] as i32) << 6) | _dig(t[i + 3] as i32);
 }
 
 // _case_apply maps ` + "`cp`" + ` through the case table — uppercase when
@@ -1504,7 +1504,7 @@ function _ascii_fold(s: string, from: i32, to: i32): string {
     var buf: u8[] = __alloc_u8(n);
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b >= from && b < from + 26) { b = b + (to - from); }
         buf = buf.with(i, b as u8);
         i = i + 1;
@@ -1720,8 +1720,8 @@ pub function eq_ignore_case(a: string, b: string): boolean {
         if (na != b.len()) { return false; }
         var k: i32 = 0;
         while (k < na) {
-            var ca: i32 = a[k];
-            var cb: i32 = b[k];
+            var ca: i32 = a[k] as i32;
+            var cb: i32 = b[k] as i32;
             if (ca >= 65 && ca <= 90) { ca = ca + 32; }
             if (cb >= 65 && cb <= 90) { cb = cb + 32; }
             if (ca != cb) { return false; }
@@ -1750,7 +1750,7 @@ pub function swap_case(s: string): string {
         var buf: u8[] = __alloc_u8(n);
         var k: i32 = 0;
         while (k < n) {
-            var b: i32 = s[k];
+            var b: i32 = s[k] as i32;
             if (b >= 65 && b <= 90) { b = b + 32; }
             else if (b >= 97 && b <= 122) { b = b - 32; }
             buf = buf.with(k, b as u8);

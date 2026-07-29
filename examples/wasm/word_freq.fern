@@ -48,7 +48,7 @@ function tokenize(s: string): string[] {
   while (i <= sLen) {
     var b: i32 = 0;
     if (i < sLen) {
-      b = lower[i];
+      b = lower[i] as i32;
     }
     var is_break: boolean = i == sLen || b == 32 || b == 9 || b == 10 || b == 13;
     if (is_break) {

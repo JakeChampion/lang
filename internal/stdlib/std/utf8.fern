@@ -30,7 +30,7 @@ import "std/string";
 pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)] {
     var n: i32 = s.len();
     if (i < 0 || i >= n) { return None; }
-    var b0: i32 = s[i];
+    var b0: i32 = s[i] as i32;
     // 1-byte: 0xxxxxxx (ASCII).
     if (b0 < 128) { return Some((b0, 1)); }
     // 0x80..0xBF is a stray continuation byte; not a valid lead.
@@ -38,7 +38,7 @@ pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)] {
     if (b0 < 224) {
         // 2-byte: 110xxxxx 10xxxxxx.
         if (i + 1 >= n) { return None; }
-        var c1: i32 = s[i + 1];
+        var c1: i32 = s[i + 1] as i32;
         if (c1 < 128 || c1 >= 192) { return None; }
         var cp2: i32 = ((b0 - 192) << 6) | (c1 - 128);
         if (cp2 < 128) { return None; }             // overlong
@@ -47,8 +47,8 @@ pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)] {
     if (b0 < 240) {
         // 3-byte: 1110xxxx 10xxxxxx 10xxxxxx.
         if (i + 2 >= n) { return None; }
-        var d1: i32 = s[i + 1];
-        var d2: i32 = s[i + 2];
+        var d1: i32 = s[i + 1] as i32;
+        var d2: i32 = s[i + 2] as i32;
         if (d1 < 128 || d1 >= 192) { return None; }
         if (d2 < 128 || d2 >= 192) { return None; }
         var cp3: i32 = ((b0 - 224) << 12) | ((d1 - 128) << 6) | (d2 - 128);
@@ -59,9 +59,9 @@ pub function utf8_decode_at(s: string, i: i32): Option[(i32, i32)] {
     if (b0 < 248) {
         // 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx.
         if (i + 3 >= n) { return None; }
-        var e1: i32 = s[i + 1];
-        var e2: i32 = s[i + 2];
-        var e3: i32 = s[i + 3];
+        var e1: i32 = s[i + 1] as i32;
+        var e2: i32 = s[i + 2] as i32;
+        var e3: i32 = s[i + 3] as i32;
         if (e1 < 128 || e1 >= 192) { return None; }
         if (e2 < 128 || e2 >= 192) { return None; }
         if (e3 < 128 || e3 >= 192) { return None; }
@@ -155,7 +155,7 @@ pub function is_valid_utf8(s: string): boolean {
     var n: i32 = s.len();
     var i: i32 = 0;
     while (i < n) {
-        var b0: i32 = s[i];
+        var b0: i32 = s[i] as i32;
         // 1-byte: 0xxxxxxx (ASCII).
         if (b0 < 128) {
             i = i + 1;
@@ -164,15 +164,15 @@ pub function is_valid_utf8(s: string): boolean {
         } else if (b0 < 224) {
             // 2-byte: 110xxxxx 10xxxxxx.
             if (i + 1 >= n) { return false; }
-            var c1: i32 = s[i + 1];
+            var c1: i32 = s[i + 1] as i32;
             if (c1 < 128 || c1 >= 192) { return false; }
             if ((((b0 - 192) << 6) | (c1 - 128)) < 128) { return false; }   // overlong
             i = i + 2;
         } else if (b0 < 240) {
             // 3-byte: 1110xxxx 10xxxxxx 10xxxxxx.
             if (i + 2 >= n) { return false; }
-            var d1: i32 = s[i + 1];
-            var d2: i32 = s[i + 2];
+            var d1: i32 = s[i + 1] as i32;
+            var d2: i32 = s[i + 2] as i32;
             if (d1 < 128 || d1 >= 192) { return false; }
             if (d2 < 128 || d2 >= 192) { return false; }
             var cp3: i32 = ((b0 - 224) << 12) | ((d1 - 128) << 6) | (d2 - 128);
@@ -182,9 +182,9 @@ pub function is_valid_utf8(s: string): boolean {
         } else if (b0 < 248) {
             // 4-byte: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx.
             if (i + 3 >= n) { return false; }
-            var e1: i32 = s[i + 1];
-            var e2: i32 = s[i + 2];
-            var e3: i32 = s[i + 3];
+            var e1: i32 = s[i + 1] as i32;
+            var e2: i32 = s[i + 2] as i32;
+            var e3: i32 = s[i + 3] as i32;
             if (e1 < 128 || e1 >= 192) { return false; }
             if (e2 < 128 || e2 >= 192) { return false; }
             if (e3 < 128 || e3 >= 192) { return false; }
@@ -291,7 +291,7 @@ pub function is_char_boundary(s: string, i: i32): boolean {
     var n: i32 = s.len();
     if (i < 0 || i > n) { return false; }
     if (i == 0 || i == n) { return true; }
-    var b: i32 = s[i];
+    var b: i32 = s[i] as i32;
     return b < 128 || b >= 192;
 }
 
@@ -311,7 +311,7 @@ pub function floor_char_boundary(s: string, i: i32): i32 {
     if (i >= n) { return n; }
     var j: i32 = i;
     while (j > 0) {
-        var b: i32 = s[j];
+        var b: i32 = s[j] as i32;
         if (b < 128 || b >= 192) { return j; }
         j = j - 1;
     }
@@ -331,7 +331,7 @@ pub function ceil_char_boundary(s: string, i: i32): i32 {
     if (i >= n) { return n; }
     var j: i32 = i;
     while (j < n) {
-        var b: i32 = s[j];
+        var b: i32 = s[j] as i32;
         if (b < 128 || b >= 192) { return j; }
         j = j + 1;
     }

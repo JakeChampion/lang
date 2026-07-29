@@ -58,7 +58,7 @@ var csvEscapeIRCases = []struct {
 	// Embedded newline -> wrapped ("a\nb" -> "\"a\nb\"", 5).
 	{"escape-newline", `return csv_escape("a\nb").len();`},
 	// First byte of a quote-escaped field is the wrapping quote (34 == '"').
-	{"escape-firstbyte", `var e: string = csv_escape("a,b"); return e[0];`},
+	{"escape-firstbyte", `var e: string = csv_escape("a,b"); return e[0] as i32;`},
 	// Join of plain fields ("a,b,c", 5).
 	{"join-plain", `return csv_join(["a", "b", "c"]).len();`},
 	// Join where one field needs escaping ("\"a,b\",c", 7).

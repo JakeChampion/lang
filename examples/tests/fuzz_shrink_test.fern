@@ -37,7 +37,7 @@ function check_to_lower_no_upper(input: string): test.TestOutcome {
     var lowered: string = input.to_lower();
     var i: i32 = 0;
     while (i < lowered.len()) {
-        var b: i32 = lowered[i];
+        var b: i32 = lowered[i] as i32;
         if (b >= 65 && b <= 90) {
             return test.fail("uppercase byte " + b.to_string() +
                         " at " + i.to_string() + " after to_lower");

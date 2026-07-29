@@ -4711,7 +4711,7 @@ func TestWASMLenOfString(t *testing.T) {
 func TestWASMStringIndexAndCompare(t *testing.T) {
 	src := `function main(): i32 {
 		var s: string = "abc";
-		var byte: i32 = s[1];
+		var byte: i32 = s[1] as i32;
 		var equal: boolean = "yes" == "yes";
 		var different: boolean = "yes" == "no";
 		// 'b' = 98; equal=1, different=0 → 98 + 1 - 0 = 99
@@ -9544,7 +9544,7 @@ func TestCmdLangComponentWrapCliTcpServerWithEnv(t *testing.T) {
             var n: i32 = 0;
             var i: i32 = 0;
             while (i < s.len()) {
-                var b: i32 = s[i];
+                var b: i32 = s[i] as i32;
                 if (b < 48 || b > 57) { return 8080; }
                 n = n * 10 + (b - 48);
                 i = i + 1;

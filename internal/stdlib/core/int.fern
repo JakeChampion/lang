@@ -107,9 +107,9 @@ pub function __int_to_string_u64(mag: i64, neg: i32): string {
 }
 
 pub function __radix_digit(c: i32): i32 {
-    if (c >= 48 && c <= 57)  { return c - 48; }     // 0-9 → 0-9
-    if (c >= 97 && c <= 122) { return c - 87; }     // a-z → 10-35
-    if (c >= 65 && c <= 90)  { return c - 55; }     // A-Z → 10-35
+    if (c >= 48 && c <= 57)  { return (c as i32) - 48; }     // 0-9 → 0-9
+    if (c >= 97 && c <= 122) { return (c as i32) - 87; }     // a-z → 10-35
+    if (c >= 65 && c <= 90)  { return (c as i32) - 55; }     // A-Z → 10-35
     return 0 - 1;
 }
 
@@ -133,7 +133,7 @@ pub function parse_int_radix(s: string, base: i32): Option[i32] {
     if (i >= n) { return None; }    // sign without digits
     var v: i32 = 0;
     while (i < n) {
-        var d: i32 = __radix_digit(s[i]);
+        var d: i32 = __radix_digit((s[i] as i32));
         if (d < 0 || d >= base) { return None; }
         v = v * base + d;
         i = i + 1;

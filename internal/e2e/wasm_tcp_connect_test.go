@@ -51,7 +51,7 @@ func TestWasmTcpConnectOutbound(t *testing.T) {
             var n: i32 = 0;
             var i: i32 = 0;
             while (i < s.len()) {
-                var b: i32 = s[i];
+                var b: i32 = s[i] as i32;
                 if (b < 48 || b > 57) { return 8080; }
                 n = n * 10 + (b - 48);
                 i = i + 1;

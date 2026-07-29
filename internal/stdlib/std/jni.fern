@@ -97,7 +97,7 @@ pub function cstr(s: string): usize {
     var buf: usize = __alloc(n + 4);
     var i: i32 = 0;
     while (i + 4 <= n) {
-        var w: i32 = s[i] | (s[i + 1] << 8) | (s[i + 2] << 16) | (s[i + 3] << 24);
+        var w: i32 = (s[i] as i32) | ((s[i + 1] as i32) << 8) | ((s[i + 2] as i32) << 16) | ((s[i + 3] as i32) << 24);
         __store_i32(buf + (i as usize), w);
         i = i + 4;
     }
@@ -105,7 +105,7 @@ pub function cstr(s: string): usize {
     var t: i32 = 0;
     var sh: i32 = 0;
     while (i < n) {
-        t = t | (s[i] << sh);
+        t = t | ((s[i] as i32) << sh);
         sh = sh + 8;
         i = i + 1;
     }

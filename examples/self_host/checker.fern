@@ -156,7 +156,7 @@ function digit_string_to_i32(s: string): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b < 48 || b > 57) { return 0 - 1; }
         acc = acc * 10 + (b - 48);
         i = i + 1;
@@ -4203,8 +4203,8 @@ function digits_fit_i32(text: string): boolean {
     var maxs: string = "2147483647";
     var i: i32 = 0;
     while (i < 10) {
-        var tc: i32 = text[i];
-        var mc: i32 = maxs[i];
+        var tc: i32 = text[i] as i32;
+        var mc: i32 = maxs[i] as i32;
         if (tc < mc) { return true; }
         if (tc > mc) { return false; }
         i = i + 1;
@@ -6741,7 +6741,7 @@ function e064_unknown_bare(type_name: string, struct_names: string[], union_name
     if (type_name == "fn" || type_name == "tuple") { return false; }
     var i: i32 = 0;
     while (i < type_name.len()) {
-        var ch: i32 = type_name[i];
+        var ch: i32 = type_name[i] as i32;
         var alpha: boolean = (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122);
         var digit: boolean = ch >= 48 && ch <= 57;
         if (!alpha && !digit && ch != 95) { return false; }
@@ -7124,7 +7124,7 @@ function e053_root_len(target: string): i32 {
     // the str-view producer surface.
     var i: i32 = 0;
     while (i < target.len()) {
-        var ch: i32 = target[i];
+        var ch: i32 = target[i] as i32;
         if (ch == 91 || ch == 46) { return i; }
         i = i + 1;
     }

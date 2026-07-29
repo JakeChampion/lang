@@ -27,14 +27,14 @@ function uuid_byte_hex(b: i32): string {
 // and the RFC 4122 variant (10xx); every other byte is random.
 pub function uuid_v4(): string {
     var b: string = random_bytes(16);
-    var b6: i32 = (b[6] & 15) | 64;    // version 4 in the high nibble
-    var b8: i32 = (b[8] & 63) | 128;   // variant 10xx in the high bits
-    return uuid_byte_hex(b[0]) + uuid_byte_hex(b[1]) + uuid_byte_hex(b[2]) + uuid_byte_hex(b[3])
-        + "-" + uuid_byte_hex(b[4]) + uuid_byte_hex(b[5])
-        + "-" + uuid_byte_hex(b6) + uuid_byte_hex(b[7])
-        + "-" + uuid_byte_hex(b8) + uuid_byte_hex(b[9])
-        + "-" + uuid_byte_hex(b[10]) + uuid_byte_hex(b[11]) + uuid_byte_hex(b[12])
-        + uuid_byte_hex(b[13]) + uuid_byte_hex(b[14]) + uuid_byte_hex(b[15]);
+    var b6: i32 = ((b[6] as i32) & 15) | 64;    // version 4 in the high nibble
+    var b8: i32 = ((b[8] as i32) & 63) | 128;   // variant 10xx in the high bits
+    return uuid_byte_hex((b[0] as i32)) + uuid_byte_hex((b[1] as i32)) + uuid_byte_hex((b[2] as i32)) + uuid_byte_hex((b[3] as i32))
+        + "-" + uuid_byte_hex((b[4] as i32)) + uuid_byte_hex((b[5] as i32))
+        + "-" + uuid_byte_hex(b6) + uuid_byte_hex((b[7] as i32))
+        + "-" + uuid_byte_hex(b8) + uuid_byte_hex((b[9] as i32))
+        + "-" + uuid_byte_hex((b[10] as i32)) + uuid_byte_hex((b[11] as i32)) + uuid_byte_hex((b[12] as i32))
+        + uuid_byte_hex((b[13] as i32)) + uuid_byte_hex((b[14] as i32)) + uuid_byte_hex((b[15] as i32));
 }
 
 // uuid_v7(): a time-ordered UUID. The first 48 bits are the
@@ -50,14 +50,14 @@ pub function uuid_v7(): string {
     var t3: i32 = ((ms >> 16) & 255) as i32;
     var t4: i32 = ((ms >> 8) & 255) as i32;
     var t5: i32 = (ms & 255) as i32;
-    var b6: i32 = (r[0] & 15) | 112;   // version 7 in the high nibble
-    var b8: i32 = (r[2] & 63) | 128;   // variant 10xx in the high bits
+    var b6: i32 = ((r[0] as i32) & 15) | 112;   // version 7 in the high nibble
+    var b8: i32 = ((r[2] as i32) & 63) | 128;   // variant 10xx in the high bits
     return uuid_byte_hex(t0) + uuid_byte_hex(t1) + uuid_byte_hex(t2) + uuid_byte_hex(t3)
         + "-" + uuid_byte_hex(t4) + uuid_byte_hex(t5)
-        + "-" + uuid_byte_hex(b6) + uuid_byte_hex(r[1])
-        + "-" + uuid_byte_hex(b8) + uuid_byte_hex(r[3])
-        + "-" + uuid_byte_hex(r[4]) + uuid_byte_hex(r[5]) + uuid_byte_hex(r[6])
-        + uuid_byte_hex(r[7]) + uuid_byte_hex(r[8]) + uuid_byte_hex(r[9]);
+        + "-" + uuid_byte_hex(b6) + uuid_byte_hex((r[1] as i32))
+        + "-" + uuid_byte_hex(b8) + uuid_byte_hex((r[3] as i32))
+        + "-" + uuid_byte_hex((r[4] as i32)) + uuid_byte_hex((r[5] as i32)) + uuid_byte_hex((r[6] as i32))
+        + uuid_byte_hex((r[7] as i32)) + uuid_byte_hex((r[8] as i32)) + uuid_byte_hex((r[9] as i32));
 }
 
 // `uuid_nil()` — the all-zeros "nil" UUID (RFC 4122 §5.9), the
@@ -88,5 +88,5 @@ function __uuid_nibble(b: i32): i32 {
 pub function uuid_version(s: string): i32 {
     if (s.len() != 36) { return -1; }
     if (s[8] != 45 || s[13] != 45 || s[18] != 45 || s[23] != 45) { return -1; }   // '-'
-    return __uuid_nibble(s[14]);
+    return __uuid_nibble((s[14] as i32));
 }

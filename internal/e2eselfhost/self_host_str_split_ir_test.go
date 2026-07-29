@@ -49,7 +49,7 @@ var strSplitIRCases = []struct {
 	{"trim-param", `function tn(s: string): i32 { return s.trim().len(); } function main(): i32 { return tn("  x  "); }`},
 	// String reverse (op_str_reverse) — likewise IR-eligible.
 	{"reverse", `function main(): i32 { return "hello".reverse().len(); }`},
-	{"reverse-first", `function main(): i32 { return "abc".reverse()[0]; }`},
+	{"reverse-first", `function main(): i32 { return "abc".reverse()[0] as i32; }`},
 	// String replace (op_str_replace) -- likewise IR-eligible.
 	{"replace", `function main(): i32 { return "a-b-c".replace("-", "_").len(); }`},
 	{"replace-param", `function rp(s: string): i32 { return s.replace("o", "0").len(); } function main(): i32 { return rp("foo"); }`},
@@ -58,7 +58,7 @@ var strSplitIRCases = []struct {
 	// str_contains(s, sub)). The self-host source uses these, so they must be
 	// IR-eligible too — the free-call companions to to-upper / repeat / … above.
 	{"free-to-upper", `function main(): i32 { return str_to_upper("ab").len(); }`},
-	{"free-to-lower", `function main(): i32 { return str_to_lower("AB")[0]; }`},
+	{"free-to-lower", `function main(): i32 { return str_to_lower("AB")[0] as i32; }`},
 	{"free-trim", `function main(): i32 { return str_trim("  a  ").len(); }`},
 	{"free-repeat", `function main(): i32 { return str_repeat("ab", 3).len(); }`},
 	{"free-replace", `function main(): i32 { return str_replace("a-b", "-", "_").len(); }`},

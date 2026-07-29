@@ -618,7 +618,7 @@ function emit_str_consts(funcs: ssa.SFunc[]): string {
                     var parts: string[] = [];
                     parts = parts.append("    .align 8\n" + sconst_label(funcs[i].name, ins.result) + ":\n    .quad " + util.i32_to_string(sv.len()) + "\n");
                     var ci: i32 = 0;
-                    while (ci < sv.len()) { parts = parts.append("    .quad " + util.i32_to_string(sv[ci]) + "\n"); ci = ci + 1; }
+                    while (ci < sv.len()) { parts = parts.append("    .quad " + util.i32_to_string((sv[ci] as i32)) + "\n"); ci = ci + 1; }
                     out = out + str_join_chunks(parts);
                 }
                 k = k + 1;

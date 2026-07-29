@@ -97,7 +97,7 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			// body loaded its arg with `movq 8(%rsp), %rdi`; the Fern-compiled body
 			// uses the standard frame, so that load must be gone.
 			"chr",
-			`function main(): i32 { return chr(65)[0]; }`,
+			`function main(): i32 { return chr(65)[0] as i32; }`,
 			"__fn___fern_chr",
 			[]string{"movq 8(%rsp), %rdi"},
 		},
@@ -123,14 +123,14 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			// str_to_upper — migrated on the IR path too. The old hand-written IR
 			// body (__fern_str_to_upper: / .Lir_upper_loop) must be gone.
 			"str_to_upper",
-			`function main(): i32 { return "aB".to_ascii_upper()[0]; }`,
+			`function main(): i32 { return "aB".to_ascii_upper()[0] as i32; }`,
 			"__fn___fern_str_to_upper",
 			[]string{"\n__fern_str_to_upper:", ".Lir_upper_loop"},
 		},
 		{
 			// str_to_lower — the lower-case sibling on the IR path.
 			"str_to_lower",
-			`function main(): i32 { return "Ab".to_ascii_lower()[0]; }`,
+			`function main(): i32 { return "Ab".to_ascii_lower()[0] as i32; }`,
 			"__fn___fern_str_to_lower",
 			[]string{"\n__fern_str_to_lower:", ".Lir_lower_loop"},
 		},
@@ -148,7 +148,7 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			// IR body (__fern_str_reverse: / .Lir_str_rev_loop) must be gone; the
 			// op_str_reverse handler now calls __fn___fern_str_reverse via the stack ABI.
 			"str_reverse",
-			`function main(): i32 { return "abc".reverse()[0]; }`,
+			`function main(): i32 { return "abc".reverse()[0] as i32; }`,
 			"__fn___fern_str_reverse",
 			[]string{"\n__fern_str_reverse:", ".Lir_str_rev_loop"},
 		},

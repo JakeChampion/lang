@@ -1476,7 +1476,7 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		},
 		{
 			"string-byte-indexing",
-			"function main(): i32 { var s = \"abc\"; return s[1]; }",
+			"function main(): i32 { var s = \"abc\"; return s[1] as i32; }",
 			98,
 			"",
 		},

@@ -42,7 +42,7 @@ function main(): i32 {
       // Bundle of single-char flags, e.g. `-iv`.
       var f: i32 = 1;
       while (f < a.len()) {
-        var c: i32 = a[f];
+        var c: i32 = a[f] as i32;
         if (c == 105) {
           o = Opts { ...o, ignore_case: true };  // i
         } else if (c == 118) {

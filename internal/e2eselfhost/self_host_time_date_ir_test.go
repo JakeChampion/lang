@@ -143,7 +143,7 @@ var timeDateIRCases = []struct {
 	// format_iso length: "2026-06-13" -> 10.
 	{"format-iso-len", `var d: Civil = Civil { year: 2026, month: 6, day: 13 }; return d.format_iso().len();`},
 	// format_iso first byte: '2' (50).
-	{"format-iso-firstbyte", `var d: Civil = Civil { year: 2026, month: 6, day: 13 }; return d.format_iso()[0];`},
+	{"format-iso-firstbyte", `var d: Civil = Civil { year: 2026, month: 6, day: 13 }; return d.format_iso()[0] as i32;`},
 }
 
 func timeDateIRSrc(mainBody string) string {

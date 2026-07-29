@@ -109,7 +109,7 @@ function __fuzz_mutate(seed: string, mode: i32): string {
         // bit flip — pick a byte, XOR with a single-bit mask.
         var i: i32 = math.random_int(0, n);
         var bit: i32 = math.random_int(0, 8);
-        var orig: i32 = seed[i];
+        var orig: i32 = seed[i] as i32;
         var flipped: i32 = orig ^ (1 << bit);
         return seed[0:i] + (flipped as i32).to_ascii_string() + seed[i + 1:n];
     }
@@ -152,7 +152,7 @@ function __fuzz_escape(s: string): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b == 92) {
             out = out + "\\\\";
         } else if (b == 34) {

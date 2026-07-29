@@ -133,7 +133,7 @@ function wit_append_name(out: i32[], s: string): i32[] {
     out = leb_u32(out, s.len());
     var i: i32 = 0;
     while (i < s.len()) {
-        out = out.append(s[i]);
+        out = out.append((s[i] as i32));
         i = i + 1;
     }
     return out;

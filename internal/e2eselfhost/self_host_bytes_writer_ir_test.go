@@ -57,9 +57,9 @@ var bytesWriterIRCases = []struct {
 	// write_bytes appends a u8[] slice directly: 2 + 2 = 4.
 	{"write-bytes", `var w: BW = bw_new(); w = w.write_string("xy"); w = w.write_bytes([1 as u8, 2 as u8]); return w.len();`, 4},
 	// into_string round-trips the buffer; first byte of "abC" is 'a' = 97.
-	{"into-string", `var w: BW = bw_new(); w = w.write_string("ab"); w = w.write_byte(67); var s: string = w.into_string(); return s[0];`, 97},
+	{"into-string", `var w: BW = bw_new(); w = w.write_string("ab"); w = w.write_byte(67); var s: string = w.into_string(); return s[0] as i32;`, 97},
 	// into_string preserves a write_byte at the end: last char 'C' = 67.
-	{"into-string-tail", `var w: BW = bw_new(); w = w.write_string("ab"); w = w.write_byte(67); var s: string = w.into_string(); return s[s.len() - 1];`, 67},
+	{"into-string-tail", `var w: BW = bw_new(); w = w.write_string("ab"); w = w.write_byte(67); var s: string = w.into_string(); return s[s.len() - 1] as i32;`, 67},
 	// reset clears the buffer: len back to 0.
 	{"reset", `var w: BW = bw_new(); w = w.write_string("abc"); var w2: BW = w.reset(); return w2.len();`, 0},
 	// is_empty on a fresh writer -> true -> 1.

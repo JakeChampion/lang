@@ -32,7 +32,7 @@ func TestInterpStrbuf(t *testing.T) {
 		{"two-appends-len", `function main(): i32 { strbuf_reset(); strbuf_append("hi"); strbuf_append("!"); var s = strbuf_take(); return s.len(); }`, 3},
 		{"single-append", `function main(): i32 { strbuf_reset(); strbuf_append("hello"); return strbuf_take().len(); }`, 5},
 		{"three-appends-len", `function main(): i32 { strbuf_reset(); strbuf_append("a"); strbuf_append("bc"); strbuf_append("def"); return strbuf_take().len(); }`, 6},
-		{"byte-content", `function main(): i32 { strbuf_reset(); strbuf_append("xy"); strbuf_append("z"); var s = strbuf_take(); return s[0] + s[1] + s[2]; }`, 107},
+		{"byte-content", `function main(): i32 { strbuf_reset(); strbuf_append("xy"); strbuf_append("z"); var s = strbuf_take(); return (s[0] as i32) + (s[1] as i32) + (s[2] as i32); }`, 107},
 		{"empty-take", `function main(): i32 { strbuf_reset(); var s = strbuf_take(); return s.len() + 5; }`, 5},
 		{"append-loop", `function main(): i32 { strbuf_reset(); var i = 0; while (i < 10) { strbuf_append("ab"); i = i + 1; } return strbuf_take().len(); }`, 20},
 	}

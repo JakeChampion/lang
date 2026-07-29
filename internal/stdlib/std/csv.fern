@@ -81,7 +81,7 @@ pub function csv_parse_line(s: string): string[] {
     var field: u8[] = [];
     var in_quotes: boolean = false;
     while (i < n) {
-        var c: i32 = s[i];
+        var c: i32 = s[i] as i32;
         if (in_quotes) {
             if (c == 34) {
                 // Doubled quote → literal "
@@ -133,7 +133,7 @@ pub function csv_parse(s: string): string[][] {
     var n: i32 = s.len();
     var i: i32 = 0;
     while (i < n) {
-        var c: i32 = s[i];
+        var c: i32 = s[i] as i32;
         if (in_quotes) {
             if (c == 34) {
                 if (i + 1 < n && s[i + 1] == 34) {

@@ -178,11 +178,11 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"ir-field-mutate-loop", "struct C { n: i32 } function main(): i32 { var c = C { n: 0 }; var i = 0; while (i < 5) { c.n = c.n + i; i = i + 1; } return c.n; }", 10, ""},
 		{"ir-field-mutate-alias", "struct P { x: i32 } function main(): i32 { var p = P { x: 1 }; var q = p; q.x = 9; return p.x; }", 9, ""},
 		{"ir-str-return", "function greet(): string { return \"hi\"; } function main(): i32 { var s = greet(); return s.len(); }", 2, ""},
-		{"ir-str-index-local", "function main(): i32 { var s = \"hello\"; return s[0]; }", 104, ""},
-		{"ir-str-index-loop", "function main(): i32 { var s = \"abc\"; var sum = 0; var i = 0; while (i < 3) { sum = sum + s[i]; i = i + 1; } return sum % 200; }", 94, ""},
-		{"ir-str-index-param", "function first(s: string): i32 { return s[0]; } function main(): i32 { return first(\"Z\"); }", 90, ""},
+		{"ir-str-index-local", "function main(): i32 { var s = \"hello\"; return s[0] as i32; }", 104, ""},
+		{"ir-str-index-loop", "function main(): i32 { var s = \"abc\"; var sum = 0; var i = 0; while (i < 3) { sum = sum + (s[i] as i32); i = i + 1; } return sum % 200; }", 94, ""},
+		{"ir-str-index-param", "function first(s: string): i32 { return s[0] as i32; } function main(): i32 { return first(\"Z\"); }", 90, ""},
 		{"ir-str-slice-len", "function main(): i32 { var s = \"hello\"; var t = s[1:4]; return t.len(); }", 3, ""},
-		{"ir-str-slice-idx0", "function main(): i32 { var s = \"hello\"; var t = s[1:4]; return t[0]; }", 101, ""},
+		{"ir-str-slice-idx0", "function main(): i32 { var s = \"hello\"; var t = s[1:4]; return t[0] as i32; }", 101, ""},
 		{"ir-str-slice-param", "function tok(s: string): i32 { return s[0:2].len(); } function main(): i32 { return tok(\"abcd\"); }", 2, ""},
 		{"ir-str-return-concat", "function shout(s: string): string { return s + \"!\"; } function main(): i32 { var g = shout(\"hey\"); return g.len(); }", 4, ""},
 		{"ir-struct-str-field", "struct Token { text: string, kind: i32 } function main(): i32 { var t = Token { text: \"hello\", kind: 7 }; return t.text.len() + t.kind; }", 12, ""},
@@ -982,7 +982,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"early-return-loop", "function find(xs: i32[], target: i32): i32 { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return i; } i = i + 1; } return 0 - 1; } function main(): i32 { print_int(find([5, 10, 15, 20], 15)); print_int(find([1, 2], 9)); return 0; }", 0, "2-1"},
 
 		// Hardening pass 5: string char-access s[i] (byte load) + more.
-		{"string-char-access", "function main(): i32 { var s: string = \"ABC\"; var sum: i32 = 0; var i: i32 = 0; while (i < s.len()) { sum = sum + s[i]; i = i + 1; } print_int(sum); return 0; }", 0, "198"},
+		{"string-char-access", "function main(): i32 { var s: string = \"ABC\"; var sum: i32 = 0; var i: i32 = 0; while (i < s.len()) { sum = sum + (s[i] as i32); i = i + 1; } print_int(sum); return 0; }", 0, "198"},
 		{"string-char-compare", "function main(): i32 { var s: string = \"a1b2\"; var digits: i32 = 0; var i: i32 = 0; while (i < s.len()) { if (s[i] >= 48 && s[i] <= 57) { digits = digits + 1; } i = i + 1; } print_int(digits); return 0; }", 0, "2"},
 		{"elseif-chain", "function grade(n: i32): string { if (n >= 90) { return \"A\"; } else if (n >= 80) { return \"B\"; } else if (n >= 70) { return \"C\"; } else { return \"F\"; } } function main(): i32 { write(grade(95)); write(grade(85)); write(grade(50)); return 0; }", 0, "ABF"},
 		{"three-variant-union", "struct A { v: i32 } struct B { v: i32 } struct C { v: i32 } type T = A | B | C; function f(t: T): i32 { match (t) { A(a) => { return a.v + 1; }, B(b) => { return b.v + 2; }, C(c) => { return c.v + 3; } } return 0; } function main(): i32 { print_int(f(A { v: 10 })); print_int(f(B { v: 10 })); print_int(f(C { v: 10 })); return 0; }", 0, "111213"},
@@ -1000,7 +1000,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"generic-receiver-method", "struct Box[T] { val: T } function (b: Box[i32]) get(): i32 { return b.val; } function main(): i32 { var b = Box[i32] { val: 42 }; print_int(b.get()); return 0; }", 0, "42"},
 		{"generic-method-T-receiver", "struct Box[T] { val: T } function (b: Box[T]) doubled(): i32 { return b.val * 2; } function main(): i32 { var b = Box { val: 21 }; print_int(b.doubled()); return 0; }", 0, "42"},
 		// Char-processing programs (now that s[i] byte access works).
-		{"count-vowels", "function isvowel(c: i32): boolean { return c == 97 || c == 101 || c == 105 || c == 111 || c == 117; } function main(): i32 { var s: string = \"hello world\"; var n: i32 = 0; var i: i32 = 0; while (i < s.len()) { if (isvowel(s[i])) { n = n + 1; } i = i + 1; } print_int(n); return 0; }", 0, "3"},
+		{"count-vowels", "function isvowel(c: i32): boolean { return c == 97 || c == 101 || c == 105 || c == 111 || c == 117; } function main(): i32 { var s: string = \"hello world\"; var n: i32 = 0; var i: i32 = 0; while (i < s.len()) { if (isvowel((s[i] as i32))) { n = n + 1; } i = i + 1; } print_int(n); return 0; }", 0, "3"},
 		{"string-reverse", "function main(): i32 { var s: string = \"abcde\"; var out: string = \"\"; var i: i32 = s.len() - 1; while (i >= 0) { out = out + s[i:i + 1]; i = i - 1; } write(out); return 0; }", 0, "edcba"},
 
 		// Hardening pass 7: compound assignment (incl. the array-element

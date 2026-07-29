@@ -76,7 +76,7 @@ struct Opts { ignore_case: boolean, show_num: boolean }
 // ... inside the argv loop, for an argument like "-in":
 var f: i32 = 1;
 while (f < a.len()) {
-    var c: i32 = a[f];              // a byte, compared by code point
+    var c: i32 = a[f] as i32;              // a byte, compared by code point
     if (c == 105) {                 // 'i'
         o = Opts { ...o, ignore_case: true };
     } else if (c == 110) {          // 'n'
@@ -126,7 +126,7 @@ function run(argv: string[]): i32 {
         if (a.starts_with("-") && a.len() > 1 && !have_pat) {
             var f: i32 = 1;
             while (f < a.len()) {
-                var c: i32 = a[f];
+                var c: i32 = a[f] as i32;
                 if (c == 105) { o = Opts { ...o, ignore_case: true }; }
                 else if (c == 110) { o = Opts { ...o, show_num: true }; }
                 else { eprint("grep: invalid option"); return 2; }

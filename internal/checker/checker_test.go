@@ -921,10 +921,33 @@ func TestStringEqualityTypechecks(t *testing.T) {
 	}
 }
 
-func TestStringIndexReturnsNumber(t *testing.T) {
+// `s[i]` yields the byte type `u8`, not `i32` (#5629). A byte flowing
+// into i32 arithmetic needs an explicit `as i32` — there is no implicit
+// unsigned widening.
+func TestStringIndexReturnsByte(t *testing.T) {
+	src := `function f(): u8 {
+		var s: string = "abc";
+		return s[1];
+	}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestStringIndexIsNotI32(t *testing.T) {
 	src := `function f(): i32 {
 		var s: string = "abc";
 		return s[1];
+	}`
+	if err := checkSource(t, src); err == nil {
+		t.Error("expected error: u8 is not assignable to i32 without a cast")
+	}
+}
+
+func TestStringIndexWidensWithCast(t *testing.T) {
+	src := `function f(): i32 {
+		var s: string = "abc";
+		return s[1] as i32;
 	}`
 	if err := checkSource(t, src); err != nil {
 		t.Errorf("unexpected error: %v", err)

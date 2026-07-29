@@ -83,7 +83,7 @@ function main(): i32 { var xs: i64[] = [1, 2, 3]; print(xs[5].to_string()); retu
 function main(): i32 {
     var xs: i32[] = [10, 20, 30, 40, 50];
     var s: [i32] = xs[1:3];
-    print(s[5].to_string());
+    print((s[5] as i32).to_string());
     return 0;
 }`},
 		// Slice CONSTRUCTION bounds (#5419): a[lo:hi] with hi > len,
@@ -183,8 +183,8 @@ function main(): i32 {
     var xs: i32[] = [10, 20, 30, 40, 50];
     var s: [i32] = xs[1:4];
     print(s.len().to_string());
-    print(s[0].to_string());
-    print(s[2].to_string());
+    print((s[0] as i32).to_string());
+    print((s[2] as i32).to_string());
     return 0;
 }`},
 		// The length boundary stays legal: lo == hi == len constructs

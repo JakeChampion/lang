@@ -82,7 +82,7 @@ func witSectionSelfTestMain(t *testing.T) string {
 function wit_bytes_of(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
-    while (i < s.len()) { o = o.append(s[i]); i = i + 1; }
+    while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
     return o;
 }
 function main(): i32 {
@@ -91,7 +91,7 @@ function main(): i32 {
     if (got.len() != payload.len()) { return 1; }
     var i: i32 = 0;
     while (i < got.len()) {
-        if (got[i] != payload[i]) { return 2; }
+        if ((got[i] as i32) != (payload[i] as i32)) { return 2; }
         i = i + 1;
     }
     return 0;
@@ -253,13 +253,13 @@ const witWorldSelfTestMain = `
 function wit_bytes(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
-    while (i < s.len()) { o = o.append(s[i]); i = i + 1; }
+    while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
     return o;
 }
 function wit_eq2(a: i32[], b: i32[]): boolean {
     if (a.len() != b.len()) { return false; }
     var i: i32 = 0;
-    while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; }
+    while (i < a.len()) { if ((a[i] as i32) != (b[i] as i32)) { return false; } i = i + 1; }
     return true;
 }
 function main(): i32 {
@@ -325,7 +325,7 @@ const witLiftSelfTestMain = `
 function wit_lift_bytes(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
-    while (i < s.len()) { o = o.append(s[i]); i = i + 1; }
+    while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
     return o;
 }
 function main(): i32 {
@@ -423,7 +423,7 @@ const witEmitSelfTestMain = `
 function wit_emit_bytes(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
-    while (i < s.len()) { o = o.append(s[i]); i = i + 1; }
+    while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
     return o;
 }
 function main(): i32 {
@@ -432,7 +432,7 @@ function main(): i32 {
     if (got.len() != want.len()) { return 1; }
     var i: i32 = 0;
     while (i < got.len()) {
-        if (got[i] != want[i]) { return 2; }
+        if ((got[i] as i32) != (want[i] as i32)) { return 2; }
         i = i + 1;
     }
     return 0;
@@ -492,7 +492,7 @@ const witClassifySelfTestMain = `
 function wit_cl_bytes(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
-    while (i < s.len()) { o = o.append(s[i]); i = i + 1; }
+    while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
     return o;
 }
 function wit_ck(tb: i32[], iface: string, fn: string, want: i32, id: i32): i32 {
@@ -567,7 +567,7 @@ const witLayoutSelfTestMain = `
 function wit_ly_bytes(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
-    while (i < s.len()) { o = o.append(s[i]); i = i + 1; }
+    while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
     return o;
 }
 function main(): i32 {

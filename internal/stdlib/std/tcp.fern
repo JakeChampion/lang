@@ -324,7 +324,7 @@ function __port_from_env(name: string, fallback: i32): i32 {
             var n: i32 = 0;
             var i: i32 = 0;
             while (i < s.len()) {
-                var b: i32 = s[i];
+                var b: i32 = s[i] as i32;
                 if (b < 48 || b > 57) { return fallback; }
                 n = n * 10 + (b - 48);
                 if (n > 65535) { return fallback; }

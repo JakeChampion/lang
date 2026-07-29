@@ -942,7 +942,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// String payload read by .len(): result is the i32 length.
 		{"iife-match-string-payload-len-value", `enum E { V(string), N } function main(): i32 { var e: E = E.V("hello"); var r = match (e) { V(s) => s.len(), N => 0 }; return r; }`, 5},
 		// String payload indexed `s[i]`: result is the i32 char code ('H' = 72).
-		{"iife-match-string-payload-index-value", `enum E { V(string), N } function main(): i32 { var e: E = E.V("Hi"); var r = match (e) { V(s) => s[0], N => 0 }; return r; }`, 72},
+		{"iife-match-string-payload-index-value", `enum E { V(string), N } function main(): i32 { var e: E = E.V("Hi"); var r = match (e) { V(s) => (s[0] as i32), N => 0 }; return r; }`, 72},
 		// Tuple payload read by ELEMENT `t.0` / `t.1` (i32 elements): result is i32.
 		{"iife-match-tuple-payload-elem-value", `enum E { V((i32, i32)), N } function main(): i32 { var e: E = E.V((3, 4)); var r = match (e) { V(t) => t.0 + t.1, N => 0 }; return r; }`, 7},
 		// Enum payload with a METHOD returning i32 (`t.sum()`): result is i32 — the

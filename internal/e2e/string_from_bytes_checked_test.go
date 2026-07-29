@@ -39,7 +39,7 @@ function main(): i32 {
     // The bytes come back exactly, not lossily re-encoded.
     var i: i32 = 0;
     while (i < 10) {
-        if (s[i] != mixed[i] as i32) { return 3; }
+        if (s[i] != mixed[i]) { return 3; }
         i = i + 1;
     }
     // Empty and pure ASCII are valid.

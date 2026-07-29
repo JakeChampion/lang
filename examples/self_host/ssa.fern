@@ -1782,7 +1782,7 @@ function contains_str(xs: string[], n: string): boolean {
 function index_of_byte(s: string, b: i32): i32 {
     var i: i32 = 0;
     while (i < s.len()) {
-        if (s[i] == b) { return i; }
+        if ((s[i] as i32) == b) { return i; }
         i = i + 1;
     }
     return 0 - 1;
@@ -3601,6 +3601,15 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
                 var x: i32 = tab[inst.args[0]];
                 if (inst.str == "-") { tab = vtab_set(tab, inst.result, 0 - x); }
                 else if (inst.str == "f64_bits" || inst.str == "f64_from_bits") { tab = vtab_set(tab, inst.result, x); }   // bit reinterpret = identity on the stored value
+                // Integer ascription casts (`x as i32` / `as i64` / `as u32` /
+                // `as u64`) are identity on a value already living in an i32
+                // slot; `as u8` truncates to the low byte. These reach the
+                // evaluator now that `s[i]` is `u8` and byte reads need an
+                // explicit widen (#5629) — without these arms they fell into
+                // the logical-NOT fallback below and `s[0] as i32` evaluated
+                // to 0 instead of the byte.
+                else if (inst.str == "as_i32" || inst.str == "as_i64" || inst.str == "as_u32" || inst.str == "as_u64") { tab = vtab_set(tab, inst.result, x); }
+                else if (inst.str == "as_u8") { tab = vtab_set(tab, inst.result, x - (x / 256) * 256); }
                 else { if (x == 0) { tab = vtab_set(tab, inst.result, 1); } else { tab = vtab_set(tab, inst.result, 0); } }
             } else if (inst.kind_tag == 14) {  // alloc
                 // Bump-allocate the handle's base. The slot count is inst.imm
@@ -3653,7 +3662,7 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
                 var csbase: i32 = mem.len();
                 mem = mem.append(csl);
                 var csi: i32 = 0;
-                while (csi < csl) { mem = mem.append(cs[csi]); csi = csi + 1; }
+                while (csi < csl) { mem = mem.append((cs[csi] as i32)); csi = csi + 1; }
                 tab = vtab_set(tab, inst.result, csbase);
             }
             k = k + 1;

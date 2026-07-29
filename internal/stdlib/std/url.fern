@@ -55,7 +55,7 @@ pub function url_encode(s: string): string {
     var out_len: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        if (__url_unreserved(s[i])) { out_len = out_len + 1; }
+        if (__url_unreserved((s[i] as i32))) { out_len = out_len + 1; }
         else { out_len = out_len + 3; }
         i = i + 1;
     }
@@ -63,7 +63,7 @@ pub function url_encode(s: string): string {
     var pos: i32 = 0;
     i = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (__url_unreserved(b)) {
             buf = buf.with(pos, b as u8);
             pos = pos + 1;
@@ -88,7 +88,7 @@ pub function url_decode(s: string): string {
     var i: i32 = 0;
     while (i < n) {
         if (s[i] == 37 && i + 2 < n
-            && __url_hex_val(s[i+1]) >= 0 && __url_hex_val(s[i+2]) >= 0) {
+            && __url_hex_val((s[i+1] as i32)) >= 0 && __url_hex_val((s[i+2] as i32)) >= 0) {
             i = i + 3;
         } else {
             i = i + 1;
@@ -99,10 +99,10 @@ pub function url_decode(s: string): string {
     var pos: i32 = 0;
     i = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b == 37 && i + 2 < n
-            && __url_hex_val(s[i+1]) >= 0 && __url_hex_val(s[i+2]) >= 0) {
-            buf = buf.with(pos, ((__url_hex_val(s[i+1]) << 4) | __url_hex_val(s[i+2])) as u8);
+            && __url_hex_val((s[i+1] as i32)) >= 0 && __url_hex_val((s[i+2] as i32)) >= 0) {
+            buf = buf.with(pos, ((__url_hex_val((s[i+1] as i32)) << 4) | __url_hex_val((s[i+2] as i32))) as u8);
             i = i + 3;
         } else {
             buf = buf.with(pos, b as u8);
@@ -126,7 +126,7 @@ pub function form_decode(s: string): string {
     var i: i32 = 0;
     while (i < n) {
         if (s[i] == 37 && i + 2 < n
-            && __url_hex_val(s[i+1]) >= 0 && __url_hex_val(s[i+2]) >= 0) {
+            && __url_hex_val((s[i+1] as i32)) >= 0 && __url_hex_val((s[i+2] as i32)) >= 0) {
             i = i + 3;
         } else {
             i = i + 1;
@@ -137,13 +137,13 @@ pub function form_decode(s: string): string {
     var pos: i32 = 0;
     i = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b == 43) {                        // '+' -> space
             buf = buf.with(pos, 32 as u8);
             i = i + 1;
         } else if (b == 37 && i + 2 < n
-            && __url_hex_val(s[i+1]) >= 0 && __url_hex_val(s[i+2]) >= 0) {
-            buf = buf.with(pos, ((__url_hex_val(s[i+1]) << 4) | __url_hex_val(s[i+2])) as u8);
+            && __url_hex_val((s[i+1] as i32)) >= 0 && __url_hex_val((s[i+2] as i32)) >= 0) {
+            buf = buf.with(pos, ((__url_hex_val((s[i+1] as i32)) << 4) | __url_hex_val((s[i+2] as i32))) as u8);
             i = i + 3;
         } else {
             buf = buf.with(pos, b as u8);
@@ -166,7 +166,7 @@ pub function form_encode(s: string): string {
     var out_len: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b == 32) { out_len = out_len + 1; }
         else if (__url_unreserved(b)) { out_len = out_len + 1; }
         else { out_len = out_len + 3; }
@@ -176,7 +176,7 @@ pub function form_encode(s: string): string {
     var pos: i32 = 0;
     i = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b == 32) {                        // space -> '+'
             buf = buf.with(pos, 43 as u8);
             pos = pos + 1;
@@ -275,7 +275,7 @@ pub function url_parse(s: string): Option[Url] {
             var port: i32 = 0;
             i = colon + 1;
             while (i < authority_end) {
-                var b: i32 = s[i];
+                var b: i32 = s[i] as i32;
                 if (b < 48 || b > 57) { port = 0; break; }
                 port = port * 10 + (b - 48);
                 if (port > 65535) { port = 0; break; }

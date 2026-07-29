@@ -319,7 +319,7 @@ function str_to_f64(s: string): f64 {
     var divisor: f64 = 1.0;
     var seen_dot: boolean = false;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b == 46) { seen_dot = true; i = i + 1; continue; }  // '.' = 0x2E
         if (b < 48 || b > 57) { break; }
         var d: i32 = b - 48;
@@ -345,7 +345,7 @@ function str_to_f64(s: string): f64 {
         }
         var exp: i32 = 0;
         while (i < n) {
-            var eb: i32 = s[i];
+            var eb: i32 = s[i] as i32;
             if (eb < 48 || eb > 57) { break; }
             exp = exp * 10 + (eb - 48);
             i = i + 1;
@@ -1051,7 +1051,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                             if (ii.v < 0 || ii.v >= s.v.len()) {
                                 return v_err("string index out of range");
                             }
-                            return v_int(s.v[ii.v]);
+                            return v_int((s.v[ii.v] as i32));
                         },
                         _ => { return v_err("string index must be i32"); }
                     }

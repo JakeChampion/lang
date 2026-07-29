@@ -68,7 +68,7 @@ function parse_int_radix(s: string, base: i32): Option[i32] {
     if (i >= n) { return None; }
     var v: i32 = 0;
     while (i < n) {
-        var d: i32 = radix_digit(s[i]);
+        var d: i32 = radix_digit(s[i] as i32);
         if (d < 0 || d >= base) { return None; }
         v = v * base + d;
         i = i + 1;

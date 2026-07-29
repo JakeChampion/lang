@@ -59,7 +59,7 @@ function trim(s: string): string {
 function index_of(s: string, c: i32, from: i32): i32 {
     var i: i32 = from;
     while (i < s.len()) {
-        if (s[i] == c) { return i; }
+        if ((s[i] as i32) == c) { return i; }
         i = i + 1;
     }
     return 0 - 1;

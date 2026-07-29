@@ -30,7 +30,7 @@ function main(): i32 {
     __raw_store8(p2, 8, 200);
     var w: i32 = __raw_load_ptr(p2, 0);
     var b: i32 = __raw_load8(p2, 8);
-    return s.len() + s[0] + (w - 1234) + (b - 200);
+    return s.len() + (s[0] as i32) + (w - 1234) + (b - 200);
 }`
 
 // TestSelfHostRawIntrinsicsX86_64 runs the intrinsic probe through both the AST

@@ -735,7 +735,7 @@ function main(): i32 {
     var s: string = "  Hello, Fern!  ";
     print("len:        " + s.len().to_string());
     print("trim:       \\"" + s.trim() + "\\"");
-    print("byte[2]:    " + s[2].to_string());
+    print("byte[2]:    " + (s[2] as i32).to_string());
     var starts: string = "no";
     if (s.trim().starts_with("Hello")) { starts = "yes"; }
     print("starts:     " + starts);
@@ -803,8 +803,8 @@ function parse_int(s: string): Result[i32, ParseError] {
     var v: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
-        if (!b.is_ascii_digit()) {
+        var b: i32 = s[i] as i32;
+        if (!(b as i32).is_ascii_digit()) {
             return Err(ParseError { message: "not a digit", pos: i });
         }
         v = v * 10 + (b - 48);
@@ -837,12 +837,12 @@ function tokenize(src: string): Token[] {
     var n: i32 = src.len();
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i];
-        if (b.is_ascii_white_space()) { i = i + 1; }
-        else if (b.is_ascii_digit()) {
+        var b: i32 = src[i] as i32;
+        if ((b as i32).is_ascii_white_space()) { i = i + 1; }
+        else if ((b as i32).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && src[i].is_ascii_digit()) {
-                v = v * 10 + (src[i] - 48);
+            while (i < n && (src[i] as i32).is_ascii_digit()) {
+                v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });

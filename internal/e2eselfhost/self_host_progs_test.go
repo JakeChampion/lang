@@ -38,7 +38,7 @@ var selfHostProgCases = []struct {
 	// Cell[string] — single-pointer string slot (self-host strings are
 	// single-pointer, heap is leak-everything), so it reuses the i32 cell
 	// machinery. "A" then overwritten to "Z"; first byte 'Z' = 90.
-	{"cell-string", `function main(): i32 { var c: Cell[string] = cell_new("A"); c.set("Z"); return c.get()[0]; }`, 90},
+	{"cell-string", `function main(): i32 { var c: Cell[string] = cell_new("A"); c.set("Z"); return c.get()[0] as i32; }`, 90},
 	// Cell[string] stored in a STRUCT FIELD — the lamdefs/Ctx shape. "ab"
 	// overwritten to "xyz" through the field; len 3.
 	{"cell-string-field", `struct Box { c: Cell[string] } function main(): i32 { var b: Box = Box { c: cell_new("ab") }; b.c.set("xyz"); return b.c.get().len(); }`, 3},

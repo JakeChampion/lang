@@ -93,7 +93,7 @@ function scan_int(s: string, pos: i32): IntsAt {
     var p: i32 = pos;
     var v: i32 = 0;
     while (p < s.len() && s[p] != 10) {          // 10 = '\n'
-        if (s[p] >= 48 && s[p] <= 57) { v = v * 10 + (s[p] - 48); }
+        if ((s[p] as i32) >= 48 && (s[p] as i32) <= 57) { v = v * 10 + ((s[p] as i32) - 48); }
         p = p + 1;
     }
     return IntsAt { items: [v], pos: p + 1 };

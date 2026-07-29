@@ -32,7 +32,7 @@ function url_encode(s: string): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (url_unreserved(b)) { out = out + s[i:i+1]; }
         else {
             var hi: i32 = (b >> 4) & 15;
@@ -55,12 +55,12 @@ function url_decode(s: string): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         var emit: string = s[i:i+1];
         var consumed: i32 = 1;
         if (b == 37 && i + 2 < n) {
-            var h1: i32 = url_hex_val(s[i+1]);
-            var h2: i32 = url_hex_val(s[i+2]);
+            var h1: i32 = url_hex_val(s[i+1] as i32);
+            var h2: i32 = url_hex_val(s[i+2] as i32);
             if (h1 >= 0 && h2 >= 0) {
                 var by: u8[] = [((h1 << 4) | h2) as u8];
                 emit = string_from_bytes_unchecked(by);
@@ -86,7 +86,7 @@ var urlCodecIRCases = []struct {
 	// two spaces -> "%20%20" -> 6.
 	{"encode-two-spaces", `return url_encode("  ").len();`, 6},
 	// '/' (47) -> "%2F"; the low nibble's hex digit is UPPERCASE 'F' (70).
-	{"encode-uppercase-hex", `var e: string = url_encode("/"); return e[2];`, 70},
+	{"encode-uppercase-hex", `var e: string = url_encode("/"); return e[2] as i32;`, 70},
 	// "a%20b%2Fc" decodes back to "a b/c" -> 5.
 	{"decode-roundtrip", `return url_decode("a%20b%2Fc").len();`, 5},
 	// an invalid escape ("%zz") is left literal -> 3.

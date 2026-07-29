@@ -86,7 +86,7 @@ func TestSelfHostForInStringIR(t *testing.T) {
 		// string instead of falling to the array-snapshot path + AST fallback).
 		{"call-returning-string", `function greet(): string { return "AB"; } function main(): i32 { var s: i32 = 0; for b in greet() { s = s + b; } return s; }`, 131},
 		{"method-returning-string", `struct B { tag: i32 } function (b: B) name(): string { return "AB"; } function main(): i32 { var x: B = B { tag: 1 }; var s: i32 = 0; for c in x.name() { s = s + c; } return s; }`, 131},
-		{"slice", `function main(): i32 { var s: i32 = 0; for b in "ABCD"[1:3] { s = s + b; } return s; }`, 133}, // 'B'+'C' = 66+67
+		{"slice", `function main(): i32 { var s: i32 = 0; for b in "ABCD"[1:3] { s = s + (b as i32); } return s; }`, 133}, // 'B'+'C' = 66+67
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

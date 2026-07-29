@@ -118,7 +118,7 @@ func TestSelfHostSSAEmitWasm(t *testing.T) {
 		// Strings (byte arrays): index, byte loop, string param.
 		{"str-len", "function main(): i32 { var s = \"hello\"; return s.len(); }", 5},
 		{"str-param", "function slen(s: string): i32 { return s.len(); } function main(): i32 { var s = \"wxyz\"; return slen(s); }", 4},
-		{"str-index", "function main(): i32 { var s = \"hello\"; return s[0]; }", 104},
+		{"str-index", "function main(): i32 { var s = \"hello\"; return s[0] as i32; }", 104},
 		// Structs: i32 + pointer fields, params, returns, methods.
 		{"struct-sum", "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 7, y: 9 }; return p.x + p.y; }", 16},
 		{"struct-array-field", "struct Box { tag: i32, data: i32[] } function main(): i32 { var b = Box { tag: 1, data: [10, 20, 30] }; return b.data[1] + b.tag; }", 21},

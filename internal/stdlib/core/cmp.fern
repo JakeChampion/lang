@@ -74,7 +74,8 @@ pub trait Debug {
 
 // ---- Display ---------------------------------------------------
 // Numeric + string types already have `to_string`; empty impls adopt
-// it. `boolean` does not, so it gets a real body.
+// it. `boolean` and `u8` do not, so they get real bodies — `u8` is the
+// byte type (`s[i]`, #5629) and has no scalar module of its own.
 
 impl Display for i32 { }
 impl Display for i64 { }
@@ -227,7 +228,7 @@ impl Hash for string {
         var n: i32 = self.len();
         var i: i32 = 0;
         while (i < n) {
-            h = h ^ self[i];
+            h = h ^ (self[i] as i32);
             h = h * 16777619;                   // 0x01000193
             i = i + 1;
         }
@@ -306,7 +307,7 @@ impl Debug for string {
         var i: i32 = 0;
         var n: i32 = self.len();
         while (i < n) {
-            var b: i32 = self[i];
+            var b: i32 = self[i] as i32;
             if (b == 34) { out = out + "\\\""; }        // "
             else { if (b == 92) { out = out + "\\\\"; }  // backslash
             else { if (b == 10) { out = out + "\\n"; }

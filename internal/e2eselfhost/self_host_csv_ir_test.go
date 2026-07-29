@@ -72,7 +72,7 @@ function csv_parse_line(s: string): string[] {
     var field: string = "";
     var in_quotes: boolean = false;
     while (i < n) {
-        var c: i32 = s[i];
+        var c: i32 = s[i] as i32;
         if (in_quotes) {
             if (c == 34) {
                 if (i + 1 < n && s[i + 1] == 34) { field = field + "\""; i = i + 2; }

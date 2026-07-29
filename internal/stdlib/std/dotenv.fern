@@ -39,8 +39,8 @@ function __de_slice(s: string, a: i32, b: i32): string {
 function __de_trim(s: string): string {
     var a: i32 = 0;
     var b: i32 = s.len();
-    while (a < b && __de_is_space(s[a])) { a = a + 1; }
-    while (b > a && __de_is_space(s[b - 1])) { b = b - 1; }
+    while (a < b && __de_is_space((s[a] as i32))) { a = a + 1; }
+    while (b > a && __de_is_space((s[b - 1] as i32))) { b = b - 1; }
     return __de_slice(s, a, b);
 }
 
@@ -51,7 +51,7 @@ function __de_unescape(s: string): string {
     var i: i32 = 0;
     while (i < s.len()) {
         if (s[i] == 92 && i + 1 < s.len()) {   // backslash
-            var n: i32 = s[i + 1];
+            var n: i32 = s[i + 1] as i32;
             if (n == 110)      { out = out.append(10 as u8); }   // \n
             else if (n == 116) { out = out.append(9 as u8); }    // \t
             else if (n == 114) { out = out.append(13 as u8); }   // \r

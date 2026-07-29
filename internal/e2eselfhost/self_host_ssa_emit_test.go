@@ -194,9 +194,9 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		// receiver's fields, a method calling another method, a method returning
 		// the receiver type (chained), and a method used in a loop.
 		{"method-basic", "struct Counter { n: i32 } function (c: Counter) get(): i32 { return c.n; } function (c: Counter) plus(d: i32): i32 { return c.n + d; } function main(): i32 { var c = Counter { n: 40 }; return c.get() + c.plus(2) - c.n; }", 42},
-		{"method-calls-method", "struct Lex { s: string, i: i32 } function (l: Lex) at_end(): boolean { return l.i >= l.s.len(); } function (l: Lex) cur(): i32 { if (l.at_end()) { return 0 - 1; } return l.s[l.i]; } function main(): i32 { var l = Lex { s: \"AB\", i: 0 }; return l.cur(); }", 65},
+		{"method-calls-method", "struct Lex { s: string, i: i32 } function (l: Lex) at_end(): boolean { return l.i >= l.s.len(); } function (l: Lex) cur(): i32 { if (l.at_end()) { return 0 - 1; } return l.s[l.i] as i32; } function main(): i32 { var l = Lex { s: \"AB\", i: 0 }; return l.cur(); }", 65},
 		{"method-chained", "struct Box { v: i32 } function (b: Box) bump(): Box { return Box { v: b.v + 1 }; } function main(): i32 { var b = Box { v: 10 }; var c = b.bump().bump(); return c.v; }", 12},
-		{"method-loop", "struct Lex { s: string, i: i32 } function (l: Lex) at_end(): boolean { return l.i >= l.s.len(); } function (l: Lex) peek(): i32 { return l.s[l.i]; } function (l: Lex) adv(): Lex { return Lex { s: l.s, i: l.i + 1 }; } function main(): i32 { var l = Lex { s: \"hello\", i: 0 }; var sum = 0; while (!l.at_end()) { sum = sum + l.peek(); l = l.adv(); } return sum; }", 532 % 256},
+		{"method-loop", "struct Lex { s: string, i: i32 } function (l: Lex) at_end(): boolean { return l.i >= l.s.len(); } function (l: Lex) peek(): i32 { return l.s[l.i] as i32; } function (l: Lex) adv(): Lex { return Lex { s: l.s, i: l.i + 1 }; } function main(): i32 { var l = Lex { s: \"hello\", i: 0 }; var sum = 0; while (!l.at_end()) { sum = sum + l.peek(); l = l.adv(); } return sum; }", 532 % 256},
 		// A call's result carries the callee's declared return type, so a
 		// struct-returning call's field access and a string-returning call's
 		// .len() / concat resolve.
@@ -205,7 +205,7 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		// string_from_bytes_unchecked(i32[]) → a string (a copy of the byte array, which
 		// shares the length-prefixed layout). The last lexer gap on the path to
 		// full self-host SSA coverage.
-		{"string-from-bytes", "function main(): i32 { var s = string_from_bytes_unchecked([72, 105]); var t = \"x\" + string_from_bytes_unchecked([89]) + \"z\"; return s.len() * 100 + t.len() + s[1]; }", 52},
+		{"string-from-bytes", "function main(): i32 { var s = string_from_bytes_unchecked([72, 105]); var t = \"x\" + string_from_bytes_unchecked([89]) + \"z\"; return s.len() * 100 + t.len() + (s[1] as i32); }", 52},
 		{"string-from-bytes-eq", "function main(): i32 { var s = string_from_bytes_unchecked([65, 66, 67, 68]); if (s == \"ABCD\") { return s.len() + 90; } return 0; }", 94},
 		// __new_array(n): runtime-sized allocation (alloc op size in args[0]).
 		{"new-array-fixed", "function main(): i32 { var b = __new_array(3); b[0] = 10; b[1] = 20; b[2] = 30; return b[0] + b[1] + b[2] + b.len(); }", 63},
@@ -289,7 +289,7 @@ func TestSelfHostSSAEmitX86_64(t *testing.T) {
 		{"arr-param-sum", "function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { var xs = [5, 10, 15, 20]; return sum(xs); }", 50},
 		{"arr-param-two", "function dot2(a: i32[], b: i32[]): i32 { return a[0] * b[0] + a[1] * b[1]; } function main(): i32 { var p = [2, 3]; var q = [10, 20]; return dot2(p, q); }", 80},
 		// Strings (byte arrays): index, byte-sum loop, and a string param.
-		{"str-byte-sum", "function main(): i32 { var s = \"AAA\"; var i = 0; var t = 0; while (i < s.len()) { t = t + s[i]; i = i + 1; } return t; }", 195},
+		{"str-byte-sum", "function main(): i32 { var s = \"AAA\"; var i = 0; var t = 0; while (i < s.len()) { t = t + (s[i] as i32); i = i + 1; } return t; }", 195},
 		{"str-param", "function slen(s: string): i32 { return s.len(); } function main(): i32 { var s = \"wxyz\"; return slen(s); }", 4},
 		// Returning pointers (arrays / strings) from functions.
 		{"return-array", "function make(): i32[] { return [10, 20, 30]; } function main(): i32 { var a = make(); return a[1]; }", 20},
