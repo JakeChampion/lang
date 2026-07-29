@@ -1455,10 +1455,11 @@ pub function component_ir_core_ok(mod: parser.Module): boolean {
 // admits a purely computational module, and `io` = true additionally admits the
 // writers plus exit, which the $fd_write / $proc_exit shims serve.
 //
-// Every other WASI op (files, stdin, clocks, args, env, random, sockets, poll)
-// has a preview2 body only on the AST path — wasm.readfile_func_p2,
-// env_func_p2, args_func_p2, clock_funcs_p2, random_func_p2 — so a module
-// needing one stays there until those bodies grow IR siblings.
+// The clock / random / env / args / filesystem ops are admitted under `io` too:
+// their preview2 bodies (the *_p2 emitters below) define the same $__fern_*
+// functions the IR already calls, so each costs only the import plus the body
+// swap. The ops still outside are the ones with no preview2 body at all —
+// stdin, sockets, poll.
 //
 // The check is an ALLOWLIST over op-needs and so fails closed: a need added to
 // needs_of later is rejected here until it is listed, rather than silently
@@ -1487,9 +1488,9 @@ pub function component_needs_ok(needs: string[], io: boolean): boolean {
         // emit_ir_module_units_mode. arg_at shares args's get-arguments import
         // and copies one entry out of the list (arg_at_func_p2).
         if (io && (n == "env" || n == "args" || n == "arg_at")) { i = i + 1; continue; }
-        // The filesystem pair. Their mode-2 bodies box a real IoError variant
-        // (err_payload_p2), which the IR consumer reads at the right offsets —
-        // see #5795 for why the AST fallback cannot share that.
+        // The filesystem pair. Their bodies box a real IoError variant
+        // (err_payload_p2) rather than storing the raw wasi error code, so an
+        // `Err(e)` here matches like one from any other target (#5795).
         if (io && (n == "read_file" || n == "write_file")) { i = i + 1; continue; }
         if (n == "arr_push" || n == "arr_push_owned" || n == "arr_push_i64"
             || n == "arr_push_f64" || n == "map_iter" || n == "str_split"
@@ -1753,28 +1754,18 @@ pub function fs_imports_p2(has_readfile: boolean, has_writefile: boolean): strin
 // first preopen descriptor -> open-at(path) -> read-via-stream ->
 // blocking-read loop, copying each chunk into a buffer. Returns the same
 // 8-byte Result box as the preview1 helper ([tag][payload]; Ok payload is a
-// `[len][bytes]` string block, Err payload is the wasi error code). The
+// `[len][bytes]` string block, Err payload an IoError variant box). The
 // return area (32 bytes, 8-aligned) holds each call's canonical result.
 // err_payload_p2 is the Err/Some payload expression the preview2 fs helpers
-// store. With box_err it is a real IoError variant box, built by translating
-// the error-code discriminant (a single BYTE at ra+4 — native reads it with
-// load8_u for the same reason) through $__fern_build_io_error_p2; without it,
-// the historical raw error code.
-//
-// The split exists because $__fern_build_io_error writes its variant fields at
-// +8 (the IR / op_enum_new layout) while the legacy AST emitter's match
-// dispatch reads them at +4, so a boxed payload is only correct for the IR
-// consumer. Mode 2 gets the correct variant; the AST fallback keeps its
-// existing (wrong, but pre-existing and byte-identical) raw code, per the
-// project rule that a legacy-AST-only gap does not need fixing. See #5795.
-function err_payload_p2(box_err: boolean): string {
-    if (box_err) {
-        return "(call $__fern_build_io_error_p2 (i32.load8_u (i32.add (local.get $ra) (i32.const 4))) (local.get $np))";
-    }
-    return "(i32.load (i32.add (local.get $ra) (i32.const 4)))";
+// store: a real IoError variant box, built by translating the error-code
+// discriminant (a single BYTE at ra+4 — native reads it with load8_u for the
+// same reason) through $__fern_build_io_error_p2. Both emitters get one, each
+// against its own box layout — see build_io_error_func's `slot` (#5795).
+function err_payload_p2(): string {
+    return "(call $__fern_build_io_error_p2 (i32.load8_u (i32.add (local.get $ra) (i32.const 4))) (local.get $np))";
 }
 
-pub function readfile_func_p2(box_err: boolean): string {
+pub function readfile_func_p2(): string {
     var o: string = "";
     o = o + "  (func $__fern_read_file (param $np i32) (result i32)\n";
     o = o + "    (local $ra i32) (local $fd i32) (local $strm i32) (local $buf i32) (local $off i32) (local $cp i32) (local $cl i32) (local $i i32) (local $tmp i32)\n";
@@ -1787,14 +1778,14 @@ pub function readfile_func_p2(box_err: boolean): string {
     o = o + "    (if (i32.ne (i32.load8_u (local.get $ra)) (i32.const 0)) (then\n";
     o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
-    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2(box_err) + ")\n";
+    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2() + ")\n";
     o = o + "      (return (local.get $tmp))))\n";
     o = o + "    (local.set $fd (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
     o = o + "    (call $read_via_stream (local.get $fd) (i64.const 0) (local.get $ra))\n";
     o = o + "    (if (i32.ne (i32.load8_u (local.get $ra)) (i32.const 0)) (then\n";
     o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
-    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2(box_err) + ")\n";
+    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2() + ")\n";
     o = o + "      (return (local.get $tmp))))\n";
     o = o + "    (local.set $strm (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
     o = o + "    (local.set $buf (call $__fern_alloc (i32.add (i32.const 4) (i32.const 1048576))))\n";
@@ -1829,7 +1820,7 @@ pub function readfile_func_p2(box_err: boolean): string {
 // the path / content `[len][bytes]` blocks; the return area (32 bytes,
 // 8-aligned) holds each host call's canonical result. blocking-write-and-flush
 // is the $bwf already imported by the stdout shim.
-pub function writefile_func_p2(box_err: boolean): string {
+pub function writefile_func_p2(): string {
     var o: string = "";
     o = o + "  (func $__fern_write_file (param $np i32) (param $cp i32) (result i32)\n";
     o = o + "    (local $ra i32) (local $fd i32) (local $strm i32) (local $clen i32) (local $cur i32) (local $chunk i32) (local $tmp i32)\n";
@@ -1843,14 +1834,14 @@ pub function writefile_func_p2(box_err: boolean): string {
     o = o + "    (if (i32.ne (i32.load8_u (local.get $ra)) (i32.const 0)) (then\n";
     o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "      (i32.store (local.get $tmp) (i32.const 0))\n";
-    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2(box_err) + ")\n";
+    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2() + ")\n";
     o = o + "      (return (local.get $tmp))))\n";
     o = o + "    (local.set $fd (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
     o = o + "    (call $write_via_stream (local.get $fd) (i64.const 0) (local.get $ra))\n";
     o = o + "    (if (i32.ne (i32.load8_u (local.get $ra)) (i32.const 0)) (then\n";
     o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "      (i32.store (local.get $tmp) (i32.const 0))\n";
-    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2(box_err) + ")\n";
+    o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2() + ")\n";
     o = o + "      (return (local.get $tmp))))\n";
     o = o + "    (local.set $strm (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
     o = o + "    (local.set $clen (i32.load (local.get $cp)))\n";
@@ -1864,7 +1855,7 @@ pub function writefile_func_p2(box_err: boolean): string {
     o = o + "      (if (i32.ne (i32.load8_u (local.get $ra)) (i32.const 0)) (then\n";
     o = o + "        (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "        (i32.store (local.get $tmp) (i32.const 0))\n";
-    o = o + "        (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2(box_err) + ")\n";
+    o = o + "        (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2() + ")\n";
     o = o + "        (return (local.get $tmp))))\n";
     o = o + "      (local.set $cur (i32.add (local.get $cur) (local.get $chunk)))\n";
     o = o + "      (br $wc)))\n";
@@ -1984,8 +1975,8 @@ pub function component_io_shims(needs: string[]): string {
     if (need(needs, "args")) { o = o + args_func_p2(); }
     if (need(needs, "arg_at")) { o = o + arg_at_func_p2(); }
     if (need(needs, "read_file") || need(needs, "write_file")) { o = o + build_io_error_p2_func(); }
-    if (need(needs, "read_file")) { o = o + readfile_func_p2(true); }
-    if (need(needs, "write_file")) { o = o + writefile_func_p2(true); }
+    if (need(needs, "read_file")) { o = o + readfile_func_p2(); }
+    if (need(needs, "write_file")) { o = o + writefile_func_p2(); }
     return o;
 }
 
@@ -3935,18 +3926,23 @@ function struct_type_id(structs: parser.StructDecl[], name: string): i32 {
 // register backends' __fern_io_error (asm_ir). Maps a small set of WASI
 // preview-1 errnos to the matching IoError variant, carrying the offending path
 // string on the single-string variants; everything else lands in
-// Other(path, ""). A self-host wasm variant box is [variant_id@0][payload@4...]
-// (the variant's struct_type_id at offset 0, payload fields at +4 each — the
-// same shape op_enum_new / the match dispatch use); a string payload is a single
-// [len][bytes] block pointer, so the caller's path block is stored directly. The
-// variant ids are baked from the module's struct table (same table the match
-// arms read, so ids agree). errno→variant matches native wasmbin: ENOENT(44) →
-// NotFound(path), EACCES(2) → PermissionDenied(path), EEXIST(20) →
-// AlreadyExists(path), EINTR(27) → Interrupted, ENOTSUP(58) → Unsupported.
-// Boxes via $__fern_str_box (the same rc-headered variant shape op_enum_new
-// builds): [variant_id@0 (8-byte header slot)][field i @ 8 + i*8], sized
-// 8 + nfields*8 — so 16 for a single-string variant, 8 for a payloadless one,
-// 24 for two-field Other. A string field is a single [len][bytes] block pointer.
+// Other(path, ""). The variant ids are baked from the module's struct table
+// (same table the match arms read, so ids agree). errno→variant matches native
+// wasmbin: ENOENT(44) → NotFound(path), EACCES(2) → PermissionDenied(path),
+// EEXIST(20) → AlreadyExists(path), EINTR(27) → Interrupted, ENOTSUP(58) →
+// Unsupported.
+//
+// `slot` is the CONSUMER's variant-box slot width. Both consumers lay a box out
+// the same way — the variant id in slot 0, field i in slot 1+i, so field i sits
+// at slot*(1+i) and an n-field box is slot*(1+n) bytes — but at different
+// widths: the IR consumer (op_enum_new / the IR match dispatch) slots 8, while
+// the legacy AST emitter slots 4 (wasm.struct_field_off(i) = 4 + i*4, boxed as
+// 4 + nfields*4). Emitting the IR layout for both is what made an AST-path
+// `NotFound(p)` read its path out of the upper half of the id slot, and the
+// two-field default arm `Other(path, msg)` — where every unmapped errno lands —
+// wrong in both fields (#5795). Boxes via $__fern_str_box, the same rc-headered
+// allocation both emitters build variants with. A string field is a single
+// [len][bytes] block pointer, so the caller's path block is stored directly.
 // build_io_error_p2_func emits $__fern_build_io_error_p2(code, path): the
 // PREVIEW2 sibling of $__fern_build_io_error below. It does not duplicate the
 // variant boxing — it translates a `wasi:filesystem/types.error-code`
@@ -3972,45 +3968,55 @@ pub function build_io_error_p2_func(): string {
     return o;
 }
 
-pub function build_io_error_func(structs: parser.StructDecl[]): string {
+// io_err_box_bytes is the size of an n-field IoError variant box, and
+// io_err_field_off the byte offset of its field i, for a consumer whose boxes
+// are `slot` bytes per slot. See build_io_error_func for the layout.
+function io_err_box_bytes(nfields: i32, slot: i32): string {
+    return util.i32_to_string(slot * (1 + nfields));
+}
+function io_err_field_off(i: i32, slot: i32): string {
+    return util.i32_to_string(slot * (1 + i));
+}
+
+pub function build_io_error_func(slot: i32): string {
     var o: string = "";
     o = o + "  (func $__fern_build_io_error (param $errno i32) (param $path i32) (result i32)\n";
     o = o + "    (local $r i32) (local $e i32)\n";
     // ENOENT(44) -> NotFound(path)
     o = o + "    (if (i32.eq (local.get $errno) (i32.const 44)) (then\n";
-    o = o + "      (local.set $r (call $__fern_str_box (i32.const 16)))\n";
+    o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1, slot) + ")))\n";
     o = o + "      (i32.store (local.get $r) (global.get " + tid_global("NotFound") + "))\n";
-    o = o + "      (i32.store (i32.add (local.get $r) (i32.const 8)) (local.get $path))\n";
+    o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0, slot) + ")) (local.get $path))\n";
     o = o + "      (return (local.get $r))))\n";
     // EACCES(2) -> PermissionDenied(path)
     o = o + "    (if (i32.eq (local.get $errno) (i32.const 2)) (then\n";
-    o = o + "      (local.set $r (call $__fern_str_box (i32.const 16)))\n";
+    o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1, slot) + ")))\n";
     o = o + "      (i32.store (local.get $r) (global.get " + tid_global("PermissionDenied") + "))\n";
-    o = o + "      (i32.store (i32.add (local.get $r) (i32.const 8)) (local.get $path))\n";
+    o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0, slot) + ")) (local.get $path))\n";
     o = o + "      (return (local.get $r))))\n";
     // EEXIST(20) -> AlreadyExists(path)
     o = o + "    (if (i32.eq (local.get $errno) (i32.const 20)) (then\n";
-    o = o + "      (local.set $r (call $__fern_str_box (i32.const 16)))\n";
+    o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1, slot) + ")))\n";
     o = o + "      (i32.store (local.get $r) (global.get " + tid_global("AlreadyExists") + "))\n";
-    o = o + "      (i32.store (i32.add (local.get $r) (i32.const 8)) (local.get $path))\n";
+    o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0, slot) + ")) (local.get $path))\n";
     o = o + "      (return (local.get $r))))\n";
     // EINTR(27) -> Interrupted (payloadless)
     o = o + "    (if (i32.eq (local.get $errno) (i32.const 27)) (then\n";
-    o = o + "      (local.set $r (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(0, slot) + ")))\n";
     o = o + "      (i32.store (local.get $r) (global.get " + tid_global("Interrupted") + "))\n";
     o = o + "      (return (local.get $r))))\n";
     // ENOTSUP(58) -> Unsupported (payloadless)
     o = o + "    (if (i32.eq (local.get $errno) (i32.const 58)) (then\n";
-    o = o + "      (local.set $r (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(0, slot) + ")))\n";
     o = o + "      (i32.store (local.get $r) (global.get " + tid_global("Unsupported") + "))\n";
     o = o + "      (return (local.get $r))))\n";
     // default -> Other(path, "") — the empty message is a valid [len=0] block.
     o = o + "    (local.set $e (call $__fern_alloc (i32.const 4)))\n";
     o = o + "    (i32.store (local.get $e) (i32.const 0))\n";
-    o = o + "    (local.set $r (call $__fern_str_box (i32.const 24)))\n";
+    o = o + "    (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(2, slot) + ")))\n";
     o = o + "    (i32.store (local.get $r) (global.get " + tid_global("Other") + "))\n";
-    o = o + "    (i32.store (i32.add (local.get $r) (i32.const 8)) (local.get $path))\n";
-    o = o + "    (i32.store (i32.add (local.get $r) (i32.const 16)) (local.get $e))\n";
+    o = o + "    (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0, slot) + ")) (local.get $path))\n";
+    o = o + "    (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(1, slot) + ")) (local.get $e))\n";
     o = o + "    (local.get $r))\n";
     return o;
 }
@@ -7246,7 +7252,7 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // sibling of native wasmbin's __build_io_error / asm_ir's
     // __fern_io_error). Emit it once whenever any fs op is present so the
     // helpers' Err/Some payloads carry a matchable variant, not a raw errno.
-    if (need(needs, "stat") || need(needs, "remove_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "write_file")) { out = out + build_io_error_func(mod.structs); }
+    if (need(needs, "stat") || need(needs, "remove_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "write_file")) { out = out + build_io_error_func(8); }
     // $__fern_stat(path, fstype): path_filestat_get -> FileStat struct +
     // Result box. Heap-backed (allocates the buffer + boxes), so folded into
     // the heap gate above.

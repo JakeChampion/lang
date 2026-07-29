@@ -9650,12 +9650,11 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     //
     // The COMPONENT modes route through the IR too, for the subset whose core
     // imports the fixed component framings can satisfy: no I/O at all (mode 1)
-    // or preview2 stdout/stderr/exit (mode 2). The fs / env / args / random /
-    // clock component shapes keep falling through — their preview2 helper
-    // bodies (readfile_func_p2, env_func_p2, args_func_p2, clock_funcs_p2,
-    // random_func_p2, all below) exist only on the AST path. `fs` is refused
-    // outright: emit_module_run_io_fs is only ever selected for an fs shape, so
-    // there is nothing for the IR leg to serve there.
+    // or preview2 stdout/stderr/exit (mode 2). `fs` selects the framing, not
+    // the emitter — an fs shape is a mode-2 core like any other, and
+    // component_needs_ok is the one gate that decides, admitting the
+    // filesystem / env / args / random / clock ops whose *_p2 helper bodies
+    // define the same $__fern_* functions the IR already calls.
     var lm: parser.Module = wasm_ir.lift_lambdas(mod);
     // Lower every function ONCE into `ir_cache` and thread it through the whole
     // IR emit path (the gate deferral checks + all the module_uses_* / str_values
@@ -9898,9 +9897,12 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     if (has_args) {
         if (io) { out = out + wasm_ir.args_func_p2(); } else { out = out + wasm_ir.args_func(); }
     }
-    // Preview-1 read_file/write_file box their Err payload via
-    // $__fern_build_io_error; emit it once for either. (The preview-2 _p2
-    // helpers keep their own shape.)
+    // read_file/write_file box their Err payload into an IoError variant via
+    // $__fern_build_io_error; emit it once for whichever of them is present.
+    // The AST emitter's variant boxes are 4-byte-slotted (struct_field_off),
+    // so it asks for that layout — the IR consumer's is 8 (#5795). The preview-2
+    // helpers reach it through $__fern_build_io_error_p2, which only translates
+    // an error-code discriminant into an errno and delegates.
     // build_io_error_func stores its variant ids via `global.get $__tid$<Name>`
     // (#5331 step 3), so this legacy AST path — which never emits
     // tid_globals_section, being whole-program by construction and no part of
@@ -9908,15 +9910,16 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // globals and fails to parse. The two module paths are mutually exclusive
     // (emit_ir_module returns early for an IR-eligible module), so this cannot
     // double-declare.
-    if (!fs && (has_readfile || has_writefile)) {
+    if (has_readfile || has_writefile) {
         out = out + wasm_ir.tid_globals_section(mod.structs);
-        out = out + wasm_ir.build_io_error_func(mod.structs);
+        out = out + wasm_ir.build_io_error_func(struct_field_off(0));
+        if (fs) { out = out + wasm_ir.build_io_error_p2_func(); }
     }
     if (has_readfile) {
-        if (fs) { out = out + wasm_ir.readfile_func_p2(false); } else { out = out + wasm_ir.readfile_func(); }
+        if (fs) { out = out + wasm_ir.readfile_func_p2(); } else { out = out + wasm_ir.readfile_func(); }
     }
     if (has_writefile) {
-        if (fs) { out = out + wasm_ir.writefile_func_p2(false); } else { out = out + wasm_ir.writefile_func(); }
+        if (fs) { out = out + wasm_ir.writefile_func_p2(); } else { out = out + wasm_ir.writefile_func(); }
     }
     // component-io-fs: the canonical-ABI realloc the fs lists need; a
     // string/list<u8>-returning extern (P4c) needs it too so the host can
