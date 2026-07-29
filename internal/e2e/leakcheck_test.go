@@ -454,3 +454,110 @@ func TestLeakCheckResultThreadReclaimArm64(t *testing.T) {
 		t.Errorf("got allocs=%d frees=%d live=%d, want fully reclaimed (allocs==frees, live==0): the l = r.lex result-struct threading strands its cluster", allocs, frees, live)
 	}
 }
+
+// --- Move-on-construction in a loop body (#5879) -------------------
+//
+// A bare-ident heap value consumed by a container literal at its last use is
+// MOVED into the construction: the alias-inc is skipped and the container's
+// deep drop releases the element. markConstructionMoves used to walk only the
+// function's top-level statements, so inside a loop body the move never fired
+// — the inc was emitted with nothing releasing the source's own reference per
+// iteration, leaking one array per iteration (linear, unbounded: 3.2 MB over
+// 100k iterations).
+//
+// The three fixtures are the discriminator. They differ in one line each, and
+// pinning all three together is what makes the gate meaningful: the fix must
+// close the leak WITHOUT moving a var that outlives the iteration.
+const loopConstructionMoveSrc = `function main(): i32 {
+    var s: i32 = 0;
+    var k: i32 = 0;
+    while (k < 20) {
+        var xs: i32[] = [1, 2, 3];
+        var t = (xs, 99);
+        s = s + t.0[2];
+        k = k + 1;
+    }
+    return s % 7;
+}`
+
+// The same loop with a FRESH literal element: names no local, so it never took
+// the construction inc and was already balanced. The control for the fixture
+// above — if this one ever regresses, the cause is not the move analysis.
+const loopConstructionFreshSrc = `function main(): i32 {
+    var s: i32 = 0;
+    var k: i32 = 0;
+    while (k < 20) {
+        var t = ([1, 2, 3], 99);
+        s = s + t.0[2];
+        k = k + 1;
+    }
+    return s % 7;
+}`
+
+// The hazard the move must NOT swallow: `a1` aliases a loop-OUTER array
+// without an inc. Moving it would let the first iteration's release free a
+// buffer later iterations still read — a use-after-free, not a leak. Pinned by
+// exit code as well as balance, since an over-release corrupts the read.
+const loopAliasNoIncSrc = `function main(): i32 {
+    var s: i32 = 0;
+    var k: i32 = 0;
+    var a0: i32[] = [1, 2, 3];
+    while (k < 20) {
+        var a1: i32[] = a0;
+        s = s + a1[2];
+        k = k + 1;
+    }
+    return s % 7;
+}`
+
+func TestX86_64LeakCheckLoopConstructionMove(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		exit int
+	}{
+		{"bare-ident-element", loopConstructionMoveSrc, 4},
+		{"fresh-literal-element", loopConstructionFreshSrc, 4},
+		{"alias-without-inc", loopAliasNoIncSrc, 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckX86_64(t, tc.src)
+			if code != tc.exit {
+				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
+			}
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations recorded — fixture drift")
+			}
+			if frees != allocs || live != 0 {
+				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+			}
+		})
+	}
+}
+
+func TestArm64LeakCheckLoopConstructionMove(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		exit int
+	}{
+		{"bare-ident-element", loopConstructionMoveSrc, 4},
+		{"fresh-literal-element", loopConstructionFreshSrc, 4},
+		{"alias-without-inc", loopAliasNoIncSrc, 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckArm64(t, tc.src)
+			if code != tc.exit {
+				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
+			}
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations recorded — fixture drift")
+			}
+			if frees != allocs || live != 0 {
+				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+			}
+		})
+	}
+}
