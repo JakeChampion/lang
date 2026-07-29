@@ -635,6 +635,75 @@ func TestArm64LeakCheckLoopConstructionMove(t *testing.T) {
 	}
 }
 
+// A string param used in a construction slot AND read by a pure-read builtin
+// (`s.len()`) must stay counted-retain — the `.len()` is a scalar read that
+// retains nothing. This is the residual lexer strand: `tokenize`'s `src` param
+// is `Lex { src: src, n: src.len() }`, and the `src.len()` occurrence used to
+// disqualify it, so every `toks = tokenize(src)` result was tainted and its
+// tokens stranded at the caller. Pinned differentially, like the retained-param
+// pair: `mk` using `s.len()` must free as much as the same builder without it.
+const pureReadLenSrc = `import "std/i32";
+struct Box { s: string, n: i32 }
+function mk(s: string): Box { return Box { s: s, n: s.len() }; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) {
+        var key: string = "k" + r.to_string();
+        var b: Box = mk(key);
+        acc = acc + b.s.len();
+        r = r + 1;
+    }
+    return acc % 7;
+}`
+
+const pureReadNoLenSrc = `import "std/i32";
+struct Box { s: string, n: i32 }
+function mk(s: string): Box { return Box { s: s, n: 0 }; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) {
+        var key: string = "k" + r.to_string();
+        var b: Box = mk(key);
+        acc = acc + b.s.len();
+        r = r + 1;
+    }
+    return acc % 7;
+}`
+
+func TestLeakCheckPureReadLenX86_64(t *testing.T) {
+	_, lenErr, lenCode := runLeakCheckX86_64(t, pureReadLenSrc)
+	_, noLenErr, noLenCode := runLeakCheckX86_64(t, pureReadNoLenSrc)
+	if lenCode != noLenCode {
+		t.Fatalf("exit codes differ: len %d, nolen %d", lenCode, noLenCode)
+	}
+	la, lf, _ := parseLeakCheckLine(t, lenErr)
+	na, nf, _ := parseLeakCheckLine(t, noLenErr)
+	if la != na {
+		t.Fatalf("allocs differ: len %d, nolen %d — fixture drift", la, na)
+	}
+	if lf < nf {
+		t.Errorf("with s.len() frees %d of %d, without it frees %d: the pure-read receiver must not disqualify the counted-retain param", lf, la, nf)
+	}
+}
+
+func TestLeakCheckPureReadLenArm64(t *testing.T) {
+	_, lenErr, lenCode := runLeakCheckArm64(t, pureReadLenSrc)
+	_, noLenErr, noLenCode := runLeakCheckArm64(t, pureReadNoLenSrc)
+	if lenCode != noLenCode {
+		t.Fatalf("exit codes differ: len %d, nolen %d", lenCode, noLenCode)
+	}
+	la, lf, _ := parseLeakCheckLine(t, lenErr)
+	na, nf, _ := parseLeakCheckLine(t, noLenErr)
+	if la != na {
+		t.Fatalf("allocs differ: len %d, nolen %d — fixture drift", la, na)
+	}
+	if lf < nf {
+		t.Errorf("with s.len() frees %d of %d, without it frees %d: the pure-read receiver must not disqualify the counted-retain param", lf, la, nf)
+	}
+}
+
 // --- Tuple-valued container element (#5879 cause B) ----------------
 //
 // An array of tuples routed its per-element release through the flat

@@ -94,7 +94,7 @@ function __fuzz_mutate(seed: string, mode: i32): string {
     if (mode == 0) {
         var i: i32 = math.random_int(0, n);
         var b: i32 = math.random_int(0, 256);
-        return seed[0:i] + (b as i32).to_ascii_string() + seed[i + 1:n];
+        return seed[0:i] + (b as u8).to_ascii_string() + seed[i + 1:n];
     }
     if (mode == 1) {
         var i: i32 = math.random_int(0, n);
@@ -103,7 +103,7 @@ function __fuzz_mutate(seed: string, mode: i32): string {
     if (mode == 2) {
         var i: i32 = math.random_int(0, n + 1);
         var b: i32 = math.random_int(0, 256);
-        return seed[0:i] + (b as i32).to_ascii_string() + seed[i:n];
+        return seed[0:i] + (b as u8).to_ascii_string() + seed[i:n];
     }
     if (mode == 3) {
         // bit flip — pick a byte, XOR with a single-bit mask.
@@ -111,7 +111,7 @@ function __fuzz_mutate(seed: string, mode: i32): string {
         var bit: i32 = math.random_int(0, 8);
         var orig: i32 = seed[i] as i32;
         var flipped: i32 = orig ^ (1 << bit);
-        return seed[0:i] + (flipped as i32).to_ascii_string() + seed[i + 1:n];
+        return seed[0:i] + (flipped as u8).to_ascii_string() + seed[i + 1:n];
     }
     if (mode == 4) {
         // byte duplicate
@@ -121,12 +121,12 @@ function __fuzz_mutate(seed: string, mode: i32): string {
     if (mode == 5) {
         // byte zero
         var i: i32 = math.random_int(0, n);
-        return seed[0:i] + (0 as i32).to_ascii_string() + seed[i + 1:n];
+        return seed[0:i] + (0 as u8).to_ascii_string() + seed[i + 1:n];
     }
     if (mode == 6) {
         // byte max (0xFF)
         var i: i32 = math.random_int(0, n);
-        return seed[0:i] + (255 as i32).to_ascii_string() + seed[i + 1:n];
+        return seed[0:i] + (255 as u8).to_ascii_string() + seed[i + 1:n];
     }
     // verbatim (mode 7 or higher)
     return seed;
@@ -164,7 +164,7 @@ function __fuzz_escape(s: string): string {
         } else if (b == 9) {
             out = out + "\\t";
         } else if (b >= 32 && b < 127) {
-            out = out + (b as i32).to_ascii_string();
+            out = out + (b as u8).to_ascii_string();
         } else {
             out = out + "\\x" + b.to_hex().pad_start(2, "0");
         }

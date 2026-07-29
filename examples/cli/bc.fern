@@ -61,7 +61,7 @@ function parse_primary(s: string, pos: i32): Eval {
   var start: i32 = p;
   var v: f64 = 0.0;
   var saw_digit: boolean = false;
-  while (p < s.len() && (s[p] as i32).is_ascii_digit()) {
+  while (p < s.len() && s[p].is_ascii_digit()) {
     v = v * 10.0 + (s[p] - 48) as f64;
     saw_digit = true;
     p = p + 1;
@@ -70,7 +70,7 @@ function parse_primary(s: string, pos: i32): Eval {
     // '.'
     p = p + 1;
     var scale: f64 = 0.1;
-    while (p < s.len() && (s[p] as i32).is_ascii_digit()) {
+    while (p < s.len() && s[p].is_ascii_digit()) {
       v = v + (s[p] - 48) as f64 * scale;
       scale = scale / 10.0;
       saw_digit = true;

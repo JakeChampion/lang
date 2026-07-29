@@ -33,7 +33,7 @@ function expand_set(s: string): string {
       var hi: i32 = s[i + 2] as i32;
       var c: i32 = lo;
       while (c <= hi) {
-        out = out + (c as i32).to_ascii_string();
+        out = out + (c as u8).to_ascii_string();
         c = c + 1;
       }
       i = i + 3;
@@ -51,7 +51,7 @@ function translate(text: string, set1: string, set2: string): string {
   var i: i32 = 0;
   while (i < n) {
     var b: i32 = text[i] as i32;
-    var pos: i32 = set1.index_of((b as i32).to_ascii_string());
+    var pos: i32 = set1.index_of((b as u8).to_ascii_string());
     if (pos >= 0) {
       // Map to the same position in set2; clamp to its last byte.
       var k: i32 = pos;
@@ -80,7 +80,7 @@ function squeeze_set(text: string, set1: string): string {
   var i: i32 = 0;
   while (i < n) {
     var b: i32 = text[i] as i32;
-    var in_set: boolean = set1.index_of((b as i32).to_ascii_string()) >= 0;
+    var in_set: boolean = set1.index_of((b as u8).to_ascii_string()) >= 0;
     if (in_set && b == prev) {
       i = i + 1;
       continue;
