@@ -2637,6 +2637,73 @@ uses) and read which rule fired. Note the `Array_push` receiver-only arm is NOT
 it (one block, above), so a third taint source is in play and naming it is a
 measurement, not a design question.
 
+### Answered: what taints `out`, and why it is a COUPLED pair (2026-07-29)
+
+The measurement the section above called for is done — a taint trace of
+`computeFreeEligible` for `lexer__tokenize` (a temporary `why[name] = rule` map
+threaded through the fixpoint), plus a minimal reproducer that finally
+reproduces (`examples/probes/result_thread_leak.fern` — the FIRST to do so; the
+three earlier mimics all reclaimed 100%). Result:
+
+```
+[taint tokenize] tainted=[after_dot i l mp out ptext rf ri rn rs …]
+  l   <= rhsTainted *ast.FieldAccess@653  (l = rf.lex)
+  out <= rhsTainted *ast.Call@654         (out = out.append(rf.tok))
+  rf  <= rhsTainted *ast.Call@652         (var rf = scan_fstring(l, …))
+  rn  <= rhsTainted *ast.Call@660         ri <= @668   rs <= @675
+```
+
+`out` is tainted by the append — but that is the SECONDARY mechanism. The
+dominant one is the mutual `l`/`rf`/`rn`/`ri`/`rs` taint knot:
+
+- `l = rf.lex` reads a pointer field OUT of the result struct. `rhsTainted`'s
+  `FieldAccess` arm is unconditionally `true`, so `l` is tainted.
+- `l` tainted makes `var rf = scan_fstring(l, …)` tainted — `scan_*`'s cursor
+  param is a STRUCT, and `inferParamCountedRetain` handles only STRING params
+  (`rc_analysis.go:489`), so the callee is never proven counted-retain and a
+  tainted arg taints the result.
+- `rf` tainted feeds back through the next `l = rf.lex`. The whole cluster is
+  mutually tainted and **never freed** — every `Res`/`NumResult { lex, tok }`
+  leaks per iteration, and with it the token its `tok` field holds.
+
+That is why the `Array_push` receiver-only arm freed only one block: the tokens
+are kept alive by the leaked RESULT STRUCTS, not by the accumulator buffer.
+Decomposed with two controls (both in the reproducer's header):
+
+| shape | allocs / frees | leaked |
+|---|---|---:|
+| `l = r.lex` + `out.append(r.tok)` (both mechanisms) | 2400 / 200 | 92% |
+| `l = r.lex`, token consumed immediately, **no accumulator** | 2100 / 0 | **100%** |
+| tokens accumulated, cursor threaded WITHOUT a result struct | 1900 / 800 | 58% |
+
+The middle row is decisive: strip the accumulator entirely and the result-struct
+threading STILL leaks everything. The append-ineligibility is real but subordinate.
+
+**The fix is a COUPLED pair, and this is the new finding — neither half moves
+`tokenize` alone, which is why every prior single-lever attempt measured
+marginal.** To reclaim the cluster:
+
+1. **Callee summary (part 1).** Generalise `inferParamCountedRetain` from
+   string-params-only to a struct param whose every appearance is a counted
+   projection — `scan(l)` stores only `l.src` (into a `Lx` field, inc'd) and
+   `l.i` (scalar). Then `rhsTainted(scan(l))` is false regardless of `l`, so
+   `rf`/`rn`/`ri`/`rs` stop being tainted. This is the projection widening the
+   doc built and measured at "+3579 frees, ZERO on tokenize" — but that zero was
+   measured in ISOLATION, which is exactly the trap:
+2. **Caller projection inc (part 2).** With `rf` no longer tainted it becomes
+   droppable, so `l = rf.lex` must INC the field (`l` owns its own reference)
+   before `rf`'s deep-drop decs it — otherwise dropping `rf` frees the `Lx` that
+   `l` still points to. Without part 2, `l = rf.lex`'s `FieldAccess` taint keeps
+   `l` (and through it the whole cluster) tainted no matter what part 1 proves —
+   which is precisely why part 1 alone showed ZERO on `tokenize`.
+
+So they must land together, gated on the reproducer going 2400→~2400 freed AND
+the map-intermediate negatives (the arm64/wasm siblings included — the wasm one
+traps rather than leaks) AND whole-compiler byte-identity. Part 1 is
+byte-identity-affecting (it un-taints call results across the compiler), so the
+batch=4 emit-all fixpoint is the gate that a re-taint didn't silently change
+codegen elsewhere.
+
 The map-intermediate negatives remain the sharpest soundness probe in this area;
 run them on every iteration of anything that touches the taint.
 
