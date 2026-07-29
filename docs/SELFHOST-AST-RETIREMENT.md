@@ -2720,11 +2720,32 @@ property. If the self-host gate agrees, the correct change is to UPDATE that tes
 to the reclaiming counts rather than to gate the arm — and the caller-side half
 of #5854's 4x becomes the only thing left between here and the lexer's number.
 
-**Still outstanding, and it is the evidence that matters:**
-`TestSelfHostLoadFixpointX86_64` on the arm. Two fixtures reclaiming is not
-compiler-scale soundness, and the original verdict's 7 self-host failures still
-have no traced mechanism — so nothing here should be landed on the strength of
-the probes alone.
+**SETTLED — the original verdict was RIGHT, and the arm is UNSOUND (2026-07-29).**
+Applying it and pushing to CI reproduces the historical signature EXACTLY:
+`TestSelfHostStdTestE2EArm64`, **7 failures**, `undefined reference to
+__fn_test__assert_eq__i32` — a definition missing while its call sites survive,
+i.e. freed-and-reused memory inside the self-host compiler. Same test, same
+count, same symbol as the verdict recorded earlier in this section.
+
+Everything above pointing the other way was measuring the wrong thing. With the
+arm applied ALL of these pass and NONE catches it: the two fixtures run
+standalone (they reclaim), the `MapIntermediateReclaim` negatives on all three
+backends, and `TestSelfHostLoadFixpointX86_64` — twice, the second time on a
+deliberately frozen tree, 369 s.
+
+**So the load fixpoint does NOT subsume `TestSelfHostStdTestE2EArm64`.** That is
+the operational rule to take from this whole episode: the x86-64 whole-compiler
+self-compile can be green while the arm64 stdtest link is broken by the same
+change, so any RC change touching array taint must run
+`TestSelfHostStdTestE2EArm64` (arm64, `internal/e2eselfhost`, ~220 s under qemu)
+before it is believed. CLAUDE.md's "leave arm64 to CI" guidance is right for
+speed and wrong for this class.
+
+The MECHANISM remains unknown: why a receiver-only alias verdict on a COUNTED
+store corrupts symbol emission in a 5000-function self-compile when every small
+program reclaims correctly. Answering that is a bisect inside the self-host
+compile, not another probe — and it is the real prerequisite for #5854's 4x,
+which stays blocked.
 
 (The original question, kept for the record: **what taints `out`?**)
 It is worth answering with the rcPlan dump rather than by guessing — print
