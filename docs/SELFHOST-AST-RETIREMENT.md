@@ -207,9 +207,22 @@ whole-compiler emit-all fixpoint stays gen0==gen1 byte-identical. Watch for the
 latent native-codegen footgun this surfaced: reusing the `StmtAssign` arm's
 local name `a` for the new `MatchArm` binding made the IR field resolver mis-key
 `a.target` to `MatchArm` and abort codegen — bind a distinct name (`marm`).
-Still open on a *separate* scrutinee-type-recovery path (both bail `lower`, both
-correct via AST fallback): a fn-local bound to a NAMED fn (`var f = g; match
-(f())` — no lambda to lift) and a Result-payload lambda.
+**Follow-up CLOSED (annotated named-fn) + one artifact ruled out.** The
+"Result-payload lambda" (`var f: () => Result[i32,i32] = () => Ok(5)`) is NOT a
+gap — it is native-INVALID (`E003`: `() => Ok(5)` infers `() => Result` with no
+`Err` type), so it never reaches the gate; the valid Result shape (fn-form with
+an explicit return) already routes IR. The **annotated** named-fn-bound form
+(`var f: () => Option[i32] = g; match (f())`, Option AND Result) now routes IR:
+`lower_stmt_var` seeds `mark_closure_opt_ret` from `closure_init_opt_ret` for a
+fn-typed local, so `closure_opt_ret` at the match recovery names the payload.
+Pinned by `match-fnlocal-named-opt` / `match-fnlocal-named-result` (x86-64 AND
+wasm); fixpoint stays gen0==gen1. **The seed is GATED on the fn-type annotation**
+because the bare unannotated `var f = g` form has no fn-value slot metadata — its
+`f()` call miscompiles on the IR path (raw-pointer dispatch → SIGSEGV, caught
+pre-landing) — so it deliberately stays on the AST fallback. **Genuinely still
+open** (goal-1 debt, correct via AST fallback): the unannotated `var f = g;
+match (f())` form, blocked on that fn-value-local call-dispatch miscompile, not
+on type recovery.
 
 Two things worth carrying forward. First, **`TestSelfHostAsmIRPath` is 80/80
 clean under the flag** once the ascription case closed — independent evidence the
@@ -268,8 +281,126 @@ AST-fallback dependents:
 **61 of the 66 leaves are wasm.** The AST fallback is far more load-bearing on
 the wasm IR path than on x86, which fits `wasm_ir_deferrals_ok` sitting as an
 extra gate above the shared eligibility — but the *size* of the gap was not
-previously quantified, and the rc/leak suites being the largest block is not
-something the deferral list predicts.
+previously quantified.
+
+#### Correction: 46 of the 66 are ONE builtin, not 46 gaps
+
+The first version of this section read the rc/leak block as a cluster of wasm
+gaps. It is not. Running one of its programs against the driver directly — which
+is the only way to see the *reason*, per the note below — names it outright:
+
+```
+FERN_STRICT_IR: main (call to unknown symbol __fern_rc_underflow_count)
+```
+
+There are two source spellings of the same debug builtin. `irlower` knows
+`__rc_underflow()`; the AST emitters know `__fern_rc_underflow_count()`. **The
+entire rc/leak corpus — 25 files — uses the AST-only one**, so every one of
+those programs bails. That covers `RcOptionBoxWasm` (27), `RcStrBoxWasm` (16)
+**and** the x86 `RcConstructContainersX86_64` (3): 46 of the 66 leaves, one
+cause. Deleting the call from a failing program makes it lower; re-spelling it
+`__rc_underflow()` makes it lower **and** produce the identical answer on both
+backends.
+
+The consequence is the part that matters for #3457. Those 25 files exist to pin
+**refcounting**, and every one of them has been exercising the AST emitter — on
+x86-64 not even the production route. The suites that are supposed to guard
+Perceus behaviour are guarding the backend being retired. Whatever else happens,
+that has to be fixed before the AST emitters can go, or the corpus loses its
+subject at exactly the moment it is most needed.
+
+The genuinely feature-level wasm gaps in the sample are much smaller than the
+raw count suggested: generic struct / enum FIELDS (12 leaves) and
+`read_file`/IoError (5), both confirmed to bail with the builtin absent.
+
+#### What happens if you just alias the spelling (measured, and NOT landed)
+
+Accepting `__fern_rc_underflow_count` as an alias of `__rc_underflow` in
+`irlower` is a one-line change, and it does what you would hope on x86-64:
+
+| | result |
+|---|---|
+| x86-64 rc suites, under `FERN_STRICT_IR`, `-count=1` | **64 pass, 0 fail** |
+| wasm rc suites, same | 172 pass, **16 fail** |
+
+So **IR-path refcounting is correct on x86-64 for everything that corpus
+covers** — the corpus simply never checked it. The wasm failures split two ways,
+and the split matters:
+
+- **4 leaves still bail** (`option-alias-clean`, `freelist-reuse`,
+  `freelist-distinct-class`, `reclaim-large-block`) — they call *other*
+  unlowered debug builtins, so the same class of problem one level down.
+- **7 `*-retained` leaves return exactly +1.** Every one.
+
+The +1 is **not an over-release**, which is what it looks like and what I first
+wrote down. Those programs call TWO debug builtins, and splitting them settles
+it — but the split has to be done carefully. Deleting one builtin's call changes
+the program's liveness, so the buffer's rc at the surviving call is no longer the
+rc under test; two probes built that way agreed with each other and with the
+conclusion below, but neither actually measured it.
+
+The faithful form keeps every statement and every use, and changes only which
+value is returned:
+
+```fern
+var ua = __fern_rc_is_unique(a);
+var uf = __fern_rc_underflow_count();
+var t  = ua + both[0][1] + both[1][0] + uf;   // all uses preserved
+if (t > 1000) { return 99; }                  // t stays live
+return ua;                                     // ... or uf
+```
+
+| returned | AST path | IR path |
+|---|---|---|
+| `__fern_rc_underflow_count()` | 0 | **0 — agree**, no over-release |
+| `__fern_rc_is_unique(a)`, `a` retained in `both` | 0 | **1 — differs** |
+
+Baseline, on a driver built WITHOUT the alias: the program gives **5 on both
+invocations**, because `-ir` refuses to lower it and falls back. With the alias
+it lowers and gives 6. So the difference is real and the alias is what exposes
+it — not a pre-existing failure.
+
+So the property the corpus is named for holds on the wasm IR path; what differs
+is `__fern_rc_is_unique` reporting a container-retained array as unique, where
+the AST path reports it shared. That is consistent with wasm arrays having no rc
+header (`[len@0, cap@4, elems@8]`) and `arr_share_inc`/`_dec` being intercepted
+as no-ops there — an alias-retain accounting difference between the two wasm
+backends.
+
+##### How much does that matter? Less than it first looks — checked, not assumed
+
+`__fern_rc_is_unique` is not only a debug counter: it is the **runtime
+uniqueness guard for constructor reuse** (#4350), whose stated job is to make a
+future hole in the static escape walk *"DEGRADE (fresh box) instead of
+corrupting (in-place write over a shared box)"*. A guard that wrongly answers
+"unique" is a guard that has stopped guarding, so the obvious next inference is
+that wasm IR has a reuse-safety hole.
+
+**That inference does not survive checking.** The guard's subject is a
+struct-update literal — `d` is a STRUCT. On a container-retained struct the two
+wasm paths *agree*:
+
+| shape | AST | IR |
+|---|---|---|
+| array retained in an array (`var both = [a, b]`) | 0 | **1 — differs** |
+| struct retained in an array (`var keep = [d]`) | 1 | 1 — agree |
+
+and agreeing on 1 is plausibly correct there, since the struct is copied into the
+array rather than aliased. So the disagreement is specific to arrays, where the
+element genuinely is a pointer alias — and arrays are not what the reuse guard
+gates.
+
+Stated precisely: this is a real backend disagreement about alias-retain
+accounting for arrays, **whose safety impact is unestablished**. It is not
+demonstrably reachable by constructor reuse, and nothing here shows a live
+corruption. Whoever resolves it should establish reachability first rather than
+inheriting the alarming reading.
+
+**The alias is therefore reverted, not landed**: it would turn those 7 wasm
+cases red, and hiding them behind a skip would bury a real backend disagreement.
+Landing it needs the `is_unique` disagreement resolved first. The x86 half is
+already clean, so whoever picks this up gets 64 subtests of IR-path rc coverage
+essentially for free once wasm agrees.
 
 Two caveats on reading this. It is **one shard of eight**, so it is a sample, not
 the whole suite. And a test failing here means its program bails *somewhere* —
@@ -478,6 +609,57 @@ side from the assigned value. Two limits are deliberate:
   is fixed by its DECLARATION rather than by what is later stored into it —
   see the next section. Crediting it routed that shape onto the IR path and it
   trapped (measured); it stays unproven.
+
+### Open: a ZERO-ARG named fn in an fn-typed TUPLE element (found 2026-07-29)
+
+Differential-probed against the interpreter oracle (x86-64 IR path, `-ir-probe`
+confirms `module: IR` for every row — these are IR miscompiles, not AST gaps):
+
+| program | interp | self-host |
+|---|---:|---:|
+| `var t: ((() => i32), i32) = (a1, 4); t.0() + t.1` — `a1(): i32` | 7 | **SIGSEGV** |
+| same, but `a1(x: i32): i32` (ONE param) | 8 | 8 |
+| `var xs: ((() => i32), i32)[] = [(a1, 4)]; xs[0].0() + xs[0].1` | 7 | **SIGSEGV** |
+| same, one param | 8 | 8 |
+| `(() => 3, 4)` — a LAMBDA element | 7 | 7 |
+| `[(() => 3, 4)]` | 7 | 7 |
+
+So the split is **arity of the named function**, not tuple nesting: a lambda
+element is always wrapped, a named fn with params is wrapped, and a ZERO-ARG
+named fn is not.
+
+The cause is the guard in the lift's `ExprTuple` arm, which wraps a bare ident
+element only when the module fn has `params.len() > 0`. Its comment states the
+reason: *"a zero-arg receiver-less fn is a `const` desugar whose VALUE must
+flow"*. That is a REAL constraint, not an oversight — Fern desugars `const X =
+expr` into a zero-arg function, so a bare `X` in expression position means
+call-it, and wrapping it would break every const read. The self-host defaults a
+bare zero-arg name to the const-call (see parser.fern's #3640 slice B.2 note on
+exactly this ambiguity).
+
+But the element's DECLARED type resolves the ambiguity: `((() => i32), i32)`
+says element 0 is a fn VALUE, so no const-call reading is possible. The tag side
+already knows this — `tuple_elem_tags` maps an "fn" segment to `"clo"`, which is
+why the call dispatches env-first — and it is the VALUE side that disagrees: the
+element holds the const-CALL result (an `i32`), and dispatching env-first on it
+treats `3` as a box pointer.
+
+**So the fix is to thread the expected type into the tuple lift** and wrap a bare
+zero-arg ident when the element's declared type is a fn — making the value side
+agree with the tag side that already assumes a box. The lift walks statements, so
+`StmtVar.type_name` is available at the binding; it is the recursion into
+`lift_inline_closures_expr` that currently drops it. Not attempted here: it is
+plumbing through a shared expression walker, and the wrong version of it silently
+breaks every `const` read, so it wants its own change with the const-read
+regression cases pinned alongside the six rows above.
+
+A related shape found in the same sweep, recorded so it is not re-probed:
+`var g: (() => i32)[][] = [[a1]]; g[0][0]()` is interp 3, self-host SIGSEGV — but
+it routes **AST**, so per the project rule (a legacy-AST-only gap needs no fix) it
+is out of scope until the IR path admits it. `Option[() => i32]` carrying a bare
+zero-arg fn (`Some(a1)`, matched, then called) is interp 3 / SIGSEGV and routes
+**IR** — the same value-vs-tag disagreement one container over, and the same fix
+shape should cover it.
 
 ### Rebinding an `fn[]` LOCAL: one direction fixed, the cross-representation ones open
 
@@ -2283,9 +2465,15 @@ and measure each — rather than writing another mimic or another analysis. The
 mimics are now 3-for-3 at not reproducing it, which is itself the strongest
 evidence about where not to look.
 
-After that, in rough order: pure reads (`len`, indexing, comparison) should not
-disqualify; `append` into an array the callee returns IS a counted store
-(emitArrayPush incs) and needs only the same treatment; locals that merely carry
+The map-intermediate negatives remain the sharpest soundness probe in this area;
+run them on every iteration of anything that touches the taint.
+
+The rest of the widening list is unaffected by that refutation but is now
+UNMOTIVATED until the leak is localised — none of it is known to touch the
+number that matters. In rough order, if it turns out to: pure reads (`len`,
+indexing, comparison) should not disqualify; `append` into an array the callee
+returns IS a counted store (emitArrayPush incs) and needs only the same
+treatment; locals that merely carry
 the param into a construction want the taint-propagation fixpoint
 `paramEscapesInFn` already has; and variant-constructor payloads are counted
 under `EnumRcPayloads`. Each is additive — the summary is a per-(fn, param) bit —

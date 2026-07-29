@@ -2703,6 +2703,33 @@ pub function (s: string) replace(old: string, new: string): string {
     return string_from_bytes_unchecked(buf);
 }
 
+// `(s: string) replacen(old, new, n)` — like `replace`, but stops after
+// the first `n` non-overlapping occurrences of `old`; the rest are left
+// as-is (`"aaaa".replacen("a", "b", 2) == "bbaa"`). `n <= 0` returns `s`
+// unchanged, `n >= count` behaves as `replace`. Mirrors Rust's
+// `str::replacen`. Copies whole runs between matches rather than
+// byte-by-byte, and appends the tail once.
+pub function (s: string) replacen(old: string, new: string, n: i32): string {
+    var oLen: i32 = old.len();
+    if (n <= 0 || oLen == 0) { return s; }
+    var slen: i32 = s.len();
+    var out: string = "";
+    var i: i32 = 0;
+    var done: i32 = 0;
+    var run_start: i32 = 0;
+    while (i + oLen <= slen && done < n) {
+        if (__substr_eq(s, i, old, oLen)) {
+            out = out + s[run_start:i] + new;
+            i = i + oLen;
+            run_start = i;
+            done = done + 1;
+        } else {
+            i = i + 1;
+        }
+    }
+    return out + s[run_start:slen];
+}
+
 // `(s: string) parse_bool()` — accepts the canonical
 // truthy / falsy spellings: "true" / "1" → Some(true),
 // "false" / "0" → Some(false). Anything else returns None

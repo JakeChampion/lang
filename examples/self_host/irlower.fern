@@ -9512,6 +9512,31 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!t2s.ok) { return t2s; }
                             return t2s.emit(ir.op_call_direct("__fern_i32_to_string", 1));
                         }
+                        // The WIDE receivers (#5826). Without these an i64/u64
+                        // `.to_string()` fell through to the method paths, which
+                        // resolve an `i64.to_string` label that only exists with
+                        // `import "std/i64"` — so the call matched nothing and the
+                        // whole MODULE bailed to the AST emitter. f-strings desugar
+                        // to `.to_string()`, so `f"{n}"` over any wide value bailed
+                        // too, which is what made this one of the broader remaining
+                        // subset holes.
+                        //
+                        // u64 first, for the same reason u32 precedes i32 above: a
+                        // u64 is also width-64, and the SIGNED formatter renders a
+                        // value with bit 63 set as negative. expr_recv_prim_type
+                        // already orders its own u64-before-i64 check, so reading it
+                        // once and comparing is enough.
+                        var wrt: string = expr_recv_prim_type(fa.obj, s);
+                        if (wrt == "u64") {
+                            var u6s: LowerState = lower_expr(fa.obj, s);
+                            if (!u6s.ok) { return u6s; }
+                            return u6s.emit(ir.op_call_direct("__fern_u64_to_string", 1));
+                        }
+                        if (wrt == "i64") {
+                            var i6s: LowerState = lower_expr(fa.obj, s);
+                            if (!i6s.ok) { return i6s; }
+                            return i6s.emit(ir.op_call_direct("__fern_i64_to_string", 1));
+                        }
                     }
                     // Built-in zero-arg i32 predicates. The AST emitter lowered these
                     // inline (asm.fern's ty_is_i32 block) and the IR path did not, which
@@ -12783,6 +12808,18 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // alias-inc and broke `__rc`. Kept out of line so this huge arm
     // doesn't grow (oversized functions miscompile — cf. #2720).
     if (ascription_target(v.init) != "") { return lower_stmt(ascription_rebind(v), s); }
+    // Record an Option/Result return for an ANNOTATED fn-typed local bound to a
+    // named opt-returning fn (`var f: () => Option[i32] = g`), so a later
+    // `match (f())` names its scrutinee type instead of bailing to the AST
+    // emitter (#3457 slice 3). Gated on the fn-type ANNOTATION: the bare
+    // unannotated `var f = g` form has no fn-type slot metadata, so its `f()`
+    // call miscompiles on the IR path (a raw-pointer dispatch, SIGSEGV) — it must
+    // stay on the AST fallback, which lowers it correctly. Lambdas / closures are
+    // seeded by the clo_init path below (they carry their own dispatch metadata).
+    if (is_fn_payload_spelling(v.type_name) || v.type_name == "fn") {
+        var vfn_optret: string = closure_init_opt_ret(v.init, s);
+        if (vfn_optret.len() > 0) { s = s.mark_closure_opt_ret(v.name, vfn_optret); }
+    }
     // Struct destructure `let Point { x, y } = E;` — parse_struct_destructure
     // encodes it as a StmtVar whose type_name is "@sd:<Struct>:<fields>" and
     // whose name is the comma-joined bindings. Expand it into per-field binds.
@@ -13076,6 +13113,8 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         cvb = cvb.mark_closure_local(v.name);
         // Record an Option/Result return so a later `match (f())` can name its
         // scrutinee type — the closure-LOCAL sibling of the fn-param seeding.
+        // (The annotated named-fn-bound form is seeded at the top of
+        // lower_stmt_var; this covers unannotated lambda / closure inits.)
         var cv_optret: string = closure_init_opt_ret(v.init, cvb);
         if (cv_optret != "") { cvb = cvb.mark_closure_opt_ret(v.name, cv_optret); }
         // #5281: carry the RETCLO fact forward so `var h = g()` (g bound here from

@@ -1288,6 +1288,20 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// matching the native structural output. The AST and IR paths must agree
 		// on the rendered length. (The inline `trait Debug` is discarded by the
 		// self-host; it keeps the program valid for the native compiler.)
+		// WIDE `.to_string()` receivers (#5826). The AST emitter already served
+		// these; the IR path fell through to the method paths, which resolve an
+		// `i64.to_string` label that only exists with `import "std/i64"`, so the
+		// whole MODULE bailed. f-strings desugar to `.to_string()`, so the
+		// f-string row is the shape that made this common in ordinary code.
+		// Boundary values are the point: INT64_MIN (whose negation wraps, hence
+		// the unsigned digit arithmetic in rt_src_i64_to_string) and a u64 with
+		// bit 63 set (which the SIGNED formatter renders negative).
+		{"i64-to-string", `function main(): i32 { var n: i64 = 1234567890123; return n.to_string().len(); }`},
+		{"i64-to-string-neg", `function main(): i32 { var n: i64 = 0 - 7; return n.to_string().len(); }`},
+		{"i64-to-string-zero", `function main(): i32 { var n: i64 = 0; return n.to_string().len(); }`},
+		{"i64-to-string-min", `function main(): i32 { var n: i64 = (0 as i64) - 9223372036854775807 - 1; return n.to_string().len(); }`},
+		{"u64-to-string-high-bit", `function main(): i32 { var n: u64 = (0 as u64) - (1 as u64); return n.to_string().len(); }`},
+		{"i64-fstring", `function main(): i32 { var n: i64 = 42; var s: string = f"v={n}"; return s.len(); }`},
 		{"derive-debug-struct", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) struct P { x: i32, name: string } function main(): i32 { return P { x: 7, name: "hi" }.to_debug().len(); }`},
 		{"derive-debug-enum-unit", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) enum E { Dot, Circle(i32), Tag(string) } function main(): i32 { return Dot.to_debug().len(); }`},
 		{"derive-debug-enum-payload", `trait Debug { function to_debug(self: Self): string; } @derive(Debug) enum E { Dot, Circle(i32), Tag(string) } function main(): i32 { return Circle(5).to_debug().len() + Tag("ab").to_debug().len(); }`},
@@ -1594,6 +1608,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// silently returned the -1 unknown-method shim (10 read back as 2,
 		// 4 as 2). Pinned to the absolute IR value (the AST==IR differential
 		// is blind to a both-paths-wrong case).
+		// Absolute digit counts for the wide stringifiers (#5826) — the
+		// differential rows above prove IR matches AST, but are blind to a
+		// both-paths-wrong case, and these are exactly the values where a
+		// sign-handling slip shows up: INT64_MIN is 20 chars including the
+		// minus, u64 max is 20 digits unsigned (11 if misread as signed -1).
+		{"i64-to-string-min-len", `function main(): i32 { var n: i64 = (0 as i64) - 9223372036854775807 - 1; return n.to_string().len(); }`, 20},
+		{"u64-to-string-max-len", `function main(): i32 { var n: u64 = (0 as u64) - (1 as u64); return n.to_string().len(); }`, 20},
+		{"i64-to-string-13-digits", `function main(): i32 { var n: i64 = 1234567890123; return n.to_string().len(); }`, 13},
 		{"map-ret-tuple-elem-getor", `function mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m; } function main(): i32 { var t: (Map[i32, i32], i32) = (mk(), 3); return t.1 + t.0.get_or(1, 0); }`, 10},
 		{"map-ret-tuple-elem-len", `function mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m; } function main(): i32 { var t: (Map[i32, i32], i32) = (mk(), 3); return t.1 + t.0.len(); }`, 4},
 		{"map-ret-tuple-elem-unannotated", `function mk(): Map[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 7); return m; } function main(): i32 { var t = (mk(), 3); return t.1 + t.0.get_or(1, 0); }`, 10},
