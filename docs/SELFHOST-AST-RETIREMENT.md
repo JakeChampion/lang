@@ -450,10 +450,38 @@ operations that would corrupt do not consult this answer. The
 **constructor-reuse guard does**, so the degradation is real even while
 currently unreachable.
 
-So the job is to **fix the wasm IR path** — retain on a container store — not to
+So the job is to **fix the IR path** — retain on a container store — not to
 adjust the 7 wasm expectations, which are correct as written. That is the
 opposite of what the previous revision suggested; it was written before this
 probe existed.
+
+##### It is NOT a wasm issue: both IR paths are wrong, both AST emitters right
+
+Every revision above framed this as a *wasm backend disagreement*, because wasm
+is where the failing tests live. Running the same probe on x86-64 shows that
+framing is wrong:
+
+| path | `is_unique(a)` after `var both = [a, b]` |
+|---|---|
+| x86-64 AST | **0** — correct |
+| wasm AST | **0** — correct |
+| x86-64 IR | **1** — wrong |
+| wasm IR | **1** — wrong |
+
+**The IR lowering does not retain an array stored into a container, on any
+backend. Both AST emitters do.** So this is a shared IR-level gap, and it is live
+on x86-64 — the production route — not a wasm quirk.
+
+The x86 rc corpus passes only because it happens to contain no `is_unique`
+-on-container case: `TestSelfHostRcConstructContainersX86_64/array-of-arrays` is
+the same shape as the failing wasm row but calls the underflow counter *without*
+the uniqueness check. So the 64/64 x86 result quoted above is real but does not
+cover this; the wasm suite is simply the only place the question is asked.
+
+That makes the constructor-reuse guard (#4350) degraded on the IR path generally.
+No live corruption is reachable from the probes above — copy-on-write does not
+consult it — but the defence-in-depth it exists to provide is not being provided
+on either backend.
 
 **The alias is therefore reverted, not landed**: it would turn those 7 wasm
 cases red, and hiding them behind a skip would bury a real backend disagreement.
