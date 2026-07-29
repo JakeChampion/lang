@@ -207,9 +207,22 @@ whole-compiler emit-all fixpoint stays gen0==gen1 byte-identical. Watch for the
 latent native-codegen footgun this surfaced: reusing the `StmtAssign` arm's
 local name `a` for the new `MatchArm` binding made the IR field resolver mis-key
 `a.target` to `MatchArm` and abort codegen — bind a distinct name (`marm`).
-Still open on a *separate* scrutinee-type-recovery path (both bail `lower`, both
-correct via AST fallback): a fn-local bound to a NAMED fn (`var f = g; match
-(f())` — no lambda to lift) and a Result-payload lambda.
+**Follow-up CLOSED (annotated named-fn) + one artifact ruled out.** The
+"Result-payload lambda" (`var f: () => Result[i32,i32] = () => Ok(5)`) is NOT a
+gap — it is native-INVALID (`E003`: `() => Ok(5)` infers `() => Result` with no
+`Err` type), so it never reaches the gate; the valid Result shape (fn-form with
+an explicit return) already routes IR. The **annotated** named-fn-bound form
+(`var f: () => Option[i32] = g; match (f())`, Option AND Result) now routes IR:
+`lower_stmt_var` seeds `mark_closure_opt_ret` from `closure_init_opt_ret` for a
+fn-typed local, so `closure_opt_ret` at the match recovery names the payload.
+Pinned by `match-fnlocal-named-opt` / `match-fnlocal-named-result` (x86-64 AND
+wasm); fixpoint stays gen0==gen1. **The seed is GATED on the fn-type annotation**
+because the bare unannotated `var f = g` form has no fn-value slot metadata — its
+`f()` call miscompiles on the IR path (raw-pointer dispatch → SIGSEGV, caught
+pre-landing) — so it deliberately stays on the AST fallback. **Genuinely still
+open** (goal-1 debt, correct via AST fallback): the unannotated `var f = g;
+match (f())` form, blocked on that fn-value-local call-dispatch miscompile, not
+on type recovery.
 
 Two things worth carrying forward. First, **`TestSelfHostAsmIRPath` is 80/80
 clean under the flag** once the ascription case closed — independent evidence the

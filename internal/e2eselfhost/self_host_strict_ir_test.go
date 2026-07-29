@@ -149,6 +149,26 @@ function main(): i32 {
     match (f()) { Some(v) => { return v; }, None => { return 0; } }
 }
 `, 7},
+	// A match whose scrutinee calls an ANNOTATED fn-typed local bound to a named
+	// Option/Result-returning fn (`var f: () => Option[i32] = g; match (f())`):
+	// the binding seeds its return type (mark_closure_opt_ret, gated on the
+	// fn-type annotation) so the payload recovers and the module routes IR. The
+	// unannotated `var f = g` form is deliberately NOT covered — its `f()` call
+	// miscompiles on the IR path, so it stays on the AST fallback.
+	{"match-fnlocal-named-opt", `
+function g(): Option[i32] { return Some(7); }
+function main(): i32 {
+    var f: () => Option[i32] = g;
+    match (f()) { Some(v) => { return v; }, None => { return 0; } }
+}
+`, 7},
+	{"match-fnlocal-named-result", `
+function g(): Result[i32, i32] { return Ok(5); }
+function main(): i32 {
+    var f: () => Result[i32, i32] = g;
+    match (f()) { Ok(v) => { return v; }, Err(_) => { return 9; } }
+}
+`, 5},
 }
 
 // runDriver runs a self-host driver over `src`, optionally with FERN_STRICT_IR
