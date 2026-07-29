@@ -174,6 +174,61 @@ use `gcc -nostdlib -static` — a plain `gcc -o` collides with `Scrt1.o`'s
 `_start` and every program then "exits 1", which reads exactly like a
 miscompile.
 
+### At-scale inventory: who actually depends on the fallback (2026-07-29)
+
+The figures below this heading came from the old hand-patch recipe on a run that
+hit a 60-minute timeout and had to report its count as a lower bound. With the
+flag the sweep is cheap enough to run properly, **paired with a control run**:
+
+```
+RE=$(paste -sd'|' shard-list)
+                     go test ./internal/e2eselfhost -run "^($RE)$"   # control
+FERN_STRICT_IR=1     go test ./internal/e2eselfhost -run "^($RE)$"   # strict
+```
+
+The control is not optional. Six of the ten failing parents are wasm and two are
+arm64-under-qemu, and CLAUDE.md warns qemu legs are the flaky part of a local
+sweep — without the control, a pre-existing local failure is indistinguishable
+from a fallback dependent. Measured on shard 0 of 8
+(`scripts/selfhost-shard-tests 0 8`, 137 tests / 1020 subtests):
+
+| run | pass | fail |
+|---|---:|---:|
+| control | 1020 | **0** |
+| `FERN_STRICT_IR=1` | 944 | **76** (66 leaves, 10 parents) |
+
+A clean control means every failure is caused by the flag, so all 66 are genuine
+AST-fallback dependents:
+
+| cluster | leaves | |
+|---|---:|---|
+| `TestSelfHostRcOptionBoxWasm` | 27 | wasm rc/leak suites — by far the largest single block |
+| `TestSelfHostRcStrBoxWasm` | 16 | |
+| `TestSelfHostStructGenEnumFieldWasmIR` | 7 | generic ENUM fields, wasm |
+| `TestSelfHostGenStructFieldGenStructWasmIR` | 5 | generic STRUCT fields, wasm |
+| `TestSelfHostIoErrorIRWasm` | 5 | |
+| `TestSelfHostRcConstructContainersX86_64` | 3 | the only x86 cluster |
+| `TestSelfHostStdTestE2EArm64` | 2 | |
+| `TestSelfHostSortArm64`, `…PerModuleWholeCompilerX86_64` | parent-level | the whole-compiler one is the known over-budget bootstrap |
+| `TestSelfHostWasmComponentIRPath/clock-tostring-falls-back` | 1 | **not a gap** — the case is named for, and asserts, an AST fallback |
+
+**61 of the 66 leaves are wasm.** The AST fallback is far more load-bearing on
+the wasm IR path than on x86, which fits `wasm_ir_deferrals_ok` sitting as an
+extra gate above the shared eligibility — but the *size* of the gap was not
+previously quantified, and the rc/leak suites being the largest block is not
+something the deferral list predicts.
+
+Two caveats on reading this. It is **one shard of eight**, so it is a sample, not
+the whole suite. And a test failing here means its program bails *somewhere* —
+not that the feature in its name is unsupported; an incidental helper can be the
+cause.
+
+Practical note for the next sweep: the harness captures driver **stdout** only,
+so the refusal message never reaches the test log — you learn *which test*
+bails, not *which bail*. To get the reason, run the driver directly on the
+program (`FERN_STRICT_IR=1 <driver> < prog.fern`). This is the same
+which-function-not-which-site limit recorded above, one level up.
+
 Result: **27 failures, 24 of them genuine** (the other 3 are unrelated — the
 `wasm-tools validate` component cases and an arm64 `R_AARCH64_CONDBR19`
 relocation overflow). The run hit its 60-minute timeout with
