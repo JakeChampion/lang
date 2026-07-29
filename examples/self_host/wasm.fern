@@ -6628,71 +6628,7 @@ function module_uses_rcmem(mod: parser.Module): boolean {
 }
 
 
-// env_imports_p2 is the preview2 counterpart: wasi:cli/environment's
-// get-environment, which writes a list<tuple<string,string>> — header
-// (ptr, count) into the passed return area, each tuple 16 bytes
-// (key{ptr@0,len@4}, value{ptr@8,len@12}). The list is host-allocated via
-// the exported cabi_realloc.
-function env_imports_p2(): string {
-    return "  (import \"wasi:cli/environment@0.2.0\" \"get-environment\" (func $get_environment (param i32)))\n";
-}
 
-// env_func_p2 is the preview2 $__fern_env(name): get-environment, then a
-// linear scan of the (key,value) tuples for a key byte-equal to `name`,
-// returning the same Option[string] box as the preview1 helper (Some(value)
-// = tag 0 + a fresh [len][bytes] value block at +4; None = tag 1). `name` is
-// a [len][bytes] block (bytes at name+4, len at name).
-function env_func_p2(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_env (param $np i32) (result i32)\n";
-    o = o + "    (local $ra i32) (local $ptr i32) (local $count i32) (local $nlen i32)\n";
-    o = o + "    (local $i i32) (local $tup i32) (local $kp i32) (local $kl i32)\n";
-    o = o + "    (local $vp i32) (local $vl i32) (local $ok i32) (local $j i32) (local $res i32) (local $tmp i32)\n";
-    o = o + "    (local.set $nlen (i32.load (local.get $np)))\n";
-    // get-environment writes the (ptr, count) list header as two i32s, so the
-    // return area must be 4-aligned; the bump cursor isn't, so over-allocate
-    // and round up to 8.
-    o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 16)) (i32.const 7)) (i32.const -8)))\n";
-    o = o + "    (call $get_environment (local.get $ra))\n";
-    o = o + "    (local.set $ptr (i32.load (local.get $ra)))\n";
-    o = o + "    (local.set $count (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (block $done (loop $cont\n";
-    o = o + "      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))\n";
-    o = o + "      (local.set $tup (i32.add (local.get $ptr) (i32.mul (local.get $i) (i32.const 16))))\n";
-    o = o + "      (local.set $kp (i32.load (local.get $tup)))\n";
-    o = o + "      (local.set $kl (i32.load (i32.add (local.get $tup) (i32.const 4))))\n";
-    o = o + "      (if (i32.eq (local.get $kl) (local.get $nlen)) (then\n";
-    o = o + "        (local.set $ok (i32.const 1))\n";
-    o = o + "        (local.set $j (i32.const 0))\n";
-    o = o + "        (block $md (loop $mc\n";
-    o = o + "          (br_if $md (i32.ge_u (local.get $j) (local.get $nlen)))\n";
-    o = o + "          (if (i32.ne (i32.load8_u (i32.add (local.get $kp) (local.get $j))) (i32.load8_u (i32.add (i32.add (local.get $np) (i32.const 4)) (local.get $j)))) (then (local.set $ok (i32.const 0)) (br $md)))\n";
-    o = o + "          (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
-    o = o + "          (br $mc)))\n";
-    o = o + "        (if (local.get $ok) (then\n";
-    o = o + "          (local.set $vp (i32.load (i32.add (local.get $tup) (i32.const 8))))\n";
-    o = o + "          (local.set $vl (i32.load (i32.add (local.get $tup) (i32.const 12))))\n";
-    o = o + "          (local.set $res (call $__fern_alloc (i32.add (i32.const 4) (local.get $vl))))\n";
-    o = o + "          (i32.store (local.get $res) (local.get $vl))\n";
-    o = o + "          (local.set $j (i32.const 0))\n";
-    o = o + "          (block $cd (loop $cc\n";
-    o = o + "            (br_if $cd (i32.ge_u (local.get $j) (local.get $vl)))\n";
-    o = o + "            (i32.store8 (i32.add (i32.add (local.get $res) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $vp) (local.get $j))))\n";
-    o = o + "            (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
-    o = o + "            (br $cc)))\n";
-    o = o + "          (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "          (i32.store (local.get $tmp) (i32.const 0))\n";
-    o = o + "          (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $res))\n";
-    o = o + "          (return (local.get $tmp))))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $cont)))\n";
-    o = o + "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "    (i32.store (local.get $tmp) (i32.const 1))\n";
-    o = o + "    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (i32.const 0))\n";
-    o = o + "    (local.get $tmp))\n";
-    return o;
-}
 
 
 // random_helpers / random_func emit the wasi random_get import + the
@@ -6729,51 +6665,7 @@ function random_func(): string {
 
 
 
-// args_imports_p2 is the preview2 counterpart: wasi:cli/environment's
-// get-arguments, which writes a list<string> — header (ptr, count) into the
-// return area, each string 8 bytes (ptr@0, len@4). Host-allocated via the
-// exported cabi_realloc.
-function args_imports_p2(): string {
-    return "  (import \"wasi:cli/environment@0.2.0\" \"get-arguments\" (func $get_arguments (param i32)))\n";
-}
 
-// args_func_p2 is the preview2 $__fern_args: get-arguments, then copy each
-// list entry into a fresh [len][bytes] string block and store its pointer in
-// the same string[] array block ([len][cap][elem-ptrs]) the preview1 helper
-// builds, so every args() call site is unchanged.
-function args_func_p2(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_args (result i32)\n";
-    o = o + "    (local $ra i32) (local $ptr i32) (local $count i32) (local $arr i32)\n";
-    o = o + "    (local $i i32) (local $sp i32) (local $sl i32) (local $blk i32) (local $j i32)\n";
-    // get-arguments writes a (ptr, count) header of two i32s, so the return
-    // area must be 4-aligned; over-allocate and round up to 8.
-    o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 16)) (i32.const 7)) (i32.const -8)))\n";
-    o = o + "    (call $get_arguments (local.get $ra))\n";
-    o = o + "    (local.set $ptr (i32.load (local.get $ra)))\n";
-    o = o + "    (local.set $count (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
-    o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $count) (i32.const 4))))\n";
-    o = o + "    (i32.store (local.get $arr) (local.get $count))\n";
-    o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $count))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $count)))\n";
-    o = o + "      (local.set $sp (i32.load (i32.add (local.get $ptr) (i32.mul (local.get $i) (i32.const 8)))))\n";
-    o = o + "      (local.set $sl (i32.load (i32.add (i32.add (local.get $ptr) (i32.mul (local.get $i) (i32.const 8))) (i32.const 4))))\n";
-    o = o + "      (local.set $blk (call $__fern_alloc (i32.add (i32.const 4) (local.get $sl))))\n";
-    o = o + "      (i32.store (local.get $blk) (local.get $sl))\n";
-    o = o + "      (local.set $j (i32.const 0))\n";
-    o = o + "      (block $cd (loop $cc\n";
-    o = o + "        (br_if $cd (i32.ge_u (local.get $j) (local.get $sl)))\n";
-    o = o + "        (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $sp) (local.get $j))))\n";
-    o = o + "        (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
-    o = o + "        (br $cc)))\n";
-    o = o + "      (i32.store (i32.add (i32.add (local.get $arr) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (local.get $blk))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (local.get $arr))\n";
-    return o;
-}
 
 
 
@@ -10008,8 +9900,8 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // still lands right after the stdout pair).
     if (has_random) { if (io) { out = out + wasm_ir.random_imports_p2(); } else { out = out + random_helpers(); } }
     if (has_clocks) { if (io) { out = out + wasm_ir.clock_imports_p2(has_wallclock, has_monoclock); } else { out = out + clock_imports(); } }
-    if (has_args) { if (io) { out = out + args_imports_p2(); } else { out = out + wasm_ir.args_helpers(); } }
-    if (has_env) { if (io) { out = out + env_imports_p2(); } else { out = out + wasm_ir.env_helpers(); } }
+    if (has_args) { if (io) { out = out + wasm_ir.args_imports_p2(); } else { out = out + wasm_ir.args_helpers(); } }
+    if (has_env) { if (io) { out = out + wasm_ir.env_imports_p2(); } else { out = out + wasm_ir.env_helpers(); } }
     // component-io-fs: the preview2 filesystem imports (read and/or write).
     if (fs) { out = out + fs_imports_p2(has_readfile, has_writefile); }
     if ((has_readfile || has_writefile) && !fs) { out = out + wasm_ir.file_imports(); }
@@ -10132,13 +10024,13 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         out = out + wasm_ir.map_helpers();
     }
     if (has_env) {
-        if (io) { out = out + env_func_p2(); } else { out = out + wasm_ir.env_func(); }
+        if (io) { out = out + wasm_ir.env_func_p2(); } else { out = out + wasm_ir.env_func(); }
     }
     if (has_random) {
         if (io) { out = out + wasm_ir.random_func_p2(); } else { out = out + random_func(); }
     }
     if (has_args) {
-        if (io) { out = out + args_func_p2(); } else { out = out + wasm_ir.args_func(); }
+        if (io) { out = out + wasm_ir.args_func_p2(); } else { out = out + wasm_ir.args_func(); }
     }
     // Preview-1 read_file/write_file box their Err payload via
     // $__fern_build_io_error; emit it once for either. (The preview-2 _p2
