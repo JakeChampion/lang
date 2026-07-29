@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -20,9 +21,12 @@ import (
 // Two things are asserted per program:
 //
 //   - which emitter produced the core. The IR emitter writes flat WAT with an
-//     unnamed local group ("(local i32 …") and the AST emitter writes folded
-//     WAT with named locals ($__retv_i32), so the two are distinguishable by
-//     inspection of the emitted core.
+//     UNNAMED local group ("(local i64 i32 …") and the AST emitter writes
+//     folded WAT with NAMED locals ($__retv_i32), so the two are
+//     distinguishable by inspection of the emitted core. The discriminator
+//     keys on the group being unnamed rather than on its first type: a
+//     function whose first local is wide emits "(local i64 …", which a
+//     "(local i32" probe misses entirely.
 //   - the core's IMPORT LIST, exactly and in order. The component framings
 //     (watbin.component_full / component_full_io / _eprint / _exit) alias
 //     imports positionally, so a core that imports a different set — or the
@@ -91,6 +95,11 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		{"noio-arith", false, `function main(): i32 { var x: i32 = 5; var y: i32 = 5; return x - y; }`, true, nil},
 		{"noio-array", false, `function main(): i32 { var xs: i32[] = [1, 2, 3]; return xs[0] + xs[2]; }`, true, nil},
 		{"noio-string", false, `function main(): i32 { var s: string = "ab" + "cd"; return s.len(); }`, true, nil},
+		// A WIDE first local. This lowers like any other, but it emits
+		// "(local i64 i32 …" rather than "(local i32 …", which is exactly the
+		// shape a first-type-specific discriminator misses — kept as a row so
+		// the probe itself stays honest.
+		{"noio-wide-local", false, `function main(): i32 { var n: i64 = 7; if (n > 0) { return 0; } return 1; }`, true, nil},
 		// A no-I/O core may not exit either: mode 1 has no proc_exit to call
 		// and no wasi:cli/exit to shim it over, so exit stays on the AST path
 		// (where it is equally unwired — but that is the pre-existing shape,
@@ -212,9 +221,18 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 // ($__retv_i32, its per-function return slot). The two markers are mutually
 // exclusive by construction, so disagreement means the discriminator itself has
 // gone stale rather than the routing — worth failing loudly on.
+// irLocalGroup matches the IR emitter's unnamed local group, whatever its
+// first type is.
+var irLocalGroup = regexp.MustCompile(`\n    \(local (i32|i64|f32|f64)[ )]`)
+
 func isIREmittedWAT(t *testing.T, wat string) bool {
 	t.Helper()
-	ir := strings.Contains(wat, "\n    (local i32")
+	// An unnamed local group — any leading type. Keying on "(local i32"
+	// specifically would miss a function whose first local is wide (i64/f64
+	// user locals sort ahead of the i32 scratch slots), and since the AST
+	// marker is absent too that shows up as the "cannot tell" fatal below
+	// rather than as a wrong answer — but it is still a false alarm.
+	ir := irLocalGroup.MatchString(wat)
 	ast := strings.Contains(wat, "(local $__retv_i32 i32)")
 	if ir == ast {
 		t.Fatalf("cannot tell which emitter produced the core (flat-locals=%v, named-locals=%v)", ir, ast)
