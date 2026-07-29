@@ -2494,6 +2494,38 @@ and measure each — rather than writing another mimic or another analysis. The
 mimics are now 3-for-3 at not reproducing it, which is itself the strongest
 evidence about where not to look.
 
+**The bisection, done (2026-07-29).** Three edits to a scratch copy of
+`lexer.fern`, each measured with `FERN_LEAKCHECK=1` on `parser.fern`
+(117315 tokens). The baseline is `allocs=508639 frees=44566`:
+
+| edit to the real lexer | allocs / frees |
+|---|---|
+| baseline — `tokenize(src)` returns `Token[]` | 508639 / 44566 |
+| the token array is dropped by a wrapper instead of reaching the caller | 508639 / 44566 |
+| `tokenize` itself returns `out.len()`, so `out` NEVER escapes (all 6 return sites) | 508639 / 44566 |
+| every `*_tok` constructor stores a LITERAL, discarding its scanned string param | 511278 / 44463 |
+
+Read those rows carefully, because each kills a candidate:
+
+- **Not the escape.** Whether the array is returned, dropped by a wrapper, or
+  never leaves `tokenize` at all, the numbers do not move by a single block. The
+  "it escapes via return, so it is legitimately tainted in the callee" reading at
+  the top of this section explains none of the strand.
+- **Not the payload strings.** Discarding them *raises* allocs (the slice still
+  happens at the call site; only the retention goes away) and leaves frees
+  unchanged. The ~4 blocks per token are the token BOXES, not their text.
+- **The counted-retain summary does fire here.** That last row is exactly the
+  pre-#5830 baseline (511278 / 44463), because a constructor storing a literal no
+  longer counts as retaining its param — which is what accounts for the 2639
+  fewer allocs and 103 more frees the fix is worth on this workload.
+
+So the strand is the `Token[]` ELEMENTS, independent of escape and of payload: an
+array built by `out = out.append(tok)` in a loop whose deep drop never walks its
+elements. That is the shape "A loop-append reclamation bug" above describes, and
+whose `rhsTainted` `Array_push` receiver-only candidate was measured at +0.3% on
+the full parse (#5830) — worth re-measuring on `tokenize` ALONE, which no one has
+done, before assuming it is as marginal here as it was there.
+
 The map-intermediate negatives remain the sharpest soundness probe in this area;
 run them on every iteration of anything that touches the taint.
 
