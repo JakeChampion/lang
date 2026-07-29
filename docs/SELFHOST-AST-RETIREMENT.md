@@ -2741,11 +2741,33 @@ change, so any RC change touching array taint must run
 before it is believed. CLAUDE.md's "leave arm64 to CI" guidance is right for
 speed and wrong for this class.
 
-The MECHANISM remains unknown: why a receiver-only alias verdict on a COUNTED
-store corrupts symbol emission in a 5000-function self-compile when every small
-program reclaims correctly. Answering that is a bisect inside the self-host
-compile, not another probe — and it is the real prerequisite for #5854's 4x,
-which stays blocked.
+**The mechanism is FUNCTION-NAME STRINGS, and it reproduces LOCALLY in 312 s
+(2026-07-29).** `go test ./internal/e2eselfhost/ -run TestSelfHostStdTestE2EArm64`
+with the arm applied fails on this host — no CI round trip needed, which is the
+first practical consequence of the rule above. The local output carries three
+symptoms CI's tail did not show, and they are one thing:
+
+| symptom | reading |
+|---|---|
+| `unknown mnemonic '__fn_m'` (map_eq_and_predicates) | a TRUNCATED function name |
+| `symbol '__fn_' is already defined` (array_combinators) | an EMPTY function name |
+| `undefined reference to __fn_test__assert_eq__i32` (option/result_combinators) | a definition missing, call sites intact |
+
+Every one is a corrupted function NAME: `__fn_` + a truncated or empty string.
+So the arm is not corrupting arbitrary heap — it is freeing the self-host
+emitter's function-name STRINGS while they are still referenced, and the
+recycled bytes come back as a short or empty name. A name that recycles to ""
+also explains the third row: the definition is emitted under a corrupted symbol,
+so the call sites' correct name resolves to nothing.
+
+That narrows the bisect enormously. The next step is to find which array of
+names the emitter builds with `xs = xs.append(name)` (the shape the arm
+untaints) and whose elements are still live when the buffer's deep drop now
+walks them — `asm_arm64.fern` / `asmcore.fern`'s symbol and function-name
+collections are the place to look, and the failing units (map, array, option,
+result combinators) share the generic-instantiation naming path. #5854's 4x
+stays blocked on this, but it is now a search with a named target rather than an
+open question.
 
 (The original question, kept for the record: **what taints `out`?**)
 It is worth answering with the rcPlan dump rather than by guessing — print
