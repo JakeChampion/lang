@@ -41,6 +41,15 @@ var cloArrayFieldCallCases = []struct {
 	src  string
 	exit int
 }{
+	// A local-built closure array stored into the field. NEW capability: the
+	// closure side of the scan credits a local proven bound to an all-`__mkclo$`
+	// array literal, so this is now proven rather than inferred by elimination.
+	{"clo-local-built", "struct R { hs: (() => i32)[] }\nfunction main(): i32 { var n: i32 = 3; var c: (() => i32)[] = [() => n]; var r = R { hs: c }; return r.hs[0](); }", 3},
+	// The local is REBOUND from a fn-pointer array to a closure array before the
+	// store, so the closure proof has to come from the ASSIGNMENT, not the
+	// declaration. Read through an element BIND rather than an inline call, so
+	// the re-proof is exercised at a second dispatch site.
+	{"clo-rebound-bind", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [seven]; a = [() => n, () => n]; var r: R = R { hs: a }; var f = r.hs[1]; return f(); }", 5},
 	// No-capture closure element, direct call.
 	{"nocap", "struct Reg { hs: (() => i32)[] } function main(): i32 { var r = Reg { hs: [() => 40] }; return r.hs[0](); }", 40},
 	// Capturing closures, two elements, both called directly.
@@ -131,6 +140,11 @@ func TestSelfHostCloArrayFieldRoutesIR(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"clo-field-call", "struct R { hs: (() => i32)[] }\nfunction main(): i32 { var n: i32 = 3; var r = R { hs: [() => n] }; return r.hs[0](); }"},
 		{"clo-field-arg", "struct R { hs: ((i32) => i32)[] }\nfunction main(): i32 { var n: i32 = 3; var r = R { hs: [(x: i32) => x + n] }; return r.hs[0](4); }"},
+		// The proof survives a rebind of the local it comes from: the closure
+		// credit is re-established by the ASSIGNMENT. Without that the field is
+		// unproven and the module drops to the AST emitter, which returns 0 for
+		// this program on wasm.
+		{"clo-field-rebound", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [seven]; a = [() => n]; var r: R = R { hs: a }; return r.hs[0](); }"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := runCapture(t, gcc, runner, driverBin, []byte(tc.src+"\n"), "-ir-probe")

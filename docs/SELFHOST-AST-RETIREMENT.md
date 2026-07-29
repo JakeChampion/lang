@@ -222,6 +222,49 @@ Pinned by `local-built` and `rebind-retracts-proof` in
 `TestSelfHostFnptrArrayFieldIRX86_64`, the latter being the case an unsound
 implementation fails.
 
+**The closure side is now proved the same way (#5790), which turned the retract
+into a re-proof.** `field_access_is_closurearr` used to be
+closure-by-elimination — "`fn[]` and not FNPTR" — so it claimed every field the
+pointer scan could not prove. It now requires a `CLOARR:<Type>.<field>` marker
+emitted from the same walk, and a field with neither marker is simply unproven.
+That flipped `rebind-retracts-proof` (`var a = [seven]; a = [() => n];`) from
+"claimed by elimination" to unproven, which dropped it to the AST emitter —
+correct on x86-64, **0 instead of 5 on wasm**. So the assignment no longer only
+retracts: on the function's own statement list it also re-proves the CLOSURE
+side from the assigned value. Two limits are deliberate:
+
+- **Only the function body's own statement list.** An assignment nested in an
+  `if` / loop / match arm / lambda body may not run, so a credit from it would
+  claim a store the program never made. Nested assignments still only retract.
+  `if (n > 100) { a = [() => n]; }` therefore stays unproven.
+- **Only the closure side.** The mirror rebind `var a = [() => n]; a = [seven];`
+  is *not* credited as a pointer array, because a local's element representation
+  is fixed by its DECLARATION rather than by what is later stored into it —
+  see the next section. Crediting it routed that shape onto the IR path and it
+  trapped (measured); it stays unproven.
+
+### Open: rebinding a LOCAL between the two `fn[]` representations miscompiles
+
+Probed 2026-07-29 (wasm IR path, no struct field involved):
+
+| program | interp | self-host wasm IR |
+|---|---|---|
+| `var a: (() => i32)[] = [() => n]; a = [seven]; return a[0]();` | 7 | **trap (134)** |
+| `var a: (() => i32)[] = [seven]; a = [() => n]; return a[0]();` | 5 | **trap (134)** |
+
+Both directions lower on the IR path and both trap. The local's slot metadata
+(`mark_closurearr` / `mark_fnarr`) is recorded where the local is DECLARED, and
+the read dispatches on it; the assignment stores the new literal in its own
+natural representation without reconciling the two. So after a rebind the slot
+says one thing and the buffer holds the other.
+
+This is why #5790's assignment re-proof credits the closure side only: the
+struct-field marker describes the buffer, and for the pointer direction the
+buffer's contents cannot be inferred from the assigned literal while the local
+itself is still miscompiled. Fixing the local rebind — either by re-marking the
+slot at the assignment or by rejecting a representation-changing rebind — is
+what would let the pointer side be re-proved too.
+
 **The negation this justifies is still load-bearing, and the shapes it cannot
 prove still MISCOMPILE.** An earlier revision of this paragraph claimed they
 "route AST rather than crashing". Probed 2026-07-28 — that was wrong:
@@ -242,8 +285,9 @@ literal to credit. The sound options are (a) positive evidence on BOTH sides
 with anything unproven becoming a clean compile ERROR rather than a silent
 miscompile (the `wasm_unsupported_builtin` pattern), or (b) making the field's
 representation uniform so the question disappears. Until then, an `fn[]` struct
-field is only safe when its construction is provable — which after #5786 means
-an array literal, or a local bound to one.
+field is only safe when its construction is provable — which after #5790 means
+an array literal, a local bound to one, or (closure side only) a local rebound
+to one by a top-level assignment.
 
 **Root cause of the tuple gap (closed by #5758), and the shape of that fix.** A callable
 behind a struct field has an ambiguous REPRESENTATION that its declared type
