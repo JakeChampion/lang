@@ -212,27 +212,39 @@ func TestGenBytesIsDeterministic(t *testing.T) {
 // surface when someone notices a backend stopped crashing.
 // Walks 1024 seeds and asserts each landmark feature appears in
 // at least one program.
-// u32LiteralRE matches a `<digits>u32` suffixed literal.
-var u32LiteralRE = regexp.MustCompile(`\b(\d+)u32\b`)
+// u32LiteralRE / u64LiteralRE match a suffixed unsigned literal.
+var (
+	u32LiteralRE = regexp.MustCompile(`\b(\d+)u32\b`)
+	u64LiteralRE = regexp.MustCompile(`\b(\d+)u64\b`)
+)
 
-// u32OperandNear reports whether op appears with a `u32` literal directly on
-// one side of it. Substring-matching the operator alone would credit the
-// signed corpus, since `/` and `<` are generated at i32 and i64 too; anchoring
-// on a `<digits>u32` token is a cheap way to be sure the UNSIGNED opcode is
-// the one being reached.
-func u32OperandNear(src, op string) bool {
+// unsignedOperandNear reports whether op appears with a literal of the given
+// unsigned suffix directly on one side of it. Substring-matching the operator
+// alone would credit the signed corpus, since `/` and `<` are generated at i32
+// and i64 too; anchoring on a `<digits>u32` / `<digits>u64` token is a cheap
+// way to be sure the UNSIGNED opcode is the one being reached, at the width
+// being claimed.
+func unsignedOperandNear(src, suffix, op string, lit *regexp.Regexp) bool {
 	for i := 0; i+len(op) <= len(src); i++ {
 		if src[i:i+len(op)] != op {
 			continue
 		}
-		if strings.HasSuffix(src[:i], "u32") {
+		if strings.HasSuffix(src[:i], suffix) {
 			return true
 		}
-		if m := u32LiteralRE.FindStringIndex(src[i+len(op):]); m != nil && m[0] == 0 {
+		if m := lit.FindStringIndex(src[i+len(op):]); m != nil && m[0] == 0 {
 			return true
 		}
 	}
 	return false
+}
+
+func u32OperandNear(src, op string) bool {
+	return unsignedOperandNear(src, "u32", op, u32LiteralRE)
+}
+
+func u64OperandNear(src, op string) bool {
+	return unsignedOperandNear(src, "u64", op, u64LiteralRE)
 }
 
 // u32AsI32RE matches emitU32AsI32's cast with a u32 token inside it, so a
@@ -293,6 +305,12 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"unsigned divide or remainder": false,
 		"unsigned shift":               false,
 		"u32 reinterpreted as i32":     false,
+		"u64 var declaration":          false,
+		"u64 literal above i64::MAX":   false,
+		"unsigned 64-bit comparison":   false,
+		"unsigned 64-bit divide/rem":   false,
+		"unsigned 64-bit shift":        false,
+		"u64 high half as i32":         false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := fernsmith.GenMain(seed)
@@ -528,6 +546,35 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if u32AsI32RE.MatchString(src) {
 			want["u32 reinterpreted as i32"] = true
 		}
+		// u64 — the same pairs one width up. Tracked separately from
+		// u32 because the wide unsigned opcodes are different
+		// instructions with a different (6-bit) count mask, so u32
+		// coverage says nothing about them.
+		if strings.Contains(src, ": u64 ") {
+			want["u64 var declaration"] = true
+		}
+		for _, m := range u64LiteralRE.FindAllStringSubmatch(src, -1) {
+			if n, err := strconv.ParseUint(m[1], 10, 64); err == nil && n > math.MaxInt64 {
+				want["u64 literal above i64::MAX"] = true
+				break
+			}
+		}
+		for _, op := range []string{" < ", " > ", " <= ", " >= "} {
+			if u64OperandNear(src, op) {
+				want["unsigned 64-bit comparison"] = true
+			}
+		}
+		for _, op := range []string{" / ", " % "} {
+			if u64OperandNear(src, op) {
+				want["unsigned 64-bit divide/rem"] = true
+			}
+		}
+		if u64OperandNear(src, " >> ") || u64OperandNear(src, " << ") {
+			want["unsigned 64-bit shift"] = true
+		}
+		if strings.Contains(src, ") >> 32u64) as i32)") {
+			want["u64 high half as i32"] = true
+		}
 	}
 	for feature, ok := range want {
 		if !ok {
@@ -535,6 +582,65 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 	}
 }
+
+// TestGenPrintableFloatCoverage is TestGenFeatureCoverage's counterpart for
+// the float-allowing profile. Floats are dropped from ProfileRunnable — the
+// exit-byte oracle observes one byte and cannot see a float — so GenMain seeds
+// never contain an f32 or f64 at all, and the features below are invisible to
+// that sweep no matter how many seeds it runs.
+//
+// f64 is tracked apart from f32 because width is the whole point: f64 is the
+// width at which a float needs no rounding step, so an f32 path that rounds
+// correctly says nothing about it.
+func TestGenPrintableFloatCoverage(t *testing.T) {
+	want := map[string]bool{
+		"f32 literal":                   false,
+		"f64 literal":                   false,
+		"f64 var or param":              false,
+		"f64 arithmetic":                false,
+		"f64 truncated to i32":          false,
+		"f64 literal past f32 mantissa": false,
+	}
+	for seed := uint64(0); seed < 1024; seed++ {
+		src := fernsmith.GenPrintableMain(seed)
+		if strings.Contains(src, "f32") {
+			want["f32 literal"] = true
+		}
+		if f64LiteralRE.MatchString(src) {
+			want["f64 literal"] = true
+		}
+		if strings.Contains(src, ": f64") {
+			want["f64 var or param"] = true
+		}
+		for _, op := range []string{" + ", " - ", " * ", " / "} {
+			if unsignedOperandNear(src, "f64", op, f64LiteralRE) {
+				want["f64 arithmetic"] = true
+			}
+		}
+		if strings.Contains(src, "f64) as i32)") || f64CastRE.MatchString(src) {
+			want["f64 truncated to i32"] = true
+		}
+		// An f32 carries ~7 significant digits; a literal needing more
+		// is one only f64 can hold, which is what catches a backend
+		// that narrowed an f64 on the way through.
+		for _, m := range f64LiteralRE.FindAllStringSubmatch(src, -1) {
+			if len(strings.ReplaceAll(m[1], ".", "")) > 8 {
+				want["f64 literal past f32 mantissa"] = true
+				break
+			}
+		}
+	}
+	for feature, ok := range want {
+		if !ok {
+			t.Errorf("feature never seen in 1024 GenPrintableMain seeds: %s", feature)
+		}
+	}
+}
+
+var (
+	f64LiteralRE = regexp.MustCompile(`\b(\d+\.\d+)f64\b`)
+	f64CastRE    = regexp.MustCompile(`f64[^()]*\) as i32\)`)
+)
 
 // TestGenBytesExhaustionShrinksProgram — chopping bytes off the
 // end of a corpus shouldn't make the emitted program *longer*.
