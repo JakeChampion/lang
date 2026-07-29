@@ -634,3 +634,93 @@ func TestArm64LeakCheckLoopConstructionMove(t *testing.T) {
 		})
 	}
 }
+
+// --- Tuple-valued container element (#5879 cause B) ----------------
+//
+// An array of tuples routed its per-element release through the flat
+// __fern_drop_arr_ptr (per-element __fern_rc_dec), because
+// arrElemStructDropName gated the generated per-element walk on
+// tupleNeedsDrop — false for a tuple of plain scalars, whose drop body has no
+// element to traverse. But the tuple BOX still has to be freed, and a flat
+// rc_dec only decrements: freeing needs the size, which only the generated
+// __drop_arr_tuple_<mangled> loop supplies. So `[t]` leaked exactly one tuple
+// box per iteration (16 bytes for `(i32, i32)` — 8 rc header + 8 payload),
+// linear and unbounded.
+//
+// The scalar tuple is the subject: a tuple carrying a string was already
+// covered (tupleNeedsDrop is true there), and it is the control — if it ever
+// regresses, the cause is the walk itself, not the gate.
+const tupleElemArrayScalarSrc = `function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 50) {
+        var t = (k, k + 1);
+        var c = [t, (7, 8)];
+        total = total + c[0].0 + c[1].1;
+        k = k + 1;
+    }
+    return total % 251;
+}`
+
+const tupleElemArrayStringSrc = `function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 50) {
+        var s: string = "ab" + "cd";
+        var t = (s, k);
+        var c = [t];
+        total = total + c[0].0.len();
+        k = k + 1;
+    }
+    return total % 251;
+}`
+
+func TestX86_64LeakCheckTupleElemArray(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		exit int
+	}{
+		{"scalar-tuple-element", tupleElemArrayScalarSrc, 119},
+		{"string-tuple-element", tupleElemArrayStringSrc, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckX86_64(t, tc.src)
+			if code != tc.exit {
+				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
+			}
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations recorded — fixture drift")
+			}
+			if frees != allocs || live != 0 {
+				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+			}
+		})
+	}
+}
+
+func TestArm64LeakCheckTupleElemArray(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		exit int
+	}{
+		{"scalar-tuple-element", tupleElemArrayScalarSrc, 119},
+		{"string-tuple-element", tupleElemArrayStringSrc, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckArm64(t, tc.src)
+			if code != tc.exit {
+				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
+			}
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations recorded — fixture drift")
+			}
+			if frees != allocs || live != 0 {
+				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+			}
+		})
+	}
+}
