@@ -236,6 +236,24 @@ fix must align the checker's fn-value inference with the `const_fns` lowering
 (deep, byte-identity-risky — touches the #2954 const-accessor semantics), so it
 is a focused follow-up, not part of the match-recovery work.
 
+**The naive fix is INSUFFICIENT — attempted 2026-07-29, reverted.** The obvious
+move is to widen `parser.infer_fnvalue_locals_module`'s `fnv_rewrite_stmt`
+(#3640 slice B.2) from its struct-return gate to *any non-callable* return, so
+`var f = g` (g called, g's return not a fn) is annotated `type_name: "fn"` and
+the existing #3574 fn-value-bind path emits `const_func`. This DOES fix the
+SIGSEGV for scalar returns (`var f = g; f()` → 42), and correctly preserves the
+const-accessor (`var x = getC; x + 1` → 100, not called so not annotated) and
+closure-return (callable return excluded) cases. But it MISCOMPILES a
+string/array/Option-etc. return whose result is method-chained: `var f = g;
+f().len()` (g: string) returns 0, not 2 — the fn-value CALL dispatches correctly
+now, but the call RESULT's type is not recovered, so `.len()` mis-dispatches
+(and `i32`'s `f().to_string()` disagrees native-vs-IR too). So the dispatch fix
+and the call-result type recovery are TWO problems; widening the annotation
+gate alone regresses the chained-method cases. A correct fix needs the general
+fn-value-call return-type recovery first (the same class as the `match (f())`
+scrutinee recovery, generalised to every use position), then the annotation
+widening on top.
+
 Two things worth carrying forward. First, **`TestSelfHostAsmIRPath` is 80/80
 clean under the flag** once the ascription case closed — independent evidence the
 per-function IR subset is as mature as CLAUDE.md claims, measured rather than
