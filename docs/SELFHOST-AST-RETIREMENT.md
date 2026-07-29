@@ -78,6 +78,42 @@ IR path bailed to the AST emitter`.
 `TestSelfHostStrictIR*` (`internal/e2eselfhost`) is the standing tripwire: a
 corpus that must NOT refuse, plus an over-budget program that must.
 
+### The Option/Result recovery audit (2026-07-29, #5646 option 3)
+
+#5646 asks whether the checked operators were the only gap in the
+shape-enumerating `Option`/`Result` recoveries and notes that nobody had looked.
+Looked, with the flag: probe each shape that can yield an `Option`, run it under
+`FERN_STRICT_IR` (a refusal is a genuine gap), and compare the answer against
+the interpreter oracle.
+
+**Six shapes lower correctly** — `bs[i].o`, `x.i.o`, `bs[i].o?`, `t.N.o`,
+`b.method()`, `Some(f())`. **Four gaps, all with SAFE AST fallbacks** — the AST
+emitter compiles each of them correctly, so unlike #5642 nothing is
+miscompiled; only the routing is wrong:
+
+| shape | status |
+|---|---|
+| `aoa[i][j]` — index whose base is an index | **closed** — shared `arr_tag_of` |
+| `t.N[i]` — index whose base is a tuple element | **closed** — same |
+| `fs[i]()` — call of a fn-typed array element returning `Option` | **open**, and deeper than a resolver arm: even `var f = fs[i]` bails, so the element's fn type is not recovered at all |
+| `None as Option[T]` — an ascription scrutinee | **open** — the `ExprUnary` arm handles the `as?_` downcast tag but not a plain ascription |
+
+Two things worth carrying forward. First, **`TestSelfHostAsmIRPath` is 79/80
+clean under the flag** (the one bail is the ascription case, which that suite
+already runs `ir=false`) — independent evidence the per-function IR subset is as
+mature as CLAUDE.md claims, measured rather than asserted. Second, **a
+safe-fallback gap is invisible to the differential suites by construction**: the
+exit codes agree, so only a routing assertion or the flag can see it. That is
+the class of finding the flag exists for, and it is the opposite of #5642's
+class — worth keeping distinct, because a wrong-answer bail is urgent and a
+right-answer bail is only goal-1 debt.
+
+To reproduce the sweep: `FERN_STRICT_IR=1 go test ./internal/e2eselfhost -run
+TestSelfHostAsmIRPath`. When linking a driver's `.s` by hand to check an answer,
+use `gcc -nostdlib -static` — a plain `gcc -o` collides with `Scrt1.o`'s
+`_start` and every program then "exits 1", which reads exactly like a
+miscompile.
+
 Result: **27 failures, 24 of them genuine** (the other 3 are unrelated — the
 `wasm-tools validate` component cases and an arm64 `R_AARCH64_CONDBR19`
 relocation overflow). The run hit its 60-minute timeout with
