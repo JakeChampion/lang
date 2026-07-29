@@ -1220,6 +1220,37 @@ pub function min_index[T: cmp.Ord](xs: T[]): Option[i32] {
     return Some(best);
 }
 
+// `running_max(xs)` / `running_min(xs)` — the running (prefix) maximum /
+// minimum: `out[i]` is the largest / smallest of `xs[0..=i]`, so the result
+// is monotonic and its last element is the overall max / min
+// (`running_max([3,1,4,1,5]) == [3,3,4,4,5]`). The `cmp.Ord` cumulative
+// siblings of `num.cumsum`, useful for high-water marks, drawdowns, and
+// monotone-envelope scans. Empty in, empty out.
+pub function running_max[T: cmp.Ord](xs: T[]): T[] {
+    var out: T[] = [];
+    if (xs.len() == 0) { return out; }
+    var best: T = xs[0];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i].cmp(best) > 0) { best = xs[i]; }
+        out = out.append(best);
+        i = i + 1;
+    }
+    return out;
+}
+pub function running_min[T: cmp.Ord](xs: T[]): T[] {
+    var out: T[] = [];
+    if (xs.len() == 0) { return out; }
+    var best: T = xs[0];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i].cmp(best) < 0) { best = xs[i]; }
+        out = out.append(best);
+        i = i + 1;
+    }
+    return out;
+}
+
 // `max_by(xs, cmp)` — `Some` of the element that is greatest under the
 // comparator `cmp` (same three-way convention as `sort_by`: `cmp(a, b)` < 0
 // when `a` orders before `b`), or `None` when empty. The comparator form of
