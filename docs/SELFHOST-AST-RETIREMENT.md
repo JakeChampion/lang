@@ -2699,12 +2699,32 @@ baseline", which is the language of a convention, not of a proven UAF. Nobody ha
 run the arm's emitted code and observed a corruption; the original "unsound"
 verdict came from 7 self-host failures whose mechanism was never traced.
 
-So the honest next step is to determine which it is, before writing any gate:
-build the arm, run `TestArrayPushProjectionSourceFreeEligible`'s two fixtures as
-real programs under `FERN_LEAKCHECK=1` and against `-interp`, and see whether the
-extra drops produce an over-release (frees > allocs, or a wrong answer) or just
-reclaim more. That is a ten-minute experiment and it decides whether the 4x above
-is one gate away or blocked on something real.
+**The experiment is done (2026-07-29): the extra drops RECLAIM, they do not
+over-release.** Both fixtures rebuilt as standalone programs (200 rounds each),
+measured with `FERN_LEAKCHECK=1` and checked against `fern -interp`:
+
+| fixture | baseline | with the arm |
+|---|---|---|
+| direct-ident (`out = out.append(row); var e = out[0]`) | 600 allocs / 200 frees, 16000 live | 600 / **400**, 6400 live |
+| projection source (`out.append(rows[0])`) | 1000 / 600, 16000 live | 1000 / **1000**, **0 live** |
+
+Exit codes match the interpreter in both (1 = 1), frees never exceed allocs, and
+the projection case reaches a perfect 1000/1000 with zero live bytes. The
+`MapIntermediateReclaim` negatives on x86-64 / arm64 / wasm — the probe that
+caught #5830's unsound scalar rule — pass with the arm applied, as do the
+retained-param and union-threaded-param tests.
+
+So `TestArrayPushProjectionSourceFreeEligible` is pinning a CONVENTION (its own
+comment calls it "the conservative direct-ident baseline"), not a safety
+property. If the self-host gate agrees, the correct change is to UPDATE that test
+to the reclaiming counts rather than to gate the arm — and the caller-side half
+of #5854's 4x becomes the only thing left between here and the lexer's number.
+
+**Still outstanding, and it is the evidence that matters:**
+`TestSelfHostLoadFixpointX86_64` on the arm. Two fixtures reclaiming is not
+compiler-scale soundness, and the original verdict's 7 self-host failures still
+have no traced mechanism — so nothing here should be landed on the strength of
+the probes alone.
 
 (The original question, kept for the record: **what taints `out`?**)
 It is worth answering with the rcPlan dump rather than by guessing — print
