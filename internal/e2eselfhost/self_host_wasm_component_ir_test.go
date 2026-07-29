@@ -36,8 +36,8 @@ import (
 // calling helpers nothing defines. Every WASI category component_shape knows
 // has now migrated — stdout/stderr/exit, clock, random, env, args, and finally
 // the filesystem pair — so what remains out of subset is the per-function IR
-// gaps (i64.to_string) and the two shapes with no preview2 body at all
-// (arg_at, and random without I/O).
+// gaps (i64.to_string) and random without I/O, which has no import any
+// component framing can wire.
 func TestSelfHostWasmComponentIRPath(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -152,18 +152,12 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-environment"}},
 		{"io-args", true, `function main(): i32 { var a: string[] = args(); write(a[0]); return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-arguments"}},
-		// arg_at (read ONE argument) has no *_p2 body on either path, so the
-		// allowlist refuses it and it falls to the AST emitter. Note what that
-		// emitter produces: a `call $arg_at` with neither a definition nor an
-		// import — an invalid module. Unlike the no-I/O random case below, this
-		// one IS reachable from the CLI: component_shape classifies the args
-		// category as module_calls(mod, "args") and never looks at arg_at, so an
-		// arg_at program is misread as plain-stdout (shape 1) and wrapped by
-		// component_full_io. Fixing it needs a classification change plus an
-		// arg_at_func_p2 — a routing decision, not a mechanical port, so it is
-		// recorded here rather than bundled in.
-		{"arg-at-falls-back", true, `function main(): i32 { write(arg_at(1)); return 0; }`, false,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
+		// arg_at shares the get-arguments import with args() — a program using
+		// only arg_at still pulls it in, and one using both imports it once.
+		{"io-arg-at", true, `function main(): i32 { write(arg_at(1)); return 0; }`, true,
+			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-arguments"}},
+		{"io-args-and-arg-at", true, `function main(): i32 { var a: string[] = args(); write(a[0]); write(arg_at(1)); return 0; }`, true,
+			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-arguments"}},
 
 		// The filesystem pair, last of component_shape's categories to move.
 		// Their mode-2 bodies box a real IoError variant rather than the raw

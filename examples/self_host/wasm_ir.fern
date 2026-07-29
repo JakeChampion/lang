@@ -1489,7 +1489,7 @@ pub function component_needs_ok(needs: string[], io: boolean): boolean {
         // list into) — see the mode-2 gate in emit_ir_module_units_mode.
         // `arg_at` is deliberately NOT here: it has no *_p2 body on either
         // path, so a lone-argument read stays on the AST emitter.
-        if (io && (n == "env" || n == "args")) { i = i + 1; continue; }
+        if (io && (n == "env" || n == "args" || n == "arg_at")) { i = i + 1; continue; }
         // The filesystem pair. Their mode-2 bodies box a real IoError variant
         // (err_payload_p2), which the IR consumer reads at the right offsets —
         // see #5795 for why the AST fallback cannot share that.
@@ -1656,6 +1656,46 @@ pub function args_imports_p2(): string {
 // list entry into a fresh [len][bytes] string block and store its pointer in
 // the same string[] array block ([len][cap][elem-ptrs]) the preview1 helper
 // builds, so every args() call site is unchanged.
+// arg_at_func_p2 is the preview2 $__fern_arg_at(i): read ONE argument. It is
+// args_func_p2's per-entry work specialised to a single index — get-arguments
+// writes a (ptr, count) header, each entry is 8 bytes (data ptr @0, len @4), so
+// entry i lives at ptr + i*8 — minus the array construction.
+//
+// Out-of-range yields an empty [len=0] block, matching the preview1 arg_at_func
+// (native's buildArgAtBodyP2 returns an empty (0,0) pair for the same reason;
+// the calling conventions differ — native returns a (data, len) pair, the
+// self-host a single [len][bytes] block — so it is the algorithm that carries
+// over, not the encoding).
+//
+// Shares the get-arguments import with $__fern_args, so a program using both
+// still imports it once.
+pub function arg_at_func_p2(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_arg_at (param $idx i32) (result i32)\n";
+    o = o + "    (local $ra i32) (local $ptr i32) (local $count i32)\n";
+    o = o + "    (local $sp i32) (local $sl i32) (local $blk i32) (local $j i32)\n";
+    o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 16)) (i32.const 7)) (i32.const -8)))\n";
+    o = o + "    (call $get_arguments (local.get $ra))\n";
+    o = o + "    (local.set $ptr (i32.load (local.get $ra)))\n";
+    o = o + "    (local.set $count (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
+    o = o + "    (if (i32.ge_u (local.get $idx) (local.get $count)) (then\n";
+    o = o + "      (local.set $blk (call $__fern_alloc (i32.const 4)))\n";
+    o = o + "      (i32.store (local.get $blk) (i32.const 0))\n";
+    o = o + "      (return (local.get $blk))))\n";
+    o = o + "    (local.set $sp (i32.load (i32.add (local.get $ptr) (i32.mul (local.get $idx) (i32.const 8)))))\n";
+    o = o + "    (local.set $sl (i32.load (i32.add (i32.add (local.get $ptr) (i32.mul (local.get $idx) (i32.const 8))) (i32.const 4))))\n";
+    o = o + "    (local.set $blk (call $__fern_alloc (i32.add (i32.const 4) (local.get $sl))))\n";
+    o = o + "    (i32.store (local.get $blk) (local.get $sl))\n";
+    o = o + "    (local.set $j (i32.const 0))\n";
+    o = o + "    (block $cd (loop $cc\n";
+    o = o + "      (br_if $cd (i32.ge_u (local.get $j) (local.get $sl)))\n";
+    o = o + "      (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $sp) (local.get $j))))\n";
+    o = o + "      (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "      (br $cc)))\n";
+    o = o + "    (local.get $blk))\n";
+    return o;
+}
+
 pub function args_func_p2(): string {
     var o: string = "";
     o = o + "  (func $__fern_args (result i32)\n";
@@ -1868,7 +1908,7 @@ pub function component_io_imports(needs: string[]): string {
     if (needs_wall_clock(needs) || need(needs, "monotonic_ns")) {
         o = o + clock_imports_p2(needs_wall_clock(needs), need(needs, "monotonic_ns"));
     }
-    if (need(needs, "args")) { o = o + args_imports_p2(); }
+    if (need(needs, "args") || need(needs, "arg_at")) { o = o + args_imports_p2(); }
     if (need(needs, "env")) { o = o + env_imports_p2(); }
     // Filesystem last, which is where the AST path puts it and therefore the
     // slot component_full_io_fs / _fs_write / _fs_rw alias.
@@ -1945,6 +1985,7 @@ pub function component_io_shims(needs: string[]): string {
     if (need(needs, "random_bytes") || need(needs, "random_i32")) { o = o + random_func_p2(); }
     if (need(needs, "env")) { o = o + env_func_p2(); }
     if (need(needs, "args")) { o = o + args_func_p2(); }
+    if (need(needs, "arg_at")) { o = o + arg_at_func_p2(); }
     if (need(needs, "read_file") || need(needs, "write_file")) { o = o + build_io_error_p2_func(); }
     if (need(needs, "read_file")) { o = o + readfile_func_p2(true); }
     if (need(needs, "write_file")) { o = o + writefile_func_p2(true); }
@@ -7148,7 +7189,7 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // $__fern_arg_at(i) copies just argv[i] into a fresh string block, sharing
     // the args imports above. Independent of the args need — a module can read
     // one argument without ever materialising the whole vector.
-    if (need(needs, "arg_at")) { out = out + arg_at_func(); }
+    if (mode != 2 && need(needs, "arg_at")) { out = out + arg_at_func(); }
     // $__fern_env(name): scan the environ vector for `NAME=`, box an
     // Option[string] (Some(value)/None). Heap-backed (allocates the value +
     // box), so the heap gate above folds env in.
@@ -7206,7 +7247,7 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // exported cabi_realloc — without it `component new` rejects the module.
     // One shared gate, so it is still emitted exactly once when a module both
     // reads argv and polls.
-    if (need(needs, "wasm_poll") || need(needs, "tcp_recv") || need(needs, "poll") || need(needs, "tcp_send") || need(needs, "udp_send") || (mode == 2 && (need(needs, "env") || need(needs, "args") || need(needs, "read_file") || need(needs, "write_file")))) { out = out + cabi_realloc_helper(); }
+    if (need(needs, "wasm_poll") || need(needs, "tcp_recv") || need(needs, "poll") || need(needs, "tcp_send") || need(needs, "udp_send") || (mode == 2 && (need(needs, "env") || need(needs, "args") || need(needs, "arg_at") || need(needs, "read_file") || need(needs, "write_file")))) { out = out + cabi_realloc_helper(); }
     // $__fern_network_handle is shared by every socket op; emitted with
     // whichever one pulls it in.
     if (need(needs, "tcp_connect") || need(needs, "tcp_listen") || need(needs, "udp_send")) { out = out + network_handle_func(); }
