@@ -867,10 +867,37 @@ payload renders either as `"fn"` or as its full `"() => i32"` spelling and the
 test has to accept both — the first version of this fix looked correct and did
 nothing at all because it only matched `"fn"`.
 
+**Two further positions had the identical split, found by continuing the same
+sweep, and are closed the same way:**
+
+| position | evidence used |
+|---|---|
+| a fn-typed RETURN — `function get(): () => i32 { return a1; }` | `fd.ret_type` |
+| a USER-enum variant field — `enum E { Wrap(() => i32) }` + `Wrap(a1)` | the variant's struct decl |
+
+The user-enum one is the cleanest of the family: the variant's field is already
+declared `"fn"` in `structs`, which is strictly better evidence than any
+annotation, and the walk was ALREADY consulting it — only the shared
+`lift_arg_is_fn_value` arity gate stood in the way. Splitting off
+`lift_arg_is_fn_value_declared` for positions whose declared type is known to be
+a fn is the whole fix there.
+
+So the family is four positions and one cause: a fn value's REPRESENTATION is
+decided by whoever writes it, the dispatch is decided by the declared type, and
+wherever those two were derived independently they disagreed for exactly the
+zero-arg case. Each fix is the same move — read the declared type at the site
+that already has it.
+
 Still out of scope, recorded so it is not re-probed:
-`var g: (() => i32)[][] = [[a1]]; g[0][0]()` is interp 3, self-host SIGSEGV — but
-it routes **AST**, so per the project rule (a legacy-AST-only gap needs no fix) it
-waits until the IR path admits it.
+`var g: (() => i32)[][] = [[a1]]; g[0][0]()` is interp 3, self-host SIGSEGV, and
+`Option[((() => i32), i32)]` carrying `Some((a1, 4))` is interp 7 / SIGSEGV — but
+BOTH route **AST**, so per the project rule (a legacy-AST-only gap needs no fix)
+they wait until the IR path admits them.
+
+Positions PROBED CLEAN in the same sweep, so they need no work: a plain struct
+field (`S { f: a1 }`), a call argument (`takes(a1)`), a fn-value local
+(`var g: () => i32 = a1`), and a fn-POINTER array (`var xs: (() => i32)[] = [a1]`,
+which goes through the const_func path instead).
 
 ### Rebinding an `fn[]` LOCAL: one direction fixed, the cross-representation ones open
 
