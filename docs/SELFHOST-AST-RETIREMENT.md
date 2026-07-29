@@ -2308,14 +2308,44 @@ re-derive the same too-good measurement and ship it.
 construction literal — and the summary is false, which also drags down the
 scalar exemption for that whole callee.
 
-The highest-value widening is the one the scalar rule exposed: the real question
-is not "are ALL pointer params counted" but "can the RESULT alias an unproven
-pointer param". `l = l.advance()` — a `Lex` param read field-by-field into a
-fresh `Lex { src: l.src, i: l.i + 1, … }` — is safe (every field init incs) yet
-fails the occurrence test, because `l.src` is a FieldAccess and the summary only
-recognises a bare ident in a construction slot. Teaching it that a param read
-THROUGH a projection into a counted slot is still counted would cover the
-lexer's and parser's threading style, which is where the 40k blocks live.
+The highest-value widening looked like the projection rule: `l = l.advance()` —
+a `Lex` param read field-by-field into a fresh `Lex { src: l.src, i: l.i + 1, … }`
+— is safe (every field init incs) yet fails the occurrence test, because `l.src`
+is a FieldAccess and the summary only recognises a bare ident in a construction
+slot.
+
+**That widening was BUILT AND MEASURED (2026-07-29) and is NOT landed. Read this
+before rebuilding it.** Crediting a one-level projection — safe when the read
+lands in a counted slot, or when the field is scalar (`projFieldIsScalar`, which
+can retain nothing wherever it goes) — is ~60 lines and passes every gate: the
+three map negatives, the leak tests, units, and byte-identical parse output. It
+is worth **+3579 frees on the full load** (175664 → 179243 of 901734) and
+**ZERO on `tokenize`** (44566, unchanged).
+
+Two reasons it was not landed, both worth inheriting:
+
+1. **It does not touch the lexer at all**, which is where the leak is.
+   `skip_trivia(l: Lex)` is the representative shape and it disqualifies on
+   appearances the projection rule does not cover: METHOD RECEIVERS (`l.at_end()`,
+   `l.peek_byte()`), an INDEX TARGET (`l.src[we]`, whose result is a scalar byte
+   and so is a pure read the rule cannot see through), and a self-reassignment
+   (`l = l.advance_to(we)`). Covering those needs per-method retention summaries
+   plus a real "pure read" classifier — a different, bigger piece of work than a
+   projection tweak, and the honest prerequisite for the 40k blocks.
+
+2. **No regression test has teeth on it.** Three attempts failed to build one: an
+   `internal/ir` drop-count assertion (the caller's local is a fresh StructLit,
+   so it is swept with or without the summary) and a `leakcheck` frees comparison
+   (helper vs inline form measure identical either way). An aggregate +2% on one
+   benchmark with no small program that isolates it is a change nothing would
+   catch the regression of — and, per the method note in this file, an aggregate
+   improvement you cannot reproduce in a minimal shape is not yet understood.
+
+So the sequence for the next attempt is: build the pure-read + method-receiver
+classifier FIRST, verify it moves `tokenize`'s freed fraction (the number that
+matters), and only then decide whether the projection rule is still needed
+separately. The map-intermediate negatives remain the sharpest soundness probe;
+run them on every iteration.
 
 After that, in rough order: pure reads (`len`, indexing, comparison) should not
 disqualify; `append` into an array the callee returns IS a counted store
