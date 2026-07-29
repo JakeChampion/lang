@@ -2862,6 +2862,46 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
     return "";
 }
 
+// arr_tag_of recovers the ARRAY-type spelling of an expression used as the base
+// of an index (`<base>[i]`): a local, a struct field, a tuple element, or
+// another index — `aoa[i][j]`'s base `aoa[i]` is one `[]` off `aoa`'s own tag.
+// "" when it cannot.
+//
+// It exists because the two Option/Result scrutinee resolvers each enumerated
+// only `ExprIdent` and a named-field `ExprFieldAccess` here, so `aoa[i][j]` and
+// `t.N[i]` resolved to "" and bailed the enclosing function to the AST emitter
+// (found by auditing under FERN_STRICT_IR — #5646 option 3). The struct-element
+// sibling of this walk already lives in expr_struct_type, which is why
+// `t.N[i].field` resolved while `match (t.N[i])` on an Option element did not.
+function arr_tag_of(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprIdent(aid) => { return s.opt_type_of_slot(s.slot_of(aid.name)); },
+        parser.ExprFieldAccess(afa) => {
+            if (util.is_all_digits(afa.field)) { return expr_tuple_elem_tag(afa.obj, util.digits_to_i32(afa.field), s); }
+            var oty: string = expr_struct_type(afa.obj, s);
+            if (oty == "") { return ""; }
+            return decl_field_type(s.structs, oty, afa.field);
+        },
+        parser.ExprIndex(aix) => { return strip_arr_suffix(arr_tag_of(aix.array, s)); },
+        _ => { return ""; }
+    }
+}
+
+// strip_arr_suffix removes one trailing "[]" from a type tag; "" when the tag
+// is not an array type.
+function strip_arr_suffix(tag: string): string {
+    if (tag.len() >= 2 && tag[tag.len() - 2 : tag.len()] == "[]") { return tag[0 : tag.len() - 2] + ""; }
+    return "";
+}
+
+// opt_elem_of is an array tag's element type when that element is an
+// Option/Result, else "".
+function opt_elem_of(tag: string): string {
+    var elt: string = strip_arr_suffix(tag);
+    if (elt.len() >= 8 && (elt[0:7] == "Option[" || elt[0:7] == "Result[")) { return elt + ""; }
+    return "";
+}
+
 // expr_is_bool reports whether `e` is a statically-boolean value, so a method
 // call on it dispatches "boolean.<m>" (its own Display / Json impl) instead of
 // falling through to "i32.<m>" — which renders a bool as 1/0 (a `@derive(Json)`
@@ -10240,34 +10280,11 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
             }
             return "";
         },
-        // `a[i]` where `a` is an Option/Result ARRAY — recover the element type
-        // from the array slot's opt_type (annotated `Option[T][]` / `Result[…][]`,
-        // or inferred from an Option-array literal), stripping the trailing `[]`.
-        // Mirrors the main StmtMatch path so `match (a[i]) { … }` in value position
-        // lowers; also handles `b.o[i]` (an Option/Result-array struct field).
-        parser.ExprIndex(six) => {
-            match (six.array) {
-                parser.ExprIdent(arrid) => {
-                    var aot: string = s.opt_type_of_slot(s.slot_of(arrid.name));
-                    if (aot.len() >= 2 && aot[aot.len() - 2 : aot.len()] == "[]") {
-                        var elt: str = aot[0 : aot.len() - 2];
-                        if (elt.len() >= 8 && (elt[0:7] == "Option[" || elt[0:7] == "Result[")) { return elt + ""; }
-                    }
-                },
-                parser.ExprFieldAccess(sfa2) => {
-                    var foty2: string = expr_struct_type(sfa2.obj, s);
-                    if (foty2 != "") {
-                        var fat: string = decl_field_type(s.structs, foty2, sfa2.field);
-                        if (fat.len() >= 2 && fat[fat.len() - 2 : fat.len()] == "[]") {
-                            var felt: str = fat[0 : fat.len() - 2];
-                            if (felt.len() >= 8 && (felt[0:7] == "Option[" || felt[0:7] == "Result[")) { return felt + ""; }
-                        }
-                    }
-                },
-                _ => {}
-            }
-            return "";
-        },
+        // `<base>[i]` where the element is an Option/Result — a local
+        // (`a[i]`), a struct field (`b.o[i]`), a tuple element (`t.N[i]`), or a
+        // nested index (`aoa[i][j]`). Mirrors the main StmtMatch path so the same
+        // shapes lower in value position.
+        parser.ExprIndex(six) => { return opt_elem_of(arr_tag_of(six.array, s)); },
         _ => { return ""; }
     }
     return "";
@@ -15845,36 +15862,11 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                                     }
                                 }
                             },
-                            // `match (a[i])` where `a` is an Option/Result
-                            // ARRAY — recover the element type from the array
-                            // slot's opt_type (the annotated `Option[T][]` /
-                            // `Result[...][]`), stripping the trailing `[]`.
-                            parser.ExprIndex(six) => {
-                                match (six.array) {
-                                    parser.ExprIdent(arrid) => {
-                                        var aot: string = ms.opt_type_of_slot(ms.slot_of(arrid.name));
-                                        if (aot.len() >= 2 && aot[aot.len() - 2 : aot.len()] == "[]") {
-                                            var elt: str = aot[0 : aot.len() - 2];
-                                            if (elt.len() >= 8 && (elt[0:7] == "Option[" || elt[0:7] == "Result[")) { srt = elt + ""; }
-                                        }
-                                    },
-                                    // `match (b.o[i])` where `o` is an
-                                    // Option/Result-array struct field —
-                                    // recover the element from the field's
-                                    // declared `Option[T][]` / `Result[…][]`.
-                                    parser.ExprFieldAccess(sfa2) => {
-                                        var foty2: string = expr_struct_type(sfa2.obj, ms);
-                                        if (foty2 != "") {
-                                            var fat: string = decl_field_type(ms.structs, foty2, sfa2.field);
-                                            if (fat.len() >= 2 && fat[fat.len() - 2 : fat.len()] == "[]") {
-                                                var felt: str = fat[0 : fat.len() - 2];
-                                                if (felt.len() >= 8 && (felt[0:7] == "Option[" || felt[0:7] == "Result[")) { srt = felt + ""; }
-                                            }
-                                        }
-                                    },
-                                    _ => {}
-                                }
-                            },
+                            // `match (<base>[i])` where the element is an
+                            // Option/Result — a local (`a[i]`), a struct field
+                            // (`b.o[i]`), a tuple element (`t.N[i]`), or a
+                            // nested index (`aoa[i][j]`).
+                            parser.ExprIndex(six) => { srt = opt_elem_of(arr_tag_of(six.array, ms)); },
                             // `match (a +? b)` — a checked arithmetic scrutinee
                             // (#5542) evaluates to Option[T] (T the operand
                             // width). Recover it so the Some(v) arm binds v.
