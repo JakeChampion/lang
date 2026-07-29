@@ -32990,7 +32990,28 @@ function clofld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], a
 // array literal, and `bad` names of fn[] fields seen constructed from ANY other
 // value (a capturing lambda `__mkclo$` box, a closure/local ident, a call, …). A
 // field is a fn-pointer array iff it is in `cand` and never in `bad`.
-struct FnptrAcc { cand: string[], bad: string[] }
+// fnloc: locals PROVEN bound to an all-fn-value array literal in the function
+// currently being scanned, so `var a = [inc]; R { hs: a }` credits the field
+// exactly as the inline literal does. Reset per function (a name is meaningless
+// across functions) and dropped on ANY assignment to the name, so a later
+// rebind to a closure array can never leave a stale credit behind — crediting a
+// closure array as fn-POINTERS would call an env box as raw code.
+struct FnptrAcc { cand: string[], bad: string[], fnloc: string[] }
+
+// remove_str returns `xs` without any element equal to `name`. Used by the
+// fnptr scan to retract a local's all-fn-value proof on shadowing or
+// reassignment — retraction must be exact, since a stale entry would credit a
+// closure array as raw fn pointers.
+function remove_str(xs: string[], name: string): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] != name) { out = out.append(xs[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
 
 // fnptr_elem_is_fnval reports whether array element `e` is a bare identifier
 // naming a receiver-less top-level function in `funcs` — the whole-program
@@ -33057,10 +33078,24 @@ function fnptr_scan(e: parser.Expr, funcs: parser.FuncDecl[], structs: parser.St
             while (i < sl2.field_names.len()) {
                 if (decl_field_type(structs, sl2.type_name, sl2.field_names[i]) == "fn[]") {
                     var key: string = sl2.type_name + "." + sl2.field_names[i];
-                    if (fnptr_array_lit_all_fnval(sl2.field_values[i], funcs)) {
-                        a = FnptrAcc { cand: push_str_unique(a.cand, key), bad: a.bad };
+                    var fv_ok: boolean = fnptr_array_lit_all_fnval(sl2.field_values[i], funcs);
+                    // `var a = [inc, dbl]; R { hs: a }` — the same all-fn-value
+                    // construction, one binding removed. Without this the field
+                    // landed in `bad`, so field_access_is_fnarr declined it and
+                    // field_access_is_closurearr claimed it by negation, and the
+                    // call dispatched env-first on a RAW code pointer (#3457).
+                    if (!fv_ok) {
+                        match (sl2.field_values[i]) {
+                            parser.ExprIdent(fvid) => {
+                                if (util.has_str(a.fnloc, fvid.name)) { fv_ok = true; }
+                            },
+                            _ => {}
+                        }
+                    }
+                    if (fv_ok) {
+                        a = FnptrAcc { cand: push_str_unique(a.cand, key), bad: a.bad, fnloc: a.fnloc };
                     } else {
-                        a = FnptrAcc { cand: a.cand, bad: push_str_unique(a.bad, key) };
+                        a = FnptrAcc { cand: a.cand, bad: push_str_unique(a.bad, key), fnloc: a.fnloc };
                     }
                 }
                 a = fnptr_scan(sl2.field_values[i], funcs, structs, a);
@@ -33088,8 +33123,25 @@ function fnptr_scan_stmts(stmts: parser.Stmt[], funcs: parser.FuncDecl[], struct
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { a = fnptr_scan(v.init, funcs, structs, a); },
-            parser.StmtAssign(as2) => { a = fnptr_scan(as2.value, funcs, structs, a); },
+            parser.StmtVar(v) => {
+                a = fnptr_scan(v.init, funcs, structs, a);
+                // Bind: remember a local proven to hold an all-fn-value array
+                // literal; a re-declaration that is NOT one drops any prior
+                // credit for the name (shadowing must not inherit it).
+                if (fnptr_array_lit_all_fnval(v.init, funcs)) {
+                    a = FnptrAcc { cand: a.cand, bad: a.bad, fnloc: push_str_unique(a.fnloc, v.name) };
+                } else {
+                    a = FnptrAcc { cand: a.cand, bad: a.bad, fnloc: remove_str(a.fnloc, v.name) };
+                }
+            },
+            parser.StmtAssign(as2) => {
+                a = fnptr_scan(as2.value, funcs, structs, a);
+                // Any assignment invalidates the proof — `a = a.append(f)` or a
+                // rebind to a closure array both land here. Conservative on
+                // purpose: a stale credit would be UNSOUND, a missing one only
+                // routes the field to the AST fallback as before.
+                a = FnptrAcc { cand: a.cand, bad: a.bad, fnloc: remove_str(a.fnloc, as2.target) };
+            },
             parser.StmtExpr(ex) => { a = fnptr_scan(ex.value, funcs, structs, a); },
             parser.StmtReturn(r) => { a = fnptr_scan(r.value, funcs, structs, a); },
             parser.StmtIf(iff) => {
@@ -33133,9 +33185,12 @@ function fnptr_scan_stmts(stmts: parser.Stmt[], funcs: parser.FuncDecl[], struct
 // box array on reclamation (its elements are raw code addresses). Runs on the
 // LIFTED module (all_funcs/all_structs), so lambda elements are already resolved.
 pub function fnptr_arr_fields_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
-    var acc: FnptrAcc = FnptrAcc { cand: [], bad: [] };
+    var acc: FnptrAcc = FnptrAcc { cand: [], bad: [], fnloc: [] };
     var i: i32 = 0;
     while (i < funcs.len()) {
+        // Local names are per-function: a proof from an earlier function must
+        // not credit a same-named local here.
+        acc = FnptrAcc { cand: acc.cand, bad: acc.bad, fnloc: [] };
         acc = fnptr_scan_stmts(funcs[i].body, funcs, structs, acc);
         i = i + 1;
     }

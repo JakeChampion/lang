@@ -207,12 +207,21 @@ This is the "already miscompiled at construction" gap that
 stale as it first appeared: the LITERAL form works (it is registered), which is
 what makes the header look wrong until you probe the non-literal one.
 
-It failed on the AST path too, so #5783 did not introduce it — but #5783 moved
-the shape onto the IR path, i.e. onto the path being kept. Fixing it means
-positive evidence rather than negation: either widen `fnptr_scan` to credit a
-local bound to an all-fn-value literal, or add the `CLOARR:<Type>.<field>`
-registry populated from `__mkclo$` elements. The first is narrower and fixes
-both paths at once.
+**FIXED** by widening `fnptr_scan`: it now tracks locals proven bound to an
+all-fn-value array literal (`fnloc` on `FnptrAcc`) and credits a field stored
+from one, so the registry covers the construction rather than the syntax. The
+proof is retracted on ANY assignment to the name and reset per function, because
+a stale credit is the unsound direction — it would call an env box as raw code.
+Pinned by `local-built` and `rebind-retracts-proof` in
+`TestSelfHostFnptrArrayFieldIRX86_64`, the latter being the case an unsound
+implementation fails.
+
+**The negation this justifies is still load-bearing.** `field_access_is_closurearr`
+remains "not FNPTR ⇒ closure", so a construction the widened scan STILL cannot
+prove (e.g. an array passed in as a parameter, or built across a loop) falls to
+the closure arm. Those shapes now route AST via other gates rather than
+crashing, but the general fix remains positive evidence on the closure side —
+a `CLOARR:<Type>.<field>` registry populated from `__mkclo$` elements.
 
 **Root cause of the tuple gap (closed by #5758), and the shape of that fix.** A callable
 behind a struct field has an ambiguous REPRESENTATION that its declared type

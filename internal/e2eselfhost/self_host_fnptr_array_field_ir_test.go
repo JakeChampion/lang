@@ -34,6 +34,18 @@ var fnptrArrayFieldCases = []struct {
 	src  string
 	exit int
 }{
+	// A LOCAL-BUILT pointer array stored into the field — the same all-fn-value
+	// construction as the literal form, one binding removed. This CRASHED on
+	// both the AST and IR paths while interp and native x86-64 both returned 7:
+	// fnptr_scan credited only an inline array literal, so the field landed in
+	// `bad`, field_access_is_fnarr declined it, and field_access_is_closurearr
+	// claimed it by negation — dispatching env-first on a raw code pointer.
+	{"local-built", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { var a: (() => i32)[] = [seven]; var r: R = R { hs: a }; return r.hs[0](); }", 7},
+	// The soundness guard for that widening: the local is REBOUND to a closure
+	// array before the store, so the all-fn-value proof must be retracted. If it
+	// is not, the field is credited as raw pointers and the call invokes an env
+	// box as code. Exercises the retract-on-assignment path directly.
+	{"rebind-retracts-proof", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [seven]; a = [() => n]; var r: R = R { hs: a }; return r.hs[0](); }", 5},
 	// var f = r.hs[0]; f() — named functions.
 	{"bind-named", "function inc(): i32 { return 40; } function dbl(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function main(): i32 { var r = Reg { hs: [inc, dbl] }; var f = r.hs[0]; return f(); }", 40},
 	// Second element, to prove per-element fn-pointer identity.
