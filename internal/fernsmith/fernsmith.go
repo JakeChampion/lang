@@ -440,13 +440,28 @@ const (
 	// in the corpus produced a tuple at all, despite fn-typed tuple
 	// elements having been a real bug cluster.
 	tTupI32I64
+	// tU32 is the first UNSIGNED type in the corpus, and unsigned is
+	// where this codebase's worst codegen bugs have lived: `/`, `%` and
+	// `>>` lower to div_u / rem_u / shr_u, distinct instructions from
+	// their signed siblings, and `<` / `>` / `<=` / `>=` lower to the
+	// unsigned condition codes. All of it hangs on reading a 32-bit
+	// operand as u32 rather than as the sign-extended int64 it is stored
+	// in — the mistake behind the u32 `>>` that miscompiled SHA-256, and
+	// behind the x86_64ssa model's missing width parameter. None of that
+	// was reachable from a corpus that generated only signed types.
+	//
+	// Verified identical on interp / x86-64 / arm64 / wasm before adding:
+	// wrapping `+` `-` `*`, `x / 0` = 0 and `x % 0` = x as for signed,
+	// logical (not arithmetic) `>>` with the count masked to 5 bits, and
+	// unsigned ordering on operands with bit 31 set.
+	tU32
 	numTypes
 )
 
 var allTypes = [numTypes]gtype{
 	tI32, tI64, tBool, tF32, tString,
 	tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32, tMapI32I32,
-	tXyz, tStatus, tResI32I32, tTupI32I64,
+	tXyz, tStatus, tResI32I32, tTupI32I64, tU32,
 }
 
 // gtypeNames is the source-level name for each builtin gtype, in
@@ -473,6 +488,7 @@ var gtypeNames = [numTypes]string{
 	tStatus:    "Status",
 	tResI32I32: "Result[i32, i32]",
 	tTupI32I64: "(i32, i64)",
+	tU32:       "u32",
 }
 
 // String reports the source-level name for a builtin gtype.
@@ -757,11 +773,12 @@ func (g *Generator) MainPrintableProgram() string {
 }
 
 // emitPrintObservation writes one `print(...)` statement observing a
-// generated expression through a backend-portable channel: integers
-// via .to_string(), booleans (including float comparisons) as
-// "T"/"F", strings raw, and floats truncated through `as i32`.
+// generated expression through a backend-portable channel: signed and
+// unsigned integers via .to_string(), booleans (including float
+// comparisons) as "T"/"F", strings raw, and floats truncated through
+// `as i32`.
 func (g *Generator) emitPrintObservation(b *strings.Builder, sc *scope) {
-	switch g.ch.intN(6) {
+	switch g.ch.intN(7) {
 	case 0:
 		b.WriteString("print((")
 		g.expr(b, sc, tI32, 0)
@@ -785,6 +802,16 @@ func (g *Generator) emitPrintObservation(b *strings.Builder, sc *scope) {
 		b.WriteString("print(((")
 		g.expr(b, sc, tF32, 0)
 		b.WriteString(") as i32).to_string()); ")
+	case 6:
+		// u32 through its own `.to_string()` rather than an `as i32`
+		// cast: the cast reinterprets the same 32 bits, so a value
+		// above i32::MAX would print as a negative and every unsigned
+		// result would still be observable — but the DECIMAL rendering
+		// is itself unsigned-specific, so routing through it also
+		// covers the u32 formatting path.
+		b.WriteString("print((")
+		g.expr(b, sc, tU32, 0)
+		b.WriteString(").to_string()); ")
 	default:
 		g.emitFloatSpecialObservation(b, sc)
 	}
@@ -828,7 +855,7 @@ func (g *Generator) emitFloatSpecialOperand(b *strings.Builder, sc *scope) {
 // channel. Composite types do the same via array index, Pair
 // field access, and match-over-Color.
 var mainVarTypes = []gtype{
-	tI32, tI64, tBool, tString,
+	tI32, tI64, tU32, tBool, tString,
 	tArrI32, tArrI64, tArrBool,
 	tPair, tColor, tOptI32,
 	tXyz, tStatus, tResI32I32, tTupI32I64,
@@ -857,6 +884,7 @@ func (g *Generator) preludeDecls(b *strings.Builder) {
 	// bare parser.Parse.
 	b.WriteString("import \"std/i32\";\n")
 	b.WriteString("import \"std/i64\";\n")
+	b.WriteString("import \"std/u32\";\n")
 	b.WriteString("import \"std/string\";\n")
 	b.WriteString("import \"std/array\";\n")
 	b.WriteString("import \"core/int\";\n")
@@ -1372,7 +1400,7 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 		return
 	}
 	switch t {
-	case tI32, tI64, tF32:
+	case tI32, tI64, tU32, tF32:
 		g.numericExpr(b, sc, t, depth)
 	case tBool:
 		g.boolExpr(b, sc, depth)
@@ -1877,10 +1905,14 @@ func (g *Generator) leaf(b *strings.Builder, sc *scope, t gtype, depth int) {
 // channels (a "T"/"F" comparison or a saturating `as i32`).
 //
 // For i32 it sometimes produces the HIGH half of an i64 instead —
-// see emitI64HighHalf.
+// see emitI64HighHalf — or a reinterpreted u32, see emitU32AsI32.
 func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth int) {
 	if t == tI32 && g.flip(0.15) {
 		g.emitI64HighHalf(b, sc, depth)
+		return
+	}
+	if t == tI32 && g.flip(0.15) {
+		g.emitU32AsI32(b, sc, depth)
 		return
 	}
 	ops := []string{"+", "-", "*", "/"}
@@ -1906,6 +1938,26 @@ func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth in
 	fmt.Fprintf(b, " %s ", op)
 	g.expr(b, sc, t, depth+1)
 	b.WriteByte(')')
+}
+
+// emitU32AsI32 writes `((<u32 expr>) as i32)`, routing an unsigned result
+// into the i32 path at full width.
+//
+// The EXIT-BYTE oracle otherwise reaches u32 only through a comparison, which
+// collapses the whole value to one bit. That is enough to notice a wrong
+// unsigned condition code and blind to everything else: a div_u that used the
+// signed divide, a shr_u that dragged in sign-extended high bits, a rem_u off
+// by a whole quotient — all of them produce a wrong 32-bit number that a
+// boolean channel can easily round back to the right answer.
+//
+// The cast is a pure reinterpretation of the same 32 bits (`4000000000u32 as
+// i32` is -294967296), verified identical on interp / x86-64 / arm64 / wasm,
+// so it adds no semantics of its own — it only makes the bits observable.
+// The printable oracle has the stronger channel, u32's own `.to_string()`.
+func (g *Generator) emitU32AsI32(b *strings.Builder, sc *scope, depth int) {
+	b.WriteString("((")
+	g.expr(b, sc, tU32, depth+1)
+	b.WriteString(") as i32)")
 }
 
 // emitI64HighHalf writes `((<i64 expr> >> 32i64) as i32)`, routing the top
@@ -2014,6 +2066,18 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 		} else {
 			b.WriteString("false")
 		}
+	case tU32:
+		// Half the draws land above i32::MAX, which is the whole point
+		// of generating u32 at all: a value with bit 31 set is where an
+		// unsigned divide, remainder, shift or comparison stops agreeing
+		// with its signed sibling. A corpus of small u32 literals would
+		// exercise the unsigned opcodes and never reach the operand
+		// range that distinguishes them.
+		if g.flip(0.5) {
+			fmt.Fprintf(b, "%du32", 2147483648+uint32(g.ch.intN(1000)))
+			return
+		}
+		fmt.Fprintf(b, "%du32", g.ch.intN(1000))
 	case tF32:
 		// Always include a decimal point so the lexer locks onto
 		// the float production regardless of the suffix. Two-
@@ -2200,7 +2264,7 @@ func (g *Generator) typePool() []gtype {
 	var pool []gtype
 	if !g.profile.floatsAllowed() {
 		pool = []gtype{
-			tI32, tI64, tBool, tString,
+			tI32, tI64, tU32, tBool, tString,
 			tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32,
 			tXyz, tStatus, tMapI32I32, tResI32I32, tTupI32I64,
 		}
@@ -2234,10 +2298,10 @@ func (g *Generator) sortedDynamicTypes() []gtype {
 // operand type of a comparison.
 func (g *Generator) pickNumeric() gtype {
 	if !g.profile.floatsAllowed() {
-		ints := []gtype{tI32, tI64}
+		ints := []gtype{tI32, tI64, tU32}
 		return ints[g.ch.intN(len(ints))]
 	}
-	return []gtype{tI32, tI64, tF32}[g.ch.intN(3)]
+	return []gtype{tI32, tI64, tU32, tF32}[g.ch.intN(4)]
 }
 
 func (g *Generator) flip(p float64) bool { return g.ch.flip(p) }
