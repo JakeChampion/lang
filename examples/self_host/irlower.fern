@@ -12808,6 +12808,18 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // alias-inc and broke `__rc`. Kept out of line so this huge arm
     // doesn't grow (oversized functions miscompile — cf. #2720).
     if (ascription_target(v.init) != "") { return lower_stmt(ascription_rebind(v), s); }
+    // Record an Option/Result return for an ANNOTATED fn-typed local bound to a
+    // named opt-returning fn (`var f: () => Option[i32] = g`), so a later
+    // `match (f())` names its scrutinee type instead of bailing to the AST
+    // emitter (#3457 slice 3). Gated on the fn-type ANNOTATION: the bare
+    // unannotated `var f = g` form has no fn-type slot metadata, so its `f()`
+    // call miscompiles on the IR path (a raw-pointer dispatch, SIGSEGV) — it must
+    // stay on the AST fallback, which lowers it correctly. Lambdas / closures are
+    // seeded by the clo_init path below (they carry their own dispatch metadata).
+    if (is_fn_payload_spelling(v.type_name) || v.type_name == "fn") {
+        var vfn_optret: string = closure_init_opt_ret(v.init, s);
+        if (vfn_optret.len() > 0) { s = s.mark_closure_opt_ret(v.name, vfn_optret); }
+    }
     // Struct destructure `let Point { x, y } = E;` — parse_struct_destructure
     // encodes it as a StmtVar whose type_name is "@sd:<Struct>:<fields>" and
     // whose name is the comma-joined bindings. Expand it into per-field binds.
@@ -13101,6 +13113,8 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         cvb = cvb.mark_closure_local(v.name);
         // Record an Option/Result return so a later `match (f())` can name its
         // scrutinee type — the closure-LOCAL sibling of the fn-param seeding.
+        // (The annotated named-fn-bound form is seeded at the top of
+        // lower_stmt_var; this covers unannotated lambda / closure inits.)
         var cv_optret: string = closure_init_opt_ret(v.init, cvb);
         if (cv_optret != "") { cvb = cvb.mark_closure_opt_ret(v.name, cv_optret); }
         // #5281: carry the RETCLO fact forward so `var h = g()` (g bound here from
