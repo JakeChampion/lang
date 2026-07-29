@@ -2699,6 +2699,26 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                                 if (aaty != "" && (decl_is_struct(s.structs, aaty) || is_enum_like_name(aaty, s.structs))) { return aaty; }
                             }
                         },
+                        // `h.g[i][j].field` where `g` is a `T[][]` struct FIELD (the
+                        // field sibling of the local-arrarr case above): resolve the
+                        // field's declared type, strip BOTH `[]` to the element struct/
+                        // enum name so `.field` resolves. Without it the second index of
+                        // a struct-array-of-arrays field had no element type and bailed.
+                        parser.ExprFieldAccess(ffa) => {
+                            if (!util.is_all_digits(ffa.field)) {
+                                var foty: string = expr_struct_type(ffa.obj, s);
+                                if (foty != "") {
+                                    var fft: string = decl_field_type(s.structs, foty, ffa.field);
+                                    if (fft.len() >= 4 && fft[fft.len() - 2 : fft.len()] == "[]") {
+                                        var inner1: str = fft[0 : fft.len() - 2];
+                                        if (inner1.len() >= 3 && inner1[inner1.len() - 2 : inner1.len()] == "[]") {
+                                            var elt2: str = inner1[0 : inner1.len() - 2];
+                                            if (decl_is_struct(s.structs, elt2) || is_enum_like_name(elt2, s.structs)) { return elt2 + ""; }
+                                        }
+                                    }
+                                }
+                            }
+                        },
                         _ => {}
                     }
                 },
