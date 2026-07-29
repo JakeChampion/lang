@@ -365,7 +365,36 @@ is `__fern_rc_is_unique` reporting a container-retained array as unique, where
 the AST path reports it shared. That is consistent with wasm arrays having no rc
 header (`[len@0, cap@4, elems@8]`) and `arr_share_inc`/`_dec` being intercepted
 as no-ops there — an alias-retain accounting difference between the two wasm
-backends, not a memory-safety fault in reuse.
+backends.
+
+##### How much does that matter? Less than it first looks — checked, not assumed
+
+`__fern_rc_is_unique` is not only a debug counter: it is the **runtime
+uniqueness guard for constructor reuse** (#4350), whose stated job is to make a
+future hole in the static escape walk *"DEGRADE (fresh box) instead of
+corrupting (in-place write over a shared box)"*. A guard that wrongly answers
+"unique" is a guard that has stopped guarding, so the obvious next inference is
+that wasm IR has a reuse-safety hole.
+
+**That inference does not survive checking.** The guard's subject is a
+struct-update literal — `d` is a STRUCT. On a container-retained struct the two
+wasm paths *agree*:
+
+| shape | AST | IR |
+|---|---|---|
+| array retained in an array (`var both = [a, b]`) | 0 | **1 — differs** |
+| struct retained in an array (`var keep = [d]`) | 1 | 1 — agree |
+
+and agreeing on 1 is plausibly correct there, since the struct is copied into the
+array rather than aliased. So the disagreement is specific to arrays, where the
+element genuinely is a pointer alias — and arrays are not what the reuse guard
+gates.
+
+Stated precisely: this is a real backend disagreement about alias-retain
+accounting for arrays, **whose safety impact is unestablished**. It is not
+demonstrably reachable by constructor reuse, and nothing here shows a live
+corruption. Whoever resolves it should establish reachability first rather than
+inheriting the alarming reading.
 
 **The alias is therefore reverted, not landed**: it would turn those 7 wasm
 cases red, and hiding them behind a skip would bury a real backend disagreement.
