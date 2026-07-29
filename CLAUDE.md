@@ -379,9 +379,14 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   `-timeout 30m`" advice here was ~9× stale and costs you a wasted
   hour-and-a-half per attempt; it is what this note replaces. Use
   `scripts/selfhost-shard-tests SHARD NSHARD < test-list`, the same
-  duration-weighted LPT partition CI uses — max-shard wall-clock is
-  ≈ the single slowest test, which is the floor for any partition. A
-  4-way split is a reasonable local default.
+  duration-weighted LPT partition CI uses.
+  **Measured 4-way, shard 0: 48 min (green).** So sharding pays only if you
+  run ONE shard — four in sequence is ~3.2 h, worse than the unsharded run it
+  replaces. Run them in parallel only if RAM allows: each heavy driver build
+  reserves ~4.3 GB through `buildMemLimiter`, so a 16 GB host fits about two
+  concurrently, not four. For ordinary local work prefer `-run` targeting the
+  tests you actually touched, and leave whole-package sweeps to CI, which
+  shards across machines.
   `internal/e2e` is still fine in one invocation at `-timeout 45m`
   (measured ~1760 s / ~30 min).
   CI doesn't hit the wall — it shards across the `test-e2e-*` workflows,
