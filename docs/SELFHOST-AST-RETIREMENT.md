@@ -109,7 +109,7 @@ miscompiled; only the routing is wrong:
 | `match (f())` where `f` is a closure LOCAL | **partly closed** — the alias shape lowers; the direct shape is a LIFT gap, not a recovery one (see below). First recorded as `fs[i]()`, which was the wrong characterisation |
 | `None as Option[T]` — an ascription scrutinee | **closed** — shared `unary_opt_type` |
 
-#### The one that is still open, characterised properly
+#### The lambda-bound case, characterised properly (now CLOSED — see the 2026-07-29 subsection below)
 
 It was first written down as "calling a fn-typed array element returning
 `Option`". **The array is incidental.** Measured on the merged tree, with
@@ -196,6 +196,20 @@ fixpoint (the risk is changing what lifts for existing lambda-plus-match code):
 
 The `const_func("main$clo")` finding was reproduced with a throwaway `eprint` in
 `const_funcs_only_known` (reverted); re-add it there if re-deriving.
+
+**CLOSED (fix option 1).** `subst_fcall_stmts` gained a `StmtMatch` arm
+(scrutinee + arm bodies + guards), so the leftover-`f` guard no longer declines
+the lift: `match (f())` rewrites to `match (__lam_N())` and the binding lifts
+like the `var o = f()` path. Both the `const_func` and the `lower` bail clear.
+Pinned by `match-closure-local-opt` / `match-capturing-closure-local-opt` in
+`strictIRCorpus` (route IR under FERN_STRICT_IR on x86-64 AND wasm); the batch=4
+whole-compiler emit-all fixpoint stays gen0==gen1 byte-identical. Watch for the
+latent native-codegen footgun this surfaced: reusing the `StmtAssign` arm's
+local name `a` for the new `MatchArm` binding made the IR field resolver mis-key
+`a.target` to `MatchArm` and abort codegen — bind a distinct name (`marm`).
+Still open on a *separate* scrutinee-type-recovery path (both bail `lower`, both
+correct via AST fallback): a fn-local bound to a NAMED fn (`var f = g; match
+(f())` — no lambda to lift) and a Result-payload lambda.
 
 Two things worth carrying forward. First, **`TestSelfHostAsmIRPath` is 80/80
 clean under the flag** once the ascription case closed — independent evidence the
