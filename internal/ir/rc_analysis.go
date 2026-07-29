@@ -1177,7 +1177,32 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// caught by the escape taint in computeFreeEligible, same as the other
 		// untainted-owned cases.
 		return false
-	case *ast.FieldAccess, *ast.Index:
+	case *ast.FieldAccess:
+		// Reading a pointer field out of a struct-typed LOCAL is a COUNTED
+		// alias, not a borrow: the binding site inc's it (needsRcIncOnAlias
+		// fires for a pointer field), and both the destination and the
+		// struct source itself deep-drop at scope exit, so the read owns its
+		// own reference rather than aliasing the container's uncounted. So
+		// the destination stays reclaimable. This is the `l = r.lex` result-
+		// struct threading in lexer.tokenize (docs/SELFHOST-AST-RETIREMENT.md):
+		// a scanner returns `Res { lex, tok }`, the caller extracts `l = r.lex`
+		// to thread the cursor, and the conservative FieldAccess taint
+		// stranded `l` — and through it the whole result-struct cluster —
+		// every iteration. Gated to a struct LOCAL source: a container this
+		// function reasons about and that itself reclaims. A param, a
+		// projection chain (`r.a.b`, whose Target is a FieldAccess), or a
+		// non-struct source keeps the conservative taint. The escape sink
+		// walk is unchanged, so a projection flowing into an UNCOUNTED sink
+		// (`m.set(k, r.field)`) still taints its source there.
+		if id, ok := x.Target.(*ast.Ident); ok {
+			if _, isLocal := b.locals[id.Name]; isLocal {
+				if _, isStruct := b.exprType(id).(ast.StructType); isStruct {
+					return false
+				}
+			}
+		}
+		return true
+	case *ast.Index:
 		return true
 	case *ast.SliceExpr:
 		// A STRING slice copies its bytes into a fresh owned heap buffer

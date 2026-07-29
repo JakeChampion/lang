@@ -2825,6 +2825,38 @@ codegen elsewhere.
 The map-intermediate negatives remain the sharpest soundness probe in this area;
 run them on every iteration of anything that touches the taint.
 
+#### Part 2 landed, and the mechanism split is sharper than "coupled pair" (2026-07-29)
+
+Part 2 is now in `rhsTainted`: a `FieldAccess` read whose source is a struct
+LOCAL is a COUNTED alias (the bind inc's it, both the destination and the source
+struct deep-drop), so it no longer taints its destination. Measured, and it
+corrects the framing above:
+
+- **Part 2 ALONE fully reclaims `result_thread_leak.fern`** (200→2400 of 2400
+  freed, `live_bytes=0`, exit unchanged). Un-tainting `l = r.lex` un-taints `l`,
+  and because `r = scan(l)`'s only tainted input was `l`, `r` un-taints with it —
+  no part 1 needed for that shape. The earlier "neither half moves it" was
+  measured on `tokenize`, whose result structs stay tainted for a SECOND reason
+  the minimal reproducer lacked.
+- **That second reason is scalar-arg poisoning, and it is what part 1 actually
+  fixes.** In `tokenize`, `start_line`/`start_col` are tainted by `escapeOwned`
+  (stored directly into `TokPunct { line: start_line, … }` literals in tokenize
+  itself), and a tainted SCALAR argument to `scan_*(l, start_line, start_col)`
+  re-taints the result via `rhsTainted`'s generic arg loop. Part 1's real job is
+  the scalar-arg EXEMPTION (`inferParamCountedRetain`'s `ptrAllCounted` gate,
+  which today needs `scan_*`'s struct cursor param counted — a struct-param
+  generalisation of the string-only summary). A faithful reproducer that carries
+  the inline scalar store — `rt3` in the session log: an inline `TPunct { line:
+  start_line }` branch — shows part 2 alone reclaiming only 200→1000 of 3400,
+  with `r` and `start_line` still tainted, exactly like the real lexer.
+
+So the split is: **part 2 = the `FieldAccess`-on-struct-local un-taint (landed,
+reclaims the threading cluster); part 1 = the scalar-arg exemption via a
+struct-param counted-retain summary (still open, the map-negative-delicate half,
+needed for tokenize's scalar-poisoned result structs).** `result_thread_leak.fern`
+is the part-2 pin (`TestLeakCheckResultThreadReclaim{X86_64,Arm64}`); a scalar-
+carrying reproducer is the part-1 pin to add when it lands.
+
 The rest of the widening list is unaffected by that refutation but is now
 UNMOTIVATED until the leak is localised — none of it is known to touch the
 number that matters. In rough order, if it turns out to: pure reads (`len`,
