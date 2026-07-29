@@ -1455,6 +1455,24 @@ pub function drop[T](xs: T[], n: i32): T[] {
     return out;
 }
 
+// `take_last(xs, n)` / `drop_last(xs, n)` — the back-of-the-array mirrors
+// of `take` / `drop`: `take_last` keeps the LAST `n` elements
+// (`take_last([1,2,3,4,5], 2) == [4,5]`), `drop_last` keeps everything but
+// them (`[1,2,3]`). Like `take` / `drop`, `n` is clamped: `n <= 0` and
+// `n >= len` behave as the natural empty / whole-array cases, never fault.
+pub function take_last[T](xs: T[], n: i32): T[] {
+    if (n <= 0) { return []; }
+    var start: i32 = xs.len() - n;
+    if (start < 0) { start = 0; }
+    return slice(xs, start, xs.len());
+}
+pub function drop_last[T](xs: T[], n: i32): T[] {
+    if (n <= 0) { return slice(xs, 0, xs.len()); }
+    var end: i32 = xs.len() - n;
+    if (end < 0) { end = 0; }
+    return slice(xs, 0, end);
+}
+
 // `slice(xs, start, end)` — fresh `T[]` of the half-open range
 // `[start, end)`. Both bounds are clamped to `[0, len]` and a start
 // past end yields empty, so out-of-range indices never fault:
