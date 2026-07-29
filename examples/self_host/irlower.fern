@@ -7510,14 +7510,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         return sd.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     }
                     // __rc_underflow(): read the over-release counter.
-                    // `__fern_rc_underflow_count()` is the same builtin under the
-                    // AST emitters' spelling, and is the ONLY one the rc/leak test
-                    // corpus uses (25 files). Without the alias every one of those
-                    // programs bailed here with "call to unknown symbol", so the
-                    // suites that exist to pin refcounting silently exercised the
-                    // AST emitter instead of the IR path they are named for — on
-                    // x86-64 that is not even the production route (#5832).
-                    if (cid.name == "__rc_underflow" || cid.name == "__fern_rc_underflow_count") {
+                    if (cid.name == "__rc_underflow") {
                         if (c.args.len() != 0) { return s.fail(); }
                         return s.emit(ir.op_call_direct("__fern_rc_underflow_get", 0));
                     }
