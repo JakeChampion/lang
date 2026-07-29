@@ -28912,17 +28912,24 @@ function tuple_elem_ctor_eligible(el: parser.Expr, s: LowerState): boolean {
     // closure-returning fn / a closure-local ident — elem_type_tag's "clo"):
     // a leak-only heap box in one pointer slot, like a struct element.
     var el_clo_ok: boolean = elem_type_tag(el, s) == "clo";
-    // A CALL element with a statically-known SCALAR (one-i32-slot) result:
-    // (a) a free-fn call whose callee is in NO nonscalar / wide-return
-    //     registry — its result is a plain i32-class scalar (`(add(1,2), 4)`);
+    // A CALL element with a statically-known SCALAR result:
+    // (a) a free-fn call whose callee is in no NONSCALAR-return registry — its
+    //     result is one scalar slot, i32-class (`(add(1,2), 4)`) or WIDE
+    //     (`(big(2), 1)` with `big: i64` / `f64`);
     // (b) a closure-LOCAL call (`(f(3), 1)` with f a closure local);
     // (c) a closure tuple-element call (`(t.0(3), t.1)` — the callee is a
     //     numeric field access whose element is tagged "clo", dispatched
     //     env-first with an i32 result).
-    // One scalar slot, like any i32 element; elem_type_tag's fallthrough
-    // already tags these "i32". An UNKNOWN or nonscalar-returning callee
-    // stays ineligible (its result would mistype the enc) — struct-returning
-    // calls pass via the existing expr_struct_type gate instead.
+    // One scalar slot either way, and elem_type_tag already classifies the
+    // width — "i64" via infer_expr_width, "f64" via expr_is_f64, else the
+    // "i32" fallthrough — so the kind string drives the store width and the
+    // construction loop routes an i64 element through lower_i64. A wide-
+    // returning callee was excluded here while a wide LOCAL or wide
+    // ARITHMETIC element was already admitted, which made only the call form
+    // bail the whole module to the AST path (#5902). An UNKNOWN or
+    // nonscalar-returning callee stays ineligible (its result would mistype
+    // the enc) — struct-returning calls pass via the expr_struct_type gate,
+    // and f64[]/i64[]-returning ones via el_typedarr_ok.
     var el_call_ok: boolean = false;
     match (el) {
         parser.ExprCall(scc) => {
@@ -28932,7 +28939,6 @@ function tuple_elem_ctor_eligible(el: parser.Expr, s: LowerState): boolean {
                     else if (s.is_user_fn(sccid.name)
                         && !s.is_str_ret_fn(sccid.name) && !s.is_arr_ret_fn(sccid.name)
                         && !s.is_strarr_ret_fn(sccid.name)
-                        && !s.is_f64_ret_fn(sccid.name) && !s.is_i64_ret_fn(sccid.name)
                         && !s.is_f64arr_ret_fn(sccid.name) && !s.is_i64arr_ret_fn(sccid.name)
                         && s.opt_ret_type(sccid.name) == "" && s.tuple_ret_type(sccid.name) == ""
                         && s.map_ret_type(sccid.name) == ""
