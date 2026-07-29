@@ -642,11 +642,36 @@ above is unsafe — the fix has to distinguish an alias-inc'd source from an
 alias-WITHOUT-inc one, which is what the two shapes look like from the drop
 site.
 
-**B. A tuple-VALUED element.** `var t = (3, 4); var c = [t];` leaks
+**B. A tuple-VALUED element.** `var t = (3, 4); var c = [t];` leaked
 allocs=2000 frees=1000 live_bytes=16000 **whether or not** `t` is at its last
-use — last-use is irrelevant because neither path releases it. The container's
-drop simply does not release a tuple-valued element. Drop-side, independent of
-the move analysis.
+use — last-use is irrelevant because neither path released it. Drop-side,
+independent of the move analysis.
+
+The **array** half is now fixed. `arrElemStructDropName` gated the generated
+per-element walk on `tupleNeedsDrop`, which is false for a tuple of plain
+scalars — correctly, since such a tuple's drop body has no element to traverse.
+But the tuple BOX still has to be freed, and the flat fallback
+(`__fern_drop_arr_ptr`, a per-element `__fern_rc_dec`) only decrements: freeing
+needs the size, which only the generated `__drop_arr_tuple_<mangled>` loop
+supplies. Hence exactly one leaked box per iteration — 16 bytes for
+`(i32, i32)`, 8 rc header + 8 payload, which is what identified it. Dropping the
+`tupleNeedsDrop` condition (the registry check stays) routes every tuple element
+through the generated walk; `[t]` is now allocs=2000 frees=2000 live_bytes=0.
+Pinned by `TestX86_64LeakCheckTupleElemArray` + the arm64 leg, with a
+string-carrying tuple as the control (already covered, since `tupleNeedsDrop` is
+true there).
+
+The **tuple-in-tuple** sibling still leaks at the same 16 bytes/iteration, from
+the same root cause one site over: `dropFnNameFor`'s `TupleType` arm carries the
+identical `tupleNeedsDrop` bail, so a tuple-valued ELEMENT of a generated
+`__drop_tuple_` falls to a flat dec. Not fixed here deliberately —
+`dropFnNameFor` is consulted for locals, struct fields, enum payloads and map
+values, so relaxing it is a far wider blast radius than the array walk, and
+`emitDec`'s local-tuple branch already depends on it returning false (a scalar
+tuple local frees inline via `is_unique` → `box_free`, which is why a
+directly-held tuple was never part of this leak). The surgical version is to
+give the per-element drop the same inline `is_unique` → `box_free` fallback that
+`emitDec` uses, rather than to widen the gate.
 
 Both were found by probing the *mechanism* rather than re-reading the sweep: the
 first table inferred cause from which tests were red, which is how the container
