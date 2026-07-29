@@ -79,7 +79,7 @@ func runProg(m map[string]*Program, table []string, p *Program, h *modelHeap, ar
 			case MovReg:
 				regs[in.Dst] = regs[in.Src]
 			case BinOp:
-				r, err := binInt(in.K, regs[in.Dst], regs[in.Src])
+				r, err := binInt(in.K, regs[in.Dst], regs[in.Src], in.W)
 				if err != nil {
 					return 0, 0, err
 				}
@@ -442,7 +442,31 @@ func b2i(b bool) int64 {
 	return 0
 }
 
-func binInt(k ssa.OpKind, a, b int64) (int64, error) {
+// binInt mirrors ssa.evalBinaryInt, width included. w is the op width (64, or
+// 32 for everything else). Two things depend on it, both invisible until an
+// operand or a count runs past 32 bits:
+//
+//   - the unsigned ops must read a 32-bit operand as u32, since 32-bit values
+//     sit sign-extended in the int64 slot (see maskW);
+//   - a shift masks its count to the operand width, 5 bits at 32 and 6 at 64,
+//     where Go would instead yield 0 for anything out of range.
+//
+// A model that skips either agrees with an emitter that makes the same
+// mistake, which is precisely the divergence Run exists to catch.
+func binInt(k ssa.OpKind, a, b int64, w int8) (int64, error) {
+	if w != 64 {
+		switch k {
+		case ssa.OpDivU, ssa.OpRemU, ssa.OpShrU:
+			a = int64(uint32(a))
+			b = int64(uint32(b))
+		}
+	}
+	shiftBy := func() uint64 {
+		if w == 64 {
+			return uint64(b) & 63
+		}
+		return uint64(uint32(b) & 31)
+	}
 	switch k {
 	case ssa.OpAdd:
 		return a + b, nil
@@ -457,11 +481,11 @@ func binInt(k ssa.OpKind, a, b int64) (int64, error) {
 	case ssa.OpXor:
 		return a ^ b, nil
 	case ssa.OpShl:
-		return a << uint64(b), nil
+		return a << shiftBy(), nil
 	case ssa.OpShr:
-		return a >> uint64(b), nil
+		return a >> shiftBy(), nil
 	case ssa.OpShrU:
-		return int64(uint64(a) >> uint64(b)), nil
+		return int64(uint64(a) >> shiftBy()), nil
 	case ssa.OpDiv:
 		if b == 0 {
 			return 0, fmt.Errorf("Run: division by zero")

@@ -791,14 +791,26 @@ func evalBinaryInt(k OpKind, a, b int64, width int8) (int64, error) {
 	case OpXor:
 		return a ^ b, nil
 	case OpShl:
-		return a << uint64(b), nil
+		return a << shiftCount(b, width), nil
 	case OpShr:
-		return a >> uint64(b), nil
+		return a >> shiftCount(b, width), nil
 	case OpShrU:
-		return int64(uint64(a) >> uint64(b)), nil
+		return int64(uint64(a) >> shiftCount(b, width)), nil
 	default:
 		return 0, fmt.Errorf("Eval: not a binary int op: %v", k)
 	}
+}
+
+// shiftCount masks a shift amount to the operand width — 5 bits at 32, 6 at
+// 64 — matching what every ISA does with the low bits of the count register
+// and what foldint.go folds. Go instead yields 0 for an out-of-range count,
+// so an unmasked `a << uint64(b)` here would make the model disagree with
+// both the language and the backends it is the oracle for.
+func shiftCount(b int64, width int8) uint64 {
+	if width == 64 {
+		return uint64(b) & 63
+	}
+	return uint64(uint32(b) & 31)
 }
 
 func evalFCompare(k OpKind, a, b float64) int64 {

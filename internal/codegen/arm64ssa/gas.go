@@ -4436,25 +4436,44 @@ func asmInst(in x86.Inst, scratch int) ([]string, error) {
 // register, then msub (Xd = Xa - Xn*Xm) yields dividend - quotient*divisor.
 func divShiftSeq(in x86.Inst, scratch int) []string {
 	d, s := xreg(in.Dst), xreg(in.Src)
-	// The UNSIGNED ops (lsr / udiv / unsigned rem) must not see the sign-extended
-	// high 32 bits of a 32-bit operand: a u32 with bit 31 set is stored sign-
-	// extended (all 1s in bits 32-63, per maskFix), so a 64-bit logical shift or
-	// unsigned divide would drag those bits in and miscompute (the u32 `>>` bug
-	// that broke SHA-256). At 32-bit width (in.W != 64) render them in the 32-bit
-	// w-form, which reads only the low 32 bits and zero-extends the result; the
-	// trailing maskFix then re-sign-extends to the storage convention. Signed and
-	// 64-bit ops keep the full-width x-form (their sign-extended operands are
-	// already correct).
-	unsigned32 := in.W != 64
+	// A 32-bit op renders in the 32-bit w-form, for TWO independent reasons.
+	//
+	// Operand: the unsigned ops (lsr / udiv / unsigned rem) must not see the
+	// sign-extended high 32 bits of a 32-bit operand. A u32 with bit 31 set is
+	// stored sign-extended (all 1s in bits 32-63, per maskFix), so a 64-bit
+	// logical shift or unsigned divide would drag those bits in and miscompute
+	// (the u32 `>>` bug that broke SHA-256).
+	//
+	// COUNT: every shift, signed included, masks its count to the width of the
+	// register it operates on — 5 bits for w, 6 for x. So `460 << 124` at i32
+	// width is `460 << (124 & 31)` = -1073741824, but rendered as `lsl x` it
+	// becomes `460 << (124 & 63)`, whose low 32 bits are 0. The signed shifts
+	// used to take the x-form on the grounds that "sign-extended operands are
+	// already correct", which is true of the VALUE and says nothing about the
+	// count.
+	//
+	// The w-form reads only the low 32 bits and zero-extends the result; the
+	// trailing maskFix re-sign-extends to the storage convention. 64-bit ops
+	// keep the x-form. Signed DIVIDE genuinely does not care: sdiv takes no
+	// count, and a sign-extended operand divides correctly at either width.
+	width32 := in.W != 64
 	dw, sw := wreg(in.Dst), wreg(in.Src)
 	var out []string
 	switch in.K {
 	case ssa.OpShl:
-		out = []string{fmt.Sprintf("lsl %s, %s, %s", d, d, s)}
+		if width32 {
+			out = []string{fmt.Sprintf("lsl %s, %s, %s", dw, dw, sw)}
+		} else {
+			out = []string{fmt.Sprintf("lsl %s, %s, %s", d, d, s)}
+		}
 	case ssa.OpShr:
-		out = []string{fmt.Sprintf("asr %s, %s, %s", d, d, s)} // arithmetic (signed)
+		if width32 {
+			out = []string{fmt.Sprintf("asr %s, %s, %s", dw, dw, sw)} // arithmetic, 32-bit
+		} else {
+			out = []string{fmt.Sprintf("asr %s, %s, %s", d, d, s)} // arithmetic, 64-bit
+		}
 	case ssa.OpShrU:
-		if unsigned32 {
+		if width32 {
 			out = []string{fmt.Sprintf("lsr %s, %s, %s", dw, dw, sw)} // logical, 32-bit
 		} else {
 			out = []string{fmt.Sprintf("lsr %s, %s, %s", d, d, s)} // logical, 64-bit
@@ -4462,13 +4481,13 @@ func divShiftSeq(in x86.Inst, scratch int) []string {
 	case ssa.OpDiv:
 		out = []string{fmt.Sprintf("sdiv %s, %s, %s", d, d, s)}
 	case ssa.OpDivU:
-		if unsigned32 {
+		if width32 {
 			out = []string{fmt.Sprintf("udiv %s, %s, %s", dw, dw, sw)} // 32-bit
 		} else {
 			out = []string{fmt.Sprintf("udiv %s, %s, %s", d, d, s)} // 64-bit
 		}
 	case ssa.OpRem, ssa.OpRemU:
-		if in.K == ssa.OpRemU && unsigned32 {
+		if in.K == ssa.OpRemU && width32 {
 			q := wreg(scratch)
 			out = []string{
 				fmt.Sprintf("udiv %s, %s, %s", q, dw, sw),         // q = d / s (32-bit)
