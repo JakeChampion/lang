@@ -3062,6 +3062,22 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
         parser.ExprIdent(uvi) => { if (decl_is_struct(s.structs, uvi.name)) { return ""; } },
         _ => {}
     }
+    // A BYTE receiver keys "u8.<m>", not the "i32.<m>" expr_scalar_type falls
+    // through to. Same reason the u32 / u64 branches exist there: std/i32's 21
+    // ascii classifiers are declared on `u8` now (#5629), so an i32 key misses
+    // and bails the module to AST. expr_subword_kind sees through an `as u8`
+    // cast as well as a tracked slot, so `(b as u8).is_ascii_digit()` — the
+    // shape a byte pulled out of i32 arithmetic takes — resolves too.
+    if (expr_subword_kind(e, s) == "u8") { return "u8"; }
+    // `s[i].is_ascii_alnum()` — indexing a STRING yields a byte (#5629), but
+    // expr_subword_kind's index arm reads the ARRAY's slot kind, and a string
+    // slot carries none. Resolved here rather than there so the byte-ness of a
+    // string index stays a dispatch fact and does not start driving
+    // expr_subword_kind's arithmetic width-wrap.
+    match (e) {
+        parser.ExprIndex(bix) => { if (expr_is_str(bix.array, s)) { return "u8"; } },
+        _ => {}
+    }
     // Arrays / tuples / maps aren't primitive receivers either; their builtin
     // methods (.len / .append / map ops) are intercepted before this fallback.
     return expr_scalar_type(e, s);
