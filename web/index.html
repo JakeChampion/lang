@@ -735,7 +735,7 @@ function main(): i32 {
     var s: string = "  Hello, Fern!  ";
     print("len:        " + s.len().to_string());
     print("trim:       \\"" + s.trim() + "\\"");
-    print("byte[2]:    " + s[2].to_string());
+    print("byte[2]:    " + (s[2] as i32).to_string());
     var starts: string = "no";
     if (s.trim().starts_with("Hello")) { starts = "yes"; }
     print("starts:     " + starts);
