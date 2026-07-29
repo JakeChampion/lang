@@ -343,7 +343,7 @@ function main(): i32 {
     if (got.len() != want.len()) { return 99; }
     var i: i32 = 0;
     while (i < want.len()) {
-        if ((got[i] as i32) != (want[i] as i32)) { return i + 1; }
+        if (got[i] != want[i]) { return i + 1; }
         i = i + 1;
     }
     return 0;
