@@ -262,6 +262,8 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_chr(cache)) { out = out.append("@uses_chr"); }
     if (module_uses_divrem(cache)) { out = out.append("@uses_divrem"); }
     if (module_uses_i32_to_string(cache)) { out = out.append("@uses_i32_to_string"); }
+    if (module_uses_i64_to_string(cache)) { out = out.append("@uses_i64_to_string"); }
+    if (module_uses_u64_to_string(cache)) { out = out.append("@uses_u64_to_string"); }
     if (module_uses_i64_divrem(cache)) { out = out.append("@uses_i64_divrem"); }
     if (module_uses_maps(cache)) { out = out.append("@uses_maps"); }
     if (module_uses_map_w64(cache)) { out = out.append("@uses_map_w64"); }
@@ -646,10 +648,15 @@ function wasm_helper_symbol(name: string): string {
     if (name == "__fern_map_free_ks") { return "$__fern_map_release"; }
     if (name == "__fern_map_free_kvs") { return "$__fern_map_release"; }
     if (name == "__fern_rc_underflow_get") { return "$__fern_rc_underflow_count"; }
-    // i32.to_string()'s decimal helper — wasm.fern's to_string_helpers emits it
-    // as $__fern_i32_to_str (param i32 -> i32 box), gated on module_uses_tostring
-    // (an AST walk, so it fires on the IR path too).
+    // i32.to_string()'s decimal helper — i32_to_string_helper emits it as
+    // $__fern_i32_to_str (param i32 -> i32 box), gated on @uses_i32_to_string.
     if (name == "__fern_i32_to_string") { return "$__fern_i32_to_str"; }
+    // The wide siblings (#5826): the register backends compile these from
+    // asmcore.rt_src_{i64,u64}_to_string; wasm serves them with hand-written
+    // WAT (i64_to_string_helper / u64_to_string_helper), each taking the value
+    // as an i64 param and returning the string block.
+    if (name == "__fern_i64_to_string") { return "$__fern_i64_to_str"; }
+    if (name == "__fern_u64_to_string") { return "$__fern_u64_to_str"; }
     return "$" + name;
 }
 
@@ -1007,81 +1014,55 @@ pub function module_uses_str_lines(cache: irlower.LowerResult[]): boolean {
     return module_emits_op_cached(cache, "str_lines");
 }
 
-// module_uses_i32_to_string reports whether any function emits the i32.to_string()
-// runtime call (a call_direct to __fern_i32_to_string) — so the heap allocator +
-// $__fern_i32_to_str helper (wasm.to_string_helpers) are emitted, even for an
-// otherwise alloc-free module. (module_emits_op keys on op.kind, not the
-// call_direct symbol, so this needs its own scan.)
-pub function module_uses_i32_to_string(cache: irlower.LowerResult[]): boolean {
+// module_calls_direct reports whether any function emits a call_direct to the
+// named runtime helper — the shared scan behind every helper gate keyed on a
+// symbol rather than an op kind (module_emits_op keys on op.kind).
+pub function module_calls_direct(cache: irlower.LowerResult[], name: string): boolean {
     var fi: i32 = 0;
     while (fi < cache.len()) {
         var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_i32_to_string") { return true; }  // call_direct
+            if (r.ops[i].kind_tag == 149 && r.ops[i].str == name) { return true; }  // call_direct
             i = i + 1;
         }
         fi = fi + 1;
     }
     return false;
+}
+
+// module_uses_i32_to_string reports whether any function emits the i32.to_string()
+// runtime call — so the heap allocator + $__fern_i32_to_str helper are emitted,
+// even for an otherwise alloc-free module.
+pub function module_uses_i32_to_string(cache: irlower.LowerResult[]): boolean {
+    return module_calls_direct(cache, "__fern_i32_to_string");
+}
+
+// module_uses_i64_to_string / module_uses_u64_to_string are the wide siblings
+// (#5826): a `.to_string()` on an i64/u64 receiver lowers to a call_direct the
+// register backends compile from asmcore.rt_src_{i64,u64}_to_string, and which
+// wasm serves with the $__fern_{i64,u64}_to_str WAT bodies — so each need pulls
+// its own formatter (and the heap its string block comes from).
+pub function module_uses_i64_to_string(cache: irlower.LowerResult[]): boolean {
+    return module_calls_direct(cache, "__fern_i64_to_string");
+}
+
+pub function module_uses_u64_to_string(cache: irlower.LowerResult[]): boolean {
+    return module_calls_direct(cache, "__fern_u64_to_string");
 }
 
 // module_calls_arr_str_join reports whether any function emits the xs.join(sep)
-// runtime call (a call_direct to __fern_arr_str_join, #5328) — so needs_of can
-// pull in the $__fern_str_join WAT helper (@uses_arr_str_join). (module_emits_op
-// keys on op.kind, not the call_direct symbol, so this needs its own scan.)
-// module_calls_wide_to_string reports whether any function lowers a
-// `.to_string()` on an i64/u64 receiver (#5826). The register backends serve
-// these by compiling asmcore.rt_src_i64_to_string / rt_src_u64_to_string
-// through the IR pipeline; wasm has no such mechanism (its runtime helpers are
-// hand-written WAT), so a wasm module reaching one would emit a call to an
-// undefined function. Deferring keeps it on the AST emitter until the WAT
-// siblings of $__fern_i32_to_str exist — the wasm half of #5826.
-pub function module_calls_wide_to_string(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 149
-                    && (r.ops[i].str == "__fern_i64_to_string" || r.ops[i].str == "__fern_u64_to_string")) { return true; }
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
-}
-
+// runtime call (#5328) — so needs_of can pull in the $__fern_str_join WAT
+// helper (@uses_arr_str_join).
 pub function module_calls_arr_str_join(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_arr_str_join") { return true; }  // call_direct
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    return module_calls_direct(cache, "__fern_arr_str_join");
 }
 
 // module_uses_str_to_i32 reports whether any function emits the str_to_i32(s)
-// runtime call (a call_direct to __fern_str_to_i32) — so wasm.str_to_i32_helper
-// is emitted. Allocation-free, so it has no heap dependency. (module_emits_op
-// keys on op.kind, not the call_direct symbol, so this needs its own scan.)
+// runtime call — so wasm.str_to_i32_helper is emitted. Allocation-free, so it
+// has no heap dependency.
 pub function module_uses_str_to_i32(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_str_to_i32") { return true; }  // call_direct
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    return module_calls_direct(cache, "__fern_str_to_i32");
 }
 
 // module_uses_strbuf reports whether any function emits a global string-builder
@@ -1094,21 +1075,11 @@ pub function module_uses_strbuf(cache: irlower.LowerResult[]): boolean {
         || module_emits_op_cached(cache, "strbuf_take");
 }
 
-// module_uses_chr reports whether any function emits the chr(n) runtime call (a
-// call_direct to __fern_chr) — so wasm.chr_helper + the heap allocator are
-// emitted. chr allocates its 1-char box, so the chr gate also pulls the heap in.
+// module_uses_chr reports whether any function emits the chr(n) runtime call —
+// so wasm.chr_helper + the heap allocator are emitted. chr allocates its
+// 1-char box, so the chr gate also pulls the heap in.
 pub function module_uses_chr(cache: irlower.LowerResult[]): boolean {
-    var fi: i32 = 0;
-    while (fi < cache.len()) {
-        var r: irlower.LowerResult = cache[fi];
-        var i: i32 = 0;
-        while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 149 && r.ops[i].str == "__fern_chr") { return true; }  // call_direct
-            i = i + 1;
-        }
-        fi = fi + 1;
-    }
-    return false;
+    return module_calls_direct(cache, "__fern_chr");
 }
 
 // module_calls_strarrarr_free reports whether any function lowers a
@@ -1386,10 +1357,10 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // the AST path, so the op-blocklist below need not be exhaustive (#6).
         && all_lowered_ok(cache)
         && !module_erased_wide(cache)
-        // i64/u64 `.to_string()` (#5826): lowered as a call_direct the register
-        // backends compile from Fern source, which wasm cannot do. See
-        // module_calls_wide_to_string.
-        && !module_calls_wide_to_string(cache)
+        // i64/u64 `.to_string()` is NO LONGER deferred (#5826): the register
+        // backends compile it from asmcore Fern source, and wasm now serves it
+        // with the $__fern_{i64,u64}_to_str WAT bodies (i64_to_string_helper /
+        // u64_to_string_helper), gated on @uses_{i64,u64}_to_string.
         // The i32 builtin helpers (sum / product / pow / index_of / contains /
         // min / max) are NO LONGER deferred: wasm_ir.arr_i32_helpers emits WAT
         // bodies for them, gated on @uses_arr_i32_helpers. Deferring them was
@@ -1510,11 +1481,11 @@ pub function component_needs_ok(needs: string[], io: boolean): boolean {
         // already calls, so admitting them costs only the import + body swap.
         if (io && (n == "now_ns" || n == "now_unix_ms" || n == "monotonic_ns"
             || n == "random_bytes" || n == "random_i32")) { i = i + 1; continue; }
-        // env / args read a preview2 LIST, so their cores must also export
-        // cabi_realloc (the guest allocator the canonical ABI materialises the
-        // list into) — see the mode-2 gate in emit_ir_module_units_mode.
-        // `arg_at` is deliberately NOT here: it has no *_p2 body on either
-        // path, so a lone-argument read stays on the AST emitter.
+        // env / args / arg_at read a preview2 LIST, so their cores must also
+        // export cabi_realloc (the guest allocator the canonical ABI
+        // materialises the list into) — see the mode-2 gate in
+        // emit_ir_module_units_mode. arg_at shares args's get-arguments import
+        // and copies one entry out of the list (arg_at_func_p2).
         if (io && (n == "env" || n == "args" || n == "arg_at")) { i = i + 1; continue; }
         // The filesystem pair. Their mode-2 bodies box a real IoError variant
         // (err_payload_p2), which the IR consumer reads at the right offsets —
@@ -5225,8 +5196,6 @@ pub function arr_slice_helper(): string {
     o = o + "    (local.get $na))\n";
     return o;
 }
-// to_string_helpers emits the integer→string runtime backing
-// `(n).to_string()` (the desugaring of an f-string interpolant): format
 // str_to_i32_helper emits $__fern_str_to_i32: parse a `[len@0][bytes@4]` string
 // strbuf_helpers emits the wasm global string-builder runtime (strbuf_reset /
 // strbuf_append / strbuf_take) — the wasm sibling of asm_ir's __fern_strbuf_*
@@ -5328,9 +5297,18 @@ pub function divrem_helpers(): string {
     out = out + "    (select (local.get $a) (i32.rem_s (local.get $a) (local.get $safe)) (i32.eqz (local.get $b))))\n";
     return out;
 }
-// an i32 / i64 into a fresh `[len][bytes]` heap block. Depends on
-// $__fern_alloc.
+// The integer→string runtime backing `(n).to_string()` (and so an f-string
+// interpolant, which desugars to it): format an i32 / i64 / u64 into a fresh
+// `[len][bytes]` heap block, rc-headered by $__fern_str_box.
+//
+// to_string_helpers is the AST emitter's bundle (i32 + i64, emitted together on
+// one `.to_string()` gate); the IR path emits each body on its own need
+// (@uses_i32_to_string / @uses_i64_to_string / @uses_u64_to_string), so an
+// i64-only module carries no dead i32 formatter.
 pub function to_string_helpers(): string {
+    return i32_to_string_helper() + i64_to_string_helper();
+}
+pub function i32_to_string_helper(): string {
     var o: string = "";
     o = o + "  (func $__fern_i32_to_str (param $n i32) (result i32)\n";
     o = o + "    (local $neg i32) (local $mag i32) (local $len i32) (local $blk i32) (local $p i32)\n";
@@ -5365,11 +5343,18 @@ pub function to_string_helpers(): string {
     o = o + "      (br $fl)))\n";
     o = o + "    (if (local.get $neg) (then (i32.store8 (i32.add (local.get $blk) (i32.const 4)) (i32.const 45))))\n";
     o = o + "    (local.get $blk))\n";
-    // i64 variant (mag / digit math in i64; addresses + length stay i32).
+    return o;
+}
+// i64 variant (mag / digit math in i64; addresses + length stay i32). The
+// magnitude runs through i64.div_u / i64.rem_u, so INT64_MIN — whose negation
+// overflows back to itself — still renders its exact 9223372036854775808
+// digits.
+pub function i64_to_string_helper(): string {
+    var o: string = "";
     o = o + "  (func $__fern_i64_to_str (param $n i64) (result i32)\n";
     o = o + "    (local $neg i32) (local $mag i64) (local $len i32) (local $blk i32) (local $p i32)\n";
     o = o + "    (if (i64.eqz (local.get $n)) (then\n";
-    o = o + "      (local.set $blk (call $__fern_alloc (i32.const 5)))\n";
+    o = o + "      (local.set $blk (call $__fern_str_box (i32.const 5)))\n";
     o = o + "      (i32.store (local.get $blk) (i32.const 1))\n";
     o = o + "      (i32.store8 (i32.add (local.get $blk) (i32.const 4)) (i32.const 48))\n";
     o = o + "      (return (local.get $blk))))\n";
@@ -5394,6 +5379,38 @@ pub function to_string_helpers(): string {
     o = o + "      (local.set $mag (i64.div_u (local.get $mag) (i64.const 10)))\n";
     o = o + "      (br $fl)))\n";
     o = o + "    (if (local.get $neg) (then (i32.store8 (i32.add (local.get $blk) (i32.const 4)) (i32.const 45))))\n";
+    o = o + "    (local.get $blk))\n";
+    return o;
+}
+// u64 variant: same digit loop with no sign branch, so a value with the high
+// bit set renders as its unsigned magnitude (18446744073709551615) rather than
+// the -1 the signed formatter would print.
+pub function u64_to_string_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_u64_to_str (param $n i64) (result i32)\n";
+    o = o + "    (local $mag i64) (local $len i32) (local $blk i32) (local $p i32)\n";
+    o = o + "    (if (i64.eqz (local.get $n)) (then\n";
+    o = o + "      (local.set $blk (call $__fern_str_box (i32.const 5)))\n";
+    o = o + "      (i32.store (local.get $blk) (i32.const 1))\n";
+    o = o + "      (i32.store8 (i32.add (local.get $blk) (i32.const 4)) (i32.const 48))\n";
+    o = o + "      (return (local.get $blk))))\n";
+    o = o + "    (local.set $len (i32.const 0))\n";
+    o = o + "    (local.set $mag (local.get $n))\n";
+    o = o + "    (block $cd (loop $cl\n";
+    o = o + "      (br_if $cd (i64.eqz (local.get $mag)))\n";
+    o = o + "      (local.set $len (i32.add (local.get $len) (i32.const 1)))\n";
+    o = o + "      (local.set $mag (i64.div_u (local.get $mag) (i64.const 10)))\n";
+    o = o + "      (br $cl)))\n";
+    o = o + "    (local.set $mag (local.get $n))\n";
+    o = o + "    (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
+    o = o + "    (i32.store (local.get $blk) (local.get $len))\n";
+    o = o + "    (local.set $p (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $len)))\n";
+    o = o + "    (block $fd (loop $fl\n";
+    o = o + "      (br_if $fd (i64.eqz (local.get $mag)))\n";
+    o = o + "      (local.set $p (i32.sub (local.get $p) (i32.const 1)))\n";
+    o = o + "      (i32.store8 (local.get $p) (i32.wrap_i64 (i64.add (i64.const 48) (i64.rem_u (local.get $mag) (i64.const 10)))))\n";
+    o = o + "      (local.set $mag (i64.div_u (local.get $mag) (i64.const 10)))\n";
+    o = o + "      (br $fl)))\n";
     o = o + "    (local.get $blk))\n";
     return o;
 }
@@ -7156,7 +7173,7 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // mode 2 folds into the heap gate: the $fd_write shim allocates its
     // canonical-ABI return area through $__fern_alloc, so a component-io core
     // needs the heap even when the program itself never allocates.
-    if (mode == 2 || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "remove_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
+    if (mode == 2 || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "remove_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
         out = out + heap_alloc_helpers(heap_base_for_strs(sv), fl_base_for_strs(sv), fl_cells());
         out = out + rc_runtime_helpers(heap_base_for_strs(sv));
     }
@@ -7200,9 +7217,13 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // $__fern_str_box from heap_alloc_helpers, which module_allocates pulls
     // in for any string program.
     if (need(needs, "@uses_strings") || need(needs, "@uses_maps")) { out = out + strcat_streq_helpers(); }
-    // $__fern_i32_to_str backs i32.to_string() (wasm_helper_symbol maps the
-    // IR call_direct to it).
-    if (need(needs, "@uses_i32_to_string")) { out = out + to_string_helpers(); }
+    // $__fern_i32_to_str / _i64_to_str / _u64_to_str back `.to_string()` on an
+    // i32 / i64 / u64 receiver (wasm_helper_symbol maps each IR call_direct to
+    // its body). One gate each, so a module formatting only one width carries
+    // only that formatter.
+    if (need(needs, "@uses_i32_to_string")) { out = out + i32_to_string_helper(); }
+    if (need(needs, "@uses_i64_to_string")) { out = out + i64_to_string_helper(); }
+    if (need(needs, "@uses_u64_to_string")) { out = out + u64_to_string_helper(); }
     // $__fern_now_ns / $__fern_now_unix_ms / $__fern_monotonic_ns back the
     // clock builtins (each result i64), reading the preview1 clock_time_get
     // import into the 8-byte scratch at addr 16 — emitted as a trio (the AST
