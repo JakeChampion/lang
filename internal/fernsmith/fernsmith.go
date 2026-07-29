@@ -1857,10 +1857,24 @@ func (g *Generator) leaf(b *strings.Builder, sc *scope, t gtype, depth int) {
 	g.literal(b, sc, t, depth)
 }
 
-// numericExpr picks `+`, `-`, or `*` and recurses with operands of
-// the same numeric type so the checker doesn't see a width mismatch.
-// Division and modulo are skipped: division by zero traps and we
-// want every emitted program to be runnable, not just type-correct.
+// numericExpr picks an arithmetic operator and recurses with operands
+// of the same numeric type so the checker doesn't see a width mismatch.
+//
+// `/` and `%` ARE included. They were skipped on the grounds that
+// "division by zero traps", which is not true of Fern: division is
+// total, and all four backends agree that `7 / 0` is 0, `7 % 0` is 7,
+// `INT_MIN / -1` is INT_MIN, and `INT_MIN % -1` is 0.
+//
+// Excluding them hid the surface where the backends differ MOST. The
+// hardware does three different things — x86 `idiv` faults on both
+// div-by-zero and INT_MIN/-1, wasm `i32.div_s` traps on both, arm64
+// `sdiv` traps on neither — so each backend normalises to the shared
+// contract with its own guard code, and none of that guard code was
+// reachable from the differential corpus.
+//
+// Float division needs no special handling: `x / 0.0` is IEEE ±Inf or
+// NaN, which the printable oracle only ever observes through portable
+// channels (a "T"/"F" comparison or a saturating `as i32`).
 //
 // For i32 it sometimes produces the HIGH half of an i64 instead —
 // see emitI64HighHalf.
@@ -1869,7 +1883,12 @@ func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth in
 		g.emitI64HighHalf(b, sc, depth)
 		return
 	}
-	op := []string{"+", "-", "*"}[g.ch.intN(3)]
+	ops := []string{"+", "-", "*", "/"}
+	if t != tF32 {
+		// `%` is integer-only.
+		ops = append(ops, "%")
+	}
+	op := ops[g.ch.intN(len(ops))]
 	b.WriteByte('(')
 	g.expr(b, sc, t, depth+1)
 	fmt.Fprintf(b, " %s ", op)
