@@ -2801,6 +2801,129 @@ arrays was dropped; if the lengths are all sane, the corruption is downstream in
 stays blocked on this, but it is now a search with a named target rather than an
 open question.
 
+### SOLVED: a shared `string[]` buffer, grown without a retain (2026-07-29)
+
+The mechanism is a **use-after-free in `__fern_arr_push_grow`'s copy path**,
+which the arm merely EXPOSES. It is not in `sanitize_label`, not in the
+`EmitState` buffer, and not in any of the `asmcore.fern` arrays named above —
+those are `string[]`s built by projection-push, which inc every element and are
+balanced. Distilled to 25 lines in `examples/probes/alias_grow_uaf.fern`
+(exit 0 native + interp, exit 1 with the arm; an `FERN_RC_FREE_DEBUG=1` build
+traps on `ud2` at the stale holder).
+
+**The chain, each link measured.**
+
+1. The one function that matters is `irlower.lift_lambdas_view` — established by
+   bisecting the arm itself, not by reading code. `rhsTainted`'s arm was gated on
+   a per-function allow-list (`FERN_ARM_LIST`) and the 147 functions whose
+   rcPlan the arm changes (an `RcPlanHook` dump of the driver, diffed between
+   two `cmd/fern` builds) were halved down. **Enabling the arm for
+   `irlower__lift_lambdas_view` ALONE reproduces all four failures with the
+   identical signature**; the other 146 together are clean.
+2. In that function the arm makes BOTH halves of an aliased pair reclaimable —
+   `freeEligible` gains `gfns,lgfns` (plus `worklist`, `r`, `cbody`):
+
+       var lgfns: string[] = gfns;                       // alias inc -> buffer rc 2
+       while (gj < acc.funcs.len()) { lgfns = lgfns.append(acc.funcs[gj].name); … }
+
+3. `lgfns = lgfns.append(..)` is the **self-append MOVE form**, which
+   `emitArrayPush` deliberately routes to the plain `__fern_arr_push_grow`
+   rather than the retaining `_ptr` / `_str` variants (`ir.go`'s "EXCEPTION"
+   comment). Its copy path memcpy's the element pointers with **no retain** —
+   sound only because the form it was written for frees the old buffer with a
+   buffer-only `__fern_arr_dec` right after ("the old buffer's pointer elements
+   were transferred to the new buffer").
+4. The copy path is taken here for the OTHER reason: `rc != 1`. The old buffer
+   is not freed — `gfns` still owns it, `__fern_arr_dec` just takes it 2 → 1.
+   So two live buffers now share every element pointer under a single count.
+5. Both locals are reclaimable, so both walk-drop at exit via
+   `__fern_drop_arr_str`, which decs each element. **Every shared name gets two
+   decs for one inc.**
+6. Only the names with no other owner actually die. A parsed name is still held
+   by the token stream / AST idents; a **monomorphised clone's** name is a fresh
+   concat from `clone_bg` (`fd.name + "__" + sanitize_key(key)`) owned by
+   nothing but its `FuncDecl`, so rc 2 → 0 and the block is freed and recycled.
+   That is why the corrupted symbols are always the mono clones at the tail of
+   `mod.funcs` (`test__assert_eq__i32`, `test__assert_eq_map__string__string`, …)
+   and never an ordinary function.
+
+That accounts for all three faces in the table above from one cause: a recycled
+block whose length word reads back 0 gives `__fn_`, one that reads 1 gives
+`__fn_m`, and the `undefined reference` is the same thing seen from the call
+sites — they spell the name correctly (it comes from the rewritten call
+expression, a different string), the DEFINITION is what lost it. In
+`option_combinators` the entire 18150-line emit differs by exactly one line.
+
+**The chain is causal, not correlational — the shape was removed and remeasured**
+(the method note further up this file, applied). With the arm still enabled for
+`lift_lambdas_view` and ONLY the alias replaced by an element-by-element copy
+(`var lgfns: string[] = []` + a loop over `gfns`, which inc's each element into
+the new buffer), all four cases go back to **byte-identical** with baseline:
+
+| build | option | result | array | map_eq |
+|---|---|---|---|---|
+| arm on `lift_lambdas_view` alone | corrupt | corrupt | corrupt | corrupt |
+| same, alias replaced by a copying loop | same | same | same | same |
+
+**Why every earlier probe read clean.** Three conditions have to hold at once,
+and dropping any one of them makes the program correct:
+
+| condition | what fails without it |
+|---|---|
+| both aliases reclaimable | one walk-drop, one dec — balanced (this is main's state today, and why the shape is currently unreachable) |
+| the grow takes the COPY path with the old buffer surviving | in-place grow shares nothing |
+| the element outlives its own buffer only via a second holder | an rc≥3 name absorbs the extra dec silently |
+
+It is also **x86-64 only** in this shape: the same probe under `-target arm64`
+returns 0 with the arm applied (two-word strings take a different retain path).
+The self-host failure is an x86-64 miscompile of `mmc` — the arm64 gate catches
+it because `mmc`, an x86-64 binary, is the thing that miscompiles.
+
+**Where a fix goes.** Not in the arm, and not in `lift_lambdas_view` (rebuilding
+`lgfns` element-by-element instead of aliasing removes the symptom, which is the
+symptom-shielding `if` CLAUDE.md warns about — the next aliased pair reopens
+it). The invariant that is actually broken is `emitArrayPush`'s
+transfer-vs-retain pairing, which assumes the self-append's old buffer always
+dies. Two shapes fix it, both in `internal/ir`:
+
+- a `__fern_arr_push_grow_move_ptr` / `_move_str` that retains the copied
+  elements **iff the incoming rc != 1** — "the old buffer survives this grow" is
+  exactly that test, and it also covers the `forceCopy` (#4827) and #4873
+  bracket cases, which inc precisely to force a copy the old holder outlives; or
+- keep one helper and pair the sites: when the appended-to local is
+  `freeEligible`, route its self-append to the retaining `_ptr` / `_str` variant
+  AND make the assign's reinit reclaim walk (`__fern_drop_arr_str` /
+  `__drop_arr_struct_<E>`) instead of the buffer-only `__fern_arr_dec`, so the
+  extra retain is compensated.
+
+Either one is a three-backend change (x86-64 / arm64 / wasm runtime helper plus
+the need-registration) and needs the gate list below. Until it lands the arm
+stays out — but it is now a bounded piece of work, not an unknown.
+
+**Gates for that work, in order** (the first two are seconds, and the last two
+are the ones that have historically disagreed):
+`examples/probes/alias_grow_uaf.fern` (exit 0 compiled == interp, x86-64 and
+arm64) → `internal/ir` `TestArrayPushProjectionSourceFreeEligible` →
+`MapIntermediateReclaim` on all three backends →
+`TestSelfHostStdTestE2EArm64` (312 s local, REQUIRED) →
+`TestSelfHostLoadFixpointX86_64`.
+
+**Reusable method, since this class keeps coming back.** The two tools that
+cracked it are cheap and general:
+
+- **Bisect the analysis, not the program.** Gate the change on a per-function
+  allow-list read from an env var, take the candidate set from an `RcPlanHook`
+  diff, and halve. Each step is one driver build (~4 min) plus a 0.6 s compile —
+  no need to guess which of 147 functions matters.
+- **Don't run the 312 s test to iterate.** `TestSelfHostStdTestE2EArm64` builds
+  `mmc` (an x86-64 binary) once and then compiles each case in well under a
+  second; building `mmc` by hand and diffing `mmc <case> <stdlib> -target arm64`
+  against a baseline build gives the same signal in 0.6 s per case, and the
+  symbol diff names the corrupted function directly.
+- **`FERN_RC_FREE_DEBUG=1` is the detector for this class** (quarantine + poison
+  + `ud2` on any rc touch of a freed block). It needs `-cc gcc`: the in-process
+  native assembler rejects `ud2`.
+
 (The original question, kept for the record: **what taints `out`?**)
 It is worth answering with the rcPlan dump rather than by guessing — print
 `freeEligible` / the taint set for `lexer__tokenize` (the `RcPlanHook` in

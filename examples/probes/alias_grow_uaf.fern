@@ -1,0 +1,55 @@
+// alias_grow_uaf.fern — the shared-buffer grow-copy over-release (#3457).
+//
+// Two `string[]` locals that ALIAS one buffer, both reclaimable, one of them
+// appended to. `__fern_arr_push_grow` (the MOVE-semantics helper the
+// self-append form `a = a.append(v)` routes to) takes its copy path whenever
+// the buffer's rc != 1 — and copies the element pointers with NO retain,
+// because the form it was written for frees the old buffer buffer-only right
+// after. Here the old buffer is NOT freed: the alias still owns it. So the
+// two buffers share every element pointer under a single count, and the two
+// walk-drops (`__fern_drop_arr_str`) at scope exit dec each element TWICE.
+// The caller's strings are freed while it still holds them.
+//
+// The trap needs BOTH locals reclaimable, which is why no single-variable
+// probe in this area ever reproduced it. Today `lg = lg.append(..)` taints
+// `lg` out of freeEligible, so the second walk-drop never happens and this
+// program is correct; it goes wrong the moment an analysis change makes an
+// appended-to array local reclaimable (the `rhsTainted` `__method_Array_push`
+// receiver-only arm — see docs/SELFHOST-AST-RETIREMENT.md).
+//
+// Names must exceed the SSO inline-string threshold: a short name has no heap
+// block, hence no refcount to over-release, and the probe reads clean.
+//
+// Exit 0 = every name intact. Exit 1 = a name was reclaimed under its owner.
+import "std/i32";
+
+// The `gfns` / `lgfns` pair from irlower.lift_lambdas_view, minimised.
+function scan(names: string[], extra: string[]): i32 {
+    var g: string[] = [];
+    var i: i32 = 0;
+    while (i < names.len()) { g = g.append(names[i]); i = i + 1; }
+    var lg: string[] = g;
+    var j: i32 = 0;
+    while (j < extra.len()) { lg = lg.append(extra[j]); j = j + 1; }
+    return g.len() + lg.len();
+}
+
+function main(): i32 {
+    var names: string[] = [];
+    var i: i32 = 0;
+    while (i < 8) { names = names.append("a_long_mangled_function_name_" + i.to_string()); i = i + 1; }
+    var extra: string[] = ["e0", "e1"];
+    var seen: i32 = scan(names, extra);
+    if (seen != 18) { return 1; }
+    // Re-alias each name: an rc touch, so an RcFreeDebug build traps here
+    // rather than silently reading recycled bytes.
+    var again: string[] = [];
+    var m: i32 = 0;
+    while (m < names.len()) { again = again.append(names[m]); m = m + 1; }
+    var n: i32 = 0;
+    while (n < again.len()) {
+        if (again[n].len() != 30) { return 1; }
+        n = n + 1;
+    }
+    return 0;
+}
