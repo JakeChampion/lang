@@ -1,0 +1,30 @@
+// A 15-line reproduction of the #3457 escape-taint leak, carrying the exact
+// eligibility signature that the drop-order bisection isolated inside
+// parser__parse_primary (its sweep entries [38] and [39]):
+//
+//     SWEEP[0] __destruct_9_5  eligible=true   (E, P)   <- hidden tuple, deep walk
+//     SWEEP[1] inner_expr      eligible=false  E        <- tainted component, plain dec
+//
+// `elems.append(inner_expr)` is a direct-Ident source at an INC-ing sink, so
+// computeFreeEligible taints inner_expr; its release degrades to a plain dec
+// that frees nothing. Leaks 1500 of 3500 allocations (48000 bytes live).
+//
+// Attribution is exact: replacing the sink with `elems.append(E{ v:
+// inner_expr.v })` — same work, no direct Ident at the sink — frees 4000/4000.
+//
+// Exit code 4, matching the interpreter oracle: the leak is silent.
+struct E { v: i32[] }
+struct P { n: i32 }
+function two(n: i32): (E, P) {
+    var xs: i32[] = [];
+    xs = xs.append(n);
+    return (E{ v: xs }, P{ n: n });
+}
+function grab(n: i32): i32 {
+    var (inner_expr, inner_p) = two(n);
+    var elems: E[] = [];
+    elems = elems.append(inner_expr);
+    return elems[0].v[0] + inner_p.n;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0;
+    while (i < 500) { acc = acc + grab(i % 3); i = i + 1; } return acc % 7; }
