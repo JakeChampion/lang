@@ -130,7 +130,7 @@ var timeRfc3339IRCases = []struct {
 	// format_rfc3339 with a fraction adds ".nnnnnnnnn" (10 chars) -> 30.
 	{"format-frac-len", `var m: Moment = Moment { sec: 1718281496 as i64, nsec: 500000000 }; return m.format_rfc3339().len();`},
 	// Round-trip: parse then format; first byte is '2' (50).
-	{"roundtrip-firstbyte", `match (instant_parse_rfc3339("2024-06-13T12:34:56Z")) { Some(m) => { return m.format_rfc3339()[0]; }, None => { return 100; }, }`},
+	{"roundtrip-firstbyte", `match (instant_parse_rfc3339("2024-06-13T12:34:56Z")) { Some(m) => { return m.format_rfc3339()[0] as i32; }, None => { return 100; }, }`},
 }
 
 func timeRfc3339IRSrc(mainBody string) string {

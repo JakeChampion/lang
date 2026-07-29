@@ -41,8 +41,8 @@ function url_decode(s: string): string {
         var emit: string = s[i:i+1];
         var consumed: i32 = 1;
         if (b == 37 && i + 2 < n) {
-            var h1: i32 = url_hex_val(s[i+1]);
-            var h2: i32 = url_hex_val(s[i+2]);
+            var h1: i32 = url_hex_val(s[i+1] as i32);
+            var h2: i32 = url_hex_val(s[i+2] as i32);
             if (h1 >= 0 && h2 >= 0) { var by: u8[] = [((h1 << 4) | h2) as u8]; emit = string_from_bytes_unchecked(by); consumed = 3; }
         }
         out = out + emit;
