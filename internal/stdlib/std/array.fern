@@ -1771,6 +1771,29 @@ pub function dedup[T: cmp.Eq](xs: T[]): T[] {
     return out;
 }
 
+// `distinct(xs)` — every element ONCE, in first-seen order
+// (`distinct([3,1,3,2,1]) == [3,1,2]`). Unlike `dedup`, which only collapses
+// CONSECUTIVE runs, this removes duplicates anywhere in the array; unlike a
+// `Set` round-trip, it keeps the original order. The generic `T: cmp.Eq`
+// sibling of the string-only `(arr: string[]) distinct()`. O(n²) membership
+// scans — fine for the small-n CLI / edge-handler workloads; reach for a
+// Set/Map at larger N.
+pub function distinct[T: cmp.Eq](xs: T[]): T[] {
+    var out: T[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        var seen: boolean = false;
+        var j: i32 = 0;
+        while (j < out.len()) {
+            if (xs[i] == out[j]) { seen = true; }
+            j = j + 1;
+        }
+        if (!seen) { out = out.append(xs[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
 // =================== EQ-DRIVEN SET ALGEBRA ===================
 //
 // `count` / `union` / `intersection` / `difference` over an arbitrary `T[]`,
