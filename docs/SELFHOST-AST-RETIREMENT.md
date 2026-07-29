@@ -3151,18 +3151,50 @@ same "does not touch the lexer" reason; the finding here is that a teeth-having
 reproducer (`scalar_thread_leak.fern`) does not change that verdict — the shape
 it fixes is a REDUCTION of the lexer, not the lexer.
 
-**So part 1 was NOT landed in isolation**, matching the prior judgment: it is
-byte-identity-affecting (it un-taints call results compiler-wide) and its
-motivating case stays unfixed without the next piece. The motivated full fix is
-the projection summary PLUS a **method-receiver-retention summary** — a call
-`l.m()` does not retain `l` when `m`'s receiver param is itself counted-retain,
-which is the SAME `structParamProjectionsSafe` applied one level down, closed to
-a fixpoint. `l = l.advance()` then also settles: `advance`'s `l` is
-projection-safe (it returns `Lx { src: l.src, … }`), so the self-reassign is a
-consume of a fresh-owned value. That fixpoint is the next slice; the classifier
-above is its building block, recorded here rather than landed so it is rebuilt
-with the receiver summary and validated against the real lexer, not a synthetic
-reduction of it.
+**Part 1 was not landed in isolation** — but the motivated full fix now is.
+
+#### Landed: the interprocedural counted-retain fixpoint (2026-07-29)
+
+`inferParamCountedRetain` is now a least-fixpoint. `structParamProjectionsSafe`
+gained the interprocedural **arg-position rule** — a `p` passed as argument i to
+a call whose callee parameter i is counted-retain is inc'd (or read) there, not
+aliased out, so it is safe exactly like a construction slot. Since a method call
+`l.at_end()` lowers to `__method_Lex_at_end(l)` with the receiver as `Args[0]`,
+this is the method-receiver-retention summary for free: `at_end` / `peek_byte`
+read only `l.i` / `l.n` / `l.src[..]`, so they are projection-safe, so a caller's
+`l.at_end()` is credited. Two more cases closed the real cursor threading:
+
+- **Reassignment target** (`l = l.advance_to(..)`): the rebind is not a
+  retention of the old value; the RHS is classified normally and the overwrite
+  dec comes from `computeConsumedParams`.
+- **Returned borrow** (`return l`): a borrowed value returned is inc'd on the
+  way out, so the result holds a COUNTED reference to the param — creditable.
+  This is the one that unblocked `advance` / `advance_to`, whose early path is
+  `if (end <= l.i) { return l; }`. It is sound because returning a borrow inc's:
+  measured with an adversarial `pick(m: Map, k): Map { return m; }` called with a
+  tainted scalar and the result dropped every iteration — the caller's map stays
+  live (no over-release), and the map-mutator negatives still exclude a builder
+  whose `m.insert(..)` reaches a builtin argument first.
+
+The fixpoint starts all-false and only adds credits (monotone, grounded), so a
+mutual-recursion cycle with no grounding stays uncredited — the conservative
+direction.
+
+Measured: both reproducers reclaim fully (`result_thread_leak.fern` 2400/2400,
+`scalar_thread_leak.fern` 3400/3400), and unlike part-1-in-isolation this DOES
+touch the real lexer — the tokenize bench goes from **8000 to 24000 freed of
+60200** (a 3× reduction in stranded blocks). Pinned by
+`TestLeakCheckScalarThreadReclaim{X86_64,Arm64}`. Validated through the map
+negatives, the full leakcheck suite, the broad RC/reuse/drop/container e2e
+sweep, and the batch=4 whole-compiler byte-identity fixpoint (gen0==gen1, 36
+units, no OOM — the change is byte-identity-preserving on the self-host
+compiler, which is dense with `return p` and struct-threading).
+
+**Residual: the lexer is 3× better, not closed.** 24000/60200 still leaks, so
+tokenize strands blocks beyond the scanner-result threading — candidates are the
+`FStringPart[]` sub-arrays and the token payload strings, a separate mechanism
+to localise with the same `FERN_LEAKCHECK` + emitted-code method used above.
+That is the next slice; the interprocedural summary itself is now complete.
 
 The rest of the widening list is unaffected by that refutation but is now
 UNMOTIVATED until the leak is localised — none of it is known to touch the
