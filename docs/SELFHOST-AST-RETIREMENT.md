@@ -3110,6 +3110,44 @@ The rcPlan dump is what settled where the remaining taint sits, and it is worth
 repeating rather than reasoning about: with the arm in, `lexer__tokenize` reports
 `freeEligible: l,out,rf,ri,rn,rs,text` — `out` IS reclaimable in the callee now.
 
+### What is left after #5880: a diffuse tail, not another lever (2026-07-29)
+
+**Current baselines, post-#5880. Use these, not anything above.**
+
+| workload on `parser.fern` | allocs | frees | freed | live |
+|---|---:|---:|---:|---|
+| `tokenize` only | 509152 | 184870 | 36.3% | 14.2 MB |
+| `tokenize` + `parse_module` | 902183 | 322623 | 35.8% | 22.8 MB |
+
+So ~64% still leaks, and the obvious next question is which functions to aim at.
+**Ranking the functions answered it, and the answer is that there is no next
+single lever.** 297 stranded allocation sites spread over 161 functions, mostly
+3–5 apiece; the two biggest (`inject_builtin_enums` 13/13, `parse_module` 11/13)
+each run ONCE per compile, so their block count is negligible, while the
+genuinely hot ones are already mostly fine (`parse_stmt` 4/20,
+`parse_match_expr` 7/16). Nothing here is worth a 4x. Whatever comes next in this
+strand should be a rule that fires across many sites, not a shape hunt — the
+shape-hunting era of this section is over for this workload.
+
+**The ranking method, and the two ways it lies.** Hook `RcPlanHook`, parse
+`freeEligible` / `movedLocals` out of each dump, walk the AST for `*ast.Var`
+declarations, and report those a function neither reclaims nor transfers. Both
+naive versions of that metric are wrong, and both wrong versions look plausible:
+
+| filter | count | why it's wrong |
+|---|---:|---|
+| every pointer-typed local not in `freeEligible` | 1258 / 381 funcs | counts locals MOVED into a returned construction — correct behaviour |
+| ...also excluding `movedLocals` | 1151 / 371 funcs | still counts BORROWED ALIASES — `var name = p.peek_ident()` owns nothing, so having nothing to free is right, not a leak |
+| ...and only inits that DEFINITELY allocate (`StructLit` / `ArrayLit` / `TupleLit` / `MakeClosure` / string concat) | **297 / 161 funcs** | this is the one to use |
+
+The middle row is the trap worth naming: **"not `freeEligible`" is not the same
+as "leaks".** A local that merely aliases someone else's value has nothing to
+free, and freeing it would be a use-after-free — so the analysis is *right* to
+exclude it. Ranking by ineligibility alone puts `parse_pattern` (7/7, every local
+a `p.peek_ident()` alias into the token stream) near the top of a leak list it
+does not belong on at all. Only a local whose initialiser is itself an
+allocation can strand a block.
+
 **Gates for that work, in order** (the first two are seconds, and the last two
 are the ones that have historically disagreed):
 `examples/probes/alias_grow_uaf.fern` (exit 0 compiled == interp, x86-64,
