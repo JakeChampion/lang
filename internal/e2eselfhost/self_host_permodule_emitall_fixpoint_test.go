@@ -30,37 +30,59 @@ import (
 // "~12 min" this comment used to claim predates the param_is_borrowable no-alloc
 // fix, which cut the per-unit emit peak ~3x and the wall with it.
 //
-// That is now cheap enough to consider de-gating, but DON'T de-gate this test as
-// it stands: at batch=8 the gen1 emit peaks 7909 MB against the 8 GiB arena
-// (~99% of the ceiling), so it would start failing with exit-137 on the next
-// compiler-source growth. batch=4 costs +36 s and buys 1.15 GB of headroom — but
-// this test's batch=8 is load-bearing (it is the exact pre-`-assume-eligible`
-// OOM config it exists to hold), so de-gating means ADDING a batch=4 run, not
-// re-tuning this one. See docs/SELFHOST-AST-RETIREMENT.md.
+// This test's batch=8 is load-bearing — it IS the pre-`-assume-eligible` OOM
+// config — so it stays gated: at batch=8 the gen1 emit peaks 7909 MB against the
+// 8 GiB arena (~99% of the ceiling), and would start failing with exit-137 on the
+// next compiler-source growth. The standing CI guard is its batch=4 sibling
+// below, which buys 1.15 GB of headroom for +36 s.
 func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 	if os.Getenv("RUN_EMITALL_FIXPOINT") == "" {
-		t.Skip("set RUN_EMITALL_FIXPOINT=1 to run the emit-all self-reproduction proof (~4.5 min; #3457 slice 2 / #5668)")
+		t.Skip("set RUN_EMITALL_FIXPOINT=1 to run the batch=8 emit-all proof (~4.5 min; #3457 slice 2 / #5668)")
 	}
+	runEmitAllFixpoint(t, 8, "eafix8")
+}
+
+// TestSelfHostPerModuleEmitAllFixpointBatch4X86_64 is the same proof at the batch
+// size that has headroom, and it runs UNGATED — the standing guard that the
+// whole-compiler per-module emit still reproduces itself byte-for-byte.
+//
+// That guard is what slices 3 and 5 rest on: repointing the driver at the
+// per-module path and then DELETING the legacy AST emitters is only safe while
+// something proves a self-host-built compiler emits the same units the Go-built
+// one does. Gated, that proof only existed when someone remembered to run it.
+//
+// batch=4 rather than the sibling's 8 because the arena is a hard wall: 6754 MB
+// peak vs 7909 MB against 8 GiB. The +36 s buys the margin that keeps this from
+// turning into an exit-137 flake as the compiler sources grow.
+func TestSelfHostPerModuleEmitAllFixpointBatch4X86_64(t *testing.T) {
+	runEmitAllFixpoint(t, 4, "eafix4")
+}
+
+// runEmitAllFixpoint drives one gen0 → link → gen1 → gen1-emit-all byte-identity
+// round at the given per-process batch size. Both generations use the same batch
+// so the comparison isolates the COMPILER, not the windowing.
+func runEmitAllFixpoint(t *testing.T, batchUnits int, label string) {
+	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 	entry := filepath.Join(dir, "asm_modload_run.fern")
 
-	gen0Bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "eafix_gen0")
+	gen0Bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", label+"_gen0")
 
-	t.Log("gen0: emit-all of the whole compiler (-assume-eligible)")
-	unitsG0 := emitAllWholeCompiler(t, runner, gen0Bin, entry, dir, "eafix_g0", 8)
-	gen1Bin := filepath.Join(dir, "eafix_gen1")
-	objsG0 := unitObjPaths(t, dir, "eafix_g0", unitsG0)
+	t.Logf("gen0: emit-all of the whole compiler (-assume-eligible, batch=%d)", batchUnits)
+	unitsG0 := emitAllWholeCompiler(t, runner, gen0Bin, entry, dir, label+"_g0", batchUnits)
+	gen1Bin := filepath.Join(dir, label+"_gen1")
+	objsG0 := unitObjPaths(t, dir, label+"_g0", unitsG0)
 	linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, append(objsG0, "-o", gen1Bin)...)
 	if lout, err := exec.Command(gcc, linkArgs...).CombinedOutput(); err != nil {
 		t.Fatalf("link gen1 from gen0's emit-all units failed: %v\n%s", err, lout)
 	}
 
-	// gen1 (self-host-built) emit-all of the SAME source, batch=8 — the batch that
-	// OOM'd before #5668. With -assume-eligible each unit's peak is ~halved, so the
-	// per-process batch accumulation stays under the 8 GiB arena.
-	t.Log("gen1: emit-all of the whole compiler (-assume-eligible, batch=8 — the pre-#5668 OOM config)")
-	unitsG1 := emitAllWholeCompiler(t, runner, gen1Bin, entry, dir, "eafix_g1", 8)
+	// gen1 (self-host-built) emit-all of the SAME source. With -assume-eligible
+	// each unit's peak is ~halved, so the per-process batch accumulation stays
+	// under the 8 GiB arena.
+	t.Logf("gen1: emit-all of the whole compiler (-assume-eligible, batch=%d)", batchUnits)
+	unitsG1 := emitAllWholeCompiler(t, runner, gen1Bin, entry, dir, label+"_g1", batchUnits)
 
 	if len(unitsG1) != len(unitsG0) {
 		t.Fatalf("unit count diverged: gen0 emitted %d units, gen1 emitted %d", len(unitsG0), len(unitsG1))
@@ -89,7 +111,7 @@ func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 	if diverged > 0 {
 		t.Fatalf("emit-all fixpoint broken: %d/%d units diverged between gen0 and gen1", diverged, len(unitsG0))
 	}
-	t.Logf("emit-all fixpoint holds: gen0 == gen1 across %d units, batch=8, no OOM — -assume-eligible unblocks it", len(unitsG0))
+	t.Logf("emit-all fixpoint holds: gen0 == gen1 across %d units, batch=%d, no OOM", len(unitsG0), batchUnits)
 }
 
 // emitAllWholeCompiler drives compilerBin's `-per-module-emit-all -assume-eligible`
