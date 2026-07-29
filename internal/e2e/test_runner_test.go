@@ -878,7 +878,7 @@ func TestRunnerUtf8ExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/utf8", "# pass 25", "# fail 0", "1..25"} {
+	for _, w := range []string{"# Suite: std/utf8", "# pass 26", "# fail 0", "1..26"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
