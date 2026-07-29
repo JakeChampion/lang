@@ -387,8 +387,20 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   concurrently, not four. For ordinary local work prefer `-run` targeting the
   tests you actually touched, and leave whole-package sweeps to CI, which
   shards across machines.
-  `internal/e2e` is still fine in one invocation at `-timeout 45m`
-  (measured ~1760 s / ~30 min).
+  **`internal/e2e` no longer fits in one invocation at `-timeout 45m`** —
+  measured 2026-07-29 on a 4-core / 15 GB host: two runs, one of them with
+  the host entirely to itself, both hit the 2700 s wall with **zero
+  `--- FAIL` lines**. The old note here said "~1760 s / ~30 min"; that is
+  stale, and believing it costs 45 minutes per attempt plus the time spent
+  deciding whether the timeout was a regression. It is not: a timed-out run
+  panics with a goroutine dump and prints `FAIL`, but the dump shows the
+  suite parked in `withBuildMemory` (the `buildMemLimiter` RAM semaphore)
+  waiting to start a heavy self-host driver build, or mid-`runLangInterp`.
+  Always check the `--- FAIL` count before reading a timeout as a breakage.
+  Prefer `-run` targeting what you touched; if you do want the whole
+  package, give it `-timeout 90m` and expect it to be the only thing
+  running. Core count matters more than RAM here — the semaphore serialises
+  the heavy builds regardless of how much memory is free.
   CI doesn't hit the wall — it shards across the `test-e2e-*` workflows,
   each well under its job timeout.
 - **Self-host driver builds are memory-heavy but the harness now self-limits
