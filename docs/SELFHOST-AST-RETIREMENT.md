@@ -55,9 +55,19 @@ carry, and it also fixes that recipe's two footguns:
   itself, which over-reports: `emitted` is also `""` when IR was never
   *requested*, and `TestSelfHostAsmIRPath` runs every case twice — with and
   without `-ir` — as a differential control, so such a probe trips on ~80
-  deliberate AST runs that are not declines at all. The flag is checked inside
-  `emit_module_ir_gated`, i.e. inside the `use_ir` branch, so it cannot see
-  those.
+  deliberate AST runs that are not declines at all. The flag fires only on an
+  ACTUAL bail inside the gate, so those runs are silent.
+
+  **Correction (2026-07-29):** this bullet previously said the flag "is checked
+  inside the `use_ir` branch, so it cannot see" the `-ir`-off runs. That is
+  wrong, and the distinction matters when planning a sweep. `asm.emit_module` —
+  the AST path's own entry — itself calls `emit_module_ir_gated`, gated on
+  `asmcore.new_state().use_ir`, which defaults **true** regardless of the
+  driver's `-ir` flag (`asm_run.fern` never toggles it). An `-ir`-off run
+  therefore DOES enter the gate and CAN refuse; the sweep's single
+  `asc-none-opt-nested` failure was reported against the `ir=false` leg for
+  exactly this reason. What saves the sweep is that a bail has to really happen,
+  not that the run is skipped.
 - **Visibility.** `eprint` alone is not enough — the e2e harness helpers capture
   the driver's **stdout** only, so driver stderr is discarded unless a bespoke
   test binds `cmd.Stderr`. The flag aborts, which is what makes the signal

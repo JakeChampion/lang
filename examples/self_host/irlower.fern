@@ -2902,6 +2902,26 @@ function opt_elem_of(tag: string): string {
     return "";
 }
 
+// unary_opt_type is the Option/Result type a cast's unary tag denotes. The
+// parser emits two disjoint spellings (parser.fern, the `as` branch):
+//
+//   `e as? T`          -> `as?_T`            — the dyn-Trait downcast, Option[T]
+//   `e as Option[T]`   -> `as_Option[T]`     — a plain ascription, the tag IS the type
+//
+// Only the downcast was enumerated, so `match (None as Option[i32])` resolved
+// to "" and bailed the enclosing function to the AST emitter (#5646 option 3).
+// The sibling ascription shapes already lowered because they bind or return
+// through an annotation that carries the payload type; this one is the
+// value-position match, where the cast is the only place the type is written.
+function unary_opt_type(op: string): string {
+    if (op.len() > 4 && op[0:4] == "as?_") { return "Option[" + op[4 : op.len()] + "]"; }
+    if (op.len() > 3 && op[0:3] == "as_") {
+        var at: str = op[3 : op.len()];
+        if (at.len() >= 8 && (at[0:7] == "Option[" || at[0:7] == "Result[")) { return at + ""; }
+    }
+    return "";
+}
+
 // expr_is_bool reports whether `e` is a statically-boolean value, so a method
 // call on it dispatches "boolean.<m>" (its own Display / Json impl) instead of
 // falling through to "i32.<m>" — which renders a bool as 1/0 (a `@derive(Json)`
@@ -10258,12 +10278,9 @@ function try_opt_type(inner: parser.Expr, s: LowerState): string {
             }
         },
         parser.ExprIdent(sid) => { return s.opt_type_of_slot(s.slot_of(sid.name)); },
-        // `e as? T` downcast (docs/DYN-TRAITS.md §9) → Option[T]; the parser tags
-        // it `as?_<T>`.
-        parser.ExprUnary(sun) => {
-            if (sun.op.len() > 4 && sun.op[0:4] == "as?_") { return "Option[" + sun.op[4 : sun.op.len()] + "]"; }
-            return "";
-        },
+        // A cast: the `as? T` downcast (docs/DYN-TRAITS.md §9) or a plain
+        // `as Option[T]` / `as Result[T, E]` ascription.
+        parser.ExprUnary(sun) => { return unary_opt_type(sun.op); },
         parser.ExprFieldAccess(sfa) => {
             // `t.N` where the tuple element is an Option/Result — recover from the
             // element's tracked tag (a numeric field; mirrors the main StmtMatch
@@ -15877,12 +15894,10 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             },
                             parser.ExprIdent(sid) => { srt = ms.opt_type_of_slot(ms.slot_of(sid.name)); },
                             // `match (e as? T)` — the downcast scrutinee
-                            // (docs/DYN-TRAITS.md §9) yields Option[T]; the
-                            // parser tags it `as?_<T>`, so the Some-arm
-                            // payload binds as a T (struct) value.
-                            parser.ExprUnary(sun) => {
-                                if (sun.op.len() > 4 && sun.op[0:4] == "as?_") { srt = "Option[" + sun.op[4 : sun.op.len()] + "]"; }
-                            },
+                            // (docs/DYN-TRAITS.md §9) yields Option[T], so the
+                            // Some-arm payload binds as a T (struct) value —
+                            // or `match (e as Option[T])`, a plain ascription.
+                            parser.ExprUnary(sun) => { srt = unary_opt_type(sun.op); },
                             // `match (p.opt)` where `opt` is an Option/Result
                             // struct field — recover its type from the field.
                             // `match (t.N)` where the tuple element is an
