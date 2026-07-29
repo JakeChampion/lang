@@ -216,6 +216,7 @@ func TestGenBytesIsDeterministic(t *testing.T) {
 var (
 	u32LiteralRE = regexp.MustCompile(`\b(\d+)u32\b`)
 	u64LiteralRE = regexp.MustCompile(`\b(\d+)u64\b`)
+	i64LiteralRE = regexp.MustCompile(`\b(\d+)i64\b`)
 )
 
 // unsignedOperandNear reports whether op appears with a literal of the given
@@ -245,6 +246,13 @@ func u32OperandNear(src, op string) bool {
 
 func u64OperandNear(src, op string) bool {
 	return unsignedOperandNear(src, "u64", op, u64LiteralRE)
+}
+
+// wideOperandNear reports whether op appears with a 64-bit literal — i64 or
+// u64 — on either side.
+func wideOperandNear(src, op string) bool {
+	return unsignedOperandNear(src, "i64", op, i64LiteralRE) ||
+		unsignedOperandNear(src, "u64", op, u64LiteralRE)
 }
 
 // u32AsI32RE matches emitU32AsI32's cast with a u32 token inside it, so a
@@ -311,6 +319,10 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"unsigned 64-bit divide/rem":   false,
 		"unsigned 64-bit shift":        false,
 		"u64 high half as i32":         false,
+		"saturating add or subtract":   false,
+		"saturating multiply":          false,
+		"saturating shift":             false,
+		"saturating at i64 or u64":     false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := fernsmith.GenMain(seed)
@@ -574,6 +586,26 @@ func TestGenFeatureCoverage(t *testing.T) {
 		}
 		if strings.Contains(src, ") >> 32u64) as i32)") {
 			want["u64 high half as i32"] = true
+		}
+		// Saturating arithmetic. Tracked per operator because the four
+		// expand to materially different clamps: the +|/-| pre-checks
+		// against MAX-b / MIN-b, *| and <<| post-check the wrapped
+		// result with a division instead.
+		if strings.Contains(src, " +| ") || strings.Contains(src, " -| ") {
+			want["saturating add or subtract"] = true
+		}
+		if strings.Contains(src, " *| ") {
+			want["saturating multiply"] = true
+		}
+		if strings.Contains(src, " <<| ") {
+			want["saturating shift"] = true
+		}
+		// The clamp bounds are per-width, so a saturating op reached
+		// only at i32 leaves the 64-bit bounds untested.
+		for _, op := range []string{" +| ", " -| ", " *| ", " <<| "} {
+			if wideOperandNear(src, op) {
+				want["saturating at i64 or u64"] = true
+			}
 		}
 	}
 	for feature, ok := range want {
