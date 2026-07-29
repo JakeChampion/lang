@@ -142,7 +142,15 @@ func runDriver(t *testing.T, runner []string, bin string, src []byte, strict boo
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cmd.Env = os.Environ()
+	// Strip any ambient FERN_STRICT_IR first: the whole package can be run under
+	// it as a probe (see docs/SELFHOST-AST-RETIREMENT.md), and inheriting it would
+	// make the "unset" leg strict too, silently voiding the inertness assertion.
+	cmd.Env = []string{}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "FERN_STRICT_IR=") {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
 	if strict {
 		cmd.Env = append(cmd.Env, "FERN_STRICT_IR=1")
 	}
