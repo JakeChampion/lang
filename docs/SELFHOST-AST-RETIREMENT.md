@@ -2252,11 +2252,36 @@ Two reasons it was not landed, both worth inheriting:
    catch the regression of — and, per the method note in this file, an aggregate
    improvement you cannot reproduce in a minimal shape is not yet understood.
 
-So the sequence for the next attempt is: build the pure-read + method-receiver
-classifier FIRST, verify it moves `tokenize`'s freed fraction (the number that
-matters), and only then decide whether the projection rule is still needed
-separately. The map-intermediate negatives remain the sharpest soundness probe;
-run them on every iteration.
+So the sequence for the next attempt WAS: build the pure-read + method-receiver
+classifier first, verify it moves `tokenize`'s freed fraction, then revisit the
+projection rule.
+
+**That sequence is now REFUTED — do not build that classifier (2026-07-29).**
+Taking the doc's own advice to check the premise before writing the analysis:
+`examples/probes/lexer_shape_control.fern` is a faithful mimic of
+`lexer.tokenize` carrying every appearance the widening list blamed — a struct
+param threaded by self-reassignment, METHOD RECEIVERS on it (`l.at_end()`,
+`l.peek()`), INDEX reads through its field (`l.src[l.i]`), a field-by-field
+rebuild (`Lx { src: l.src, … }`), a UNION token built by per-variant helpers
+that retain a string param, `out = out.append(tok)` in a `while (true)` with the
+array returned from inside the loop, and payloads cut by string slice.
+
+It reclaims **100%**: allocs == frees, zero live bytes. Three versions were
+measured — single-struct token, union token, and union-plus-array-payload-variant
+(the real `TokFString` shape) — all clean. So the constructs the classifier would
+have taught the summary about are ALREADY not the problem, and a per-method
+retention summary would have been aimed at a non-leak.
+
+What that leaves: `lexer.tokenize` strands ~4 blocks per token (464073 of 508639
+on `parser.fern`, 117315 tokens) for a reason no small program has yet
+reproduced. The remaining structural differences between the control and the
+real thing are scale (a ~400-line function with dozens of locals and branches,
+against the control's ~20), the FStringPart sub-array actually being POPULATED,
+and the source string arriving from `io.read_all_stdin` rather than a literal.
+Bisect INSIDE the real lexer next — call its real functions from a probe driver
+and measure each — rather than writing another mimic or another analysis. The
+mimics are now 3-for-3 at not reproducing it, which is itself the strongest
+evidence about where not to look.
 
 After that, in rough order: pure reads (`len`, indexing, comparison) should not
 disqualify; `append` into an array the callee returns IS a counted store
