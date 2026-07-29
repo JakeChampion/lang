@@ -2591,13 +2591,33 @@ Along with the escape and payload rows above, that closes off every mechanism
 this section has proposed for the lexer strand: not the return escape, not the
 payload strings, not the buffer taint, and not the threading shape.
 
-What has NOT been tried on `tokenize`: reading the emitted drop for `out` at its
-exit sites and confirming from the ASM whether it is `__fern_drop_arr_ptr` (the
-element-walking form) or a flat `__fern_rc_dec` — i.e. establishing what the
-compiler actually emits before proposing another analysis to change it. Every
-attempt in this section so far has reasoned forward from an analysis to a
-predicted number; the one that worked (#5820) went the other way, from the
-emitted code back. Start there.
+**Read from the emitted code (2026-07-29), and the whole strand reduces to one
+question.** `fern -target x86-64 lexprobe.fern > lexprobe.s`, then grep
+`lexer__tokenize`'s body:
+
+    164  Lrcop_dec              (inline flat rc decs)
+      8  call __fern_arr_dec    (BUFFER-ONLY array release)
+      0  __fern_drop_arr_ptr / __drop_arr*   (the element-walking form)
+
+At all 8 exit sites `out` is released by the buffer-only form, so the `Token[]`
+elements are never walked — which is exactly the ~4 blocks per token: the union
+box, its payload struct box, and the payload string, none of them ever dec'd.
+`emitDec` routes an array through the walking form only when
+`arrElemIsRcTracked(elem) && eligible`, and `Token` is an EnumType so the element
+test passes. **Therefore `freeEligible[out]` is false.**
+
+And the escape is NOT why: re-emitting the `tokenize_local` variant (all 6
+`return out;` rewritten to `return out.len();`, so `out` cannot escape) gives the
+SAME 8 `__fern_arr_dec` and no walk. So `out` is tainted by something inside
+`tokenize` other than its return.
+
+That is the one question the lexer's 91% now reduces to: **what taints `out`?**
+It is worth answering with the rcPlan dump rather than by guessing — print
+`freeEligible` / the taint set for `lexer__tokenize` (the `RcPlanHook` in
+`internal/ir/rc_dump.go` gives it in-process; the same hook the #4482 harness
+uses) and read which rule fired. Note the `Array_push` receiver-only arm is NOT
+it (one block, above), so a third taint source is in play and naming it is a
+measurement, not a design question.
 
 The map-intermediate negatives remain the sharpest soundness probe in this area;
 run them on every iteration of anything that touches the taint.
