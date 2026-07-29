@@ -52,7 +52,7 @@ import "std/string";
 
 function parse(s: string): i32 {
     var n: i32 = 0; var i: i32 = 0;
-    while (i < s.len()) { var b: i32 = s[i]; if (b < 48 || b > 57) { return 0; } n = n * 10 + (b - 48); i = i + 1; }
+    while (i < s.len()) { var b: i32 = s[i] as i32; if (b < 48 || b > 57) { return 0; } n = n * 10 + (b - 48); i = i + 1; }
     return n;
 }
 function port(key: string): i32 { match (env(key)) { Some(s) => { return parse(s); }, None => { return 0; } } }
@@ -146,7 +146,7 @@ import "std/string";
 
 function parse(s: string): i32 {
     var n: i32 = 0; var i: i32 = 0;
-    while (i < s.len()) { var b: i32 = s[i]; if (b < 48 || b > 57) { return 0; } n = n * 10 + (b - 48); i = i + 1; }
+    while (i < s.len()) { var b: i32 = s[i] as i32; if (b < 48 || b > 57) { return 0; } n = n * 10 + (b - 48); i = i + 1; }
     return n;
 }
 function port(key: string): i32 { match (env(key)) { Some(s) => { return parse(s); }, None => { return 0; } } }

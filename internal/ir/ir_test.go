@@ -307,7 +307,7 @@ func TestLowerArrayLitAndIndex(t *testing.T) {
 func TestLowerStringIndex(t *testing.T) {
 	prog := lowerSource(t, `function f(): i32 {
 		var s: string = "abc";
-		return s[1];
+		return s[1] as i32;
 	}`)
 	mustContainOp(t, prog, "f", OpCallDirect) // __str_idx
 	mustContainOp(t, prog, "f", OpLoadByte)

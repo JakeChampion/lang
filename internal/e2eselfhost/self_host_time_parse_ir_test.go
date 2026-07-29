@@ -32,7 +32,7 @@ function parse_digits(s: string, start: i32, end: i32): i32 {
     var acc: i32 = 0;
     var i: i32 = start;
     while (i < end) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b < 48 || b > 57) { return -1; }
         acc = acc * 10 + (b - 48);
         i = i + 1;

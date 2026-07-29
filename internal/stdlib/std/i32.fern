@@ -57,7 +57,7 @@ pub function (n: i32) midpoint(other: i32): i32 {
 // leading bytes are all >= 0x80 — that matches Go's
 // `unicode/utf8` convention.
 //
-// Method-style chosen so call sites read as `s[i].is_ascii_digit()`
+// Method-style chosen so call sites read as `(s[i] as i32).is_ascii_digit()`
 // — matches the rest of the i32 / string receiver surface's
 // `to_string()` / `is_empty()` shape. `__is_ascii_ws`
 // stays as a free function for the `trim()` body that pre-
@@ -121,7 +121,7 @@ pub function (b: i32) matches_any(bytes: string): boolean {
     var n: i32 = bytes.len();
     var i: i32 = 0;
     while (i < n) {
-        if (bytes[i] == b) { return true; }
+        if (bytes[i] as i32 == b) { return true; }
         i = i + 1;
     }
     return false;

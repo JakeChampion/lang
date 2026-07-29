@@ -696,7 +696,7 @@ pub function (s: LowerState) fn_arg_is_dyn(name: string, ai: i32): boolean {
             var started: boolean = false;
             var pj: i32 = pfx.len();
             while (pj < e.len()) {
-                var ch: i32 = e[pj];
+                var ch: i32 = e[pj] as i32;
                 if (ch == 44) {   // 44 = ','
                     if (started && cur == ai) { return true; }
                     cur = 0;
@@ -839,7 +839,7 @@ pub function (s: LowerState) tuple_elem_tag(i: i32, n: i32): string {
             idx = idx + 1;
             start = k + 1;
         } else {
-            var ch: i32 = enc[k];
+            var ch: i32 = enc[k] as i32;
             if (ch == 91 || ch == 40) { depth = depth + 1; }       // '[' '('
             else if (ch == 93 || ch == 41) { depth = depth - 1; }  // ']' ')'
         }
@@ -864,7 +864,7 @@ pub function csv_nth(enc: string, n: i32): string {
             idx = idx + 1;
             start = k + 1;
         } else {
-            var ch: i32 = enc[k];
+            var ch: i32 = enc[k] as i32;
             if (ch == 91 || ch == 40) { depth = depth + 1; }       // '[' '('
             else if (ch == 93 || ch == 41) { depth = depth - 1; }  // ']' ')'
         }
@@ -31918,10 +31918,10 @@ pub function rewrite_typevars_to_argrefs(t: string, params: parser.ParamDecl[]):
     var out: string = "";
     var i: i32 = 0;
     while (i < t.len()) {
-        var c: i32 = t[i];
+        var c: i32 = t[i] as i32;
         var is_upper: boolean = c >= 65 && c <= 90;
-        var prev_alnum: boolean = i > 0 && irl_is_alnum_byte(t[i - 1]);
-        var next_alnum: boolean = i + 1 < t.len() && irl_is_alnum_byte(t[i + 1]);
+        var prev_alnum: boolean = i > 0 && irl_is_alnum_byte((t[i - 1] as i32));
+        var next_alnum: boolean = i + 1 < t.len() && irl_is_alnum_byte((t[i + 1] as i32));
         if (is_upper && !prev_alnum && !next_alnum) {
             var tv: str = t[i : i + 1];
             var repl: string = tv + "";
@@ -33341,7 +33341,7 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
 // otherwise degrade the element to a scalar at every call site.
 function irl_looks_type_var(s: string): boolean {
     if (s.len() != 1) { return false; }
-    var c: i32 = s[0];
+    var c: i32 = s[0] as i32;
     return c >= 65 && c <= 90;
 }
 
@@ -35515,7 +35515,7 @@ function rc_fe_split_csv(s: string): string[] {
     while (i <= s.len()) {
         var split: boolean = i == s.len();
         if (!split) {
-            var c: i32 = s[i];
+            var c: i32 = s[i] as i32;
             if (c == 40 || c == 91) { depth = depth + 1; }
             if (c == 41 || c == 93) { depth = depth - 1; }
             if (c == 44 && depth == 0) { split = true; }
@@ -36580,8 +36580,8 @@ function rc_dump_str_lt(a: string, b: string): boolean {
     if (lb < n) { n = lb; }
     var i: i32 = 0;
     while (i < n) {
-        var ca: i32 = a[i];
-        var cb: i32 = b[i];
+        var ca: i32 = a[i] as i32;
+        var cb: i32 = b[i] as i32;
         if (ca != cb) { return ca < cb; }
         i = i + 1;
     }
@@ -37357,7 +37357,7 @@ pub function opt_payload_type(rettype: string, variant: string): string {
         var depth: i32 = 0;
         var ci: i32 = 0;
         while (ci < inside.len()) {
-            var ch: i32 = inside[ci];
+            var ch: i32 = inside[ci] as i32;
             if (ch == 91 || ch == 40) { depth = depth + 1; }        // '[' '('
             else if (ch == 93 || ch == 41) { depth = depth - 1; }   // ']' ')'
             else if (ch == 44 && depth == 0) {          // ',' at top level
@@ -37390,7 +37390,7 @@ pub function is_fn_payload_spelling(t: string): boolean {
     var i: i32 = 0;
     var close: i32 = 0 - 1;
     while (i < n) {
-        var ch: i32 = t[i];
+        var ch: i32 = t[i] as i32;
         if (ch == 40 || ch == 91) { depth = depth + 1; }        // '(' '['
         else if (ch == 41 || ch == 93) {                        // ')' ']'
             depth = depth - 1;
@@ -37643,7 +37643,7 @@ function shape_id(name: string): i32 {
     var h: i32 = 7;
     var i: i32 = 0;
     while (i < name.len()) {
-        h = h * 31 + name[i];
+        h = h * 31 + (name[i] as i32);
         i = i + 1;
     }
     if (h < 0) { h = 0 - h; }

@@ -342,7 +342,7 @@ function __http_content_length(h: HeaderMap): Option[i32] {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < value.len()) {
-        var b: i32 = value[i];
+        var b: i32 = value[i] as i32;
         if (b < 48 || b > 57) {
             return None;
         }
@@ -642,7 +642,7 @@ function __cookie_clean(s: string, drop_eq: boolean): string {
     var out: u8[] = [];
     var i: i32 = 0;
     while (i < s.len()) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         var keep: boolean = b >= 32 && b != 59;
         if (drop_eq && b == 61) { keep = false; }
         if (keep) { out = out.append(b as u8); }

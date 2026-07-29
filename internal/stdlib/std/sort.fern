@@ -80,8 +80,8 @@ pub function string_cmp_ci(a: string, b: string): i32 {
     if (m < n) { min = m; }
     var i: i32 = 0;
     while (i < min) {
-        var ca: i32 = a[i].to_ascii_lower();
-        var cb: i32 = b[i].to_ascii_lower();
+        var ca: i32 = (a[i] as i32).to_ascii_lower();
+        var cb: i32 = (b[i] as i32).to_ascii_lower();
         if (ca < cb) { return 0 - 1; }
         if (ca > cb) { return 1; }
         i = i + 1;

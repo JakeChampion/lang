@@ -32,7 +32,7 @@ function url_encode(s: string): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (url_unreserved(b)) { out = out + s[i:i+1]; }
         else {
             var hi: i32 = (b >> 4) & 15;
@@ -55,7 +55,7 @@ function url_decode(s: string): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         var emit: string = s[i:i+1];
         var consumed: i32 = 1;
         if (b == 37 && i + 2 < n) {

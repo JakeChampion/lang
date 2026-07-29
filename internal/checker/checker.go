@@ -10701,17 +10701,19 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.ElemType = sl.Elem
 			return sl.Elem
 		}
-		// `s[i]` on a string returns the byte at i as a number.
+		// `s[i]` on a string yields the byte at i as `u8` — the byte
+		// type, distinct from `i32` (#5629). No implicit widening: a
+		// byte reaching i32 arithmetic needs an explicit `as i32`.
 		if _, ok := at.(ast.StringType); ok {
 			n.IsString = true
-			return ast.NumberType{}
+			return ast.NumberType{Width: 8, Signed: false}
 		}
 		// `v[i]` on a `str` view reads the byte too — a read-only
 		// operation, safe on a borrow (#4813). Same IsString lowering:
 		// after erasure the operand IS a string.
 		if _, ok := at.(ast.StrType); ok {
 			n.IsString = true
-			return ast.NumberType{}
+			return ast.NumberType{Width: 8, Signed: false}
 		}
 		if at != nil {
 			c.errfCode(n.P, "E034", "indexing non-array value of type %s", at)

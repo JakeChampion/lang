@@ -74,7 +74,8 @@ pub trait Debug {
 
 // ---- Display ---------------------------------------------------
 // Numeric + string types already have `to_string`; empty impls adopt
-// it. `boolean` does not, so it gets a real body.
+// it. `boolean` and `u8` do not, so they get real bodies — `u8` is the
+// byte type (`s[i]`, #5629) and has no scalar module of its own.
 
 impl Display for i32 { }
 impl Display for i64 { }
@@ -83,6 +84,10 @@ impl Display for u64 { }
 impl Display for f64 { }
 impl Display for f32 { }
 impl Display for string { }
+
+impl Display for u8 {
+    function to_string(self: Self): string { return (self as i32).to_string(); }
+}
 
 impl Display for boolean {
     function to_string(self: Self): string {
@@ -97,6 +102,9 @@ impl Eq for i32 {
     function eq(self: Self, other: Self): boolean { return self == other; }
 }
 impl Eq for i64 {
+    function eq(self: Self, other: Self): boolean { return self == other; }
+}
+impl Eq for u8 {
     function eq(self: Self, other: Self): boolean { return self == other; }
 }
 impl Eq for u32 {
@@ -131,6 +139,13 @@ impl Ord for i32 {
     }
 }
 impl Ord for i64 {
+    function cmp(self: Self, other: Self): i32 {
+        if (self < other) { return 0 - 1; }
+        if (self > other) { return 1; }
+        return 0;
+    }
+}
+impl Ord for u8 {
     function cmp(self: Self, other: Self): i32 {
         if (self < other) { return 0 - 1; }
         if (self > other) { return 1; }
@@ -198,6 +213,9 @@ function __hash_mix_i32(x: i32): i32 {
 impl Hash for i32 {
     function hash(self: Self): i32 { return __hash_mix_i32(self); }
 }
+impl Hash for u8 {
+    function hash(self: Self): i32 { return __hash_mix_i32(self as i32); }
+}
 impl Hash for u32 {
     function hash(self: Self): i32 { return __hash_mix_i32(self as i32); }
 }
@@ -227,7 +245,7 @@ impl Hash for string {
         var n: i32 = self.len();
         var i: i32 = 0;
         while (i < n) {
-            h = h ^ self[i];
+            h = h ^ (self[i] as i32);
             h = h * 16777619;                   // 0x01000193
             i = i + 1;
         }
@@ -306,7 +324,7 @@ impl Debug for string {
         var i: i32 = 0;
         var n: i32 = self.len();
         while (i < n) {
-            var b: i32 = self[i];
+            var b: i32 = self[i] as i32;
             if (b == 34) { out = out + "\\\""; }        // "
             else { if (b == 92) { out = out + "\\\\"; }  // backslash
             else { if (b == 10) { out = out + "\\n"; }

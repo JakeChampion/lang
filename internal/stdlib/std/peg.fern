@@ -151,26 +151,26 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
         },
         PRange(lo, hi) => {
             if (pos >= input.len()) { return __peg_fail(st, pos); }
-            var c: i32 = input[pos];
+            var c: i32 = input[pos] as i32;
             if (c < lo || c > hi) { return __peg_fail(st, pos); }
             return (pos + 1, st);
         },
         PSet(cs) => {
             if (pos >= input.len()) { return __peg_fail(st, pos); }
-            var c: i32 = input[pos];
+            var c: i32 = input[pos] as i32;
             var i: i32 = 0;
             while (i < cs.len()) {
-                if (cs[i] == c) { return (pos + 1, st); }
+                if ((cs[i] as i32) == c) { return (pos + 1, st); }
                 i = i + 1;
             }
             return __peg_fail(st, pos);
         },
         PNotSet(cs) => {
             if (pos >= input.len()) { return __peg_fail(st, pos); }
-            var c: i32 = input[pos];
+            var c: i32 = input[pos] as i32;
             var i: i32 = 0;
             while (i < cs.len()) {
-                if (cs[i] == c) { return __peg_fail(st, pos); }
+                if ((cs[i] as i32) == c) { return __peg_fail(st, pos); }
                 i = i + 1;
             }
             return (pos + 1, st);

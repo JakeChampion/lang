@@ -28,7 +28,7 @@ function hexenc(s: string): string {
     var buf: u8[] = __alloc_u8(n * 2);
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         buf = buf.with(i * 2, hex_lc((b >> 4) & 15) as u8);
         buf = buf.with(i * 2 + 1, hex_lc(b & 15) as u8);
         i = i + 1;

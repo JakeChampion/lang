@@ -130,7 +130,7 @@ function wat_tokenize(src: string): WatTok[] {
     var i: i32 = 0;
     var n: i32 = src.len();
     while (i < n) {
-        var c: i32 = src[i];
+        var c: i32 = src[i] as i32;
         if (wat_is_space(c)) {
             i = i + 1;
         } else if (c == 40) {
@@ -159,7 +159,7 @@ function wat_tokenize(src: string): WatTok[] {
             // Atom: run up to the next whitespace, paren, or quote.
             var astart: i32 = i;
             while (i < n) {
-                var ch: i32 = src[i];
+                var ch: i32 = src[i] as i32;
                 if (wat_is_space(ch) || ch == 40 || ch == 41 || ch == 34) {
                     break;
                 }
@@ -250,7 +250,7 @@ function wcat(buf: i32[], src: i32[]): i32[] {
 function wstr_bytes(buf: i32[], s: string): i32[] {
     var i: i32 = 0;
     while (i < s.len()) {
-        buf = buf.append(s[i]);
+        buf = buf.append((s[i] as i32));
         i = i + 1;
     }
     return buf;
@@ -350,7 +350,7 @@ function parse_dec(s: string): i32 {
     if (s.len() > 0 && s[0] == 45) { neg = true; i = 1; }
     var v: i32 = 0;
     while (i < s.len()) {
-        v = v * 10 + (s[i] - 48);
+        v = v * 10 + ((s[i] as i32) - 48);
         i = i + 1;
     }
     if (neg) { return 0 - v; }
@@ -469,7 +469,7 @@ function parse_f64_bits(s: string): i64 {
     var sticky: boolean = false;
     var started: boolean = false;
     while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
-        var d: i32 = s[i] - 48;
+        var d: i32 = (s[i] as i32) - 48;
         if (started || d != 0) {
             started = true;
             if (digits.len() < 40) { digits = digits.append(d); }
@@ -481,7 +481,7 @@ function parse_f64_bits(s: string): i64 {
     if (i < s.len() && s[i] == 46) {        // '.'
         i = i + 1;
         while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
-            var fd: i32 = s[i] - 48;
+            var fd: i32 = (s[i] as i32) - 48;
             if (started || fd != 0) {
                 started = true;
                 if (digits.len() < 40) { digits = digits.append(fd); }
@@ -499,7 +499,7 @@ function parse_f64_bits(s: string): i64 {
         else if (i < s.len() && s[i] == 43) { i = i + 1; }
         var exp: i32 = 0;
         while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
-            if (exp < 100000) { exp = exp * 10 + (s[i] - 48); }
+            if (exp < 100000) { exp = exp * 10 + ((s[i] as i32) - 48); }
             i = i + 1;
         }
         if (eneg) { dp = dp - exp; } else { dp = dp + exp; }
@@ -605,15 +605,15 @@ function data_bytes(s: string): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
     while (i < s.len()) {
-        var c: i32 = s[i];
+        var c: i32 = s[i] as i32;
         if (c == 92 && i + 1 < s.len()) {
-            var n: i32 = s[i + 1];
+            var n: i32 = s[i + 1] as i32;
             if (n == 110) { out = out.append(10); i = i + 2; }
             else if (n == 116) { out = out.append(9); i = i + 2; }
             else if (n == 92) { out = out.append(92); i = i + 2; }
             else if (n == 34) { out = out.append(34); i = i + 2; }
             else if (i + 2 < s.len()) {
-                out = out.append(hexval(n) * 16 + hexval(s[i + 2]));
+                out = out.append(hexval(n) * 16 + hexval((s[i + 2] as i32)));
                 i = i + 3;
             } else { out = out.append(c); i = i + 1; }
         } else {
@@ -1785,7 +1785,7 @@ function tb_fswrite_random_tail(): string { return "\x07\x1b\x01\x42\x02\x01\x40
 function blob_to_bytes(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
-    while (i < s.len()) { o = o.append(s[i]); i = i + 1; }
+    while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
     return o;
 }
 

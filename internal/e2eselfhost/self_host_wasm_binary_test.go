@@ -145,7 +145,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		{"scale-string-split", "function main(): i32 { var s: string = \"the quick brown fox\"; var words = s.split(\" \"); var total: i32 = 0; for w in words { total = total + w.len(); } return total + words.len(); }", 20},
 		// string_from_bytes_unchecked: pack a u8[] (i32[] of byte values) into a string
 		// block. len() * 10 + first byte offset from 'A': 4*10 + (65-65) = 40.
-		{"string-from-bytes", "function main(): i32 { var s: string = string_from_bytes_unchecked([65, 66, 67, 68]); return s.len() * 10 + (s[0] - 65); }", 40},
+		{"string-from-bytes", "function main(): i32 { var s: string = string_from_bytes_unchecked([65, 66, 67, 68]); return s.len() * 10 + ((s[0] as i32) - 65); }", 40},
 		{"string-from-bytes-write", "function main(): i32 { var s: string = string_from_bytes_unchecked([104, 105]); write(s); return s.len(); }", 2},
 		// random_i32(): a single i32 of randomness. Used in self-cancelling
 		// arithmetic so the result is deterministic (42) while still

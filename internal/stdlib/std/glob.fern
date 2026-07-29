@@ -32,10 +32,10 @@ function __glob_class(p: string, start: i32, ch: i32): (boolean, i32) {
     while (i < p.len() && (p[i] != 93 || first)) {      // ']' ends unless first
         first = false;
         if (i + 2 < p.len() && p[i + 1] == 45 && p[i + 2] != 93) {   // range a-z
-            if (ch >= p[i] && ch <= p[i + 2]) { matched = true; }
+            if (ch >= (p[i] as i32) && ch <= (p[i + 2] as i32)) { matched = true; }
             i = i + 3;
         } else {
-            if (ch == p[i]) { matched = true; }
+            if (ch == (p[i] as i32)) { matched = true; }
             i = i + 1;
         }
     }
@@ -51,7 +51,7 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
     var pi: i32 = i;
     var tj: i32 = j;
     while (pi < p.len()) {
-        var pc: i32 = p[pi];
+        var pc: i32 = p[pi] as i32;
         if (pc == 42) {                              // '*'
             if (pi + 1 < p.len() && p[pi + 1] == 42) {   // '**' — crosses '/'
                 var ni: i32 = pi;
@@ -85,12 +85,12 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
             tj = tj + 1;
         } else if (pc == 91) {                       // '['
             if (tj >= t.len() || t[tj] == 47) { return false; }
-            var res: (boolean, i32) = __glob_class(p, pi, t[tj]);
+            var res: (boolean, i32) = __glob_class(p, pi, (t[tj] as i32));
             if (!res.0) { return false; }
             pi = res.1;
             tj = tj + 1;
         } else {                                     // literal
-            if (tj >= t.len() || t[tj] != pc) { return false; }
+            if (tj >= t.len() || (t[tj] as i32) != pc) { return false; }
             pi = pi + 1;
             tj = tj + 1;
         }

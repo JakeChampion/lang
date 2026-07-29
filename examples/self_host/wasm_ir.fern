@@ -6369,7 +6369,7 @@ pub function wat_escape(s: string): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < s.len()) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b >= 32 && b <= 126 && b != 34 && b != 92) {
             out = out + s[i:i + 1];
         } else {

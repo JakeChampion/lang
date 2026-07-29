@@ -1188,7 +1188,7 @@ function arm64_gas_atoi(tok: string): i32 {
     if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
         i = i + 2;
         while (i < s.len()) {
-            var c: i32 = s[i];
+            var c: i32 = s[i] as i32;
             var d: i32 = 0 - 1;
             if (c >= 48 && c <= 57) { d = c - 48; }
             else { if (c >= 97 && c <= 102) { d = c - 97 + 10; }
@@ -1198,7 +1198,7 @@ function arm64_gas_atoi(tok: string): i32 {
         }
     } else {
         while (i < s.len()) {
-            var c2: i32 = s[i];
+            var c2: i32 = s[i] as i32;
             if (c2 >= 48 && c2 <= 57) { v = v * 10 + (c2 - 48); }
             i = i + 1;
         }
@@ -1236,7 +1236,7 @@ function arm64_gas_reg(tok: string): i32 {
         var n: i32 = 0;
         var i: i32 = 1;
         while (i < s.len()) {
-            var c: i32 = s[i];
+            var c: i32 = s[i] as i32;
             if (c < 48 || c > 57) { return 0 - 1; }
             n = n * 10 + (c - 48);
             i = i + 1;
@@ -1333,7 +1333,7 @@ function arm64_gas_operands(rest: string): string[] {
     var start: i32 = 0;
     var i: i32 = 0;
     while (i < rest.len()) {
-        var c: i32 = rest[i];
+        var c: i32 = rest[i] as i32;
         if (c == 91) { depth = depth + 1; }        // '['
         else if (c == 93) { depth = depth - 1; }   // ']'
         else if (c == 44 && depth == 0) {           // ','
@@ -1836,9 +1836,9 @@ function arm64_gas_data_asciz(p: Arm64GasProg, line: string): Arm64GasProg {
     }
     var i: i32 = q1 + 1;
     while (i < line.len() && line[i] != 34) { // until closing '"'
-        var c: i32 = line[i];
+        var c: i32 = line[i] as i32;
         if (c == 92 && i + 1 < line.len()) { // '\'
-            var e: i32 = line[i + 1];
+            var e: i32 = line[i + 1] as i32;
             if (e == 110) { c = 10; }       // \n
             else if (e == 116) { c = 9; }   // \t
             else if (e == 48) { c = 0; }    // \0
@@ -1860,9 +1860,9 @@ function arm64_gas_data_ascii(p: Arm64GasProg, line: string): Arm64GasProg {
     if (q1 < 0) { return p; }
     var i: i32 = q1 + 1;
     while (i < line.len() && line[i] != 34) {
-        var c: i32 = line[i];
+        var c: i32 = line[i] as i32;
         if (c == 92 && i + 1 < line.len()) {
-            var e: i32 = line[i + 1];
+            var e: i32 = line[i + 1] as i32;
             if (e == 110) { c = 10; }
             else if (e == 116) { c = 9; }
             else if (e == 114) { c = 13; }
@@ -1955,7 +1955,7 @@ function parse_f64_bits(s: string): i64 {
     var sticky: boolean = false;
     var started: boolean = false;
     while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
-        var d: i32 = s[i] - 48;
+        var d: i32 = (s[i] as i32) - 48;
         if (started || d != 0) {
             started = true;
             if (digits.len() < 40) { digits = digits.append(d); }
@@ -1967,7 +1967,7 @@ function parse_f64_bits(s: string): i64 {
     if (i < s.len() && s[i] == 46) {        // '.'
         i = i + 1;
         while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
-            var fd: i32 = s[i] - 48;
+            var fd: i32 = (s[i] as i32) - 48;
             if (started || fd != 0) {
                 started = true;
                 if (digits.len() < 40) { digits = digits.append(fd); }
@@ -1985,7 +1985,7 @@ function parse_f64_bits(s: string): i64 {
         else if (i < s.len() && s[i] == 43) { i = i + 1; }
         var exp: i32 = 0;
         while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
-            if (exp < 100000) { exp = exp * 10 + (s[i] - 48); }
+            if (exp < 100000) { exp = exp * 10 + ((s[i] as i32) - 48); }
             i = i + 1;
         }
         if (eneg) { dp = dp - exp; } else { dp = dp + exp; }
@@ -2753,7 +2753,7 @@ function macho_be64(buf: i32[], v: i64): i32[] {
 function macho_name16(buf: i32[], s: string): i32[] {
     var i: i32 = 0;
     while (i < s.len()) {
-        buf = buf.append(s[i]);
+        buf = buf.append((s[i] as i32));
         i = i + 1;
     }
     while (i < 16) {
@@ -2940,7 +2940,7 @@ function macho_code_signature(content: i32[], code_limit: i32, exec_seg_limit: i
     // identifier + NUL
     var i: i32 = 0;
     while (i < ident.len()) {
-        sb = sb.append(ident[i]);
+        sb = sb.append((ident[i] as i32));
         i = i + 1;
     }
     sb = sb.append(0);

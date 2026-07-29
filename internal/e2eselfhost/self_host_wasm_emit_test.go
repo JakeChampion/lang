@@ -401,7 +401,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"sarr-for-eq", "function main(): i32 { var xs = [\"x\", \"y\", \"z\"]; var n = 0; for s in xs { if (s == \"y\") { n = n + 1; } } return n; }", 1, ""},
 		{"sarr-push", "function main(): i32 { var xs: string[] = [\"a\"]; xs = xs.append(\"b\"); write(xs[1]); return xs.len(); }", 2, "b"},
 		{"sarr-param", "function first(xs: string[]): string { return xs[0]; } function main(): i32 { write(first([\"hello\", \"world\"])); return 0; }", 0, "hello"},
-		{"sarr-elem-method", "function main(): i32 { var xs = [\"abc\"]; write(xs[0].to_ascii_upper()); return 0; }", 0, "ABC"},
+		{"sarr-elem-method", "function main(): i32 { var xs = [\"abc\"]; write((xs[0] as i32).to_ascii_upper()); return 0; }", 0, "ABC"},
 		{"sarr-for-var-method", "function main(): i32 { var xs = [\"ab\", \"cd\"]; for s in xs { write(s.to_ascii_upper()); } return 0; }", 0, "ABCD"},
 		{"sarr-for-var-len", "function main(): i32 { var xs = [\"abc\", \"de\"]; var n = 0; for s in xs { n = n + s.len(); } return n; }", 5, ""},
 		// join (string[] -> string) and split (string -> string[]).
@@ -415,7 +415,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"split-multichar", "function main(): i32 { var parts = \"aXXbXXc\".split(\"XX\"); return parts.len(); }", 3, ""},
 		{"split-no-match", "function main(): i32 { var parts = \"abc\".split(\",\"); return parts.len(); }", 1, ""},
 		{"split-then-join", "function main(): i32 { var parts = \"a,b,c\".split(\",\"); write(parts.join(\"-\")); return 0; }", 0, "a-b-c"},
-		{"split-elem-method", "function main(): i32 { var parts = \"ab,cd\".split(\",\"); write(parts[0].to_ascii_upper()); return 0; }", 0, "AB"},
+		{"split-elem-method", "function main(): i32 { var parts = \"ab,cd\".split(\",\"); write((parts[0] as i32).to_ascii_upper()); return 0; }", 0, "AB"},
 		// Structs: literal, field read, field assign, struct param/return.
 		{"struct-field-read", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 40, y: 2 }; return p.x + p.y; }", 42, ""},
 		{"struct-field-order", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { y: 2, x: 40 }; return p.x; }", 40, ""},
@@ -523,7 +523,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"args-count", "function main(): i32 { return args().len(); }", 3, ""},
 		{"args-index", "function main(): i32 { var a = args(); write(a[1]); write(a[2]); return 0; }", 0, "ALPHABETA"},
 		{"args-for", "function main(): i32 { var a = args(); var n = 0; for s in a { n = n + s.len(); } if (n > 0) { write(a[1]); return 0; } return 1; }", 0, "ALPHA"},
-		{"args-method", "function main(): i32 { var a = args(); write(a[1].to_ascii_lower()); return 0; }", 0, "alpha"},
+		{"args-method", "function main(): i32 { var a = args(); write((a[1] as i32).to_ascii_lower()); return 0; }", 0, "alpha"},
 		// read_file(path): Result[string, IoError] via wasi path_open/fd_read
 		// (runner preopens the project dir, which contains rf_test.txt =
 		// "file-contents-123").

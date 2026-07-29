@@ -161,7 +161,7 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			// The old register-ABI hand-asm (a bare __fern_chr: label) is gone;
 			// only the Fern-compiled __fn___fern_chr remains.
 			"chr",
-			`function main(): i32 { return chr(65)[0]; }`,
+			`function main(): i32 { return chr(65)[0] as i32; }`,
 			"__fn___fern_chr",
 			[]string{"\n__fern_chr:"},
 		},
@@ -188,14 +188,14 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			// str_search. The old register-ABI hand-asm (__fern_str_to_upper: /
 			// .Lupper_loop) is gone.
 			"str_to_upper",
-			`function main(): i32 { return "aB".to_ascii_upper()[0]; }`,
+			`function main(): i32 { return "aB".to_ascii_upper()[0] as i32; }`,
 			"__fn___fern_str_to_upper",
 			[]string{"\n__fern_str_to_upper:", ".Lupper_loop"},
 		},
 		{
 			// str_to_lower — the lower-case sibling, same str_case-gated migration.
 			"str_to_lower",
-			`function main(): i32 { return "Ab".to_ascii_lower()[0]; }`,
+			`function main(): i32 { return "Ab".to_ascii_lower()[0] as i32; }`,
 			"__fn___fern_str_to_lower",
 			[]string{"\n__fern_str_to_lower:", ".Llower_loop"},
 		},
@@ -215,7 +215,7 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			// label + .Lstr_rev_loop) is gone; the call site targets
 			// __fn___fern_str_reverse via the stack ABI.
 			"str_reverse",
-			`function main(): i32 { return "abc".reverse()[0]; }`,
+			`function main(): i32 { return "abc".reverse()[0] as i32; }`,
 			"__fn___fern_str_reverse",
 			[]string{"\n__fern_str_reverse:", ".Lstr_rev_loop"},
 		},

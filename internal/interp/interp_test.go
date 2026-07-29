@@ -177,7 +177,7 @@ func TestInterpLenOfArray(t *testing.T) {
 func TestInterpStringIndex(t *testing.T) {
 	if got := evalProgramValue(t, `function main(): i32 {
 		var s: string = "ABC";
-		return s[1];
+		return s[1] as i32;
 	}`); got != Number(int64('B')) {
 		t.Errorf("got %v, want %d", got, 'B')
 	}

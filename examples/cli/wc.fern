@@ -37,7 +37,7 @@ function count(text: string): Counts {
   var chars: i32 = 0;
   var i: i32 = 0;
   while (i < bytes) {
-    var b: i32 = text[i];
+    var b: i32 = text[i] as i32;
     if (b == 10) {
       lines = lines + 1;
     }

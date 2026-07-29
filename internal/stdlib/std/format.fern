@@ -144,12 +144,12 @@ function __format_apply_spec(s: string, spec: string): string {
     // follows it; a bare align char takes the default space fill.
     var fill: str = " ";
     var align: i32 = 1; // 1=left, 2=right, 3=center; strings default left.
-    if (p + 1 < m && __is_align(spec[p + 1])) {
+    if (p + 1 < m && __is_align((spec[p + 1] as i32))) {
         fill = spec[p:p + 1];
-        align = __align_code(spec[p + 1]);
+        align = __align_code((spec[p + 1] as i32));
         p = p + 2;
-    } else if (p < m && __is_align(spec[p])) {
-        align = __align_code(spec[p]);
+    } else if (p < m && __is_align((spec[p] as i32))) {
+        align = __align_code((spec[p] as i32));
         p = p + 1;
     }
     // sign — `+` forces a leading `+` on non-negative numbers; `-`
@@ -166,7 +166,7 @@ function __format_apply_spec(s: string, spec: string): string {
     // width — run of decimal digits.
     var width: i32 = 0;
     while (p < m && spec[p] >= 48 && spec[p] <= 57) {
-        width = width * 10 + (spec[p] - 48);
+        width = width * 10 + ((spec[p] as i32) - 48);
         p = p + 1;
     }
     // .precision — truncate the value to at most `prec` bytes.
@@ -175,7 +175,7 @@ function __format_apply_spec(s: string, spec: string): string {
         p = p + 1;
         var prec: i32 = 0;
         while (p < m && spec[p] >= 48 && spec[p] <= 57) {
-            prec = prec * 10 + (spec[p] - 48);
+            prec = prec * 10 + ((spec[p] as i32) - 48);
             p = p + 1;
         }
         if (val.len() > prec) { val = val[0:prec].to_owned(); }

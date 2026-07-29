@@ -66,7 +66,7 @@ pub function base32_decode(s: string): u8[] {
     var n: i32 = 0;
     var sLen: i32 = s.len();
     while (n < sLen) {
-        if (__b32_decode_char(s[n]) < 0) { break; }
+        if (__b32_decode_char((s[n] as i32)) < 0) { break; }
         n = n + 1;
     }
     var out: u8[] = [];
@@ -74,7 +74,7 @@ pub function base32_decode(s: string): u8[] {
     var bits: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        acc = (acc << 5) | __b32_decode_char(s[i]);
+        acc = (acc << 5) | __b32_decode_char((s[i] as i32));
         bits = bits + 5;
         if (bits >= 8) {
             bits = bits - 8;
@@ -103,7 +103,7 @@ pub function base32_decode_strict(s: string): Option[u8[]] {
     var sLen: i32 = s.len();
     var n: i32 = 0;
     while (n < sLen) {
-        if (__b32_decode_char(s[n]) < 0) { break; }
+        if (__b32_decode_char((s[n] as i32)) < 0) { break; }
         n = n + 1;
     }
     // Everything after the data run must be `=` padding — a non-`=` char
@@ -133,7 +133,7 @@ pub function base32_decode_strict(s: string): Option[u8[]] {
     var acc: i32 = 0;
     var bits: i32 = 0;
     while (i < n) {
-        acc = (acc << 5) | __b32_decode_char(s[i]);
+        acc = (acc << 5) | __b32_decode_char((s[i] as i32));
         bits = bits + 5;
         if (bits >= 8) {
             bits = bits - 8;

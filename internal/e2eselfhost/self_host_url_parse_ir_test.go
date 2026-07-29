@@ -53,7 +53,7 @@ function uri_parse(s: string): Option[Uri] {
         if (colon < authority_end) {
             var port: i32 = 0;
             i = colon + 1;
-            while (i < authority_end) { var b: i32 = s[i]; if (b < 48 || b > 57) { port = 0; break; } port = port * 10 + (b - 48); i = i + 1; }
+            while (i < authority_end) { var b: i32 = s[i] as i32; if (b < 48 || b > 57) { port = 0; break; } port = port * 10 + (b - 48); i = i + 1; }
             u = Uri { ...u, host: s[rest_start:colon], port: port };
         } else { u = Uri { ...u, host: s[rest_start:authority_end] }; }
     }

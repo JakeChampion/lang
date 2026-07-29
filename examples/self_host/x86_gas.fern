@@ -209,7 +209,7 @@ function x86_gas_xmm(tok: string): i32 {
     var v: i32 = 0;
     var i: i32 = 3;
     while (i < s.len()) {
-        var c: i32 = s[i];
+        var c: i32 = s[i] as i32;
         if (c >= 48 && c <= 57) {
             v = v * 10 + (c - 48);
         }
@@ -297,7 +297,7 @@ function parse_f64_bits(s: string): i64 {
     var sticky: boolean = false;
     var started: boolean = false;
     while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
-        var d: i32 = s[i] - 48;
+        var d: i32 = (s[i] as i32) - 48;
         if (started || d != 0) {
             started = true;
             if (digits.len() < 40) { digits = digits.append(d); }
@@ -309,7 +309,7 @@ function parse_f64_bits(s: string): i64 {
     if (i < s.len() && s[i] == 46) {        // '.'
         i = i + 1;
         while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
-            var fd: i32 = s[i] - 48;
+            var fd: i32 = (s[i] as i32) - 48;
             if (started || fd != 0) {
                 started = true;
                 if (digits.len() < 40) { digits = digits.append(fd); }
@@ -327,7 +327,7 @@ function parse_f64_bits(s: string): i64 {
         else if (i < s.len() && s[i] == 43) { i = i + 1; }
         var exp: i32 = 0;
         while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
-            if (exp < 100000) { exp = exp * 10 + (s[i] - 48); }
+            if (exp < 100000) { exp = exp * 10 + ((s[i] as i32) - 48); }
             i = i + 1;
         }
         if (eneg) { dp = dp - exp; } else { dp = dp + exp; }
@@ -434,13 +434,13 @@ function x86_gas_ascii(buf: i32[], line: string): i32[] {
     }
     var i: i32 = q1 + 1;
     while (i < line.len()) {
-        var c: i32 = line[i];
+        var c: i32 = line[i] as i32;
         if (c == 34) { // closing '"'
             return buf;
         }
         if (c == 92 && i + 1 < line.len()) { // backslash escape
             i = i + 1;
-            var e: i32 = line[i];
+            var e: i32 = line[i] as i32;
             if (e == 110) { c = 10; }        // \n
             else { if (e == 116) { c = 9; }  // \t
             else { if (e == 114) { c = 13; } // \r
@@ -475,7 +475,7 @@ function x86_gas_atoi(tok: string): i32 {
     if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
         i = i + 2;
         while (i < s.len()) {
-            var c: i32 = s[i];
+            var c: i32 = s[i] as i32;
             var d: i32 = 0 - 1;
             if (c >= 48 && c <= 57) { d = c - 48; }
             else { if (c >= 97 && c <= 102) { d = c - 97 + 10; }
@@ -485,7 +485,7 @@ function x86_gas_atoi(tok: string): i32 {
         }
     } else {
         while (i < s.len()) {
-            var c: i32 = s[i];
+            var c: i32 = s[i] as i32;
             if (c >= 48 && c <= 57) {
                 v = v * 10 + (c - 48);
             }
@@ -516,7 +516,7 @@ function x86_gas_atoi64(tok: string): i64 {
     if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
         i = i + 2;
         while (i < s.len()) {
-            var c: i32 = s[i];
+            var c: i32 = s[i] as i32;
             var d: i32 = 0 - 1;
             if (c >= 48 && c <= 57) { d = c - 48; }
             else { if (c >= 97 && c <= 102) { d = c - 97 + 10; }
@@ -526,7 +526,7 @@ function x86_gas_atoi64(tok: string): i64 {
         }
     } else {
         while (i < s.len()) {
-            var c: i32 = s[i];
+            var c: i32 = s[i] as i32;
             if (c >= 48 && c <= 57) { v = v * 10 + ((c - 48) as i64); }
             i = i + 1;
         }
@@ -686,7 +686,7 @@ function x86_gas_top_comma(s: string): i32 {
     var depth: i32 = 0;
     var i: i32 = 0;
     while (i < s.len()) {
-        var c: i32 = s[i];
+        var c: i32 = s[i] as i32;
         if (c == 40) { // '('
             depth = depth + 1;
         } else {

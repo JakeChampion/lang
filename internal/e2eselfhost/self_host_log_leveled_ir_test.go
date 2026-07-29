@@ -48,7 +48,7 @@ function log_json_escape(s: string): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < s.len()) {
-        var c: i32 = s[i];
+        var c: i32 = s[i] as i32;
         if (c == 92) { out = out + "\\\\"; }
         else if (c == 34) { out = out + "\\\""; }
         else if (c == 10) { out = out + "\\n"; }

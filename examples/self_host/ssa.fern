@@ -1782,7 +1782,7 @@ function contains_str(xs: string[], n: string): boolean {
 function index_of_byte(s: string, b: i32): i32 {
     var i: i32 = 0;
     while (i < s.len()) {
-        if (s[i] == b) { return i; }
+        if ((s[i] as i32) == b) { return i; }
         i = i + 1;
     }
     return 0 - 1;
@@ -3653,7 +3653,7 @@ pub function eval_func(f: SFunc, args: i32[]): i32 {
                 var csbase: i32 = mem.len();
                 mem = mem.append(csl);
                 var csi: i32 = 0;
-                while (csi < csl) { mem = mem.append(cs[csi]); csi = csi + 1; }
+                while (csi < csl) { mem = mem.append((cs[csi] as i32)); csi = csi + 1; }
                 tab = vtab_set(tab, inst.result, csbase);
             }
             k = k + 1;

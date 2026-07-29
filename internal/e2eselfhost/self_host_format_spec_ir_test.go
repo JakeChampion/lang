@@ -41,12 +41,12 @@ function fmt_apply_spec(s: string, spec: string): string {
     var p: i32 = 1;
     var fill: str = " ";
     var align: i32 = 1;
-    if (p + 1 < m && fmt_is_align(spec[p + 1])) {
+    if (p + 1 < m && fmt_is_align(spec[p + 1] as i32)) {
         fill = spec[p:p + 1];
-        align = fmt_align_code(spec[p + 1]);
+        align = fmt_align_code(spec[p + 1] as i32);
         p = p + 2;
-    } else if (p < m && fmt_is_align(spec[p])) {
-        align = fmt_align_code(spec[p]);
+    } else if (p < m && fmt_is_align(spec[p] as i32)) {
+        align = fmt_align_code(spec[p] as i32);
         p = p + 1;
     }
     var plus: boolean = false;
@@ -56,7 +56,7 @@ function fmt_apply_spec(s: string, spec: string): string {
     if (p < m && spec[p] == 48) { zero = true; p = p + 1; }
     var width: i32 = 0;
     while (p < m && spec[p] >= 48 && spec[p] <= 57) {
-        width = width * 10 + (spec[p] - 48);
+        width = width * 10 + ((spec[p] as i32) - 48);
         p = p + 1;
     }
     var val: string = s;
@@ -64,7 +64,7 @@ function fmt_apply_spec(s: string, spec: string): string {
         p = p + 1;
         var prec: i32 = 0;
         while (p < m && spec[p] >= 48 && spec[p] <= 57) {
-            prec = prec * 10 + (spec[p] - 48);
+            prec = prec * 10 + ((spec[p] as i32) - 48);
             p = p + 1;
         }
         if (val.len() > prec) { val = val[0:prec] + ""; }

@@ -381,7 +381,7 @@ function __parse_digits(s: string, start: i32, end: i32): i32 {
     var acc: i32 = 0;
     var i: i32 = start;
     while (i < end) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b < 48 || b > 57) { return -1; }
         acc = acc * 10 + (b - 48);
         i = i + 1;
@@ -817,7 +817,7 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
         var frac_end: i32 = -1;
         var i: i32 = frac_start;
         while (i < n) {
-            var b: i32 = s[i];
+            var b: i32 = s[i] as i32;
             if (b == 90 || b == 43 || b == 45) {  // Z, +, -
                 frac_end = i;
                 i = n;

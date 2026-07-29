@@ -34,7 +34,7 @@ function test_v4_version(): test.TestOutcome {
 
 function test_v4_variant(): test.TestOutcome {
     // The variant nibble (index 19) is one of 8/9/a/b for RFC 4122.
-    var c: i32 = uuid.uuid_v4()[19];
+    var c: i32 = (uuid.uuid_v4()[19] as i32);
     return test.assert_true(c == 56 || c == 57 || c == 97 || c == 98);
 }
 

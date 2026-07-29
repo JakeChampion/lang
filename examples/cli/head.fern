@@ -56,7 +56,7 @@ function main(): i32 {
       o = Opts { ...o, count: a.drop(2).parse_int_or(10), by_bytes: false };
     } else if (a.starts_with("-c")) {
       o = Opts { ...o, count: a.drop(2).parse_int_or(10), by_bytes: true };
-    } else if (a.len() > 1 && a[0] == 45 && a[1].is_ascii_digit()) {
+    } else if (a.len() > 1 && a[0] == 45 && (a[1] as i32).is_ascii_digit()) {
       // `-5` shorthand for `-n 5`.
       o = Opts { ...o, count: a.drop(1).parse_int_or(10), by_bytes: false };
     } else {

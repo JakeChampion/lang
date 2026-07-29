@@ -35,7 +35,7 @@ function ref_sum_supported(t: string): boolean {
         var i: i32 = 0;
         var depth: i32 = 0;
         while (i < inner.len()) {
-            var c: i32 = inner[i];
+            var c: i32 = inner[i] as i32;
             if (c == 91) { depth = depth + 1; }
             else if (c == 93) { depth = depth - 1; }
             else if (c == 44 && depth == 0) {

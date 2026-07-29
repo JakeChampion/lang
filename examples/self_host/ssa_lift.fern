@@ -324,7 +324,7 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
             var dec: boolean = t.len() > 0;
             var ci: i32 = 0;
             while (ci < t.len()) {
-                var c: i32 = t[ci];
+                var c: i32 = t[ci] as i32;
                 if (ci == 0 && c == 45) {
                     if (t.len() == 1) { dec = false; }
                 } else if (c < 48 || c > 57) { dec = false; }
@@ -361,7 +361,7 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
             var idi: i32 = istart;
             if (ishex) { idi = istart + 2; if (it.len() <= idi) { iok = false; } }
             while (idi < it.len()) {
-                var ic: i32 = it[idi];
+                var ic: i32 = it[idi] as i32;
                 var isdec: boolean = ic >= 48 && ic <= 57;
                 var ishexd: boolean = ishex && ((ic >= 97 && ic <= 102) || (ic >= 65 && ic <= 70));
                 if (!isdec && !ishexd) { iok = false; }

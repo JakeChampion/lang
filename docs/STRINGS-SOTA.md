@@ -48,7 +48,7 @@ below proposes changing it.
 | Operation | Today |
 |---|---|
 | `s.len()` | bytes |
-| `s[i]` | byte, as `i32` |
+| `s[i]` | byte, as `u8` (the byte type — distinct from `i32`, #5629) |
 | `s[a:b]` | **fresh copy**, no codepoint-boundary check — can split a codepoint |
 | `==` | byte equality |
 | `.to_upper()` / `.to_lower()` | ASCII byte fold (A–Z ↔ a–z), everything ≥ 0x80 passes through |
@@ -218,12 +218,13 @@ onto a UTF-16 `char` at real cost. Go's `rune` is only an alias, which is
 why `for i, r := range s` confuses newcomers about whether `i` counts
 bytes or runes.
 
-Fern is currently in the *worst* cell of this table: not only is there no
-scalar type, but a byte and a code point are the **same type**, so
-`s[i].to_upper()` (a byte, ASCII fold) and `unicode.to_upper_char(cp)`
-(a scalar, Unicode mapping) are both `i32 → i32` and neither the checker
-nor the reader can tell them apart. That type collision is the root
-cause of #5552's confusion, not the missing tables.
+Fern *was* in the *worst* cell of this table: a byte and a code point were
+the **same type**, so `s[i].to_upper()` (a byte, ASCII fold) and
+`unicode.to_upper_char(cp)` (a scalar, Unicode mapping) were both
+`i32 → i32` and neither the checker nor the reader could tell them apart.
+That type collision — the root cause of #5552's confusion, not the missing
+tables — is now **closed**: `char` is the scalar type and `u8` is the byte
+type, with `s[i]` yielding `u8` and the ASCII classifiers on `u8` receivers.
 
 Swift is the one language whose default unit is the grapheme cluster.
 It's the most *correct* choice and the most expensive: `String` is not
@@ -454,7 +455,7 @@ types.
 
 - `char` = a Unicode scalar value (0..0x10FFFF minus surrogates),
   stored in an i32 slot, distinct in the checker.
-- `u8` stays the byte type; `s[i]` yields `u8` (today: `i32`).
+- `u8` stays the byte type; `s[i]` yields `u8` — **LANDED** (#5629).
 - `std/utf8`'s `codepoints() → i32[]` becomes `char[]`;
   `unicode.to_upper_char(cp: i32)` becomes `char.to_upper()` — **both
   LANDED**. `string_from_codepoint(s)` followed, since the round trip

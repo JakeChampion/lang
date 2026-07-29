@@ -30,7 +30,7 @@ struct Moment { sec: i64, nsec: i32 }
 function parse_digits(s: string, start: i32, end: i32): i32 {
     if (start >= end) { return -1; }
     var acc: i32 = 0; var i: i32 = start;
-    while (i < end) { var b: i32 = s[i]; if (b < 48 || b > 57) { return -1; } acc = acc * 10 + (b - 48); i = i + 1; }
+    while (i < end) { var b: i32 = s[i] as i32; if (b < 48 || b > 57) { return -1; } acc = acc * 10 + (b - 48); i = i + 1; }
     return acc;
 }
 function days_from_civil(y_in: i32, m: i32, d: i32): i32 {

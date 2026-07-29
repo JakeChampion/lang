@@ -134,7 +134,7 @@ function __map_fnv_str(s: string): i32 {
     var sLen: i32 = s.len();
     var i: i32 = 0;
     while (i < sLen) {
-        h = h ^ s[i];
+        h = h ^ (s[i] as i32);
         h = h * 16777619;                       // 0x01000193
         i = i + 1;
     }

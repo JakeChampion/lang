@@ -172,7 +172,7 @@ struct Lex { src: string, i: i32, n: i32, line: i32, col: i32 }
 function (l: Lex) at_end(): boolean { return l.i >= l.n; }
 function (l: Lex) peek_byte(): i32 {
     if (l.i >= l.n) { return 0; }
-    return l.src[l.i];
+    return (l.src[l.i] as i32);
 }
 
 // advance consumes one byte, updates line/col. Returns the new
@@ -180,7 +180,7 @@ function (l: Lex) peek_byte(): i32 {
 // caller threads the updated state back through.
 function (l: Lex) advance(): Lex {
     if (l.i >= l.n) { return l; }
-    var b: i32 = l.src[l.i];
+    var b: i32 = l.src[l.i] as i32;
     var new_line: i32 = l.line;
     var new_col: i32 = l.col;
     if (b == 10) {
@@ -223,7 +223,7 @@ function skip_trivia(l: Lex): Lex {
         var b: i32 = l.peek_byte();
         if (is_space(b)) {
             var we: i32 = l.i;
-            while (we < l.n && is_space(l.src[we])) {
+            while (we < l.n && is_space((l.src[we] as i32))) {
                 we = we + 1;
             }
             l = l.advance_to(we);
@@ -290,7 +290,7 @@ pub function fstring_tok(parts: FStringPart[], line: i32, col: i32): Token {
 function is_blank_range(s: string): boolean {
     var i: i32 = 0;
     while (i < s.len()) {
-        if (!is_space(s[i])) { return false; }
+        if (!is_space((s[i] as i32))) { return false; }
         i = i + 1;
     }
     return true;
@@ -333,7 +333,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
         l = l.advance_to(l.i + 2);   // '0' then 'x' / 'X'
         var hex_start: i32 = l.i;
         var he: i32 = l.i;
-        while (he < l.n && is_hex_digit(l.src[he])) {
+        while (he < l.n && is_hex_digit((l.src[he] as i32))) {
             he = he + 1;
         }
         l = l.advance_to(he);
@@ -342,7 +342,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
         }
     } else {
         var de: i32 = l.i;
-        while (de < l.n && is_digit(l.src[de])) {
+        while (de < l.n && is_digit((l.src[de] as i32))) {
             de = de + 1;
         }
         l = l.advance_to(de);
@@ -350,11 +350,11 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
     var is_float: boolean = false;
     // Fractional part: `.<digit>+`. Suppressed for hex and right
     // after a `.` (chained tuple index).
-    if (!is_hex && !after_dot && l.i + 1 < l.n && l.src[l.i] == 46 && is_digit(l.src[l.i + 1])) {
+    if (!is_hex && !after_dot && l.i + 1 < l.n && l.src[l.i] == 46 && is_digit((l.src[l.i + 1] as i32))) {
         is_float = true;
         l = l.advance_to(l.i + 1);   // consume `.`
         var fe: i32 = l.i;
-        while (fe < l.n && is_digit(l.src[fe])) {
+        while (fe < l.n && is_digit((l.src[fe] as i32))) {
             fe = fe + 1;
         }
         l = l.advance_to(fe);
@@ -367,14 +367,14 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
         && (l.peek_byte() == 101 || l.peek_byte() == 69)) {   // 'e' / 'E'
         var j: i32 = l.i + 1;
         if (j < l.n && (l.src[j] == 43 || l.src[j] == 45)) { j = j + 1; }   // '+' / '-'
-        if (j < l.n && is_digit(l.src[j])) {
+        if (j < l.n && is_digit((l.src[j] as i32))) {
             is_float = true;
             l = l.advance_to(l.i + 1);   // 'e' / 'E'
             if (!l.at_end() && (l.peek_byte() == 43 || l.peek_byte() == 45)) {
                 l = l.advance_to(l.i + 1);   // sign
             }
             var ee: i32 = l.i;
-            while (ee < l.n && is_digit(l.src[ee])) {
+            while (ee < l.n && is_digit((l.src[ee] as i32))) {
                 ee = ee + 1;
             }
             l = l.advance_to(ee);
@@ -391,7 +391,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
         var s_begin: i32 = l.i;
         l = l.advance_to(l.i + 1);
         var se: i32 = l.i;
-        while (se < l.n && is_digit(l.src[se])) {
+        while (se < l.n && is_digit((l.src[se] as i32))) {
             se = se + 1;
         }
         l = l.advance_to(se);
@@ -418,7 +418,7 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
 function scan_ident(l: Lex, start_line: i32, start_col: i32): NumResult {
     var begin: i32 = l.i;
     var e: i32 = l.i;
-    while (e < l.n && is_alnum(l.src[e])) {
+    while (e < l.n && is_alnum((l.src[e] as i32))) {
         e = e + 1;
     }
     l = l.advance_to(e);
@@ -447,10 +447,10 @@ function apply_escape(l: Lex, esc: i32): EscResult {
     if (esc == 92) { return EscResult { lex: l, frag: "\\", hexerr: false, unknown: false }; }
     if (esc == 120) {
         // \xNN — two hex digits → one byte.
-        if (l.i + 1 >= l.n || !is_hex_digit(l.src[l.i]) || !is_hex_digit(l.src[l.i + 1])) {
+        if (l.i + 1 >= l.n || !is_hex_digit((l.src[l.i] as i32)) || !is_hex_digit((l.src[l.i + 1] as i32))) {
             return EscResult { lex: l, frag: "", hexerr: true, unknown: false };
         }
-        var b: i32 = hex_val(l.src[l.i]) * 16 + hex_val(l.src[l.i + 1]);
+        var b: i32 = hex_val((l.src[l.i] as i32)) * 16 + hex_val((l.src[l.i + 1] as i32));
         l = l.advance();
         l = l.advance();
         return EscResult { lex: l, frag: string_from_bytes_unchecked([b]), hexerr: false, unknown: false };

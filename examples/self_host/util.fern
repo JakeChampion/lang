@@ -58,7 +58,7 @@ pub function hash_key(s: string): string {
     var b: i32 = 5381;
     var i: i32 = 0;
     while (i < s.len()) {
-        var c: i32 = s[i];
+        var c: i32 = s[i] as i32;
         a = (a * 31 + c + 1) & 1073741823;
         b = (b * 131 + c + 7) & 1073741823;
         i = i + 1;
@@ -90,7 +90,7 @@ pub function lit_to_i32(s: string): i32 {
         var acc: i32 = 0;
         var i: i32 = start + 2;
         while (i < s.len()) {
-            var b: i32 = s[i];
+            var b: i32 = s[i] as i32;
             var d: i32 = 0 - 1;
             if (b >= 48 && b <= 57) { d = b - 48; }
             else if (b >= 97 && b <= 102) { d = b - 97 + 10; }
@@ -106,7 +106,7 @@ pub function lit_to_i32(s: string): i32 {
         var bacc: i32 = 0;
         var bi: i32 = start + 2;
         while (bi < s.len()) {
-            var bb: i32 = s[bi];
+            var bb: i32 = s[bi] as i32;
             if (bb != 48 && bb != 49) { break; }
             bacc = bacc * 2 + (bb - 48);
             bi = bi + 1;
@@ -125,7 +125,7 @@ pub function digits_to_i32(s: string): i32 {
     var acc: i32 = 0;
     var i: i32 = start;
     while (i < s.len()) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b < 48 || b > 57) {
             if (neg) { return 0 - acc; }
             return acc;
@@ -149,7 +149,7 @@ pub function digits_to_i64(s: string): i64 {
     var acc: i64 = 0;
     var i: i32 = start;
     while (i < s.len()) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b < 48 || b > 57) {
             if (neg) { return 0 - acc; }
             return acc;
@@ -167,7 +167,7 @@ pub function is_all_digits(s: string): boolean {
     if (s.len() == 0) { return false; }
     var i: i32 = 0;
     while (i < s.len()) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b < 48 || b > 57) { return false; }
         i = i + 1;
     }
@@ -255,7 +255,7 @@ pub function parse_f64_bits(s: string): i64 {
     var sticky: boolean = false;
     var started: boolean = false;
     while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
-        var d: i32 = s[i] - 48;
+        var d: i32 = (s[i] as i32) - 48;
         if (started || d != 0) {
             started = true;
             if (digits.len() < 40) { digits = digits.append(d); }
@@ -267,7 +267,7 @@ pub function parse_f64_bits(s: string): i64 {
     if (i < s.len() && s[i] == 46) {        // '.'
         i = i + 1;
         while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
-            var fd: i32 = s[i] - 48;
+            var fd: i32 = (s[i] as i32) - 48;
             if (started || fd != 0) {
                 started = true;
                 if (digits.len() < 40) { digits = digits.append(fd); }
@@ -285,7 +285,7 @@ pub function parse_f64_bits(s: string): i64 {
         else if (i < s.len() && s[i] == 43) { i = i + 1; }
         var exp: i32 = 0;
         while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
-            if (exp < 100000) { exp = exp * 10 + (s[i] - 48); }
+            if (exp < 100000) { exp = exp * 10 + ((s[i] as i32) - 48); }
             i = i + 1;
         }
         if (eneg) { dp = dp - exp; } else { dp = dp + exp; }

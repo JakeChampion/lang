@@ -1504,7 +1504,7 @@ function _ascii_fold(s: string, from: i32, to: i32): string {
     var buf: u8[] = __alloc_u8(n);
     var i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i];
+        var b: i32 = s[i] as i32;
         if (b >= from && b < from + 26) { b = b + (to - from); }
         buf = buf.with(i, b as u8);
         i = i + 1;
@@ -1720,8 +1720,8 @@ pub function eq_ignore_case(a: string, b: string): boolean {
         if (na != b.len()) { return false; }
         var k: i32 = 0;
         while (k < na) {
-            var ca: i32 = a[k];
-            var cb: i32 = b[k];
+            var ca: i32 = a[k] as i32;
+            var cb: i32 = b[k] as i32;
             if (ca >= 65 && ca <= 90) { ca = ca + 32; }
             if (cb >= 65 && cb <= 90) { cb = cb + 32; }
             if (ca != cb) { return false; }
@@ -1750,7 +1750,7 @@ pub function swap_case(s: string): string {
         var buf: u8[] = __alloc_u8(n);
         var k: i32 = 0;
         while (k < n) {
-            var b: i32 = s[k];
+            var b: i32 = s[k] as i32;
             if (b >= 65 && b <= 90) { b = b + 32; }
             else if (b >= 97 && b <= 122) { b = b - 32; }
             buf = buf.with(k, b as u8);
