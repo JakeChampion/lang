@@ -715,7 +715,7 @@ side from the assigned value. Two limits are deliberate:
   see the next section. Crediting it routed that shape onto the IR path and it
   trapped (measured); it stays unproven.
 
-### Open: a ZERO-ARG named fn in an fn-typed TUPLE element (found 2026-07-29)
+### CLOSED: a ZERO-ARG named fn in an fn-typed TUPLE element (found + fixed 2026-07-29)
 
 Differential-probed against the interpreter oracle (x86-64 IR path, `-ir-probe`
 confirms `module: IR` for every row — these are IR miscompiles, not AST gaps):
@@ -749,14 +749,23 @@ why the call dispatches env-first — and it is the VALUE side that disagrees: t
 element holds the const-CALL result (an `i32`), and dispatching env-first on it
 treats `3` as a box pointer.
 
-**So the fix is to thread the expected type into the tuple lift** and wrap a bare
-zero-arg ident when the element's declared type is a fn — making the value side
-agree with the tag side that already assumes a box. The lift walks statements, so
-`StmtVar.type_name` is available at the binding; it is the recursion into
-`lift_inline_closures_expr` that currently drops it. Not attempted here: it is
-plumbing through a shared expression walker, and the wrong version of it silently
-breaks every `const` read, so it wants its own change with the const-read
-regression cases pinned alongside the six rows above.
+**FIXED.** The value side now agrees with the tag side that already assumes a
+box — and without threading a type through the shared expression walker, which is
+what made this look expensive. `StmtVar.type_name` is already in hand at the
+binding, so `wrap_ann_fn_tuple_elems` runs there as a pre-pass: for an ANNOTATED
+tuple (or annotated array of tuples) it boxes exactly the elements whose declared
+segment is a fn (`tuple_type_elem_tag(...) == "clo"`) and whose value is a bare
+unshadowed zero-arg module fn. Elements with >= 1 param are left to the ordinary
+tuple walk that already boxes them, so nothing is double-wrapped.
+
+Restricting it to ANNOTATED tuples is what keeps `const` reads intact: an
+unannotated `var t = (K, 4)` has no declared fn segment, so the pre-pass does not
+fire, and a bare `K` still reads as the const's value. Pinned by
+`TestSelfHostTupleFnZeroArg{IRX86_64,IRWasm}`, which carries four const-read
+regression cases (const in a tuple, a plain const read, a const and a fn value in
+the same annotated tuple, and an unannotated tuple carrying a const) next to the
+crash cases — an over-eager version of this fix breaks those four, so they are the
+real gate on it.
 
 A related shape found in the same sweep, recorded so it is not re-probed:
 `var g: (() => i32)[][] = [[a1]]; g[0][0]()` is interp 3, self-host SIGSEGV — but
