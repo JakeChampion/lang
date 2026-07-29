@@ -16204,6 +16204,13 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             // `m.get(k)` / `m.len()` / `m.iter()` dispatch as
                             // map ops (m.get recovers Option[V] from map_type_of).
                             ms = ms.mark_map_type(bslot, ev_ty);
+                        } else if (ev_ty.len() >= 8 && (ev_ty[0:7] == "Option[" || ev_ty[0:7] == "Result[")) {
+                            // An Option/Result payload (`Maybe(Option[i32])`): the box
+                            // pointer reads via struct_get like a struct; carry the
+                            // Option/Result type so a nested `match (o)` on the bound
+                            // value recovers its payload (the enum-payload sibling of
+                            // the tuple-element / struct-field opt-type marking).
+                            ms = ms.mark_opt_type(bslot, ev_ty);
                         } else if (is_scalar_array_type(ev_ty)) {
                             ms = ms.mark_arr(bslot, true);
                         } else if (ev_ty == "string[]") {

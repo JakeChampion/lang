@@ -358,6 +358,14 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// `.x` had no element type and bailed. The new ExprFieldAccess arm strips
 		// both `[]` off the field type to the element struct. 1+2+3=6.
 		{"structfield-arr2d-struct", "struct P { x: i32 } struct H { g: P[][] } function main(): i32 { var h = H { g: [[P { x: 1 }, P { x: 2 }], [P { x: 3 }]] }; var s = 0; var i = 0; while (i < h.g.len()) { var j = 0; while (j < h.g[i].len()) { s = s + h.g[i][j].x; j = j + 1; } i = i + 1; } return s; }"},
+		// An enum variant whose PAYLOAD is an Option / Result, then matched:
+		// `Maybe(Option[i32])` -> `match (o) { Some(v) => … }`. The nominal-enum
+		// match-arm payload binding typed string/scalar/struct/enum/map/array
+		// payloads but had no arm for an Option/Result payload, so the bound `o` was
+		// untyped and the inner `match (o)` bailed. Adding mark_opt_type closes it
+		// (o bound-but-not-matched already lowered). Option: 9; Result: 9.
+		{"enum-payload-opt", "enum E { Maybe(Option[i32]), No } function f(e: E): i32 { match (e) { Maybe(o) => { match (o) { Some(v) => { return v; }, None => { return 1; } } }, No => { return 2; } } return 0; } function main(): i32 { return f(Maybe(Some(9))); }"},
+		{"enum-payload-result", "enum E { Res(Result[i32, i32]), No } function f(e: E): i32 { match (e) { Res(r) => { match (r) { Ok(v) => { return v; }, Err(e2) => { return e2; } } }, No => { return 2; } } return 0; } function main(): i32 { return f(Res(Ok(9))); }"},
 		// A struct-array (P[]) / enum-array (E[]) value as a TUPLE element. The
 		// buffer is a heap pointer in the slot (leak mode — elements leak with the
 		// leak-only tuple); the destructure binds mark_arr + the element struct/enum
