@@ -29,7 +29,7 @@ function test_v4_hyphens(): test.TestOutcome {
 function test_v4_version(): test.TestOutcome {
     // The version nibble is the first char of the third group (index 14):
     // '4' is 52.
-    return test.assert_eq(uuid.uuid_v4()[14], 52);
+    return test.assert_eq(uuid.uuid_v4()[14] as i32, 52);
 }
 
 function test_v4_variant(): test.TestOutcome {
@@ -53,7 +53,7 @@ function test_v7_is_uuid(): test.TestOutcome {
 
 function test_v7_version(): test.TestOutcome {
     // v7 carries version '7' (55) in the same nibble slot.
-    return test.assert_eq(uuid.uuid_v7()[14], 55);
+    return test.assert_eq(uuid.uuid_v7()[14] as i32, 55);
 }
 
 function test_nil(): test.TestOutcome {
