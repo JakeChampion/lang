@@ -393,8 +393,37 @@ gates.
 Stated precisely: this is a real backend disagreement about alias-retain
 accounting for arrays, **whose safety impact is unestablished**. It is not
 demonstrably reachable by constructor reuse, and nothing here shows a live
-corruption. Whoever resolves it should establish reachability first rather than
-inheriting the alarming reading.
+corruption.
+
+##### Reachability: hunted, not found — and the IR answer may be the correct one
+
+The obvious way for a missing retain to bite is a free-while-still-referenced:
+the container keeps a pointer, the original binding's sweep frees the buffer.
+Four shapes designed to trigger exactly that, all **real programs with no debug
+builtins**, all against the interpreter as oracle:
+
+| shape | interp | wasm AST | wasm IR |
+|---|---|---|---|
+| container escapes the function (`return both`) | 55 | 55 | 55 |
+| original rebound after the store (`a = [99, 99]`) | 22 | 22 | 22 |
+| loop-scoped element appended each iteration | 22 | 22 | 22 |
+| rebind followed by allocation churn (would reuse a freed block) | 21 | 21 | 21 |
+
+**No miscompile.** That is a negative result, so it bounds rather than proves —
+but it is four independent attempts at the specific failure the missing retain
+predicts.
+
+It also raises a reading worth taking seriously before "fixing" the IR path: if
+an array is **moved** into the container rather than aliased, then after the
+store the container holds the only live reference, rc is genuinely 1, and
+`is_unique` answering **1 is correct** — with the AST path over-counting (which
+leaks rather than corrupts, i.e. errs safe). Nothing here settles which side is
+right; it settles that the IR side is not obviously the wrong one.
+
+Consequence for the alias: the 7 failing wasm rows assert `is_unique == 0`, and
+that expectation may itself be AST-specific rather than a specification. Landing
+the alias might therefore be a matter of **correcting those expectations for
+wasm**, not of changing the backend. Establish which before writing code.
 
 **The alias is therefore reverted, not landed**: it would turn those 7 wasm
 cases red, and hiding them behind a skip would bury a real backend disagreement.
