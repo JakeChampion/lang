@@ -214,7 +214,7 @@ pub function (s: string) rfind(needle: string): Option[i32] {
 pub function (s: string) to_ascii_capitalize(): string {
     var n: i32 = s.len();
     if (n == 0) { return ""; }
-    var first: i32 = (s[0] as i32).to_ascii_upper();
+    var first: i32 = s[0].to_ascii_upper() as i32;
     if (first == (s[0] as i32)) { return s; }
     var buf: u8[] = __alloc_u8(1);
     buf = buf.with(0, first as u8);
@@ -438,7 +438,7 @@ function __case_separator(s: string, sep_byte: i32): string {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = s[i] as i32;
-        if ((b as i32).is_ascii_upper() && i > 0) { total = total + 2; }
+        if ((b as u8).is_ascii_upper() && i > 0) { total = total + 2; }
         else { total = total + 1; }
         i = i + 1;
     }
@@ -447,14 +447,14 @@ function __case_separator(s: string, sep_byte: i32): string {
     i = 0;
     while (i < n) {
         var b: i32 = s[i] as i32;
-        if ((b as i32).is_ascii_upper() && i > 0) {
+        if ((b as u8).is_ascii_upper() && i > 0) {
             buf = buf.with(pos, sep_byte as u8);
             pos = pos + 1;
         }
         if (b == 32) {
             buf = buf.with(pos, sep_byte as u8);
         } else {
-            buf = buf.with(pos, (b as i32).to_ascii_lower() as u8);
+            buf = buf.with(pos, (b as u8).to_ascii_lower() as u8);
         }
         pos = pos + 1;
         i = i + 1;
@@ -510,13 +510,13 @@ function __case_join(s: string, upper_first: boolean): string {
             at_word_start = true;
             i = i + 1;
         } else {
-            var out_b: i32 = (b as i32).to_ascii_lower();
+            var out_b: i32 = (b as u8).to_ascii_lower() as i32;
             if (at_word_start) {
                 if (!emitted_any) {
                     // First word's initial: PascalCase upper, camelCase lower.
-                    if (upper_first) { out_b = (b as i32).to_ascii_upper(); }
+                    if (upper_first) { out_b = (b as u8).to_ascii_upper() as i32; }
                 } else {
-                    out_b = (b as i32).to_ascii_upper();
+                    out_b = (b as u8).to_ascii_upper() as i32;
                 }
             }
             buf = buf.with(pos, out_b as u8);
@@ -546,7 +546,7 @@ pub function (s: string) slugify(): string {
     var pending: boolean = false;   // a separator run is buffered
     var i: i32 = 0;
     while (i < n) {
-        var lc: i32 = (s[i] as i32).to_ascii_lower();
+        var lc: i32 = s[i].to_ascii_lower() as i32;
         var alnum: boolean = (lc >= 97 && lc <= 122) || (lc >= 48 && lc <= 57);
         if (alnum) {
             // Emit the buffered separator only between alphanumerics, so
@@ -571,10 +571,10 @@ pub function (s: string) is_valid_identifier(): boolean {
     var n: i32 = s.len();
     if (n == 0) { return false; }
     var first: i32 = s[0] as i32;
-    if (!(first as i32).is_ascii_alpha() && first != 95) { return false; }
+    if (!(first as u8).is_ascii_alpha() && first != 95) { return false; }
     var i: i32 = 1;
     while (i < n) {
-        if (!(s[i] as i32).is_ascii_alnum() && s[i] != 95) { return false; }
+        if (!s[i].is_ascii_alnum() && s[i] != 95) { return false; }
         i = i + 1;
     }
     return true;
@@ -604,7 +604,7 @@ pub function (s: string) is_ipv4(): boolean {
         var j: i32 = 0;
         while (j < plen) {
             var b: i32 = p[j] as i32;
-            if (!(b as i32).is_ascii_digit()) { return false; }
+            if (!(b as u8).is_ascii_digit()) { return false; }
             v = v * 10 + (b - 48);
             j = j + 1;
         }
@@ -1016,7 +1016,7 @@ pub function (s: string) to_acronym(): string {
         var t: string = toks[i];
         if (t.len() > 0) {
             var b: i32 = t[0] as i32;
-            out = out + ((b as i32).to_ascii_upper()).to_ascii_string();
+            out = out + ((b as u8).to_ascii_upper()).to_ascii_string();
         }
         i = i + 1;
     }
@@ -1039,7 +1039,7 @@ pub function (s: string) to_ascii_title_case(): string {
     while (i < n) {
         var b: i32 = s[i] as i32;
         if (prev_space) {
-            buf = buf.with(i, (b as i32).to_ascii_upper() as u8);
+            buf = buf.with(i, (b as u8).to_ascii_upper() as u8);
         } else {
             buf = buf.with(i, b as u8);
         }
@@ -1111,7 +1111,7 @@ pub function (s: string) is_ascii_numeric(): boolean {
     if (n == 0) { return false; }
     var i: i32 = 0;
     while (i < n) {
-        if (!(s[i] as i32).is_ascii_digit()) { return false; }
+        if (!s[i].is_ascii_digit()) { return false; }
         i = i + 1;
     }
     return true;
@@ -1126,7 +1126,7 @@ pub function (s: string) is_ascii_alpha_only(): boolean {
     if (n == 0) { return false; }
     var i: i32 = 0;
     while (i < n) {
-        if (!(s[i] as i32).is_ascii_alpha()) { return false; }
+        if (!s[i].is_ascii_alpha()) { return false; }
         i = i + 1;
     }
     return true;
@@ -1141,7 +1141,7 @@ pub function (s: string) is_ascii_alnum_only(): boolean {
     if (n == 0) { return false; }
     var i: i32 = 0;
     while (i < n) {
-        if (!(s[i] as i32).is_ascii_alnum()) { return false; }
+        if (!s[i].is_ascii_alnum()) { return false; }
         i = i + 1;
     }
     return true;
@@ -1162,7 +1162,7 @@ pub function (s: string) is_int(): boolean {
     if (s[0] == 45 || s[0] == 43) { i = 1; }
     if (i >= n) { return false; }
     while (i < n) {
-        if (!(s[i] as i32).is_ascii_digit()) { return false; }
+        if (!s[i].is_ascii_digit()) { return false; }
         i = i + 1;
     }
     return true;
@@ -1180,13 +1180,13 @@ pub function (s: string) is_float(): boolean {
     if (s[0] == 45 || s[0] == 43) { i = 1; }
     if (i >= n) { return false; }
     var any_digits: boolean = false;
-    while (i < n && (s[i] as i32).is_ascii_digit()) {
+    while (i < n && s[i].is_ascii_digit()) {
         any_digits = true;
         i = i + 1;
     }
     if (i < n && s[i] == 46) {
         i = i + 1;
-        while (i < n && (s[i] as i32).is_ascii_digit()) {
+        while (i < n && s[i].is_ascii_digit()) {
             any_digits = true;
             i = i + 1;
         }
@@ -1225,7 +1225,7 @@ pub function (s: string) is_hex_string(): boolean {
     if (n == 0) { return false; }
     var i: i32 = 0;
     while (i < n) {
-        if (!(s[i] as i32).is_ascii_hex_digit()) { return false; }
+        if (!s[i].is_ascii_hex_digit()) { return false; }
         i = i + 1;
     }
     return true;
@@ -1435,7 +1435,7 @@ pub function (s: string) starts_with_ci(prefix: string): boolean {
     if (pLen > sLen) { return false; }
     var i: i32 = 0;
     while (i < pLen) {
-        if ((s[i] as i32).to_ascii_lower() != (prefix[i] as i32).to_ascii_lower()) { return false; }
+        if (s[i].to_ascii_lower() != prefix[i].to_ascii_lower()) { return false; }
         i = i + 1;
     }
     return true;
@@ -1448,7 +1448,7 @@ pub function (s: string) ends_with_ci(suffix: string): boolean {
     var off: i32 = sLen - uLen;
     var i: i32 = 0;
     while (i < uLen) {
-        if ((s[off + i] as i32).to_ascii_lower() != (suffix[i] as i32).to_ascii_lower()) { return false; }
+        if (s[off + i].to_ascii_lower() != suffix[i].to_ascii_lower()) { return false; }
         i = i + 1;
     }
     return true;
@@ -1908,7 +1908,7 @@ pub function (s: string) is_uuid(): boolean {
         if (i == 8 || i == 13 || i == 18 || i == 23) {
             if (s[i] != 45) { return false; }    // '-'
         } else {
-            if (!(s[i] as i32).is_ascii_hex_digit()) { return false; }
+            if (!s[i].is_ascii_hex_digit()) { return false; }
         }
         i = i + 1;
     }
@@ -2107,7 +2107,7 @@ pub function (s: string) index_of_ci(needle: string): i32 {
         var j: i32 = 0;
         var ok: boolean = true;
         while (j < nLen) {
-            if ((s[i + j] as i32).to_ascii_lower() != (needle[j] as i32).to_ascii_lower()) {
+            if (s[i + j].to_ascii_lower() != needle[j].to_ascii_lower()) {
                 ok = false;
                 j = nLen;
             } else {
