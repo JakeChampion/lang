@@ -24,6 +24,7 @@ import "./parser";
 import "./asm";
 import "./asm_ir";
 import "./asm_arm64";
+import "./irlower";
 
 function main(): i32 {
     var av: string[] = args();
@@ -79,6 +80,16 @@ function main(): i32 {
     }
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    // Unclassifiable `fn[]` struct field (#5787 / #3457): a field whose
+    // construction proves neither fn-pointers nor closures has no safe dispatch
+    // — either default crashes — and used to bail to the AST emitter, which
+    // miscompiles it into a runtime SIGSEGV with no diagnostic. Report it, the
+    // way the arity / undefined-callee gates report theirs, before either emit.
+    var fnfld_errs: string = irlower.check_fn_array_fields(mod);
+    if (fnfld_errs.len() > 0) {
+        eprint(fnfld_errs);
+        return 1;
+    }
     var lm: parser.Module = asm_ir.lift_lambdas(mod);
     // Build the whole-program signature view: this module's own funcs/structs
     // plus every -ir-sigs sibling's. Each module is run through

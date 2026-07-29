@@ -33435,7 +33435,243 @@ pub function fnptr_arr_fields_of(funcs: parser.FuncDecl[], structs: parser.Struc
         if (!util.has_str(acc.cbad, acc.ccand[k])) { out = out.append("CLOARR:" + acc.ccand[k]); }
         k = k + 1;
     }
+    // FNFLD:<sty>.<field> — every "fn[]" field this module CONSTRUCTS, proved or
+    // not. The two marker sets above answer "which representation", this one
+    // answers "was it built here at all", which is what separates a field the
+    // module cannot classify (a real error — see check_fn_array_fields) from one
+    // it simply never sees constructed (a sibling module's job, so silence).
+    var seen: string[] = [];
+    var si: i32 = 0;
+    while (si < acc.cand.len()) { seen = push_str_unique(seen, acc.cand[si]); si = si + 1; }
+    si = 0;
+    while (si < acc.bad.len()) { seen = push_str_unique(seen, acc.bad[si]); si = si + 1; }
+    si = 0;
+    while (si < acc.ccand.len()) { seen = push_str_unique(seen, acc.ccand[si]); si = si + 1; }
+    si = 0;
+    while (si < acc.cbad.len()) { seen = push_str_unique(seen, acc.cbad[si]); si = si + 1; }
+    si = 0;
+    while (si < seen.len()) { out = out.append("FNFLD:" + seen[si]); si = si + 1; }
     return out;
+}
+
+// check_fn_array_fields is the pre-emit gate for the ONE `fn[]` struct-field
+// shape the compiler cannot lower correctly: a field whose construction proves
+// neither representation.
+//
+// `(() => T)[]` is spelled the same for a raw-fn-pointer array and an array of
+// `__mkclo$` env boxes, and the two dispatch differently (plain `call_indirect`
+// vs env-first). The construction scan proves one or the other and the read side
+// asks for the proof (#5790). A field with NEITHER marker is unproven — and
+// neither dispatch default is safe: a raw pointer called env-first crashes, and
+// an env box called as a plain pointer crashes too. Before this gate the read
+// simply bailed the function, the module dropped to the legacy AST emitter, and
+// THAT miscompiled it — a SIGSEGV at runtime with no diagnostic (#5787 measured
+// both the param-built and loop-built shapes crashing on both paths).
+//
+// So: report it, the way `wasm_unsupported_builtin` reports a builtin with no
+// wasm meaning. A diagnostic naming the field beats a segfault.
+//
+// Two deliberate narrowings keep this from rejecting working programs:
+//   - only a field this module CONSTRUCTS (`FNFLD:`). A field read here but built
+//     in a sibling module is not this module's call to make, and per-module emit
+//     must not reject it.
+//   - only a field this module READS. Building an unclassifiable field and never
+//     reading it lowers fine today, because the representation only matters at
+//     dispatch.
+pub function check_fn_array_fields(mod: parser.Module): string {
+    var lifted: parser.Module = lift_lambdas(mod);
+    var marks: string[] = fnptr_arr_fields_of(lifted.funcs, lifted.structs);
+    var reads: string[] = [];
+    var i: i32 = 0;
+    while (i < lifted.funcs.len()) {
+        // Seed the bindings with the params: `function call(r: Reg)` makes `r`
+        // a Reg for every read in the body.
+        var binds: string[] = [];
+        var pi: i32 = 0;
+        while (pi < lifted.funcs[i].params.len()) {
+            binds = fnfld_bind(binds, lifted.funcs[i].params[pi].name, lifted.funcs[i].params[pi].type_name, lifted.structs);
+            pi = pi + 1;
+        }
+        reads = fnfld_read_stmts(lifted.funcs[i].body, lifted.structs, binds, reads);
+        i = i + 1;
+    }
+    var out: string = "";
+    var r: i32 = 0;
+    while (r < reads.len()) {
+        var key: string = reads[r];
+        if (util.has_str(marks, "FNFLD:" + key)
+                && !util.has_str(marks, "FNPTR:" + key)
+                && !util.has_str(marks, "CLOARR:" + key)) {
+            out = out + "error: cannot determine whether the `fn[]` field `" + key
+                + "` holds function pointers or closures\n"
+                + "  every construction of it must be an array literal (or a local bound to one)\n"
+                + "  whose elements are ALL named functions, or ALL closures\n";
+        }
+        r = r + 1;
+    }
+    return out;
+}
+
+// fnfld_read_stmts collects `<Type>.<field>` for every "fn[]" struct field READ
+// in `stmts`, threading `binds` — the local/param name -> struct type map the
+// resolution needs, since the gate runs before any LowerState exists.
+//
+// A bare `.len()` receiver is not a read for this purpose: it never reaches an
+// element, so the representation cannot matter. Same carve-out strarrfld_scan
+// makes.
+function fnfld_read_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], binds: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var b: string[] = binds;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                a = fnfld_read_expr(v.init, structs, b, a);
+                // `var r: R = …` binds by annotation; `var r = R { … }` by the
+                // literal. Anything else drops the name (a shadowing rebind must
+                // not inherit the old type).
+                var vty: string = v.type_name;
+                if (vty.len() == 0) { vty = fnfld_lit_type(v.init); }
+                b = fnfld_bind(b, v.name, vty, structs);
+            },
+            parser.StmtAssign(as2) => { a = fnfld_read_expr(as2.value, structs, b, a); },
+            parser.StmtExpr(ex) => { a = fnfld_read_expr(ex.value, structs, b, a); },
+            parser.StmtReturn(rt) => { a = fnfld_read_expr(rt.value, structs, b, a); },
+            parser.StmtIf(iff) => {
+                a = fnfld_read_expr(iff.cond, structs, b, a);
+                a = fnfld_read_stmts(iff.then_body, structs, b, a);
+                a = fnfld_read_stmts(iff.else_body, structs, b, a);
+            },
+            parser.StmtWhile(w) => {
+                a = fnfld_read_expr(w.cond, structs, b, a);
+                a = fnfld_read_stmts(w.body, structs, b, a);
+            },
+            parser.StmtFor(fo) => {
+                a = fnfld_read_expr(fo.iter, structs, b, a);
+                a = fnfld_read_stmts(fo.body, structs, b, a);
+            },
+            parser.StmtMatch(m) => {
+                a = fnfld_read_expr(m.scrutinee, structs, b, a);
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    if (m.arms[ai].has_guard) { a = fnfld_read_expr(m.arms[ai].guard, structs, b, a); }
+                    a = fnfld_read_stmts(m.arms[ai].body, structs, b, a);
+                    ai = ai + 1;
+                }
+            },
+            parser.StmtDefer(d) => { a = fnfld_read_stmts([d.action], structs, b, a); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+function fnfld_read_expr(e: parser.Expr, structs: parser.StructDecl[], binds: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = fnfld_obj_type(fa.obj, structs, binds);
+            if (oty.len() > 0 && decl_field_type(structs, oty, fa.field) == "fn[]") {
+                a = push_str_unique(a, oty + "." + fa.field);
+            }
+            return fnfld_read_expr(fa.obj, structs, binds, a);
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "len") {
+                        match (cfa.obj) {
+                            parser.ExprFieldAccess(ffa) => { a = fnfld_read_expr(ffa.obj, structs, binds, a); },
+                            _ => { a = fnfld_read_expr(cfa.obj, structs, binds, a); }
+                        }
+                    } else {
+                        a = fnfld_read_expr(c.callee, structs, binds, a);
+                    }
+                },
+                _ => { a = fnfld_read_expr(c.callee, structs, binds, a); }
+            }
+            var ci: i32 = 0;
+            while (ci < c.args.len()) { a = fnfld_read_expr(c.args[ci], structs, binds, a); ci = ci + 1; }
+            return a;
+        },
+        parser.ExprIndex(ix) => { return fnfld_read_expr(ix.index, structs, binds, fnfld_read_expr(ix.array, structs, binds, a)); },
+        parser.ExprBinary(bx) => { return fnfld_read_expr(bx.right, structs, binds, fnfld_read_expr(bx.left, structs, binds, a)); },
+        parser.ExprUnary(u) => { return fnfld_read_expr(u.operand, structs, binds, a); },
+        parser.ExprSlice(sl) => { return fnfld_read_expr(sl.end, structs, binds, fnfld_read_expr(sl.start, structs, binds, fnfld_read_expr(sl.array, structs, binds, a))); },
+        parser.ExprArray(av) => {
+            var ei: i32 = 0;
+            while (ei < av.elements.len()) { a = fnfld_read_expr(av.elements[ei], structs, binds, a); ei = ei + 1; }
+            return a;
+        },
+        parser.ExprTuple(t) => {
+            var ti: i32 = 0;
+            while (ti < t.elements.len()) { a = fnfld_read_expr(t.elements[ti], structs, binds, a); ti = ti + 1; }
+            return a;
+        },
+        parser.ExprStructLit(sl2) => {
+            var fi: i32 = 0;
+            while (fi < sl2.field_values.len()) { a = fnfld_read_expr(sl2.field_values[fi], structs, binds, a); fi = fi + 1; }
+            if (sl2.has_base) { a = fnfld_read_expr(sl2.base, structs, binds, a); }
+            return a;
+        },
+        parser.ExprLambda(lm) => { return fnfld_read_stmts(lm.body, structs, binds, a); },
+        _ => { return a; }
+    }
+    return a;
+}
+
+// fnfld_obj_type resolves the struct type of a field-access RECEIVER from
+// declarations alone: a `T { … }` literal, or a name bound by a param / an
+// annotated `var` / a `var` initialised from a literal. Anything else yields ""
+// and the gate stays silent — the conservative direction for a rejector.
+function fnfld_obj_type(e: parser.Expr, structs: parser.StructDecl[], binds: string[]): string {
+    match (e) {
+        parser.ExprStructLit(sl) => { return sl.type_name; },
+        parser.ExprIdent(id) => { return fnfld_lookup(binds, id.name); },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// fnfld_lit_type reads the struct type off an initialiser that is a struct
+// literal, so an UNANNOTATED `var r = R { … }` still binds.
+function fnfld_lit_type(e: parser.Expr): string {
+    match (e) {
+        parser.ExprStructLit(sl) => { return sl.type_name; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// fnfld_bind records `name` as `ty` when `ty` names a declared struct, and drops
+// any prior binding for the name otherwise (shadowing must not inherit a type).
+// Entries are "name ty" pairs in one flat list — two slots per binding, so the
+// list stays a plain string[] the way the other scan accumulators do.
+function fnfld_bind(binds: string[], name: string, ty: string, structs: parser.StructDecl[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i + 1 < binds.len()) {
+        if (binds[i] != name) { out = out.append(binds[i]); out = out.append(binds[i + 1]); }
+        i = i + 2;
+    }
+    var known: boolean = false;
+    var si: i32 = 0;
+    while (si < structs.len()) {
+        if (structs[si].name == ty) { known = true; }
+        si = si + 1;
+    }
+    if (known) { out = out.append(name); out = out.append(ty); }
+    return out;
+}
+
+function fnfld_lookup(binds: string[], name: string): string {
+    var i: i32 = 0;
+    while (i + 1 < binds.len()) {
+        if (binds[i] == name) { return binds[i + 1]; }
+        i = i + 2;
+    }
+    return "";
 }
 
 // strarrfld_scan / strarrfld_scan_stmts: the string[]-field admission walk.

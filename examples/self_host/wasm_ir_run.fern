@@ -41,6 +41,11 @@ function main(): i32 {
     // against a symbol nothing defines — an opaque load-time `unknown func`
     // instead of a diagnostic pointing at the source.
     arity_errs = arity_errs + asmcore.check_undefined_calls(mod);
+    // Unclassifiable `fn[]` struct field (#5787 / #3457): a field whose
+    // construction proves neither fn-pointers nor closures has no safe dispatch
+    // — either default crashes — and used to bail to the AST emitter, which
+    // miscompiles it into a runtime SIGSEGV with no diagnostic. Report it.
+    arity_errs = arity_errs + irlower.check_fn_array_fields(mod);
     if (arity_errs.len() > 0) {
         eprint(arity_errs);
         return 1;

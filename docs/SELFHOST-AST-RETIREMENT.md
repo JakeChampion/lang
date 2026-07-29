@@ -482,7 +482,35 @@ not close it either — the param case has no construction visible at the struct
 literal to credit. The sound options are (a) positive evidence on BOTH sides
 with anything unproven becoming a clean compile ERROR rather than a silent
 miscompile (the `wasm_unsupported_builtin` pattern), or (b) making the field's
-representation uniform so the question disappears. Until then, an `fn[]` struct
+representation uniform so the question disappears.
+
+**Option (a) is DONE.** #5790 supplied the positive evidence on both sides, and
+`irlower.check_fn_array_fields` is the pre-emit gate that reports what neither
+side proves — wired into `asm_ir_run` and `wasm_ir_run` next to the arity /
+undefined-callee gates. Both shapes in the table above now produce
+`error: cannot determine whether the fn[] field R.hs holds function pointers or
+closures` instead of a SIGSEGV, on both backends.
+
+Two narrowings keep it from rejecting working programs, both pinned by
+`TestSelfHostFnArrayFieldGate{X86_64,Wasm}`:
+  - only a field this module CONSTRUCTS (the `FNFLD:` marker). A field read here
+    but built in a sibling module is not this module's call to make, which matters
+    for per-module emit.
+  - only a field this module READS THROUGH AN ELEMENT. A bare `.len()` never
+    reaches an element, so the representation cannot matter — an unprovable field
+    that is only length-queried still compiles.
+
+The resolution is deliberately syntactic (`fnfld_obj_type` over a param/annotated-
+var/struct-literal binding map) because the gate runs before any `LowerState`
+exists. Anything it cannot resolve yields "" and the gate stays silent, which is
+the conservative direction for a rejector: a missed read is the status quo ante,
+a false positive would break a working build. Verified against
+`TestSelfHostAsmIRPath`, the IR fixpoint, the closure / fnptr / tuple-fn suites,
+the wasm IR path, and both stage-2 compilers — no program lost.
+
+Option (b) is still the better end state (it would also close the
+cross-representation LOCAL rebind, which no gate can classify), but it is a
+representation change across every backend. Until then, an `fn[]` struct
 field is only safe when its construction is provable — which after #5790 means
 an array literal, a local bound to one, or (closure side only) a local rebound
 to one by a top-level assignment.
