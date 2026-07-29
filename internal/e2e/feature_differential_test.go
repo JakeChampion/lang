@@ -533,8 +533,8 @@ import "std/array";
 function main(): i32 {
     var xs: i32[] = [5, 2, 8, 1, 9, 3];
     var s = xs.sorted_asc();
-    print(s[0].to_string());
-    print(s[5].to_string());
+    print((s[0] as i32).to_string());
+    print((s[5] as i32).to_string());
     print(xs.sum().to_string());
     match (xs.median()) { Some(m) => { print(m.to_string()); }, None => {} }
     match (xs.min_max()) { Some(p) => { print(p.0.to_string() + ".." + p.1.to_string()); }, None => {} }
