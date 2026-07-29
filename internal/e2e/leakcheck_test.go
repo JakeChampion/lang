@@ -308,3 +308,81 @@ func TestArm64LeakCheckExitBuiltinReports(t *testing.T) {
 		t.Errorf("got allocs=%d frees=%d live=%d, want 1/0/112", allocs, frees, live)
 	}
 }
+
+// A callee that RETAINS a string parameter into the value it returns —
+// `mkT(name, line) -> Tk { name: name, line: line }`, the shape every one of
+// the lexer's eight `*_tok` helpers has — used to leak one reference per call.
+// The field init is a counted store, so the returned struct owns a reference,
+// but computeFreeEligible taints any string argument passed to a user function
+// (it cannot see whether the callee retains it uncounted), so the CALLER's
+// reference was never released and the rc sat one above its true owner count
+// forever. inferParamCountedRetain lifts that taint for the counted case.
+//
+// Pinned by frees, not by a leak-free total: the shape has a second, unrelated
+// leak (the inline-literal form leaks one block per round too), so the contract
+// here is that routing through the retaining helper costs NOTHING over building
+// the struct in place — equal on x86-64, and better than inline on arm64, whose
+// two-word string ABI never took this taint (it is gated to single-word
+// natives) and whose inline form reclaims less. `examples/probes/retained_param_leak.fern` is
+// the standalone probe; on `parser.fern` this is worth +90% frees in the lexer.
+const retainedParamSrc = `import "std/i32";
+struct Tk { name: string, line: i32 }
+function mkT(name: string, line: i32): Tk { return Tk { name: name, line: line }; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) {
+        var s: string = "id" + r.to_string();
+        var t: Tk = mkT(s, r);
+        acc = acc + t.name.len();
+        r = r + 1;
+    }
+    return acc % 5;
+}`
+
+// The same program with the struct built in place — no retaining call at all.
+const retainedParamInlineSrc = `import "std/i32";
+struct Tk { name: string, line: i32 }
+function main(): i32 {
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) {
+        var s: string = "id" + r.to_string();
+        var t: Tk = Tk { name: s, line: r };
+        acc = acc + t.name.len();
+        r = r + 1;
+    }
+    return acc % 5;
+}`
+
+func TestLeakCheckRetainedParamX86_64(t *testing.T) {
+	_, viaHelperErr, viaHelperCode := runLeakCheckX86_64(t, retainedParamSrc)
+	_, inlineErr, inlineCode := runLeakCheckX86_64(t, retainedParamInlineSrc)
+	if viaHelperCode != inlineCode {
+		t.Fatalf("exit codes differ: helper %d, inline %d", viaHelperCode, inlineCode)
+	}
+	ha, hf, _ := parseLeakCheckLine(t, viaHelperErr)
+	ia, iff, _ := parseLeakCheckLine(t, inlineErr)
+	if ha != ia {
+		t.Fatalf("allocs differ: helper %d, inline %d — fixture drift", ha, ia)
+	}
+	if hf < iff {
+		t.Errorf("retaining callee frees %d of %d, inline form frees %d: the call leaks the caller's reference", hf, ha, iff)
+	}
+}
+
+func TestLeakCheckRetainedParamArm64(t *testing.T) {
+	_, viaHelperErr, viaHelperCode := runLeakCheckArm64(t, retainedParamSrc)
+	_, inlineErr, inlineCode := runLeakCheckArm64(t, retainedParamInlineSrc)
+	if viaHelperCode != inlineCode {
+		t.Fatalf("exit codes differ: helper %d, inline %d", viaHelperCode, inlineCode)
+	}
+	ha, hf, _ := parseLeakCheckLine(t, viaHelperErr)
+	ia, iff, _ := parseLeakCheckLine(t, inlineErr)
+	if ha != ia {
+		t.Fatalf("allocs differ: helper %d, inline %d — fixture drift", ha, ia)
+	}
+	if hf < iff {
+		t.Errorf("retaining callee frees %d of %d, inline form frees %d: the call leaks the caller's reference", hf, ha, iff)
+	}
+}

@@ -1,18 +1,27 @@
 // A 13-line reproduction of the LEAK half of #3457 (docs/SELFHOST-AST-RETIREMENT.md,
 // "The load pipeline leaks"): passing an owned value to a function that RETAINS it
-// into the value it returns leaks exactly one reference per call — the caller's.
+// into the value it returns USED TO leak exactly one reference per call — the
+// caller's.
 //
 // `mkT` stores its borrowed `name` param into the returned struct, which is a
-// COUNTED store (the StructLit field inc). The caller's own reference is then
+// COUNTED store (the StructLit field inc). The caller's own reference was then
 // escape-tainted out of every release site (computeFreeEligible taints an
-// argument that flows into a call), so nothing ever decs it: the string's rc
-// stays one above its true owner count forever.
+// argument that flows into a call), so nothing ever dec'd it and the string's rc
+// sat one above its true owner count forever. inferParamCountedRetain now proves
+// the retention counted and lifts that taint.
 //
 //   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/retained_param_leak.fern
-//   /tmp/p; # stderr: leakcheck: allocs=3000 frees=1000 live_bytes=64000
+//   /tmp/p; # stderr: leakcheck: allocs=3000 frees=2000 live_bytes=32000
 //
-// Attribution, measured on this shape (3 allocs per round — the to_string buffer,
-// the concat, the struct box):
+// FIXED for this shape by inferParamCountedRetain: frees went 1000 -> 2000, so
+// routing through the retaining helper now costs nothing over building the
+// struct in place. The remaining 1000 is a SEPARATE leak the inline form has
+// too (see the table below) — this probe stays as the regression guard for the
+// call-boundary half, alongside TestLeakCheckRetainedParam{X86_64,Arm64}.
+//
+// Attribution as originally measured (3 allocs per round — the to_string
+// buffer, the concat, the struct box); the "via the helper" rows are what the
+// fix moved from 2000 leaked to 1000:
 //
 //   var t = Tk { name: s, line: r };          inline literal   1000 leaked (baseline)
 //   var t = mkT(s, r);                        via the helper   2000 leaked
@@ -25,7 +34,10 @@
 //
 // This is the lexer's per-token shape — `ident_tok(text, line, col)` and its seven
 // siblings each retain their string param into the returned Token — which is why
-// `lexer.tokenize` on parser.fern leaks 466815 of 511278 blocks (91.3%).
+// `lexer.tokenize` on parser.fern leaks 464073 of 508639 blocks (91.2%). Fixing
+// this shape alone barely moves that number (+103 blocks): the lexer threads a
+// `Lex` struct param through field-by-field rebuilds, which the summary cannot
+// yet prove counted. See the doc's widening list.
 //
 // Exit code 0 either way, matching the interpreter: the leak is silent.
 import "std/i32";

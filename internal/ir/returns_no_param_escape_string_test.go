@@ -66,8 +66,13 @@ function main(): i32 {
 		t.Errorf("concat string field: main emits no __drop_enum_E — concat should be provenance-free fresh")
 	}
 
-	// PARAM-embedding ctor: `S { name: nm }` aliases the caller's string —
-	// the verdict must stay false and the local must NOT be swept.
+	// PARAM-embedding ctor: `S { name: nm }` aliases the caller's string, so
+	// returnsNoParamEscape stays FALSE — but the alias is COUNTED (the StructLit
+	// field inc), and inferParamCountedRetain reads exactly that: the caller's
+	// local stays reclaimable and the result is swept. Both halves of the pair
+	// are then balanced — the sweep decs the field, the caller's own release
+	// decs the last reference — where the old conservative answer stranded the
+	// enum box, the payload struct box AND the string on every call.
 	const paramEmbed = `struct S { name: string, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm, n: n }, n); }
@@ -82,7 +87,36 @@ function main(): i32 {
     }
     return acc + keep.len();
 }`
-	if n := dropCallCountInFn(lowerForTest(t, paramEmbed), "main", "__drop_enum_E"); n != 0 {
-		t.Errorf("param-embedding ctor: main emits %d __drop_enum_E calls, want 0 (result aliases caller heap)", n)
+	if n := dropCallCountInFn(lowerForTest(t, paramEmbed), "main", "__drop_enum_E"); n == 0 {
+		t.Errorf("param-embedding ctor: main emits no __drop_enum_E — a COUNTED param alias must stay reclaimable (inferParamCountedRetain)")
+	}
+
+	// UNCOUNTED param retention: the callee pushes the string into an array it
+	// returns. `xs.append(nm)` is not a counting construction site the summary
+	// recognises (it is a call, not a literal), so the param is NOT counted-only
+	// and the conservative taint stands — the caller must not reclaim `keep`.
+	// This is the #4174 shape: a self-host codegen helper stored a string arg
+	// into an array field of the returned struct and the caller-side str_dec
+	// recycled its box mid-codegen.
+	const uncounted = `struct S { names: string[], n: i32 }
+enum E { A(S, i32), B(i32, i32) }
+function mk(nm: string, n: i32): E {
+    var xs: string[] = [];
+    xs = xs.append(nm);
+    return A(S { names: xs, n: n }, n);
+}
+function main(): i32 {
+    var keep: string = "aa" + "bb";
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 10) {
+        var e: E = mk(keep, i);
+        match (e) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
+        i = i + 1;
+    }
+    return acc + keep.len();
+}`
+	if n := dropCallCountInFn(lowerForTest(t, uncounted), "main", "__drop_enum_E"); n != 0 {
+		t.Errorf("uncounted param retention: main emits %d __drop_enum_E calls, want 0 (the append is not a counted construction)", n)
 	}
 }

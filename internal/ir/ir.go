@@ -2700,6 +2700,9 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// (calleeParamOwnedByDefault) consult this so they agree on which
 	// owned-by-default params are kept borrowed.
 	paramEscapes := inferParamEscapes(prog, info)
+	// Per-callee: string params retained only through counted constructions, so
+	// a caller may release its own reference (see inferParamCountedRetain).
+	paramCountedRetain := inferParamCountedRetain(prog, info)
 	readOnlyComparators := computeReadOnlyComparators(info)
 	// #4873: per-function param positions whose buffers the callee may grow
 	// in place — drives the caller-side containment bracket in callBody.
@@ -2758,7 +2761,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes, readOnlyComparators, growParams)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes, paramCountedRetain, readOnlyComparators, growParams)
 		if err != nil {
 			return nil, err
 		}
@@ -4454,6 +4457,10 @@ type builder struct {
 	// NON-escaping owned-by-default param borrowed — no caller inc, no callee
 	// dec — read consistently on both the definition and call sides so they agree.
 	paramEscapes map[string][]bool
+	// paramCountedRetain[fn][i] is true when string parameter i of `fn` is
+	// retained only by counted constructions, so an argument passed there needs
+	// no conservative escape taint (inferParamCountedRetain).
+	paramCountedRetain map[string][]bool
 	// readOnlyComparators is the set of Eq/Hash trait method names
 	// (`__method_<T>_eq` / `__method_<T>_hash`). They are read-only by
 	// contract, so they BORROW their params even under the owned model
@@ -4846,7 +4853,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, readOnlyComparators map[string]bool, growParams map[string][]uint8) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, readOnlyComparators map[string]bool, growParams map[string][]uint8) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -4872,6 +4879,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		trmcFuncs:            trmcFuncs,
 		trmcConsumeSafe:      trmcConsumeSafe,
 		paramEscapes:         paramEscapes,
+		paramCountedRetain:   paramCountedRetain,
 		readOnlyComparators:  readOnlyComparators,
 		growParams:           growParams,
 		thisIsPair:           pairForm[fn.Name],
