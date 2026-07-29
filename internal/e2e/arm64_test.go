@@ -257,18 +257,18 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as i32).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_alpha() || b == 95) {
             var start: i32 = i;
-            while (i < n && ((src[i] as i32).is_ascii_alnum() || src[i] == 95)) {
+            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) {
                 i = i + 1;
             }
             toks = toks.append(TokIdent { name: src[start:i] + "" });
@@ -521,11 +521,11 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
@@ -774,18 +774,18 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as i32).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_alpha() || b == 95) {
             var start: i32 = i;
-            while (i < n && ((src[i] as i32).is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: src[start:i] + "" });
         } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
             toks = toks.append(TokPunct { ch: 1001 });
@@ -1292,18 +1292,18 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as i32).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_alpha() || b == 95) {
             var start: i32 = i;
-            while (i < n && ((src[i] as i32).is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: src[start:i] + "" });
         } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
             toks = toks.append(TokPunct { ch: 1001 });   // ==
@@ -1804,18 +1804,18 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as i32).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_alpha() || b == 95) {
             var start: i32 = i;
-            while (i < n && ((src[i] as i32).is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: src[start:i] + "" });
         } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
             toks = toks.append(TokPunct { ch: 1001 });   // ==
@@ -2203,18 +2203,18 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as i32).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_alpha() || b == 95) {
             var start: i32 = i;
-            while (i < n && ((src[i] as i32).is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: src[start:i] + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -2534,18 +2534,18 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as i32).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_alpha() || b == 95) {
             var start: i32 = i;
-            while (i < n && ((src[i] as i32).is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: src[start:i] + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -2872,18 +2872,18 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as i32).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_alpha() || b == 95) {
             var start: i32 = i;
-            while (i < n && ((src[i] as i32).is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: src[start:i] + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -3204,18 +3204,18 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as i32).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_alpha() || b == 95) {
             var start: i32 = i;
-            while (i < n && ((src[i] as i32).is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: src[start:i] + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -3483,18 +3483,18 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as i32).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_alpha() || b == 95) {
             var start: i32 = i;
-            while (i < n && ((src[i] as i32).is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: src[start:i] + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -3794,18 +3794,18 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as i32).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_alpha() || b == 95) {
             var start: i32 = i;
-            while (i < n && ((src[i] as i32).is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: src[start:i] + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -4100,18 +4100,18 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as i32).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_alpha() || b == 95) {
             var start: i32 = i;
-            while (i < n && ((src[i] as i32).is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: src[start:i] + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -4383,18 +4383,18 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as i32).is_ascii_alpha()) {
+        } else if ((b as u8).is_ascii_alpha()) {
             var start: i32 = i;
-            while (i < n && (src[i] as i32).is_ascii_alnum()) { i = i + 1; }
+            while (i < n && src[i].is_ascii_alnum()) { i = i + 1; }
             toks = toks.append(TokIdent { name: src[start:i] + "" });
         } else {
             toks = toks.append(TokPunct { ch: b });
@@ -4592,11 +4592,11 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
@@ -4784,11 +4784,11 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
@@ -5109,32 +5109,32 @@ function tokenize(src: string): Token[] {
         if (b == 47 && i + 1 < n && src[i + 1] == 47) {
             i = i + 2;
             while (i < n && src[i] != 10) { i = i + 1; }
-        } else if ((b as i32).is_ascii_white_space()) {
+        } else if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             start = i;
             numV = 0;
             isFloat = false;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 numV = numV * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             // Float when next is dot followed by digit. 1. and 1.x
             // leave the dot for the punctuator branch — matches
             // the Go lexer at internal/lexer/lexer.go:298.
-            if (i + 1 < n && src[i] == 46 && (src[i + 1] as i32).is_ascii_digit()) {
+            if (i + 1 < n && src[i] == 46 && src[i + 1].is_ascii_digit()) {
                 isFloat = true;
                 i = i + 1;
-                while (i < n && (src[i] as i32).is_ascii_digit()) { i = i + 1; }
+                while (i < n && src[i].is_ascii_digit()) { i = i + 1; }
             }
             if (isFloat) {
                 toks = toks.append(TokFloat { text: src[start:i] + "" });
             } else {
                 toks = toks.append(TokInt { value: numV });
             }
-        } else if ((b as i32).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_alpha() || b == 95) {
             start = i;
-            while (i < n && ((src[i] as i32).is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
+            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: src[start:i] + "" });
         } else {
             toks = toks.append(TokPunct { text: src[i:i + 1] + "" });
@@ -5325,7 +5325,7 @@ function tokenize(src: string): Token[] {
             // Line comment — drop bytes through next \n.
             i = i + 2;
             while (i < n && src[i] != 10) { i = i + 1; }
-        } else if ((b as i32).is_ascii_white_space()) {
+        } else if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if (b == 34) {
             // String literal with escape handling. Build the
@@ -5345,16 +5345,16 @@ function tokenize(src: string): Token[] {
             }
             if (i < n) { i = i + 1; }   // closing "
             toks = toks.append(TokStr { value: s });
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             numV = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 numV = numV * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: numV });
-        } else if ((b as i32).is_ascii_alpha() || b == 95) {
+        } else if ((b as u8).is_ascii_alpha() || b == 95) {
             start = i;
-            while (i < n && ((src[i] as i32).is_ascii_alnum() || src[i] == 95)) {
+            while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) {
                 i = i + 1;
             }
             var name: str = src[start:i];
@@ -5531,16 +5531,16 @@ function tokenize(src: string): Token[] {
     var numSfx: string = "";
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if (b == 48 && i + 1 < n && (src[i + 1] == 120 || src[i + 1] == 88)) {
-            if (i + 2 >= n || !(src[i + 2] as i32).is_ascii_hex_digit()) {
+            if (i + 2 >= n || !src[i + 2].is_ascii_hex_digit()) {
                 toks = toks.append(TokInt { value: 0, base: 10, suffix: "" });
                 i = i + 1;
             } else {
                 i = i + 2;
                 numV = 0;
-                while (i < n && (src[i] as i32).is_ascii_hex_digit()) {
+                while (i < n && src[i].is_ascii_hex_digit()) {
                     numV = numV * 16 + hex_value(src[i] as i32);
                     i = i + 1;
                 }
@@ -5548,18 +5548,18 @@ function tokenize(src: string): Token[] {
                 if (numSfx.len() > 0) { i = i + numSfx.len(); }
                 toks = toks.append(TokInt { value: numV, base: 16, suffix: numSfx });
             }
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             numV = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 numV = numV * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             numSfx = read_num_suffix(src, i);
             if (numSfx.len() > 0) { i = i + numSfx.len(); }
             toks = toks.append(TokInt { value: numV, base: 10, suffix: numSfx });
-        } else if ((b as i32).is_ascii_alpha()) {
+        } else if ((b as u8).is_ascii_alpha()) {
             var start: i32 = i;
-            while (i < n && (src[i] as i32).is_ascii_alnum()) { i = i + 1; }
+            while (i < n && src[i].is_ascii_alnum()) { i = i + 1; }
             var name: str = src[start:i];
             if (is_keyword(name)) {
                 toks = toks.append(TokKw { name: name + "" });
@@ -5676,20 +5676,20 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             var sfx: string = read_num_suffix(src, i);
             if (sfx.len() > 0) { i = i + sfx.len(); }
             toks = toks.append(TokInt { value: v, suffix: sfx });
-        } else if ((b as i32).is_ascii_alpha()) {
+        } else if ((b as u8).is_ascii_alpha()) {
             var start: i32 = i;
-            while (i < n && (src[i] as i32).is_ascii_alnum()) { i = i + 1; }
+            while (i < n && src[i].is_ascii_alnum()) { i = i + 1; }
             var name: str = src[start:i];
             if (is_keyword(name)) {
                 toks = toks.append(TokKw { name: name + "" });
@@ -5797,7 +5797,7 @@ function tokenize(src: string): Token[] {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = src[i] as i32;
-        if ((b as i32).is_ascii_white_space()) {
+        if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if (b == 47 && i + 1 < n && src[i + 1] == 47) {
             i = i + 2;
@@ -5834,16 +5834,16 @@ function tokenize(src: string): Token[] {
             }
             if (i < n) { i = i + 1; }
             toks = toks.append(TokStr { value: out });
-        } else if ((b as i32).is_ascii_digit()) {
+        } else if ((b as u8).is_ascii_digit()) {
             var v: i32 = 0;
-            while (i < n && (src[i] as i32).is_ascii_digit()) {
+            while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
-        } else if ((b as i32).is_ascii_alpha()) {
+        } else if ((b as u8).is_ascii_alpha()) {
             var start: i32 = i;
-            while (i < n && (src[i] as i32).is_ascii_alnum()) { i = i + 1; }
+            while (i < n && src[i].is_ascii_alnum()) { i = i + 1; }
             var name: str = src[start:i];
             if (is_keyword(name)) {
                 toks = toks.append(TokKw { name: name + "" });
@@ -6062,21 +6062,21 @@ func TestArm64ByteClassifiers(t *testing.T) {
 	src := `
 import "std/i32";
 function main(): i32 {
-    if (!(48 as i32).is_ascii_digit()) { return 1; }      // '0'
-    if (!(57 as i32).is_ascii_digit()) { return 2; }      // '9'
-    if ((47 as i32).is_ascii_digit()) { return 3; }       // '/' is not a digit
-    if (!(65 as i32).is_ascii_alpha()) { return 4; }      // 'A'
-    if (!(122 as i32).is_ascii_alpha()) { return 5; }     // 'z'
-    if ((64 as i32).is_ascii_alpha()) { return 6; }       // '@' is not alpha
-    if (!(48 as i32).is_ascii_alnum()) { return 7; }
-    if (!(65 as i32).is_ascii_alnum()) { return 8; }
-    if (!(32 as i32).is_ascii_white_space()) { return 9; }
-    if (!(10 as i32).is_ascii_white_space()) { return 10; }
-    if (!(97 as i32).is_ascii_hex_digit()) { return 11; } // 'a'
-    if (!(70 as i32).is_ascii_hex_digit()) { return 12; } // 'F'
-    if ((103 as i32).is_ascii_hex_digit()) { return 13; } // 'g' is not hex
-    if (!(127 as i32).is_ascii()) { return 14; }
-    if ((128 as i32).is_ascii()) { return 15; }     // 0x80 is past ASCII
+    if (!(48 as u8).is_ascii_digit()) { return 1; }      // '0'
+    if (!(57 as u8).is_ascii_digit()) { return 2; }      // '9'
+    if ((47 as u8).is_ascii_digit()) { return 3; }       // '/' is not a digit
+    if (!(65 as u8).is_ascii_alpha()) { return 4; }      // 'A'
+    if (!(122 as u8).is_ascii_alpha()) { return 5; }     // 'z'
+    if ((64 as u8).is_ascii_alpha()) { return 6; }       // '@' is not alpha
+    if (!(48 as u8).is_ascii_alnum()) { return 7; }
+    if (!(65 as u8).is_ascii_alnum()) { return 8; }
+    if (!(32 as u8).is_ascii_white_space()) { return 9; }
+    if (!(10 as u8).is_ascii_white_space()) { return 10; }
+    if (!(97 as u8).is_ascii_hex_digit()) { return 11; } // 'a'
+    if (!(70 as u8).is_ascii_hex_digit()) { return 12; } // 'F'
+    if ((103 as u8).is_ascii_hex_digit()) { return 13; } // 'g' is not hex
+    if (!(127 as u8).is_ascii()) { return 14; }
+    if ((128 as u8).is_ascii()) { return 15; }     // 0x80 is past ASCII
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7066,9 +7066,9 @@ function main(): i32 {
     if ((0 - 1).is_between(0, 10)) { return 19; }
 
     // is_letter
-    if (!(65 as i32).is_ascii_letter()) { return 20; }
-    if (!(97 as i32).is_ascii_letter()) { return 21; }
-    if ((48 as i32).is_ascii_letter()) { return 22; }
+    if (!(65 as u8).is_ascii_letter()) { return 20; }
+    if (!(97 as u8).is_ascii_letter()) { return 21; }
+    if ((48 as u8).is_ascii_letter()) { return 22; }
 
     // all_non_empty
     if (!["a", "b", "c"].all_non_empty()) { return 23; }
@@ -7103,9 +7103,9 @@ function main(): i32 {
     if ((5).is_in_range(10, 0)) { return 10; }    // inverted
 
     // matches_any
-    if (!(97 as i32).matches_any("abc")) { return 11; }
-    if ((100 as i32).matches_any("abc")) { return 12; }
-    if ((97 as i32).matches_any("")) { return 13; }
+    if (!(97 as u8).matches_any("abc")) { return 11; }
+    if ((100 as u8).matches_any("abc")) { return 12; }
+    if ((97 as u8).matches_any("")) { return 13; }
 
     // reverse_digits
     if ((1234).reverse_digits() != 4321) { return 14; }
@@ -7173,14 +7173,14 @@ function main(): i32 {
     if (math.pack_rgb(0, 128, 64).to_rgb_hex() != "#008040") { return 20; }
 
     // is_printable / is_control
-    if (!(32 as i32).is_ascii_printable()) { return 21; }
-    if (!(126 as i32).is_ascii_printable()) { return 22; }
-    if ((31 as i32).is_ascii_printable()) { return 23; }
-    if ((127 as i32).is_ascii_printable()) { return 24; }
-    if (!(0 as i32).is_ascii_control()) { return 25; }
-    if (!(127 as i32).is_ascii_control()) { return 26; }
-    if ((32 as i32).is_ascii_control()) { return 27; }
-    if ((128 as i32).is_ascii_control()) { return 28; }
+    if (!(32 as u8).is_ascii_printable()) { return 21; }
+    if (!(126 as u8).is_ascii_printable()) { return 22; }
+    if ((31 as u8).is_ascii_printable()) { return 23; }
+    if ((127 as u8).is_ascii_printable()) { return 24; }
+    if (!(0 as u8).is_ascii_control()) { return 25; }
+    if (!(127 as u8).is_ascii_control()) { return 26; }
+    if ((32 as u8).is_ascii_control()) { return 27; }
+    if ((128 as u8).is_ascii_control()) { return 28; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7248,15 +7248,15 @@ func TestArm64StdlibBundle19(t *testing.T) {
 import "std/http";
 function main(): i32 {
     // digit_value
-    if ((48 as i32).digit_value() != 0) { return 1; }
-    if ((57 as i32).digit_value() != 9) { return 2; }
-    if ((65 as i32).digit_value() != (0 - 1)) { return 3; }
+    if ((48 as u8).digit_value() != 0) { return 1; }
+    if ((57 as u8).digit_value() != 9) { return 2; }
+    if ((65 as u8).digit_value() != (0 - 1)) { return 3; }
 
     // hex_value
-    if ((48 as i32).hex_value() != 0) { return 4; }
-    if ((97 as i32).hex_value() != 10) { return 5; }
-    if ((70 as i32).hex_value() != 15) { return 6; }
-    if ((71 as i32).hex_value() != (0 - 1)) { return 7; }
+    if ((48 as u8).hex_value() != 0) { return 4; }
+    if ((97 as u8).hex_value() != 10) { return 5; }
+    if ((70 as u8).hex_value() != 15) { return 6; }
+    if ((71 as u8).hex_value() != (0 - 1)) { return 7; }
 
     // count_byte
     if ("hello".count_byte(108) != 2) { return 8; }
@@ -7373,10 +7373,10 @@ function main(): i32 {
     if ((16711680).to_rgb_hex() != "#ff0000") { return 19; }
 
     // is_vowel — ASCII a/e/i/o/u, no y
-    if (!(97 as i32).is_ascii_vowel()) { return 20; }
-    if (!(65 as i32).is_ascii_vowel()) { return 21; }
-    if ((98 as i32).is_ascii_vowel()) { return 22; }
-    if ((121 as i32).is_ascii_vowel()) { return 23; }
+    if (!(97 as u8).is_ascii_vowel()) { return 20; }
+    if (!(65 as u8).is_ascii_vowel()) { return 21; }
+    if ((98 as u8).is_ascii_vowel()) { return 22; }
+    if ((121 as u8).is_ascii_vowel()) { return 23; }
 
     // rstrip_newline — single trailing newline
     if ("hello\n".rstrip_newline() != "hello") { return 24; }
@@ -7478,8 +7478,8 @@ function main(): i32 {
     if ((1000).next_power_of_2() != 1024) { return 13; }
 
     // to_ascii_string
-    if ((65 as i32).to_ascii_string() != "A") { return 14; }
-    if ((48 as i32).to_ascii_string() != "0") { return 15; }
+    if ((65 as u8).to_ascii_string() != "A") { return 14; }
+    if ((48 as u8).to_ascii_string() != "0") { return 15; }
 
     // hash_djb2 — deterministic + distinguishing
     if ("a".hash_djb2() == "b".hash_djb2()) { return 17; }
@@ -7620,9 +7620,9 @@ function main(): i32 {
     if ((5).toggle_bit(100) != 5) { return 12; }
 
     // is_newline
-    if (!(10 as i32).is_ascii_newline()) { return 13; }
-    if (!(13 as i32).is_ascii_newline()) { return 14; }
-    if ((32 as i32).is_ascii_newline()) { return 15; }
+    if (!(10 as u8).is_ascii_newline()) { return 13; }
+    if (!(13 as u8).is_ascii_newline()) { return 14; }
+    if ((32 as u8).is_ascii_newline()) { return 15; }
 
     // count_lines
     if ("a\nb\nc".count_lines() != 3) { return 16; }
@@ -8054,17 +8054,17 @@ func TestArm64StdlibBundle4(t *testing.T) {
 import "std/i32";
 function main(): i32 {
     // is_punct
-    if (!(33 as i32).is_ascii_punct()) { return 1; }
-    if (!(126 as i32).is_ascii_punct()) { return 2; }
-    if (!(64 as i32).is_ascii_punct()) { return 3; }
-    if ((48 as i32).is_ascii_punct()) { return 4; }
-    if ((65 as i32).is_ascii_punct()) { return 5; }
+    if (!(33 as u8).is_ascii_punct()) { return 1; }
+    if (!(126 as u8).is_ascii_punct()) { return 2; }
+    if (!(64 as u8).is_ascii_punct()) { return 3; }
+    if ((48 as u8).is_ascii_punct()) { return 4; }
+    if ((65 as u8).is_ascii_punct()) { return 5; }
 
     // hex_digit
-    if ((0 as i32).hex_digit() != "0") { return 6; }
-    if ((10 as i32).hex_digit() != "a") { return 7; }
-    if ((15 as i32).hex_digit() != "f") { return 8; }
-    if ((16 as i32).hex_digit() != "") { return 9; }
+    if ((0 as u8).hex_digit() != "0") { return 6; }
+    if ((10 as u8).hex_digit() != "a") { return 7; }
+    if ((15 as u8).hex_digit() != "f") { return 8; }
+    if ((16 as u8).hex_digit() != "") { return 9; }
 
     // signum / sign predicates
     if ((5).signum() != 1) { return 11; }
@@ -8160,14 +8160,14 @@ func TestArm64StdlibBundle2(t *testing.T) {
 import "std/i32";
 function main(): i32 {
     // Byte-level case classifiers + flippers.
-    if (!(65 as i32).is_ascii_upper()) { return 1; }
-    if ((65 as i32).is_ascii_lower()) { return 2; }
-    if (!(97 as i32).is_ascii_lower()) { return 3; }
-    if ((97 as i32).is_ascii_upper()) { return 4; }
-    if ((65 as i32).to_ascii_lower() != 97) { return 5; }   // 'A' → 'a'
-    if ((97 as i32).to_ascii_upper() != 65) { return 6; }   // 'a' → 'A'
-    if ((48 as i32).to_ascii_lower() != 48) { return 7; }   // digits pass through
-    if ((48 as i32).to_ascii_upper() != 48) { return 8; }
+    if (!(65 as u8).is_ascii_upper()) { return 1; }
+    if ((65 as u8).is_ascii_lower()) { return 2; }
+    if (!(97 as u8).is_ascii_lower()) { return 3; }
+    if ((97 as u8).is_ascii_upper()) { return 4; }
+    if ((65 as u8).to_ascii_lower() != 97) { return 5; }   // 'A' → 'a'
+    if ((97 as u8).to_ascii_upper() != 65) { return 6; }   // 'a' → 'A'
+    if ((48 as u8).to_ascii_lower() != 48) { return 7; }   // digits pass through
+    if ((48 as u8).to_ascii_upper() != 48) { return 8; }
 
     // i32 numeric methods.
     if ((5).abs() != 5) { return 9; }
