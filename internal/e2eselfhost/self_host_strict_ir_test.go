@@ -1,0 +1,285 @@
+package e2eselfhost
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// FERN_STRICT_IR (#5646) turns the self-host compiler's IR-to-AST bail into a
+// hard error instead of a silent fall-through.
+//
+// The fallback is only SAFE when the AST emitter can express what the IR path
+// declined. When it can't, the fallback emits wrong code and nothing notices
+// until a differential test disagrees at a runtime exit code, far from the
+// cause. #5642 is the worked example: `match (a +? b)` had no `ExprBinary` case
+// in `lower_match`'s scrutinee-type recovery, so the enclosing function bailed
+// to an AST emitter with no checked-operator lowering at all. That surfaced as
+// 46 failing subtests whose symptoms read like several unrelated bugs — wrong
+// match arm taken, payload read as zero, SIGABRT — none of which were
+// checked-arithmetic bugs.
+//
+// These tests are the tripwire that would have caught it at the bail. Two
+// halves, and both are load-bearing:
+//
+//   - strictIRCorpus asserts NO refusal across constructs the IR path is
+//     supposed to cover. A newly-unlowerable construct fails here, naming the
+//     function, instead of miscompiling.
+//   - TestSelfHostStrictIRRefusesBail asserts a real bail DOES refuse, so a
+//     green corpus means the tripwire is armed rather than inert.
+//
+// The corpus also self-certifies its own routing: a program that fell back
+// would exit 3 under the flag, so "strict run succeeded" IS "lowered on the IR
+// path" — no separate path-probe assertion needed.
+//
+// The flag is checked in asm_ir.fern, which both backends' eligibility runs
+// through (wasm_ir's `wasm_eligible` calls `asm_ir.eligible_core`), so the
+// x86-64 and wasm legs cover the same per-function gate.
+var strictIRCorpus = []struct {
+	name string
+	src  string
+	want int
+}{
+	// The #5642 shape itself: checked operators in a match scrutinee, the
+	// construct whose missing recovery case motivated the issue.
+	{"checked-operators", `
+function f(a: u8, b: u8): i32 {
+    match (a +? b) { Some(v) => { return v as i32; }, None => { return 99; } }
+}
+function g(a: i32, b: i32): i32 {
+    match (a *? b) { Some(v) => { return v; }, None => { return 7; } }
+}
+function main(): i32 { return f(250, 3) + g(2, 3) - 99; }
+`, 160},
+	// Closures with captures, held in an array and dispatched through a
+	// fn-typed param.
+	{"closures", `
+function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
+function main(): i32 {
+    var n: i32 = 5;
+    var add: (i32) => i32 = function (x: i32): i32 { return x + n; };
+    var dbl: (i32) => i32 = function (x: i32): i32 { return x * 2; };
+    var fs: ((i32) => i32)[] = [add, dbl];
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < fs.len()) { t = t + apply(fs[i], 3); i = i + 1; }
+    return t;
+}
+`, 14},
+	// Enum payloads, a guarded arm, and an exhaustive match.
+	{"enum-match-guard", `
+enum Shape { Circle(i32), Rect(i32, i32), Empty }
+function area(s: Shape): i32 {
+    match (s) {
+        Circle(r) when r > 10 => { return 999; },
+        Circle(r) => { return 3 * r * r; },
+        Rect(w, h) => { return w * h; },
+        Empty => { return 0; }
+    }
+}
+function main(): i32 { return area(Circle(2)) + area(Rect(3, 4)) + area(Empty); }
+`, 24},
+	// Heap traffic: a struct array grown by append, with string fields read
+	// back after construction.
+	{"struct-array-strings", `
+struct P { name: string, n: i32 }
+function label(i: i32): string {
+    if (i % 2 == 0) { return "ab"; }
+    return "xyz";
+}
+function build(n: i32): P[] {
+    var out: P[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(P { name: label(i) + "!", n: i }); i = i + 1; }
+    return out;
+}
+function main(): i32 {
+    var ps: P[] = build(5);
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < ps.len()) { if (ps[i].name.len() == 3) { t = t + ps[i].n + 1; } i = i + 1; }
+    return t;
+}
+`, 9},
+	// Generics, tuples, and the `?` operator — the other consuming position
+	// whose scrutinee-type recovery #5642 had to fix alongside lower_match's.
+	{"generics-tuples-try", `
+function pair[K, V](k: K, v: V): (K, V) { return (k, v); }
+function first(t: (i32, string)): i32 { return t.0; }
+function parse(s: string): Result[i32, string] {
+    if (s == "ok") { return Ok(1); }
+    return Err("bad");
+}
+function chain(s: string): Result[i32, string] {
+    var v: i32 = parse(s)?;
+    return Ok(v + 41);
+}
+function main(): i32 {
+    var t: (i32, string) = pair(1, "x");
+    match (chain("ok")) { Ok(v) => { return v + first(t); }, Err(_) => { return 0; } }
+}
+`, 43},
+}
+
+// runDriver runs a self-host driver over `src`, optionally with FERN_STRICT_IR
+// set, and returns stdout, stderr and the exit code.
+func runDriver(t *testing.T, runner []string, bin string, src []byte, strict bool, args ...string) ([]byte, string, int) {
+	t.Helper()
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(bin, args...)
+	} else {
+		a := append([]string{}, runner[1:]...)
+		a = append(a, bin)
+		a = append(a, args...)
+		cmd = exec.Command(runner[0], a...)
+	}
+	cmd.Stdin = bytes.NewReader(src)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	cmd.Env = os.Environ()
+	if strict {
+		cmd.Env = append(cmd.Env, "FERN_STRICT_IR=1")
+	}
+	_ = cmd.Run()
+	return stdout.Bytes(), stderr.String(), cmd.ProcessState.ExitCode()
+}
+
+// overBudgetProgram is a module past the 512-function merged-bundle budget
+// (#3425) — the one bail site that is deterministically reachable from a valid
+// program, and so the only way to prove the tripwire fires.
+func overBudgetProgram() []byte {
+	var b strings.Builder
+	for i := 0; i < 513; i++ {
+		fmt.Fprintf(&b, "function zf%d(): i32 { return %d; }\n", i, i%7)
+	}
+	b.WriteString("function main(): i32 { return zf0() + zf1(); }\n")
+	return []byte(b.String())
+}
+
+func strictIRDriver(t *testing.T) (string, []string, string) {
+	t.Helper()
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	return gcc, runner, buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+}
+
+// TestSelfHostStrictIRX86_64 asserts the corpus lowers with no bail under
+// FERN_STRICT_IR, that the flag is otherwise inert (byte-identical asm), and
+// that each program still runs to its expected exit code.
+func TestSelfHostStrictIRX86_64(t *testing.T) {
+	gcc, runner, driverBin := strictIRDriver(t)
+	dir := filepath.Dir(driverBin)
+
+	for _, tc := range strictIRCorpus {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			off, _, offCode := runDriver(t, runner, driverBin, src, false)
+			if offCode != 0 || len(off) == 0 {
+				t.Fatalf("driver (unset) exited %d with %d bytes", offCode, len(off))
+			}
+			on, stderr, onCode := runDriver(t, runner, driverBin, src, true)
+			if strings.Contains(stderr, "FERN_STRICT_IR:") {
+				t.Fatalf("%s bailed to the AST emitter under FERN_STRICT_IR:\n%s", tc.name, stderr)
+			}
+			if onCode != 0 {
+				t.Fatalf("driver (FERN_STRICT_IR=1) exited %d\n%s", onCode, stderr)
+			}
+			if !bytes.Equal(off, on) {
+				t.Fatalf("%s: FERN_STRICT_IR changed the emitted asm (%d vs %d bytes); the flag must only affect the bail path", tc.name, len(off), len(on))
+			}
+			progBin := buildBin(t, gcc, dir, "strict_"+tc.name, string(on))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
+			}
+		})
+	}
+}
+
+// TestSelfHostStrictIRRefusesBail is the teeth: a program that genuinely bails
+// must refuse under the flag and fall back silently without it. Without this,
+// a green corpus is consistent with the flag doing nothing at all.
+func TestSelfHostStrictIRRefusesBail(t *testing.T) {
+	_, runner, driverBin := strictIRDriver(t)
+	src := overBudgetProgram()
+
+	off, _, offCode := runDriver(t, runner, driverBin, src, false)
+	if offCode != 0 || len(off) == 0 {
+		t.Fatalf("unset: driver exited %d with %d bytes, want a silent AST fallback", offCode, len(off))
+	}
+	on, stderr, onCode := runDriver(t, runner, driverBin, src, true)
+	if onCode != 3 {
+		t.Fatalf("FERN_STRICT_IR=1: driver exited %d with %d bytes, want a refusal (3)\n%s", onCode, len(on), stderr)
+	}
+	if !strings.Contains(stderr, "FERN_STRICT_IR:") || !strings.Contains(stderr, "512-function") {
+		t.Errorf("refusal did not name the bail:\n%s", stderr)
+	}
+}
+
+// TestSelfHostStrictIRWasm runs the corpus through the wasm IR driver. The
+// eligibility gate is shared (wasm_eligible calls asm_ir.eligible_core), so the
+// same per-function bail is covered on both backends.
+func TestSelfHostStrictIRWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host strict-IR wasm e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	for _, tc := range strictIRCorpus {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			wat, stderr, code := runDriver(t, runner, driverBin, src, true, "-ir")
+			if strings.Contains(stderr, "FERN_STRICT_IR:") {
+				t.Fatalf("%s bailed to the AST emitter under FERN_STRICT_IR:\n%s", tc.name, stderr)
+			}
+			if code != 0 || len(wat) == 0 {
+				t.Fatalf("driver (FERN_STRICT_IR=1) exited %d with %d bytes\n%s", code, len(wat), stderr)
+			}
+			watFile := filepath.Join(dir, "strict_ir_prog.wat")
+			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			run := exec.Command("wasmtime", "run", watFile)
+			_ = run.Run()
+			if run.ProcessState == nil || !run.ProcessState.Exited() {
+				t.Fatalf("wasmtime did not exit normally for %q", tc.name)
+			}
+			if got := run.ProcessState.ExitCode(); got != tc.want {
+				t.Errorf("strict-IR wasm %q = %d, want %d", tc.name, got, tc.want)
+			}
+		})
+	}
+}
