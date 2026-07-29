@@ -568,6 +568,57 @@ side from the assigned value. Two limits are deliberate:
   see the next section. Crediting it routed that shape onto the IR path and it
   trapped (measured); it stays unproven.
 
+### Open: a ZERO-ARG named fn in an fn-typed TUPLE element (found 2026-07-29)
+
+Differential-probed against the interpreter oracle (x86-64 IR path, `-ir-probe`
+confirms `module: IR` for every row — these are IR miscompiles, not AST gaps):
+
+| program | interp | self-host |
+|---|---:|---:|
+| `var t: ((() => i32), i32) = (a1, 4); t.0() + t.1` — `a1(): i32` | 7 | **SIGSEGV** |
+| same, but `a1(x: i32): i32` (ONE param) | 8 | 8 |
+| `var xs: ((() => i32), i32)[] = [(a1, 4)]; xs[0].0() + xs[0].1` | 7 | **SIGSEGV** |
+| same, one param | 8 | 8 |
+| `(() => 3, 4)` — a LAMBDA element | 7 | 7 |
+| `[(() => 3, 4)]` | 7 | 7 |
+
+So the split is **arity of the named function**, not tuple nesting: a lambda
+element is always wrapped, a named fn with params is wrapped, and a ZERO-ARG
+named fn is not.
+
+The cause is the guard in the lift's `ExprTuple` arm, which wraps a bare ident
+element only when the module fn has `params.len() > 0`. Its comment states the
+reason: *"a zero-arg receiver-less fn is a `const` desugar whose VALUE must
+flow"*. That is a REAL constraint, not an oversight — Fern desugars `const X =
+expr` into a zero-arg function, so a bare `X` in expression position means
+call-it, and wrapping it would break every const read. The self-host defaults a
+bare zero-arg name to the const-call (see parser.fern's #3640 slice B.2 note on
+exactly this ambiguity).
+
+But the element's DECLARED type resolves the ambiguity: `((() => i32), i32)`
+says element 0 is a fn VALUE, so no const-call reading is possible. The tag side
+already knows this — `tuple_elem_tags` maps an "fn" segment to `"clo"`, which is
+why the call dispatches env-first — and it is the VALUE side that disagrees: the
+element holds the const-CALL result (an `i32`), and dispatching env-first on it
+treats `3` as a box pointer.
+
+**So the fix is to thread the expected type into the tuple lift** and wrap a bare
+zero-arg ident when the element's declared type is a fn — making the value side
+agree with the tag side that already assumes a box. The lift walks statements, so
+`StmtVar.type_name` is available at the binding; it is the recursion into
+`lift_inline_closures_expr` that currently drops it. Not attempted here: it is
+plumbing through a shared expression walker, and the wrong version of it silently
+breaks every `const` read, so it wants its own change with the const-read
+regression cases pinned alongside the six rows above.
+
+A related shape found in the same sweep, recorded so it is not re-probed:
+`var g: (() => i32)[][] = [[a1]]; g[0][0]()` is interp 3, self-host SIGSEGV — but
+it routes **AST**, so per the project rule (a legacy-AST-only gap needs no fix) it
+is out of scope until the IR path admits it. `Option[() => i32]` carrying a bare
+zero-arg fn (`Some(a1)`, matched, then called) is interp 3 / SIGSEGV and routes
+**IR** — the same value-vs-tag disagreement one container over, and the same fix
+shape should cover it.
+
 ### Rebinding an `fn[]` LOCAL: one direction fixed, the cross-representation ones open
 
 Probed 2026-07-29 on the x86-64 IR path (no struct field involved; the wasm IR
