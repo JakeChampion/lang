@@ -1112,6 +1112,13 @@ pub function some_opt_type(e: parser.Expr, s: LowerState): string {
                         // `Option[Result[T, E]]` as `Option[i32]`. Return "" so the
                         // binding's annotation (the authoritative full type) wins.
                         if (expr_is_result(c.args[0], s)) { return ""; }
+                        // A NESTED Some payload (`Some(Some(P))`): recurse so the
+                        // inner Option type is recovered — elem_type_tag defaults a
+                        // nested Some to "i32", collapsing `Option[Option[P]]` to
+                        // `Option[i32]`, which then mis-binds the outer match's
+                        // payload as i32 and bailed `match (inner)` to the AST path.
+                        var innr: string = some_opt_type(c.args[0], s);
+                        if (innr.len() > 0) { return "Option[" + innr + "]"; }
                         var pt: string = elem_type_tag(c.args[0], s);
                         if (pt == "fn") { return ""; }
                         if (pt.len() >= 7 && pt[0:7] == "Result[") { return ""; }
