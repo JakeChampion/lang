@@ -306,13 +306,32 @@ and the split matters:
 - **7 `*-retained` leaves return exactly +1.** Every one.
 
 The +1 is **not an over-release**, which is what it looks like and what I first
-wrote down. Splitting the two debug builtins in one failing program
-(`array-of-arrays-retained`) settles it:
+wrote down. Those programs call TWO debug builtins, and splitting them settles
+it — but the split has to be done carefully. Deleting one builtin's call changes
+the program's liveness, so the buffer's rc at the surviving call is no longer the
+rc under test; two probes built that way agreed with each other and with the
+conclusion below, but neither actually measured it.
 
-| probe | result |
-|---|---|
-| `__fern_rc_underflow_count()` alone | **0 — correct**, no over-release |
-| `__fern_rc_is_unique(a)` alone, `a` retained in `both` | **1 — wrong**, want 0 |
+The faithful form keeps every statement and every use, and changes only which
+value is returned:
+
+```fern
+var ua = __fern_rc_is_unique(a);
+var uf = __fern_rc_underflow_count();
+var t  = ua + both[0][1] + both[1][0] + uf;   // all uses preserved
+if (t > 1000) { return 99; }                  // t stays live
+return ua;                                     // ... or uf
+```
+
+| returned | AST path | IR path |
+|---|---|---|
+| `__fern_rc_underflow_count()` | 0 | **0 — agree**, no over-release |
+| `__fern_rc_is_unique(a)`, `a` retained in `both` | 0 | **1 — differs** |
+
+Baseline, on a driver built WITHOUT the alias: the program gives **5 on both
+invocations**, because `-ir` refuses to lower it and falls back. With the alias
+it lowers and gives 6. So the difference is real and the alias is what exposes
+it — not a pre-existing failure.
 
 So the property the corpus is named for holds on the wasm IR path; what differs
 is `__fern_rc_is_unique` reporting a container-retained array as unique, where
