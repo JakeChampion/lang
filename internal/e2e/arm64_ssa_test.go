@@ -110,6 +110,49 @@ function main(): i32 { return addf(90.0f32, 6.55f32) as i32; }`,
 			want: 96,
 		},
 		{
+			// float32_call's INDIRECT sibling. A nested function is never
+			// called by name — the enclosing function builds a closure cell and
+			// calls through it — so the callee-name lookup that widens a direct
+			// call's result cannot see it, and the f32 came back masked to 32
+			// bits: the low mantissa half with the sign and exponent gone, a
+			// denormal that reads back as 0. The width now comes from the
+			// signature the IR call op carries.
+			name: "float32_nested_fn_return",
+			src: `function outer(): f32 {
+    function inner(): f32 { return 42.5f32; }
+    return inner();
+}
+function main(): i32 { return outer() as i32; }`,
+			want: 42,
+		},
+		{
+			// The same indirect call reached the other way: a function VALUE in
+			// a parameter, where there is no closure in scope to trace back to
+			// at all. Reading the call site's signature covers both shapes,
+			// which is why it beats resolving the closure target.
+			name: "float32_fn_value_param",
+			src: `function apply(f: () => f32): f32 { return f(); }
+function main(): i32 {
+    function g(): f32 { return 42.5f32; }
+    return apply(g) as i32;
+}`,
+			want: 42,
+		},
+		{
+			// The i64 half of the same annotation: a wide integer through an
+			// indirect call is truncated by the identical mask. 2^32 + 42 is
+			// chosen so a truncation to the low word survives as 42 while the
+			// high bit is what actually differs — the `/ 1000i64` keeps the
+			// result inside a byte only when the high half made it through.
+			name: "i64_fn_value_param",
+			src: `function apply(f: () => i64): i64 { return f(); }
+function main(): i32 {
+    function g(): i64 { return 4294967296i64 + 42i64; }
+    return (apply(g) / 1000000000i64) as i32;
+}`,
+			want: 4,
+		},
+		{
 			// f32 arithmetic must round to f32 after EVERY operation, including
 			// when the whole chain is constant and folds at compile time. The
 			// SSA path lost the f32 width at the lift, so both constant folders
