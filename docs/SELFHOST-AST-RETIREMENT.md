@@ -139,6 +139,45 @@ the scrutinee-type recovery, and the next attempt should **instrument the bail**
 rather than reason about which resolver arm is missing — three successive
 hypotheses about that were wrong.
 
+#### Instrumented (2026-07-29) — the bail is `const_func("main$clo")`, a lift gap
+
+The "instrument the bail" step above was done. `asm_ir_run -ir-probe` on the
+canonical `var f: () => Option[i32] = () => Some(7); match (f())` reports
+**`main: BAIL lower const_func`** — TWO bails, and the second is the load-bearing
+one. Instrumenting `const_funcs_only_known` (asm_ir.fern) to print the offending
+name shows the unresolved reference is **`main$clo`** — the *first-class
+(escaping) closure* convention (`<cur_fn>$clo`, emitted by the `ExprLambda` arm
+at `irlower.fern:9942`). So the lambda is being lowered as an escaping closure
+whose `main$clo` body was never hoisted/registered, and `const_funcs_only_known`
+rejects the module. This is **not** a scrutinee-type-recovery problem at all —
+confirming "upstream of the scrutinee-type recovery".
+
+Why only the INLINE match: in the working rewrite `var o = f(); match (o)` the
+capture-free lambda is lifted to a registered `__lam_N` (a plain fn pointer), so
+`f` binds a fn-name and no `$clo` is emitted. In `match (f())` the lambda is
+**not** lifted, stays inline, and hits the escaping-closure arm. The lift's
+call-site walks do not descend into a `match` statement: `subst_fcall_stmts`
+(`irlower.fern`, ~line 39616) rewrites `f(...)` inside `StmtReturn` / `StmtVar` /
+`StmtExpr` / `StmtAssign` / `StmtIf` / `StmtWhile` / `StmtFor` but has **no
+`StmtMatch` arm** (the `_ =>` passes a match through untouched), and the
+capture-free binding-lift's use-analysis has the same blind spot — so a binding
+used only as `match (f())` is not recognised as call-only and is left inline.
+
+Two candidate fixes, both to be validated against the whole-compiler byte-identity
+fixpoint (the risk is changing what lifts for existing lambda-plus-match code):
+1. **Complete the lift walks for `StmtMatch`** — traverse the scrutinee, arm
+   bodies, and guards in `subst_fcall_stmts` and the parallel call-only
+   use-analysis, so the binding lifts to `__lam_N` exactly as the `var o = f()`
+   rewrite already does. Most direct; closes both the `const_func` and the
+   `lower` bail at once.
+2. **Desugar `match (<call-through-fn-local>)` → `var $s = f(); match ($s)`**
+   before the lift pass — reuse the proven case-A path. Narrower blast radius
+   (only this shape, which currently bails to AST anyway), but needs the
+   fn-local/closure classification available at the desugar site.
+
+The `const_func("main$clo")` finding was reproduced with a throwaway `eprint` in
+`const_funcs_only_known` (reverted); re-add it there if re-deriving.
+
 Two things worth carrying forward. First, **`TestSelfHostAsmIRPath` is 80/80
 clean under the flag** once the ascription case closed — independent evidence the
 per-function IR subset is as mature as CLAUDE.md claims, measured rather than
