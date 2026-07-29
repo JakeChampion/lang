@@ -130,7 +130,7 @@ splits the list in two:
 | shape | `-ir-probe` verdict | status |
 |---|---|---|
 | fn-typed tuple element in a struct field (`s.p.1()`) | was `main: BAIL lower` → `module: AST` | **CLOSED by #5758** |
-| closure-array struct field (`r.hs[1]()`) | `main: BAIL lower` → `module: AST` | **still open** (re-probed after #5758) |
+| closure-array struct field (`r.hs[1]()`) | `main: BAIL lower` → `module: AST` | **still open** — localized below |
 | struct match-expression + `when` guard | `module: IR` | **NOT the declining construct** |
 | `w @ P { a, b } when w.a > 0` | `module: IR` | **NOT the declining construct** |
 
@@ -156,7 +156,34 @@ The lesson repeats the one above: an abort tells you a test's process reached
 the fallback, not WHICH program did. Confirm each shape with `-ir-probe` before
 building on it.
 
-**Root cause of the two confirmed gaps, and the shape of the fix.** A callable
+**The closure-ARRAY gap is a DISPATCH gap, not an eligibility one** (probed
+2026-07-28, after #5758). Do not reason about it by analogy with the tuple
+shape — the two fail at different layers:
+
+| variant | verdict |
+|---|---|
+| `R { hs: [() => n] }`, never read | `ir` |
+| …`r.hs.len()` | `ir` |
+| …`[seven]` (named fn), `.len()` | `ir` |
+| the same call through a LOCAL clo-array | `ir` |
+| **`r.hs[0]()`** | **BAIL** |
+
+So the field TYPE is admitted fine; only the inline CALL through a
+struct-field closure array bails. It is `irlower.fern`'s element-call dispatch
+(the `parser.ExprIndex(cidx)` arm): its `parser.ExprFieldAccess(_)` case sets
+`idx_is_arr` only when `field_access_is_fnarr` says the field is a registered
+fn-POINTER array (#5235). A field holding env BOXES matches neither
+`is_clo_arr` nor `idx_is_arr`, falls through to `_` → `s.fail()` → AST.
+
+**Why the obvious fix is unsound.** "Not in the FNPTR registry ⇒ closure box"
+inverts a conservative predicate: `fnptr_arr_fields_of` drops any candidate it
+cannot prove (its `bad` set), so a genuine pointer array can be absent from the
+registry, and env-first dispatch on a raw code pointer crashes. The sound shape
+is positive evidence — a `CLOARR:<Type>.<field>` registry populated at the
+struct-literal site (element is a `__mkclo$` box), read here — i.e. the same
+construction #5235 built for pointers, not its negation.
+
+**Root cause of the tuple gap (closed by #5758), and the shape of that fix.** A callable
 behind a struct field has an ambiguous REPRESENTATION that its declared type
 cannot resolve: `() => i32` is spelled the same whether the value is a raw code
 pointer or a `__mkclo$` env box, and the two dispatch differently (env-first vs
