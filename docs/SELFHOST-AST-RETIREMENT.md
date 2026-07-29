@@ -268,8 +268,97 @@ AST-fallback dependents:
 **61 of the 66 leaves are wasm.** The AST fallback is far more load-bearing on
 the wasm IR path than on x86, which fits `wasm_ir_deferrals_ok` sitting as an
 extra gate above the shared eligibility — but the *size* of the gap was not
-previously quantified, and the rc/leak suites being the largest block is not
-something the deferral list predicts.
+previously quantified.
+
+#### Correction: 46 of the 66 are ONE builtin, not 46 gaps
+
+The first version of this section read the rc/leak block as a cluster of wasm
+gaps. It is not. Running one of its programs against the driver directly — which
+is the only way to see the *reason*, per the note below — names it outright:
+
+```
+FERN_STRICT_IR: main (call to unknown symbol __fern_rc_underflow_count)
+```
+
+There are two source spellings of the same debug builtin. `irlower` knows
+`__rc_underflow()`; the AST emitters know `__fern_rc_underflow_count()`. **The
+entire rc/leak corpus — 25 files — uses the AST-only one**, so every one of
+those programs bails. That covers `RcOptionBoxWasm` (27), `RcStrBoxWasm` (16)
+**and** the x86 `RcConstructContainersX86_64` (3): 46 of the 66 leaves, one
+cause. Deleting the call from a failing program makes it lower; re-spelling it
+`__rc_underflow()` makes it lower **and** produce the identical answer on both
+backends.
+
+The consequence is the part that matters for #3457. Those 25 files exist to pin
+**refcounting**, and every one of them has been exercising the AST emitter — on
+x86-64 not even the production route. The suites that are supposed to guard
+Perceus behaviour are guarding the backend being retired. Whatever else happens,
+that has to be fixed before the AST emitters can go, or the corpus loses its
+subject at exactly the moment it is most needed.
+
+The genuinely feature-level wasm gaps in the sample are much smaller than the
+raw count suggested: generic struct / enum FIELDS (12 leaves) and
+`read_file`/IoError (5), both confirmed to bail with the builtin absent.
+
+#### What happens if you just alias the spelling (measured, and NOT landed)
+
+Accepting `__fern_rc_underflow_count` as an alias of `__rc_underflow` in
+`irlower` is a one-line change, and it does what you would hope on x86-64:
+
+| | result |
+|---|---|
+| x86-64 rc suites, under `FERN_STRICT_IR`, `-count=1` | **64 pass, 0 fail** |
+| wasm rc suites, same | 172 pass, **16 fail** |
+
+So **IR-path refcounting is correct on x86-64 for everything that corpus
+covers** — the corpus simply never checked it. The wasm failures split two ways,
+and the split matters:
+
+- **4 leaves still bail** (`option-alias-clean`, `freelist-reuse`,
+  `freelist-distinct-class`, `reclaim-large-block`) — they call *other*
+  unlowered debug builtins, so the same class of problem one level down.
+- **7 `*-retained` leaves return exactly +1.** Every one.
+
+The +1 is **not an over-release**, which is what it looks like and what I first
+wrote down. Those programs call TWO debug builtins, and splitting them settles
+it — but the split has to be done carefully. Deleting one builtin's call changes
+the program's liveness, so the buffer's rc at the surviving call is no longer the
+rc under test; two probes built that way agreed with each other and with the
+conclusion below, but neither actually measured it.
+
+The faithful form keeps every statement and every use, and changes only which
+value is returned:
+
+```fern
+var ua = __fern_rc_is_unique(a);
+var uf = __fern_rc_underflow_count();
+var t  = ua + both[0][1] + both[1][0] + uf;   // all uses preserved
+if (t > 1000) { return 99; }                  // t stays live
+return ua;                                     // ... or uf
+```
+
+| returned | AST path | IR path |
+|---|---|---|
+| `__fern_rc_underflow_count()` | 0 | **0 — agree**, no over-release |
+| `__fern_rc_is_unique(a)`, `a` retained in `both` | 0 | **1 — differs** |
+
+Baseline, on a driver built WITHOUT the alias: the program gives **5 on both
+invocations**, because `-ir` refuses to lower it and falls back. With the alias
+it lowers and gives 6. So the difference is real and the alias is what exposes
+it — not a pre-existing failure.
+
+So the property the corpus is named for holds on the wasm IR path; what differs
+is `__fern_rc_is_unique` reporting a container-retained array as unique, where
+the AST path reports it shared. That is consistent with wasm arrays having no rc
+header (`[len@0, cap@4, elems@8]`) and `arr_share_inc`/`_dec` being intercepted
+as no-ops there — an alias-retain accounting difference between the two wasm
+backends, not a memory-safety fault in reuse.
+
+**The alias is therefore reverted, not landed**: it would turn those 7 wasm
+cases red, and hiding them behind a skip would bury a real backend disagreement.
+Landing it needs the `is_unique` disagreement resolved first. The x86 half is
+already clean, so whoever picks this up gets 64 subtests of IR-path rc coverage
+essentially for free once wasm agrees.
 
 Two caveats on reading this. It is **one shard of eight**, so it is a sample, not
 the whole suite. And a test failing here means its program bails *somewhere* —
