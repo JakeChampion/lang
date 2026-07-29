@@ -1925,8 +1925,23 @@ pub function is_leaksafe_opt_field(t: string): boolean {
 // legacy AST backend miscompiles an `Option[enum]` struct field (it segfaults),
 // so admitting it to the IR path would route a backend-buggy shape.
 function opt_payload_ok_d(structs: parser.StructDecl[], p: string): boolean {
+    var seen: string[] = [];
+    return opt_payload_ok_dv(structs, p, 0, seen);
+}
+
+// opt_payload_ok_dv threads the leak-safe proof's depth + visiting set (the
+// struct names on the current path) so a struct payload re-enters
+// decl_is_leaksafe_d WITH that context, not the fresh decl_is_leaksafe wrapper.
+// Without this a self-referential field — `next: Option[Node]` on
+// `struct Node` — recursed decl_is_leaksafe_d -> is_leaksafe_opt_field_d ->
+// opt_payload_ok_d -> decl_is_leaksafe (fresh, visiting reset) -> … forever,
+// SIGSEGV-ing the compiler on a valid linked list / tree. Threading the set lets
+// decl_is_leaksafe_d's back-edge check short-circuit the cycle (leak-only, safe),
+// admitting recursive structs to the IR path — the intent decl_is_leaksafe_d's
+// header already states for the struct-array back-edge.
+function opt_payload_ok_dv(structs: parser.StructDecl[], p: string, depth: i32, visiting: string[]): boolean {
     if (is_leaksafe_payload(p)) { return true; }
-    if (decl_is_struct(structs, p) && decl_is_leaksafe(structs, p)) { return true; }
+    if (decl_is_struct(structs, p) && decl_is_leaksafe_d(structs, p, depth + 1, visiting)) { return true; }
     return false;
 }
 
@@ -1935,11 +1950,17 @@ function opt_payload_ok_d(structs: parser.StructDecl[], p: string): boolean {
 // payload is itself leak-safe (the construction + match lowering already handle
 // it on every backend; only this eligibility predicate forced such fields to AST).
 pub function is_leaksafe_opt_field_d(structs: parser.StructDecl[], t: string): boolean {
+    var seen: string[] = [];
+    return is_leaksafe_opt_field_dv(structs, t, 0, seen);
+}
+
+// Depth/visiting-threaded variant — see opt_payload_ok_dv.
+pub function is_leaksafe_opt_field_dv(structs: parser.StructDecl[], t: string, depth: i32, visiting: string[]): boolean {
     var n: i32 = t.len();
     if (n < 9) { return false; }
-    if (t[0:7] == "Option[") { return opt_payload_ok_d(structs, opt_payload_type(t, "Some")); }
+    if (t[0:7] == "Option[") { return opt_payload_ok_dv(structs, opt_payload_type(t, "Some"), depth, visiting); }
     if (t[0:7] == "Result[") {
-        return opt_payload_ok_d(structs, opt_payload_type(t, "Ok")) && opt_payload_ok_d(structs, opt_payload_type(t, "Err"));
+        return opt_payload_ok_dv(structs, opt_payload_type(t, "Ok"), depth, visiting) && opt_payload_ok_dv(structs, opt_payload_type(t, "Err"), depth, visiting);
     }
     return false;
 }
@@ -2007,6 +2028,14 @@ pub function is_leaksafe_tuple_field(t: string): boolean {
 // with such a tuple field is admitted to the IR path but conservatively skips
 // constructor reuse (alloc path — sound, just unoptimised).
 pub function is_leaksafe_tuple_field_d(structs: parser.StructDecl[], t: string): boolean {
+    var seen: string[] = [];
+    return is_leaksafe_tuple_field_dv(structs, t, 0, seen);
+}
+
+// Depth/visiting-threaded variant — see opt_payload_ok_dv. Threads the set into
+// its Option-element and nested-tuple recursion so a tuple field carrying a
+// self-referential Option / tuple element does not spin the same cycle.
+pub function is_leaksafe_tuple_field_dv(structs: parser.StructDecl[], t: string, depth: i32, visiting: string[]): boolean {
     var len: i32 = t.len();
     if (len < 3 || t[0:1] != "(" || t[len - 1 : len] != ")") { return false; }
     var any: boolean = false;
@@ -2015,7 +2044,7 @@ pub function is_leaksafe_tuple_field_d(structs: parser.StructDecl[], t: string):
         var tag: string = tuple_type_elem_tag(t, i);
         if (tag == "") { return any; }
         var elem_ok: boolean = is_leaksafe_payload(tag);
-        if (!elem_ok) { elem_ok = is_leaksafe_opt_field_d(structs, tag); }
+        if (!elem_ok) { elem_ok = is_leaksafe_opt_field_dv(structs, tag, depth, visiting); }
         if (!elem_ok && (tag == "string[]" || tag == "f64[]" || tag == "i64[]" || is_leaksafe_array_field(tag))) { elem_ok = true; }
         // The struct-view additions over the plain gate: a struct-array / enum-
         // array element.
@@ -2032,7 +2061,7 @@ pub function is_leaksafe_tuple_field_d(structs: parser.StructDecl[], t: string):
         if (!elem_ok && tag == "clo") { elem_ok = true; }
         // A NESTED tuple element recurses through THIS predicate so an inner
         // struct-/enum-array element is admitted at any depth.
-        if (!elem_ok && tag.len() >= 2 && tag[0:1] == "(") { elem_ok = is_leaksafe_tuple_field_d(structs, tag); }
+        if (!elem_ok && tag.len() >= 2 && tag[0:1] == "(") { elem_ok = is_leaksafe_tuple_field_dv(structs, tag, depth, visiting); }
         if (!elem_ok) { return false; }
         any = true;
         i = i + 1;
@@ -2224,7 +2253,12 @@ function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, d
                 // read loads at the default 32-bit width; a sub-word cast wraps the
                 // value before the store). u64 / f32 are NOT added: they need real
                 // 64-bit / float width handling, so they keep the struct on AST.
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_d(structs, t) || is_leaksafe_tuple_field_d(structs, t) || is_map_type_name(t) || (t.len() > 5 && t[0:5] == "Cell[")) {
+                // Thread this proof's depth + visiting set (`nv`) into the Option /
+                // tuple field predicates so a self-referential `Option[Node]` /
+                // `(Node, …)` field re-enters decl_is_leaksafe_d WITH the path — its
+                // back-edge check then short-circuits the cycle instead of recursing
+                // forever (was a SIGSEGV on any linked list / tree).
+                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_dv(structs, t, depth, nv) || is_leaksafe_tuple_field_dv(structs, t, depth, nv) || is_map_type_name(t) || (t.len() > 5 && t[0:5] == "Cell[")) {
                     fi = fi + 1;
                     continue;
                 }
