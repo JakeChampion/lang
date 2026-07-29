@@ -2362,8 +2362,19 @@ pub function (s: EmitState) has_local(name: string): boolean {
 
 pub struct LabelOut { state: EmitState, name: string }
 
+// fresh_label mints a unit-local assembler label. Like str_lit_label it is
+// namespaced by `str_ns` for per-module emit: each unit starts a fresh
+// EmitState, so its counter restarts at 0, and the per-module CONCAT path
+// (emit_per_module_concat — the over-budget rescue) assembles every unit as
+// ONE file, where two units' `.L0` are a duplicate-symbol error. GAS's `.L`
+// prefix keeps the symbol out of the symtab; it does not make two definitions
+// in one file legal. An f64 literal is the common way to reach here, so a
+// program with one in both a library module and its entry (`import
+// "std/float"` plus a float literal in main) failed to assemble. Empty ns —
+// the whole-program path — keeps `.L<n>` byte-identical.
 pub function fresh_label(s: EmitState): LabelOut {
     var name: string = ".L" + util.i32_to_string(s.label_n);
+    if (s.str_ns.len() > 0) { name = ".L" + s.str_ns + "_" + util.i32_to_string(s.label_n); }
     var ns: EmitState = EmitState { ...s, label_n: s.label_n + 1 };
     return LabelOut { state: ns, name: name };
 }
