@@ -117,11 +117,19 @@ function t_i32(): Type { return TypeI32 { tag: 0, width: 32, unsigned: false }; 
 function t_i64(): Type { return TypeI32 { tag: 0, width: 64, unsigned: false }; }
 function t_u32(): Type { return TypeI32 { tag: 0, width: 32, unsigned: true }; }
 function t_u64(): Type { return TypeI32 { tag: 0, width: 64, unsigned: true }; }
+function t_u8(): Type { return TypeI32 { tag: 0, width: 8, unsigned: true }; }
 // int_label recovers the source spelling of an integer TypeI32 from its
 // (width, unsigned) so method dispatch + diagnostics name the right type.
+// int_label is this checker's methodTypeName: the width-aware name a
+// method on an integer receiver is registered and looked up under. The
+// width-8 arm must come before the u32 fallback — std/i32's 21 ascii
+// classifiers are declared on `u8` (#5629), and labelling a byte "u32"
+// registered them under one name while calls looked them up under
+// another, so every classifier call reported a spurious E043.
 function int_label(t: TypeI32): string {
     if (t.unsigned) {
         if (t.width == 64) { return "u64"; }
+        if (t.width == 8) { return "u8"; }
         return "u32";
     }
     if (t.width == 64) { return "i64"; }
@@ -1132,6 +1140,7 @@ function type_from_name(name: string): Type {
     // point (#5629); this port has no separate tag, so it resolves as i32.
     if (name == "char") { return t_i32(); }
     if (name == "i64") { return t_i64(); }
+    if (name == "u8") { return t_u8(); }
     if (name == "u32") { return t_u32(); }
     if (name == "u64") { return t_u64(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
@@ -1577,9 +1586,11 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             }
             match (at) {
                 TypeArray(ta) => { return ta.elem; },
-                // String indexing returns the byte as i32 — same
-                // semantics as the production Fern pipeline.
-                TypeString(_) => { return t_i32(); },
+                // String indexing yields the byte as `u8`, the byte type
+                // (#5629) — same semantics as the production Fern pipeline.
+                // This is what lets `s[i].is_ascii_digit()` find the
+                // classifiers, which are declared on a u8 receiver.
+                TypeString(_) => { return t_u8(); },
                 _ => { return t_unknown("can only index into an array or string"); }
             }
             return t_unknown("unreachable index arm");
@@ -2156,6 +2167,7 @@ pub function type_from_name_with_structs(name: string, structs: StructSig[]): Ty
     }
     if (name == "i32") { return t_i32(); }
     if (name == "i64") { return t_i64(); }
+    if (name == "u8") { return t_u8(); }
     if (name == "u32") { return t_u32(); }
     if (name == "u64") { return t_u64(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
@@ -2180,6 +2192,7 @@ pub function type_from_name_with_struct_names(name: string, struct_names: string
     }
     if (name == "i32") { return t_i32(); }
     if (name == "i64") { return t_i64(); }
+    if (name == "u8") { return t_u8(); }
     if (name == "u32") { return t_u32(); }
     if (name == "u64") { return t_u64(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
@@ -2245,6 +2258,7 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
     var name: string = parser.render_type_ref(r);
     if (name == "i32") { return t_i32(); }
     if (name == "i64") { return t_i64(); }
+    if (name == "u8") { return t_u8(); }
     if (name == "u32") { return t_u32(); }
     if (name == "u64") { return t_u64(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
@@ -2415,6 +2429,7 @@ pub function type_from_name_with_names_and_unions(name: string, struct_names: st
     }
     if (name == "i32") { return t_i32(); }
     if (name == "i64") { return t_i64(); }
+    if (name == "u8") { return t_u8(); }
     if (name == "u32") { return t_u32(); }
     if (name == "u64") { return t_u64(); }
     if (name == "bool" || name == "boolean") { return t_bool(); }
