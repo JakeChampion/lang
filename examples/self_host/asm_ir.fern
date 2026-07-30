@@ -6049,6 +6049,43 @@ pub function script_normalized(mod: parser.Module): parser.Module {
 // routed IR before still routes IR (byte-identically), one that fell back to AST
 // still falls back — just at half the lowering cost.
 //
+// emit_module_or_error is the non-AST half of asm.emit_module (#3457 slice 3):
+// the same parse-error / type-check / lambda-lift prologue, then the IR gate —
+// but a module the gate declines is a hard ERROR here rather than a silent
+// fall-through to the legacy AST emitter.
+//
+// It exists so the single-module drivers can stop importing `asm.fern` at all,
+// which is what makes the AST emitter deletable (slice 5). The declines are
+// diagnosable rather than mysterious: FERN_STRICT_IR=1 makes the gate exit(3)
+// naming the bail site, so a regression here says WHICH construct left the
+// subset, not merely that one did.
+//
+// The prologue is ordered check-then-emit for the reason #4327 records: the
+// fused gate+emit used to return ahead of the type check, so every IR-eligible
+// module skipped it and an ill-typed one miscompiled silently.
+pub function emit_module_or_error(mod: parser.Module): string {
+    var parse_errs: string = asmcore.parse_unknown_errors_module(mod);
+    if (parse_errs.len() > 0) {
+        eprint(parse_errs);
+        exit(1);
+        return "";
+    }
+    var chk: asmcore.EmitState = asmcore.new_state();
+    chk = asmcore.EmitState { ...chk, struct_decls: mod.structs, funcs: mod.funcs };
+    var check_errs: string = asmcore.check_module(mod, chk);
+    if (check_errs.len() > 0) {
+        eprint(check_errs);
+        exit(1);
+        return "";
+    }
+    var lm: parser.Module = lift_lambdas(mod);
+    var g: string = emit_module_ir_gated(lm, []);
+    if (g != "") { return g; }
+    eprint("error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)\n");
+    exit(1);
+    return "";
+}
+
 // "" is an unambiguous "ineligible" sentinel: an eligible module always emits at
 // least `.globl _start\n    .text\n…`, never the empty string.
 pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
