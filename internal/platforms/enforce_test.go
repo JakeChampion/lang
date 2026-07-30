@@ -182,13 +182,58 @@ func TestEnforceUnknownTargetSkips(t *testing.T) {
 	}
 }
 
+// The one-level arena checkpoint (__heap_mark / __heap_release_to) is
+// native-only: both natives rewind __fern_heap_ptr and snapshot the freelist
+// heads into a .bss shadow, which wasm's linear-memory allocator has no room
+// for below its head table. wasm must therefore reject the pair HERE, at check
+// time — before the gate existed, a wasm build died inside the backend with
+// `unknown callee "__fern_heap_mark"`, an internal message carrying an IR op
+// index and no source position. `__heap_bump_bytes` stays ungated: reading the
+// cursor works on every target, only rewinding it is native.
+func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
+	src := `function main(): i32 {
+    var m: i64 = __heap_mark();
+    __heap_release_to(m);
+    return __heap_bump_bytes();
+}`
+	for _, target := range []string{"x86-64", "arm64", "arm64-darwin", "arm64-android"} {
+		t.Run(target+"/allowed", func(t *testing.T) {
+			if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
+				t.Errorf("native target %q should provide `arena`; violations = %+v", target, vs)
+			}
+		})
+	}
+	for _, target := range []string{"wasm", "wasi-http"} {
+		t.Run(target+"/rejected", func(t *testing.T) {
+			vs := platforms.Enforce(prepared(t, src, false), target)
+			// Both calls are gated; __heap_bump_bytes is not.
+			if len(vs) != 2 {
+				t.Fatalf("violations = %d, want 2 (mark + release_to): %+v", len(vs), vs)
+			}
+			for _, v := range vs {
+				if v.Capability != "arena" {
+					t.Errorf("violation %+v: capability = %q, want arena", v, v.Capability)
+				}
+				if v.Builtin != "__heap_mark" && v.Builtin != "__heap_release_to" {
+					t.Errorf("unexpected gated builtin %q", v.Builtin)
+				}
+				// The message must point at the targets that DO provide it,
+				// not read as interp-only the way subprocess does.
+				if msg := v.Message("<stdin>"); !strings.Contains(msg, "x86-64") {
+					t.Errorf("message should list the providing targets: %s", msg)
+				}
+			}
+		})
+	}
+}
+
 // Table consistency: every capability named in the gate table is
 // either provided by at least one target or is the documented
 // interp-only case (subprocess). Guards against typos like gating on
 // "filesystem" while descriptors say "fs".
 func TestGatedCapabilitiesResolvable(t *testing.T) {
 	caps := map[string]bool{}
-	for _, name := range []string{"subprocess", "read_line", "stdin", "tcp_listen", "read_file", "stat", "temp_dir", "udp_send"} {
+	for _, name := range []string{"subprocess", "read_line", "stdin", "tcp_listen", "read_file", "stat", "temp_dir", "udp_send", "__heap_mark", "__heap_release_to"} {
 		c, ok := platforms.GatedBuiltin(name)
 		if !ok {
 			t.Errorf("expected %q to be gated", name)

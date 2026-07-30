@@ -510,6 +510,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesHeapBumpBytes {
 		g.emitHeapBumpBytesRuntime()
 	}
+	if g.usesHeapMark {
+		g.emitHeapMarkRuntime()
+	}
 	if g.usesSliceMake {
 		g.emitSliceMakeRuntime()
 	}
@@ -1022,6 +1025,10 @@ func (g *generator) emitDataSections() {
 		// but never explicitly alloc otherwise.
 		g.line(`.align 3`)
 		g.label("__fern_freelist_heads")
+		g.line(`	.space 2048`)
+		// Shadow copy for the one-level arena checkpoint
+		// (__fern_heap_mark / __fern_heap_release_to). Mirrors x86_64.
+		g.label("__fern_freelist_shadow")
 		g.line(`	.space 2048`)
 	}
 }
@@ -1955,6 +1962,68 @@ func (g *generator) emitHeapBumpBytesRuntime() {
 	g.emit("mov x0, #0")
 	g.emit("ret")
 	g.sizeDirective("__fern_heap_bump_bytes")
+}
+
+// emitHeapMarkRuntime emits `__fern_heap_mark() -> i64` and
+// `__fern_heap_release_to(mark: i64)` — the one-level arena checkpoint.
+// Mirrors the x86_64 pair; see emitHeapMarkRuntime there for why the freelist
+// heads are snapshotted rather than cleared (a block allocated and freed
+// inside a window would otherwise leave a head pointing above the mark, and
+// both a later pop and a later bump would hand out that same address) and for
+// the caller's obligation that nothing allocated after the mark is still
+// reachable at the release.
+func (g *generator) emitHeapMarkRuntime() {
+	g.line("")
+	g.line(".global __fern_heap_mark")
+	g.typeDirective("__fern_heap_mark")
+	g.label("__fern_heap_mark")
+	g.adrpAdd("x1", "__fern_heap_ptr")
+	g.emit("ldr x0, [x1]")
+	if ast.RcFreeEnabled && (g.usesAlloc || g.usesFree) {
+		// The copy loop needs scratch registers. Every other reader of the
+		// arena globals (__fern_heap_bump_bytes) leaves the argument
+		// registers alone, so preserve them rather than assume the emitted
+		// code around a call here holds nothing live in x1..x4.
+		g.emit("stp x1, x2, [sp, #-32]!")
+		g.emit("stp x3, x4, [sp, #16]")
+		g.adrpAdd("x1", "__fern_freelist_heads")
+		g.adrpAdd("x2", "__fern_freelist_shadow")
+		g.emit("mov x3, #2048")
+		g.label(".Lheap_mark_cp")
+		g.emit("ldr x4, [x1], #8")
+		g.emit("str x4, [x2], #8")
+		g.emit("subs x3, x3, #8")
+		g.emit("b.ne .Lheap_mark_cp")
+		g.emit("ldp x3, x4, [sp, #16]")
+		g.emit("ldp x1, x2, [sp], #32")
+	}
+	g.emit("ret")
+	g.sizeDirective("__fern_heap_mark")
+
+	g.line("")
+	g.line(".global __fern_heap_release_to")
+	g.typeDirective("__fern_heap_release_to")
+	g.label("__fern_heap_release_to")
+	g.emit("cbz x0, .Lheap_rel_done") // mark 0 = no checkpoint
+	g.adrpAdd("x1", "__fern_heap_ptr")
+	g.emit("str x0, [x1]")
+	if ast.RcFreeEnabled && (g.usesAlloc || g.usesFree) {
+		g.emit("stp x1, x2, [sp, #-32]!")
+		g.emit("stp x3, x4, [sp, #16]")
+		g.adrpAdd("x1", "__fern_freelist_shadow")
+		g.adrpAdd("x2", "__fern_freelist_heads")
+		g.emit("mov x3, #2048")
+		g.label(".Lheap_rel_cp")
+		g.emit("ldr x4, [x1], #8")
+		g.emit("str x4, [x2], #8")
+		g.emit("subs x3, x3, #8")
+		g.emit("b.ne .Lheap_rel_cp")
+		g.emit("ldp x3, x4, [sp, #16]")
+		g.emit("ldp x1, x2, [sp], #32")
+	}
+	g.label(".Lheap_rel_done")
+	g.emit("ret")
+	g.sizeDirective("__fern_heap_release_to")
 }
 
 // emitAllocBoxRuntime emits `__fern_alloc_box(size) -> data` —
@@ -8080,6 +8149,11 @@ type generator struct {
 	// the bump high-water mark). Set when the IR emits the matching
 	// OpCallDirect; also pulls in the allocator (it reads its cursor).
 	usesHeapBumpBytes bool
+	// usesHeapMark gates the one-level arena checkpoint pair
+	// `__fern_heap_mark` / `__fern_heap_release_to`. Set when the IR emits
+	// either matching OpCallDirect; also pulls in the allocator (the pair
+	// rewinds its cursor and snapshots its freelist heads).
+	usesHeapMark bool
 	// usesArrPushGrow gates `__fern_arr_push_grow` — the Phase 2
 	// helper called by `emitArrayPush` to decide between in-
 	// place mutation (rc==1 + cap available) and copy-into-new-
@@ -10943,6 +11017,14 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__fern_heap_bump_bytes":
 			g.usesHeapBumpBytes = true
 			g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
+		case "__heap_mark", "__heap_release_to":
+			// The IR carries the SOURCE builtin name (see internal/ir's
+			// lowering: void-ness of release_to is resolved through the
+			// checker's FuncSigs, which is keyed by that name), so map it to
+			// the runtime symbol here.
+			target = "__fern_" + target[2:]
+			g.usesHeapMark = true
+			g.usesAlloc = true // rewinds __fern_heap_ptr; shadows the freelist heads
 		case "__fern_arr_push_grow":
 			g.usesArrPushGrow = true
 			g.usesAlloc = true

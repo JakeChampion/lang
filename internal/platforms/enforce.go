@@ -43,6 +43,16 @@ var gatedBuiltins = map[string]string{
 	"proc_fork":    "proc",
 	"proc_waitpid": "proc",
 
+	// One-level bump-arena checkpoint (__heap_mark / __heap_release_to).
+	// Native-only: both natives rewind __fern_heap_ptr and snapshot the
+	// freelist heads into a .bss shadow, which wasm's linear-memory
+	// allocator has no room for below its head table. `__heap_bump_bytes`
+	// stays ungated — reading the cursor works everywhere; only rewinding
+	// it is native. Gating turns an internal "unknown callee
+	// __fern_heap_mark" mid-build failure into E066 at check time.
+	"__heap_mark":       "arena",
+	"__heap_release_to": "arena",
+
 	// Blocking stdin reads (a webserver target has no stdin).
 	"read_line": "stdin",
 	"stdin":     "stdin",
