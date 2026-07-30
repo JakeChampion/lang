@@ -276,6 +276,9 @@ impl Default for u32 {
 impl Default for u64 {
     function default(): u64 { return 0 as u64; }
 }
+impl Default for u8 {
+    function default(): u8 { return 0 as u8; }
+}
 impl Default for string {
     function default(): string { return ""; }
 }
@@ -308,6 +311,12 @@ impl Debug for u32 {
 }
 impl Debug for u64 {
     function to_debug(self: Self): string { return self.to_string(); }
+}
+// A byte has neither structure to render nor a `to_string` of its own to
+// call, so it debugs as the decimal form of the i32 it widens to — the same
+// borrow `impl Display for u8` makes.
+impl Debug for u8 {
+    function to_debug(self: Self): string { return (self as i32).to_string(); }
 }
 impl Debug for f64 {
     function to_debug(self: Self): string { return self.to_string(); }

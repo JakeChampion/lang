@@ -2756,11 +2756,6 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 // fn, so the shortcut lets stdlib internals call each other
 // freely — only USER → stdlib visibility still requires an
 // explicit import.
-// methodTypeName maps a type to the canonical name used in the
-// `__method_<Type>_<name>` mangling and the Info.Methods keys. It
-// mirrors the receiver-hoist switch so impl-conformance lookups land
-// on the same key the hoist registered. Returns false for types that
-// can't carry methods.
 // validScalarValue reports whether v is a Unicode scalar value: in
 // 0..0x10FFFF and not one of the UTF-16 surrogates 0xD800..0xDFFF. This is
 // `char`'s domain (#5629) — the surrogates are excluded because they only
@@ -2779,48 +2774,11 @@ func surrogateHint(v int64) string {
 	return ""
 }
 
-func methodTypeName(t ast.Type) (string, bool) {
-	switch rt := t.(type) {
-	case ast.StructType:
-		return rt.Name, true
-	case ast.EnumType:
-		return rt.Name, true
-	case ast.StringType:
-		return "string", true
-	case ast.StrType:
-		// `str` (#4813) shares the `string` method surface: every string
-		// receiver method (builtin len/as_bytes and the std/string family)
-		// dispatches on a view too -- methods borrow their receiver.
-		return "string", true
-	case ast.CharType:
-		// `char` (#5629) has its OWN method surface -- deliberately not
-		// i32's, so the byte classifiers can never be reached through a
-		// scalar. Nothing declares a `char` receiver yet.
-		return "char", true
-	case ast.NumberType:
-		switch {
-		case rt.NormalWidth() == 64 && rt.IsSigned():
-			return "i64", true
-		case rt.NormalWidth() == 64 && !rt.IsSigned():
-			return "u64", true
-		case rt.NormalWidth() == 8:
-			return "u8", true
-		case !rt.IsSigned():
-			return "u32", true
-		default:
-			return "i32", true
-		}
-	case ast.FloatType:
-		if rt.NormalWidth() == 64 {
-			return "f64", true
-		}
-		return "f32", true
-	case ast.BoolType:
-		return "boolean", true
-	default:
-		return "", false
-	}
-}
+// methodTypeName maps a type to the canonical name used in the
+// `__method_<Type>_<name>` mangling and the Info.Methods keys — the
+// same `ast.ReceiverTypeName` the receiver hoist registers under, so
+// impl-conformance lookups land on the key the hoist wrote.
+func methodTypeName(t ast.Type) (string, bool) { return ast.ReceiverTypeName(t) }
 
 // setElemHintFor stamps c.elemHint with the element type of `dst` when
 // `e` is directly an array literal and `dst` is an array type — the
@@ -4695,41 +4653,14 @@ func (c *checker) methodImplementsTrait(typeName, methodName string) bool {
 }
 
 // displayDispatchTypeName maps a concrete value type to the receiver name
-// `to_string` (and other trait methods) dispatch under — mirroring the
-// scalar/struct/enum mapping in the method-call path. Returns "" for types
-// that can't carry a `to_string` (void, tuples, raw arrays, …).
+// `to_string` (and other trait methods) dispatch under — the same
+// `ast.ReceiverTypeName` the method-call path resolves against, so the
+// `print` Display gate and the dispatch it enables can't disagree.
+// Returns "" for types that can't carry a `to_string` (void, tuples,
+// raw arrays, …).
 func displayDispatchTypeName(t ast.Type) string {
-	switch x := t.(type) {
-	case ast.StructType:
-		return x.Name
-	case ast.EnumType:
-		return x.Name
-	case ast.StringType:
-		return "string"
-	case ast.StrType:
-		return "string"
-	case ast.CharType:
-		return "char"
-	case ast.BoolType:
-		return "boolean"
-	case ast.NumberType:
-		switch {
-		case x.NormalWidth() == 64 && x.IsSigned():
-			return "i64"
-		case x.NormalWidth() == 64 && !x.IsSigned():
-			return "u64"
-		case !x.IsSigned():
-			return "u32"
-		default:
-			return "i32"
-		}
-	case ast.FloatType:
-		if x.NormalWidth() == 64 {
-			return "f64"
-		}
-		return "f32"
-	}
-	return ""
+	tn, _ := ast.ReceiverTypeName(t)
+	return tn
 }
 
 // typeImplementsDisplay reports whether a value of type t can be rendered via

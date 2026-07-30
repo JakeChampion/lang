@@ -11763,7 +11763,7 @@ function synth_struct_display(sd: StructDecl): FuncDecl {
 // (Strings with embedded quotes/backslashes aren't escaped here — the
 // native `impl Debug for string` does, a small self-host fidelity gap.)
 function dv_is_debug_scalar(t: string): boolean {
-    return t == "i32" || t == "i64" || t == "u32" || t == "u64"
+    return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64"
         || t == "f32" || t == "f64" || t == "boolean";
 }
 function dv_debug_render(value: Expr, t: string): Expr {
@@ -12197,10 +12197,13 @@ function synth_enum_derives(ename: string, variants: StructDecl[], derives: stri
 // IR path resolves it). Mirrors the Go synthDefault / defaultDeriveExpr.
 
 // dv_is_scalar reports whether a type is a primitive scalar whose default
-// is a zero literal: i32/i64/u32/u64 → 0, f32/f64 → 0.0, boolean → false,
-// string → "".
+// is a zero literal: i32/i64/u8/u32/u64 → 0, f32/f64 → 0.0, boolean → false,
+// string → "". The Go side asks this of the TYPE (every NumberType is a
+// scalar), so a width missing here is a divergence, not a conservative
+// omission: `u8` was, and `T.default()` at `T = u8` emitted a `u8.default()`
+// call naming a type that is not a value.
 function dv_is_scalar(t: string): boolean {
-    return t == "i32" || t == "i64" || t == "u32" || t == "u64"
+    return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64"
         || t == "f32" || t == "f64" || t == "boolean" || t == "string";
 }
 

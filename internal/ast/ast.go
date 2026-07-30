@@ -1245,6 +1245,64 @@ func IsPointerType(t Type) bool {
 	return false
 }
 
+// ReceiverTypeName maps a type to the surface name its methods are
+// registered and dispatched under — struct/enum names as written, and
+// one name per scalar method surface (`string` for both `string` and a
+// `str` view, `char`, `boolean`, and the numeric widths). It backs the
+// `__method_<Type>_<name>` mangling, the call-site dispatch, the
+// `print` auto-`to_string` gate, and monomorph's `T.f()` associated-call
+// rewrite. Returns false for types that can't carry methods.
+//
+// This is the ONE copy of the width switch on purpose. It used to be
+// open-coded at each of those sites, and every copy had to learn each
+// new width independently: when `u8` became its own type (#5629) two of
+// them kept naming a byte `u32`, so a `print(b)` gate passed on u32's
+// `to_string` while dispatch looked for u8's, and `T.default()` at
+// `T = u8` rewrote onto `impl Default for u32`. Add a width here and
+// every site learns it at once.
+func ReceiverTypeName(t Type) (string, bool) {
+	switch rt := t.(type) {
+	case StructType:
+		return rt.Name, true
+	case EnumType:
+		return rt.Name, true
+	case StringType:
+		return "string", true
+	case StrType:
+		// `str` (#4813) shares the `string` method surface: every string
+		// receiver method (builtin len/as_bytes and the std/string family)
+		// dispatches on a view too -- methods borrow their receiver.
+		return "string", true
+	case CharType:
+		// `char` (#5629) has its OWN method surface -- deliberately not
+		// i32's, so the byte classifiers can never be reached through a
+		// scalar. Nothing declares a `char` receiver yet.
+		return "char", true
+	case NumberType:
+		switch {
+		case rt.NormalWidth() == 64 && rt.IsSigned():
+			return "i64", true
+		case rt.NormalWidth() == 64 && !rt.IsSigned():
+			return "u64", true
+		case rt.NormalWidth() == 8:
+			return "u8", true
+		case !rt.IsSigned():
+			return "u32", true
+		default:
+			return "i32", true
+		}
+	case FloatType:
+		if rt.NormalWidth() == 64 {
+			return "f64", true
+		}
+		return "f32", true
+	case BoolType:
+		return "boolean", true
+	default:
+		return "", false
+	}
+}
+
 // Equal reports whether two types are structurally equal.
 func Equal(a, b Type) bool {
 	switch x := a.(type) {
