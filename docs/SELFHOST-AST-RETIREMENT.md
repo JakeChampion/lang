@@ -1914,20 +1914,48 @@ tier → leak.
      interned shape string, a struct-drop BODY depends on the emitting unit's
      struct-decl view, so identical copies is a property to verify rather than
      take for granted.)
-  2. **A runtime segfault in the built compiler — OPEN, and the actual gate.**
-     With the symbols deduped the stage-2 asm assembles and links, and the
-     resulting compiler *segfaults* (`TestSelfHostStage2Bootstrap`: "stage 1:
-     self-hosted compiler asm = 17635180 bytes" then `signal: segmentation
-     fault`; every `TestSelfHostStage2Compiler` case fails). That is a
-     correctness bug in the >=1500 per-module concat path, unrelated to symbols
-     and unrelated to memory.
+  2. ~~**A runtime segfault in the built compiler — OPEN, and the actual gate.**~~
+     **RETRACTED (same day): that segfault was a bug in blocker 1's own fix, and
+     it is fixed.** The emitter indents its DIRECTIVES, so a unit's prologue is
+     `    .globl _start` / `    .text`. The new skip dropped ANY indented line, so
+     a duplicate `.weak` at the tail of one unit's shape block swallowed the next
+     unit's prologue — putting the entry unit's code inside the previous unit's
+     `.rodata` and leaving `_start` a LOCAL rodata symbol (`nm`: `r _start`). ld
+     then could not find an entry ("cannot find entry symbol _start", defaulting
+     to 0x401000) and the binary jumped to garbage: RIP=**0x1** with the initial
+     argv/envp stack untouched, i.e. no real code had run. Corrected stop rule: a
+     body line is an INSTRUCTION (indented AND not starting with `.`) or a `.L…`
+     label; anything else, including an indented directive, ends the skip.
 
-  **So the bound stays at `< 1500` for now** and the dedup fix lands on its own:
-  it is a live latent bug at ANY size (a program in the current 512..1500 band
-  whose modules share a struct type hits the same assembler error today), it is
-  necessary for lifting the bound, and it is not sufficient. The next attempt
-  should start from blocker 2 with the bound temporarily raised, not from the
-  batched-emit plan — and should not re-derive the OOM story.
+     Measured by hand at 1958 merged funcs after the correction:
+
+     | | before | after |
+     |---|---|---|
+     | `_start` linkage | `r` (local, rodata) | **`T` (global, .text)** |
+     | link | `cannot find entry symbol _start` | clean |
+     | stage-1 compiler | segfault, 0 bytes | runs, 302 bytes |
+     | stage-2 program | — | **exit 7** |
+
+  3. **The whole-compiler self-compile IS still memory-bound — so the OOM story
+     is half right, for a different program.** With the bound raised past it,
+     step 7 of `TestSelfHostModloadPerModuleWholeCompilerX86_64` (the
+     per-module-built compiler over the whole compiler source, no flags) routes
+     into a single-process concat and **exits 137** — `__fern_alloc`'s arena
+     bounds check, not a host OOM-kill. So blocker 3 is the real remaining gate,
+     and the batched-emit reachability plan above is the right fix for it.
+
+  **Correcting this section's own correction:** "the cap is NOT the OOM" was
+  measured on the **stage-2 compiler (1958 funcs)**, which has no memory problem,
+  and over-generalised from it. Function count is a poor proxy either way — 1958
+  fits and ~2040 does not, because what exhausts the arena is the COMPILE
+  WORKLOAD, not the emitted function count.
+
+  **So the bound stays at `< 1500`** and the dedup + prologue fixes land on their
+  own: they are a live latent bug at ANY size (a program in the current 512..1500
+  band whose modules share a struct type hits the same assembler error today) and
+  they are necessary but not sufficient. What survives, and is genuinely narrower
+  than the original framing: only the WHOLE-COMPILER case needs the batched path;
+  ordinary large programs up to at least 1958 funcs now work through the concat.
 
   **What the attempt did establish**, and what survives it: exactly three callers
   needed the opt-out, and one is a ROUTINE test — step 7 of
