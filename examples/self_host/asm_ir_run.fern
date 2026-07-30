@@ -24,6 +24,7 @@ import "./parser";
 import "./asm";
 import "./asm_ir";
 import "./asm_arm64";
+import "./asm_arm64_ir";
 import "./irlower";
 
 function main(): i32 {
@@ -141,7 +142,7 @@ function main(): i32 {
     // the old mirror driver (which ignored unknown flags).
     if (target == "arm64") {
         if (use_ir && asm_ir.all_eligible(lm)) {
-            print(asm_arm64.emit_module_ir(lm, false));
+            print(asm_arm64_ir.emit_module_ir(lm, false));
         } else {
             print(asm_arm64.emit_module(parser.module_with_builtins(mod), false));
         }

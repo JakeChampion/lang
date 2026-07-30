@@ -3964,144 +3964,6 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
-// emit_module_ir_unit_arm64 is the arm64 mirror of asm_ir.emit_module_ir_unit
-// (the per-module-compilation epic, #3451 / #3457 step 0a): it emits ONE
-// translation unit's worth of arm64 asm from the IR path. The four knobs match
-// x86's: is_entry (emit `_start` + the single shared __fern_* runtime),
-// globl_defs (mark each emitted `__fn_<label>` `.globl` so a sibling unit's
-// `bl __fn_...` extern resolves at link), str_ns (per-module .rodata namespace
-// so two units' string + shape pools co-link without collision), and
-// extra_needs (the whole-program runtime-need union, folded into the entry's
-// single runtime so a sibling's helper is present). all_funcs/all_structs are
-// the whole-program signature view (#3454) driving call/return tagging + struct
-// layout; only mod.funcs are EMITTED. The _start is copied verbatim from
-// emit_body (the proven single-unit IR path). Caller must have established
-// asm_ir.all_eligible_*_known_view(mod) and seeded nothing (we reset here).
-pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], lo: i32, hi: i32): string {
-    mod = parser.infer_ret_types_module(mod);
-    strbuf_reset();
-    var s: asmcore.EmitState = asmcore.new_state();
-    // struct_decls is the WHOLE-PROGRAM struct set so a function emitting an
-    // imported struct's layout resolves it; str_ns namespaces this unit's pools.
-    s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns };
-    if (is_entry) { s = s.write("    .globl _start\n"); }
-    s = s.write("    .text\n");
-    // The entry exports its shared runtime entry points (__fern_alloc /
-    // __fern_arr_box / …) `.globl` so sibling library units' `bl __fern_*`
-    // externs resolve against the single copy it emits. Target-independent
-    // symbol list — reused from asm_ir.
-    if (is_entry && globl_defs) { s = asm_ir.emit_runtime_globls(s); }
-    // Side-tables derived ONCE over the whole-program all_funcs (#3454) — per-fn
-    // derivation is O(n^2) and OOMs the bump heap (mirrors emit_body / x86
-    // emit_module_funcs). struct_ret over all_structs.
-    var arf: string[] = asm_ir.array_ret_fns_of(all_funcs);
-    var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
-    var csparams: string[] = irlower.consume_safe_params_interproc(all_funcs, bparams);
-    var srf: string[] = irlower.str_ret_fns_of(all_funcs);
-    var sarf: string[] = irlower.strarr_ret_fns_of(all_funcs);
-    var amf: string[] = irlower.arr_method_fns_of(all_funcs);
-    var orf: string[] = irlower.opt_ret_fns_of(all_funcs);
-    var irf: string[] = irlower.i64_ret_fns_of(all_funcs);
-    var trf: string[] = irlower.tuple_ret_fns_of(all_funcs);
-    var srtf: string[] = irlower.struct_ret_fns_of(all_funcs, all_structs);
-    var mrtf: string[] = irlower.map_ret_fns_of(all_funcs);
-    var frf: string[] = irlower.f64_ret_fns_of(all_funcs);
-    var farf: string[] = irlower.f64arr_ret_fns_of(all_funcs);
-    var iarf: string[] = irlower.i64arr_ret_fns_of(all_funcs);
-    var fps: string[] = irlower.fn_param_sigs_of(all_funcs, all_structs);
-    var cfs: string[] = irlower.closure_and_fnptr_fns_of(all_funcs, all_structs);
-    var cnf: string[] = irlower.const_fns_of(all_funcs);
-    var frsf: string[] = irlower.fresh_struct_ret_fns_of(all_funcs, all_structs);
-    var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
-    var sfrf: string[] = irlower.str_fresh_ret_fns_of(all_funcs);
-    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(all_funcs, all_structs);
-    var sfot: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
-    var tfrf: string[] = irlower.tuple_fresh_ret_fns_of(all_funcs);
-    // [lo, hi) function-index window (function-sharding, #3425 — the arm64
-    // mirror of asm_ir.emit_module_funcs' windowing). A full window (lo=0,
-    // hi<0 "to the end") is byte-identical to the unsharded emit; a partial
-    // window lets an oversized module emit across separate processes without
-    // any single emit's leak-mode heap crossing the arena ceiling.
-    var hh: i32 = hi;
-    if (hh < 0 || hh > mod.funcs.len()) { hh = mod.funcs.len(); }
-    var fi: i32 = lo;
-    while (fi < hh) {
-        if (globl_defs) {
-            var gname: string = mod.funcs[fi].name;
-            if (mod.funcs[fi].receiver_type.len() > 0) { gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name; }
-            s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
-        }
-        s = asm_arm64_ir.emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs, mod.structs), cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
-        fi = fi + 1;
-    }
-    // #4355: admit the replaced-STRING-field arm per type from the
-    // WHOLE-PROGRAM read scan (all_funcs — see asm_ir.emit_module_ir_unit's
-    // sibling seeding and irlower.strfld_reclaim_ok_types_of).
-    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
-    var sfoi: i32 = 0;
-    while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
-    // #5235: seed the plain-fn-pointer-array field registry as needs so
-    // emit_arm64_struct_drop_one buffer-only-decs those fields (no element walk).
-    var fpk: string[] = irlower.fnptr_arr_fields_of(all_funcs, all_structs);
-    var fpi: i32 = 0;
-    while (fpi < fpk.len()) { s = s.need(fpk[fpi]); fpi = fpi + 1; }
-    // Per-type __field_reclaim_<T> + __struct_drop_<T> bodies (#3457). Shared
-    // with emit_module's single-unit IR path (so the load_run / emit_module
-    // route also emits them — previously only this multi-unit path did, so a
-    // reclaimable struct-with-array-field link-failed there).
-    s = asm_arm64_ir.emit_arm64_reclaim_drop_bodies(s);
-    // Fold the whole-program need union (sibling modules' needs) into the entry's
-    // single runtime BEFORE _start, so _start's args gating sees a sibling's
-    // args() need. Inert (empty) on the single-unit path.
-    var en: i32 = 0;
-    while (en < extra_needs.len()) { s = s.need(extra_needs[en]); en = en + 1; }
-    // _start belongs only to the entry (one program entry point). Copied verbatim
-    // from emit_body: save argc/argv from the SysV entry stack (gated on args),
-    // frame push, call __fn_main, exit with its result.
-    if (is_entry) {
-        s = s.write("_start:\n");
-        if (s.has_need("args")) {
-            s = s.write("    ldr x0, [sp]\n");
-            s = s.write("    adrp x1, __fern_argc\n");
-            s = s.write("    add x1, x1, :lo12:__fern_argc\n");
-            s = s.write("    str x0, [x1]\n");
-            s = s.write("    add x0, sp, #8\n");
-            s = s.write("    adrp x1, __fern_argv\n");
-            s = s.write("    add x1, x1, :lo12:__fern_argv\n");
-            s = s.write("    str x0, [x1]\n");
-        }
-        // Save envp for env() / subprocess (Linux SysV: envp = sp + 16 +
-        // argc*8), gated on heap like the AST _start and the __fern_env
-        // helper. The multi-unit IR _start missed it just like emit_body's;
-        // without it __fern_envp stays null and env() derefs a null base.
-        if (s.has_need("heap")) {
-            s = s.write("    ldr x0, [sp]\n");            // argc
-            s = s.write("    lsl x0, x0, #3\n");          // argc*8
-            s = s.write("    add x0, x0, #16\n");         // + 16 (argc slot + argv NULL)
-            s = s.write("    add x0, sp, x0\n");          // envp base
-            s = s.write("    adrp x1, __fern_envp\n");
-            s = s.write("    add x1, x1, :lo12:__fern_envp\n");
-            s = s.write("    str x0, [x1]\n");
-        }
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    bl __fn_main\n");
-        s = s.write("    mov x8, #93\n");
-        s = s.write("    svc #0\n");
-    }
-    s = s.close_needs();
-    // The entry emits the single shared __fern_* runtime (its helpers are already
-    // `.globl`, so sibling `bl __fern_*` externs resolve against it) AND its own
-    // .rodata pools (emit_runtime calls emit_rodata_pools_arm64). A non-entry
-    // module emits ONLY its own pools — no runtime, no _start.
-    if (is_entry) {
-        s = asm_arm64_ir.emit_ir_runtime(s, false);
-    } else {
-        s = emit_rodata_pools_arm64(s);
-    }
-    return strbuf_take();
-}
-
 // emit_ccall_shim1_arm64 emits one `__fn___c_call<n>[suffix]` FFI shim (#4375),
 // the arm64 sibling of asm_ir.emit_ccall_shim1. Entered like any stack-ABI
 // callee (the generic call_direct emit reversed the args so arg0/fn sits on
@@ -9126,37 +8988,6 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     return s;
 }
 
-// emit_module_ir is the FORCED-IR whole-program emit — the use_ir branch of
-// emit_module without the eligibility fallback or the pre-codegen check, the
-// arm64 sibling of asm_ir.emit_module_ir. The asm_ir_run `-target arm64 -ir`
-// differential driver calls this (with an already lambda-lifted module) so the
-// IR orchestration lives in ONE place: the driver's old hand-copy of this
-// sequence drifted when emit_arm64_reclaim_drop_bodies was added to
-// emit_module's dispatch (#3457) but not to the driver, so a reclaimable
-// struct-with-array-field program link-failed on `__struct_drop_<T>` there.
-pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
-    strbuf_reset();
-    var s: asmcore.EmitState = asmcore.new_state();
-    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
-    s = asm_arm64_ir.emit_body(mod, s);
-    // Expand the declarative runtime-dependency closure (see emit_module's IR
-    // dispatch) before emit_runtime gates each helper on has_need.
-    s = s.close_needs();
-    // #4355: replaced-STRING-field admission — this driver route is
-    // single-module whole-program, so mod.funcs IS the full read scope.
-    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
-    var sfoi: i32 = 0;
-    while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
-    // #5235: plain-fn-pointer-array field registry (see the emit_module_funcs twin).
-    var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, mod.structs);
-    var fpi: i32 = 0;
-    while (fpi < fpk.len()) { s = s.need(fpk[fpi]); fpi = fpi + 1; }
-    // Per-type __field_reclaim_<T> / __struct_drop_<T> bodies (#3457).
-    s = asm_arm64_ir.emit_arm64_reclaim_drop_bodies(s);
-    s = asm_arm64_ir.emit_ir_runtime(s, darwin);
-    return strbuf_take();
-}
-
 pub function emit_module(mod: parser.Module, darwin: boolean): string {
     var parse_errs: string = asmcore.parse_unknown_errors_module(mod);
     if (parse_errs.len() > 0) {
@@ -9198,7 +9029,7 @@ pub function emit_module(mod: parser.Module, darwin: boolean): string {
         // (emit_body -> close_needs -> reclaim/drop bodies -> emit_runtime)
         // lives in emit_module_ir; nothing has been written to the strbuf
         // yet, so its internal reset keeps this byte-identical.
-        return emit_module_ir(lm, darwin);
+        return asm_arm64_ir.emit_module_ir(lm, darwin);
     }
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
