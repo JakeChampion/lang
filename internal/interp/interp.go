@@ -536,6 +536,14 @@ func New() *Interp {
 	// under -interp without erroring (the metric is only meaningful in
 	// codegen).
 	i.Builtins["__heap_bump_bytes"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	// __heap_mark() / __heap_release_to(mark): the arena checkpoint pair. The
+	// interpreter is GC'd, so there is no cursor to capture or rewind — mark
+	// hands back the same "no checkpoint" 0 the codegen backends use when
+	// nothing has been allocated yet, and release_to is a no-op. A program
+	// driving the pair therefore runs correctly under -interp; it just does
+	// not observe reclamation, exactly as with __heap_bump_bytes.
+	i.Builtins["__heap_mark"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	i.Builtins["__heap_release_to"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
 	i.Builtins["f32_bits"] = &Builtin{Fn: builtinF32Bits}
 	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}
 	i.Builtins["f64_bits"] = &Builtin{Fn: builtinF64Bits}

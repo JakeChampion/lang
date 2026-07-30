@@ -11833,6 +11833,24 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __heap_mark() / __heap_release_to(mark) — the one-level arena
+	// checkpoint pair. Same runtime-helper shape as __heap_bump_bytes so each
+	// backend rewinds its own cursor and snapshots its own freelist heads.
+	if id.Name == "__heap_mark" && len(n.Args) == 0 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_heap_mark", I32: 0})
+			return nil
+		}
+	}
+	if id.Name == "__heap_release_to" && len(n.Args) == 1 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			if err := b.expr(n.Args[0]); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_heap_release_to", I32: 1})
+			return nil
+		}
+	}
 	// f64_bits / f64_from_bits: 64-bit cousin of the f32 pair.
 	// Same zero-cost reinterpret on natives; wasm needs the
 	// typed `i64.reinterpret_f64` / `f64.reinterpret_i64` op.
