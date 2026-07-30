@@ -1447,6 +1447,21 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// proc_exec(path, args): i32 — replace this process with `path`,
+	// completing the crash-only trio (fork / exec / waitpid) so a forked
+	// child can become another program. argv is [path, args...], so callers
+	// pass only the real arguments; the environment is inherited.
+	//
+	// On success it does NOT return, so the result only ever reports failure
+	// as a negative errno — the same "the syscall's return shape IS the
+	// contract" convention proc_fork uses. Shares the `proc` capability gate
+	// (native targets only). The interpreter cannot exec (it would replace
+	// the compiler process) and answers -38 / ENOSYS, matching proc_fork's
+	// degrade-at-runtime story.
+	c.info.FuncSigs["proc_exec"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.StringType{}}},
+		Result: ast.NumberType{},
+	}
 	// temp_dir(prefix): Result[string, IoError] — create a
 	// fresh empty directory and return its absolute path.
 	// `prefix` is appended to a random suffix so concurrent

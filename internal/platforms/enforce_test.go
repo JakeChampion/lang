@@ -75,7 +75,8 @@ func TestEnforceSubprocessRejectedOnCompiledTargets(t *testing.T) {
 	}
 }
 
-// `proc` (proc_fork / proc_waitpid — docs/CRASH-ONLY-SERVE.md D2') is
+// `proc` (proc_fork / proc_exec / proc_waitpid — docs/CRASH-ONLY-SERVE.md
+// D2') is
 // granted by the four native targets only: wasm worlds have no
 // processes, so both wasm targets reject at check time. The interp is
 // deliberately ungated (Enforce only runs for compiled targets): its
@@ -84,7 +85,7 @@ func TestEnforceProcByTarget(t *testing.T) {
 	src := `function main(): i32 {
     var pid: i32 = proc_fork();
     if (pid == 0) {
-        return 0;
+        return proc_exec("/bin/true", []);
     }
     return proc_waitpid(pid);
 }`
@@ -96,16 +97,21 @@ func TestEnforceProcByTarget(t *testing.T) {
 	for _, target := range []string{"wasm", "wasi-http"} {
 		t.Run(target, func(t *testing.T) {
 			vs := platforms.Enforce(prepared(t, src, false), target)
-			if len(vs) != 2 {
-				t.Fatalf("violations = %d, want 2 (proc_fork + proc_waitpid): %+v", len(vs), vs)
+			if len(vs) != 3 {
+				t.Fatalf("violations = %d, want 3 (proc_fork + proc_exec + proc_waitpid): %+v", len(vs), vs)
 			}
 			for _, v := range vs {
 				if v.Capability != "proc" {
 					t.Errorf("violation capability = %q, want proc: %+v", v.Capability, v)
 				}
 			}
-			if vs[0].Builtin != "proc_fork" || vs[1].Builtin != "proc_waitpid" {
-				t.Errorf("builtins = %q,%q, want proc_fork,proc_waitpid", vs[0].Builtin, vs[1].Builtin)
+			got := []string{vs[0].Builtin, vs[1].Builtin, vs[2].Builtin}
+			want := []string{"proc_fork", "proc_exec", "proc_waitpid"}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Errorf("builtins = %v, want %v", got, want)
+					break
+				}
 			}
 			if msg := vs[0].Message("<stdin>"); !strings.Contains(msg, "x86-64") || !strings.Contains(msg, "arm64") {
 				t.Errorf("provider hint missing native targets: %s", msg)
@@ -233,7 +239,7 @@ func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
 // "filesystem" while descriptors say "fs".
 func TestGatedCapabilitiesResolvable(t *testing.T) {
 	caps := map[string]bool{}
-	for _, name := range []string{"subprocess", "read_line", "stdin", "tcp_listen", "read_file", "stat", "temp_dir", "udp_send", "__heap_mark", "__heap_release_to"} {
+	for _, name := range []string{"subprocess", "read_line", "stdin", "tcp_listen", "read_file", "stat", "temp_dir", "udp_send", "proc_exec", "__heap_mark", "__heap_release_to"} {
 		c, ok := platforms.GatedBuiltin(name)
 		if !ok {
 			t.Errorf("expected %q to be gated", name)

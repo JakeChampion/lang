@@ -68,6 +68,7 @@ var BuiltinCaps = map[string]string{
 	"subprocess":   "subprocess",
 	"proc_fork":    "subprocess",
 	"proc_waitpid": "subprocess",
+	"proc_exec":    "subprocess",
 
 	"now_unix_ms":         "time",
 	"now_ns":              "time",

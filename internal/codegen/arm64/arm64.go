@@ -64,8 +64,9 @@ const (
 	// crash-only supervision primitives (docs/CRASH-ONLY-SERVE.md
 	// D2'). arm64 Linux has no bare fork(2) syscall; fork is
 	// `clone(SIGCHLD, 0, 0, 0, 0)`.
-	sysClone = 220
-	sysWait4 = 260
+	sysClone  = 220
+	sysExecve = 221
+	sysWait4  = 260
 	// ppoll(2): asm-generic table syscall 73 (arm64 has no bare
 	// `poll`). Backs `__fern_poll` — the std/task reactor's readiness
 	// multiplexer (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1).
@@ -112,8 +113,9 @@ const (
 	// convention; our helper does the same). wait4's status-word
 	// layout matches Linux's (low 7 bits = signal, bits 8..15 =
 	// exit code), so the decode is shared.
-	darFork  = 2
-	darWait4 = 7
+	darFork   = 2
+	darWait4  = 7
+	darExecve = 59
 )
 
 // linuxDarwinSysno maps a logical syscall name to (Linux, Darwin)
@@ -612,6 +614,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesProcWaitpid {
 		g.emitProcWaitpidRuntime()
+	}
+	if g.usesProcExec {
+		g.emitProcExecRuntime()
 	}
 	if g.usesArgs {
 		g.emitArgsRuntime()
@@ -4947,6 +4952,201 @@ func (g *generator) emitProcForkRuntime() {
 	g.sizeDirective("__fern_proc_fork")
 }
 
+// emitProcExecRuntime emits `__fern_proc_exec(path, args) -> i32` — execve,
+// the mirror of the x86-64 helper; see it for why the result only ever reports
+// failure (-errno), why argv is [path, args...], and why the NUL-terminated
+// copies are deliberately never freed.
+func (g *generator) emitProcExecRuntime() {
+	g.line("")
+	g.line(".global __fern_proc_exec")
+	g.typeDirective("__fern_proc_exec")
+	g.label("__fern_proc_exec")
+	if ast.UseTwoWordStrings(8) {
+		g.emitProcExecRuntime2W()
+		return
+	}
+	// Single-word (SSO) string ABI: x0 = path string value, x1 = args box.
+	//
+	// Frame: 96 bytes, one allocation, everything at POSITIVE offsets from x29
+	// (the __fern_strcat convention). x29 == sp == the frame BOTTOM, so a
+	// second `stp ..., [sp, #-N]!` would push sp below x29 and make
+	// emitStrDataPtr's `add dst, x29, #off+1` unrepresentable — it takes no
+	// negative immediate.
+	//   [x29 + 16..31]: saved x19 (args box) / x20 (path len, then argc)
+	//   [x29 + 32..47]: saved x21 (argv) / x22 (loop index)
+	//   [x29 + 48..63]: saved x23 (dst cstr) / x24 (element length)
+	//   [x29 + 64..79]: saved x25 (source bytes) / x26 (path cstr)
+	//   [x29 + 80..87]: emitStrDataPtr scratch — reserved: for a SMALL string
+	//                   that helper returns a pointer INTO it, so storing
+	//                   anything else there destroys the bytes it refers to.
+	g.emit("stp x29, x30, [sp, #-96]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("stp x25, x26, [sp, #64]")
+
+	g.emit("mov x19, x1") // x19 = args box
+	g.emitStrLen("w20", "x0")
+	g.emitStrDataPtr("x25", "x0", 80)
+	g.emit("add x0, x20, #1")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x26, x0") // x26 = path cstr
+	g.emit("mov x24, #0")
+	g.label(".Lpexec_pcopy")
+	g.emit("cmp x24, x20")
+	g.emit("b.ge .Lpexec_pcopy_done")
+	g.emit("ldrb w1, [x25, x24]")
+	g.emit("strb w1, [x26, x24]")
+	g.emit("add x24, x24, #1")
+	g.emit("b .Lpexec_pcopy")
+	g.label(".Lpexec_pcopy_done")
+	g.emit("strb wzr, [x26, x20]")
+
+	g.emitArrayLen("w20", "x19") // x20 = argc
+	g.emit("add x0, x20, #2")
+	g.emit("lsl x0, x0, #3")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x21, x0")
+	g.emit("str x26, [x21]") // argv[0] = path cstr
+	g.emit("mov x22, #0")
+
+	g.label(".Lpexec_arg")
+	g.emit("cmp x22, x20")
+	g.emit("b.ge .Lpexec_arg_done")
+	g.emit("ldr x0, [x19, x22, lsl #3]")
+	g.emitStrLen("w24", "x0")
+	g.emitStrDataPtr("x25", "x0", 80)
+	g.emit("add x0, x24, #1")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x23, x0")
+	g.emit("mov x1, #0")
+	g.label(".Lpexec_acopy")
+	g.emit("cmp x1, x24")
+	g.emit("b.ge .Lpexec_acopy_done")
+	g.emit("ldrb w2, [x25, x1]")
+	g.emit("strb w2, [x23, x1]")
+	g.emit("add x1, x1, #1")
+	g.emit("b .Lpexec_acopy")
+	g.label(".Lpexec_acopy_done")
+	g.emit("strb wzr, [x23, x24]")
+	g.emit("add x1, x22, #1")
+	g.emit("str x23, [x21, x1, lsl #3]")
+	g.emit("add x22, x22, #1")
+	g.emit("b .Lpexec_arg")
+	g.label(".Lpexec_arg_done")
+	g.emit("add x1, x20, #1")
+	g.emit("str xzr, [x21, x1, lsl #3]")
+	g.emitProcExecTail()
+	g.sizeDirective("__fern_proc_exec")
+}
+
+// emitProcExecRuntime2W is __fern_proc_exec under the two-word string ABI
+// (docs/SSO-NATIVE-FLIP-STATUS.md), which arm64 uses. A `string` occupies TWO
+// argument slots there, so the parameters are:
+//
+//	x0 = path data ptr, x1 = path length (tagged), x2 = args box
+//
+// and a `string[]` element is 2*ptrW = 16 bytes — data at [base + i*16],
+// length at [base + i*16 + 8] (ast.ElemSizeBytesFor). Getting this wrong is
+// what made the first cut of this helper read the path LENGTH as the args box
+// and fault on the array-length load.
+func (g *generator) emitProcExecRuntime2W() {
+	// Frame 112 bytes: saved fp/lr + x19..x26 + a 16-byte 2W scratch slot at
+	// [x29 + 80] (emitStrDataPtr2W spills BOTH words there for an inline
+	// string, so it needs 16 bytes, not 8).
+	g.emit("stp x29, x30, [sp, #-112]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("stp x23, x24, [sp, #48]")
+	g.emit("stp x25, x26, [sp, #64]")
+
+	g.emit("mov x19, x2") // x19 = args box
+	// Path: (x0, x1) -> NUL-terminated copy in x26.
+	g.emitStrDataPtr2W("x25", "x0", "x1", 80) // x25 = path bytes
+	g.emitStrLen2W("w20", "x1")               // x20 = real path length
+	g.emit("mov x26, x25")
+	g.emitNulTermPath2W("x26", "x26", "x20") // x26 = path cstr
+
+	// argv = alloc((argc + 2) * 8); argv[0] = path cstr.
+	g.emitArrayLen("w20", "x19") // x20 = argc
+	g.emit("add x0, x20, #2")
+	g.emit("lsl x0, x0, #3")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x21, x0")    // x21 = argv
+	g.emit("str x26, [x21]") // argv[0]
+	g.emit("mov x22, #0")    // i = 0
+
+	g.label(".Lpexec2w_arg")
+	g.emit("cmp x22, x20")
+	g.emit("b.ge .Lpexec2w_arg_done")
+	// Element i: 16-byte (data, len) pair.
+	g.emit("lsl x9, x22, #4")
+	g.emit("add x9, x19, x9")
+	g.emit("ldr x0, [x9]")     // data
+	g.emit("ldr x1, [x9, #8]") // length (tagged)
+	g.emitStrDataPtr2W("x25", "x0", "x1", 80)
+	g.emitStrLen2W("w24", "x1") // x24 = real length
+	g.emit("mov x23, x25")
+	g.emitNulTermPath2W("x23", "x23", "x24") // x23 = element cstr
+	g.emit("add x1, x22, #1")
+	g.emit("str x23, [x21, x1, lsl #3]")
+	g.emit("add x22, x22, #1")
+	g.emit("b .Lpexec2w_arg")
+	g.label(".Lpexec2w_arg_done")
+	g.emit("add x1, x20, #1")
+	g.emit("str xzr, [x21, x1, lsl #3]") // argv[argc + 1] = NULL
+
+	g.emit("ldr x0, [x21]") // path cstr
+	g.emit("mov x1, x21")   // argv
+	g.adrpAdd("x2", "__fern_envp")
+	g.emit("ldr x2, [x2]")
+	if g.darwin {
+		g.emit("mov x16, #%d", darExecve)
+		g.emit("svc #0x80")
+		g.emit("b.cc .Lpexec2w_ret")
+		g.emit("neg x0, x0")
+	} else {
+		g.emit("mov x8, #%d", sysExecve)
+		g.emit("svc #0")
+	}
+	g.label(".Lpexec2w_ret")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x25, x26, [sp, #64]")
+	g.emit("ldp x29, x30, [sp], #112")
+	g.emit("ret")
+	g.sizeDirective("__fern_proc_exec")
+}
+
+// emitProcExecTail is the shared execve + epilogue of the single-word variant:
+// argv is complete in x21, so load argv[0] as the path and hand both to the
+// kernel with the inherited environment. Only returns on failure.
+func (g *generator) emitProcExecTail() {
+	g.emit("ldr x0, [x21]")
+	g.emit("mov x1, x21")
+	g.adrpAdd("x2", "__fern_envp")
+	g.emit("ldr x2, [x2]")
+	if g.darwin {
+		g.emit("mov x16, #%d", darExecve)
+		g.emit("svc #0x80")
+		g.emit("b.cc .Lpexec_ret")
+		g.emit("neg x0, x0") // carry set: +errno -> -errno
+	} else {
+		g.emit("mov x8, #%d", sysExecve)
+		g.emit("svc #0")
+	}
+	g.label(".Lpexec_ret")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x25, x26, [sp, #64]")
+	g.emit("ldp x29, x30, [sp], #96")
+	g.emit("ret")
+}
+
 // emitProcWaitpidRuntime emits `__fern_proc_waitpid(pid)` —
 // blocking wait4 (Linux asm-generic #260 / Darwin BSD 7: pid,
 // &status, options=0, rusage=NULL; status on the stack) plus the
@@ -8293,6 +8493,10 @@ type generator struct {
 	// crash-only supervision primitives (docs/CRASH-ONLY-SERVE.md D2').
 	usesProcFork    bool
 	usesProcWaitpid bool
+	// usesProcExec pulls in `__fern_proc_exec(path, args)` — execve, the leg
+	// that lets a forked child become another program. Shares the `proc`
+	// capability with fork / waitpid.
+	usesProcExec bool
 	// usesFloatTranscendentals pulls in the f64 transcendental
 	// runtime bundle — __fern_sin/cos/exp/log/pow_f64 plus their
 	// shared .rodata polynomial-coefficient table. arm64 has no
@@ -11316,6 +11520,14 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// or select (Darwin). Void.
 			target = "__fern_sleep_ms"
 			g.usesSleepMs = true
+		case "proc_exec":
+			target = "__fern_proc_exec"
+			g.usesProcExec = true
+			g.usesAlloc = true // NUL-terminated argv copies
+			// __fern_envp's slot + the _start capture are gated on usesEnv;
+			// the env reader strcats, hence memcpy.
+			g.usesEnv = true
+			g.usesMemcpy = true
 		case "proc_fork":
 			// proc_fork(): fork the process via clone(SIGCHLD,0,0,0,0)
 			// (Linux — arm64 has no bare fork syscall) or fork (Darwin

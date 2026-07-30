@@ -116,6 +116,14 @@ func TestEncodings(t *testing.T) {
 		{"str x1,[x2,#8]!", arm64.IdxLoadStore(1, 2, 8, 3, false, true), 0xf8008c41},
 		{"ldr x3,[x4],#-8", arm64.IdxLoadStore(3, 4, -8, 3, true, false), 0xf85f8483},
 		{"ubfx x1,x1,#56,#4", arm64.UBFX(1, 1, 56, 4), 0xd378ec21},
+		// 32-bit (W-register) forms: sf=0, N=0 where the 64-bit forms set
+		// both. The string runtime's small-string decode emits
+		// `ubfx w0, w0, #1, #3` to pull the inline length out of a tagged
+		// string word, so these are needed to assemble any program that
+		// reaches a string runtime helper.
+		{"ubfx w0,w0,#1,#3", arm64.UBFXW(0, 0, 1, 3), 0x53010c00},
+		{"ubfx w20,w0,#1,#3", arm64.UBFXW(20, 0, 1, 3), 0x53010c14},
+		{"sbfx w3,w4,#8,#16", arm64.SBFXW(3, 4, 8, 16), 0x13085c83},
 		{"ubfx x0,x2,#0,#8", arm64.UBFX(0, 2, 0, 8), 0xd3401c40},
 		{"sbfx x3,x4,#8,#16", arm64.SBFX(3, 4, 8, 16), 0x93485c83},
 		{"ldr x3,[x2,x1,lsl#3]", arm64.LDRreg(3, 2, 1, true), 0xf8617843},
