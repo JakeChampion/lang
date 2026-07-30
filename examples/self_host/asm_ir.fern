@@ -807,6 +807,25 @@ pub function emit_ir_proc_fork(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+// emit_ir_proc_exec appends __fern_proc_exec(%rdi = path box, %rsi = args box)
+// -> i32 — execve(2) (syscall 59). Only returns on FAILURE, with -errno, since
+// on success the process image is gone; that IS the builtin's contract, the same
+// way proc_fork's kernel return is.
+//
+// argv is [path, args[0], ..., NULL]: the callee's argv[0] is the program path,
+// so callers pass only real arguments. envp comes from the __fern_envp global
+// (hence the `env` need), so the child inherits the environment.
+//
+// Fern strings are (data, len) boxes and not NUL-terminated, so the path and
+// every argument are copied into fresh NUL-terminated buffers via __fern_alloc
+// (hence the `heap` need). Those are never freed: on success the address space
+// is replaced, on failure the caller is about to report an error. The argv-build
+// loops are the same shape as __fern_subprocess's, minus the pipes and fork.
+pub function emit_ir_proc_exec(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_proc_exec:\n    pushq %rbp\n    movq %rsp, %rbp\n    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n    subq $32, %rsp\n    movq %rdi, %r12\n    movq %rsi, %r13\n    movq 8(%r12), %r15\n    leaq 1(%r15), %rdi\n    call __fern_alloc\n    movq %rax, -64(%rbp)\n    movq (%r12), %rcx\n    movq $0, %r8\n.Lpx_ccmd:\n    cmpq %r15, %r8\n    jge .Lpx_ccmd_d\n    movb (%rcx, %r8, 1), %al\n    movq -64(%rbp), %r9\n    movb %al, (%r9, %r8, 1)\n    incq %r8\n    jmp .Lpx_ccmd\n.Lpx_ccmd_d:\n    movq -64(%rbp), %r9\n    movb $0, (%r9, %r15, 1)\n    movq (%r13), %r15\n    leaq 2(%r15), %rdi\n    shlq $3, %rdi\n    call __fern_alloc\n    movq %rax, -56(%rbp)\n    movq -64(%rbp), %rcx\n    movq -56(%rbp), %r9\n    movq %rcx, (%r9)\n    movq $0, %rbx\n.Lpx_arg:\n    cmpq %r15, %rbx\n    jge .Lpx_arg_d\n    leaq 1(%rbx), %rcx\n    movq (%r13, %rcx, 8), %r10\n    movq 8(%r10), %rsi\n    leaq 1(%rsi), %rdi\n    pushq %r10\n    pushq %rsi\n    call __fern_alloc\n    popq %rsi\n    popq %r10\n    movq (%r10), %rcx\n    movq $0, %r8\n.Lpx_acopy:\n    cmpq %rsi, %r8\n    jge .Lpx_acopy_d\n    movb (%rcx, %r8, 1), %dl\n    movb %dl, (%rax, %r8, 1)\n    incq %r8\n    jmp .Lpx_acopy\n.Lpx_acopy_d:\n    movb $0, (%rax, %rsi, 1)\n    movq -56(%rbp), %r9\n    leaq 1(%rbx), %rcx\n    movq %rax, (%r9, %rcx, 8)\n    incq %rbx\n    jmp .Lpx_arg\n.Lpx_arg_d:\n    movq -56(%rbp), %r9\n    leaq 1(%r15), %rcx\n    movq $0, (%r9, %rcx, 8)\n    movq -64(%rbp), %rdi\n    movq -56(%rbp), %rsi\n    movq __fern_envp(%rip), %rdx\n    movq $59, %rax\n    syscall\n    addq $32, %rsp\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n");
+    return s;
+}
+
 // emit_ir_proc_waitpid appends __fern_proc_waitpid(%rdi = pid) -> i32: a
 // blocking wait4(2) (syscall 61 — pid, &status, options=0, rusage=NULL, status
 // in a stack slot) plus the status-word decode both native backends use,
@@ -3840,7 +3859,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_read_all_stdin",
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
         // crash-only supervision (#5686): the entry owns fork / wait4.
-        "__fern_proc_fork", "__fern_proc_waitpid",
+        "__fern_proc_fork", "__fern_proc_waitpid", "__fern_proc_exec",
         // __fern_random_bytes: register-ABI symbol kept for the arm64 / AST
         // backends (still hand-asm); the x86-64 IR path defines the Fern-compiled
         // __fn___fern_random_bytes (#2649). Both listed during the transition —
@@ -4394,6 +4413,11 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // [pid] -> __fern_proc_waitpid(%rdi = pid) -> decoded status in %rax.
             s = s.write("    popq %rdi\n    call __fern_proc_waitpid\n    pushq %rax\n");
             s = s.need("proc_waitpid");
+        } else if (o.kind_tag == 213) {  // proc_exec
+            // [pathbox, argsbox] -> __fern_proc_exec(%rdi = path, %rsi = args).
+            // Only returns on failure (-errno), so the push is the failure value.
+            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_proc_exec\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("env"); s = s.need("proc_exec");
         } else if (o.kind_tag == 182) {  // monotonic_ns
             // no operands; Fern-compiled __fn___fern_monotonic_ns() -> i64 in %rax (#2649).
             s = s.write("    call __fn___fern_monotonic_ns\n    pushq %rax\n");
@@ -5956,7 +5980,7 @@ pub function all_runtime_need_roots(): string[] {
         "arr_str_index_of", "arr_str_join", "arrarr_free", "chr", "env", "eprint", "heap", "i32_gcd",
         "i32_lcm", "i32_pow",
         "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
-        "print_int", "proc_fork", "proc_waitpid", "putchar", "random_bytes", "random_i32", "read_file",
+        "print_int", "proc_exec", "proc_fork", "proc_waitpid", "putchar", "random_bytes", "random_i32", "read_file",
         "read_int", "sleep_ms", "str_bytes", "str_case", "str_chars", "str_cmp",
         "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
         "str_read_line", "str_repeat", "str_replace", "str_reverse", "str_search",
@@ -6553,6 +6577,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // fork / wait4 allocate nothing either — same heap-independent gating.
     if (s.has_need("proc_fork")) { s = emit_ir_proc_fork(s); }
     if (s.has_need("proc_waitpid")) { s = emit_ir_proc_waitpid(s); }
+    if (s.has_need("proc_exec")) { s = emit_ir_proc_exec(s); }
     // The fixed static __fern_scratch buffer (#2649): the buffer the syscall-leaf
     // helpers hand the kernel to write structs into (timespec for the clocks,
     // struct stat for `stat`), reused/never-freed so no per-call leak. Emitted once

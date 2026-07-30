@@ -795,6 +795,13 @@ pub function op_sleep_ms(): Op { return op0("sleep_ms"); }
 // (docs/CRASH-ONLY-SERVE.md D2'), mirroring the native builtins (#5686).
 pub function op_proc_fork(): Op { return op0("proc_fork"); }
 pub function op_proc_waitpid(): Op { return op0("proc_waitpid"); }
+// `proc_exec` pops [path, args] and replaces the process image via execve. It
+// only ever pushes a FAILURE (-errno): on success there is no process left to
+// push into. Completes the crash-only trio, mirroring the native builtin, and
+// is what lets a forked child become another program — the batched per-module
+// orchestrator in asm_modload_run needs exactly this. No wasm (a component has
+// no processes — see wasm_unsupported_builtin).
+pub function op_proc_exec(): Op { return op0("proc_exec"); }
 // `map_get` pops [map, key] → an Option box [tag@0, payload@8] (Some(value) on a
 // hit, None on a miss) — the SAME layout as opt_make, so it plugs into the
 // built-in Option match. `map_has` pops [map, key] → i32 0/1. Both carry the key
@@ -1335,6 +1342,7 @@ function kind_id_4(name: string): i32 {
     // Crash-only supervision (#5686): fork / reap.
     if (name == "proc_fork") { return 211; }
     if (name == "proc_waitpid") { return 212; }
+    if (name == "proc_exec") { return 213; }
     return 0;
 }
 
@@ -1576,6 +1584,7 @@ function kind_name_4(id: i32): string {
     if (id == 210) { return "arg_at"; }
     if (id == 211) { return "proc_fork"; }
     if (id == 212) { return "proc_waitpid"; }
+    if (id == 213) { return "proc_exec"; }
     return "invalid";
 }
 
