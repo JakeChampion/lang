@@ -21,7 +21,7 @@
 // docs/SELFHOST-SSA-ALWAYS.md for the roadmap to every backend on the IR.
 //
 // It is a drop-in-shaped replacement for cmd/fern: one binary hosting
-// both the x86-64 (asm.fern) and arm64 (asm_arm64.fern) emitters,
+// both the x86-64 (asm_ir.fern) and arm64 (asm_arm64.fern) emitters,
 // selected at runtime by -target — where the codebase previously had
 // two separate compilers. Module loading is the import-driven,
 // file-loading scheme from asm_load_run (follow `import "./x"` to
@@ -32,7 +32,7 @@ import "./util";
 import "./lexer";
 import "./parser";
 import "./flatten";
-import "./asm";
+import "./asm_ir";
 import "./asm_arm64";
 import "./asm_arm64_ir";
 import "./wasm";
@@ -593,11 +593,12 @@ function main(): i32 {
     // so the byte-identical self-compile fixpoint is preserved.
     merged = checker.annotate_module(merged);
 
-    // Production default: the IR path. The compile falls through to the AST
-    // shell below (asm.fern / asm_arm64.fern / wasm.fern), which itself routes
-    // eligible modules AST → stack IR → asm via asm_ir.emit_module_ir
-    // (use_ir=true, asmcore.fern) — so the IR is the single production lowering
-    // (issue #4391 / docs/SELFHOST-SSA-DECISION.md). The SSA pipeline is opt-in
+    // Production default: the IR path. On x86 the compile now routes
+    // IR-or-error (asm_ir.emit_module_or_error, #3457 slice 3) — this driver no
+    // longer imports asm.fern at all. arm64 / wasm still enter via their AST
+    // shell (asm_arm64.fern / wasm.fern), which itself routes eligible modules
+    // AST → stack IR → asm (use_ir=true, asmcore.fern) — so the IR is the single
+    // production lowering (issue #4391 / docs/SELFHOST-SSA-DECISION.md). The SSA pipeline is opt-in
     // via -ssa (experimental): it applies only if every function is in the SSA
     // subset (else it too falls through), covering x86-64 / arm64 / a wasm
     // subset. arm64-darwin and the wasm-bin / wasm-component targets have no SSA
@@ -736,7 +737,10 @@ function main(): i32 {
         }
         out_asm = string_from_bytes_unchecked(to_u8(comp));
     } else {
-        out_asm = asm.emit_module(full);
+        // #3457 slice 3: the x86 CLI path routes IR-or-error, never the legacy
+        // AST emitter. asm.emit_module's remaining callers are the merged-bundle
+        // rescues and the AST-vs-IR differential drivers, which retire with it.
+        out_asm = asm_ir.emit_module_or_error(full);
     }
     if (out_path.len() > 0) {
         match (write_file(out_path, out_asm)) {
