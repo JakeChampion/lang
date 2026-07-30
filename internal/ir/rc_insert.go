@@ -1084,12 +1084,21 @@ func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 	}
 	// freeEligible is the borrow-aware verdict the EXIT sweep uses: true
 	// only for an OWNED local that genuinely holds its own reference.
-	// Ineligible locals — borrowed params, and crucially a var whose init
-	// ALIASES another live local WITHOUT an inc (e.g. `var a1 = match (o)
-	// { _ => a0 }`, an alias shape needsRcIncOnAlias doesn't catch) — must
-	// be skipped entirely: they don't own a reference to release, so a dec
-	// here would over-release the shared buffer. Mirroring the exit
-	// sweep's gate keeps dec-on-reinit balanced against the binding's inc.
+	// Ineligible locals (borrowed params and borrowed-derived views) hold no
+	// reference of their own, so the DEEP free must not fire for them.
+	//
+	// An earlier version of this comment named `var a1 = match (o) { _ => a0 }`
+	// as the motivating hazard — "an alias shape needsRcIncOnAlias doesn't
+	// catch", which a dec here would over-release. That is NOT the case:
+	// probing it shows needsRcIncOnAlias DOES catch it (one inc per match arm),
+	// `a1` comes out freeEligible, and the shape is already balanced. The claim
+	// was load-bearing — it was cited as the reason cause A's fix was unsafe —
+	// so it is corrected rather than left standing (#5879).
+	//
+	// The real distinction is narrower: ineligibility has several causes, and
+	// only a CONSTRUCTION alias-inc (rc.ctorAliasInced) leaves the local
+	// holding a counted reference it must give back. That case gets the flat
+	// dec below; every other ineligible local is still skipped entirely.
 	if !b.localNameUnique(name) || b.rc.movedLocals[name] {
 		return
 	}
