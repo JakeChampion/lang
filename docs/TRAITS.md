@@ -520,15 +520,37 @@ Seven traits are derivable today (`deriveKind`, `synthesizeDerives`):
 Each composes through the same trait on every field/payload, so a type is
 `@derive`-able as soon as its fields are — and a generic type derives a
 *parametric* impl (`@derive(Hash) struct Box[T]` → `impl[T: Hash] Hash for
-Box[T]`). For the field-wise-comparing kinds (`Eq`/`Ord`/`Hash`) that
-requirement is enforced up front (#5392): a field (or variant payload)
+Box[T]`). For every kind whose synthesised body calls the trait method on
+each field — all but `Default` — that requirement is enforced up front
+(#5392): a field (or variant payload)
 type with no impl, no derive of its own, and no covering method set draws
 one positioned E021 at the deriving decl (`cannot @derive(Ord) for Foo:
 field x of type i32 does not implement Ord — add \`impl Ord for i32\``)
-and the broken method is not synthesised. Both checkers enforce it — the
+and the broken method is not synthesised. `Default` is excluded because it
+composes through zero literals and `Type.default()` rather than a call on
+the field value, and reports its own per-field gap from `synthDefault`.
+Without the gate the non-conforming field escapes into the synthesised
+body and surfaces as a position-less E043 blaming a missing *field* named
+after the trait's method (`struct Bare has no field "to_debug"`, at 0:0
+with no file) — which is what `Display`/`Debug`/`Json` did until the gate
+grew past its original `Eq`/`Ord`/`Hash` list. Both checkers enforce it — the
 native pre-check is `preCheckDeriveFields` (checker.go), the self-host's
 is `e021_derive_field_diags` (checker.fern, reading the `derives` list
-the parser stamps on each StructDecl). `Eq`/`Ord`/`Display`/`Debug`/`Hash`/`Default` live in `core/cmp`;
+the parser stamps on each StructDecl).
+
+The two do not yet agree code-for-code on the *broken* path for
+`Display`/`Debug`/`Json`. Native skips synthesis once the pre-check fires,
+so the E021 is the only diagnostic; the self-host synthesises derived
+bodies at **parse** time, so the ill-typed `self.f.<method>()` survives its
+checker and adds an E043 alongside. Closing that means teaching the
+self-host parser to skip synthesis for a derive its checker will reject —
+parser work, not a gate change. `Eq`/`Ord`/`Hash` are unaffected because
+their scalar bodies render inline (`==` / `<`) instead of through a method
+call. The differential suite therefore pins the clean path for these three
+kinds (`derive-display-impl-ok` and siblings in
+`self_host_checker_codes_test.go`).
+
+`Eq`/`Ord`/`Display`/`Debug`/`Hash`/`Default` live in `core/cmp`;
 `Json` in `std/json` (it returns canonical JSON text and reuses the
 `JsonValue` encoder's string escaper). `Eq`/`Ord`/`Display`/`Debug`/`Hash`/
 `Json` are mirrored in the self-hosted compiler's `synth_*`; `Default` is

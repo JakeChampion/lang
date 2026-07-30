@@ -7847,13 +7847,21 @@ function e021_derive_conforms(mod: parser.Module, tr: string, treq_idx: i32, fty
 // e021_derive_one_diag returns the E021 for ONE @derive(tr) on type
 // `tname` (struct fields or flattened enum variant payloads: labels[i]
 // names types[i] in the message), or none. Gates mirror the native
-// pre-check (#5392): only the field-wise-comparing kinds Eq / Ord /
-// Hash, only a trait declared in this module, only known non-generic
-// field types; the first non-conforming field draws the single
-// diagnostic at the deriving decl.
+// pre-check (#5392): only the kinds whose synthesised body calls the
+// trait method on every field, only a trait declared in this module,
+// only known non-generic field types; the first non-conforming field
+// draws the single diagnostic at the deriving decl.
+//
+// Native writes this same set as "every derivable kind but Default",
+// because its deriveKind already whitelists the derivable traits. This
+// side has no such whitelist — derive_simple_name only strips the
+// module prefix, so an arbitrary user trait reaches here — hence the
+// explicit list. Default is excluded on both sides: it composes through
+// zero literals and `Type.default()`, not a call on the field value.
 function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, labels: string[], ftys: string[], tps: string[], ln: i32, cl: i32): Diag[] {
     var kind: string = parser.derive_simple_name(tr);
-    if (kind != "Eq" && kind != "Ord" && kind != "Hash") { return []; }
+    if (kind != "Eq" && kind != "Ord" && kind != "Hash"
+        && kind != "Display" && kind != "Debug" && kind != "Json") { return []; }
     var tidx: i32 = e021_trait_idx(tr, mod.trait_reqs);
     if (tidx < 0) { return []; }
     var fi: i32 = 0;
@@ -7870,8 +7878,8 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
 }
 
 // e021_derive_field_diags reports E021 (#5392) for a struct/enum
-// @derive(Eq/Ord/Hash) whose field (variant payload) type does not
-// implement the derived trait — the self-host mirror of the native
+// @derive whose field (variant payload) type does not implement the
+// derived trait — the self-host mirror of the native
 // checker's preCheckDeriveFields. One diagnostic per (type, trait),
 // at the deriving declaration.
 function e021_derive_field_diags(mod: parser.Module): Diag[] {
