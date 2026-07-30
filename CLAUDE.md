@@ -322,7 +322,9 @@ ported to the self-host runtime, x86 `asm_ir.fern` #5609 + arm64
 `asm_arm64.fern` #5614, and `TestSelfHostPerModuleFixpointX86_64`
 (env-gated `RUN_PERMODULE_FIXPOINT=1`) is GREEN — a self-host-BUILT
 compiler per-module-emits all 35 units with no arena OOM, gen0==gen1
-byte-identical, ~7.6 GB peak/window under the 8 GiB arena. Slice 2 is
+byte-identical, ~7.6 GB peak/window — measured under the 8 GiB arena of
+the time, so read it as ~7.6 GB against today's **16 GiB** ceiling, not
+as 0.4 GB of headroom. Slice 2 is
 now unblocked — the only residual is the gen1 per-module fixpoint's CI
 *time* (serial ~16.6 min), addressed by memory-budgeted parallel emit,
 not a memory wall; 4 is a ~5k-line arm64/wasm runtime duplication that
@@ -460,8 +462,14 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   ```
   **BUT exit 137 from a *running* Fern-compiled binary is usually NOT an
   OOM-kill**: `__fern_alloc`'s bounds check deliberately `exit(137)`s when
-  the fixed bump arena (x86 8 GiB, arm64 8 GiB) is exhausted — a REAL
-  failure, reproducible locally, that masquerades as SIGKILL. The stage-2
+  the fixed bump arena is exhausted — a REAL failure, reproducible locally,
+  that masquerades as SIGKILL. **The arena is 16 GiB** (0x400000000) on all
+  four emitters — native x86-64 + arm64 (`heapBytes`) and self-host
+  `asm.fern` / `asm_ir.fern` (`heap_size`), deliberately kept in lockstep;
+  this note used to say 8 GiB, which was the pre-raise figure and makes any
+  headroom calculation off by 2x in the direction that matters. The mmap is
+  MAP_NORESERVE, so the reservation costs nothing until touched — only the
+  exit-137 ceiling moves. The stage-2
   self-compile (gen1/mmc2 in the fixpoint tests) is the usual victim: the
   self-host-built compiler's live set grows with every compiler-source
   addition, and when it hits the arena wall the test "OOMs" on CI with no
