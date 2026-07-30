@@ -661,17 +661,42 @@ Pinned by `TestX86_64LeakCheckTupleElemArray` + the arm64 leg, with a
 string-carrying tuple as the control (already covered, since `tupleNeedsDrop` is
 true there).
 
-The **tuple-in-tuple** sibling still leaks at the same 16 bytes/iteration, from
-the same root cause one site over: `dropFnNameFor`'s `TupleType` arm carries the
-identical `tupleNeedsDrop` bail, so a tuple-valued ELEMENT of a generated
-`__drop_tuple_` falls to a flat dec. Not fixed here deliberately —
-`dropFnNameFor` is consulted for locals, struct fields, enum payloads and map
-values, so relaxing it is a far wider blast radius than the array walk, and
-`emitDec`'s local-tuple branch already depends on it returning false (a scalar
-tuple local frees inline via `is_unique` → `box_free`, which is why a
-directly-held tuple was never part of this leak). The surgical version is to
-give the per-element drop the same inline `is_unique` → `box_free` fallback that
-`emitDec` uses, rather than to widen the gate.
+The **tuple-in-tuple** sibling is now fixed too. `dropFnNameFor`'s `TupleType`
+arm carried the identical `tupleNeedsDrop` bail, so a tuple-valued ELEMENT of a
+generated `__drop_tuple_` fell through to a flat dec that decrements the inner
+box's rc but never frees it (freeing needs the size, which only the generated
+body carries). Removing that bail routes every tuple shape to `genTupleDropFn`,
+whose body for a scalar tuple emits no element drops — just the
+`is_unique`-gated `box_free`, which is precisely the free that was missing.
+`(t, 99)` and a `(i32, i32)` struct field both go from `100 / 50 / 800` to fully
+balanced. With both gates gone `tupleNeedsDrop` has no callers, so it is
+**deleted**, along with its row in the `rc_caps.go` capability table and the
+now-false claim in `genTupleDropFn`'s header that it "assumes at least one
+element drop is emitted".
+
+An earlier revision of this section justified a narrower fix (two targeted call
+sites, gate retained) with the claim that widening `dropFnNameFor` "broke the
+self-host interp driver outright". **That was a misread and is retracted.** What
+happened: `test-e2e-selfhost-x86_64-shard11` came back red with
+`TestSelfHostInterpDriverX86_64` reporting every program `exited -1` and
+`default-multi` at 1080 s. The x86 self-host shards are
+`continue-on-error: true` by design (see the RUNNER PREEMPTION note in
+`.github/workflows/test-e2e-selfhost.yml`) precisely because they are
+intermittently reclaimed or time out mid-run against the 20-minute job cap; the
+`-1`s are harness teardown after the wall, not 15 independent failures. The same
+shard failed identically on the narrowed commit, and running
+`TestSelfHostInterpDriverX86_64` locally against the WIDE version passes in
+165 s with 0 failures.
+
+Two lessons worth keeping. **The aarch64 self-host shards are the strict signal**
+— the workflow says so outright ("the aarch64 shards run the IDENTICAL test set
+… and stay strict — so a real self-host regression still turns this workflow red
+on aarch64"), so read those before concluding anything from an x86 shard. And a
+red check that agrees with a hypothesis you already hold is exactly when to
+verify it: the flake looked like confirmation of a blast-radius worry about
+`dropFnNameFor`'s twelve call sites (the Map value drop glue whose tag the
+runtime reads, closure capture thunks, vtable drop routing), and that coincidence
+cost a full rewrite.
 
 Both were found by probing the *mechanism* rather than re-reading the sweep: the
 first table inferred cause from which tests were red, which is how the container

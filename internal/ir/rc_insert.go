@@ -1428,9 +1428,6 @@ func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl,
 		if tupleReg == nil {
 			return "", false
 		}
-		if !tupleNeedsDrop(v, ptrW) {
-			return "", false
-		}
 		mangled := mangleTupleInst(v)
 		tupleReg[mangled] = v
 		return "__drop_tuple_" + mangled, true
@@ -2565,10 +2562,13 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 // the leak the docs called out under "nested tuples … strings still
 // leak."
 //
-// Tuples not worth dropping (no rc-tracked or string element) are
-// filtered upstream by tupleNeedsDrop before the routing fires, so
-// genTupleDropFn assumes at least one element drop is emitted; the
-// box_free + dec arms are always emitted.
+// EVERY tuple shape is routed here, including one whose elements are all
+// plain scalars: such a body emits no element drops, just the
+// is_unique-gated box_free + dec. That is the point — the box still has to
+// be freed, and the flat __fern_rc_dec fallback callers used to take for
+// those shapes only decrements (freeing needs the size, which only this
+// body has). The former tupleNeedsDrop gate suppressed exactly that free
+// and leaked one box per construction (#5879).
 func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, dynRcSupported bool) *Func {
 	offs, size := tupleElemLayout(tt.Elems, ptrW)
 	ops := []Op{
