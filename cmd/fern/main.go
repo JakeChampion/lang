@@ -1686,6 +1686,10 @@ func buildWasmSSA(prog *ast.Program, info *checker.Info) ([]byte, error) {
 		return nil, fmt.Errorf("ssa.LiftFromIR: %v", err)
 	}
 	ssa.Optimize(f)
+	// Same contract as buildArm64SSA, and after Optimize for the same reason.
+	if err := ssa.Verify(f); err != nil {
+		return nil, fmt.Errorf("ssa.Verify: %v", err)
+	}
 	return wasmssa.EmitModule(f, "main")
 }
 
@@ -1739,6 +1743,23 @@ func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 			return "", fmt.Errorf("ssa.LiftFromIR %s: %v", fn.Name, err)
 		}
 		ssa.Optimize(f)
+		// Verify AFTER Optimize, not before. This backend promises that an
+		// unsupported construct ERRORS rather than miscompiles, and without
+		// any Verify call on a build path that promise did not hold: invalid
+		// SSA sailed through regalloc and emit and yielded a binary that
+		// SIGSEGVs.
+		//
+		// After-Optimize only, because the lifter deliberately leaves blocks
+		// unreachable — endBlockScope / endLoopScope say so explicitly, for
+		// PruneUnreachable to drop — and Verify's use-before-def rule wants a
+		// def in an ancestor block, which nothing in an unreachable block has.
+		// Checking before Optimize would therefore reject programs the lifter
+		// considers well-formed, and it buys no detection: an invalid lift
+		// survives the passes, which is how it reached emit in the first
+		// place.
+		if err := ssa.Verify(f); err != nil {
+			return "", fmt.Errorf("ssa.Verify %s: %v", fn.Name, err)
+		}
 		funcs[fn.Name] = f
 	}
 	if _, ok := funcs["main"]; !ok {

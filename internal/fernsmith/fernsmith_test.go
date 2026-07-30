@@ -217,6 +217,7 @@ var (
 	u32LiteralRE = regexp.MustCompile(`\b(\d+)u32\b`)
 	u64LiteralRE = regexp.MustCompile(`\b(\d+)u64\b`)
 	i64LiteralRE = regexp.MustCompile(`\b(\d+)i64\b`)
+	u8LiteralRE  = regexp.MustCompile(`\b(\d+)u8\b`)
 )
 
 // unsignedOperandNear reports whether op appears with a literal of the given
@@ -335,6 +336,10 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"checked shift":                false,
 		"checked at i64 or u64":        false,
 		"checked None arm taken":       false,
+		"u8 var declaration":           false,
+		"u8 literal at or above 200":   false,
+		"u8 arithmetic":                false,
+		"u8 saturating or checked":     false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := fernsmith.GenMain(seed)
@@ -646,6 +651,29 @@ func TestGenFeatureCoverage(t *testing.T) {
 		// operator observable rather than a Some passthrough.
 		if strings.Contains(src, "None => ") && strings.Contains(src, "__chk_v") {
 			want["checked None arm taken"] = true
+		}
+		// u8 — the only sub-word integer. Its wrap mask is 8 bits and its
+		// saturating clamp is 0/255, so reaching it at all is a different
+		// surface from the 32- and 64-bit types; the near-255 literal is
+		// tracked separately because only those cross either boundary.
+		if strings.Contains(src, ": u8 ") {
+			want["u8 var declaration"] = true
+		}
+		for _, m := range u8LiteralRE.FindAllStringSubmatch(src, -1) {
+			if n, err := strconv.ParseUint(m[1], 10, 64); err == nil && n >= 200 {
+				want["u8 literal at or above 200"] = true
+				break
+			}
+		}
+		for _, op := range []string{" + ", " - ", " * ", " / ", " % ", " << ", " >> "} {
+			if unsignedOperandNear(src, "u8", op, u8LiteralRE) {
+				want["u8 arithmetic"] = true
+			}
+		}
+		for _, op := range []string{" +| ", " -| ", " *| ", " <<| ", " +? ", " -? ", " *? ", " /? ", " %? ", " <<? ", " >>? "} {
+			if unsignedOperandNear(src, "u8", op, u8LiteralRE) {
+				want["u8 saturating or checked"] = true
+			}
 		}
 	}
 	for feature, ok := range want {

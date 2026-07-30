@@ -661,17 +661,42 @@ Pinned by `TestX86_64LeakCheckTupleElemArray` + the arm64 leg, with a
 string-carrying tuple as the control (already covered, since `tupleNeedsDrop` is
 true there).
 
-The **tuple-in-tuple** sibling still leaks at the same 16 bytes/iteration, from
-the same root cause one site over: `dropFnNameFor`'s `TupleType` arm carries the
-identical `tupleNeedsDrop` bail, so a tuple-valued ELEMENT of a generated
-`__drop_tuple_` falls to a flat dec. Not fixed here deliberately —
-`dropFnNameFor` is consulted for locals, struct fields, enum payloads and map
-values, so relaxing it is a far wider blast radius than the array walk, and
-`emitDec`'s local-tuple branch already depends on it returning false (a scalar
-tuple local frees inline via `is_unique` → `box_free`, which is why a
-directly-held tuple was never part of this leak). The surgical version is to
-give the per-element drop the same inline `is_unique` → `box_free` fallback that
-`emitDec` uses, rather than to widen the gate.
+The **tuple-in-tuple** sibling is now fixed too. `dropFnNameFor`'s `TupleType`
+arm carried the identical `tupleNeedsDrop` bail, so a tuple-valued ELEMENT of a
+generated `__drop_tuple_` fell through to a flat dec that decrements the inner
+box's rc but never frees it (freeing needs the size, which only the generated
+body carries). Removing that bail routes every tuple shape to `genTupleDropFn`,
+whose body for a scalar tuple emits no element drops — just the
+`is_unique`-gated `box_free`, which is precisely the free that was missing.
+`(t, 99)` and a `(i32, i32)` struct field both go from `100 / 50 / 800` to fully
+balanced. With both gates gone `tupleNeedsDrop` has no callers, so it is
+**deleted**, along with its row in the `rc_caps.go` capability table and the
+now-false claim in `genTupleDropFn`'s header that it "assumes at least one
+element drop is emitted".
+
+An earlier revision of this section justified a narrower fix (two targeted call
+sites, gate retained) with the claim that widening `dropFnNameFor` "broke the
+self-host interp driver outright". **That was a misread and is retracted.** What
+happened: `test-e2e-selfhost-x86_64-shard11` came back red with
+`TestSelfHostInterpDriverX86_64` reporting every program `exited -1` and
+`default-multi` at 1080 s. The x86 self-host shards are
+`continue-on-error: true` by design (see the RUNNER PREEMPTION note in
+`.github/workflows/test-e2e-selfhost.yml`) precisely because they are
+intermittently reclaimed or time out mid-run against the 20-minute job cap; the
+`-1`s are harness teardown after the wall, not 15 independent failures. The same
+shard failed identically on the narrowed commit, and running
+`TestSelfHostInterpDriverX86_64` locally against the WIDE version passes in
+165 s with 0 failures.
+
+Two lessons worth keeping. **The aarch64 self-host shards are the strict signal**
+— the workflow says so outright ("the aarch64 shards run the IDENTICAL test set
+… and stay strict — so a real self-host regression still turns this workflow red
+on aarch64"), so read those before concluding anything from an x86 shard. And a
+red check that agrees with a hypothesis you already hold is exactly when to
+verify it: the flake looked like confirmation of a blast-radius worry about
+`dropFnNameFor`'s twelve call sites (the Map value drop glue whose tag the
+runtime reads, closure capture thunks, vtable drop routing), and that coincidence
+cost a full rewrite.
 
 Both were found by probing the *mechanism* rather than re-reading the sweep: the
 first table inferred cause from which tests were red, which is how the container
@@ -1889,20 +1914,48 @@ tier → leak.
      interned shape string, a struct-drop BODY depends on the emitting unit's
      struct-decl view, so identical copies is a property to verify rather than
      take for granted.)
-  2. **A runtime segfault in the built compiler — OPEN, and the actual gate.**
-     With the symbols deduped the stage-2 asm assembles and links, and the
-     resulting compiler *segfaults* (`TestSelfHostStage2Bootstrap`: "stage 1:
-     self-hosted compiler asm = 17635180 bytes" then `signal: segmentation
-     fault`; every `TestSelfHostStage2Compiler` case fails). That is a
-     correctness bug in the >=1500 per-module concat path, unrelated to symbols
-     and unrelated to memory.
+  2. ~~**A runtime segfault in the built compiler — OPEN, and the actual gate.**~~
+     **RETRACTED (same day): that segfault was a bug in blocker 1's own fix, and
+     it is fixed.** The emitter indents its DIRECTIVES, so a unit's prologue is
+     `    .globl _start` / `    .text`. The new skip dropped ANY indented line, so
+     a duplicate `.weak` at the tail of one unit's shape block swallowed the next
+     unit's prologue — putting the entry unit's code inside the previous unit's
+     `.rodata` and leaving `_start` a LOCAL rodata symbol (`nm`: `r _start`). ld
+     then could not find an entry ("cannot find entry symbol _start", defaulting
+     to 0x401000) and the binary jumped to garbage: RIP=**0x1** with the initial
+     argv/envp stack untouched, i.e. no real code had run. Corrected stop rule: a
+     body line is an INSTRUCTION (indented AND not starting with `.`) or a `.L…`
+     label; anything else, including an indented directive, ends the skip.
 
-  **So the bound stays at `< 1500` for now** and the dedup fix lands on its own:
-  it is a live latent bug at ANY size (a program in the current 512..1500 band
-  whose modules share a struct type hits the same assembler error today), it is
-  necessary for lifting the bound, and it is not sufficient. The next attempt
-  should start from blocker 2 with the bound temporarily raised, not from the
-  batched-emit plan — and should not re-derive the OOM story.
+     Measured by hand at 1958 merged funcs after the correction:
+
+     | | before | after |
+     |---|---|---|
+     | `_start` linkage | `r` (local, rodata) | **`T` (global, .text)** |
+     | link | `cannot find entry symbol _start` | clean |
+     | stage-1 compiler | segfault, 0 bytes | runs, 302 bytes |
+     | stage-2 program | — | **exit 7** |
+
+  3. **The whole-compiler self-compile IS still memory-bound — so the OOM story
+     is half right, for a different program.** With the bound raised past it,
+     step 7 of `TestSelfHostModloadPerModuleWholeCompilerX86_64` (the
+     per-module-built compiler over the whole compiler source, no flags) routes
+     into a single-process concat and **exits 137** — `__fern_alloc`'s arena
+     bounds check, not a host OOM-kill. So blocker 3 is the real remaining gate,
+     and the batched-emit reachability plan above is the right fix for it.
+
+  **Correcting this section's own correction:** "the cap is NOT the OOM" was
+  measured on the **stage-2 compiler (1958 funcs)**, which has no memory problem,
+  and over-generalised from it. Function count is a poor proxy either way — 1958
+  fits and ~2040 does not, because what exhausts the arena is the COMPILE
+  WORKLOAD, not the emitted function count.
+
+  **So the bound stays at `< 1500`** and the dedup + prologue fixes land on their
+  own: they are a live latent bug at ANY size (a program in the current 512..1500
+  band whose modules share a struct type hits the same assembler error today) and
+  they are necessary but not sufficient. What survives, and is genuinely narrower
+  than the original framing: only the WHOLE-COMPILER case needs the batched path;
+  ordinary large programs up to at least 1958 funcs now work through the concat.
 
   **What the attempt did establish**, and what survives it: exactly three callers
   needed the opt-out, and one is a ROUTINE test — step 7 of

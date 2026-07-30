@@ -67,6 +67,22 @@ type rcPlan struct {
 	// per-site so only the local's LAST alias moves — earlier aliases
 	// of the same local keep their inc.
 	moveSites map[ast.Node]bool
+	// ctorAliasInced[name] records a local that received a CONSTRUCTION
+	// alias-inc — its reference was retained into a container literal
+	// (array / tuple / struct field / enum payload) while the local itself
+	// stayed live, so both own the value. Recorded by noteCtorAliasInc at
+	// the construction sites, i.e. exactly where the inc is emitted rather
+	// than inferred from freeEligible's taint reasons.
+	//
+	// emitVarReinitDropOld consumes it: a loop-body local in this set is
+	// ineligible for the deep free (the container shares the value) but DOES
+	// hold a counted reference that must be released once per iteration.
+	// Without that release the inc happens n times and the matching dec only
+	// once, at the function-exit sweep — so n-1 values leak, linear and
+	// unbounded (#5879 cause A). Keyed on the emitted inc, not on
+	// !freeEligible, because ineligibility has several causes and only this
+	// one comes with a reference to give back.
+	ctorAliasInced map[string]bool
 	// arraySetInc[call] is true for a `__method_Array_set` (`.with`) call
 	// whose receiver is LIVE after the call (read again, and not a
 	// reassign-to-self), so emitArraySet must rc-inc the receiver buffer
@@ -190,6 +206,7 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.freeEligible = b.computeFreeEligible()
 	b.rc.moveSites = map[ast.Node]bool{}
 	b.rc.movedLocals = b.computeMovedLocals()
+	b.rc.ctorAliasInced = b.computeCtorAliasInced()
 	b.rc.borrowedMapFieldResults = b.computeBorrowedMapFieldResults()
 	b.rc.arraySetInc = b.computeArraySetIncs()
 	b.computeBorrowedAliases()
@@ -1795,7 +1812,7 @@ func (b *builder) markConstructionMoves(val ast.Expr, order identOrder, moved ma
 	case *ast.TupleLit:
 		// A tuple with rc-tracked elements: each is inc'd on
 		// construction and dec'd by __drop_tuple_<...> at the tuple's
-		// drop (tupleNeedsDrop / dropFnNameFor), so a moved element
+		// drop (dropFnNameFor), so a moved element
 		// balances — same shape as the struct/array cases. Only mark
 		// owned rc locals; mark self-filters non-pointer elements via
 		// isOwnedRcLocal.
@@ -3801,4 +3818,63 @@ func computeGrowParams(prog *ast.Program, info *checker.Info) map[string][]uint8
 		}
 	}
 	return grow
+}
+
+// computeCtorAliasInced collects every local that a container construction
+// RETAINS while the local itself stays live — an array / tuple / struct-field /
+// enum-payload element that is a bare ident, is not a move site, and passes
+// needsRcIncOnAlias. Those are exactly the sites that emit a construction
+// alias-inc, so the local ends up holding a counted reference of its own on top
+// of the container's.
+//
+// Computed here rather than recorded during lowering because the consumer runs
+// EARLIER in the same pass: emitVarReinitDropOld fires when the loop body's
+// `var xs = …` is lowered, while the construction that retains xs is lowered
+// after it. A lowering-time set is therefore always empty at the point of use —
+// measured, not assumed: the first version of this recorded at the four
+// construction sites and moved no measurement at all.
+//
+// Mirrors the inc side's gating exactly (needsRcIncOnAlias + !moveSites), so
+// analysis and lowering cannot disagree about which locals took an inc; the
+// move-on-construction cases are excluded because they never emit one.
+func (b *builder) computeCtorAliasInced() map[string]bool {
+	out := map[string]bool{}
+	if b.fn.Body == nil {
+		return out
+	}
+	mark := func(e ast.Expr) {
+		id, ok := e.(*ast.Ident)
+		if !ok || b.rc.moveSites[e] || !needsRcIncOnAlias(e, b) {
+			return
+		}
+		out[id.Name] = true
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.ArrayLit:
+			for _, el := range x.Elems {
+				mark(el)
+			}
+		case *ast.TupleLit:
+			for _, el := range x.Elems {
+				mark(el)
+			}
+		case *ast.StructLit:
+			for _, f := range x.Fields {
+				mark(f.Value)
+			}
+		case *ast.Call:
+			// Enum-variant construction (`Some(xs)` / `Ok(xs)`): the payload is
+			// inc\'d under EnumRcPayloads exactly like a struct field.
+			if id, ok := x.Callee.(*ast.Ident); ok {
+				if en, _, _, isVar := b.lookupVariant(id.Name); isVar && b.enumRcPayloadsEligible(en) {
+					for _, a := range x.Args {
+						mark(a)
+					}
+				}
+			}
+		}
+		return true
+	})
+	return out
 }

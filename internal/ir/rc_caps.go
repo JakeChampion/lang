@@ -15,7 +15,7 @@ package ir
 //	string      | no (two-word)   | yes        | no                      | str_dec route
 //	array       | yes             | yes        | no                      | arr_dec / per-elem
 //	struct      | yes             | yes        | if string/array/Map-free| __drop_struct_*
-//	tuple       | yes             | yes        | if string/array/Map-free| tupleNeedsDrop
+//	tuple       | yes             | yes        | if string/array/Map-free| __drop_tuple_*
 //	enum        | yes             | yes        | if eligible + uniform   | enumNeedsDrop
 //	closure     | yes             | yes        | no                      | __closure_drop_*
 //	dyn Trait   | dynRc-gated     | sweep-only | no                      | __drop_dyn_<set>
@@ -280,30 +280,6 @@ func (b *builder) enumRcPayloadsEligibleForValue(e ast.Expr) bool {
 		return false
 	}
 	return b.enumRcPayloadsEligible(name)
-}
-
-// tupleNeedsDrop reports whether tt has at least one element worth
-// recursing through — its drop fn dec's only rc-tracked / string
-// elements, so a tuple of plain i32s (or any other non-rc shape) has
-// nothing to do beyond the surrounding box dec the caller already
-// emits. Mirrors enumNeedsDrop in role: dropFnNameFor uses it to
-// decide whether to register and route through `__drop_tuple_<...>`
-// at all.
-func tupleNeedsDrop(tt ast.TupleType, ptrW int) bool {
-	for _, et := range tt.Elems {
-		if arrElemIsRcTracked(et) {
-			return true
-		}
-		if _, isStr := et.(ast.StringType); isStr {
-			// Two-word string element (wasm + arm64-TwoWordOverride) or
-			// native single-word: both reach __fern_str_dec / __fern_rc_dec
-			// from the per-tuple drop.
-			if ast.UseTwoWordStrings(ptrW) || (ptrW == 8 && !ast.UseTwoWordStrings(ptrW)) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // enumNeedsDrop reports whether a concrete enum has a heap box worth

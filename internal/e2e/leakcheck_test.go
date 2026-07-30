@@ -708,16 +708,16 @@ func TestLeakCheckPureReadLenArm64(t *testing.T) {
 //
 // An array of tuples routed its per-element release through the flat
 // __fern_drop_arr_ptr (per-element __fern_rc_dec), because
-// arrElemStructDropName gated the generated per-element walk on
-// tupleNeedsDrop — false for a tuple of plain scalars, whose drop body has no
-// element to traverse. But the tuple BOX still has to be freed, and a flat
+// arrElemStructDropName gated the generated per-element walk on a
+// "does this tuple need a deep drop?" predicate — false for a tuple of plain
+// scalars, whose drop body has no element to traverse. But the tuple BOX still has to be freed, and a flat
 // rc_dec only decrements: freeing needs the size, which only the generated
 // __drop_arr_tuple_<mangled> loop supplies. So `[t]` leaked exactly one tuple
 // box per iteration (16 bytes for `(i32, i32)` — 8 rc header + 8 payload),
 // linear and unbounded.
 //
-// The scalar tuple is the subject: a tuple carrying a string was already
-// covered (tupleNeedsDrop is true there), and it is the control — if it ever
+// The scalar tuple is the subject; a tuple carrying a string was already
+// covered before the gate came out, so it is the control — if it ever
 // regresses, the cause is the walk itself, not the gate.
 const tupleElemArrayScalarSrc = `function main(): i32 {
     var total: i32 = 0;
@@ -777,6 +777,216 @@ func TestArm64LeakCheckTupleElemArray(t *testing.T) {
 	}{
 		{"scalar-tuple-element", tupleElemArrayScalarSrc, 119},
 		{"string-tuple-element", tupleElemArrayStringSrc, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckArm64(t, tc.src)
+			if code != tc.exit {
+				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
+			}
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations recorded — fixture drift")
+			}
+			if frees != allocs || live != 0 {
+				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+			}
+		})
+	}
+}
+
+// --- Tuple-valued element of a tuple (#5879 cause B, nested half) ---
+//
+// The sibling #5899 left open. dropFnNameFor's TupleType arm carried the same
+// "needs a deep drop?" bail as arrElemStructDropName did, so a tuple-valued
+// element of a generated __drop_tuple_ fell through dropStructField to a flat
+// decValueOnStack dec — decrementing the inner box's rc but never freeing it,
+// since freeing needs the size only the generated body has. 16 bytes per
+// iteration for `(i32, i32)`, linear and unbounded.
+//
+// Removing that bail leaves tupleNeedsDrop with no callers, so it is gone; a
+// scalar tuple now reaches genTupleDropFn and emits an is_unique-gated
+// box_free with no element drops, which is exactly the free that was missing.
+const tupleInTupleScalarSrc = `function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 50) {
+        var t = (k, k + 1);
+        var o = (t, 99);
+        total = total + o.0.1 + o.1;
+        k = k + 1;
+    }
+    return total % 251;
+}`
+
+// A tuple-valued element nested in a STRUCT field, the third routing into the
+// same per-element drop (dropStructField reaches it via __drop_struct_*).
+const tupleInStructScalarSrc = `struct Holder { pair: (i32, i32), n: i32 }
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 50) {
+        var t = (k, k + 1);
+        var h = Holder { pair: t, n: 3 };
+        total = total + h.pair.1 + h.n;
+        k = k + 1;
+    }
+    return total % 251;
+}`
+
+func TestX86_64LeakCheckNestedTupleElem(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{"tuple-in-tuple", tupleInTupleScalarSrc},
+		{"tuple-in-struct", tupleInStructScalarSrc},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckX86_64(t, tc.src)
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations recorded — fixture drift (exit %d)", code)
+			}
+			if frees != allocs || live != 0 {
+				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+			}
+		})
+	}
+}
+
+func TestArm64LeakCheckNestedTupleElem(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{"tuple-in-tuple", tupleInTupleScalarSrc},
+		{"tuple-in-struct", tupleInStructScalarSrc},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckArm64(t, tc.src)
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations recorded — fixture drift (exit %d)", code)
+			}
+			if frees != allocs || live != 0 {
+				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+			}
+		})
+	}
+}
+
+// --- Construction-retained loop source (#5879 cause A) --------------
+//
+// A loop-body local whose reference is RETAINED into a container while the
+// local stays live (read after the construction) took a construction alias-inc
+// per iteration against a single exit-sweep dec, so n-1 values leaked — linear
+// and unbounded. It is not the move-side gap #5889 closed: the inc is CORRECT
+// here, because the local and the container genuinely both hold the value, so a
+// move is unavailable. What was missing is the per-iteration release, which
+// emitVarReinitDropOld skipped along with every other !freeEligible local.
+//
+// The release is keyed on rc.ctorAliasInced — the locals that actually received
+// a construction inc — not on !freeEligible, because ineligibility has several
+// causes and only this one leaves a reference to give back. It is the FLAT dec
+// the exit sweep already emits, never the deep drop: the container shares the
+// value and reclaims it through its own drop.
+//
+// Both readings of the same construction are pinned. The container-read form
+// was already clean (the construction is the source's last use, so the move
+// fires) and is the control: if it regresses, the cause is the move analysis,
+// not this release.
+const ctorRetainedSourceReadSrc = `function main(): i32 {
+    var s: i32 = 0;
+    var k: i32 = 0;
+    while (k < 40) {
+        var xs: i32[] = [4, 5, 6];
+        var o = (xs, 9);
+        s = s + xs[1] + o.1;
+        k = k + 1;
+    }
+    return s % 251;
+}`
+
+const ctorRetainedContainerReadSrc = `function main(): i32 {
+    var s: i32 = 0;
+    var k: i32 = 0;
+    while (k < 40) {
+        var xs: i32[] = [4, 5, 6];
+        var o = (xs, 9);
+        s = s + o.0[1] + o.1;
+        k = k + 1;
+    }
+    return s % 251;
+}`
+
+// Same retain through an ENUM payload rather than a tuple — the
+// EnumRcPayloads inc site, the fourth routing computeCtorAliasInced covers.
+const ctorRetainedEnumPayloadSrc = `function main(): i32 {
+    var s: i32 = 0;
+    var k: i32 = 0;
+    while (k < 40) {
+        var xs: i32[] = [4, 5, 6];
+        var o = Some(xs);
+        s = s + xs[1];
+        k = k + 1;
+    }
+    return s % 251;
+}`
+
+// The shape the release must NOT swallow: a1 aliases a loop-OUTER array. It
+// takes no construction inc, so it is absent from ctorAliasInced and keeps its
+// existing handling; releasing it per iteration would over-release a0's buffer.
+// Pinned on exit code too, since an over-release corrupts the read.
+const ctorOuterAliasSrc = `function main(): i32 {
+    var s: i32 = 0;
+    var k: i32 = 0;
+    var a0: i32[] = [7, 8, 9];
+    while (k < 40) {
+        var a1: i32[] = a0;
+        var o = (a1, 1);
+        s = s + a1[2] + o.1;
+        k = k + 1;
+    }
+    return s % 251;
+}`
+
+func TestX86_64LeakCheckCtorRetainedLoopSource(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		exit int
+	}{
+		{"source-read-after", ctorRetainedSourceReadSrc, 58},
+		{"container-read", ctorRetainedContainerReadSrc, 58},
+		{"enum-payload", ctorRetainedEnumPayloadSrc, 200},
+		{"outer-alias", ctorOuterAliasSrc, 149},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckX86_64(t, tc.src)
+			if code != tc.exit {
+				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
+			}
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations recorded — fixture drift")
+			}
+			if frees != allocs || live != 0 {
+				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+			}
+		})
+	}
+}
+
+func TestArm64LeakCheckCtorRetainedLoopSource(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		exit int
+	}{
+		{"source-read-after", ctorRetainedSourceReadSrc, 58},
+		{"container-read", ctorRetainedContainerReadSrc, 58},
+		{"enum-payload", ctorRetainedEnumPayloadSrc, 200},
+		{"outer-alias", ctorOuterAliasSrc, 149},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, stderr, code := runLeakCheckArm64(t, tc.src)

@@ -473,13 +473,29 @@ const (
 	// `as i32` at both ends of the range.
 	tU64
 	tF64
+	// tU8 is the only SUB-WORD integer the language has (i8 / u16 / i16 do
+	// not exist), and it is a distinct codegen surface from the 32- and
+	// 64-bit types rather than a narrower one: its wrap mask is 8 bits, a
+	// `u8[]` element is a BYTE load/store rather than a word one, and the
+	// saturating clamp bounds are 0 / 255 — the one width where a saturated
+	// result is in range by construction so the wrap mask never has to run
+	// (docs/INTEGER-SEMANTICS.md).
+	//
+	// Verified identical on interp / x86-64 / arm64 / wasm before adding:
+	// wrapping `+` `-` `*` at 8 bits (`250 + 10` = 4, `10 - 250` = 16,
+	// `250 * 10` = 196), `/` and `%` incl. the zero divisor, the bit
+	// operators, unsigned ordering, the saturating family clamping at 0 and
+	// 255, and `u8[]` element loads. Note the SHIFT count still masks at 32,
+	// not at 8 — `250u8 >> 9` is 0, not `250 >> (9 & 7)` — and all four
+	// backends agree on that, which is the point of generating it.
+	tU8
 	numTypes
 )
 
 var allTypes = [numTypes]gtype{
 	tI32, tI64, tBool, tF32, tString,
 	tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32, tMapI32I32,
-	tXyz, tStatus, tResI32I32, tTupI32I64, tU32, tU64, tF64,
+	tXyz, tStatus, tResI32I32, tTupI32I64, tU32, tU64, tF64, tU8,
 }
 
 // gtypeNames is the source-level name for each builtin gtype, in
@@ -509,6 +525,7 @@ var gtypeNames = [numTypes]string{
 	tU32:       "u32",
 	tU64:       "u64",
 	tF64:       "f64",
+	tU8:        "u8",
 }
 
 // String reports the source-level name for a builtin gtype.
@@ -889,7 +906,7 @@ func (g *Generator) emitFloatSpecialOperand(b *strings.Builder, sc *scope) {
 // channel. Composite types do the same via array index, Pair
 // field access, and match-over-Color.
 var mainVarTypes = []gtype{
-	tI32, tI64, tU32, tU64, tBool, tString,
+	tI32, tI64, tU32, tU64, tU8, tBool, tString,
 	tArrI32, tArrI64, tArrBool,
 	tPair, tColor, tOptI32,
 	tXyz, tStatus, tResI32I32, tTupI32I64,
@@ -1435,7 +1452,7 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 		return
 	}
 	switch t {
-	case tI32, tI64, tU32, tU64, tF32, tF64:
+	case tI32, tI64, tU32, tU64, tU8, tF32, tF64:
 		g.numericExpr(b, sc, t, depth)
 	case tBool:
 		g.boolExpr(b, sc, depth)
@@ -2201,6 +2218,16 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 			return
 		}
 		fmt.Fprintf(b, "%du32", g.ch.intN(1000))
+	case tU8:
+		// The whole 0..255 range, weighted toward the top so the 8-bit
+		// wrap and the saturating clamp at 255 are reached often: a
+		// corpus of small u8s would exercise the type without ever
+		// crossing either boundary.
+		if g.flip(0.5) {
+			fmt.Fprintf(b, "%du8", 200+g.ch.intN(56))
+			return
+		}
+		fmt.Fprintf(b, "%du8", g.ch.intN(200))
 	case tU64:
 		// Same rationale as tU32's split, one width up: below i64::MAX
 		// an unsigned 64-bit op agrees with its signed sibling, so half
@@ -2405,7 +2432,7 @@ func (g *Generator) typePool() []gtype {
 	var pool []gtype
 	if !g.profile.floatsAllowed() {
 		pool = []gtype{
-			tI32, tI64, tU32, tU64, tBool, tString,
+			tI32, tI64, tU32, tU64, tU8, tBool, tString,
 			tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32,
 			tXyz, tStatus, tMapI32I32, tResI32I32, tTupI32I64,
 		}
@@ -2439,10 +2466,10 @@ func (g *Generator) sortedDynamicTypes() []gtype {
 // operand type of a comparison.
 func (g *Generator) pickNumeric() gtype {
 	if !g.profile.floatsAllowed() {
-		ints := []gtype{tI32, tI64, tU32, tU64}
+		ints := []gtype{tI32, tI64, tU32, tU64, tU8}
 		return ints[g.ch.intN(len(ints))]
 	}
-	return []gtype{tI32, tI64, tU32, tU64, tF32, tF64}[g.ch.intN(6)]
+	return []gtype{tI32, tI64, tU32, tU64, tU8, tF32, tF64}[g.ch.intN(7)]
 }
 
 func (g *Generator) flip(p float64) bool { return g.ch.flip(p) }
