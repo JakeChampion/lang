@@ -397,6 +397,16 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   suite parked in `withBuildMemory` (the `buildMemLimiter` RAM semaphore)
   waiting to start a heavy self-host driver build, or mid-`runLangInterp`.
   Always check the `--- FAIL` count before reading a timeout as a breakage.
+  **Never pipe a test run through `tail`/`head`.** `go test … 2>&1 | tail -3`
+  reports the PIPELINE's exit status — `tail`'s, which is always 0 — so a
+  failing suite is announced as a success, and the failure detail is discarded
+  with the rest of the output. Measured 2026-07-30: a `FAIL` on
+  `internal/e2e` was reported as a completed-successfully background task, and
+  the three surviving lines could not say which test failed (it did not
+  reproduce in dedicated re-runs on either the same or the following commit, so
+  the cause is now unrecoverable). Redirect to a file and grep it —
+  `go test … > run.log 2>&1; echo "EXIT=$?"` — then read `--- FAIL` from the
+  file.
   Prefer `-run` targeting what you touched; if you do want the whole
   package, give it `-timeout 90m` and expect it to be the only thing
   running. Core count matters more than RAM here — the semaphore serialises

@@ -1428,22 +1428,27 @@ func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl,
 			return "", false
 		}
 		if len(v.Args) > 0 {
-			// Generic instantiation (Option[Item]). Substitute the type
-			// args into the decl and route to a per-instantiation drop
-			// IFF the substituted decl is heap-boxed (a pointer payload).
-			// Scalar instantiations (Option[i32], pair-form, no box) read
-			// false and fall through to the flat dec, exactly as before.
-			// The substituted decl is stashed in reg under a mangled name
-			// the worklist regenerates the body from. Without a registry
-			// to record into (direct unit calls) we can't be regenerated,
-			// so bail to the safe flat path.
+			// Generic instantiation (Option[Item]). Substitute the type args
+			// into the decl and route to a per-instantiation drop. The
+			// substituted decl is stashed in reg under a mangled name the
+			// worklist regenerates the body from; without a registry to record
+			// into (direct unit calls) we can't be regenerated, so bail to the
+			// safe flat path.
+			//
+			// This used to additionally require enumHasPointerPayload(sub),
+			// on the grounds that a scalar instantiation is "pair-form, no
+			// box". It is not: pair-form is a per-FUNCTION return ABI
+			// (findPairFormFuncs, keyed by function name), and a scalar
+			// instantiation is heap-boxed like any other. With the gate in
+			// place a NESTED scalar Option leaked its box — measured at
+			// 16 bytes per construction for `struct H { o: Option[i32] }` and
+			// for `(Some(k), 1)`, linear and unbounded (#5917). The sibling
+			// gate in emitEnumSlotDrop had the identical bug for a direct
+			// local; both are gone.
 			if reg == nil {
 				return "", false
 			}
 			sub := substituteEnumDecl(ed, v.Args)
-			if !enumHasPointerPayload(sub) {
-				return "", false
-			}
 			mangled := mangleEnumInst(v)
 			reg[mangled] = sub
 			return "__drop_enum_" + mangled, true
