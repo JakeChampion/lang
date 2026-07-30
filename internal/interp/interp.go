@@ -579,6 +579,7 @@ func New() *Interp {
 	i.Builtins["sleep_ms"] = &Builtin{Fn: builtinSleepMS}
 	i.Builtins["proc_fork"] = &Builtin{Fn: builtinProcFork}
 	i.Builtins["proc_waitpid"] = &Builtin{Fn: builtinProcWaitpid}
+	i.Builtins["proc_exec"] = &Builtin{Fn: builtinProcExec}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
@@ -1552,6 +1553,17 @@ func builtinSleepMS(_ *Interp, args []Value) (Value, error) {
 func builtinProcFork(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("proc_fork: expected 0 args, got %d", len(args))
+	}
+	return Number(-38), nil // -ENOSYS
+}
+
+// builtinProcExec mirrors the native `proc_exec(path, args)`. Exec'ing here
+// would replace the interpreter process itself, so it is refused the same way
+// proc_fork is: -38 (ENOSYS), letting a caller detect "no process control" and
+// degrade rather than mysteriously vanishing.
+func builtinProcExec(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("proc_exec: expected 2 args, got %d", len(args))
 	}
 	return Number(-38), nil // -ENOSYS
 }

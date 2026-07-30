@@ -812,9 +812,7 @@ func asmBitfieldExtract(a *Assembler, mnem string, ops []string) error {
 	if len(ops) != 4 {
 		return fmt.Errorf("%s expects Xd, Xn, #lsb, #width", mnem)
 	}
-	if is32(ops[0]) {
-		return fmt.Errorf("32-bit %s not supported yet", mnem)
-	}
+	w32 := is32(ops[0])
 	rd, err := parseReg(ops[0])
 	if err != nil {
 		return err
@@ -830,6 +828,22 @@ func asmBitfieldExtract(a *Assembler, mnem string, ops []string) error {
 	width, err := parseImm(ops[3])
 	if err != nil {
 		return err
+	}
+	if w32 {
+		// The 32-bit encoding's immr/imms are 5-bit: the extracted field must
+		// lie inside the register.
+		if lsb < 0 || width < 1 || lsb+width > 32 {
+			return fmt.Errorf("%s: field [%d,+%d) out of range for a 32-bit register", mnem, lsb, width)
+		}
+		if mnem == "ubfx" {
+			a.Emit(UBFXW(rd, rn, uint32(lsb), uint32(width)))
+		} else {
+			a.Emit(SBFXW(rd, rn, uint32(lsb), uint32(width)))
+		}
+		return nil
+	}
+	if lsb < 0 || width < 1 || lsb+width > 64 {
+		return fmt.Errorf("%s: field [%d,+%d) out of range for a 64-bit register", mnem, lsb, width)
 	}
 	if mnem == "ubfx" {
 		a.Emit(UBFX(rd, rn, uint32(lsb), uint32(width)))

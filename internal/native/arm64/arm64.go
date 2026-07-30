@@ -525,6 +525,14 @@ func UXTH(rd, rn uint32) uint32 {
 func UBFX(rd, rn, lsb, width uint32) uint32 { return ubfmX(rd, rn, lsb, lsb+width-1) }
 func SBFX(rd, rn, lsb, width uint32) uint32 { return sbfmX(rd, rn, lsb, lsb+width-1) }
 
+// UBFXW / SBFXW are the W-register (32-bit) forms of the same aliases —
+// `ubfx Wd, Wn, #lsb, #width`. The string runtime's small-string decode emits
+// these (`ubfx w0, w0, #1, #3` pulls the inline length out of a tagged string
+// word), so the assembler needs them to build any program touching strings via
+// a runtime helper.
+func UBFXW(rd, rn, lsb, width uint32) uint32 { return ubfmW(rd, rn, lsb, lsb+width-1) }
+func SBFXW(rd, rn, lsb, width uint32) uint32 { return sbfmW(rd, rn, lsb, lsb+width-1) }
+
 // CSEL encodes `csel Xd, Xn, Xm, <cond>` — Xd = cond ? Xn : Xm.
 // Encoding: base 0x9A800000 | Rm<<16 | cond<<12 | Rn<<5 | Rd.
 func CSEL(rd, rn, rm, cond uint32) uint32 {

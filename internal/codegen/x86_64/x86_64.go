@@ -79,8 +79,9 @@ const (
 	// fork(2) / wait4(2): x86-64 syscalls 57 / 61. Back
 	// `__fern_proc_fork` / `__fern_proc_waitpid` — the crash-only
 	// supervision primitives (docs/CRASH-ONLY-SERVE.md D2').
-	sysFork  = 57
-	sysWait4 = 61
+	sysFork   = 57
+	sysExecve = 59
+	sysWait4  = 61
 	// poll(2): x86-64 syscall 7. Used by `__fern_poll` — the readiness
 	// multiplexer behind the std/task reactor
 	// (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1). Waits on a set of
@@ -434,6 +435,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesProcWaitpid {
 		g.emitProcWaitpidRuntime()
 	}
+	if g.usesProcExec {
+		g.emitProcExecRuntime()
+	}
 	if g.usesTcp {
 		g.emitTcpListenRuntime()
 		g.emitTcpAcceptRuntime()
@@ -627,6 +631,11 @@ type generator struct {
 	// for `ms` milliseconds via `nanosleep(&req, NULL)` (#35); ms <= 0
 	// returns immediately. Void.
 	usesSleepMs bool
+	// usesProcExec pulls in `__fern_proc_exec(path, args)` — execve(2),
+	// the leg that lets a forked child become another program. Shares the
+	// `proc` capability with fork / waitpid and needs the allocator (it
+	// materialises NUL-terminated copies for the C ABI).
+	usesProcExec bool
 	// usesProcFork / usesProcWaitpid pull in `__fern_proc_fork()` —
 	// fork(2) (#57): 0 in child, pid in parent, -errno on failure —
 	// and `__fern_proc_waitpid(pid)` — wait4(2) (#61) + status-word
@@ -1029,6 +1038,14 @@ func (g *generator) recordUse(target string) {
 		g.usesNowNs = true
 	case "sleep_ms":
 		g.usesSleepMs = true
+	case "proc_exec":
+		g.usesProcExec = true
+		g.usesAlloc = true // NUL-terminated argv copies
+		// __fern_envp (its .bss slot AND the _start capture) is gated on
+		// usesEnv, and execve passes it as the child's environment. That
+		// pulls in the env READER too, which strcats — hence memcpy.
+		g.usesEnv = true
+		g.usesMemcpy = true
 	case "proc_fork":
 		g.usesProcFork = true
 	case "proc_waitpid":
@@ -2422,6 +2439,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_now_ns"
 		case "sleep_ms":
 			target = "__fern_sleep_ms"
+		case "proc_exec":
+			target = "__fern_proc_exec"
 		case "proc_fork":
 			target = "__fern_proc_fork"
 		case "proc_waitpid":
@@ -6662,6 +6681,127 @@ func (g *generator) emitProcForkRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_proc_fork, .-__fern_proc_fork")
+}
+
+// emitProcExecRuntime emits `__fern_proc_exec(path, args) -> i32` —
+// execve(2) (syscall 59), the third leg of the crash-only process trio
+// alongside __fern_proc_fork / __fern_proc_waitpid, and the piece that lets a
+// forked child become another program.
+//
+// It replaces the calling process, so on SUCCESS it does not return at all.
+// The i32 result therefore only ever carries failure: -errno, exactly as the
+// kernel hands it back, matching proc_fork's "the syscall's return shape IS
+// the builtin's contract" convention.
+//
+// argv is built as [path, args[0], ..., args[n-1], NULL] — the callee's argv[0]
+// is the program path, the convention every exec'd program expects, so callers
+// pass only the real arguments. envp is inherited via the __fern_envp global
+// captured at _start, so the child sees the parent's environment.
+//
+// Fern strings are length-prefixed and NOT guaranteed NUL-terminated (only the
+// argv-derived ones are), and execve needs C strings, so the path and every
+// argument are copied into fresh NUL-terminated buffers. Those allocations are
+// deliberately never freed: on the success path the address space is replaced,
+// and on the failure path the caller is about to report an error and exit.
+func (g *generator) emitProcExecRuntime() {
+	g.line("")
+	g.line(".globl __fern_proc_exec")
+	g.line(".type __fern_proc_exec, @function")
+	g.label("__fern_proc_exec")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // rbp-8:  args box
+	g.emit("push r12") // rbp-16: argc
+	g.emit("push r13") // rbp-24: argv
+	g.emit("push r14") // rbp-32: loop index
+	g.emit("push r15") // rbp-40: scratch pointer
+	// Spill slots start BELOW the pushed callee-saved registers (rbp-8 ..
+	// rbp-40); writing at or above rbp-40 would corrupt the caller's rbx /
+	// r12..r15. 72 keeps rsp 16-aligned for the __fern_alloc calls
+	// (rbp-40-72 = rbp-112).
+	g.emit("sub rsp, 72")
+	//   [rbp-48] source bytes (path, then each element)
+	//   [rbp-56] path cstr
+	//   [rbp-64] element length
+	//   [rbp-80] emitStrDataPtr scratch — for a SMALL string that helper
+	//            returns a pointer INTO this slot, so nothing else may use it.
+
+	g.emit("mov rbx, rsi") // rbx = args box (string[] data ptr)
+	// Path -> NUL-terminated copy.
+	g.emitStrLen("r12d", "rdi")                  // r12 = path length
+	g.emitStrDataPtr("r15", "rdi", "[rbp - 80]") // r15 = path bytes
+	g.emit("mov [rbp - 48], r15")
+	g.emit("lea rdi, [r12 + 1]")
+	g.emit("call __fern_alloc")
+	g.emit("mov [rbp - 56], rax") // path cstr
+	g.emit("mov r15, [rbp - 48]") // path bytes
+	g.emit("xor ecx, ecx")
+	g.label(".Lpexec_pcopy")
+	g.emit("cmp rcx, r12")
+	g.emit("jge .Lpexec_pcopy_done")
+	g.emit("mov dl, [r15 + rcx]")
+	g.emit("mov [rax + rcx], dl")
+	g.emit("inc rcx")
+	g.emit("jmp .Lpexec_pcopy")
+	g.label(".Lpexec_pcopy_done")
+	g.emit("mov byte ptr [rax + r12], 0")
+
+	// argv = alloc((argc + 2) * 8); argv[0] = path cstr.
+	g.emitArrayLen("r12d", "rbx") // r12 = argc
+	g.emit("lea rdi, [r12 + 2]")
+	g.emit("shl rdi, 3")
+	g.emit("call __fern_alloc")
+	g.emit("mov r13, rax")        // r13 = argv
+	g.emit("mov rax, [rbp - 56]") // path cstr
+	g.emit("mov [r13], rax")      // argv[0]
+	g.emit("xor r14d, r14d")      // i = 0
+
+	g.label(".Lpexec_arg")
+	g.emit("cmp r14, r12")
+	g.emit("jge .Lpexec_arg_done")
+	g.emit("mov r15, [rbx + r14*8]") // element string box
+	g.emitStrLen("ecx", "r15")
+	g.emit("mov [rbp - 64], rcx")                // element length
+	g.emitStrDataPtr("r15", "r15", "[rbp - 80]") // element bytes
+	g.emit("mov [rbp - 48], r15")
+	g.emit("mov rdi, [rbp - 64]")
+	g.emit("inc rdi")
+	g.emit("call __fern_alloc")
+	g.emit("mov r15, [rbp - 48]") // src bytes
+	g.emit("mov rdx, [rbp - 64]") // length
+	g.emit("xor ecx, ecx")
+	g.label(".Lpexec_acopy")
+	g.emit("cmp rcx, rdx")
+	g.emit("jge .Lpexec_acopy_done")
+	g.emit("mov r8b, [r15 + rcx]")
+	g.emit("mov [rax + rcx], r8b")
+	g.emit("inc rcx")
+	g.emit("jmp .Lpexec_acopy")
+	g.label(".Lpexec_acopy_done")
+	g.emit("mov byte ptr [rax + rdx], 0")
+	g.emit("lea rcx, [r14 + 1]")
+	g.emit("mov [r13 + rcx*8], rax") // argv[i + 1]
+	g.emit("inc r14")
+	g.emit("jmp .Lpexec_arg")
+	g.label(".Lpexec_arg_done")
+	g.emit("lea rcx, [r12 + 1]")
+	g.emit("mov qword ptr [r13 + rcx*8], 0") // argv[argc + 1] = NULL
+
+	g.emit("mov rdi, [rbp - 56]") // path cstr
+	g.emit("mov rsi, r13")        // argv
+	g.emit("mov rdx, [rip + __fern_envp]")
+	g.emit(fmt.Sprintf("mov eax, %d", sysExecve))
+	g.emit("syscall")
+	// Only reachable on failure; rax holds -errno.
+	g.emit("add rsp, 72")
+	g.emit("pop r15")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_proc_exec, .-__fern_proc_exec")
 }
 
 // emitProcWaitpidRuntime emits `__fern_proc_waitpid(pid)` —
