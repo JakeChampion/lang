@@ -48,7 +48,12 @@ import "./parser";
 // long-standing loose-int behaviour), but width is carried so method DISPATCH
 // keys (which compare the declared receiver-type spelling) can recover "i64" /
 // "u32" / "u64" at a call site. Actual codegen width lives in asmcore's `Ty`.
-pub struct TypeI32 { tag: i32, width: i32, unsigned: boolean }
+// The integer-shaped scalars, plus `char`. `is_char` marks a Unicode scalar
+// value (#5629): it rides an i32 slot, so it shares this variant and stays
+// interchangeable with i32 under type_eq — but it dispatches its own method
+// surface (std/unicode declares seven `char`-receiver methods), which is what
+// the flag is read for. Replaces a dead `tag` filler field that nothing read.
+pub struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean }
 pub struct TypeBool { tag: i32 }      // payload — variants need a
 pub struct TypeString { tag: i32 }    // shape; the field is unused.
 pub struct TypeFloat { tag: i32 }     // f64 — `f32` aliases the same
@@ -113,11 +118,14 @@ pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeSt
 // the struct literal in return-position lets the implicit
 // struct→union wrap fire. Inline `var t: Type = TypeI32 { ... };`
 // inside a non-return position doesn't always trigger the wrap.
-function t_i32(): Type { return TypeI32 { tag: 0, width: 32, unsigned: false }; }
-function t_i64(): Type { return TypeI32 { tag: 0, width: 64, unsigned: false }; }
-function t_u32(): Type { return TypeI32 { tag: 0, width: 32, unsigned: true }; }
-function t_u64(): Type { return TypeI32 { tag: 0, width: 64, unsigned: true }; }
-function t_u8(): Type { return TypeI32 { tag: 0, width: 8, unsigned: true }; }
+function t_i32(): Type { return TypeI32 { is_char: false, width: 32, unsigned: false }; }
+function t_i64(): Type { return TypeI32 { is_char: false, width: 64, unsigned: false }; }
+function t_u32(): Type { return TypeI32 { is_char: false, width: 32, unsigned: true }; }
+function t_u64(): Type { return TypeI32 { is_char: false, width: 64, unsigned: true }; }
+function t_u8(): Type { return TypeI32 { is_char: false, width: 8, unsigned: true }; }
+// `char` — a Unicode scalar value in an i32 slot (#5629). Width 32 because
+// that is the slot it rides; `is_char` is what distinguishes it.
+function t_char(): Type { return TypeI32 { is_char: true, width: 32, unsigned: false }; }
 
 // lit_is_scalar_value reports whether an integer literal's SOURCE TEXT names a
 // Unicode scalar value — 0..0x10FFFF minus the UTF-16 surrogates D800..DFFF.
@@ -161,6 +169,12 @@ function lit_scalar_msg(text: string): string {
 // registered them under one name while calls looked them up under
 // another, so every classifier call reported a spurious E043.
 function int_label(t: TypeI32): string {
+    // `char` before the width ladder: it rides a 32-bit slot but registers and
+    // dispatches its methods under "char" (std/unicode's seven), so labelling
+    // it "i32" would look up a key nothing declares (#5629) — the same
+    // register-here / look-up-there skew that took std/string off the IR path
+    // for `u8` in #5886.
+    if (t.is_char) { return "char"; }
     if (t.unsigned) {
         if (t.width == 64) { return "u64"; }
         if (t.width == 8) { return "u8"; }
@@ -1170,9 +1184,9 @@ function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
 // couldn't recover the width to dispatch.
 function type_from_name(name: string): Type {
     if (name == "i32") { return t_i32(); }
-    // `char` is a SURFACE type that erases to an i32 slot at the IR choke
-    // point (#5629); this port has no separate tag, so it resolves as i32.
-    if (name == "char") { return t_i32(); }
+    // `char` erases to an i32 SLOT, but it is not i32: it carries its own
+    // method surface, so it resolves to t_char() and dispatches under "char".
+    if (name == "char") { return t_char(); }
     if (name == "i64") { return t_i64(); }
     if (name == "u8") { return t_u8(); }
     if (name == "u32") { return t_u32(); }
@@ -2200,6 +2214,11 @@ pub function type_from_name_with_structs(name: string, structs: StructSig[]): Ty
         return t_array(type_from_name_with_structs(parser.render_type_ref(elem), structs));
     }
     if (name == "i32") { return t_i32(); }
+    // Every resolver must know `char`. It was in type_from_name alone, so the
+    // other four fell through to t_unknown and the checker silently skipped
+    // every check on a char value — a bogus char method went unreported while
+    // the Go checker raised E043 (#5922).
+    if (name == "char") { return t_char(); }
     if (name == "i64") { return t_i64(); }
     if (name == "u8") { return t_u8(); }
     if (name == "u32") { return t_u32(); }
@@ -2225,6 +2244,11 @@ pub function type_from_name_with_struct_names(name: string, struct_names: string
         return t_array(type_from_name_with_struct_names(parser.render_type_ref(elem), struct_names));
     }
     if (name == "i32") { return t_i32(); }
+    // Every resolver must know `char`. It was in type_from_name alone, so the
+    // other four fell through to t_unknown and the checker silently skipped
+    // every check on a char value — a bogus char method went unreported while
+    // the Go checker raised E043 (#5922).
+    if (name == "char") { return t_char(); }
     if (name == "i64") { return t_i64(); }
     if (name == "u8") { return t_u8(); }
     if (name == "u32") { return t_u32(); }
@@ -2291,6 +2315,11 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
     // primitive / struct / union key and the unknown-reason text.
     var name: string = parser.render_type_ref(r);
     if (name == "i32") { return t_i32(); }
+    // Every resolver must know `char`. It was in type_from_name alone, so the
+    // other four fell through to t_unknown and the checker silently skipped
+    // every check on a char value — a bogus char method went unreported while
+    // the Go checker raised E043 (#5922).
+    if (name == "char") { return t_char(); }
     if (name == "i64") { return t_i64(); }
     if (name == "u8") { return t_u8(); }
     if (name == "u32") { return t_u32(); }
@@ -2462,6 +2491,11 @@ pub function type_from_name_with_names_and_unions(name: string, struct_names: st
         return t_array(type_from_name_with_names_and_unions(parser.render_type_ref(elem), struct_names, union_names));
     }
     if (name == "i32") { return t_i32(); }
+    // Every resolver must know `char`. It was in type_from_name alone, so the
+    // other four fell through to t_unknown and the checker silently skipped
+    // every check on a char value — a bogus char method went unreported while
+    // the Go checker raised E043 (#5922).
+    if (name == "char") { return t_char(); }
     if (name == "i64") { return t_i64(); }
     if (name == "u8") { return t_u8(); }
     if (name == "u32") { return t_u32(); }
