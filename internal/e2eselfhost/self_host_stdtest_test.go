@@ -1,6 +1,7 @@
 package e2eselfhost
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -89,6 +90,14 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 			// Self-host: compile → assemble → link → run.
 			asm, err := exec.Command(mmc, tc.src, stdlibRoot).Output()
 			if err != nil {
+				// The driver reports the reason (a checker diagnostic, an
+				// unsupported construct) on stderr; without it the failure is
+				// a bare "exit status 1" and the next reader has to rebuild
+				// the driver by hand to learn anything.
+				var ee *exec.ExitError
+				if errors.As(err, &ee) {
+					t.Fatalf("self-host compile failed: %v\n%s", err, ee.Stderr)
+				}
 				t.Fatalf("self-host compile failed: %v", err)
 			}
 			if len(asm) == 0 {
@@ -230,10 +239,11 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"quiet_mode", langSrcAbs(t, "examples/tests/quiet_mode_test.fern"), ""},
 		{"skip_and_subsuites", langSrcAbs(t, "examples/tests/skip_and_subsuites_test.fern"), ""},
 		{"runner_self", langSrcAbs(t, "examples/tests/runner_self_test.fern"), ""},
-		// core/cmp's Display/Eq/Ord/Hash impls for u8. Routed through the
-		// self-host deliberately: these were removed in #5869 because the
-		// self-host collapsed u8 onto the i32 tag and the impl sets collided
-		// (an E021 differential). The native side would not have caught that.
+		// core/cmp's six impls for u8 (Display/Eq/Ord/Hash/Debug/Default).
+		// Routed through the self-host deliberately: the first four were
+		// removed in #5869 because the self-host collapsed u8 onto the i32
+		// tag and the impl sets collided (an E021 differential). The native
+		// side would not have caught that.
 		{"u8_traits", langSrcAbs(t, "examples/tests/u8_traits_test.fern"), ""},
 		{"option_and_set_ops", langSrcAbs(t, "examples/tests/option_and_set_ops_test.fern"), ""},
 		{"result_assertions", langSrcAbs(t, "examples/tests/result_assertions_test.fern"), ""},

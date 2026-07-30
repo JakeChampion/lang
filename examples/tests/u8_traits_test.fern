@@ -1,15 +1,18 @@
-// std/core's Display / Eq / Ord / Hash impls for `u8`, the byte type.
+// core/cmp's six trait impls for `u8`, the byte type: Display / Eq / Ord /
+// Hash / Debug / Default.
 //
 // These exist because a byte has no scalar module of its own — there is no
 // `std/u8` supplying `to_string` for an empty `impl Display` to adopt — so
 // each one needs a real body. Without them a byte cannot reach any
-// `[T: Display]` / `[T: Eq]` / `[T: Ord]` generic, which is what a plain
-// `assert_eq` on two bytes goes through.
+// `[T: Display]` / `[T: Eq]` / `[T: Ord]` / `[T: Debug]` / `[T: Default]`
+// generic, which is what a plain `assert_eq` on two bytes goes through.
 //
-// They were removed in #5869 because the self-host collapsed `u8` onto the
-// i32 tag and the two impl sets collided (an E021 differential). #5886 gave
-// `u8` a real TyU8 tag, which is what lets them come back.
+// Display / Eq / Ord / Hash were removed in #5869 because the self-host
+// collapsed `u8` onto the i32 tag and the two impl sets collided (an E021
+// differential). #5886 gave `u8` a real TyU8 tag, which is what lets them
+// come back.
 import "std/test";
+import "core/cmp";
 
 function test_display(): test.TestOutcome {
     var b: u8 = 65;
@@ -47,8 +50,42 @@ function test_hash(): test.TestOutcome {
     return test.assert_true(a.hash() != b.hash() && a.hash() == (42).hash());
 }
 
+// Debug is the developer-facing half of the Display/Debug split. A byte has
+// no quoting or structure to add, so it debugs as its decimal form — the
+// point is that `[T: Debug]` (an `@derive(Debug)` struct with a `u8` field,
+// which expands to `self.f.to_debug()`) can reach a byte at all.
+function debug_of[T: cmp.Debug](x: T): string { return x.to_debug(); }
+
+function test_debug(): test.TestOutcome {
+    var high: u8 = 200;
+    var zero: u8 = 0;
+    return test.assert_true(debug_of(high) == "200" && debug_of(zero) == "0");
+}
+
+// The composing half: a derived `to_debug` expands to `self.r.to_debug()` for
+// the byte field, so the struct only debugs because the byte does.
+@derive(cmp.Debug)
+struct Pixel { r: u8, a: i32 }
+
+function test_derive_debug(): test.TestOutcome {
+    var p: Pixel = Pixel { r: 200, a: 7 };
+    return test.assert_eq(p.to_debug(), "Pixel { r: 200, a: 7 }");
+}
+
+// Default is an ASSOCIATED function — `T.default()`, no receiver — so a byte
+// reaches it only through a bound. A generic `@derive(Default)` struct is that
+// shape: `Box[u8].default()` derives to `Box { v: T.default() }`, and the `T`
+// there resolves onto `impl Default for u8`.
+@derive(cmp.Default)
+struct Box[T] { v: T }
+
+function test_default(): test.TestOutcome {
+    var b: Box[u8] = Box.default();
+    return test.assert_eq(b.v, 0 as u8);
+}
+
 // The reason the impls exist: a bare assert_eq on two bytes resolves through
-// the `[T: Eq + Debug]` bound, so it only compiles when u8 satisfies them.
+// the `[T: Eq + Display]` bound, so it only compiles when u8 satisfies them.
 function test_generic_bound(): test.TestOutcome {
     var b: u8 = 65;
     return test.assert_eq(b, 65 as u8);
@@ -60,6 +97,9 @@ function main(): i32 {
     r = r.it("Eq", test_eq());
     r = r.it("Ord unsigned order", test_ord());
     r = r.it("Hash", test_hash());
-    r = r.it("generic Eq+Debug bound", test_generic_bound());
+    r = r.it("Debug", test_debug());
+    r = r.it("derived Debug over a byte field", test_derive_debug());
+    r = r.it("Default", test_default());
+    r = r.it("generic Eq+Display bound", test_generic_bound());
     return r.finish();
 }

@@ -1224,42 +1224,13 @@ func containsParamType(t ast.Type) bool {
 	return false
 }
 
-// concreteTypeNameOf returns the nominal name of a struct/enum type (the
-// receiver name used to resolve an associated function). Reports false
-// for non-nominal types (a still-parametric arg, a scalar, etc.).
-func concreteTypeNameOf(t ast.Type) (string, bool) {
-	switch x := t.(type) {
-	case ast.StructType:
-		return x.Name, true
-	case ast.EnumType:
-		return x.Name, true
-	// Primitive type params resolve associated calls onto a primitive impl
-	// (`impl Default for i32` → `__assoc_i32_default`): name them the same way
-	// the checker names a primitive method receiver, so `T.f()` with `T=i32`
-	// rewrites to `i32.f()`.
-	case ast.StringType:
-		return "string", true
-	case ast.BoolType:
-		return "boolean", true
-	case ast.NumberType:
-		switch {
-		case x.NormalWidth() == 64 && x.IsSigned():
-			return "i64", true
-		case x.NormalWidth() == 64 && !x.IsSigned():
-			return "u64", true
-		case !x.IsSigned():
-			return "u32", true
-		default:
-			return "i32", true
-		}
-	case ast.FloatType:
-		if x.NormalWidth() == 64 {
-			return "f64", true
-		}
-		return "f32", true
-	}
-	return "", false
-}
+// concreteTypeNameOf returns the receiver name a type argument resolves
+// associated calls under — struct/enum names, and one name per scalar
+// impl surface (`impl Default for i32` → `__assoc_i32_default`), so
+// `T.f()` at `T = i32` rewrites to `i32.f()`. It is `ast.ReceiverTypeName`,
+// the same mapping the checker registers those impls under. Reports false
+// for a type that can't carry one (a still-parametric arg, a tuple, …).
+func concreteTypeNameOf(t ast.Type) (string, bool) { return ast.ReceiverTypeName(t) }
 
 func substituteExpr(e ast.Expr, sub map[string]ast.Type) {
 	if e == nil {

@@ -821,3 +821,54 @@ function main(): i32 { var b: Box[string] = Box.default(); return b.v.len(); }`}
 		})
 	}
 }
+
+// TestAssocCallRewriteNamesEveryScalarWidth walks a `T.default()`
+// associated call through every scalar a type argument can bind to. The
+// rewrite names `T`'s impl with the same classifier the checker
+// registers `impl Default for <scalar>` under (`ast.ReceiverTypeName`);
+// when the two disagreed the call resolved onto ANOTHER type's impl and
+// the trailing re-check died with a "compiler bug".
+//
+// `u8` is the case that motivated the table: it used to fall through a
+// width switch that only knew 32 and 64, so a byte was named `u32` here
+// while the checker named it `u8`, and `zero[u8]()` failed with
+// "undefined identifier u32" — or, once a u32 impl existed to land on,
+// "function returns u8 but expression is u32". Every width is listed so
+// the next one to arrive is a one-line addition, not another skew.
+func TestAssocCallRewriteNamesEveryScalarWidth(t *testing.T) {
+	scalars := []struct{ ty, zero, use string }{
+		{"i32", "0", "b"},
+		{"i64", "0 as i64", "b as i32"},
+		{"u32", "0 as u32", "b as i32"},
+		{"u64", "0 as u64", "b as i32"},
+		{"u8", "0 as u8", "b as i32"},
+		{"f32", "0.0 as f32", "b as i32"},
+		{"f64", "0.0", "b as i32"},
+		{"boolean", "false", "0"},
+		{"string", `""`, "b.len()"},
+	}
+	for _, s := range scalars {
+		t.Run(s.ty, func(t *testing.T) {
+			src := fmt.Sprintf(`trait Default { function default(): Self; }
+impl Default for %[1]s { function default(): %[1]s { return %[2]s; } }
+function zero[T: Default](): T { return T.default(); }
+function main(): i32 { var b: %[1]s = zero[%[1]s](); return %[3]s; }`, s.ty, s.zero, s.use)
+			prog, _, err := modload.LoadSource(src)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			info, err := checker.Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if err := monomorph.Run(prog, info); err != nil {
+				t.Fatalf("monomorph: %v", err)
+			}
+			for _, fn := range prog.Funcs {
+				if len(fn.TypeParams) > 0 {
+					t.Errorf("generic decl %q survived monomorph", fn.Name)
+				}
+			}
+		})
+	}
+}

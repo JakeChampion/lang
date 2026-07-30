@@ -5200,3 +5200,38 @@ func TestCastRejectionStillReported(t *testing.T) {
 		t.Errorf("want E033, got: %v", err)
 	}
 }
+
+// TestByteDisplayGateAndDispatchAgree: the `print(x)` Display gate and the
+// `x.to_string()` dispatch it rewrites to must name the receiver the same
+// way. They didn't for `u8`: the gate ran a width switch that only knew 32
+// and 64, so a byte was gated on `u32`'s `to_string` while dispatch looked
+// for `u8`'s — a program with `impl Display for u32` in scope passed the
+// gate and then failed with `no method "to_string" on u8 — add
+// import "std/u32"`, naming the very module it already had. Both now run
+// through `ast.ReceiverTypeName`, so a byte is either accepted by its own
+// impl or refused up front by E038.
+func TestByteDisplayGateAndDispatchAgree(t *testing.T) {
+	const displayTrait = `trait Display { function to_string(self: Self): string; }
+`
+	// A u32 impl does NOT make a byte printable — and the refusal is the
+	// honest E038 naming u8, not a dispatch failure blaming an import.
+	err := checkSource(t, displayTrait+
+		`impl Display for u32 { function to_string(self: Self): string { return "u32"; } }
+function main(): i32 { var s: string = "A"; var b: u8 = s[0]; print(b); return 0; }`)
+	if err == nil {
+		t.Fatalf("expected print(u8) to be refused with only a u32 Display impl in scope")
+	}
+	if !hasCode(err, "E038") {
+		t.Errorf("want E038 (Display not implemented for u8), got %v", err)
+	}
+	if strings.Contains(err.Error(), "no method \"to_string\" on u8") {
+		t.Errorf("gate admitted the call and dispatch then failed on u8: %v", err)
+	}
+
+	// The byte's own impl is what makes it printable.
+	if err := checkSource(t, displayTrait+
+		`impl Display for u8 { function to_string(self: Self): string { return "b"; } }
+function main(): i32 { var s: string = "A"; var b: u8 = s[0]; print(b); return 0; }`); err != nil {
+		t.Errorf("print(u8) with `impl Display for u8` in scope: %v", err)
+	}
+}
