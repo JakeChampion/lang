@@ -2043,6 +2043,10 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // Both plain i32, matching native's FuncSigs (#5686).
                     if (id.name == "proc_fork") { return ty_i32(); }
                     if (id.name == "proc_waitpid") { return ty_i32(); }
+                    // proc_exec(path, args) → i32, but only on FAILURE (-errno):
+                    // on success execve has replaced the process image, so there
+                    // is nothing left to return to. Matches native's FuncSigs.
+                    if (id.name == "proc_exec") { return ty_i32(); }
                     if (id.name == "remove_file") { return ty_option(ty_unknown()); }
                     // subprocess(cmd, args, stdin) → ProcessResult struct.
                     // See asm.fern: returns "unknown" because the struct's
