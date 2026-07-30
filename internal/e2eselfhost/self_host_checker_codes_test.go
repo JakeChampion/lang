@@ -1268,6 +1268,12 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 
 	progs := []struct{ name, src string }{
+		// A `char`-RECEIVER method call. std/unicode declares seven of them
+		// ((c: char) to_upper / is_letter / ...), so if the self-host resolves a
+		// char receiver to the i32 label while the declaration registered under
+		// "char", every one of these is a spurious E043.
+		{"char-method-to-upper", "import \"std/utf8\";\nimport \"std/unicode\";\nfunction main(): i32 { var cs: char[] = utf8.codepoints(\"a\"); return cs[0].to_upper() as i32; }\n"},
+		{"char-method-is-letter", "import \"std/utf8\";\nimport \"std/unicode\";\nfunction main(): i32 { var cs: char[] = utf8.codepoints(\"a\"); if (cs[0].is_letter()) { return 1; } return 0; }\n"},
 		// `<lit> as char` range/surrogate validation (E071, #5629 slice 5).
 		// Both checkers must agree on which literals name a Unicode scalar
 		// value. The self-host resolves `char` to i32, so it keys the rule on
