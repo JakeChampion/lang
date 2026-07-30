@@ -169,6 +169,46 @@ function main(): i32 {
     match (f()) { Ok(v) => { return v; }, Err(_) => { return 9; } }
 }
 `, 5},
+	// `?` whose success payload is itself a bracketed generic
+	// (`Result[Option[i32], E]`) — the last per-function shape lower_try
+	// declined (#3457 endgame). The payload box is pointer-shaped, read
+	// through the same op_opt_payload as a struct/enum, and the `var x:
+	// Option[i32] = f(n)?` binding types the slot from its annotation, so
+	// the following `match (x)` recovers both arms.
+	{"try-generic-payload", `
+function f(n: i32): Result[Option[i32], i32] { return Ok(Some(n)); }
+function g(n: i32): Result[i32, i32] {
+    var x: Option[i32] = f(n)?;
+    match (x) { Some(v) => { return Ok(v); }, None => { return Ok(0); } }
+}
+function main(): i32 { match (g(5)) { Ok(v) => { return v; }, Err(_) => { return 9; } } }
+`, 5},
+	// The same shape on a bare Option (`Option[Option[i32]]`), plus a
+	// None-payload leg so the inner enum's other variant is exercised too.
+	{"try-generic-payload-option", `
+function f(n: i32): Option[Option[i32]] { if (n > 3) { return Some(Some(n)); } return Some(None); }
+function g(n: i32): Option[i32] {
+    var x: Option[i32] = f(n)?;
+    match (x) { Some(v) => { return Some(v + 1); }, None => { return Some(50); } }
+}
+function main(): i32 {
+    var a: i32 = 0;
+    match (g(7)) { Some(v) => { a = v; }, None => { a = 99; } }
+    match (g(1)) { Some(v) => { a = a + v; }, None => { a = a + 99; } }
+    return a;
+}
+`, 58},
+	// A `?`-chain whose bound generic payload is itself unwrapped by a second
+	// `?`: the payload slot must survive being fed back into the try path.
+	{"try-generic-payload-chain", `
+function inner(n: i32): Result[Result[i32, i32], i32] { if (n > 0) { return Ok(Ok(n)); } return Ok(Err(3)); }
+function outer(n: i32): Result[i32, i32] {
+    var o: Result[i32, i32] = inner(n)?;
+    var v: i32 = o?;
+    return Ok(v * 2);
+}
+function main(): i32 { match (outer(9)) { Ok(v) => { return v; }, Err(_) => { return 88; } } }
+`, 18},
 }
 
 // runDriver runs a self-host driver over `src`, optionally with FERN_STRICT_IR
