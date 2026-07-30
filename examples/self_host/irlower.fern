@@ -7990,6 +7990,17 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!pws.ok) { return pws; }
                         return pws.emit(ir.op_proc_waitpid());
                     }
+                    // `proc_exec(path, args)` execve's, so it only returns on
+                    // FAILURE (-errno). The third leg of the trio: it is what
+                    // lets a forked child become another program, which the
+                    // batched per-module orchestrator in asm_modload_run needs.
+                    if (cid.name == "proc_exec" && c.args.len() == 2) {
+                        var pe0: LowerState = lower_expr(c.args[0], s);
+                        if (!pe0.ok) { return pe0; }
+                        var pe1: LowerState = lower_expr(c.args[1], pe0);
+                        if (!pe1.ok) { return pe1; }
+                        return pe1.emit(ir.op_proc_exec());
+                    }
                     // Built-in `write(s)` / `print(s)` — write a string's bytes to
                     // stdout. `print` appends a newline (Fern's print == println):
                     // it desugars to `print_str(s + "\n")` via the existing str_concat
