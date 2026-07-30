@@ -1090,10 +1090,29 @@ func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 	// be skipped entirely: they don't own a reference to release, so a dec
 	// here would over-release the shared buffer. Mirroring the exit
 	// sweep's gate keeps dec-on-reinit balanced against the binding's inc.
-	if !b.rc.freeEligible[name] {
+	if !b.localNameUnique(name) || b.rc.movedLocals[name] {
 		return
 	}
-	if !b.localNameUnique(name) || b.rc.movedLocals[name] {
+	if !b.rc.freeEligible[name] {
+		// Ineligible for the DEEP free — but a local that took a construction
+		// alias-inc (ctorAliasInced) still holds a counted reference of its
+		// own, and a loop-body re-declaration must give it back or the inc
+		// happens once per iteration against a single exit-sweep dec: n-1
+		// values leak, linear and unbounded (#5879 cause A).
+		//
+		// The release is the FLAT dec the exit sweep already emits for this
+		// same local (emitDec's ineligible fall-through), never the deep
+		// array/struct drop — the container shares the value and reclaims it
+		// through its own drop, so freeing the payload here would be a
+		// use-after-free. Every other ineligibility cause is skipped, since
+		// only this one comes with a reference to release.
+		if ast.RcFreeEnabled && b.rc.ctorAliasInced[name] {
+			if t, ok := b.localDeclType(name); ok && rcTrackedForFlatDec(t) {
+				b.emit(Op{Kind: OpLoadLocal, I32: idx})
+				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+				b.emit(Op{Kind: OpDrop})
+			}
+		}
 		return
 	}
 	// A borrowed `dyn Trait` view (#4787 — e.g. a for-in loop var
@@ -2956,4 +2975,18 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int, dynRcSupported bool) ([]var
 		return nil, false
 	}
 	return plan, true
+}
+
+// rcTrackedForFlatDec reports whether a local of type t is released by a flat
+// single-word __fern_rc_dec. Strings are excluded: their retain/release is
+// two-word on wasm + arm64-TwoWordOverride (__fern_str_inc/_dec), so a flat dec
+// would consume one of the two stack words and misread a length as a pointer —
+// the same hazard emitAliasInc's string arm documents. dyn values carry no rc
+// header. Used by the ctorAliasInced release in emitVarReinitDropOld.
+func rcTrackedForFlatDec(t ast.Type) bool {
+	switch t.(type) {
+	case ast.StringType, ast.DynTraitType:
+		return false
+	}
+	return arrElemIsRcTracked(t)
 }
