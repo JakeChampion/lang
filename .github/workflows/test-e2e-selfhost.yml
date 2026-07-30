@@ -117,9 +117,10 @@ name: Test e2e self-host
 # weights file exists for. The x86 test job stays `continue-on-error` so a rare
 # runner reclaim (a cancellation, not a trappable exit code) can't fail the run;
 # the aarch64 lane is always green because the x86-only self-host tests t.Skip
-# there for lack of cross-gcc / qemu-x86_64. Those two facts TOGETHER mean no lane
-# enforces a `*X86_64` test — see the `continue-on-error` comment on the `test`
-# job and #5912; do not read either half as coverage on its own.
+# there for lack of cross-gcc / qemu-x86_64. Those two facts TOGETHER once meant
+# no lane enforced a `*X86_64` test; the `verify` job now does, off-machine, from
+# per-shard outcome artifacts (#5912 item 1). Read `verify` as the enforcement
+# point — neither `test` half is coverage on its own.
 #
 # STREAMING OUTPUT. Every test-running step here goes through gotestsum via
 # `--raw-command`, which runs the PREBUILT binary through `go tool test2json`
@@ -412,23 +413,25 @@ jobs:
     # harness is transitional; the project is moving to the self-hosted test
     # runner — we let the x86 shards be non-fatal.
     #
-    # WHAT THIS COSTS, stated honestly (#5912). `continue-on-error` cannot tell a
-    # reclaim from an assertion failure, so it absorbs both. This comment used to
-    # claim "Correctness is NOT lost: the aarch64 shards run the IDENTICAL test
-    # set … so a real self-host regression still turns this workflow red on
-    # aarch64." That is FALSE for every `TestSelfHost*X86_64` test, and it
-    # contradicts the note at the head of this file (L119-120). Those tests
-    # `t.Skip` on aarch64 — X86_64Tooling (internal/e2eharness/x86_64.go:43-46)
-    # needs `qemu-x86_64` on a non-amd64 host and nothing here installs it — so
-    # they are enforced by NEITHER lane: skipped where it is strict, tolerated
-    # where they run.
+    # `continue-on-error` here keeps a RECLAIM from failing the lane, but on its
+    # own it cannot tell a reclaim from an assertion failure, so it absorbed
+    # both. That was the #5912-item-1 enforcement gap: every `TestSelfHost*X86_64`
+    # test was enforced by NEITHER lane — `t.Skip`ped on aarch64 (X86_64Tooling,
+    # internal/e2eharness/x86_64.go:43-46, needs `qemu-x86_64` on a non-amd64
+    # host and nothing here installs it) and tolerated on x86, the lane where
+    # they actually run. #5901 shipped through that hole: a `dedupe_weak_defs`
+    # regression emitted four `util` functions into non-executable `.rodata`,
+    # segfaulting the self-host-compiled interpreter on any integer literal —
+    # 100 of 104 subtests of TestSelfHostInterpDriverX86_64 — with every lane
+    # green.
     #
-    # That is not hypothetical. #5901 shipped a `dedupe_weak_defs` regression that
-    # emitted four `util` functions into `.rodata` (non-executable), segfaulting
-    # the self-host-compiled interpreter on any integer literal —
-    # TestSelfHostInterpDriverX86_64, 100 of 104 subtests. Every lane stayed
-    # green. Fixing the enforcement gap is #5912; until then, treat a red x86
-    # shard as a REAL failure to read, not as noise to skip past.
+    # The gap is now closed by the `verify` job below, NOT by this flag: each
+    # shard records its outcome as an artifact, and `verify` (a separate job, on
+    # a separate machine) asserts every expected shard reported `success`. That
+    # separation is the whole point — a reclaimed runner is gone, so no step on
+    # it runs, not even `if: always()`; only an off-machine check can tell
+    # "tests failed" from "host vanished". So this flag no longer hides a real
+    # failure: it only stops a reclaimed shard from failing the lane twice.
     continue-on-error: ${{ matrix.host == 'x86_64' }}
     steps:
       - uses: actions/checkout@v4 # for the ../../examples + ../../internal/stdlib data files the tests read
@@ -469,6 +472,7 @@ jobs:
       # NOTE: fern.fern is intentionally absent — its tests run inside the
       # `cli` job (see ISOLATED_DRIVER_TESTS), so no shard builds it.
       - name: run self-host shard ${{ matrix.shard }}/${{ matrix.nshard }} (prebuilt binary, streaming)
+        id: run
         env:
           SHARD: "${{ matrix.shard }}"
           NSHARD: "${{ matrix.nshard }}"
@@ -529,3 +533,69 @@ jobs:
             ( cd internal/e2e && gotestsum --format standard-verbose --raw-command -- \
                 go tool test2json -t -p e2e "$E2E_BIN" -test.run "$PAT" -test.v -test.timeout 18m )
           fi
+      # RECORD THE SHARD'S VERDICT for the off-machine `verify` job. These steps
+      # run on FAILURE too, so a shard that ran its tests always leaves a
+      # marker; a shard whose RUNNER was reclaimed never gets here and leaves
+      # none. That absence is the signal `verify` turns into an error — it is
+      # the only way to distinguish a reclaim from a test failure, since a dead
+      # runner executes no further steps whatever their condition.
+      #
+      # `!cancelled()` rather than `always()`: this repo cancels runs routinely
+      # (cancel-in-progress on the workflow, plus cancel-on-merge.yml), and
+      # under `always()` a cancelled shard would record the literal outcome
+      # `cancelled`, which `verify` would then report as a real test failure.
+      # `verify` carries the matching guard, so on cancellation neither side
+      # runs and no spurious verdict is produced.
+      - name: record shard outcome
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p shard-outcome
+          echo '${{ steps.run.outcome }}' > "shard-outcome/${{ matrix.host }}-${{ matrix.shard }}"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: shard-outcome-${{ matrix.host }}-${{ matrix.shard }}
+          path: shard-outcome/
+          retention-days: 1
+
+  # ENFORCE THE SHARD RESULTS (#5912 item 1). Runs on a machine of its own so a
+  # reclaimed shard cannot suppress its own verdict, and on failure too so it
+  # still reports when `test` comes back red. The strict check lives here rather
+  # than in the shards because the x86 shards carry `continue-on-error` (see the
+  # note on that flag): without this job, a real `TestSelfHost*X86_64` failure
+  # turns NO lane red.
+  #
+  # Missing-marker policy: fatal by default. Flip
+  # FERN_CI_TOLERATE_VANISHED_SHARDS to "1" below to downgrade a vanished shard
+  # (runner reclaim / OOM-kill / job timeout) to a reported-but-nonfatal note;
+  # a shard that actually RAN and failed stays fatal either way.
+  verify:
+    needs: [gate, test]
+    # `needs.test.result != 'skipped'` keeps this quiet when `test` never ran at
+    # all (a `build` failure cascades through `needs`): that is already red at
+    # its source, and reporting all 28 shards "vanished" on top of it would bury
+    # the real error. `!cancelled()` matches the recording steps' guard — see
+    # the note there for why `always()` would manufacture false failures here.
+    if: ${{ !cancelled() && needs.gate.outputs.skip != 'true' && needs.test.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      FERN_CI_TOLERATE_VANISHED_SHARDS: "0"
+    steps:
+      - uses: actions/checkout@v4
+      # continue-on-error: download-artifact@v4 hard-fails when its pattern
+      # matches nothing (every shard reclaimed, say). Let it pass so the
+      # verifier below reports the real, legible "VANISHED" list instead of an
+      # opaque "unable to find any artifacts".
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: shard-outcome-*
+          path: shard-outcomes
+          merge-multiple: true
+      # Shard counts are kept in step with the matrix by
+      # TestSelfHostWorkflowShardCountsMatchVerifyExpectations (internal/sourcelint):
+      # adding a shard here without updating the matrix (or vice versa) fails
+      # that unit test rather than silently narrowing what gets enforced.
+      - name: verify every shard reported success
+        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=20 aarch64=8

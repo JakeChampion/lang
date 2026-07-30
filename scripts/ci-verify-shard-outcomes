@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# ci-verify-shard-outcomes — assert every expected CI shard reported a result.
+#
+# Usage: ci-verify-shard-outcomes DIR HOST=NSHARD [HOST=NSHARD ...]
+#
+# DIR holds one marker file per shard, named `<host>-<shard>`, whose contents
+# are that shard's GitHub Actions step outcome (`success` / `failure` / …).
+# For every host, shards 0..NSHARD-1 must each have a marker reading
+# `success`; anything else is reported and fails the run.
+#
+# WHY THIS EXISTS — a shard cannot be trusted to report its own death.
+# The x86 self-host shards carry `continue-on-error` because the runner pool
+# intermittently reclaims them mid-run (exit 143, "runner received a shutdown
+# signal", no test failure). But `continue-on-error` cannot tell a reclaim from
+# an assertion failure, so it absorbed BOTH: a real regression on any
+# `TestSelfHost*X86_64` test turned no lane red, because those tests `t.Skip`
+# on aarch64 (they need `qemu-x86_64`, which that lane does not install) and
+# were tolerated on the lane where they actually run. #5901 shipped exactly
+# that way — a `dedupe_weak_defs` regression segfaulted the self-host-compiled
+# interpreter on any integer literal, failing 100 of 104 subtests in
+# TestSelfHostInterpDriverX86_64, with every lane green.
+#
+# The fix has to run OFF the shard's machine. A reclaimed runner is gone: no
+# later step on it executes, not even `if: always()`, so no in-job guard can
+# distinguish "my tests failed" from "my host vanished". Marker files invert
+# it — a shard that finished its tests leaves a verdict behind, so:
+#
+#   * marker says `success`  → the shard ran its slice and passed.
+#   * marker says otherwise  → REAL test failure. Always fatal.
+#   * marker absent          → the shard never reached its record step: runner
+#                              reclaim, OOM-kill, or job timeout. Fatal too,
+#                              because a silently missing shard is precisely
+#                              how the #5901 regression stayed invisible.
+#
+# The absent case is the one with a policy dial, since a stochastic reclaim
+# becomes a red build someone has to re-run: set
+# FERN_CI_TOLERATE_VANISHED_SHARDS=1 to report vanished shards without
+# failing. Failures are ALWAYS fatal — that half has no downside and is the
+# gap #5912 item 1 was filed for.
+
+set -euo pipefail
+
+DIR="${1:?usage: ci-verify-shard-outcomes DIR HOST=NSHARD [HOST=NSHARD ...]}"
+shift
+[ "$#" -gt 0 ] || {
+  echo "ci-verify-shard-outcomes: no HOST=NSHARD expectations given" >&2
+  exit 2
+}
+
+tolerate_vanished="${FERN_CI_TOLERATE_VANISHED_SHARDS:-0}"
+
+failed=()   # shard reported a non-success outcome
+vanished=() # shard left no marker at all
+ok=0
+
+for spec in "$@"; do
+  case "$spec" in
+    *=*) ;;
+    *)
+      echo "ci-verify-shard-outcomes: expectation '$spec' is not HOST=NSHARD" >&2
+      exit 2
+      ;;
+  esac
+  host="${spec%%=*}"
+  nshard="${spec#*=}"
+  case "$nshard" in
+    '' | *[!0-9]*)
+      echo "ci-verify-shard-outcomes: '$spec' has a non-numeric shard count" >&2
+      exit 2
+      ;;
+  esac
+
+  for ((s = 0; s < nshard; s++)); do
+    marker="$DIR/$host-$s"
+    if [ ! -f "$marker" ]; then
+      vanished+=("$host shard$s")
+      continue
+    fi
+    # trim whitespace/newline the recording step may leave behind
+    outcome="$(tr -d '[:space:]' <"$marker")"
+    if [ "$outcome" = "success" ]; then
+      ok=$((ok + 1))
+    else
+      failed+=("$host shard$s (${outcome:-empty})")
+    fi
+  done
+done
+
+echo "shard outcomes: $ok passed, ${#failed[@]} failed, ${#vanished[@]} vanished"
+
+for f in ${failed+"${failed[@]}"}; do
+  echo "FAILED: $f — real test failure, read the shard's log" >&2
+done
+for v in ${vanished+"${vanished[@]}"}; do
+  echo "VANISHED: $v — no outcome reported (runner reclaim, OOM-kill, or timeout)" >&2
+done
+
+if [ ${#failed[@]} -gt 0 ]; then
+  exit 1
+fi
+
+if [ ${#vanished[@]} -gt 0 ]; then
+  if [ "$tolerate_vanished" = "1" ]; then
+    echo "tolerating ${#vanished[@]} vanished shard(s): FERN_CI_TOLERATE_VANISHED_SHARDS=1" >&2
+    exit 0
+  fi
+  echo "a vanished shard ran NO tests — re-run the job, or set FERN_CI_TOLERATE_VANISHED_SHARDS=1 to tolerate" >&2
+  exit 1
+fi
+
+echo "all expected shards reported success"
