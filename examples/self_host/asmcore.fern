@@ -123,7 +123,14 @@ pub struct EmitState {
     // (a token constructed in lexer matches in parser). Empty / unused on the
     // whole-program (str_ns == "") path, which keeps interning shapes as ordinary
     // string literals (byte-identical).
-    shape_lits: string[]
+    shape_lits: string[],
+    // ir_runtime: set by the arm64 IR emit paths so emit_runtime_fern_fn lowers
+    // its Fern runtime helpers through the IR selector (emit_function_via_ir)
+    // instead of the AST emit_function — the last coupling of the arm64 IR path
+    // to the AST emitter (#3457 slice 4a). Default false: the AST path
+    // (asm_arm64.emit_module's fallback, and x86, which never reads this) keeps
+    // the AST emit_function, so x86 stays byte-identical.
+    ir_runtime: boolean
 }
 
 pub function new_state(): EmitState {
@@ -163,7 +170,8 @@ pub function new_state(): EmitState {
         // (byte-identical to the pre-per-module emitter). Per-module unit emit
         // sets this to keep each module's `.rodata` pool collision-free.
         str_ns: "",
-        shape_lits: []
+        shape_lits: [],
+        ir_runtime: false
     };
 }
 

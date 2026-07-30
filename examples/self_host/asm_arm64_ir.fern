@@ -27,6 +27,7 @@ import "./util";
 import "./ir";
 import "./irlower";
 import "./asm_ir";
+import "./lexer";
 
 // fr_ldr / fr_str load/store `reg` at the x29-relative frame offset `off`
 // (always <= 0 — locals live below the frame pointer). Inlined copies of
@@ -1523,6 +1524,62 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitSt
 // depend only on asmcore / irlower / util / asm_ir — so they live here in the
 // IR selector, mirroring the x86 asm_ir.emit_ir_struct_drop_one layout, not in
 // the AST emitter asm_arm64.fern that #3457 deletes.
+// emit_ir_runtime_fern_fn is the arm64 sibling of asm_ir.emit_ir_runtime_fern_fn:
+// a runtime helper written in Fern (an asmcore.rt_src_* body) is lowered through
+// the IR selector (emit_function_via_ir) rather than the AST emit_function that
+// asm_arm64.emit_runtime_fern_fn uses. This is what lets the arm64 IR path emit
+// its Fern runtime helpers WITHOUT the AST emitter (#3457 slice 4a) — the
+// remaining transitive coupling of emit_module_ir_unit_arm64 to asm_arm64.fern.
+// The helper bodies are self-contained (fully annotated, call no other helper),
+// so the per-helper side-tables computed over the helper's own funcs suffice.
+// Byte-equivalence with the AST path is NOT expected (emit_function and
+// emit_function_via_ir select different instructions for the same source) — the
+// arm64 differential + fixpoint gate this, not the byte-identity gate.
+pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], s: asmcore.EmitState): asmcore.EmitState {
+    var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
+    var fns: parser.FuncDecl[] = m.funcs;
+    var bparams: string[] = irlower.borrowable_params_interproc(fns);
+    var csparams: string[] = irlower.consume_safe_params_interproc(fns, bparams);
+    var arf: string[] = asm_ir.array_ret_fns_of(fns);
+    var srf: string[] = irlower.str_ret_fns_of(fns);
+    var sarf: string[] = irlower.strarr_ret_fns_of(fns);
+    var amf: string[] = irlower.arr_method_fns_of(fns);
+    var orf: string[] = irlower.opt_ret_fns_of(fns);
+    var irf: string[] = irlower.i64_ret_fns_of(fns);
+    var trf: string[] = irlower.tuple_ret_fns_of(fns);
+    var srtf: string[] = irlower.struct_ret_fns_of(fns, all_structs);
+    var mrtf: string[] = irlower.map_ret_fns_of(fns);
+    var frf: string[] = irlower.f64_ret_fns_of(fns);
+    var farf: string[] = irlower.f64arr_ret_fns_of(fns);
+    var iarf: string[] = irlower.i64arr_ret_fns_of(fns);
+    var fps: string[] = irlower.fn_param_sigs_of(fns, all_structs);
+    var cfs: string[] = irlower.closure_and_fnptr_fns_of(fns, all_structs);
+    var cnf: string[] = irlower.const_fns_of(fns);
+    var frsf: string[] = irlower.fresh_struct_ret_fns_of(fns, all_structs);
+    var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(fns, all_structs);
+    var sfrf: string[] = irlower.str_fresh_ret_fns_of(fns);
+    var ofrf: string[] = irlower.opt_fresh_ret_fns_of(fns, s.struct_decls);
+    var sfot: string[] = irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls);
+    var tfrf: string[] = irlower.tuple_fresh_ret_fns_of(fns);
+    var fnames: string[] = irlower.fn_names_of(fns);
+    var lit0: i32 = s.string_lits.len();
+    var i: i32 = 0;
+    while (i < fns.len()) {
+        s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(fns, all_structs), cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        i = i + 1;
+    }
+    if (s.string_lits.len() > lit0) {
+        s = s.write("    .section .rodata\n");
+        var li: i32 = lit0;
+        while (li < s.string_lits.len()) {
+            s = s.write(asm_ir.str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
+            li = li + 1;
+        }
+        s = s.write("    .text\n");
+    }
+    return s;
+}
+
 // emit_arm64_reclaim_drop_bodies emits this unit's per-type __field_reclaim_<T>
 // + __struct_drop_<T> helper bodies (#3457), `.weak` (link-deduped across units).
 // Called by BOTH arm64 IR emit paths — emit_module_ir_unit_arm64 (multi-unit)
