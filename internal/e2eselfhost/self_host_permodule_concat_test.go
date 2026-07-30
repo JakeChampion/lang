@@ -166,15 +166,32 @@ func TestSelfHostPerModuleConcatX86_64(t *testing.T) {
 // checks. Keeping it means a future regression in the arm64 unit path's
 // runtime-helper symbols fails here instead of silently going green.
 //
-// The DRIVER runs on the host (x86-64) and cross-emits with `-target arm64`; only
-// the emitted program needs the aarch64 toolchain, so this skips on a host
-// without it rather than requiring an arm64 runner.
+// Two host shapes, and getting the gating right is what makes this run in CI at
+// all. The DRIVER must be executable on the host (it resolves argv paths); the
+// emitted PROGRAM must be executable for arm64. So:
+//
+//   - native arm64 host (the aarch64 CI lane, and Apple Silicon): one toolchain
+//     does both, and qemu is empty because nothing needs emulating.
+//   - x86 host with the aarch64 cross toolchain: the host gcc builds the driver,
+//     the cross gcc builds the program, qemu runs it.
+//
+// The first version of this test required x86_64Tooling unconditionally, which
+// silently skipped it EVERYWHERE: on x86 CI shards the cross toolchain is absent
+// (`gcc="" qemu=""`), and on the aarch64 lane x86_64Tooling returns a qemu-x86_64
+// runner, tripping the native-only guard. A PR whose whole point is that the
+// arm64 concat is link-verified would have had that verified nowhere. Gate on the
+// arm64 toolchain and derive the host compiler from it instead.
 func TestSelfHostPerModuleConcatArm64(t *testing.T) {
-	hostGcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("file-loading driver test runs only natively (argv paths)")
+	armGcc, qemu := arm64Tooling(t) // skips when no arm64 toolchain is available
+	hostGcc := armGcc
+	if len(qemu) != 0 {
+		// Cross-host: armGcc cannot produce a host-runnable driver.
+		var runner []string
+		hostGcc, runner = x86_64Tooling(t)
+		if len(runner) != 0 {
+			t.Skip("driver must run natively (argv paths); host is neither arm64 nor x86-64")
+		}
 	}
-	armGcc, qemu := arm64Tooling(t) // skips when the cross toolchain is absent
 	dir, mmr := buildConcatDriver(t, hostGcc)
 	entryPath, _ := writeConcatFixture(t, dir)
 
