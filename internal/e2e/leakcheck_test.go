@@ -1170,3 +1170,137 @@ func TestArm64LeakCheckEnumStringPayloadBox(t *testing.T) {
 		})
 	}
 }
+
+// `n.to_string()` leaked one heap buffer per call (#5931) — pervasive, since
+// `core/int.int_to_string` / `__int_to_string_u64` back the `std/i32` /
+// `std/i64` / `std/u32` / `std/u64` method wrappers and
+// `int_to_string_radix` backs `to_hex` / `to_binary` / `to_rgb_hex`.
+//
+// All three helpers pack their digits into a `__alloc_u8(n_bytes)` output
+// buffer whose size is COMPUTED, and rhsTainted's generic any-arg-tainted
+// rule read the tainted scalar byte count as evidence the buffer might alias
+// something: `__alloc_u8(16)` (literal arg, untainted) was freeEligible while
+// `__alloc_u8(n_bytes)` was not, so the buffer was never dropped.
+// `string_from_bytes_unchecked` always COPIES its input — into an inline-
+// tagged register value at <= 7 bytes, into a fresh rc1 heap buffer above —
+// so the input buffer is dead at the return and must be reclaimed.
+//
+// Pinned by a FULL reclaim (allocs == frees, live_bytes == 0) plus the loop's
+// value: before the fix `to_string` freed 346 of 545 blocks and the radix
+// helper 177 of 295. The value checks are the over-release half of the
+// contract — a radix buffer freed while its string still needed it would show
+// as a wrong exit code, not as a leak. The third leg (to_rgb_hex) asserts the
+// value only; see its own comment for the #5942 residual it composes in.
+const toStringReclaimSrc = `import "std/i32";
+import "std/i64";
+import "std/u64";
+function main(): i32 {
+    var t: i32 = 0;
+    var k: i32 = 0;
+    while (k < 50) {
+        var s: string = k.to_string();
+        var u: string = ((k as i64) * 1000000007).to_string();
+        var v: string = ((k as u64) * (1234567891 as u64)).to_string();
+        var w: string = (k * 1234567).to_binary();
+        t = t + s.len() + u.len() + v.len() + w.len();
+        k = k + 1;
+    }
+    if (t == 2378) { return 0; }
+    return 1;
+}`
+
+// int_to_string_radix's own output buffer, both signs (the negative arm takes
+// the `out_len = k + 1` path), read back byte by byte so an over-release
+// corrupts the exit code.
+const radixReclaimSrc = `import "std/i32";
+import "core/int";
+function main(): i32 {
+    var acc: i32 = 0;
+    var k: i32 = 1;
+    while (k < 60) {
+        var h: string = int.int_to_string_radix(k * 7919, 16);
+        var b: string = int.int_to_string_radix(0 - (k * 7919), 2);
+        var i: i32 = 0;
+        while (i < h.len()) { acc = (acc * 31 + (h[i] as i32)) % 100003; i = i + 1; }
+        i = 0;
+        while (i < b.len()) { acc = (acc * 31 + (b[i] as i32)) % 100003; i = i + 1; }
+        k = k + 1;
+    }
+    return acc % 251;
+}`
+
+// to_rgb_hex — the shape the *ast.Binary case in rhsTainted still cites as
+// its over-release witness. Untainting the ALLOCATOR rather than the scalar
+// size expression keeps the VALUE right, which is all this leg asserts.
+//
+// It deliberately does NOT assert a full reclaim, because `to_rgb_hex`'s body
+// chains its intermediates — `r.to_hex().pad_start(2, "0")`, three times, then
+// concatenated — and a fresh string temp handed to a string-RETURNING call is
+// a separate, pre-existing safe-leak (#5942): the stage-(b) arg-temp reclaim
+// is gated on `resultCannotAliasArg`, and `pad_start` really can return its
+// receiver (`if (sl >= n) { return s; }`), so dec'ing after the call would be
+// a UAF. Binding the intermediate to a `var` reclaims it on both backends.
+//
+// That leak is invisible on x86-64 here only by accident: the hex pieces are
+// <= 7 bytes, so the single-word ABI keeps them SSO-inline and there is no
+// block to lose. arm64's two-word strings heap-allocate them, so the same
+// source reports allocs=542 frees=388. This fix still moves arm64 from
+// frees=234 to frees=388; the residual is #5942's, not this one's.
+const rgbHexReclaimSrc = `import "std/i32";
+function main(): i32 {
+    var acc: i32 = 0;
+    var k: i32 = 1;
+    while (k < 40) {
+        var s: string = (k * 66049).to_rgb_hex();
+        var i: i32 = 0;
+        while (i < s.len()) { acc = (acc * 31 + (s[i] as i32)) % 100003; i = i + 1; }
+        k = k + 1;
+    }
+    return acc % 251;
+}`
+
+var toStringReclaimCases = []struct {
+	name string
+	src  string
+	exit int
+	// fullReclaim: assert allocs == frees / live == 0. False only for
+	// to_rgb_hex, whose body also trips the separate #5942 arg-temp leak; that
+	// leg still pins the exit VALUE, which is the over-release half.
+	fullReclaim bool
+}{
+	{"to_string-i32-i64-u64-binary", toStringReclaimSrc, 0, true},
+	{"int_to_string_radix", radixReclaimSrc, 143, true},
+	{"to_rgb_hex", rgbHexReclaimSrc, 29, false},
+}
+
+func checkToStringReclaim(t *testing.T, stderr string, code, wantExit int, fullReclaim bool) {
+	t.Helper()
+	if code != wantExit {
+		t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, wantExit)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs == 0 {
+		t.Fatalf("no allocations recorded — fixture drift")
+	}
+	if fullReclaim && (frees != allocs || live != 0) {
+		t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+	}
+}
+
+func TestX86_64LeakCheckToStringReclaim(t *testing.T) {
+	for _, tc := range toStringReclaimCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckX86_64(t, tc.src)
+			checkToStringReclaim(t, stderr, code, tc.exit, tc.fullReclaim)
+		})
+	}
+}
+
+func TestArm64LeakCheckToStringReclaim(t *testing.T) {
+	for _, tc := range toStringReclaimCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckArm64(t, tc.src)
+			checkToStringReclaim(t, stderr, code, tc.exit, tc.fullReclaim)
+		})
+	}
+}

@@ -1462,10 +1462,16 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// (`__alloc_u8(out_len)`, out_len from `k + 1`) made buffers eligible
 		// that the escape/move analysis can't prove safe to reclaim — it
 		// over-released int_to_string_radix's result buffer (to_rgb_hex
-		// returned the wrong hex). The win is in the NumberLit case above
-		// (literal-sized temps); the scalar-binary case is marginal — most
-		// such buffers are `as usize`-threaded or moved into the return — and
-		// not worth the over-release risk.
+		// returned the wrong hex).
+		//
+		// The dynamically-sized-BUFFER half of that motivation is gone: the
+		// `__alloc_u8` case above now untaints the ALLOCATOR instead, which
+		// reaches every `__alloc_u8(<computed>)` — int_to_string_radix
+		// included, reclaimed in full with the right hex (#5931,
+		// TestX86_64LeakCheckToStringReclaim/to_rgb_hex) — without untainting
+		// the size expression itself or anything else derived from it. What
+		// remains here is the general scalar-binary untaint, which is
+		// unexercised by any current shape and stays conservative.
 		return !x.IsStringConcat
 	case *ast.Call:
 		// Slice 1b: under EnumRcPayloads a variant constructor is a FRESH
@@ -1528,6 +1534,24 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// helper's non-retaining copy then let both walk-drops release
 				// the same elements (#3457).
 				return len(x.Args) > 0 && b.rhsTainted(x.Args[0], tainted)
+			case "__alloc_u8":
+				// A fresh zero-filled rc=1 buffer straight from the runtime
+				// allocator (or the static empty sentinel for n==0, which
+				// every dec no-ops on). Its only argument is a SCALAR byte
+				// count, so the result cannot alias it however tainted that
+				// count is — the generic any-arg-tainted rule below said
+				// otherwise and left every dynamically-sized buffer
+				// permanently ineligible: `__alloc_u8(16)` (literal, untainted)
+				// reclaimed but `__alloc_u8(n_bytes)` did not, leaking one
+				// buffer per call out of int_to_string / __int_to_string_u64 /
+				// int_to_string_radix — i.e. out of every `n.to_string()`
+				// (#5931). Untainting the ALLOCATOR is narrower than untainting
+				// the scalar-binary size expression itself (see the *ast.Binary
+				// case below): the buffer stays protected by the CastExpr
+				// escape taint whenever the function threads it as a raw
+				// `buf as usize` pointer, and by the escape / move analysis
+				// whenever it flows into a container or out through a return.
+				return false
 			case "random_bytes":
 				// random_bytes returns a string the two-word backends
 				// (arm64 / wasm) allocate as RAW n bytes with NO rc header
