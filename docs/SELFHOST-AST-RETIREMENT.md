@@ -731,7 +731,24 @@ representative subset splits it three ways:
   * A module pruned to ZERO reachable functions read as ineligible and aborted the whole concat (`core/map` in an HTTP program). Empty units are skipped.
   * `all_runtime_need_roots` was NOT the closed set it claims to be: 27 roots were missing — every socket / readiness / filesystem / process / stdin / wide-int-stringifier helper — so library units linked against undefined `__fern_tcp_send` etc. Nothing had noticed because the only program ever built per-module is the compiler, which marks none of them.
   * **The rescue WAS gated, and no longer is.** Diverting *every* over-budget program swept in the self-host CHECKER driver (built by this same driver, and in the window), routing it through IR and straight into the two IR-path over-frees documented below. Both are now fixed, the gate (`needs_ir_only_builtin` + its builtin-name table) is DELETED, and every over-budget program in the window routes per-module IR. `TestSelfHostCheckerCodesX86_64` / `TestSelfHostCheckerDifferentialX86_64` are now the pin: they build the checker driver through this driver, so they compile the checker on the IR path and fail loudly if either over-free comes back.
-  * **arm64 needs none of this.** The driver's arm64 branch returns `asm_arm64.emit_module` directly, with none of the budget arithmetic or concat rescue the x86 branch carries — which reads like an unconditional drop to the AST emitter, and is not. `emit_module` tries `all_eligible` first, and unlike x86 the arm64 merged IR path has **no 512-function budget**, so it already takes the over-budget programs the x86 path has to rescue. Measured on the flagship handler, on `http_parse_request`, and on a trivial program: all three route IR on both targets. arm64 emits the whole closure rather than the treeshaken subset (~2.5 MB vs ~430 KB), which is a size difference, not a routing one. Pinned by `TestSelfHostOverBudgetRoutesIRArm64` — it only needs the x86-built driver, since asserting the routing reads the emitted assembly.
+  * **~~arm64 needs none of this.~~ It does — this bullet's central clause is FALSE (measured 2026-07-30).** The bullet used to read: "`emit_module` tries `all_eligible` first, and unlike x86 the arm64 merged IR path has **no 512-function budget**, so it already takes the over-budget programs the x86 path has to rescue." There is no such asymmetry. The 512-function budget lives in `eligible_core_known_main` (`asm_ir.fern:3248`), which arm64 reaches through the very `asm_ir.all_eligible` call this bullet cites — one gate, both backends. (That gate's own comment is stale in the other direction: it justifies the cap by #3425, which is closed.)
+
+    Measured on the `TestSelfHostPerModuleConcat*` fixture (7 sibling modules × 100 functions, 701 raw merged funcs) with `-target arm64` and the arm64 rescue disabled by raising its lower bound out of range:
+
+    | | `.L` labels | of which `.Lir` | per-unit pools | links + runs |
+    | --- | ---: | --- | --- | --- |
+    | rescue off | 733 | **0** | no | yes, exit 0 |
+    | rescue on | — | yes | yes | yes, exit 0 |
+
+    Zero `.Lir` among 733 labels is the AST emitter. It links and runs correctly, so the fallback is sound — it is simply AST. The arm64 AST emitter therefore *was* load-bearing for this band, which is what #5937 claimed and this bullet denied.
+
+    Two method notes, both of which cost time to rediscover:
+    - **Give the fixture BRANCHES before classifying by labels.** The first measurement used the stock fixture, whose bodies are `return x + N` — straight-line code emits no labels at all, so "no `.Lir`" was uninformative. Adding an `if` to each body is what made the 733-vs-0 split readable.
+    - **`TestSelfHostOverBudgetRoutesIRArm64` cannot tell the two IR routes apart** once the rescue exists: it asserts `.Lir` is present, which the per-module concat satisfies as readily as the merged path. It is a not-AST assertion, not a which-IR-path one.
+
+    What survives from the original bullet: its *observations*. The two stdlib programs (the flagship handler, `http_parse_request`) do route IR on arm64. Why they clear a gate the 701-function fixture does not is **not established** — do not re-derive it from this bullet's reasoning, which is the part that was wrong.
+
+    The size note also stands: arm64 emits the whole closure rather than the treeshaken subset (~2.5 MB vs ~430 KB).
   * A fn value handed to a SIBLING module's function was passed unboxed while the callee always dereferenced a box (#5698) — the caller's boxing decision looked the callee up in `mod.funcs`. `irlower.lift_lambdas_view` threads a whole-program signature view through that lookup; an empty view keeps every other caller byte-identical.
 
   Net: the flagship edge-handler program (`std/http` + `std/tcp` + a `handle` function, ~925 merged functions) is compiled by the self-hosted compiler and **serves real HTTP** (`TestSelfHostHttpHandlerServesX86_64`).
