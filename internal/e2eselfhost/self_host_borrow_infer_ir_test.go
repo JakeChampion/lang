@@ -102,6 +102,6 @@ function main(): i32 {
     var s: i32 = 0;
     var f: i32 = 0;
     while (f < 1000) { s = s + once(); f = f + 1; }
-    return (s - 5000) + __fern_rc_underflow_count();
+    return (s - 5000) + __rc_underflow();
 }`, "borrow_infer_cycle_sound", 0, "")
 }

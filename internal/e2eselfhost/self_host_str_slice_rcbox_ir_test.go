@@ -68,9 +68,9 @@ func TestSelfHostStrSliceRcBoxIRX86_64(t *testing.T) {
 
 	// SAFETY-NET CHURN: 2,000,000 trim + slice iterations. trim() lowers to s[start:end]
 	// (a slice view); each iteration builds a fresh immortal view. A view is never freed
-	// (rc=-1), so no double-free can tick __fern_rc_underflow_count(); the shared source
+	// (rc=-1), so no double-free can tick __rc_underflow(); the shared source
 	// buffer is never reclaimed out from under a live view. r = "mid" len 3, so bad stays
 	// 0, underflow 0 -> exit 0.
-	run(t, `function churn(n: i32): i32 { var s: string = "  mid  "; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var r: string = s.trim(); if (r.len() != 3) { bad = 1; } var sl: string = s[2:5]; if (sl.len() != 3) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+	run(t, `function churn(n: i32): i32 { var s: string = "  mid  "; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var r: string = s.trim(); if (r.len() != 3) { bad = 1; } var sl: string = s[2:5]; if (sl.len() != 3) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"slice-trim-churn-no-underflow", 0, true)
 }

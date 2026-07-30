@@ -24,7 +24,7 @@ import (
 // over-release detector (__rc_underflow() → 99), and admission/exclusion by an
 // asm-shape assertion on the __fn___fern_str_arr_free CALL site. All probes use
 // the IR-path builtins (__rc_underflow / __heap_bump_bytes) so the program
-// stays on the IR path — the AST-path spelling __fern_rc_underflow_count would
+// stays on the IR path — the AST-path spelling __rc_underflow would
 // silently bail the function to the legacy emitter.
 func TestSelfHostStrArrElemReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

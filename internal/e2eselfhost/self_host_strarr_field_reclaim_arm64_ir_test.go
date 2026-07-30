@@ -58,7 +58,7 @@ func TestSelfHostStrArrFieldReclaimIRArm64(t *testing.T) {
 	// and the deep-free call present in the emitted asm.
 	run(t, `struct Diag { code: i32, notes: string[] }
 function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var d: Diag = Diag { code: i, notes: ["alpha", "beta" + "x"] }; if (d.notes.len() != 2) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(300000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(300000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"strarr-field-reclaim-arm64", 0, "bl __fn___fern_str_arr_free")
 
 	// STRING-BEFORE-ARRAY field order (the x10-staleness regression): R's
@@ -68,6 +68,6 @@ function main(): i32 { var v: i32 = churn(300000); if (__fern_rc_underflow_count
 	// underflow detector at scale. 300k cycles balanced → exit 0.
 	run(t, `struct R { name: string, items: i32[] }
 function churn(n: i32): i32 { var pre: string = "aa"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var r: R = R { name: pre + "x", items: [1, 2, 3] }; if (r.name.len() != 3) { bad = 1; } if (r.items.len() != 3) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(300000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(300000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"str-before-array-field-order-arm64", 0, "")
 }

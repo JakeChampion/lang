@@ -19,7 +19,7 @@ import (
 // dropped every iteration. WITHOUT the field-drop the fresh name box leaks each
 // iteration and millions of iterations exhaust the heap (SIGKILL 137); WITH it
 // the heap stays flat. A spurious double-free would instead tick
-// __fern_rc_underflow_count() -> exit 99. Exit 0 proves the field is reclaimed
+// __rc_underflow() -> exit 99. Exit 0 proves the field is reclaimed
 // AND balanced (no over-release) over millions of build/drop cycles.
 func TestSelfHostStructStrFieldReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -59,7 +59,7 @@ func TestSelfHostStructStrFieldReclaimIRX86_64(t *testing.T) {
 	// cycles stay flat (name freed) → exit 0; a leak would SIGKILL (137).
 	run(t, `struct R { name: string, items: i32[] }
 function churn(n: i32): i32 { var pre: string = "aa"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var r: R = R { name: pre + "x", items: [1, 2, 3] }; if (r.name.len() != 3) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"struct-str-field-reclaim-churn", 0)
 
 	// NON-FRESH (aliased) string field: `name` is bound from a live local `nm`,
@@ -69,7 +69,7 @@ function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_coun
 	// (r.name reads len 3 while nm is still live). Exit 0.
 	run(t, `struct R { name: string, items: i32[] }
 function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var nm: string = "abc"; var r: R = R { name: nm, items: [1] }; if (r.name.len() != 3) { bad = 1; } if (nm.len() != 3) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"struct-str-field-aliased-balanced", 0)
 
 	// FUNCTIONAL-UPDATE base-copy: `r2 = R { ...r1, items: [...] }` copies `name`
@@ -81,7 +81,7 @@ function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_coun
 	// the pre-fix double-free would tick the underflow counter → exit 99.
 	run(t, `struct R { name: string, items: i32[] }
 function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var nm: string = "abc"; var r1: R = R { name: nm, items: [1] }; var r2: R = R { ...r1, items: [2, 3] }; if (r2.name.len() != 3) { bad = 1; } if (r1.name.len() != 3) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"struct-str-field-base-copy-balanced", 0)
 
 	// NESTED string-only struct (deep-drop): `B { name: string }` has no rc-array
@@ -94,7 +94,7 @@ function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_coun
 	run(t, `struct B { name: string }
 struct A { inner: B, items: i32[] }
 function churn(n: i32): i32 { var pre: string = "z"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var a: A = A { inner: B { name: pre + "xy" }, items: [1, 2] }; if (a.inner.name.len() != 3) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1500000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(1500000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"nested-string-only-struct-reclaim", 0)
 
 	// STRING[] FIELD (the k_str_arr slice): a struct whose string[] field is
@@ -106,7 +106,7 @@ function main(): i32 { var v: i32 = churn(1500000); if (__fern_rc_underflow_coun
 	// (underflow 0) and correct values → exit 0.
 	run(t, `struct Diag { code: i32, notes: string[] }
 function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var d: Diag = Diag { code: i, notes: ["alpha", "beta" + "x"] }; if (d.notes.len() != 2) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(4000000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(4000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"strarr-field-reclaim-churn", 0)
 
 	// NON-admitted: the string[] field value is a bare IDENT (an alias of a
@@ -114,13 +114,13 @@ function main(): i32 { var v: i32 = churn(4000000); if (__fern_rc_underflow_coun
 	// type keeps the sound leak — xs's element boxes must survive the struct
 	// drop (xs is read after). Value correct, underflow 0.
 	run(t, `struct Diag { code: i32, notes: string[] }
-function main(): i32 { var xs: string[] = ["ab", "cd"]; var d: Diag = Diag { code: 3, notes: xs }; var s: i32 = d.code + xs[0].len() + xs.len(); if (s != 7) { return 90; } if (__fern_rc_underflow_count() != 0) { return 99; } return 0; }`,
+function main(): i32 { var xs: string[] = ["ab", "cd"]; var d: Diag = Diag { code: 3, notes: xs }; var s: i32 = d.code + xs[0].len() + xs.len(); if (s != 7) { return 90; } if (__rc_underflow() != 0) { return 99; } return 0; }`,
 		"strarr-field-aliased-excluded", 0)
 
 	// NON-admitted: an ELEMENT READ (`d.notes[0]`) binds an uncounted alias of
 	// an element box, so the read gate excludes the type — the element must
 	// survive the struct's exit drop. Value correct, underflow 0.
 	run(t, `struct Diag { code: i32, notes: string[] }
-function main(): i32 { var d: Diag = Diag { code: 3, notes: ["alpha", "beta"] }; var n0: string = d.notes[0]; var s: i32 = d.code + d.notes.len() + n0.len(); if (s != 10) { return 90; } if (__fern_rc_underflow_count() != 0) { return 99; } return 0; }`,
+function main(): i32 { var d: Diag = Diag { code: 3, notes: ["alpha", "beta"] }; var n0: string = d.notes[0]; var s: i32 = d.code + d.notes.len() + n0.len(); if (s != 10) { return 90; } if (__rc_underflow() != 0) { return 99; } return 0; }`,
 		"strarr-field-read-excluded", 0)
 }
