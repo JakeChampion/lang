@@ -1111,6 +1111,25 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{},
 	}
+	// __heap_mark(): i64 / __heap_release_to(mark: i64) — one-level arena
+	// checkpoint. Mark captures the bump cursor (plus a freelist-head
+	// snapshot); release_to rewinds to it, reclaiming everything allocated
+	// since in one step. i64, not i32: the cursor is a raw address and the
+	// arena is 16 GiB, so an i32 offset would overflow on exactly the
+	// workload this exists for.
+	//
+	// Releasing is sound only when nothing allocated after the mark is still
+	// reachable — the caller owns that, as with malloc/free. Marks do not
+	// nest (one shadow buffer). Built for the self-host per-module emit,
+	// whose per-unit accumulation otherwise exhausts the arena.
+	c.info.FuncSigs["__heap_mark"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	c.info.FuncSigs["__heap_release_to"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.VoidType{},
+	}
 	// f32_bits(x: f32): i32 — reinterprets a 32-bit float as its
 	// IEEE-754 bit pattern. f32_from_bits is the inverse. The pair
 	// is needed by float formatting routines (extracting sign /

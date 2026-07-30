@@ -349,6 +349,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesHeapBumpBytes {
 		g.emitHeapBumpBytesRuntime()
 	}
+	if g.usesHeapMark {
+		g.emitHeapMarkRuntime()
+	}
 	if g.usesArrPushGrow {
 		g.emitArrPushGrowRuntime()
 	}
@@ -733,6 +736,11 @@ type generator struct {
 	// the bump high-water mark). Set when the IR emits the matching
 	// OpCallDirect; also pulls in the allocator (it reads its cursor).
 	usesHeapBumpBytes bool
+	// usesHeapMark gates the one-level arena checkpoint pair
+	// `__fern_heap_mark` / `__fern_heap_release_to`. Set when the IR emits
+	// either matching OpCallDirect; also pulls in the allocator (the pair
+	// rewinds its cursor and snapshots its freelist heads).
+	usesHeapMark bool
 	// usesArrPushGrow gates `__fern_arr_push_grow` — the Phase 2
 	// helper called by `emitArrayPush` to decide between in-
 	// place mutation (rc==1 + cap available) and copy-into-new-
@@ -917,6 +925,9 @@ func (g *generator) recordUse(target string) {
 	case "__fern_heap_bump_bytes":
 		g.usesHeapBumpBytes = true
 		g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
+	case "__heap_mark", "__heap_release_to":
+		g.usesHeapMark = true
+		g.usesAlloc = true // rewinds __fern_heap_ptr; shadows the freelist heads
 	case "__fern_arr_push_grow":
 		g.usesArrPushGrow = true
 		g.usesAlloc = true
@@ -2393,6 +2404,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_eprint"
 		case "exit":
 			target = "__fern_exit"
+		case "__heap_mark":
+			target = "__fern_heap_mark"
+		case "__heap_release_to":
+			target = "__fern_heap_release_to"
 		case "strbuf_reset":
 			target = "__fern_strbuf_reset"
 		case "strbuf_append":
@@ -4119,6 +4134,12 @@ func (g *generator) emitDataSections() {
 			g.line(".align 8")
 			g.label("__fern_freelist_heads")
 			g.line("\t.space 2048")
+			// Shadow copy for the one-level arena checkpoint
+			// (__fern_heap_mark / __fern_heap_release_to). Not gated on the
+			// mark helpers being used: it is 2 KiB of .bss, and gating it
+			// would couple the alloc BSS layout to an unrelated flag.
+			g.label("__fern_freelist_shadow")
+			g.line("\t.space 2048")
 		}
 	}
 }
@@ -5099,6 +5120,84 @@ func (g *generator) emitHeapBumpBytesRuntime() {
 	g.emit("xor eax, eax")
 	g.emit("ret")
 	g.line(".size __fern_heap_bump_bytes, .-__fern_heap_bump_bytes")
+}
+
+// emitHeapMarkRuntime emits `__fern_heap_mark() -> i64` and
+// `__fern_heap_release_to(mark: i64)` — a one-level arena checkpoint.
+//
+// The pair exists so a batch-shaped workload can reclaim a phase's whole
+// allocation set at once on a bump arena that otherwise never gives memory
+// back: the self-host per-module emit accumulates ~0.4 GB per unit that
+// nothing frees, so emitting ~35 units in one process walks off the end of
+// the 16 GiB arena (__fern_alloc's bounds check, exit 137). Marking before a
+// unit and releasing after writing it out keeps the peak at one unit.
+//
+// Releasing is only sound when NOTHING allocated after the mark is still
+// reachable — the caller owns that invariant, exactly as it owns malloc/free
+// pairing. Two details make the reset safe rather than merely fast:
+//
+//   - The freelist heads are snapshotted, not cleared. A block allocated AND
+//     freed inside the window leaves a head pointing above the mark; after the
+//     cursor rewinds, a later pop and a later bump would both hand out that
+//     same address. Restoring the pre-mark heads drops precisely those
+//     entries, while keeping the ones that predate the mark reusable. An entry
+//     popped during the window is legitimately re-added: whatever was
+//     allocated into it died at the release.
+//   - A pre-mark block freed during the window is forgotten (its head is
+//     restored to the older value). That is a bounded leak, not corruption.
+//
+// One live mark at a time — the shadow is a single fixed buffer, so marks do
+// not nest. mark==0 (taken before the first allocation seeded the cursor) is
+// treated as "no checkpoint" by release_to, so a stray release cannot zero the
+// cursor and hand out the arena base.
+func (g *generator) emitHeapMarkRuntime() {
+	g.line("")
+	g.line(".globl __fern_heap_mark")
+	g.line(".type __fern_heap_mark, @function")
+	g.label("__fern_heap_mark")
+	g.emit("mov rax, [rip + __fern_heap_ptr]")
+	if ast.RcFreeEnabled && g.usesAlloc {
+		// rep movsq clobbers rcx/rsi/rdi. Every other reader of the arena
+		// globals (__fern_heap_bump_bytes) touches only rax, so the emitted
+		// code around a call here may well be holding live values in the
+		// argument registers — restore them rather than assume the SysV
+		// caller-saved rule is what the backend relies on.
+		g.emit("push rcx")
+		g.emit("push rsi")
+		g.emit("push rdi")
+		g.emit("lea rsi, [rip + __fern_freelist_heads]")
+		g.emit("lea rdi, [rip + __fern_freelist_shadow]")
+		g.emit("mov ecx, 256")
+		g.emit("rep movsq")
+		g.emit("pop rdi")
+		g.emit("pop rsi")
+		g.emit("pop rcx")
+	}
+	g.emit("ret")
+	g.line(".size __fern_heap_mark, .-__fern_heap_mark")
+
+	g.line("")
+	g.line(".globl __fern_heap_release_to")
+	g.line(".type __fern_heap_release_to, @function")
+	g.label("__fern_heap_release_to")
+	g.emit("test rdi, rdi")
+	g.emit("jz .Lheap_rel_done") // mark 0 = no checkpoint; leave the cursor alone
+	g.emit("mov [rip + __fern_heap_ptr], rdi") // read the arg before clobbering rdi
+	if ast.RcFreeEnabled && g.usesAlloc {
+		g.emit("push rcx")
+		g.emit("push rsi")
+		g.emit("push rdi")
+		g.emit("lea rsi, [rip + __fern_freelist_shadow]")
+		g.emit("lea rdi, [rip + __fern_freelist_heads]")
+		g.emit("mov ecx, 256")
+		g.emit("rep movsq")
+		g.emit("pop rdi")
+		g.emit("pop rsi")
+		g.emit("pop rcx")
+	}
+	g.label(".Lheap_rel_done")
+	g.emit("ret")
+	g.line(".size __fern_heap_release_to, .-__fern_heap_release_to")
 }
 
 // emitAllocBoxRuntime emits `__fern_alloc_box(size) -> data`

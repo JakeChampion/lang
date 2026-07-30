@@ -11833,6 +11833,33 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __heap_mark() / __heap_release_to(mark) — the one-level arena
+	// checkpoint pair. Same runtime-helper shape as __heap_bump_bytes so each
+	// backend rewinds its own cursor and snapshots its own freelist heads.
+	//
+	// These carry the SOURCE builtin name, not the __fern_ runtime name, and
+	// each backend rewrites it at the call site. That is load-bearing for
+	// release_to: it returns void, and the backends suppress the post-call
+	// operand-stack push via callReturnsVoid, which resolves voidness through
+	// the checker's FuncSigs — keyed by the source name. Emitting the runtime
+	// name here makes that lookup miss, so every release pushes a phantom rax
+	// slot and the operand stack drifts (observed as SIGSEGV on garbage
+	// pointers well past the arena, several units into a checkpointed emit).
+	if id.Name == "__heap_mark" && len(n.Args) == 0 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			b.emit(Op{Kind: OpCallDirect, Str: "__heap_mark", I32: 0})
+			return nil
+		}
+	}
+	if id.Name == "__heap_release_to" && len(n.Args) == 1 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			if err := b.expr(n.Args[0]); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: "__heap_release_to", I32: 1})
+			return nil
+		}
+	}
 	// f64_bits / f64_from_bits: 64-bit cousin of the f32 pair.
 	// Same zero-cost reinterpret on natives; wasm needs the
 	// typed `i64.reinterpret_f64` / `f64.reinterpret_i64` op.
