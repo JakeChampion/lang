@@ -33,6 +33,7 @@ var interpExit = e2eharness.InterpExit
 var langSrcAbs = e2eharness.LangSrcAbs
 var loadCheckMono = e2eharness.LoadCheckMono
 var mustWrite = e2eharness.MustWrite
+var nativeLinkArm64 = e2eharness.NativeLinkArm64
 var runArm64Bin = e2eharness.RunArm64Bin
 var runBin = e2eharness.RunBin
 var runCapture = e2eharness.RunCapture
@@ -44,6 +45,7 @@ var selfHostImportClosure = e2eharness.SelfHostImportClosure
 
 const uuidV4Program = e2eharness.UuidV4Program
 
+var withBuildMemoryMB = e2eharness.WithBuildMemoryMB
 var writeSelfHostAsmProject = e2eharness.WriteSelfHostAsmProject
 var writeSelfHostModloadProject = e2eharness.WriteSelfHostModloadProject
 var x86_64Tooling = e2eharness.X86_64Tooling

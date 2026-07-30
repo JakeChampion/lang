@@ -252,6 +252,69 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-07-30 — the arm64 branch-range wall is gone: the native assembler emits veneers
+
+The 2026-06-28 entry below lifted the `ld` side of the AArch64 ±128 MiB
+`bl`/`b` wall with per-function sections; the **pure-Go assembler** — the
+default for `-target arm64`, no external toolchain — still had the wall,
+because it resolves branches itself and had nothing to fall back on. It
+refused the program outright:
+
+    native assembler: arm64: branch to "__drop_struct_asmcore__EmitState"
+    spans 33891495 instructions — outside the signed 26-bit range
+
+Not one bad commit: the driver's executable segment was 127.5 MB of a
+128 MB limit *before* the addition that tipped it, so essentially any
+growth would have done it. `internal/native/arm64/veneer.go` now does what
+a linker does — plants an `adrp`/`add`/`br x17` trampoline within range of
+the call site and retargets the branch at it, iterating to a fixed point
+because splicing shifts the code after it. Trampolines are grouped into
+islands headed by a hop-over `b`, placed at the ends of `.text` wherever
+the ends can reach (prepending shifts everything uniformly, appending
+shifts nothing), with interior islands only once `.text` outgrows them.
+x17 is AAPCS's IP1, call-clobbered, so nothing live crosses the branch
+that enters a veneer. The Mach-O linker path gets both the veneers and
+the range check it never had (it truncated silently).
+
+`asm_modload_run.fern` — the biggest program in the tree, at 135.6 MB of
+code, 1.4 MB past the span — builds and runs again.
+
+Coverage, because no lane had built this driver for this target (the x86
+self-host shards skip arm64 for want of a cross toolchain, the aarch64
+shards do not build this driver, so CI was green on the commit that broke
+it): `TestSelfHostArm64ModloadNativeBuild` builds it for arm64 and runs
+it, needing no aarch64 toolchain at all since the assembler and linker are
+pure Go. `TestVeneerRealImm26Ceiling` runs a program with a genuinely
+>128 MB span between a call and its callee, and the rest of
+`internal/native/arm64/veneer_test.go` exercises anchoring, dedupe, and
+index remapping against a shortened span.
+
+`FERN_ARM64_VENEER_REACH=<instructions>` shrinks the span the assembler
+assumes, so every ordinary program's calls get veneered and the existing
+arm64 corpus becomes veneer coverage — the check that matters for the
+x17 clobber, since it is the whole emitted-code corpus, not one synthetic
+program, that has to survive a trampoline between caller and callee.
+`TestArm64VeneerForcedReach` builds and runs eight programs that way.
+
+That knob immediately earned itself. Under it, `(0.0 - 2.25).to_string()`
+**hung**: a second veneering pass computes its anchors over the stream
+the first one produced, so it spliced an island *inside* an island — and
+that island's hop-over `b` was a hand-encoded offset, the one thing the
+index remap cannot correct. The hop landed on its own `add x17, x17` and
+fell into `br x17` with a half-built address. The hop-over is a labelled
+fixup now, so it is remapped like every other branch and nesting is
+harmless (control flows through the inner island's hop and back into the
+outer veneer). Guarded by `TestVeneerSecondPassKeepsIslandsIntact` and by
+the `float_to_string` case above, which fails on the pre-fix assembler.
+
+Also closed a verification gap from [#5946](https://github.com/JakeChampion/lang/issues/5946):
+the self-host arm64 `__fern_proc_exec` runtime blob had only ever been
+checked to *assemble*. `TestSelfHostArm64ProcExecRuns` executes it from
+both emitters (`asm_arm64.fern`'s AST path and `asm_arm64_ir.fern`'s IR
+path) — the program execs `/bin/sh -c "exit 9"`, so the exit code proves
+execve ran and argv arrived intact. The Darwin branch (`svc #0x80` /
+BSD 59) still only assembles; there is no macOS runner in that lane.
+
 ### 2026-07-29 — self-host: `.to_string()` on an i64 / u64 receiver, on every backend ([#5826](https://github.com/JakeChampion/lang/issues/5826))
 
 `irlower.fern` had a `to_string` arm for an i32 receiver only, so a wide
