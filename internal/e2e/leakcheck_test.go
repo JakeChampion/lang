@@ -1003,3 +1003,128 @@ func TestArm64LeakCheckCtorRetainedLoopSource(t *testing.T) {
 		})
 	}
 }
+
+// --- Boxed generic enum with a string payload (#5879) ---------------
+//
+// `Option[string]` is heap-boxed, but dropFnNameFor / emitEnumSlotDrop only
+// adopted a substituted generic decl when enumHasPointerPayload said so — and
+// that predicate is built on arrElemIsRcTracked, which deliberately EXCLUDES
+// strings (their retain/release is two-word on wasm + arm64-TwoWordOverride).
+// So an Option[string] read false, kept the generic decl, fell to the flat dec,
+// and its box was never freed: 32 bytes per construction, linear and unbounded.
+//
+// enumHasBoxedPayload answers the narrower question the box_free actually needs
+// ("is this instantiation boxed?") and is kept separate from
+// enumHasPointerPayload, which also selects the drop SHAPE (uniform-branchless
+// vs variant-plan). A scalar instantiation (Option[i32], pair-form, no box)
+// still reads false, so box_free is never emitted for it.
+//
+// The constant-folded fixture is the subject: with the payload folded to a
+// static string the box is the only allocation, so allocs==frees isolates the
+// box exactly. The array fixture is the control — Option[i32[]] always had a
+// pointer payload, so it was never affected.
+const enumStringPayloadBoxSrc = `function main(): i32 {
+    var t: i32 = 0;
+    var k: i32 = 0;
+    while (k < 100) {
+        var st: string = "ab" + "cd";
+        var o = Some(st);
+        t = t + st.len();
+        k = k + 1;
+    }
+    return t % 251;
+}`
+
+const enumArrayPayloadBoxSrc = `function main(): i32 {
+    var t: i32 = 0;
+    var k: i32 = 0;
+    while (k < 100) {
+        var xs: i32[] = [1, 2];
+        var o = Some(xs);
+        t = t + xs[1];
+        k = k + 1;
+    }
+    return t % 251;
+}`
+
+// A scalar instantiation. Guards the other side: enumHasBoxedPayload must keep
+// reading false here, so no box_free is emitted for a shape the variant-plan
+// drop cannot validly free. Asserted on exit code and on accounting being
+// UNCHANGED by the fix, not on being leak-free — measured identical before and
+// after (allocs=100 frees=0 live=1600), i.e. Option[i32] leaks a 16-byte box
+// today, pre-existing and independent of this change. Note that contradicts the
+// surrounding comments' claim that a scalar instantiation is "pair-form, no
+// box": it does allocate. Filed separately rather than pinned as correct here.
+const enumScalarPayloadNoBoxSrc = `function main(): i32 {
+    var t: i32 = 0;
+    var k: i32 = 0;
+    while (k < 100) {
+        var o = Some(k);
+        t = t + 1;
+        k = k + 1;
+    }
+    return t % 251;
+}`
+
+func TestX86_64LeakCheckEnumStringPayloadBox(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		exit int
+	}{
+		{"string-payload-boxed", enumStringPayloadBoxSrc, 149},
+		{"array-payload-boxed", enumArrayPayloadBoxSrc, 200},
+		{"scalar-payload-pairform", enumScalarPayloadNoBoxSrc, 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckX86_64(t, tc.src)
+			if code != tc.exit {
+				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
+			}
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if tc.name == "scalar-payload-pairform" {
+				// Pinned as UNCHANGED, not as clean: this shape leaks a
+				// 16-byte box today (pre-existing, see the fixture comment).
+				// What matters here is that the boxed-payload gate did not
+				// start emitting box_free for it — that would show up as a
+				// crash or a bogus extra free, both of which move these
+				// numbers.
+				if allocs != 100 || frees != 0 || live != 1600 {
+					t.Errorf("got allocs=%d frees=%d live=%d, want 100/0/1600 (unchanged pre-existing behaviour); a CHANGE here means the boxed gate started firing on a scalar instantiation", allocs, frees, live)
+				}
+				return
+			}
+			if allocs == 0 {
+				t.Fatalf("no allocations recorded — fixture drift")
+			}
+			if frees != allocs || live != 0 {
+				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+			}
+		})
+	}
+}
+
+func TestArm64LeakCheckEnumStringPayloadBox(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		exit int
+	}{
+		{"string-payload-boxed", enumStringPayloadBoxSrc, 149},
+		{"array-payload-boxed", enumArrayPayloadBoxSrc, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckArm64(t, tc.src)
+			if code != tc.exit {
+				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
+			}
+			allocs, frees, live := parseLeakCheckLine(t, stderr)
+			if allocs == 0 {
+				t.Fatalf("no allocations recorded — fixture drift")
+			}
+			if frees != allocs || live != 0 {
+				t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+			}
+		})
+	}
+}

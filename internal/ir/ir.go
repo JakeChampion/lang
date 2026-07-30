@@ -14054,7 +14054,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 		// (Option[i32], pair-form, no box) keep the generic decl and bail to
 		// the flat dec as before.
 		if len(et.Args) > 0 {
-			if sub := substituteEnumDecl(ed, et.Args); enumHasPointerPayload(sub) {
+			if sub := substituteEnumDecl(ed, et.Args); enumHasBoxedPayload(sub) {
 				ed = sub
 			}
 		}
