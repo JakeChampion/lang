@@ -113,3 +113,20 @@ TestSelfHostReadAllStdinIRX86_64 10
 TestSelfHostReadAllStdinIRArm64 20
 TestSelfHostReadAllStdinIRRoutingX86_64 6
 TestSelfHostReadAllStdinIRWasm 12
+# The interp driver (#5912): self-host-compiles lexer + parser + interp + util
+# into a working interpreter, then feeds it 104 tiny programs. MEASURED 6.58 s
+# with the modload driver restored from the warm cache, which is what the shard
+# step configures via FERN_SELFHOST_BUILD_CACHE.
+#
+# Recorded because the naive measurement is off by ~23x and I nearly wrote it
+# here: `go test` with no FERN_SELFHOST_BUILD_CACHE has NO disk cache at all
+# (diskCacheReadDirs returns nil), so it re-emits the ~245 MB driver every
+# invocation and reports ~140-155 s. Almost all of that is the driver build the
+# warm artifact eliminates. To reproduce the real number, point the var at a dir
+# already holding `<hash>.driverbin` — note the suffix, `drv-<hash>` is the
+# separate link cache and will silently MISS.
+#
+# This test had no entry while it was segfaulting on every integer literal
+# (#5901, fixed by #5908), so its 18-minute shard-11 blowout was the hang, not a
+# scheduling error. 6.58 s is the honest cost; the entry is ordinary balance.
+TestSelfHostInterpDriverX86_64 7
