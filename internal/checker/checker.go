@@ -3383,7 +3383,7 @@ func (c *checker) mapKeyTypeError(k ast.Type) string {
 // its own impl in this same pass, in either order), and an existing
 // receiver-method set covering every required trait method (the
 // conformance pass's "adopt the existing method" rule). Drives the
-// @derive(Eq/Ord/Hash) field pre-check in synthesizeDerives.
+// @derive field pre-check in synthesizeDerives.
 type deriveConf struct {
 	impls   map[string]map[string]bool // trait name -> type name
 	methods map[string]map[string]bool // type name -> receiver-method name
@@ -3445,10 +3445,10 @@ func (dc *deriveConf) conforms(td *ast.TraitDecl, dn, tn string) bool {
 }
 
 // deriveFieldGap returns the first (label, type) among the given
-// field/payload types that does NOT conform to trait td — the
-// @derive(Eq/Ord/Hash) pre-check that replaces the position-less
-// garbage a broken synthesised body would surface (#5392). Types the
-// check cannot name (arrays, tuples, maps, closures — methodTypeName
+// field/payload types that does NOT conform to trait td — the @derive
+// pre-check that replaces the position-less garbage a broken synthesised
+// body would surface (#5392). Types the check cannot name (arrays,
+// tuples, maps, closures — methodTypeName
 // fails) and type parameters of the deriving decl are skipped: the
 // former keep their historical behaviour, the latter are bound-checked
 // per instantiation via the parametric impl.
@@ -3465,15 +3465,22 @@ func (dc *deriveConf) deriveFieldGap(td *ast.TraitDecl, dn string, labels []stri
 	return "", "", false
 }
 
-// preCheckDeriveFields runs the deriveFieldGap pre-check for one
-// derive of a field-wise-comparing trait (Eq / Ord / Hash — the kinds
-// whose synthesised bodies call the trait method on every field) and
-// reports the E021 at the deriving decl's position. labels[i] names
+// preCheckDeriveFields runs the deriveFieldGap pre-check for one derive
+// and reports the E021 at the deriving decl's position. labels[i] names
 // types[i] for the message ("field x" / "variant B payload"). Returns
 // true when the derive is broken, in which case the caller must skip
 // synthesis — no method beats an ill-typed one.
+//
+// Every derivable kind but Default synthesises an unconditional per-field
+// trait call (`self.f.eq(other.f)` / `self.f.to_string()` /
+// `self.f.to_debug()` / `self.f.to_json()`), so every one of them needs
+// the gate: without it a non-conforming field escapes into the
+// synthesised body and surfaces as a position-less E043 naming the
+// trait's method as a missing field. Default is excluded because it
+// reports its own per-field gap from synthDefault — it composes through
+// zero literals and `Type.default()`, not a call on the field value.
 func (c *checker) preCheckDeriveFields(dc *deriveConf, td *ast.TraitDecl, dn, kind, what string, p ast.Position, labels []string, types []ast.Type, typeParams []string) bool {
-	if kind != "Eq" && kind != "Ord" && kind != "Hash" {
+	if kind == "" || kind == "Default" {
 		return false
 	}
 	label, tn, bad := dc.deriveFieldGap(td, dn, labels, types, typeParams)
