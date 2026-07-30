@@ -1086,6 +1086,33 @@ function main(): i32 {
     return t % 251;
 }`
 
+// A scalar Option NESTED in a container — a struct field and a tuple element.
+// These go through dropFnNameFor rather than emitEnumSlotDrop, which carried the
+// identical "pair-form, no box" gate, so they leaked 16 bytes per construction
+// even once the direct-local case was fixed (#5917). Both gates are gone.
+const enumScalarNestedStructSrc = `struct H { o: Option[i32], n: i32 }
+function main(): i32 {
+    var t: i32 = 0;
+    var k: i32 = 0;
+    while (k < 100) {
+        var h = H { o: Some(k), n: 1 };
+        t = t + h.n;
+        k = k + 1;
+    }
+    return t % 251;
+}`
+
+const enumScalarNestedTupleSrc = `function main(): i32 {
+    var t: i32 = 0;
+    var k: i32 = 0;
+    while (k < 100) {
+        var p = (Some(k), 1);
+        t = t + p.1;
+        k = k + 1;
+    }
+    return t % 251;
+}`
+
 func TestX86_64LeakCheckEnumStringPayloadBox(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1096,6 +1123,8 @@ func TestX86_64LeakCheckEnumStringPayloadBox(t *testing.T) {
 		{"array-payload-boxed", enumArrayPayloadBoxSrc, 200},
 		{"scalar-payload-boxed", enumScalarPayloadNoBoxSrc, 100},
 		{"scalar-from-pairform-callee", enumScalarFromCalleeSrc, 100},
+		{"scalar-nested-in-struct", enumScalarNestedStructSrc, 100},
+		{"scalar-nested-in-tuple", enumScalarNestedTupleSrc, 100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, stderr, code := runLeakCheckX86_64(t, tc.src)
@@ -1123,6 +1152,8 @@ func TestArm64LeakCheckEnumStringPayloadBox(t *testing.T) {
 		{"array-payload-boxed", enumArrayPayloadBoxSrc, 200},
 		{"scalar-payload-boxed", enumScalarPayloadNoBoxSrc, 100},
 		{"scalar-from-pairform-callee", enumScalarFromCalleeSrc, 100},
+		{"scalar-nested-in-struct", enumScalarNestedStructSrc, 100},
+		{"scalar-nested-in-tuple", enumScalarNestedTupleSrc, 100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, stderr, code := runLeakCheckArm64(t, tc.src)
