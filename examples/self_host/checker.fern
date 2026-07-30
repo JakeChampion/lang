@@ -264,9 +264,15 @@ pub function type_debug(t: Type): string {
 // marker, not a wildcard).
 function type_eq(a: Type, b: Type): boolean {
     match (a) {
-        TypeI32(_) => {
+        TypeI32(ai) => {
             match (b) {
-                TypeI32(_) => { return true; },
+                // `char` is NOT an integer, even though it rides an i32 slot
+                // (#5629). The Go checker rejects both directions without an
+                // explicit cast — that distinctness is the type's whole point,
+                // since a byte and a code point sharing i32 is what made
+                // `s[i].to_upper()` and `to_upper_char(cp)` indistinguishable.
+                // The widths stay interchangeable among themselves, as before.
+                TypeI32(bi) => { return ai.is_char == bi.is_char; },
                 _ => { return false; }
             }
         },
@@ -443,16 +449,24 @@ function is_primitive_type(t: Type): boolean {
 }
 
 // as_cast_allowed decides whether `src as tgt` is a legal cast for the
-// scalar types the self-host models (i32 / f64 / bool / string), mirroring
-// the Go checker's E033 rule over those types: identity, numeric↔numeric
-// (i32 / f64), and the string↔i32 data-pointer hop (either direction) are
-// allowed; everything else (any bool↔non-bool, f64↔string) is rejected.
-// Callers guard with `is_primitive_type` on both sides, so struct / array
-// pointer hops and wider-int targets are never reached here.
+// scalar types the self-host models (i32 / char / f64 / bool / string),
+// mirroring the Go checker's E033 rule over those types: identity,
+// numeric↔numeric (i32 / char / f64), and the string↔i32 data-pointer hop
+// (either direction) are allowed; everything else (any bool↔non-bool,
+// f64↔string) is rejected. Callers guard with `is_primitive_type` on both
+// sides, so struct / array pointer hops and wider-int targets are never
+// reached here.
+//
+// `char` counts as numeric HERE even though type_eq now separates it from
+// i32 (#5629): the cast is exactly the sanctioned way to cross between a
+// scalar value and its integer, so `n as char` / `c as i32` must stay legal
+// while the implicit conversion is rejected. Missing this made every
+// `x as char` an E033 — including the ones inside std/string, which took
+// every program importing it down with them.
 function as_cast_allowed(src: Type, tgt: Type): boolean {
     if (type_eq(src, tgt)) { return true; }
-    var src_num: boolean = type_eq(src, t_i32()) || type_eq(src, t_float());
-    var tgt_num: boolean = type_eq(tgt, t_i32()) || type_eq(tgt, t_float());
+    var src_num: boolean = type_eq(src, t_i32()) || type_eq(src, t_char()) || type_eq(src, t_float());
+    var tgt_num: boolean = type_eq(tgt, t_i32()) || type_eq(tgt, t_char()) || type_eq(tgt, t_float());
     if (src_num && tgt_num) { return true; }
     if (type_eq(src, t_string()) && type_eq(tgt, t_i32())) { return true; }
     if (type_eq(src, t_i32()) && type_eq(tgt, t_string())) { return true; }

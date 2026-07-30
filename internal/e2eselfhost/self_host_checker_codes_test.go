@@ -1268,6 +1268,17 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 
 	progs := []struct{ name, src string }{
+		// `char` is NOT an integer. Both directions must be rejected without an
+		// explicit cast — that distinctness is the type's whole point (#5629),
+		// since a byte and a code point sharing i32 is what made
+		// `s[i].to_upper()` and `to_upper_char(cp)` indistinguishable. The cast
+		// itself stays legal, and the last case pins that: making char distinct
+		// must not turn `n as char` / `c as i32` into E033.
+		{"char-not-from-int-literal", "function main(): i32 { var c: char = 65; return 0; }\n"},
+		{"char-not-to-i32-return", "function f(c: char): i32 { return c; }\nfunction main(): i32 { return 0; }\n"},
+		{"char-not-from-i32-return", "function f(n: i32): char { return n; }\nfunction main(): i32 { return 0; }\n"},
+		{"char-not-to-u8", "function main(): i32 { var cs: char[] = []; var b: u8 = cs[0]; return 0; }\n"},
+		{"char-casts-both-ways-ok", "function main(): i32 { var c: char = 65 as char; var n: i32 = c as i32; return n; }\n"},
 		// The NEGATIVE cases are the ones that discriminate. A bogus method on a
 		// char must be E043 in both checkers; before #5922 the self-host reported
 		// nothing at all, because `char` resolved in only one of five type-name
