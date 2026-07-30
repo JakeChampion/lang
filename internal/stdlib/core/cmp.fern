@@ -85,6 +85,13 @@ impl Display for f64 { }
 impl Display for f32 { }
 impl Display for string { }
 
+// `u8` has no scalar module, so no `to_string` to adopt — it widens to
+// i32 and borrows that one. Without this a byte cannot reach any
+// `[T: Display]` generic, which is what `assert_eq` on two bytes needs.
+impl Display for u8 {
+    function to_string(self: Self): string { return (self as i32).to_string(); }
+}
+
 impl Display for boolean {
     function to_string(self: Self): string {
         if (self) { return "true"; }
@@ -104,6 +111,9 @@ impl Eq for u32 {
     function eq(self: Self, other: Self): boolean { return self == other; }
 }
 impl Eq for u64 {
+    function eq(self: Self, other: Self): boolean { return self == other; }
+}
+impl Eq for u8 {
     function eq(self: Self, other: Self): boolean { return self == other; }
 }
 impl Eq for string {
@@ -146,6 +156,13 @@ impl Ord for u32 {
     }
 }
 impl Ord for u64 {
+    function cmp(self: Self, other: Self): i32 {
+        if (self < other) { return 0 - 1; }
+        if (self > other) { return 1; }
+        return 0;
+    }
+}
+impl Ord for u8 {
     function cmp(self: Self, other: Self): i32 {
         if (self < other) { return 0 - 1; }
         if (self > other) { return 1; }
@@ -198,6 +215,9 @@ function __hash_mix_i32(x: i32): i32 {
 
 impl Hash for i32 {
     function hash(self: Self): i32 { return __hash_mix_i32(self); }
+}
+impl Hash for u8 {
+    function hash(self: Self): i32 { return __hash_mix_i32(self as i32); }
 }
 impl Hash for u32 {
     function hash(self: Self): i32 { return __hash_mix_i32(self as i32); }
