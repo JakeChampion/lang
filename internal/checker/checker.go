@@ -10564,6 +10564,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if c.assignable(n.Target, inner) {
 			return n.Target
 		}
+		// A nil inner means the operand never typed — an undefined
+		// identifier, an unknown call, a missing field — and whatever
+		// failed already reported its own diagnostic. Saying "cannot cast
+		// <nothing> to i32" on top of that stacks a second error on one
+		// typo, and formats the nil type as `%!s(<nil>)` while doing it.
+		// The cast's own target is still returned so the expression keeps
+		// a type and callers do not cascade further.
+		if inner == nil {
+			return n.Target
+		}
 		c.errfCode(n.P, "E033", "cannot cast %s to %s; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", inner, n.Target)
 		return n.Target
 	case *ast.BoolLit:

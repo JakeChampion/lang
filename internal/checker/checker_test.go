@@ -5155,3 +5155,48 @@ function main(): i32 {
 		}
 	})
 }
+
+// A cast whose operand never typed must not stack a second diagnostic on the
+// first. `undefined_thing as i32` is one typo, and E001 already names it —
+// the follow-on E033 added nothing, and formatted the nil operand type as
+// `%!s(<nil>)` while doing it. The cast still yields its target type so
+// nothing downstream cascades either.
+func TestCastOnUntypedOperandDoesNotCascade(t *testing.T) {
+	for _, tc := range []struct{ name, src, wantCode string }{
+		{"undefined identifier",
+			`function main(): i32 { return undefined_thing as i32; }`, "E001"},
+		{"unknown call",
+			`function main(): i32 { return nosuchfn() as i32; }`, "E001"},
+		{"unknown struct field",
+			`struct S { a: i32 }
+			 function main(): i32 { var s: S = S { a: 1 }; return s.nofield as i32; }`, "E043"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkSource(t, tc.src)
+			if err == nil {
+				t.Fatalf("expected %s, got no error", tc.wantCode)
+			}
+			if !hasCode(err, tc.wantCode) {
+				t.Errorf("want %s, got: %v", tc.wantCode, err)
+			}
+			if hasCode(err, "E033") {
+				t.Errorf("E033 cascaded off an already-errored operand: %v", err)
+			}
+			if strings.Contains(err.Error(), "%!s(") {
+				t.Errorf("a nil type reached a %%s verb: %v", err)
+			}
+		})
+	}
+}
+
+// The genuine cast rejection must survive the suppression above — an operand
+// that DID type, cast to something incompatible, is still E033.
+func TestCastRejectionStillReported(t *testing.T) {
+	err := checkSource(t, `function main(): i32 { var s: string = "x"; return s as boolean; }`)
+	if err == nil {
+		t.Fatalf("expected E033, got no error")
+	}
+	if !hasCode(err, "E033") {
+		t.Errorf("want E033, got: %v", err)
+	}
+}

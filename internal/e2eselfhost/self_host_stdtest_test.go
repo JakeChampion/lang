@@ -230,6 +230,11 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"quiet_mode", langSrcAbs(t, "examples/tests/quiet_mode_test.fern"), ""},
 		{"skip_and_subsuites", langSrcAbs(t, "examples/tests/skip_and_subsuites_test.fern"), ""},
 		{"runner_self", langSrcAbs(t, "examples/tests/runner_self_test.fern"), ""},
+		// core/cmp's Display/Eq/Ord/Hash impls for u8. Routed through the
+		// self-host deliberately: these were removed in #5869 because the
+		// self-host collapsed u8 onto the i32 tag and the impl sets collided
+		// (an E021 differential). The native side would not have caught that.
+		{"u8_traits", langSrcAbs(t, "examples/tests/u8_traits_test.fern"), ""},
 		{"option_and_set_ops", langSrcAbs(t, "examples/tests/option_and_set_ops_test.fern"), ""},
 		{"result_assertions", langSrcAbs(t, "examples/tests/result_assertions_test.fern"), ""},
 		{"fuzz_example", langSrcAbs(t, "examples/tests/fuzz_example_test.fern"), ""},
