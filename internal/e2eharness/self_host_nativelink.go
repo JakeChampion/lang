@@ -65,6 +65,12 @@ func nativeLinkArm64(asm, binPath string) error {
 	return nil
 }
 
+// NativeLinkArm64 assembles+links arm64 asm into binPath entirely
+// in-process, with no aarch64 toolchain — for tests that must run on a
+// host without a cross gcc. BuildBinArm64 is the general entry point;
+// this one is the pure-Go path on its own.
+func NativeLinkArm64(asm, binPath string) error { return nativeLinkArm64(asm, binPath) }
+
 // nativeLinkWeightMB estimates the native assemble+link's peak RSS for a
 // given asm size, for reservation against the build-memory budget. The
 // assembler's working set is roughly linear in the input: measured

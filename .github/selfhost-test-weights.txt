@@ -165,3 +165,23 @@ TestSelfHostTupleWideCallElem 3
 # (#5901, fixed by #5908), so its 18-minute shard-11 blowout was the hang, not a
 # scheduling error. 6.58 s is the honest cost; the entry is ordinary balance.
 TestSelfHostInterpDriverX86_64 170
+# The arm64 native-assembler lane (the branch-veneer coverage): builds
+# asm_modload_run for arm64 through the in-process pure-Go assembler — a
+# ~135 MB image — then runs it. No warm artifact applies (the warm jobs
+# build x86 host drivers), so this is a genuine cold build every shard.
+# MEASURED 117 s locally, of which ~110 s is the emit+assemble.
+TestSelfHostArm64ModloadNativeBuild 120
+# Executes the self-host arm64 __fern_proc_exec blob from both emitters.
+# Dominated by the one modload driver build it shares with the rest of the
+# suite; MEASURED 108 s cold, near-free once that driver is warm.
+TestSelfHostArm64ProcExecRuns 15
+# The arm64 stage-2 fixed point had NO entry — `TestSelfHostStage2FixedPoint`
+# above is a different test, and the lookup is exact — so LPT ranked a
+# ~15-MINUTE test with the sub-second ones and packed a shard around it. Any
+# change to the test list can then drop it in a bucket that blows the 18-minute
+# -test.timeout; adding two tests in #5953 did exactly that (run 30581856560,
+# x86_64-shard9: `panic: test timed out after 18m0s` with the test 13m31s in).
+# MEASURED from that run: 53 s of stage-1/stage-2 build, then `self` 709 s —
+# mmc2 re-emitting the compiler UNDER QEMU — plus sort_wider 25 s and two more
+# cases still to go.
+TestSelfHostStage2FixedPointArm64 900

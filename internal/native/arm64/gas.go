@@ -234,6 +234,14 @@ func assembleInsn(a *Assembler, line string) error {
 		}
 		a.Emit(RET(rn))
 		return nil
+	case "nop":
+		// The assembler emits `nop` itself, padding a veneer island to an
+		// even instruction count, so it reads one back too.
+		if len(ops) != 0 {
+			return fmt.Errorf("nop takes no operands")
+		}
+		a.Emit(nopInsn)
+		return nil
 	case "svc":
 		if len(ops) != 1 {
 			return fmt.Errorf("svc expects 1 operand")

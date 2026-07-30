@@ -89,6 +89,14 @@ func withBuildMemory(weightMB int, fn func() error) error {
 	return fn()
 }
 
+// WithBuildMemoryMB is withBuildMemory for tests outside this package
+// that run a heavy build of their own — a `fern` subprocess emitting a
+// multi-hundred-MB image, say — and must not stack their peak on top of
+// a concurrent driver build's.
+func WithBuildMemoryMB(weightMB int, fn func() error) error {
+	return withBuildMemory(weightMB, fn)
+}
+
 // buildMemBudgetMB is the total estimated-RSS budget for concurrent heavy
 // builds. FERN_BUILD_MEM_BUDGET_MB overrides it; otherwise it's ~85% of
 // MemTotal (leaving headroom for the Go test process, gcc's own compile,

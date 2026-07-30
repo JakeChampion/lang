@@ -3,11 +3,13 @@ package arm64
 import "fmt"
 
 // MachOTextLen returns the final size of the .text (code) in bytes. It
-// flushes any pending literal pool first, so the count is stable; call it
-// before computing the Mach-O layout (which needs the code size to place
-// the __DATA segment).
+// flushes any pending literal pool and plants any branch veneers first,
+// so the count is stable; call it before computing the Mach-O layout
+// (which needs the code size to place the __DATA segment). A veneering
+// failure is held until LinkMachO, which can report it.
 func (a *Assembler) MachOTextLen() int {
 	a.FlushLiterals()
+	a.veneerErr = a.insertVeneers()
 	return len(a.insns) * 4
 }
 
@@ -23,6 +25,12 @@ func (a *Assembler) MachODataLen() int { return len(a.rodata) }
 // no-op.
 func (a *Assembler) LinkMachO(textVAddr, dataVAddr uint64) (text, data []byte, err error) {
 	a.FlushLiterals()
+	if a.veneerErr != nil {
+		return nil, nil, a.veneerErr
+	}
+	if err := a.insertVeneers(); err != nil {
+		return nil, nil, err
+	}
 	for _, f := range a.litFixups {
 		insnAddr := textVAddr + uint64(f.at)*4
 		litAddr := textVAddr + uint64(f.poolIdx)*4
@@ -45,6 +53,9 @@ func (a *Assembler) LinkMachO(textVAddr, dataVAddr uint64) (text, data []byte, e
 		target, ok := a.labels[f.label]
 		if !ok {
 			return nil, nil, fmt.Errorf("arm64: branch to undefined label %q", f.label)
+		}
+		if err := checkBranchRange(f.kind, target-f.at, f.label); err != nil {
+			return nil, nil, err
 		}
 		off := uint32(target - f.at)
 		switch f.kind {

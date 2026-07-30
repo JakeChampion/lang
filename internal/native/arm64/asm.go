@@ -33,6 +33,16 @@ type Assembler struct {
 	// DWARF .debug_line rows: the source line active at a .text byte offset,
 	// recorded when the code generator emits a `.loc` directive under -g.
 	locRows []LineRow
+
+	// Branch veneers (see veneer.go): veneerSeq names each synthetic
+	// trampoline label, veneerReach overrides the b/bl span in tests,
+	// veneerPasses records how many rounds it took to reach a fixed
+	// point, and veneerErr carries a failure from MachOTextLen (which
+	// plants veneers but cannot return an error) to LinkMachO.
+	veneerSeq    int
+	veneerReach  int
+	veneerPasses int
+	veneerErr    error
 }
 
 // LineRow is one DWARF .debug_line row: the source line active at a .text
@@ -52,8 +62,9 @@ type litRef struct {
 }
 
 type litResolve struct {
-	at      int // ldr-literal instruction index
-	poolIdx int // index of the literal's first word in insns
+	at      int  // ldr-literal instruction index
+	poolIdx int  // index of the literal's first word in insns
+	wide    bool // 8-byte literal: it occupies poolIdx and poolIdx+1
 }
 
 // symbol is a named location: in .text it's an instruction index, in
@@ -98,7 +109,7 @@ type fixup struct {
 
 // NewAssembler returns an empty assembler.
 func NewAssembler() *Assembler {
-	return &Assembler{labels: map[string]int{}, syms: map[string]symbol{}}
+	return &Assembler{labels: map[string]int{}, syms: map[string]symbol{}, veneerReach: envVeneerReach()}
 }
 
 // TextLabel marks a .text symbol at the current instruction position
@@ -159,7 +170,7 @@ func (a *Assembler) FlushLiterals() {
 		if l.wide {
 			a.insns = append(a.insns, uint32(l.val>>32))
 		}
-		a.litFixups = append(a.litFixups, litResolve{at: l.at, poolIdx: poolIdx})
+		a.litFixups = append(a.litFixups, litResolve{at: l.at, poolIdx: poolIdx, wide: l.wide})
 	}
 	a.pendingLits = nil
 }
@@ -289,6 +300,9 @@ func (a *Assembler) Bytes() ([]byte, error) {
 // the single-segment layout (elf.StaticExecutableData / R+W+X).
 func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err error) {
 	a.FlushLiterals()
+	if err := a.insertVeneers(); err != nil {
+		return nil, nil, err
+	}
 	rodataVAddr := textVAddr + uint64(len(a.insns)*4)
 	if rem := rodataVAddr % 8; rem != 0 {
 		rodataVAddr += 8 - rem
@@ -303,6 +317,9 @@ func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err err
 // page size matches elf.pageAlign; pass elf.TextVAddrWX as textVAddr.
 func (a *Assembler) BytesProgramWX(textVAddr uint64) (text, rodata []byte, err error) {
 	a.FlushLiterals()
+	if err := a.insertVeneers(); err != nil {
+		return nil, nil, err
+	}
 	const page = 0x10000 // must match elf.pageAlign
 	rodataVAddr := (textVAddr + uint64(len(a.insns)*4) + page - 1) &^ (page - 1)
 	return a.bytesProgramAt(textVAddr, rodataVAddr, nil, nil)
@@ -353,6 +370,9 @@ func (a *Assembler) TextLabelVAddrs(textVAddr uint64) map[string]uint64 {
 // ldr-literals) are base-independent and need no relocation.
 func (a *Assembler) BytesProgramPIE(textVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
 	a.FlushLiterals()
+	if err := a.insertVeneers(); err != nil {
+		return nil, nil, nil, err
+	}
 	const page = 0x10000 // must match elf.pageAlign
 	rodataVAddr := (textVAddr + uint64(len(a.insns)*4) + page - 1) &^ (page - 1)
 
@@ -484,8 +504,13 @@ func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64, relocs *[]Relo
 // behaviour) turns an over-long branch into a jump to an unrelated
 // address — a miscompile that only shows up at driver/self-compile
 // scale, where .text outgrows the ±1 MB imm19 span. Loud errors keep
-// the assembler's "error, never miscompile" contract and let harness
-// callers fall back to the external toolchain.
+// the assembler's "error, never miscompile" contract.
+//
+// The imm26 (b/bl) case is handled before it gets here on the layout
+// paths: insertVeneers plants a trampoline for any call that outruns
+// ±128 MB (see veneer.go), so an imm26 report from here means either
+// the raw Bytes path — which has no virtual addresses and so cannot
+// resolve a veneer's adrp — or a veneering bug.
 func checkBranchRange(kind branchKind, offInsns int, label string) error {
 	var bits uint
 	switch kind {
