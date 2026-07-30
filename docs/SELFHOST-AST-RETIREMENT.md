@@ -2127,6 +2127,74 @@ tier → leak.
   differential tests (their oracle role ends when the IR path is trusted). Gated
   on all the above + #3425.
 
+  ### Slice 5 — code-verified execution plan (2026-07-30)
+
+  The arm64 IR path is now fully self-contained in `asm_arm64_ir.fern`
+  (#5923/#5925/#5927 — runtime, module framers, `darwinize`), and x86's was
+  always self-contained in `asm_ir.fern`. So both register backends can be
+  retired; wasm stays (its IR path still reuses `wasm.fern`'s `Ctx`-based
+  RC-body cluster — see the wasm bullet above — and re-spelling its rc corpora
+  would trip the open `is_unique`-on-container gap). What remains for x86+arm64,
+  verified against the code:
+
+  1. **Precondition — no test may compile an AST-fallback-only program.** With
+     the drivers' `emit_module` AST branch turned into a hard error, any
+     non-IR-eligible program regresses. Enumerate via `FERN_STRICT_IR` (a bail →
+     `exit(3)`). **The per-function x86 subset is clean** (`TestSelfHostAsmIRPath`
+     80/80 under the flag). The one real cluster was the rc/leak corpus's
+     **AST-only debug builtin `__fern_rc_underflow_count`** (the IR gate's
+     `is_fern_helper` has no entry, so a call to it bailed — *not* the container
+     construction, which lowers fine post-#5861). **Closed for the register
+     backends** by re-spelling those corpora to the IR-canonical `__rc_underflow`
+     (an inline counter read `irlower` already lowers): #5929 (rc-runtime) +
+     #5933 (borrow_infer / str_rcbox / str_slice_rcbox / strarr_elem_reclaim /
+     struct_enum_field_reclaim / struct_str_field_reclaim + arm64 strarr_field).
+     The **wasm** rc corpora deliberately keep `__fern_rc_underflow_count` (wasm
+     AST is not being retired; re-spelling them routes onto the wasm IR path's
+     `is_unique` gap). The remaining x86 AST consumer is the **over-budget merged
+     bundle**, which is the whole-compiler bootstrap — already superseded by the
+     per-module IR path (`TestSelfHostModloadPerModuleWholeCompilerX86_64`); its
+     merged-AST fixpoint is env-gated (`RUN_MERGED_FIXPOINT`). NOTE: a full
+     dependent enumeration is **CI-scale** — ~491 x86 tests each build a ~4 GB
+     self-host driver (serialised by `buildMemLimiter`), so run the sweep on CI
+     shards, not locally.
+
+  2. **Add `asm_ir.emit_module_or_error`** — the non-AST half of
+     `asm.emit_module` (asm.fern:7157): `parse_unknown_errors` + `check_module` +
+     `lift_lambdas` + `emit_module_ir_gated`, and **`eprint`+`exit(1)` when the
+     gate returns `""`** instead of falling through to the AST emit. (arm64: the
+     mirror over `asm_arm64_ir.emit_module_ir`.)
+
+  3. **Reroute the driver `emit_module` sites — heterogeneous, verify each.**
+     x86 (5): `asm_run.fern:23`, `asm_ir_run.fern:174`, `fern.fern:739` are
+     single-module → `emit_module_or_error`; `asm_load_run.fern:472` and
+     `asm_modload_run.fern:715` already run the per-module *concat* rescue and
+     only reach `asm.emit_module` as a last resort → route that resort to error.
+     arm64 (7): `asm_ir_run.fern:147`+`:160` (ELF + darwin), `asm_load_run.fern:449`,
+     `asm_modload_run.fern:665`, `fern.fern:642`/`:647`/`:663` → the
+     `asm_arm64_ir` equivalents. `asm_run.fern` is a **workhorse IR driver** many
+     `*_ir_test.go` build+run (via `emit_module`'s eligible→IR dispatch), NOT a
+     deletable demo — its comment header misleads.
+
+  4. **Retire the differential — DELETE, do not re-point.** `TestSelfHostAsmIRPath`'s
+     AST-vs-IR comparison cannot be re-pointed to `cmd/fern -interp`: its `cases`
+     are in the **driver dialect** (`parser.module_with_builtins` injects
+     `map_new`/`__alloc`/casts/etc. that native interp rejects with e.g.
+     `E001: Map operations require import "core/map"`). Once the IR path is
+     trusted (byte-identity fixpoint + the interp-validated dedicated
+     `*_ir_test.go` corpus), the differential's oracle role ends — delete it
+     along with the AST driver legs, rather than seeking a replacement oracle.
+
+  5. **Delete `asm.fern` + `asm_arm64.fern` + the 512-budget**, and sweep
+     `"asm.fern"` / `"asm_arm64.fern"` out of the **~221** Go harness copy-lists
+     (mix of inline `[]string` lists + `e2eharness` helpers) — atomic with the
+     file deletion, else those tests fail to read the removed sources. Keep the
+     builtin in the native codegen (`internal/codegen/*`) and the wasm-AST path.
+
+  Validation is CI-scale: the arm64 byte-identity fixpoint + the sharded e2e
+  matrix are the authoritative gates; locally, gate x86 (fixpoint + the touched
+  `*_ir_test.go` under `FERN_STRICT_IR`) and leave arm64/qemu to CI.
+
 ## Per-window emit peak: measured (2026-07-28)
 
 **CORRECTION (same day).** The first version of this section measured the
