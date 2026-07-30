@@ -3445,6 +3445,63 @@ func TestDeriveFieldConformancePreCheck(t *testing.T) {
 	}
 }
 
+// TestDeriveFieldPreCheckCoversEveryFieldWiseTrait walks every derivable
+// trait whose synthesised body calls the trait method on each field. All
+// of them compose the same way, so all of them must draw the SAME
+// positioned E021 when a field does not conform — a kind that reaches
+// synthesis instead emits `self.f.<method>()` against a type without it,
+// which surfaces as a position-less E043 blaming a missing *field* named
+// after the trait's method (0:0, no file). The gate originally covered
+// only Eq/Ord/Hash, so Display/Debug/Json each had that hole.
+//
+// A kind added to the synthesis switch but not the gate fails here.
+func TestDeriveFieldPreCheckCoversEveryFieldWiseTrait(t *testing.T) {
+	for _, c := range []struct{ kind, decl string }{
+		{"Eq", "trait Eq { function eq(self: Self, other: Self): boolean; }"},
+		{"Ord", "trait Ord { function cmp(self: Self, other: Self): i32; }"},
+		{"Hash", "trait Hash { function hash(self: Self): i32; }"},
+		{"Display", "trait Display { function to_string(self: Self): string; }"},
+		{"Debug", "trait Debug { function to_debug(self: Self): string; }"},
+		{"Json", "trait Json { function to_json(self: Self): string; }"},
+	} {
+		src := c.decl + "\nstruct Bare { n: i32 }\n@derive(" + c.kind + ")\nstruct Foo { b: Bare }\nfunction main(): i32 { return 0; }"
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("@derive(%s) over a non-conforming field: expected E021, got nil", c.kind)
+			continue
+		}
+		es, ok := err.(diag.Errors)
+		if !ok {
+			t.Errorf("@derive(%s): expected diag.Errors, got %T: %v", c.kind, err, err)
+			continue
+		}
+		ce, ok := es[0].(*Error)
+		if !ok {
+			t.Errorf("@derive(%s): expected *Error, got %T", c.kind, es[0])
+			continue
+		}
+		if ce.ErrCode != "E021" {
+			t.Errorf("@derive(%s): code = %q, want E021 (a position-less E043 means the gate skipped this kind): %v", c.kind, ce.ErrCode, err)
+		}
+		want := "cannot @derive(" + c.kind + ") for Foo: field b of type Bare does not implement " + c.kind
+		if !strings.Contains(ce.Error(), want) {
+			t.Errorf("@derive(%s): message %q does not contain %q", c.kind, ce.Error(), want)
+		}
+		// The whole point of the gate is a real source position.
+		if ce.Pos.Line != 4 || ce.Pos.Col == 0 {
+			t.Errorf("@derive(%s): position = %d:%d, want line 4 with a non-zero column", c.kind, ce.Pos.Line, ce.Pos.Col)
+		}
+	}
+
+	// Default is deliberately NOT gated by the field-conformance
+	// pre-check: it composes through zero literals and `Type.default()`
+	// rather than a call on the field value, and reports its own gap.
+	err := checkSource(t, "trait Default { function default(): Self; }\n@derive(Default)\nstruct Foo { b: (i32, i32) }\nfunction main(): i32 { return 0; }")
+	if err == nil || !strings.Contains(err.Error(), "which has no default; implement Default by hand") {
+		t.Errorf("@derive(Default) keeps its own dedicated diagnostic, got: %v", err)
+	}
+}
+
 // @derive on a generic enum and @derive(Ord) on an enum are rejected
 // with clear messages (both are follow-ups). See docs/TRAITS.md.
 func TestDeriveEnumErrors(t *testing.T) {

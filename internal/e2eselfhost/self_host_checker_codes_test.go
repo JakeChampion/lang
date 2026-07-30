@@ -302,6 +302,32 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"derive-field-impl-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nimpl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }\n@derive(Ord)\nstruct Foo { x: i32 }\nfunction main(): i32 { var p: Foo = Foo { x: 1 }; return p.x; }\n", nil},
 		{"derive-enum-payload-no-impl", "trait Eq { function eq(self: Self, other: Self): boolean; }\n@derive(Eq)\nenum E { A, B(i32) }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"derive-two-fields-no-impl", "trait Ord { function cmp(self: Self, other: Self): i32; }\n@derive(Ord)\nstruct P { x: i32, y: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		// The pre-check covers every derivable kind whose synthesised body
+		// calls the trait method on each field, not just Eq/Ord/Hash:
+		// Display / Debug / Json compose identically (`self.f.to_string()`
+		// / `to_debug()` / `to_json()`), so each draws the same positioned
+		// E021 at the deriving decl instead of the position-less E043 that
+		// names the trait's method as a missing field.
+		//
+		// Only the CLEAN path is asserted differentially. For these three
+		// kinds the broken path cannot agree code-for-code: native skips
+		// synthesis once the pre-check fires, but the self-host synthesises
+		// derived bodies at PARSE time and so still emits `self.f.<method>()`,
+		// adding an E043 the Go oracle does not have. Nor can the shape be
+		// dodged — the field type either lacks the method (native E021,
+		// self-host E021+E043) or has it (both clean, nothing to assert).
+		// Closing it means teaching the self-host parser to skip synthesis
+		// for a derive its checker will reject; that is parser work, not a
+		// gate change. Eq/Ord/Hash escape this because their scalar bodies
+		// render inline (`==` / `<`) rather than through a method call.
+		{"derive-display-impl-ok", "trait Display { function to_string(self: Self): string; }\nimpl Display for i32 { function to_string(self: Self): string { return \"n\"; } }\n@derive(Display)\nstruct Foo { x: i32 }\nfunction main(): i32 { return 0; }\n", nil},
+		// Debug uses a NOMINAL field: the self-host renders Debug
+		// type-directed, sending scalars through `to_string` rather than
+		// `to_debug`, so a scalar carrying only a Debug impl diverges for
+		// reasons of its own. A nominal field routes through `to_debug` on
+		// both sides.
+		{"derive-debug-impl-ok", "trait Debug { function to_debug(self: Self): string; }\nstruct Bare { n: i32 }\nimpl Debug for Bare { function to_debug(self: Self): string { return \"b\"; } }\n@derive(Debug)\nstruct Foo { b: Bare }\nfunction main(): i32 { return 0; }\n", nil},
+		{"derive-json-impl-ok", "trait Json { function to_json(self: Self): string; }\nimpl Json for i32 { function to_json(self: Self): string { return \"0\"; } }\n@derive(Json)\nstruct Foo { x: i32 }\nfunction main(): i32 { return 0; }\n", nil},
 		{"bound-opaque-generic-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nfunction inner[T: Ord](a: T): T { return a; }\nfunction outer[U](x: U): U { return inner(x); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"bound-multi-missing", "trait A { function fa(self: Self): i32; }\ntrait B { function fb(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nfunction need[T: A + B](x: T): T { return x; }\nfunction main(): i32 { var s: S = S { v: 1 }; var r: S = need(s); return r.v; }\n", []string{"E021"}},
 		// E021 object-safety (#4347 slice 4): a `dyn T` param whose trait T is not
