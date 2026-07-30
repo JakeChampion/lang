@@ -28,6 +28,7 @@ import "./parser";
 import "./flatten";
 import "./asm";
 import "./asm_arm64";
+import "./asm_arm64_ir";
 import "./asm_ir";
 import "./modloader";
 import "./treeshake";
@@ -381,7 +382,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
                     if (wlo > 0) { shard_ns = shard_ns + "_s" + util.i32_to_string(wlo); }
                     var unit: string = "";
                     if (target == "arm64") {
-                        unit = asm_arm64.emit_module_ir_unit_arm64(infmods[idx], parts[idx].is_entry, true, shard_ns, extra_all, all_funcs, all_structs, wlo, whi);
+                        unit = asm_arm64_ir.emit_module_ir_unit_arm64(infmods[idx], parts[idx].is_entry, true, shard_ns, extra_all, all_funcs, all_structs, wlo, whi);
                     } else {
                         unit = asm_ir.emit_module_ir_unit_flat(infmods[idx], parts[idx].is_entry, true, shard_ns, extra_all, all_funcs, all_structs, wlo, whi, [], wpb);
                     }
@@ -528,7 +529,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // fold doubled the whole-compiler per-module program (both backends in
     // one closure), pushing its biggest modules past the one-process ceiling.
     if (target == "arm64") {
-        unit = asm_arm64.emit_module_ir_unit_arm64(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_structs, pm_lo, pm_hi);
+        unit = asm_arm64_ir.emit_module_ir_unit_arm64(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_structs, pm_lo, pm_hi);
     } else {
         unit = asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_structs, pm_lo, pm_hi, []);
     }

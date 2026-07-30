@@ -1473,10 +1473,24 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   emits byte-identical asm for string/array/foreach/chr/pow/cmp/index_of programs
   before and after), and x86-inert (no x86 file read the field). `asm_arm64.fern`
   keeps its own `emit_runtime` for the AST fallback until slice 5 deletes the
-  file. **Remaining for deletion (slice 5):** `emit_module_ir` /
-  `emit_module_ir_unit_arm64` (the arm64 IR module framers) still live in
-  `asm_arm64.fern` — moving them to `asm_arm64_ir.fern` and repointing the drivers
-  is the last step before the file can go.
+  file. **Fourth untangle step DONE (slice-5 prep): the arm64 IR module framers
+  `emit_module_ir` / `emit_module_ir_unit_arm64` now live in `asm_arm64_ir.fern`
+  too.** They moved verbatim (only the `asm_arm64_ir.`-qualified self-calls
+  dropped to bare), and their three callers were repointed:
+  `asm_arm64.emit_module`'s eligible-dispatch to `asm_arm64_ir.emit_module_ir`,
+  and `asm_ir_run` / `asm_modload_run`'s arm64 legs (which gained an
+  `import "./asm_arm64_ir"`). Byte-preserving on the arm64 IR path (same
+  string/array/foreach probes diff clean) and x86-inert (only arm64-branch
+  driver lines changed). **The entire arm64 IR emit path — instruction
+  selection, RC/reclaim bodies, runtime, and module framing — now lives in
+  `asm_arm64_ir.fern`; `asm_arm64.fern` holds only the AST emitter (`emit_module`
+  / `emit_function` / `emit_stmt` / `emit_expr` / …) plus the shared `darwinize`
+  post-processor.** **Remaining for deletion (slice 5):** move `darwinize` +
+  its `darwin_*` helpers into `asm_arm64_ir.fern` (and route the driver's
+  arm64-darwin leg through `emit_module_ir` directly for eligible modules, as the
+  arm64-ELF leg already does), then delete `asm_arm64.fern`'s AST emitter and
+  retire the arm64 AST differential — the roadmap-level trust-IR-outright step,
+  shared with the x86 and wasm AST retirements.
 - **wasm: NOT clean, and larger — but hand-WAT, so movable byte-preservingly.**
   `wasm_ir.fern` reuses `wasm.fern`'s WAT runtime extensively (heap/RC,
   `str_*_helpers`, `to_string_helpers`, `divrem_helpers`), and the per-module IR
