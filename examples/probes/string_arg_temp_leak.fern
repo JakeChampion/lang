@@ -1,0 +1,67 @@
+// A reproduction of #5942: a FRESH string temporary handed straight to a
+// string-RETURNING call is never reclaimed. Binding it to a `var` first is
+// enough to reclaim it, so the two functions below differ only in whether the
+// intermediate has a name.
+//
+//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/string_arg_temp_leak.fern
+//   /tmp/p    # stderr: leakcheck: allocs=195 frees=156 live_bytes=1248
+//
+// with `-target arm64` reporting the same 195/156. One block per call of
+// `temp()`, unbounded in a loop; `bound()` alone is 195/195.
+//
+// Cause: the stage-(b) arg-temp reclaim (ir.go, `reclaimArgTemps`) is gated on
+// `resultCannotAliasArg` — the post-call dec fires immediately, so it is only
+// sound when the callee's result provably is not the argument. `pad_start`
+// really can hand its receiver back:
+//
+//     pub function (s: string) pad_start(n: i32, ch: string): string {
+//         var sl: i32 = s.len();
+//         if (sl >= n) { return s; }        // <-- result IS the argument
+//         ...
+//
+// so the gate correctly refuses, and the temp keeps its prior safe-leak. That
+// is the documented, deliberate exclusion in `reclaimArgTemps` ("every
+// excluded shape keeps its prior safe-leak") — closing it needs a callee-side
+// ownership contract, not a wider caller-side gate; an earlier attempt to
+// admit pointer results segfaulted the differential oracle.
+//
+// NOTE on why this hid for so long: on the single-word (x86-64 native) string
+// ABI a <= 7-byte string is SSO-inline, so short intermediates allocate
+// nothing and there is no block to lose. The two-word ABI (arm64 /
+// TwoWordOverride, wasm) heap-allocates them, which is why `to_rgb_hex` —
+// three `to_hex().pad_start(2, "0")` chains — reports a leak on arm64 and a
+// clean run on x86-64 for byte-identical source. The long strings below
+// exceed the SSO window so both backends show it.
+import "std/i32";
+import "std/string";
+
+function temp(): i32 {
+    var acc: i32 = 0;
+    var k: i32 = 1;
+    while (k < 40) {
+        var s: string = (k * 66049).to_binary().pad_start(40, "0");
+        var i: i32 = 0;
+        while (i < s.len()) { acc = (acc * 31 + (s[i] as i32)) % 100003; i = i + 1; }
+        k = k + 1;
+    }
+    return acc % 251;
+}
+
+function bound(): i32 {
+    var acc: i32 = 0;
+    var k: i32 = 1;
+    while (k < 40) {
+        var h: string = (k * 66049).to_binary();
+        var s: string = h.pad_start(40, "0");
+        var i: i32 = 0;
+        while (i < s.len()) { acc = (acc * 31 + (s[i] as i32)) % 100003; i = i + 1; }
+        k = k + 1;
+    }
+    return acc % 251;
+}
+
+function main(): i32 {
+    // Same value from both — the leak is pure accounting, not a wrong answer.
+    if (temp() != bound()) { return 1; }
+    return 0;
+}
