@@ -2222,6 +2222,31 @@ tier → leak.
      self-host driver (serialised by `buildMemLimiter`), so run the sweep on CI
      shards, not locally.
 
+     **CORRECTION (2026-07-30, measured — the precondition is NOT close to met).**
+     Doing the reroute (step 2/3) as PR #5955 and letting CI run it is the cheapest
+     real enumeration, and it turned **38 x86 tests red on shards 4 + 10** — none
+     over-budget, none rc-corpus. So the "per-function subset is clean" claim above
+     is TRUE only for the curated `TestSelfHostAsmIRPath` corpus; the broader
+     `TestSelfHostAsmRunX86_64` corpus exercises a substantial set of **still-
+     unlowered** constructs the x86 AST emitter was silently covering. Confirmed
+     genuine gate declines via `-ir-probe` (`module: AST`), not an
+     `emit_module_or_error` bug:
+
+     - **Array methods:** `xs.last()` / `xs.first()` / `xs.concat()` /
+       `xs.reverse()` (i32[] and string[])
+     - **i32 methods:** `a.min()` / `a.max()` / `n.clamp()`
+     - **String-array methods:** `xs.contains()` / `xs.index_of()` (+ the
+       `arr_str_index_of` runtime helper)
+     - **Direct IIFE:** `(function(): i32 { … })()`
+     - **`try` over an Option payload:** `result-option`, `nested-chain`
+
+     Each is a distinct IR-lowering gap to close (the program must reach
+     `module: IR`) BEFORE the reroute can land. This is the real bulk of the
+     remaining slice-5 precondition — a series of focused per-construct lowering
+     PRs, each gated by re-running its `TestSelfHostAsmRunX86_64` / … subtests
+     under `FERN_STRICT_IR`. The reroute (`emit_module_or_error` + the 5 driver
+     sites) re-lands only once these are all green.
+
   2. **Add `asm_ir.emit_module_or_error`** — the non-AST half of
      `asm.emit_module` (asm.fern:7157): `parse_unknown_errors` + `check_module` +
      `lift_lambdas` + `emit_module_ir_gated`, and **`eprint`+`exit(1)` when the
