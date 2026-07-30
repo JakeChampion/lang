@@ -113,6 +113,12 @@ TestSelfHostReadAllStdinIRX86_64 10
 TestSelfHostReadAllStdinIRArm64 20
 TestSelfHostReadAllStdinIRRoutingX86_64 6
 TestSelfHostReadAllStdinIRWasm 12
+# Tuple element from a wide-returning call (#5902): 7 subtests through two
+# drivers (asm_run + asm_pathprobe_run). MEASURED 2.6 s with both restored from
+# the warm cache, per the FERN_SELFHOST_BUILD_CACHE method documented on the
+# interp-driver entry below — a cold `go test` reports 249 s, 94x higher,
+# because it re-emits both drivers.
+TestSelfHostTupleWideCallElem 3
 # The interp driver (#5912): self-host-compiles lexer + parser + interp + util
 # into a working interpreter, then feeds it 104 tiny programs. MEASURED 6.58 s
 # with the modload driver restored from the warm cache, which is what the shard
