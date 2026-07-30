@@ -685,6 +685,14 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"arr-index-of-helper", `function main(): i32 { var xs: i32[] = [7, 8, 9]; return xs.index_of(9); }`},
 		{"arr-contains-helper", `function main(): i32 { var xs: i32[] = [7, 8, 9]; if (xs.contains(8)) { return 1; } return 0; }`},
 		{"i32-pow-helper", `function main(): i32 { var n: i32 = 2; return n.pow(5); }`},
+		// gcd / lcm: helper-backed like pow, and the only pair whose helper body
+		// calls ANOTHER helper (lcm's Fern source calls `.gcd()`). arm64 is where
+		// that bit first, because its per-module unit path emits lcm's body
+		// unconditionally — see the lowering comment in irlower and #5940.
+		{"i32-gcd-helper", `function main(): i32 { var n: i32 = 48; return n.gcd(18); }`},
+		{"i32-gcd-negative", `function main(): i32 { var n: i32 = 0 - 48; return n.gcd(18); }`},
+		{"i32-lcm-helper", `function main(): i32 { var n: i32 = 4; return n.lcm(6); }`},
+		{"i32-lcm-zero", `function main(): i32 { var n: i32 = 9; return n.lcm(0); }`},
 		{"arr-min-helper", `function main(): i32 { var xs: i32[] = [5, 2, 8]; match (xs.min()) { Some(m) => { return m; }, None => { return 99; } } }`},
 		{"arr-max-helper", `function main(): i32 { var xs: i32[] = [5, 2, 8]; match (xs.max()) { Some(m) => { return m; }, None => { return 99; } } }`},
 		{"arr-max-empty-helper", `function main(): i32 { var xs: i32[] = []; match (xs.max()) { Some(m) => { return m; }, None => { return 99; } } }`},

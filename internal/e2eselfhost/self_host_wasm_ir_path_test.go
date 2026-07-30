@@ -1207,6 +1207,18 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"arr-contains-false", `function main(): i32 { var xs: i32[] = [7, 8, 9]; if (xs.contains(3)) { return 1; } return 0; }`, 0},
 		{"i32-pow", `function main(): i32 { var n: i32 = 2; return n.pow(5); }`, 32},
 		{"i32-pow-zero-exp", `function main(): i32 { var n: i32 = 7; return n.pow(0); }`, 1},
+		// gcd / lcm are the only helper pair where one body CALLS the other, so
+		// the lcm cases also pin that $__fern_i32_lcm's inner `call $__fern_i32_gcd`
+		// passes its operands in the same (other, n) order the WAT declares. Both
+		// operations are symmetric, so that is checked by the negative and zero
+		// cases (which are not symmetric in sign) rather than by the values.
+		{"i32-gcd", `function main(): i32 { var n: i32 = 48; return n.gcd(18); }`, 6},
+		{"i32-gcd-negative", `function main(): i32 { var n: i32 = 0 - 48; return n.gcd(18); }`, 6},
+		{"i32-gcd-zero-arg", `function main(): i32 { var n: i32 = 7; return n.gcd(0); }`, 7},
+		{"i32-gcd-both-zero", `function main(): i32 { var n: i32 = 0; return n.gcd(0); }`, 0},
+		{"i32-lcm", `function main(): i32 { var n: i32 = 4; return n.lcm(6); }`, 12},
+		{"i32-lcm-negative", `function main(): i32 { var n: i32 = 0 - 4; return n.lcm(6); }`, 12},
+		{"i32-lcm-zero-arg", `function main(): i32 { var n: i32 = 9; return n.lcm(0); }`, 0},
 		// min/max carry the empty-array guard and build the i32-payload Option box
 		// ([tag@0][payload@4], tag 1 = None) inside the helper, so the empty cases
 		// exercise a branch the non-empty ones never reach.

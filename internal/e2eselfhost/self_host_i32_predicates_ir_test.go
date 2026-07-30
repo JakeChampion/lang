@@ -104,6 +104,36 @@ func TestSelfHostI32PredicatesIRX86_64(t *testing.T) {
 		// Negative base, odd exponent: -8, shifted into exit-code range.
 		{"pow-negative-base", "function main(): i32 { var n: i32 = 0 - 2; return n.pow(3) + 100; }", 92},
 		{"pow-expr-receiver", "function main(): i32 { var b: i32 = 2; var e: i32 = 3; return (b + 1).pow(e); }", 27},
+		// n.gcd(m) / n.lcm(m) — helper-backed with an argument, like pow, but with
+		// one extra moving part: lcm's own Fern body calls `.gcd()`, so the lowering
+		// added here is what that inner call goes through too. Before it existed,
+		// that inner call fell to the generic primitive-receiver dispatch and emitted
+		// an undefined `__fn_i32__gcd` — which the arm64 per-module UNIT path hit for
+		// real, since i32_lcm is in all_runtime_need_roots and its entry unit emits
+		// lcm unconditionally (#5940, the blocker on the arm64 over-budget rescue).
+		//
+		// gcd and lcm are both SYMMETRIC, so no case here can catch a swapped
+		// operand order — the ordering is copied from pow, which the asymmetric
+		// cases above do pin. What these do pin: the sign handling (both operands
+		// are abs()'d), the zero conventions, and that the helper bodies link.
+		{"gcd-48-18", "function main(): i32 { var n: i32 = 48; return n.gcd(18); }", 6},
+		{"gcd-coprime", "function main(): i32 { var n: i32 = 9; return n.gcd(28); }", 1},
+		{"gcd-negative-receiver", "function main(): i32 { var n: i32 = 0 - 48; return n.gcd(18); }", 6},
+		{"gcd-negative-arg", "function main(): i32 { var n: i32 = 48; return n.gcd(0 - 18); }", 6},
+		// gcd(a, 0) == abs(a) and gcd(0, 0) == 0 — the loop-never-runs arm.
+		{"gcd-zero-arg", "function main(): i32 { var n: i32 = 7; return n.gcd(0); }", 7},
+		{"gcd-zero-receiver", "function main(): i32 { var n: i32 = 0; return n.gcd(12); }", 12},
+		{"gcd-both-zero", "function main(): i32 { var n: i32 = 0; return n.gcd(0); }", 0},
+		{"gcd-expr-receiver", "function main(): i32 { var a: i32 = 40; var b: i32 = 8; return (a + b).gcd(18); }", 6},
+		{"lcm-4-6", "function main(): i32 { var n: i32 = 4; return n.lcm(6); }", 12},
+		{"lcm-coprime", "function main(): i32 { var n: i32 = 5; return n.lcm(7); }", 35},
+		{"lcm-negative-receiver", "function main(): i32 { var n: i32 = 0 - 4; return n.lcm(6); }", 12},
+		{"lcm-negative-arg", "function main(): i32 { var n: i32 = 4; return n.lcm(0 - 6); }", 12},
+		// Either operand zero short-circuits to 0, before the divide by gcd == 0.
+		{"lcm-zero-arg", "function main(): i32 { var n: i32 = 9; return n.lcm(0); }", 0},
+		{"lcm-zero-receiver", "function main(): i32 { var n: i32 = 0; return n.lcm(9); }", 0},
+		{"lcm-multiple", "function main(): i32 { var n: i32 = 3; return n.lcm(9); }", 9},
+		{"lcm-expr-receiver", "function main(): i32 { var a: i32 = 2; var b: i32 = 2; return (a + b).lcm(6); }", 12},
 		// xs.index_of(x) / xs.contains(x): helper-backed WITH an argument, so both the
 		// need-mapping and the reverse operand order apply. The not-found cases shift
 		// by +10 because the helper returns -1, which is not an exit code.

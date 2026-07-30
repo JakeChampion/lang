@@ -170,6 +170,12 @@ pub function is_fern_helper(name: string): boolean {
         || name == "__fern_arr_i32_sum"
         || name == "__fern_arr_i32_product"
         || name == "__fern_i32_pow"
+        // n.gcd(m) / n.lcm(m) (#2649) — pure-scalar Fern helpers, like pow.
+        // lcm's own body calls gcd, so both must be recognised here: without
+        // the gcd entry, calls_only_known reads lcm's inner call as an unknown
+        // USER function and bails the module to AST.
+        || name == "__fern_i32_gcd"
+        || name == "__fern_i32_lcm"
         || name == "__fern_arr_i32_index_of"
         // xs.min() / xs.max() (#3457): the Option-returning extremum helpers —
         // the guard and the box live in their Fern bodies, so the call site is
@@ -3887,6 +3893,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         // `call __fn___fern_arr_i32_sum`; the entry owns the definition. A
         // registered NEED root is not the same as an exported SYMBOL.
         "__fn___fern_arr_i32_sum", "__fn___fern_arr_i32_product", "__fn___fern_i32_pow",
+        "__fn___fern_i32_gcd", "__fn___fern_i32_lcm",
         "__fn___fern_arr_i32_index_of",
         "__fn___fern_arr_i32_min_opt", "__fn___fern_arr_i32_max_opt"
     ];
@@ -4873,6 +4880,10 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             if (o.str == "__fern_arr_i32_sum") { s = s.need("arr_i32_sum"); }
             if (o.str == "__fern_arr_i32_product") { s = s.need("arr_i32_product"); }
             if (o.str == "__fern_i32_pow") { s = s.need("i32_pow"); }
+            // i32_lcm's body calls gcd; runtime_need_deps carries the
+            // i32_lcm → i32_gcd edge, so close_needs emits gcd's body too.
+            if (o.str == "__fern_i32_gcd") { s = s.need("i32_gcd"); }
+            if (o.str == "__fern_i32_lcm") { s = s.need("i32_lcm"); }
             if (o.str == "__fern_arr_i32_index_of") { s = s.need("arr_i32_index_of"); }
             // xs.min() / xs.max() (#3457) — unlike the fold helpers these ALLOCATE
             // (the Option box they return), so they pull in the heap runtime too.
@@ -6509,6 +6520,19 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("i32_pow")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_pow(), all_structs, s);
+    }
+    // i32_gcd / i32_lcm back n.gcd(m) / n.lcm(m) — also allocation-free. gcd
+    // FIRST: lcm's body calls it, and close_needs pulls i32_gcd in whenever
+    // i32_lcm is needed (the runtime_need_deps edge). Mirrors the arm64 pair in
+    // asm_arm64_ir.emit_ir_runtime, which shipped before this one and is why the
+    // arm64 unit path emitted an lcm body whose `.gcd()` had no lowering (#5940).
+    if (s.has_need("i32_gcd")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_gcd(), all_structs, s);
+    }
+    if (s.has_need("i32_lcm")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_lcm(), all_structs, s);
     }
     // arr_i32_index_of backs xs.index_of(x) / xs.contains(x) (#3457) —
     // allocation-free, like the other fold helpers.
