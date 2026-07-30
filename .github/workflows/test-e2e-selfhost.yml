@@ -447,6 +447,27 @@ jobs:
         with:
           wasmtime: "true"
           gotestsum: "true"
+      # aarch64 cross toolchain, x86 shards only. The TestSelfHost*Arm64 family
+      # runs the self-host DRIVER on the host (it is always emitted as x86-64 asm
+      # — e2eharness.emitDriverAsm calls x86_64.Emit) and cross-emits the arm64
+      # program, so it needs a native x86 host PLUS an aarch64 assembler/linker
+      # and qemu to run the result. Without these, Arm64Tooling reports
+      # `gcc="" qemu=""` and every one of those tests t.Skips — measured on
+      # x86_64-shard8: 11 skipped that way in a single shard, including
+      # TestSelfHostPerModuleConcatArm64, whose entire purpose is to LINK the
+      # arm64 per-module concat (a dangling cross-unit symbol is invisible to
+      # emit-only checks — see #5937/#5940). Those skips read as green.
+      # The aarch64 lane cannot substitute: its runner is native arm64, so the
+      # x86-64 driver binary will not exec there at all.
+      - name: aarch64 cross toolchain (x86 shards — arm64 cross-emit tests)
+        if: matrix.host == 'x86_64'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu qemu-user-static
+          aarch64-linux-gnu-gcc --version | head -1
+          qemu-aarch64-static --version | head -1
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-${{ matrix.host }}

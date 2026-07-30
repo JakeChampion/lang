@@ -166,32 +166,29 @@ func TestSelfHostPerModuleConcatX86_64(t *testing.T) {
 // checks. Keeping it means a future regression in the arm64 unit path's
 // runtime-helper symbols fails here instead of silently going green.
 //
-// Two host shapes, and getting the gating right is what makes this run in CI at
-// all. The DRIVER must be executable on the host (it resolves argv paths); the
-// emitted PROGRAM must be executable for arm64. So:
+// This is an x86-HOST test that cross-emits for arm64, and the reason is
+// structural rather than a choice: buildSelfHostBin's emit is
+// e2eharness.emitDriverAsm, which calls x86_64.Emit unconditionally, so a
+// self-host DRIVER binary is always x86-64 asm. There is no arm64 driver to
+// build, which is why the whole TestSelfHost*Arm64 family runs the driver on x86
+// and only the EMITTED program is arm64.
 //
-//   - native arm64 host (the aarch64 CI lane, and Apple Silicon): one toolchain
-//     does both, and qemu is empty because nothing needs emulating.
-//   - x86 host with the aarch64 cross toolchain: the host gcc builds the driver,
-//     the cross gcc builds the program, qemu runs it.
+// So the requirements are: a native x86-64 host to exec the driver, plus the
+// aarch64 cross toolchain to assemble/link/run the emitted program. On a native
+// arm64 runner this cannot work at all — the driver is the wrong architecture
+// (`fork/exec …/mmr: exec format error`), which is exactly what an earlier
+// attempt to run this on the aarch64 lane hit.
 //
-// The first version of this test required x86_64Tooling unconditionally, which
-// silently skipped it EVERYWHERE: on x86 CI shards the cross toolchain is absent
-// (`gcc="" qemu=""`), and on the aarch64 lane x86_64Tooling returns a qemu-x86_64
-// runner, tripping the native-only guard. A PR whose whole point is that the
-// arm64 concat is link-verified would have had that verified nowhere. Gate on the
-// arm64 toolchain and derive the host compiler from it instead.
+// CI coverage therefore depends on the x86 shards HAVING the cross toolchain;
+// without it this skips, as 11 sibling *Arm64 tests silently did. The selfhost
+// workflow now installs gcc-aarch64-linux-gnu + qemu-user-static on the x86_64
+// shards for exactly that reason.
 func TestSelfHostPerModuleConcatArm64(t *testing.T) {
-	armGcc, qemu := arm64Tooling(t) // skips when no arm64 toolchain is available
-	hostGcc := armGcc
-	if len(qemu) != 0 {
-		// Cross-host: armGcc cannot produce a host-runnable driver.
-		var runner []string
-		hostGcc, runner = x86_64Tooling(t)
-		if len(runner) != 0 {
-			t.Skip("driver must run natively (argv paths); host is neither arm64 nor x86-64")
-		}
+	hostGcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("the self-host driver is emitted as x86-64 asm (x86_64.Emit), so it must run on a native x86-64 host")
 	}
+	armGcc, qemu := arm64Tooling(t) // skips when the aarch64 cross toolchain is absent
 	dir, mmr := buildConcatDriver(t, hostGcc)
 	entryPath, _ := writeConcatFixture(t, dir)
 
