@@ -178,14 +178,7 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
 //
 // Returns "" if a REACHABLE module is still not IR-eligible, so such programs
 // fall back to the AST emitter unchanged.
-// `target` selects the per-unit emitter: "arm64" uses
-// asm_arm64_ir.emit_module_ir_unit_arm64, anything else the x86-64
-// asm_ir.emit_module_ir_unit. Before this the helper was x86-only, so the arm64
-// merged leg had no over-budget rescue and dropped straight to the AST emitter
-// for the whole 512..1500-function band x86 already served via IR (#3457 slice 5
-// prerequisite — the arm64 AST emitter cannot be deleted while that band depends
-// on it).
-function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: flatten.LoadedModule[], reach: string[], target: string): string {
+function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: flatten.LoadedModule[], reach: string[]): string {
     var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded);
     var infmods: parser.Module[] = [];
     var all_funcs: parser.FuncDecl[] = [];
@@ -258,11 +251,7 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
         }
         var extra: string[] = [];
         if (parts[idx].is_entry) { extra = needs; }
-        if (target == "arm64") {
-            out = out + asm_arm64_ir.emit_module_ir_unit_arm64(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_structs, 0, 0 - 1);
-        } else {
-            out = out + asm_ir.emit_module_ir_unit(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_structs, 0, 0 - 1, []);
-        }
+        out = out + asm_ir.emit_module_ir_unit(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_structs, 0, 0 - 1, []);
         idx = idx + 1;
     }
     return dedupe_weak_defs(out);
@@ -673,25 +662,7 @@ function main(): i32 {
                 return 0;
             }
             if (target == "arm64") {
-                // Same over-budget rescue the x86 leg below has had since #5676:
-                // a merged bundle past the 512-function IR budget but small
-                // enough for one process routes per-module (each module is under
-                // budget → IR) instead of dropping the whole program to the AST
-                // emitter. arm64 lacked this, so the entire 512..1500 band went
-                // AST here while x86 served it via IR — the asymmetry that had to
-                // be closed before the arm64 AST emitter can be deleted (#3457
-                // slice 5). Bounds and treeshake rationale: see the x86 leg.
-                var amwb: parser.Module = parser.module_with_builtins(merged);
-                var anfuncs: i32 = asm_ir.lift_lambdas(amwb).funcs.len();
-                if (anfuncs > 512 && anfuncs < 1500) {
-                    var ashaken: parser.Module = treeshake.treeshake(merged);
-                    var areach: string[] = [];
-                    var ari: i32 = 0;
-                    while (ari < ashaken.funcs.len()) { areach = areach.append(ashaken.funcs[ari].name); ari = ari + 1; }
-                    var apmc: string = emit_per_module_concat(dir, entry, loaded, areach, "arm64");
-                    if (apmc.len() > 0) { write(apmc); return 0; }
-                }
-                write(asm_arm64.emit_module(amwb, false));
+                write(asm_arm64.emit_module(parser.module_with_builtins(merged), false));
                 return 0;
             }
             // OVER the merged 512-function IR budget but small enough to fit one
@@ -738,7 +709,7 @@ function main(): i32 {
                 var reach: string[] = [];
                 var ri: i32 = 0;
                 while (ri < shaken.funcs.len()) { reach = reach.append(shaken.funcs[ri].name); ri = ri + 1; }
-                var pmc: string = emit_per_module_concat(dir, entry, loaded, reach, "x86-64");
+                var pmc: string = emit_per_module_concat(dir, entry, loaded, reach);
                 if (pmc.len() > 0) { write(pmc); return 0; }
             }
             write(asm.emit_module(mwb));
