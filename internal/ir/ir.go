@@ -3811,6 +3811,25 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		if id.Name == "map_new" {
 			return true
 		}
+		// `string_from_bytes_unchecked(buf)` always COPIES — into an
+		// inline-tagged register value at <= 7 bytes, into a fresh rc1 heap
+		// buffer above — so the result aliases neither `buf` nor anything
+		// reachable from it. Same provenance-free-fresh rule as the string
+		// concat / slice arms above, just spelled as a builtin. (This is the
+		// copy #5931's allocator untaint rests on: it is what makes the input
+		// buffer dead at the return.)
+		//
+		// Admitting it is what lets the int-to-string family prove fresh at all.
+		// `core/int.int_to_string` / `__int_to_string_u64` / `int_to_string_radix`
+		// all END in this call, so without it every one of them was rejected here,
+		// and with them every wrapper above them — `to_string`, `to_hex`,
+		// `to_binary`. That verdict propagates: ownedCallResultType refuses to
+		// reclaim a `__`-prefixed method result unless the callee is proven
+		// fresh-returning, so `x.to_binary()` handed to another call could not be
+		// stashed and dec'd, and leaked (#5942).
+		if id.Name == "string_from_bytes_unchecked" {
+			return true
+		}
 		// `xs.append(v)` returns the receiver's OWN buffer (the rc==1 in-place
 		// path) or a fresh copy of it — never anything derived from the element
 		// argument's heap. So the result is param-free exactly when the
@@ -11580,6 +11599,50 @@ func resultCannotAliasArg(t ast.Type) bool {
 	return false
 }
 
+// resultIsCountedStringAlias admits the stage-(b) arg-temp reclaim for a
+// STRING-returning user callee, where resultCannotAliasArg says no. The result
+// really can be the argument — `pad_start`'s `if (sl >= n) { return s; }` is the
+// canonical shape — so this rests on a different argument: not that the alias is
+// impossible, but that it is COUNTED.
+//
+// `return <param>` emits the return-transfer inc. A param is borrowed, so it is
+// never an isOwnedRcLocal, so move-on-return can never cancel that inc away
+// (needsRcIncOnAlias's StringType arm supplies it on every backend). So after the
+// call the temp's rc is 2 on the pass-through path and 1 on the fresh path, and
+// the immediate post-call dec nets it to exactly one owner either way — freeing
+// the temp only when the result does not reference it.
+//
+// Without this, a fresh string temp handed to a string-returning call is never
+// reclaimed at all: `(k * 66049).to_binary().pad_start(40, "0")` leaks one block
+// per call, while the identical code with the intermediate bound to a `var` does
+// not (#5942). It hid from the x86-64 leakcheck suite because ≤ 7-byte strings
+// are SSO-inline on the single-word ABI, so short intermediates allocate nothing;
+// arm64 and wasm heap-allocate them.
+//
+// Deliberately narrow, because widening this gate to POINTER results in general
+// is the thing that segfaulted the differential oracle before (seeds
+// 1392/1596/1836, recorded on reclaimArgTemps above). Two restrictions carry
+// that weight:
+//
+//   - CONCRETE StringType only. The shapes that broke were generic identity
+//     returns (`id[T](x)`, `pick[T](c,a,b)`), whose result type is the bare type
+//     var `ast.ParamType` — not StringType, so they stay excluded exactly as
+//     they are today. A concrete string result cannot hide a type var.
+//   - USER-DECLARED callees only (the returnsNoParamEscape map keys every decl in
+//     prog.Funcs). A builtin's allocation contract is per-helper rather than the
+//     return-transfer model this argument rests on — `random_bytes` hands back a
+//     buffer with no rc header at all — so builtins keep their prior safe-leak.
+func (b *builder) resultIsCountedStringAlias(name string, t ast.Type) bool {
+	if !ast.RcFreeEnabled {
+		return false
+	}
+	if _, isStr := t.(ast.StringType); !isStr {
+		return false
+	}
+	_, isUserFn := b.returnsNoParamEscape[name]
+	return isUserFn
+}
+
 // growBracketEntry is one buffer the #4873 caller-side containment bracket
 // protects across a call: the arg local's slot, and either the arg buffer
 // itself (empty fieldPath) or an array buffer reached from a struct arg by
@@ -12458,7 +12521,8 @@ func (b *builder) callBody(n *ast.Call) error {
 	_, calleeIsLocal := b.locals[id.Name]
 	_, calleeIsFunc := b.info.FuncSigs[id.Name]
 	reclaimArgTemps := ast.RcFreeEnabled && calleeIsFunc && !calleeIsLocal &&
-		(resultCannotAliasArg(b.exprType(n)) || b.returnsNoParamEscape[id.Name]) &&
+		(resultCannotAliasArg(b.exprType(n)) || b.returnsNoParamEscape[id.Name] ||
+			b.resultIsCountedStringAlias(id.Name, b.exprType(n))) &&
 		!b.pairForm[id.Name] && id.Name != "map_new" && !calleeRetainsAnyArg(id.Name)
 	var argTempSlots []int32
 	var argTempTypes []ast.Type

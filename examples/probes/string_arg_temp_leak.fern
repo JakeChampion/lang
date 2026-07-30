@@ -1,37 +1,59 @@
-// A reproduction of #5942: a FRESH string temporary handed straight to a
-// string-RETURNING call is never reclaimed. Binding it to a `var` first is
-// enough to reclaim it, so the two functions below differ only in whether the
-// intermediate has a name.
+// A reproduction of #5942 — a FRESH string temporary handed straight to a
+// string-RETURNING call was never reclaimed — now FIXED. The two functions
+// below differ only in whether the intermediate has a name, and are balanced
+// either way:
 //
 //   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/string_arg_temp_leak.fern
-//   /tmp/p    # stderr: leakcheck: allocs=195 frees=156 live_bytes=1248
+//   /tmp/p    # stderr, before: leakcheck: allocs=195 frees=156 live_bytes=1248
+//             # stderr, after:  leakcheck: allocs=195 frees=195 live_bytes=0
 //
-// with `-target arm64` reporting the same 195/156. One block per call of
-// `temp()`, unbounded in a loop; `bound()` alone is 195/195.
+// `-target arm64` reports the same numbers. Before the fix, one block leaked per
+// call of temp(), unbounded in a loop; bound() alone was already 195/195.
 //
-// Cause: the stage-(b) arg-temp reclaim (ir.go, `reclaimArgTemps`) is gated on
-// `resultCannotAliasArg` — the post-call dec fires immediately, so it is only
-// sound when the callee's result provably is not the argument. `pad_start`
-// really can hand its receiver back:
+// TWO gates had to open, and each alone left the leak in place.
 //
-//     pub function (s: string) pad_start(n: i32, ch: string): string {
-//         var sl: i32 = s.len();
-//         if (sl >= n) { return s; }        // <-- result IS the argument
-//         ...
+// 1. The stage-(b) arg-temp reclaim (ir.go, `reclaimArgTemps`) was gated on
+//    `resultCannotAliasArg` — a concrete scalar result — because the post-call
+//    dec fires immediately. `pad_start` really can hand its receiver back:
 //
-// so the gate correctly refuses, and the temp keeps its prior safe-leak. That
-// is the documented, deliberate exclusion in `reclaimArgTemps` ("every
-// excluded shape keeps its prior safe-leak") — closing it needs a callee-side
-// ownership contract, not a wider caller-side gate; an earlier attempt to
-// admit pointer results segfaulted the differential oracle.
+//        pub function (s: string) pad_start(n: i32, ch: string): string {
+//            var sl: i32 = s.len();
+//            if (sl >= n) { return s; }        // <-- result IS the argument
+//
+//    But that alias is COUNTED: `return <param>` emits the return-transfer inc,
+//    and a param is never an isOwnedRcLocal, so move-on-return cannot cancel it
+//    away. After the call the temp's rc is 2 on the pass-through path and 1 on
+//    the fresh path, so ONE post-call dec nets both to a single owner — freeing
+//    the temp only when the result does not reference it. That is
+//    `resultIsCountedStringAlias`, restricted to concrete string results and
+//    user-declared callees: widening to pointer results in general is what
+//    segfaulted the differential oracle in an earlier attempt.
+//
+// 2. `ownedCallResultType` refuses to reclaim a `__`-prefixed method result
+//    unless the callee is PROVEN fresh-returning, and the whole int-to-string
+//    family was unproven — `int_to_string` / `__int_to_string_u64` /
+//    `int_to_string_radix` all end in `string_from_bytes_unchecked`, a builtin
+//    absent from the fixpoint set, so `exprNoParamEscape` rejected it and the
+//    verdict propagated up through `to_string` / `to_hex` / `to_binary`. That
+//    call always COPIES (the same fact #5931's allocator untaint rests on),
+//    which is now stated where the fixpoint can use it.
 //
 // NOTE on why this hid for so long: on the single-word (x86-64 native) string
-// ABI a <= 7-byte string is SSO-inline, so short intermediates allocate
-// nothing and there is no block to lose. The two-word ABI (arm64 /
-// TwoWordOverride, wasm) heap-allocates them, which is why `to_rgb_hex` —
-// three `to_hex().pad_start(2, "0")` chains — reports a leak on arm64 and a
-// clean run on x86-64 for byte-identical source. The long strings below
-// exceed the SSO window so both backends show it.
+// ABI a <= 7-byte string is SSO-inline, so short intermediates allocate nothing
+// and there is no block to lose. The two-word ABI (arm64 / TwoWordOverride,
+// wasm) heap-allocates them — which is why `to_rgb_hex`, three
+// `to_hex().pad_start(2, "0")` chains, reported a leak on arm64 and a clean run
+// on x86-64 for byte-identical source. The strings below exceed the SSO window
+// so both backends show it. Any new rc/string fixture should do the same, or it
+// under-reports by however much fits inline.
+//
+// STILL OPEN: the concat half. A `"#" + a + b` operand is an *ast.Binary, not a
+// Call, so it never reaches the arg-temp reclaim — `to_rgb_hex` is at 425 of 542
+// on arm64, the remaining 117 being 3 per iteration, one per concat step.
+//
+// Regression gate: TestX86_64LeakCheckStringArgTempReclaim and its arm64 mirror,
+// whose pass-through leg is the over-release half — a buffer freed while the
+// result still needed it shows up as a wrong exit code, not as a leak.
 import "std/i32";
 import "std/string";
 
