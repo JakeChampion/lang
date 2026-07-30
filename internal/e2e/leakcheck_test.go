@@ -1235,17 +1235,20 @@ function main(): i32 {
 //
 // It deliberately does NOT assert a full reclaim, because `to_rgb_hex`'s body
 // chains its intermediates — `r.to_hex().pad_start(2, "0")`, three times, then
-// concatenated — and a fresh string temp handed to a string-RETURNING call is
-// a separate, pre-existing safe-leak (#5942): the stage-(b) arg-temp reclaim
-// is gated on `resultCannotAliasArg`, and `pad_start` really can return its
-// receiver (`if (sl >= n) { return s; }`), so dec'ing after the call would be
-// a UAF. Binding the intermediate to a `var` reclaims it on both backends.
+// CONCATENATED — and the concat half of that chain still leaks on arm64.
 //
-// That leak is invisible on x86-64 here only by accident: the hex pieces are
-// <= 7 bytes, so the single-word ABI keeps them SSO-inline and there is no
-// block to lose. arm64's two-word strings heap-allocate them, so the same
-// source reports allocs=542 frees=388. This fix still moves arm64 from
-// frees=234 to frees=388; the residual is #5942's, not this one's.
+// The call half is now closed: a fresh string temp handed to a string-RETURNING
+// call is reclaimed (#5942, pinned by the StringArgTempReclaim tests below), so
+// arm64 moved 388 -> 425 of 542. What remains is the `"#" + a + b + c` chain
+// itself. A concat operand is an *ast.Binary, not a Call, so it never reaches
+// the stage-(b) arg-temp reclaim that fixed the call case; the ~117 blocks left
+// here are 3 per iteration, one per concat step.
+//
+// x86-64 shows none of this: the hex pieces are <= 7 bytes, so the single-word
+// ABI keeps them SSO-inline and there is no block to lose. That is also why the
+// x86 leg happens to satisfy allocs == frees while the arm64 one does not —
+// treat a clean x86 string-leak number as weak evidence unless the strings
+// exceed the SSO window.
 const rgbHexReclaimSrc = `import "std/i32";
 function main(): i32 {
     var acc: i32 = 0;
@@ -1301,6 +1304,133 @@ func TestArm64LeakCheckToStringReclaim(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, stderr, code := runLeakCheckArm64(t, tc.src)
 			checkToStringReclaim(t, stderr, code, tc.exit, tc.fullReclaim)
+		})
+	}
+}
+
+// A fresh string temp handed straight to a string-RETURNING call used to be
+// reclaimed by nobody (#5942) — one heap block per call, unbounded in a loop.
+// Binding the intermediate to a `var` first reclaimed it, so the two shapes
+// below differ only in whether the intermediate has a name, and had to differ
+// only in that after the fix too.
+//
+// TWO gates had to open, and each alone leaves the leak in place:
+//
+//   - The stage-(b) arg-temp reclaim was gated on `resultCannotAliasArg`, which
+//     rejects every pointer result. `pad_start` really can return its receiver
+//     (`if (sl >= n) { return s; }`), so the gate was not wrong — but the alias
+//     it fears is COUNTED: `return <param>` emits the return-transfer inc, and a
+//     param is never an isOwnedRcLocal, so move-on-return cannot cancel that inc
+//     away. rc is 2 on the pass-through path and 1 on the fresh path, and one
+//     post-call dec nets both to a single owner (resultIsCountedStringAlias).
+//   - `ownedCallResultType` refuses to reclaim a `__`-prefixed method result
+//     unless the callee is PROVEN fresh-returning, and the whole int-to-string
+//     family was unproven: they all end in `string_from_bytes_unchecked`, a
+//     builtin absent from the fixpoint set, so `exprNoParamEscape` rejected it
+//     and the verdict propagated up through to_string / to_hex / to_binary. That
+//     call always copies, which is now stated where the fixpoint can use it.
+//
+// The pass-through leg is the one with teeth on the first gate: it pads to a
+// width the receiver already exceeds, so `pad_start` returns its argument and
+// the post-call dec lands on a buffer the RESULT still needs. If the counted-
+// alias reasoning were wrong that is a use-after-free — a wrong exit code or a
+// segfault, not a leak. Widening this gate to pointer results in general is
+// what segfaulted the differential oracle before (see reclaimArgTemps), so the
+// narrowing to concrete strings + user callees is load-bearing, not tidiness.
+//
+// Both legs use LONG (> 7 byte) intermediates deliberately. On the single-word
+// x86-64 string ABI a <= 7-byte string is SSO-inline and allocates nothing, so
+// short fixtures report a clean allocs == frees whether or not the leak exists —
+// which is exactly how this hid from the x86-only suite while arm64's two-word
+// strings heap-allocated the same values. The arm64 mirror is not optional here.
+const argTempReclaimTempRecvSrc = `import "std/i32";
+import "std/string";
+function main(): i32 {
+    var acc: i32 = 0;
+    var k: i32 = 1;
+    while (k < 40) {
+        var s: string = (k * 66049).to_binary().pad_start(40, "0");
+        var i: i32 = 0;
+        while (i < s.len()) { acc = (acc * 31 + (s[i] as i32)) % 100003; i = i + 1; }
+        k = k + 1;
+    }
+    return acc % 251;
+}`
+
+// The control: identical, with the intermediate named. Balanced before and
+// after — if this ever diverges from the leg above, the fix has become a
+// double-free rather than a reclaim.
+const argTempReclaimBoundRecvSrc = `import "std/i32";
+import "std/string";
+function main(): i32 {
+    var acc: i32 = 0;
+    var k: i32 = 1;
+    while (k < 40) {
+        var h: string = (k * 66049).to_binary();
+        var s: string = h.pad_start(40, "0");
+        var i: i32 = 0;
+        while (i < s.len()) { acc = (acc * 31 + (s[i] as i32)) % 100003; i = i + 1; }
+        k = k + 1;
+    }
+    return acc % 251;
+}`
+
+// pad_start's PASS-THROUGH arm: width 2 against a >= 32-byte receiver, so
+// `sl >= n` holds and the result IS the argument. Reads every byte back, so an
+// over-release shows as a wrong exit code.
+const argTempReclaimPassThroughSrc = `import "std/i32";
+import "std/string";
+function main(): i32 {
+    var acc: i32 = 0;
+    var k: i32 = 1;
+    while (k < 40) {
+        var s: string = (k * 66049).to_binary().pad_start(2, "0");
+        var i: i32 = 0;
+        while (i < s.len()) { acc = (acc * 31 + (s[i] as i32)) % 100003; i = i + 1; }
+        k = k + 1;
+    }
+    return acc % 251;
+}`
+
+var argTempReclaimCases = []struct {
+	name string
+	src  string
+	exit int
+}{
+	{"temp-receiver", argTempReclaimTempRecvSrc, 240},
+	{"bound-receiver", argTempReclaimBoundRecvSrc, 240},
+	{"pass-through-arm", argTempReclaimPassThroughSrc, 24},
+}
+
+func checkArgTempReclaim(t *testing.T, stderr string, code, wantExit int) {
+	t.Helper()
+	if code != wantExit {
+		t.Fatalf("exit=%d, want %d — the string is wrong, which for the pass-through leg "+
+			"means the post-call dec freed a buffer the result still referenced", code, wantExit)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs == 0 {
+		t.Fatalf("no allocations recorded — fixture drift (are the intermediates still > 7 bytes?)")
+	}
+	if frees != allocs || live != 0 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want allocs==frees / live==0", allocs, frees, live)
+	}
+}
+
+func TestX86_64LeakCheckStringArgTempReclaim(t *testing.T) {
+	for _, tc := range argTempReclaimCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckX86_64(t, tc.src)
+			checkArgTempReclaim(t, stderr, code, tc.exit)
+		})
+	}
+}
+
+func TestArm64LeakCheckStringArgTempReclaim(t *testing.T) {
+	for _, tc := range argTempReclaimCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runLeakCheckArm64(t, tc.src)
+			checkArgTempReclaim(t, stderr, code, tc.exit)
 		})
 	}
 }
