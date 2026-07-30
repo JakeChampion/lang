@@ -5200,7 +5200,7 @@ func (g *generator) emitHeapMarkRuntime() {
 	g.line(".type __fern_heap_release_to, @function")
 	g.label("__fern_heap_release_to")
 	g.emit("test rdi, rdi")
-	g.emit("jz .Lheap_rel_done") // mark 0 = no checkpoint; leave the cursor alone
+	g.emit("jz .Lheap_rel_done")               // mark 0 = no checkpoint; leave the cursor alone
 	g.emit("mov [rip + __fern_heap_ptr], rdi") // read the arg before clobbering rdi
 	if ast.RcFreeEnabled && g.usesAlloc {
 		g.emit("push rcx")

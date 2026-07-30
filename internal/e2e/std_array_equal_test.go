@@ -10,6 +10,7 @@ import "testing"
 //     `cmp.eq_arrays`, so an `import "std/array"` program still gets element-
 //     wise equality without importing core/cmp directly;
 //   - `array.index_of_last` — the reverse-scan Eq verb that stays in std/array.
+//
 // All are bound `[T: Eq]` and compare elements with `==`, so `i32` keeps the
 // scalar compare and `string` dispatches byte equality, on interp + x86-64 +
 // wasm.

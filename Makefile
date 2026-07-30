@@ -6,7 +6,7 @@ ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 LANG_SRCS := $(wildcard examples/*.fern)
 
-.PHONY: all build test vet deadcode clean examples run-% fmt fmt-check
+.PHONY: all build test vet deadcode clean examples run-% fmt fmt-check gofmt gofmt-check
 
 all: build test
 
@@ -59,6 +59,22 @@ fmt-check: bin/fern
 		if ! ./bin/fern -fmt -d "$$f"; then status=1; fi; \
 	done; \
 	exit $$status
+
+# The Go-side counterpart to fmt / fmt-check. `fmt-check` covers only
+# examples/*.fern, so nothing gated Go formatting and it drifted —
+# gofmt's trailing-comment and map-literal alignment goes stale as soon
+# as a longer entry lands beside an existing one.
+gofmt:
+	@out=$$(gofmt -l .); \
+	if [ -n "$$out" ]; then gofmt -w $$out; echo "reformatted:"; echo "$$out"; fi
+
+gofmt-check:
+	@out=$$(gofmt -l .); \
+	if [ -n "$$out" ]; then \
+		echo "not gofmt-clean:"; echo "$$out"; \
+		gofmt -d $$out; \
+		exit 1; \
+	fi
 
 clean:
 	rm -rf bin build

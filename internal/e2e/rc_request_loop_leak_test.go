@@ -20,20 +20,20 @@ import "testing"
 // So a *flat* leak assertion is impossible until that safe-leak cleanup lands;
 // this guard therefore checks the three things that ARE backend-robust today:
 //
-//   1. Value correctness — both loop halves compute the same result (a drop
-//      that corrupted data would diverge).
-//   2. No rc under-release — __rc_underflow_count() stays 0 (the corpus's gate,
-//      folded in here too since a request loop is a good exerciser).
-//   3. BOUNDED, LINEAR growth — the second batch of N requests must not grow
-//      meaningfully more than the first (catches a compounding leak or a
-//      cross-request cycle, which accelerate), and per-request growth must sit
-//      under an absolute ceiling of 700 B (catches a gross per-request leak or
-//      reclamation broken for a class — e.g. an injected 300-element
-//      append-churn handler measures 1632 B/req and trips it, while the ~176 /
-//      352 B/req safe-leak baseline clears it with 2-4x margin). It TOLERATES a
-//      documented linear safe-leak below ~700 B/req; catching those is the
-//      RC-STRINGS-PLAN cleanup's job, and when that lands this ceiling should
-//      drop toward zero.
+//  1. Value correctness — both loop halves compute the same result (a drop
+//     that corrupted data would diverge).
+//  2. No rc under-release — __rc_underflow_count() stays 0 (the corpus's gate,
+//     folded in here too since a request loop is a good exerciser).
+//  3. BOUNDED, LINEAR growth — the second batch of N requests must not grow
+//     meaningfully more than the first (catches a compounding leak or a
+//     cross-request cycle, which accelerate), and per-request growth must sit
+//     under an absolute ceiling of 700 B (catches a gross per-request leak or
+//     reclamation broken for a class — e.g. an injected 300-element
+//     append-churn handler measures 1632 B/req and trips it, while the ~176 /
+//     352 B/req safe-leak baseline clears it with 2-4x margin). It TOLERATES a
+//     documented linear safe-leak below ~700 B/req; catching those is the
+//     RC-STRINGS-PLAN cleanup's job, and when that lands this ceiling should
+//     drop toward zero.
 //
 // Runs on the three native backends that share the bump-allocator + freelist
 // memory model; the interp backend uses Go GC (it reported 0 growth for the
