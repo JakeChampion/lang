@@ -175,3 +175,13 @@ TestSelfHostArm64ModloadNativeBuild 120
 # Dominated by the one modload driver build it shares with the rest of the
 # suite; MEASURED 108 s cold, near-free once that driver is warm.
 TestSelfHostArm64ProcExecRuns 15
+# The arm64 stage-2 fixed point had NO entry — `TestSelfHostStage2FixedPoint`
+# above is a different test, and the lookup is exact — so LPT ranked a
+# ~15-MINUTE test with the sub-second ones and packed a shard around it. Any
+# change to the test list can then drop it in a bucket that blows the 18-minute
+# -test.timeout; adding two tests in #5953 did exactly that (run 30581856560,
+# x86_64-shard9: `panic: test timed out after 18m0s` with the test 13m31s in).
+# MEASURED from that run: 53 s of stage-1/stage-2 build, then `self` 709 s —
+# mmc2 re-emitting the compiler UNDER QEMU — plus sort_wider 25 s and two more
+# cases still to go.
+TestSelfHostStage2FixedPointArm64 900
