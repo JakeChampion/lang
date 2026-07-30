@@ -687,7 +687,7 @@ pub function module_allocates(cache: irlower.LowerResult[]): boolean {
 // __field_reclaim_<T> helper is called anywhere in the lowered module (#3457).
 // wasm emits a per-type REAL reclaim body for each (emit_wasm_field_reclaim_body
 // frees the superseded rc-array field buffer on a consume-rebind via
-// __fern_snapshot_dec — see wasm.fern:emit_ir_rc_bodies + TestSelfHostFieldReclaimWasm);
+// __fern_snapshot_dec — see emit_ir_rc_bodies below + TestSelfHostFieldReclaimWasm);
 // collected by scanning lowered call_direct ops rather than a need-set, matching
 // wasm's module_calls-style gating.
 pub function field_reclaim_types(cache: irlower.LowerResult[]): string[] {
@@ -7450,5 +7450,362 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     out = out + "  (export \"main\" (func $main))\n";
     out = out + "  (func $_lang_run (result i32) (i32.eqz (i32.eqz (call $main))))\n";
     out = out + "  (export \"_lang_run\" (func $_lang_run)))\n";
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Relocated from wasm.fern (#3457 slice-5 prep, untangle step 15): the RC
+// drop/reclaim body emitters the wasm IR framing needs, plus the struct/enum
+// type classifiers they rest on. These were the LAST IR-path residents in
+// wasm.fern. The three classifiers previously took the AST emitter's 60-field
+// `Ctx`; they read only two of its fields, so they now take `structs` +
+// `mr_types` directly (the shape `is_struct_type` already used), which is what
+// lets them move without dragging `Ctx` across the module boundary.
+// ---------------------------------------------------------------------------
+
+// ty_spelling_is_array reports whether a declared type spelling names an
+// array type — i.e. ends in the two-char "[]" suffix (i32[] / string[] /
+// Foo[] / i32[][]). Generic spellings like Map[K,V] / Box[T] end in "]"
+// but not "[]", so they are correctly excluded.
+pub function ty_spelling_is_array(t: string): boolean {
+    if (t.len() < 2) { return false; }
+    return t[t.len() - 2:t.len()] == "[]";
+}
+
+// struct_field_kind_char classifies a struct field TYPE for recursive
+// release: 'a' array, 's' string, 'S' rc-boxed struct / enum / tuple (freed
+// one level — the nested value's OWN fields leak, a sound known gap), 'i'
+// scalar / unprovable (SKIPPED). Soundness is asymmetric and critical: a
+// false 'a'/'s'/'S' on a scalar field would $__fern_arr_dec a raw integer
+// (corruption for a large even value above heap_base), so the classifier is
+// EXACT for the pointer cases and defaults everything else to 'i' (a missed
+// pointer field just leaks, never corrupts).
+pub function struct_field_kind_char(ft: string, structs: parser.StructDecl[], mr_types: string[]): string {
+    if (ty_spelling_is_array(ft)) { return "a"; }
+    if (ft == "string") { return "s"; }
+    if (ft.len() > 0 && ft[0] == 40) { return "S"; }
+    if (is_struct_type(structs, ft)) { return "S"; }
+    if (is_enum_type_name(structs, mr_types, ft)) { return "S"; }
+    return "i";
+}
+
+// array_field_elem_is_ptr: for an array field type "T[]", is the ELEMENT T an
+// rc-boxed pointer (string / struct / enum / tuple / nested array)? Drives
+// whether a struct's array field is deep-released ($__fern_arr_dec_ptr, which
+// releases the elements) or freed flat ($__fern_arr_dec — for i32/i64/f64
+// scalar elements, which must NOT be dec'd as pointers).
+pub function array_field_elem_is_ptr(ft: string, structs: parser.StructDecl[], mr_types: string[]): boolean {
+    if (!ty_spelling_is_array(ft)) { return false; }
+    return struct_field_kind_char(ft[0:ft.len() - 2], structs, mr_types) != "i";
+}
+
+// emit_wasm_struct_drop_body returns the WAT for $__struct_drop_<t>(box) -> box —
+// the wasm sibling of asm_ir.emit_ir_struct_drop_one (Perceus slice 1c). For each
+// ARRAY field (struct_field_kind_char == "a") it releases the field BUFFER via
+// $__fern_arr_dec_ptr (pointer-element array — releases ITS elements too, the
+// deep walk encapsulated in the helper) or $__fern_arr_dec (scalar-element array
+// — flat free). Both rc-guard (only free at rc==1) and null-/literal-guard
+// internally, so no explicit uniqueness or null check is needed. Non-array rc
+// fields (string / nested struct) are skipped — a later slice, matching the
+// register backends' array-only struct_drop. The field offset is the IR
+// struct layout (`8 + i*8` — an 8-byte header then 8-byte slots, matching
+// wasm_ir's struct_make / struct_get / struct_set), NOT the AST `struct_field_off`
+// (`4 + i*4`): this body runs on the IR path, where the box is laid out by the IR
+// emitter. A pointer field is stored as i32 in the low 4 bytes of its 8-byte slot,
+// so an `i32.load` at the slot offset recovers the buffer pointer. Returns box
+// (the call site drops it).
+// emit_ir_rc_bodies returns the per-type $__field_reclaim_<T> + $__struct_drop_<T>
+// helper-function definitions for the IR path (#3457, Perceus slices 1c/1d):
+// field_reclaim frees a superseded rc-array field buffer on a consume-rebind and
+// frees the old box via $__fern_snapshot_dec; struct_drop deep-drops a struct's
+// rc fields at scope exit (incl. the Perceus slice-3 nested-struct deep-drop).
+// Both share one release ctx. Shared by emit_module's IR orchestration AND the
+// differential wasm_ir_run driver, so the driver emits the SAME definitions for
+// every `call $__struct_drop_<T>` / `call $__field_reclaim_<T>` the lowered IR
+// inserts — without this the driver linked against undefined helpers and any
+// struct program with a deep-drop trapped (`unknown func $__struct_drop_<T>`).
+// emit_ir_rc_bodies_from emits the per-type RC helper bodies from the three TYPE
+// LISTS they are keyed by, rather than from an ir_cache (#5331). Those lists are
+// the only thing the cache was consulted for here, so recording them as unit
+// metadata lets the link step emit these helpers without re-lowering anything —
+// the last cache dependency link had, after the needs set took the other 74.
+//
+// The lists are merged across units at link; the struct world they resolve
+// against is shared, so a type appearing in two units yields one body.
+pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: string[], aet: string[], heap_base: i32): string {
+    var out: string = "";
+    var mr_types: string[] = collect_method_types(mod);
+    // #4355: replaced-STRING-field admission — the wasm IR driver is
+    // single-module whole-program, so mod.funcs is the full read scope
+    // (see irlower.strfld_reclaim_ok_types_of).
+    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
+    var frti: i32 = 0;
+    while (frti < frt.len()) {
+        out = out + emit_wasm_field_reclaim_body(frt[frti], mod.structs, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0);
+        frti = frti + 1;
+    }
+    // #5235: plain-fn-pointer-array field markers ("FNPTR:<sty>.<field>") — a
+    // registered field is buffer-only-freed (its elements are raw code addresses).
+    var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, mod.structs);
+    var sdti: i32 = 0;
+    while (sdti < sdt.len()) {
+        out = out + emit_wasm_struct_drop_body(sdt[sdti], mod.structs, mr_types, util.index_of_str(sfok, sdt[sdti]) >= 0, util.index_of_str(sfok, "clo:" + sdt[sdti]) >= 0, fpk);
+        sdti = sdti + 1;
+    }
+    // Per-element-type array deep-drop helpers (#2649): $__struct_arr_elems_drop_<E>
+    // for each struct-array element type E reachable from a struct_drop type. Emitted
+    // after the struct_drop bodies they call (order is irrelevant for wasm funcs, but
+    // struct_drop_types already added each E so $__struct_drop_<E> exists).
+    var aeti: i32 = 0;
+    while (aeti < aet.len()) {
+        out = out + emit_wasm_struct_arr_elems_drop_body(aet[aeti], mod.structs, mr_types);
+        aeti = aeti + 1;
+    }
+    return out;
+}
+
+// emit_ir_rc_bodies is the single-unit case: derive the three type lists from
+// the module's own cache.
+pub function emit_ir_rc_bodies(mod: parser.Module, cache: irlower.LowerResult[]): string {
+    return emit_ir_rc_bodies_from(mod,
+        field_reclaim_types(cache),
+        struct_drop_types(cache, mod.structs),
+        struct_arr_elems_drop_types(cache, mod.structs),
+        heap_base_for(cache));
+}
+
+// emit_wasm_struct_arr_elems_drop_body returns the WAT for
+// $__struct_arr_elems_drop_<E>(buf) -> buf — the wasm sibling of
+// asm_ir.emit_ir_struct_arr_elems_drop_one (#2649 array-element deep-drop). For a
+// uniquely-owned buffer it walks the elements and, per uniquely-owned element box,
+// calls $__struct_drop_<E> to release the element's OWN rc fields — the level the
+// shallow $__fern_arr_dec_ptr walk leaked. It frees neither the element boxes nor the
+// buffer; the caller's arr_dec_ptr (emitted right after) still does that. $__fern_rc_is_unique
+// null-/low-/sentinel-guards internally, so a shared buffer or element is skipped.
+// wasm32 array layout: len at buf[0], element i at buf+8+i*4 (4-byte pointers), rc at buf-8.
+pub function emit_wasm_struct_arr_elems_drop_body(e: string, structs: parser.StructDecl[], mr_types: string[]): string {
+    var o: string = "  (func $__struct_arr_elems_drop_" + e + " (param $buf i32) (result i32)\n";
+    o = o + "    (local $i i32) (local $n i32) (local $e i32)\n";
+    o = o + "    (if (call $__fern_rc_is_unique (local.get $buf)) (then\n";
+    o = o + "      (local.set $n (i32.load (local.get $buf)))\n";
+    o = o + "      (local.set $i (i32.const 0))\n";
+    o = o + "      (block $saed_done (loop $saed_lp\n";
+    o = o + "        (br_if $saed_done (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "        (local.set $e (i32.load (i32.add (i32.add (local.get $buf) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
+    o = o + "        (if (call $__fern_rc_is_unique (local.get $e)) (then\n";
+    o = o + "          (drop (call $__struct_drop_" + e + " (local.get $e)))))\n";
+    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "        (br $saed_lp))))) \n";
+    o = o + "    (local.get $buf))\n";
+    return o;
+}
+
+pub function emit_wasm_struct_drop_body(t: string, structs: parser.StructDecl[], mr_types: string[], str_ok: boolean, clo_ok: boolean, fnptr_fields: string[]): string {
+    var o: string = "  (func $__struct_drop_" + t + " (param $box i32) (result i32)\n";
+    var si: i32 = 0;
+    while (si < structs.len()) {
+        if (structs[si].name == t) {
+            var k: i32 = 0;
+            while (k < structs[si].fields.len()) {
+                var ft: string = structs[si].fields[k].type_name;
+                // #5235: a registered plain-fn-pointer array field — its elements
+                // are RAW code addresses, so it must NOT be walked as a pointer
+                // array ($__fern_arr_dec_ptr releases each element as a box →
+                // SIGSEGV). Free the BUFFER only (flat $__fern_arr_dec, no element
+                // walk); the buffer is a real rc box the struct owns at rc=1, so
+                // this frees it once (the wasm sibling of the register backends'
+                // k_fnptr arm).
+                var fnptr_here: boolean = util.has_str(fnptr_fields, "FNPTR:" + t + "." + structs[si].fields[k].name);
+                if (struct_field_kind_char(ft, structs, mr_types) == "a" && fnptr_here) {
+                    var fpload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
+                    o = o + "    (drop (call $__fern_arr_dec " + fpload + "))\n";
+                } else if (struct_field_kind_char(ft, structs, mr_types) == "a") {
+                    var load: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
+                    // MULTI-LEVEL array-element deep-drop (#2649): a struct-ARRAY field
+                    // `X[]` whose element struct X is deep-drop-ok releases each element's
+                    // OWN rc fields via $__struct_arr_elems_drop_X BEFORE arr_dec_ptr frees
+                    // the element boxes + buffer. Enum-array elements have no $__struct_drop,
+                    // so they keep the plain arr_dec_ptr (one level).
+                    if (irlower.is_struct_array_field_type(structs, ft)) {
+                        var elem_ty: str = ft[0 : ft.len() - 2];
+                        if (irlower.nested_field_deep_drop_ok(structs, elem_ty)) {
+                            o = o + "    (drop (call $__struct_arr_elems_drop_" + elem_ty + " " + load + "))\n";
+                        }
+                    }
+                    if (array_field_elem_is_ptr(ft, structs, mr_types)) {
+                        o = o + "    (drop (call $__fern_arr_dec_ptr " + load + "))\n";
+                    } else {
+                        o = o + "    (drop (call $__fern_arr_dec " + load + "))\n";
+                    }
+                } else if (is_struct_type(structs, ft)) {
+                    var sload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
+                    if (irlower.nested_field_deep_drop_ok(structs, ft)) {
+                        // DEEP nested-struct field drop (Perceus slice 3 deep-drop):
+                        // when the inner box is UNIQUELY owned, first $__struct_drop_<ft>
+                        // releases the inner's OWN rc-array buffers, THEN $__fern_arr_dec
+                        // frees the inner box — mirroring the x86 / arm64 deep-drop arm.
+                        // ft is deep-drop-ok (its nested-struct closure is ACYCLIC per
+                        // nested_field_deep_drop_ok), so $__struct_drop_<ft> may itself
+                        // recurse into ft's own deep-drop-ok fields: the call graph is a
+                        // DAG (multi-level, no cycle). struct_drop_types' transitive
+                        // closure emits every reachable inner body. $__fern_rc_is_unique
+                        // null-/rc-guards internally; a shared inner (rc>1) skips the
+                        // field-release and only the box decs.
+                        o = o + "    (if (call $__fern_rc_is_unique " + sload + ") (then\n";
+                        o = o + "      (drop (call $__struct_drop_" + ft + " " + sload + "))))\n";
+                        o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";
+                    } else {
+                        // A DIRECT nested-struct field (`inner: Inner`) that is NOT a
+                        // deep-drop-ok leaf (a self-referential / tree struct carries a
+                        // nested-struct field, so it stays here): freed SHALLOW via the
+                        // same $__fern_arr_dec as a scalar-array buffer — one level, like
+                        // a struct-array element box (arr_dec frees struct boxes too).
+                        // rc-guarded inside arr_dec; the construction alias-inc (shared
+                        // irlower) balances it. Mirrors the x86 / arm64 shallow k_struct
+                        // case (Perceus slice 3c). Enum/tuple/Option fields (also kind
+                        // "S") stay leak-only — is_struct_type is false for them.
+                        o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";
+                    }
+                } else if (ft == "fn" && clo_ok) {
+                    // An fn-typed (closure) field: the slot holds an rc-headered
+                    // `__mkclo$` env box, shallow-freed via the rc-guarded
+                    // $__fern_arr_dec — one level, captures leak. GATED on the
+                    // clofld admission ("clo:<T>" in strfld_reclaim_ok_types_of:
+                    // fresh-lambda-only values, no base copies, call-only reads),
+                    // the wasm sibling of the register backends' k_clo arm
+                    // (#5104). A non-admitted type keeps the sound leak.
+                    var cldload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
+                    o = o + "    (drop (call $__fern_arr_dec " + cldload + "))\n";
+                } else if (ft == "string" && str_ok) {
+                    // A `string` field is an rc-headered INLINE block on wasm
+                    // ([rc][bsz][len][bytes]); reclaim it with $__fern_arr_dec — frees
+                    // at rc==1 by size class, guards a data-section literal (below
+                    // heap_base), decs a shared box, and the rc-underflow detector
+                    // catches a double free. Balanced by the shared-irlower
+                    // construction alias-inc. Mirrors the x86 / arm64 k_str arm
+                    // (#4297 A2). GATED on the STRFLDOK admission (str_ok, from the
+                    // whole-program read scan — the same verdict the field-reclaim
+                    // string arm and the construction retain use): a non-admitted
+                    // type's string fields are uncounted aliases this dec would
+                    // over-release (#3425, x86 twin note in emit_ir_struct_drop_one).
+                    var strload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
+                    o = o + "    (drop (call $__fern_arr_dec " + strload + "))\n";
+                }
+                k = k + 1;
+            }
+        }
+        si = si + 1;
+    }
+    o = o + "    (local.get $box))\n";
+    return o;
+}
+
+// emit_wasm_field_reclaim_body returns the WAT for
+// $__field_reclaim_<t>(new, old, snap) -> new — the wasm sibling of
+// asm_ir.emit_ir_field_reclaim_one (Perceus slice 1d). The consume-rebind
+// replaced-field reclaim: when a struct PARAM is reassigned (`a = T { … }`),
+// the superseded `old` struct's rc-array field buffers are freed, then `old`'s
+// box itself via $__fern_snapshot_dec. For each ARRAY field (struct_field_kind_char
+// == "a") it frees old.field_k (SHALLOW — $__fern_arr_dec, matching the register
+// backends; a pointer-element field's element boxes are a known one-level gap on
+// every backend) iff old.field_k differs from BOTH new.field_k (cow — the rebind
+// kept the buffer) and, when snap != 0, snap.field_k (the caller's borrowed
+// original). The field offset is the IR struct layout (`8 + i*8`), as in
+// emit_wasm_struct_drop_body. `old` null / below heap_base skips the field loop
+// (snapshot_dec null-guards the box free). Returns `new`. `hb` is the module's
+// heap base (the low-address guard threshold).
+pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[], mr_types: string[], hb: i32, str_ok: boolean, clo_ok: boolean): string {
+    var o: string = "  (func $__field_reclaim_" + t + " (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
+    o = o + "    (if (i32.ge_u (local.get $old) (i32.const " + util.i32_to_string(hb) + ")) (then\n";
+    var si: i32 = 0;
+    while (si < structs.len()) {
+        if (structs[si].name == t) {
+            var k: i32 = 0;
+            while (k < structs[si].fields.len()) {
+                var ft: string = structs[si].fields[k].type_name;
+                // A replaced STRING field (#4355) rides the same guarded dec:
+                // a wasm heap string is a single inline rc-headered block, so
+                // $__fern_arr_dec IS the wasm string free (it null-/low-/
+                // sentinel-guards a literal internally). Balanced by the shared
+                // irlower construction retain, and gated on the whole-program
+                // read scan (str_ok) — see the x86 emit_ir_field_reclaim_one
+                // string arm.
+                var frk: string = struct_field_kind_char(ft, structs, mr_types);
+                // A replaced fn (closure) field rides the same guarded
+                // $__fern_arr_dec: the superseded `__mkclo$` env box is one
+                // rc-headered block, shallow-freed (captures leak). Gated on
+                // the clofld admission (clo_ok) — the wasm fr_clo sibling.
+                if (frk == "a" || (frk == "s" && str_ok) || (ft == "fn" && clo_ok)) {
+                    var off: string = util.i32_to_string(8 + k * 8);
+                    var oldf: string = "(i32.load offset=" + off + " (local.get $old))";
+                    var newf: string = "(i32.load offset=" + off + " (local.get $new))";
+                    var snapf: string = "(i32.load offset=" + off + " (local.get $snap))";
+                    var dec: string = "(drop (call $__fern_arr_dec " + oldf + "))";
+                    // cow: skip if old.field_k == new.field_k. Then snap guard,
+                    // nested (NOT a flat i32.or) so snap.field_k is never loaded
+                    // when snap == 0: dec if snap == 0, else dec iff
+                    // old.field_k != snap.field_k.
+                    o = o + "      (if (i32.ne " + oldf + " " + newf + ") (then\n";
+                    o = o + "        (if (i32.eqz (local.get $snap)) (then " + dec + ")\n";
+                    o = o + "          (else (if (i32.ne " + oldf + " " + snapf + ") (then " + dec + "))))))\n";
+                }
+                k = k + 1;
+            }
+        }
+        si = si + 1;
+    }
+    o = o + "    ))\n";
+    o = o + "    (call $__fern_snapshot_dec (local.get $new) (local.get $old) (local.get $snap)))\n";
+    return o;
+}
+
+// is_enum_type_name reports whether `name` is a method-bearing ENUM type —
+// not a declared struct, but the receiver type of at least one method.
+// Enum names aren't in the struct table (only their variants are), so a
+// var typed `Shape` must record `Shape` (not the variant from its
+// initializer) for its methods to dispatch.
+pub function is_enum_type_name(structs: parser.StructDecl[], mr_types: string[], name: string): boolean {
+    if (name.len() == 0) { return false; }
+    // A primitive scalar OR `string` receiver type (`impl Eq for i32`,
+    // `impl Show for string`, `function (n: i32) twice()`) lands in mr_types too,
+    // but is NEVER an enum — guard it, else a struct's i32/i64/f64/boolean field
+    // gets misclassified "S" (drop helper emits an undefined `$__fern_release_i32`)
+    // or a `string[]` field's element is taken for a struct (undefined
+    // `$__fern_arr_release_string`) — both are wasm validation errors.
+    if (is_primitive_type_name(name) || name == "string") { return false; }
+    if (is_struct_type(structs, name)) { return false; }
+    var i: i32 = 0;
+    while (i < mr_types.len()) {
+        if (mr_types[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// is_primitive_type_name reports whether `name` spells a built-in scalar type
+// (never rc-tracked, never a struct/enum). Scalars are released as no-ops.
+pub function is_primitive_type_name(name: string): boolean {
+    return name == "i32" || name == "i64" || name == "f64" || name == "boolean";
+}
+
+// is_struct_type is true when `t` names a declared struct.
+pub function is_struct_type(structs: parser.StructDecl[], t: string): boolean {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == t) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// collect_method_* build the receiver-method registry (parallel arrays:
+// receiver type, method name, return type).
+pub function collect_method_types(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].receiver_type.len() > 0) { out = out.append(util.base_type_name(mod.funcs[i].receiver_type)); }
+        i = i + 1;
+    }
     return out;
 }

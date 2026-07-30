@@ -1627,10 +1627,40 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   `wasm_ir.foo()` and `foo()` compile to the same call. **The wasm IR path no longer depends on
   `wasm.fern` for module emission at all** — `emit_ir_module` (the thin entry that calls
   `wasm_ir.emit_ir_module_units`) is the only IR-path resident left in `wasm.fern`, and it can move
-  trivially once the AST path retires. `emit_ir_rc_bodies_from`
-  is LAST — it drags `Ctx` / `release_module_ctx` / `collect_method_types` and the
-  shared struct predicates (co-owned by the AST emitter → a cycle until that
-  shared layer is relocated).
+  trivially once the AST path retires. (15) **the RC body emitters —
+  `emit_ir_rc_bodies_from` / `emit_ir_rc_bodies` and the three bodies they drive
+  (`emit_wasm_field_reclaim_body` / `emit_wasm_struct_drop_body` /
+  `emit_wasm_struct_arr_elems_drop_body`) — plus the type classifiers they rest on
+  (`is_struct_type` / `is_enum_type_name` / `struct_field_kind_char` /
+  `array_field_elem_is_ptr` / `ty_spelling_is_array` / `is_primitive_type_name` /
+  `collect_method_types`) are now in `wasm_ir.fern`.** This step was predicted here
+  to need a shared-layer extraction — "it drags `Ctx` / `release_module_ctx` /
+  `collect_method_types` and the shared struct predicates (co-owned by the AST
+  emitter → a cycle)". **That prediction was wrong, and the cheaper route is worth
+  recording.** Measured: the three `Ctx`-taking classifiers read exactly TWO of
+  `Ctx`'s ~60 fields (`cx.structs`, `cx.mr_types`), and `release_module_ctx` builds
+  a Ctx with only those two plus `mod_funcs` populated — every other field empty.
+  So instead of relocating `Ctx` (which would have rewritten 98 signatures in the
+  file slice 5 intends to DELETE), the classifiers now take `structs` + `mr_types`
+  directly — the shape `is_struct_type(structs, t)` already used in the same file.
+  That deletes the cycle rather than moving it: the IR path no longer references
+  `Ctx` or `release_module_ctx` at all, and `release_module_ctx` is now AST-only
+  (one call site, `struct_enum_drop_helpers`). 12 functions / 335 lines left
+  `wasm.fern`; 65 bare call sites there took the `wasm_ir.` prefix (the multi-site
+  approach step 8 validated) and `wasm_modload_run` / `wasm_units_probe` were
+  repointed off `wasm.emit_ir_rc_bodies_from`. Verified byte-identical WAT on
+  **both** the IR *and* the AST path (the AST path matters here: 65 of the rewritten
+  call sites are inside the AST emitter) for three probes — struct-RC churn with
+  string/array/nested-struct/tuple/Option fields, a string+array struct, and an
+  enum+match+`Shape[]` program that exercises `is_enum_type_name` — each
+  native-valid first and each running correctly under wasmtime. Plus
+  `TestSelfHostFieldReclaimWasm` / `StructDropWasm` / `OptAarrReclaimWasmIR` /
+  `TupStructFieldReclaimWasmIR` and the per-module driver tests
+  (`WasmUnitsN2` / `WasmIncrementalCache` / `WasmLinkFromCache` / `WasmLinkHitOnly` /
+  `WasmFuncRangeShard`). **`emit_ir_module` / `emit_ir_module_mode` — the two thin
+  entries that call `wasm_ir.emit_ir_module_units` — are now the ONLY IR-path
+  residents left in `wasm.fern`**, and both move trivially once the AST path
+  retires.
 
 ## The gate: #3425 (self-host runtime memory) — CLOSED
 

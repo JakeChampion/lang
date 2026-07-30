@@ -333,7 +333,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // quantity: it sits past every unit's literals.
         var merged: parser.Module = flatten.bundle(entry, loaded);
         merged = parser.infer_ret_types_module(wasm_ir.lift_lambdas(modloader.merge_builtins(dir, merged)));
-        var rc: string = wasm.emit_ir_rc_bodies_from(merged, frt, sdt, aet, wasm_ir.heap_base_for_strs(all_strs));
+        var rc: string = wasm_ir.emit_ir_rc_bodies_from(merged, frt, sdt, aet, wasm_ir.heap_base_for_strs(all_strs));
         write(wasm_ir.emit_ir_module_units(nss, texts, all_strs, str_counts, all_fns, fn_counts, merged, needs, arities, rc));
         return 0;
     }
