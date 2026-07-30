@@ -2,6 +2,7 @@ package e2eselfhost
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -17,6 +18,14 @@ import (
 //
 // Found via differential probing (native -interp exit vs the self-host-compiled
 // binary's).
+//
+// The exit code alone does not say WHICH emitter produced the binary — the AST
+// fallback happens to get these right, so a green run was consistent with the
+// module never reaching the IR path. Each case therefore also asserts the
+// emitter's per-function label marker (`.Lir_` on x86-64, `.Lira_` on arm64).
+// `result-option` / `nested-chain` are the two that really did fall back:
+// lower_try's payload whitelist rejected the bracketed `Option[i32]` because
+// is_enum_like_name declines any type containing `[`.
 var tryOptionPayloadIRCases = []struct {
 	name string
 	src  string
@@ -47,6 +56,9 @@ func TestSelfHostTryOptionPayloadIRX86_64(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			if !strings.Contains(string(asm), ".Lir_") {
+				t.Fatalf("%s: fell back to the AST path (no .Lir_ labels)", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd
@@ -80,6 +92,9 @@ func TestSelfHostTryOptionPayloadIRArm64(t *testing.T) {
 			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64", "-ir")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
+			}
+			if !strings.Contains(string(asm), ".Lira_") {
+				t.Fatalf("%s: arm64 asm has no .Lira_ marker — module bailed to the AST path", tc.name)
 			}
 			progBin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
 			cmd := runArm64Bin(qemu, progBin)

@@ -756,32 +756,44 @@ representative subset splits it three ways:
   Also note the entry unit of an arbitrary stdlib-using program is often not per-module-eligible, in which case the concat correctly declines; check with `-per-module-emit <last-unit-index>` before blaming the router. |
 | `no-main` | 0 | Functions but no `main`. Supported by the desugar; not exercised today. | n/a |
 
-### `ineligible-fn` is NOT closed — 17 subtests still decline (measured 2026-07-28)
+### `ineligible-fn` — the per-function declines are now CLOSED (measured 2026-07-30)
 
-The `ineligible-fn` row above says "No `ineligible-fn` items remain". That is
-true of the **builtin methods** it enumerates, and false as a general statement:
+The `ineligible-fn` row above says "No `ineligible-fn` items remain". That was
+true of the **builtin methods** it enumerates and false as a general statement:
 running the corrected probe (inside the `use_ir` branch — see above) over
-`internal/e2eselfhost` aborts **17 subtests across 7 test functions** (**15
-across 6** after #5755 retired return-type inference, then **10 across 5** after
-#5758 closed the tuple-fn struct field, then **8 across 4** after #5790 closed
-the closure-array struct field — see the struck rows), none of
-them over-budget (they are all small single-module programs), so every one is an
-eligibility decline. `asm_ir_run`'s AST fallback is therefore **live code**, not
-something #3457 can delete yet.
+`internal/e2eselfhost` aborted **17 subtests across 7 test functions** on
+2026-07-28. The count fell to **8 across 4** over #5755 / #5758 / #5790, and
+**re-measuring the remaining four under `FERN_STRICT_IR=1` on 2026-07-30 found
+only ONE that still declined** — three of the four rows had gone green without
+anyone striking them, which is why the table below now records a *measured*
+verdict per row rather than carrying the 2026-07-28 list forward. That last row
+(`?` over a bracketed generic payload) is now closed too — see its row.
 
-| test | subtests | shape |
-|---|---|---|
-| ~~`TestSelfHostReturnInferenceIR`~~ | ~~`option-some`, `option-none`~~ | **GONE (E070, #5755)** — the shape was an UN-ANNOTATED fn whose return type had to infer to `Option[i32]`. Requiring return annotations made those programs *invalid*, so the gate never sees them and the test was deleted. Note what this is NOT: the IR path was not taught anything: 17 declines → 15 by removing programs, not by widening the subset. |
-| ~~`TestSelfHostTupleFnStructFieldX86_64`~~ | ~~`bare`, `arg-elem0`, `two-arg`, `read-then-call`, `churn`~~ | **CLOSED (#5758)** — fn-typed TUPLE element in a struct field, `s.p.1()`. Re-probed 2026-07-28: both the direct form and the via-a-local form (`var t = s.p; t.1()`) now report `module: IR`. |
-| ~~`TestSelfHostCloArrayFieldCallIRX86_64`~~ | ~~`capture-multi`, `with-arg`~~ | **CLOSED (#5790)** — closure-ARRAY struct field (`hs: (() => i32)[]`), capturing call. This row read `STILL OPEN` after #5758 (correctly — the tuple-side `clo` admission does not reach an array-of-fn field), but #5790 closed it separately by proving the field positively (`CLOARR:<Type>.<field>`) rather than by elimination. See "The closure-ARRAY gap is a DISPATCH gap" below. The param-built / loop-built construction shapes (#5787) still decline, but for **soundness** — they are unprovable at the struct literal — not as a subset gap. |
-| `TestSelfHostStructMatchX86_64` | `expr_form`, `rename_expr` | `return match (p) { … }` over a struct — the match-EXPRESSION form |
-| `TestSelfHostTryOptionPayloadIRX86_64` | `result-option`, `nested-chain` | `?` over an Option payload, incl. nested chains |
-| `TestSelfHostAtBindingX86_64` | `struct_expr_guard_uses_at`, `tuple_expr_guard_uses_at` | `@` binding read from inside a `when` guard |
-| `TestSelfHostAsmIRPath` | `asc-none-opt-nested` | nested `None` in an ascribed Option position |
+| test | subtests | shape | verdict |
+|---|---|---|---|
+| ~~`TestSelfHostReturnInferenceIR`~~ | ~~`option-some`, `option-none`~~ | UN-ANNOTATED fn whose return type had to infer to `Option[i32]` | **GONE (E070, #5755)** — requiring return annotations made those programs *invalid*, so the gate never sees them and the test was deleted. Note what this is NOT: the IR path was not taught anything — 17 declines → 15 by removing programs, not by widening the subset. |
+| ~~`TestSelfHostTupleFnStructFieldX86_64`~~ | ~~`bare`, `arg-elem0`, `two-arg`, `read-then-call`, `churn`~~ | fn-typed TUPLE element in a struct field, `s.p.1()` | **CLOSED (#5758)** — re-probed 2026-07-28: both the direct form and the via-a-local form (`var t = s.p; t.1()`) report `module: IR`. |
+| ~~`TestSelfHostCloArrayFieldCallIRX86_64`~~ | ~~`capture-multi`, `with-arg`~~ | closure-ARRAY struct field (`hs: (() => i32)[]`), capturing call | **CLOSED (#5790)** — this row read `STILL OPEN` after #5758 (correctly — the tuple-side `clo` admission does not reach an array-of-fn field); #5790 closed it separately by proving the field positively (`CLOARR:<Type>.<field>`). See "The closure-ARRAY gap is a DISPATCH gap" below. The param-built / loop-built construction shapes (#5787) still decline, but for **soundness** — they are unprovable at the struct literal — not as a subset gap. |
+| ~~`TestSelfHostStructMatchX86_64`~~ | ~~`expr_form`, `rename_expr`~~ | `return match (p) { … }` over a struct — the match-EXPRESSION form | **NOT DECLINING (measured 2026-07-30)** — the whole test runs clean under `FERN_STRICT_IR=1`. It was never a verified gap; see the attribution caveat below, which already flagged the shape as `module: IR`. |
+| ~~`TestSelfHostAtBindingX86_64`~~ | ~~`struct_expr_guard_uses_at`, `tuple_expr_guard_uses_at`~~ | `@` binding read from inside a `when` guard | **NOT DECLINING (measured 2026-07-30)** — same as above: clean under the flag, and the caveat table below already read `module: IR`. |
+| ~~`TestSelfHostAsmIRPath`~~ | ~~`asc-none-opt-nested`~~ | nested `None` in an ascribed Option position | **NOT DECLINING (measured 2026-07-30)** — clean under the flag. |
+| ~~`TestSelfHostTryOptionPayloadIRX86_64`~~ | ~~`result-option`, `nested-chain`~~ | `?` whose success payload is itself a bracketed generic (`Result[Option[i32], E]`) | **CLOSED** — the only row that still declined on 2026-07-30. `lower_try`'s payload whitelist reached `is_enum_like_name`, which rejects any type containing `[`, so a pointer-boxed `Option[…]` / `Result[…]` payload fell through to `s.fail()` and dropped the whole module to AST. Both halves were needed: the admission in `lower_try`, and the binding side (`mark_opt_type` off the annotation, or off `try_opt_type` for the unannotated `var o = f()?`) so the following `match (o)` resolves. |
 
-Note the last row in context: the other ~80 `TestSelfHostAsmIRPath` subtests
-pass under the probe, which is the control proving the probe placement is right
+Note the `TestSelfHostAsmIRPath` row in context: the other ~80 subtests pass
+under the probe, which is the control proving the probe placement is right
 (they are the deliberate `-ir`-off differential runs, not declines).
+
+**Net: no per-function decline is known to remain.** `asm_ir_run`'s AST fallback
+is no longer live *for per-function reasons*; what still reaches it is the
+over-budget bundle (#3425's ~512-function merged-bundle budget) and the wasm-IR
+deferral gate, neither of which is an eligibility decline on a small program.
+The `?`-payload closure is pinned by three cases in `strictIRCorpus`
+(`try-generic-payload`, `try-generic-payload-option`,
+`try-generic-payload-chain`, covering `Result[Option[T], E]`,
+`Option[Option[T]]`, and a chained `Result[Result[T, E], E]`) plus a `.Lir_` /
+`.Lira_` routing assertion added to `TestSelfHostTryOptionPayloadIR*` — that
+test previously asserted only an exit code, which the AST fallback also got
+right, so it was green while routing AST.
 
 **Attribution caveat — the table names TESTS, not verified declining shapes.**
 Re-probing the exact case sources with `asm_ir_run -ir-probe` (2026-07-28)
@@ -793,10 +805,12 @@ splits the list in two:
 | closure-array struct field (`r.hs[1]()`) | was `main: BAIL lower` | **CLOSED** — see below |
 | struct match-expression + `when` guard | `module: IR` | **NOT the declining construct** |
 | `w @ P { a, b } when w.a > 0` | `module: IR` | **NOT the declining construct** |
+| `var o: Option[i32] = f()?`, `f: Result[Option[i32], E]` | `module: AST`, 0 `.Lir` labels | **verified gap; CLOSED 2026-07-30** |
 
-So only the two struct-field-of-callable shapes were verified gaps, and both
-present the same way: the lifted closure lowers fine (`main$clo0: ir`) while the
-struct-field form bails.
+So only the two struct-field-of-callable shapes and the `?`-over-a-bracketed-
+generic payload were verified gaps. The two callable ones present the same way:
+the lifted closure lowers fine (`main$clo0: ir`) while the struct-field form
+bails.
 
 **They did NOT close together, and the reason is worth keeping.** #5758 closed
 the tuple one by admitting a `clo` element in the wide (`_d`) tuple-field
@@ -814,7 +828,9 @@ normally, so whatever declines there is served correctly by the fallback.
 
 The lesson repeats the one above: an abort tells you a test's process reached
 the fallback, not WHICH program did. Confirm each shape with `-ir-probe` before
-building on it.
+building on it. The 2026-07-30 re-measurement is the payoff: three of the four
+surviving rows were stale, and only re-running each test under
+`FERN_STRICT_IR=1` separated the one real decline from the noise.
 
 ### Composite-type IR gaps closed by differential probing (2026-07-29)
 

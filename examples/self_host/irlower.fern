@@ -10115,43 +10115,56 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
 // `?` are released, not leaked — mirroring native's ir.go `*ast.TryOp` cleanup.
 // It also replays the parse-level defer pass's cleanup markers at that edge
 // (#4334, see try_cleanup below), so defer / errdefer fire on `?` exactly as
-// they do on an explicit return. Gated to scalar i32 / boolean
-// payloads for now: those need no extra slot-typing at the `var x = inner?`
-// binding (x defaults to a width-32 i32 slot), so a string / i64 / f64 /
-// composite payload bails to AST until the success value's slot typing is
-// threaded. Out of line so the ExprUnary arm stays small (#2720 guard).
+// they do on an explicit return. Out of line so the ExprUnary arm stays small
+// (#2720 guard).
 function lower_try(inner: parser.Expr, s: LowerState): LowerState {
     var ot: string = try_opt_type(inner, s);
     if (ot.len() < 8) { return s.fail(); }
     var is_result: boolean = ot[0:7] == "Result[";
     var is_option: boolean = ot[0:7] == "Option[";
     if (!is_result && !is_option) { return s.fail(); }
-    // Success payload type — scalar i32 / boolean (4-byte) or i64 / u64 (8-byte)
-    // inline here. An i64/u64 payload reads through op_opt_payload_w(64) just like
-    // the match-arm payload binding does; the `var x: i64 = inner?` binding routes
-    // through lower_i64 (which dispatches back here), so the success value is left
-    // as a true 8-byte i64 on the stack. (string / f64 / composite still bail.)
+    // Success payload type. Every payload shape now lowers; what varies is HOW
+    // the value is read out of the box, and what types the `var x = inner?`
+    // binding's slot so a later `x.field` / `x.len()` / `x.N` / `match (x)`
+    // resolves. This whitelist is a SOUNDNESS gate, not a capability list —
+    // admitting a payload type whose binding side cannot type the slot does not
+    // bail, it MISCOMPILES. Add both halves or neither.
+    //
+    //   i32 / boolean          4-byte read; the slot's default width-32 typing.
+    //   i64 / u64              8-byte op_opt_payload_w(64, true). The
+    //                          `var x: i64 = inner?` binding routes through
+    //                          lower_i64, which dispatches back here, so the
+    //                          value is left a true 8-byte i64 on the stack.
+    //   f64                    the same 8-byte read with is_i64=false: wasm keys
+    //                          i64.load vs f64.load off that flag (a typed-stack
+    //                          load) and the value must land as an f64 to match
+    //                          the f64-typed slot. x86/arm64 ignore it (a raw
+    //                          movq), so the tweak is wasm-only and harmless.
+    //   string                 pointer-width read; the slot is is_str.
+    //   struct (leaf-safe)     pointer-width read; struct_ty from the annotation.
+    //   enum                   pointer-width read; is_enum_like_name → struct_ty.
+    //   tuple                  pointer-width read; mark_tuple_elems from the
+    //                          annotation (StmtVar's ExprUnary arm).
+    //   Option[…] / Result[…]  pointer-width read; mark_opt_type from the
+    //                          annotation, or — unannotated — from try_opt_type
+    //                          in that same ExprUnary arm. Needs its own gate
+    //                          because is_enum_like_name declines any type
+    //                          containing `[`, so the enum row does not reach a
+    //                          bracketed generic.
+    //
+    // Every pointer-width row is the identical default op_opt_payload read: the
+    // match-arm Some/Ok binding already reads these payloads the same way. Only
+    // the payload's OUTER shape matters — the value read is the inner box
+    // POINTER whatever its own payload width, so `Option[i64]` needs no width
+    // tweak. (#3802 struct, #3810 string + enum, #3824 tuple, #3457-endgame
+    // Option/Result.)
     var pt: string = opt_payload_type(ot, "Ok");
     var pt_is_i64: boolean = pt == "i64" || pt == "u64";
-    // A leaf-safe STRUCT, a STRING, or an ENUM success payload is admitted too:
-    // op_opt_payload reads the pointer-width box exactly as the match-arm Some/Ok
-    // binding does (which already lowers these payloads), and the `var x: T = inner?`
-    // binding types x's slot from its annotation — struct_ty for a struct, is_str for
-    // a string, is_enum_like_name→struct_ty for an enum (StmtVar). So `x.field` /
-    // `x.len()` / `match (x)` resolve. Without this a struct payload bailed the whole
-    // module to AST (#3802 — goal-1 `?`-on-composites); #3810 widens it to string +
-    // enum. An f64 payload is admitted too: it reads through the same 8-byte
-    // width-64 path as i64 (the `var x: f64 = inner?` slot is f64-typed from its
-    // annotation), with the wasm-only is_i64=false tweak below so wasm emits
-    // f64.load. A TUPLE payload (#3824) rounds out the set: it is pointer-boxed,
-    // so it reads through the default op_opt_payload like a struct, and the
-    // `var t: (A, B) = inner?` binding types t's slot via mark_tuple_elems from
-    // its annotation (StmtVar's ExprUnary arm) so a later `t.N` resolves. With
-    // tuple admitted every `?` success-payload shape now lowers through IR.
     var pt_is_struct: boolean = decl_is_struct(s.structs, pt) && decl_is_leaksafe(s.structs, pt);
     var pt_is_enum: boolean = is_enum_like_name(pt, s.structs);
     var pt_is_tuple: boolean = pt.len() > 1 && pt[0] == 40 && tuple_elems_lowerable(pt, s.structs);
-    if (pt != "i32" && pt != "boolean" && !pt_is_i64 && !pt_is_struct && pt != "string" && !pt_is_enum && pt != "f64" && !pt_is_tuple) { return s.fail(); }
+    var pt_is_optgen: boolean = pt.len() >= 8 && (pt[0:7] == "Option[" || pt[0:7] == "Result[");
+    if (pt != "i32" && pt != "boolean" && !pt_is_i64 && !pt_is_struct && pt != "string" && !pt_is_enum && pt != "f64" && !pt_is_tuple && !pt_is_optgen) { return s.fail(); }
     // Evaluate inner into a fresh temp slot (the box pointer).
     var tmp: string = "$try" + util.i32_to_string(s.locals.len());
     var ts: LowerState = s.add_local(tmp);
@@ -14654,6 +14667,14 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 // to AST. Carry the payload's struct/enum name (mark_struct_type) —
                 // exactly what an explicit `var u: User = f()?` annotation does.
                 else if (decl_is_struct(sb.structs, tupay) || is_enum_like_name(tupay, sb.structs)) { sb = sb.mark_struct_type(slot, tupay); }
+                // An Option/Result success payload: `var o = f()?` where f returns
+                // `Result[Option[i32], E]` / `Option[Option[i32]]`. The bracketed
+                // spelling is neither struct nor enum-like, so carry it as the
+                // slot's OPTION type — what an explicit `var o: Option[i32] = f()?`
+                // annotation records at the mark_opt_type above. Without it the
+                // slot is untyped and the following `match (o)` bails the module
+                // to AST (never a miscompile, but off the IR path).
+                else if (tupay.len() >= 8 && (tupay[0:7] == "Option[" || tupay[0:7] == "Result[")) { sb = sb.mark_opt_type(slot, tupay); }
             }
         },
         _ => {}
