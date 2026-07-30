@@ -1485,12 +1485,20 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   selection, RC/reclaim bodies, runtime, and module framing — now lives in
   `asm_arm64_ir.fern`; `asm_arm64.fern` holds only the AST emitter (`emit_module`
   / `emit_function` / `emit_stmt` / `emit_expr` / …) plus the shared `darwinize`
-  post-processor.** **Remaining for deletion (slice 5):** move `darwinize` +
-  its `darwin_*` helpers into `asm_arm64_ir.fern` (and route the driver's
-  arm64-darwin leg through `emit_module_ir` directly for eligible modules, as the
-  arm64-ELF leg already does), then delete `asm_arm64.fern`'s AST emitter and
-  retire the arm64 AST differential — the roadmap-level trust-IR-outright step,
-  shared with the x86 and wasm AST retirements.
+  post-processor.** **Fifth untangle step DONE (slice-5 prep): `darwinize` + its
+  `darwin_*` helpers now live in `asm_arm64_ir.fern` too.** They moved verbatim
+  (no self-call rewrites — they only call each other); the six callers were
+  repointed to `asm_arm64_ir.darwinize`: four internal to `asm_arm64.fern`'s own
+  standalone driver, `asm_ir_run`'s arm64-darwin leg, and `fern.fern`'s (which
+  gained an `import "./asm_arm64_ir"`). **With this, `asm_arm64.fern` holds ONLY
+  the AST emitter — every IR-path function (instruction selection, RC/reclaim,
+  runtime, module framing, darwin post-processing) is in `asm_arm64_ir.fern`, and
+  `asm_arm64_ir` still imports no `asm_arm64`.** **Remaining for deletion (slice
+  5):** delete `asm_arm64.fern`'s AST emitter (repointing the drivers' ineligible
+  arm64 fallbacks — `asm_ir_run` arm64/arm64-darwin, `asm_modload_run` — to
+  error-or-per-module-IR) and retire the arm64 AST differential — the
+  roadmap-level trust-IR-outright step, shared with the x86 and wasm AST
+  retirements, and a decision to surface rather than drive-by.
 - **wasm: NOT clean, and larger — but hand-WAT, so movable byte-preservingly.**
   `wasm_ir.fern` reuses `wasm.fern`'s WAT runtime extensively (heap/RC,
   `str_*_helpers`, `to_string_helpers`, `divrem_helpers`), and the per-module IR

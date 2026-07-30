@@ -157,7 +157,7 @@ function main(): i32 {
     // opt out of. (The comment this replaces claimed darwin had no IR leg,
     // which would make "build one" look like remaining #3457 work; it is not.)
     if (target == "arm64-darwin") {
-        print(asm_arm64.darwinize(asm_arm64.emit_module(parser.module_with_builtins(mod), true)));
+        print(asm_arm64_ir.darwinize(asm_arm64.emit_module(parser.module_with_builtins(mod), true)));
         return 0;
     }
     // `-ir-unit entry|lib`: emit a single per-module translation unit (defs
