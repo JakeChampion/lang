@@ -925,7 +925,7 @@ func (g *generator) recordUse(target string) {
 	case "__fern_heap_bump_bytes":
 		g.usesHeapBumpBytes = true
 		g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
-	case "__fern_heap_mark", "__fern_heap_release_to":
+	case "__heap_mark", "__heap_release_to":
 		g.usesHeapMark = true
 		g.usesAlloc = true // rewinds __fern_heap_ptr; shadows the freelist heads
 	case "__fern_arr_push_grow":
@@ -2404,6 +2404,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_eprint"
 		case "exit":
 			target = "__fern_exit"
+		case "__heap_mark":
+			target = "__fern_heap_mark"
+		case "__heap_release_to":
+			target = "__fern_heap_release_to"
 		case "strbuf_reset":
 			target = "__fern_strbuf_reset"
 		case "strbuf_append":
@@ -5153,10 +5157,21 @@ func (g *generator) emitHeapMarkRuntime() {
 	g.label("__fern_heap_mark")
 	g.emit("mov rax, [rip + __fern_heap_ptr]")
 	if ast.RcFreeEnabled && g.usesAlloc {
+		// rep movsq clobbers rcx/rsi/rdi. Every other reader of the arena
+		// globals (__fern_heap_bump_bytes) touches only rax, so the emitted
+		// code around a call here may well be holding live values in the
+		// argument registers — restore them rather than assume the SysV
+		// caller-saved rule is what the backend relies on.
+		g.emit("push rcx")
+		g.emit("push rsi")
+		g.emit("push rdi")
 		g.emit("lea rsi, [rip + __fern_freelist_heads]")
 		g.emit("lea rdi, [rip + __fern_freelist_shadow]")
 		g.emit("mov ecx, 256")
 		g.emit("rep movsq")
+		g.emit("pop rdi")
+		g.emit("pop rsi")
+		g.emit("pop rcx")
 	}
 	g.emit("ret")
 	g.line(".size __fern_heap_mark, .-__fern_heap_mark")
@@ -5167,12 +5182,18 @@ func (g *generator) emitHeapMarkRuntime() {
 	g.label("__fern_heap_release_to")
 	g.emit("test rdi, rdi")
 	g.emit("jz .Lheap_rel_done") // mark 0 = no checkpoint; leave the cursor alone
-	g.emit("mov [rip + __fern_heap_ptr], rdi")
+	g.emit("mov [rip + __fern_heap_ptr], rdi") // read the arg before clobbering rdi
 	if ast.RcFreeEnabled && g.usesAlloc {
+		g.emit("push rcx")
+		g.emit("push rsi")
+		g.emit("push rdi")
 		g.emit("lea rsi, [rip + __fern_freelist_shadow]")
 		g.emit("lea rdi, [rip + __fern_freelist_heads]")
 		g.emit("mov ecx, 256")
 		g.emit("rep movsq")
+		g.emit("pop rdi")
+		g.emit("pop rsi")
+		g.emit("pop rcx")
 	}
 	g.label(".Lheap_rel_done")
 	g.emit("ret")

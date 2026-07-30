@@ -1980,6 +1980,12 @@ func (g *generator) emitHeapMarkRuntime() {
 	g.adrpAdd("x1", "__fern_heap_ptr")
 	g.emit("ldr x0, [x1]")
 	if ast.RcFreeEnabled && (g.usesAlloc || g.usesFree) {
+		// The copy loop needs scratch registers. Every other reader of the
+		// arena globals (__fern_heap_bump_bytes) leaves the argument
+		// registers alone, so preserve them rather than assume the emitted
+		// code around a call here holds nothing live in x1..x4.
+		g.emit("stp x1, x2, [sp, #-32]!")
+		g.emit("stp x3, x4, [sp, #16]")
 		g.adrpAdd("x1", "__fern_freelist_heads")
 		g.adrpAdd("x2", "__fern_freelist_shadow")
 		g.emit("mov x3, #2048")
@@ -1988,6 +1994,8 @@ func (g *generator) emitHeapMarkRuntime() {
 		g.emit("str x4, [x2], #8")
 		g.emit("subs x3, x3, #8")
 		g.emit("b.ne .Lheap_mark_cp")
+		g.emit("ldp x3, x4, [sp, #16]")
+		g.emit("ldp x1, x2, [sp], #32")
 	}
 	g.emit("ret")
 	g.sizeDirective("__fern_heap_mark")
@@ -2000,6 +2008,8 @@ func (g *generator) emitHeapMarkRuntime() {
 	g.adrpAdd("x1", "__fern_heap_ptr")
 	g.emit("str x0, [x1]")
 	if ast.RcFreeEnabled && (g.usesAlloc || g.usesFree) {
+		g.emit("stp x1, x2, [sp, #-32]!")
+		g.emit("stp x3, x4, [sp, #16]")
 		g.adrpAdd("x1", "__fern_freelist_shadow")
 		g.adrpAdd("x2", "__fern_freelist_heads")
 		g.emit("mov x3, #2048")
@@ -2008,6 +2018,8 @@ func (g *generator) emitHeapMarkRuntime() {
 		g.emit("str x4, [x2], #8")
 		g.emit("subs x3, x3, #8")
 		g.emit("b.ne .Lheap_rel_cp")
+		g.emit("ldp x3, x4, [sp, #16]")
+		g.emit("ldp x1, x2, [sp], #32")
 	}
 	g.label(".Lheap_rel_done")
 	g.emit("ret")
@@ -11005,7 +11017,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__fern_heap_bump_bytes":
 			g.usesHeapBumpBytes = true
 			g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
-		case "__fern_heap_mark", "__fern_heap_release_to":
+		case "__heap_mark", "__heap_release_to":
+			// The IR carries the SOURCE builtin name (see internal/ir's
+			// lowering: void-ness of release_to is resolved through the
+			// checker's FuncSigs, which is keyed by that name), so map it to
+			// the runtime symbol here.
+			target = "__fern_" + target[2:]
 			g.usesHeapMark = true
 			g.usesAlloc = true // rewinds __fern_heap_ptr; shadows the freelist heads
 		case "__fern_arr_push_grow":
