@@ -21,14 +21,150 @@ import (
 )
 
 // freelistHeadsAddr is the base of the Phase 3 step-4 segregated
-// freelist: 128 i32 heads, one per 16-byte size class (16..2048),
-// occupying [256, 768). It lives in the always-free reserved window
-// [96, 1024) — the named low-memory scratch tops out at 92
-// (stderrHandleAddr) and the bump cursor floor is the string-pool
-// end, which never falls below stringStart=1024. Linear memory is
-// zero-initialised, so every class starts empty. Only consulted
-// when ast.RcFreeEnabled; the flag-off allocator never touches it.
+// freelist: `freelistClasses` i32 heads occupying [256, 1024), which
+// fills the always-free reserved window [96, 1024) exactly — the named
+// low-memory scratch tops out at 92 (stderrHandleAddr) and the bump
+// cursor floor is the string-pool end, which never falls below
+// stringStart=1024. Linear memory is zero-initialised, so every class
+// starts empty. Only consulted when ast.RcFreeEnabled; the flag-off
+// allocator never touches it.
+//
+// The window is now full, so a further class cannot just be appended:
+// growing the tier means relocating the table (or raising
+// stringStart). freelistTableFitsWindow pins that.
 const freelistHeadsAddr = 256
+
+// Freelist class geometry. The heads table holds `freelistClasses`
+// i32 slots at freelistHeadsAddr, filling the always-free window
+// [256, 1024) exactly:
+//
+//	0..127     small tier — 16-byte EXACT-FIT classes; slot i is the
+//	           freelist for blocks of size (i+1)*16, i.e. 16..2048 B.
+//	128..191   large tier — 64 slots, four per octave (capacities
+//	           rounded to 3 significant bits), covering 2 KiB up to
+//	           2^25 B (32 MiB). Blocks above that are not recycled.
+//
+// The large tier is the wasm mirror of the native two-tier freelist
+// (#3425). Without it every buffer over 2048 B was dropped on the
+// floor: a `string[]` self-append loop's largest grow buffer is
+// 16 + 8*cap bytes, which crosses 2048 at cap 254 — so
+// `a = a.append(s)` past ~254 elements leaked one buffer per call,
+// while the single-word `struct[]` sibling (16 + 4*cap) stayed under
+// the ceiling and reclaimed fine. That asymmetry is what made the
+// gap look string-specific rather than size-specific.
+const (
+	freelistSmallClasses = 128
+	freelistLargeClasses = 64
+	freelistClasses      = freelistSmallClasses + freelistLargeClasses
+	// Largest size the small tier covers, and the granularity of its
+	// exact-fit classes.
+	freelistSmallMax = freelistSmallClasses * 16 // 2048
+)
+
+// emitFreelistBin appends the size→(capacity, class) binning both
+// __fern_alloc and __fern_free must agree on. Emitting it from ONE
+// place is the point: alloc has to BUMP at the same capacity free
+// BINS at, or a block returns to a class it was never sized for and
+// the next allocation from that class hands back a short buffer.
+//
+// Reads the 16-rounded request from local `size`. Writes:
+//
+//	capL   — bytes to reserve/charge (== size in the small tier; the
+//	         3-significant-bit round-up in the large tier)
+//	classL — heads-table slot, or -1 when the block is too large to
+//	         recycle (callers must treat negative as "bump only")
+//
+// `tmpL` is scratch. All four are plain i32 locals.
+func emitFreelistBin(body []byte, size, capL, classL, tmpL uint32) []byte {
+	// cap = size; class = -1
+	body = inst.InstLocalGet(body, size)
+	body = inst.InstLocalSet(body, capL)
+	body = inst.InstI32Const(body, -1)
+	body = inst.InstLocalSet(body, classL)
+	// if size < 16: nothing to do (sub-header allocations aren't classed).
+	body = inst.InstLocalGet(body, size)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, size)
+		body = inst.InstI32Const(body, freelistSmallMax)
+		body = numeric.InstI32LeU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			// Small tier: exact fit. class = (size>>4) - 1.
+			body = inst.InstLocalGet(body, size)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32ShrU(body)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Sub(body)
+			body = inst.InstLocalSet(body, classL)
+		}
+		body = inst.InstElse(body)
+		{
+			// Large tier. shift = floor(log2(size)) - 2, so the
+			// granularity keeps three significant bits.
+			//   tmp = 31 - clz(size) - 2
+			body = inst.InstI32Const(body, 29)
+			body = inst.InstLocalGet(body, size)
+			body = numeric.InstI32Clz(body)
+			body = numeric.InstI32Sub(body)
+			body = inst.InstLocalSet(body, tmpL)
+			// cap = (size + (1<<shift) - 1) & -(1<<shift)
+			body = inst.InstLocalGet(body, size)
+			body = inst.InstI32Const(body, 1)
+			body = inst.InstLocalGet(body, tmpL)
+			body = numeric.InstI32Shl(body)
+			body = numeric.InstI32Add(body)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Sub(body)
+			body = inst.InstI32Const(body, 0)
+			body = inst.InstI32Const(body, 1)
+			body = inst.InstLocalGet(body, tmpL)
+			body = numeric.InstI32Shl(body)
+			body = numeric.InstI32Sub(body) // -(1<<shift)
+			body = numeric.InstI32And(body)
+			body = inst.InstLocalSet(body, capL)
+			// Re-derive the shift FROM cap: rounding up can carry into
+			// the next octave (e.g. 0x1F01 -> 0x2000), and the class
+			// must describe the capacity actually reserved.
+			body = inst.InstI32Const(body, 29)
+			body = inst.InstLocalGet(body, capL)
+			body = numeric.InstI32Clz(body)
+			body = numeric.InstI32Sub(body)
+			body = inst.InstLocalSet(body, tmpL)
+			// idx = (shift-9)*4 + ((cap>>shift) - 4)
+			//   cap>>shift is the 3-bit mantissa, always in [4,7].
+			body = inst.InstLocalGet(body, tmpL)
+			body = inst.InstI32Const(body, 9)
+			body = numeric.InstI32Sub(body)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Mul(body)
+			body = inst.InstLocalGet(body, capL)
+			body = inst.InstLocalGet(body, tmpL)
+			body = numeric.InstI32ShrU(body)
+			body = numeric.InstI32Add(body)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Sub(body)
+			body = inst.InstLocalSet(body, tmpL) // tmp = idx
+			// class = 128 + idx, but only while idx is in range.
+			body = inst.InstLocalGet(body, tmpL)
+			body = inst.InstI32Const(body, freelistLargeClasses)
+			body = numeric.InstI32LtU(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			{
+				body = inst.InstLocalGet(body, tmpL)
+				body = inst.InstI32Const(body, freelistSmallClasses)
+				body = numeric.InstI32Add(body)
+				body = inst.InstLocalSet(body, classL)
+			}
+			body = inst.InstEnd(body)
+		}
+		body = inst.InstEnd(body)
+	}
+	body = inst.InstEnd(body)
+	return body
+}
 
 // memInst* short aliases keep the buildAllocBody assembly readable
 // without each line repeating the package qualifier. Alignment 2
@@ -1917,29 +2053,19 @@ func buildAllocBody(_ map[string]uint32) []byte {
 	body = numeric.InstI32And(body)
 	body = inst.InstLocalSet(body, 0)
 	if ast.RcFreeEnabled {
-		// Phase 3 step-4: reuse a freed block of the same size class
-		// before bumping. $size (local 0) is the 16-byte-rounded
-		// request; classes cover 16..2048.
-		//   if 16 <= size <= 2048:
-		//     headAddr = freelistHeadsAddr + ((size>>4)-1)*4
-		//     head = mem[headAddr]
-		//     if head != 0: mem[headAddr] = mem[head]; return head
-		// Locals 4 = headAddr, 5 = head (declared below).
-		body = inst.InstLocalGet(body, 0)
-		body = inst.InstI32Const(body, 16)
-		body = numeric.InstI32GeU(body)
-		body = inst.InstLocalGet(body, 0)
-		body = inst.InstI32Const(body, 2048)
-		body = numeric.InstI32LeU(body)
-		body = numeric.InstI32And(body)
+		// Phase 3 step-4: reuse a freed block of the same class before
+		// bumping. emitFreelistBin turns the 16-rounded request (local
+		// 0) into the capacity to charge (local 6) and the heads slot
+		// (local 7), so this pop and __fern_free's push cannot drift.
+		// Locals: 4 = headAddr, 5 = head, 6 = cap, 7 = class, 8 = tmp.
+		body = emitFreelistBin(body, 0, 6, 7, 8)
+		body = inst.InstLocalGet(body, 7)
+		body = inst.InstI32Const(body, 0)
+		body = numeric.InstI32GeS(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
-			// headAddr = freelistHeadsAddr + ((size>>4)-1)*4
-			body = inst.InstLocalGet(body, 0)
-			body = inst.InstI32Const(body, 4)
-			body = numeric.InstI32ShrU(body)
-			body = inst.InstI32Const(body, 1)
-			body = numeric.InstI32Sub(body)
+			// headAddr = freelistHeadsAddr + class*4
+			body = inst.InstLocalGet(body, 7)
 			body = inst.InstI32Const(body, 4)
 			body = numeric.InstI32Mul(body)
 			body = inst.InstI32Const(body, freelistHeadsAddr)
@@ -1961,6 +2087,10 @@ func buildAllocBody(_ map[string]uint32) []byte {
 			body = inst.InstEnd(body)
 		}
 		body = inst.InstEnd(body)
+		// Charge the BINNED capacity, not the raw request: a large-tier
+		// block must be as big as the class it will be freed into.
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalSet(body, 0)
 	}
 	// end = ptr + size
 	body = inst.InstLocalGet(body, 1) // $ptr
@@ -1995,7 +2125,7 @@ func buildAllocBody(_ map[string]uint32) []byte {
 	// flag-on freelist pop.
 	nLocals := uint32(3)
 	if ast.RcFreeEnabled {
-		nLocals = 5
+		nLocals = 8 // + headAddr, head, cap, class, tmp
 	}
 	locals := inst.PutLocalsOneGroup(nil, nLocals, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -2022,22 +2152,17 @@ func buildFreeBody(_ map[string]uint32) []byte {
 		body = inst.InstI32Const(body, -16)
 		body = numeric.InstI32And(body)
 		body = inst.InstLocalSet(body, 1)
-		// if 16 <= size <= 2048
-		body = inst.InstLocalGet(body, 1)
-		body = inst.InstI32Const(body, 16)
-		body = numeric.InstI32GeU(body)
-		body = inst.InstLocalGet(body, 1)
-		body = inst.InstI32Const(body, 2048)
-		body = numeric.InstI32LeU(body)
-		body = numeric.InstI32And(body)
+		// Bin exactly as __fern_alloc charged. Locals: 2 = headAddr,
+		// 3 = cap (unused here — alloc already reserved it), 4 = class,
+		// 5 = tmp.
+		body = emitFreelistBin(body, 1, 3, 4, 5)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 0)
+		body = numeric.InstI32GeS(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
-			// headAddr = freelistHeadsAddr + ((size>>4)-1)*4
-			body = inst.InstLocalGet(body, 1)
-			body = inst.InstI32Const(body, 4)
-			body = numeric.InstI32ShrU(body)
-			body = inst.InstI32Const(body, 1)
-			body = numeric.InstI32Sub(body)
+			// headAddr = freelistHeadsAddr + class*4
+			body = inst.InstLocalGet(body, 4)
 			body = inst.InstI32Const(body, 4)
 			body = numeric.InstI32Mul(body)
 			body = inst.InstI32Const(body, freelistHeadsAddr)
@@ -2055,7 +2180,11 @@ func buildFreeBody(_ map[string]uint32) []byte {
 		}
 		body = inst.InstEnd(body)
 	}
-	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	nLocals := uint32(1)
+	if ast.RcFreeEnabled {
+		nLocals = 4 // headAddr, cap, class, tmp
+	}
+	locals := inst.PutLocalsOneGroup(nil, nLocals, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
@@ -5529,3 +5658,9 @@ func buildTruncF64Body(_ map[string]uint32) []byte {
 	body = numeric.InstF64Trunc(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
+
+// freelistTableFitsWindow fails the build if the heads table outgrows
+// the always-free low-memory window it lives in. The table is
+// zero-initialised linear memory rather than a data segment, so an
+// overflow would silently alias the string pool instead of erroring.
+const freelistTableFitsWindow = uint(1024 - (freelistHeadsAddr + freelistClasses*4))
