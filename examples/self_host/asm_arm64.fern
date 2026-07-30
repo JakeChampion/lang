@@ -3889,6 +3889,13 @@ function emit_function(fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitS
 // bottoming out in inline-lowered operations (scalar arithmetic, control
 // flow) — so it needs no checker pass and calls no other helper.
 function emit_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.EmitState {
+    // On the IR emit paths (emit_module_ir_unit_arm64 / emit_module_ir), lower
+    // the helper through the IR selector so the arm64 IR path no longer depends
+    // on the AST emit_function below (#3457 slice 4a). The AST path keeps this
+    // body; x86 never sets ir_runtime.
+    if (s.ir_runtime) {
+        return asm_arm64_ir.emit_ir_runtime_fern_fn(src, s.struct_decls, s);
+    }
     var m: parser.Module = parser.parse_module(lexer.tokenize(src));
     // Flush any string literals the helper body interns (e.g. "" in
     // arr_str_join) — they land after the main .rodata pool, so emit them in
@@ -3980,7 +3987,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     var s: asmcore.EmitState = asmcore.new_state();
     // struct_decls is the WHOLE-PROGRAM struct set so a function emitting an
     // imported struct's layout resolves it; str_ns namespaces this unit's pools.
-    s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns };
+    s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: mod.funcs, str_ns: str_ns, ir_runtime: true };
     if (is_entry) { s = s.write("    .globl _start\n"); }
     s = s.write("    .text\n");
     // The entry exports its shared runtime entry points (__fern_alloc /
@@ -9134,7 +9141,7 @@ pub function emit_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
 pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
-    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs, ir_runtime: true };
     s = asm_arm64_ir.emit_body(mod, s);
     // Expand the declarative runtime-dependency closure (see emit_module's IR
     // dispatch) before emit_runtime gates each helper on has_need.
