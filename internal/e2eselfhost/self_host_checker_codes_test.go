@@ -1268,6 +1268,13 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 
 	progs := []struct{ name, src string }{
+		// The NEGATIVE cases are the ones that discriminate. A bogus method on a
+		// char must be E043 in both checkers; before #5922 the self-host reported
+		// nothing at all, because `char` resolved in only one of five type-name
+		// resolvers and an unknown receiver type skips every check — which made
+		// the two positive cases below pass vacuously.
+		{"char-method-bogus", "import \"std/utf8\";\nimport \"std/unicode\";\nfunction main(): i32 { var cs: char[] = utf8.codepoints(\"a\"); return cs[0].definitely_not_a_method(); }\n"},
+		{"char-param-method-bogus", "function f(c: char): i32 { return c.definitely_not_a_method(); }\nfunction main(): i32 { return 0; }\n"},
 		// A `char`-RECEIVER method call. std/unicode declares seven of them
 		// ((c: char) to_upper / is_letter / ...), so if the self-host resolves a
 		// char receiver to the i32 label while the declaration registered under
