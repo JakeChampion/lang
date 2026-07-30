@@ -21,7 +21,7 @@ import (
 // iteration. WITHOUT the k_enum arm the fresh enum box leaks each iteration and
 // millions of iterations exhaust the heap (SIGKILL 137); WITH it the heap stays
 // flat. A spurious double-free (mis-balanced construction inc) would instead tick
-// __fern_rc_underflow_count() -> exit 99. Exit 0 proves the enum field is reclaimed
+// __rc_underflow() -> exit 99. Exit 0 proves the enum field is reclaimed
 // AND balanced (no over-release) over millions of build/drop cycles.
 func TestSelfHostStructEnumFieldReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -65,7 +65,7 @@ func TestSelfHostStructEnumFieldReclaimIRX86_64(t *testing.T) {
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, n: i32 }
 function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var t: Tagged = Tagged { e: Rect(i), n: i }; match (t.e) { Rect(v) => { if (v != i) { bad = 1; } }, _ => { bad = 1; } } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"struct-enum-field-fresh-gate-churn", 0)
 
 	// NON-FRESH (aliased) enum field: `e` is bound from a live enum local `s`, so
@@ -77,7 +77,7 @@ function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_coun
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, n: i32 }
 function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var s: Shape = Rect(7); var t: Tagged = Tagged { e: s, n: 1 }; match (t.e) { Rect(v) => { if (v != 7) { bad = 1; } }, _ => { bad = 1; } } match (s) { Rect(w) => { if (w != 7) { bad = 1; } }, _ => { bad = 1; } } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"struct-enum-field-aliased-balanced", 0)
 
 	// FUNCTIONAL-UPDATE base-copy: `t2 = Tagged { ...t1, n: 2 }` copies `e` from t1
@@ -89,7 +89,7 @@ function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_coun
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, n: i32 }
 function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var s: Shape = Rect(9); var t1: Tagged = Tagged { e: s, n: 1 }; var t2: Tagged = Tagged { ...t1, n: 2 }; match (t2.e) { Rect(v) => { if (v != 9) { bad = 1; } }, _ => { bad = 1; } } match (t1.e) { Rect(w) => { if (w != 9) { bad = 1; } }, _ => { bad = 1; } } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"struct-enum-field-base-copy-balanced", 0)
 
 	// ENUM FIELD ALONGSIDE AN ARRAY FIELD: `Tagged { e: Shape, items: i32[] }` is
@@ -100,6 +100,6 @@ function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_coun
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, items: i32[] }
 function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var t: Tagged = Tagged { e: Rect(i), items: [1, 2, 3] }; if (t.items.len() != 3) { bad = 1; } match (t.e) { Rect(v) => { if (v != i) { bad = 1; } }, _ => { bad = 1; } } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"struct-enum-field-with-array-churn", 0)
 }

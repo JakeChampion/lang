@@ -21,7 +21,7 @@ import (
 //   - EMISSION: the driver emits `call __fern_str_box` (rc-headered construction) — the
 //     old raw `movq $16 / __fern_alloc / store data / store len` box is gone.
 //   - DOUBLE-FREE SAFETY NET: a long fresh-concat churn reclaims a box each iteration; a
-//     spurious double-free would tick __fern_rc_underflow_count(), which main checks and
+//     spurious double-free would tick __rc_underflow(), which main checks and
 //     maps to exit 99. Exit 0 proves the rc-aware free balances (flat heap, no
 //     over-release) over millions of allocate/reclaim cycles.
 func TestSelfHostStrRcBoxIRX86_64(t *testing.T) {
@@ -59,18 +59,18 @@ func TestSelfHostStrRcBoxIRX86_64(t *testing.T) {
 	}
 
 	// DOUBLE-FREE SAFETY NET at scale: 2,000,000 fresh concat chains, each reclaimed. A
-	// double-free would bump __fern_rc_underflow_count() -> exit 99; a leak would exhaust
+	// double-free would bump __rc_underflow() -> exit 99; a leak would exhaust
 	// the heap (SIGKILL 137). r = "aaxbb" len 5, t stays 0, underflow 0 -> exit 0.
-	run(t, `function churn(n: i32): i32 { var pre: string = "aa"; var suf: string = "bb"; var t: i32 = 0; var i: i32 = 0; while (i < n) { var r: string = pre + "x" + suf; if (r.len() < 5) { t = 1; } i = i + 1; } return t; } function main(): i32 { var v: i32 = churn(2000000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`,
+	run(t, `function churn(n: i32): i32 { var pre: string = "aa"; var suf: string = "bb"; var t: i32 = 0; var i: i32 = 0; while (i < n) { var r: string = pre + "x" + suf; if (r.len() < 5) { t = 1; } i = i + 1; } return t; } function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"rcbox-churn-no-underflow", 0, true)
 
 	// VALUE + underflow check on a fresh literal-operand concat reclaimed at scope exit.
 	// "hi"+"!" = len 3; underflow 0.
-	run(t, `function mk(): i32 { var s: string = "hi" + "!"; return s.len(); } function main(): i32 { var r: i32 = mk(); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`,
+	run(t, `function mk(): i32 { var s: string = "hi" + "!"; return s.len(); } function main(): i32 { var r: i32 = mk(); if (__rc_underflow() != 0) { return 99; } return r; }`,
 		"rcbox-scope-exit", 3, true)
 
 	// i32_to_string churn: the digit-string box is rc-headered too; reclaimed each iter,
 	// no over-release. Every decimal string has len >= 1, so ok stays 0 -> exit 0.
-	run(t, `function churn(n: i32): i32 { var ok: i32 = 0; var i: i32 = 0; while (i < n) { var s: string = i32_to_string(i); if (s.len() < 1) { ok = 1; } i = i + 1; } return ok; } function main(): i32 { var r: i32 = churn(2000000); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`,
+	run(t, `function churn(n: i32): i32 { var ok: i32 = 0; var i: i32 = 0; while (i < n) { var s: string = i32_to_string(i); if (s.len() < 1) { ok = 1; } i = i + 1; } return ok; } function main(): i32 { var r: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return r; }`,
 		"rcbox-i32-to-string-churn", 0, true)
 }
