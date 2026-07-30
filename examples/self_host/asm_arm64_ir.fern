@@ -7161,3 +7161,192 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     }
     return strbuf_take();
 }
+
+// ===================== arm64-darwin post-processor =====================
+// darwinize + its darwin_* helpers moved here from asm_arm64.fern (#3457
+// slice-5 prep): the arm64-darwin IR path (emit_module_ir(mod, true) threads
+// darwin through the runtime, then darwinize reskins the GAS text to Mach-O)
+// must keep working once asm_arm64.fern's AST emitter is deleted, so the
+// post-processor lives with the rest of the arm64 IR emit path.
+// =================== arm64-darwin (Mach-O) ====================
+//
+// darwinize rewrites the Linux arm64 GAS assembly emitted by
+// emit_module into the arm64-apple-darwin (Mach-O) dialect that
+// `clang --target=arm64-apple-darwin` assembles and ld64 / lld link
+// into a Mach-O executable. The transform is purely lexical plus a
+// syscall-number remap — emit_module's instruction selection is
+// byte-for-byte identical on both platforms, so the same code
+// generator backs the Linux ELF and the Darwin Mach-O target:
+//
+//   - PC-relative symbol addressing. GNU `adrp Xd, sym` /
+//     `add Xd, Xd, :lo12:sym` becomes Apple's `adrp Xd, sym@PAGE` /
+//     `add Xd, Xd, sym@PAGEOFF`. Both name the identical ADRP/ADD
+//     relocation pair; only the assembler syntax differs. Every
+//     emitted `adrp` is paired with an `add ..., :lo12:...` and there
+//     are no `ldr [.., :lo12:..]` forms, so the rewrite is unambiguous.
+//   - Sections. `.section .rodata` -> `.section __TEXT,__const`;
+//     `.bss` / `.section .bss` -> `.section __DATA,__bss`;
+//     `.section .text` -> `.text`.
+//   - ELF-only directives. `.type` / `.size` / `.note.GNU-stack` are
+//     dropped — Mach-O records function-vs-data via section
+//     membership, not per-symbol metadata.
+//   - Entry symbol. `_start` -> `_main`: ld64 / lld's default
+//     executable entry, which dyld invokes via LC_MAIN.
+//   - Syscalls. Linux issues `mov x8, #N` + `svc #0`; Darwin BSD
+//     issues `mov x16, #M` + `svc #0x80`. We remap the syscalls whose
+//     argument + result ABI is number-compatible (read / write /
+//     close / openat / lseek / newfstatat / unlinkat / mkdirat /
+//     getdents64→getdirentries64 / dup3→dup2 / execve / wait4 / exit /
+//     mmap — see darwin_sysno) and flip the trap, normalising the
+//     carry-flag errno back to Linux's -errno. Syscalls with no
+//     number-compatible Darwin form are emitted directly by the code
+//     generator behind its `darwin` flag instead: clock_gettime →
+//     gettimeofday (now_unix_ms) / CNTVCT_EL0 (monotonic_ns), getrandom
+//     → getentropy (random_bytes), nanosleep → select (sleep_ms), and
+//     the subprocess pipe2 → pipe / clone → fork divergences. The
+//     supported surface is the core language (arithmetic, control flow,
+//     functions, structs, enums, arrays, strings incl. heap concat,
+//     closures, maps), stdin/stdout I/O, the filesystem builtins
+//     (read_file / write_file / stat / temp_dir / remove_file /
+//     read_dir / remove_dir_all), time + randomness, sleep,
+//     subprocess, and the TCP socket primitives (tcp_listen /
+//     tcp_accept / tcp_recv / tcp_send / tcp_close — socket 198→97 /
+//     bind 200→104 / listen 201→106 / accept 202→30, plus the Darwin
+//     sockaddr_in sin_len byte) that std/tcp.fern's HTTP edge-handler
+//     loop is built on, and one-shot IPv4 UDP (udp_send — socket /
+//     sendto 206→133 / close, dotted-quad host parse).
+
+function darwin_starts_with(s: string, p: string): boolean {
+    if (s.len() < p.len()) { return false; }
+    return s[0:p.len()] == p;
+}
+
+// darwin_lstrip drops leading ASCII spaces.
+function darwin_lstrip(s: string): string {
+    var i: i32 = 0;
+    while (i < s.len() && s[i] == 32) { i = i + 1; }
+    return s[i:s.len()] + "";
+}
+
+// darwin_index_of returns the first index of sub in s, or -1.
+function darwin_index_of(s: string, sub: string): i32 {
+    if (sub.len() == 0) { return 0; }
+    if (s.len() < sub.len()) { return 0 - 1; }
+    var i: i32 = 0;
+    while (i <= s.len() - sub.len()) {
+        if (s[i:i + sub.len()] == sub) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// darwin_sysno maps a Linux arm64 syscall number to its Darwin BSD
+// equivalent, for syscalls whose argument + result ABI is identical
+// (only the number + trap instruction differ). Returns -1 when there
+// is no number-compatible Darwin form.
+function darwin_sysno(n: i32): i32 {
+    if (n == 63) { return 3; }     // read
+    if (n == 64) { return 4; }     // write
+    if (n == 57) { return 6; }     // close
+    if (n == 56) { return 463; }   // openat
+    if (n == 61) { return 344; }   // getdents64 -> getdirentries64
+    if (n == 62) { return 199; }   // lseek
+    if (n == 79) { return 470; }   // newfstatat -> fstatat64 (same args)
+    if (n == 35) { return 472; }   // unlinkat (same args)
+    if (n == 34) { return 475; }   // mkdirat (same args)
+    if (n == 24) { return 90; }    // dup3(.,.,0) -> dup2 (flags 0 == dup2)
+    if (n == 221) { return 59; }   // execve (same args)
+    if (n == 260) { return 7; }    // wait4 (same args)
+    if (n == 198) { return 97; }   // socket (same args)
+    if (n == 200) { return 104; }  // bind (sockaddr_in gets a sin_len byte)
+    if (n == 201) { return 106; }  // listen (same args)
+    if (n == 202) { return 30; }   // accept (same args)
+    if (n == 206) { return 133; }  // sendto (same args)
+    if (n == 93) { return 1; }     // exit
+    if (n == 94) { return 1; }     // exit_group -> exit
+    if (n == 222) { return 197; }  // mmap
+    return 0 - 1;
+}
+
+pub function darwinize(asm: string): string {
+    // Accumulate transformed lines into a local string. We deliberately
+    // do NOT use the global strbuf here: emit_module has just run a
+    // strbuf cycle to produce `asm`, and re-entering strbuf inside the
+    // same call chain is fragile. Plain `+` accumulation is O(n^2) in
+    // the worst case, but the arm64-darwin surface is small CLI / edge
+    // programs whose asm is a few KB, so this stays well within budget.
+    var out: string = "";
+    var n: i32 = asm.len();
+    var start: i32 = 0;
+    var i: i32 = 0;
+    // prev_sys_num holds the Darwin number of a remapped syscall whose
+    // `mov x16, #M` we just emitted, so the following `svc` knows whether
+    // (and how) to flip the trap + normalise the errno. -1 = none.
+    var prev_sys_num: i32 = 0 - 1;
+    var norm_n: i32 = 0;   // fresh-label counter for errno normalisation
+    while (i <= n) {
+        if (i == n || asm[i] == 10) {
+            var line: str = asm[start:i];
+            var has_nl: boolean = (i < n);
+            var body: string = darwin_lstrip(line);
+            var keep: boolean = true;
+            var out_line: string = line + "";
+            var this_sys_num: i32 = 0 - 1;
+
+            if (darwin_starts_with(body, ".type ") || darwin_starts_with(body, ".size ")) {
+                keep = false;
+            } else if (darwin_starts_with(body, ".note.GNU-stack")) {
+                keep = false;
+            } else if (body == ".section .rodata") {
+                out_line = "    .section __TEXT,__const";
+            } else if (body == ".bss" || body == ".section .bss") {
+                out_line = "    .section __DATA,__bss";
+            } else if (body == ".section .text") {
+                out_line = "    .text";
+            } else if (body == ".globl _start" || body == ".global _start") {
+                out_line = "    .globl _main";
+            } else if (line == "_start:") {
+                out_line = "_main:";
+            } else if (darwin_starts_with(body, "adrp ")) {
+                out_line = line + "@PAGE";
+            } else if (darwin_index_of(line, ":lo12:") >= 0) {
+                var idx: i32 = darwin_index_of(line, ":lo12:");
+                out_line = line[0:idx] + line[idx + 6:line.len()] + "@PAGEOFF";
+            } else if (darwin_starts_with(line, "    mov x8, #")) {
+                var num: i32 = util.digits_to_i32(line[13:line.len()]);
+                var m: i32 = darwin_sysno(num);
+                if (m >= 0) {
+                    out_line = "    mov x16, #" + util.i32_to_string(m);
+                    this_sys_num = m;
+                }
+            } else if (line == "    svc #0") {
+                if (prev_sys_num == 1) {
+                    // exit / exit_group: never returns, so no errno
+                    // normalisation — just flip the trap.
+                    out_line = "    svc #0x80";
+                } else if (prev_sys_num >= 0) {
+                    // Fallible syscall. Darwin returns +errno with the
+                    // carry flag SET on error; Linux returns -errno. The
+                    // self-host's callers test `x0 < 0`, so negate x0 when
+                    // carry is set to restore the Linux-shaped -errno.
+                    // Mirrors the Go backend's syscall() normalisation.
+                    var lbl: string = ".Ldwsc_" + util.i32_to_string(norm_n);
+                    norm_n = norm_n + 1;
+                    out_line = "    svc #0x80\n    b.cc " + lbl + "\n    neg x0, x0\n" + lbl + ":";
+                }
+            }
+
+            if (keep) {
+                if (has_nl) {
+                    out = out + out_line + "\n";
+                } else {
+                    out = out + out_line;
+                }
+            }
+            prev_sys_num = this_sys_num;
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}

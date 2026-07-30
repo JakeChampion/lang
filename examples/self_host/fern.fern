@@ -34,6 +34,7 @@ import "./parser";
 import "./flatten";
 import "./asm";
 import "./asm_arm64";
+import "./asm_arm64_ir";
 import "./wasm";
 import "./checker";
 import "./interp";
@@ -659,7 +660,7 @@ function main(): i32 {
         // binaries). No external clang / ld64. The output bytes are packed
         // into a string written verbatim by write_file (see -target
         // wasm-bin for the same i32[]->u8[]->string idiom).
-        var gas: string = asm_arm64.darwinize(asm_arm64.emit_module(full, true));
+        var gas: string = asm_arm64_ir.darwinize(asm_arm64.emit_module(full, true));
         var prog: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(gas);
         if (prog.unknown.len() > 0) {
             eprint("fern: -target arm64-darwin: in-process assembler hit an instruction it does not yet support: ");
