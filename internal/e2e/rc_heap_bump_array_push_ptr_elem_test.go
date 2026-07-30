@@ -32,12 +32,13 @@ import (
 // set that scales with the iteration count. The RETAIN half (rc != 1, the
 // shared-alias pair) is `TestAliasGrowNoOverRelease`.
 //
-// x86-64 and arm64 only (arm64 is new here; only x86-64 was covered before).
-// On wasm the `string[]` leg fails and has ALWAYS failed — 20 iters -> 64480
-// bytes, 400 -> 1231840, identical with and without the `_move_` routing — so
-// it is a pre-existing gap in the two-word `string[]` self-append reclaim, not
-// this contract. The `struct[]` leg passes there. Recorded in
-// docs/SELFHOST-AST-RETIREMENT.md; adding the wasm leg belongs to fixing that.
+// All three backends. The wasm `string[]` leg used to fail (20 iters -> 64480
+// bytes, 400 -> 1231840) and the cause was NOT string-specific: wasm's freelist
+// had no large tier, so `__free` dropped every block over 2048 B. A `string[]`
+// grow buffer is 16 + 8*cap bytes and crosses that at cap 254, while the
+// single-word `struct[]` sibling (16 + 4*cap) stayed under it — which is why
+// only the string leg leaked. Fixed by mirroring the native two-tier freelist
+// (#3425) in wasmbin; this leg is its end-to-end guard.
 
 func strArrPushSrc(iters string) string {
 	return `
@@ -117,4 +118,13 @@ func TestX86_64ArrayPushPtrElemReclaim(t *testing.T) {
 func TestArm64ArrayPushPtrElemReclaim(t *testing.T) {
 	ast.RcFreeEnabled = true
 	runArrayPushPtrElemChecks(t, mustRunArm64FreeOn)
+}
+
+func TestWASMArrayPushPtrElemReclaim(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	runArrayPushPtrElemChecks(t, func(t *testing.T, src string) int {
+		return runWasm(t, src)
+	})
 }
