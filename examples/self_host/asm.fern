@@ -498,6 +498,18 @@ function try_emit_builtin(c: parser.ExprCall, name: string, s: asmcore.EmitState
         s = s.need("proc_fork");
         return CallOut { state: s, done: true };
     }
+    if (name == "proc_exec" && c.args.len() == 2) {
+        s = emit_expr(c.args[0], s);
+        s = emit_expr(c.args[1], s);
+        s = s.write("    popq %rsi\n");
+        s = s.write("    popq %rdi\n");
+        s = s.write("    call __fern_proc_exec\n");
+        s = s.write("    pushq %rax\n");
+        s = s.need("heap");
+        s = s.need("env");
+        s = s.need("proc_exec");
+        return CallOut { state: s, done: true };
+    }
     if (name == "proc_waitpid" && c.args.len() == 1) {
         s = emit_expr(c.args[0], s);
         s = s.write("    popq %rdi\n");
@@ -7131,6 +7143,7 @@ function emit_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // than being transcribed a second time here. Allocation-free, so gated on
     // their own needs independently of the heap runtime.
     if (s.has_need("proc_fork")) { s = asm_ir.emit_ir_proc_fork(s); }
+    if (s.has_need("proc_exec")) { s = asm_ir.emit_ir_proc_exec(s); }
     if (s.has_need("proc_waitpid")) { s = asm_ir.emit_ir_proc_waitpid(s); }
     // __fern_arr_str_index_of is now a Fern runtime function (#2649): see
     // asmcore.rt_src_arr_str_index_of. It CALLS str_eq (also Fern now) — the
