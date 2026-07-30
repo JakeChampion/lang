@@ -3083,6 +3083,30 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
     return expr_scalar_type(e, s);
 }
 
+// emit_i32_minmax_slots emits the branchless i32 min/max of two values already
+// stored in locals `aslot` / `bslot`, leaving the result on the stack. No
+// helper call, no need/globls plumbing — pure ops every backend has:
+//   mask = 0 - (a < b)   (0 or all-ones)
+//   min  = b ^ ((a ^ b) & mask)    max = a ^ ((a ^ b) & mask)
+// When a < b the mask is all-ones so `b ^ (a^b)` = a (min) / `a ^ (a^b)` = b
+// (max); otherwise the mask is 0 and the "keep" operand passes through. Uses a
+// signed compare (not `(a-b) >> 31`) so it is overflow-safe for i32 MIN/MAX,
+// matching the AST emitter's cmov.
+function emit_i32_minmax_slots(p: LowerState, aslot: i32, bslot: i32, is_max: boolean): LowerState {
+    if (is_max) { p = p.emit(ir.op_load_local(aslot)); }
+    else { p = p.emit(ir.op_load_local(bslot)); }
+    p = p.emit(ir.op_load_local(aslot));
+    p = p.emit(ir.op_load_local(bslot));
+    p = p.emit(ir.op_bin("xor", 0, false));         // a ^ b
+    p = p.emit(ir.op_const_i32(0));
+    p = p.emit(ir.op_load_local(aslot));
+    p = p.emit(ir.op_load_local(bslot));
+    p = p.emit(ir.op_bin("lt_s", 0, false));        // a < b (0/1)
+    p = p.emit(ir.op_bin("sub", 0, false));         // 0 - (a<b) = mask
+    p = p.emit(ir.op_bin("and", 0, false));         // (a^b) & mask
+    return p.emit(ir.op_bin("xor", 0, false));      // keep ^ ((a^b) & mask)
+}
+
 // lower_dyn_arg lowers an expression that flows into a `dyn Trait` slot
 // (docs/DYN-TRAITS.md §4.2.3). A struct/enum value already carries its shape at
 // offset 0 (a struct its type's shape; an enum its VARIANT's shape — the
@@ -9642,6 +9666,61 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!pgl.ok) { return pgl; }
                         if (fa.field == "gcd") { return pgl.emit(ir.op_call_direct("__fern_i32_gcd", 2)); }
                         return pgl.emit(ir.op_call_direct("__fern_i32_lcm", 2));
+                    }
+                    // n.min(m) / n.max(m) — branchless (emit_i32_minmax_slots),
+                    // so no runtime helper. Store receiver + arg in temps (each
+                    // value is read several times) then compute; a side-effecting
+                    // receiver/arg is evaluated exactly once. Until this existed
+                    // they bailed the module to the AST emitter (#3457 slice 5).
+                    if ((fa.field == "min" || fa.field == "max") && c.args.len() == 1
+                            && expr_recv_prim_type(fa.obj, s) == "i32"
+                            && !expr_is_u32(c.args[0], s) && !expr_is_u64(c.args[0], s)) {
+                        var amn: string = "$i32mmA" + util.i32_to_string(s.locals.len());
+                        var pmm: LowerState = s.add_local(amn);
+                        var amslot: i32 = pmm.slot_of(amn);
+                        var bmn: string = "$i32mmB" + util.i32_to_string(pmm.locals.len());
+                        pmm = pmm.add_local(bmn);
+                        var bmslot: i32 = pmm.slot_of(bmn);
+                        pmm = lower_expr(fa.obj, pmm);
+                        if (!pmm.ok) { return pmm; }
+                        pmm = pmm.emit(ir.op_store_local(amslot));
+                        pmm = lower_expr(c.args[0], pmm);
+                        if (!pmm.ok) { return pmm; }
+                        pmm = pmm.emit(ir.op_store_local(bmslot));
+                        return emit_i32_minmax_slots(pmm, amslot, bmslot, fa.field == "max");
+                    }
+                    // n.clamp(lo, hi) = min(max(n, lo), hi), composed from the
+                    // same branchless primitive over three temps.
+                    if (fa.field == "clamp" && c.args.len() == 2
+                            && expr_recv_prim_type(fa.obj, s) == "i32"
+                            && !expr_is_u32(c.args[0], s) && !expr_is_u64(c.args[0], s)
+                            && !expr_is_u32(c.args[1], s) && !expr_is_u64(c.args[1], s)) {
+                        var cnn: string = "$i32clN" + util.i32_to_string(s.locals.len());
+                        var pcl: LowerState = s.add_local(cnn);
+                        var cnslot: i32 = pcl.slot_of(cnn);
+                        var cln: string = "$i32clL" + util.i32_to_string(pcl.locals.len());
+                        pcl = pcl.add_local(cln);
+                        var clslot: i32 = pcl.slot_of(cln);
+                        var chn: string = "$i32clH" + util.i32_to_string(pcl.locals.len());
+                        pcl = pcl.add_local(chn);
+                        var chslot: i32 = pcl.slot_of(chn);
+                        var ctn: string = "$i32clT" + util.i32_to_string(pcl.locals.len());
+                        pcl = pcl.add_local(ctn);
+                        var ctslot: i32 = pcl.slot_of(ctn);
+                        pcl = lower_expr(fa.obj, pcl);
+                        if (!pcl.ok) { return pcl; }
+                        pcl = pcl.emit(ir.op_store_local(cnslot));
+                        pcl = lower_expr(c.args[0], pcl);
+                        if (!pcl.ok) { return pcl; }
+                        pcl = pcl.emit(ir.op_store_local(clslot));
+                        pcl = lower_expr(c.args[1], pcl);
+                        if (!pcl.ok) { return pcl; }
+                        pcl = pcl.emit(ir.op_store_local(chslot));
+                        // t = max(n, lo)
+                        pcl = emit_i32_minmax_slots(pcl, cnslot, clslot, true);
+                        pcl = pcl.emit(ir.op_store_local(ctslot));
+                        // clamp = min(t, hi)
+                        return emit_i32_minmax_slots(pcl, ctslot, chslot, false);
                     }
                     if (c.args.len() == 0 && expr_recv_prim_type(fa.obj, s) == "i32") {
                         if (fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative") {
