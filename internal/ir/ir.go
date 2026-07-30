@@ -14054,9 +14054,21 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 		// (Option[i32], pair-form, no box) keep the generic decl and bail to
 		// the flat dec as before.
 		if len(et.Args) > 0 {
-			if sub := substituteEnumDecl(ed, et.Args); enumHasBoxedPayload(sub) {
-				ed = sub
-			}
+			// Always adopt the substituted decl. The generic decl's payloads are
+			// ParamTypes, which uniformEnumDropLoads / uniformEnumBoxSize cannot
+			// size or classify, so the uniform path was skipped and the box
+			// leaked for a SCALAR instantiation: `var o = Some(k)` allocated 16
+			// bytes per construction and never freed them (#5917).
+			//
+			// The previous gate gave this up on the stated grounds that a scalar
+			// instantiation is "pair-form, no box". That conflates two things:
+			// pair-form is a per-FUNCTION return ABI (findPairFormFuncs, keyed by
+			// function name), describing how a callee hands an Option back — not
+			// how an Option LOCAL is represented. Measured, a local is boxed in
+			// every shape, including one bound from a pair-form-eligible callee.
+			// Substitution is strictly more informative than the generic decl, so
+			// there is no shape it makes worse.
+			ed = substituteEnumDecl(ed, et.Args)
 		}
 		loads, loadsOk := uniformEnumDropLoads(ed, b.ptrW)
 		size, sizeOk := uniformEnumBoxSize(ed, b.ptrW)

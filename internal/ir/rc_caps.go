@@ -309,38 +309,19 @@ func enumNeedsDrop(ed *ast.EnumDecl) bool {
 // uniform path": every such payload is deep-droppable in a tag-guarded
 // arm (where its exact type is known), where the uniform path could
 // only flat-dec it (and a union's variants differ at the shared
-// offset). It's also the gate for adopting a generic instantiation's
-// substituted decl — a pointer payload proves a heap-boxed (non-pair-
-// form) instantiation, so the variant-plan's box_free is valid; scalar
-// payloads (pair-form, no box) read false and stay on the flat path.
-// enumHasBoxedPayload reports whether a substituted instantiation is
-// HEAP-BOXED — the condition the variant-plan drop's box_free needs. That is
-// enumHasPointerPayload plus a STRING payload: `Option[string]` allocates a box
-// (measured: one alloc per construction with the payload constant-folded away),
-// but a string is deliberately absent from arrElemIsRcTracked because its
-// retain/release is two-word on wasm + arm64-TwoWordOverride, so
-// enumHasPointerPayload reads false for it and the box was never freed —
-// 32 bytes per construction, linear and unbounded (#5879).
+// offset).
 //
-// Kept separate from enumHasPointerPayload rather than folded into it: that
-// predicate also selects the uniform-branchless vs variant-plan drop shape, and
-// "is this boxed?" is a different question from "does a payload need a deep
-// pointer drop?". A scalar instantiation (Option[i32], pair-form, no box) reads
-// false here exactly as before, so box_free is still never emitted for it.
-func enumHasBoxedPayload(ed *ast.EnumDecl) bool {
-	if enumHasPointerPayload(ed) {
-		return true
-	}
-	for _, v := range ed.Variants {
-		for _, pt := range v.Payloads {
-			if _, isStr := pt.(ast.StringType); isStr {
-				return true
-			}
-		}
-	}
-	return false
-}
-
+// It is NOT a test for "is this instantiation heap-boxed". An earlier
+// revision of this comment claimed it was, and that scalar payloads are
+// "pair-form, no box" — used to justify skipping the box_free for a
+// scalar generic instantiation. Both halves were wrong: pair-form is a
+// per-FUNCTION return ABI (findPairFormFuncs, keyed by function name),
+// describing how a callee hands an Option back, not how an Option LOCAL
+// is represented; and a local is boxed in every measured shape,
+// including one bound from a pair-form-eligible callee. Option[i32] was
+// leaking a 16-byte box per construction on that reasoning (#5917).
+// emitEnumSlotDrop now adopts the substituted decl unconditionally, so
+// this predicate is back to its one job: choosing the drop SHAPE.
 func enumHasPointerPayload(ed *ast.EnumDecl) bool {
 	for _, v := range ed.Variants {
 		for _, pt := range v.Payloads {

@@ -1047,19 +1047,39 @@ const enumArrayPayloadBoxSrc = `function main(): i32 {
     return t % 251;
 }`
 
-// A scalar instantiation. Guards the other side: enumHasBoxedPayload must keep
-// reading false here, so no box_free is emitted for a shape the variant-plan
-// drop cannot validly free. Asserted on exit code and on accounting being
-// UNCHANGED by the fix, not on being leak-free — measured identical before and
-// after (allocs=100 frees=0 live=1600), i.e. Option[i32] leaks a 16-byte box
-// today, pre-existing and independent of this change. Note that contradicts the
-// surrounding comments' claim that a scalar instantiation is "pair-form, no
-// box": it does allocate. Filed separately rather than pinned as correct here.
+// A scalar instantiation. This was pinned as UNCHANGED-and-leaking when the
+// string-payload box fix landed (allocs=100 frees=0 live=1600), with the note
+// that it flips to the ordinary assertion once #5917 lands. It has: adopting the
+// substituted decl unconditionally in emitEnumSlotDrop gives the uniform drop
+// path concrete payload types, so the box is freed here too.
+//
+// The reasoning that kept it leaking was that a scalar instantiation is
+// "pair-form, no box". Pair-form is a per-FUNCTION return ABI (findPairFormFuncs,
+// keyed by function name) describing how a callee hands an Option back, not how
+// an Option LOCAL is represented — and a local is boxed in every measured shape,
+// including one bound from a pair-form-eligible callee (the returned-from-callee
+// fixture below).
 const enumScalarPayloadNoBoxSrc = `function main(): i32 {
     var t: i32 = 0;
     var k: i32 = 0;
     while (k < 100) {
         var o = Some(k);
+        t = t + 1;
+        k = k + 1;
+    }
+    return t % 251;
+}`
+
+// A scalar Option bound from a callee whose every return is Some(EXPR)/None —
+// i.e. a function findPairFormFuncs marks pair-form-ELIGIBLE. The caller's local
+// is still boxed and must still be freed; this is the fixture that disproves
+// "pair-form ⇒ no box" for the local (#5917).
+const enumScalarFromCalleeSrc = `function mk(n: i32): Option[i32] { return Some(n); }
+function main(): i32 {
+    var t: i32 = 0;
+    var k: i32 = 0;
+    while (k < 100) {
+        var o = mk(k);
         t = t + 1;
         k = k + 1;
     }
@@ -1074,7 +1094,8 @@ func TestX86_64LeakCheckEnumStringPayloadBox(t *testing.T) {
 	}{
 		{"string-payload-boxed", enumStringPayloadBoxSrc, 149},
 		{"array-payload-boxed", enumArrayPayloadBoxSrc, 200},
-		{"scalar-payload-pairform", enumScalarPayloadNoBoxSrc, 100},
+		{"scalar-payload-boxed", enumScalarPayloadNoBoxSrc, 100},
+		{"scalar-from-pairform-callee", enumScalarFromCalleeSrc, 100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, stderr, code := runLeakCheckX86_64(t, tc.src)
@@ -1082,18 +1103,6 @@ func TestX86_64LeakCheckEnumStringPayloadBox(t *testing.T) {
 				t.Fatalf("exit=%d, want %d — the loop result is wrong, not just its accounting", code, tc.exit)
 			}
 			allocs, frees, live := parseLeakCheckLine(t, stderr)
-			if tc.name == "scalar-payload-pairform" {
-				// Pinned as UNCHANGED, not as clean: this shape leaks a
-				// 16-byte box today (pre-existing, see the fixture comment).
-				// What matters here is that the boxed-payload gate did not
-				// start emitting box_free for it — that would show up as a
-				// crash or a bogus extra free, both of which move these
-				// numbers.
-				if allocs != 100 || frees != 0 || live != 1600 {
-					t.Errorf("got allocs=%d frees=%d live=%d, want 100/0/1600 (unchanged pre-existing behaviour); a CHANGE here means the boxed gate started firing on a scalar instantiation", allocs, frees, live)
-				}
-				return
-			}
 			if allocs == 0 {
 				t.Fatalf("no allocations recorded — fixture drift")
 			}
@@ -1112,6 +1121,8 @@ func TestArm64LeakCheckEnumStringPayloadBox(t *testing.T) {
 	}{
 		{"string-payload-boxed", enumStringPayloadBoxSrc, 149},
 		{"array-payload-boxed", enumArrayPayloadBoxSrc, 200},
+		{"scalar-payload-boxed", enumScalarPayloadNoBoxSrc, 100},
+		{"scalar-from-pairform-callee", enumScalarFromCalleeSrc, 100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, stderr, code := runLeakCheckArm64(t, tc.src)
