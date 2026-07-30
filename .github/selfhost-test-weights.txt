@@ -11,6 +11,35 @@
 # and the wasmtime-gated entries added from run 29165757576 (the first
 # with wasmtime restored to the shards).
 #
+# STALENESS IS NOT ALWAYS BENIGN (2026-07-30, #5914). The note below is
+# right that a wrong entry cannot drop or double-run a test — but a
+# BADLY wrong one pushes its shard past the job timeout, which fails the
+# shard for real. TestSelfHostInterpDriverX86_64 sat at 7 while actually
+# costing ~166 s (three dedicated local runs: 169.3 / 165.0 / 169.3), a
+# ~24x underestimate. LPT ranked it with the sub-second tests instead of
+# giving it its own bucket, and the shard holding it hit the 18-minute
+# wall on three consecutive unrelated commits — deterministically, since
+# the partition is deterministic by construction.
+#
+# DO NOT TRUST A LOCALLY-COMPUTED SHARD INDEX. The failing job was shard
+# 11 and its log shows this test's subtests, so CI placed it there; but
+# reconstructing the partition locally from `go test -list` puts it in
+# shard 8, because that union does not exactly match the one CI derives
+# from its prebuilt binaries. The shard NUMBER is not reproducible
+# outside CI. The mis-weighting is, and giving the test its own bucket is
+# the remedy whichever bucket that turns out to be.
+#
+# What matters to LPT is RELATIVE order, so uniform drift is harmless and
+# NON-UNIFORM drift is what bites. Re-measured locally on 2026-07-30
+# (4-core, drivers warm), three entries were all under, by very different
+# factors: InterpDriver ~24x, LoadFixpoint ~4.4x (75 -> 330; from the
+# least-contended of six runs, others up to 746 s under load),
+# ModloadPerModuleWholeCompiler ~2.2x (210 -> 460). Those three are
+# updated; everything else still carries its 2026-07-11 figure, so treat
+# the rest as unverified rather than current. Local numbers, not CI ones
+# — CI has the warm-artifact restore — but the gap that mattered was
+# 7 vs 166, which no cache difference explains.
+#
 # NOTE on the TestSelfHostExtern* family: those ~39 tests each build a
 # stdin driver that is byte-identical to the stock wasm_runio_run.fern,
 # which the `wasm*` warm jobs prime — so post-conversion each restores
@@ -19,7 +48,7 @@
 # left at the default 1 unless a shard log shows them dominating again.
 
 # Whole-compiler self-builds / fixpoints — the genuine multi-minute tail.
-TestSelfHostModloadPerModuleWholeCompilerX86_64 210
+TestSelfHostModloadPerModuleWholeCompilerX86_64 460
 # Two whole-compiler emit-all passes at batch=4 (gen0 40 s + gen1 79 s),
 # measured on the x86_64 lane 2026-07-29 with the modload driver warm. Well
 # above the ~1 s norm, so LPT gives it its own bucket rather than stacking it
@@ -34,7 +63,7 @@ TestSelfHostTupleFnZeroArgIRX86_64 12
 TestSelfHostTupleFnZeroArgIRWasm 12
 TestSelfHostAsmX86_64 90
 TestSelfHostModloadPerModuleWholeCompilerArm64 80
-TestSelfHostLoadFixpointX86_64 75
+TestSelfHostLoadFixpointX86_64 330
 TestSelfHostFieldReclaimIRX86_64 55
 TestSelfHostAsmIRPath 28
 TestSelfHostStage2FixedPoint 27
@@ -135,4 +164,4 @@ TestSelfHostTupleWideCallElem 3
 # This test had no entry while it was segfaulting on every integer literal
 # (#5901, fixed by #5908), so its 18-minute shard-11 blowout was the hang, not a
 # scheduling error. 6.58 s is the honest cost; the entry is ordinary balance.
-TestSelfHostInterpDriverX86_64 7
+TestSelfHostInterpDriverX86_64 170
