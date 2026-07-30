@@ -538,17 +538,30 @@ native pre-check is `preCheckDeriveFields` (checker.go), the self-host's
 is `e021_derive_field_diags` (checker.fern, reading the `derives` list
 the parser stamps on each StructDecl).
 
-The two do not yet agree code-for-code on the *broken* path for
-`Display`/`Debug`/`Json`. Native skips synthesis once the pre-check fires,
-so the E021 is the only diagnostic; the self-host synthesises derived
-bodies at **parse** time, so the ill-typed `self.f.<method>()` survives its
-checker and adds an E043 alongside. Closing that means teaching the
-self-host parser to skip synthesis for a derive its checker will reject —
-parser work, not a gate change. `Eq`/`Ord`/`Hash` are unaffected because
-their scalar bodies render inline (`==` / `<`) instead of through a method
-call. The differential suite therefore pins the clean path for these three
-kinds (`derive-display-impl-ok` and siblings in
+The two agree code-for-code on the *broken* path as well. They get there
+differently: native skips synthesis once the pre-check fires, so the
+ill-typed body never exists, while the self-host synthesises derived bodies
+at **parse** time — before any `impl` is known — and so cannot decide at
+synthesis time. Instead `e021_derive_field_diags` returns the
+`Type.method` key of every derive it condemned, and `check_module`'s body
+loop declines to check exactly those synthesised functions
+(`derive_body_suppressed`), which lands on the same end state: one
+positioned E021, no trailing E043. Only synthesised methods sit at 0:0, so
+a user-written method of the same name is still checked, and a genuine bad
+field access elsewhere is untouched.
+
+This spans all six field-wise kinds. `Eq`/`Ord`/`Hash` were long thought
+unaffected because their bodies render inline (`==` / `<`) — but that holds
+only for a *scalar* field; over a nominal one `Ord`'s body calls `.cmp()`
+and diverged identically. The differential suite pins both paths
+(`derive-display-impl-ok`, `derive-ord-field-broken` and siblings in
 `self_host_checker_codes_test.go`).
+
+One divergence remains, and it is a synthesis-*shape* difference rather
+than a gate one: the self-host renders `Debug` type-directed, sending
+scalar fields through `to_string` rather than `to_debug`, so a scalar
+carrying only a `Debug` impl still disagrees. The differential cases use a
+nominal field to stay clear of it.
 
 `Eq`/`Ord`/`Display`/`Debug`/`Hash`/`Default` live in `core/cmp`;
 `Json` in `std/json` (it returns canonical JSON text and reuses the

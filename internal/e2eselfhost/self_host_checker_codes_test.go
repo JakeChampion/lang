@@ -309,17 +309,23 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E021 at the deriving decl instead of the position-less E043 that
 		// names the trait's method as a missing field.
 		//
-		// Only the CLEAN path is asserted differentially. For these three
-		// kinds the broken path cannot agree code-for-code: native skips
-		// synthesis once the pre-check fires, but the self-host synthesises
-		// derived bodies at PARSE time and so still emits `self.f.<method>()`,
-		// adding an E043 the Go oracle does not have. Nor can the shape be
-		// dodged — the field type either lacks the method (native E021,
-		// self-host E021+E043) or has it (both clean, nothing to assert).
-		// Closing it means teaching the self-host parser to skip synthesis
-		// for a derive its checker will reject; that is parser work, not a
-		// gate change. Eq/Ord/Hash escape this because their scalar bodies
-		// render inline (`==` / `<`) rather than through a method call.
+		// The BROKEN path agrees too. It did not always: the self-host
+		// synthesises derived bodies at PARSE time — before any `impl` is
+		// known — so the ill-typed `self.f.<method>()` survived to its
+		// checker and stacked a position-less E043 on top of the E021.
+		// Native never has that body, because it skips synthesis once the
+		// pre-check fires. The self-host now reaches the same end state
+		// from the other side: e021_derive_field_diags hands back the
+		// "Type.method" key of each derive it condemned, and the body loop
+		// declines to check exactly those synthesised functions
+		// (derive_body_suppressed). Only synthesised methods sit at 0:0, so
+		// a user-written method of the same name is still checked.
+		//
+		// This spans all six field-wise kinds, not the three whose gate
+		// #5948 widened. Eq/Ord/Hash were said to escape it because their
+		// bodies render inline (`==` / `<`) — but that holds only for a
+		// SCALAR field. Over a NOMINAL one, `Ord`'s body calls `.cmp()` and
+		// diverged identically; `derive-ord-field-broken` pins it.
 		{"derive-display-impl-ok", "trait Display { function to_string(self: Self): string; }\nimpl Display for i32 { function to_string(self: Self): string { return \"n\"; } }\n@derive(Display)\nstruct Foo { x: i32 }\nfunction main(): i32 { return 0; }\n", nil},
 		// Debug uses a NOMINAL field: the self-host renders Debug
 		// type-directed, sending scalars through `to_string` rather than
@@ -328,6 +334,28 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// both sides.
 		{"derive-debug-impl-ok", "trait Debug { function to_debug(self: Self): string; }\nstruct Bare { n: i32 }\nimpl Debug for Bare { function to_debug(self: Self): string { return \"b\"; } }\n@derive(Debug)\nstruct Foo { b: Bare }\nfunction main(): i32 { return 0; }\n", nil},
 		{"derive-json-impl-ok", "trait Json { function to_json(self: Self): string; }\nimpl Json for i32 { function to_json(self: Self): string { return \"0\"; } }\n@derive(Json)\nstruct Foo { x: i32 }\nfunction main(): i32 { return 0; }\n", nil},
+		// The broken path, one per field-wise kind: a nominal field with no
+		// impl of the derived trait. Each is E021 ALONE — an E043 here means
+		// the synthesised body escaped suppression.
+		{"derive-display-field-broken", "trait Display { function to_string(self: Self): string; }\nstruct Bare { n: i32 }\n@derive(Display)\nstruct HasBare { b: Bare }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"derive-debug-field-broken", "trait Debug { function to_debug(self: Self): string; }\nstruct Bare { n: i32 }\n@derive(Debug)\nstruct HasBare { b: Bare }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"derive-json-field-broken", "trait Json { function to_json(self: Self): string; }\nstruct Bare { n: i32 }\n@derive(Json)\nstruct HasBare { b: Bare }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"derive-ord-field-broken", "trait Ord { function cmp(self: Self, other: Self): i32; }\nstruct Bare { n: i32 }\n@derive(Ord)\nstruct HasBare { b: Bare }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		// The ENUM path: derives are stamped on each variant, and the
+		// condemned key is the ENUM's name, not a variant's.
+		{"derive-debug-enum-broken", "trait Debug { function to_debug(self: Self): string; }\nstruct Bare { n: i32 }\n@derive(Debug)\nenum E { A(Bare), B(i32) }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		// Suppression is keyed to the condemned derive, not to E043 at
+		// large: a genuine bad field access is still reported, and so is a
+		// USER-written method of a derived trait's name (it sits at a real
+		// position, so it never matches a synthesised key).
+		{"real-e043-still-reported", "struct S { n: i32 }\nfunction main(): i32 { var s: S = S { n: 1 }; return s.missing; }\n", []string{"E043"}},
+		{"user-written-method-still-checked", "trait Debug { function to_debug(self: Self): string; }\nstruct Bare { n: i32 }\nstruct Foo { b: Bare }\nimpl Debug for Foo { function to_debug(self: Self): string { return self.nope; } }\nfunction main(): i32 { return 0; }\n", []string{"E043"}},
+		// u8 / char are named by ast.ReceiverTypeName, so the pre-check must
+		// reason about them too; e021_derive_field_known omitted both, which
+		// left native reporting E021 where the self-host reported only the
+		// E043 from the body it then failed to suppress.
+		{"derive-u8-field-broken", "trait Debug { function to_debug(self: Self): string; }\n@derive(Debug)\nstruct Foo { b: u8 }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"derive-char-field-broken", "trait Debug { function to_debug(self: Self): string; }\n@derive(Debug)\nstruct Foo { c: char }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"bound-opaque-generic-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nfunction inner[T: Ord](a: T): T { return a; }\nfunction outer[U](x: U): U { return inner(x); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"bound-multi-missing", "trait A { function fa(self: Self): i32; }\ntrait B { function fb(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function fa(self: Self): i32 { return self.v; } }\nfunction need[T: A + B](x: T): T { return x; }\nfunction main(): i32 { var s: S = S { v: 1 }; var r: S = need(s); return r.v; }\n", []string{"E021"}},
 		// E021 object-safety (#4347 slice 4): a `dyn T` param whose trait T is not

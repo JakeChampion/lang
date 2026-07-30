@@ -7815,9 +7815,16 @@ function e021_diags(mod: parser.Module): Diag[] {
 // a declared struct / enum name. Composite shapes (`i32[]`, tuples,
 // maps, closures) and unknown names stay silent — matching the native
 // pre-check, which skips any type it cannot name.
+//
+// The scalar list must track what ast.ReceiverTypeName names, since that
+// is the set native's pre-check reasons about: a name missing here is a
+// field native checks and this side silently skips, not a conservative
+// omission. `u8` and `char` were both missing. (`str` needs no entry —
+// the parser already records a `str` field's type as "string", which is
+// also what ReceiverTypeName maps it to.)
 function e021_derive_field_known(mod: parser.Module, fty: string): boolean {
-    if (fty == "i32" || fty == "i64" || fty == "u32" || fty == "u64"
-        || fty == "f32" || fty == "f64" || fty == "boolean" || fty == "string") { return true; }
+    if (fty == "i32" || fty == "i64" || fty == "u8" || fty == "u32" || fty == "u64"
+        || fty == "f32" || fty == "f64" || fty == "boolean" || fty == "char" || fty == "string") { return true; }
     var i: i32 = 0;
     while (i < mod.structs.len()) { if (mod.structs[i].name == fty) { return true; } i = i + 1; }
     var j: i32 = 0;
@@ -7877,13 +7884,53 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
     return [];
 }
 
+// derive_method_name maps a derivable trait kind to the method name its
+// synthesised body defines, so a condemned derive can be keyed to the one
+// function whose body must not be checked. Kinds outside the field-wise
+// set return "" — notably Default, whose synthesis composes zero literals
+// and `Type.default()` rather than a call on the field value.
+function derive_method_name(kind: string): string {
+    if (kind == "Display") { return "to_string"; }
+    if (kind == "Debug") { return "to_debug"; }
+    if (kind == "Json") { return "to_json"; }
+    if (kind == "Eq") { return "eq"; }
+    if (kind == "Ord") { return "cmp"; }
+    if (kind == "Hash") { return "hash"; }
+    return "";
+}
+
+// derive_body_suppressed reports whether `fn` is the parse-time-synthesised
+// body of a @derive that e021_derive_field_diags already condemned (`keys`
+// holds its "Type.method" entries).
+//
+// Native skips synthesis outright once preCheckDeriveFields fires, so its
+// ill-typed body never exists to be checked. This side synthesises at PARSE
+// time — before any `impl` is known — and reaches the same end state by
+// declining to check the body it has already reported on. Without it the
+// synthesised `self.f.to_debug()` stacks a position-less E043 (`struct Bare
+// has no field "to_debug"`) in front of the E021 that named the real
+// problem, blaming a missing FIELD named after the trait's method.
+//
+// Only synthesised methods sit at 0:0, so a user-written method of the same
+// name on the same type is never matched.
+function derive_body_suppressed(fn: parser.FuncDecl, keys: string[]): boolean {
+    if (keys.len() == 0) { return false; }
+    if (fn.line != 0 || fn.col != 0) { return false; }
+    if (fn.receiver_type.len() == 0) { return false; }
+    return name_in(fn.receiver_type + "." + fn.name, keys);
+}
+
 // e021_derive_field_diags reports E021 (#5392) for a struct/enum
 // @derive whose field (variant payload) type does not implement the
 // derived trait — the self-host mirror of the native
 // checker's preCheckDeriveFields. One diagnostic per (type, trait),
 // at the deriving declaration.
-function e021_derive_field_diags(mod: parser.Module): Diag[] {
+//
+// Also returns the "Type.method" key of every derive it condemned, for
+// derive_body_suppressed to silence the matching synthesised body.
+function e021_derive_field_diags(mod: parser.Module): (Diag[], string[]) {
     var out: Diag[] = [];
+    var keys: string[] = [];
     var si: i32 = 0;
     while (si < mod.structs.len()) {
         var sd: parser.StructDecl = mod.structs[si];
@@ -7898,7 +7945,12 @@ function e021_derive_field_diags(mod: parser.Module): Diag[] {
             }
             var di: i32 = 0;
             while (di < sd.derives.len()) {
-                out = append_diags(out, e021_derive_one_diag(mod, sd.derives[di], sd.name, labels, ftys, sd.type_params, sd.line, sd.col));
+                var sdd: Diag[] = e021_derive_one_diag(mod, sd.derives[di], sd.name, labels, ftys, sd.type_params, sd.line, sd.col);
+                if (sdd.len() > 0) {
+                    var smn: string = derive_method_name(parser.derive_simple_name(sd.derives[di]));
+                    if (smn.len() > 0) { keys = keys.append(sd.name + "." + smn); }
+                }
+                out = append_diags(out, sdd);
                 di = di + 1;
             }
         }
@@ -7926,12 +7978,17 @@ function e021_derive_field_diags(mod: parser.Module): Diag[] {
         }
         var edi: i32 = 0;
         while (edi < ederives.len()) {
-            out = append_diags(out, e021_derive_one_diag(mod, ederives[edi], ed.name, elabels, eftys, ed.type_params, ed.line, ed.col));
+            var edd: Diag[] = e021_derive_one_diag(mod, ederives[edi], ed.name, elabels, eftys, ed.type_params, ed.line, ed.col);
+            if (edd.len() > 0) {
+                var emn: string = derive_method_name(parser.derive_simple_name(ederives[edi]));
+                if (emn.len() > 0) { keys = keys.append(ed.name + "." + emn); }
+            }
+            out = append_diags(out, edd);
             edi = edi + 1;
         }
         ei = ei + 1;
     }
-    return out;
+    return (out, keys);
 }
 
 // e021_object_unsafe_method returns the name of a required method that makes
@@ -8343,8 +8400,13 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     // fast path that keeps the obligation walk free for unmarked modules
     // (e.g. the self-host compiler's own sources).
     var mc_on: boolean = mc_any_marked(mod.structs, mod.enums);
+    // Hoisted above the body loop: its condemned-derive keys decide which
+    // parse-time-synthesised bodies to skip (derive_body_suppressed). The
+    // diagnostics themselves are folded into `dd` below, unchanged.
+    var (derive_diags, derive_keys) = e021_derive_field_diags(mod);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
+        if (derive_body_suppressed(mod.funcs[i], derive_keys)) { i = i + 1; continue; }
         if (!check_func_body(mod.funcs[i], sigs, structs, unions, methods)) { well_typed = false; }
         var dbody: parser.Stmt[] = mod.funcs[i].body;
         // E002: return-type mismatch, per function (recursing into nested
@@ -8571,7 +8633,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
     // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
     // for move / capture analysis.
-    var dd: Diag[] = append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), e021_derive_field_diags(mod)), e021_object_safety_diags(mod)), e060_e062_diags(mod));
+    var dd: Diag[] = append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(append_diags(collect_decl_diags(mod), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), derive_diags), e021_object_safety_diags(mod)), e060_e062_diags(mod));
     if (dd.len() > 0) { well_typed = false; }
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
 }
