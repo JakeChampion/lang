@@ -1057,7 +1057,8 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // stack-ABI __fn___fern_chr in asm_arm64.emit_runtime).
             if (o.str == "__fern_chr") { s = s.mark_chr(); }
             // The i32 builtin helpers irlower lowers for EVERY backend (#3457):
-            // xs.sum() / .product() / .index_of() / .contains(), n.pow(k), and
+            // xs.sum() / .product() / .index_of() / .contains(), n.pow(k),
+            // n.gcd(m) / n.lcm(m), and
             // xs.min() / .max(). Their bodies are need-gated in
             // asm_arm64.emit_runtime, and the arm64 IR path marked none of them —
             // so `bl __fn___fern_arr_i32_sum` was emitted against nothing and the
@@ -1066,6 +1067,15 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             if (o.str == "__fern_arr_i32_sum") { s = s.mark_arr_i32_sum(); }
             if (o.str == "__fern_arr_i32_product") { s = s.mark_arr_i32_product(); }
             if (o.str == "__fern_i32_pow") { s = s.mark_i32_pow(); }
+            // n.gcd(m) / n.lcm(m). The BODIES were already emitted below (gated
+            // on has_need), fed by all_runtime_need_roots in the per-module entry
+            // — but nothing marked the need from a call site, because irlower had
+            // no lowering for these two until now and so no call site existed.
+            // close_needs carries i32_lcm → i32_gcd, so marking lcm alone would
+            // still emit gcd's body; both are marked for symmetry with the x86
+            // pair in asm_ir.
+            if (o.str == "__fern_i32_gcd") { s = s.mark_i32_gcd(); }
+            if (o.str == "__fern_i32_lcm") { s = s.mark_i32_lcm(); }
             if (o.str == "__fern_arr_i32_index_of") { s = s.mark_arr_i32_index_of(); }
             // min/max return a freshly allocated Option box, so unlike the fold
             // helpers they need the heap runtime as well as their own bodies.

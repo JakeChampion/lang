@@ -9609,6 +9609,29 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!ppow.ok) { return ppow; }
                         return ppow.emit(ir.op_call_direct("__fern_i32_pow", 2));
                     }
+                    // n.gcd(m) / n.lcm(m) — the same helper-backed shape as pow,
+                    // and the same argument order (arg pushed first, receiver
+                    // second). Both are symmetric in their operands, so an order
+                    // slip would not show in a test; the pattern is copied from
+                    // pow rather than re-derived.
+                    //
+                    // Until this existed, `.gcd()` / `.lcm()` bailed the whole
+                    // module to the AST emitter — but worse, the arm64 per-module
+                    // UNIT path emits __fern_i32_lcm unconditionally (i32_lcm is in
+                    // asm_ir.all_runtime_need_roots) and its body calls `.gcd()`,
+                    // so the generic primitive-receiver dispatch below lowered it as
+                    // a USER method to `i32.gcd` → an undefined `__fn_i32__gcd`.
+                    // That dangling reference is what blocked the arm64 over-budget
+                    // per-module rescue (#5940, #3457 slice 5).
+                    if ((fa.field == "gcd" || fa.field == "lcm") && c.args.len() == 1
+                            && expr_recv_prim_type(fa.obj, s) == "i32") {
+                        var pgl: LowerState = lower_expr(c.args[0], s);
+                        if (!pgl.ok) { return pgl; }
+                        pgl = lower_expr(fa.obj, pgl);
+                        if (!pgl.ok) { return pgl; }
+                        if (fa.field == "gcd") { return pgl.emit(ir.op_call_direct("__fern_i32_gcd", 2)); }
+                        return pgl.emit(ir.op_call_direct("__fern_i32_lcm", 2));
+                    }
                     if (c.args.len() == 0 && expr_recv_prim_type(fa.obj, s) == "i32") {
                         if (fa.field == "is_zero" || fa.field == "is_positive" || fa.field == "is_negative") {
                             var pcmp: LowerState = lower_expr(fa.obj, s);

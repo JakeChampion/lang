@@ -43,17 +43,15 @@ import (
 //     returns 0 only if the sum across all 7 modules matches, so a miscompiled
 //     cross-unit call is a nonzero exit rather than a silent pass.
 //
-// arm64 is deliberately NOT covered yet. Giving the arm64 merged leg the same
-// rescue (the #3457 slice-5 prerequisite) is blocked on a defect this fixture
-// found: on the per-module UNIT path the arm64 runtime emits __fern_i32_lcm whose
-// body calls `__fn_i32__gcd`, while the gcd body is emitted as
-// `__fn___fern_i32_gcd` — an unlinkable dangling reference
-// (`undefined reference to __fn_i32__gcd`). i32_gcd/i32_lcm are both in
-// asm_ir.all_runtime_need_roots(), so the concat's entry unit always emits lcm.
-// The single-module arm64 IR path resolves the same helper correctly, so the
-// mismatch is specific to the unit path. Add the arm64 leg here once that is
-// fixed; until then arm64 over-budget bundles keep using the AST emitter, which
-// is why asm_arm64.fern's AST emitter cannot be deleted yet.
+// arm64 is not covered here yet. The defect this fixture found — the arm64
+// per-module UNIT path emitting a __fern_i32_lcm body whose `.gcd()` call
+// dangled as `__fn_i32__gcd` — is FIXED: irlower now lowers `.gcd()` / `.lcm()`
+// to the __fern_i32_gcd / __fern_i32_lcm helpers on every backend, so lcm's
+// inner call resolves to the gcd body emitted beside it. What remains before an
+// arm64 leg can be added here is re-landing the arm64 merged-leg rescue itself
+// (the #5937 revert), which is the #3457 slice-5 prerequisite; until then arm64
+// over-budget bundles keep using the AST emitter, which is why asm_arm64.fern's
+// AST emitter cannot be deleted yet.
 //
 // Native only: the driver resolves sibling imports by host path from argv.
 func TestSelfHostPerModuleConcatX86_64(t *testing.T) {

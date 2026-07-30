@@ -2143,7 +2143,23 @@ tier → leak.
     `arr_i32_{sum,product,min,max,index_of}`, `arr_str_index_of`) and x86 IR-emits
     3 arm64 keeps hand-written (`clock`, `env`, `random_bytes`) — reconcile
     per-helper (most of the 11 are likely `has_need`-gated off on the IR path;
-    verify before porting). Validate: build the driver on x86 (compiles → module
+    verify before porting).
+
+    **`i32_gcd` / `i32_lcm` reconciled (2026-07-30), and the divergence was
+    masking a real defect.** The "has_need-gated off, so harmless" guess held
+    only until something set the need without a call site — which
+    `all_runtime_need_roots` does in every per-module ENTRY unit. arm64 then
+    emitted an `__fern_i32_lcm` body whose `.gcd()` had no irlower lowering, so
+    the generic primitive-receiver dispatch turned it into an undefined
+    `__fn_i32__gcd`; that dangling reference is what forced the #5937 revert
+    (#5940). Fixed by giving `.gcd()` / `.lcm()` the same five-part
+    helper-backed treatment `pow` has (lowering + `is_fern_helper` + need
+    mapping + `emit_ir_runtime_fern_fn` gate + globls export), on x86, arm64 and
+    wasm — so x86 now Fern-emits the pair too and the sets agree. Read this as a
+    caution for the remaining 9: a helper arm64 emits and x86 does not is not
+    inert just because no ordinary program calls it.
+
+    Validate: build the driver on x86 (compiles → module
     boundaries resolve), emit whole-compiler arm64 asm and diff (only the 31
     helper-body regions should change), run small arm64 programs under
     `qemu-aarch64` for correctness, then `TestSelfHostFixpointArm64` (the arm64
