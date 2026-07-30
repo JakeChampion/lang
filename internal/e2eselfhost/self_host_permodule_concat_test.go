@@ -166,15 +166,29 @@ func TestSelfHostPerModuleConcatX86_64(t *testing.T) {
 // checks. Keeping it means a future regression in the arm64 unit path's
 // runtime-helper symbols fails here instead of silently going green.
 //
-// The DRIVER runs on the host (x86-64) and cross-emits with `-target arm64`; only
-// the emitted program needs the aarch64 toolchain, so this skips on a host
-// without it rather than requiring an arm64 runner.
+// This is an x86-HOST test that cross-emits for arm64, and the reason is
+// structural rather than a choice: buildSelfHostBin's emit is
+// e2eharness.emitDriverAsm, which calls x86_64.Emit unconditionally, so a
+// self-host DRIVER binary is always x86-64 asm. There is no arm64 driver to
+// build, which is why the whole TestSelfHost*Arm64 family runs the driver on x86
+// and only the EMITTED program is arm64.
+//
+// So the requirements are: a native x86-64 host to exec the driver, plus the
+// aarch64 cross toolchain to assemble/link/run the emitted program. On a native
+// arm64 runner this cannot work at all — the driver is the wrong architecture
+// (`fork/exec …/mmr: exec format error`), which is exactly what an earlier
+// attempt to run this on the aarch64 lane hit.
+//
+// CI coverage therefore depends on the x86 shards HAVING the cross toolchain;
+// without it this skips, as 11 sibling *Arm64 tests silently did. The selfhost
+// workflow now installs gcc-aarch64-linux-gnu + qemu-user-static on the x86_64
+// shards for exactly that reason.
 func TestSelfHostPerModuleConcatArm64(t *testing.T) {
 	hostGcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
-		t.Skip("file-loading driver test runs only natively (argv paths)")
+		t.Skip("the self-host driver is emitted as x86-64 asm (x86_64.Emit), so it must run on a native x86-64 host")
 	}
-	armGcc, qemu := arm64Tooling(t) // skips when the cross toolchain is absent
+	armGcc, qemu := arm64Tooling(t) // skips when the aarch64 cross toolchain is absent
 	dir, mmr := buildConcatDriver(t, hostGcc)
 	entryPath, _ := writeConcatFixture(t, dir)
 
