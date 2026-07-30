@@ -1,0 +1,51 @@
+// A reproduction of #5931: `n.to_string()` USED TO leak one heap buffer per
+// call — pervasive, since `core/int.int_to_string` / `__int_to_string_u64`
+// back the `std/i32` / `std/i64` / `std/u32` / `std/u64` method wrappers and
+// `int_to_string_radix` backs `to_hex` / `to_binary` / `to_rgb_hex`.
+//
+// All three helpers write their digits backwards into a fixed-size scratch
+// buffer, then pack them into a SECOND buffer of computed length:
+//
+//     var n_bytes: i32 = 16 - end;
+//     var buf: u8[] = __alloc_u8(n_bytes);      // <-- the leaked block
+//     ...
+//     return string_from_bytes_unchecked(buf);
+//
+// `string_from_bytes_unchecked` always COPIES its input — into an
+// inline-tagged register value at <= 7 bytes, into a fresh rc1 heap buffer
+// above — so `buf` is dead at the return and must be reclaimed. It wasn't:
+// rhsTainted's generic any-arg-tainted rule for calls read the tainted SCALAR
+// byte count as evidence the buffer might alias something, so `buf` never made
+// it into freeEligible and no drop was ever emitted for it. The scratch buffer
+// next to it, sized by the literal 16, was untainted and reclaimed fine — the
+// whole difference was the size being computed rather than constant.
+//
+//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/to_string_buf_leak.fern
+//   /tmp/p; # stderr, before the fix: leakcheck: allocs=545 frees=346 live_bytes=7152
+//           # stderr, after:          leakcheck: allocs=545 frees=545 live_bytes=0
+//
+// FIXED by untainting the ALLOCATOR in rhsTainted (`__alloc_u8` returns a
+// fresh block that cannot alias its scalar size argument) rather than the size
+// expression — narrower, and it leaves the `buf as usize` raw-pointer guard
+// (the CastExpr escape taint) doing its job. Regression-guarded by
+// TestX86_64LeakCheckToStringReclaim / TestArm64LeakCheckToStringReclaim,
+// whose radix legs also pin the OVER-release half: a buffer freed while its
+// string still needed it shows up as a wrong exit code, not as a leak.
+import "std/i32";
+import "std/i64";
+import "std/u64";
+
+function main(): i32 {
+    var t: i32 = 0;
+    var k: i32 = 0;
+    while (k < 50) {
+        var s: string = k.to_string();
+        var u: string = ((k as i64) * 1000000007).to_string();
+        var v: string = ((k as u64) * (1234567891 as u64)).to_string();
+        var w: string = (k * 1234567).to_binary();
+        t = t + s.len() + u.len() + v.len() + w.len();
+        k = k + 1;
+    }
+    if (t == 2378) { return 0; }
+    return 1;
+}
