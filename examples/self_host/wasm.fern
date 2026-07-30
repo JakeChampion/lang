@@ -775,14 +775,6 @@ function collect_fn_arr_names(body: parser.Stmt[], acc: string[]): string[] {
     return acc;
 }
 
-// ty_spelling_is_array reports whether a declared type spelling names an
-// array type — i.e. ends in the two-char "[]" suffix (i32[] / string[] /
-// Foo[] / i32[][]). Generic spellings like Map[K,V] / Box[T] end in "]"
-// but not "[]", so they are correctly excluded.
-function ty_spelling_is_array(t: string): boolean {
-    if (t.len() < 2) { return false; }
-    return t[t.len() - 2:t.len()] == "[]";
-}
 
 // init_is_owned_array: the init expression yields a freshly-owned array
 // (rc 1) — an array literal or a slice (which copies into a new block).
@@ -993,7 +985,7 @@ function tuple_release_inner(base: string, kinds: string, svcsv: string, cx: Ctx
     while (e < kinds.len()) {
         var load: string = "(i32.load (i32.add " + base + " (i32.const " + util.i32_to_string(e * 4) + ")))";
         var svt: string = nth_csv_elem(svcsv, e);
-        if (svt.len() > 0 && (is_struct_type(cx.structs, svt) || (is_enum_type_name(cx, svt) && svt != "Option" && svt != "Result"))) {
+        if (svt.len() > 0 && (wasm_ir.is_struct_type(cx.structs, svt) || (wasm_ir.is_enum_type_name(cx.structs, cx.mr_types, svt) && svt != "Option" && svt != "Result"))) {
             inner = inner + " (drop (call $__fern_release_" + svt + " " + load + "))";
         } else if (kinds[e] == 97 || kinds[e] == 115) {
             inner = inner + " (drop (call $__fern_arr_dec " + load + "))";
@@ -1042,13 +1034,13 @@ function init_is_owned_struct(e: parser.Expr, cx: Ctx): boolean {
         parser.ExprStructLit(_) => { return true; },
         parser.ExprCall(_) => { return struct_type_of(e, cx).len() > 0; },
         parser.ExprIdent(id) => {
-            return is_struct_type(cx.structs, id.name) && struct_field_count(cx.structs, id.name) == 0;
+            return wasm_ir.is_struct_type(cx.structs, id.name) && struct_field_count(cx.structs, id.name) == 0;
         },
         parser.ExprFieldAccess(fa) => {
             // An enum constant (`Color.Green`): obj isn't struct-typed but the
             // field names a variant — a fresh box. A real field read
             // (`s.field`, obj struct-typed) is borrowed, not owned.
-            return struct_type_of(fa.obj, cx).len() == 0 && is_struct_type(cx.structs, fa.field);
+            return struct_type_of(fa.obj, cx).len() == 0 && wasm_ir.is_struct_type(cx.structs, fa.field);
         },
         _ => { return false; },
     }
@@ -1061,7 +1053,7 @@ function init_is_owned_struct(e: parser.Expr, cx: Ctx): boolean {
 function init_is_struct_alias(e: parser.Expr, cx: Ctx): boolean {
     match (e) {
         parser.ExprIdent(id) => {
-            if (is_struct_type(cx.structs, id.name)) { return false; }
+            if (wasm_ir.is_struct_type(cx.structs, id.name)) { return false; }
             return lookup_pair(cx.sv_names, cx.sv_types, id.name).len() > 0;
         },
         _ => { return false; },
@@ -1101,292 +1093,12 @@ function collect_struct_swept(body: parser.Stmt[], cx: Ctx, acc: string[]): stri
     return acc;
 }
 
-// struct_field_kind_char classifies a struct field TYPE for recursive
-// release: 'a' array, 's' string, 'S' rc-boxed struct / enum / tuple (freed
-// one level — the nested value's OWN fields leak, a sound known gap), 'i'
-// scalar / unprovable (SKIPPED). Soundness is asymmetric and critical: a
-// false 'a'/'s'/'S' on a scalar field would $__fern_arr_dec a raw integer
-// (corruption for a large even value above heap_base), so the classifier is
-// EXACT for the pointer cases and defaults everything else to 'i' (a missed
-// pointer field just leaks, never corrupts).
-function struct_field_kind_char(ft: string, cx: Ctx): string {
-    if (ty_spelling_is_array(ft)) { return "a"; }
-    if (ft == "string") { return "s"; }
-    if (ft.len() > 0 && ft[0] == 40) { return "S"; }
-    if (is_struct_type(cx.structs, ft)) { return "S"; }
-    if (is_enum_type_name(cx, ft)) { return "S"; }
-    return "i";
-}
 
-// array_field_elem_is_ptr: for an array field type "T[]", is the ELEMENT T an
-// rc-boxed pointer (string / struct / enum / tuple / nested array)? Drives
-// whether a struct's array field is deep-released ($__fern_arr_dec_ptr, which
-// releases the elements) or freed flat ($__fern_arr_dec — for i32/i64/f64
-// scalar elements, which must NOT be dec'd as pointers).
-function array_field_elem_is_ptr(ft: string, cx: Ctx): boolean {
-    if (!ty_spelling_is_array(ft)) { return false; }
-    return struct_field_kind_char(ft[0:ft.len() - 2], cx) != "i";
-}
 
-// emit_wasm_struct_drop_body returns the WAT for $__struct_drop_<t>(box) -> box —
-// the wasm sibling of asm_ir.emit_ir_struct_drop_one (Perceus slice 1c). For each
-// ARRAY field (struct_field_kind_char == "a") it releases the field BUFFER via
-// $__fern_arr_dec_ptr (pointer-element array — releases ITS elements too, the
-// deep walk encapsulated in the helper) or $__fern_arr_dec (scalar-element array
-// — flat free). Both rc-guard (only free at rc==1) and null-/literal-guard
-// internally, so no explicit uniqueness or null check is needed. Non-array rc
-// fields (string / nested struct) are skipped — a later slice, matching the
-// register backends' array-only struct_drop. The field offset is the IR
-// struct layout (`8 + i*8` — an 8-byte header then 8-byte slots, matching
-// wasm_ir's struct_make / struct_get / struct_set), NOT the AST `struct_field_off`
-// (`4 + i*4`): this body runs on the IR path, where the box is laid out by the IR
-// emitter. A pointer field is stored as i32 in the low 4 bytes of its 8-byte slot,
-// so an `i32.load` at the slot offset recovers the buffer pointer. Returns box
-// (the call site drops it).
-// emit_ir_rc_bodies returns the per-type $__field_reclaim_<T> + $__struct_drop_<T>
-// helper-function definitions for the IR path (#3457, Perceus slices 1c/1d):
-// field_reclaim frees a superseded rc-array field buffer on a consume-rebind and
-// frees the old box via $__fern_snapshot_dec; struct_drop deep-drops a struct's
-// rc fields at scope exit (incl. the Perceus slice-3 nested-struct deep-drop).
-// Both share one release ctx. Shared by emit_module's IR orchestration AND the
-// differential wasm_ir_run driver, so the driver emits the SAME definitions for
-// every `call $__struct_drop_<T>` / `call $__field_reclaim_<T>` the lowered IR
-// inserts — without this the driver linked against undefined helpers and any
-// struct program with a deep-drop trapped (`unknown func $__struct_drop_<T>`).
-// emit_ir_rc_bodies_from emits the per-type RC helper bodies from the three TYPE
-// LISTS they are keyed by, rather than from an ir_cache (#5331). Those lists are
-// the only thing the cache was consulted for here, so recording them as unit
-// metadata lets the link step emit these helpers without re-lowering anything —
-// the last cache dependency link had, after the needs set took the other 74.
-//
-// The lists are merged across units at link; the struct world they resolve
-// against is shared, so a type appearing in two units yields one body.
-pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: string[], aet: string[], heap_base: i32): string {
-    var out: string = "";
-    var rc_cx: Ctx = release_module_ctx(mod.structs, collect_method_types(mod), mod.funcs);
-    // #4355: replaced-STRING-field admission — the wasm IR driver is
-    // single-module whole-program, so mod.funcs is the full read scope
-    // (see irlower.strfld_reclaim_ok_types_of).
-    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
-    var frti: i32 = 0;
-    while (frti < frt.len()) {
-        out = out + emit_wasm_field_reclaim_body(frt[frti], rc_cx, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0);
-        frti = frti + 1;
-    }
-    // #5235: plain-fn-pointer-array field markers ("FNPTR:<sty>.<field>") — a
-    // registered field is buffer-only-freed (its elements are raw code addresses).
-    var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, mod.structs);
-    var sdti: i32 = 0;
-    while (sdti < sdt.len()) {
-        out = out + emit_wasm_struct_drop_body(sdt[sdti], rc_cx, util.index_of_str(sfok, sdt[sdti]) >= 0, util.index_of_str(sfok, "clo:" + sdt[sdti]) >= 0, fpk);
-        sdti = sdti + 1;
-    }
-    // Per-element-type array deep-drop helpers (#2649): $__struct_arr_elems_drop_<E>
-    // for each struct-array element type E reachable from a struct_drop type. Emitted
-    // after the struct_drop bodies they call (order is irrelevant for wasm funcs, but
-    // struct_drop_types already added each E so $__struct_drop_<E> exists).
-    var aeti: i32 = 0;
-    while (aeti < aet.len()) {
-        out = out + emit_wasm_struct_arr_elems_drop_body(aet[aeti], rc_cx);
-        aeti = aeti + 1;
-    }
-    return out;
-}
 
-// emit_ir_rc_bodies is the single-unit case: derive the three type lists from
-// the module's own cache.
-pub function emit_ir_rc_bodies(mod: parser.Module, cache: irlower.LowerResult[]): string {
-    return emit_ir_rc_bodies_from(mod,
-        wasm_ir.field_reclaim_types(cache),
-        wasm_ir.struct_drop_types(cache, mod.structs),
-        wasm_ir.struct_arr_elems_drop_types(cache, mod.structs),
-        wasm_ir.heap_base_for(cache));
-}
 
-// emit_wasm_struct_arr_elems_drop_body returns the WAT for
-// $__struct_arr_elems_drop_<E>(buf) -> buf — the wasm sibling of
-// asm_ir.emit_ir_struct_arr_elems_drop_one (#2649 array-element deep-drop). For a
-// uniquely-owned buffer it walks the elements and, per uniquely-owned element box,
-// calls $__struct_drop_<E> to release the element's OWN rc fields — the level the
-// shallow $__fern_arr_dec_ptr walk leaked. It frees neither the element boxes nor the
-// buffer; the caller's arr_dec_ptr (emitted right after) still does that. $__fern_rc_is_unique
-// null-/low-/sentinel-guards internally, so a shared buffer or element is skipped.
-// wasm32 array layout: len at buf[0], element i at buf+8+i*4 (4-byte pointers), rc at buf-8.
-function emit_wasm_struct_arr_elems_drop_body(e: string, cx: Ctx): string {
-    var o: string = "  (func $__struct_arr_elems_drop_" + e + " (param $buf i32) (result i32)\n";
-    o = o + "    (local $i i32) (local $n i32) (local $e i32)\n";
-    o = o + "    (if (call $__fern_rc_is_unique (local.get $buf)) (then\n";
-    o = o + "      (local.set $n (i32.load (local.get $buf)))\n";
-    o = o + "      (local.set $i (i32.const 0))\n";
-    o = o + "      (block $saed_done (loop $saed_lp\n";
-    o = o + "        (br_if $saed_done (i32.ge_u (local.get $i) (local.get $n)))\n";
-    o = o + "        (local.set $e (i32.load (i32.add (i32.add (local.get $buf) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
-    o = o + "        (if (call $__fern_rc_is_unique (local.get $e)) (then\n";
-    o = o + "          (drop (call $__struct_drop_" + e + " (local.get $e)))))\n";
-    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "        (br $saed_lp))))) \n";
-    o = o + "    (local.get $buf))\n";
-    return o;
-}
 
-function emit_wasm_struct_drop_body(t: string, cx: Ctx, str_ok: boolean, clo_ok: boolean, fnptr_fields: string[]): string {
-    var o: string = "  (func $__struct_drop_" + t + " (param $box i32) (result i32)\n";
-    var si: i32 = 0;
-    while (si < cx.structs.len()) {
-        if (cx.structs[si].name == t) {
-            var k: i32 = 0;
-            while (k < cx.structs[si].fields.len()) {
-                var ft: string = cx.structs[si].fields[k].type_name;
-                // #5235: a registered plain-fn-pointer array field — its elements
-                // are RAW code addresses, so it must NOT be walked as a pointer
-                // array ($__fern_arr_dec_ptr releases each element as a box →
-                // SIGSEGV). Free the BUFFER only (flat $__fern_arr_dec, no element
-                // walk); the buffer is a real rc box the struct owns at rc=1, so
-                // this frees it once (the wasm sibling of the register backends'
-                // k_fnptr arm).
-                var fnptr_here: boolean = util.has_str(fnptr_fields, "FNPTR:" + t + "." + cx.structs[si].fields[k].name);
-                if (struct_field_kind_char(ft, cx) == "a" && fnptr_here) {
-                    var fpload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
-                    o = o + "    (drop (call $__fern_arr_dec " + fpload + "))\n";
-                } else if (struct_field_kind_char(ft, cx) == "a") {
-                    var load: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
-                    // MULTI-LEVEL array-element deep-drop (#2649): a struct-ARRAY field
-                    // `X[]` whose element struct X is deep-drop-ok releases each element's
-                    // OWN rc fields via $__struct_arr_elems_drop_X BEFORE arr_dec_ptr frees
-                    // the element boxes + buffer. Enum-array elements have no $__struct_drop,
-                    // so they keep the plain arr_dec_ptr (one level).
-                    if (irlower.is_struct_array_field_type(cx.structs, ft)) {
-                        var elem_ty: str = ft[0 : ft.len() - 2];
-                        if (irlower.nested_field_deep_drop_ok(cx.structs, elem_ty)) {
-                            o = o + "    (drop (call $__struct_arr_elems_drop_" + elem_ty + " " + load + "))\n";
-                        }
-                    }
-                    if (array_field_elem_is_ptr(ft, cx)) {
-                        o = o + "    (drop (call $__fern_arr_dec_ptr " + load + "))\n";
-                    } else {
-                        o = o + "    (drop (call $__fern_arr_dec " + load + "))\n";
-                    }
-                } else if (is_struct_type(cx.structs, ft)) {
-                    var sload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
-                    if (irlower.nested_field_deep_drop_ok(cx.structs, ft)) {
-                        // DEEP nested-struct field drop (Perceus slice 3 deep-drop):
-                        // when the inner box is UNIQUELY owned, first $__struct_drop_<ft>
-                        // releases the inner's OWN rc-array buffers, THEN $__fern_arr_dec
-                        // frees the inner box — mirroring the x86 / arm64 deep-drop arm.
-                        // ft is deep-drop-ok (its nested-struct closure is ACYCLIC per
-                        // nested_field_deep_drop_ok), so $__struct_drop_<ft> may itself
-                        // recurse into ft's own deep-drop-ok fields: the call graph is a
-                        // DAG (multi-level, no cycle). struct_drop_types' transitive
-                        // closure emits every reachable inner body. $__fern_rc_is_unique
-                        // null-/rc-guards internally; a shared inner (rc>1) skips the
-                        // field-release and only the box decs.
-                        o = o + "    (if (call $__fern_rc_is_unique " + sload + ") (then\n";
-                        o = o + "      (drop (call $__struct_drop_" + ft + " " + sload + "))))\n";
-                        o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";
-                    } else {
-                        // A DIRECT nested-struct field (`inner: Inner`) that is NOT a
-                        // deep-drop-ok leaf (a self-referential / tree struct carries a
-                        // nested-struct field, so it stays here): freed SHALLOW via the
-                        // same $__fern_arr_dec as a scalar-array buffer — one level, like
-                        // a struct-array element box (arr_dec frees struct boxes too).
-                        // rc-guarded inside arr_dec; the construction alias-inc (shared
-                        // irlower) balances it. Mirrors the x86 / arm64 shallow k_struct
-                        // case (Perceus slice 3c). Enum/tuple/Option fields (also kind
-                        // "S") stay leak-only — is_struct_type is false for them.
-                        o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";
-                    }
-                } else if (ft == "fn" && clo_ok) {
-                    // An fn-typed (closure) field: the slot holds an rc-headered
-                    // `__mkclo$` env box, shallow-freed via the rc-guarded
-                    // $__fern_arr_dec — one level, captures leak. GATED on the
-                    // clofld admission ("clo:<T>" in strfld_reclaim_ok_types_of:
-                    // fresh-lambda-only values, no base copies, call-only reads),
-                    // the wasm sibling of the register backends' k_clo arm
-                    // (#5104). A non-admitted type keeps the sound leak.
-                    var cldload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
-                    o = o + "    (drop (call $__fern_arr_dec " + cldload + "))\n";
-                } else if (ft == "string" && str_ok) {
-                    // A `string` field is an rc-headered INLINE block on wasm
-                    // ([rc][bsz][len][bytes]); reclaim it with $__fern_arr_dec — frees
-                    // at rc==1 by size class, guards a data-section literal (below
-                    // heap_base), decs a shared box, and the rc-underflow detector
-                    // catches a double free. Balanced by the shared-irlower
-                    // construction alias-inc. Mirrors the x86 / arm64 k_str arm
-                    // (#4297 A2). GATED on the STRFLDOK admission (str_ok, from the
-                    // whole-program read scan — the same verdict the field-reclaim
-                    // string arm and the construction retain use): a non-admitted
-                    // type's string fields are uncounted aliases this dec would
-                    // over-release (#3425, x86 twin note in emit_ir_struct_drop_one).
-                    var strload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
-                    o = o + "    (drop (call $__fern_arr_dec " + strload + "))\n";
-                }
-                k = k + 1;
-            }
-        }
-        si = si + 1;
-    }
-    o = o + "    (local.get $box))\n";
-    return o;
-}
 
-// emit_wasm_field_reclaim_body returns the WAT for
-// $__field_reclaim_<t>(new, old, snap) -> new — the wasm sibling of
-// asm_ir.emit_ir_field_reclaim_one (Perceus slice 1d). The consume-rebind
-// replaced-field reclaim: when a struct PARAM is reassigned (`a = T { … }`),
-// the superseded `old` struct's rc-array field buffers are freed, then `old`'s
-// box itself via $__fern_snapshot_dec. For each ARRAY field (struct_field_kind_char
-// == "a") it frees old.field_k (SHALLOW — $__fern_arr_dec, matching the register
-// backends; a pointer-element field's element boxes are a known one-level gap on
-// every backend) iff old.field_k differs from BOTH new.field_k (cow — the rebind
-// kept the buffer) and, when snap != 0, snap.field_k (the caller's borrowed
-// original). The field offset is the IR struct layout (`8 + i*8`), as in
-// emit_wasm_struct_drop_body. `old` null / below heap_base skips the field loop
-// (snapshot_dec null-guards the box free). Returns `new`. `hb` is the module's
-// heap base (the low-address guard threshold).
-function emit_wasm_field_reclaim_body(t: string, cx: Ctx, hb: i32, str_ok: boolean, clo_ok: boolean): string {
-    var o: string = "  (func $__field_reclaim_" + t + " (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
-    o = o + "    (if (i32.ge_u (local.get $old) (i32.const " + util.i32_to_string(hb) + ")) (then\n";
-    var si: i32 = 0;
-    while (si < cx.structs.len()) {
-        if (cx.structs[si].name == t) {
-            var k: i32 = 0;
-            while (k < cx.structs[si].fields.len()) {
-                var ft: string = cx.structs[si].fields[k].type_name;
-                // A replaced STRING field (#4355) rides the same guarded dec:
-                // a wasm heap string is a single inline rc-headered block, so
-                // $__fern_arr_dec IS the wasm string free (it null-/low-/
-                // sentinel-guards a literal internally). Balanced by the shared
-                // irlower construction retain, and gated on the whole-program
-                // read scan (str_ok) — see the x86 emit_ir_field_reclaim_one
-                // string arm.
-                var frk: string = struct_field_kind_char(ft, cx);
-                // A replaced fn (closure) field rides the same guarded
-                // $__fern_arr_dec: the superseded `__mkclo$` env box is one
-                // rc-headered block, shallow-freed (captures leak). Gated on
-                // the clofld admission (clo_ok) — the wasm fr_clo sibling.
-                if (frk == "a" || (frk == "s" && str_ok) || (ft == "fn" && clo_ok)) {
-                    var off: string = util.i32_to_string(8 + k * 8);
-                    var oldf: string = "(i32.load offset=" + off + " (local.get $old))";
-                    var newf: string = "(i32.load offset=" + off + " (local.get $new))";
-                    var snapf: string = "(i32.load offset=" + off + " (local.get $snap))";
-                    var dec: string = "(drop (call $__fern_arr_dec " + oldf + "))";
-                    // cow: skip if old.field_k == new.field_k. Then snap guard,
-                    // nested (NOT a flat i32.or) so snap.field_k is never loaded
-                    // when snap == 0: dec if snap == 0, else dec iff
-                    // old.field_k != snap.field_k.
-                    o = o + "      (if (i32.ne " + oldf + " " + newf + ") (then\n";
-                    o = o + "        (if (i32.eqz (local.get $snap)) (then " + dec + ")\n";
-                    o = o + "          (else (if (i32.ne " + oldf + " " + snapf + ") (then " + dec + "))))))\n";
-                }
-                k = k + 1;
-            }
-        }
-        si = si + 1;
-    }
-    o = o + "    ))\n";
-    o = o + "    (call $__fern_snapshot_dec (local.get $new) (local.get $old) (local.get $snap)))\n";
-    return o;
-}
 
 // emit_struct_release frees one owned struct/enum local with RECURSIVE
 // field-release: if it is the LAST owner (rc word at [s-8] == 1, i.e. the box
@@ -1408,7 +1120,7 @@ function emit_wasm_field_reclaim_body(t: string, cx: Ctx, hb: i32, str_ok: boole
 // box flat. The release fns are generated once per module by
 // struct_enum_drop_helpers.
 function emit_struct_release(name: string, sty: string, cx: Ctx): string {
-    if (is_struct_type(cx.structs, sty) || is_enum_type_name(cx, sty)) {
+    if (wasm_ir.is_struct_type(cx.structs, sty) || wasm_ir.is_enum_type_name(cx.structs, cx.mr_types, sty)) {
         return "    (drop (call $__fern_release_" + sty + " (local.get $" + name + ")))\n";
     }
     return "    (drop (call $__fern_arr_dec (local.get $" + name + ")))\n";
@@ -1426,19 +1138,19 @@ function struct_release_field_inner(pe: string, sty: string, cx: Ctx): string {
     var fi: i32 = 0;
     while (fi < nf) {
         var ft: string = struct_field_type_at(cx.structs, sty, fi);
-        var fk: string = struct_field_kind_char(ft, cx);
+        var fk: string = wasm_ir.struct_field_kind_char(ft, cx.structs, cx.mr_types);
         var off: string = util.i32_to_string(struct_field_off(fi));
         var load: string = "(i32.load (i32.add " + pe + " (i32.const " + off + ")))";
-        if (fk == "S" && (is_struct_type(cx.structs, ft) || (is_enum_type_name(cx, ft) && ft != "Option" && ft != "Result"))) {
+        if (fk == "S" && (wasm_ir.is_struct_type(cx.structs, ft) || (wasm_ir.is_enum_type_name(cx.structs, cx.mr_types, ft) && ft != "Option" && ft != "Result"))) {
             inner = inner + " (drop (call $__fern_release_" + ft + " " + load + "))";
         } else if (fk == "a") {
             // Array field: a STRUCT-element array deep-releases each element
             // (Stage B, $__fern_arr_release_<Elem>); a string-element (or other
             // pointer) array frees one level (arr_dec_ptr); a scalar array flat.
             var elem: str = ft[0:ft.len() - 2];
-            if (is_struct_type(cx.structs, elem) || (is_enum_type_name(cx, elem) && elem != "Option" && elem != "Result")) {
+            if (wasm_ir.is_struct_type(cx.structs, elem) || (wasm_ir.is_enum_type_name(cx.structs, cx.mr_types, elem) && elem != "Option" && elem != "Result")) {
                 inner = inner + " (drop (call $__fern_arr_release_" + elem + " " + load + "))";
-            } else if (array_field_elem_is_ptr(ft, cx)) {
+            } else if (wasm_ir.array_field_elem_is_ptr(ft, cx.structs, cx.mr_types)) {
                 inner = inner + " (drop (call $__fern_arr_dec_ptr " + load + "))";
             } else {
                 inner = inner + " (drop (call $__fern_arr_dec " + load + "))";
@@ -1495,7 +1207,7 @@ function struct_enum_drop_helpers(mod: parser.Module, cx: Ctx): string {
         var en: string = mod.enums[e].name;
         // Option/Result locals use emit_option_release, not a $__fern_release_
         // fn; an enum sharing a struct name (shouldn't happen) is skipped.
-        if (en != "Option" && en != "Result" && !is_struct_type(mod.structs, en)) {
+        if (en != "Option" && en != "Result" && !wasm_ir.is_struct_type(mod.structs, en)) {
             // Stage C — variant payload dispatch (native genEnumDrops): an enum
             // value is a variant box [struct_id@0][fields@4…]. Dispatch on the
             // tag to the matching variant struct's release fn (which releases
@@ -1541,7 +1253,7 @@ function struct_enum_drop_helpers(mod: parser.Module, cx: Ctx): string {
         var ei: i32 = 0;
         while (ei < mod.enums.len()) {
             var en2: string = mod.enums[ei].name;
-            if (en2 != "Option" && en2 != "Result" && !is_struct_type(mod.structs, en2)) {
+            if (en2 != "Option" && en2 != "Result" && !wasm_ir.is_struct_type(mod.structs, en2)) {
                 o = o + map_release_via_fn(en2);
             }
             ei = ei + 1;
@@ -1734,18 +1446,18 @@ function collect_opt_swept(body: parser.Stmt[], cx: Ctx, acc: string[]): string[
 // with these decs so the payload balances.
 function emit_option_release(name: string, pt: string, cx: Ctx): string {
     var o: string = "";
-    var pk: string = struct_field_kind_char(pt, cx);
+    var pk: string = wasm_ir.struct_field_kind_char(pt, cx.structs, cx.mr_types);
     if (pk == "a" || pk == "s" || pk == "S") {
         var dec: string = "$__fern_arr_dec";
-        if (pk == "a" && array_field_elem_is_ptr(pt, cx)) { dec = "$__fern_arr_dec_ptr"; }
+        if (pk == "a" && wasm_ir.array_field_elem_is_ptr(pt, cx.structs, cx.mr_types)) { dec = "$__fern_arr_dec_ptr"; }
         o = o + "    (if (local.get $" + name + ") (then (if (i32.eq (i32.load (i32.sub (local.get $" + name + ") (i32.const 8))) (i32.const 1)) (then (if (i32.eqz (i32.load (local.get $" + name + "))) (then (drop (call " + dec + " (i32.load (i32.add (local.get $" + name + ") (i32.const 4)))))))))))\n";
     }
     // Result Err payload (tag 1): release when the Err type is rc-tracked.
     var et: string = lookup_pair(cx.ol_names, cx.ol_err_payloads, name);
-    var ek: string = struct_field_kind_char(et, cx);
+    var ek: string = wasm_ir.struct_field_kind_char(et, cx.structs, cx.mr_types);
     if (ek == "a" || ek == "s" || ek == "S") {
         var edec: string = "$__fern_arr_dec";
-        if (ek == "a" && array_field_elem_is_ptr(et, cx)) { edec = "$__fern_arr_dec_ptr"; }
+        if (ek == "a" && wasm_ir.array_field_elem_is_ptr(et, cx.structs, cx.mr_types)) { edec = "$__fern_arr_dec_ptr"; }
         o = o + "    (if (local.get $" + name + ") (then (if (i32.eq (i32.load (i32.sub (local.get $" + name + ") (i32.const 8))) (i32.const 1)) (then (if (i32.eq (i32.load (local.get $" + name + ")) (i32.const 1)) (then (drop (call " + edec + " (i32.load (i32.add (local.get $" + name + ") (i32.const 4)))))))))))\n";
     }
     o = o + "    (drop (call $__fern_arr_dec (local.get $" + name + ")))\n";
@@ -2050,7 +1762,7 @@ function store_value_is_borrowed(v: parser.Expr, cx: Ctx): boolean {
             if (util.is_all_digits(fa.field)) { return false; }
             var ot: string = struct_type_of(fa.obj, cx);
             if (ot.len() == 0) { return false; }
-            return struct_field_kind_char(struct_field_type(cx.structs, ot, fa.field), cx) != "i";
+            return wasm_ir.struct_field_kind_char(struct_field_type(cx.structs, ot, fa.field), cx.structs, cx.mr_types) != "i";
         },
         parser.ExprIndex(ix) => {
             match (ix.array) {
@@ -2082,7 +1794,7 @@ function arr_exit_sweep_excl(cx: Ctx, excl: string): string {
             // array-of-array / array-of-tuple, still one-level-flat) frees flat.
             var sat: string = lookup_pair(cx.sa_names, cx.sa_types, name);
             var tak: string = lookup_pair(cx.ta_names, cx.ta_kinds, name);
-            if (sat.len() > 0 && (is_struct_type(cx.structs, sat) || (is_enum_type_name(cx, sat) && sat != "Option" && sat != "Result"))) {
+            if (sat.len() > 0 && (wasm_ir.is_struct_type(cx.structs, sat) || (wasm_ir.is_enum_type_name(cx.structs, cx.mr_types, sat) && sat != "Option" && sat != "Result"))) {
                 o = o + "    (drop (call $__fern_arr_release_" + sat + " (local.get $" + name + ")))\n";
             } else if (tak.len() > 0) {
                 // Array-of-tuple deep release (native __drop_arr_tuple_): when
@@ -2187,7 +1899,7 @@ function collect_arr_src(body: parser.Stmt[], arr_ret_fns: string[], acc: string
         match (body[i]) {
             parser.StmtVar(v) => {
                 if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
-                    if (ty_spelling_is_array(v.type_name) || init_is_owned_array(v.init) || init_is_user_arr_call(v.init, arr_ret_fns) || init_is_fresh_array_builtin(v.init)) {
+                    if (wasm_ir.ty_spelling_is_array(v.type_name) || init_is_owned_array(v.init) || init_is_user_arr_call(v.init, arr_ret_fns) || init_is_fresh_array_builtin(v.init)) {
                         acc = acc.append(v.name);
                     }
                 }
@@ -2216,7 +1928,7 @@ function collect_arr_swept(body: parser.Stmt[], src: string[], arr_ret_fns: stri
             parser.StmtVar(v) => {
                 if (comma_index(v.name) < 0 && !contains_str(acc, v.name)) {
                     if (init_is_owned_array(v.init) || init_is_arr_alias(v.init, src) || init_is_user_arr_call(v.init, arr_ret_fns) || init_is_fresh_array_builtin(v.init)
-                        || (ty_spelling_is_array(v.type_name) && init_is_user_arr_method(v.init, arr_ret_methods))) {
+                        || (wasm_ir.ty_spelling_is_array(v.type_name) && init_is_user_arr_method(v.init, arr_ret_methods))) {
                         acc = acc.append(v.name);
                     }
                 }
@@ -2245,7 +1957,7 @@ function collect_arr_ret_fns(mod_funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod_funcs.len()) {
-        if (mod_funcs[i].receiver_type.len() == 0 && ty_spelling_is_array(mod_funcs[i].ret_type)) {
+        if (mod_funcs[i].receiver_type.len() == 0 && wasm_ir.ty_spelling_is_array(mod_funcs[i].ret_type)) {
             out = out.append(mod_funcs[i].name);
         }
         i = i + 1;
@@ -2297,13 +2009,13 @@ function collect_arr_ret_methods(mod_funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod_funcs.len()) {
-        if (mod_funcs[i].receiver_type.len() > 0 && ty_spelling_is_array(mod_funcs[i].ret_type) && !contains_str(out, mod_funcs[i].name)) {
+        if (mod_funcs[i].receiver_type.len() > 0 && wasm_ir.ty_spelling_is_array(mod_funcs[i].ret_type) && !contains_str(out, mod_funcs[i].name)) {
             out = out.append(mod_funcs[i].name);
         }
         // Auto-discovered array methods reached via method syntax
         // (`a.reversed()` → __method_Array_reversed) return-retain just like a
         // user method, so an array-returning helper's FIELD name must sweep too.
-        if (mod_funcs[i].receiver_type.len() == 0 && ty_spelling_is_array(mod_funcs[i].ret_type)) {
+        if (mod_funcs[i].receiver_type.len() == 0 && wasm_ir.ty_spelling_is_array(mod_funcs[i].ret_type)) {
             var fld: string = array_method_field(mod_funcs[i].name);
             if (fld.len() > 0 && !contains_str(out, fld)) { out = out.append(fld); }
         }
@@ -2601,7 +2313,7 @@ function lambda_captures(lm: parser.ExprLambda, cx: Ctx): string[] {
 // A capture not matched here is conservatively skipped (leak one level, sound).
 function capture_kind(name: string, cx: Ctx): string {
     var svt: string = lookup_pair(cx.sv_names, cx.sv_types, name);
-    if (svt.len() > 0 && (is_struct_type(cx.structs, svt) || (is_enum_type_name(cx, svt) && svt != "Option" && svt != "Result"))) {
+    if (svt.len() > 0 && (wasm_ir.is_struct_type(cx.structs, svt) || (wasm_ir.is_enum_type_name(cx.structs, cx.mr_types, svt) && svt != "Option" && svt != "Result"))) {
         return "S:" + svt;
     }
     if (contains_str(cx.arr_src, name)) {
@@ -2611,7 +2323,7 @@ function capture_kind(name: string, cx: Ctx): string {
         // (or other pointer-element) array frees one level (arr_dec_ptr); a
         // scalar array frees flat (arr_dec).
         var sae: string = lookup_pair(cx.sa_names, cx.sa_types, name);
-        if (sae.len() > 0 && (is_struct_type(cx.structs, sae) || (is_enum_type_name(cx, sae) && sae != "Option" && sae != "Result"))) {
+        if (sae.len() > 0 && (wasm_ir.is_struct_type(cx.structs, sae) || (wasm_ir.is_enum_type_name(cx.structs, cx.mr_types, sae) && sae != "Option" && sae != "Result"))) {
             return "A:" + sae;
         }
         if (contains_str(cx.str_arrays, name) || contains_str(cx.sa_names, name)) { return "p"; }
@@ -3313,7 +3025,7 @@ function extern_plain_enum_param(mod: parser.Module, t: string): boolean {
             var j: i32 = 0;
             while (j < n) {
                 var vn: string = mod.enums[i].variant_names[j];
-                if (!is_struct_type(mod.structs, vn) || struct_field_count(mod.structs, vn) != 0) { return false; }
+                if (!wasm_ir.is_struct_type(mod.structs, vn) || struct_field_count(mod.structs, vn) != 0) { return false; }
                 j = j + 1;
             }
             return true;
@@ -3342,7 +3054,7 @@ function extern_variant_param_supported(mod: parser.Module, t: string): boolean 
             var j: i32 = 0;
             while (j < n) {
                 var vn: string = mod.enums[i].variant_names[j];
-                if (!is_struct_type(mod.structs, vn)) { return false; }
+                if (!wasm_ir.is_struct_type(mod.structs, vn)) { return false; }
                 var fc: i32 = struct_field_count(mod.structs, vn);
                 if (fc > maxf) { maxf = fc; }
                 if (fc >= 1) { anyp = true; }
@@ -4838,7 +4550,7 @@ function emit_dyn_dispatch(obj: parser.Expr, field: string, args: parser.Expr[],
     var impls: string[] = [];
     var i: i32 = 0;
     while (i < cx.mr_names.len()) {
-        if (cx.mr_names[i] == field && is_struct_type(cx.structs, cx.mr_types[i])
+        if (cx.mr_names[i] == field && wasm_ir.is_struct_type(cx.structs, cx.mr_types[i])
                 && !contains_str(impls, cx.mr_types[i])) {
             impls = impls.append(cx.mr_types[i]);
         }
@@ -4864,34 +4576,7 @@ function emit_dyn_dispatch(obj: parser.Expr, field: string, args: parser.Expr[],
     return "(block (result " + wt + ") (local.set " + sc + " " + emit_expr(obj, cx, depth + 1) + ") " + chain + ")";
 }
 
-// is_enum_type_name reports whether `name` is a method-bearing ENUM type —
-// not a declared struct, but the receiver type of at least one method.
-// Enum names aren't in the struct table (only their variants are), so a
-// var typed `Shape` must record `Shape` (not the variant from its
-// initializer) for its methods to dispatch.
-function is_enum_type_name(cx: Ctx, name: string): boolean {
-    if (name.len() == 0) { return false; }
-    // A primitive scalar OR `string` receiver type (`impl Eq for i32`,
-    // `impl Show for string`, `function (n: i32) twice()`) lands in mr_types too,
-    // but is NEVER an enum — guard it, else a struct's i32/i64/f64/boolean field
-    // gets misclassified "S" (drop helper emits an undefined `$__fern_release_i32`)
-    // or a `string[]` field's element is taken for a struct (undefined
-    // `$__fern_arr_release_string`) — both are wasm validation errors.
-    if (is_primitive_type_name(name) || name == "string") { return false; }
-    if (is_struct_type(cx.structs, name)) { return false; }
-    var i: i32 = 0;
-    while (i < cx.mr_types.len()) {
-        if (cx.mr_types[i] == name) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
 
-// is_primitive_type_name reports whether `name` spells a built-in scalar type
-// (never rc-tracked, never a struct/enum). Scalars are released as no-ops.
-function is_primitive_type_name(name: string): boolean {
-    return name == "i32" || name == "i64" || name == "f64" || name == "boolean";
-}
 
 // func_body_matches_variant reports whether `stmts` contains a top-level
 // `match (<recv>) { … }` with an arm whose variant pattern names `variant`
@@ -4937,7 +4622,7 @@ function enum_of_variant(cx: Ctx, name: string): string {
     var i: i32 = 0;
     while (i < cx.mod_funcs.len()) {
         var fd: parser.FuncDecl = cx.mod_funcs[i];
-        if (fd.receiver_name.len() > 0 && is_enum_type_name(cx, fd.receiver_type)) {
+        if (fd.receiver_name.len() > 0 && wasm_ir.is_enum_type_name(cx.structs, cx.mr_types, fd.receiver_type)) {
             if (func_body_matches_variant(fd.body, fd.receiver_name, name)) {
                 return fd.receiver_type;
             }
@@ -5117,15 +4802,6 @@ function lookup_pair(keys: string[], vals: string[], key: string): string {
 // ident, so this returns "" for it — harmless, arrays aren't structs.)
 // base_type_name -> util.base_type_name (SH-020).
 
-// is_struct_type is true when `t` names a declared struct.
-function is_struct_type(structs: parser.StructDecl[], t: string): boolean {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == t) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
 
 // struct_id returns a stable runtime type id for a struct (its index in
 // the module's struct table), stored at offset 0 of every struct value so
@@ -5154,7 +4830,7 @@ function struct_type_of(e: parser.Expr, cx: Ctx): string {
             var sv: string = lookup_pair(cx.sv_names, cx.sv_types, id.name);
             if (sv.len() > 0) { return sv; }
             // A bare unit-variant receiver (`Nil.eq(…)`): map it to its enum.
-            if (is_struct_type(cx.structs, id.name)) { return enum_of_variant(cx, id.name); }
+            if (wasm_ir.is_struct_type(cx.structs, id.name)) { return enum_of_variant(cx, id.name); }
             return "";
         },
         parser.ExprStructLit(sl) => { return sl.type_name; },
@@ -5165,7 +4841,7 @@ function struct_type_of(e: parser.Expr, cx: Ctx): string {
                     if (sf.len() > 0) { return sf; }
                     // A positional variant constructor receiver (`Has(5).eq(…)`):
                     // map the variant to its enum so the method dispatches.
-                    if (is_struct_type(cx.structs, id.name)) { return enum_of_variant(cx, id.name); }
+                    if (wasm_ir.is_struct_type(cx.structs, id.name)) { return enum_of_variant(cx, id.name); }
                     return "";
                 },
                 parser.ExprFieldAccess(fa) => {
@@ -5178,7 +4854,7 @@ function struct_type_of(e: parser.Expr, cx: Ctx): string {
                     }
                     // A receiver method returning a struct.
                     var rt: string = method_ret(cx, struct_type_of(fa.obj, cx), fa.field);
-                    if (is_struct_type(cx.structs, rt)) { return rt; }
+                    if (wasm_ir.is_struct_type(cx.structs, rt)) { return rt; }
                     return "";
                 },
                 _ => { return ""; },
@@ -5188,7 +4864,7 @@ function struct_type_of(e: parser.Expr, cx: Ctx): string {
             var ot: string = struct_type_of(fa.obj, cx);
             if (ot.len() == 0) { return ""; }
             var ft: string = struct_field_type(cx.structs, ot, fa.field);
-            if (is_struct_type(cx.structs, ft)) { return ft; }
+            if (wasm_ir.is_struct_type(cx.structs, ft)) { return ft; }
             return "";
         },
         parser.ExprIndex(ix) => {
@@ -5283,7 +4959,7 @@ function tuple_elem_struct_type(obj: parser.Expr, idx: i32, cx: Ctx): string {
         },
         parser.ExprIdent(id) => {
             var el: string = nth_csv_elem(lookup_pair(cx.tup_names, cx.tup_svtypes, id.name), idx);
-            if (is_struct_type(cx.structs, el)) { return el; }
+            if (wasm_ir.is_struct_type(cx.structs, el)) { return el; }
             return "";
         },
         parser.ExprCall(c) => {
@@ -5294,7 +4970,7 @@ function tuple_elem_struct_type(obj: parser.Expr, idx: i32, cx: Ctx): string {
                 _ => {},
             }
             var el2: string = nth_tuple_type_elem(spelling, idx);
-            if (is_struct_type(cx.structs, el2)) { return el2; }
+            if (wasm_ir.is_struct_type(cx.structs, el2)) { return el2; }
             return "";
         },
         _ => { return ""; },
@@ -5323,7 +4999,7 @@ function struct_array_elem_type(e: parser.Expr, cx: Ctx): string {
             var ft: string = struct_field_type(cx.structs, ot, fa.field);
             if (ft.len() > 2 && ft[ft.len() - 2:ft.len()] == "[]") {
                 var elem: str = ft[0:ft.len() - 2];
-                if (is_struct_type(cx.structs, elem)) { return elem + ""; }
+                if (wasm_ir.is_struct_type(cx.structs, elem)) { return elem + ""; }
             }
             return "";
         },
@@ -5413,7 +5089,7 @@ function sa_elem_decl_type(v: parser.StmtVar, cx: Ctx): string {
     // method calls on the runtime-dispatch (emit_dyn_dispatch) path.
     if (v.type_name.len() >= 4 && v.type_name[0:4] == "dyn ") { return ""; }
     var et: string = struct_array_elem_type(v.init, cx);
-    if (et.len() == 0 && v.type_name.len() > 2 && v.type_name[v.type_name.len() - 2] == 91 && is_struct_type(cx.structs, util.base_type_name(v.type_name))) {
+    if (et.len() == 0 && v.type_name.len() > 2 && v.type_name[v.type_name.len() - 2] == 91 && wasm_ir.is_struct_type(cx.structs, util.base_type_name(v.type_name))) {
         et = util.base_type_name(v.type_name);
     }
     return et;
@@ -5678,7 +5354,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // A bare reference to a 0-field declared struct is a unit enum
             // variant (`Nil`, `Empty`): construct its [struct_id@0] tag box,
             // so `match` reads the right tag at offset 0.
-            if (is_struct_type(cx.structs, id.name) && struct_field_count(cx.structs, id.name) == 0) {
+            if (wasm_ir.is_struct_type(cx.structs, id.name) && struct_field_count(cx.structs, id.name) == 0) {
                 var uap: string = "$__lit" + util.i32_to_string(depth);
                 return "(block (result i32) (local.set " + uap + " (call $__fern_str_box (i32.const 4))) (i32.store (local.get " + uap + ") (i32.const " + util.i32_to_string(struct_id(cx.structs, id.name)) + ")) (local.get " + uap + "))";
             }
@@ -5858,7 +5534,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                     // struct literal produces, so `match` reads the tag at
                     // offset 0 and the payload at offset 4. (Plain user enums:
                     // only Option/Result were special-cased before.)
-                    if (is_struct_type(cx.structs, id.name)) {
+                    if (wasm_ir.is_struct_type(cx.structs, id.name)) {
                         var vap: string = "$__lit" + util.i32_to_string(depth);
                         var vnf: i32 = struct_field_count(cx.structs, id.name);
                         // Box size: the tag word + each field by its slot width
@@ -6254,7 +5930,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
                         if (struct_field_index(cx.structs, sl.type_name, sl.field_names[ok]) == fi) { overridden = true; }
                         ok = ok + 1;
                     }
-                    if (!overridden && struct_field_kind_char(struct_field_type_at(cx.structs, sl.type_name, fi), cx) != "i") {
+                    if (!overridden && wasm_ir.struct_field_kind_char(struct_field_type_at(cx.structs, sl.type_name, fi), cx.structs, cx.mr_types) != "i") {
                         s = s + " (drop (call $__fern_rc_inc (i32.load (i32.add " + bp + " (i32.const " + util.i32_to_string(struct_field_off(fi)) + ")))))";
                     }
                     fi = fi + 1;
@@ -6287,7 +5963,7 @@ function emit_expr(e: parser.Expr, cx: Ctx, depth: i32): string {
             // value, but the field names a (zero-field variant) struct —
             // emit a variant box `[type_id]`, like `Green {}`, so the
             // existing struct-union `match` dispatch works.
-            if (ot.len() == 0 && is_struct_type(cx.structs, fa.field)) {
+            if (ot.len() == 0 && wasm_ir.is_struct_type(cx.structs, fa.field)) {
                 var vp: string = "$__lit" + util.i32_to_string(depth);
                 return "(block (result i32) (local.set " + vp + " (call $__fern_str_box (i32.const " + util.i32_to_string(4 + struct_field_count(cx.structs, fa.field) * 4) + "))) (i32.store (local.get " + vp + ") (i32.const " + util.i32_to_string(struct_id(cx.structs, fa.field)) + ")) (local.get " + vp + "))";
             }
@@ -7908,7 +7584,7 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                     var di: i32 = 0;
                     while (di < dnames.len()) {
                         var dt: string = tuple_elem_struct_type(v.init, di, cx);
-                        if (is_struct_type(cx.structs, dt)) {
+                        if (wasm_ir.is_struct_type(cx.structs, dt)) {
                             cx = Ctx { ...cx, sv_names: cx.sv_names.append(dnames[di]), sv_types: cx.sv_types.append(dt) };
                         }
                         di = di + 1;
@@ -7945,10 +7621,10 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                     // Keep an enum-typed declaration as the enum name (so its
                     // methods dispatch); only fall back to the initializer's
                     // type when the declared type is neither struct nor enum.
-                    if (!is_struct_type(cx.structs, styp) && !is_enum_type_name(cx, styp)) { styp = struct_type_of(v.init, cx); }
+                    if (!wasm_ir.is_struct_type(cx.structs, styp) && !wasm_ir.is_enum_type_name(cx.structs, cx.mr_types, styp)) { styp = struct_type_of(v.init, cx); }
                     if (optpay.len() > 0) {
                         cx = Ctx { ...cx, ol_names: cx.ol_names.append(v.name), ol_payloads: cx.ol_payloads.append(optpay), ol_err_payloads: cx.ol_err_payloads.append(parse_result_err_payload(v.type_name)) };
-                    } else if (is_struct_type(cx.structs, styp) || is_enum_type_name(cx, styp)) {
+                    } else if (wasm_ir.is_struct_type(cx.structs, styp) || wasm_ir.is_enum_type_name(cx.structs, cx.mr_types, styp)) {
                         cx = Ctx { ...cx, sv_names: cx.sv_names.append(v.name), sv_types: cx.sv_types.append(styp) };
                     } else if (is_str_array_type(v.type_name) || is_string_array_expr(v.init, cx)) {
                         cx = Ctx { ...cx, str_arrays: cx.str_arrays.append(v.name) };
@@ -8000,10 +7676,10 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                                     cx = Ctx { ...cx, locals: cx.locals.append(pv.binding) };
                                 } else if (is_str_array_type(pt)) {
                                     cx = Ctx { ...cx, str_arrays: cx.str_arrays.append(pv.binding) };
-                                } else if (is_struct_type(cx.structs, pt)) {
+                                } else if (wasm_ir.is_struct_type(cx.structs, pt)) {
                                     cx = Ctx { ...cx, sv_names: cx.sv_names.append(pv.binding), sv_types: cx.sv_types.append(pt) };
                                 }
-                            } else if (is_struct_type(cx.structs, pv.type_name) && pv.binding.len() > 0 && pv.binding != "_") {
+                            } else if (wasm_ir.is_struct_type(cx.structs, pv.type_name) && pv.binding.len() > 0 && pv.binding != "_") {
                                 if (struct_field_index(cx.structs, pv.type_name, "__ev") >= 0) {
                                     // Enum-variant arm `Has(b)`: b is the
                                     // PAYLOAD (the `__ev` field), so type it as
@@ -8016,7 +7692,7 @@ function collect_str_locals_stmts(body: parser.Stmt[], cx: Ctx): Ctx {
                                     var paytype: string = struct_field_type(cx.structs, pv.type_name, "__ev");
                                     if (paytype == "string") {
                                         cx = Ctx { ...cx, locals: cx.locals.append(pv.binding) };
-                                    } else if (is_struct_type(cx.structs, paytype) || is_enum_type_name(cx, paytype)) {
+                                    } else if (wasm_ir.is_struct_type(cx.structs, paytype) || wasm_ir.is_enum_type_name(cx.structs, cx.mr_types, paytype)) {
                                         cx = Ctx { ...cx, sv_names: cx.sv_names.append(pv.binding), sv_types: cx.sv_types.append(paytype) };
                                     }
                                 } else {
@@ -8118,7 +7794,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
             ol_err_payloads = ol_err_payloads.append(parse_result_err_payload(f.params[i].type_name));
         } else if (is_str_array_type(f.params[i].type_name)) {
             str_arrays = str_arrays.append(f.params[i].name);
-        } else if (is_struct_type(structs, util.base_type_name(f.params[i].type_name))) {
+        } else if (wasm_ir.is_struct_type(structs, util.base_type_name(f.params[i].type_name))) {
             // Generic instantiation `Box[i32]` / param `Box[T]` strips to
             // the base struct name `Box`.
             sv_names = sv_names.append(f.params[i].name);
@@ -8176,7 +7852,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         ret_arr_kind: arr_kind_of_spelling(f.ret_type),
         arr_swept: [], arr_src: [],
         ret_void: !returns_value(f.ret_type),
-        ret_is_array: ty_spelling_is_array(f.ret_type),
+        ret_is_array: wasm_ir.ty_spelling_is_array(f.ret_type),
         str_swept: [],
         ret_is_string: f.ret_type == "string",
         tup_swept: [],
@@ -8200,7 +7876,7 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
         var pt: string = f.params[sap].type_name;
         if (pt.len() > 2 && pt[pt.len() - 2:pt.len()] == "[]") {
             var pe: str = pt[0:pt.len() - 2];
-            if (is_struct_type(structs, pe) && !contains_str(san, f.params[sap].name)) {
+            if (wasm_ir.is_struct_type(structs, pe) && !contains_str(san, f.params[sap].name)) {
                 san = san.append(f.params[sap].name);
                 sat = sat.append(pe);
             }
@@ -8224,10 +7900,10 @@ function build_ctx(f: parser.FuncDecl, tab: StrTable, funcs: string[], str_arr_f
     // swept — params are borrowed) then adds the body's array vars;
     // arr_swept is the owned/alias body subset released at exit.
     var asrc: string[] = [];
-    if (f.receiver_type.len() > 0 && ty_spelling_is_array(f.receiver_type)) { asrc = asrc.append(f.receiver_name); }
+    if (f.receiver_type.len() > 0 && wasm_ir.ty_spelling_is_array(f.receiver_type)) { asrc = asrc.append(f.receiver_name); }
     var api: i32 = 0;
     while (api < f.params.len()) {
-        if (ty_spelling_is_array(f.params[api].type_name) && !contains_str(asrc, f.params[api].name)) {
+        if (wasm_ir.ty_spelling_is_array(f.params[api].type_name) && !contains_str(asrc, f.params[api].name)) {
             asrc = asrc.append(f.params[api].name);
         }
         api = api + 1;
@@ -8290,17 +7966,6 @@ function collect_opt_func_names(mod: parser.Module): string[] {
     return out;
 }
 
-// collect_method_* build the receiver-method registry (parallel arrays:
-// receiver type, method name, return type).
-function collect_method_types(mod: parser.Module): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type.len() > 0) { out = out.append(util.base_type_name(mod.funcs[i].receiver_type)); }
-        i = i + 1;
-    }
-    return out;
-}
 
 function collect_method_names(mod: parser.Module): string[] {
     var out: string[] = [];
@@ -8341,7 +8006,7 @@ function collect_struct_func_names(mod: parser.Module): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type.len() == 0 && is_struct_type(mod.structs, mod.funcs[i].ret_type)) {
+        if (mod.funcs[i].receiver_type.len() == 0 && wasm_ir.is_struct_type(mod.structs, mod.funcs[i].ret_type)) {
             out = out.append(mod.funcs[i].name);
         }
         i = i + 1;
@@ -8353,7 +8018,7 @@ function collect_struct_func_types(mod: parser.Module): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].receiver_type.len() == 0 && is_struct_type(mod.structs, mod.funcs[i].ret_type)) {
+        if (mod.funcs[i].receiver_type.len() == 0 && wasm_ir.is_struct_type(mod.structs, mod.funcs[i].ret_type)) {
             out = out.append(mod.funcs[i].ret_type);
         }
         i = i + 1;
@@ -9633,7 +9298,7 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResu
     var ft: string[] = wasm_ir.fn_value_table(ir_cache);
     var unit: string = wasm_ir.emit_functions_ns("", mod, ir_cache);
     return wasm_ir.emit_ir_module_units_mode([""], [unit], sv, [sv.len()], ft, [ft.len()], mod,
-        wasm_ir.needs_of(ir_cache), wasm_ir.indirect_arities(ir_cache), emit_ir_rc_bodies(mod, ir_cache), mode);
+        wasm_ir.needs_of(ir_cache), wasm_ir.indirect_arities(ir_cache), wasm_ir.emit_ir_rc_bodies(mod, ir_cache), mode);
 }
 
 function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, fs: boolean): string {
@@ -9698,7 +9363,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     var sf_types: string[] = collect_struct_func_types(mod);
     var of_names: string[] = collect_opt_func_names(mod);
     var of_payloads: string[] = collect_opt_func_payloads(mod);
-    var mr_types: string[] = collect_method_types(mod);
+    var mr_types: string[] = wasm_ir.collect_method_types(mod);
     var mr_names: string[] = collect_method_names(mod);
     var mr_rets: string[] = collect_method_rets(mod);
 

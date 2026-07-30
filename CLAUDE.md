@@ -279,10 +279,16 @@ partial-promotion hazard: a multi-typevar generic where only ONE var matches
 clause (c) — `scan[T, A](xs: T[], init: A, f: (A, T) => A): A[]` (A matches, T
 doesn't) — would otherwise clone with an erased sibling `T`, a malformed clone
 that crashes (caught by `array_hof`). The genuinely two-typevar `Result[T, E]`
-(`okg[T, E](x: T): Result[T, E]`, `all_tp_count == 2`) STAYS deferred: promoting
-only `T` leaves `E` erased in the clone (`Result[i64, E]`), reintroducing the
-width ambiguity on the Err arm — closing it needs binding `E` from the call-site
-return annotation too (a follow-up). (`c_call` is no longer deferred — FFI
+(`okg[T, E](x: T): Result[T, E]`, `all_tp_count == 2`) is **no longer deferred** —
+this note used to say it "STAYS deferred" pending a follow-up that binds `E` from
+the call-site return annotation; that follow-up LANDED. `parse_func`'s separate
+clause (c′) (`all_tp_count == 2 && result_two_bare_vars(ret_type, unbounded_tps)
+&& has_any_bare_scalar_param(...)`) promotes BOTH vars, so neither is stranded
+erased on the Err arm: `T` binds from the scalar arg, `E` from the call-site
+return annotation (`infer_inst_ret`). `result_two_bare_vars` requires BARE var
+args (a nested `Result[Option[T], E]` does not match), which is what guarantees
+the clone is fully concrete. The two paths stay disjoint — clause (c)'s
+`all_tp_count == 1` guard excludes this shape. (`c_call` is no longer deferred — FFI
 `__c_call<n>` has no wasm C ABI, so it is now a clean error endpoint,
 rejected before emit by `wasm_unsupported_builtin` like `subprocess` /
 `timer_fd`, #4375.) (`open_file` / `writer_write` — the
