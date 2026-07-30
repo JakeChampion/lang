@@ -7,6 +7,7 @@
 //     (segfault / garbage dispatch on both natives);
 //   - the exit sweep dropped the borrowed view itself unconditionally,
 //     double-freeing against the owning array's own drop walk.
+//
 // A bare pre-coerced dyn LOCAL as a literal element (`[d]`) is the same
 // hazard from the other side: the cell MOVES into the array uncounted, so
 // the source local must not also be swept.

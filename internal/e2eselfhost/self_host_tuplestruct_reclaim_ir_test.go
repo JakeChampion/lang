@@ -115,7 +115,7 @@ function main(): i32 {
     return 0;
 }`, 0},
 	// REGRESSION guard: the borrow-only array-element tuple STILL reclaims (the gate
-    // only rejects whole extraction, not `t.1[j]` reads). Heap-bounded, no underflow.
+	// only rejects whole extraction, not `t.1[j]` reads). Heap-bounded, no underflow.
 	{"arrtuple-borrow-reclaims", `function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;

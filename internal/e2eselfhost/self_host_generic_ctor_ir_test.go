@@ -12,12 +12,13 @@ import (
 // generic function whose type parameter appears only in its return type
 // (`mk[T](): Box[T]`) is bound from the call-site annotation (`var b: Box[i32]
 // = mk()`) — the arguments alone can't. The monomorphiser (parser.fern) now:
-//   1. promotes such a return-only unbounded type var into type_params (it is
-//      bindable from the annotation, not just from a param),
-//   2. binds it via infer_inst_ret in the annotated-var position (mono_var_init),
-//   3. retypes the constructor's `return Box { xs: [] }` generic struct literal
-//      — whose empty-array field yields no element type to infer from — using
-//      the function's concrete return type (ms_stmt StmtReturn).
+//  1. promotes such a return-only unbounded type var into type_params (it is
+//     bindable from the annotation, not just from a param),
+//  2. binds it via infer_inst_ret in the annotated-var position (mono_var_init),
+//  3. retypes the constructor's `return Box { xs: [] }` generic struct literal
+//     — whose empty-array field yields no element type to infer from — using
+//     the function's concrete return type (ms_stmt StmtReturn).
+//
 // Without all three the template stays un-monomorphised, its `Box { xs: [] }`
 // can't lower, and the whole module drops to the legacy AST emitter and
 // SEGFAULTS. std/set's `set_new` → `set_of` is the real-world victim. Each case

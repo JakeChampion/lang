@@ -15,34 +15,34 @@ package elf
 
 // DWARF tag / attribute / form constants used below (DWARF v4, section 7).
 const (
-	dwTagCompileUnit      = 0x11
-	dwTagSubprogram       = 0x2e
-	dwTagBaseType         = 0x24
-	dwTagFormalParameter  = 0x05
-	dwTagVariable         = 0x34
-	dwTagStructureType    = 0x13
-	dwTagMember           = 0x0d
-	dwTagPointerType      = 0x0f
-	dwTagEnumerationType  = 0x04
-	dwTagEnumerator       = 0x28
+	dwTagCompileUnit     = 0x11
+	dwTagSubprogram      = 0x2e
+	dwTagBaseType        = 0x24
+	dwTagFormalParameter = 0x05
+	dwTagVariable        = 0x34
+	dwTagStructureType   = 0x13
+	dwTagMember          = 0x0d
+	dwTagPointerType     = 0x0f
+	dwTagEnumerationType = 0x04
+	dwTagEnumerator      = 0x28
 
 	dwChildrenYes = 1
 	dwChildrenNo  = 0
 
-	dwAtLocation  = 0x02
-	dwAtName                = 0x03
-	dwAtByteSize            = 0x0b
-	dwAtStmtList            = 0x10
-	dwAtDataMemberLocation  = 0x38
-	dwAtConstValue          = 0x1c
-	dwAtLowPC     = 0x11
-	dwAtHighPC    = 0x12
-	dwAtLanguage  = 0x13
-	dwAtCompDir   = 0x1b
-	dwAtProducer  = 0x25
-	dwAtFrameBase = 0x40
-	dwAtType      = 0x49
-	dwAtEncoding  = 0x3e
+	dwAtLocation           = 0x02
+	dwAtName               = 0x03
+	dwAtByteSize           = 0x0b
+	dwAtStmtList           = 0x10
+	dwAtDataMemberLocation = 0x38
+	dwAtConstValue         = 0x1c
+	dwAtLowPC              = 0x11
+	dwAtHighPC             = 0x12
+	dwAtLanguage           = 0x13
+	dwAtCompDir            = 0x1b
+	dwAtProducer           = 0x25
+	dwAtFrameBase          = 0x40
+	dwAtType               = 0x49
+	dwAtEncoding           = 0x3e
 
 	dwFormAddr      = 0x01
 	dwFormData1     = 0x0b

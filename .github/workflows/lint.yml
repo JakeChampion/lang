@@ -7,7 +7,12 @@ name: Lint
 #   build      — `go build ./...` so a compile-only failure
 #                surfaces here, not buried under a test failure.
 #   fmt-check  — `make fmt-check` (== `fern -fmt -d` on every
-#                examples/*.fern).
+#                examples/*.fern). Fern sources only.
+#   gofmt      — `make gofmt-check`: the Go-side counterpart. Nothing
+#                gated Go formatting before, so 21 files across
+#                internal/ and cmd/ had drifted (trailing-comment and
+#                map-literal alignment goes stale when a longer entry
+#                lands beside an existing one).
 #   deadcode   — `make deadcode`: fails on any unreachable function
 #                not in tools/deadcode-allowlist.txt.
 #
@@ -74,6 +79,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
       - run: make fmt-check
+
+  gofmt:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+      - run: make gofmt-check
 
   deadcode:
     needs: gate

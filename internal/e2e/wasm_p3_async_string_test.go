@@ -120,11 +120,11 @@ function main(): i32 { return 0; }
 	i32 := []byte{encode.ValtypeI32}
 	comp := component.BuildAsyncImportsAwaitComponent(core, []component.AsyncImportSpec{{
 		Iface: "test:dep/d", WITName: "fetch",
-		Provider:           provider,
-		ProviderExportName: "fetch",
-		LowerParams:        i32, // (retptr) -> status
-		LowerResults:       i32,
-		NeedsRealloc:       true, // string result: lower carries [async, memory, realloc]
+		Provider:            provider,
+		ProviderExportName:  "fetch",
+		LowerParams:         i32, // (retptr) -> status
+		LowerResults:        i32,
+		NeedsRealloc:        true,                     // string result: lower carries [async, memory, realloc]
 		ImportResultValtype: component.CValtypeString, // fetch: async func() -> string
 	}}, "__async_run", "run", component.CValtypeU32)
 
@@ -207,7 +207,7 @@ function main(): i32 { return 0; }
 			Provider:           component.BuildAsyncLiftedExportComponentString(p3FetchStringCore, "mem", "fetch", "msg"),
 			ProviderExportName: "msg",
 			LowerParams:        i32, LowerResults: i32,
-			NeedsRealloc: true, // string result
+			NeedsRealloc:        true,                     // string result
 			ImportResultValtype: component.CValtypeString, // msg: async func() -> string
 		},
 	}, "__async_run", "run", component.CValtypeU32)

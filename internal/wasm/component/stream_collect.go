@@ -76,9 +76,9 @@ func buildStreamEOFProducerComponent(producerCore []byte, tramp2, fixup2 []byte,
 	}) // core instance 3
 	buf = PutCoreInstanceSectionInstantiateWithInstanceArgs(buf, 2, []string{""}, []uint32{3}) // core instance 4 (fixup)
 
-	buf = PutAliasSectionCoreExportFunc(buf, 2, "prod")    // core func 10 (prod)
+	buf = PutAliasSectionCoreExportFunc(buf, 2, "prod")         // core func 10 (prod)
 	buf = PutTypeSectionOneFuncResultIdxAsync(buf, nil, nil, 0) // component type 1: () -> stream<elem>(type 0)
-	buf = PutCanonSectionLiftAsync(buf, 10, 1)             // component func 0
+	buf = PutCanonSectionLiftAsync(buf, 10, 1)                  // component func 0
 	buf = PutExportSectionOneFunc(buf, "prod", 0)
 	return buf
 }

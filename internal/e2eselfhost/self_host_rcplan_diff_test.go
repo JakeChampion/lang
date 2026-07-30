@@ -222,7 +222,7 @@ function w(): i32 {
 	return s.items[0];
 }
 function main(): i32 { return w(); }`,
-			anchor: map[string]map[string]string{"w": {"movedLocals": "x"}},  // moveSites agreement-checked (ident col)
+			anchor: map[string]map[string]string{"w": {"movedLocals": "x"}}, // moveSites agreement-checked (ident col)
 		},
 		{
 			// DESTRUCTURE MOVE: `var (xs, n) = t` at the tuple LOCAL's last

@@ -18,7 +18,7 @@ import (
 // unambiguously (a 3 GiB file's low word is still positive and could pass a
 // weaker check). The file is created sparse (ftruncate), so it costs no disk.
 
-const statSizeI64Big = 5 << 30       // 5 GiB
+const statSizeI64Big = 5 << 30 // 5 GiB
 const statSizeI64BigStr = "5368709120"
 const statSizeI64LowStr = "1073741824" // the low-32-bit truncation, for a clear failure exit
 

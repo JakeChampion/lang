@@ -53,7 +53,7 @@ A few properties fall out of using commit statuses for this:
 | step                | CI lane (workflow)            | run locally with |
 | ------------------- | ----------------------------- | ---------------- |
 | `units`             | Test units                    | `go test ./internal/...` (unit pkgs) |
-| `lint`              | Lint (vet/build/fmt/deadcode) | `make vet && go build ./... && make fmt-check && make deadcode` |
+| `lint`              | Lint (vet/build/fmt/gofmt/deadcode) | `make vet && go build ./... && make fmt-check && make gofmt-check && make deadcode` |
 | `examples`          | Examples                      | `make examples` |
 | `fernsmith`         | Test fernsmith                | `go test ./internal/fernsmith/...` |
 | `e2e-x86_64`        | Test e2e x86_64               | `go test -run '^TestX86_64' ./internal/e2e/` |

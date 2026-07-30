@@ -859,10 +859,10 @@ func imageWXSymsLines(text, data []byte, machine uint16, entryOff uint64, syms [
 	}
 
 	// Patch the ELF header's section-table fields (imageWX left them zero).
-	putLE64s(buf[40:], shoff)    // e_shoff
-	putLE16s(buf[58:], 64)       // e_shentsize
-	putLE16s(buf[60:], shnum)    // e_shnum
-	putLE16s(buf[62:], 4)        // e_shstrndx (.shstrtab)
+	putLE64s(buf[40:], shoff) // e_shoff
+	putLE16s(buf[58:], 64)    // e_shentsize
+	putLE16s(buf[60:], shnum) // e_shnum
+	putLE16s(buf[62:], 4)     // e_shstrndx (.shstrtab)
 	return buf
 }
 

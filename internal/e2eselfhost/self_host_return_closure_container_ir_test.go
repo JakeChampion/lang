@@ -11,10 +11,12 @@ import (
 // pre-passes registering functions whose body returns a closure box, so a
 // caller's `var g = pick()` binds g a closure local / closure array) gained a
 // `structs`-aware type resolver (detector_expr_type) and now recognise:
-//   B — `return r.hs[0]` / `return fs[i]`: an element of a closure ARRAY that is
-//       a struct field or an fn[] param (type resolves to "fn[]").
-//   C — `return r.hs`: a whole closure-array struct field / fn[] param.
-//   E — `return kvs[i].f` / `return s.f`: a fn-valued struct FIELD.
+//
+//	B — `return r.hs[0]` / `return fs[i]`: an element of a closure ARRAY that is
+//	    a struct field or an fn[] param (type resolves to "fn[]").
+//	C — `return r.hs`: a whole closure-array struct field / fn[] param.
+//	E — `return kvs[i].f` / `return s.f`: a fn-valued struct FIELD.
+//
 // Before the fix these went unregistered, the caller bound g a plain scalar,
 // and `g()` bare-called the box pointer → SIGSEGV. Case A (`return hs[0]` from a
 // LOCAL closure array) landed earlier in #5207; case D (a MATCH-bound fn-typed

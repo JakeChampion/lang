@@ -211,13 +211,13 @@ var watHelperDeps = map[string][]string{
 	// these mutator results (issue #2763), and that injection — like
 	// __map_drop_values above — happens after lowering, so there's no
 	// AST reference for tree-shake to follow on its own.
-	"map_new":                   {"map_new_impl", "__map_drop_values"},
-	"__method_Map_len":          {"__map_len_impl"},
-	"__method_Map_has":          {"__map_has_impl", "__map_lookup", "__map_hash"},
-	"__method_Map_get":          {"__map_get_impl", "__map_lookup", "__map_hash"},
-	"__method_Map_get_or":       {"__map_get_or_impl", "__map_lookup", "__map_hash"},
-	"__method_Map_set":          {"__map_set_impl", "__map_grow", "__map_hash", "__map_lookup_val", "__map_clone"},
-	"__method_Map_delete":       {"__map_delete_impl", "__map_hash", "__map_clone"},
+	"map_new":             {"map_new_impl", "__map_drop_values"},
+	"__method_Map_len":    {"__map_len_impl"},
+	"__method_Map_has":    {"__map_has_impl", "__map_lookup", "__map_hash"},
+	"__method_Map_get":    {"__map_get_impl", "__map_lookup", "__map_hash"},
+	"__method_Map_get_or": {"__map_get_or_impl", "__map_lookup", "__map_hash"},
+	"__method_Map_set":    {"__map_set_impl", "__map_grow", "__map_hash", "__map_lookup_val", "__map_clone"},
+	"__method_Map_delete": {"__map_delete_impl", "__map_hash", "__map_clone"},
 	// Struct/enum (keyKind-3) keys route through the `_keyed` runtime
 	// variants (#2671). These alias names aren't real functions; the
 	// entries pull in the keyed impls (whose bodies — including the

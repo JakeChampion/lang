@@ -890,10 +890,10 @@ const (
 // normdata.txt deliberately omits them; the generated Fern implements the
 // formula with these constants.
 const (
-	hangulSBase = 0xAC00
-	hangulLBase = 0x1100
-	hangulVBase = 0x1161
-	hangulTBase = 0x11A7
+	hangulSBase  = 0xAC00
+	hangulLBase  = 0x1100
+	hangulVBase  = 0x1161
+	hangulTBase  = 0x11A7
 	hangulTCount = 28
 	hangulNCount = 588
 	hangulSCount = 11172
@@ -1149,7 +1149,7 @@ var gcbNames = map[string]int{
 	"CR": gcbCR, "LF": gcbLF, "CONTROL": gcbControl,
 	"EXTEND": gcbExtend, "ZWJ": gcbZWJ,
 	"REGIONAL_INDICATOR": gcbRegionalIndicator,
-	"PREPEND": gcbPrepend, "PACINGMARK": gcbSpacingMark,
+	"PREPEND":            gcbPrepend, "PACINGMARK": gcbSpacingMark,
 	"L": gcbL, "V": gcbV, "T": gcbT, "LV": gcbLV, "LVT": gcbLVT,
 }
 
