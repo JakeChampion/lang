@@ -1455,11 +1455,28 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   so the byte-identity gate does not apply; it is validated by x86 byte-identity
   (the shared `asmcore` field is inert on x86 — no x86 file reads `ir_runtime`)
   plus the arm64 self-reproduction fixpoint + e2e on CI (which still hold, since
-  gen0 and gen1 both emit via IR). **Remaining for deletion (slice 5):** the
-  IR path still *calls* `asm_arm64.emit_runtime` (it reuses the hand-written
-  helper bodies), so `asm_arm64.fern` cannot be deleted until `emit_runtime`
-  itself moves to `asm_arm64_ir.fern` — now a mechanical move, since the AST
-  `emit_function` coupling it carried is gone from the IR path.
+  gen0 and gen1 both emit via IR). **Third untangle step DONE (slice-5 prep):
+  `emit_runtime` now lives in `asm_arm64_ir.fern` as `emit_ir_runtime`.** The IR
+  path no longer calls into `asm_arm64.fern` for its runtime at all: both arm64
+  IR entry points (`emit_module_ir` / `emit_module_ir_unit_arm64`) call
+  `asm_arm64_ir.emit_ir_runtime`, a near-verbatim copy of `asm_arm64.emit_runtime`
+  whose only difference is that its 32 Fern-helper sites lower through
+  `emit_ir_runtime_fern_fn` (the IR selector) rather than `emit_runtime_fern_fn`
+  (the AST dispatcher). Its callees `emit_ldc` / `emit_ccall_shim1_arm64` /
+  `emit_ccall_shims_arm64` / `emit_rodata_pools_arm64` were copied alongside. This
+  mirrors x86's structure exactly (`asm_ir.emit_ir_runtime` coexists with
+  `asm.emit_runtime`), so the slice-4a `EmitState.ir_runtime` mode flag is now
+  **superseded and deleted** — with the IR callers routed to `emit_ir_runtime`,
+  `asm_arm64.emit_runtime_fern_fn` is only ever reached on the AST path, so its
+  (never-taken) IR branch and the shared `asmcore` field are dead. **This move is
+  BYTE-PRESERVING on the arm64 IR path** (verified: `asm_ir_run -target arm64 -ir`
+  emits byte-identical asm for string/array/foreach/chr/pow/cmp/index_of programs
+  before and after), and x86-inert (no x86 file read the field). `asm_arm64.fern`
+  keeps its own `emit_runtime` for the AST fallback until slice 5 deletes the
+  file. **Remaining for deletion (slice 5):** `emit_module_ir` /
+  `emit_module_ir_unit_arm64` (the arm64 IR module framers) still live in
+  `asm_arm64.fern` — moving them to `asm_arm64_ir.fern` and repointing the drivers
+  is the last step before the file can go.
 - **wasm: NOT clean, and larger — but hand-WAT, so movable byte-preservingly.**
   `wasm_ir.fern` reuses `wasm.fern`'s WAT runtime extensively (heap/RC,
   `str_*_helpers`, `to_string_helpers`, `divrem_helpers`), and the per-module IR
