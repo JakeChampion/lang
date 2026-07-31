@@ -311,6 +311,75 @@ function main(): i32 {
     return t;
 }
 `, 94},
+	// b.to_ascii_string() — a fresh 1-char string from a byte. It desugars to
+	// chr(b), which already lowers to the __fern_chr runtime helper, rather than
+	// hand-emitting the two allocations the AST emitter open-codes. The CHAINED
+	// receiver is the case that needed more than the desugar: to_ascii_lower /
+	// _upper return a byte, and expr_subword_kind cannot see a call RESULT, so
+	// `b.to_ascii_lower().to_ascii_string()` declined while each half lowered.
+	{"ascii-to-string", `
+function main(): i32 {
+    var c: u8 = 65;
+    var s: string = c.to_ascii_string();
+    var t: i32 = 0;
+    if (s[0] as i32 == 65) { t = t + 1; }
+    if (s.len() == 1) { t = t + 2; }
+    if ((66 as u8).to_ascii_string()[0] as i32 == 66) { t = t + 4; }
+    if (c.to_ascii_lower().to_ascii_string()[0] as i32 == 97) { t = t + 8; }
+    return t;
+}
+`, 15},
+	// A Cell[T] PARAMETER. The local-annotation path marks a `var c: Cell[i32]`
+	// slot is_cell, but the param columns hard-coded it false, so `c.get()` on a
+	// parameter keyed "i32.get" — an unknown symbol — and bailed the module.
+	// Cell[string] is included because the element kind drives the read: an
+	// untracked element loads as an i32 and `.len()` on it is meaningless.
+	{"cell-param", `
+function bump(c: Cell[i32]): void { c.set(c.get() + 1); }
+function slen(c: Cell[string]): i32 { return c.get().len(); }
+function main(): i32 {
+    var c: Cell[i32] = cell_new(10);
+    bump(c);
+    bump(c);
+    var s: Cell[string] = cell_new("abc");
+    s.set("de");
+    return c.get() + slen(s) + s.get().len();
+}
+`, 16},
+	// A nested RESULT payload bound in a match-EXPRESSION (`Some(r)` over an
+	// Option[Result[…]]). iife_payload_bindable admitted a nested `Option[` payload
+	// into an i32 temp from an ident scrutinee and omitted `Result[` from the same
+	// spelling test, so this bailed while the identical STATEMENT-form match
+	// lowered. The argument for admitting it is the Option half's: arms share a
+	// result type, so an i32 temp means the bound box is only ever consumed to
+	// compute an i32, never stored as the result.
+	{"iife-match-nested-result-payload", `
+function g(o: Option[Result[i32, i32]]): i32 {
+    return match (o) { Some(r) => 7, None => 0 - 1 };
+}
+function h(o: Option[Result[i32, i32]]): i32 {
+    match (o) { Some(r) => { match (r) { Ok(n) => { return n + 100; }, Err(e) => { return e; } } }, None => { return 0; } }
+}
+function main(): i32 { return g(Some(Ok(5))) + h(Some(Ok(5))); }
+`, 112},
+	// A NESTED PATTERN in a match-EXPRESSION (`Some(Ok(n)) => n + 100`). The
+	// parser desugars a nested arm into a flat outer arm whose body re-matches the
+	// payload on an inner `match` STATEMENT, so the arm's terminal is not a
+	// `return E` and lower_iife_match bailed the whole module — while the identical
+	// match in STATEMENT form lowered. iife_rewrite_arm_body now rewrites that
+	// inner match recursively, storing into the same value temp, and carries the
+	// f64 / string / i64 width guards down with it so an ill-fitting tail bails
+	// wherever it sits rather than only at the top level.
+	{"iife-match-nested-pattern", `
+function g(o: Option[Result[i32, i32]]): i32 {
+    return match (o) {
+        Some(Ok(n)) => n + 100,
+        Some(Err(e)) => e,
+        None => 0 - 1,
+    };
+}
+function main(): i32 { return g(Some(Ok(5))) + g(Some(Err(2))) + g(None); }
+`, 106},
 	// xs.reverse() / xs.concat(ys) on arrays, lowered to the same
 	// __fern_arr_reverse / __fern_arr_concat runtime helpers the AST emitters
 	// call (op_arr_reverse / op_arr_concat, modelled on op_arr_slice). Until this

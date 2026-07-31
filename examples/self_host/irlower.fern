@@ -1373,6 +1373,16 @@ pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
 pub function (s: LowerState) mark_map_type(i: i32, t: string): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_map_type(s.locals[i], t)) };
 }
+// cell_elem_of_type_name returns T for a `Cell[T]` type spelling, "" otherwise —
+// the shared reader behind both the local-annotation marking and the param
+// column, so a Cell PARAM tracks exactly like a Cell local.
+pub function cell_elem_of_type_name(t: string): string {
+    if (t.len() > 6 && t[0:5] == "Cell[" && t[t.len() - 1 : t.len()] == "]") {
+        return t[5 : t.len() - 1] + "";
+    }
+    return "";
+}
+
 pub function (s: LowerState) mark_cell(i: i32, t: string): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_cell(s.locals[i], t)) };
 }
@@ -2004,6 +2014,18 @@ function opt_payload_ok_dv(structs: parser.StructDecl[], p: string, depth: i32, 
     // predicate. (visiting-threaded for recursion safety.)
     if (is_leaksafe_tuple_field_dv(structs, p, depth, visiting)) { return true; }
     if (p.len() >= 8 && (p[0:7] == "Option[" || p[0:7] == "Result[") && is_leaksafe_opt_field_dv(structs, p, depth, visiting)) { return true; }
+    // An `Option[<enum>]` payload is NOT admitted here, deliberately. The shape
+    // looks exactly like the struct payload above — one enum-variant pointer in
+    // the box, leak-only, and decl_is_leaksafe_d admits a bare `c: Color` FIELD on
+    // that reasoning — but `opt-enum-field-stays-ast` in
+    // self_host_opt_struct_payload_field_ir_test.go is a deliberate NEGATIVE pin
+    // requiring it to route AST. Admitting it (tried, reverted) turns that test
+    // red. Its stated rationale is self-contradictory — "the legacy AST backend
+    // miscompiles an Option[enum] field", which would be an argument FOR the IR
+    // path — so whoever revisits this has to re-derive which backend actually
+    // mishandles the shape before moving the pin. On the wasm IR path all four
+    // probe shapes (Some / None / payload matched / read into a local) already
+    // agree with the interpreter; the x86 IR runtime answer is the unverified part.
     return false;
 }
 
@@ -3145,6 +3167,21 @@ function ascii_byte_receiver(e: parser.Expr, s: LowerState): boolean {
     if (expr_subword_kind(e, s) == "u8") { return true; }
     match (e) {
         parser.ExprIndex(bix) => { if (expr_is_str(bix.array, s)) { return true; } },
+        // A CHAINED case conversion (`b.to_ascii_lower().to_ascii_string()`):
+        // to_ascii_lower / _upper return a byte, so their result is a byte
+        // receiver too. expr_subword_kind cannot see this — it reads slots and
+        // casts, not call results — and without it the chain declines while each
+        // half lowers on its own.
+        parser.ExprCall(bc) => {
+            match (bc.callee) {
+                parser.ExprFieldAccess(bcf) => {
+                    if ((bcf.field == "to_ascii_lower" || bcf.field == "to_ascii_upper") && bc.args.len() == 0) {
+                        return ascii_byte_receiver(bcf.obj, s);
+                    }
+                },
+                _ => {}
+            }
+        },
         _ => {}
     }
     return false;
@@ -3729,6 +3766,10 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     if (arr_firstlast_call(cfa.field, cfa.obj, c.args.len(), s)) {
                         return expr_is_str(arr_elem_index_expr(cfa.obj), s);
                     }
+                    // `b.to_ascii_string()` on a byte receiver yields a fresh
+                    // 1-char string (it desugars to chr(b)), so the result feeds
+                    // `[0]` / `.len()` / concat as a string.
+                    if (cfa.field == "to_ascii_string" && c.args.len() == 0 && ascii_byte_receiver(cfa.obj, s)) { return true; }
                     if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) { return true; }
                     // `s.to_upper()` / `s.to_lower()` on a string receiver yield a
                     // fresh string (op_str_to_upper / _to_lower), so the result
@@ -9956,6 +9997,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         && ascii_byte_receiver(fa.obj, s)) {
                         return lower_ascii_byte_method(fa.field, fa.obj, s);
                     }
+                    // b.to_ascii_string() — a fresh 1-char string from the byte.
+                    // That is exactly `chr(b)`, which already lowers to the
+                    // __fern_chr runtime helper on every backend, so it desugars
+                    // rather than hand-emitting the two allocations the AST
+                    // emitter open-codes (asm.fern:1804). Re-lowering also picks up
+                    // chr's heap need and its string result typing for free.
+                    if (fa.field == "to_ascii_string" && c.args.len() == 0
+                        && ascii_byte_receiver(fa.obj, s)) {
+                        var tas: parser.Expr = parser.ExprCall {
+                            callee: parser.ExprIdent { name: "chr", line: fa.line, col: fa.col },
+                            args: [fa.obj], line: c.line, col: c.col, type_argc: 0, ty: "",
+                        };
+                        return lower_expr(tas, s);
+                    }
                     // n.pow(k) — helper-backed like xs.sum() (#5664), but with a
                     // scalar receiver and ONE argument, so it sits outside the zero-arg
                     // block below. Same five-part requirement: lowering + is_fern_helper
@@ -11884,7 +11939,18 @@ function iife_payload_bindable(pv: parser.PatVariant, arm: parser.MatchArm, opt_
         // into an i32-result temp: the underlying StmtMatch path marks the slot
         // with the dyn type so `e.method()` dispatches via op_dyn_dispatch.
         if (temp_is_i32 && pt.len() > 4 && pt[0:4] == "dyn ") { return true; }
-        if (temp_is_i32 && scrut_is_ident && pt.len() >= 8 && pt[0:7] == "Option[") { return true; }
+        // A nested Option / RESULT payload (`Some(b)` where b: Option[T] or
+        // Result[T, E]) into an i32 temp from an IDENT scrutinee. The argument is
+        // the one the Option half already rested on: arms share a result type in
+        // valid Fern, so an i32 temp means every arm computes an i32 and the bound
+        // box is only ever CONSUMED to do that — typically by a nested
+        // `match (b)`, or by a nested PATTERN (`Some(Ok(n))`), which the underlying
+        // StmtMatch path lowers. It is never stored into the i32 temp as the
+        // result; an arm returning the box whole would not have an i32 temp.
+        // Result was simply missing from the spelling test, so `Some(r)` /
+        // `Some(Ok(n))` over an Option[Result[…]] bailed the module while the
+        // identical STATEMENT-form match lowered.
+        if (temp_is_i32 && scrut_is_ident && pt.len() >= 8 && (pt[0:7] == "Option[" || pt[0:7] == "Result[")) { return true; }
         // A STRING / STRUCT / TUPLE / ENUM Some/Ok/Err payload BORROW-read into the
         // result (`Some(s) => s.len()`, `Some(p) => p.x`, `Err(s) => s.len()`):
         // admit via the SAME leak-safe borrow machinery the user-enum branch below
@@ -12333,6 +12399,58 @@ function iife_user_enum_payload_type(pv: parser.PatVariant, s: LowerState): stri
     return decl_field_type(s.structs, vname, "__ev");
 }
 
+// iife_rewrite_arm_body rewrites one match-EXPRESSION arm body so it STORES the
+// arm's value into `tmp` instead of returning it: leading statements are kept
+// verbatim and the TERMINAL statement is rewritten. Two terminal shapes are
+// accepted:
+//
+//   `return E`      -> `tmp = E`
+//   a nested MATCH  -> the same match with every one of ITS arm bodies rewritten
+//                      by this function, recursively
+//
+// The nested-match case is what a NESTED PATTERN needs. The parser desugars
+// `Some(Ok(n)) => n + 100` into a flat `Some($p)` arm whose body re-matches the
+// payload (see parser.PatVariant's `nested` note), so the arm's terminal is a
+// StmtMatch, not a return — and before this the whole match-expression bailed to
+// the AST emitter even though the identical STATEMENT-form match lowered.
+//
+// Returns an empty array to mean "not rewritable", which the caller turns into a
+// bail. The f64 / string / i64 result guards live here so they apply at every
+// depth: an arm tail whose value does not fit the temp's width must bail wherever
+// it sits, not only at the top level.
+function iife_rewrite_arm_body(body: parser.Stmt[], tmp: string, tslot: i32, ts: LowerState): parser.Stmt[] {
+    var none: parser.Stmt[] = [];
+    if (body.len() == 0) { return none; }
+    var last: parser.Stmt = body[body.len() - 1];
+    var tail: parser.Stmt[] = [];
+    match (last) {
+        parser.StmtReturn(r) => {
+            if (expr_is_f64(r.value, ts) && !ts.is_f64_slot(tslot)) { return none; }
+            if (expr_is_str(r.value, ts) && !ts.is_str_slot(tslot)) { return none; }
+            if (infer_expr_width(r.value, ts) == 64 && !ts.is_i64_slot(tslot)) { return none; }
+            tail = tail.append(parser.StmtAssign { target: tmp, value: r.value, line: 0, col: 0, target_line: 0, target_col: 0 });
+        },
+        parser.StmtMatch(im) => {
+            var iarms: parser.MatchArm[] = [];
+            var ii: i32 = 0;
+            while (ii < im.arms.len()) {
+                var ib: parser.Stmt[] = iife_rewrite_arm_body(im.arms[ii].body, tmp, tslot, ts);
+                if (ib.len() == 0) { return none; }
+                iarms = iarms.append(parser.MatchArm { pattern: im.arms[ii].pattern, body: ib, line: im.arms[ii].line, col: im.arms[ii].col, guard: im.arms[ii].guard, has_guard: im.arms[ii].has_guard });
+                ii = ii + 1;
+            }
+            tail = tail.append(parser.StmtMatch { scrutinee: im.scrutinee, arms: iarms, line: im.line, col: im.col, origin: im.origin });
+        },
+        _ => { return none; }
+    }
+    var nb: parser.Stmt[] = [];
+    var bj: i32 = 0;
+    while (bj < body.len() - 1) { nb = nb.append(body[bj]); bj = bj + 1; }
+    var tj: i32 = 0;
+    while (tj < tail.len()) { nb = nb.append(tail[tj]); tj = tj + 1; }
+    return nb;
+}
+
 function lower_iife_match(m: parser.StmtMatch, s: LowerState, force_i64: boolean): LowerState {
     var tmp: string = "$ife" + util.i32_to_string(s.locals.len());
     var ts: LowerState = s.add_local(tmp);
@@ -12456,29 +12574,13 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState, force_i64: boolean
         // leading statements lower unchanged in the rewritten arm; only the
         // FINAL `return E` becomes `tmp = E`. A single-expr arm is the
         // len()==1 case of this (no leading statements). An empty body bails.
-        if (arm.body.len() == 0) { return s.fail(); }
-        var last: parser.Stmt = arm.body[arm.body.len() - 1];
-        match (last) {
-            parser.StmtReturn(r) => {
-                // f64 / string results admitted only into a matching temp (set
-                // above for an f64- / string-valued match); otherwise into the i32
-                // temp they bail. The rewritten `tmp = E` store is steered by the
-                // temp's slot type.
-                if (expr_is_f64(r.value, ts) && !ts.is_f64_slot(tslot)) { return s.fail(); }
-                if (expr_is_str(r.value, ts) && !ts.is_str_slot(tslot)) { return s.fail(); }
-                // An i64-width result is admitted into an i64 temp (the rewritten
-                // `tmp = E` store widens via the i64-typed target); into a non-i64
-                // temp it bails.
-                if (infer_expr_width(r.value, ts) == 64 && !ts.is_i64_slot(tslot)) { return s.fail(); }
-                // Keep any leading statements, then the rewritten terminal store.
-                var nbody: parser.Stmt[] = [];
-                var bj: i32 = 0;
-                while (bj < arm.body.len() - 1) { nbody = nbody.append(arm.body[bj]); bj = bj + 1; }
-                nbody = nbody.append(parser.StmtAssign { target: tmp, value: r.value, line: 0, col: 0, target_line: 0, target_col: 0 });
-                newarms = newarms.append(parser.MatchArm { pattern: arm.pattern, body: nbody, line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
-            },
-            _ => { return s.fail(); }
-        }
+        // The terminal-statement rewrite (`return E` -> `tmp = E`, or a nested
+        // match rewritten one level down) plus its width guards live in
+        // iife_rewrite_arm_body, so they apply at every nesting depth. An empty
+        // result means the shape is not rewritable.
+        var nbody: parser.Stmt[] = iife_rewrite_arm_body(arm.body, tmp, tslot, ts);
+        if (nbody.len() == 0) { return s.fail(); }
+        newarms = newarms.append(parser.MatchArm { pattern: arm.pattern, body: nbody, line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
         i = i + 1;
     }
     var newmatch: parser.Stmt = parser.StmtMatch { scrutinee: m.scrutinee, arms: newarms, line: m.line, col: m.col, origin: m.origin };
@@ -31239,6 +31341,12 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var clo_opt_rets: string[] = [];
     var tupty: string[] = [];
     var mapty: string[] = [];
+    // A Cell[T] PARAM's element type (#3457 slice 5): the local-annotation path
+    // marks a `var c: Cell[i32]` slot is_cell, but the param columns hard-coded
+    // is_cell false, so `c.get()` on a PARAMETER keyed "i32.get" — an unknown
+    // symbol — and bailed the whole module to the AST emitter. The map column
+    // right above is the same shape, added for the same reason (#map-param).
+    var cellty: string[] = [];
     var isi64: boolean[] = [];
     var isf64: boolean[] = [];
     var isf32: boolean[] = [];
@@ -31303,6 +31411,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         // Map-track a Map receiver (the full Map[K, V] type) so map-op dispatch
         // on `self` resolves the key/value kinds — exactly like a Map PARAM below.
         if (r_is_map) { mapty = mapty.append(fn.receiver_type); } else { mapty = mapty.append(""); }
+        cellty = cellty.append(cell_elem_of_type_name(fn.receiver_type));
         isi64 = isi64.append(rbase == "i64");
         isf64 = isf64.append(is_f64_scalar_type_name(rbase));
         // `float` excluded — the f64 alias, not f32 (#5882); isf64 covers it.
@@ -31391,6 +31500,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         // on the parameter dispatch as map ops (the local-var annotation path
         // already does this; params lacked it). #map-param.
         if (is_map_type_name(ptn)) { mapty = mapty.append(ptn); } else { mapty = mapty.append(""); }
+        cellty = cellty.append(cell_elem_of_type_name(ptn));
         // On wasm a bare-typevar (erased-generic) param of a PASS-THROUGH fn
         // (bare-typevar RETURN, e.g. `id[T](x:T):T` / `fst[A,B](a:A,b:B):A`) is
         // typed i64 — the uniform 8-byte slot the register backends give every
@@ -31598,7 +31708,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: false, cell_elem: "", str_own: 1 });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1 });
         lzi = lzi + 1;
     }
     // #4354: approve closure locals for capture RC. The approvals and the

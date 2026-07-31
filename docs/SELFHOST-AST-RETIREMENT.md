@@ -2376,6 +2376,102 @@ tier → leak.
      wasmtime returns 1, which reads exactly like a miscompile (it cost a bisect
      here before the range constraint was remembered).
 
+     **THE asm_run REROUTE IS NOT READY — two dependents CI found that the local
+     enumeration could not (2026-07-31). Read this before trying again.** The
+     reroute was written, measured clean over 2531 programs, pushed, and CI turned
+     up two failures the sweep was structurally incapable of seeing:
+
+     - **`TestSelfHostBootstrapsItself` feeds each compiler SOURCE FILE through
+       `asm_run` individually** — `util.fern` first. That is a main-less LIBRARY
+       module (15 functions, no `main`), which the AST emitter happily emits as
+       bare function bodies and the IR gate refuses outright. Note the gap-reason
+       table further up lists `no-main` as "Supported by the desugar; not exercised
+       today" — it IS exercised, by this test, and the desugar does not cover it.
+       Nothing embedded as a Go literal could have shown this: the input is a file
+       on disk.
+     - **`TestSelfHostSortByI32Key` is a documented AST-fallback dependent** — its
+       own comment says a "closure-typed param over a generic `T[]` currently
+       lowers via the AST emitter rather than the IR path on the self-host, which
+       is still correct end-to-end (the legitimate fallback)". It lives in
+       **`internal/e2e`**, not `internal/e2eselfhost`, and the sweep only scanned
+       the latter. CLAUDE.md says plainly that `internal/e2e` holds ~30 residual
+       `TestSelfHost*` legs; the sweep should have scanned both packages.
+
+     So the enumeration recipe below needs two amendments: scan **both** e2e
+     packages, and remember that a test whose input is a FILE (the bootstrap
+     self-compile, the modload drivers) is invisible to literal extraction
+     entirely. The 2531-program result stands for what it covers — it is what found
+     the four gaps that did land — but "0 genuine declines" was a statement about
+     one package's Go literals, not about the driver.
+
+     **The measurement that IS sound (2026-07-31).**
+     The enumeration above, tightened once more to understand Go string
+     CONCATENATION (`prelude + "function main…"`), covers **2531 asm_run-reachable
+     programs** — `asm_run.fern` being the driver **365 test files** build, hence
+     the widest blast radius and the best single proof. Run through the driver with
+     its `emit_module` rerouted to `asm_ir.emit_module_or_error`, they classify:
+
+     | | count |
+     |---|---:|
+     | compile on the IR path | **2448** |
+     | invalid programs (checker corpora, partial fragments) | 66 |
+     | ineligible | **17 — every one an extraction artifact** |
+
+     The 17 are the three named-prelude-constant clusters (`dynArrayLocalPrelude`,
+     `hoDblHelper`, `jsonArrayPrelude`): the extractor sees the case string but not
+     the Go CONSTANT prepended to it, so the fragment references an undeclared
+     trait / struct / helper. Re-assembled with their preludes, **all four spellings
+     compile** — checked individually, because "it is probably an artifact" is
+     exactly the assumption this file keeps having to retract.
+
+     Getting there took four more gaps, none of them on the original list, all found
+     by this method rather than by inspection: the ASCII byte-method family (#5964),
+     then `to_ascii_string`, a `Cell[T]` PARAMETER, a nested `Result` payload in a
+     match-expression, and a nested PATTERN in a match-expression (#5965, landed
+     with the reroute).
+
+     **One shape was tried and REVERTED: an `Option[<enum>]` struct field.** It
+     looks exactly like the `Option[Struct]` payload beside it — one enum-variant
+     pointer in the box, leak-only, and `decl_is_leaksafe_d` admits a bare
+     `c: Color` FIELD on that reasoning — and admitting it in `opt_payload_ok_dv`
+     made all four probe shapes route IR and agree with the interpreter on wasm.
+     But `opt-enum-field-stays-ast` in
+     `self_host_opt_struct_payload_field_ir_test.go` is a deliberate NEGATIVE pin
+     requiring the AST route, and it went red. Two things to inherit: the pin's
+     stated rationale is **self-contradictory** — "the legacy AST backend
+     miscompiles an Option[enum] field", which is an argument FOR the IR path, not
+     against it — so it has to be re-derived before the pin moves; and the
+     unverified half is the x86 IR RUNTIME answer, which is exactly what a host
+     without user-mode qemu cannot check. Do not flip that pin from a Mac.
+
+     **The recurring shape, worth stating once: three of those four were a missing
+     entry in a SECOND mechanism, not missing lowering.** A slot column
+     (`lower_stmt_var`'s `is_arr` list; the param columns' hard-coded
+     `is_cell: false`) or an admission predicate (`opt_payload_ok_dv` had no enum
+     arm; `iife_payload_bindable` tested only for `Option[`) lagged behind a
+     lowering path that already worked. (`opt_payload_ok_dv` is on that list as the
+     REVERTED case above, not as a fix.) The tell is a shape that lowers in one
+     position and not another — an annotated binding but not an unannotated one, a
+     local but not a parameter, a statement-form match but not the expression form.
+     When a decline looks like that, check the second mechanism before writing any
+     lowering.
+
+     **What a future reroute will have to change, beyond the lowering.** Two
+     contracts encode the silent fallback (both were written and then reverted with
+     the reroute, so the diffs are in #5965's history if useful):
+
+     - `TestSelfHostStrictIRRefusesBail` asserted that an over-budget program
+       "falls back silently" without the flag. There is no silent fallback any
+       more, so the unset leg now asserts a REFUSAL naming the ineligibility, and
+       the flag's remaining job — naming the bail SITE (exit 3, "512-function") —
+       is what the two legs now distinguish. That difference is the whole
+       diagnostic value of the flag once the AST emitter is unreachable.
+     - `self_host_x86_scale_probe_test.go` generated a **600-function** program,
+       over the 512-function merged-bundle budget, and relied on the AST fallback
+       to compile it. It probes the x86 ENCODER at scale, not the budget, so its
+       largest case is now 500 — same ~130 KB asm text, inside the subset. A
+       genuinely over-budget program is the per-module path's job.
+
      **One corpus CAN be enumerated locally and cheaply — and doing so found two
      more gaps (2026-07-31).** `TestSelfHostAsmRunX86_64`'s cases are Go string
      literals, so they extract to files and each routes through `fern -interp
