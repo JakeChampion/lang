@@ -258,6 +258,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_arr_slice(cache)) { out = out.append("@uses_arr_slice"); }
     if (module_uses_arr_slice8(cache)) { out = out.append("@uses_arr_slice8"); }
     if (module_calls_arr_str_join(cache)) { out = out.append("@uses_arr_str_join"); }
+    if (module_calls_arr_str_index_of(cache)) { out = out.append("@uses_arr_str_index_of"); }
     if (module_calls_arr_i32_helper(cache)) { out = out.append("@uses_arr_i32_helpers"); }
     if (module_uses_chr(cache)) { out = out.append("@uses_chr"); }
     if (module_uses_divrem(cache)) { out = out.append("@uses_divrem"); }
@@ -436,6 +437,12 @@ pub function module_uses_strings(cache: irlower.LowerResult[]): boolean {
             var kt: i32 = r.ops[i].kind_tag;
             if (kt == 5 || kt == 97 || kt == 98 || kt == 99 || kt == 100) { return true; }  // const_str, str_len, str_concat, str_eq, str_cmp
             if (kt == 101 || kt == 102) { return true; }  // str_index, str_slice
+            // The string[] index_of / contains helper compares with
+            // $__fern_streq, which lives in the strcat_streq bundle this gate
+            // emits. A module can reach the helper with no string op of its own
+            // (`function f(xs: string[], t: string): i32 { return xs.index_of(t); }`
+            // has no const_str), so the CALL counts as a string use.
+            if (kt == 149 && r.ops[i].str == "__fern_arr_str_index_of") { return true; }  // call_direct
             i = i + 1;
         }
         fi = fi + 1;
@@ -1087,6 +1094,13 @@ pub function module_uses_u64_to_string(cache: irlower.LowerResult[]): boolean {
 // helper (@uses_arr_str_join).
 pub function module_calls_arr_str_join(cache: irlower.LowerResult[]): boolean {
     return module_calls_direct(cache, "__fern_arr_str_join");
+}
+
+// module_calls_arr_str_index_of reports whether any function emits the string[]
+// index_of / contains runtime call (#3457) — so needs_of can pull in the
+// $__fern_arr_str_index_of WAT helper (@uses_arr_str_index_of).
+pub function module_calls_arr_str_index_of(cache: irlower.LowerResult[]): boolean {
+    return module_calls_direct(cache, "__fern_arr_str_index_of");
 }
 
 // module_uses_str_to_i32 reports whether any function emits the str_to_i32(s)
@@ -5180,6 +5194,33 @@ pub function arr_str_join_helper(): string {
     return o;
 }
 
+// arr_str_index_of_helper emits the IR-path $__fern_arr_str_index_of — the
+// symbol irlower's string[] index_of / contains intercept targets (the register
+// backends compile asmcore.rt_src_arr_str_index_of from Fern source; wasm has no
+// such mechanism, hence this WAT twin of arr_i32_helpers' i32 scan). Content
+// equality via $__fern_streq, so two distinct string blocks holding the same
+// bytes match — the whole reason string arrays cannot reuse the i32 helper's
+// pointer compare. Not found is -1, matching the Fern source; `contains` is the
+// `>= 0` test irlower emits around the result. Parameter order is (target, xs)
+// for the reason arr_i32_helpers documents: irlower pushes the argument first,
+// and a wasm `call` binds the first-pushed value to param 0. Gated on
+// @uses_arr_str_index_of; $__fern_streq comes from strcat_streq_helpers, which
+// module_uses_strings pulls in for exactly this call.
+pub function arr_str_index_of_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_arr_str_index_of (param $t i32) (param $a i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $i i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $a)))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
+    o = o + "      (if (call $__fern_streq (i32.load (i32.add (local.get $a) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 4))))) (local.get $t))\n";
+    o = o + "        (then (return (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (i32.const -1))\n";
+    return o;
+}
+
 // print_str_helper emits the `$__fern_print_str` runtime: given a string-block
 // pointer `[len@0][bytes@4]`, set the iovec (buf = ptr+4, len = load(ptr)) in the
 // low-24 scratch (memory 0/4, nwritten at 8) and fd_write it to stdout (fd 1).
@@ -7382,6 +7423,11 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // register backends' __fern_arr_str_join runtime call. Self-contained (only
     // $__fern_str_box), emitted only when used.
     if (need(needs, "@uses_arr_str_join")) { out = out + arr_str_join_helper(); }
+    // $__fern_arr_str_index_of backs xs.index_of(t) / .contains(t) on a string[]
+    // — the register backends' Fern-source helper. It calls $__fern_streq, which
+    // strcat_streq_helpers provides (module_uses_strings admits this call so the
+    // bundle is present even in a module with no other string op).
+    if (need(needs, "@uses_arr_str_index_of")) { out = out + arr_str_index_of_helper(); }
     // The i32 builtin helpers backing xs.sum() / .product() / .index_of() /
     // .contains(), n.pow(k) and xs.min() / .max() (#3457). The register backends
     // compile these from Fern source (asmcore.rt_src_*); wasm has no such

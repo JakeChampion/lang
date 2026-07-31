@@ -9288,6 +9288,49 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // asm.fern's own comment at this intercept says the same — "push
                     // args right-to-left (target then array) so the array is param[0]".
                     // `contains` is `index_of(...) >= 0`. Same receiver guard as below.
+                    // The string[] sibling, backed by __fern_arr_str_index_of
+                    // (asmcore.rt_src_arr_str_index_of): a linear scan comparing
+                    // elements with str_eq, so CONTENT equality matches even when
+                    // two .rodata slots differ — which is why it cannot share the
+                    // i32 helper's pointer compare. Same reverse push order, same
+                    // `>= 0` for contains. Both operands go through temp locals so
+                    // the RECEIVER is evaluated before the argument (source order,
+                    // matching the AST emitter, which emits receiver-then-arg and
+                    // re-orders on the stack) while still being pushed second —
+                    // the lower_arr_str_join shape.
+                    //
+                    // DEFERS to an in-scope std/array helper, unlike its i32
+                    // sibling. std/array really does define
+                    // `__method_Array_index_of(arr: string[], s: string)` and its
+                    // `contains` wrapper, with identical semantics (linear scan,
+                    // -1 sentinel) — so a program importing std/array already
+                    // lowered through the find_arr_method dispatch below, and
+                    // shadowing it would rewrite that program's codegen for no
+                    // behavioural gain. The gap #3457 needs closed is the
+                    // driver-dialect program that imports nothing.
+                    if ((fa.field == "index_of" || fa.field == "contains") && c.args.len() == 1
+                        && expr_is_strarr(fa.obj, s) && s.find_arr_method(fa.field).len() == 0) {
+                        var sxn: string = "$sioxs" + util.i32_to_string(s.locals.len());
+                        var psi: LowerState = s.add_local(sxn);
+                        var sxslot: i32 = psi.slot_of(sxn);
+                        psi = lower_expr(fa.obj, psi);
+                        if (!psi.ok) { return psi; }
+                        psi = psi.emit(ir.op_store_local(sxslot));
+                        var stn: string = "$siot" + util.i32_to_string(psi.locals.len());
+                        psi = psi.add_local(stn);
+                        var stslot: i32 = psi.slot_of(stn);
+                        psi = lower_expr(c.args[0], psi);
+                        if (!psi.ok) { return psi; }
+                        psi = psi.emit(ir.op_store_local(stslot));
+                        psi = psi.emit(ir.op_load_local(stslot));  // param1 = target
+                        psi = psi.emit(ir.op_load_local(sxslot));  // param0 = xs
+                        psi = psi.emit(ir.op_call_direct("__fern_arr_str_index_of", 2));
+                        if (fa.field == "contains") {
+                            psi = psi.emit(ir.op_const_i32(0));
+                            return psi.emit(ir.op_bin("ge_s", 0, false));
+                        }
+                        return psi;
+                    }
                     if ((fa.field == "index_of" || fa.field == "contains") && c.args.len() == 1
                         && expr_is_arr_src(fa.obj, s)
                         && !expr_is_strarr(fa.obj, s) && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)) {

@@ -253,6 +253,28 @@ function main(): i32 {
     return t + build().last() + build().first();    // +10
 }
 `, 70},
+	// xs.index_of(t) / xs.contains(t) on a string[], backed by the
+	// __fern_arr_str_index_of Fern helper (x86 + arm64) and its WAT twin
+	// $__fern_arr_str_index_of (wasm). Until this existed either one bailed the
+	// module to the AST emitter (#3457 slice 5).
+	//
+	// `find` takes both operands as PARAMS, so its body carries no string
+	// literal — the shape that proves the wasm gate pulls $__fern_streq in for
+	// the call itself rather than relying on some other string op being present.
+	// The `"c" + "c"` argument is the reason this cannot share the i32 helper's
+	// pointer compare: a freshly concatenated block must still match the
+	// element's .rodata slot by CONTENT.
+	{"arr-string-index-of", `
+function find(xs: string[], t: string): i32 { return xs.index_of(t); }
+function main(): i32 {
+    var xs: string[] = ["a", "bb", "cc"];
+    var i: i32 = xs.index_of("bb");        // 1
+    var j: i32 = xs.index_of("zz");        // -1
+    var k: i32 = find(xs, "c" + "c");      // 2
+    if (xs.contains("cc") && !xs.contains("qq")) { return i + (0 - j) + k + 10; }
+    return 1;
+}
+`, 14},
 	// The receiver guard on the case above: a STRUCT with user methods named
 	// `first` / `last` keeps its own return types. Classifying those calls as
 	// element reads (the bug an unguarded `field == "first"` test introduces)
