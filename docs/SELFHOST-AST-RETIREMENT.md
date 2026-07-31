@@ -2376,7 +2376,35 @@ tier → leak.
      wasmtime returns 1, which reads exactly like a miscompile (it cost a bisect
      here before the range constraint was remembered).
 
-     **THE asm_run REROUTE IS READY — measured 0 genuine declines (2026-07-31).**
+     **THE asm_run REROUTE IS NOT READY — two dependents CI found that the local
+     enumeration could not (2026-07-31). Read this before trying again.** The
+     reroute was written, measured clean over 2531 programs, pushed, and CI turned
+     up two failures the sweep was structurally incapable of seeing:
+
+     - **`TestSelfHostBootstrapsItself` feeds each compiler SOURCE FILE through
+       `asm_run` individually** — `util.fern` first. That is a main-less LIBRARY
+       module (15 functions, no `main`), which the AST emitter happily emits as
+       bare function bodies and the IR gate refuses outright. Note the gap-reason
+       table further up lists `no-main` as "Supported by the desugar; not exercised
+       today" — it IS exercised, by this test, and the desugar does not cover it.
+       Nothing embedded as a Go literal could have shown this: the input is a file
+       on disk.
+     - **`TestSelfHostSortByI32Key` is a documented AST-fallback dependent** — its
+       own comment says a "closure-typed param over a generic `T[]` currently
+       lowers via the AST emitter rather than the IR path on the self-host, which
+       is still correct end-to-end (the legitimate fallback)". It lives in
+       **`internal/e2e`**, not `internal/e2eselfhost`, and the sweep only scanned
+       the latter. CLAUDE.md says plainly that `internal/e2e` holds ~30 residual
+       `TestSelfHost*` legs; the sweep should have scanned both packages.
+
+     So the enumeration recipe below needs two amendments: scan **both** e2e
+     packages, and remember that a test whose input is a FILE (the bootstrap
+     self-compile, the modload drivers) is invisible to literal extraction
+     entirely. The 2531-program result stands for what it covers — it is what found
+     the four gaps that did land — but "0 genuine declines" was a statement about
+     one package's Go literals, not about the driver.
+
+     **The measurement that IS sound (2026-07-31).**
      The enumeration above, tightened once more to understand Go string
      CONCATENATION (`prelude + "function main…"`), covers **2531 asm_run-reachable
      programs** — `asm_run.fern` being the driver **365 test files** build, hence
@@ -2428,9 +2456,9 @@ tier → leak.
      When a decline looks like that, check the second mechanism before writing any
      lowering.
 
-     **What the reroute itself had to change, beyond the lowering.** Two contracts
-     encoded the silent fallback and had to be rewritten, and neither is a test
-     merely needing a new expected value:
+     **What a future reroute will have to change, beyond the lowering.** Two
+     contracts encode the silent fallback (both were written and then reverted with
+     the reroute, so the diffs are in #5965's history if useful):
 
      - `TestSelfHostStrictIRRefusesBail` asserted that an over-budget program
        "falls back silently" without the flag. There is no silent fallback any
