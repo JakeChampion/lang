@@ -275,6 +275,44 @@ function main(): i32 {
     return 1;
 }
 `, 14},
+	// A DIRECT, hand-written IIFE — `(function (): i32 { return 7; })()`.
+	// lower_iife handled only the if/match-EXPRESSION desugars (a StmtIf or
+	// StmtMatch body); a single-`return` body fell through its catch-all and
+	// bailed the module to the AST emitter (#3457 slice 5). Only the shapes the
+	// lift leaves inline ever reached it, which is why the gap was narrow: a
+	// bound `var a = (…)()` hoists to __lam_N and lowers, while `return (…)();`
+	// does not — hence `ret()` here, the originally-reported form.
+	//
+	// The result types are the point of the rest: string, struct and a nested
+	// IIFE all flow through the inlined value, and the loop body's capture (`i`)
+	// must read the enclosing local rather than a copy — inlining is only correct
+	// because the lambda is invoked immediately in this scope.
+	{"direct-iife", `
+struct P { n: i32 }
+function g(n: i32): i32 { return n * 2; }
+function ret(): i32 { return (function (): i32 { return 7; })(); }
+function main(): i32 {
+    var t: i32 = ret();                                              // 7
+    var n: i32 = 5;
+    t = t + (function (): i32 { return n + 2; })();                   // +7
+    t = t + (function (): string { return "ab" + "cd"; })().len();    // +4
+    t = t + (function (): P { return P { n: 6 }; })().n;              // +6
+    t = t + (function (): i32 { return (function (): i32 { return 3; })() + 4; })(); // +7
+    var i: i32 = 0;
+    while (i < 3) { t = t + (function (): i32 { return g(i); })(); i = i + 1; }      // +6
+    return t;
+}
+`, 37},
+	// The if/match-EXPRESSION desugars share the IIFE shape, so they are the
+	// regression side of the case above: a fix that mishandled a StmtIf /
+	// StmtMatch body would change these, not the direct form.
+	{"iife-if-match-expression", `
+function main(): i32 {
+    var a: i32 = if (3 > 2) { 5 } else { 1 };
+    var b: i32 = match (a) { 5 => { 20 }, _ => { 0 } };
+    return a + b;
+}
+`, 25},
 	// The receiver guard on the case above: a STRUCT with user methods named
 	// `first` / `last` keeps its own return types. Classifying those calls as
 	// element reads (the bug an unguarded `field == "first"` test introduces)
