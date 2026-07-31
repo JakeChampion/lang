@@ -1373,6 +1373,16 @@ pub function elem_type_tag(e: parser.Expr, s: LowerState): string {
 pub function (s: LowerState) mark_map_type(i: i32, t: string): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_map_type(s.locals[i], t)) };
 }
+// cell_elem_of_type_name returns T for a `Cell[T]` type spelling, "" otherwise —
+// the shared reader behind both the local-annotation marking and the param
+// column, so a Cell PARAM tracks exactly like a Cell local.
+pub function cell_elem_of_type_name(t: string): string {
+    if (t.len() > 6 && t[0:5] == "Cell[" && t[t.len() - 1 : t.len()] == "]") {
+        return t[5 : t.len() - 1] + "";
+    }
+    return "";
+}
+
 pub function (s: LowerState) mark_cell(i: i32, t: string): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_cell(s.locals[i], t)) };
 }
@@ -3145,6 +3155,21 @@ function ascii_byte_receiver(e: parser.Expr, s: LowerState): boolean {
     if (expr_subword_kind(e, s) == "u8") { return true; }
     match (e) {
         parser.ExprIndex(bix) => { if (expr_is_str(bix.array, s)) { return true; } },
+        // A CHAINED case conversion (`b.to_ascii_lower().to_ascii_string()`):
+        // to_ascii_lower / _upper return a byte, so their result is a byte
+        // receiver too. expr_subword_kind cannot see this — it reads slots and
+        // casts, not call results — and without it the chain declines while each
+        // half lowers on its own.
+        parser.ExprCall(bc) => {
+            match (bc.callee) {
+                parser.ExprFieldAccess(bcf) => {
+                    if ((bcf.field == "to_ascii_lower" || bcf.field == "to_ascii_upper") && bc.args.len() == 0) {
+                        return ascii_byte_receiver(bcf.obj, s);
+                    }
+                },
+                _ => {}
+            }
+        },
         _ => {}
     }
     return false;
@@ -3729,6 +3754,10 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     if (arr_firstlast_call(cfa.field, cfa.obj, c.args.len(), s)) {
                         return expr_is_str(arr_elem_index_expr(cfa.obj), s);
                     }
+                    // `b.to_ascii_string()` on a byte receiver yields a fresh
+                    // 1-char string (it desugars to chr(b)), so the result feeds
+                    // `[0]` / `.len()` / concat as a string.
+                    if (cfa.field == "to_ascii_string" && c.args.len() == 0 && ascii_byte_receiver(cfa.obj, s)) { return true; }
                     if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) { return true; }
                     // `s.to_upper()` / `s.to_lower()` on a string receiver yield a
                     // fresh string (op_str_to_upper / _to_lower), so the result
@@ -9955,6 +9984,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (ascii_byte_method(fa.field) && c.args.len() == 0
                         && ascii_byte_receiver(fa.obj, s)) {
                         return lower_ascii_byte_method(fa.field, fa.obj, s);
+                    }
+                    // b.to_ascii_string() — a fresh 1-char string from the byte.
+                    // That is exactly `chr(b)`, which already lowers to the
+                    // __fern_chr runtime helper on every backend, so it desugars
+                    // rather than hand-emitting the two allocations the AST
+                    // emitter open-codes (asm.fern:1804). Re-lowering also picks up
+                    // chr's heap need and its string result typing for free.
+                    if (fa.field == "to_ascii_string" && c.args.len() == 0
+                        && ascii_byte_receiver(fa.obj, s)) {
+                        var tas: parser.Expr = parser.ExprCall {
+                            callee: parser.ExprIdent { name: "chr", line: fa.line, col: fa.col },
+                            args: [fa.obj], line: c.line, col: c.col, type_argc: 0, ty: "",
+                        };
+                        return lower_expr(tas, s);
                     }
                     // n.pow(k) — helper-backed like xs.sum() (#5664), but with a
                     // scalar receiver and ONE argument, so it sits outside the zero-arg
@@ -31239,6 +31282,12 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var clo_opt_rets: string[] = [];
     var tupty: string[] = [];
     var mapty: string[] = [];
+    // A Cell[T] PARAM's element type (#3457 slice 5): the local-annotation path
+    // marks a `var c: Cell[i32]` slot is_cell, but the param columns hard-coded
+    // is_cell false, so `c.get()` on a PARAMETER keyed "i32.get" — an unknown
+    // symbol — and bailed the whole module to the AST emitter. The map column
+    // right above is the same shape, added for the same reason (#map-param).
+    var cellty: string[] = [];
     var isi64: boolean[] = [];
     var isf64: boolean[] = [];
     var isf32: boolean[] = [];
@@ -31303,6 +31352,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         // Map-track a Map receiver (the full Map[K, V] type) so map-op dispatch
         // on `self` resolves the key/value kinds — exactly like a Map PARAM below.
         if (r_is_map) { mapty = mapty.append(fn.receiver_type); } else { mapty = mapty.append(""); }
+        cellty = cellty.append(cell_elem_of_type_name(fn.receiver_type));
         isi64 = isi64.append(rbase == "i64");
         isf64 = isf64.append(is_f64_scalar_type_name(rbase));
         // `float` excluded — the f64 alias, not f32 (#5882); isf64 covers it.
@@ -31391,6 +31441,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
         // on the parameter dispatch as map ops (the local-var annotation path
         // already does this; params lacked it). #map-param.
         if (is_map_type_name(ptn)) { mapty = mapty.append(ptn); } else { mapty = mapty.append(""); }
+        cellty = cellty.append(cell_elem_of_type_name(ptn));
         // On wasm a bare-typevar (erased-generic) param of a PASS-THROUGH fn
         // (bare-typevar RETURN, e.g. `id[T](x:T):T` / `fst[A,B](a:A,b:B):A`) is
         // typed i64 — the uniform 8-byte slot the register backends give every
@@ -31598,7 +31649,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: false, cell_elem: "", str_own: 1 });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1 });
         lzi = lzi + 1;
     }
     // #4354: approve closure locals for capture RC. The approvals and the

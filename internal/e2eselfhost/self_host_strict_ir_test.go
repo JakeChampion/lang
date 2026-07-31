@@ -311,6 +311,41 @@ function main(): i32 {
     return t;
 }
 `, 94},
+	// b.to_ascii_string() — a fresh 1-char string from a byte. It desugars to
+	// chr(b), which already lowers to the __fern_chr runtime helper, rather than
+	// hand-emitting the two allocations the AST emitter open-codes. The CHAINED
+	// receiver is the case that needed more than the desugar: to_ascii_lower /
+	// _upper return a byte, and expr_subword_kind cannot see a call RESULT, so
+	// `b.to_ascii_lower().to_ascii_string()` declined while each half lowered.
+	{"ascii-to-string", `
+function main(): i32 {
+    var c: u8 = 65;
+    var s: string = c.to_ascii_string();
+    var t: i32 = 0;
+    if (s[0] as i32 == 65) { t = t + 1; }
+    if (s.len() == 1) { t = t + 2; }
+    if ((66 as u8).to_ascii_string()[0] as i32 == 66) { t = t + 4; }
+    if (c.to_ascii_lower().to_ascii_string()[0] as i32 == 97) { t = t + 8; }
+    return t;
+}
+`, 15},
+	// A Cell[T] PARAMETER. The local-annotation path marks a `var c: Cell[i32]`
+	// slot is_cell, but the param columns hard-coded it false, so `c.get()` on a
+	// parameter keyed "i32.get" — an unknown symbol — and bailed the module.
+	// Cell[string] is included because the element kind drives the read: an
+	// untracked element loads as an i32 and `.len()` on it is meaningless.
+	{"cell-param", `
+function bump(c: Cell[i32]): void { c.set(c.get() + 1); }
+function slen(c: Cell[string]): i32 { return c.get().len(); }
+function main(): i32 {
+    var c: Cell[i32] = cell_new(10);
+    bump(c);
+    bump(c);
+    var s: Cell[string] = cell_new("abc");
+    s.set("de");
+    return c.get() + slen(s) + s.get().len();
+}
+`, 16},
 	// xs.reverse() / xs.concat(ys) on arrays, lowered to the same
 	// __fern_arr_reverse / __fern_arr_concat runtime helpers the AST emitters
 	// call (op_arr_reverse / op_arr_concat, modelled on op_arr_slice). Until this
