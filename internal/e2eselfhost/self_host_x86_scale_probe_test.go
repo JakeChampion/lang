@@ -70,11 +70,19 @@ func TestSelfHostX86ScaleProbe(t *testing.T) {
 		return b.String()
 	}
 
+	// nfn stays UNDER the 512-function merged-bundle budget (#3425). asm_run.fern
+	// routes IR-or-error now (#3457 slice 5), so an over-budget program is a hard
+	// error there rather than a silent drop to the AST emitter — and the budget is
+	// a property of the single-module merged path, not of the x86 encoder this test
+	// probes. 500 exercises the same scale (a ~130 KB asm text) without changing
+	// what is under test; a genuinely over-budget program is compiled by the
+	// per-module path, and the budget refusal itself is pinned by
+	// TestSelfHostStrictIRRefusesBail.
 	cases := []struct{ nfn, want int }{
 		{40, 40},
 		{150, 150},
 		{400, 200},
-		{600, 250},
+		{500, 250},
 	}
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("nfn%d_want%d", tc.nfn, tc.want), func(t *testing.T) {
