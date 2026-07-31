@@ -346,6 +346,40 @@ function main(): i32 {
     return c.get() + slen(s) + s.get().len();
 }
 `, 16},
+	// A struct field of type `Option[<enum>]`. The Option box holds one
+	// enum-variant pointer, leak-only exactly like an `Option[Struct]` payload,
+	// and decl_is_leaksafe_d already admits a bare `c: Color` field and a `C[]`
+	// array-of-enum field on that reasoning — opt_payload_ok_dv was simply missing
+	// the twin arm, so an `Option[Color]` FIELD bailed the module while both an
+	// `Option[i32]` field and an `Option[Color]` LOCAL lowered.
+	{"opt-enum-struct-field", `
+enum Color { Red, Blue }
+struct Box { c: Option[Color] }
+function main(): i32 {
+    var b: Box = Box { c: Some(Blue) };
+    var t: i32 = 0;
+    match (b.c) { Some(x) => { match (x) { Red => { t = 1; }, Blue => { t = 2; } } }, None => { t = 9; } }
+    var e: Box = Box { c: None };
+    match (e.c) { Some(x) => { t = t + 40; }, None => { t = t + 5; } }
+    return t;
+}
+`, 7},
+	// A nested RESULT payload bound in a match-EXPRESSION (`Some(r)` over an
+	// Option[Result[…]]). iife_payload_bindable admitted a nested `Option[` payload
+	// into an i32 temp from an ident scrutinee and omitted `Result[` from the same
+	// spelling test, so this bailed while the identical STATEMENT-form match
+	// lowered. The argument for admitting it is the Option half's: arms share a
+	// result type, so an i32 temp means the bound box is only ever consumed to
+	// compute an i32, never stored as the result.
+	{"iife-match-nested-result-payload", `
+function g(o: Option[Result[i32, i32]]): i32 {
+    return match (o) { Some(r) => 7, None => 0 - 1 };
+}
+function h(o: Option[Result[i32, i32]]): i32 {
+    match (o) { Some(r) => { match (r) { Ok(n) => { return n + 100; }, Err(e) => { return e; } } }, None => { return 0; } }
+}
+function main(): i32 { return g(Some(Ok(5))) + h(Some(Ok(5))); }
+`, 112},
 	// xs.reverse() / xs.concat(ys) on arrays, lowered to the same
 	// __fern_arr_reverse / __fern_arr_concat runtime helpers the AST emitters
 	// call (op_arr_reverse / op_arr_concat, modelled on op_arr_slice). Until this

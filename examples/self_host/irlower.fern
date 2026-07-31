@@ -2014,6 +2014,16 @@ function opt_payload_ok_dv(structs: parser.StructDecl[], p: string, depth: i32, 
     // predicate. (visiting-threaded for recursion safety.)
     if (is_leaksafe_tuple_field_dv(structs, p, depth, visiting)) { return true; }
     if (p.len() >= 8 && (p[0:7] == "Option[" || p[0:7] == "Result[") && is_leaksafe_opt_field_dv(structs, p, depth, visiting)) { return true; }
+    // A nominal-ENUM payload (`Option[Color]` as a struct field): the Option box
+    // holds one enum-variant pointer, leak-only exactly like the struct payload
+    // above — the exit sweep never frees an enum box. decl_is_leaksafe_d already
+    // admits a bare `c: Color` FIELD and a `C[]` array-of-enum field on that same
+    // reasoning; this is the Option-payload twin, and its absence was why an
+    // `Option[Color]` field bailed the module while both an `Option[i32]` field
+    // and an `Option[Color]` LOCAL lowered. is_enum_like_name can over-match a
+    // bare nominal, and as at those sites the only consequence is an AST fallback
+    // at the construction / match site, never a miscompile.
+    if (is_enum_like_name(p, structs)) { return true; }
     return false;
 }
 
@@ -11927,7 +11937,18 @@ function iife_payload_bindable(pv: parser.PatVariant, arm: parser.MatchArm, opt_
         // into an i32-result temp: the underlying StmtMatch path marks the slot
         // with the dyn type so `e.method()` dispatches via op_dyn_dispatch.
         if (temp_is_i32 && pt.len() > 4 && pt[0:4] == "dyn ") { return true; }
-        if (temp_is_i32 && scrut_is_ident && pt.len() >= 8 && pt[0:7] == "Option[") { return true; }
+        // A nested Option / RESULT payload (`Some(b)` where b: Option[T] or
+        // Result[T, E]) into an i32 temp from an IDENT scrutinee. The argument is
+        // the one the Option half already rested on: arms share a result type in
+        // valid Fern, so an i32 temp means every arm computes an i32 and the bound
+        // box is only ever CONSUMED to do that — typically by a nested
+        // `match (b)`, or by a nested PATTERN (`Some(Ok(n))`), which the underlying
+        // StmtMatch path lowers. It is never stored into the i32 temp as the
+        // result; an arm returning the box whole would not have an i32 temp.
+        // Result was simply missing from the spelling test, so `Some(r)` /
+        // `Some(Ok(n))` over an Option[Result[…]] bailed the module while the
+        // identical STATEMENT-form match lowered.
+        if (temp_is_i32 && scrut_is_ident && pt.len() >= 8 && (pt[0:7] == "Option[" || pt[0:7] == "Result[")) { return true; }
         // A STRING / STRUCT / TUPLE / ENUM Some/Ok/Err payload BORROW-read into the
         // result (`Some(s) => s.len()`, `Some(p) => p.x`, `Err(s) => s.len()`):
         // admit via the SAME leak-safe borrow machinery the user-enum branch below
