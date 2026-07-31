@@ -66,9 +66,17 @@ func TestSelfHostIREligibilityProbe(t *testing.T) {
 			wantLines:   []string{"main: BAIL call"},
 		},
 		{
-			name:        "no-main-is-ast",
+			// A MAIN-LESS module now routes IR (#3457 slice 5). It used to be a
+			// blanket refusal — the whole-program `_start` emitted `call __fn_main`
+			// unconditionally, so the gate carried a require_main flag — and this
+			// case pinned that refusal. `_start` exits 0 when there is no main, the
+			// flag is deleted, and the shape is covered end-to-end (link + run) by
+			// TestSelfHostNoMainModuleIRX86_64. Note `helper: ir` was ALREADY the
+			// expectation here: every function lowered even then, which is what made
+			// the old verdict a module-level gate rather than a lowering gap.
+			name:        "no-main-is-ir",
 			src:         "function helper(): i32 { return 1; }",
-			wantVerdict: "module: AST",
+			wantVerdict: "module: IR",
 			wantLines:   []string{"helper: ir"},
 		},
 		{
