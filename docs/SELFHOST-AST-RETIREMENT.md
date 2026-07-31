@@ -754,7 +754,7 @@ representative subset splits it three ways:
   Net: the flagship edge-handler program (`std/http` + `std/tcp` + a `handle` function, ~925 merged functions) is compiled by the self-hosted compiler and **serves real HTTP** (`TestSelfHostHttpHandlerServesX86_64`).
 
   Also note the entry unit of an arbitrary stdlib-using program is often not per-module-eligible, in which case the concat correctly declines; check with `-per-module-emit <last-unit-index>` before blaming the router. |
-| `no-main` | 0 | Functions but no `main`. Supported by the desugar; not exercised today. | n/a |
+| `no-main` | 0 → **wrong on both counts** | Functions but no `main`. **It IS exercised** — `TestSelfHostBootstrapsItself` pipes each compiler SOURCE FILE through `asm_run`, and 7 of its 9 are main-less library modules (util / astwalk / asmcore / ir / irlower / asm_ir, and only lexer / parser / asm define `main`). And it is **not** supported: the whole-program `_start` unconditionally emits `call __fn_main`, so `emit_module_ir_gated` refuses (`require_main`) rather than mirroring `asm.fern`'s no-main branch (top-level stmts + `exit(0)`). Measured 2026-07-31 by rerouting `asm_run` and watching that test fail on `util.fern`. | **OPEN** |
 
 ### `ineligible-fn` — the per-function declines are now CLOSED (measured 2026-07-30)
 
@@ -2376,6 +2376,36 @@ tier → leak.
      wasmtime returns 1, which reads exactly like a miscompile (it cost a bisect
      here before the range constraint was remembered).
 
+     **What actually blocks the asm_run reroute is the BOOTSTRAP TEST, and it is
+     not a lowering gap (measured 2026-07-31).** `TestSelfHostBootstrapsItself`
+     pipes each compiler source through `asm_run` and asserts the emitted asm
+     assembles. Function counts, measured:
+
+     | source | funcs | `main`? |
+     |---|---:|---|
+     | util | 15 | no |
+     | astwalk | 4 | no |
+     | asmcore | 239 | no |
+     | lexer | 46 | yes |
+     | parser | 408 | yes |
+     | ir | 210 | no |
+     | **irlower** | **964** | no |
+     | asm_ir | 84 | no |
+     | asm | 18 | yes |
+
+     So that one test needs BOTH things the IR gate refuses: **main-less modules**
+     (7 of 9) and the **512-function budget** (irlower at 964, asmcore/parser
+     comfortably under it but irlower nearly double). The budget cannot be lifted —
+     this file records the lift and the streaming variant as OOMing the self-host
+     runtime at stage 2, and says not to re-probe them. Therefore `asm_run` cannot
+     be rerouted until this test is repointed at the per-module path, which is
+     slice 2/3 work, NOT another per-construct lowering PR.
+
+     That is a genuine correction to the plan above, which expected the remaining
+     x86 blockers to be lowering gaps plus CI affordability. The lowering gaps are
+     essentially gone; what is left on this driver is one test that compiles the
+     whole compiler through a single-module path.
+
      **THE asm_run REROUTE IS NOT READY — two dependents CI found that the local
      enumeration could not (2026-07-31). Read this before trying again.** The
      reroute was written, measured clean over 2531 programs, pushed, and CI turned
@@ -2396,6 +2426,45 @@ tier → leak.
        **`internal/e2e`**, not `internal/e2eselfhost`, and the sweep only scanned
        the latter. CLAUDE.md says plainly that `internal/e2e` holds ~30 residual
        `TestSelfHost*` legs; the sweep should have scanned both packages.
+
+       **Narrowed to one line, and it is NOT the closure param (2026-07-31).** The
+       comment misattributes it. `-ir-probe` reports the generic function itself
+       lowering (`sort_by_i32_key: ir`) and the lifted closure lowering
+       (`main$wrap0: ir`); it is `main` that bails. Bisected:
+
+       | shape | verdict |
+       |---|---|
+       | `pick[T](arr: T[], key: (T) => i32): i32` — closure param, scalar return | **ir** |
+       | `var s: P[] = idf(xs)` — generic `T[]` return, ANNOTATED | **ir** |
+       | `var s = idf(xs)` — the same, UNANNOTATED | **ast** |
+
+       So the gap is an unannotated binding of a generic `T[]`-returning call, and
+       it is the **third instance of the same second-mechanism pattern**:
+       `array_ret_fns_of` DOES register the function (`is_array_type` only tests the
+       `[]` suffix, so `T[]` counts, and the slot is is_arr), but
+       `struct_ret_fns_of` records no ELEMENT type, because stripping `[]` from
+       `T[]` leaves the typevar `T` rather than a declared struct. So `s[0].k` has
+       no struct type and the caller bails.
+
+       **CLOSED** by the `name|$arg<i>` argref convention `strarr_ret_argref` /
+       `argref_in` already use for erased string / array returns: record the element
+       type positionally and resolve it against the ACTUAL argument at the call
+       site (`expr_struct_type` asks `arr_elem_index_expr(arg)`, so struct and enum
+       elements resolve exactly as a concrete `P[]` return does). One wrinkle worth
+       knowing: `struct_ret_fns` entries are `"name|StructType"`, so `|` is this
+       registry's field SEPARATOR, not the invisibility marker it is in the
+       string-side registries — `struct_ret_type` needs an explicit skip or a call
+       takes `"$arg0"` as its struct type.
+
+       **A trap this hit while being oracle-checked, worth recording.** The first
+       test program read the SOURCE array after passing it to the generic sorter and
+       disagreed with the interpreter (16 vs 18). That is not a lowering bug: `.with`
+       is an in-place store on the register / wasm backends (the AST emitter's own
+       comment says so — "the leak-everything heap has no aliasing") and a COPY in
+       the interpreter, so any program that mutates an array through a callee and
+       then reads the caller's binding measures that divergence instead of the thing
+       under test. Confirmed by isolating it: the same program without `.with` agrees
+       (3 / 3). Keep source and result arrays separate when oracle-checking generics.
 
      So the enumeration recipe below needs two amendments: scan **both** e2e
      packages, and remember that a test whose input is a FILE (the bootstrap

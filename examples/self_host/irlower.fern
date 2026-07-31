@@ -2854,6 +2854,17 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                     // builtin: `var r = subprocess(..)` marks r ProcessResult so
                     // `r.stdout` / `r.exit_code` resolve.
                     if (id.name == "subprocess" && c.args.len() == 3) { return "ProcessResult"; }
+                    // An erased-generic `T[]` return (`idf[T](arr: T[]): T[]`):
+                    // the result's ELEMENT type is the ELEMENT type of argument i.
+                    // arr_elem_index_expr asks that question the same way the
+                    // ExprIndex arm above answers it, so a struct / enum / dyn
+                    // element all resolve identically to a concrete `P[]` return.
+                    // Without it an UNANNOTATED `var s = idf(xs)` lost `s[i]`'s
+                    // type and bailed the caller to the AST emitter.
+                    var gsa: i32 = struct_ret_argref(s, id.name);
+                    if (gsa >= 0 && gsa < c.args.len()) {
+                        return expr_struct_type(arr_elem_index_expr(c.args[gsa]), s);
+                    }
                     return s.struct_ret_type(id.name);
                 },
                 parser.ExprFieldAccess(fa) => {
@@ -32641,6 +32652,14 @@ pub function strarr_ret_argref(s: LowerState, name: string): i32 {
     return argref_in(s.strarr_ret_fns, name);
 }
 
+// struct_ret_argref is the struct-element twin: for an erased-generic `T[]`
+// return it gives the ARGUMENT index whose element type the result's element type
+// equals, or -1. Recorded by struct_ret_fns_of; read by expr_struct_type's call
+// arm so an unannotated `var s = idf(xs)` recovers `s[i]`'s struct type.
+pub function struct_ret_argref(s: LowerState, name: string): i32 {
+    return argref_in(s.struct_ret_fns, name);
+}
+
 // argref_in scans a registry for a "name|$arg<i>" positional-reference entry
 // and returns i, or -1. The '|' keeps these entries invisible to the
 // registries' exact-name membership scans.
@@ -34835,6 +34854,27 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
             // admits any `[]` return), but without this tag an unannotated
             // `var ys = mk()` lost the trait and `ys[i].m()` mis-dispatched.
             else if (et.len() > 4 && et[0:4] == "dyn ") { elig = true; elem_t = et + ""; }
+            // An ERASED-generic `T[]` return (`idf[T](arr: T[]): T[]`, `sort_by_
+            // i32_key[T](arr: T[], key: (T) => i32): T[]`): the element is the bare
+            // typevar, so there is no declared struct to record and an UNANNOTATED
+            // `var s = f(xs)` lost `s[i]`'s type — which bailed the caller to the
+            // AST emitter while the generic fn itself lowered fine. Record a
+            // positional "name|$arg<i>" entry instead, meaning "the element type is
+            // whatever argument i's element type is", and let expr_struct_type
+            // resolve it against the ACTUAL argument at the call site. Same
+            // convention (and same argref_in reader) as the erased string / array
+            // returns above; the '|' keeps the entry invisible to the exact-name
+            // membership scans. Free functions only — a receiver method is never an
+            // erased generic — matching the string-side producer.
+            else if (funcs[k].receiver_type.len() == 0 && irl_looks_type_var(et + "")) {
+                var api: i32 = 0;
+                while (api < funcs[k].params.len()) {
+                    if (funcs[k].params[api].type_name == rt) {
+                        out = out.append(funcs[k].name + "|$arg" + util.i32_to_string(api));
+                        api = funcs[k].params.len();
+                    } else { api = api + 1; }
+                }
+            }
         }
         // A SCALAR `dyn Trait` return: record the coarse "dyn <Trait>" type so a
         // call site recovers the result as a `dyn` value — expr_struct_type's
@@ -38618,7 +38658,17 @@ pub function (s: LowerState) struct_ret_type(name: string): string {
         var e: string = s.struct_ret_fns[i];
         var bar: i32 = 0;
         while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0:bar] == name) { return e[bar + 1 : e.len()] + ""; }
+        if (bar < e.len() && e[0:bar] == name) {
+            var v: str = e[bar + 1 : e.len()];
+            // Skip a POSITIONAL "$arg<i>" entry (the erased-generic `T[]` return,
+            // read by struct_ret_argref): it is an argument INDEX, not a struct
+            // name. Unlike the string-side registries — where the '|' makes an
+            // argref invisible to a bare exact-name membership scan — '|' is this
+            // registry's field SEPARATOR, so without this guard `var s = idf(xs)`
+            // would take "$arg0" as its struct type.
+            if (v.len() > 4 && v[0:4] == "$arg") { return ""; }
+            return v + "";
+        }
         i = i + 1;
     }
     return "";
