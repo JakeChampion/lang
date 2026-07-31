@@ -3098,6 +3098,104 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
 // (max); otherwise the mask is 0 and the "keep" operand passes through. Uses a
 // signed compare (not `(a-b) >> 31`) so it is overflow-safe for i32 MIN/MAX,
 // matching the AST emitter's cmov.
+// emit_ascii_range emits `(b - lo) <=u span` for the byte in `bslot` — the ONE
+// primitive every ASCII classifier is built from, and exactly what the AST
+// emitter open-codes as `subq lo; cmpq span; setbe` (asm.fern:1691 onward). The
+// compare is UNSIGNED, which is what makes a single compare enough: a byte below
+// `lo` wraps to a huge value and fails the upper bound in the same instruction.
+function emit_ascii_range(p: LowerState, bslot: i32, lo: i32, span: i32): LowerState {
+    p = p.emit(ir.op_load_local(bslot));
+    p = p.emit(ir.op_const_i32(lo));
+    p = p.emit(ir.op_bin("sub", 0, false));
+    p = p.emit(ir.op_const_i32(span));
+    return p.emit(ir.op_bin("le_u", 0, false));
+}
+
+// emit_ascii_case emits the case conversion for the byte in `bslot`: add 32 when
+// it is uppercase (to_ascii_lower), subtract 32 when it is lowercase
+// (to_ascii_upper). Branchless via the mask idiom emit_i32_minmax_slots uses —
+// `0 - in_range` is all-ones or zero — rather than the AST emitter's `cmovbe`,
+// which has no IR equivalent. `delta & mask` is 32 or 0, so one add/sub covers
+// both the convert and the leave-alone case with no branch to lower.
+function emit_ascii_case(p: LowerState, bslot: i32, to_lower: boolean): LowerState {
+    p = p.emit(ir.op_load_local(bslot));
+    p = p.emit(ir.op_const_i32(32));
+    p = p.emit(ir.op_const_i32(0));
+    if (to_lower) { p = emit_ascii_range(p, bslot, 65, 25); }
+    else { p = emit_ascii_range(p, bslot, 97, 25); }
+    p = p.emit(ir.op_bin("sub", 0, false));     // 0 - in_range = mask
+    p = p.emit(ir.op_bin("and", 0, false));     // 32 & mask
+    if (to_lower) { return p.emit(ir.op_bin("add", 0, false)); }
+    return p.emit(ir.op_bin("sub", 0, false));
+}
+
+// ascii_byte_receiver reports whether `e` is a BYTE receiver for the ASCII
+// family: a u8-tracked slot or an `as u8` cast (expr_subword_kind sees both), or
+// a string INDEX, which yields a byte since #5629.
+//
+// Deliberately NOT expr_recv_prim_type, even though that is what every other
+// scalar-method dispatch here uses. Its first line bails on
+// `expr_struct_type != ""`, and a `var c: u8 = 65` slot records "u8" as its
+// declared type there — so expr_struct_type answers "u8", the receiver reads as a
+// STRUCT, and the commonest byte receiver of all never reaches the dispatch. That
+// is why the AST emitter's own gate (asm.fern:1520, on the same
+// expr_recv_prim_type sibling) admits `ty_is_i32` alongside `ty_is_u8`: it is
+// working around the same thing from the other side.
+function ascii_byte_receiver(e: parser.Expr, s: LowerState): boolean {
+    if (expr_subword_kind(e, s) == "u8") { return true; }
+    match (e) {
+        parser.ExprIndex(bix) => { if (expr_is_str(bix.array, s)) { return true; } },
+        _ => {}
+    }
+    return false;
+}
+
+// ascii_byte_method reports whether `field` is one of the builtin ASCII
+// byte methods lowered by lower_ascii_byte_method below.
+function ascii_byte_method(field: string): boolean {
+    return field == "is_ascii_digit" || field == "is_ascii_lower" || field == "is_ascii_upper"
+        || field == "is_ascii_alpha" || field == "is_ascii_letter"
+        || field == "is_ascii_alnum" || field == "is_ascii_hex_digit"
+        || field == "to_ascii_lower" || field == "to_ascii_upper";
+}
+
+// lower_ascii_byte_method lowers the ASCII classifier / case family on a byte
+// receiver (#3457 slice 5). Until this existed every one of them bailed the
+// module to the AST emitter, where they live as hand-written `setbe` /
+// `cmovbe` sequences — none of which the IR path could express, though the
+// pieces (an unsigned compare, a mask) were all already there.
+//
+// The receiver goes through a temp local because every method reads it at least
+// twice (the alnum / hex forms three times) — the #5661 abs/sign pattern — so a
+// side-effecting receiver like `next_byte().is_ascii_digit()` is evaluated once.
+function lower_ascii_byte_method(field: string, recv: parser.Expr, s: LowerState): LowerState {
+    var bname: string = "$asc" + util.i32_to_string(s.locals.len());
+    var p: LowerState = s.add_local(bname);
+    var bslot: i32 = p.slot_of(bname);
+    p = lower_expr(recv, p);
+    if (!p.ok) { return p; }
+    p = p.emit(ir.op_store_local(bslot));
+    if (field == "is_ascii_digit") { return emit_ascii_range(p, bslot, 48, 9); }
+    if (field == "is_ascii_lower") { return emit_ascii_range(p, bslot, 97, 25); }
+    if (field == "is_ascii_upper") { return emit_ascii_range(p, bslot, 65, 25); }
+    if (field == "to_ascii_lower") { return emit_ascii_case(p, bslot, true); }
+    if (field == "to_ascii_upper") { return emit_ascii_case(p, bslot, false); }
+    if (field == "is_ascii_alpha" || field == "is_ascii_letter") {
+        p = emit_ascii_range(p, bslot, 65, 25);
+        p = emit_ascii_range(p, bslot, 97, 25);
+        return p.emit(ir.op_bin("or", 0, false));
+    }
+    // alnum and hex_digit are three ranges OR'd; they differ only in the two
+    // letter spans (A-Z / a-z vs A-F / a-f).
+    var lspan: i32 = 25;
+    if (field == "is_ascii_hex_digit") { lspan = 5; }
+    p = emit_ascii_range(p, bslot, 48, 9);
+    p = emit_ascii_range(p, bslot, 65, lspan);
+    p = p.emit(ir.op_bin("or", 0, false));
+    p = emit_ascii_range(p, bslot, 97, lspan);
+    return p.emit(ir.op_bin("or", 0, false));
+}
+
 function emit_i32_minmax_slots(p: LowerState, aslot: i32, bslot: i32, is_max: boolean): LowerState {
     if (is_max) { p = p.emit(ir.op_load_local(aslot)); }
     else { p = p.emit(ir.op_load_local(bslot)); }
@@ -9845,6 +9943,19 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // receiver (`next().is_odd()`) still evaluates once. That is also why
                     // `abs` / `sign` are NOT here: both need the value twice, so they want
                     // a temp slot rather than a second lower_expr of the same subtree.
+                    //
+                    // The ASCII classifier / case family on a BYTE receiver
+                    // (#3457 slice 5). The AST emitter admits both scalar tags at
+                    // its own gate (asm.fern:1520) because the checker has already
+                    // rejected the wrong pairing, so this mirrors that rather than
+                    // re-splitting them: `s[i]` is a u8 now (#5629), and every
+                    // classifier call site reads one. Each of these needs the
+                    // receiver at least twice, so lower_ascii_byte_method binds it
+                    // to a temp local (the abs/sign pattern).
+                    if (ascii_byte_method(fa.field) && c.args.len() == 0
+                        && ascii_byte_receiver(fa.obj, s)) {
+                        return lower_ascii_byte_method(fa.field, fa.obj, s);
+                    }
                     // n.pow(k) — helper-backed like xs.sum() (#5664), but with a
                     // scalar receiver and ONE argument, so it sits outside the zero-arg
                     // block below. Same five-part requirement: lowering + is_fern_helper
