@@ -209,6 +209,19 @@ function outer(n: i32): Result[i32, i32] {
 }
 function main(): i32 { match (outer(9)) { Ok(v) => { return v; }, Err(_) => { return 88; } } }
 `, 18},
+	// Branchless i32 min/max/clamp lowered directly on the IR path
+	// (emit_i32_minmax_slots) — no runtime helper, no need/globls plumbing.
+	// Until this existed a scalar `n.min(m)` / `n.max(m)` / `n.clamp(lo, hi)`
+	// bailed the module to the AST emitter (#3457 slice 5). Asymmetric operands
+	// catch an operand-order swap; the two clamp calls exercise the hi and lo
+	// saturating edges.
+	{"i32-min-max-clamp", `
+function main(): i32 {
+    var a: i32 = 8;
+    var b: i32 = 3;
+    return a.min(b) + a.max(b) + (99).clamp(0, 10) + (0 - 5).clamp(0, 10);
+}
+`, 21},
 }
 
 // runDriver runs a self-host driver over `src`, optionally with FERN_STRICT_IR
