@@ -1448,7 +1448,7 @@ The three legacy emitters are still reached through these entry points
 
 | Site | Path | Reachable today because… |
 |---|---|---|
-| `asm_run.fern:23` | merged AST (x86) | `TestSelfHostBootstrapsItself` / `TestSelfHostAsmRunX86_64` pipe programs through it |
+| `asm_run.fern:23` | merged AST (x86) | `TestSelfHostAsmRunX86_64` and ~390 other test files pipe programs through it (`TestSelfHostBootstrapsItself` did too, until #5968 retired it — it fed modules with UNRESOLVED imports, which no IR lowering can accept) |
 | `asm_load_run.fern:376` (arm64 373) | merged AST | `TestSelfHostStage2FixedPoint{,Arm64}` fixpoint on this driver |
 | `asm_modload_run.fern:335` (arm64 332) | merged AST default | ~~`TestSelfHostModloadFixpointX86_64`~~ **retired from routine CI (env-gated `RUN_MERGED_FIXPOINT`, #3457 slice 2)** — the x86 whole-compiler self-compile gate now runs `TestSelfHostModloadPerModuleWholeCompilerX86_64` (per-module IR). **CORRECTED (2026-07-29):** this row used to claim "no routine test (x86 OR arm64) exercises the merged default". That was wrong — `TestSelfHostModloadPerModuleWholeCompilerX86_64`'s step 7 drives the per-module-BUILT compiler over the whole compiler source with no flags, which IS the merged default. Retiring the *fixpoints* from routine CI did not retire the merged path from routine CI. Since #3457 slice 3 the driver REFUSES a merged bundle this size unless `-merged` is passed, so the remaining AST consumers are greppable: that smoke run, plus the two env-gated fixpoints (`TestSelfHostFixpointArm64` / `TestSelfHostModloadFixpointX86_64`). The arm64 routine gate is `TestSelfHostModloadPerModuleWholeCompilerArm64` |
 | `asm_ir_run.fern:158` (arm64 135/144) | AST *fallback* of the IR differential | reached when `emit_module_ir_gated` returns "" (an ineligible program) |
@@ -2396,6 +2396,50 @@ tier → leak.
      So that one test needed BOTH things the IR gate refused: **main-less modules**
      (7 of 9) and the **512-function budget** (irlower at 964, asmcore/parser
      comfortably under it but irlower nearly double).
+
+     **And the budget is not even the whole story — the deeper reason is
+     UNRESOLVED IMPORTS (measured 2026-07-31).** This test pipes each source in
+     with no knowledge of its siblings, so every cross-module call is genuinely
+     unresolvable. Routing correlates exactly with the import count:
+
+     | source | imports | routes |
+     |---|---:|---|
+     | util | 0 | **ir** |
+     | lexer | 0 | **ir** |
+     | astwalk | 2 | ast |
+     | ir | 1 | ast |
+     | asmcore / parser / asm_ir / asm / irlower | 2-6 | ast |
+
+     Minimal repro: `pub function f(n: i32): i32 { return foo.helper(n); }` refuses
+     with `function value foo not defined`, while an unresolved qualified TYPE alone
+     (`f(e: foo.Bar)`) lowers fine. So the AST emitter is not covering a lowering
+     gap here — it is tolerating an ILL-FORMED module, and the IR path correctly
+     declines to emit a call to a symbol that does not exist. The per-module path
+     solves this properly with the program-wide `known` set (a sibling's function is
+     accepted as an extern); the standalone driver passes an empty `known`, so
+     nothing can be.
+
+     **Therefore this test cannot be satisfied by any amount of IR lowering, and it
+     is RETIRED (#5968).** Its intent ("can the compiler chew its own sources?") is
+     already covered strictly more strongly by
+     `TestSelfHostModloadPerModuleWholeCompilerX86_64`, whose own header says it "IS
+     the routine whole-compiler self-compile gate now (#3457 slice 2)": imports
+     resolved, all ~12 modules emitted per-module, units linked with no undefined
+     symbols, the linked binary run AS a compiler, and the whole compiler
+     self-compiled. The standalone-with-unresolved-imports variant tests the AST
+     emitter's tolerance for ill-formed input, which is precisely the behaviour
+     #3457 is deleting. Narrowing its file list to the import-free sources (util,
+     lexer) was the conservative alternative, but it keeps only 2 of 9 files and
+     little of the value.
+
+     What its header recorded, kept here because the history is worth more than the
+     test: it was built to catch three walls, all long fixed — the `s = s.out + text`
+     O(N²) output build (replaced by the amortised strbuf primitive), a family of
+     parser non-advance runaways on qualified type names / variant patterns
+     (`lexer.Token`, `lexer.TokNumber(n)`), and the parse+emit memory ceiling that
+     once OOM-killed parser.fern. None of those can regress silently now: the
+     per-module whole-compiler test compiles the same sources with imports resolved,
+     and the byte-identity fixpoints pin the output.
 
      **The main-less half is now CLOSED (#5967).** The budget half is not, and
      cannot be: this file records the lift and the streaming variant as OOMing the
