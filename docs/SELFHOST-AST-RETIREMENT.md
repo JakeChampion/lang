@@ -754,7 +754,7 @@ representative subset splits it three ways:
   Net: the flagship edge-handler program (`std/http` + `std/tcp` + a `handle` function, ~925 merged functions) is compiled by the self-hosted compiler and **serves real HTTP** (`TestSelfHostHttpHandlerServesX86_64`).
 
   Also note the entry unit of an arbitrary stdlib-using program is often not per-module-eligible, in which case the concat correctly declines; check with `-per-module-emit <last-unit-index>` before blaming the router. |
-| `no-main` | 0 → **wrong on both counts** | Functions but no `main`. **It IS exercised** — `TestSelfHostBootstrapsItself` pipes each compiler SOURCE FILE through `asm_run`, and 7 of its 9 are main-less library modules (util / astwalk / asmcore / ir / irlower / asm_ir, and only lexer / parser / asm define `main`). And it is **not** supported: the whole-program `_start` unconditionally emits `call __fn_main`, so `emit_module_ir_gated` refuses (`require_main`) rather than mirroring `asm.fern`'s no-main branch (top-level stmts + `exit(0)`). Measured 2026-07-31 by rerouting `asm_run` and watching that test fail on `util.fern`. | **OPEN** |
+| `no-main` | 0 → **was wrong on both counts** | Functions but no `main`. **It IS exercised** — `TestSelfHostBootstrapsItself` pipes each compiler SOURCE FILE through `asm_run`, and 7 of its 9 are main-less library modules (util / astwalk / asmcore / ir / irlower / asm_ir, and only lexer / parser / asm define `main`). And it was **not** supported: the whole-program `_start` emitted `call __fn_main` unconditionally, so the gate refused via a `require_main` flag. Found 2026-07-31 by rerouting `asm_run` and watching that test fail on `util.fern`. | **CLOSED** (#5967) — `_start` exits 0 when there is no main, mirroring `asm.fern`'s own branch; `require_main` and its two `has_main` checks are DELETED rather than left inert, which also collapsed `eligible_core_known_main` / `_main_view` into the plain bodies (the library-vs-entry distinction no longer exists). Verified: `util.fern` routes `ir` and its emitted asm assembles. |
 
 ### `ineligible-fn` — the per-function declines are now CLOSED (measured 2026-07-30)
 
@@ -2393,13 +2393,18 @@ tier → leak.
      | asm_ir | 84 | no |
      | asm | 18 | yes |
 
-     So that one test needs BOTH things the IR gate refuses: **main-less modules**
+     So that one test needed BOTH things the IR gate refused: **main-less modules**
      (7 of 9) and the **512-function budget** (irlower at 964, asmcore/parser
-     comfortably under it but irlower nearly double). The budget cannot be lifted —
-     this file records the lift and the streaming variant as OOMing the self-host
-     runtime at stage 2, and says not to re-probe them. Therefore `asm_run` cannot
-     be rerouted until this test is repointed at the per-module path, which is
-     slice 2/3 work, NOT another per-construct lowering PR.
+     comfortably under it but irlower nearly double).
+
+     **The main-less half is now CLOSED (#5967).** The budget half is not, and
+     cannot be: this file records the lift and the streaming variant as OOMing the
+     self-host runtime at stage 2, and says not to re-probe them. Note the trap in
+     re-measuring that locally — the INTERPRETED driver has no arena, so a big
+     single-module emit "succeeding" there says nothing about stage 2, where a
+     self-host-BUILT driver does the emit under an 8 GiB arena. So `asm_run` still
+     cannot be rerouted until this test is repointed at the per-module path, which
+     is slice 2/3 work, NOT another per-construct lowering PR.
 
      That is a genuine correction to the plan above, which expected the remaining
      x86 blockers to be lowering gaps plus CI affordability. The lowering gaps are
@@ -2524,6 +2529,14 @@ tier → leak.
      local but not a parameter, a statement-form match but not the expression form.
      When a decline looks like that, check the second mechanism before writing any
      lowering.
+
+     **Assembling the emitted x86 asm IS possible without an x86 host** — worth
+     knowing, because it is what let the no-main work be verified rather than
+     guessed. `clang -target x86_64-unknown-linux-gnu -c prog.s -o prog.o` assembles
+     it on an Apple Silicon Mac, which is exactly the assertion
+     `TestSelfHostBootstrapsItself` makes. Only EXECUTION still needs qemu or a real
+     x86 box, so the probing note below ("no driver binary can run here") understates
+     what is checkable: routing, assemblability and emitted-code structure all are.
 
      **What a future reroute will have to change, beyond the lowering.** Two
      contracts encode the silent fallback (both were written and then reverted with

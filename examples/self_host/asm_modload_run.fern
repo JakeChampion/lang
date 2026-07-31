@@ -257,7 +257,7 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
         // A module left with no reachable functions contributes no code, so
         // there is nothing to emit and nothing to judge: skip it. Without this
         // the eligibility gate — which reports an EMPTY module as ineligible
-        // (eligible_core_known_main_view's `funcs.len() == 0` guard) — aborts
+        // (eligible_core_known_view_impl's `funcs.len() == 0` guard) — aborts
         // the whole concat, and a program whose closure pulls in modules it
         // barely uses (every std/http + std/tcp program: ~40 modules loaded,
         // ~81 functions reachable) can never take the IR path.
