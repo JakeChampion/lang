@@ -2260,14 +2260,26 @@ tier → leak.
        the WIDE contexts, which do not route through the `ExprCall` arm, so
        `var v: i64 = xs.last()` would read a 4-byte slot. An f64[][] / i64[][]
        receiver IS admitted — the element is a pointer.
-     - **Array methods (rest):** `xs.concat()` / `xs.reverse()` (i32[] and
-       string[]). NOTE for whoever takes these: unlike first/last they collide
-       with std/array, which really does define `__method_Array_reverse(string[])`,
-       so a builtin intercept placed before the `find_arr_method` dispatch would
-       SHADOW the std helper. They also have no IR-path runtime body — `asm_ir.fern`
-       lists `arr_reverse` / `arr_concat` in `all_runtime_need_roots` but emits
-       neither (only `asm_arm64_ir.fern` carries them), so either a Fern
-       `rt_src_arr_*` helper or an x86 body emitter is part of the work.
+     - ~~**Array methods (rest):** `xs.concat()` / `xs.reverse()`~~ — **CLOSED**
+       (#5963), as two new IR ops (`op_arr_reverse` / `op_arr_concat`, ids
+       214/215) over the SAME `__fern_arr_reverse` / `__fern_arr_concat` runtime
+       helpers the AST emitters call, which is what makes the IR answer identical
+       — the raw-slot copy's non-retaining treatment of rc elements included. The
+       three predictions in the earlier draft of this bullet all held: the
+       std/array collision is real (`__method_Array_reverse(string[])`), so both
+       intercepts defer to `find_arr_method` — and `concat` normally never reaches
+       the intercept at all, because `monomorphize` rewrites the generic array
+       METHOD to `__arrm_concat(xs, ys)` first (`TestSelfHostArrayConcatMethodIR`);
+       and the x86 IR runtime really had neither body, so both were ported from
+       `asm.fern` (arm64's were already present and only needed a call site, the
+       #5944 shape again). wasm needed WAT twins. A new op id also has to be
+       registered in `kind_name`, in `ir_kind_run.fern`'s `ext_names`, and in the
+       golden `ext_ok` count — three places `kind_id` alone does not cover.
+       f64[] / i64[] receivers are excluded: the register helpers copy 8-byte
+       slots regardless, but the wasm twins copy the 4-byte element stride, so an
+       8-byte element would need `op_arr_slice`'s width flag and a second WAT
+       helper. Also NOT recovered: the element STRUCT type, so
+       `ps.reverse()[0].n` still bails (safely) to the AST emitter.
      - ~~**i32 methods:** `a.min()` / `a.max()` / `n.clamp()`~~ — **CLOSED** (#5959)
      - ~~**String-array methods:** `xs.contains()` / `xs.index_of()` (+ the
        `arr_str_index_of` runtime helper)~~ — **CLOSED** (#5961): lowered to
@@ -2306,6 +2318,17 @@ tier → leak.
      PRs, each gated by re-running its `TestSelfHostAsmRunX86_64` / … subtests
      under `FERN_STRICT_IR`. The reroute (`emit_module_or_error` + the 5 driver
      sites) re-lands only once these are all green.
+
+     **Every item on that list is now closed (2026-07-31): #5958 / #5959 / #5960 /
+     #5961 / #5962 / #5963.** That does NOT mean the precondition is met, and this
+     doc's own history is the reason to say so explicitly: the list came from ONE
+     reroute attempt, measured on **shards 4 + 10 only**, so it is a sample of the
+     x86 dependents, not an enumeration of them. The next step is therefore to
+     RE-RUN the reroute as a throwaway PR and read the new failure set — the
+     "cheapest real enumeration" argument that produced this list in the first
+     place — rather than to assume the remaining shards are clean. Expect a second
+     (smaller) round of per-construct PRs, and note that the arm64 leg has never
+     been enumerated at all.
 
      **Probing these WITHOUT an x86 host (method, 2026-07-31).** The recipe above
      assumes a driver binary you can run, which an Apple Silicon dev box cannot

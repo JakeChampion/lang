@@ -257,6 +257,8 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_calls_strarrarr_free(cache)) { out = out.append("@calls_strarrarr_free"); }
     if (module_uses_arr_slice(cache)) { out = out.append("@uses_arr_slice"); }
     if (module_uses_arr_slice8(cache)) { out = out.append("@uses_arr_slice8"); }
+    if (module_emits_op_cached(cache, "arr_reverse")) { out = out.append("@uses_arr_reverse"); }
+    if (module_emits_op_cached(cache, "arr_concat")) { out = out.append("@uses_arr_concat"); }
     if (module_calls_arr_str_join(cache)) { out = out.append("@uses_arr_str_join"); }
     if (module_calls_arr_str_index_of(cache)) { out = out.append("@uses_arr_str_index_of"); }
     if (module_calls_arr_i32_helper(cache)) { out = out.append("@uses_arr_i32_helpers"); }
@@ -3229,6 +3231,14 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // stack: src, start, end -> $__fern_substr(src, start, end) copies the
             // bytes into a fresh block (wasm strings are inline, so no view).
             out = out + "    call $__fern_substr\n";
+        } else if (o.kind_tag == 214) {  // arr_reverse
+            // stack: arr -> fresh reversed array block ($__fern_arr_reverse, the
+            // WAT twin of the register backends' helper; gated @uses_arr_reverse).
+            out = out + "    call $__fern_arr_reverse\n";
+        } else if (o.kind_tag == 215) {  // arr_concat
+            // stack: A, B -> fresh A-then-B array block. Natural operand order,
+            // so wasm's first-pushed-is-param-0 binding needs no reordering.
+            out = out + "    call $__fern_arr_concat\n";
         } else if (o.kind_tag == 96) {  // arr_slice
             // stack: arr, start, end -> fresh array block. An f64[] slice (width
             // 64) copies 8-byte elements via $__fern_arr_slice8; i32[] / string[]
@@ -5272,6 +5282,55 @@ pub function arr_slice_helper(): string {
     o = o + "      (i32.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (i32.add (local.get $start) (local.get $i)) (i32.const 4)))))\n";
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c)))\n";
+    o = o + "    (local.get $na))\n";
+    return o;
+}
+
+// arr_reverse_helper / arr_concat_helper emit $__fern_arr_reverse and
+// $__fern_arr_concat — the WAT twins of the register backends' hand-asm helpers
+// of the same name, which back the builtin `xs.reverse()` / `xs.concat(ys)`
+// (op_arr_reverse / op_arr_concat). Same array layout and same 4-byte element
+// stride as arr_slice_helper above ([len@0][cap@4][elems@8]), and like it the
+// copy is a raw slot move — an rc-tracked element is not retained, matching
+// every other backend. 8-byte-element arrays never reach here: the lowering
+// excludes f64[] / i64[] receivers, so no `*8` variant is needed (contrast
+// arr_slice, whose width flag selects $__fern_arr_slice8).
+pub function arr_reverse_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_arr_reverse (param $a i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $na i32) (local $i i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $a)))\n";
+    o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+    o = o + "    (i32.store (local.get $na) (local.get $n))\n";
+    o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $n))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
+    o = o + "      (i32.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (i32.sub (i32.sub (local.get $n) (local.get $i)) (i32.const 1)) (i32.const 4)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (local.get $na))\n";
+    return o;
+}
+pub function arr_concat_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_arr_concat (param $a i32) (param $b i32) (result i32)\n";
+    o = o + "    (local $an i32) (local $bn i32) (local $na i32) (local $i i32)\n";
+    o = o + "    (local.set $an (i32.load (local.get $a)))\n";
+    o = o + "    (local.set $bn (i32.load (local.get $b)))\n";
+    o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (i32.add (local.get $an) (local.get $bn)) (i32.const 4))))\n";
+    o = o + "    (i32.store (local.get $na) (i32.add (local.get $an) (local.get $bn)))\n";
+    o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (i32.add (local.get $an) (local.get $bn)))\n";
+    o = o + "    (block $da (loop $ca\n";
+    o = o + "      (br_if $da (i32.ge_s (local.get $i) (local.get $an)))\n";
+    o = o + "      (i32.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $ca)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $db (loop $cb\n";
+    o = o + "      (br_if $db (i32.ge_s (local.get $i) (local.get $bn)))\n";
+    o = o + "      (i32.store (i32.add (i32.add (local.get $na) (i32.const 8)) (i32.mul (i32.add (local.get $an) (local.get $i)) (i32.const 4))) (i32.load (i32.add (i32.add (local.get $b) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $cb)))\n";
     o = o + "    (local.get $na))\n";
     return o;
 }
@@ -7423,6 +7482,12 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // register backends' __fern_arr_str_join runtime call. Self-contained (only
     // $__fern_str_box), emitted only when used.
     if (need(needs, "@uses_arr_str_join")) { out = out + arr_str_join_helper(); }
+    // $__fern_arr_reverse / $__fern_arr_concat back the builtin xs.reverse() /
+    // xs.concat(ys) — the register backends' hand-asm helpers of the same name.
+    // Self-contained apart from $__fern_arr_box (@allocates pulls it in, and
+    // op_allocates lists both ops).
+    if (need(needs, "@uses_arr_reverse")) { out = out + arr_reverse_helper(); }
+    if (need(needs, "@uses_arr_concat")) { out = out + arr_concat_helper(); }
     // $__fern_arr_str_index_of backs xs.index_of(t) / .contains(t) on a string[]
     // — the register backends' Fern-source helper. It calls $__fern_streq, which
     // strcat_streq_helpers provides (module_uses_strings admits this call so the
