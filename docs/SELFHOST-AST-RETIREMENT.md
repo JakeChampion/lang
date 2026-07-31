@@ -2688,6 +2688,26 @@ tier → leak.
      mirror over `asm_arm64_ir.emit_module_ir`.)
 
   3. **Reroute the driver `emit_module` sites — heterogeneous, verify each.**
+     Landed so far: `fern.fern`'s x86 branch (#5954), `asm_run.fern` (#5969 — the
+     widest, ~390 test files), and `fern.fern`'s THREE arm64 branches (arm64 ELF,
+     arm64-android static-PIE, arm64-darwin) plus the
+     `asm_arm64_ir.emit_module_or_error` mirror they call (#5970).
+
+     Two things measured while doing the arm64 CLI, both worth knowing:
+
+     - **Routing does not differ between the backends.** `asm_arm64.emit_module`'s
+       gate was already `asm_ir.all_eligible` — the same predicate the x86 path uses
+       — so an x86 `-ir-probe` verdict answers for arm64 too. Only instruction
+       selection differs. That is what makes the arm64 reroute checkable from a
+       host that cannot run arm64 binaries.
+     - **The arm64 CLI now REFUSES some programs it used to miscompile.** A program
+       the emitter-side `asmcore.check_module` misses — `y = 5` against an undefined
+       name, `continue` outside a loop — previously fell through to the AST emitter,
+       which emitted `# unresolved ident: y` and produced a broken binary. It now
+       errors. The CLI's own diagnostic tests are unaffected because every one of
+       them goes through `-check`, a different checker that DOES catch these; the
+       divergence between the two checkers is pre-existing and unrelated. x86 has
+       behaved this way since #5954.
      x86 (5): `asm_run.fern:23`, `asm_ir_run.fern:174`, `fern.fern:739` are
      single-module → `emit_module_or_error`; `asm_load_run.fern:472` and
      `asm_modload_run.fern:715` already run the per-module *concat* rescue and
