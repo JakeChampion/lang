@@ -2455,9 +2455,11 @@ tier → leak.
      essentially gone; what is left on this driver is one test that compiles the
      whole compiler through a single-module path.
 
-     **THE asm_run REROUTE IS NOT READY — two dependents CI found that the local
-     enumeration could not (2026-07-31). Read this before trying again.** The
-     reroute was written, measured clean over 2531 programs, pushed, and CI turned
+     **THE asm_run REROUTE IS LANDED (#5969), on the third attempt.** What the two
+     earlier attempts taught is below; read it before trusting any future
+     "the enumeration is clean" claim, because two of them were wrong.
+
+     The FIRST attempt was measured clean over 2531 programs, pushed, and CI turned
      up two failures the sweep was structurally incapable of seeing:
 
      - **`TestSelfHostBootstrapsItself` feeds each compiler SOURCE FILE through
@@ -2521,6 +2523,28 @@ tier → leak.
      entirely. The 2531-program result stands for what it covers — it is what found
      the four gaps that did land — but "0 genuine declines" was a statement about
      one package's Go literals, not about the driver.
+
+     **A THIRD amendment, from the second attempt: resolve named prelude CONSTANTS,
+     and then re-check every decline against the REAL case source.** The
+     concat-aware extractor still missed `const fooPrelude = ...` constants
+     referenced by name, so fragments using them read as declines. Fixing that by
+     prepending every code-shaped constant to every case produced the OPPOSITE
+     error — programs with two `main` definitions, which are invalid and also read
+     as declines. Both directions inflate the count with noise.
+
+     On the final sweep (3147 programs across 392 test files in BOTH packages) the
+     raw figure was 2873 compile / 232 invalid / 42 ineligible, and **all 42
+     dissolved**: 30 prelude artifacts of one kind or the other, 12 with
+     unresolvable `import` lines, and re-extracting the named-constant programs from
+     the three suspicious test files gave 16 real programs that ALL compile. One
+     decline was not even reachable — `opt-enum-field-stays-ast` asserts routing via
+     the PATHPROBE driver and never sends its program to `asm_run`, so piping every
+     extracted literal through `asm_run` over-reports by construction.
+
+     The lesson worth keeping: **a decline count means nothing until each entry is
+     traced to a real case source that the test actually feeds to THAT driver.**
+     Three sweeps produced 17, 21 and 42 raw declines; the genuine totals were
+     2, 2 and 0.
 
      **The measurement that IS sound (2026-07-31).**
      The enumeration above, tightened once more to understand Go string
