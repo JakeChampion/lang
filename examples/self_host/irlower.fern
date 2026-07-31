@@ -2835,6 +2835,12 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                     return s.struct_ret_type(id.name);
                 },
                 parser.ExprFieldAccess(fa) => {
+                    // `ps.first()` / `.last()` on a struct/enum ARRAY evaluates to
+                    // the element type, exactly as `ps[0]` does — so
+                    // `ps.last().field` / `ps.last().method()` resolve.
+                    if (arr_firstlast_call(fa.field, fa.obj, c.args.len(), s)) {
+                        return expr_struct_type(arr_elem_index_expr(fa.obj), s);
+                    }
                     // Associated-function call `Type.make()` / `Enum.default()` —
                     // the object is a bare TYPE name (struct or enum), not a local
                     // slot. Key the return type by "<Type>.<method>" directly via
@@ -3291,6 +3297,11 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
                     return s.is_strarr_ret_fn(cid.name);
                 },
                 parser.ExprFieldAccess(cfa) => {
+                    // `xss.first()` / `.last()` on a string[][] yields a string[]
+                    // element, exactly as `xss[0]` does.
+                    if (arr_firstlast_call(cfa.field, cfa.obj, c.args.len(), s)) {
+                        return expr_is_strarr(arr_elem_index_expr(cfa.obj), s);
+                    }
                     if (cfa.field == "split" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
                     if (cfa.field == "chars" && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
                     if (cfa.field == "lines" && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
@@ -3363,6 +3374,11 @@ pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
                     return s.is_f64arr_ret_fn(cid.name);
                 },
                 parser.ExprFieldAccess(cfa) => {
+                    // `xss.first()` / `.last()` on an f64[][] yields an f64[]
+                    // element, so the following `[j]` reads 8-byte.
+                    if (arr_firstlast_call(cfa.field, cfa.obj, c.args.len(), s)) {
+                        return expr_is_f64arr(arr_elem_index_expr(cfa.obj), s);
+                    }
                     // `a.with(...)` / `a.append(...)` preserve the receiver's element
                     // kind: an f64[] receiver yields a fresh f64[].
                     if (((cfa.field == "with" && c.args.len() == 2) || (cfa.field == "append" && c.args.len() == 1))
@@ -3392,6 +3408,32 @@ pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
 // expr_is_arr_src reports whether `e` is an ARRAY (an array literal, an
 // array-marked local/param, an array-returning call, or a slice of one) — used
 // to route `e[start:end]` to arr_slice vs str_slice.
+// arr_elem_index_expr builds the `xs[0]` node that `xs.first()` / `xs.last()`
+// lower to. The result-type classifiers below use it to answer "what does this
+// call yield?" by asking what an INDEX of the receiver yields, so the desugar
+// and the classifiers cannot drift — a string[] element reads as a string, an
+// f64[][] element as an f64[], and so on, with no per-classifier restatement of
+// the element-kind table.
+function arr_elem_index_expr(recv: parser.Expr): parser.Expr {
+    return parser.ExprIndex {
+        array: recv,
+        index: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 },
+        unchecked: false,
+    };
+}
+
+// arr_firstlast_call reports whether `recv.field(args)` is the builtin
+// `.first()` / `.last()` element read — the shape whose result type is the
+// receiver's element type. The ARRAY-receiver test is part of the question, not
+// an optimisation: a struct or enum with a user method of the same name keeps
+// its own return type, so the classifiers must not claim it.
+function arr_firstlast_call(field: string, recv: parser.Expr, argc: i32, s: LowerState): boolean {
+    if (argc != 0) { return false; }
+    if (field != "first" && field != "last") { return false; }
+    return expr_is_arr_src(recv, s) || expr_is_strarr(recv, s)
+        || expr_is_f64arr(recv, s) || expr_is_i64arr(recv, s);
+}
+
 pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprArray(_) => { return true; },
@@ -3417,6 +3459,13 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
                 // fresh u8[] (op_str_bytes), and `s.split(sep)` a fresh string[]
                 // (op_str_split) — both rc-tracked array sources.
                 parser.ExprFieldAccess(cfa) => {
+                    // `xss.first()` / `.last()` on an array-of-arrays yields an
+                    // array element, so it is an array source exactly as `xss[0]`
+                    // is. Checked before the std/array find_arr_method arm below,
+                    // matching the lowering's builtin-before-helper precedence.
+                    if (arr_firstlast_call(cfa.field, cfa.obj, c.args.len(), s)) {
+                        return expr_is_arr_src(arr_elem_index_expr(cfa.obj), s);
+                    }
                     if ((cfa.field == "bytes" || cfa.field == "as_bytes") && c.args.len() == 0) {
                         return expr_is_str(cfa.obj, s);
                     }
@@ -3545,6 +3594,12 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                 // so the str_ret_fn path below can't reach it). Either way the
                 // result feeds `+` concat / `.len()` as a string.
                 parser.ExprFieldAccess(cfa) => {
+                    // `xs.first()` / `xs.last()` on a string[] yields a string
+                    // element — the same answer as `xs[0]`, which is what the
+                    // lowering reads them as.
+                    if (arr_firstlast_call(cfa.field, cfa.obj, c.args.len(), s)) {
+                        return expr_is_str(arr_elem_index_expr(cfa.obj), s);
+                    }
                     if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) { return true; }
                     // `s.to_upper()` / `s.to_lower()` on a string receiver yield a
                     // fresh string (op_str_to_upper / _to_lower), so the result
@@ -5250,6 +5305,11 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
                     return s.is_i64arr_ret_fn(cid.name);
                 },
                 parser.ExprFieldAccess(cfa) => {
+                    // `xss.first()` / `.last()` on an i64[][] / u64[][] yields an
+                    // 8-byte-element array, so the following `[j]` reads 8-byte.
+                    if (arr_firstlast_call(cfa.field, cfa.obj, c.args.len(), s)) {
+                        return expr_is_i64arr(arr_elem_index_expr(cfa.obj), s);
+                    }
                     // `a.with(...)` / `a.append(...)` preserve the receiver's element
                     // kind: an i64[] receiver yields a fresh i64[].
                     if (((cfa.field == "with" && c.args.len() == 2) || (cfa.field == "append" && c.args.len() == 1))
@@ -9270,6 +9330,45 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!pmm.ok) { return pmm; }
                         if (fa.field == "min") { return pmm.emit(ir.op_call_direct("__fern_arr_i32_min_opt", 1)); }
                         return pmm.emit(ir.op_call_direct("__fern_arr_i32_max_opt", 1));
+                    }
+                    // xs.first() / xs.last() — O(1) element reads the AST emitter
+                    // open-codes as raw loads off the array header (asm.fern:1879
+                    // /1887). Lowered as the equivalent INDEX read, so the element
+                    // width, the bounds check and the element rc handling all come
+                    // from the one ExprIndex arm instead of a second copy. That
+                    // makes `.first()` bounds-CHECKED where the AST emitter reads
+                    // the header word as an element — a UB program aborts instead
+                    // of returning garbage, which is the safer disagreement.
+                    //
+                    // f64[] / i64[] receivers are excluded, like the sum / index_of
+                    // / min / max intercepts above: their element reads lower in the
+                    // WIDE contexts (lower_i64 / the f64 path), which do not route
+                    // through this ExprCall arm, so `var v: i64 = xs.last()` would
+                    // read a 4-byte slot. An f64[][] / i64[][] receiver is fine —
+                    // the ELEMENT is a pointer, and the classifiers below recover
+                    // its width for the following `[j]`.
+                    if (arr_firstlast_call(fa.field, fa.obj, c.args.len(), s)
+                        && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)) {
+                        if (fa.field == "first") { return lower_expr(arr_elem_index_expr(fa.obj), s); }
+                        // `last` reads the receiver TWICE (once for the length, once
+                        // as the indexed array), so it goes through a temp local —
+                        // the last_byte pattern just below — rather than duplicating
+                        // the subtree, which would evaluate a call receiver
+                        // (`build().last()`) twice. The temp is synthetic, so it is
+                        // absent from reclaimable_names and never swept: a borrowed
+                        // receiver cannot be freed under its owner.
+                        var alname: string = "$alast" + util.i32_to_string(s.locals.len());
+                        var pal: LowerState = s.add_local(alname);
+                        var alslot: i32 = pal.slot_of(alname);
+                        pal = lower_expr(fa.obj, pal);
+                        if (!pal.ok) { return pal; }
+                        pal = pal.emit(ir.op_store_local(alslot));
+                        pal = pal.emit(ir.op_load_local(alslot));    // array (operand 1)
+                        pal = pal.emit(ir.op_load_local(alslot));
+                        pal = pal.emit(ir.op_arr_len());
+                        pal = pal.emit(ir.op_const_i32(1));
+                        pal = pal.emit(ir.op_bin("sub", 0, false)); // len - 1 (operand 2)
+                        return pal.emit(ir.op_arr_get(32));
                     }
                     // s.first_byte() / s.last_byte() — inline byte reads in the AST
                     // emitter (asm.fern:2057/2065), i.e. exactly s[0] and s[len-1], so
