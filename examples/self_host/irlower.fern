@@ -2014,16 +2014,18 @@ function opt_payload_ok_dv(structs: parser.StructDecl[], p: string, depth: i32, 
     // predicate. (visiting-threaded for recursion safety.)
     if (is_leaksafe_tuple_field_dv(structs, p, depth, visiting)) { return true; }
     if (p.len() >= 8 && (p[0:7] == "Option[" || p[0:7] == "Result[") && is_leaksafe_opt_field_dv(structs, p, depth, visiting)) { return true; }
-    // A nominal-ENUM payload (`Option[Color]` as a struct field): the Option box
-    // holds one enum-variant pointer, leak-only exactly like the struct payload
-    // above — the exit sweep never frees an enum box. decl_is_leaksafe_d already
-    // admits a bare `c: Color` FIELD and a `C[]` array-of-enum field on that same
-    // reasoning; this is the Option-payload twin, and its absence was why an
-    // `Option[Color]` field bailed the module while both an `Option[i32]` field
-    // and an `Option[Color]` LOCAL lowered. is_enum_like_name can over-match a
-    // bare nominal, and as at those sites the only consequence is an AST fallback
-    // at the construction / match site, never a miscompile.
-    if (is_enum_like_name(p, structs)) { return true; }
+    // An `Option[<enum>]` payload is NOT admitted here, deliberately. The shape
+    // looks exactly like the struct payload above — one enum-variant pointer in
+    // the box, leak-only, and decl_is_leaksafe_d admits a bare `c: Color` FIELD on
+    // that reasoning — but `opt-enum-field-stays-ast` in
+    // self_host_opt_struct_payload_field_ir_test.go is a deliberate NEGATIVE pin
+    // requiring it to route AST. Admitting it (tried, reverted) turns that test
+    // red. Its stated rationale is self-contradictory — "the legacy AST backend
+    // miscompiles an Option[enum] field", which would be an argument FOR the IR
+    // path — so whoever revisits this has to re-derive which backend actually
+    // mishandles the shape before moving the pin. On the wasm IR path all four
+    // probe shapes (Some / None / payload matched / read into a local) already
+    // agree with the interpreter; the x86 IR runtime answer is the unverified part.
     return false;
 }
 
@@ -12397,6 +12399,58 @@ function iife_user_enum_payload_type(pv: parser.PatVariant, s: LowerState): stri
     return decl_field_type(s.structs, vname, "__ev");
 }
 
+// iife_rewrite_arm_body rewrites one match-EXPRESSION arm body so it STORES the
+// arm's value into `tmp` instead of returning it: leading statements are kept
+// verbatim and the TERMINAL statement is rewritten. Two terminal shapes are
+// accepted:
+//
+//   `return E`      -> `tmp = E`
+//   a nested MATCH  -> the same match with every one of ITS arm bodies rewritten
+//                      by this function, recursively
+//
+// The nested-match case is what a NESTED PATTERN needs. The parser desugars
+// `Some(Ok(n)) => n + 100` into a flat `Some($p)` arm whose body re-matches the
+// payload (see parser.PatVariant's `nested` note), so the arm's terminal is a
+// StmtMatch, not a return — and before this the whole match-expression bailed to
+// the AST emitter even though the identical STATEMENT-form match lowered.
+//
+// Returns an empty array to mean "not rewritable", which the caller turns into a
+// bail. The f64 / string / i64 result guards live here so they apply at every
+// depth: an arm tail whose value does not fit the temp's width must bail wherever
+// it sits, not only at the top level.
+function iife_rewrite_arm_body(body: parser.Stmt[], tmp: string, tslot: i32, ts: LowerState): parser.Stmt[] {
+    var none: parser.Stmt[] = [];
+    if (body.len() == 0) { return none; }
+    var last: parser.Stmt = body[body.len() - 1];
+    var tail: parser.Stmt[] = [];
+    match (last) {
+        parser.StmtReturn(r) => {
+            if (expr_is_f64(r.value, ts) && !ts.is_f64_slot(tslot)) { return none; }
+            if (expr_is_str(r.value, ts) && !ts.is_str_slot(tslot)) { return none; }
+            if (infer_expr_width(r.value, ts) == 64 && !ts.is_i64_slot(tslot)) { return none; }
+            tail = tail.append(parser.StmtAssign { target: tmp, value: r.value, line: 0, col: 0, target_line: 0, target_col: 0 });
+        },
+        parser.StmtMatch(im) => {
+            var iarms: parser.MatchArm[] = [];
+            var ii: i32 = 0;
+            while (ii < im.arms.len()) {
+                var ib: parser.Stmt[] = iife_rewrite_arm_body(im.arms[ii].body, tmp, tslot, ts);
+                if (ib.len() == 0) { return none; }
+                iarms = iarms.append(parser.MatchArm { pattern: im.arms[ii].pattern, body: ib, line: im.arms[ii].line, col: im.arms[ii].col, guard: im.arms[ii].guard, has_guard: im.arms[ii].has_guard });
+                ii = ii + 1;
+            }
+            tail = tail.append(parser.StmtMatch { scrutinee: im.scrutinee, arms: iarms, line: im.line, col: im.col, origin: im.origin });
+        },
+        _ => { return none; }
+    }
+    var nb: parser.Stmt[] = [];
+    var bj: i32 = 0;
+    while (bj < body.len() - 1) { nb = nb.append(body[bj]); bj = bj + 1; }
+    var tj: i32 = 0;
+    while (tj < tail.len()) { nb = nb.append(tail[tj]); tj = tj + 1; }
+    return nb;
+}
+
 function lower_iife_match(m: parser.StmtMatch, s: LowerState, force_i64: boolean): LowerState {
     var tmp: string = "$ife" + util.i32_to_string(s.locals.len());
     var ts: LowerState = s.add_local(tmp);
@@ -12520,29 +12574,13 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState, force_i64: boolean
         // leading statements lower unchanged in the rewritten arm; only the
         // FINAL `return E` becomes `tmp = E`. A single-expr arm is the
         // len()==1 case of this (no leading statements). An empty body bails.
-        if (arm.body.len() == 0) { return s.fail(); }
-        var last: parser.Stmt = arm.body[arm.body.len() - 1];
-        match (last) {
-            parser.StmtReturn(r) => {
-                // f64 / string results admitted only into a matching temp (set
-                // above for an f64- / string-valued match); otherwise into the i32
-                // temp they bail. The rewritten `tmp = E` store is steered by the
-                // temp's slot type.
-                if (expr_is_f64(r.value, ts) && !ts.is_f64_slot(tslot)) { return s.fail(); }
-                if (expr_is_str(r.value, ts) && !ts.is_str_slot(tslot)) { return s.fail(); }
-                // An i64-width result is admitted into an i64 temp (the rewritten
-                // `tmp = E` store widens via the i64-typed target); into a non-i64
-                // temp it bails.
-                if (infer_expr_width(r.value, ts) == 64 && !ts.is_i64_slot(tslot)) { return s.fail(); }
-                // Keep any leading statements, then the rewritten terminal store.
-                var nbody: parser.Stmt[] = [];
-                var bj: i32 = 0;
-                while (bj < arm.body.len() - 1) { nbody = nbody.append(arm.body[bj]); bj = bj + 1; }
-                nbody = nbody.append(parser.StmtAssign { target: tmp, value: r.value, line: 0, col: 0, target_line: 0, target_col: 0 });
-                newarms = newarms.append(parser.MatchArm { pattern: arm.pattern, body: nbody, line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
-            },
-            _ => { return s.fail(); }
-        }
+        // The terminal-statement rewrite (`return E` -> `tmp = E`, or a nested
+        // match rewritten one level down) plus its width guards live in
+        // iife_rewrite_arm_body, so they apply at every nesting depth. An empty
+        // result means the shape is not rewritable.
+        var nbody: parser.Stmt[] = iife_rewrite_arm_body(arm.body, tmp, tslot, ts);
+        if (nbody.len() == 0) { return s.fail(); }
+        newarms = newarms.append(parser.MatchArm { pattern: arm.pattern, body: nbody, line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
         i = i + 1;
     }
     var newmatch: parser.Stmt = parser.StmtMatch { scrutinee: m.scrutinee, arms: newarms, line: m.line, col: m.col, origin: m.origin };

@@ -346,24 +346,6 @@ function main(): i32 {
     return c.get() + slen(s) + s.get().len();
 }
 `, 16},
-	// A struct field of type `Option[<enum>]`. The Option box holds one
-	// enum-variant pointer, leak-only exactly like an `Option[Struct]` payload,
-	// and decl_is_leaksafe_d already admits a bare `c: Color` field and a `C[]`
-	// array-of-enum field on that reasoning — opt_payload_ok_dv was simply missing
-	// the twin arm, so an `Option[Color]` FIELD bailed the module while both an
-	// `Option[i32]` field and an `Option[Color]` LOCAL lowered.
-	{"opt-enum-struct-field", `
-enum Color { Red, Blue }
-struct Box { c: Option[Color] }
-function main(): i32 {
-    var b: Box = Box { c: Some(Blue) };
-    var t: i32 = 0;
-    match (b.c) { Some(x) => { match (x) { Red => { t = 1; }, Blue => { t = 2; } } }, None => { t = 9; } }
-    var e: Box = Box { c: None };
-    match (e.c) { Some(x) => { t = t + 40; }, None => { t = t + 5; } }
-    return t;
-}
-`, 7},
 	// A nested RESULT payload bound in a match-EXPRESSION (`Some(r)` over an
 	// Option[Result[…]]). iife_payload_bindable admitted a nested `Option[` payload
 	// into an i32 temp from an ident scrutinee and omitted `Result[` from the same
@@ -380,6 +362,24 @@ function h(o: Option[Result[i32, i32]]): i32 {
 }
 function main(): i32 { return g(Some(Ok(5))) + h(Some(Ok(5))); }
 `, 112},
+	// A NESTED PATTERN in a match-EXPRESSION (`Some(Ok(n)) => n + 100`). The
+	// parser desugars a nested arm into a flat outer arm whose body re-matches the
+	// payload on an inner `match` STATEMENT, so the arm's terminal is not a
+	// `return E` and lower_iife_match bailed the whole module — while the identical
+	// match in STATEMENT form lowered. iife_rewrite_arm_body now rewrites that
+	// inner match recursively, storing into the same value temp, and carries the
+	// f64 / string / i64 width guards down with it so an ill-fitting tail bails
+	// wherever it sits rather than only at the top level.
+	{"iife-match-nested-pattern", `
+function g(o: Option[Result[i32, i32]]): i32 {
+    return match (o) {
+        Some(Ok(n)) => n + 100,
+        Some(Err(e)) => e,
+        None => 0 - 1,
+    };
+}
+function main(): i32 { return g(Some(Ok(5))) + g(Some(Err(2))) + g(None); }
+`, 106},
 	// xs.reverse() / xs.concat(ys) on arrays, lowered to the same
 	// __fern_arr_reverse / __fern_arr_concat runtime helpers the AST emitters
 	// call (op_arr_reverse / op_arr_concat, modelled on op_arr_slice). Until this
@@ -588,15 +588,26 @@ func TestSelfHostStrictIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostStrictIRRefusesBail is the teeth: a program that genuinely bails
-// must refuse under the flag and fall back silently without it. Without this,
-// a green corpus is consistent with the flag doing nothing at all.
+// must be REFUSED, and the flag must name the bail site. Without this, a green
+// corpus is consistent with the flag doing nothing at all.
+//
+// The unset-flag leg no longer asserts a silent AST fallback, because there
+// isn't one any more: asm_run.fern routes through
+// asm_ir.emit_module_or_error (#3457 slice 5), so an ineligible module is an
+// error with or without the flag. What the flag still changes — and what this
+// test pins — is WHICH error: without it the driver reports only that the module
+// is ineligible, with it the gate exits 3 naming the bail site. That difference
+// is the whole diagnostic value of the flag now.
 func TestSelfHostStrictIRRefusesBail(t *testing.T) {
 	_, runner, driverBin := strictIRDriver(t)
 	src := overBudgetProgram()
 
-	off, _, offCode := runDriver(t, runner, driverBin, src, false)
-	if offCode != 0 || len(off) == 0 {
-		t.Fatalf("unset: driver exited %d with %d bytes, want a silent AST fallback", offCode, len(off))
+	off, offErr, offCode := runDriver(t, runner, driverBin, src, false)
+	if offCode == 0 || len(off) != 0 {
+		t.Fatalf("unset: driver exited %d with %d bytes, want a refusal (the AST emitter is unreachable)", offCode, len(off))
+	}
+	if !strings.Contains(offErr, "not IR-eligible") {
+		t.Errorf("unset: refusal did not say the module is ineligible:\n%s", offErr)
 	}
 	on, stderr, onCode := runDriver(t, runner, driverBin, src, true)
 	if onCode != 3 {
