@@ -2342,6 +2342,40 @@ tier → leak.
      (smaller) round of per-construct PRs, and note that the arm64 leg has never
      been enumerated at all.
 
+     **A second local round, over the WHOLE suite (2026-07-31).** The same
+     extract-and-probe trick applied to every Go literal in `internal/e2eselfhost`
+     — 6815 unique programs, ~10-way parallel, minutes — reads **6136 IR / 677
+     AST**. Read that 677 carefully, because most of it is not gaps:
+
+     - **306** are not valid programs at all. Mass extraction pulls partial
+       fragments (a `main` whose struct/method lives in a separate literal the
+       test concatenates) and the deliberately-ill-typed inputs of the checker
+       corpora. An invalid program routes AST too, which is the trap the probing
+       note below warns about, now measured: **45% of the raw decline count.**
+     - **162** call `__fern_rc_underflow_count` — the AST-only debug builtin the
+       wasm rc corpora deliberately keep (see the precondition bullet). Not a gap,
+       and not on the x86/arm64 retirement path.
+     - **~30** name a specific missing symbol under `FERN_STRICT_IR`, which is
+       where the real gaps are. Closed from this batch: the **ASCII byte-method
+       family** (#5964 — `is_ascii_digit` / `_lower` / `_upper` / `_alpha` /
+       `_letter` / `_alnum` / `_hex_digit`, `to_ascii_lower` / `_upper`), which
+       matters because `self_host_charmethods_test.go` builds `asm_run.fern` —
+       one of **365** test files that do, so any gap reachable from that driver
+       blocks the reroute. Still open and named: `i32.to_json`, `Bare.to_debug`,
+       the raw/debug intrinsics `__fern_heap_used` / `__fern_arr_dec` /
+       `__new_array` / `__str_to_bytes`, and `main$clo` (the nested-closure lift).
+     - **72** bail with no symbol (a plain `main`), of which sampling found a real
+       one — a 3-deep `i32[][][]` with nested `for` — and dismissed others as
+       artifacts (`x % 2.0` is E009-invalid natively; `Statuus[i32]` is a checker
+       test's misspelling).
+
+     Two method notes worth inheriting. **Always classify a decline before
+     counting it**: valid-program filtering plus the strict-flag REASON turned a
+     raw 677 into ~30 named gaps. And when checking an answer on wasm, keep the
+     expected exit under 126 — a WASI status above that is rejected outright and
+     wasmtime returns 1, which reads exactly like a miscompile (it cost a bisect
+     here before the range constraint was remembered).
+
      **One corpus CAN be enumerated locally and cheaply — and doing so found two
      more gaps (2026-07-31).** `TestSelfHostAsmRunX86_64`'s cases are Go string
      literals, so they extract to files and each routes through `fern -interp

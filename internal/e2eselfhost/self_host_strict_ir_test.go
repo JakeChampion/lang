@@ -275,6 +275,42 @@ function main(): i32 {
     return 1;
 }
 `, 14},
+	// The ASCII classifier / case family on a byte receiver, lowered from the one
+	// unsigned-range primitive `(b - lo) <=u span` plus the mask idiom for the two
+	// case conversions. Until this existed every one of them bailed the module to
+	// the AST emitter, where they are hand-written `setbe` / `cmovbe` sequences
+	// (#3457 slice 5).
+	//
+	// The receivers are the point: a u8-tracked LOCAL (the commonest shape, and
+	// the one an expr_recv_prim_type gate silently misses — a `var c: u8` slot
+	// records "u8" as its declared struct type, so the receiver reads as a
+	// struct), an `as u8` cast, and a string INDEX, which is a byte since #5629.
+	// The total is kept under 126: a WASI exit status above that is rejected
+	// outright, which reads exactly like a miscompile.
+	{"ascii-byte-methods", `
+function main(): i32 {
+    var t: i32 = 0;
+    var A: u8 = 65;
+    var z: u8 = 122;
+    var d: u8 = 53;
+    var f: u8 = 70;
+    var g: u8 = 71;
+    var sp: u8 = 32;
+    if (A.to_ascii_lower() as i32 == 97) { t = t + 1; }
+    if (z.to_ascii_upper() as i32 == 90) { t = t + 2; }
+    if (A.to_ascii_upper() as i32 == 65) { t = t + 4; }   // already upper: unchanged
+    if (z.to_ascii_lower() as i32 == 122) { t = t + 8; }  // already lower: unchanged
+    if (d.is_ascii_digit() && !A.is_ascii_digit()) { t = t + 16; }
+    if (z.is_ascii_lower() && A.is_ascii_upper()) { t = t + 32; }
+    if (A.is_ascii_alpha() && A.is_ascii_letter() && d.is_ascii_alnum()) { t = t + 1; }
+    if (!sp.is_ascii_alnum() && !sp.is_ascii_alpha()) { t = t + 2; }
+    if (f.is_ascii_hex_digit() && d.is_ascii_hex_digit() && !g.is_ascii_hex_digit()) { t = t + 4; }
+    if ((66 as u8).to_ascii_lower() as i32 == 98) { t = t + 8; }
+    var s: string = "Q";
+    if (s[0].is_ascii_upper() && s[0].to_ascii_lower() as i32 == 113) { t = t + 16; }
+    return t;
+}
+`, 94},
 	// xs.reverse() / xs.concat(ys) on arrays, lowered to the same
 	// __fern_arr_reverse / __fern_arr_concat runtime helpers the AST emitters
 	// call (op_arr_reverse / op_arr_concat, modelled on op_arr_slice). Until this
