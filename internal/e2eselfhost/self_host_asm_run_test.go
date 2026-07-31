@@ -1383,6 +1383,17 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"hello",
 			"",
 		},
+		// concat's two operands are each evaluated ONCE, in source order —
+		// stdout "bb", not "bbbb" or "b". As with `.last()` above, the exit code
+		// is identical either way, so stdout is the only place a duplicated
+		// evaluation shows.
+		{
+			"arr-concat-evaluates-operands-once",
+			"function build(): i32[] { write(\"b\"); var o: i32[] = []; o = o.append(3); return o; }\nfunction main(): i32 { var c: i32[] = build().concat(build()); return c.len() + c[1]; }",
+			5,
+			"bb",
+			"",
+		},
 		// `.last()` needs its receiver twice (once for the length, once as the
 		// indexed array). The IR path binds it to a temp local rather than
 		// lowering the subtree twice, so a receiver with a side effect runs

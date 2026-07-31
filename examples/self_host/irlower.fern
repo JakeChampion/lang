@@ -3302,6 +3302,10 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
                     if (arr_firstlast_call(cfa.field, cfa.obj, c.args.len(), s)) {
                         return expr_is_strarr(arr_elem_index_expr(cfa.obj), s);
                     }
+                    // `.reverse()` / `.concat(ys)` on a string[] yield a string[].
+                    if (arr_samekind_call(cfa.field, cfa.obj, c.args.len(), s)) {
+                        return expr_is_strarr(cfa.obj, s);
+                    }
                     if (cfa.field == "split" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
                     if (cfa.field == "chars" && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
                     if (cfa.field == "lines" && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
@@ -3379,6 +3383,9 @@ pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
                     if (arr_firstlast_call(cfa.field, cfa.obj, c.args.len(), s)) {
                         return expr_is_f64arr(arr_elem_index_expr(cfa.obj), s);
                     }
+                    if (arr_samekind_call(cfa.field, cfa.obj, c.args.len(), s)) {
+                        return expr_is_f64arr(cfa.obj, s);
+                    }
                     // `a.with(...)` / `a.append(...)` preserve the receiver's element
                     // kind: an f64[] receiver yields a fresh f64[].
                     if (((cfa.field == "with" && c.args.len() == 2) || (cfa.field == "append" && c.args.len() == 1))
@@ -3434,6 +3441,25 @@ function arr_firstlast_call(field: string, recv: parser.Expr, argc: i32, s: Lowe
         || expr_is_f64arr(recv, s) || expr_is_i64arr(recv, s);
 }
 
+// arr_samekind_call reports whether `recv.field(args)` is the builtin
+// `.reverse()` / `.concat(ys)` — the array builtins whose result is an array of
+// the SAME element type as the receiver, so every classifier answers for them by
+// asking about the receiver. Like arr_firstlast_call, the ARRAY-receiver test is
+// part of the question: a struct with a user `reverse` method keeps its own
+// return type. std/array's own helpers are NOT excluded here — a classifier
+// answering "array of the receiver's element type" is right either way; it is the
+// LOWERING that defers to them.
+//
+// NOT recovered: the element STRUCT type. `expr_struct_type` reports "" for an
+// array value by design, and a struct-array reverse would need the result slot
+// marked with the element type at its binding. `ps.reverse()[0].n` therefore
+// bails to the AST emitter rather than mis-resolving — safe, and left open.
+function arr_samekind_call(field: string, recv: parser.Expr, argc: i32, s: LowerState): boolean {
+    if (!((field == "reverse" && argc == 0) || (field == "concat" && argc == 1))) { return false; }
+    return expr_is_arr_src(recv, s) || expr_is_strarr(recv, s)
+        || expr_is_f64arr(recv, s) || expr_is_i64arr(recv, s);
+}
+
 pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprArray(_) => { return true; },
@@ -3465,6 +3491,11 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
                     // matching the lowering's builtin-before-helper precedence.
                     if (arr_firstlast_call(cfa.field, cfa.obj, c.args.len(), s)) {
                         return expr_is_arr_src(arr_elem_index_expr(cfa.obj), s);
+                    }
+                    // `.reverse()` / `.concat(ys)` yield an array of the receiver's
+                    // element type, so they are array sources exactly as it is.
+                    if (arr_samekind_call(cfa.field, cfa.obj, c.args.len(), s)) {
+                        return expr_is_arr_src(cfa.obj, s);
                     }
                     if ((cfa.field == "bytes" || cfa.field == "as_bytes") && c.args.len() == 0) {
                         return expr_is_str(cfa.obj, s);
@@ -5309,6 +5340,9 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
                     // 8-byte-element array, so the following `[j]` reads 8-byte.
                     if (arr_firstlast_call(cfa.field, cfa.obj, c.args.len(), s)) {
                         return expr_is_i64arr(arr_elem_index_expr(cfa.obj), s);
+                    }
+                    if (arr_samekind_call(cfa.field, cfa.obj, c.args.len(), s)) {
+                        return expr_is_i64arr(cfa.obj, s);
                     }
                     // `a.with(...)` / `a.append(...)` preserve the receiver's element
                     // kind: an i64[] receiver yields a fresh i64[].
@@ -9373,6 +9407,49 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!pmm.ok) { return pmm; }
                         if (fa.field == "min") { return pmm.emit(ir.op_call_direct("__fern_arr_i32_min_opt", 1)); }
                         return pmm.emit(ir.op_call_direct("__fern_arr_i32_max_opt", 1));
+                    }
+                    // xs.reverse() / xs.concat(ys) — fresh arrays with the
+                    // elements copied, backed by the same __fern_arr_reverse /
+                    // __fern_arr_concat runtime helpers the AST emitters call
+                    // (op_arr_reverse / op_arr_concat, modelled on op_arr_slice).
+                    // Using the SAME helpers is what makes the IR answer
+                    // byte-for-byte the AST answer, including the raw-slot copy's
+                    // treatment of rc-tracked elements.
+                    //
+                    // Both DEFER to an in-scope std/array helper, like the string[]
+                    // index_of intercept above: std/array defines
+                    // `__method_Array_reverse(arr: string[])`, and `concat` is a
+                    // generic array METHOD that monomorphize rewrites to
+                    // `__arrm_concat(xs, ys)` before lowering (so it normally never
+                    // reaches here at all — see TestSelfHostArrayConcatMethodIR).
+                    // The gap #3457 needs closed is the driver-dialect program that
+                    // imports nothing.
+                    //
+                    // f64[] / i64[] receivers are excluded: the register helpers
+                    // copy 8-byte slots regardless, but the wasm twins copy the
+                    // 4-byte element stride, so an 8-byte element would need the
+                    // op_arr_slice-style width flag and a second WAT helper. Same
+                    // exclusion, same reason, as the other array builtins here.
+                    if ((fa.field == "reverse" && c.args.len() == 0)
+                        && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s))
+                        && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)
+                        && s.find_arr_method("reverse").len() == 0) {
+                        var prv: LowerState = lower_expr(fa.obj, s);
+                        if (!prv.ok) { return prv; }
+                        return prv.emit(ir.op_arr_reverse());
+                    }
+                    if ((fa.field == "concat" && c.args.len() == 1)
+                        && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s))
+                        && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)
+                        && s.find_arr_method("concat").len() == 0) {
+                        // Natural operand order (receiver then argument) — the op_*
+                        // convention, unlike the reverse-push op_call_direct ABI the
+                        // Fern-source helpers use.
+                        var pcc: LowerState = lower_expr(fa.obj, s);
+                        if (!pcc.ok) { return pcc; }
+                        pcc = lower_expr(c.args[0], pcc);
+                        if (!pcc.ok) { return pcc; }
+                        return pcc.emit(ir.op_arr_concat());
                     }
                     // xs.first() / xs.last() — O(1) element reads the AST emitter
                     // open-codes as raw loads off the array header (asm.fern:1879
@@ -13978,6 +14055,18 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                             || expr_is_f64arr(cfa.obj, se) || expr_is_i64arr(cfa.obj, se)
                             || scalar_arr_field_type(cfa.obj, se) != "") { is_arr = true; }
                     }
+                    // `var r = xs.reverse()` / `var c = xs.concat(ys)` — a FRESH
+                    // owned array (rc=1, a move, no alias_inc), same as with /
+                    // append above. This list is what marks the SLOT, and it is
+                    // separate from the expression classifiers: without an entry
+                    // here an UNANNOTATED binding leaves the slot untyped, which
+                    // `for v in r` rejects outright (it requires is_arr_slot) even
+                    // though `r.len()` happens to work. The annotated form is
+                    // covered by is_array_type_name(v.type_name) further down —
+                    // which is exactly why the two `arr-string-{reverse,concat}`
+                    // corpus cases, the only unannotated-plus-for-in ones, were
+                    // the last two of 313 still routing AST.
+                    else if (arr_samekind_call(cfa.field, cfa.obj, cc.args.len(), se)) { is_arr = true; }
                     // `var ks = m.keys()` / `var vs = m.values()` — op_map_keys
                     // / op_map_values return a FRESH owned array (rc=1, a move,
                     // no alias_inc). The element flags (is_strarr / is_i64arr /

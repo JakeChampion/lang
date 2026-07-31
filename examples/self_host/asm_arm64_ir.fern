@@ -541,6 +541,20 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // predicates/concat/eq/cmp) are emitted by emit_str_op — factored out
             // to keep this dispatch under the oversized-function threshold (#2720).
             s = emit_str_op(o, s);
+        } else if (o.kind_tag == 214) {  // arr_reverse
+            // operand stack [arr]; __fern_arr_reverse(x0=arr) -> fresh array in x0.
+            // The helper body is already in this file's emit_ir_runtime, gated on
+            // the arr_reverse need — it just had no call site until irlower
+            // lowered the builtin (#3457 slice 5).
+            s = s.mark_heap();
+            s = s.mark_arr_reverse();
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_arr_reverse\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 215) {  // arr_concat
+            // operand stack [A, B] (B top); __fern_arr_concat(x0=A, x1=B) -> fresh
+            // array in x0. Same story as arr_reverse: body present, call site new.
+            s = s.mark_heap();
+            s = s.mark_arr_concat();
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_arr_concat\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 96) {  // arr_slice
             // operand stack [arr, start, end] (end top); __fern_arr_slice(x0=arr,
             // x1=start, x2=end) -> fresh array in x0. asm_arm64.emit_runtime emits

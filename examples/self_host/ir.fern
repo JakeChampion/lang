@@ -374,6 +374,18 @@ pub function op_str_slice(): Op { return op0("str_slice"); }
 // helper. The register backends copy 8-byte slots regardless and ignore it.
 pub function op_arr_slice(width: i32): Op { return Op { kind_tag: 96, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
 
+// op_arr_reverse / op_arr_concat back the builtin `xs.reverse()` / `xs.concat(ys)`
+// on arrays: a FRESH array with the elements copied (reversed, or A-then-B).
+// Both are backed by the same __fern_arr_reverse / __fern_arr_concat runtime
+// helpers the AST emitters call, so the IR path produces the identical answer;
+// wasm serves them with WAT twins. Modelled on op_arr_slice — the other
+// fresh-array-from-elements op — and, like it, the copy is a raw slot move: an
+// rc-tracked element is NOT retained, matching arr_slice and both AST emitters.
+// f64[] / i64[] receivers are excluded at the lowering, so the copy is always
+// the natural pointer/i32 slot width and no width flag is needed.
+pub function op_arr_reverse(): Op { return op0("arr_reverse"); }
+pub function op_arr_concat(): Op { return op0("arr_concat"); }
+
 // Raw-memory intrinsics (issue #2649, Tier-2 floor — see docs/RUNTIME-INTRINSICS.md).
 // Unsafe, unchecked, `__`-prefixed; only the audited Tier-2 runtime helpers use
 // them. Each lowers to a SINGLE instruction (or one __fern_alloc call), so they
@@ -1343,6 +1355,9 @@ function kind_id_4(name: string): i32 {
     if (name == "proc_fork") { return 211; }
     if (name == "proc_waitpid") { return 212; }
     if (name == "proc_exec") { return 213; }
+    // Builtin fresh-array builders (#3457): xs.reverse() / xs.concat(ys).
+    if (name == "arr_reverse") { return 214; }
+    if (name == "arr_concat") { return 215; }
     return 0;
 }
 
@@ -1585,6 +1600,8 @@ function kind_name_4(id: i32): string {
     if (id == 211) { return "proc_fork"; }
     if (id == 212) { return "proc_waitpid"; }
     if (id == 213) { return "proc_exec"; }
+    if (id == 214) { return "arr_reverse"; }
+    if (id == 215) { return "arr_concat"; }
     return "invalid";
 }
 
@@ -1736,6 +1753,9 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 131 || tag == 132) { return true; }
     // Byte/string builders that materialise a fresh box.
     if (tag == 185 || tag == 104 || tag == 105) { return true; }
+    // arr_reverse / arr_concat build a fresh array via __fern_arr_box, so they
+    // need the heap runtime like arr_slice (96, in the low-level group above).
+    if (tag == 214 || tag == 215) { return true; }
     // args() materialises a fresh string[] (the arr box + a string block per
     // argv entry), so it needs the heap runtime like any other allocator.
     // arg_at(i) boxes the one entry it reads, so it needs it too.
