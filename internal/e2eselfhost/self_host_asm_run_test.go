@@ -1383,6 +1383,19 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"hello",
 			"",
 		},
+		// `.last()` needs its receiver twice (once for the length, once as the
+		// indexed array). The IR path binds it to a temp local rather than
+		// lowering the subtree twice, so a receiver with a side effect runs
+		// ONCE — duplicating it would print "b" twice here. Stdout is the only
+		// place that difference is observable; the exit code is identical either
+		// way, which is why this case exists next to the value-only ones above.
+		{
+			"arr-last-evaluates-receiver-once",
+			"function build(): i32[] { write(\"b\"); var out: i32[] = []; out = out.append(7); return out; }\nfunction main(): i32 { return build().last(); }",
+			7,
+			"b",
+			"",
+		},
 		{
 			"arr-string-last",
 			"function main(): i32 { var xs: string[] = [\"hello\", \"world\"]; write(xs.last()); return 0; }",

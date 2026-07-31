@@ -2248,13 +2248,33 @@ tier → leak.
      genuine gate declines via `-ir-probe` (`module: AST`), not an
      `emit_module_or_error` bug:
 
-     - **Array methods:** `xs.last()` / `xs.first()` / `xs.concat()` /
-       `xs.reverse()` (i32[] and string[])
-     - **i32 methods:** `a.min()` / `a.max()` / `n.clamp()`
+     - ~~**Array element reads:** `xs.first()` / `xs.last()`~~ — **CLOSED**
+       (#5868): lowered as the equivalent INDEX read, so the element width, the
+       bounds check and the element rc handling come from the one `ExprIndex`
+       arm. `first` reuses the receiver subtree directly; `last` needs it twice
+       (length + indexed array) and so binds it to a synthetic temp local, which
+       keeps a side-effecting receiver evaluated ONCE
+       (`arr-last-evaluates-receiver-once` pins that via stdout — the exit code
+       is identical either way). f64[] / i64[] receivers stay excluded, the same
+       exclusion sum / index_of / min / max carry: their element reads lower in
+       the WIDE contexts, which do not route through the `ExprCall` arm, so
+       `var v: i64 = xs.last()` would read a 4-byte slot. An f64[][] / i64[][]
+       receiver IS admitted — the element is a pointer.
+     - **Array methods (rest):** `xs.concat()` / `xs.reverse()` (i32[] and
+       string[]). NOTE for whoever takes these: unlike first/last they collide
+       with std/array, which really does define `__method_Array_reverse(string[])`,
+       so a builtin intercept placed before the `find_arr_method` dispatch would
+       SHADOW the std helper. They also have no IR-path runtime body — `asm_ir.fern`
+       lists `arr_reverse` / `arr_concat` in `all_runtime_need_roots` but emits
+       neither (only `asm_arm64_ir.fern` carries them), so either a Fern
+       `rt_src_arr_*` helper or an x86 body emitter is part of the work.
+     - ~~**i32 methods:** `a.min()` / `a.max()` / `n.clamp()`~~ — **CLOSED** (#5959)
      - **String-array methods:** `xs.contains()` / `xs.index_of()` (+ the
        `arr_str_index_of` runtime helper)
      - **Direct IIFE:** `(function(): i32 { … })()`
-     - **`try` over an Option payload:** `result-option`, `nested-chain`
+     - ~~**`try` over an Option payload:** `result-option`, `nested-chain`~~ —
+       **CLOSED** (#5958, the bracketed-generic payload); re-probed 2026-07-31,
+       `Option[i32]` through `?` reports `module: IR`.
 
      Each is a distinct IR-lowering gap to close (the program must reach
      `module: IR`) BEFORE the reroute can land. This is the real bulk of the
@@ -2262,6 +2282,23 @@ tier → leak.
      PRs, each gated by re-running its `TestSelfHostAsmRunX86_64` / … subtests
      under `FERN_STRICT_IR`. The reroute (`emit_module_or_error` + the 5 driver
      sites) re-lands only once these are all green.
+
+     **Probing these WITHOUT an x86 host (method, 2026-07-31).** The recipe above
+     assumes a driver binary you can run, which an Apple Silicon dev box cannot
+     provide: user-mode `qemu-x86_64` is not in Homebrew's qemu, the native
+     arm64-darwin backend's static dyld-free Mach-O is SIGKILLed by current macOS
+     (`TestArm64DarwinNativeMachO` skips with exactly this diagnostic), `-cc clang`
+     assembles a driver-sized `.s` only until a `bl` exceeds the 26-bit ±128 MB
+     span (`__drop_struct_asmcore__EmitState`), and `-target wasm` cannot compile
+     the x86 driver at all (`asm__try_emit_builtin: unknown callee strbuf_append`).
+     What DOES work, and is faster than any of them: **interpret the driver** —
+     `fern -interp asm_ir_run.fern -- -ir-probe < prog.fern` gives the routing
+     verdict in ~0.6 s, and `fern -interp wasm_ir_run.fern -- -ir` piped to
+     `wasmtime` gives a real runtime answer, with the same command minus `-ir` as
+     the AST-path oracle. That oracle matters here because `.first()`/`.last()`
+     are DRIVER-DIALECT builtins: native `fern -interp` rejects them (`E043:
+     field access on non-struct value of type i32[]`), so the AST emitter, not the
+     interpreter, is the only reference for them.
 
   2. **Add `asm_ir.emit_module_or_error`** — the non-AST half of
      `asm.emit_module` (asm.fern:7157): `parse_unknown_errors` + `check_module` +

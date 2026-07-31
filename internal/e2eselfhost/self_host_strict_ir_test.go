@@ -222,6 +222,51 @@ function main(): i32 {
     return a.min(b) + a.max(b) + (99).clamp(0, 10) + (0 - 5).clamp(0, 10);
 }
 `, 21},
+	// xs.first() / xs.last() lowered as the equivalent index read. Until this
+	// existed either one bailed the whole module to the AST emitter (#3457
+	// slice 5). The receivers cover every element kind the intercept admits, and
+	// each result is CONSUMED so the call's result type has to be recovered too:
+	// a string element through `.len()`, a struct element through `.n`, an
+	// array-of-arrays element through a second `[i]`, and a string[][] element
+	// through a chained `.first()`. A missing recovery mis-dispatches (arr_len on
+	// a string box reads a different field) rather than bailing, so the exit code
+	// is what catches it.
+	{"arr-first-last", `
+struct P { name: string, n: i32 }
+function build(): i32[] {
+    var out: i32[] = [];
+    out = out.append(4);
+    out = out.append(6);
+    return out;
+}
+function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    var ss: string[] = ["ab", "cde"];
+    var ps: P[] = [P { name: "x", n: 3 }, P { name: "yy", n: 4 }];
+    var m: i32[][] = [[1, 2], [3, 4]];
+    var mm: string[][] = [["a", "bb"], ["ccc"]];
+    var t: i32 = xs.first() + xs.last();            // 40
+    t = t + ss.first().len() + ss.last().len();     // +5
+    t = t + ps.first().n + ps.last().name.len();    // +5
+    t = t + m.first()[1] + m.last()[0];             // +5
+    t = t + mm.first()[1].len() + mm.last().first().len(); // +5
+    return t + build().last() + build().first();    // +10
+}
+`, 70},
+	// The receiver guard on the case above: a STRUCT with user methods named
+	// `first` / `last` keeps its own return types. Classifying those calls as
+	// element reads (the bug an unguarded `field == "first"` test introduces)
+	// types `b.last()` as "" instead of string, so `.len()` mis-dispatches —
+	// silently, since the module still lowers. Exit 7 on both legs is the pin.
+	{"arr-first-last-user-method", `
+struct Box { n: i32 }
+function (b: Box) first(): i32 { return b.n + 1; }
+function (b: Box) last(): string { return "zz"; }
+function main(): i32 {
+    var b: Box = Box { n: 4 };
+    return b.first() + b.last().len();
+}
+`, 7},
 }
 
 // runDriver runs a self-host driver over `src`, optionally with FERN_STRICT_IR
