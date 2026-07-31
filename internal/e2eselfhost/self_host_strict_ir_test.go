@@ -380,6 +380,54 @@ function g(o: Option[Result[i32, i32]]): i32 {
 }
 function main(): i32 { return g(Some(Ok(5))) + g(Some(Err(2))) + g(None); }
 `, 106},
+	// An UNANNOTATED binding of an erased-generic `T[]`-returning call
+	// (`var s = sort_by_key(ps, …)`). array_ret_fns_of already registered the
+	// function — is_array_type only tests the `[]` suffix, so `T[]` counts and the
+	// slot is is_arr — but struct_ret_fns_of recorded no ELEMENT type, because
+	// stripping `[]` from `T[]` leaves the typevar. So `s[i].k` had no struct type
+	// and the CALLER bailed to the AST emitter while the generic function itself
+	// lowered fine. A positional "name|$arg<i>" argref now records "the element
+	// type is argument i's element type", resolved at the call site — the same
+	// convention the erased string / array returns use.
+	//
+	// The annotated form (`var s: P[] = …`) always worked, which is what made this
+	// the third second-mechanism gap of the set. Struct AND enum elements are both
+	// covered; `qs` is a separate array from `ps` on purpose, because reading a
+	// source array after a generic mutated it through `.with` measures leak-mode
+	// aliasing (an in-place store on the register/wasm backends, a copy in the
+	// interpreter) rather than anything about this fix.
+	{"generic-array-return-unannotated", `
+struct P { k: i32 }
+enum C { Red, Blue }
+function idf[T](arr: T[]): T[] { return arr; }
+function sort_by_key[T](arr: T[], key: (T) => i32): T[] {
+    var out: T[] = arr;
+    var i: i32 = 1;
+    while (i < out.len()) {
+        var j: i32 = i;
+        while (j > 0 && key(out[j]) < key(out[j - 1])) {
+            var tv: T = out[j];
+            out = out.with(j, out[j - 1]);
+            out = out.with(j - 1, tv);
+            j = j - 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+function main(): i32 {
+    var ps: P[] = [P { k: 3 }, P { k: 1 }, P { k: 2 }];
+    var s = sort_by_key(ps, function (p: P): i32 { return p.k; });
+    var t: i32 = s[0].k * 10 + s[2].k;          // 1*10 + 3
+    var qs: P[] = [P { k: 7 }];
+    var d = idf(qs);
+    t = t + d[0].k;                              // + 7
+    var cs: C[] = [Blue, Red];
+    var e = idf(cs);
+    match (e[0]) { Red => { t = t + 1; }, Blue => { t = t + 2; } }
+    return t;
+}
+`, 22},
 	// xs.reverse() / xs.concat(ys) on arrays, lowered to the same
 	// __fern_arr_reverse / __fern_arr_concat runtime helpers the AST emitters
 	// call (op_arr_reverse / op_arr_concat, modelled on op_arr_slice). Until this
