@@ -2280,6 +2280,18 @@ tier → leak.
        8-byte element would need `op_arr_slice`'s width flag and a second WAT
        helper. Also NOT recovered: the element STRUCT type, so
        `ps.reverse()[0].n` still bails (safely) to the AST emitter.
+
+       **Two mechanisms have to agree, and the second is easy to miss.** The
+       expression classifiers type the CALL; `lower_stmt_var`'s hand-enumerated
+       `is_arr` list types the SLOT. Only the latter is what `for v in r`
+       consults — it requires `is_arr_slot` and bails outright otherwise — so
+       with the classifiers alone an UNANNOTATED `var r = xs.reverse()` followed
+       by a `for` still routed AST, while `r.len()` on the same slot appeared to
+       work (an untyped slot dispatches `str_len`, and an array box and a string
+       box both carry their length at offset 0, so the answer coincides). The
+       annotated form goes through `is_array_type_name(v.type_name)` instead and
+       was never affected. Any future array-returning builtin needs an entry in
+       BOTH places.
      - ~~**i32 methods:** `a.min()` / `a.max()` / `n.clamp()`~~ — **CLOSED** (#5959)
      - ~~**String-array methods:** `xs.contains()` / `xs.index_of()` (+ the
        `arr_str_index_of` runtime helper)~~ — **CLOSED** (#5961): lowered to
@@ -2329,6 +2341,19 @@ tier → leak.
      place — rather than to assume the remaining shards are clean. Expect a second
      (smaller) round of per-construct PRs, and note that the arm64 leg has never
      been enumerated at all.
+
+     **One corpus CAN be enumerated locally and cheaply — and doing so found two
+     more gaps (2026-07-31).** `TestSelfHostAsmRunX86_64`'s cases are Go string
+     literals, so they extract to files and each routes through `fern -interp
+     asm_ir_run.fern -- -ir-probe` in ~0.6 s — the whole 313-program corpus in
+     about three minutes, on a host where every x86 e2e leg SKIPS (see the probing
+     note below). Measured that way it was **311 IR / 2 AST**, and the two were
+     `arr-string-reverse` / `arr-string-concat`: the unannotated-binding-plus-`for`
+     shape described under reverse/concat, which per-construct lowering alone did
+     NOT close. With #5963 it is **313 / 313**. Do this before spending a CI matrix
+     on a reroute — it covers one corpus rather than all of them, but it covers
+     that one exhaustively, in minutes, and it is the only enumeration available
+     without a machine that can run the driver.
 
      **Probing these WITHOUT an x86 host (method, 2026-07-31).** The recipe above
      assumes a driver binary you can run, which an Apple Silicon dev box cannot

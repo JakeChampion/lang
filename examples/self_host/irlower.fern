@@ -14055,6 +14055,18 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                             || expr_is_f64arr(cfa.obj, se) || expr_is_i64arr(cfa.obj, se)
                             || scalar_arr_field_type(cfa.obj, se) != "") { is_arr = true; }
                     }
+                    // `var r = xs.reverse()` / `var c = xs.concat(ys)` — a FRESH
+                    // owned array (rc=1, a move, no alias_inc), same as with /
+                    // append above. This list is what marks the SLOT, and it is
+                    // separate from the expression classifiers: without an entry
+                    // here an UNANNOTATED binding leaves the slot untyped, which
+                    // `for v in r` rejects outright (it requires is_arr_slot) even
+                    // though `r.len()` happens to work. The annotated form is
+                    // covered by is_array_type_name(v.type_name) further down —
+                    // which is exactly why the two `arr-string-{reverse,concat}`
+                    // corpus cases, the only unannotated-plus-for-in ones, were
+                    // the last two of 313 still routing AST.
+                    else if (arr_samekind_call(cfa.field, cfa.obj, cc.args.len(), se)) { is_arr = true; }
                     // `var ks = m.keys()` / `var vs = m.values()` — op_map_keys
                     // / op_map_values return a FRESH owned array (rc=1, a move,
                     // no alias_inc). The element flags (is_strarr / is_i64arr /

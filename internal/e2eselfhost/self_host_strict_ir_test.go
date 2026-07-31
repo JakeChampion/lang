@@ -300,6 +300,24 @@ function main(): i32 {
     return t + e.reverse().len() + e.concat(e).len() + xs.reverse().reverse()[0]; // + 0 + 0 + 1
 }
 `, 50},
+	// The UNANNOTATED binding plus `for … in`. Two separate mechanisms have to
+	// agree: the expression classifiers (which type `xs.reverse()` itself) and
+	// lower_stmt_var's is_arr list (which types the SLOT). Only the second is
+	// what `for v in r` consults — it requires is_arr_slot and bails outright
+	// otherwise — so with the classifiers alone this shape still routed AST while
+	// `r.len()` worked, which is how it survived. The annotated form goes through
+	// is_array_type_name(v.type_name) instead and was never affected.
+	{"arr-reverse-concat-unannotated-foreach", `
+function main(): i32 {
+    var xs: string[] = ["a", "b", "c"];
+    var ys = xs.reverse();
+    var t: i32 = 0;
+    for s in ys { t = t + s.len(); }
+    var ns = xs.concat(["dd"]);
+    for s in ns { t = t + s.len(); }
+    return t;
+}
+`, 8},
 	// reverse() copies, so the source stays independent: appending to `a`
 	// afterwards must not be visible through `r`. A helper that returned the
 	// receiver instead of a fresh array passes every length assertion above and
