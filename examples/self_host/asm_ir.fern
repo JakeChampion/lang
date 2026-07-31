@@ -3312,16 +3312,19 @@ pub function eligible_core(mod: parser.Module): boolean {
 // cross-module call is already local in the merged module), so the merged path
 // is byte-for-byte unchanged.
 pub function eligible_core_known(mod: parser.Module, known: string[]): boolean {
-    return eligible_core_known_main(mod, known, true);
+    return eligible_core_known_impl(mod, known);
 }
 
 // all_eligible_lib_known is the per-module LIBRARY eligibility check (#3456): a
 // non-entry unit legitimately has no `main` (it exposes only its `__fn_*`
-// definitions; the entry owns `_start`/`__fn_main`), so the require_main gate is
-// dropped. Otherwise identical to all_eligible_known — every function lowers and
-// every call/function-value resolves against the program-wide known set.
+// definitions; the entry owns `_start`/`__fn_main`). It is now IDENTICAL to
+// eligible_core_known: the former require_main gate is gone, because the entry
+// emitter handles a main-less module by exiting 0 from `_start` instead of
+// calling a __fn_main that does not exist. Kept as a named alias because the
+// per-module call sites read better for it, and because "is this unit a library?"
+// may well need to mean something again.
 pub function all_eligible_lib_known(mod: parser.Module, known: string[]): boolean {
-    return eligible_core_known_main(mod, known, false);
+    return eligible_core_known_impl(mod, known);
 }
 
 // all_eligible_lib_known_view is all_eligible_lib_known with the WHOLE-PROGRAM
@@ -3332,14 +3335,16 @@ pub function all_eligible_lib_known(mod: parser.Module, known: string[]): boolea
 // all_eligible_lib_known — to gate a per-module emit driven off
 // flatten.bundle_per_module.
 pub function all_eligible_lib_known_view(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): boolean {
-    return eligible_core_known_main_view(mod, known, false, all_funcs, all_structs);
+    return eligible_core_known_view_impl(mod, known, all_funcs, all_structs);
 }
 
-// eligible_core_known_main is eligible_core_known with the `main`-required gate
-// made optional: require_main=true is the whole-program / entry path (emits
-// `_start` → `call __fn_main`, so a module with no main would dangle);
-// require_main=false is a per-module library unit, which has no main by design.
-pub function eligible_core_known_main(mod: parser.Module, known: string[], require_main: boolean): boolean {
+// eligible_core_known_impl is the shared body. It used to take a `require_main`
+// flag — true for the whole-program / entry path, false for a per-module library
+// unit — but the distinction is gone: emit_module_ir_unit's `_start` exits 0 for a
+// main-less module instead of calling a __fn_main that does not exist, so BOTH
+// callers want the same answer. The flag and its two `has_main` checks are
+// deleted rather than left inert (#3457 slice 5).
+pub function eligible_core_known_impl(mod: parser.Module, known: string[]): boolean {
     if (mod.funcs.len() == 0) { return false; }
     // Module-size budget. emit_module_ir lowers every function into ir.Op
     // lists built by repeated `.append`, which grow past the native runtime's
@@ -3355,14 +3360,6 @@ pub function eligible_core_known_main(mod: parser.Module, known: string[], requi
     // bundle, so a normal program / module compiles through IR while the
     // bootstrap self-compile of the merged compiler stays on the AST emitter.
     if (mod.funcs.len() > 512) { return false; }
-    // emit_module_ir is a WHOLE-PROGRAM emitter: it writes a `_start` that
-    // calls `__fn_main` and exits with its return. A module with no `main`
-    // (a library compiled standalone, e.g. util.fern under the bootstrap
-    // self-compile) has no `__fn_main`, so routing it through the IR path
-    // would emit a dangling reference. Such modules stay on the AST emitter,
-    // which handles the no-main case (top-level stmts + fallback exit). A
-    // per-module library unit (require_main=false) has no main by design.
-    if (require_main && !asmcore.has_main(mod)) { return false; }
     // Per-function eligibility lowers fd ONCE and runs all three checks (body
     // lowers / calls-only-known / const-funcs-only-known) on that single
     // LowerResult, rather than re-lowering it three times (ir_eligible +
@@ -3453,13 +3450,12 @@ function strict_ir_refuse(what: string): i32 {
 // eligible_core_known_main, modulo the merged path's historical use of
 // array_ret_fns / borrowable_params_of (vs the _of / _interproc forms emit
 // uses); this variant tracks emit, not that legacy gate, by design.
-pub function eligible_core_known_main_view(mod: parser.Module, known: string[], require_main: boolean, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): boolean {
+pub function eligible_core_known_view_impl(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): boolean {
     if (mod.funcs.len() == 0) { return false; }
     // No 512-function size budget here: a per-module unit is a SINGLE module
     // (the largest, irlower, is ~350 funcs), so the merged-bundle OOM the budget
-    // guards against (eligible_core_known_main) can't arise — each module is
+    // guards against (eligible_core_known_impl) can't arise — each module is
     // emitted in its own process, holding only its own ops live.
-    if (require_main && !asmcore.has_main(mod)) { return false; }
     // Side-tables + struct layouts from the WHOLE-PROGRAM view, exactly as
     // emit_module_funcs derives them (array_ret_fns_of / borrowable_params_interproc
     // / *_of from all_funcs, struct_ret_fns_of against all_structs).
@@ -3563,7 +3559,7 @@ pub function all_eligible_known(mod: parser.Module, known: string[]): boolean {
 // `call __fn_main`). Gates a per-module ENTRY emit against the same all_funcs /
 // all_structs view emit_module_ir_unit lowers it with.
 pub function all_eligible_known_view(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): boolean {
-    return eligible_core_known_main_view(mod, known, true, all_funcs, all_structs);
+    return eligible_core_known_view_impl(mod, known, all_funcs, all_structs);
 }
 
 // eligibility_report returns a per-function IR-eligibility breakdown for `mod`:
@@ -6196,7 +6192,7 @@ pub function emit_module_or_error(mod: parser.Module): string {
 // least `.globl _start\n    .text\n…`, never the empty string.
 pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var sm: parser.Module = script_normalized(mod);
-    // Module-level gates, mirroring eligible_core_known_main's pre-checks: no
+    // Module-level gates, mirroring eligible_core_known_impl's pre-checks: no
     // functions / over the merged-bundle size budget (#3425) / no `main` (the
     // whole-program emit writes `_start` → `call __fn_main`) all fall back to AST.
     if (sm.funcs.len() == 0) { return ""; }
@@ -6204,7 +6200,10 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
         if (strict_ir_on()) { strict_ir_refuse("module over the 512-function merged-bundle budget (#3425)"); }
         return "";
     }
-    if (!asmcore.has_main(sm)) { return ""; }
+    // A main-less module is admitted now: emit_module_ir_unit's `_start` exits 0
+    // instead of calling a __fn_main that does not exist (see its has_main branch).
+    // Was a blanket refusal, which is what kept the bootstrap smoke test's
+    // main-less compiler sources on the AST emitter.
     // Infer ret types BEFORE lowering the cache so the side-tables see inferred
     // return types (emit_module_ir_unit re-infers idempotently, keeping the cache
     // indices aligned with the module it emits).
@@ -6421,8 +6420,23 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         }
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    call __fn_main\n");
-        s = s.write("    movq %rax, %rdi\n");
+        // A MAIN-LESS module (a library compiled standalone — util.fern et al.
+        // under the bootstrap self-compile) has no __fn_main to call, so `_start`
+        // exits 0 directly. Mirrors asm.fern's own no-main branch, minus the
+        // top-level statements: a script-shaped source has already been rewritten
+        // into `function main()` by asmcore.synth_script_main upstream, so
+        // anything still main-less here is a library with functions only.
+        //
+        // Emitting the call unconditionally is what forced the gate to refuse such
+        // a module (`require_main`), which is why the bootstrap smoke test — it
+        // pipes each compiler SOURCE through this driver, and 7 of 9 are
+        // main-less — depended on the AST emitter.
+        if (asmcore.has_main(mod)) {
+            s = s.write("    call __fn_main\n");
+            s = s.write("    movq %rax, %rdi\n");
+        } else {
+            s = s.write("    movq $0, %rdi\n");
+        }
         s = s.write("    movq $60, %rax\n");
         s = s.write("    syscall\n");
     }
