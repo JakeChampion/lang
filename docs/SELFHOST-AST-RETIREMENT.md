@@ -2269,8 +2269,20 @@ tier → leak.
        neither (only `asm_arm64_ir.fern` carries them), so either a Fern
        `rt_src_arr_*` helper or an x86 body emitter is part of the work.
      - ~~**i32 methods:** `a.min()` / `a.max()` / `n.clamp()`~~ — **CLOSED** (#5959)
-     - **String-array methods:** `xs.contains()` / `xs.index_of()` (+ the
-       `arr_str_index_of` runtime helper)
+     - ~~**String-array methods:** `xs.contains()` / `xs.index_of()` (+ the
+       `arr_str_index_of` runtime helper)~~ — **CLOSED** (#5961): lowered to
+       `__fern_arr_str_index_of`, `contains` as the `>= 0` test around it. Content
+       equality via str_eq is the whole reason it cannot reuse the i32 helper's
+       pointer compare, so `"c" + "c"` must still match a `.rodata` element.
+       Three things the wiring needed beyond the lowering, and only the first was
+       obvious: the x86 `emit_ir_runtime` had no body block for it (arm64's
+       already did); `asm_arm64_ir` had the reverse gap — the body but no
+       call-site need mark, so the arm64 leg emitted `bl` to an undefined symbol
+       (verified by removing the mark: 5 calls, 0 definitions — the #5944 class
+       again, and the existing `arr-string-index-of` arm64 subtest is its pin);
+       and on wasm `module_uses_strings` had to admit the CALL, since
+       `function f(xs: string[], t: string) { return xs.index_of(t); }` carries no
+       string op of its own yet needs `$__fern_streq` from that bundle.
      - **Direct IIFE:** `(function(): i32 { … })()`
      - ~~**`try` over an Option payload:** `result-option`, `nested-chain`~~ —
        **CLOSED** (#5958, the bracketed-generic payload); re-probed 2026-07-31,
