@@ -2283,7 +2283,19 @@ tier → leak.
        and on wasm `module_uses_strings` had to admit the CALL, since
        `function f(xs: string[], t: string) { return xs.index_of(t); }` carries no
        string op of its own yet needs `$__fern_streq` from that bundle.
-     - **Direct IIFE:** `(function(): i32 { … })()`
+     - ~~**Direct IIFE:** `(function(): i32 { … })()`~~ — **CLOSED** (#5962), and
+       far narrower than the bullet implies. `lower_iife` handled only the
+       if/match-EXPRESSION desugars (a `StmtIf` / `StmtMatch` body) and
+       multi-statement value blocks; a single-`return` body — the hand-written
+       IIFE — fell through its catch-all `s.fail()`. Its value simply IS the
+       returned expression, evaluated in the same scope (the lambda is invoked
+       immediately, so a capture reads the enclosing local), i.e.
+       `lower_value_block`'s inline treatment with zero leading statements and so
+       no user return/break/continue to escape. Worth recording WHY it was narrow:
+       only positions where the LIFT leaves the lambda inline ever reach
+       `lower_iife`. `var a = (…)()`, an operand and an argument all hoist to
+       `__lam_N` and lowered fine; `return (…)();` does not hoist, so that — and
+       only that — bailed.
      - ~~**`try` over an Option payload:** `result-option`, `nested-chain`~~ —
        **CLOSED** (#5958, the bracketed-generic payload); re-probed 2026-07-31,
        `Option[i32]` through `?` reports `module: IR`.

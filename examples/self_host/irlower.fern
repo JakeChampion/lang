@@ -10886,6 +10886,24 @@ function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState, f
         parser.StmtMatch(mm) => {
             return lower_iife_match(mm, s, force_i64);
         },
+        // A single `return E` body is the DIRECT, hand-written IIFE —
+        // `(function (): i32 { return 7; })()` — as opposed to the if/match
+        // desugars above, which is why it reached the catch-all and bailed the
+        // whole module to the AST emitter (#3457 slice 5). Its value simply IS
+        // E, evaluated here: the lambda is invoked immediately in this scope, so
+        // a capture reads the enclosing local. No temp and no branch structure —
+        // this is lower_value_block's inline treatment with zero leading
+        // statements, hence also no user return / break / continue that could
+        // escape.
+        //
+        // Only reachable when the lift left the lambda inline. In most positions
+        // (`var a = (…)()`, an operand, an argument) it hoists to __lam_N and the
+        // call never gets here, which is why the gap survived: the failing shapes
+        // were exactly `return (…)();` and the RETURN-position operand.
+        parser.StmtReturn(dr) => {
+            if (force_i64) { return lower_i64(dr.value, s); }
+            return lower_expr(dr.value, s);
+        },
         _ => { return s.fail(); }
     }
     return s.fail();
