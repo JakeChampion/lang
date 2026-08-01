@@ -3361,6 +3361,31 @@ pub function cell_elem_type(e: parser.Expr, s: LowerState): string {
     }
 }
 
+// cell_new_elem_tag returns the element-type spelling for a `cell_new(x)`
+// initialiser (so an UNANNOTATED `var c = cell_new(x)` binding can record the
+// same is_cell / element-kind columns the `: Cell[T]` spelling gives it), or ""
+// when `e` is not a cell_new call. Scalars + string only: a Cell over a
+// composite is rejected upstream by E057.
+pub function cell_new_elem_tag(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(ci) => {
+                    if (ci.name != "cell_new" || c.args.len() != 1) { return ""; }
+                    var a: parser.Expr = c.args[0];
+                    if (expr_is_str(a, s)) { return "string"; }
+                    if (expr_is_f64(a, s)) { return "f64"; }
+                    if (expr_is_u64(a, s)) { return "u64"; }
+                    if (infer_expr_width(a, s) == 64) { return "i64"; }
+                    return "i32";
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+}
+
 // cell_get_elem returns the element type of a `X.get()` call where X is a cell,
 // or "" otherwise — the result type c.get() produces (#5510). Used by the type
 // predicates (expr_is_str etc.), which run on the ORIGINAL `c.get()` AST before
@@ -10811,7 +10836,26 @@ function builtin_arr_opt_ret_type(field: string, obj: parser.Expr, s: LowerState
         && !expr_is_strarr(obj, s) && !expr_is_f64arr(obj, s) && !expr_is_i64arr(obj, s)) {
         return "Option[i32]";
     }
-    return "";
+    return arr_method_opt_ret_type(field, obj, s);
+}
+
+// arr_method_opt_ret_type recovers the Option/Result type of a USER array-method
+// call (`xs.gcd_all()` → std/array's `__method_Array_gcd_all(arr): Option[i32]`).
+// The call lowers through the find_arr_method dispatch, but the scrutinee-type
+// resolvers only knew the BUILTIN array methods above, so an INLINE
+// `match (xs.gcd_all())` had no payload type and bailed the module — while
+// binding it first (`var o: Option[i32] = xs.gcd_all(); match (o)`) lowered,
+// the by-now-familiar tell that the gap is a missing result-type recovery
+// rather than missing lowering.
+//
+// Keyed off the resolved helper NAME so it works for any array method the module
+// actually has, and array-receiver-gated so a same-named struct method keeps its
+// own registry entry.
+function arr_method_opt_ret_type(field: string, obj: parser.Expr, s: LowerState): string {
+    if (!(expr_is_arr_src(obj, s) || expr_is_strarr(obj, s) || expr_is_f64arr(obj, s) || expr_is_i64arr(obj, s))) { return ""; }
+    var amn: string = s.find_arr_method(field);
+    if (amn.len() == 0) { return ""; }
+    return s.opt_ret_type(amn);
 }
 
 // try_opt_type recovers the Option/Result type spelling of a try-operator's
@@ -15006,6 +15050,21 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 _ => {}
             }
             sb = sb.mark_map_type(slot, "Map[" + uktag + ", " + uvtag + "]");
+        }
+    }
+    // UNANNOTATED cell binding — `var c = cell_new(0)` (no `: Cell[i32]`).
+    // The annotated form above records is_cell from the type spelling, but
+    // without it the slot stayed plain and `c.get()` dispatched as a method on
+    // the ELEMENT type ("call to unknown symbol i32.get") — the whole module
+    // bailed. Recover the cell-ness (and the element kind) from the
+    // `cell_new(x)` initialiser instead. #3457 slice 5.
+    if (!sb.is_cell_slot(slot)) {
+        var ucelt: string = cell_new_elem_tag(v.init, sb);
+        if (ucelt.len() > 0) {
+            sb = sb.mark_cell(slot, ucelt);
+            if (ucelt == "string") { sb = sb.mark_strarr(slot, true); }
+            else if (ucelt == "i64" || ucelt == "u64") { sb = sb.mark_i64arr(slot, true); }
+            else if (ucelt == "f64") { sb = sb.mark_f64arr(slot, true); }
         }
     }
     // UNANNOTATED binding from a map-RETURNING call (`var m = build()`,

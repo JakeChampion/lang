@@ -535,6 +535,60 @@ function main(): i32 {
     return b.first() + b.last().len();
 }
 `, 7},
+	// A USER array method returning Option[T], matched INLINE. The call itself
+	// always lowered; what was missing was the scrutinee's result TYPE — the
+	// match-scrutinee (and try-operator) resolvers only knew the BUILTIN array
+	// methods (min / max), so `match (xs.pick())` had no payload type and bailed
+	// the whole module, while binding it first (`var o: Option[i32] =
+	// xs.pick(); match (o)`) lowered. std/array's `gcd_all` / `lcm_all` are the
+	// real consumers (TestSelfHostArray, TestSelfHostStdTestE2E). Both the
+	// inline and the bound form are pinned, since it is the pair that identifies
+	// the gap as a missing type recovery rather than missing lowering.
+	{"arr-user-method-option-inline", `
+function __method_Array_pick(arr: i32[]): Option[i32] {
+    if (arr.len() == 0) { return None; }
+    return Some(arr[0]);
+}
+function __method_Array_tail_str(arr: string[]): Option[string] {
+    if (arr.len() < 2) { return None; }
+    return Some(arr[arr.len() - 1]);
+}
+function main(): i32 {
+    var xs: i32[] = [12, 18];
+    var t: i32 = 0;
+    match (xs.pick()) { Some(g) => { t = g; }, None => { t = 99; } }
+    var bound: Option[i32] = xs.pick();
+    match (bound) { Some(g) => { t = t + g; }, None => { t = t + 99; } }
+    var empty: i32[] = [];
+    match (empty.pick()) { Some(g) => { t = t + g; }, None => { t = t + 1; } }
+    var ss: string[] = ["a", "bcd"];
+    match (ss.tail_str()) { Some(v) => { t = t + v.len(); }, None => { t = t + 50; } }
+    return t;                                    // 12 + 12 + 1 + 3
+}
+`, 28},
+	// An UNANNOTATED cell binding — `var c = cell_new(0)` with no `: Cell[i32]`.
+	// The annotated spelling records is_cell from the type name; without it the
+	// slot stayed plain and `c.get()` dispatched as a method on the ELEMENT type
+	// ("call to unknown symbol i32.get"), bailing the module — the shape
+	// TestSelfHostImmutabilityGate's cell-scalar-ok case feeds. The element KIND
+	// matters too, not just the cell-ness: a string cell whose slot misses
+	// is_strarr loads its element as an i32, so `.len()` reads a non-pointer.
+	// i64 cells are deliberately absent: the IR path and the interpreter
+	// disagree on Cell[i64] for the ANNOTATED spelling too, so it is a
+	// pre-existing divergence, not this shape's business.
+	{"cell-unannotated", `
+function main(): i32 {
+    var ci = cell_new(7);
+    ci.set(ci.get() + 3);
+    var cs = cell_new("ab");
+    cs.set(cs.get() + "cd");
+    var cf = cell_new(1.5);
+    cf.set(cf.get() + 0.5);
+    var acc: i32 = ci.get() + cs.get().len();
+    if (cf.get() == 2.0) { acc = acc + 10; }
+    return acc;                                  // 10 + 4 + 10
+}
+`, 24},
 }
 
 // runDriver runs a self-host driver over `src`, optionally with FERN_STRICT_IR

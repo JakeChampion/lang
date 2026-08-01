@@ -157,30 +157,30 @@ func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 		if out, _ := runDriver(entry, root, "-decide"); strings.TrimSpace(out) != "ir" {
 			t.Errorf("heavy decide (default treeshake) = %q, want \"ir\"", strings.TrimSpace(out))
 		}
-		// Both paths must produce the correct result (treeshake changes the path,
-		// not behaviour): AST build (-no-treeshake) and IR build (default).
-		for _, tc := range []struct {
-			tag  string
-			args []string
-		}{
-			{"ast", []string{entry, root, "-no-treeshake"}},
-			{"ir", []string{entry, root}},
-		} {
-			asm, _ := runDriver(tc.args...)
-			if len(asm) == 0 {
-				t.Fatalf("heavy %s: 0 bytes", tc.tag)
-			}
-			bin := buildBin(t, gcc, dir, "ts_heavy_"+tc.tag, asm)
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 7 {
-				t.Errorf("heavy %s run = %d, want 7", tc.tag, code)
-			}
+		// The PRUNED build compiles, links and runs correctly.
+		asm, _ := runDriver(entry, root)
+		if len(asm) == 0 {
+			t.Fatal("heavy (pruned): 0 bytes")
+		}
+		bin := buildBin(t, gcc, dir, "ts_heavy_ir", asm)
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(bin)
+		} else {
+			cmd = exec.Command(runner[0], append(runner[1:], bin)...)
+		}
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != 7 {
+			t.Errorf("heavy (pruned) run = %d, want 7", code)
+		}
+		// And the UNPRUNED one is REFUSED. This used to build too — the AST
+		// emitter took it, and the pair asserted "treeshake changes the path, not
+		// behaviour". #3457 slice 5 deleted that emitter, so the over-budget route
+		// the -decide above still reports has nowhere to go: emitting 0 bytes IS
+		// the contract now, and it is what makes the prune load-bearing rather
+		// than merely preferable.
+		if noPrune, _ := runDriver(entry, root, "-no-treeshake"); len(noPrune) != 0 {
+			t.Errorf("heavy (unpruned) emitted %d bytes, want a refusal (over budget, no AST emitter)", len(noPrune))
 		}
 	})
 
