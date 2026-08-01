@@ -608,6 +608,28 @@ function main(): i32 {
     return a + b + c + d;
 }
 `, 48},
+	// An annotated TUPLE binding whose initialiser is a method call the tuple-tag
+	// inference does not key. Each StmtVar arm recovers element tags from the
+	// INITIALISER — the method arm keys `tuple_ret_type("<Struct>.<m>")` — so a
+	// method on an Option/Result receiver (std/option's `some.unzip()`, the real
+	// consumer in examples/tests/option_combinators_test.fern) recorded nothing
+	// and `sa.0.unwrap_or(0)` dispatched as `i32.unwrap_or`, an unknown symbol.
+	// The annotation names every element, so it now fills the hole — only when
+	// nothing else did, which is what keeps every self-typing binding's tags
+	// (and therefore its asm) identical.
+	//
+	// Both elements are CONSUMED at their own types: an i32 payload and a string
+	// payload whose `.len()` would read a non-pointer if the tag were lost, so a
+	// half-recovered tag shows up as a wrong answer rather than as a bail.
+	{"tuple-annotation-from-call", `
+function unwrap_or_i(o: Option[i32], d: i32): i32 { match (o) { Some(v) => { return v; }, None => { return d; } } }
+function unwrap_or_s(o: Option[string], d: string): string { match (o) { Some(v) => { return v; }, None => { return d; } } }
+function split_pair(t: (i32, string)): (Option[i32], Option[string]) { return (Some(t.0), Some(t.1)); }
+function main(): i32 {
+    var sa: (Option[i32], Option[string]) = split_pair((7, "hi"));
+    return unwrap_or_i(sa.0, 0) + unwrap_or_s(sa.1, "").len();   // 7 + 2
+}
+`, 9},
 }
 
 // runDriver runs a self-host driver over `src`, optionally with FERN_STRICT_IR

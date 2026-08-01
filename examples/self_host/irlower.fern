@@ -15310,6 +15310,20 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         },
         _ => {}
     }
+    // TUPLE ANNOTATION as the last resort. Each initialiser arm above recovers
+    // the element tags from the INITIALISER, and each covers only the shapes it
+    // knows: the method arm keys `tuple_ret_type("<Struct>.<m>")`, so a method on
+    // an Option/Result receiver (`var sa: (Option[i32], Option[string]) =
+    // some.unzip()`) recorded nothing and `sa.0.unwrap_or(0)` dispatched as
+    // `i32.unwrap_or` — an unknown symbol, bailing the module. The annotation
+    // names every element authoritatively, so use it whenever nothing else did.
+    //
+    // Placed AFTER the match, and gated on the slot still being untagged, so
+    // every binding that types itself today keeps its exact tags: this only
+    // fills a hole, never overrides an inference.
+    if (v.type_name.len() >= 2 && v.type_name[0:1] == "(" && sb.tuple_elem_tag(slot, 0).len() == 0) {
+        sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
+    }
     // A u32 / u32[] binding marks the slot u32 so its arithmetic wraps at
     // 2^32 and its `>>` is logical (expr_is_u32 / the binary-op masking).
     // An un-annotated binding has an empty type_name, so also infer the
