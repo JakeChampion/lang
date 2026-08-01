@@ -44,7 +44,7 @@ func TestSelfHostArm64NativeViaGoBackend(t *testing.T) {
 	// Stage the full self-host project + fern.fern's transitive closure
 	// (incl. arm64_native.fern, which the flipped fern.fern now imports).
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"asmcore.fern", "util.fern", "flatten.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "astwalk.fern", "ssa.fern", "ssa_arm64.fern", "ssa_x86.fern", "ssa_wasm.fern", "watbin.fern", "constfold.fern", "arm64_native.fern", "elf.fern", "fern.fern"} {
+	for _, name := range []string{"asmcore.fern", "util.fern", "flatten.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "checker.fern", "interp.fern", "printer.fern", "astwalk.fern", "ssa.fern", "ssa_arm64.fern", "ssa_x86.fern", "ssa_wasm.fern", "watbin.fern", "constfold.fern", "arm64_native.fern", "elf.fern", "fern.fern"} {
 		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

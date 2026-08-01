@@ -2209,10 +2209,25 @@ tier → leak.
     `emit_ir_rc_bodies_from` + the shared WAT runtime helpers out of `wasm.fern`
     into `wasm_ir.fern`.
 
-- **Slice 5 — delete `asm.fern` → `asm_arm64.fern` → `wasm.fern` + the
-  512-budget.** Repoint every driver + Go test module list; retire the AST-side
-  differential tests (their oracle role ends when the IR path is trusted). Gated
-  on all the above + #3425.
+- **Slice 5 — DONE for the register backends (#5972).** `asm.fern` and
+  `asm_arm64.fern` are DELETED, along with `self_host_asm_test.go` (the test of
+  those two files) and 517 `"asm.fern"` / `"asm_arm64.fern"` entries across 246 Go
+  harness copy-lists. `wasm.fern` STAYS: the wasm IR path still reuses its
+  `Ctx`-based RC-body cluster, and re-spelling the wasm rc corpora would trip the
+  open `is_unique`-on-container gap.
+
+  **The 512-function budget STAYS too, and the plan line above was wrong to bundle
+  it in.** It reads like a leftover of the AST fallback, but it is not: it is what
+  makes an oversized merged module REFUSE instead of OOMing the self-host runtime
+  at stage 2. Removing it would restore exactly the failure this file records as
+  unliftable. It is now load-bearing for a different reason than it was written
+  for — a refusal boundary, not a fallback trigger — and that is worth a comment
+  wherever it is next touched.
+
+  Verified after deletion: all nine drivers typecheck; a corpus program compiles
+  through `asm_run` (x86, and the emitted asm assembles under
+  `clang -target x86_64-unknown-linux-gnu -c`), through `asm_ir_run -target arm64`,
+  and through the wasm IR path to the right exit code.
 
   ### Slice 5 — code-verified execution plan (2026-07-30)
 

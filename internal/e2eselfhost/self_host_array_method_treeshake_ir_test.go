@@ -36,7 +36,7 @@ func TestSelfHostArrayMethodTreeshakeIR(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t) // util, parser, irlower, asm_ir, treeshake, …
-	for _, name := range []string{"flatten.fern", "checker.fern", "asm_arm64.fern", "asm_arm64_ir.fern", "asm_load_run.fern"} {
+	for _, name := range []string{"flatten.fern", "checker.fern", "asm_arm64_ir.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

@@ -31,7 +31,7 @@ import (
 func TestSelfHostIRPerModuleDriver(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"flatten.fern", "checker.fern", "asm_arm64.fern", "asm_arm64_ir.fern", "asm_load_run.fern"} {
+	for _, name := range []string{"flatten.fern", "checker.fern", "asm_arm64_ir.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -142,7 +142,7 @@ func TestSelfHostIRPerModuleDriver(t *testing.T) {
 func TestSelfHostIRPerModuleCrossStruct(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"flatten.fern", "checker.fern", "asm_arm64.fern", "asm_arm64_ir.fern", "asm_load_run.fern"} {
+	for _, name := range []string{"flatten.fern", "checker.fern", "asm_arm64_ir.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -239,7 +239,7 @@ func TestSelfHostIRPerModuleCrossStruct(t *testing.T) {
 func TestSelfHostIRPerModuleCrossEnum(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"flatten.fern", "checker.fern", "asm_arm64.fern", "asm_arm64_ir.fern", "asm_load_run.fern"} {
+	for _, name := range []string{"flatten.fern", "checker.fern", "asm_arm64_ir.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

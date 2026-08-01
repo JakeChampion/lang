@@ -39,7 +39,7 @@ function main(): i32 {
 func TestSelfHostRawIntrinsicsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	for _, drv := range []string{"asm_run.fern", "asm_arm64.fern", "asm_arm64_ir.fern", "asm_ir_run.fern"} {
+	for _, drv := range []string{"asm_run.fern", "asm_arm64_ir.fern", "asm_ir_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", drv))
 		if err != nil {
 			t.Fatalf("read %s: %v", drv, err)

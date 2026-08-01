@@ -51,7 +51,7 @@ var returnMatchPayloadIRCases = []struct {
 func TestSelfHostReturnMatchPayloadIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "asm_arm64.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range returnMatchPayloadIRCases {
@@ -84,7 +84,7 @@ func TestSelfHostReturnMatchPayloadIRArm64(t *testing.T) {
 		t.Skip("arm64 return-match-payload gate needs a native x86 host to run the driver")
 	}
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range returnMatchPayloadIRCases {

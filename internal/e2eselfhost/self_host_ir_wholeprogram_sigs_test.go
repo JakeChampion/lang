@@ -25,7 +25,7 @@ import (
 func TestSelfHostIRWholeProgramSignatures(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostFiles(t, dir, "asm_arm64.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "airun")
 
 	run := func(t *testing.T, prog string, args ...string) string {
