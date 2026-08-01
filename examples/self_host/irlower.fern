@@ -17023,15 +17023,23 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         var bslot: i32 = ms.slot_of(bname);
                         // Read the payload at its width: an i64/u64 payload uses
                         // struct_get_i64 (i64.load — u64 rides the i64 8-byte
-                        // domain), an f64 one struct_get width 64 (f64.load), else
-                        // the i32 read. The u64 read MUST match the binding's
-                        // mark_u64 below (is_i64_slot → 64-bit) or the wasm
-                        // backend, which has true 32/64 widths, sees the i32 read
-                        // feed an i64 use and fails to validate (type mismatch).
+                        // domain), everything else struct_get at the width
+                        // struct_field_width gives the field. The u64 read MUST
+                        // match the binding's mark_u64 below (is_i64_slot →
+                        // 64-bit) or the wasm backend, which has true 32/64
+                        // widths, sees the i32 read feed an i64 use and fails to
+                        // validate (type mismatch).
+                        //
+                        // Deferring to struct_field_width rather than testing
+                        // "f64" here is what makes an **f32** payload read
+                        // correctly: the construction side widens an f32 field to
+                        // an 8-byte f64 (op_struct_new's f64.store, and the AST
+                        // emitter's box likewise), so an i32.load of it returned
+                        // the low half of a double — `x == 2.5` on an f32 arm was
+                        // simply false. Found via the WIT f32-arm variant extern.
                         ms = ms.emit(ir.op_load_local(scrut_slot));
                         if (ev_ty == "i64" || ev_ty == "u64") { ms = ms.emit(ir.op_struct_get_i64(bidx)); }
-                        else if (ev_ty == "f64") { ms = ms.emit(ir.op_struct_get(bidx, 64)); }
-                        else { ms = ms.emit(ir.op_struct_get(bidx, 0)); }
+                        else { ms = ms.emit(ir.op_struct_get(bidx, struct_field_width(ms.structs, vname, bidx))); }
                         ms = ms.emit(ir.op_store_local(bslot));
                         // Type the bound payload for downstream dispatch: a
                         // string payload (`Word(string)`) as a string; a
@@ -17060,7 +17068,9 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             // / `x / y` selects the unsigned form — on wasm a signed
                             // shr/div on a bit-31-set u32 diverges (x86 hides it).
                             ms = ms.mark_u32(bslot, true);
-                        } else if (ev_ty == "f64") {
+                        } else if (ev_ty == "f64" || ev_ty == "f32" || ev_ty == "float") {
+                            // f32 / float ride the f64 domain, matching the
+                            // 8-byte widened field the read above now recovers.
                             ms = ms.mark_f64(bslot, true);
                         } else if (ev_ty == "fn" || is_fn_payload_spelling(ev_ty) || ev_ty == "clo") {
                             // A function-typed payload (`Pending(i32,

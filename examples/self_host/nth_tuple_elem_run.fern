@@ -19,7 +19,7 @@
 // tuple-array spelling reaches this on the self-host sources, so the extern-param
 // codegen is unchanged.
 
-import "./wasm";
+import "./wasm_ir";
 import "./util";
 
 function show(s: string): string { if (s.len() == 0) { return "<empty>"; } return s; }
@@ -38,7 +38,7 @@ function main(): i32 {
         if (label.len() == 0) { label = "<empty>"; }
         var n: i32 = 0;
         while (n <= 3) {
-            out = out + label + "[" + util.i32_to_string(n) + "]=" + show(wasm.nth_tuple_type_elem(t, n)) + "\n";
+            out = out + label + "[" + util.i32_to_string(n) + "]=" + show(wasm_ir.nth_tuple_type_elem(t, n)) + "\n";
             n = n + 1;
         }
         i = i + 1;

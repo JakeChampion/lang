@@ -16,19 +16,14 @@ import "std/io";
 import "./lexer";
 import "./parser";
 import "./wasm";
-import "./wasm_ir";
 
 function main(): i32 {
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    // NOT rerouted IR-or-error, unlike the mode-0 drivers. Component mode's gate
-    // (component_ir_core_ok) refuses any module declaring an `@import` extern or an
-    // `@export` binding, because the canonical-ABI bridge those need
-    // (wasm.extern_imports / extern_wrappers / extern_exports) is AST-only with no
-    // IR sibling. Measured on origin/main: an `@export` program emits 65407 bytes
-    // WITH the export surfaced here, and rerouting turned that into a hard error.
-    // Porting that bridge is what unblocks this driver — see
-    // docs/SELFHOST-AST-RETIREMENT.md.
+    // Still the AST entry: rerouting the wasm drivers IR-or-error is a separate
+    // slice, gated on the mode-0 decline set being empty (see
+    // docs/SELFHOST-AST-RETIREMENT.md). The blocker THIS slice removes is the
+    // extern/export one — component mode no longer refuses such modules.
     write(wasm.emit_module_run_io(parser.module_with_builtins(mod)));
     return 0;
 }
