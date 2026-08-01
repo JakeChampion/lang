@@ -13177,11 +13177,34 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                 var fsty: string = expr_struct_type(c.args[0], s);
                                 if (fsty == "") { return s.fail(); }
                                 if (!decl_is_leaksafe(s.structs, fsty)) { return s.fail(); }
-                                // Mutating an array field (scalar or struct-array)
-                                // would orphan the old array (leak) and need a retain
-                                // on the new one — and could alias it — so bail to AST.
+                                // An ARRAY field (scalar-element or struct-element) is
+                                // mutable here, with the ownership rules the struct
+                                // LITERAL path already uses for the same store:
+                                //
+                                //   - the new value is RETAINED when it aliases an
+                                //     rc-tracked array local (`s.code = other`), so the
+                                //     field's reference is counted and the exit
+                                //     dec-sweep on `other` cannot free a buffer the
+                                //     struct still points at. Without the retain that
+                                //     is a use-after-free, which is what the AST
+                                //     emitter does today — it stores bare, no inc;
+                                //   - the REPLACED buffer is not released: the store
+                                //     orphans it. That is the safe-leak floor this
+                                //     codebase already stands on for a struct carrying
+                                //     an unreclaimable field, and it is what the AST
+                                //     emitter does too, so nothing regresses by
+                                //     lowering here. Reclaiming it needs the
+                                //     whole-program read-safety analysis #4355 built
+                                //     for REPLACED STRING fields
+                                //     (strfld_reclaim_ok_types_of) generalised to
+                                //     arrays — a separate step, tracked in
+                                //     docs/SELFHOST-AST-RETIREMENT.md.
+                                //
+                                // This is what used to bail to the AST emitter, and is
+                                // the first mode-0 wasm decliner: `a.code = enc(…)` in
+                                // x86_encode.fern.
                                 var fmft: string = decl_field_type(s.structs, fsty, fname);
-                                if (is_leaksafe_array_field(fmft) || is_struct_array_field_type(s.structs, fmft)) { return s.fail(); }
+                                var fm_is_arr: boolean = is_leaksafe_array_field(fmft) || is_struct_array_field_type(s.structs, fmft);
                                 var fidx: i32 = s.field_index_in(fsty, fname);
                                 if (fidx < 0) { return s.fail(); }
                                 var sf: LowerState = lower_expr(c.args[0], s);
@@ -13197,6 +13220,21 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                 }
                                 sf = lower_expr(c.args[2], sf);
                                 if (!sf.ok) { return sf; }
+                                // Array-field alias retain, mirroring the struct-lit
+                                // construction inc (see the fav_alias_inc arm): a bare
+                                // ident naming an rc-tracked array slot is a SECOND
+                                // owner once stored. rc_inc returns its argument, so
+                                // the stack shape struct_set expects is unchanged.
+                                if (fm_is_arr) {
+                                    match (c.args[2]) {
+                                        parser.ExprIdent(svid) => {
+                                            if (sf.is_arr_slot(sf.slot_of(svid.name))) {
+                                                sf = sf.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                                            }
+                                        },
+                                        _ => {}
+                                    }
+                                }
                                 return sf.emit(ir.op_struct_set(fidx, struct_field_width(s.structs, fsty, fidx)));
                             }
                         },

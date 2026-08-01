@@ -4859,6 +4859,39 @@ PATH="$HOME/.fern-wasm:$HOME/.wasmtime/bin:$PATH" FERN_SELFHOST_INTERP=1 \
    native checker (immutable data), so there is no interpreter oracle for these
    programs — the self-host compiler's own sources use field mutation and its
    immutability gate is filtered to the cycle rules.
+
+   **CLOSED, and it was not only a wasm decliner.** The bail lives in irlower,
+   which is shared, so since #5972 deleted the register-backend AST emitters it had
+   become a HARD ERROR on x86-64 / arm64: the same six-line repro through
+   `asm_ir_run` gives *"module is not IR-eligible; the AST emitter is no longer
+   reachable from this driver"*. Array-field assignment was simply not compilable
+   on the register backends. That is a capability the AST retirement lost and this
+   closes.
+
+   What lowers now, and the ownership rules it uses:
+
+   - the new value is **retained** when it aliases an rc-tracked array local
+     (`s.code = other`), so the field holds a counted reference and the exit
+     dec-sweep on `other` cannot free a buffer the struct still points at. This
+     mirrors the struct-LITERAL construction inc (`fav_alias_inc`) for the same
+     store. Note the AST emitter stored **bare** — no inc — so that shape was a
+     use-after-free there: the IR path is strictly better, not merely equal.
+   - the **replaced buffer is orphaned**. That is the safe-leak floor this codebase
+     already stands on for a struct carrying an unreclaimable field, and it is
+     exactly what the AST emitter did, so nothing regresses by lowering here.
+     Reclaiming it is the #4355 generalisation described above and remains open.
+
+   The bootstrap is unaffected and the fixpoint stays byte-identical, by a short
+   argument: any array-field mutation in the compiler's own sources would already
+   have been that hard error on x86-64, so there is none to re-route.
+
+   Verified: `x86_encode.fern` + its labels self-test now routes `ir` where
+   `origin/main` says `ast`, and `TestSelfHostX86Encode` / `TestSelfHostX86Labels`
+   pass through the IR path (163 s / 82 s under an interpreted driver). Five shapes
+   — fresh literal, scalar-field control, aliased local, reassignment in a loop,
+   struct-element array field — are pinned on both halves by
+   `TestSelfHostArrayFieldSetIR{Wasm,X86_64}`; the expected exit codes are stated
+   rather than derived, since these programs have no interpreter oracle.
 4. Reroute the drivers IR-or-error — only once 2 and 3 leave the decline set
    empty. Rerouting first was the mistake this section records: on the asm side
    the reroute WAS the enumeration tool because the subset was already mature; on
