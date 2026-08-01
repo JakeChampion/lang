@@ -33,7 +33,6 @@ import "./lexer";
 import "./parser";
 import "./flatten";
 import "./asm_ir";
-import "./asm_arm64";
 import "./asm_arm64_ir";
 import "./wasm";
 import "./checker";
@@ -593,12 +592,12 @@ function main(): i32 {
     // so the byte-identical self-compile fixpoint is preserved.
     merged = checker.annotate_module(merged);
 
-    // Production default: the IR path. On x86 the compile now routes
-    // IR-or-error (asm_ir.emit_module_or_error, #3457 slice 3) — this driver no
-    // longer imports asm.fern at all. arm64 / wasm still enter via their AST
-    // shell (asm_arm64.fern / wasm.fern), which itself routes eligible modules
-    // AST → stack IR → asm (use_ir=true, asmcore.fern) — so the IR is the single
-    // production lowering (issue #4391 / docs/SELFHOST-SSA-DECISION.md). The SSA pipeline is opt-in
+    // Production default: the IR path. x86 and arm64 both route IR-or-error
+    // (asm_ir / asm_arm64_ir `.emit_module_or_error`, #3457 slices 3 and 5), so
+    // this driver imports neither legacy AST emitter. wasm still enters via its
+    // AST shell (wasm.fern), which itself routes eligible modules AST → stack IR
+    // → asm (use_ir=true, asmcore.fern) — so the IR is the single production
+    // lowering (issue #4391 / docs/SELFHOST-SSA-DECISION.md). The SSA pipeline is opt-in
     // via -ssa (experimental): it applies only if every function is in the SSA
     // subset (else it too falls through), covering x86-64 / arm64 / a wasm
     // subset. arm64-darwin and the wasm-bin / wasm-component targets have no SSA
@@ -738,8 +737,7 @@ function main(): i32 {
         out_asm = string_from_bytes_unchecked(to_u8(comp));
     } else {
         // #3457 slice 3: the x86 CLI path routes IR-or-error, never the legacy
-        // AST emitter. asm.emit_module's remaining callers are the merged-bundle
-        // rescues and the AST-vs-IR differential drivers, which retire with it.
+        // AST emitter. As of slice 5 asm.emit_module has no callers at all.
         out_asm = asm_ir.emit_module_or_error(full);
     }
     if (out_path.len() > 0) {

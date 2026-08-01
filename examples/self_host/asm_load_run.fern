@@ -17,8 +17,7 @@ import "./lexer";
 import "./parser";
 import "./flatten";
 import "./checker";
-import "./asm";
-import "./asm_arm64";
+import "./asm_arm64_ir";
 import "./asm_ir";
 import "./treeshake";
 
@@ -446,7 +445,13 @@ function main(): i32 {
     merged = checker.annotate_module(merged);
 
     if (target == "arm64") {
-        write(asm_arm64.emit_module(parser.module_with_builtins(merged), false));
+        // IR-or-error (#3457 slice 5): the arm64 leg has no AST fallback either.
+        // asm_arm64_ir.emit_module_or_error runs the same prologue asm_arm64
+        // .emit_module did and errors where the fallback used to be. Note the arm64
+        // merged path shares the 512-function budget (#5949 corrected the old "arm64
+        // needs none of this"), so an over-budget program errors here exactly as it
+        // does on x86 — the per-module path is what compiles those.
+        write(asm_arm64_ir.emit_module_or_error(parser.module_with_builtins(merged), false));
         return 0;
     }
     var mwb: parser.Module = parser.module_with_builtins(merged);
@@ -469,6 +474,9 @@ function main(): i32 {
         var pmc: string = emit_per_module_concat(entry_mod, loaded, reach);
         if (pmc.len() > 0) { write(pmc); return 0; }
     }
-    write(asm.emit_module(mwb));
+    // Last resort, and no longer a fallback: a module the per-module concat rescue
+    // above declined (or one past its 1500-function ceiling) is an ERROR, not a
+    // silent drop to the legacy AST emitter (#3457 slice 5).
+    write(asm_ir.emit_module_or_error(mwb));
     return 0;
 }

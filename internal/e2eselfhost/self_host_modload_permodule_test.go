@@ -36,12 +36,13 @@ import (
 // surfaced the string[]-struct-field `.append()` aliasing UAF in the checker
 // (#3561), fixed by routing string[] field appends through the clone form.
 //
-// This IS the routine whole-compiler self-compile gate now (#3457 slice 2): the
-// merged-bundle fixpoint TestSelfHostModloadFixpointX86_64 — which drove the whole
-// compiler through the legacy AST emitter — is retired from routine CI (env-gated
-// RUN_MERGED_FIXPOINT). Byte-identity of the per-module self-reproduction is proved
-// by the env-gated TestSelfHostPerModuleEmitAllFixpointX86_64; this test guards the
-// per-module emit+link+self-compile mechanics on every run.
+// This IS the whole-compiler self-compile gate (#3457 slice 2). Every
+// merged-bundle fixpoint that preceded it drove the whole compiler through the
+// legacy AST emitter, and all of them are DELETED as of slice 5 — a merged
+// bundle is past the 512-function IR budget, so with that emitter gone there is
+// nothing left to compile one. Byte-identity of the per-module self-reproduction
+// is proved by TestSelfHostPerModuleEmitAllFixpointBatch4X86_64 (ungated); this
+// test guards the per-module emit+link+self-compile mechanics on every run.
 func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)

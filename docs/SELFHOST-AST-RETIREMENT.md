@@ -1446,6 +1446,14 @@ here.
 The three legacy emitters are still reached through these entry points
 (`asm.emit_module` / `asm_arm64.emit_module` / `wasm.emit_module`):
 
+> **RESOLVED (#3457 slice 5, 2026-08).** Every x86/arm64 row below is now
+> rerouted IR-or-error (#5954, #5969, #5970, #5971) and the two emitters are
+> deleted; only the `wasm.emit_module` rows survive, deliberately. The table is
+> kept as the record of what had to be enumerated — see the slice-5 section for
+> what each reroute cost. The fixpoint tests named in the second and third rows
+> are themselves retired: their mechanism IS the merged bundle, which only ever
+> compiled because the AST emitter took it.
+
 | Site | Path | Reachable today because… |
 |---|---|---|
 | `asm_run.fern:23` | merged AST (x86) | `TestSelfHostAsmRunX86_64` and ~390 other test files pipe programs through it (`TestSelfHostBootstrapsItself` did too, until #5968 retired it — it fed modules with UNRESOLVED imports, which no IR lowering can accept) |
@@ -2688,10 +2696,133 @@ tier → leak.
      mirror over `asm_arm64_ir.emit_module_ir`.)
 
   3. **Reroute the driver `emit_module` sites — heterogeneous, verify each.**
-     Landed so far: `fern.fern`'s x86 branch (#5954), `asm_run.fern` (#5969 — the
-     widest, ~390 test files), and `fern.fern`'s THREE arm64 branches (arm64 ELF,
-     arm64-android static-PIE, arm64-darwin) plus the
-     `asm_arm64_ir.emit_module_or_error` mirror they call (#5970).
+
+     **STATUS: the two widest sites are LANDED; the rest are pushed and RED.**
+     `fern.fern` x86 (#5954), `asm_run.fern` (#5969), `fern.fern`'s three arm64
+     branches + the mirror (#5970) are done. #5971 — `asm_ir_run` (×3 targets),
+     `asm_load_run` and `asm_modload_run` (×2 each) — turned **13 checks red**, and
+     the reason is a process failure worth naming: it was pushed WITHOUT the
+     per-driver enumeration that the three earlier sweeps had already proved
+     necessary. 62 + 17 + 204 tests build those drivers and none of their programs
+     were checked first.
+     
+     The failures grouped into four kinds. **All four are now resolved**; each
+     entry records the diagnosis, because the *kinds* are the reusable part —
+     only one of them was a lowering gap, and the taxonomy is what stopped the
+     other three being mis-chased as one.
+
+     1. **Whole-compiler self-compile through the MERGED path** — the 512-budget
+        refusal, now reached routinely. Three sub-cases, three different answers:
+        - `TestSelfHostStage2FixedPoint` (+Arm64) and
+          `TestSelfHostLoadFixpointX86_64` **retire**. Their mechanism *is* the
+          merged whole-compiler compile, which only ever worked because the AST
+          emitter took it; there is nothing to repoint them at. Their contract
+          (the self-host is a fixed point of its own emit) is already carried by
+          the UNGATED `TestSelfHostPerModuleEmitAllFixpointBatch4X86_64`, whose
+          own header names itself the guard "slices 3 and 5 rest on".
+        - `TestSelfHostAsmArm64Bootstrap` was **not** a budget failure at all,
+          despite looking like one: every subtest failed, including `return 42;`.
+          Its cases are SCRIPT-shaped, and the new arm64 `emit_module_or_error`
+          skipped `asm_ir.script_normalized`. Before the reroute a script simply
+          failed `all_eligible` (no `main` yet) and fell through to the AST
+          emitter, so the arm64 IR path had never needed the normalise. Fixed by
+          normalising there; the script form now emits byte-identical asm to the
+          function form.
+        - `TestSelfHostModloadPerModuleWholeCompilerArm64` did have the suspected
+          merged sub-step (step 7 self-compiles the whole compiler merged). The
+          x86 twin passes the same step because it escapes through
+          `emit_per_module_spawned`; the arm64 leg's rescue stopped at the
+          single-process `emit_per_module_concat` ceiling ("the batched spawned
+          path stays x86-only for now"). Wired arm64 to the spawned path —
+          `spawn_batch` already threads `-target`, and the arm64
+          `-per-module-emit` child is the leg that same test drives.
+     2. **Tests whose SUBJECT is the AST emitter** — `TestSelfHostF64MethodAST_X86_64`,
+        `TestSelfHostStructLitOrderLegacyX86_64` / `Arm64` (the "Legacy"/"AST" in
+        those names is the emitter). They retire WITH the files, like
+        `self_host_asm_test.go`.
+     3. **Ill-formed input on the arm64 leg** — `TestSelfHostStringArm64` is the
+        arm64 twin of the x86 `std/string` test fixed in #5969; only the x86 leg
+        was repointed to the loader driver. Both legs now use `asm_load_run`.
+     4. **Genuine lowering gaps** — and both were the *second-mechanism* shape
+        this document keeps recording: the call lowered, but a TYPE the module
+        needed downstream was never recovered.
+        - `TestSelfHostArrayX86_64` / `Arm64`, `TestSelfHostStdTestE2E{,Arm64}`:
+          an inline `match (xs.gcd_all())` over a USER array method returning
+          `Option[T]`. The scrutinee/try resolvers knew only the BUILTIN array
+          methods (`min` / `max`). Binding first (`var o: Option[i32] = …`)
+          lowered — the tell.
+        - `TestSelfHostImmutabilityGateX86_64/cell-scalar-ok`: an UNANNOTATED
+          `var c = cell_new(0)`. The `: Cell[i32]` spelling records `is_cell`;
+          without it `c.get()` dispatched on the ELEMENT type ("call to unknown
+          symbol i32.get").
+        `TestSelfHostTreeshakeStdlibIR` was neither — its two-way build loop
+        compared a pruned build against an unpruned one, and the unpruned half
+        was only ever compiling because the AST emitter caught it.
+
+     **Do the enumeration first this time.** `-decide` is the tool for the loader
+     drivers (`fern -interp asm_load_run.fern -- main.fern <stdlibRoot> -decide`
+     prints ir/ast, interpreted, minutes per call so sample) and `-ir-probe` for
+     the single-module ones. And note kind 1 cannot be enumerated from Go literals
+     at all — those tests feed the compiler its OWN source graph off disk.
+
+     **Round 2 of #5971 (5 failures, down from 13) added two more, and one of
+     them is not a lowering matter either:**
+
+     - `(n as i64).to_string()` — the SIXTH instance of the second-mechanism
+       shape. The wide `to_string` intercept lowered its receiver with
+       `lower_expr`, which has no `as_i64` / `as_u64` arm (the same hole the
+       i64[]-literal path documents), so the INLINE cast bailed the module while
+       `var v: i64 = n as i64; v.to_string()` lowered. Note the fix tries
+       `lower_expr` FIRST and falls back to `lower_i64`, not the reverse: for
+       every receiver that lowers today both paths succeed but emit DIFFERENT
+       ops, and this is on the byte-identical self-compile path. Reaching for the
+       "more correct" path first would have been a silent byte-identity break.
+     - `TestSelfHostModloadPerModuleWholeCompilerArm64` timed out at 18 min (it
+       was 297 s). Not a bail — a BUDGET consequence of the fix one round
+       earlier: with the AST fallback gone, its step-7 whole-compiler
+       self-compile takes the batched per-module escape, ~35 emit children, and
+       it was running them under **qemu**. The x86 twin does the same work
+       natively in 98 s. Moved to the host driver, which also gives the arm64
+       batched escape its only direct test.
+
+     **Watch for that second kind.** Removing a fallback does not only turn
+     bails into errors; it re-routes work onto a path with a different COST
+     profile, and a qemu-multiplied one can blow a shard budget without any
+     test failing on correctness.
+
+     **A fifth blind spot, from kind 1's middle case:** a test whose whole
+     subtest list fails is evidence AGAINST the expensive explanation, not for
+     it. `TestSelfHostAsmArm64Bootstrap` was filed under "the whole-compiler
+     merged bundle is over budget" because it appeared alongside the fixpoints;
+     `return 42;` failing is not something a function-count budget can do. Check
+     the cheapest case in a failing set before believing the expensive story.
+
+     Previously (for the record) all sites were listed here as rerouted: `fern.fern`'s x86 branch (#5954),
+     `asm_run.fern` (#5969 — the widest, ~390 test files), `fern.fern`'s three
+     arm64 branches plus the `asm_arm64_ir.emit_module_or_error` mirror (#5970),
+     and finally `asm_ir_run` (x86 + arm64 + arm64-darwin), `asm_load_run` and
+     `asm_modload_run` (both targets each) in #5971. `asm.fern` /
+     `asm_arm64.fern` have no remaining callers outside their own files, so the
+     deletion (step 5) is unblocked.
+
+     Three test consequences, all of them pre-authorised rather than incidental:
+
+     - **The AST-vs-IR differential is gone** (`TestSelfHostAsmIRPath`). Once
+       `asm_ir_run` has no AST leg, its `-ir`-on and `-ir`-off runs are the SAME
+       emitter, so the comparison was vacuous — not merely redundant. Step 4 said
+       "DELETE, do not re-point", and re-pointing is genuinely unavailable: the
+       cases are in the driver dialect that native `-interp` rejects. Its ~930
+       cases are KEPT as an eligibility + assembly guard (each must compile via
+       IR, assemble, link and run), which is the largest such guard in the suite.
+       The honest cost: a wrong exit code now passes there; the dedicated
+       `*_ir_test.go` corpora carry the oracle role.
+     - **The env-gated merged fixpoints are deleted** (x86
+       `TestSelfHostModloadFixpointX86_64` + arm64 `TestSelfHostFixpointArm64`).
+       Both headers already said they stay "until slice 5 deletes `asm.fern`, at
+       which point it goes with it" — and the reroute forces it: they compile the
+       whole compiler through the merged bundle, which now refuses.
+     - **The x86 `std/string` test moved to the loader driver** (#5969) because
+       that module stopped being self-contained.
 
      Two things measured while doing the arm64 CLI, both worth knowing:
 

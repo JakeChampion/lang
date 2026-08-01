@@ -28,11 +28,13 @@ import (
 // Pinning it needs two generations, which is what this test builds.
 //
 // It is env-gated because it is expensive in a way the ordinary suite is not:
-// it builds a second full mmc1/mmc2 pair (~4 min, a ~220 MB stage-1 binary and
-// a heavy emit) that cannot be shared with TestSelfHostStage2FixedPoint's pair,
-// since it needs asm_ir.fern's 512-function budget removed. With the budget in
-// place the bootstrap uses the AST emitter for BOTH generations, they agree
-// trivially, and the bug cannot manifest. Run it with:
+// it builds a full mmc1/mmc2 pair (~4 min, a ~220 MB stage-1 binary and a heavy
+// emit) with asm_ir.fern's 512-function budget removed in the temp-dir copy.
+// The budget removal is what makes generation 2 IR-BUILT: with the budget in
+// place the ~525-function merged bundle is refused outright (before #3457 slice
+// 5 it fell through to the AST emitter instead), so there is no second
+// generation to disagree with the first and the bug cannot manifest. Run it
+// with:
 //
 //	RUN_CONST_FUNC_GEN2=1 go test ./internal/e2eselfhost/ -run TestSelfHostConstFuncGen2 -timeout 30m
 func TestSelfHostConstFuncGen2(t *testing.T) {

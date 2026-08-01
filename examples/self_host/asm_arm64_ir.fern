@@ -7164,7 +7164,13 @@ pub function emit_module_or_error(mod: parser.Module, darwin: boolean): string {
         exit(1);
         return "";
     }
-    var lm: parser.Module = asm_ir.lift_lambdas(mod);
+    // script_normalized desugars a SCRIPT-shaped module (top-level statements,
+    // no `main`) into `function main(): i32 { … }`. The x86 twin gets this
+    // inside emit_module_ir_gated; here it has to be explicit, because until
+    // slice 5 a script on arm64 simply failed all_eligible (no main) and fell
+    // through to the AST emitter — which is exactly the fall-through this
+    // function removes, so without the normalise every script became an error.
+    var lm: parser.Module = asm_ir.script_normalized(asm_ir.lift_lambdas(mod));
     if (asm_ir.all_eligible(lm)) { return emit_module_ir(lm, darwin); }
     eprint("error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)\n");
     exit(1);

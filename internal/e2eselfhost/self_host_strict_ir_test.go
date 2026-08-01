@@ -535,6 +535,101 @@ function main(): i32 {
     return b.first() + b.last().len();
 }
 `, 7},
+	// A USER array method returning Option[T], matched INLINE. The call itself
+	// always lowered; what was missing was the scrutinee's result TYPE — the
+	// match-scrutinee (and try-operator) resolvers only knew the BUILTIN array
+	// methods (min / max), so `match (xs.pick())` had no payload type and bailed
+	// the whole module, while binding it first (`var o: Option[i32] =
+	// xs.pick(); match (o)`) lowered. std/array's `gcd_all` / `lcm_all` are the
+	// real consumers (TestSelfHostArray, TestSelfHostStdTestE2E). Both the
+	// inline and the bound form are pinned, since it is the pair that identifies
+	// the gap as a missing type recovery rather than missing lowering.
+	{"arr-user-method-option-inline", `
+function __method_Array_pick(arr: i32[]): Option[i32] {
+    if (arr.len() == 0) { return None; }
+    return Some(arr[0]);
+}
+function __method_Array_tail_str(arr: string[]): Option[string] {
+    if (arr.len() < 2) { return None; }
+    return Some(arr[arr.len() - 1]);
+}
+function main(): i32 {
+    var xs: i32[] = [12, 18];
+    var t: i32 = 0;
+    match (xs.pick()) { Some(g) => { t = g; }, None => { t = 99; } }
+    var bound: Option[i32] = xs.pick();
+    match (bound) { Some(g) => { t = t + g; }, None => { t = t + 99; } }
+    var empty: i32[] = [];
+    match (empty.pick()) { Some(g) => { t = t + g; }, None => { t = t + 1; } }
+    var ss: string[] = ["a", "bcd"];
+    match (ss.tail_str()) { Some(v) => { t = t + v.len(); }, None => { t = t + 50; } }
+    return t;                                    // 12 + 12 + 1 + 3
+}
+`, 28},
+	// An UNANNOTATED cell binding — `var c = cell_new(0)` with no `: Cell[i32]`.
+	// The annotated spelling records is_cell from the type name; without it the
+	// slot stayed plain and `c.get()` dispatched as a method on the ELEMENT type
+	// ("call to unknown symbol i32.get"), bailing the module — the shape
+	// TestSelfHostImmutabilityGate's cell-scalar-ok case feeds. The element KIND
+	// matters too, not just the cell-ness: a string cell whose slot misses
+	// is_strarr loads its element as an i32, so `.len()` reads a non-pointer.
+	// i64 cells are deliberately absent: the IR path and the interpreter
+	// disagree on Cell[i64] for the ANNOTATED spelling too, so it is a
+	// pre-existing divergence, not this shape's business.
+	{"cell-unannotated", `
+function main(): i32 {
+    var ci = cell_new(7);
+    ci.set(ci.get() + 3);
+    var cs = cell_new("ab");
+    cs.set(cs.get() + "cd");
+    var cf = cell_new(1.5);
+    cf.set(cf.get() + 0.5);
+    var acc: i32 = ci.get() + cs.get().len();
+    if (cf.get() == 2.0) { acc = acc + 10; }
+    return acc;                                  // 10 + 4 + 10
+}
+`, 24},
+	// `.to_string()` on an INLINE wide cast — `(n as i64).to_string()`. The wide
+	// to_string intercept lowered its receiver with lower_expr, which has no
+	// `as_i64` / `as_u64` arm (the same hole the i64[]-literal path documents),
+	// so the whole module bailed; the bound form `var v: i64 = n as i64;
+	// v.to_string()` lowered, which is the tell. Both forms are pinned, and both
+	// widths: u64 renders 2^64-1 as the full decimal only if it keeps the
+	// UNSIGNED formatter, so a receiver-lowering change that lost the width would
+	// show up as 20 vs 2 rather than as a bail. Real consumers:
+	// examples/tests/{i64,u64}_test.fern's test_to_string_wide.
+	{"wide-cast-to-string", `
+function main(): i32 {
+    var a: i32 = (1234567890123 as i64).to_string().len();      // 13
+    var b: i32 = (42 as i64).to_string().len();                 //  2
+    var c: i32 = (18446744073709551615 as u64).to_string().len();// 20
+    var v: i64 = 1234567890123 as i64;
+    var d: i32 = v.to_string().len();                           // 13
+    return a + b + c + d;
+}
+`, 48},
+	// An annotated TUPLE binding whose initialiser is a method call the tuple-tag
+	// inference does not key. Each StmtVar arm recovers element tags from the
+	// INITIALISER — the method arm keys `tuple_ret_type("<Struct>.<m>")` — so a
+	// method on an Option/Result receiver (std/option's `some.unzip()`, the real
+	// consumer in examples/tests/option_combinators_test.fern) recorded nothing
+	// and `sa.0.unwrap_or(0)` dispatched as `i32.unwrap_or`, an unknown symbol.
+	// The annotation names every element, so it now fills the hole — only when
+	// nothing else did, which is what keeps every self-typing binding's tags
+	// (and therefore its asm) identical.
+	//
+	// Both elements are CONSUMED at their own types: an i32 payload and a string
+	// payload whose `.len()` would read a non-pointer if the tag were lost, so a
+	// half-recovered tag shows up as a wrong answer rather than as a bail.
+	{"tuple-annotation-from-call", `
+function unwrap_or_i(o: Option[i32], d: i32): i32 { match (o) { Some(v) => { return v; }, None => { return d; } } }
+function unwrap_or_s(o: Option[string], d: string): string { match (o) { Some(v) => { return v; }, None => { return d; } } }
+function split_pair(t: (i32, string)): (Option[i32], Option[string]) { return (Some(t.0), Some(t.1)); }
+function main(): i32 {
+    var sa: (Option[i32], Option[string]) = split_pair((7, "hi"));
+    return unwrap_or_i(sa.0, 0) + unwrap_or_s(sa.1, "").len();   // 7 + 2
+}
+`, 9},
 }
 
 // runDriver runs a self-host driver over `src`, optionally with FERN_STRICT_IR
