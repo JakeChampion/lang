@@ -7132,6 +7132,45 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
 // sequence drifted when emit_arm64_reclaim_drop_bodies was added to
 // emit_module's dispatch (#3457) but not to the driver, so a reclaimable
 // struct-with-array-field program link-failed on `__struct_drop_<T>` there.
+// emit_module_or_error is the arm64 mirror of asm_ir.emit_module_or_error
+// (#3457 slice 5): the same parse-error / type-check / lambda-lift prologue as
+// asm_arm64.emit_module, then the eligibility gate — but a module the gate
+// declines is a hard ERROR here rather than a silent fall-through to the legacy
+// AST emitter.
+//
+// It exists so the arm64 drivers can stop importing `asm_arm64.fern` at all,
+// which is what makes that emitter deletable. Declines stay diagnosable:
+// FERN_STRICT_IR=1 makes the shared gate exit(3) naming the bail site, so a
+// regression says WHICH construct left the subset rather than merely that one
+// did. The gate itself is `asm_ir.all_eligible` — the SAME eligibility the x86
+// path uses — so a program's routing does not differ between the backends; only
+// the instruction selection does.
+//
+// The prologue is ordered check-then-emit for the reason #4327 records: a gate
+// that returns ahead of the type check lets an ill-typed module miscompile
+// silently.
+pub function emit_module_or_error(mod: parser.Module, darwin: boolean): string {
+    var parse_errs: string = asmcore.parse_unknown_errors_module(mod);
+    if (parse_errs.len() > 0) {
+        eprint(parse_errs);
+        exit(1);
+        return "";
+    }
+    var s: asmcore.EmitState = asmcore.new_state();
+    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+    var check_errs: string = asmcore.check_module(mod, s);
+    if (check_errs.len() > 0) {
+        eprint(check_errs);
+        exit(1);
+        return "";
+    }
+    var lm: parser.Module = asm_ir.lift_lambdas(mod);
+    if (asm_ir.all_eligible(lm)) { return emit_module_ir(lm, darwin); }
+    eprint("error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)\n");
+    exit(1);
+    return "";
+}
+
 pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();

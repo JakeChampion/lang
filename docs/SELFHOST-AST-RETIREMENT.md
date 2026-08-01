@@ -2455,9 +2455,11 @@ tier → leak.
      essentially gone; what is left on this driver is one test that compiles the
      whole compiler through a single-module path.
 
-     **THE asm_run REROUTE IS NOT READY — two dependents CI found that the local
-     enumeration could not (2026-07-31). Read this before trying again.** The
-     reroute was written, measured clean over 2531 programs, pushed, and CI turned
+     **THE asm_run REROUTE IS LANDED (#5969), on the third attempt.** What the two
+     earlier attempts taught is below; read it before trusting any future
+     "the enumeration is clean" claim, because two of them were wrong.
+
+     The FIRST attempt was measured clean over 2531 programs, pushed, and CI turned
      up two failures the sweep was structurally incapable of seeing:
 
      - **`TestSelfHostBootstrapsItself` feeds each compiler SOURCE FILE through
@@ -2521,6 +2523,57 @@ tier → leak.
      entirely. The 2531-program result stands for what it covers — it is what found
      the four gaps that did land — but "0 genuine declines" was a statement about
      one package's Go literals, not about the driver.
+
+     **A THIRD amendment, from the second attempt: resolve named prelude CONSTANTS,
+     and then re-check every decline against the REAL case source.** The
+     concat-aware extractor still missed `const fooPrelude = ...` constants
+     referenced by name, so fragments using them read as declines. Fixing that by
+     prepending every code-shaped constant to every case produced the OPPOSITE
+     error — programs with two `main` definitions, which are invalid and also read
+     as declines. Both directions inflate the count with noise.
+
+     On the final sweep (3147 programs across 392 test files in BOTH packages) the
+     raw figure was 2873 compile / 232 invalid / 42 ineligible, and **all 42
+     dissolved**: 30 prelude artifacts of one kind or the other, 12 with
+     unresolvable `import` lines, and re-extracting the named-constant programs from
+     the three suspicious test files gave 16 real programs that ALL compile. One
+     decline was not even reachable — `opt-enum-field-stays-ast` asserts routing via
+     the PATHPROBE driver and never sends its program to `asm_run`, so piping every
+     extracted literal through `asm_run` over-reports by construction.
+
+     The lesson worth keeping: **a decline count means nothing until each entry is
+     traced to a real case source that the test actually feeds to THAT driver.**
+     Three sweeps produced 17, 21 and 42 raw declines; the genuine totals were
+     2, 2 and 0.
+
+     **And a FOURTH miss, which is the one worth generalising.** CI then failed
+     `TestSelfHostStringX86_64`, which builds its input by reading
+     `internal/stdlib/std/string.fern` and appending a `main`. Every sweep had
+     hunted file-derived inputs under `examples/self_host/` and never thought to
+     look under `internal/stdlib/`. Enumerated properly, the whole CLASS — a test
+     that builds `asm_run` and feeds it a MODULE read from either root — is eight
+     tests, of which seven are fine because their module is self-contained
+     (`std/base64`, `std/path`, `std/hex` have zero imports; `x86_encode` /
+     `x86_gas` / `elf` likewise; `util.fern` is the no-main case). Only
+     `std/string` is ill-formed, and its header says why it stopped being
+     self-contained without anyone noticing: *"its imports are prelude-resident:
+     core/int, std/i32, std/array"* — written before `std/unicode` was added.
+     `capitalize` calls `unicode.capitalize`, which a single-module compile cannot
+     resolve.
+
+     **Appending the dependency is NOT the fix**, which is worth recording because
+     it is the obvious move: `std/unicode` imports `std/utf8`, which imports
+     `std/string` back. The three are mutually recursive, so only the module loader
+     resolves them — the concatenation approach cannot, at any depth. The x86 leg
+     now compiles through `asm_load_run` with the stdlib root (verified to route
+     `ir` via its `-decide` flag), which is also how a real program uses
+     `std/string`. The arm64 leg keeps the concatenated form until its driver
+     reroutes.
+
+     **`-decide` is the enumeration tool for the loader drivers**, and it works
+     interpreted: `fern -interp asm_load_run.fern -- main.fern <stdlibRoot>
+     -decide` prints `ir` / `ast`. Slow (it loads the whole stdlib per invocation,
+     minutes each), so sample rather than sweep.
 
      **The measurement that IS sound (2026-07-31).**
      The enumeration above, tightened once more to understand Go string
@@ -2635,6 +2688,26 @@ tier → leak.
      mirror over `asm_arm64_ir.emit_module_ir`.)
 
   3. **Reroute the driver `emit_module` sites — heterogeneous, verify each.**
+     Landed so far: `fern.fern`'s x86 branch (#5954), `asm_run.fern` (#5969 — the
+     widest, ~390 test files), and `fern.fern`'s THREE arm64 branches (arm64 ELF,
+     arm64-android static-PIE, arm64-darwin) plus the
+     `asm_arm64_ir.emit_module_or_error` mirror they call (#5970).
+
+     Two things measured while doing the arm64 CLI, both worth knowing:
+
+     - **Routing does not differ between the backends.** `asm_arm64.emit_module`'s
+       gate was already `asm_ir.all_eligible` — the same predicate the x86 path uses
+       — so an x86 `-ir-probe` verdict answers for arm64 too. Only instruction
+       selection differs. That is what makes the arm64 reroute checkable from a
+       host that cannot run arm64 binaries.
+     - **The arm64 CLI now REFUSES some programs it used to miscompile.** A program
+       the emitter-side `asmcore.check_module` misses — `y = 5` against an undefined
+       name, `continue` outside a loop — previously fell through to the AST emitter,
+       which emitted `# unresolved ident: y` and produced a broken binary. It now
+       errors. The CLI's own diagnostic tests are unaffected because every one of
+       them goes through `-check`, a different checker that DOES catch these; the
+       divergence between the two checkers is pre-existing and unrelated. x86 has
+       behaved this way since #5954.
      x86 (5): `asm_run.fern:23`, `asm_ir_run.fern:174`, `fern.fern:739` are
      single-module → `emit_module_or_error`; `asm_load_run.fern:472` and
      `asm_modload_run.fern:715` already run the per-module *concat* rescue and

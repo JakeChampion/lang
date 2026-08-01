@@ -1,6 +1,6 @@
 // examples/self_host/asm_run.fern — bootstrap-demo driver. Reads
-// Fern source from stdin, wires it through lexer +
-// parser + asm.emit_module, and prints the resulting AT&T x86_64
+// Fern source from stdin, wires it through lexer + parser +
+// asm_ir.emit_module_or_error, and prints the resulting AT&T x86_64
 // assembly to stdout. The companion Go-side test
 // (self_host_asm_run_test.go) pipes a source program in, captures
 // the asm, assembles it with gcc -nostdlib, and runs the
@@ -9,18 +9,28 @@
 // the same driver via a table-driven test.
 //
 // That's the real bootstrap-style demo: Fern program → native
-// binary → correct exit code. End-to-end proof that
-// asm.fern produces working executables.
+// binary → correct exit code.
+//
+// IR-or-error (#3457 slice 5): this driver no longer imports `asm.fern`, so a
+// module the IR gate declines is a hard error here instead of a silent fall
+// back to the legacy AST emitter. That is what makes the AST emitter
+// deletable — and this is the driver with the widest reach, built by ~390 test
+// files across internal/e2eselfhost and internal/e2e, so it is also the reroute
+// that proves the per-function IR subset covers the corpus rather than the
+// curated part of it. A decline names its bail site under FERN_STRICT_IR=1.
+//
+// Despite the "demo" framing above this is a WORKHORSE: the *_ir_test.go
+// suites build it to exercise the IR path end-to-end. It is not deletable.
 
 import "std/io";
 import "./lexer";
 import "./parser";
-import "./asm";
+import "./asm_ir";
 
 function main(): i32 {
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    var emitted: string = asm.emit_module(parser.module_with_builtins(mod));
+    var emitted: string = asm_ir.emit_module_or_error(parser.module_with_builtins(mod));
     print(emitted);
     return 0;
 }

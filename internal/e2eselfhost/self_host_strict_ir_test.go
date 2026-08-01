@@ -636,15 +636,25 @@ func TestSelfHostStrictIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostStrictIRRefusesBail is the teeth: a program that genuinely bails
-// must refuse under the flag and fall back silently without it. Without this,
-// a green corpus is consistent with the flag doing nothing at all.
+// must be REFUSED, and the flag must name the bail site. Without this, a green
+// corpus is consistent with the flag doing nothing at all.
+//
+// The unset-flag leg no longer asserts a silent AST fallback, because there is
+// none: asm_run.fern routes through asm_ir.emit_module_or_error (#3457 slice 5),
+// so an ineligible module is an error with or without the flag. What the flag
+// still changes — and what this pins — is WHICH error: without it the driver says
+// only that the module is ineligible, with it the gate exits 3 naming the bail
+// site. That difference is the whole diagnostic value of the flag now.
 func TestSelfHostStrictIRRefusesBail(t *testing.T) {
 	_, runner, driverBin := strictIRDriver(t)
 	src := overBudgetProgram()
 
-	off, _, offCode := runDriver(t, runner, driverBin, src, false)
-	if offCode != 0 || len(off) == 0 {
-		t.Fatalf("unset: driver exited %d with %d bytes, want a silent AST fallback", offCode, len(off))
+	off, offErr, offCode := runDriver(t, runner, driverBin, src, false)
+	if offCode == 0 || len(off) != 0 {
+		t.Fatalf("unset: driver exited %d with %d bytes, want a refusal (the AST emitter is unreachable)", offCode, len(off))
+	}
+	if !strings.Contains(offErr, "not IR-eligible") {
+		t.Errorf("unset: refusal did not say the module is ineligible:\n%s", offErr)
 	}
 	on, stderr, onCode := runDriver(t, runner, driverBin, src, true)
 	if onCode != 3 {
