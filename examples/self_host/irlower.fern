@@ -3366,7 +3366,7 @@ pub function cell_elem_type(e: parser.Expr, s: LowerState): string {
 // same is_cell / element-kind columns the `: Cell[T]` spelling gives it), or ""
 // when `e` is not a cell_new call. Scalars + string only: a Cell over a
 // composite is rejected upstream by E057.
-pub function cell_new_elem_tag(e: parser.Expr, s: LowerState): string {
+function cell_new_elem_tag(e: parser.Expr, s: LowerState): string {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
