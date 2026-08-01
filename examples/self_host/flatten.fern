@@ -247,6 +247,33 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
         }
         return out + ")";
     }
+    // A GENERIC application (`Option[Flag]`, `Map[string, Flag]`,
+    // `mod.Wrapper[Flag]`, `Option[Flag][]`): rewrite the base AND every type
+    // ARGUMENT. The bracket handling further down re-attaches `tn[br:]`
+    // verbatim, which leaves an own-module type inside the brackets unmangled —
+    // `find(): Option[Flag]` kept `Option[Flag]` while the struct decl became
+    // `lib__Flag`. Nothing then resolves the match binder's payload type, so
+    // `f.<field>` on it cannot lower and the whole module bails to the AST
+    // emitter (std/cli's `parse` was the last such holdout, via
+    // `match (__cli_find_short(...)) { Some(f) => f.takes_value }`).
+    //
+    // Same recursion as the tuple case above, and for the same reason — the
+    // element is a full type spelling, so it needs the full rewrite, not a
+    // substring copy. An `args`-less spelling (`Flag[]`, a bare name) has
+    // nothing to recurse into and falls through to the logic below unchanged.
+    if (!tref.is_tuple && tref.args.len() > 0) {
+        var gout: string = rewrite_type_name(tref.base, ctx) + "[";
+        var gi: i32 = 0;
+        while (gi < tref.args.len()) {
+            if (gi > 0) { gout = gout + ", "; }
+            gout = gout + rewrite_type_name(parser.render_type_ref(tref.args[gi]), ctx);
+            gi = gi + 1;
+        }
+        gout = gout + "]";
+        var gad: i32 = 0;
+        while (gad < tref.array_depth) { gout = gout + "[]"; gad = gad + 1; }
+        return gout;
+    }
     var dot: i32 = first_dot(tn);
     if (dot >= 0) {
         var qual: str = tn[0:dot];
