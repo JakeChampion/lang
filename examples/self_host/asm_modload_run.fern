@@ -26,8 +26,6 @@ import "./util";
 import "./lexer";
 import "./parser";
 import "./flatten";
-import "./asm";
-import "./asm_arm64";
 import "./asm_arm64_ir";
 import "./asm_ir";
 import "./modloader";
