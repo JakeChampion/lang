@@ -5128,6 +5128,38 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // constraint. No compiler/stdlib generic matches this shape, so the bootstrap
         // is untouched (byte-identity holds with nothing to monomorphise).
         if (all_tp_count == 2 && result_two_bare_vars(ret_type, unbounded_tps) && has_any_bare_scalar_param(params, unbounded_tps)) { promote = true; }
+        // (c'') a single-typevar fn with a bare-scalar param whose RETURN is fully
+        // CONCRETE — `eqf[T](a: T, b: T): boolean`. The value never leaves through
+        // the type variable, so neither the widening path nor clause (c) covers it:
+        // erased_widenable requires the return to BE the var (a pass-through) or a
+        // bare tuple of it, and feeds_wide_container requires the return to CONTAIN
+        // it.
+        //
+        // Left erased, this is a SILENT MISCOMPILE on wasm, not a bail. An erased
+        // param is typed i32 there, so an i64 argument crosses the boundary as a box
+        // POINTER and a body that USES the value compares/operates on the pointer:
+        // `eqf(x, y)` with two equal i64s returns false, because the two boxes are
+        // distinct. (The register backends are unaffected — their erased slots are
+        // 8 bytes, so the same body emits a `cmpq` and is correct.) Widening the
+        // params cannot fix it: the body's operation is width-SENSITIVE, which is
+        // exactly why erased_passthrough_safe excludes bodies that use the var.
+        // Monomorphising to `eqf__i64(a: i64, b: i64): boolean` gives the body a
+        // concrete width and the wasm IR path lowers it correctly.
+        //
+        // NOTHING in the stdlib or the compiler matches this shape (a scan of every
+        // `function f[T](… : T …): <concrete>` found zero), so the bootstrap
+        // monomorphises nothing new and byte-identity holds — the same argument
+        // clause (c') rests on. The `all_tp_count == 1` guard carries the same
+        // no-stranded-sibling rationale as clause (c).
+        // Not guarded to ONE type var, unlike clause (c). The stranded-sibling
+        // hazard clause (c) guards against is a var that survives ERASED in the
+        // clone; here every var is required to be bound by a bare-scalar param
+        // (all_bare_scalar_bound) and none appears in the return, so promoting the
+        // set leaves nothing behind — `both[T, U](a: T, b: U): boolean` clones as
+        // `both__i64_i64`, fully concrete. Without the multi-var case the same
+        // silent miscompile survives one variable further out.
+        if (has_bare_scalar_param(params, un) && !ret_mentions_any(ret_type, unbounded_tps)
+            && all_bare_scalar_bound(params, unbounded_tps)) { promote = true; }
         if (promote) { bounded_tps = bounded_tps.append(un); bound_names = bound_names.append(""); }
         ui = ui + 1;
     }
@@ -12755,6 +12787,53 @@ function feeds_wide_container(ty: string, name: string): boolean {
     }
     return false;
 }
+// all_bare_scalar_bound reports whether EVERY type var in `tps` is bound by some
+// param whose type is exactly that var. It is what makes the multi-var half of
+// clause (c'') safe: a var not bound this way would survive erased in the clone
+// (the stranded-sibling hazard clause (c) guards against with all_tp_count == 1).
+function all_bare_scalar_bound(params: ParamDecl[], tps: string[]): boolean {
+    var i: i32 = 0;
+    while (i < tps.len()) {
+        if (!has_bare_scalar_param(params, tps[i])) { return false; }
+        i = i + 1;
+    }
+    return tps.len() > 0;
+}
+
+// ret_mentions_any reports whether `ret_type` references ANY of `tps` — the
+// clause (c'') requirement that the return be fully concrete, checked across the
+// whole set rather than one var at a time.
+function ret_mentions_any(ret_type: string, tps: string[]): boolean {
+    var i: i32 = 0;
+    while (i < tps.len()) {
+        if (type_mentions_var(ret_type, tps[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// type_mentions_var reports whether the type spelling `ty` references the type
+// variable `name` anywhere, as a whole identifier — the word-boundary scan
+// feeds_wide_container does, without its container test. Used by clause (c'') to
+// require a return type that is fully CONCRETE.
+function type_mentions_var(ty: string, name: string): boolean {
+    var i: i32 = 0;
+    var nl: i32 = name.len();
+    if (nl == 0) { return false; }
+    while (i < ty.len()) {
+        if (i + nl <= ty.len() && ty[i : i + nl] == name) {
+            var prev_ok: boolean = true;
+            if (i > 0 && ident_byte((ty[i - 1] as i32))) { prev_ok = false; }
+            var nxt: i32 = i + nl;
+            var next_ok: boolean = true;
+            if (nxt < ty.len() && ident_byte((ty[nxt] as i32))) { next_ok = false; }
+            if (prev_ok && next_ok) { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // has_bare_scalar_param reports whether some param's type is EXACTLY `name` — a
 // bare-typevar SCALAR param (`x: T`), the shape that carries a wide i64/f64 value
 // through an erased-generic call. Distinguishes `some1[T](x: T): Option[T]` /

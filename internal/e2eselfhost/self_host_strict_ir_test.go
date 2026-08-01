@@ -573,9 +573,15 @@ function main(): i32 {
 	// TestSelfHostImmutabilityGate's cell-scalar-ok case feeds. The element KIND
 	// matters too, not just the cell-ness: a string cell whose slot misses
 	// is_strarr loads its element as an i32, so `.len()` reads a non-pointer.
-	// i64 cells are deliberately absent: the IR path and the interpreter
-	// disagree on Cell[i64] for the ANNOTATED spelling too, so it is a
-	// pre-existing divergence, not this shape's business.
+	// i64 cells are absent, but NOT because of a codegen divergence — an earlier
+	// note here claimed the IR path and the interpreter "disagree" on Cell[i64],
+	// which was wrong. `var c: Cell[i64] = cell_new(5000000000)` is REJECTED by
+	// the native checker (E003: cannot assign Cell[i32] to Cell[i64]): cell_new
+	// types its argument in isolation, so a bare literal settles to i32 and the
+	// annotation never reaches it. The interpreter was not computing a different
+	// answer, it was refusing to compile. Spelled `cell_new(5000000000 as i64)`
+	// both paths agree (42). The inference gap is real but is native-checker
+	// business, not this shape's.
 	{"cell-unannotated", `
 function main(): i32 {
     var ci = cell_new(7);

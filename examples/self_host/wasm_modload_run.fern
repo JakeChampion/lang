@@ -30,7 +30,6 @@ import "./util";
 import "./lexer";
 import "./parser";
 import "./flatten";
-import "./wasm";
 import "./wasm_ir";
 import "./irlower";
 import "./asm_ir";

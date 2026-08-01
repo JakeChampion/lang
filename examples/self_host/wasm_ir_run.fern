@@ -114,12 +114,14 @@ function main(): i32 {
         // str_values ~50× — re-lowering per query is the O(functions²) ×
         // O(passes) blowup that OOMed large modules (#4652).
         var ir_cache: irlower.LowerResult[] = wasm_ir.lower_all_for(mod);
-        // The module emission itself lives in wasm.emit_ir_module — the SINGLE
+        // The module emission itself lives in wasm_ir.emit_ir_module — the SINGLE
         // source of truth shared with wasm.emit_module_mode's IR branch. This
         // driver used to inline its own near-identical copy; the two drifted and
         // the emit_module_mode copy lost the whole WASI env/args/clock/fs surface,
-        // emitting calls to helpers it never defined (#4801).
-        emitted = wasm.emit_ir_module(mod, ir_cache);
+        // emitting calls to helpers it never defined (#4801). It moved out of
+        // wasm.fern in wasm slice 1b, so the IR path no longer routes through the
+        // AST emitter's module at all.
+        emitted = wasm_ir.emit_ir_module(mod, ir_cache);
     } else {
         emitted = wasm.emit_module(parser.module_with_builtins(mod));
     }

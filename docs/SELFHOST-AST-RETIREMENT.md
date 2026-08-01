@@ -2209,25 +2209,10 @@ tier → leak.
     `emit_ir_rc_bodies_from` + the shared WAT runtime helpers out of `wasm.fern`
     into `wasm_ir.fern`.
 
-- **Slice 5 — DONE for the register backends (#5972).** `asm.fern` and
-  `asm_arm64.fern` are DELETED, along with `self_host_asm_test.go` (the test of
-  those two files) and 517 `"asm.fern"` / `"asm_arm64.fern"` entries across 246 Go
-  harness copy-lists. `wasm.fern` STAYS: the wasm IR path still reuses its
-  `Ctx`-based RC-body cluster, and re-spelling the wasm rc corpora would trip the
-  open `is_unique`-on-container gap.
-
-  **The 512-function budget STAYS too, and the plan line above was wrong to bundle
-  it in.** It reads like a leftover of the AST fallback, but it is not: it is what
-  makes an oversized merged module REFUSE instead of OOMing the self-host runtime
-  at stage 2. Removing it would restore exactly the failure this file records as
-  unliftable. It is now load-bearing for a different reason than it was written
-  for — a refusal boundary, not a fallback trigger — and that is worth a comment
-  wherever it is next touched.
-
-  Verified after deletion: all nine drivers typecheck; a corpus program compiles
-  through `asm_run` (x86, and the emitted asm assembles under
-  `clang -target x86_64-unknown-linux-gnu -c`), through `asm_ir_run -target arm64`,
-  and through the wasm IR path to the right exit code.
+- **Slice 5 — delete `asm.fern` → `asm_arm64.fern` → `wasm.fern` + the
+  512-budget.** Repoint every driver + Go test module list; retire the AST-side
+  differential tests (their oracle role ends when the IR path is trusted). Gated
+  on all the above + #3425.
 
   ### Slice 5 — code-verified execution plan (2026-07-30)
 
@@ -4568,3 +4553,172 @@ accept a small-program test as evidence for a change to these fixpoints.
 
 Do NOT re-probe the budget-lift or streaming merged-IR paths — both are recorded
 above as OOMing the self-host runtime at stage 2; they are ruled out, not untried.
+
+## wasm.fern retirement (2026-08-01, newly in scope)
+
+The register-backend emitters are gone (#5972). `wasm.fern` (9,690 lines) is the
+last AST→asm emitter, and the standing claim that it cannot go — "the wasm IR
+path still reuses wasm.fern's RC-body cluster" — is **STALE**. Verified against
+the code:
+
+- `wasm_ir.fern` does **not import `wasm.fern` at all**. Its only `wasm.` mention
+  is a comment. It owns `heap_alloc_helpers`, `rc_runtime_helpers` and
+  `emit_ir_rc_bodies` itself.
+- `wasm.emit_ir_module_mode` is a ~10-line pass-through into `wasm_ir`.
+- The remaining coupling is six PURE helpers (`nth_tuple_type_elem`,
+  `extern_sum_param_supported` / `_is_option`, `parse_option_payload`,
+  `parse_result_err_payload`, `component_shape` + `module_calls`), ~123 lines,
+  all self-contained over `parser.TypeRef` / `parser.Module`.
+
+So this is the same shape as the register backends, not a prerequisite refactor.
+
+**The subset is WIDER than expected.** `should_use_ir_core` is literally
+`asmcore.new_state().use_ir && asm_ir.eligible_core(mod)` — the wasm per-function
+IR subset **is** the x86 subset. The wasm-only exclusions are just:
+
+1. `wasm_ir_deferrals_ok` → `module_erased_wide` (partially closed already);
+2. `component_ir_core_ok` — refuses any module with WIT `exports` or a function
+   with `import_iface`;
+3. `component_needs_ok` — the needs whitelist for component modes.
+
+(2) is the substantive gap: the component path, not the core language.
+
+**Blast radius:** 79 test files build `wasm_run`, 323 `wasm_ir_run`, 42
+`wasm_runio_run`, 3 `wasm_modload_run`. Eleven `wasm.<fn>` call sites across
+8 files; only four are the emitter.
+
+### A SIXTH enumeration blind spot, and why the probe had to come first
+
+The wasm drivers exposed only `-ir`, which **forces** the IR path and therefore
+bypasses the very gates above. There was no wasm equivalent of `-ir-probe` /
+`asm_pathprobe_run`, so "how would this program route?" was unanswerable — and
+the declines are exactly what an IR-or-error reroute converts into hard errors.
+
+Trying to enumerate from Go test literals instead produced a number that looked
+clean and was not: 323 extracted programs, 111 declines, of which 5 were real
+(all deliberate `wasm_unsupported_builtin` endpoints — `proc_fork`,
+`subprocess`, `timer_fd`, `__c_call0`). The other 106 split two ways, and the
+second way is the new lesson:
+
+- some were extraction artifacts (Go comment text, test-function bodies);
+- **others were REAL programs belonging to a DIFFERENT driver.**
+  `self_host_x86_gas_test.go` mentions `wasm_run.fern` four times while
+  containing 52 x86-driver references, so the sweep probed x86 programs against
+  the wasm backend, where `x86_gas_assemble` is naturally undefined.
+
+**A test file that mentions a driver does not mean its programs are fed to that
+driver.** Attribution is not greppable. Hence `wasm_run -decide`, which reuses
+the emitter's own decision (`wasm_ir.ir_route_precheck` / `ir_route_final`,
+extracted from `emit_module_mode` so the probe cannot drift from what it
+describes) and self-filters wrong-driver programs by erroring instead of
+reporting a verdict.
+
+### Found by the probe: an erased-wide SILENT MISCOMPILE on wasm
+
+The first thing `-decide` turned up is a bug, not a gap. For
+
+```fern
+function eqf[T](a: T, b: T): boolean { return a == b; }
+function main(): i32 { var x: i64 = 5000000000; var y: i64 = 5000000000;
+                       if (eqf(x, y)) { return 42; } return 1; }
+```
+
+| path | answer |
+|---|---|
+| interpreter (oracle) | 42 |
+| `wasm_run` (AST route) | **1** |
+| `wasm_ir_run -ir` (forced IR) | **1** |
+
+The emitted WAT shows the mechanism: an erased type-var param is typed i32
+(`(func $eqf (param $a i32) (param $b i32))`), so an i64 argument crosses the
+boundary as a BOX POINTER and the body's `i32.eq` compares two distinct boxes
+rather than the values in them — always false. With i32 arguments the same
+program is correct (42), which is what makes it silent.
+
+So `module_erased_wide` is RIGHT to decline this shape, and the legacy AST
+emitter is WRONG to accept it: the program does not bail, it returns 1.
+Retiring that emitter converts a wrong answer into a hard error — an improvement
+before any lowering work happens. Making it actually work is the erased-wide
+half of slice 3.
+
+This is also the general argument for the reroute: a fallback that silently
+miscompiles is worse than a refusal, and only a probe that reports the gate
+boundary makes such cases findable.
+
+**FIXED, by monomorphising instead of widening (parser clause (c'')).** Widening
+the params cannot work here: the body's operation is width-SENSITIVE, which is
+precisely why `erased_passthrough_safe` excludes bodies that USE the variable.
+Promoting the shape to BOUNDED instead makes `monomorphize_module` clone it with
+concrete widths (`eqf__i64(a: i64, b: i64): boolean`), and the wasm IR path then
+lowers it like any concrete function.
+
+The clause fires when every unbounded var is bound by a bare-scalar param
+(`all_bare_scalar_bound`) and the return mentions none of them
+(`ret_mentions_any` false). Unlike clause (c) it is NOT limited to one type
+variable — clause (c)'s `all_tp_count == 1` guard exists to stop a var surviving
+ERASED in the clone, and requiring every var to be param-bound rules that out
+directly, so the two-var sibling (`both[T, U](a: T, b: U): boolean`) is covered
+too.
+
+Safety: a scan of every `function f[…](… : T …): <concrete>` across
+`internal/stdlib` and `examples/self_host` found **zero** matches for both the
+single- and multi-var forms, so the bootstrap monomorphises nothing new — the
+same argument clause (c') rests on. Verified: all three shapes (i64, f64,
+two-var) now route `ir` and return the interpreter's answer on wasm; the 31-case
+strict-IR corpus is unchanged on wasm; the x86 emit of a matching program still
+assembles.
+
+**What still declines, and the wider finding.** The FOLD shape
+(`sum_all[T](xs: T[], seed: T): T`) is still declined — its var is bound by an
+ARRAY param, not a bare scalar one, so nothing can bind the clone. And it is
+still miscompiled through the AST route (1, where the interpreter says 42).
+
+That generalises: **every erased-wide shape tested returns the wrong answer
+through the wasm AST emitter** — the two-var form, the fold form, and (before
+the fix) the scalar form. For this family the AST fallback is not a safety net,
+it is a source of silent wrong answers, so retiring it strictly improves matters
+even before the remaining shapes lower.
+
+### MEASURED: the reroute is NOT ready, and the order has to change
+
+The reroute was attempted and **reverted**. Pushing it turned **10+ self-host
+shards red**, and the probe explains why: unlike the register backends, whose
+per-function subset was mature before the reroute, a large share of real
+programs still route `ast` on wasm. `x86_encode.fern` + its labels self-test
+(1,346 lines, `TestSelfHostX86Labels`) is a worked example — `-decide` says
+`ast`, and under the reroute it became a hard error.
+
+Two distinct blockers, both now measured rather than guessed:
+
+1. **Component mode refuses `@import` / `@export`** (`component_ir_core_ok`).
+   Measured on `origin/main`: an `@export` program emits 65,407 bytes through
+   `wasm_runio_run` WITH the export surfaced, and rerouting turned that into a
+   hard error, breaking ~11 export/extern self-host tests. The canonical-ABI
+   bridge those need (`wasm.extern_imports` / `extern_wrappers` /
+   `extern_exports`) is AST-only with no IR sibling. **Porting it is the single
+   biggest remaining piece.**
+2. **Mode 0 has its own decliners** — a large set, not yet enumerated
+   individually. This is what the probe is for.
+
+**A pre-existing silent bug found while measuring this.** In mode 0 the IR path
+DROPS an `@export` entirely: `wasm_run` on the program above emits 11,108 bytes
+whose only exports are `memory` and `_start`, on `origin/main` as much as on the
+branch. Component mode surfaces it correctly. So an export in command mode is
+silently ignored today — the same AST-only-bridge gap, showing up as lost surface
+rather than as a bail.
+
+### Order (revised)
+
+1. **DONE** — routing probe (`wasm_run -decide`), the gate named
+   (`ir_route_precheck` / `ir_route_final`), and the IR entry moved OUT of
+   `wasm.fern` so the IR path no longer depends on the AST emitter's module.
+2. **Port the extern/export canonical-ABI bridge to the IR path.** This unblocks
+   component mode and fixes the mode-0 export drop at the same time.
+3. **Enumerate mode-0 decliners with `-decide`** and close them.
+4. Reroute the drivers IR-or-error — only once 2 and 3 leave the decline set
+   empty. Rerouting first was the mistake this section records: on the asm side
+   the reroute WAS the enumeration tool because the subset was already mature; on
+   wasm it just turns a wide gap into a wide outage.
+5. Move the remaining pure helpers (`component_shape` + `module_calls` /
+   `stmts_call` / `expr_calls`, ~95 lines; plus the four type-spelling helpers the
+   three probe drivers use) and delete `wasm.fern`.

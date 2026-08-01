@@ -18,6 +18,22 @@ import "./wasm";
 import "./wasm_ir";
 
 function main(): i32 {
+    // `-decide`: print the ROUTING verdict ("ir" / "ast") instead of emitting.
+    // The wasm side had no such probe — its drivers expose only `-ir`, which
+    // FORCES the IR path and so bypasses the gates whose declines are exactly
+    // what an IR-or-error reroute turns into hard errors. Enumerating those
+    // declines from Go test literals does not work either: a test file that
+    // mentions a driver does not mean its programs are fed to that driver
+    // (self_host_x86_gas_test.go names wasm_run.fern while its programs are
+    // x86), so an extraction sweep silently probes the wrong backend. This is
+    // the wasm sibling of asm_pathprobe_run / `-ir-probe`.
+    var decide: boolean = false;
+    var av: string[] = args();
+    var ai: i32 = 1;
+    while (ai < av.len()) {
+        if (av[ai] == "-decide") { decide = true; }
+        ai = ai + 1;
+    }
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
     // Call-arity gate (#4360): an arg-count mismatch used to sail through the
@@ -48,7 +64,18 @@ function main(): i32 {
         eprint(wasm_ir.wasm_unsupported_message(unsupported));
         return 1;
     }
-    var emitted: string = wasm.emit_module(parser.module_with_builtins(mod));
+    var mwb: parser.Module = parser.module_with_builtins(mod);
+    if (decide) {
+        // The same two-halves decision emit_module_mode makes, in its default
+        // (non-component) mode — reused from wasm_ir rather than restated, so
+        // the probe cannot drift from the emitter it describes.
+        var plm: parser.Module = wasm_ir.lift_lambdas(mwb);
+        var pok: boolean = wasm_ir.ir_route_precheck(plm, false);
+        if (pok) { pok = wasm_ir.ir_route_final(wasm_ir.lower_all_for(plm), false, false); }
+        if (pok) { print("ir\n"); } else { print("ast\n"); }
+        return 0;
+    }
+    var emitted: string = wasm.emit_module(mwb);
     write(emitted);
     return 0;
 }
