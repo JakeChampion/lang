@@ -46,7 +46,7 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 	// side-by-side.)
 	copySelfHostFiles(t, dir,
 		"asmcore.fern", "lexer.fern", "parser.fern", "util.fern",
-		"interp.fern", "astwalk.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern",
+		"interp.fern", "astwalk.fern", "ir.fern", "irlower.fern", "asm_ir.fern",
 		"interp_run.fern", "asm_run.fern")
 
 	// Build both drivers through the shared cached path

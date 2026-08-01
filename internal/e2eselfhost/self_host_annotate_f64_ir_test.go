@@ -51,7 +51,7 @@ func annotateF64ProjDir(t *testing.T) (dir, mmc, stdlibRoot string, gcc string, 
 	gcc, _ = x86_64Tooling(t)
 	interpBin = buildLangBinForInterp(t)
 	dir = writeSelfHostAsmProject(t)
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm.fern", "treeshake.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_load_run.fern"} {
+	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "treeshake.fern", "asm_arm64_ir.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

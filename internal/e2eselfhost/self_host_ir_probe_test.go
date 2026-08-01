@@ -28,7 +28,7 @@ func TestSelfHostIREligibilityProbe(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	// The probe driver = asm_ir_run.fern (writeSelfHostAsmProject copies its
 	// ./-imports; std/io resolves from the real stdlib root).
-	copySelfHostFiles(t, dir, "asm_arm64.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "airun")
 
 	probe := func(t *testing.T, prog string) string {
@@ -124,7 +124,7 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	// asm_load_run pulls in flatten + checker on top of the core emitter set.
-	for _, name := range []string{"flatten.fern", "checker.fern", "asm_arm64_ir.fern", "asm_arm64.fern", "asm_load_run.fern"} {
+	for _, name := range []string{"flatten.fern", "checker.fern", "asm_arm64_ir.fern", "asm_load_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
