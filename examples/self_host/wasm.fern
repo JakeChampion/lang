@@ -9282,25 +9282,6 @@ pub function emit_module_run_io_fs(mod: parser.Module): string {
 }
 
 
-// emit_ir_module is whole-program emit: a single unnamespaced unit. Kept as the
-// entry point every existing caller uses, and the byte-identity invariant for
-// #5331 step 4b — its output must not change at all.
-pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[]): string {
-    return emit_ir_module_mode(mod, ir_cache, 0);
-}
-
-// emit_ir_module_mode is emit_ir_module for a chosen wasm emit mode (0 preview1
-// command, 1 component run, 2 component run + stdout — see
-// wasm_ir.emit_ir_module_units_mode). Mode 0 delegates unchanged, so the
-// byte-identity invariant for #5331 step 4b is untouched.
-pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResult[], mode: i32): string {
-    var sv: string[] = wasm_ir.str_values(ir_cache);
-    var ft: string[] = wasm_ir.fn_value_table(ir_cache);
-    var unit: string = wasm_ir.emit_functions_ns("", mod, ir_cache);
-    return wasm_ir.emit_ir_module_units_mode([""], [unit], sv, [sv.len()], ft, [ft.len()], mod,
-        wasm_ir.needs_of(ir_cache), wasm_ir.indirect_arities(ir_cache), wasm_ir.emit_ir_rc_bodies(mod, ir_cache), mode);
-}
-
 function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, fs: boolean): string {
     // IR path (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3): when use_ir is set
     // (default on) AND the whole module is in the i32 + arrays subset, emit the
@@ -9333,19 +9314,17 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
         mode = 1;
         if (io) { mode = 2; }
     }
-    var ir_ok: boolean = wasm_ir.should_use_ir_core(lm)
-        && (!component || wasm_ir.component_ir_core_ok(lm));
+    var ir_ok: boolean = wasm_ir.ir_route_precheck(lm, component);
     var ir_cache: irlower.LowerResult[] = [];
     if (ir_ok) {
         ir_cache = wasm_ir.lower_all_for(lm);
-        ir_ok = wasm_ir.wasm_ir_deferrals_ok(ir_cache)
-            && (!component || wasm_ir.component_needs_ok(wasm_ir.needs_of(ir_cache), io));
+        ir_ok = wasm_ir.ir_route_final(ir_cache, component, io);
     }
     if (ir_ok) {
         // Hoist no-capture lambda call-args (closures slice 2a) before emit;
         // lambda-free modules are unchanged, and the AST path below keeps `mod`.
         mod = lm;
-        return emit_ir_module_mode(mod, ir_cache, mode);
+        return wasm_ir.emit_ir_module_mode(mod, ir_cache, mode);
     }
     // Intern every string literal in the module into the data section.
     var tab: StrTable = new_str_table();

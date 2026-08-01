@@ -31,7 +31,6 @@ import "std/io";
 import "./lexer";
 import "./parser";
 import "./asmcore";
-import "./wasm";
 import "./wasm_ir";
 import "./irlower";
 import "./util";

@@ -2042,6 +2042,55 @@ pub function should_use_ir_core(mod: parser.Module): boolean {
     return asmcore.new_state().use_ir && asm_ir.eligible_core(mod);
 }
 
+// emit_ir_module / emit_ir_module_mode MOVED HERE from wasm.fern (#3457, wasm
+// slice 1b). They only ever called into this module, so living in wasm.fern made
+// the IR path formally depend on the legacy AST emitter it is meant to replace —
+// the last structural reason wasm.fern looked unretirable. Nothing else changes:
+// the bodies are verbatim, so the byte-identity invariant for #5331 step 4b
+// holds.
+// emit_ir_module is whole-program emit: a single unnamespaced unit. Kept as the
+// entry point every existing caller uses, and the byte-identity invariant for
+// #5331 step 4b — its output must not change at all.
+pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[]): string {
+    return emit_ir_module_mode(mod, ir_cache, 0);
+}
+
+// emit_ir_module_mode is emit_ir_module for a chosen wasm emit mode (0 preview1
+// command, 1 component run, 2 component run + stdout — see
+// emit_ir_module_units_mode). Mode 0 delegates unchanged, so the
+// byte-identity invariant for #5331 step 4b is untouched.
+pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResult[], mode: i32): string {
+    var sv: string[] = str_values(ir_cache);
+    var ft: string[] = fn_value_table(ir_cache);
+    var unit: string = emit_functions_ns("", mod, ir_cache);
+    return emit_ir_module_units_mode([""], [unit], sv, [sv.len()], ft, [ft.len()], mod,
+        needs_of(ir_cache), indirect_arities(ir_cache), emit_ir_rc_bodies(mod, ir_cache), mode);
+}
+
+
+// ir_route_precheck / ir_route_final are the TWO HALVES of the wasm routing
+// decision, split at the point where a lowering becomes necessary.
+//
+// wasm.emit_module_mode used to spell this decision inline, so nothing else
+// could ask "how would this program route?" — the wasm drivers expose only
+// `-ir`, which FORCES the IR path and therefore bypasses these very gates. That
+// made the wasm side the one backend with no routing probe (the asm side has
+// `-ir-probe` and asm_pathprobe_run), and an emitter-retirement reroute is
+// exactly the change whose risk lives in what the gates DECLINE. Naming the
+// halves here lets a probe reuse the decision instead of restating it, which is
+// what keeps the probe honest as the gates move.
+//
+// The split is load-bearing, not cosmetic: the precheck is AST-only, so an
+// ineligible module is never lowered, and the caller pays the single lowering
+// exactly once before asking ir_route_final.
+pub function ir_route_precheck(lm: parser.Module, component: boolean): boolean {
+    return should_use_ir_core(lm) && (!component || component_ir_core_ok(lm));
+}
+
+pub function ir_route_final(cache: irlower.LowerResult[], component: boolean, io: boolean): boolean {
+    return wasm_ir_deferrals_ok(cache) && (!component || component_needs_ok(needs_of(cache), io));
+}
+
 // Preview-2 component-model imports for the wasm reactor's timer-pollable ops
 // (#3457 / #4317). Emitted into the module header (caller-side, wasm_ir_run) when
 // the module uses the op, exactly like the preview1 import helpers — but these
