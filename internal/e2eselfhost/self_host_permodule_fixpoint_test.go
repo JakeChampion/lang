@@ -40,10 +40,10 @@ func TestSelfHostPerModuleFixpointX86_64(t *testing.T) {
 	// self-host-built); the gen1 emit must be SERIAL (the leaky self-host runtime
 	// makes concurrent large-module emits thrash a 16 GB host), so the test runs
 	// ~16 min — past the 13-min CI shard timeout. It is therefore env-gated
-	// (RUN_PERMODULE_FIXPOINT=1) rather than run in every CI lane. Once Stage 4
-	// flips the default self-compile to per-module, TestSelfHostModloadFixpointX86_64
-	// itself becomes the permanent per-module fixpoint guard and this scaffolding
-	// is deleted.
+	// (RUN_PERMODULE_FIXPOINT=1) rather than run in every CI lane. The permanent
+	// per-module fixpoint guard is its cheaper sibling
+	// TestSelfHostPerModuleEmitAllFixpointBatch4X86_64, which runs UNGATED; this
+	// one proves the same reproduction with a self-host-BUILT compiler.
 	if os.Getenv("RUN_PERMODULE_FIXPOINT") == "" {
 		t.Skip("set RUN_PERMODULE_FIXPOINT=1 to run the heavy per-module self-reproduction proof (~16 min; #3457 Stage 1)")
 	}

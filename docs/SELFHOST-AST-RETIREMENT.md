@@ -1446,6 +1446,14 @@ here.
 The three legacy emitters are still reached through these entry points
 (`asm.emit_module` / `asm_arm64.emit_module` / `wasm.emit_module`):
 
+> **RESOLVED (#3457 slice 5, 2026-08).** Every x86/arm64 row below is now
+> rerouted IR-or-error (#5954, #5969, #5970, #5971) and the two emitters are
+> deleted; only the `wasm.emit_module` rows survive, deliberately. The table is
+> kept as the record of what had to be enumerated — see the slice-5 section for
+> what each reroute cost. The fixpoint tests named in the second and third rows
+> are themselves retired: their mechanism IS the merged bundle, which only ever
+> compiled because the AST emitter took it.
+
 | Site | Path | Reachable today because… |
 |---|---|---|
 | `asm_run.fern:23` | merged AST (x86) | `TestSelfHostAsmRunX86_64` and ~390 other test files pipe programs through it (`TestSelfHostBootstrapsItself` did too, until #5968 retired it — it fed modules with UNRESOLVED imports, which no IR lowering can accept) |
