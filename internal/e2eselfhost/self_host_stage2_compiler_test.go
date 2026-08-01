@@ -29,7 +29,7 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 	// FILES by the file-based asm driver (no ///MODULE bundle).
 	entry := "import \"./lexer\";\n" +
 		"import \"./parser\";\n" +
-		"import \"./asm\";\n" +
+		"import \"./asm_ir\";\n" +
 		"function main(): i32 {\n" +
 		"    var src: string = \"\";\n" +
 		"    while (true) {\n" +
@@ -41,11 +41,11 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 		"            None => { break; },\n" +
 		"        }\n" +
 		"    }\n" +
-		"    print(asm.emit_module(parser.parse_module(lexer.tokenize(src))));\n" +
+		"    print(asm_ir.emit_module_or_error(parser.parse_module(lexer.tokenize(src))));\n" +
 		"    return 0;\n" +
 		"}\n"
 	files := map[string]string{"main.fern": entry}
-	for _, m := range []string{"util", "astwalk", "asmcore", "lexer", "parser", "ir", "irlower", "asm_ir", "asm"} {
+	for _, m := range []string{"util", "astwalk", "asmcore", "lexer", "parser", "ir", "irlower", "asm_ir"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
 		if err != nil {
 			t.Fatalf("read %s.fern: %v", m, err)
