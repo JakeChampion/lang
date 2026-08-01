@@ -4707,56 +4707,128 @@ branch. Component mode surfaces it correctly. So an export in command mode is
 silently ignored today — the same AST-only-bridge gap, showing up as lost surface
 rather than as a bail.
 
+### Interpret-the-driver: how any of this got verified
+
+`ok 0.262s` for a test that builds a self-host driver is a SKIP, and it is the
+reason a bridge built against the wrong consumer's layout looked green. The
+verification gap was structural, not an oversight: a self-host driver test EMITS
+with a driver BINARY (the driver's Fern sources → x86-64 asm → link → run under
+`qemu-x86_64`), so on a host with neither native x86-64 nor qemu — an arm64 macOS
+dev machine — `X86_64Tooling` skips, and the entire wasm-emitter surface reports
+success while running nothing.
+
+`FERN_SELFHOST_INTERP=1` closes it. The drivers whose output is all a test wants —
+an emitted `.wat` / `.s` on stdout — do not need to be machine code to produce it,
+so `BuildSelfHostBin` writes an executable SHIM in place of the linked binary:
+
+```
+#!/bin/sh
+exec /path/to/fern -interp /path/to/driver.fern -- "$@"
+```
+
+A shim rather than a sentinel the run helpers learn to recognise, because the ~575
+test files reach their driver several ways (`RunCapture`, `RunDriverStdinExits`, a
+bare `exec.Command`) and a real executable serves all of them unchanged.
+
+**Measured:** the 36 extern/export component tests — every one of them skipping
+before — run in **15.5 s** total, ~0.4 s each. That is the loop that found the
+layout mismatch, the two calling-convention shims, the missing `cabi_realloc`, the
+reactor `main`, and the f32 bind bug, each in one edit-run cycle instead of a
+5-minute CI shard.
+
+Off by default and inert when unset: CI keeps building real driver binaries, which
+is also the only way the x86-64 emit itself gets exercised. In this mode
+`X86_64Tooling` stops skipping when qemu is absent, so a test that runs an emitted
+x86 BINARY (rather than capturing a driver's stdout) fails loudly on the missing
+runner — which is the intended trade: a visible failure beats a silent skip.
+
+Local recipe used throughout, for the record:
+
+```
+PATH="$HOME/.fern-wasm:$HOME/.wasmtime/bin:$PATH" FERN_SELFHOST_INTERP=1 \
+  go test ./internal/e2eselfhost/ -run '^(TestSelfHostExtern...)$' -v
+```
+
 ### Order (revised)
 
 1. **DONE** — routing probe (`wasm_run -decide`), the gate named
    (`ir_route_precheck` / `ir_route_final`), and the IR entry moved OUT of
    `wasm.fern` so the IR path no longer depends on the AST emitter's module.
-2. **Port the extern/export canonical-ABI bridge to the IR path.** This unblocks
-   component mode and fixes the mode-0 export drop at the same time.
+2. **DONE — the extern/export canonical-ABI bridge is on the IR path, with the
+   box layout parameterised by CONSUMER.**
 
-   **Attempted as a MOVE first, and that was wrong** — the correction is the
-   useful part. The 65 bridge functions really are pure: no `StrTable`, no `Ctx`,
-   no `wasm.fern`-local types. So moving the 1,437-line closure into `wasm_ir`
-   and re-qualifying the 67 references left behind compiles, and leaves the AST
-   path's output byte-identical. But **purity is not layout-independence.** The
-   bridge lifts WIT record / variant / tuple leaves into Fern-side boxes at the
-   AST emitter's stride, and the IR-emitted code that then reads those boxes uses
-   a different one.
+   Attempted first as a MOVE, and that was wrong; the correction is worth keeping
+   on the record. The 65 bridge functions are pure — no `StrTable`, no `Ctx`, no
+   `wasm.fern`-local types — but **purity is not layout-independence.** They lift
+   WIT record / variant / tuple leaves into Fern-side heap boxes, and the two
+   emitters read those boxes at different slot widths: the IR consumer
+   (`op_struct_new` / `op_enum_new` and the IR match dispatch) slots **8**, the
+   legacy AST emitter **4**. Emitting one layout for both gave WRONG ANSWERS, not
+   link errors — 36 tests over 15 shards, every one a record / variant / tuple /
+   array / resource-handle shape. #5795 was the same mismatch between the same
+   two consumers, which is why `build_io_error_func` already took its slot width
+   as a parameter.
 
-   `wasm_ir` documents the split itself, in the `build_io_error_func` comment: a
-   box is the id or discriminant in slot 0 and field *i* in slot 1+*i* for both
-   consumers, but at different widths — the IR consumer (`op_enum_new` and the IR
-   match dispatch) slots **8**, while the legacy AST emitter slots **4**
-   (`struct_field_off(i) = 4 + i*4`, boxed as `4 + nfields*4`). A moved bridge
-   writes leaves into 4-byte slots that IR-emitted code reads at `8 + i*8`.
+   The port threads that same width through the remaining leaf-lifting paths:
 
-   So the failures are WRONG ANSWERS, not link errors: 36 tests over 15 shards,
-   every one of them a record / variant / tuple / array / resource-handle extern
-   or export (`mr-bad`, `vf64r-bad`, plus one `failed to parse component`). This
-   is the SECOND time this exact confusion has landed — #5795 was the same
-   box-slot mismatch between the same two consumers, which is precisely why
-   `build_io_error_func` already takes its slot width as a parameter.
+   - `xbox_field_off(slot, i) = slot * (1 + i)` is the box geometry, and
+     `xbox_bytes(slot, nf, wide)` its block size. `wide` covers the AST emitter's
+     12-byte i64-payload variant box: a 4-byte slot cannot hold 8 bytes, so that
+     consumer sizes such a box `slot + 8*nf` where the IR one is `slot*(1+nf)`.
+   - `xbox_new(slot, bytes)` / `xstr_new(slot, len)` cover the ALLOCATION form,
+     which is consumer-dependent too. The IR consumer's own constructors allocate
+     every box through `$__fern_str_box`, so its boxes carry the rc header
+     `$__fern_arr_dec` reads at `[p-8]`; handing IR-emitted code a bump-allocated
+     box would have it decrement the *previous* block's data.
+   - `xslot_ir()` / `xslot_ast()` name the two widths at the call sites, so a site
+     says which consumer it emits for rather than a bare 8 or 4. `struct_field_off`
+     is now just `xbox_field_off(4, …)` — the AST spelling, every remaining caller
+     inside `wasm.fern`, so it retires when that file does.
 
-   Neither check run against the move could have caught it. Byte-identity
-   measured the AST path, which keeps its own layout by construction and is
-   therefore invariant under the move; and the end-to-end check used a
-   `list<s32>` export — the one shape with no record leaves to misplace.
+   Array geometry (`[len@0][cap@4][elems@+8]`, stride `elem_slot_size`) is already
+   shared by both consumers and needed nothing. (Noted while checking: the bridge
+   writes an array's `len` but not its `cap` word, for BOTH consumers, where the
+   emitters' own array literals write both. Nothing reads `cap` on these paths
+   today, so it is left alone rather than folded into a layout change.)
 
-   **What the real port is:** thread the consumer's slot width through the
-   leaf-lifting paths, exactly as `build_io_error_func(slot)` already does — the
-   ~10 `struct_field_off` sites, the four `4 + n*4` box sizes, and the tuple
-   `ti * 4` / `tn * 4` element stride. Array element stride (`elem_slot_size`
-   over an 8-byte header) is already shared by both consumers, so it needs
-   nothing. **Do not land the move alone**: a 4-byte `struct_field_off` sitting
-   inside `wasm_ir` next to the IR path's 8-byte convention is a trap, and the
-   #5795 recurrence is the evidence that it is one people fall into.
+   Three further changes were needed, none of them layout — all the IR path's own
+   conventions leaking out at the WIT boundary:
 
-   One commit from the attempt IS independently correct and belongs in whatever
-   replaces it: `emit_functions_view` must SKIP functions with `import_iface`
-   set. The IR path was lowering body-less `@import` declarations to a stub
-   returning `i32.const 0`, so an extern call silently yielded 0. It cannot ship
-   alone — without the bridge, nothing else defines the wrapper it calls.
+   - **The heap / `cabi_realloc` gates.** Those are derived from the LOWERED ops,
+     and the bridge is emitted from the module's DECLARATIONS. So an extern-only
+     module reached `call $__fern_alloc` with no allocator emitted, and a
+     list-returning extern produced a core with no `cabi_realloc` export
+     (`core instance 5 has no export named cabi_realloc`).
+     `module_extern_needs_heap` / `module_has_extern_composite_result` fold the
+     declarations into both gates.
+   - **Void externs and void exports.** The IR path emits every Fern-callable with
+     `(result i32)` — a `function f(x: i32) { }` returns 0 — and lowers a discarded
+     call as call-then-DROP. Calling a void import directly left nothing to drop
+     (`expected a type but nothing on stack`, which is how the
+     `[method]pollable.block` resource externs failed), and exporting a void
+     function directly offered the canonical ABI an i32 the WIT signature has no
+     room for (`lowered result types [] do not match result types [I32]`). Each
+     gets a shim, gated on the IR consumer alone so the AST path is untouched.
+   - **A reactor module has no `main`.** `asmcore.synth_script_main` covers a
+     SCRIPT (top-level statements, no `main`); a module whose entry is its
+     `@export` bindings has neither, and the IR framing still names `$main` in
+     `_start` / `_lang_run`. It now emits the same stub-returning-0 the AST
+     emitter synthesises.
+
+   And one genuine IR-path bug the bridge surfaced, fixed in `irlower`: an **f32
+   enum payload** is constructed widened to an 8-byte f64 (`op_struct_new`'s
+   `f64.store`, matching `struct_field_width`), but the match-arm bind read it back
+   with `i32.load` — the low half of a double — so `x == 2.5` on an f32 arm was
+   simply false. The bind now defers to `struct_field_width` rather than testing
+   `"f64"` by hand, which is what made the two sides disagree. Pinned with no WIT
+   in sight by `TestSelfHostWasmVariantF32ArmMatchIR`.
+
+   Verified: the 36 previously-red extern/export component tests pass, plus two new
+   pins — `TestSelfHostWasmExternBridgeIRLayout` asserts both the ROUTING (an
+   extern/export module must reach the IR framing, since a silent regression to the
+   AST emitter would keep the component tests green) and the emitted slot offsets
+   per shape, so a layout mismatch reads as a diff rather than as `mr-bad` from
+   wasmtime.
 3. **Enumerate mode-0 decliners with `-decide`** and close them. **First one
    bisected:** `x86_encode.fern` + its labels self-test declines because of
    **assignment to an ARRAY-typed struct field** — `a.code = x86_mov_r32_imm32(…)`.

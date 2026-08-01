@@ -13,7 +13,7 @@
 // Exits with the mismatch count (0 = byte-identical), so a regression in the
 // TypeRef decode (or in parse_type_ref feeding it) fails the golden here.
 
-import "./wasm";
+import "./wasm_ir";
 import "./util";
 
 // --- frozen reference: the exact magic-byte logic these replaced ---
@@ -68,8 +68,8 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < corpus.len()) {
         var t: string = corpus[i];
-        var ns: boolean = wasm.extern_sum_param_supported(t);
-        var no: boolean = wasm.extern_sum_param_is_option(t);
+        var ns: boolean = wasm_ir.extern_sum_param_supported(t);
+        var no: boolean = wasm_ir.extern_sum_param_is_option(t);
         var os: boolean = ref_sum_supported(t);
         var oo: boolean = ref_is_option(t);
         var mark: string = "ok  ";

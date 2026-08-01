@@ -70,7 +70,7 @@ function main(): i32 {
         // (non-component) mode — reused from wasm_ir rather than restated, so
         // the probe cannot drift from the emitter it describes.
         var plm: parser.Module = wasm_ir.lift_lambdas(mwb);
-        var pok: boolean = wasm_ir.ir_route_precheck(plm, false);
+        var pok: boolean = wasm_ir.ir_route_precheck(plm);
         if (pok) { pok = wasm_ir.ir_route_final(wasm_ir.lower_all_for(plm), false, false); }
         if (pok) { print("ir\n"); } else { print("ast\n"); }
         return 0;
