@@ -6619,6 +6619,26 @@ function lower_opt_make_payload_exp(tag: i32, arg: parser.Expr, exp_tag: string,
     return aw.emit(ir.op_opt_make_w(tag, 64, true));
 }
 
+// lower_wide_to_string_recv lowers the RECEIVER of an i64/u64 `.to_string()`.
+//
+// lower_expr has no `as_i64` / `as_u64` arm — the same hole the i64[]-literal
+// path documents — so an INLINE `(1234567890123 as i64).to_string()` bailed the
+// whole module, while the bound form (`var v: i64 = … as i64; v.to_string()`)
+// lowered. lower_i64 has that arm but bails on a CALL, which lower_expr takes,
+// so neither alone covers the receiver domain.
+//
+// lower_expr goes FIRST, not lower_i64: for every receiver that lowers today
+// (an i64 slot, an i64-returning call) both paths succeed but emit different
+// ops, and this is on the byte-identical self-compile path. Trying the working
+// path first keeps those programs' output identical and rescues only the shapes
+// that bailed. Re-lowering from the ORIGINAL state on failure is the same
+// speculative shape lower_opt_make_payload_exp uses.
+function lower_wide_to_string_recv(e: parser.Expr, s: LowerState): LowerState {
+    var n32: LowerState = lower_expr(e, s);
+    if (n32.ok) { return n32; }
+    return lower_i64(e, s);
+}
+
 // lower_subprocess_call lowers `subprocess(cmd, args, stdin)` — the three args
 // (cmd / args / stdin, so the dispatch pops stdin from TOS) then op_subprocess,
 // which pushes a fresh ProcessResult struct. Kept OUT of lower_expr's body: that
@@ -9999,12 +10019,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         // once and comparing is enough.
                         var wrt: string = expr_recv_prim_type(fa.obj, s);
                         if (wrt == "u64") {
-                            var u6s: LowerState = lower_expr(fa.obj, s);
+                            var u6s: LowerState = lower_wide_to_string_recv(fa.obj, s);
                             if (!u6s.ok) { return u6s; }
                             return u6s.emit(ir.op_call_direct("__fern_u64_to_string", 1));
                         }
                         if (wrt == "i64") {
-                            var i6s: LowerState = lower_expr(fa.obj, s);
+                            var i6s: LowerState = lower_wide_to_string_recv(fa.obj, s);
                             if (!i6s.ok) { return i6s; }
                             return i6s.emit(ir.op_call_direct("__fern_i64_to_string", 1));
                         }

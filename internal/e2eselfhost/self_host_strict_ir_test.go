@@ -589,6 +589,25 @@ function main(): i32 {
     return acc;                                  // 10 + 4 + 10
 }
 `, 24},
+	// `.to_string()` on an INLINE wide cast — `(n as i64).to_string()`. The wide
+	// to_string intercept lowered its receiver with lower_expr, which has no
+	// `as_i64` / `as_u64` arm (the same hole the i64[]-literal path documents),
+	// so the whole module bailed; the bound form `var v: i64 = n as i64;
+	// v.to_string()` lowered, which is the tell. Both forms are pinned, and both
+	// widths: u64 renders 2^64-1 as the full decimal only if it keeps the
+	// UNSIGNED formatter, so a receiver-lowering change that lost the width would
+	// show up as 20 vs 2 rather than as a bail. Real consumers:
+	// examples/tests/{i64,u64}_test.fern's test_to_string_wide.
+	{"wide-cast-to-string", `
+function main(): i32 {
+    var a: i32 = (1234567890123 as i64).to_string().len();      // 13
+    var b: i32 = (42 as i64).to_string().len();                 //  2
+    var c: i32 = (18446744073709551615 as u64).to_string().len();// 20
+    var v: i64 = 1234567890123 as i64;
+    var d: i32 = v.to_string().len();                           // 13
+    return a + b + c + d;
+}
+`, 48},
 }
 
 // runDriver runs a self-host driver over `src`, optionally with FERN_STRICT_IR

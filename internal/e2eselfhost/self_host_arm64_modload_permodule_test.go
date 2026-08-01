@@ -196,17 +196,30 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 		t.Errorf("per-module-built arm64 compiler miscompiled add(40, 2): program exited %d, want 42", code)
 	}
 
-	// 7. SELF-COMPILE (the #3561 regression guard, arm64 twin): the per-module-built
-	// arm64 compiler compiles the WHOLE compiler (the fixpoint gen2 input) without
-	// crashing and emits a real `call __fn_main`. Guards the string[]-struct-field
-	// `.append()` aliasing UAF in the checker (see the x86 twin for the mechanism) —
-	// the fix is in shared irlower.fern, so it must hold on both backends.
-	gen2, err := exec.Command(qemu, binPath, entry, "-target", "arm64").Output()
+	// 7. WHOLE-COMPILER MERGED-DEFAULT COMPILE (arm64). No per-module flags, so
+	// the driver takes the merged route: past the 512-function IR budget, past
+	// the single-process concat ceiling, and therefore out through the BATCHED
+	// per-module emit (emit_per_module_spawned). That escape used to be x86-only
+	// — arm64 had the AST emitter to drop to instead — so this is the direct
+	// guard on the arm64 wiring #3457 slice 5 added.
+	//
+	// Run on the HOST driver, not the qemu one. The per-module-BUILT compiler
+	// doing this same self-compile is what the step used to assert; with the AST
+	// fallback gone it now forks ~35 emit children, and under qemu that took the
+	// whole test from 297 s past the 18-minute shard timeout. Its unique value
+	// was the #3561 string[]-field `.append()` UAF guard, whose fix is in SHARED
+	// irlower.fern and which the x86 twin exercises on every run — so what is
+	// lost here is a duplicate, while what is gained is coverage of code that
+	// otherwise had none.
+	gen2, err := drive(t)
 	if err != nil {
-		t.Fatalf("per-module-built arm64 compiler crashed self-compiling the whole compiler (#3561 regression): %v", err)
+		t.Fatalf("arm64 whole-compiler merged compile failed (batched per-module escape): %v", err)
 	}
-	if !strings.Contains(string(gen2), "bl __fn_main") && !strings.Contains(string(gen2), "call __fn_main") {
-		t.Errorf("self-compiled whole compiler missing the main call — has_main misread (no-main fallback)")
+	if !strings.Contains(gen2, "bl __fn_main") && !strings.Contains(gen2, "call __fn_main") {
+		t.Errorf("whole-compiler compile missing the main call — has_main misread (no-main fallback)")
+	}
+	if len(gen2) == 0 {
+		t.Error("arm64 whole-compiler merged compile emitted 0 bytes")
 	}
 
 	// 8. SELF-DRIVEN -per-module-needs (#3456, arm64 twin): the per-module-built arm64
