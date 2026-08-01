@@ -2688,7 +2688,42 @@ tier → leak.
      mirror over `asm_arm64_ir.emit_module_ir`.)
 
   3. **Reroute the driver `emit_module` sites — heterogeneous, verify each.**
-     **ALL SITES ARE NOW REROUTED**: `fern.fern`'s x86 branch (#5954),
+
+     **STATUS: the two widest sites are LANDED; the rest are pushed and RED.**
+     `fern.fern` x86 (#5954), `asm_run.fern` (#5969), `fern.fern`'s three arm64
+     branches + the mirror (#5970) are done. #5971 — `asm_ir_run` (×3 targets),
+     `asm_load_run` and `asm_modload_run` (×2 each) — turned **13 checks red**, and
+     the reason is a process failure worth naming: it was pushed WITHOUT the
+     per-driver enumeration that the three earlier sweeps had already proved
+     necessary. 62 + 17 + 204 tests build those drivers and none of their programs
+     were checked first.
+     
+     The failures group into four kinds, and only the third is a lowering matter:
+
+     1. **Whole-compiler self-compile through the MERGED path** — the 512-budget
+        refusal, now reached routinely: `TestSelfHostStage2FixedPoint` (+Arm64),
+        `TestSelfHostLoadFixpointX86_64`, `TestSelfHostAsmArm64Bootstrap`, and
+        (unexpectedly) `TestSelfHostModloadPerModuleWholeCompilerArm64` — check
+        whether that last one has a merged sub-step. These need repointing at the
+        batched per-module path, exactly as the retired env-gated fixpoints did.
+     2. **Tests whose SUBJECT is the AST emitter** — `TestSelfHostF64MethodAST_X86_64`,
+        `TestSelfHostStructLitOrderLegacyX86_64` / `Arm64` (the "Legacy"/"AST" in
+        those names is the emitter). They retire WITH the files, like
+        `self_host_asm_test.go`.
+     3. **Ill-formed input on the arm64 leg** — `TestSelfHostStringArm64` is the
+        arm64 twin of the x86 `std/string` test fixed in #5969; only the x86 leg
+        was repointed to the loader driver.
+     4. **Undiagnosed** — `TestSelfHostArrayX86_64` / `Arm64`, `TestSelfHostStdTestE2E`
+        / `Arm64`, `TestSelfHostImmutabilityGateX86_64`,
+        `TestSelfHostTreeshakeStdlibIR`. Diagnose before assuming a category.
+
+     **Do the enumeration first this time.** `-decide` is the tool for the loader
+     drivers (`fern -interp asm_load_run.fern -- main.fern <stdlibRoot> -decide`
+     prints ir/ast, interpreted, minutes per call so sample) and `-ir-probe` for
+     the single-module ones. And note kind 1 cannot be enumerated from Go literals
+     at all — those tests feed the compiler its OWN source graph off disk.
+
+     Previously (for the record) all sites were listed here as rerouted: `fern.fern`'s x86 branch (#5954),
      `asm_run.fern` (#5969 — the widest, ~390 test files), `fern.fern`'s three
      arm64 branches plus the `asm_arm64_ir.emit_module_or_error` mirror (#5970),
      and finally `asm_ir_run` (x86 + arm64 + arm64-darwin), `asm_load_run` and
