@@ -314,10 +314,13 @@ staying green (the self-compile must remain byte-identical).
   (b) each slice ships a
   differential e2e that stresses alloc/drop/reuse churn (the native
   `*reuse*/main.fern` cases) and compares self-host output to the interpreter
-  **byte-for-byte**; (c) **both fixpoint suites must still converge** — reuse
-  changes the emitted asm, so `TestSelfHostLoadFixpointX86_64` /
-  `TestSelfHostModloadFixpointX86_64` prove the self-compiled compiler is still
-  self-consistent; (d) the whole reuse layer can be switched off
+  **byte-for-byte**; (c) **the fixpoint suite must still converge** — reuse
+  changes the emitted asm, so `TestSelfHostPerModuleEmitAllFixpointBatch4X86_64`
+  proves the self-compiled compiler is still self-consistent. (It replaced the
+  merged-bundle fixpoints `TestSelfHostLoadFixpointX86_64` /
+  `TestSelfHostModloadFixpointX86_64`, which retired with the AST emitters in
+  #3457 slice 5 — a merged whole-compiler bundle is past the 512-function IR
+  budget, so there was nothing left to compile it.) (d) the whole reuse layer can be switched off
   (`FERN_SELFHOST_NO_REUSE=1` → `irlower.reuse_layer_disabled()`, §6.5), and
   `TestSelfHostReuseDifferentialX86_64` asserts reuse-on vs reuse-off are
   observationally identical on firing shapes from every family.

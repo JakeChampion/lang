@@ -924,13 +924,31 @@ function main(): i32 {
                 // The batched spawned path stays x86-only for now.
                 var amwb: parser.Module = parser.module_with_builtins(merged);
                 var anfuncs: i32 = asm_ir.lift_lambdas(amwb).funcs.len();
-                if (anfuncs > 512 && anfuncs < single_process_max) {
-                    var ashaken: parser.Module = treeshake.treeshake(merged);
-                    var areach: string[] = [];
-                    var ari: i32 = 0;
-                    while (ari < ashaken.funcs.len()) { areach = areach.append(ashaken.funcs[ari].name); ari = ari + 1; }
-                    var apmc: string = emit_per_module_concat(dir, entry, loaded, areach, "arm64");
-                    if (apmc.len() > 0) { write(apmc); return 0; }
+                if (anfuncs > 512 || force_spawned) {
+                    if (anfuncs < single_process_max && !force_spawned) {
+                        var ashaken: parser.Module = treeshake.treeshake(merged);
+                        var areach: string[] = [];
+                        var ari: i32 = 0;
+                        while (ari < ashaken.funcs.len()) { areach = areach.append(ashaken.funcs[ari].name); ari = ari + 1; }
+                        var apmc: string = emit_per_module_concat(dir, entry, loaded, areach, "arm64");
+                        if (apmc.len() > 0) { write(apmc); return 0; }
+                    } else {
+                        // ABOVE the single-process ceiling — the whole-compiler
+                        // self-compile itself. Was x86-only ("the batched spawned
+                        // path stays x86-only for now"), which only worked because
+                        // arm64 still had the AST emitter to drop to; removing that
+                        // fallback is what makes the batched path required here too.
+                        // spawn_batch already threads `-target`, and the arm64
+                        // `-per-module-emit` child is the exact path
+                        // TestSelfHostModloadPerModuleWholeCompilerArm64 drives, so
+                        // this reuses a proven leg rather than adding one.
+                        var asrc: i32 = emit_per_module_spawned(dir, entry_path, entry, loaded, target, func_budget, unit_batch, a[0]);
+                        if (asrc == 0) { return 0; }
+                        if (asrc == 2) {
+                            eprint("asm_modload_run: spawned per-module emit failed after writing output\n");
+                            return 1;
+                        }
+                    }
                 }
                 // IR-or-error (#3457 slice 5) — see asm_load_run's arm64 leg.
                 write(asm_arm64_ir.emit_module_or_error(amwb, false));
