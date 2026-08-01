@@ -2765,6 +2765,31 @@ tier → leak.
      the single-module ones. And note kind 1 cannot be enumerated from Go literals
      at all — those tests feed the compiler its OWN source graph off disk.
 
+     **Round 2 of #5971 (5 failures, down from 13) added two more, and one of
+     them is not a lowering matter either:**
+
+     - `(n as i64).to_string()` — the SIXTH instance of the second-mechanism
+       shape. The wide `to_string` intercept lowered its receiver with
+       `lower_expr`, which has no `as_i64` / `as_u64` arm (the same hole the
+       i64[]-literal path documents), so the INLINE cast bailed the module while
+       `var v: i64 = n as i64; v.to_string()` lowered. Note the fix tries
+       `lower_expr` FIRST and falls back to `lower_i64`, not the reverse: for
+       every receiver that lowers today both paths succeed but emit DIFFERENT
+       ops, and this is on the byte-identical self-compile path. Reaching for the
+       "more correct" path first would have been a silent byte-identity break.
+     - `TestSelfHostModloadPerModuleWholeCompilerArm64` timed out at 18 min (it
+       was 297 s). Not a bail — a BUDGET consequence of the fix one round
+       earlier: with the AST fallback gone, its step-7 whole-compiler
+       self-compile takes the batched per-module escape, ~35 emit children, and
+       it was running them under **qemu**. The x86 twin does the same work
+       natively in 98 s. Moved to the host driver, which also gives the arm64
+       batched escape its only direct test.
+
+     **Watch for that second kind.** Removing a fallback does not only turn
+     bails into errors; it re-routes work onto a path with a different COST
+     profile, and a qemu-multiplied one can blow a shard budget without any
+     test failing on correctness.
+
      **A fifth blind spot, from kind 1's middle case:** a test whose whole
      subtest list fails is evidence AGAINST the expensive explanation, not for
      it. `TestSelfHostAsmArm64Bootstrap` was filed under "the whole-compiler
