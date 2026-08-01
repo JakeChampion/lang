@@ -45,23 +45,58 @@ func stringSource(t *testing.T, mainBody string) []byte {
 	return append(src, []byte("\nfunction main(): i32 { "+mainBody+" }\n")...)
 }
 
-// TestSelfHostStringX86_64 compiles std/string + a main with the
-// self-hosted x86-64 compiler and checks exit codes.
+// stringImportSource is the well-formed spelling of the same program: IMPORT
+// std/string rather than concatenating its source with a main.
+//
+// The concatenated form (stringSource, still used by the arm64 leg below) has
+// been ill-formed since std/unicode was added to std/string's imports — the
+// header's "its imports are prelude-resident" went stale. `capitalize` calls
+// `unicode.capitalize`, which a single-module compile cannot resolve, and the
+// legacy AST emitter merely tolerated the dangling reference. Appending the
+// dependency is not a fix either: std/unicode imports std/utf8, which imports
+// std/string back, so the three are mutually recursive and only the module
+// loader resolves them.
+//
+// So the x86 leg compiles through asm_load_run (the loader driver) with the
+// stdlib root, which is also how a real program uses std/string. Verified to
+// route "ir".
+func stringImportSource(mainBody string) []byte {
+	return []byte("import \"std/string\";\nfunction main(): i32 { " + mainBody + " }\n")
+}
+
+// TestSelfHostStringX86_64 compiles a program IMPORTING std/string with the
+// self-hosted x86-64 compiler and checks exit codes. It goes through the loader
+// driver (asm_load_run) rather than the single-module one, because std/string is
+// no longer self-contained — see stringImportSource.
 func TestSelfHostStringX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	for _, name := range []string{"flatten.fern", "checker.fern", "treeshake.fern", "asm_load_run.fern"} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	mmc := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "mmc")
+	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
+		t.Fatalf("abs stdlib root: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
 	for _, tc := range stringCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, stringSource(t, tc.main))
+			proj := t.TempDir()
+			mainPath := filepath.Join(proj, "main.fern")
+			if err := os.WriteFile(mainPath, stringImportSource(tc.main), 0o644); err != nil {
+				t.Fatalf("write main.fern: %v", err)
+			}
+			asm, cerr := exec.Command(mmc, mainPath, stdlibRoot).Output()
+			if cerr != nil {
+				t.Fatalf("loader compile: %v", cerr)
+			}
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}

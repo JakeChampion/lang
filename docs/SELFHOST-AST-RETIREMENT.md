@@ -2546,6 +2546,35 @@ tier → leak.
      Three sweeps produced 17, 21 and 42 raw declines; the genuine totals were
      2, 2 and 0.
 
+     **And a FOURTH miss, which is the one worth generalising.** CI then failed
+     `TestSelfHostStringX86_64`, which builds its input by reading
+     `internal/stdlib/std/string.fern` and appending a `main`. Every sweep had
+     hunted file-derived inputs under `examples/self_host/` and never thought to
+     look under `internal/stdlib/`. Enumerated properly, the whole CLASS — a test
+     that builds `asm_run` and feeds it a MODULE read from either root — is eight
+     tests, of which seven are fine because their module is self-contained
+     (`std/base64`, `std/path`, `std/hex` have zero imports; `x86_encode` /
+     `x86_gas` / `elf` likewise; `util.fern` is the no-main case). Only
+     `std/string` is ill-formed, and its header says why it stopped being
+     self-contained without anyone noticing: *"its imports are prelude-resident:
+     core/int, std/i32, std/array"* — written before `std/unicode` was added.
+     `capitalize` calls `unicode.capitalize`, which a single-module compile cannot
+     resolve.
+
+     **Appending the dependency is NOT the fix**, which is worth recording because
+     it is the obvious move: `std/unicode` imports `std/utf8`, which imports
+     `std/string` back. The three are mutually recursive, so only the module loader
+     resolves them — the concatenation approach cannot, at any depth. The x86 leg
+     now compiles through `asm_load_run` with the stdlib root (verified to route
+     `ir` via its `-decide` flag), which is also how a real program uses
+     `std/string`. The arm64 leg keeps the concatenated form until its driver
+     reroutes.
+
+     **`-decide` is the enumeration tool for the loader drivers**, and it works
+     interpreted: `fern -interp asm_load_run.fern -- main.fern <stdlibRoot>
+     -decide` prints `ir` / `ast`. Slow (it loads the whole stdlib per invocation,
+     minutes each), so sample rather than sweep.
+
      **The measurement that IS sound (2026-07-31).**
      The enumeration above, tightened once more to understand Go string
      CONCATENATION (`prelude + "function main…"`), covers **2531 asm_run-reachable
