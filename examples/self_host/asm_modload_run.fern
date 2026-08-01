@@ -932,7 +932,8 @@ function main(): i32 {
                     var apmc: string = emit_per_module_concat(dir, entry, loaded, areach, "arm64");
                     if (apmc.len() > 0) { write(apmc); return 0; }
                 }
-                write(asm_arm64.emit_module(amwb, false));
+                // IR-or-error (#3457 slice 5) — see asm_load_run's arm64 leg.
+                write(asm_arm64_ir.emit_module_or_error(amwb, false));
                 return 0;
             }
             // OVER the merged 512-function IR budget: route per-module (each
@@ -984,7 +985,12 @@ function main(): i32 {
                     }
                 }
             }
-            write(asm.emit_module(mwb));
+            // Last resort, and no longer a fallback (#3457 slice 5): a module the
+            // batched per-module emit above could not take is an ERROR. The
+            // whole-compiler merged bundle lands here, which is why the env-gated
+            // merged fixpoints retire with this change — their own header says they
+            // "go with" asm.fern.
+            write(asm_ir.emit_module_or_error(mwb));
             return 0;
         },
         Err(e) => {

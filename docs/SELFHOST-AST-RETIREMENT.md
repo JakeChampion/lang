@@ -2688,10 +2688,32 @@ tier → leak.
      mirror over `asm_arm64_ir.emit_module_ir`.)
 
   3. **Reroute the driver `emit_module` sites — heterogeneous, verify each.**
-     Landed so far: `fern.fern`'s x86 branch (#5954), `asm_run.fern` (#5969 — the
-     widest, ~390 test files), and `fern.fern`'s THREE arm64 branches (arm64 ELF,
-     arm64-android static-PIE, arm64-darwin) plus the
-     `asm_arm64_ir.emit_module_or_error` mirror they call (#5970).
+     **ALL SITES ARE NOW REROUTED**: `fern.fern`'s x86 branch (#5954),
+     `asm_run.fern` (#5969 — the widest, ~390 test files), `fern.fern`'s three
+     arm64 branches plus the `asm_arm64_ir.emit_module_or_error` mirror (#5970),
+     and finally `asm_ir_run` (x86 + arm64 + arm64-darwin), `asm_load_run` and
+     `asm_modload_run` (both targets each) in #5971. `asm.fern` /
+     `asm_arm64.fern` have no remaining callers outside their own files, so the
+     deletion (step 5) is unblocked.
+
+     Three test consequences, all of them pre-authorised rather than incidental:
+
+     - **The AST-vs-IR differential is gone** (`TestSelfHostAsmIRPath`). Once
+       `asm_ir_run` has no AST leg, its `-ir`-on and `-ir`-off runs are the SAME
+       emitter, so the comparison was vacuous — not merely redundant. Step 4 said
+       "DELETE, do not re-point", and re-pointing is genuinely unavailable: the
+       cases are in the driver dialect that native `-interp` rejects. Its ~930
+       cases are KEPT as an eligibility + assembly guard (each must compile via
+       IR, assemble, link and run), which is the largest such guard in the suite.
+       The honest cost: a wrong exit code now passes there; the dedicated
+       `*_ir_test.go` corpora carry the oracle role.
+     - **The env-gated merged fixpoints are deleted** (x86
+       `TestSelfHostModloadFixpointX86_64` + arm64 `TestSelfHostFixpointArm64`).
+       Both headers already said they stay "until slice 5 deletes `asm.fern`, at
+       which point it goes with it" — and the reroute forces it: they compile the
+       whole compiler through the merged bundle, which now refuses.
+     - **The x86 `std/string` test moved to the loader driver** (#5969) because
+       that module stopped being self-contained.
 
      Two things measured while doing the arm64 CLI, both worth knowing:
 

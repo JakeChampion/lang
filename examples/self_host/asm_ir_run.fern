@@ -2,14 +2,15 @@
 // path's integration into the production backend. Like asm_run, but with a
 // `-ir` flag: when set AND the module is fully i32-eligible, it emits via the
 // IR path (asm_ir.emit_module_ir: AST -> stack IR -> asm); otherwise it uses
-// the unchanged AST backend (asm.emit_module). The companion Go test
+// the IR path only — since #3457 slice 5 this driver has no AST leg at all,
+// so `-ir` selects a fast path rather than an emitter. The companion Go test
 // (self_host_asm_ir_path_test.go) pipes each program through both ways and
 // asserts identical exit codes — proving the IR path is behaviour-equivalent
 // to the production AST path (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3).
 //
 // `-target arm64` selects the arm64 backends instead (#4398 part 1): the IR
-// path via asm_arm64.emit_module_ir, the AST fallback via
-// asm_arm64.emit_module — replacing the retired asm_arm64_ir_run mirror
+// path via asm_arm64_ir.emit_module_ir, and IR-or-error via
+// asm_arm64_ir.emit_module_or_error — replacing the retired asm_arm64_ir_run mirror
 // driver. The target-independent probe modes (`-ir-probe` / `-ir-needs`)
 // work for both targets; the per-module unit flags (`-ir-unit` / `-ir-ns` /
 // `-ir-extern` / `-ir-extra-need` / `-ir-sigs`) remain x86-64-only.
@@ -21,9 +22,7 @@
 import "std/io";
 import "./lexer";
 import "./parser";
-import "./asm";
 import "./asm_ir";
-import "./asm_arm64";
 import "./asm_arm64_ir";
 import "./irlower";
 
@@ -133,18 +132,22 @@ function main(): i32 {
         return 0;
     }
     // `-target arm64`: the arm64 leg (replacing the retired asm_arm64_ir_run
-    // mirror). `-ir` + fully-eligible routes IR via asm_arm64.emit_module_ir —
+    // mirror). `-ir` + fully-eligible routes IR via asm_arm64_ir.emit_module_ir —
     // the SAME orchestration emit_module's use_ir dispatch runs (the old
     // mirror hand-copied that sequence and drifted: it missed the #3457
     // reclaim/drop bodies, so struct-with-array-field programs link-failed on
-    // `__struct_drop_<T>`). Anything else falls back to the arm64 AST backend.
+    // `__struct_drop_<T>`). Anything else is refused, not fallen back.
     // The unit/extern/sigs flags are x86-64-only and ignored here, matching
     // the old mirror driver (which ignored unknown flags).
     if (target == "arm64") {
         if (use_ir && asm_ir.all_eligible(lm)) {
             print(asm_arm64_ir.emit_module_ir(lm, false));
         } else {
-            print(asm_arm64.emit_module(parser.module_with_builtins(mod), false));
+            // IR-or-error (#3457 slice 5): no AST fallback. With this the `-ir`-off
+            // leg behaves exactly like the `-ir`-on one — route IR or refuse — which
+            // is why the AST-vs-IR differential retires alongside (its two legs no
+            // longer differ for any program).
+            print(asm_arm64_ir.emit_module_or_error(parser.module_with_builtins(mod), false));
         }
         return 0;
     }
@@ -157,7 +160,7 @@ function main(): i32 {
     // opt out of. (The comment this replaces claimed darwin had no IR leg,
     // which would make "build one" look like remaining #3457 work; it is not.)
     if (target == "arm64-darwin") {
-        print(asm_arm64_ir.darwinize(asm_arm64.emit_module(parser.module_with_builtins(mod), true)));
+        print(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error(parser.module_with_builtins(mod), true)));
         return 0;
     }
     // `-ir-unit entry|lib`: emit a single per-module translation unit (defs
@@ -171,7 +174,11 @@ function main(): i32 {
     // lowered all, then emit re-lowered all). "" means ineligible → AST fallback.
     if (use_ir) { emitted = asm_ir.emit_module_ir_gated(lm, known); }
     if (emitted == "") {
-        emitted = asm.emit_module(parser.module_with_builtins(mod));
+        // IR-or-error (#3457 slice 5). This was the AST fallback; it is now a
+        // refusal. `use_ir` false lands here too, so the `-ir` flag no longer
+        // selects between two emitters — it only skips the gated fast path, and
+        // emit_module_or_error re-runs the same gate.
+        emitted = asm_ir.emit_module_or_error(parser.module_with_builtins(mod));
     }
     print(emitted);
     return 0;

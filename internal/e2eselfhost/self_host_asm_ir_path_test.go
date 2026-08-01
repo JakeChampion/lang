@@ -8,16 +8,26 @@ import (
 	"testing"
 )
 
-// TestSelfHostAsmIRPath is the differential gate for integrating the stack IR
-// into the PRODUCTION x86-64 backend. The asm_ir_run driver's `-ir` flag, when
-// the module is fully i32-eligible, emits via the IR path (asm_ir.emit_module_ir:
-// AST -> stack IR -> asm, ABI-identical to asm.fern's output); otherwise it uses
-// the unchanged AST backend (asm.emit_module). This compiles each program BOTH
-// ways and asserts identical exit codes — proving the IR path is behaviour-
-// equivalent to the production AST path, the rollout prerequisite
-// (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3) before the IR path can become the
-// default. asm.fern and the asm_run driver are UNCHANGED, so the byte-identical
-// self-bootstrap and the ~50 asm_run harnesses are unaffected.
+// TestSelfHostAsmIRPath WAS the AST-vs-IR differential gate: it compiled each
+// program both ways through asm_ir_run and asserted identical exit codes, proving
+// the IR path behaviour-equivalent to the production AST path
+// (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3).
+//
+// That comparison is GONE, because it can no longer compare anything. Since
+// #3457 slice 5 the driver has no AST leg: both the `-ir`-on and `-ir`-off paths
+// route IR or refuse, so the two legs are the same emitter and the assertion was
+// vacuous. Deleting it is what slice-5 step 4 specifies ("DELETE, do not
+// re-point") — and re-pointing is genuinely unavailable, since these cases are in
+// the driver dialect (parser.module_with_builtins injects map_new / __alloc /
+// casts) that native `-interp` rejects, so there is no independent oracle to
+// swap in.
+//
+// What the ~930 cases still buy: every one must compile through the IR path,
+// assemble, link and run. That is an ELIGIBILITY + assembly guard at a scale
+// nothing else in the suite provides, and it is exactly what keeps slice 5 green.
+// What they no longer buy: a wrong exit code passes. The dedicated *_ir_test.go
+// corpora carry the oracle role now (each checks values, most against
+// `fern -interp`), which is the trade slice 5 accepts.
 //
 // Slice 16 eligibility is pure i32 functions (no params, no user calls, no
 // arrays), so single-function i32 programs exercise the IR path; multi-
@@ -1574,13 +1584,18 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"errdefer-ok-path", "function f(): Result[i32, string] { var x = 1; errdefer { x = 9; } return Ok(x); } function main(): i32 { match (f()) { Ok(v) => { return v; }, Err(_) => { return 0; } } }"},
 	}
 
+	// Each case must COMPILE through the IR path, assemble, link and run.
+	// emitAndRun fatals if the driver refuses (there is no AST leg to fall back
+	// to any more), if gcc rejects the asm, or if the binary cannot be run — so
+	// this is an eligibility + assembly guard over ~930 programs, which is what
+	// slice 5 needs kept green.
+	//
+	// It is NOT the behaviour-equivalence oracle it used to be, and that loss is
+	// real: a miscompile that changes an exit code now passes here. See the header
+	// for why there is nothing left to compare against.
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			astCode := emitAndRun(t, tc.src, false)
-			irCode := emitAndRun(t, tc.src, true)
-			if astCode != irCode {
-				t.Errorf("AST-path vs IR-path mismatch for %q: AST=%d IR=%d", tc.name, astCode, irCode)
-			}
+			emitAndRun(t, tc.src, true)
 		})
 	}
 
