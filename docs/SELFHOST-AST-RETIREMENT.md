@@ -4714,7 +4714,79 @@ rather than as a bail.
    `wasm.fern` so the IR path no longer depends on the AST emitter's module.
 2. **Port the extern/export canonical-ABI bridge to the IR path.** This unblocks
    component mode and fixes the mode-0 export drop at the same time.
-3. **Enumerate mode-0 decliners with `-decide`** and close them.
+
+   **Attempted as a MOVE first, and that was wrong** — the correction is the
+   useful part. The 65 bridge functions really are pure: no `StrTable`, no `Ctx`,
+   no `wasm.fern`-local types. So moving the 1,437-line closure into `wasm_ir`
+   and re-qualifying the 67 references left behind compiles, and leaves the AST
+   path's output byte-identical. But **purity is not layout-independence.** The
+   bridge lifts WIT record / variant / tuple leaves into Fern-side boxes at the
+   AST emitter's stride, and the IR-emitted code that then reads those boxes uses
+   a different one.
+
+   `wasm_ir` documents the split itself, in the `build_io_error_func` comment: a
+   box is the id or discriminant in slot 0 and field *i* in slot 1+*i* for both
+   consumers, but at different widths — the IR consumer (`op_enum_new` and the IR
+   match dispatch) slots **8**, while the legacy AST emitter slots **4**
+   (`struct_field_off(i) = 4 + i*4`, boxed as `4 + nfields*4`). A moved bridge
+   writes leaves into 4-byte slots that IR-emitted code reads at `8 + i*8`.
+
+   So the failures are WRONG ANSWERS, not link errors: 36 tests over 15 shards,
+   every one of them a record / variant / tuple / array / resource-handle extern
+   or export (`mr-bad`, `vf64r-bad`, plus one `failed to parse component`). This
+   is the SECOND time this exact confusion has landed — #5795 was the same
+   box-slot mismatch between the same two consumers, which is precisely why
+   `build_io_error_func` already takes its slot width as a parameter.
+
+   Neither check run against the move could have caught it. Byte-identity
+   measured the AST path, which keeps its own layout by construction and is
+   therefore invariant under the move; and the end-to-end check used a
+   `list<s32>` export — the one shape with no record leaves to misplace.
+
+   **What the real port is:** thread the consumer's slot width through the
+   leaf-lifting paths, exactly as `build_io_error_func(slot)` already does — the
+   ~10 `struct_field_off` sites, the four `4 + n*4` box sizes, and the tuple
+   `ti * 4` / `tn * 4` element stride. Array element stride (`elem_slot_size`
+   over an 8-byte header) is already shared by both consumers, so it needs
+   nothing. **Do not land the move alone**: a 4-byte `struct_field_off` sitting
+   inside `wasm_ir` next to the IR path's 8-byte convention is a trap, and the
+   #5795 recurrence is the evidence that it is one people fall into.
+
+   One commit from the attempt IS independently correct and belongs in whatever
+   replaces it: `emit_functions_view` must SKIP functions with `import_iface`
+   set. The IR path was lowering body-less `@import` declarations to a stub
+   returning `i32.const 0`, so an extern call silently yielded 0. It cannot ship
+   alone — without the bridge, nothing else defines the wrapper it calls.
+3. **Enumerate mode-0 decliners with `-decide`** and close them. **First one
+   bisected:** `x86_encode.fern` + its labels self-test declines because of
+   **assignment to an ARRAY-typed struct field** — `a.code = x86_mov_r32_imm32(…)`.
+   Reduced to six lines:
+
+   ```fern
+   struct S { code: i32[], n: i32 }
+   function main(): i32 { var s: S = S { code: [], n: 0 }; s.code = [1, 2]; return s.code.len(); }
+   ```
+
+   `s.n = 5` (scalar field) lowers, and `S { code: [1, 2] }` (array field in the
+   LITERAL) lowers — it is specifically the mutation. The refusal is DELIBERATE
+   and already commented at the `__set_field` arm in irlower:
+
+   > Mutating an array field (scalar or struct-array) would orphan the old array
+   > (leak) and need a retain on the new one — and could alias it — so bail to AST.
+
+   So this is not plumbing, it is Perceus work: the store has to release the old
+   buffer, retain the new one, and be safe against the new value aliasing the old.
+   The likely lever is the REPLACED-STRING-field machinery from #4355
+   (`strfld_reclaim_ok_types_of` / `__field_reclaim_<T>`, already threaded through
+   both register backends and the wasm IR emit) generalised from `string` fields to
+   array fields — it solves the same shape (replace a heap pointer held in a field,
+   reclaim the old one) and already carries the whole-program read-safety analysis
+   that makes the aliasing question answerable.
+
+   Worth noting for scope: this is driver-dialect code. `s.f = v` is E048 in the
+   native checker (immutable data), so there is no interpreter oracle for these
+   programs — the self-host compiler's own sources use field mutation and its
+   immutability gate is filtered to the cycle rules.
 4. Reroute the drivers IR-or-error — only once 2 and 3 leave the decline set
    empty. Rerouting first was the mistake this section records: on the asm side
    the reroute WAS the enumeration tool because the subset was already mature; on
