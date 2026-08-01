@@ -4707,6 +4707,48 @@ branch. Component mode surfaces it correctly. So an export in command mode is
 silently ignored today — the same AST-only-bridge gap, showing up as lost surface
 rather than as a bail.
 
+### Interpret-the-driver: how any of this got verified
+
+`ok 0.262s` for a test that builds a self-host driver is a SKIP, and it is the
+reason a bridge built against the wrong consumer's layout looked green. The
+verification gap was structural, not an oversight: a self-host driver test EMITS
+with a driver BINARY (the driver's Fern sources → x86-64 asm → link → run under
+`qemu-x86_64`), so on a host with neither native x86-64 nor qemu — an arm64 macOS
+dev machine — `X86_64Tooling` skips, and the entire wasm-emitter surface reports
+success while running nothing.
+
+`FERN_SELFHOST_INTERP=1` closes it. The drivers whose output is all a test wants —
+an emitted `.wat` / `.s` on stdout — do not need to be machine code to produce it,
+so `BuildSelfHostBin` writes an executable SHIM in place of the linked binary:
+
+```
+#!/bin/sh
+exec /path/to/fern -interp /path/to/driver.fern -- "$@"
+```
+
+A shim rather than a sentinel the run helpers learn to recognise, because the ~575
+test files reach their driver several ways (`RunCapture`, `RunDriverStdinExits`, a
+bare `exec.Command`) and a real executable serves all of them unchanged.
+
+**Measured:** the 36 extern/export component tests — every one of them skipping
+before — run in **15.5 s** total, ~0.4 s each. That is the loop that found the
+layout mismatch, the two calling-convention shims, the missing `cabi_realloc`, the
+reactor `main`, and the f32 bind bug, each in one edit-run cycle instead of a
+5-minute CI shard.
+
+Off by default and inert when unset: CI keeps building real driver binaries, which
+is also the only way the x86-64 emit itself gets exercised. In this mode
+`X86_64Tooling` stops skipping when qemu is absent, so a test that runs an emitted
+x86 BINARY (rather than capturing a driver's stdout) fails loudly on the missing
+runner — which is the intended trade: a visible failure beats a silent skip.
+
+Local recipe used throughout, for the record:
+
+```
+PATH="$HOME/.fern-wasm:$HOME/.wasmtime/bin:$PATH" FERN_SELFHOST_INTERP=1 \
+  go test ./internal/e2eselfhost/ -run '^(TestSelfHostExtern...)$' -v
+```
+
 ### Order (revised)
 
 1. **DONE** — routing probe (`wasm_run -decide`), the gate named

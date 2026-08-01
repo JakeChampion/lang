@@ -199,6 +199,9 @@ func CopySelfHostFiles(t *testing.T, dir string, names ...string) {
 // (or drop sibling files next to it) see a real file in their own dir.
 func BuildSelfHostBin(t *testing.T, gcc, dir, fernName, out string) string {
 	t.Helper()
+	if InterpDriverMode() {
+		return writeInterpDriverShim(t, dir, fernName, out)
+	}
 	dst := filepath.Join(dir, out)
 	copyExecutable(t, CachedDriverBin(t, gcc, dir, fernName), dst)
 	return dst

@@ -43,6 +43,14 @@ func X86_64Tooling(t *testing.T) (gcc string, exec_ []string) {
 	if p, err := exec.LookPath("qemu-x86_64"); err == nil {
 		return gcc, []string{p}
 	}
+	if InterpDriverMode() {
+		// Interpret-the-driver mode: the caller only wants a driver's STDOUT
+		// (an emitted .wat / .s), which InterpDriver produces without ever
+		// linking or executing an x86-64 binary. No runner, and gcc is unused
+		// downstream. A test that also execs a compiled x86 binary will fail
+		// loudly on the missing runner rather than silently skipping.
+		return gcc, nil
+	}
 	t.Skip("non-x86_64 host and no qemu-x86_64 on PATH; skipping x86-64 e2e")
 	return "", nil
 }
