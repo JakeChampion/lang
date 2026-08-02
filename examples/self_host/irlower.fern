@@ -6239,6 +6239,16 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 if (!iw.ok) { return iw; }
                 return iw.emit(ir.op_int_extend(s.is_u32_slot(sl)));
             }
+            // A `const B: i64` read. A const desugars to a zero-arg accessor
+            // function (parser: `const NAME: T = E;` → `function NAME(): T`), so
+            // the bare ident is a CALL returning i64 — which infer_expr_width
+            // already knew (its is_i64_ret_fn query, #4801) while this arm did
+            // not, so every USE of an i64 const bailed the module to the AST
+            // emitter. An i32-returning const still falls to the widening path
+            // above via lower_expr, and a u64 one rides the same 8-byte call.
+            if (sl < 0 && s.is_const_fn(id.name) && s.is_i64_ret_fn(id.name)) {
+                return s.emit(ir.op_call_direct(id.name, 0));
+            }
             return s.fail();
         },
         parser.ExprUnary(u) => {
@@ -14750,6 +14760,13 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                 _ => {}
             }
         },
+        // `var u = o` where o is an Option/Result LOCAL — an un-annotated alias.
+        // The IIFE-leaf arm above already recovers an opt_type from an ident this
+        // way; the plain alias did not, so `var o = Some(20); var u = o;` left u
+        // untyped and the later `match (u)` could not recover the payload, bailing
+        // the module to the AST emitter. (Annotating u worked, which is what made
+        // this look like a match gap rather than a propagation one.)
+        parser.ExprIdent(oaid) => { opt_ty = se.opt_type_of_slot(se.slot_of(oaid.name)); },
         _ => {}
     }
     if (opt_ty == "" && v.type_name.len() >= 8 && (v.type_name[0:7] == "Option[" || v.type_name[0:7] == "Result[")) { opt_ty = v.type_name; }
@@ -14977,6 +14994,16 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             if (innr == "u64") { arrarr_e = "u64"; }
             if (innr == "f64") { arrarr_e = "f64"; }
             if (innr == "string") { arrarr_e = "string"; }
+            // A THREE-deep array (`i32[][][]`): the inner element is itself an
+            // array, which the four scalar kinds above cannot say. "arr" records
+            // it so the foreach marking can re-mark the loop var as an
+            // array-of-arrays and a third `for` level keeps its element type —
+            // without it `for plane in cube` bound `plane` as a plain array, the
+            // next level bound a SCALAR, and the innermost loop bailed the module
+            // to the AST emitter. The reclaim consumers compare against the scalar
+            // kinds, so "arr" falls through to their leak-safe default; a FOUR-deep
+            // array is still out of the model (its loop var gets arrarr_elem "").
+            if (is_array_type_name(innr)) { arrarr_e = "arr"; }
         }
         match (v.init) {
             parser.ExprArray(aarr2) => {
@@ -16576,6 +16603,10 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
         // i64/f64 elements instead of truncating to 32 bits. #2691.
         if (s.arrarr_elem_of_slot(aslot) == "i64") { ff = ff.mark_i64arr(xslot, true); }
         if (s.arrarr_elem_of_slot(aslot) == "f64") { ff = ff.mark_f64arr(xslot, true); }
+        // A 3-deep source (`for plane in <T[][][]>`): the element is ITSELF an
+        // array-of-arrays, so carry that too or the next `for` level sees a
+        // scalar. See the "arr" kind in the arrarr_e derivation.
+        if (s.arrarr_elem_of_slot(aslot) == "arr") { ff = ff.mark_arrarr(xslot, true); }
     }
     // `for x in <struct[]>`: x is a struct (pointer) element — carry the
     // element struct type (from the array slot's local_struct_type) so

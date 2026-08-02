@@ -5020,15 +5020,87 @@ with both applied (the script fix alone is what ships here):
 | what remains | count | note |
 |---|---|---|
 | the ~512-function merged-bundle budget | 2 | 521 functions each — the documented deliberate decline |
-| closure returning a closure (`function (a: Adder) make(): (i32) => i32`) | 2 | capturing a struct field, and a local copy of one |
-| module-level `const BIG: i64` | 2 | `BIG + 1`, `BIG % 97` |
-| `i32[][][]` with nested `for` | 1 | triple-nested array |
-| `Option` alias + match (`var u = o; match (u)`) | 1 | |
+| a RECEIVER METHOD returning a CAPTURING closure | 2 | bisected below |
+| ~~module-level `const BIG: i64`~~ | ~~2~~ | **CLOSED** — see below |
+| ~~`i32[][][]` with nested `for`~~ | ~~1~~ | **CLOSED** — see below |
+| ~~`Option` alias + match~~ | ~~1~~ | **CLOSED** — see below |
 | `Map` with STRUCT values (`map_new_i32` + `P` value) | 1 | |
 
 Five constructs and one deliberate budget case. That is the whole remaining mode-0
 gap, individually named — which is what step 4 (the IR-or-error reroute) has been
 waiting for.
+
+**Three of the five are now closed, and none was a missing feature.** Each was a
+piece of type information the lowering failed to carry one step further than it
+already did — which is why they read as unrelated language gaps until reduced:
+
+- **an i64 `const` READ.** A const desugars to a zero-arg accessor (`const NAME: T
+  = E;` → `function NAME(): T`), so a bare reference is a CALL returning i64.
+  `infer_expr_width` already knew this (its `is_i64_ret_fn` query, #4801);
+  `lower_i64`'s ident arm did not, so every USE of an i64 const bailed while an
+  UNUSED one lowered fine. The i32-const and i64-LOCAL controls both already
+  worked, which is what isolates it.
+- **iterating a THREE-deep array.** `arrarr_elem` could only name a scalar inner
+  kind (`i64` / `u64` / `f64` / `string`), so `i32[][][]` recorded nothing:
+  `for plane in cube` bound `plane` as a plain array, the next level bound a
+  SCALAR, and the third `for` bailed. A new `"arr"` kind records "the element is
+  itself an array" and the foreach marking re-marks the loop var. FOUR-deep is
+  still outside the model, deliberately — its loop var gets `arrarr_elem ""`.
+- **an un-annotated Option ALIAS.** `var u = o` did not copy `o`'s `opt_type`, so
+  a later `match (u)` could not recover the payload. Annotating `u` worked, which
+  is exactly what made this look like a match gap rather than a propagation one.
+  The IIFE-leaf arm alongside it already recovered an opt_type from an ident; the
+  plain alias arm was simply absent. `Result` aliases were the same bug and are
+  fixed by the same line.
+
+Pinned by `TestSelfHostMode0GapsIR` (10 cases: each gap, each with the control
+that always worked). Note what the controls buy — the AST emitter computes all of
+these CORRECTLY, so a regression would be silent in the answer and visible only in
+the route, which is why every case asserts `-decide` as well as the exit code.
+
+**On the closure one still open, bisected:** it is not "closure returning a
+closure" — a FREE function returning a capturing closure lowers fine
+(`function make(base: i32): (i32) => i32 { return function(x) { return x + base; }; }`
+routes `ir`), and a receiver method returning a NON-capturing closure lowers too.
+The decline needs both halves: a receiver method AND a capture. Both corpus
+programs are that shape, one capturing `a.base` directly and one a local copy of
+it, so they are one gap and not two. Likely in `lift_lambdas` (a lifted lambda
+inside a method not getting its captures wired, the shape the nested-closure note
+in this doc already describes) rather than in the lowering proper.
+
+**The ~512-function budget is no longer a fallback — it is a WALL, and that is a
+live regression.** Its own comment says it caps IR routing "until the native
+large-tier freelist is fixed"; that landed (#3425, ported to the self-host runtime
+in #5609 / #5614). Meanwhile #5972 deleted the AST emitters the budget used to fall
+back TO, so today a >512-function whole-program module is simply uncompilable on
+the register backends:
+
+```
+$ fern -interp asm_ir_run.fern < 521-functions.fern
+error: module is not IR-eligible; the AST emitter is no longer reachable from this driver
+```
+
+Removing both gates (`eligible_core_known_impl` and `emit_module_ir_gated` carry
+one each) makes a 521-function module compile on x86-64 (86 KB of asm, assembles)
+and run on wasm — measured. It is ALSO the last thing keeping the merged
+whole-compiler bundle off the IR path, which is what this file's step 5 needs.
+
+It is NOT applied here, deliberately. `TestSelfHostConstFuncGen2` exists precisely
+because removing the budget makes generation 2 IR-BUILT and exposes a
+self-referential miscompile (the IR path compiling the code that decides IR
+eligibility). That test removes the budget in a temp-dir copy to simulate this —
+and it is env-gated behind `RUN_CONST_FUNC_GEN2`, which **no workflow sets**, and
+it runs natively on x86-64 only. So the one guard for the hazard the change
+creates is neither runnable here nor run by CI. Landing the removal should come
+with that test un-gated (or a CI lane that sets the variable), so the hazard is
+covered by the change that creates it. Patch kept, not applied.
+
+**On the Map-with-struct-values one still open:** its test
+(`TestSelfHostRcMapStructVal`) PASSES today, because it routes AST and asserts the
+AST answer. That is the same shape as the RC-corpus finding above — a test that
+looks like coverage of the IR path and is not — so it will turn into a hard error
+at the reroute rather than a test failure before it. `map_new_i32` is self-host
+dialect (E001 natively), so there is no interpreter oracle for it either.
 
 4. Reroute the drivers IR-or-error — only once 2 and 3 leave the decline set
    empty. Rerouting first was the mistake this section records: on the asm side
