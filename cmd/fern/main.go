@@ -2175,7 +2175,7 @@ func linkNativeDarwin(asm, outPath string) error {
 			return fmt.Errorf("native assembler: %w", err)
 		}
 		syms := nativemacho.FuncSyms(a.TextLabelVAddrs(textVAddr), textVAddr+uint64(len(text)))
-		bin := nativemacho.StaticExecutableSyms(text, data, filepath.Base(outPath), syms)
+		bin := nativemacho.StaticExecutableSyms(text, data, filepath.Base(outPath), syms, a.MachODataRebaseOffsets())
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}
@@ -2186,7 +2186,7 @@ func linkNativeDarwin(asm, outPath string) error {
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
 	}
-	bin := nativemacho.StaticExecutable(text, data, filepath.Base(outPath))
+	bin := nativemacho.StaticExecutable(text, data, filepath.Base(outPath), a.MachODataRebaseOffsets())
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
 	}

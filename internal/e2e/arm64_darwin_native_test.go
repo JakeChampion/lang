@@ -128,11 +128,17 @@ function main(): i32 {
 			if f.Type != macho.TypeExec || f.Cpu != macho.CpuArm64 {
 				t.Fatalf("got type=%v cpu=%v, want EXECUTE/arm64", f.Type, f.Cpu)
 			}
-			// LC_UNIXTHREAD (0x5) is the in-process backend's marker; clang
-			// would emit LC_MAIN + dyld. Its presence proves the DEFAULT is
-			// native, with no external toolchain.
-			if !hasLoadCommand(raw, 0x5) {
-				t.Errorf("default build is missing LC_UNIXTHREAD — expected the native backend, not clang")
+			// The in-process backend's marker is an ad-hoc LC_CODE_SIGNATURE
+			// (0x1D) with no LC_DYLD_EXPORTS_TRIE: clang/ld64 emits the trie
+			// and a UUID, and this writer emits neither. Its presence proves
+			// the DEFAULT is native, with no external toolchain. (The old
+			// marker was LC_UNIXTHREAD, which this image no longer has — it
+			// is dyld-loaded now, because nothing else launches.)
+			if !hasLoadCommand(raw, 0x1D) {
+				t.Errorf("default build is missing LC_CODE_SIGNATURE — expected the native backend, not clang")
+			}
+			if hasLoadCommand(raw, 0x80000033) {
+				t.Errorf("default build has LC_DYLD_EXPORTS_TRIE — that is clang/ld64 output, not the native backend")
 			}
 
 			if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
@@ -143,9 +149,11 @@ function main(): i32 {
 			runErr := cmd.Run()
 			ps := cmd.ProcessState
 			if ps == nil || !ps.Exited() {
-				// Launched-and-killed or never-execed: the kernel rejected
-				// the static binary. Record the finding; not a regression.
-				t.Skipf("native static Mach-O did not run to a normal exit (err=%v, state=%v); a static dyld-free LC_UNIXTHREAD binary may be unsupported on this macOS", runErr, ps)
+				// Was a skip while it was an open question whether Apple
+				// Silicon would launch this image at all. It does — the image
+				// is dyld-loaded, PIE and ad-hoc signed — so a launch failure
+				// is now a regression in the container, not a platform limit.
+				t.Fatalf("native Mach-O did not run to a normal exit (err=%v, state=%v)", runErr, ps)
 			}
 			if code := ps.ExitCode(); code != c.wantExit {
 				t.Errorf("native arm64-darwin %q exit = %d, want %d", c.name, code, c.wantExit)
@@ -189,7 +197,7 @@ func TestArm64DarwinNativeReadFile(t *testing.T) {
 	_ = cmd.Run()
 	ps := cmd.ProcessState
 	if ps == nil || !ps.Exited() {
-		t.Skipf("native static Mach-O did not run to a normal exit (state=%v)", ps)
+		t.Fatalf("native Mach-O did not run to a normal exit (state=%v)", ps)
 	}
 	if code := ps.ExitCode(); code != len(content) {
 		t.Errorf("read_file().len() = %d, want %d (fstat64 / st_size offset wrong?)", code, len(content))
