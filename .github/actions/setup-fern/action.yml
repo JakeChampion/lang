@@ -134,6 +134,50 @@ runs:
         echo "$HOME/wasm-tools-1.253.0-${{ steps.wasm-arch.outputs.arch }}" >> "$GITHUB_PATH"
         echo "FERN_WASI_ADAPTER=$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" >> "$GITHUB_ENV"
 
+    # PREFLIGHT: a missing wasm tool must fail the JOB, not the tests.
+    #
+    # Every wasm e2e test opens with `exec.LookPath("wasmtime")` / `("wasm-tools")`
+    # and t.Skip()s when it is absent, and a skipped test reports `ok`. So if an
+    # install step ever half-succeeds — a moved release URL, a partially-restored
+    # cache, an arch the download matrix does not cover — the entire wasm surface
+    # goes green while running NOTHING, and the failure is invisible in the one
+    # place anyone looks. That is not hypothetical: 36 extern/export component
+    # tests were silently skipping for a long stretch of #3457 (see
+    # docs/SELFHOST-AST-RETIREMENT.md, "Interpret-the-driver"), and a bridge built
+    # against the wrong box layout looked green the whole time.
+    #
+    # Asserting here converts that class from "silently covered nothing" into a
+    # loud setup failure, at the only point that can tell the difference between
+    # "this runner is not supposed to have wasmtime" (wasmtime input false, this
+    # step does not run) and "wasmtime was requested and is missing".
+    - name: Assert the wasm toolchain is actually usable
+      if: inputs.wasmtime == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        fail=0
+        for tool in wasmtime wasm-tools; do
+          if ! command -v "$tool" >/dev/null 2>&1; then
+            echo "::error::$tool was requested (wasmtime: true) but is not on PATH — every wasm e2e test would t.Skip() and the lane would report a false green"
+            fail=1
+          fi
+        done
+        if [ -n "${FERN_WASI_ADAPTER:-}" ] && [ ! -f "$FERN_WASI_ADAPTER" ]; then
+          echo "::error::FERN_WASI_ADAPTER points at $FERN_WASI_ADAPTER, which does not exist — the component tests would skip"
+          fail=1
+        fi
+        if [ -z "${FERN_WASI_ADAPTER:-}" ]; then
+          echo "::error::FERN_WASI_ADAPTER is unset — the component tests would skip"
+          fail=1
+        fi
+        [ "$fail" -eq 0 ] || exit 1
+        # The pinned versions matter too: v46 changed the component-model-async
+        # ABI, and an older wasmtime fails the preview-3 tests with an opaque
+        # `invalid leading byte (0x43)`. Report them so a version drift is
+        # visible in the log rather than surfacing as a mystery test failure.
+        wasmtime --version
+        wasm-tools --version
+
     - name: Cache gotestsum binary
       if: inputs.gotestsum == 'true'
       id: cache-gotestsum
