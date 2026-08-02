@@ -78,7 +78,20 @@ pub struct VErr { msg: string }
 // silently through every operator that touches it so the first
 // error wins. Mirrors how the checker's TypeUnknown works.
 
-pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VErr;
+// VCellI / VCellF are the by-reference binding for a MUTABLE SCALAR CAPTURE
+// (SH-057 / #2850). The language deliberately splits capture semantics: scalars
+// are captured by reference and a closure may write them (closures-as-counters
+// is a supported feature), while reference-typed captures are read-only (E049)
+// precisely so a write-back cannot close an RC cycle — the same no-cycles model
+// Roc uses. Env is persistent (bind/update return fresh copies), so there is no
+// shared mutable state to write through; a cell supplies exactly that, and only
+// for the scalar cases the language allows. Cell's own element-type restriction
+// (E057: scalars and strings, no composites, for the same cycle reason) lines up
+// with E049's, which is why this needs two scalar-shaped variants rather than a
+// single Cell[Value].
+pub struct VCellI { c: Cell[i32] }
+pub struct VCellF { c: Cell[f64] }
+pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VErr;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 // v_int64 packs an i64 into a VInt64's two i32 halves; unpack_i64 rebuilds
@@ -249,10 +262,187 @@ function (e: Env) bind(name: string, v: Value): Env {
 function (e: Env) lookup(name: string): Value {
     var i: i32 = e.names.len() - 1;
     while (i >= 0) {
-        if (e.names[i] == name) { return e.values[i]; }
+        if (e.names[i] == name) { return deref_cell(e.values[i]); }
         i = i - 1;
     }
     return v_err("undefined identifier: " + name);
+}
+
+// deref_cell reads through a mutable-scalar-capture cell (SH-057). Every read
+// path goes via lookup, so a VCell* is never observed by the rest of the
+// interpreter — it exists only in the Env slot and in the closure snapshot that
+// shares it. Non-cell values pass straight through.
+function deref_cell(v: Value): Value {
+    match (v) {
+        VCellI(ci) => { return v_int(ci.c.get()); },
+        VCellF(cf) => { return VFloat { v: cf.c.get() }; },
+        _ => { return v; }
+    }
+}
+
+// cell_slot_set writes through a cell slot, returning true when `v` was one.
+// The Env is left alone in that case: the mutation lives in the cell, which the
+// enclosing scope and every closure that captured it already share.
+function cell_slot_set(slot: Value, v: Value): boolean {
+    match (slot) {
+        VCellI(ci) => {
+            match (v) {
+                VInt(n) => { ci.c.set(n.v); return true; },
+                VBool(bb) => { if (bb.v) { ci.c.set(1); } else { ci.c.set(0); } return true; },
+                _ => { return false; }
+            }
+        },
+        VCellF(cf) => {
+            match (v) {
+                VFloat(f) => { cf.c.set(f.v); return true; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
+// ---- mutable scalar captures: deciding which locals need a cell (SH-057) ----
+//
+// A local needs one exactly when some lambda in the same statement ASSIGNS to
+// it. Reads alone are fine — the by-value snapshot already sees the right
+// value — which is why the bug only ever showed on a write, and why the audit
+// repro assigns without reading.
+//
+// The decision is made per STATEMENT rather than per function body: a lambda
+// can appear in any expression position (a `var` init, a call argument, an
+// array element), and doing it here means every one of those is covered by the
+// same code path without threading a set through Env.
+
+// lam_assign_targets collects assignment targets anywhere in a lambda body,
+// including nested control flow and nested lambdas.
+function lam_assign_targets(stmts: parser.Stmt[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => { acc = acc.append(a.target); acc = lam_targets_expr(a.value, acc); },
+            parser.StmtVar(v) => { acc = lam_targets_expr(v.init, acc); },
+            parser.StmtReturn(r) => { acc = lam_targets_expr(r.value, acc); },
+            parser.StmtExpr(x) => { acc = lam_targets_expr(x.value, acc); },
+            parser.StmtIf(f) => {
+                acc = lam_targets_expr(f.cond, acc);
+                acc = lam_assign_targets(f.then_body, acc);
+                acc = lam_assign_targets(f.else_body, acc);
+            },
+            parser.StmtWhile(w) => { acc = lam_targets_expr(w.cond, acc); acc = lam_assign_targets(w.body, acc); },
+            parser.StmtFor(fo) => { acc = lam_targets_expr(fo.iter, acc); acc = lam_assign_targets(fo.body, acc); },
+            parser.StmtMatch(m) => {
+                acc = lam_targets_expr(m.scrutinee, acc);
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { acc = lam_assign_targets(m.arms[ai].body, acc); ai = ai + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
+// lam_targets_expr recurses an expression for nested lambda bodies.
+function lam_targets_expr(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprLambda(lm) => { return lam_assign_targets(lm.body, acc); },
+        parser.ExprBinary(b) => { return lam_targets_expr(b.right, lam_targets_expr(b.left, acc)); },
+        parser.ExprUnary(u) => { return lam_targets_expr(u.operand, acc); },
+        parser.ExprIndex(ix) => { return lam_targets_expr(ix.index, lam_targets_expr(ix.array, acc)); },
+        parser.ExprSlice(sl) => { return lam_targets_expr(sl.end, lam_targets_expr(sl.start, lam_targets_expr(sl.array, acc))); },
+        parser.ExprFieldAccess(fa) => { return lam_targets_expr(fa.obj, acc); },
+        parser.ExprCall(c) => {
+            acc = lam_targets_expr(c.callee, acc);
+            var i: i32 = 0;
+            while (i < c.args.len()) { acc = lam_targets_expr(c.args[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { acc = lam_targets_expr(a.elements[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { acc = lam_targets_expr(t.elements[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { acc = lam_targets_expr(sl.field_values[i], acc); i = i + 1; }
+            return acc;
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+// stmt_lambda_writes lists the names some lambda in `st` assigns to.
+function stmt_lambda_writes(st: parser.Stmt): string[] {
+    var one: parser.Stmt[] = [st];
+    var acc: string[] = [];
+    // Only a lambda body contributes: walk the statement's EXPRESSIONS, never
+    // its own top-level assignments (those are ordinary writes in this scope).
+    match (st) {
+        parser.StmtVar(v) => { return lam_targets_expr(v.init, acc); },
+        parser.StmtAssign(a) => { return lam_targets_expr(a.value, acc); },
+        parser.StmtReturn(r) => { return lam_targets_expr(r.value, acc); },
+        parser.StmtExpr(x) => { return lam_targets_expr(x.value, acc); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+// raw_slot reads a slot WITHOUT the lookup deref — cellify needs to see whether
+// a binding is already a cell.
+function (e: Env) raw_slot(name: string): i32 {
+    var i: i32 = e.names.len() - 1;
+    while (i >= 0) {
+        if (e.names[i] == name) { return i; }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+
+// cellify_env converts each named scalar binding into a shared cell, so the
+// closure about to be built and the enclosing scope write through the same one.
+function cellify_env(e: Env, names: string[]): Env {
+    var out: Env = e;
+    var i: i32 = 0;
+    while (i < names.len()) {
+        var idx: i32 = out.raw_slot(names[i]);
+        if (idx >= 0) {
+            var cur: Value = out.values[idx];
+            var boxed: Value = cell_for(cur);
+            // cell_for returns its argument unchanged for a non-scalar (E049
+            // keeps those read-only) and for an already-celled slot, so this
+            // is idempotent and never re-seeds a live cell.
+            if (!is_cell(cur)) { out = out.update(names[i], boxed); }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function is_cell(v: Value): boolean {
+    match (v) {
+        VCellI(_) => { return true; },
+        VCellF(_) => { return true; },
+        _ => { return false; }
+    }
+}
+
+// cell_for makes the by-reference binding for a mutable scalar capture, or
+// returns `v` unchanged when it is not a scalar the language lets a closure
+// write (E049 keeps reference captures read-only).
+function cell_for(v: Value): Value {
+    match (v) {
+        VInt(n) => { return VCellI { c: cell_new(n.v) }; },
+        VBool(bb) => { if (bb.v) { return VCellI { c: cell_new(1) }; } return VCellI { c: cell_new(0) }; },
+        VFloat(f) => { return VCellF { c: cell_new(f.v) }; },
+        _ => { return v; }
+    }
 }
 
 // update mutates the slot for an existing name. Linear back-to-
@@ -1622,6 +1812,12 @@ function value_eq(a: Value, b: Value): boolean {
                 _ => { return false; }
             }
         },
+        // A cell never reaches a comparison: Env.lookup derefs it, so the only
+        // places a VCell* is observable are the slot itself and a closure's
+        // captured snapshot. Answering `false` keeps value_eq total without
+        // inventing an equality for a binding-site artifact.
+        VCellI(_) => { return false; },
+        VCellF(_) => { return false; },
         VErr(_) => { return false; }
     }
     return false;
@@ -1649,6 +1845,11 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
         // arm recurses on the lowered form.
         parser.StmtDefer(d) => { return eval_stmt(d.action, env); },
         parser.StmtVar(v) => {
+            // Mutable scalar captures (SH-057): if the initialiser contains a
+            // lambda that WRITES an enclosing local, rebind that local as a
+            // shared cell first, so the closure's env snapshot and this scope
+            // point at the same one. Read-only captures are untouched.
+            env = cellify_env(env, stmt_lambda_writes(st));
             var val: Value = eval_expr(v.init, env);
             // A runtime error in the initializer aborts the function rather
             // than being bound and silently swallowed (#4348 item 4). eval_expr
@@ -1771,6 +1972,14 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             if (!found) {
                 return step_stop(env, v_err("assign to undefined `" + a.target + "`"));
             }
+            // A celled slot is a mutable scalar capture: write THROUGH it and
+            // leave the Env alone. That is what makes the write visible to the
+            // enclosing scope and to every other closure sharing the cell —
+            // env.update would only rebind this copy (SH-057).
+            var tslot: i32 = env.raw_slot(a.target);
+            if (tslot >= 0 && cell_slot_set(env.values[tslot], av)) { return step_none(env); }
+            // A lambda in the RHS may itself write an enclosing local.
+            env = cellify_env(env, stmt_lambda_writes(st));
             return step_none(env.update(a.target, av));
         },
         parser.StmtMatch(m) => {
