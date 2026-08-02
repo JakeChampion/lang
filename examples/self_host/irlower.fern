@@ -14689,6 +14689,30 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // literal form is handled by a dedicated branch above; here this
     // catches aliasing (`var b = a`) and the `i64[]` annotation.
     var is_i64arr: boolean = expr_is_i64arr(v.init, se) || v.type_name == "i64[]" || v.type_name == "u64[]";
+    // INVARIANT: an INIT the element-kind predicates recognise as a typed array
+    // is an array.
+    //
+    // Each of the three comments above asserts "the array itself is already
+    // is_arr". That was an assumption, not a derivation, and it was wrong. The
+    // `is_arr` decision a few hundred lines up enumerates callee names by hand
+    // (`__alloc_u8`, `str_split`, `args`, is_arr_ret_fn) and so does
+    // expr_is_strarr (`str_split`, `args`, strarr_ret_argref, is_strarr_ret_fn)
+    // — two independent hand-maintained lists answering the same question about
+    // the same expression. `args()` sat in one and not the other for as long as
+    // the builtin has existed, so `var a = args()` came out string-array-tracked
+    // and NOT array-tracked: `a[i]` and `a.len()` lowered fine while `for s in a`
+    // bailed the whole function to the (now deleted) AST emitter. #5983 patched
+    // the missing entry; this removes the way for the next one to hide.
+    //
+    // Deliberately keyed on the INIT predicates only, not on the is_strarr /
+    // is_f64arr / is_i64arr flags above — those also take the ANNOTATION
+    // (`v.type_name == "string[]"`), and `is_arr` has never consulted an
+    // annotation. Folding that in would newly array-track
+    // `var xs: string[] = <init the walker does not recognise>`, and is_arr
+    // drives the exit dec-sweep, so it is an RC change rather than a typing one.
+    // An init a kind-predicate positively identifies as a typed array, on the
+    // other hand, IS an array by construction (#3457).
+    if (expr_is_strarr(v.init, se) || expr_is_f64arr(v.init, se) || expr_is_i64arr(v.init, se)) { is_arr = true; }
     // bind AFTER lowering the init (the init can't see the new name)
     // Option/Result tracking: `var r = f()` of an Option/Result-returning
     // call (or a `var r: Option[T] = …` annotation) records the slot's
