@@ -99,11 +99,14 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// shape a first-type-specific discriminator misses — kept as a row so
 		// the probe itself stays honest.
 		{"noio-wide-local", false, `function main(): i32 { var n: i64 = 7; if (n > 0) { return 0; } return 1; }`, true, nil},
-		// A no-I/O core may not exit either: mode 1 has no proc_exit to call
-		// and no wasi:cli/exit to shim it over, so exit stays on the AST path
-		// (where it is equally unwired — but that is the pre-existing shape,
-		// not something the IR leg should newly emit a dangling call for).
-		{"noio-exit-falls-back", false, `function main(): i32 { exit(0); return 0; }`, false, nil},
+		// A no-I/O core may not exit: mode 1 has no proc_exit to call and no
+		// wasi:cli/exit to shim it over. This used to fall back to the AST
+		// emitter, where exit was equally unwired — a core with a dangling
+		// call. With that emitter gone (#3457) the gate's decline is a hard
+		// error, which is the right answer for a program mode 1 cannot express
+		// (see refusedRows). Unreachable through the CLI either way:
+		// component_shape sends an exit-using program to the io wrap (shape 14).
+		{"noio-exit-refused", false, `function main(): i32 { exit(0); return 0; }`, false, nil},
 
 		// Mode 2 — stdout. The $fd_write shim serves every writer, so print /
 		// write / print_int / putchar all ride the same two imports.
@@ -142,16 +145,15 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		{"io-clock-mono", true, `function main(): i32 { if (monotonic_ns() > 0) { write("m"); } return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/monotonic-clock@0.2.0 now"}},
 		// A no-I/O component has no import to satisfy the byte source, so the
-		// gate refuses random there and it stays on the AST path. Note what
-		// the AST fallback then emits: a PREVIEW1 random_get, which no
-		// component framing can wire — its `if (io)` split treats "not io" as
-		// "preview1 command core". That combination is unreachable through the
-		// CLI (component_shape sends every random program to the io wrap, so
-		// emit_module_run never sees one), which is why it has gone unnoticed;
-		// the import list below records what happens today and is deliberately
-		// NOT a contract worth preserving.
-		{"noio-random-falls-back", false, `function main(): i32 { return random_i32() & 1; }`, false,
-			[]string{"wasi_snapshot_preview1 random_get"}},
+		// gate refuses random there. It used to fall back to the AST emitter,
+		// which emitted a PREVIEW1 random_get no component framing can wire —
+		// its `if (io)` split treated "not io" as "preview1 command core". The
+		// old row recorded that output while saying in as many words that it was
+		// "deliberately NOT a contract worth preserving"; deleting the emitter
+		// (#3457) turns it into a refusal, which is what it should always have
+		// been. Unreachable through the CLI (component_shape sends every random
+		// program to the io wrap).
+		{"noio-random-refused", false, `function main(): i32 { return random_i32() & 1; }`, false, nil},
 
 		// env / args read a preview2 LIST, so their cores also export
 		// cabi_realloc — the guest allocator the canonical ABI materialises the
@@ -188,6 +190,16 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 			bin := runBin
 			if tc.io {
 				bin = ioBin
+			}
+			if refusedRows[tc.name] {
+				// The gate declines this shape and there is no AST emitter to
+				// fall through to, so the driver must refuse rather than emit a
+				// core whose imports the framing cannot satisfy.
+				out, code := emitRefusable(t, runner, bin, tc.source)
+				if code == 0 || len(out) != 0 {
+					t.Fatalf("driver exited %d with %d bytes, want a refusal", code, len(out))
+				}
+				return
 			}
 			wat := emit(t, bin, tc.source)
 
@@ -265,4 +277,28 @@ func equalStrs(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// refusedRows names the table rows whose shape the component gate DECLINES. They
+// are kept as rows rather than deleted because the decline is the contract: each
+// is a program mode 1 cannot express, and before #3457 each fell through to the
+// AST emitter and produced a core the framing could not wire.
+var refusedRows = map[string]bool{
+	"noio-exit-refused":   true,
+	"noio-random-refused": true,
+}
+
+// emitRefusable runs a component driver expecting it to REFUSE, returning stdout
+// and the exit code instead of fataling on a non-zero exit the way `emit` does.
+func emitRefusable(t *testing.T, runner []string, bin, src string) ([]byte, int) {
+	t.Helper()
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(bin)
+	} else {
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+	}
+	cmd.Stdin = bytes.NewReader([]byte(src))
+	out, _ := cmd.Output()
+	return out, cmd.ProcessState.ExitCode()
 }
