@@ -119,7 +119,7 @@ pub function subst_ident_expr(e: parser.Expr, from: string, to: string): parser.
             return parser.ExprCall { callee: subst_ident_expr(c.callee, from, to), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         parser.ExprFieldAccess(fa) => {
-            return parser.ExprFieldAccess { obj: subst_ident_expr(fa.obj, from, to), field: fa.field, line: fa.line, col: fa.col };
+            return parser.ExprFieldAccess { obj: subst_ident_expr(fa.obj, from, to), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
         },
         parser.ExprIndex(x) => {
             return parser.ExprIndex { array: subst_ident_expr(x.array, from, to), index: subst_ident_expr(x.index, from, to), unchecked: x.unchecked };

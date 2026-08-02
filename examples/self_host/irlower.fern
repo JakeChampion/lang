@@ -1465,16 +1465,15 @@ pub function expr_map_type_tag(e: parser.Expr, s: LowerState): string {
             var lt: string = s.map_type_of(s.slot_of(mid.name));
             if (is_map_type_name(lt)) { return lt; }
         },
-        // A Map-typed struct FIELD (`r.caps` where `caps: Map[K, V]`): recover the
-        // field's declared Map[K, V] from the receiver struct, so a map op on it
+        // A Map-typed struct FIELD (`r.caps` where `caps: Map[K, V]`) or tuple
+        // element: recover the declared Map[K, V], so a map op on it
         // (`r.caps.get(k)` / `.len()` / …) resolves its K/V instead of falling
-        // through to the scalar tag.
+        // through to the scalar tag. fa_type_tag backs the declaration walk with
+        // the checker-stamped tag (#5986), which is itself the canonical
+        // "Map[K, V]" spelling this reads.
         parser.ExprFieldAccess(mfa) => {
-            var fsty: string = expr_struct_type(mfa.obj, s);
-            if (fsty != "") {
-                var fmt: string = decl_field_type(s.structs, fsty, mfa.field);
-                if (is_map_type_name(fmt)) { return fmt; }
-            }
+            var fmt: string = fa_type_tag(mfa, s);
+            if (is_map_type_name(fmt)) { return fmt; }
         },
         _ => {}
     }
@@ -2836,18 +2835,13 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
             return "";
         },
         parser.ExprFieldAccess(fa) => {
-            // A struct-typed tuple element `t.N` evaluates to that struct type.
-            if (util.is_all_digits(fa.field)) {
-                var tt: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
-                if (decl_is_struct(s.structs, tt)) { return tt; }
-                return "";
-            }
-            // A struct-typed field read `obj.f` evaluates to the field's struct
-            // type (enables nested access `b.p.x`). Returns "" if obj isn't a
-            // struct or f isn't a struct-typed field.
-            var oty: string = expr_struct_type(fa.obj, s);
-            if (oty == "") { return ""; }
-            var ft: string = decl_field_type(s.structs, oty, fa.field);
+            // A struct-typed tuple element `t.N`, or a struct-typed field read
+            // `obj.f` (which is what enables nested access `b.p.x`). "" when
+            // neither names a known struct. typed-IR (#5986): fa_type_tag falls
+            // back to the checker-stamped tag when the declaration walk cannot
+            // recover obj's own struct type, so a field read off a call / map /
+            // generic receiver resolves instead of silently yielding "".
+            var ft: string = fa_type_tag(fa, s);
             if (decl_is_struct(s.structs, ft)) { return ft; }
             return "";
         },
@@ -5154,7 +5148,7 @@ pub function lower_foreach_snapshot(var_name: string, iter: parser.Expr, body: p
 function to_json_append_stmt(on: string, byte: parser.Expr): parser.Stmt {
     var oref: parser.Expr = parser.ExprIdent { name: on, line: 0, col: 0 };
     var casted: parser.Expr = parser.ExprUnary { op: "as_u8", operand: byte, line: 0, col: 0 };
-    var app: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: oref, field: "append", line: 0, col: 0 }, args: [casted], line: 0, col: 0, type_argc: 0, ty: "" };
+    var app: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: oref, field: "append", line: 0, col: 0, ty: "" }, args: [casted], line: 0, col: 0, type_argc: 0, ty: "" };
     return parser.StmtAssign { target: on, value: app, line: 0, col: 0, target_line: 0, target_col: 0 };
 }
 
@@ -5166,7 +5160,7 @@ function to_json_bytecopy_stmt(on: string, sn: string, kn: string): parser.Stmt 
     var sref: parser.Expr = parser.ExprIdent { name: sn, line: 0, col: 0 };
     var kref: parser.Expr = parser.ExprIdent { name: kn, line: 0, col: 0 };
     var one: parser.Expr = parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 };
-    var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
+    var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var cond: parser.Expr = parser.ExprBinary { op: "<", left: kref, right: lenc, line: 0, col: 0 };
     var elem: parser.Expr = parser.ExprIndex { array: sref, index: kref, unchecked: false };
     var app: parser.Stmt = to_json_append_stmt(on, elem);
@@ -5190,14 +5184,14 @@ function to_json_loop_stmt(on: string, inm: string, sn: string, kn: string, aref
     var zero: parser.Expr = parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 };
     var one: parser.Expr = parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 };
     var comma: parser.Expr = parser.ExprNumber { text: "44", suffix: "", is_float: false, line: 0, col: 0 };
-    var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: aref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
+    var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: aref, field: "len", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var cond: parser.Expr = parser.ExprBinary { op: "<", left: iref, right: lenc, line: 0, col: 0 };
     var igt: parser.Expr = parser.ExprBinary { op: ">", left: iref, right: zero, line: 0, col: 0 };
     var noelse: parser.Stmt[] = [];
     var ifc: parser.Stmt = parser.StmtIf { cond: igt, then_body: [to_json_append_stmt(on, comma)], else_body: noelse };
     // var $s = aref[$i].to_json();
     var elem: parser.Expr = parser.ExprIndex { array: aref, index: iref, unchecked: false };
-    var elemj: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: elem, field: "to_json", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
+    var elemj: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: elem, field: "to_json", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var dvs: parser.Stmt = parser.StmtVar { name: sn, type_name: "", init: elemj, line: 0, col: 0, is_str: false };
     // var $k = 0;
     var dk: parser.Stmt = parser.StmtVar { name: kn, type_name: "", init: zero, line: 0, col: 0, is_str: false };
@@ -5269,7 +5263,7 @@ function lower_string_foreach(var_name: string, iter: parser.Expr, body: parser.
     var sref: parser.Expr = parser.ExprIdent { name: sn, line: 0, col: 0 };
     var iref: parser.Expr = parser.ExprIdent { name: idx, line: 0, col: 0 };
     var zero: parser.Expr = parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 };
-    var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
+    var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var rargs: parser.Expr[] = [zero, lenc];
     var range_iter: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__range", line: 0, col: 0 }, args: rargs, line: 0, col: 0, type_argc: 0, ty: "" };
     var bind: parser.Stmt = parser.StmtVar { name: var_name, type_name: "", init: parser.ExprIndex { array: sref, index: iref, unchecked: false }, line: 0, col: 0, is_str: false };
@@ -5562,21 +5556,34 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
-// field_or_tuple_type_tag returns the canonical scalar type string of a
-// struct-field or tuple-element access `obj.field` — the tuple element's
-// annotated tag (`t.N`, N all-digits) or the struct field's declared type
-// (`p.x`) — or "" when `obj` is neither a typed tuple nor a known struct. It is
-// the shared leaf the four numeric-kind predicates (expr_is_f64/f32/u32/u64)
+// fa_type_tag returns the canonical scalar type string of a struct-field or
+// tuple-element access `obj.field` — the tuple element's annotated tag (`t.N`,
+// N all-digits) or the struct field's declared type (`p.x`) — or "" when neither
+// the declaration walk nor the checker can name it. It is the shared leaf the
+// four numeric-kind predicates (expr_is_f64/f32/u32/u64) and infer_expr_width
 // test for membership, so their field arms resolve the type ONE way and can't
-// drift apart (#5520). infer_expr_width's struct arm deliberately stays on
-// struct_field_is_i64 (a width query, not a tag match), so it is not unified.
-function field_or_tuple_type_tag(obj: parser.Expr, field: string, s: LowerState): string {
-    if (util.is_all_digits(field)) {
-        return expr_tuple_elem_tag(obj, util.digits_to_i32(field), s);
+// drift apart (#5520).
+//
+// The DECLARATION walk runs first and wins when it resolves, because it returns
+// the field's declared SPELLING: it distinguishes `f32` from `f64`, a
+// distinction the checker's Type erases (TypeFloat carries no width), so the
+// stamped tag would report a genuine f32 field as "f64" and take expr_is_f32's
+// dispatch off the f32 path. The typed-IR tag (#5986, the ExprCall.ty sibling
+// from #5531) fills the walk's HOLES instead: when `obj`'s struct type is not
+// structurally recoverable — a call, a map read, a generic chain — the walk
+// returns "" for a field the checker typed all along. That silent "" is the
+// missing-arm class behind #5982 / #5983 / #5985.
+function fa_type_tag(fa: parser.ExprFieldAccess, s: LowerState): string {
+    if (util.is_all_digits(fa.field)) {
+        var tt: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
+        if (tt != "") { return tt; }
+        return fa.ty;
     }
-    var oty: string = expr_struct_type(obj, s);
-    if (oty == "") { return ""; }
-    return decl_field_type(s.structs, oty, field);
+    var oty: string = expr_struct_type(fa.obj, s);
+    if (oty == "") { return fa.ty; }
+    var ft: string = decl_field_type(s.structs, oty, fa.field);
+    if (ft == "") { return fa.ty; }
+    return ft;
 }
 
 // method_recv_prim_key builds the "<RecvType>.<method>" registry key for a
@@ -5694,7 +5701,7 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
         },
         parser.ExprFieldAccess(fa) => {
             // An f64-typed struct field read `p.x`, or an f64 tuple element.
-            var ft: string = field_or_tuple_type_tag(fa.obj, fa.field, s);
+            var ft: string = fa_type_tag(fa, s);
             return ft == "f64" || ft == "f32" || ft == "float";
         },
         parser.ExprIndex(ix) => { return arr_index_is_f64(ix.array, s); },
@@ -5731,7 +5738,7 @@ pub function expr_is_f32(e: parser.Expr, s: LowerState): boolean {
             return false;
         },
         parser.ExprFieldAccess(fa) => {
-            return field_or_tuple_type_tag(fa.obj, fa.field, s) == "f32";
+            return fa_type_tag(fa, s) == "f32";
         },
         // An erased-generic fn whose return mirrors argument i (`id[T](x: T): T`)
         // is f32 exactly when that argument is — the f32 sibling of expr_is_f64's
@@ -5796,7 +5803,7 @@ pub function expr_is_u32(e: parser.Expr, s: LowerState): boolean {
         // expr_is_u64's ExprFieldAccess arm — on wasm a signed shr/div on a
         // bit-31-set u32 field/element diverges (x86 zero-extension hides it).
         parser.ExprFieldAccess(fa) => {
-            return field_or_tuple_type_tag(fa.obj, fa.field, s) == "u32";
+            return fa_type_tag(fa, s) == "u32";
         },
         parser.ExprUnary(u) => {
             if (u.op == "as_u32") { return true; }
@@ -5913,7 +5920,7 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
             // decl) is a u64 value, so a chained `>> 1` / `> x` selects shr_u / gt_u.
             // The 64-bit WIDTH is already tracked by infer_expr_width; this recovers
             // the unsigned-ness.
-            return field_or_tuple_type_tag(fa.obj, fa.field, s) == "u64";
+            return fa_type_tag(fa, s) == "u64";
         },
         parser.ExprUnary(u) => {
             if (u.op == "as_u64") { return true; }
@@ -6169,13 +6176,12 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
         },
         parser.ExprFieldAccess(fa) => {
             // An i64/u64 tuple element `t.N` or i64 struct field `p.x` is 64-bit.
-            if (util.is_all_digits(fa.field)) {
-                var tew: string = expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s);
-                if (tew == "i64" || tew == "u64") { return 64; }
-                return 32;
-            }
-            var oty: string = expr_struct_type(fa.obj, s);
-            if (oty != "" && struct_field_is_i64(s.structs, oty, s.field_index_in(oty, fa.field))) { return 64; }
+            // Shares fa_type_tag with the four numeric-kind predicates rather
+            // than re-walking obj → struct → field itself: struct_field_is_i64
+            // is exactly `decl_field_type in {i64, u64}` by index, so the two
+            // walks answered the same question and could drift (#5986).
+            var wt: string = fa_type_tag(fa, s);
+            if (wt == "i64" || wt == "u64") { return 64; }
             return 32;
         },
         _ => { return 32; }
@@ -7304,7 +7310,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // E009), so bail to the AST path rather than mis-lower the
                     // struct pointers as scalar arithmetic.
                     if (s.struct_ret_type(blt + "." + ovm) == "") { return s.fail(); }
-                    var ovcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: b.left, field: ovm, line: b.line, col: b.col }, args: [b.right], line: b.line, col: b.col, type_argc: 0, ty: "" };
+                    var ovcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: b.left, field: ovm, line: b.line, col: b.col, ty: "" }, args: [b.right], line: b.line, col: b.col, type_argc: 0, ty: "" };
                     return lower_expr(ovcall, s);
                 }
             }
@@ -7529,7 +7535,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 var ust: string = expr_struct_type(u.operand, s);
                 if (decl_is_struct(s.structs, ust)) {
                     if (s.struct_ret_type(ust + ".neg") == "") { return s.fail(); }
-                    var negcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: u.operand, field: "neg", line: u.line, col: u.col }, args: [], line: u.line, col: u.col, type_argc: 0, ty: "" };
+                    var negcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: u.operand, field: "neg", line: u.line, col: u.col, ty: "" }, args: [], line: u.line, col: u.col, type_argc: 0, ty: "" };
                     return lower_expr(negcall, s);
                 }
                 // -x  ==  0 - x  : push 0, push x, sub.
@@ -8646,7 +8652,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             args: [], line: c.line, col: c.col, type_argc: 0, ty: "",
                         };
                         var alen: parser.Expr = parser.ExprCall {
-                            callee: parser.ExprFieldAccess { obj: acall, field: "len", line: c.line, col: c.col },
+                            callee: parser.ExprFieldAccess { obj: acall, field: "len", line: c.line, col: c.col, ty: "" },
                             args: [], line: c.line, col: c.col, type_argc: 0, ty: "",
                         };
                         return lower_expr(alen, s);
@@ -9812,7 +9818,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s) || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s)
                             || !decl_is_struct(s.structs, expr_struct_type(fa.obj, s)))) {
                         var lenc: parser.Expr = parser.ExprCall {
-                            callee: parser.ExprFieldAccess { obj: fa.obj, field: "len", line: fa.line, col: fa.col },
+                            callee: parser.ExprFieldAccess { obj: fa.obj, field: "len", line: fa.line, col: fa.col, ty: "" },
                             args: [], line: c.line, col: c.col, type_argc: 0, ty: "",
                         };
                         var iszero: parser.Expr = parser.ExprBinary {
@@ -13582,7 +13588,7 @@ function lower_struct_destructure(v: parser.StmtVar, s: LowerState): LowerState 
     dt = dt.emit(ir.op_store_local(tmp_slot));
     var i: i32 = 0;
     while (i < bindings.len()) {
-        var fa: parser.Expr = parser.ExprFieldAccess { obj: parser.ExprIdent { name: tmp, line: 0, col: 0 }, field: fields[i], line: 0, col: 0 };
+        var fa: parser.Expr = parser.ExprFieldAccess { obj: parser.ExprIdent { name: tmp, line: 0, col: 0 }, field: fields[i], line: 0, col: 0, ty: "" };
         var sv: parser.Stmt = parser.StmtVar { name: bindings[i], type_name: "", init: fa, line: 0, col: 0, is_str: false };
         dt = lower_stmt(sv, dt);
         if (!dt.ok) { return dt; }
@@ -17476,10 +17482,10 @@ function lower_map_clone_insert(target: string, recv: parser.Expr, key: parser.E
     var st: LowerState = lower_stmt(parser.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0, is_str: false }, s);
     if (!st.ok) { return st; }
     // var $mck = recv.keys();  var $mcv = recv.values();
-    var keyscall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "keys", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
+    var keyscall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "keys", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     st = lower_stmt(parser.StmtVar { name: mck, type_name: "", init: keyscall, line: 0, col: 0, is_str: false }, st);
     if (!st.ok) { return st; }
-    var valscall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "values", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
+    var valscall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "values", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     st = lower_stmt(parser.StmtVar { name: mcv, type_name: "", init: valscall, line: 0, col: 0, is_str: false }, st);
     if (!st.ok) { return st; }
     // for $mci in 0 .. $mck.len() { $mc = $mc.insert($mck[$mci], $mcv[$mci]); }
@@ -17487,16 +17493,16 @@ function lower_map_clone_insert(target: string, recv: parser.Expr, key: parser.E
     var mcvref: parser.Expr = parser.ExprIdent { name: mcv, line: 0, col: 0 };
     var mciref: parser.Expr = parser.ExprIdent { name: mci, line: 0, col: 0 };
     var mcref: parser.Expr = parser.ExprIdent { name: mc, line: 0, col: 0 };
-    var lencall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mckref, field: "len", line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
+    var lencall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mckref, field: "len", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var range: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__range", line: 0, col: 0 }, args: [zero, lencall], line: 0, col: 0, type_argc: 0, ty: "" };
     var insargs: parser.Expr[] = [parser.ExprIndex { array: mckref, index: mciref, unchecked: false }, parser.ExprIndex { array: mcvref, index: mciref, unchecked: false }];
-    var insexpr: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0 }, args: insargs, line: 0, col: 0, type_argc: 0, ty: "" };
+    var insexpr: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: insargs, line: 0, col: 0, type_argc: 0, ty: "" };
     var loopbody: parser.Stmt[] = [parser.StmtAssign { target: mc, value: insexpr, line: 0, col: 0, target_line: 0, target_col: 0 }];
     st = lower_stmt(parser.StmtFor { var_name: mci, iter: range, body: loopbody, label: "" }, st);
     if (!st.ok) { return st; }
     // target = $mc.insert(key, val);  ($mc != target → generic assign; $mc is
     // unaliased so its in-place insert is sound, and the fresh clone binds to m).
-    var finalins: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0 }, args: [key, val], line: 0, col: 0, type_argc: 0, ty: "" };
+    var finalins: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: [key, val], line: 0, col: 0, type_argc: 0, ty: "" };
     return lower_stmt(parser.StmtAssign { target: target, value: finalins, line: 0, col: 0, target_line: 0, target_col: 0 }, st);
 }
 
@@ -40225,7 +40231,7 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
         },
         parser.ExprFieldAccess(fa) => {
             var faor: LiftExpr = lift_expr_walk(fa.obj, acc, gfns);
-            return LiftExpr { expr: parser.ExprFieldAccess { obj: faor.expr, field: fa.field, line: fa.line, col: fa.col }, acc: faor.acc };
+            return LiftExpr { expr: parser.ExprFieldAccess { obj: faor.expr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, acc: faor.acc };
         },
         _ => { return LiftExpr { expr: e, acc: acc }; }
     }
@@ -40862,8 +40868,18 @@ function cap_type_expr(e: parser.Expr, fd: parser.FuncDecl, depth: i32, structs:
         // local resolved "" and the lift declined (#3457).
         parser.ExprFieldAccess(fa) => {
             var oty: string = cap_type_expr(fa.obj, fd, depth - 1, structs, mfuncs);
-            if (oty.len() == 0) { return ""; }
-            return decl_field_type(structs, oty, fa.field);
+            if (oty.len() > 0) {
+                var ft: string = decl_field_type(structs, oty, fa.field);
+                if (ft.len() > 0) { return ft; }
+            }
+            // typed-IR (#5986): the checker-stamped tag when this depth-bounded
+            // walk cannot recover obj's type — either it ran out of depth or obj
+            // is a form with no arm here. That "" is what made the lift DECLINE,
+            // the exact failure #5982 patched one missing arm at a time. The walk
+            // still wins when it resolves: it returns the field's declared
+            // SPELLING, which distinguishes f32 from f64 where the checker's
+            // TypeFloat does not.
+            return fa.ty;
         },
         // `var b = f(…)` / `var b = s.m(…)` — the callee's DECLARED return type,
         // resolved exactly as the for-in / match-scrutinee arms do (callee_ret_type).
@@ -40958,7 +40974,7 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
             return parser.ExprIndex { array: subst_fcall_expr(ix.array, fname, lname, capargs), index: subst_fcall_expr(ix.index, fname, lname, capargs), unchecked: ix.unchecked };
         },
         parser.ExprFieldAccess(fa) => {
-            return parser.ExprFieldAccess { obj: subst_fcall_expr(fa.obj, fname, lname, capargs), field: fa.field, line: fa.line, col: fa.col };
+            return parser.ExprFieldAccess { obj: subst_fcall_expr(fa.obj, fname, lname, capargs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
         },
         parser.ExprLambda(lm) => {
             // Rewrite a hoisted lambda's call sites that appear INSIDE another
@@ -41614,7 +41630,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
             // `f(xs, cb).m().k()`) still gets its fn-typed arguments env-boxed.
             // Rebuilds structurally identical when nothing inside changes.
             var or: InlineCloRes = lift_inline_closures_expr(fa.obj, fd, funcs, counter, gfns, structs, mfuncs);
-            return InlineCloRes { expr: parser.ExprFieldAccess { obj: or.expr, field: fa.field, line: fa.line, col: fa.col }, funcs: or.funcs, counter: or.counter };
+            return InlineCloRes { expr: parser.ExprFieldAccess { obj: or.expr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, funcs: or.funcs, counter: or.counter };
         },
         parser.ExprArray(arr) => {
             var fs: parser.FuncDecl[] = funcs;
@@ -42377,7 +42393,7 @@ function box_rewrite_expr(e: parser.Expr, boxed: string[], btypes: string[]): pa
             if (sl.has_base) { nbase = box_rewrite_expr(sl.base, boxed, btypes); }
             return parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col };
         },
-        parser.ExprFieldAccess(fa) => { return parser.ExprFieldAccess { obj: box_rewrite_expr(fa.obj, boxed, btypes), field: fa.field, line: fa.line, col: fa.col }; },
+        parser.ExprFieldAccess(fa) => { return parser.ExprFieldAccess { obj: box_rewrite_expr(fa.obj, boxed, btypes), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
         parser.ExprLambda(lm) => { return parser.ExprLambda { params: lm.params, ret_type: lm.ret_type, body: box_rewrite_stmts(lm.body, boxed, btypes), use_infer: lm.use_infer }; },
         _ => { return e; }
     }
@@ -42400,7 +42416,7 @@ function box_rewrite_stmt(st: parser.Stmt, boxed: string[], btypes: string[]): p
             if (util.index_of_str(boxed, a.target) >= 0) {
                 // x = v  ->  x = x.with(0, v)   (receiver stays the raw cell ident)
                 var recv: parser.Expr = parser.ExprIdent { name: a.target, line: a.target_line, col: a.target_col };
-                var wcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "with", line: a.line, col: a.col }, args: [parser.ExprNumber { text: "0", suffix: "", is_float: false, line: a.line, col: a.col }, box_rewrite_expr(a.value, boxed, btypes)], line: a.line, col: a.col, type_argc: 0, ty: "" };
+                var wcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "with", line: a.line, col: a.col, ty: "" }, args: [parser.ExprNumber { text: "0", suffix: "", is_float: false, line: a.line, col: a.col }, box_rewrite_expr(a.value, boxed, btypes)], line: a.line, col: a.col, type_argc: 0, ty: "" };
                 return parser.StmtAssign { target: a.target, value: wcall, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
             }
             return parser.StmtAssign { target: a.target, value: box_rewrite_expr(a.value, boxed, btypes), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };

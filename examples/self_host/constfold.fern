@@ -164,7 +164,7 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
             return parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: fvs, has_base: sl.has_base, base: folded_base, line: sl.line, col: sl.col };
         },
         parser.ExprFieldAccess(fa) => {
-            return parser.ExprFieldAccess { obj: fold_expr(fa.obj), field: fa.field, line: fa.line, col: fa.col };
+            return parser.ExprFieldAccess { obj: fold_expr(fa.obj), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
         }
     }
     return e;

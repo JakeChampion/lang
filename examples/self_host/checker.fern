@@ -9329,8 +9329,9 @@ function annotate_advance(st: parser.Stmt, s: Scope): Scope {
     return s;
 }
 
-// annotate_expr rebuilds `e`, stamping ExprCall.ty with the checker-inferred
-// result tag. Recurses through every composite so a nested call is reached.
+// annotate_expr rebuilds `e`, stamping ExprCall.ty and ExprFieldAccess.ty with
+// the checker-inferred result tag. Recurses through every composite so a nested
+// call is reached.
 function annotate_expr(e: parser.Expr, s: Scope): parser.Expr {
     match (e) {
         parser.ExprBinary(b) => {
@@ -9347,7 +9348,7 @@ function annotate_expr(e: parser.Expr, s: Scope): parser.Expr {
             return parser.ExprCall { callee: annotate_expr(c.callee, s), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: tag };
         },
         parser.ExprFieldAccess(fa) => {
-            return parser.ExprFieldAccess { obj: annotate_expr(fa.obj, s), field: fa.field, line: fa.line, col: fa.col };
+            return parser.ExprFieldAccess { obj: annotate_expr(fa.obj, s), field: fa.field, line: fa.line, col: fa.col, ty: type_to_irtag(check_expr(e, s)) };
         },
         parser.ExprIndex(x) => {
             return parser.ExprIndex { array: annotate_expr(x.array, s), index: annotate_expr(x.index, s), unchecked: x.unchecked };
@@ -9506,8 +9507,9 @@ function annotate_func(fd: parser.FuncDecl, mt: ModuleTables): parser.FuncDecl {
     return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: annotate_block(fd.body, s), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str };
 }
 
-// annotate_module stamps every call expression — in a function body and at the
-// TOP LEVEL — with its checker-inferred result type. Top-level statements walk
+// annotate_module stamps every call and field-access expression — in a function
+// body and at the TOP LEVEL — with its checker-inferred result type. Top-level
+// statements walk
 // from the bare module scope, threading statement-to-statement exactly as
 // check_module's own top_stmts loop does, so a script-shaped module (which now
 // lowers through the IR path, #5657) gets the same annotation coverage a

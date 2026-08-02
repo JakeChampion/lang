@@ -1,6 +1,7 @@
 # Typed-IR rewrite: feed lowering the types the checker already computes
 
-Status: proposal. Owner: unassigned. Tracking issue: #5531.
+Status: in progress, Phase A. Tracking issues: #5531 (the mechanism), #5986
+(finish the migration). See "Carriers landed" below for what is annotated today.
 
 ## TL;DR
 
@@ -60,10 +61,13 @@ Nearly every fragility and bug worked recently traces to it:
   `LowerState.closure_opt_rets`) laboriously recover what was discarded. A
   structured type never loses it.
 - **The bail-to-AST model (fragility #1).** Because lowering is a partial
-  re-derivation, when a predicate can't resolve a type the whole function bails to
-  a completely separate AST emitter (`asm.fern`/`asm_arm64.fern`/`wasm.fern`).
-  That parallel backend is the #1 structural problem (#3457). A total, typed
-  lowering has nothing to bail to.
+  re-derivation, a predicate that couldn't resolve a type bailed the whole
+  function to a separate AST emitter (`asm.fern`/`asm_arm64.fern`/`wasm.fern`).
+  Those three are now **deleted** and every backend routes IR-or-error (#3457),
+  so an unresolved type is a hard error naming the bail site rather than a
+  silent fall-through to a second answer. That converts the failure mode from
+  "wrong output" to "no output" — better, but still one defect per missing arm,
+  which is what the annotation removes.
 - **The type-reinference "soup" (fragility #3).** Documented directly: the
   predicates independently re-derive overlapping facts and drift apart.
 - **Cost.** ~105 per-module derivation passes + O(depth) re-walks per expression
@@ -113,6 +117,36 @@ A seam already exists: #5519 extracted `expr_scalar_type` as the single scalar
 classification chokepoint precisely so it can later read a real type instead of
 re-walking. The numeric-predicate unifications (#5523/#5524) narrowed the surface
 further. Continue widening these seams.
+
+### Carriers landed
+
+`checker.annotate_module` walks the checked tree and stamps a `ty` tag —
+`type_to_irtag(check_expr(e, s))`, the canonical string spelling irlower already
+keys on — onto the node types below. It runs after `check_module` and before
+every emit path, so `-decide`, the eligibility judgement and the emit all see the
+same annotated tree. A driver that skips it (`asm_ir_run`, the native compiler)
+leaves every `ty` empty and gets the structural walk unchanged.
+
+| node | landed | consumers reading it |
+|---|---|---|
+| `ExprCall.ty` | #5531 | `expr_struct_type`, `expr_map_type_tag`, `expr_tuple_elem_tag`, `try_opt_type`, `expr_is_str` / `_f64` / `_u32` / `_u64`, `infer_expr_width` |
+| `ExprFieldAccess.ty` | #5986 | `fa_type_tag` — the single leaf behind `expr_struct_type`, `expr_map_type_tag`, `infer_expr_width` and `expr_is_f64` / `_f32` / `_u32` / `_u64`; plus `cap_type_expr` at lift time |
+
+Two ordering facts constrain how a carrier is read, and both cost a debugging
+session to rediscover:
+
+- **The declaration walk wins where it resolves; the tag fills its holes.** The
+  checker's `Type` has no `f32` (`TypeFloat` carries no width), so a stamped tag
+  reports a genuine `f32` field as `"f64"` and would take `expr_is_f32`'s
+  dispatch off the f32 path. The declared spelling is strictly more precise, so
+  `fa_type_tag` consults it first and falls back to `fa.ty` only when it yields
+  `""`. `ExprCall.ty` has no such twin (there is no declaration to read), which
+  is why #5531 could trust its tag first.
+- **Annotation runs before monomorphisation** (`module_with_builtins` →
+  `monomorphize_module`), so a generic function's body is annotated in its erased
+  form: a field whose type is a bare type parameter stamps `""` and the clone
+  inherits that. Measured across the fixture corpus, that is essentially the only
+  place a field read goes unstamped.
 
 ## Sequencing and cost
 
