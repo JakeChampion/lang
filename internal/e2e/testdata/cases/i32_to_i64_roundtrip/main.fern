@@ -1,0 +1,6 @@
+function main(): i32 {
+			var a: i32 = 7;
+			var b: i64 = a as i64;
+			var c: i32 = b as i32;
+			return c + 35;
+		}

@@ -1,0 +1,16 @@
+import "core/map";
+import "std/string";
+function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m = m.insert("alpha", 1);
+    m = m.insert("beta", 2);
+    m = m.insert("gamma", 3);
+    var ks: string[] = m.keys();
+    var i: i32 = 0;
+    var total: i32 = 0;
+    while (i < ks.len()) {
+        total = total + ks[i].len();
+        i = i + 1;
+    }
+    return total;
+}

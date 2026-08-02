@@ -1,0 +1,4 @@
+# wasm excluded: the wasm leg recovers main's value from a result line appended
+# to stdout, which requires main to RETURN. exit() terminates before that, so the
+# mechanism cannot see a value. Not a backend defect — a property of the harness.
+interp x86_64 arm64

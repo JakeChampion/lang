@@ -1,0 +1,6 @@
+struct Person { name: string, age: i32 }
+function main(): i32 {
+    var a: Person = Person { name: "alice", age: 30 };
+    var b: Person = Person { ...a, age: 31 };
+    return b.name.len() + b.age;
+}

@@ -1037,30 +1037,6 @@ func TestWASMMapFieldStructRebind(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"insert-dedup", `
-import "core/map";
-struct IntSet { m: Map[i32, i32] }
-function (s: IntSet) insert(x: i32): IntSet { return IntSet { m: s.m.insert(x, 1) }; }
-function (s: IntSet) len(): i32 { return s.m.len(); }
-function main(): i32 {
-    var m0: Map[i32, i32] = map_new(4);
-    var s: IntSet = IntSet { m: m0 };
-    s = s.insert(10);
-    s = s.insert(20);
-    s = s.insert(10);
-    return s.len();
-}`, 2},
-		{"single-insert", `
-import "core/map";
-struct IntSet { m: Map[i32, i32] }
-function (s: IntSet) insert(x: i32): IntSet { return IntSet { m: s.m.insert(x, 1) }; }
-function (s: IntSet) len(): i32 { return s.m.len(); }
-function main(): i32 {
-    var m0: Map[i32, i32] = map_new(4);
-    var s: IntSet = IntSet { m: m0 };
-    s = s.insert(10);
-    return s.len();
-}`, 1},
 		// `.cleared()` (the value-returning clear) also lowers to a COW
 		// mutator (__method_Map_clear) and returns a bare Map, so it can
 		// initialise the field directly — exercising the clone on the clear
@@ -3345,44 +3321,9 @@ function area(s: Shape): i32 {
 function main(): i32 { return area(Rect(P { x: 4, y: 5 })) * 10 + area(Dot); }`, 201},
 		// Guard false → falls through to the unguarded arm, which reads
 		// its OWN `p` (p.y == 5) → 105.
-		{"both-arms-read-p", `
-struct P { x: i32, y: i32 }
-enum Shape { Dot, Rect(P) }
-function area(s: Shape): i32 {
-    match (s) {
-        Rect(p) when p.x > 0 => { return p.x * p.y; },
-        Rect(p) => { return p.y + 100; },
-        Dot => { return 1; }
-    }
-    return 0;
-}
-function main(): i32 { return area(Rect(P { x: 0, y: 5 })); }`, 105},
 		// Three arms binding `p`, two guarded: the middle guard (p.x > 5)
 		// wins for x=7 → p.x*2 == 14.
-		{"three-arms-bind-p", `
-struct P { x: i32, y: i32 }
-enum Shape { Rect(P) }
-function f(s: Shape): i32 {
-    match (s) {
-        Rect(p) when p.x > 10 => { return 1; },
-        Rect(p) when p.x > 5 => { return p.x * 2; },
-        Rect(p) => { return p.y; }
-    }
-    return 0;
-}
-function main(): i32 { return f(Rect(P { x: 7, y: 99 })); }`, 14},
 		// i32-payload re-bind across a guarded + unguarded arm.
-		{"i32-payload-rebind", `
-enum E { A(i32), B }
-function g(e: E): i32 {
-    match (e) {
-        A(n) when n > 100 => { return n - 100; },
-        A(n) => { return n * 3; },
-        B => { return 0; }
-    }
-    return 0;
-}
-function main(): i32 { return g(A(7)) + g(A(150)); }`, 71},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

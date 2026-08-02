@@ -1,0 +1,7 @@
+import "core/map";
+function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m = m.insert("hello", 42);
+    m = m.insert("world", 99);
+    return m.get_or("world", 0);
+}

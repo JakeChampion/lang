@@ -1,0 +1,6 @@
+function main(): i32 {
+    print("hi");
+    putchar(33);
+    putchar(10);
+    return 0;
+}

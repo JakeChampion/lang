@@ -1,0 +1,8 @@
+function compute(a: i64, b: i64): (i64, i64) {
+    return (a + b, a - b);
+}
+function main(): i32 {
+    var p = compute(1234567890123, 1000);
+    if (p.0 == 1234567891123 && p.1 == 1234567889123) { return 0; }
+    return 1;
+}

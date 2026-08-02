@@ -1,0 +1,7 @@
+function main(): i32 {
+    match (stdin().read_line()) {
+        Some(_) => { return 1; },
+        None => { return 0; }
+    }
+    return -1;
+}

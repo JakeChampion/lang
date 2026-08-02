@@ -1,0 +1,12 @@
+enum E { A, B }
+function pick(e: E): i64[] {
+    return match (e) {
+        A => [1234567890123, 9876543210],
+        B => [0, 0]
+    };
+}
+function main(): i32 {
+    var arr: i64[] = pick(A);
+    if (arr[0] == 1234567890123 && arr[1] == 9876543210) { return 0; }
+    return 1;
+}

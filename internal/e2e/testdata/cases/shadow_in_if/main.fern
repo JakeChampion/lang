@@ -1,0 +1,9 @@
+function main(): i32 {
+    var x: i64 = 100;
+    if (true) {
+        var x: i64 = 200;
+        if (x != 200) { return 1; }
+    }
+    if (x != 100) { return 2; }
+    return 0;
+}

@@ -1,0 +1,10 @@
+enum E { A, B }
+function main(): i32 {
+    var e: E = A;
+    var n: i64 = match (e) {
+        A => 1234567890123,
+        B => 9876543210
+    };
+    if (n == 1234567890123) { return 0; }
+    return 1;
+}

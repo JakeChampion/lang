@@ -1,0 +1,11 @@
+enum E { A }
+function pick(e: E): (i64, i32) {
+    return match (e) {
+        A => (1234567890123, 42)
+    };
+}
+function main(): i32 {
+    var p = pick(A);
+    if (p.0 == 1234567890123 && p.1 == 42) { return 0; }
+    return 1;
+}

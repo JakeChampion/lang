@@ -1,0 +1,6 @@
+function main(): i32 {
+    var cond: boolean = true;
+    var f: f64 = if (cond) { 3.14 } else { 0.0 };
+    if (f > 3.0 && f < 4.0) { return 0; }
+    return 1;
+}

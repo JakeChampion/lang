@@ -1,0 +1,10 @@
+enum E { A(i32), B }
+function g(e: E): i32 {
+    match (e) {
+        A(n) when n > 100 => { return n - 100; },
+        A(n) => { return n * 3; },
+        B => { return 0; }
+    }
+    return 0;
+}
+function main(): i32 { return g(A(7)) + g(A(150)); }

@@ -1,0 +1,6 @@
+function main(): i32 {
+    var n: i64 = (1234567 as i64) * (1000000 as i64);
+    var q: i64 = n / (1000000 as i64);
+    if (q == (1234567 as i64)) { return 0; }
+    return 1;
+}
