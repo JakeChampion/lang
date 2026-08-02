@@ -8,34 +8,46 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 )
 
-// Cross-validation across the three execution engines in the
-// fern-port: the self-hosted tree-walking interpreter
-// (interp.fern), the native (Go) tree-walking interpreter
-// (internal/interp), and the self-hosted native asm emitter
-// (asm.fern). Every test source is piped through the self-host
-// interp driver (interp_run.fern) and the self-host asm driver
-// (asm_run.fern), and run directly against the native interp,
-// and the test asserts all three return the same exit code.
+// Cross-validation across the three execution engines: the self-hosted
+// tree-walking interpreter (interp.fern), the native (Go) tree-walking
+// interpreter (internal/interp), and the self-hosted compiler's x86-64 output.
+// Every source is piped through interp_run.fern and asm_run.fern and run
+// directly against the native interp; all three must return the same exit code.
 //
-// This is the "every layer agrees" demo — a regression suite
-// for the consistency of the fern-port's semantics across
-// completely different execution strategies.
+// This is the load-bearing parity net between the self-host compiler and the one
+// implementation whose bugs are UNCORRELATED with it. The native interpreter is
+// written in a different language and compiled by a different compiler, so it is
+// the only engine here that cannot share a frontend bug with the others — see
+// docs/NATIVE-CONVERGENCE.md §3, which keeps it permanently for exactly that
+// reason. A self-host-only comparison would prove the compiler agrees with
+// itself.
 //
-// Source programs use the common subset all three engines
-// support: i32, arithmetic, comparisons, if/else, while,
-// var/assign, function decls + recursion. No arrays / strings
-// / print* because those aren't all supported by the asm
-// emitter today.
+// SUBSET. This used to say "i32 only ... no arrays / strings / print* because
+// those aren't all supported by the asm emitter today", naming asm.fern — an
+// emitter deleted in #5972. asm_run now routes IR-or-error, and the IR path
+// handles far more, so that restriction was long stale and was hiding real
+// divergences behind an untested surface. The corpus below covers strings,
+// arrays, structs and their methods, tuples, closures, higher-order functions,
+// user enums with match, i64 and f64.
 //
-// (A fourth engine — a bytecode VM, vm.fern — used to sit here
-// too. It was retired in #4392: an unreachable fifth
-// implementation of Fern semantics with no production consumer
-// and known semantic drift from the other engines.)
+// KNOWN GAPS, deliberately absent (each is a real divergence, tracked, not a
+// subset choice):
+//   - Option / Result. interp.fern does not mention Some / None / Ok / Err at
+//     all, so `Some(42)` evaluates to an error and the driver exits 254 while
+//     native and both compiled backends answer correctly.
+//   - `to_ascii_lower` / `to_ascii_upper` — same shape, absent from interp.fern.
+// Add the cases here when those land; a passing row is the definition of done.
+//
+// (A fourth engine — a bytecode VM, vm.fern — used to sit here too. It was
+// retired in #4392: an unreachable fifth implementation of Fern semantics with
+// no production consumer and known semantic drift from the other engines.)
 
 func TestSelfHostCrossValidationX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -104,15 +116,15 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		return inner.ProcessState.ExitCode()
 	}
 
-	// runNativeInterp runs `source` directly against the native
-	// (Go) tree-walking interpreter — the third leg. Skips
-	// checker.Check (unlike cmd/fern's `-interp` pipeline):
-	// several cases below return a boolean from an `i32`-typed
-	// `main` (e.g. "comparison-true"), which the self-host legs'
-	// untyped bootstrap language accepts but the native checker's
-	// strict return-type rule rejects. The interpreter itself
-	// evaluates the AST directly and needs no type info for this
-	// program subset.
+	// runNativeInterp runs `source` against the native (Go) tree-walking
+	// interpreter — the third leg, and the oracle, since it is the one engine
+	// here whose bugs cannot correlate with the self-host frontend's.
+	//
+	// It now runs the SAME pipeline cmd/fern's `-interp` does, checker and
+	// monomorph included. It used to skip the checker because three rows
+	// returned a boolean from an `i32`-typed `main`; those rows are written
+	// well-typed now (same operators, an `if` instead), which costs nothing and
+	// buys every method-dispatch row in the corpus.
 	//
 	// Unlike the self-host mini-lexer/parser the other two legs
 	// run on, the real Fern grammar has no implicit top-level
@@ -130,6 +142,21 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		}
 		if err := constfold.Fold(prog); err != nil {
 			t.Fatalf("native interp constfold: %v\n--- source ---\n%s", err, source)
+		}
+		// The full pipeline, matching cmd/fern's `-interp`: modload → constfold
+		// → CHECK → MONOMORPH → interpret. The check and the monomorph pass used
+		// to be skipped here, which quietly capped what this suite could cover:
+		// method dispatch needs the checker's type info, so `s.len()` failed
+		// inside the harness with "field access on non-struct interp.String"
+		// even though `fern -interp` runs it fine. Every string / method /
+		// generic row below was unreachable until this leg became the real
+		// pipeline rather than a partial re-implementation of it.
+		info, err := checker.Check(prog)
+		if err != nil {
+			t.Fatalf("native interp check: %v\n--- source ---\n%s", err, source)
+		}
+		if err := monomorph.Run(prog, info); err != nil {
+			t.Fatalf("native interp monomorph: %v\n--- source ---\n%s", err, source)
 		}
 		ip := interp.New()
 		for _, ed := range prog.Enums {
@@ -167,9 +194,9 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		{"division", "return 84 / 2;", 42},
 		{"modulo", "return 23 % 5;", 3},
 		{"unary-neg", "return 0 - 5 + 10;", 5},
-		{"comparison-true", "return 5 < 10;", 1},
-		{"comparison-false", "return 10 < 5;", 0},
-		{"equality-true", "return 7 == 7;", 1},
+		{"comparison-true", "if (5 < 10) { return 1; } return 0;", 1},
+		{"comparison-false", "if (10 < 5) { return 1; } return 0;", 0},
+		{"equality-true", "if (7 == 7) { return 1; } return 0;", 1},
 		{"locals", "var x = 5; var y = 10; return x + y;", 15},
 		{"reassign", "var x = 5; x = x + 3; return x;", 8},
 		{"compound-assign", "var x = 1; x *= 6; x += 1; return x;", 7},
@@ -221,6 +248,30 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 			"struct P { a: i32, b: i32 } function bump(p: P): P { return P { ...p, b: p.b + 100 }; } function main(): i32 { var p: P = P { a: 5, b: 6 }; var q: P = bump(p); return p.b*1000 + q.a*100 + q.b; }",
 			6606 % 256, // = 206
 		},
+		// ---- beyond the old i32-only subset (see SUBSET above) ----------
+		// Each row was verified to agree across native interp, self-host interp
+		// and the compiled path before being added; the compiled leg was also
+		// checked on wasm, which shares irlower with the x86 backend.
+		{"string-len", `function main(): i32 { var s: string = "hello"; return s.len(); }`, 5},
+		{"string-concat", `function main(): i32 { var a: string = "ab"; var b: string = "cde"; var c: string = a + b; return c.len(); }`, 5},
+		{"string-index", `function main(): i32 { var s: string = "abc"; return s[1] as i32; }`, 98},
+		{"string-slice", `function main(): i32 { var s: string = "abcdef"; var t: string = s[1:3] + ""; return t.len(); }`, 2},
+		{"array-for-sum", `function main(): i32 { var xs: i32[] = [1,2,3,4]; var t = 0; for v in xs { t = t + v; } return t; }`, 10},
+		{"string-array-for", `function main(): i32 { var xs: string[] = ["ab","cde"]; var t = 0; for s in xs { t = t + s.len(); } return t; }`, 5},
+		{"struct-field-read", `struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 40, y: 2 }; return p.x + p.y; }`, 42},
+		{"struct-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function main(): i32 { var p: P = P { x: 21 }; return p.dbl(); }`, 42},
+		{"tuple-elements", `function main(): i32 { var t: (i32, i32) = (40, 2); return t.0 + t.1; }`, 42},
+		{"closure-capture", `function main(): i32 { var n: i32 = 40; var f: () => i32 = function (): i32 { return n + 2; }; return f(); }`, 42},
+		// A closure that WRITES its captured scalar. By-reference scalar capture
+		// is a deliberate language feature, and the interpreter got it wrong for
+		// months while the compiled path was correct (SH-057 / #2850) — exactly
+		// the divergence class this suite exists to catch.
+		{"closure-mutates-capture", `function main(): i32 { var n: i32 = 0; var inc: () => i32 = function (): i32 { n = n + 1; return n; }; inc(); inc(); return n + 40; }`, 42},
+		{"higher-order-fn", `function ap(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { return ap(function (n: i32): i32 { return n + 1; }, 41); }`, 42},
+		{"enum-match", `enum C { A, B } function main(): i32 { var c: C = C.A; match (c) { C.A => { return 3; }, C.B => { return 4; } } }`, 3},
+		{"i64-arith", `function main(): i32 { var n: i64 = 5000000000; return (n % 97) as i32; }`, 73},
+		{"f64-arith", `function main(): i32 { var f: f64 = 2.5; var g: f64 = 1.5; return (f + g) as i32; }`, 4},
+		{"forward-declared-call", `function outer(n: i32): i32 { return inner(n) + 1; } function inner(n: i32): i32 { return n * 2; } function main(): i32 { return outer(20); }`, 41},
 	}
 
 	for _, tc := range cases {
