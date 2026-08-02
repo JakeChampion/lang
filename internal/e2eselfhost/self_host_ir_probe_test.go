@@ -124,15 +124,7 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	// asm_load_run pulls in flatten + checker on top of the core emitter set.
-	for _, name := range []string{"flatten.fern", "checker.fern", "asm_arm64_ir.fern", "asm_load_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {

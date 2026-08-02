@@ -47,15 +47,7 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 
 	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"flatten.fern", "checker.fern", "util.fern", "asm_arm64_ir.fern", "asm_load_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	mmc := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "mmc")
 
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
@@ -147,15 +139,7 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 
 	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "treeshake.fern", "asm_load_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	// Build the arm64 driver as a native x86 host binary — its
 	// OUTPUT is aarch64 asm. Cheaper than running mmc itself under
 	// qemu and avoids any arm64-self-compiling-arm64-self bugs in

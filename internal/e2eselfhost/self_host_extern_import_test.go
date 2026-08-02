@@ -37,15 +37,7 @@ func TestSelfHostExternImportRunsUnderWasmtime(t *testing.T) {
 
 	// Stage the self-host front end + wasm backend, plus a component-io driver
 	// that emits the run core (emit_module_run_io) from source on stdin.
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_runio_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	const want = "self-host-extern-ok"

@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -30,15 +28,7 @@ func TestSelfHostTypeResolveSimple(t *testing.T) {
 		t.Skip("type_resolve_simple_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "lexer.fern", "parser.fern", "checker.fern", "type_resolve_simple_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "type_resolve_simple_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "type_resolve_simple_run.fern", "type_resolve_simple_run")
 
 	const want = "i32 => structs=i32 names=i32 names+unions=i32\n" +

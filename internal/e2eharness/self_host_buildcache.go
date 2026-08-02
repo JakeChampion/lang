@@ -173,13 +173,55 @@ func HashSelfHostSources(t *testing.T, dir, fernName string) string {
 // CachedLink's disk key). The emit is held in memory and handed straight
 // to the in-process assembler; a scratch `.s` is written (then removed)
 // only on the gcc fallback path and never reaches the disk cache.
+// CopySelfHostDriver copies each named driver AND its entire transitive
+// local-import closure from examples/self_host into dir — the staging step
+// before BuildSelfHostBin.
+//
+// It replaces the hand-written module list that used to sit in front of nearly
+// every self-host test. There were 457 copies of that list, each a duplicate of
+// some driver's import closure, and duplicating it had two costs that both came
+// due at once when wasm.fern was deleted (#3457): the deletion had to touch 468
+// files, and it still MISSED four tests, because a handful build their driver
+// from an inline Go string literal that names the module (`import "./wasm";`)
+// rather than the file, so no filename-based sweep could find them. Deriving the
+// closure from the driver's own imports makes both failure modes impossible: a
+// module that is no longer imported is no longer copied, with nothing to update.
+//
+// The closure is computed against the SOURCE tree, so it is the same walk
+// HashSelfHostSources keys the build cache on — the copied set and the cache key
+// cannot disagree about what a driver is made of.
+func CopySelfHostDriver(t *testing.T, dir string, entries ...string) {
+	t.Helper()
+	var names []string
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		for _, p := range SelfHostImportClosure(t, selfHostSrcDir, entry) {
+			base := filepath.Base(p)
+			if seen[base] {
+				continue
+			}
+			seen[base] = true
+			names = append(names, base)
+		}
+	}
+	CopySelfHostFiles(t, dir, names...)
+}
+
+// selfHostSrcDir is the one place the path from a test package to the self-host
+// sources is written down. Both test packages sit two levels under the repo
+// root, which is what makes the single relative path correct for both.
+const selfHostSrcDir = "../../examples/self_host"
+
 // CopySelfHostFiles copies the named examples/self_host sources into dir —
 // the staging step before BuildSelfHostBin for tests that hand-pick a driver's
 // import closure instead of copySelfHostTree'ing the whole directory.
+//
+// Prefer CopySelfHostDriver: it derives the list from the driver's imports, so
+// it cannot go stale when a module is added or removed.
 func CopySelfHostFiles(t *testing.T, dir string, names ...string) {
 	t.Helper()
 	for _, name := range names {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		src, err := os.ReadFile(filepath.Join(selfHostSrcDir, name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}

@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -29,15 +27,7 @@ func TestSelfHostTupleTags(t *testing.T) {
 		t.Skip("tuple_tags_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "lexer.fern", "astwalk.fern", "parser.fern", "asmcore.fern", "tuple_tags_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "tuple_tags_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "tuple_tags_run.fern", "tuple_tags_run")
 
 	// Golden — the exact split_tuple_ret / tuple_ret_tag_at tag mapping the former

@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"bytes"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -51,15 +50,7 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 	}
 
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "treeshake.fern", "asm_load_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	driverSrc := filepath.Join(dir, "asm_load_run.fern")
 
 	// Build mmc via the Go arm64 backend → aarch64 binary running

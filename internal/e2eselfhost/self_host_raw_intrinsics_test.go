@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -39,15 +37,7 @@ function main(): i32 {
 func TestSelfHostRawIntrinsicsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	for _, drv := range []string{"asm_run.fern", "asm_arm64_ir.fern", "asm_ir_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", drv))
-		if err != nil {
-			t.Fatalf("read %s: %v", drv, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, drv), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", drv, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "asm_run.fern", "asm_ir_run.fern")
 
 	cases := []struct {
 		name   string

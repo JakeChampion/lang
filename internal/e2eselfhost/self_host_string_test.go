@@ -61,15 +61,7 @@ func stringImportSource(mainBody string) []byte {
 func TestSelfHostStringX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"flatten.fern", "checker.fern", "treeshake.fern", "asm_load_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	mmc := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "mmc")
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
@@ -115,15 +107,7 @@ func TestSelfHostStringArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, _ := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"flatten.fern", "checker.fern", "treeshake.fern", "asm_load_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc")
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
