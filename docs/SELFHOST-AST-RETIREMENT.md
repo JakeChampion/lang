@@ -5058,15 +5058,38 @@ that always worked). Note what the controls buy — the AST emitter computes all
 these CORRECTLY, so a regression would be silent in the answer and visible only in
 the route, which is why every case asserts `-decide` as well as the exit code.
 
-**On the closure one still open, bisected:** it is not "closure returning a
-closure" — a FREE function returning a capturing closure lowers fine
-(`function make(base: i32): (i32) => i32 { return function(x) { return x + base; }; }`
-routes `ir`), and a receiver method returning a NON-capturing closure lowers too.
-The decline needs both halves: a receiver method AND a capture. Both corpus
-programs are that shape, one capturing `a.base` directly and one a local copy of
-it, so they are one gap and not two. Likely in `lift_lambdas` (a lifted lambda
-inside a method not getting its captures wired, the shape the nested-closure note
-in this doc already describes) rather than in the lowering proper.
+**On the closure one still open, bisected — and my first bisection of it was
+WRONG, which is worth recording because of how it went wrong.** I first compared a
+FREE function *returning* a capturing lambda (routes `ir`) against a receiver
+method *binding* one (routes `ast`) and concluded the decline "needs both a
+receiver method and a capture". Two variables changed between those probes —
+receiver-vs-free and return-vs-bind — and I attributed the difference to the wrong
+one. The receiver is irrelevant.
+
+Holding one variable at a time:
+
+| program | route |
+|---|---|
+| `main` itself binds and calls a capturing lambda | `ir` |
+| a function `use()` binds and calls one, and NOTHING CALLS `use` | `ir` |
+| …and `main` calls `use()` | **`ast`** |
+| a receiver method does it | `ast` — because it is not the entry, not because it is a method |
+| `return function(x) { … }` from a free function | `ir` (the returned-lambda desugar, #5266) |
+
+And `FERN_STRICT_IR=1` names the bailing function as **`main`**, not `use`. So the
+callee containing the closure lowers perfectly well; it is the CALL SITE that
+cannot handle calling a function that contains a lifted capturing closure. The
+arithmetic around the call is irrelevant (`return use();`, `return use() + 30;` and
+`var v = use();` all decline identically), and so is whether the closure's result
+is returned directly or via a local.
+
+That makes the gap considerably WIDER than the two corpus programs implied — it is
+any cross-function call into a closure-bearing function, not a receiver-method
+quirk — and it means the mode-0 count under-represents it, since the corpus only
+contains programs some test happens to feed a wasm driver. Re-sweep after fixing
+it. The likely area is still the lift (`lift_lambdas` / `closure_lift_one`) or the
+caller-side closure_fns registry, but the evidence now points at what the CALLER
+believes about the callee's signature rather than at the lambda's own captures.
 
 **The ~512-function budget is no longer a fallback — it is a WALL, and that is a
 live regression.** Its own comment says it caps IR routing "until the native
