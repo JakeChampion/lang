@@ -4944,6 +4944,37 @@ normalisation for BOTH the emitter and the `-decide` probe, so the probe cannot
 report a verdict for a module the emitter does not judge. Measured: `return 42;`
 goes 62,543 bytes (AST) → **2,236 bytes** (IR), and runs.
 
+### CLOSED — and the blocker was three small fixes, not a Perceus port
+
+The section below is kept because the DIAGNOSIS was right and is worth reading;
+its conclusion — "the spelling fix waits on the container-retain work (goal 2)" —
+was too pessimistic and is now wrong. Closing it took three contained changes:
+
+1. **The retain, at all three container constructors.** The array-literal and
+   Option-payload sites already had a construction-store alias-inc; both were gated
+   on ARRAY slots only, and the tuple constructor had none. A string or tuple local
+   stored into a container therefore kept rc 1. The three sites now share ONE
+   predicate, `slot_is_rc_container` (array | string | tuple), which is what stops
+   them drifting apart again.
+2. **The RC-runtime gate.** `rc_runtime_helpers` rides the heap gate, so a module
+   that ALLOCATES nothing an op reports — a scalar-capture closure — emitted a call
+   to `$__fern_rc_underflow_count` it never defined. Reading a counter now pulls the
+   runtime in. This was the whole of the 3 closure failures: `unknown func`, not an
+   RC-discipline difference at all.
+3. **The spelling fix itself**, unchanged from the diagnosis below.
+
+With all three, the full RC family is **219/219 green**, so ~140 programs move to
+the IR path with the corpus asserting the SAME answers it always did — no
+re-baselining, which is what made holding the fix back the right call at the time.
+
+Two measurements that bound the risk, since the retain reaches every backend: on
+the compiler's own sources the emit is **byte-identical** (`util.fern`,
+`lexer.fern` — the retain needs a bare-ident element at a container constructor,
+which the compiler's own code does not do); and on the escaping-tuple churn both
+emitters trap identically at 2M iterations under a 32 MB cap, so the retain costs
+no memory it was not already costing. `parser.fern` is too slow to interpret
+locally; the x86 / arm64 fixpoints are CI's.
+
 ### The RC-spelling fix is held back, and WHY is the more valuable finding
 
 Teaching irlower the runtime-symbol spellings is three lines and re-routes ~140

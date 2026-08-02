@@ -680,6 +680,14 @@ pub function module_allocates(cache: irlower.LowerResult[]): boolean {
             // Any allocating op needs the heap + RC runtime. ir.op_allocates is
             // the shared list (see ir.fern), identical to asm_ir's heap gate.
             if (ir.op_allocates(r.ops[i].kind_tag)) { return true; }
+            // The RC probes live in rc_runtime_helpers, which rides this same
+            // gate, so a program that only READS the counters still needs it:
+            // a scalar-capture closure allocates nothing an op reports, and its
+            // `__fern_rc_underflow_count()` then called a function the module
+            // never emitted ("unknown func $__fern_rc_underflow_count").
+            if (r.ops[i].kind_tag == 149 && (r.ops[i].str == "__fern_rc_underflow_get"
+                || r.ops[i].str == "__fern_rc_is_unique" || r.ops[i].str == "__fern_rc_inc"
+                || r.ops[i].str == "__fern_rc_dec")) { return true; }
             i = i + 1;
         }
         fi = fi + 1;
