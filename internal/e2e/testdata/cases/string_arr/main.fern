@@ -1,0 +1,4 @@
+function main(): i32 {
+    var xs: string[] = ["alpha", "beta", "gamma"];
+    return xs[0].len() + xs[1].len() + xs[2].len() + xs.len();
+}

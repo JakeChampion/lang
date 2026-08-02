@@ -1,0 +1,5 @@
+function main(): i32 {
+    var p: (string, i64) = ("hello", 1234567890123);
+    if (p.0 == "hello" && p.1 == 1234567890123) { return 0; }
+    return 1;
+}

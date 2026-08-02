@@ -1,0 +1,14 @@
+enum Msg {
+    Text(string),
+    Empty
+}
+function build(): Msg {
+    return Text("payload-string");
+}
+function main(): i32 {
+    match (build()) {
+        Text(s) => { return s.len(); },
+        Empty => { return 0; }
+    }
+    return -1;
+}

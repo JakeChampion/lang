@@ -1,0 +1,8 @@
+import "core/map";
+import "std/string";
+function main(): i32 {
+    var m: Map[string, string] = map_new(4);
+    m = m.insert("k1", "ab");
+    m = m.insert("k2", "abcde");
+    return (m.get_or("k2", "")).len();
+}

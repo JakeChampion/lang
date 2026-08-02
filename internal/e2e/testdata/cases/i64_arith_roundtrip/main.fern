@@ -1,0 +1,5 @@
+function main(): i32 {
+			var a: i64 = 1000000000000i64;
+			var b: i64 = a + 42i64;
+			return (b - 1000000000000i64) as i32;
+		}

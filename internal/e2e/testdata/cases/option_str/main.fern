@@ -1,0 +1,10 @@
+function get_msg(): Option[string] {
+    return Some("hi there");
+}
+function main(): i32 {
+    match (get_msg()) {
+        Some(s) => { return s.len(); },
+        None => { return 0; }
+    }
+    return -1;
+}

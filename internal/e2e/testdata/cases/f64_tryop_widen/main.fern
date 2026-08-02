@@ -1,0 +1,11 @@
+function process(): Option[f64] {
+    var v: f64 = Some(3.14)?;
+    return Some(v * 2.0);
+}
+function main(): i32 {
+    match (process()) {
+        Some(f) => { if (f > 6.0 && f < 7.0) { return 0; } return 1; },
+        None => { return 2; },
+    }
+    return 99;
+}

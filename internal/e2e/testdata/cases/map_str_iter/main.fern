@@ -1,0 +1,14 @@
+import "core/map";
+function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m = m.insert("a", 10);
+    m = m.insert("b", 20);
+    m = m.insert("c", 30);
+    var it: MapIter[string, i32] = m.iter();
+    var sum: i32 = 0;
+    while (it.has_next()) {
+        sum = sum + it.value();
+        it.advance();
+    }
+    return sum;
+}

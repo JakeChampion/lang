@@ -1,0 +1,6 @@
+struct Point { x: i32, y: i32 }
+function main(): i32 {
+    var a: Point = Point { x: 3, y: 4 };
+    var b: Point = Point { ...a, y: 10 };
+    return b.x + b.y;
+}

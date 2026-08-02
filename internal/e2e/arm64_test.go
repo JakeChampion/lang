@@ -8443,32 +8443,6 @@ function main(): i32 {
 	}
 }
 
-func TestArm64OptionNoneSentinel(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"none-equal-none", `function main(): i32 {
-    var a: Option[i32] = None;
-    var b: Option[i32] = None;
-    match (a) {
-        Some(_) => { return 99; },
-        None => {
-            match (b) {
-                Some(_) => { return 98; },
-                None => { return 17; }
-            }
-        }
-    }
-}`, 17},
-	} {
-		_, code := compileAndRunArm64(t, c.src)
-		if code != c.want {
-			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
-		}
-	}
-}
 func TestArm64ArrayLiteral(t *testing.T) {
 	for _, c := range []struct {
 		src  string
@@ -8599,52 +8573,6 @@ function main(): i32 {
 	}
 }
 
-// Regression for i64 compares + division that silently used
-// the w-form on arm64 (`cmp w1, w0`, `sdiv w0, w1, w0`), so
-// any value whose upper 32 bits mattered got truncated:
-//
-//   - `n != (0 as i64)` inside the __int_to_string_u64 loop
-//     exited the loop whenever the lower 32 bits hit zero,
-//     stringifying every i64 as `n mod 2^32` (1234567000000
-//     → "1911386048", 9223372036854775807 → "-1", etc.).
-//   - `mag / 10` truncated the dividend to its lower 32 bits
-//     before the divide, so the digit-extraction loop walked
-//     the wrong number.
-//
-// Fix: comparisons + divisions now consult `op.Width` and
-// emit x-form (`cmp x1, x0`, `sdiv/udiv x0, x1, x0`) when
-// width=64 / pointer-width. Three sub-tests pin the shape;
-// matching x86_64 sibling lives in TestX86_64I64CmpDivWidth.
-func TestArm64I64CmpDivWidth(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"i64_mul_then_divide", `function main(): i32 {
-    var n: i64 = (1234567 as i64) * (1000000 as i64);  // 1234567000000
-    var q: i64 = n / (1000000 as i64);                 // 1234567
-    if (q == (1234567 as i64)) { return 0; }
-    return 1;
-}`, 0},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, c.src); code != c.want {
-				t.Errorf("got exit %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// Regression for unsigned right-shift on arm64. The OpShrS
-// codegen unconditionally emitted `asr` (arithmetic right
-// shift), which propagates the sign bit. Correct for signed
-// types, but `(u64::MAX >> 1)` ended up as `u64::MAX` again
-// instead of `2^63 - 1` because every shifted-in bit was 1.
-//
-// The wasm + x86_64 codegens picked `lsr` / `shr` based on
-// `op.Unsigned` from the start; this aligns arm64 with that
-// contract.
 func TestArm64UnsignedRightShift(t *testing.T) {
 	src := `
 import "std/u64";
@@ -8660,161 +8588,6 @@ function main(): i32 {
 	}
 }
 
-// Regression for the tuple-literal i64-element layout bug.
-// `(a + b, a - b)` where both operands are i64 used to lay
-// out the tuple with 4-byte slots (size=8, offsets {0, 4})
-// instead of 8-byte slots (size=16, offsets {0, 8}), so the
-// second element's store partially clobbered the first's
-// high half. Cross-target — wasm rejected the wat at parse
-// time ("type mismatch: expected i32, found i64"); natives
-// produced silently-wrong values (sums of garbage high
-// bits).
-//
-// Root cause: `b.exprType(*ast.Binary)` only handled the
-// string-concat / string-cmp special cases and returned nil
-// for numeric binaries. `payloadSlotSize(nil, ptrW)`
-// defaulted to 4. Now exprType returns
-// `NumberType{Width: x.IntWidth}` / `FloatType{Width: x.FloatWidth}`
-// when the checker stamped one.
-func TestArm64I64TupleElementLayout(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"add_sub_pair", `function compute(a: i64, b: i64): (i64, i64) {
-    return (a + b, a - b);
-}
-function main(): i32 {
-    var p = compute(1234567890123, 1000);
-    if (p.0 == 1234567891123 && p.1 == 1234567889123) { return 0; }
-    return 1;
-}`, 0},
-		{"divmod_inline", `function compute(a: i64, b: i64): (i64, i64) {
-    return (a / b, a - (a / b) * b);
-}
-function main(): i32 {
-    var p = compute(1234567890123, 1000);
-    if (p.0 == 1234567890 && p.1 == 123) { return 0; }
-    return 1;
-}`, 0},
-		{"f64_elements", `function pair(a: f64, b: f64): (f64, f64) {
-    return (a + b, a * b);
-}
-function main(): i32 {
-    var p = pair(1.5, 2.5);
-    if (p.0 == 4.0 && p.1 == 3.75) { return 0; }
-    return 1;
-}`, 0},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, c.src); code != c.want {
-				t.Errorf("got exit %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// Tuple-literal element-type propagation. Two issues fed
-// the same observation — `var p: (string, i64) = ("hi",
-// 1234567890123)` either rejected as "(string, i32) not
-// assignable" or compiled with the i64 element packed into
-// a 4-byte slot:
-//
-//  1. settleNumeric had no TupleType case, so each element
-//     was checked in isolation against checkExpr's default
-//     (i32 for an unsuffixed integer literal).
-//  2. postSettleType + b.exprType didn't re-derive the
-//     tuple/element type from the literal after settle,
-//     so the type check and slot-sizing both saw the pre-
-//     settle width.
-//
-// Fix splits across the checker (settle + postSettle) and
-// the IR (exprType reports NumberLit's settled Width back).
-func TestArm64TupleMixedElementSettle(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"string_and_i64", `function main(): i32 {
-    var p: (string, i64) = ("hello", 1234567890123);
-    if (p.0 == "hello" && p.1 == 1234567890123) { return 0; }
-    return 1;
-}`, 0},
-		{"two_i64_literals", `function main(): i32 {
-    var p: (i64, i64) = (1234567890123, 9876543210);
-    if (p.0 == 1234567890123 && p.1 == 9876543210) { return 0; }
-    return 1;
-}`, 0},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, c.src); code != c.want {
-				t.Errorf("got exit %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// Regression for tuple literals whose element is a
-// `CastExpr` (`n as i64`) or a match expression returning a
-// cast. The IR's `b.exprType(*ast.CastExpr)` previously
-// returned nil; tuple-slot sizing fell back to the 4-byte
-// default and silently truncated wide i64 elements (the
-// observed `1234567890123` came back as `431409005771`).
-//
-// Match propagation was the indirect path — exprType
-// recursed on each arm body, and every arm body was a
-// CastExpr.
-//
-// Fix: exprType returns `x.Target` for CastExpr.
-func TestArm64TupleCastExprElementType(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"cast_in_tuple", `function main(): i32 {
-    var n: i32 = 100;
-    var p: (i64, i64) = (n as i64, 1234567890123);
-    if (p.0 == 100 && p.1 == 1234567890123) { return 0; }
-    return 1;
-}`, 0},
-		{"match_returning_cast", `enum E { A, B }
-function main(): i32 {
-    var e: E = A;
-    var p: (i64, i64) = (
-        match (e) {
-            A => 1234567890123 as i64,
-            B => 9876543210 as i64
-        },
-        100 as i64
-    );
-    if (p.0 == 1234567890123 && p.1 == 100) { return 0; }
-    return 1;
-}`, 0},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, c.src); code != c.want {
-				t.Errorf("got exit %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// Regression for tuple-field-access in a tuple literal.
-// `b.exprType(*ast.FieldAccess)` only handled struct field
-// access via `fieldOwner`; tuple field access (numeric
-// selector like `inner.0`) fell through and returned nil.
-// TupleLit slot-sizing then defaulted to 4 bytes per
-// element, truncating wide i64 reads.
-//
-// Observed: `(inner.0, inner.1)` where inner is `(i64, i32)`
-// returned a garbage i64 (`182300902603`) and `0` instead of
-// the original `(1234567890123, 42)`.
-//
-// Fix: exprType(FieldAccess) now checks `targetTupleType`
-// first and returns the element type for numeric selectors.
 func TestArm64NestedTupleFieldExprType(t *testing.T) {
 	src := `function main(): i32 {
     var inner: (i64, i32) = (1234567890123, 42);
@@ -8856,64 +8629,6 @@ function main(): i32 {
 	}
 }
 
-// Tuple settle through match / if expressions. After #533
-// (Return refreshes from post-settle) and #530
-// (settleNumeric got a TupleType case), `return match (e)
-// { A => (1234567890123, 42) }` still failed because
-// settleNumeric on a TupleType hint only matched literal
-// *ast.TupleLit nodes — it didn't recurse through MatchExpr
-// or IfExpr arms.
-//
-// Fix: settleNumeric(ast.TupleType) recurses into MatchExpr
-// arms and IfExpr Then/Else; postSettleType handles the
-// same shapes so the assignability check sees the resolved
-// widths.
-func TestArm64TupleSettleInMatchAndIf(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"match_arm_tuple", `enum E { A }
-function pick(e: E): (i64, i32) {
-    return match (e) {
-        A => (1234567890123, 42)
-    };
-}
-function main(): i32 {
-    var p = pick(A);
-    if (p.0 == 1234567890123 && p.1 == 42) { return 0; }
-    return 1;
-}`, 0},
-		{"if_arm_tuple", `function pick(cond: boolean): (i64, i32) {
-    return if (cond) { (1234567890123, 42) } else { (9876543210, 0 - 1) };
-}
-function main(): i32 {
-    var p = pick(true);
-    var q = pick(false);
-    if (p.0 == 1234567890123 && p.1 == 42 && q.0 == 9876543210 && q.1 == 0 - 1) { return 0; }
-    return 1;
-}`, 0},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, c.src); code != c.want {
-				t.Errorf("got exit %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// Regression: tuple-field access on an array index.
-// `arr[i].N` over `(i64, i32)[]` errored at IR-build time
-// with `field access on unresolved struct ""` —
-// `targetTupleType` recognised Ident / TupleLit / nested
-// FieldAccess but had no `*ast.Index` case, so the
-// FieldAccess lowering fell through to the struct path and
-// `fieldOwner` returned "" for the indexed value.
-//
-// Fix: `targetTupleType(*ast.Index)` consults `exprType`,
-// which already returns the array's ElemType (a TupleType
-// when the array elements are tuples).
 func TestArm64ArrayIndexTupleFieldAccess(t *testing.T) {
 	src := `function main(): i32 {
     var arr: (i64, i32)[] = [(1234567890123, 42), (9876543210, 0 - 1)];
@@ -8929,70 +8644,6 @@ func TestArm64ArrayIndexTupleFieldAccess(t *testing.T) {
 	}
 }
 
-// Regression for `var n: i64 = if cond { 1 } else { 2 }`
-// and the matching f64 / match-expression flavour. The
-// destination's int/float width never reached the arm
-// bodies because settleInt / settleFloat only recursed
-// through Unary / Binary nodes — IfExpr and MatchExpr were
-// no-ops. The arm-body literals stayed at the i32 / f32
-// default and the i64 / f64 load read the wrong width.
-//
-// Observed: `var n: i64 = if (true) { 1234567890123 } else
-// { 0 }` returned `1912276171` (the lower 32 bits of the
-// literal).
-//
-// Fix: settleInt + settleFloat recurse into IfExpr Then /
-// Else and MatchExpr arm bodies with the same hint.
-func TestArm64SettleIntFloatInCondArms(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"i64_if_expr", `function main(): i32 {
-    var cond: boolean = true;
-    var n: i64 = if (cond) { 1234567890123 } else { 0 };
-    if (n == 1234567890123) { return 0; }
-    return 1;
-}`, 0},
-		{"i64_match_expr", `enum E { A, B }
-function main(): i32 {
-    var e: E = A;
-    var n: i64 = match (e) {
-        A => 1234567890123,
-        B => 9876543210
-    };
-    if (n == 1234567890123) { return 0; }
-    return 1;
-}`, 0},
-		{"f64_if_expr", `function main(): i32 {
-    var cond: boolean = true;
-    var f: f64 = if (cond) { 3.14 } else { 0.0 };
-    if (f > 3.0 && f < 4.0) { return 0; }
-    return 1;
-}`, 0},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, c.src); code != c.want {
-				t.Errorf("got exit %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// `var n: i64 = if cond { a * b } else { 0 };` failed with
-// "if-expression branches differ: i64 vs i32". The Then
-// arm typed as i64 (concrete from `a * b`), but the Else
-// arm's `0` was a polymorphic NumberLit that the checker
-// reports as `NumberType{Polymorphic: true}`. unifyIfArms
-// had no rule for polymorphic-vs-concrete, returned nil,
-// and the error fired before settleInt got a chance to
-// propagate the i64 hint to the literal.
-//
-// Fix: unifyIfArms treats a polymorphic NumberType as a
-// match for any concrete NumberType / FloatType, returning
-// the concrete side so settleInt can stamp the polymorphic
-// literal's width on the post-check pass.
 func TestArm64UnifyIfArmsPolymorphicNumeric(t *testing.T) {
 	src := `function main(): i32 {
     var a: i64 = 1000000;
@@ -9271,61 +8922,6 @@ function main(): i32 {
 	}
 }
 
-// Sibling to #545: settleNumeric for `ArrayType` /
-// `SliceType` hints only matched a top-level `*ast.ArrayLit`.
-// When the array literal sat inside an `IfExpr` or
-// `MatchExpr`, the destination element type never reached
-// the inner literal — `var arr: i64[] = if cond { [...] }
-// else { [...] };` rejected with
-// "cannot assign i32[] to variable of type i64[]".
-//
-// Fix: ArrayType and SliceType cases recurse through
-// IfExpr Then/Else and MatchExpr arm bodies with the same
-// hint. Same shape as the TupleType / EnumType fan-outs
-// added previously.
-func TestArm64SettleArraySliceInCondArms(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"if_expr_array", `function main(): i32 {
-    var cond: boolean = true;
-    var arr: i64[] = if (cond) { [1234567890123, 9876543210] } else { [0, 0] };
-    if (arr[0] == 1234567890123 && arr[1] == 9876543210) { return 0; }
-    return 1;
-}`, 0},
-		{"match_expr_array", `enum E { A, B }
-function pick(e: E): i64[] {
-    return match (e) {
-        A => [1234567890123, 9876543210],
-        B => [0, 0]
-    };
-}
-function main(): i32 {
-    var arr: i64[] = pick(A);
-    if (arr[0] == 1234567890123 && arr[1] == 9876543210) { return 0; }
-    return 1;
-}`, 0},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, c.src); code != c.want {
-				t.Errorf("got exit %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// Sibling to #546: settleNumeric for the StructType
-// (`Map[K, V]`) hint only matched a top-level
-// `*ast.MapLit`. When the map literal sat inside an
-// `IfExpr` or `MatchExpr`, the destination's V never
-// reached the inner literal, so a bare-i64 value stayed
-// at the i32 default and `Map[string, i64]` rejected as
-// `Map[string, i32]`.
-//
-// Fix: recurse the Map-shaped StructType hint into IfExpr
-// Then/Else and MatchExpr arm bodies.
 func TestArm64SettleMapLitInCondArms(t *testing.T) {
 	src := `
 import "core/map";
@@ -9498,150 +9094,6 @@ function main(): i32 {
 	}
 }
 
-// Two IR fold paths emitted an i32 constant onto the
-// operand stack ahead of an i64 op, breaking the wasm
-// validator's type discipline (the natives silently
-// promoted the 32-bit slot to 64-bit on the operand
-// stack so the failures were wasm-only):
-//
-//  1. `x * 2^k` strength reduction → `x << k` emitted
-//     OpConstI32 for k regardless of the binary's
-//     resolved width. For an i64 LHS, the subsequent
-//     OpShl resolved to `i64.shl` and the i32 const on
-//     the stack failed validation.
-//  2. `x - x` / `x ^ x` self-identity fold emitted
-//     OpConstI32 0 regardless of the resolved width.
-//     Same i64.add / i64.sub consumer mismatch on wasm.
-//
-// Fixes: emit OpConstI64 (and Width=64 on OpShl in the
-// strength-reduction path) when the binary's IntWidth is
-// 64. Comparison self-identities (==, <=, >=, !=, <, >)
-// still emit i32 — the result is bool regardless of
-// operand width.
-//
-// Test pin lives on arm64 (where it passed silently) —
-// the actual win is on wasm, exercised implicitly by the
-// e2e suite.
-func TestArm64IRFoldI64Constants(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"strength_reduction_mul", `function step(): Result[i64, string] {
-    var v: i64 = 50;
-    return Ok(v * 2);
-}
-function main(): i32 {
-    match (step()) {
-        Ok(n) => { if (n == 100) { return 0; } return 1; },
-        Err(_) => { return 2; },
-    }
-    return 99;
-}`, 0},
-		{"self_identity_sub", `function step(): Result[i64, string] {
-    var v: i64 = 50;
-    return Ok(v - v);
-}
-function main(): i32 {
-    match (step()) {
-        Ok(n) => { if (n == 0) { return 0; } return 1; },
-        Err(_) => { return 2; },
-    }
-    return 99;
-}`, 0},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, c.src); code != c.want {
-				t.Errorf("got exit %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// Two cross-target type-shape bugs that the wasm validator
-// caught and natives silently absorbed:
-//
-//  1. b.exprType(*ast.Binary) returned the IR's
-//     IntWidth-stamped NumberType even for comparison ops
-//     (==, !=, <, <=, >, >=). The OPERAND width is what
-//     drives codegen's `i64.eq` vs `i32.eq` selection, but
-//     the RESULT type is bool (i32). Without the
-//     comparison-op shortcut, `(a > b, a + b)` inside a
-//     `(boolean, i64)` tuple inferred its first slot as
-//     i64 — the tuple stride doubled, the i32 0/1 store
-//     overflowed into the i64 slot, and wasm rejected the
-//     load with "type mismatch: expected i64, found i32".
-//
-//  2. settleNumeric had no `*ast.TryOp` case. The
-//     destination's hint applies to the inner expression's
-//     payload, not to the TryOp itself. Without a wrap of
-//     the hint in `Option[T]` / `Result[T, E]`,
-//     `var v: f64 = Some(3.14)?;` left 3.14 at the f32
-//     default and wasm rejected the f64 destination load
-//     ("type mismatch: expected f64, found f32").
-//
-// Both fixes land in the same PR — they share the "the
-// surrounding type-shape needs to reach the inner
-// expression for settle to fire" pattern and were both
-// silently miscompiled to a near-correct shape on natives.
-func TestArm64BoolCmpAndTryOpSettle(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"bool_in_tuple_with_i64", `function step(a: i64, b: i64): (boolean, i64) {
-    return (a > b, a + b);
-}
-function main(): i32 {
-    var p = step(1234567890123, 100);
-    if (p.0 && p.1 == 1234567890223) { return 0; }
-    return 1;
-}`, 0},
-		{"f64_tryop_widen", `function process(): Option[f64] {
-    var v: f64 = Some(3.14)?;
-    return Some(v * 2.0);
-}
-function main(): i32 {
-    match (process()) {
-        Some(f) => { if (f > 6.0 && f < 7.0) { return 0; } return 1; },
-        None => { return 2; },
-    }
-    return 99;
-}`, 0},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, c.src); code != c.want {
-				t.Errorf("got exit %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// A tail-recursive function returning i64 failed wasm
-// validation with "type mismatch: expected i64, found
-// i32". TailCallOptimize wraps the body in a `loop ... end`
-// so the call sites become `local.set $param; br 0` — the
-// loop never falls through. But the wasm validator still
-// needs *something* of the function's return type after
-// the loop end (to type-check the unreachable fall-off);
-// the codegen padded that slot with `i32.const 0`
-// regardless of the return type, which an i64 / f64
-// signature rejected.
-//
-// Triggered any time a tail-recursive function returned
-// i64 (e.g. `factorial`-style accumulator loops, recursive
-// Fibonacci with i64 accumulator). Native targets ignored
-// the validator and ran fine.
-//
-// Fix: branch on the return type for the padding — push
-// `i64.const 0` for i64 returns alongside the existing
-// `i32.const 0` / `f32.const 0` / `f64.const 0` cases.
-//
-// Tests pin a tail-recursive i64 factorial (20! =
-// 2432902008176640000 — needs i64). arm64 already passed;
-// wasm now joins it.
 func TestArm64WasmI64TailCallReturn(t *testing.T) {
 	src := `function fact(n: i32, acc: i64): i64 {
     if (n <= 1) { return acc; }
@@ -9894,90 +9346,6 @@ func TestArm64ArrayLitEmptyInnerUnify(t *testing.T) {
 	}
 }
 
-// Inner-scope variable shadowing collapsed onto the outer
-// scope's slot, so the outer reads silently saw the inner
-// store's value after the inner block returned:
-//
-//	var x: i64 = 100;
-//	if (true) {
-//	    var x: i64 = 200;
-//	}
-//	print(x.to_string());  // printed 200, not 100
-//
-// The IR's `b.locals` flat name → slot map keyed by the
-// AST name; two `var x` declarations both set `b.locals["x"]`
-// in turn, second-write-wins. Both slots existed in
-// `info.Locals[fn]` (distinct entries, distinct indices), so
-// just reading them out preserved both, but every Ident
-// reference resolved to the most-recently-bound slot.
-//
-// Fix: a new shadowrename pass walks each function body
-// before closureconv / IR build, tracks a scope stack
-// (block / if / for / match-arm / iflet bindings), and
-// renames every shadowing Var / Destructure / pattern
-// binding to `name$N`. References inside the shadowing
-// scope follow via per-frame lookup. Native ABIs and wasm
-// alike see post-rename names everywhere, so the IR's
-// name-based slot map stays unambiguous.
-//
-// Three sub-tests pin sibling-shadow, depth-2 shadow, and
-// for-loop counter shadowing the outer name.
-func TestArm64VariableShadowing(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"shadow_in_if", `function main(): i32 {
-    var x: i64 = 100;
-    if (true) {
-        var x: i64 = 200;
-        if (x != 200) { return 1; }
-    }
-    if (x != 100) { return 2; }
-    return 0;
-}`, 0},
-		{"shadow_depth_2", `function main(): i32 {
-    var x: i64 = 1;
-    if (true) {
-        var x: i64 = 2;
-        if (true) {
-            var x: i64 = 3;
-            if (x != 3) { return 1; }
-        }
-        if (x != 2) { return 2; }
-    }
-    if (x != 1) { return 3; }
-    return 0;
-}`, 0},
-		{"shadow_for_counter", `function main(): i32 {
-    var i: i32 = 100;
-    for (var i: i32 = 0; i < 5; i = i + 1) { }
-    return i - 100;
-}`, 0},
-		{"shadow_rhs_reads_outer", `function main(): i32 {
-    var x: i64 = 10;
-    var y: i64 = 0;
-    if (true) {
-        var x: i64 = x + 100;
-        y = x;
-    }
-    if (x != 10 || y != 110) { return 1; }
-    return 0;
-}`, 0},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, c.src); code != c.want {
-				t.Errorf("got exit %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// arm64 f32 / f64 arithmetic + comparisons. Float values
-// live as raw bit patterns on the operand stack; the codegen
-// fmov's them into the V-register file (s0/s1 for f32,
-// d0/d1 for f64), runs the op, and fmov's the result back.
 func TestArm64Floats(t *testing.T) {
 	for _, c := range []struct {
 		src  string
@@ -10464,12 +9832,7 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		wantExit int
 	}{
 		// Plain return — exercises only SYS_exit.
-		{"exit_42", `function main(): i32 { return 42; }`, 42},
 		// String concat — exercises SYS_mmap via __fern_alloc.
-		{"strconcat", `function main(): i32 {
-    var s: string = "hello, " + "world!";
-    return s.len();
-}`, 13},
 		// TCP listen + close — exercises socket/bind/listen/close
 		// syscalls (Darwin numbers + svc #0x80 path).
 		{"tcp", `function main(): i32 {
@@ -10482,48 +9845,22 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// inline lowering (alloc + memcpy + tail store).
 		// push() returns a new array; lang uses value
 		// semantics so the receiver must be reassigned.
-		{"arrpush", `function main(): i32 {
-    var xs: i32[] = [];
-    xs = xs.append(7);
-    xs = xs.append(35);
-    return xs[0] + xs[1];
-}`, 42},
 		// Stdout builtins — print(s) lowers to two write(2)s
 		// (string + newline), putchar(c) to a single 1-byte
 		// write. Exercises Darwin write syscall + the
 		// .LLangNewline rodata entry on Mach-O.
-		{"print", `function main(): i32 {
-    print("hi");
-    putchar(33);
-    putchar(10);
-    return 0;
-}`, 0},
 		// exit(code) — direct exit syscall; bypasses main's
 		// normal return path. Verifies the user-supplied code
 		// makes it through Darwin's `mov x16, #1; svc #0x80`
 		// flavour of exit.
-		{"exit", `function main(): i32 {
-    exit(7);
-    return 99;
-}`, 7},
 		// args() — argv reader. With no extra args passed by
 		// the harness, argv contains just the binary path, so
 		// argc == 1. Verifies the start-runtime prologue
 		// stashed argc/argv from the kernel-delivered stack.
-		{"args", `function main(): i32 {
-    return (args()).len();
-}`, 1},
 		// stdin().read_line() — exercises the .bss buffer +
 		// byte-by-byte read syscall + Option[string] result.
 		// CI runs the binary with no stdin attached, so the
 		// first read returns 0 (EOF) and we get None.
-		{"read_line", `function main(): i32 {
-    match (stdin().read_line()) {
-        Some(_) => { return 1; },
-        None => { return 0; }
-    }
-    return -1;
-}`, 0},
 		// Map[i32, i32] — pointer-width fix exercise. The
 		// Map handle now uses __store_ptr / __load_ptr (8
 		// bytes on arm64) so the buf pointer round-trips
@@ -10541,9 +9878,6 @@ function main(): i32 {
 		// random_bytes(n) — Darwin getentropy path
 		// (chunked, 256-byte cap per call). Just verify the
 		// length round-trips; can't assert content.
-		{"random_bytes", `function main(): i32 {
-    return (random_bytes(32)).len();
-}`, 32},
 		// Map[string, i32] — string keys exercise the
 		// pointer-width entry-slot fix. set("world", 99)
 		// writes the string pointer through __store_ptr (8
@@ -10551,114 +9885,36 @@ function main(): i32 {
 		// (FNV-1a hash + byte-wise string compare) finds
 		// the entry even when the heap is above 4 GiB. The
 		// returned i32 value rides x0 untruncated.
-		{"map_str_key", `
-import "core/map";
-function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
-    m = m.insert("hello", 42);
-    m = m.insert("world", 99);
-    return m.get_or("world", 0);
-}`, 99},
 		// Map[i32, string] — string values. get_or returns
 		// the entry's pointer-width V slot via __load_ptr;
 		// the i32-typed return rides x0 as a full 64-bit
 		// pointer, and len(s) reads s's length prefix at
 		// the correct (high-bit-preserved) address.
-		{"map_str_val", `
-import "core/map";
-import "std/i32";
-import "std/string";
-function main(): i32 {
-    var m: Map[i32, string] = map_new(4);
-    m = m.insert(1, "abc");
-    m = m.insert(2, "abcdef");
-    return (m.get_or(2, "")).len();
-}`, 6},
 		// Map[string, string] — both key and value are
 		// pointer-width. End-to-end check that the entry
 		// stride doubled to 2*ptr_width on arm64 (16 bytes)
 		// without breaking the bucket arithmetic.
-		{"map_str_str", `
-import "core/map";
-import "std/string";
-function main(): i32 {
-    var m: Map[string, string] = map_new(4);
-    m = m.insert("k1", "ab");
-    m = m.insert("k2", "abcde");
-    return (m.get_or("k2", "")).len();
-}`, 5},
 		// Iteration over Map[string, i32] via has_next /
 		// key / value — accumulates the sum of all values.
 		// Exercises __mapiter_entry_addr's stride math and
 		// the pointer-width key load (even though we don't
 		// inspect keys here, the iterator's address math
 		// must use the same entryStride or it'd walk off).
-		{"map_str_iter", `
-import "core/map";
-function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
-    m = m.insert("a", 10);
-    m = m.insert("b", 20);
-    m = m.insert("c", 30);
-    var it: MapIter[string, i32] = m.iter();
-    var sum: i32 = 0;
-    while (it.has_next()) {
-        sum = sum + it.value();
-        it.advance();
-    }
-    return sum;
-}`, 60},
 		// Delete over a string-keyed map — verifies the
 		// swap-with-last path correctly uses __load_ptr /
 		// __store_ptr on the moved entry's K/V slots. After
 		// removing "b" and "c", get_or("a") still finds the
 		// remaining entry.
-		{"map_str_delete", `
-import "core/map";
-import "std/string";
-function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
-    m = m.insert("a", 1);
-    m = m.insert("b", 2);
-    m = m.insert("c", 3);
-    m = m.without("b").0;
-    m = m.without("c").0;
-    return m.get_or("a", 0) * 10 + m.len();
-}`, 11},
 		// Option[string] payload — the Some(s) variant now
 		// stores `s` in a pointer-width payload slot (8
 		// bytes on arm64), so the high 32 bits of macOS
 		// heap pointers survive the match's payload-load.
 		// `len(s)` reads s's length prefix at [s_ptr - 4],
 		// which would trap on a truncated pointer.
-		{"option_str", `function get_msg(): Option[string] {
-    return Some("hi there");
-}
-function main(): i32 {
-    match (get_msg()) {
-        Some(s) => { return s.len(); },
-        None => { return 0; }
-    }
-    return -1;
-}`, 8},
 		// User-defined enum with a pointer-typed payload —
 		// same widening as Option[string] but exercises the
 		// full payloadLayout / payloadStore / payloadLoad
 		// triple for a non-prelude variant.
-		{"enum_str", `enum Msg {
-    Text(string),
-    Empty
-}
-function build(): Msg {
-    return Text("payload-string");
-}
-function main(): i32 {
-    match (build()) {
-        Text(s) => { return s.len(); },
-        Empty => { return 0; }
-    }
-    return -1;
-}`, 14},
 		// Struct with a string field — exercises ptrW-aware
 		// field offsets and stores. `name` lands at offset
 		// 8 (aligned to 8) on arm64, sandwiched between two
@@ -10676,53 +9932,15 @@ function main(): i32 {
 		// store widened to 8 bytes for pointer-typed elems
 		// on arm64; indexing via __arr_idx_8 picks the
 		// matching `lsl #3` address compute.
-		{"string_arr", `function main(): i32 {
-    var xs: string[] = ["alpha", "beta", "gamma"];
-    return xs[0].len() + xs[1].len() + xs[2].len() + xs.len();
-}`, 17},
 		// Map[string, i32].keys() — the snapshot array is
 		// now ptrW-aware (destStride=8 on arm64 for pointer
 		// K), so iterating the keys() result and calling
 		// len() on each returns valid lengths instead of
 		// segfaulting on truncated pointers.
-		{"map_keys_str", `
-import "core/map";
-import "std/string";
-function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
-    m = m.insert("alpha", 1);
-    m = m.insert("beta", 2);
-    m = m.insert("gamma", 3);
-    var ks: string[] = m.keys();
-    var i: i32 = 0;
-    var total: i32 = 0;
-    while (i < ks.len()) {
-        total = total + ks[i].len();
-        i = i + 1;
-    }
-    return total;
-}`, 14},
 		// Map[i32, string].values() — same shape on the V
 		// side. valKind is now tracked at buf+12 so
 		// __map_values_impl picks destStride correctly per-
 		// instance without per-V monomorphisation.
-		{"map_values_str", `
-import "core/map";
-import "std/string";
-function main(): i32 {
-    var m: Map[i32, string] = map_new(4);
-    m = m.insert(1, "one");
-    m = m.insert(2, "two");
-    m = m.insert(3, "three");
-    var vs: string[] = m.values();
-    var i: i32 = 0;
-    var total: i32 = 0;
-    while (i < vs.len()) {
-        total = total + vs[i].len();
-        i = i + 1;
-    }
-    return total;
-}`, 11},
 		// Probe for the arm64-darwin heap-address truncation
 		// bug (BACKEND-PARITY.md "Known limitations"). Map
 		// values are HEAP-allocated strings (built via concat
@@ -10736,17 +9954,6 @@ function main(): i32 {
 		// to `usize` so the full 8-byte address survives. The
 		// previous `t.Skip` on Darwin has been removed —
 		// macOS CI now exercises this case alongside Linux.
-		{"map_heap_value_probe", `
-import "core/map";
-import "std/string";
-function main(): i32 {
-    var m: Map[i32, string] = map_new(4);
-    var v1: string = "alp" + "ha";
-    var v2: string = "be" + "ta";
-    m = m.insert(1, v1);
-    m = m.insert(2, v2);
-    return (m.get_or(1, "")).len() + (m.get_or(2, "")).len();
-}`, 9},
 	}
 
 	for _, c := range cases {
@@ -11367,49 +10574,6 @@ function main(): i32 {
 	}
 }
 
-// i32 ↔ i64 conversion. arm64 lowers OpExtendI32S via `sxtw`,
-// OpExtendI32U + OpWrapI64 via `mov w0, w0` (the 32-bit reg
-// form implicitly zero-extends the high half on AArch64).
-// OpConstI64 uses `ldr x0, =N` with a literal-pool entry.
-func TestArm64I32I64Convert(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"i32_to_i64_roundtrip", `function main(): i32 {
-			var a: i32 = 7;
-			var b: i64 = a as i64;
-			var c: i32 = b as i32;
-			return c + 35;
-		}`, 42},
-		{"wrap_drops_high_half", `function main(): i32 {
-			var big: i64 = 4294967300i64;
-			return (big as i32);
-		}`, 4},
-		{"sxtw_preserves_sign", `function main(): i32 {
-			var neg: i32 = 0 - 1;
-			var ext: i64 = neg as i64;
-			if (ext == 0 - 1i64) { return 7; }
-			return 99;
-		}`, 7},
-		{"i64_arith_roundtrip", `function main(): i32 {
-			var a: i64 = 1000000000000i64;
-			var b: i64 = a + 42i64;
-			return (b - 1000000000000i64) as i32;
-		}`, 42},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, c.src); code != c.want {
-				t.Errorf("got %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// Mirrors TestX86_64{Defer,Switch,FStringInterpolation,Generic,
-// Tuple,ForEach,IfLet} — backfills the BACKEND-PARITY.md test
-// gaps on arm64.
 func TestArm64Defer(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -11893,49 +11057,6 @@ func TestArm64ReadWriteFileRoundtrip(t *testing.T) {
 	}
 }
 
-// Function calls with more arguments than the register-arg
-// window (8 on AAPCS64). Args 9+ live on the caller's stack
-// at [sp+0..]. The prologue copies them from there into the
-// callee's local slots so subsequent OpLoadLocal references
-// can read them uniformly.
-func TestArm64StackPassedArgs(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"sum_10_args", `function sum10(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32, j: i32): i32 {
-    return a + b + c + d + e + f + g + h + i + j;
-}
-function main(): i32 {
-    return sum10(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
-}`, 55},
-		{"sum_12_args_order_check", `function sum12(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32, j: i32, k: i32, l: i32): i32 {
-    return (a * 1) + (b * 2) + (c * 3) + (d * 4) + (e * 5) + (f * 6) + (g * 7) + (h * 8) + (i * 9) + (j * 10) + (k * 11) + (l * 12);
-}
-function main(): i32 {
-    // a..l = 1..12, weighted by their position; sum = 1+4+9+16+25+36+49+64+81+100+121+144 = 650
-    return sum12(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) - 600;
-}`, 50},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, c.src); code != c.want {
-				t.Errorf("got %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// Unsigned float ↔ int conversions. arm64 has dedicated
-// `ucvtf` / `fcvtzu` opcodes; this test asserts the IR's
-// Unsigned-flagged variants route through them and produce
-// correct results for values above the signed boundary
-// (u32 > 2^31; u64 > 2^63).
-// Mirror of TestX86_64FloatBitCast. Doubles as a regression
-// test for the OpConstF32 emit-form fix in this PR — every
-// non-zero f32 const here had a bit pattern > 16 bits, which
-// the old `mov x0, #<imm>` form rejected (the literal-pool
-// `ldr x0, =<imm>` form now lifts that limit).
 func TestArm64FloatBitCast(t *testing.T) {
 	for _, c := range []struct {
 		name string

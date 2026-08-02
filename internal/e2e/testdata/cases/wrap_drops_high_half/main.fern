@@ -1,0 +1,4 @@
+function main(): i32 {
+			var big: i64 = 4294967300i64;
+			return (big as i32);
+		}

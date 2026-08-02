@@ -1,0 +1,15 @@
+function main(): i32 {
+    var a: Option[i32] = None;
+    var b: Option[i32] = None;
+    // Both are sentinels — heap-pointer equality (cmp rdi, rsi)
+    // sees identical addresses, so a == b via match works.
+    match (a) {
+        Some(_) => { return 99; },
+        None => {
+            match (b) {
+                Some(_) => { return 98; },
+                None => { return 17; }
+            }
+        }
+    }
+}

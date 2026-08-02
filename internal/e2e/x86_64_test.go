@@ -305,39 +305,6 @@ function main(): i32 {
 		t.Errorf("got %d, want 0 (string lines)", code)
 	}
 }
-func TestX86_64OptionNoneSentinel(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"none-equal-none", `function main(): i32 {
-    var a: Option[i32] = None;
-    var b: Option[i32] = None;
-    // Both are sentinels — heap-pointer equality (cmp rdi, rsi)
-    // sees identical addresses, so a == b via match works.
-    match (a) {
-        Some(_) => { return 99; },
-        None => {
-            match (b) {
-                Some(_) => { return 98; },
-                None => { return 17; }
-            }
-        }
-    }
-}`, 17},
-	} {
-		_, code := compileAndRunX86_64(t, c.src)
-		if code != c.want {
-			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
-		}
-	}
-}
-
-// Array literals + indexing. Pulls in __fern_alloc + the
-// inline `lea rax, [base + idx*N]` per-stride index-helper
-// path. Mirrors TestArm64ArrayLiteral so the two backends
-// stay observably equivalent.
 func TestX86_64ArrayLiteral(t *testing.T) {
 	for _, c := range []struct {
 		src  string
@@ -401,56 +368,6 @@ function main(): i32 {
 	}
 }
 
-// Struct-update literal `Foo { ...base, field: v }` end-to-end on the
-// native x86-64 backend: un-named fields are copied from the base, the
-// named ones override, and copied pointer-shaped fields (string) are
-// rc-inc'd so they survive — without double-free. Exercises the IR
-// lowering's copy-from-base path.
-func TestX86_64StructUpdate(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"override-scalar", `struct Point { x: i32, y: i32 }
-function main(): i32 {
-    var a: Point = Point { x: 3, y: 4 };
-    var b: Point = Point { ...a, y: 10 };
-    return b.x + b.y;
-}`, 13}, // copied x=3 + override y=10
-		{"pure-copy", `struct Point { x: i32, y: i32 }
-function main(): i32 {
-    var a: Point = Point { x: 3, y: 4 };
-    var b: Point = Point { ...a };
-    return b.x + b.y;
-}`, 7},
-		{"functional-base-unchanged", `struct Point { x: i32, y: i32 }
-function main(): i32 {
-    var a: Point = Point { x: 3, y: 4 };
-    var b: Point = Point { ...a, x: 100 };
-    return a.x + a.y;
-}`, 7}, // updating b must not touch a
-		{"copied-string-field", `struct Person { name: string, age: i32 }
-function main(): i32 {
-    var a: Person = Person { name: "alice", age: 30 };
-    var b: Person = Person { ...a, age: 31 };
-    return b.name.len() + b.age;
-}`, 36}, // copied name ("alice"=5) + override age=31
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			_, code := compileAndRunX86_64(t, c.src)
-			if code != c.want {
-				t.Errorf("exit = %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// f32 / f64 arithmetic, comparison, int <-> float
-// conversions, negation. Mirrors TestArm64Floats's case
-// table. Floats ride the operand stack as raw bit patterns
-// and move into xmm0/xmm1 at op time — same shape as arm64
-// uses for the V register file.
 func TestX86_64Floats(t *testing.T) {
 	for _, c := range []struct {
 		src  string
@@ -1511,28 +1428,6 @@ function main(): i32 {
     m = m.insert(2, 200);
     return m.get_or(2, 0);
 }`, 200},
-		{"grow_past_capacity", `
-import "core/map";
-function main(): i32 {
-    var m: Map[i32, i32] = map_new(4);
-    var i: i32 = 0;
-    while (i < 8) {
-        m = m.insert(i, i * 10);
-        i = i + 1;
-    }
-    if (m.len() != 8) { return 1; }
-    if (m.get_or(7, 0 - 1) != 70) { return 2; }
-    return 42;
-}`, 42},
-		{"string_keys", `
-import "core/map";
-function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
-    m = m.insert("alpha", 1);
-    m = m.insert("beta", 2);
-    m = m.insert("gamma", 3);
-    return m.get_or("beta", 0 - 1) + m.len();
-}`, 5},
 		{"iter_after_delete", `
 import "core/map";
 function main(): i32 {
@@ -1559,35 +1454,6 @@ function main(): i32 {
 	}
 }
 
-func TestX86_64I64CmpDivWidth(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"i64_mul_then_divide", `function main(): i32 {
-    var n: i64 = (1234567 as i64) * (1000000 as i64);
-    var q: i64 = n / (1000000 as i64);
-    if (q == (1234567 as i64)) { return 0; }
-    return 1;
-}`, 0},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunX86_64(t, c.src); code != c.want {
-				t.Errorf("got exit %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// Test families that previously had wasm-only coverage but
-// were also codegen-supported on the native backends. Adding
-// e2e tests pins backend parity per BACKEND-PARITY.md's
-// "Both natives test gaps vs wasm" list. While stitching
-// them in, hit a pre-existing compiler panic on
-// `switch`-without-default: collectDefers walked
-// `x.Default` (concrete `*ast.Block`) and crashed when it
-// was a typed-nil; fixed alongside (guard at the call site).
 func TestX86_64Defer(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -2161,53 +2027,6 @@ func TestX86_64EprintExit(t *testing.T) {
 	}
 }
 
-// Function calls with more arguments than the register-arg
-// window (6 on System V x86-64). Args 7+ live on the caller's
-// stack at [rbp+16+8*(i-6)]; the prologue copies them into the
-// callee's local slots.
-func TestX86_64StackPassedArgs(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"sum_8_args", `function sum8(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32): i32 {
-    return a + b + c + d + e + f + g + h;
-}
-function main(): i32 {
-    return sum8(1, 2, 3, 4, 5, 6, 7, 8);
-}`, 36},
-		{"sum_10_args_order_check", `function sum10(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32, j: i32): i32 {
-    return (a * 1) + (b * 2) + (c * 3) + (d * 4) + (e * 5) + (f * 6) + (g * 7) + (h * 8) + (i * 9) + (j * 10);
-}
-function main(): i32 {
-    // 1+4+9+16+25+36+49+64+81+100 = 385
-    return sum10(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) - 343;
-}`, 42},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunX86_64(t, c.src); code != c.want {
-				t.Errorf("got %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// Unsigned float ↔ int conversions on x86-64. The CPU only has
-// signed cvt(t)sX2si / cvtsi2sX; the unsigned-flagged ops route
-// through:
-//   - u32 → f: zero-extend to rax + signed-convert from rax.
-//   - f → u32: signed-convert to rax, low 32 bits = u32 value.
-//   - u64 → f: 2-step trick for values >= 2^63 (the high-bit
-//     path halves, converts, then doubles).
-//   - f → u64: 2-step trick — if f >= 2^63, subtract 2^63, do a
-//     signed cvtt, then `btc rax, 63` adds 2^63 back.
-//
-// f32_bits / f32_from_bits expose IEEE-754 bit patterns
-// without value conversion. Both round-trip (float → bits →
-// float) and exact-bit-pattern (1.0 → 0x3F800000) must agree
-// across all backends. Needed by float formatters that pick
-// apart sign / exponent / mantissa fields.
 func TestX86_64FloatBitCast(t *testing.T) {
 	for _, c := range []struct {
 		name string

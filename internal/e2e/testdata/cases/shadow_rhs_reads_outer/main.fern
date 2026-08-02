@@ -1,0 +1,10 @@
+function main(): i32 {
+    var x: i64 = 10;
+    var y: i64 = 0;
+    if (true) {
+        var x: i64 = x + 100;
+        y = x;
+    }
+    if (x != 10 || y != 110) { return 1; }
+    return 0;
+}

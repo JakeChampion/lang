@@ -1,0 +1,8 @@
+import "core/map";
+function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m = m.insert("alpha", 1);
+    m = m.insert("beta", 2);
+    m = m.insert("gamma", 3);
+    return m.get_or("beta", 0 - 1) + m.len();
+}

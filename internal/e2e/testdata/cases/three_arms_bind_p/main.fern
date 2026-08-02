@@ -1,0 +1,11 @@
+struct P { x: i32, y: i32 }
+enum Shape { Rect(P) }
+function f(s: Shape): i32 {
+    match (s) {
+        Rect(p) when p.x > 10 => { return 1; },
+        Rect(p) when p.x > 5 => { return p.x * 2; },
+        Rect(p) => { return p.y; }
+    }
+    return 0;
+}
+function main(): i32 { return f(Rect(P { x: 7, y: 99 })); }

@@ -1,0 +1,11 @@
+struct P { x: i32, y: i32 }
+enum Shape { Dot, Rect(P) }
+function area(s: Shape): i32 {
+    match (s) {
+        Rect(p) when p.x > 0 => { return p.x * p.y; },
+        Rect(p) => { return p.y + 100; },
+        Dot => { return 1; }
+    }
+    return 0;
+}
+function main(): i32 { return area(Rect(P { x: 0, y: 5 })); }

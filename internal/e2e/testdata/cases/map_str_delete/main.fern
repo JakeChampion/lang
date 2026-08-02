@@ -1,0 +1,11 @@
+import "core/map";
+import "std/string";
+function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    m = m.insert("a", 1);
+    m = m.insert("b", 2);
+    m = m.insert("c", 3);
+    m = m.without("b").0;
+    m = m.without("c").0;
+    return m.get_or("a", 0) * 10 + m.len();
+}

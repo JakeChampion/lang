@@ -1,0 +1,5 @@
+function main(): i32 {
+    var i: i32 = 100;
+    for (var i: i32 = 0; i < 5; i = i + 1) { }
+    return i - 100;
+}

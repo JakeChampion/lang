@@ -1,0 +1,12 @@
+import "core/map";
+function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    var i: i32 = 0;
+    while (i < 8) {
+        m = m.insert(i, i * 10);
+        i = i + 1;
+    }
+    if (m.len() != 8) { return 1; }
+    if (m.get_or(7, 0 - 1) != 70) { return 2; }
+    return 42;
+}

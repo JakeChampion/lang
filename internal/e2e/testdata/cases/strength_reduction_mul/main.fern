@@ -1,0 +1,11 @@
+function step(): Result[i64, string] {
+    var v: i64 = 50;
+    return Ok(v * 2);
+}
+function main(): i32 {
+    match (step()) {
+        Ok(n) => { if (n == 100) { return 0; } return 1; },
+        Err(_) => { return 2; },
+    }
+    return 99;
+}

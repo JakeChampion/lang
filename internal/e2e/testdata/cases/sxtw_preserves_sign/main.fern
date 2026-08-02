@@ -1,0 +1,6 @@
+function main(): i32 {
+			var neg: i32 = 0 - 1;
+			var ext: i64 = neg as i64;
+			if (ext == 0 - 1i64) { return 7; }
+			return 99;
+		}
