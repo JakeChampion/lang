@@ -1,0 +1,4 @@
+function main(): i32 {
+    var s: str = "abcdefghij"[0:5]; // inline "abcde"
+    return s[0] as i32;
+}

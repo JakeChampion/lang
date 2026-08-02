@@ -1,0 +1,5 @@
+struct Box { s: string }
+function main(): i32 {
+    var b: Box = Box { s: "abcdefgh"[0:5] + "" }; // inline "abcde"
+    return b.s.len();
+}

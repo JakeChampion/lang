@@ -1,0 +1,6 @@
+import "core/int";
+function main(): i32 {
+    var s: str = "abcdefgh"[0:5]; // inline "abcde"
+    print(s);
+    return s.len();
+}

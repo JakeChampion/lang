@@ -1,0 +1,9 @@
+function main(): i32 {
+    var bs: u8[] = __alloc_u8(3);
+    bs = bs.with(0, 65 as u8); // 'A'
+    bs = bs.with(1, 66 as u8); // 'B'
+    bs = bs.with(2, 67 as u8); // 'C'
+    var s: string = string_from_bytes_unchecked(bs);
+    if (s == "ABC") { return 1; }
+    return 0;
+}

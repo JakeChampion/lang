@@ -1,0 +1,5 @@
+function main(): i32 {
+    var a: str = "abcdef"[0:5];  // inline "abcde"
+    var b: string = "fghij";         // heap, 5 chars
+    return (a + b).len();
+}
