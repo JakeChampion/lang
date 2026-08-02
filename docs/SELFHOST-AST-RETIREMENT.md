@@ -4892,6 +4892,113 @@ PATH="$HOME/.fern-wasm:$HOME/.wasmtime/bin:$PATH" FERN_SELFHOST_INTERP=1 \
    struct-element array field — are pinned on both halves by
    `TestSelfHostArrayFieldSetIR{Wasm,X86_64}`; the expected exit codes are stated
    rather than derived, since these programs have no interpreter oracle.
+### The mode-0 decline set, ENUMERATED (and it was mostly a name)
+
+The doc above records three failed attempts at this enumeration: grepping Go test
+literals (artifacts + programs belonging to other drivers), rerouting to see what
+breaks (a wide outage), and hand-probing (finds only what you think to type).
+Attribution is not greppable — so capture it where it is unambiguous, at the
+harness boundary.
+
+`FERN_DUMP_PROGRAMS=<dir>` makes the interpret-the-driver shim record each
+program fed to a driver, named by the DRIVER it went to, and exit without
+compiling. One run of the wasm test families harvested **5,026 programs** in
+minutes: 2,534 `wasm_ir_run`, 1,035 `wasm_run`, 51 `wasm_runio_run`, 5
+`wasm_modload_run` (plus the asm drivers, which the same sweep separates out for
+free). Every one is a program a real test really feeds to that driver — no
+artifacts, no misattribution.
+
+Deduped, the mode-0 corpus is **1,024 distinct programs**. Swept through
+`wasm_run -decide` against a pristine `origin/main` worktree:
+
+| verdict | count | meaning |
+|---|---|---|
+| `ir` | 743 | already lowers |
+| `ast` | 169 | **the work list** |
+| ERR | 86 | the driver rejects it outright — invalid or deliberately-error programs, unchanged by a reroute |
+
+**Two thirds of the `ast` set was a NAME, not a construct.** The RC test corpus
+calls `__fern_rc_underflow_count()` / `__fern_rc_dec()` / `__fern_arr_dec()` /
+`__fern_rc_inc()` — the runtime symbols' own names, which the AST emitters accept
+because the helpers they emit happen to be called that (`wasm.fern`'s
+`module_calls` gate). irlower knew only the short spellings `__rc_underflow` /
+`__rc_dec`. ~140 uses across 15 self-host RC test files therefore routed AST for a
+spelling. Neither form is natively valid (E001), so these are self-host dialect
+programs either way; accepting both is what lets the AST emitter retire without
+rewriting the corpus.
+
+One subtlety worth keeping: `__fern_arr_dec` must NOT be emitted verbatim. The
+IR's canonical array release is `__fern_rc_dec`, which `ir_helper_symbol` maps to
+`__fn___fern_arr_dec` — so `__fern_arr_dec` is a SYMBOL name, not an IR callee
+name, and a `call_direct` naming it fails `calls_only_known` (which admits only
+`is_fern_helper` names). All three spellings lower to the one helper.
+
+The other systematic decline was **script-shaped modules** (top-level statements,
+no `main` — `return 42;` is the smallest). `asmcore.synth_script_main` has
+desugared these in the shared frontend since #3457 and the asm side routes them
+through the IR path on that basis (`asm_ir.script_normalized`); the wasm route
+simply never called it, so scripts went to the AST emitter — which inlines the
+statements into `_start` itself, exactly the behaviour that made script support a
+reason `wasm.fern` could not retire. `wasm_ir.route_normalized` now does the
+normalisation for BOTH the emitter and the `-decide` probe, so the probe cannot
+report a verdict for a module the emitter does not judge. Measured: `return 42;`
+goes 62,543 bytes (AST) → **2,236 bytes** (IR), and runs.
+
+### The RC-spelling fix is held back, and WHY is the more valuable finding
+
+Teaching irlower the runtime-symbol spellings is three lines and re-routes ~140
+programs from AST to IR. Doing it turns **4 RC tests red**, and the reason is not
+the spelling:
+
+```
+tuple-elem-retained:        wasm exited 4, want 3
+string-array-elem-retained: wasm exited 3, want 2
+string-option-retained:     wasm exited 5, want 4
+tuple-in-tuple-retained:    wasm exited 7, want 6
+clos-box-freed / clos-multi / clos-scalar-churn: exited 1, want 42
+```
+
+Every one is off by exactly the `__fern_rc_is_unique` observation. The IR path
+treats a store into a tuple / array element / option payload / closure capture as
+a MOVE — no retain — where the AST emitter retains. Confirmed independently of the
+spelling fix, on `origin/main`, with a program that already routes `ir` because it
+does not mention the underflow counter:
+
+```fern
+function main(): i32 { var xs: i32[] = [1, 2, 3]; var t = (xs, 99);
+                       return __fern_rc_is_unique(xs) + t.0[2]; }
+```
+
+IR path answers **4** (unique), AST path **3** (not unique). The underflow detector
+stays at 0 on both, so the IR path is self-consistent — it does not release
+container elements either, so this is leak-not-UAF — but it is a WEAKER discipline
+than the one the tests assert, and than the struct-literal path's own
+`fav_alias_inc` already implements for the same store.
+
+So the real finding is about coverage, not spelling: **~15 self-host RC test files
+have been exercising the AST emitter's RC discipline and not the IR path's**, kept
+there by a builtin name. The spelling gap was hiding a Perceus gap. Closing the
+name without closing the discipline would mean re-baselining those tests to a
+weaker guarantee, which is the wrong direction — so the spelling fix waits on the
+container-retain work (goal 2), and this is now a NAMED blocker for the mode-0
+reroute rather than an unexamined one.
+
+**Result once both fixes land: 169 decliners → 9.** Re-swept over the same corpus
+with both applied (the script fix alone is what ships here):
+
+| what remains | count | note |
+|---|---|---|
+| the ~512-function merged-bundle budget | 2 | 521 functions each — the documented deliberate decline |
+| closure returning a closure (`function (a: Adder) make(): (i32) => i32`) | 2 | capturing a struct field, and a local copy of one |
+| module-level `const BIG: i64` | 2 | `BIG + 1`, `BIG % 97` |
+| `i32[][][]` with nested `for` | 1 | triple-nested array |
+| `Option` alias + match (`var u = o; match (u)`) | 1 | |
+| `Map` with STRUCT values (`map_new_i32` + `P` value) | 1 | |
+
+Five constructs and one deliberate budget case. That is the whole remaining mode-0
+gap, individually named — which is what step 4 (the IR-or-error reroute) has been
+waiting for.
+
 4. Reroute the drivers IR-or-error — only once 2 and 3 leave the decline set
    empty. Rerouting first was the mistake this section records: on the asm side
    the reroute WAS the enumeration tool because the subset was already mature; on

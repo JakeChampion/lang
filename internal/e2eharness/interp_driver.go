@@ -3,6 +3,7 @@ package e2eharness
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -47,13 +48,34 @@ func InterpDriverMode() bool {
 	return v != "" && v != "0"
 }
 
+// Program harvesting (FERN_DUMP_PROGRAMS=<dir>), layered on the same shim.
+//
+// "Which programs actually reach the wasm emitter?" had no answer, and three
+// attempts to guess one all failed: grepping Go test literals mixes in comment
+// text and programs belonging to a DIFFERENT driver (self_host_x86_gas_test.go
+// names wasm_run.fern while its programs are x86), rerouting to see what breaks
+// turns a wide gap into a wide outage, and hand-probing finds only what you think
+// to type. Attribution is not greppable — so capture it where it is unambiguous.
+//
+// With the dir set, the shim records each program on stdin under the name of the
+// DRIVER it was fed to, and exits 0 without compiling. Tests fail (they get no
+// output), which is fine: this is a harvesting run, not a test run. One pass over
+// the wasm test families yields the exact corpus, per driver, in minutes — 5,026
+// programs when this was written. Feed those to `wasm_run -decide` and the decline
+// set is measured rather than estimated.
+
 // writeInterpDriverShim writes an executable shim at dir/out that interprets the
 // driver source dir/fernName, and returns its path.
 func writeInterpDriverShim(t *testing.T, dir, fernName, out string) string {
 	t.Helper()
 	fern := BuildLangBinForInterp(t)
 	path := filepath.Join(dir, out)
-	script := "#!/bin/sh\nexec " + fern + " -interp " + filepath.Join(dir, fernName) + " -- \"$@\"\n"
+	script := "#!/bin/sh\n" +
+		"if [ -n \"$FERN_DUMP_PROGRAMS\" ]; then\n" +
+		"  f=$(mktemp \"$FERN_DUMP_PROGRAMS/" + strings.TrimSuffix(fernName, ".fern") + ".XXXXXX\")\n" +
+		"  cat > \"$f.fern\"; rm -f \"$f\"; exit 0\n" +
+		"fi\n" +
+		"exec " + fern + " -interp " + filepath.Join(dir, fernName) + " -- \"$@\"\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write interp driver shim: %v", err)
 	}

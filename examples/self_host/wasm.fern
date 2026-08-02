@@ -7565,7 +7565,7 @@ function emit_module_mode(mod: parser.Module, component: boolean, io: boolean, f
     // component_needs_ok is the one gate that decides, admitting the
     // filesystem / env / args / random / clock ops whose *_p2 helper bodies
     // define the same $__fern_* functions the IR already calls.
-    var lm: parser.Module = wasm_ir.lift_lambdas(mod);
+    var lm: parser.Module = wasm_ir.route_normalized(mod);
     // Lower every function ONCE into `ir_cache` and thread it through the whole
     // IR emit path (the gate deferral checks + all the module_uses_* / str_values
     // / fn_value_table collect passes below), instead of re-lowering the module
