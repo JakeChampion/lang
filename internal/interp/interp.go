@@ -3770,8 +3770,22 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 	defers := i.deferStack[len(i.deferStack)-1]
 	i.deferStack = i.deferStack[:len(i.deferStack)-1]
 	if err != nil {
-		_, early := err.(*tryOpEarlyReturn)
-		i.runDefers(defers, e, early)
+		// A closure is a function boundary, so a `?` unwind stops HERE and
+		// becomes this closure's return value — exactly as callFunc does it.
+		// This used to only consult the sentinel to decide whether errdefers
+		// fire and then re-raise it, so a `None` / `Err` unwound past the
+		// lambda and out of the whole program: `function (o: Option[i32]):
+		// Option[i32] { var v: i32 = o?; return Some(v + 1); }` applied to
+		// None terminated the interpreter with exit 0 instead of answering
+		// None. The compiled backends were right; only this engine was wrong,
+		// which matters double because it is the differential ORACLE the
+		// cross-validation suite grades the self-host engines against
+		// (docs/NATIVE-CONVERGENCE.md §3).
+		if early, ok := err.(*tryOpEarlyReturn); ok {
+			i.runDefers(defers, e, true)
+			return early.val, nil
+		}
+		i.runDefers(defers, e, false)
 		return nil, err
 	}
 	i.runDefers(defers, e, r.flow == flowReturn && isErrReturnValue(r.val))

@@ -543,6 +543,14 @@ function main(): i32 {
                 if (bv.v) { return 1; }
                 return 0;
             },
+            // The interpreter's bottom carries WHY it stopped. Printing it is
+            // the difference between "exit 254" and a usable report: #5990 was
+            // filed against a silent 254 whose cause (an unimplemented
+            // construct) the message already named.
+            interp.VErr(ev) => {
+                eprint("fern: interp: " + ev.msg + "\n");
+                return 254;
+            },
             _ => { return 254; },
         }
         return 254;
