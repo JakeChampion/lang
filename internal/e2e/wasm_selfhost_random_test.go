@@ -15,7 +15,7 @@ import (
 //
 // The bug it guards: the IR wasm backend lowered random_bytes/random_i32 to
 // `call $__fern_random_bytes` / `$__fern_random_i32` and the `random_get` wasi
-// import, but wasm.fern's IR runtime section never emitted those helper
+// import, but the IR runtime section never emitted those helper
 // definitions or the import, so any program drawing randomness produced an
 // invalid module (undefined function / import → wasmtime exits 1). Fixed by
 // gating random_get_import / random_bytes_ir_func / random_i32_func on the
@@ -27,7 +27,7 @@ func TestWasmSelfHostRandom(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

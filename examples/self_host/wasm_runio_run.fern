@@ -1,6 +1,6 @@
 // examples/self_host/wasm_runio_run.fern — stdin-driven driver for the
 // self-hosted wasm emitter's run_io wrapper. Reads Fern source from
-// stdin, runs it through lexer + parser + wasm.emit_module_run_io, and
+// stdin, runs it through lexer + parser + wasm_ir.emit_module_mode_or_error, and
 // prints the resulting WASI core module (WAT text, wrapped for the
 // full-io component path) to stdout. Companion to wasm_run.fern (the
 // plain emit_module driver): same front end, io-wrapped emit.
@@ -15,7 +15,6 @@
 import "std/io";
 import "./lexer";
 import "./parser";
-import "./wasm";
 import "./wasm_ir";
 
 function main(): i32 {
@@ -48,6 +47,6 @@ function main(): i32 {
     // slice, gated on the mode-0 decline set being empty (see
     // docs/SELFHOST-AST-RETIREMENT.md). The blocker THIS slice removes is the
     // extern/export one — component mode no longer refuses such modules.
-    write(wasm.emit_module_run_io(mwb));
+    write(wasm_ir.emit_module_mode_or_error(mwb, true, true));
     return 0;
 }

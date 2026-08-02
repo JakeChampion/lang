@@ -17,7 +17,7 @@ import (
 // handled only the AST emitter's FOLDED S-expressions). The new enc_flat_body
 // path encodes a linear instruction-atom sequence directly (the natural shape
 // of the wasm binary format), dispatched per-function by body shape — so a
-// program mixing flat user functions with wasm.fern's folded heap/RC helpers
+// program mixing flat user functions with the emitter's folded heap/RC helpers
 // (array programs) assembles correctly too.
 //
 // Pipeline per case: wasm_ir_run -ir emits flat WAT -> the watbin driver
@@ -32,7 +32,7 @@ func TestSelfHostWatbinFlat(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
-		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern",
 		"watbin.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
@@ -93,7 +93,7 @@ function main(): i32 {
 		{"if-else", "function main(): i32 { var x = 0; if (2 < 1) { x = 3; } else { x = 9; } return x; }", 9},
 		{"factorial", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120},
 		{"fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21},
-		// Array program: flat user functions + wasm.fern's folded heap/RC
+		// Array program: flat user functions + the emitter's folded heap/RC
 		// helpers in the SAME module — exercises the per-function dispatch.
 		{"arr-index", "function main(): i32 { var a = [10, 20, 30]; return a[0] + a[2]; }", 40},
 		{"arr-loop-sum", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }", 75},

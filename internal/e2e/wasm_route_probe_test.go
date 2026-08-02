@@ -34,7 +34,7 @@ func TestWasmRouteProbe(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -152,16 +152,41 @@ func TestWasmRouteProbe(t *testing.T) {
 		})
 	}
 
-	// The still-declined fold shape must EMIT (the probe changed routing
-	// reporting, not routing). Its ANSWER is deliberately not asserted: it is
-	// still miscompiled (1, not 42), and pinning that would pin a bug. Retiring
-	// wasm.fern turns it into a hard error, which is the improvement available
-	// before that shape lowers.
-	t.Run("ast-route-emits", func(t *testing.T) {
-		if wat := runCapture(t, gcc, runner, driverBin, []byte(foldShape)); len(wat) == 0 {
-			t.Fatal("wasm emitter produced 0 bytes for the ast-routed program")
+	// The still-declined fold shape is now a hard ERROR, which is what retiring
+	// wasm.fern bought here. It used to EMIT, via the AST fallback, and its
+	// answer was deliberately left unasserted because that emit was WRONG (1,
+	// not 42) — pinning it would have pinned a bug. A refusal is strictly better
+	// than a silent wrong answer, and it is the improvement available before the
+	// shape lowers.
+	t.Run("declined-route-refuses", func(t *testing.T) {
+		// Not runCapture: that helper fatals on a non-zero exit, and a non-zero
+		// exit is exactly the contract here.
+		wat, stderr, code := runDeclined(t, runner, driverBin, []byte(foldShape))
+		if code == 0 || len(wat) != 0 {
+			t.Fatalf("driver exited %d with %d bytes, want a refusal — the AST fallback is back, and on this shape it miscompiles", code, len(wat))
+		}
+		if !strings.Contains(stderr, "not IR-eligible") {
+			t.Errorf("refusal did not say the module is ineligible:\n%s", stderr)
 		}
 	})
+}
+
+// runDeclined runs the driver expecting it to REFUSE, returning stdout, stderr
+// and the exit code rather than fataling on a non-zero exit.
+func runDeclined(t *testing.T, runner []string, bin string, stdin []byte) ([]byte, string, int) {
+	t.Helper()
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(bin)
+	} else {
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+	}
+	cmd.Stdin = bytes.NewReader(stdin)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	_ = cmd.Run()
+	return stdout.Bytes(), stderr.String(), cmd.ProcessState.ExitCode()
 }
 
 // runCaptureArgs is runCapture with extra argv for the driver — the probe needs

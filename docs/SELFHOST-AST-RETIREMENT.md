@@ -5204,21 +5204,55 @@ looks like coverage of the IR path and is not — so it will turn into a hard er
 at the reroute rather than a test failure before it. `map_new_i32` is self-host
 dialect (E001 natively), so there is no interpreter oracle for it either.
 
-4. **DONE for mode 0 AND component mode** — the decline set is empty of
-   CONSTRUCTS. Component mode's corpus is 50/50 `ir`; mode 0's two remaining
+4. **DONE.** The decline set is empty of CONSTRUCTS. Component mode's corpus is 50/50 `ir`; mode 0's two remaining
    decliners are both the 512-function budget. Rerouting BEFORE this was the
    mistake this section records: on the asm side the reroute WAS the enumeration
    tool because the subset was already mature; on wasm it just turned a wide gap
    into a wide outage.
-5. **Steps 4 and 5 are ONE commit, together with #5980's budget removal** (see the
-   structural point above — landing them separately means writing code to preserve
-   a path the next commit deletes). That commit:
-   - removes both budget gates (`eligible_core_known_impl`,
-     `emit_module_ir_gated`) and un-gates / CI-wires `TestSelfHostConstFuncGen2`,
-     which is the guard for the two-generation miscompile hazard the removal
-     creates;
-   - reroutes `wasm_run` / `wasm_runio_run` / `fern.fern` IR-or-error;
-   - moves the residual pure helpers (`component_shape` + `module_calls` /
-     `stmts_call` / `expr_calls`, ~95 lines, plus the four type-spelling helpers
-     the three probe drivers use);
-   - deletes `wasm.fern` and the four tests whose subject it is.
+5. **DONE — `wasm.fern` is deleted, and steps 4, 5 and #5980's budget removal
+   landed as ONE commit** (see the structural point above: landing them
+   separately means writing code to preserve a path the next commit deletes).
+   What that commit did:
+   - removed both budget gates (`eligible_core_known_impl`,
+     `emit_module_ir_gated`) and CI-wired `TestSelfHostConstFuncGen2` via a
+     `gen2` job, so the two-generation miscompile hazard the removal creates is
+     guarded by the change that creates it. The test no longer patches the
+     budget out of a temp-dir copy — it exercises the shipped configuration;
+   - added `wasm_ir.emit_module_mode_or_error`, the wasm sibling of
+     `asm_ir.emit_module_or_error`, and pointed `wasm_run` / `wasm_runio_run` /
+     `wasm_ir_run` / `fern.fern` at it. `fs` is gone from the signature: it never
+     selected an EMITTER, only the component wrapper the caller builds;
+   - moved the six residual pure helpers into `wasm_ir.fern`
+     (`parse_option_payload`, `parse_result_err_payload`, `component_shape` and
+     its private `module_calls` / `stmts_call` / `expr_calls`). The doc's older
+     estimate also listed `nth_tuple_type_elem` and
+     `extern_sum_param_supported` — those had already moved, and the three probe
+     drivers import only `wasm_ir`;
+   - deleted `wasm.fern` (7,933 lines) and removed it from the source-copy list
+     of 457 test files.
+
+   **On the four tests that blocked #5980, three did NOT simply get deleted.**
+   "Delete the tests whose subject it is" was the plan, and it was too blunt:
+   - `TestSelfHostWasmAstPathIoErrorTypeIds` — deleted. Its entire subject was
+     "the ONE place the legacy AST wasm emitter reaches into `wasm_ir`".
+   - `TestSelfHostWasmIoErrorVariantLayout` — TRIMMED, not deleted. Two of its
+     four cases were AST-layout cases; the other two pin the IR box geometry
+     (field i at `8*(1+i)`), which the boxer still writes by hand.
+   - `TestSelfHostStrictIRRefusesBail` — RE-POINTED. Its subject (does the flag
+     name the bail site?) survives; only its fixture died. It now bails on a
+     FOUR-deep array iteration, which is better than the budget it replaces: the
+     budget was a whole-MODULE gate, this is a genuine per-function `lower_func`
+     bail, which is what the flag exists to name. `arrarr_elem` models one level
+     of array-of-array element and no more (#5979), deliberately.
+   - `TestSelfHostTreeshakeStdlibIR` — its `heavy` case INVERTED. It asserted
+     unpruned → `ast` and, after slice 5, unpruned → refusal. Both route `ir`
+     now, which restores the original contract that treeshake changes the path,
+     not behaviour: the prune is a size / compile-time optimisation again rather
+     than the thing that makes a stdlib-heavy program compilable.
+
+   One more assertion flipped for the same reason, outside those four:
+   `wasm_route_probe_test.go`'s `ast-route-emits` became `declined-route-refuses`.
+   Its own comment had predicted this — the erased-wide fold shape emitted a
+   WRONG answer (1, not 42) through the AST fallback, and the case deliberately
+   did not assert that answer. A refusal is strictly better than a silent wrong
+   answer.

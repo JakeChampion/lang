@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostWasmOptionPayload pins the wasm backend's Option/Result payload
-// extractors (examples/self_host/wasm.fern's parse_option_payload /
+// extractors (examples/self_host/wasm_ir.fern's parse_option_payload /
 // parse_result_err_payload — SH-021, docs/SELF-HOST-AUDIT.md T2). Both now decode
 // an Option[T] / Result[T, E] spelling via the structured TypeRef
 // (parser.parse_type_ref) instead of the magic-byte `Option[` / `Result[` prefix +
@@ -31,8 +31,7 @@ func TestSelfHostWasmOptionPayload(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"util.fern", "lexer.fern", "astwalk.fern", "ir.fern", "parser.fern",
-		"asmcore.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern",
-		"wasm_option_payload_run.fern",
+		"asmcore.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_option_payload_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {

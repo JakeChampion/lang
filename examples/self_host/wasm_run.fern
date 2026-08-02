@@ -1,6 +1,6 @@
 // examples/self_host/wasm_run.fern — stdin-driven driver for the
 // self-hosted wasm emitter. Reads Fern source from stdin, runs it
-// through lexer + parser + wasm.emit_module, and prints the resulting
+// through lexer + parser + wasm_ir.emit_module_mode_or_error, and prints the
 // WASI core module (WAT text) to stdout. Companion to asm_run.fern
 // (x86-64) and asm_ir_run.fern (which serves arm64 / arm64-darwin via
 // `-target`): the same front end feeding the wasm backend.
@@ -8,13 +8,12 @@
 // The Go-side test (self_host_wasm_test.go) pipes a source program in,
 // captures the WAT, and runs it with `wasmtime run prog.wat` — asserting
 // the process exit code matches the program's result. End-to-end proof
-// that wasm.fern emits runnable WebAssembly.
+// that the wasm IR emitter emits runnable WebAssembly.
 
 import "std/io";
 import "./lexer";
 import "./parser";
 import "./asmcore";
-import "./wasm";
 import "./wasm_ir";
 
 function main(): i32 {
@@ -75,7 +74,7 @@ function main(): i32 {
         if (pok) { print("ir\n"); } else { print("ast\n"); }
         return 0;
     }
-    var emitted: string = wasm.emit_module(mwb);
+    var emitted: string = wasm_ir.emit_module_mode_or_error(mwb, false, false);
     write(emitted);
     return 0;
 }

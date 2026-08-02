@@ -39,7 +39,7 @@ func TestSelfHostWasmIncrementalCache(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
-		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern",
 		"flatten.fern", "modloader.fern", "fern_toml.fern", "wasm_objfile.fern",
 		"wasm_modload_run.fern",
 	} {
@@ -206,7 +206,7 @@ func TestSelfHostWasmLinkFromCache(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
-		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern",
 		"flatten.fern", "modloader.fern", "fern_toml.fern", "wasm_objfile.fern",
 		"wasm_modload_run.fern",
 	} {
@@ -346,7 +346,7 @@ func TestSelfHostWasmLinkHitOnly(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
-		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern",
 		"flatten.fern", "modloader.fern", "fern_toml.fern", "wasm_objfile.fern",
 		"wasm_modload_run.fern",
 	} {

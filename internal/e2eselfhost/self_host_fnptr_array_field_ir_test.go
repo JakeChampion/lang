@@ -129,7 +129,7 @@ func TestSelfHostFnptrArrayFieldIRArm64(t *testing.T) {
 }
 
 // TestSelfHostFnptrArrayFieldIRWasm runs the same cases through the wasm IR
-// backend — the runtime pin for the wasm.fern struct-drop change (Fix C on the
+// backend — the runtime pin for the wasm struct-drop change (Fix C on the
 // wasm side: a registered fn-pointer array field is buffer-only-freed, its raw
 // code-address elements never walked as boxes). All case exit codes are <= 120
 // (the wasm exit-code clamp).
@@ -141,7 +141,7 @@ func TestSelfHostFnptrArrayFieldIRWasm(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
-		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {

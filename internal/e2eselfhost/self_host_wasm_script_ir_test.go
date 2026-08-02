@@ -16,7 +16,7 @@ import (
 // path on that basis (asm_ir.script_normalized). The wasm route simply never
 // called it, so every script went to the legacy AST emitter, which inlines the
 // statements into `_start` itself — exactly the behaviour that made script support
-// a reason wasm.fern could not retire.
+// a reason wasm.fern could not retire. It has since retired (#3457).
 //
 // wasm_ir.route_normalized now normalises for BOTH the emitter and the `-decide`
 // probe, so the probe cannot report a verdict for a module the emitter does not
@@ -30,7 +30,7 @@ func TestSelfHostWasmScriptRoutesIR(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
 		src, rerr := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if rerr != nil {
 			t.Fatalf("read %s: %v", name, rerr)

@@ -17,7 +17,7 @@ import (
 // closes that gap for the append path.
 //
 // The bug it guards: the IR wasm backend lowered `a.append(v)` to a
-// `call $__fern_arr_push` but the helper-emission gate (wasm.fern's IR
+// `call $__fern_arr_push` but the helper-emission gate (the IR
 // runtime section) never emitted the $__fern_arr_push definition unless
 // the module also used str_split, so an append-only program produced an
 // invalid module (undefined function → wasmtime exits 1). Fixed by gating
@@ -29,7 +29,7 @@ func TestWasmSelfHostArrPush(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

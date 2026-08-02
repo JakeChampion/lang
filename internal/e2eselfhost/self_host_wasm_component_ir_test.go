@@ -14,7 +14,7 @@ import (
 // modes, which no other component test can see: every wasm-component core used
 // to come from the AST emitter unconditionally (emit_module_mode gated the IR
 // leg on `!component`), so the self-hosted component path was a hard blocker on
-// retiring wasm.fern. The sibling tests here (…ComponentStdout / …Eprint /
+// retiring wasm.fern, which has since happened (#3457). The sibling tests here (…ComponentStdout / …Eprint /
 // …Exit) run the resulting component and would stay green if the routing
 // silently reverted to AST, so they cannot guard it — this one does.
 //
@@ -45,7 +45,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

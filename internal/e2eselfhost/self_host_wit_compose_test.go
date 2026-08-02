@@ -55,7 +55,7 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 
 	// Build the self-host wasm emitter, then compile a driver that turns the
 	// core into a component via the world-driven path.
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -196,7 +196,7 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	}
 
 	// Build the self-host emitter and a driver that composes from the user world.
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
 		b, _ := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		_ = os.WriteFile(filepath.Join(dir, name), b, 0o644)
 	}

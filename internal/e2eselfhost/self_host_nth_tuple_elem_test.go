@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostNthTupleElem pins the wasm backend's tuple-element decoder
-// (examples/self_host/wasm.fern's nth_tuple_type_elem — SH-021,
+// (examples/self_host/wasm_ir.fern's nth_tuple_type_elem — SH-021,
 // docs/SELF-HOST-AUDIT.md T2). It returns the idx-th element type of a tuple
 // spelling "(A, B, …)", or "" when the spelling isn't a tuple / idx is out of
 // range, and now decodes via the structured TypeRef (parser.parse_type_ref)
@@ -33,8 +33,7 @@ func TestSelfHostNthTupleElem(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"util.fern", "lexer.fern", "astwalk.fern", "ir.fern", "parser.fern",
-		"asmcore.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern",
-		"nth_tuple_elem_run.fern",
+		"asmcore.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "nth_tuple_elem_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {

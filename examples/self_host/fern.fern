@@ -34,7 +34,7 @@ import "./parser";
 import "./flatten";
 import "./asm_ir";
 import "./asm_arm64_ir";
-import "./wasm";
+import "./wasm_ir";
 import "./checker";
 import "./interp";
 import "./printer";
@@ -592,12 +592,11 @@ function main(): i32 {
     // so the byte-identical self-compile fixpoint is preserved.
     merged = checker.annotate_module(merged);
 
-    // Production default: the IR path. x86 and arm64 both route IR-or-error
-    // (asm_ir / asm_arm64_ir `.emit_module_or_error`, #3457 slices 3 and 5), so
-    // this driver imports neither legacy AST emitter. wasm still enters via its
-    // AST shell (wasm.fern), which itself routes eligible modules AST → stack IR
-    // → asm (use_ir=true, asmcore.fern) — so the IR is the single production
-    // lowering (issue #4391 / docs/SELFHOST-SSA-DECISION.md). The SSA pipeline is opt-in
+    // Production default: the IR path. All three targets route IR-or-error
+    // (asm_ir / asm_arm64_ir / wasm_ir `.emit_module*_or_error`, #3457), so this
+    // driver imports no legacy AST emitter at all — there are none left to
+    // import. The IR is the single production lowering (issue #4391 /
+    // docs/SELFHOST-SSA-DECISION.md). The SSA pipeline is opt-in
     // via -ssa (experimental): it applies only if every function is in the SSA
     // subset (else it too falls through), covering x86-64 / arm64 / a wasm
     // subset. arm64-darwin and the wasm-bin / wasm-component targets have no SSA
@@ -677,14 +676,14 @@ function main(): i32 {
     } else if (target == "wasm") {
         // WASI core module in text format (WAT). Runnable directly by
         // `wasmtime run`; main()'s result becomes the process exit code.
-        out_asm = wasm.emit_module(full);
+        out_asm = wasm_ir.emit_module_mode_or_error(full, false, false);
     } else if (target == "wasm-bin") {
         // Same WASI core module, assembled to the wasm *binary* format:
-        // emit WAT (wasm.emit_module), then run it through the self-hosted
+        // emit WAT, then run it through the self-hosted
         // WAT->binary assembler (watbin). The binary bytes (an i32[] of
         // 0..255) are packed into a string whose bytes write_file / write
         // emit verbatim, so the output file is a runnable `.wasm`.
-        out_asm = string_from_bytes_unchecked(to_u8(watbin.wat_to_binary(wasm.emit_module(full))));
+        out_asm = string_from_bytes_unchecked(to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, false, false))));
     } else if (target == "wasm-component") {
         // A Component-Model `wasi:cli/run` component. Pick the framing from
         // the program's WASI usage: no-I/O (component_full), stdout/exit
@@ -693,46 +692,46 @@ function main(): i32 {
         // WASI the self-host component path doesn't wrap yet (random / env /
         // args / clock / stderr) are rejected rather than emitting a broken
         // component.
-        var shape: i32 = wasm.component_shape(full);
+        var shape: i32 = wasm_ir.component_shape(full);
         if (shape < 0) {
             eprint("fern: -target wasm-component: program uses WASI imports not yet supported (no-I/O, stdout, and filesystem are wrapped so far)\n");
             return 2;
         }
         var comp: i32[] = [];
         if (shape == 1) {
-            comp = watbin.component_full_io(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+            comp = watbin.component_full_io(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 2) {
-            comp = watbin.component_full_io_fs(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+            comp = watbin.component_full_io_fs(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 3) {
-            comp = watbin.component_full_io_fs_write(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+            comp = watbin.component_full_io_fs_write(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 4) {
-            comp = watbin.component_full_io_fs_rw(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+            comp = watbin.component_full_io_fs_rw(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 5) {
-            comp = watbin.component_full_io_random(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+            comp = watbin.component_full_io_random(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 6) {
-            comp = watbin.component_full_io_env(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+            comp = watbin.component_full_io_env(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 7) {
-            comp = watbin.component_full_io_args(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+            comp = watbin.component_full_io_args(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 8) {
-            comp = watbin.component_full_io_clock(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+            comp = watbin.component_full_io_clock(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 9) {
-            comp = watbin.component_full_io_clock_mono(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+            comp = watbin.component_full_io_clock_mono(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 13) {
-            comp = watbin.component_full_io_eprint(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+            comp = watbin.component_full_io_eprint(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 14) {
-            comp = watbin.component_full_io_exit(watbin.wat_to_binary(wasm.emit_module_run_io(full)));
+            comp = watbin.component_full_io_exit(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 10) {
-            comp = watbin.component_full_io_fs_read_env(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+            comp = watbin.component_full_io_fs_read_env(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 11) {
-            comp = watbin.component_full_io_fs_rw_env(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+            comp = watbin.component_full_io_fs_rw_env(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 12) {
-            comp = watbin.component_full_io_random_write(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+            comp = watbin.component_full_io_random_write(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 15) {
-            comp = watbin.component_full_io_fs_args_read(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+            comp = watbin.component_full_io_fs_args_read(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else if (shape == 16) {
-            comp = watbin.component_full_io_fs_rw_args(watbin.wat_to_binary(wasm.emit_module_run_io_fs(full)));
+            comp = watbin.component_full_io_fs_rw_args(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, true)));
         } else {
-            comp = watbin.component_full(watbin.wat_to_binary(wasm.emit_module_run(full)));
+            comp = watbin.component_full(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, false)));
         }
         out_asm = string_from_bytes_unchecked(to_u8(comp));
     } else {
