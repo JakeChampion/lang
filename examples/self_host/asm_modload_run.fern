@@ -181,7 +181,8 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
 // unit emits `_start` + the shared runtime.
 //
 // Without it, a stdlib-importing program whose merged closure crosses the
-// budget dropped to the AST emitter — which cannot emit tcp_listen / poll /
+// budget dropped to the AST emitter (deleted since; #3457) — which could not
+// emit tcp_listen / poll /
 // tcp_pollable at all, so the flagship edge-handler program (std/http +
 // std/tcp + a `handle` function) compiled to asm with a dozen dangling
 // `__fn_` symbols and failed at LINK, even though every one of its functions
@@ -191,13 +192,14 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
 // does: a unit touching a built-in type (Option / Result / IoError /
 // HttpRequest) needs those layouts or it miscompiles.
 //
-// Returns "" if a REACHABLE module is still not IR-eligible, so such programs
-// fall back to the AST emitter unchanged.
+// Returns "" if a REACHABLE module is still not IR-eligible. That used to mean
+// "fall back to the AST emitter"; the emitters are gone (#3457), so the caller
+// turns it into a hard error via emit_module_or_error.
 // `target` selects the per-unit emitter: "arm64" uses
 // asm_arm64_ir.emit_module_ir_unit_arm64, anything else the x86-64
 // asm_ir.emit_module_ir_unit. The other per-module routes here were already
 // target-aware; this one was not, so the arm64 merged leg had no over-budget
-// rescue and dropped straight to the AST emitter for the whole single-process
+// rescue and dropped straight to the (since-deleted) AST emitter for the whole single-process
 // band x86 served via IR (#3457 slice 5).
 function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: flatten.LoadedModule[], reach: string[], target: string): string {
     var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded);

@@ -92,7 +92,10 @@ concrete completion criterion:
   **blockers**, not filtered-away deltas. They live in one place (this section)
   so "are we at parity?" has a single checklist rather than tribal knowledge.
   Freeze precondition: this list is empty. Known open entries at adoption:
-  - mutable scalar captures across closure boundaries (SH-057 / #2850).
+  - ~~mutable scalar captures across closure boundaries (SH-057 / #2850)~~ —
+    **closed 2026-08-02 (#5988)**. Worth keeping the note: #2850 was closed once
+    already, on the compiled path, while the self-host interpreter still captured
+    by value. A class is only closed when EVERY engine implements it.
 
   Add a row when a new class is found; strike it when a differential test
   pins the fix.
@@ -111,11 +114,22 @@ the self-host backends reach parity; retiring the native *interpreter* is not.
 1. Roadmap **goal 2** complete — the Perceus port (inc/dec, borrow inference,
    drop specialisation, reuse analysis) at parity in the self-host compiler.
 2. #3451 / #3457 complete (the bootstrap-budget / bundle prerequisites).
+   **#3457 is CLOSED** (2026-08-02): all three legacy AST→asm emitters are
+   deleted — `asm.fern` + `asm_arm64.fern` (#5972) and `wasm.fern` (#5983) —
+   every backend routes IR-or-error, and the ~512-function merged-bundle budget
+   went with them. #3451 (the per-module epic) is still OPEN, so this row is
+   HALF green.
 3. **Checker-codes filter empty** — `selfHostImplementedCodes` deleted, the
    six-code gap above closed, all three differentials comparing unfiltered
    sets. **GREEN as of 2026-07-12.**
 4. **SH-057-class semantics closed** — the blocker list in §2 is empty, each
-   former entry pinned by a differential test.
+   former entry pinned by a differential test. **GREEN as of 2026-08-02**: the
+   one listed entry, mutable scalar captures (SH-057 / #2850), is closed on both
+   engines. The compiled path had it via `box_mutated_scalar_captures`; the
+   INTERPRETER still captured by value and returned 8 where the reference says
+   49 — #2850 had been closed on the compiled half alone. Fixed in #5988 and
+   pinned by `TestSelfHostMutableScalarCaptureInterp`, which oracles every case
+   against the native interpreter, plus a row in the cross-validation corpus.
 
 None are date-driven; the freeze fires when the last one goes green.
 
