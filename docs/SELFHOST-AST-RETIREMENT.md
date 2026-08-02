@@ -5020,15 +5020,16 @@ with both applied (the script fix alone is what ships here):
 | what remains | count | note |
 |---|---|---|
 | the ~512-function merged-bundle budget | 2 | 521 functions each — the documented deliberate decline |
-| a RECEIVER METHOD returning a CAPTURING closure | 2 | bisected below |
+| ~~a RECEIVER METHOD returning a CAPTURING closure~~ | ~~2~~ | **CLOSED** — see below |
 | ~~module-level `const BIG: i64`~~ | ~~2~~ | **CLOSED** — see below |
 | ~~`i32[][][]` with nested `for`~~ | ~~1~~ | **CLOSED** — see below |
 | ~~`Option` alias + match~~ | ~~1~~ | **CLOSED** — see below |
-| `Map` with STRUCT values (`map_new_i32` + `P` value) | 1 | |
+| ~~`Map` with STRUCT values (`map_new_i32` + `P` value)~~ | ~~1~~ | **CLOSED** — see below |
 
 Five constructs and one deliberate budget case. That is the whole remaining mode-0
 gap, individually named — which is what step 4 (the IR-or-error reroute) has been
-waiting for.
+waiting for. **All five constructs are now closed**; the budget is the only
+mode-0 decliner left, and removing it is #5980's parked patch.
 
 **Three of the five are now closed, and none was a missing feature.** Each was a
 piece of type information the lowering failed to carry one step further than it
@@ -5058,38 +5059,116 @@ that always worked). Note what the controls buy — the AST emitter computes all
 these CORRECTLY, so a regression would be silent in the answer and visible only in
 the route, which is why every case asserts `-decide` as well as the exit code.
 
-**On the closure one still open, bisected — and my first bisection of it was
-WRONG, which is worth recording because of how it went wrong.** I first compared a
-FREE function *returning* a capturing lambda (routes `ir`) against a receiver
-method *binding* one (routes `ast`) and concluded the decline "needs both a
-receiver method and a capture". Two variables changed between those probes —
-receiver-vs-free and return-vs-bind — and I attributed the difference to the wrong
-one. The receiver is irrelevant.
+**CLOSED — and BOTH earlier bisections of it were wrong. How the second one went
+wrong is the more useful lesson.**
 
-Holding one variable at a time:
+The first attempt compared a free function *returning* a capturing lambda (`ir`)
+against a receiver method *binding* one (`ast`) and concluded the decline needed
+"both a receiver method and a capture" — two variables changed at once.
 
-| program | route |
+The correction to that was worse, and it read as rigorous: a one-variable-at-a-time
+table showing `main` binding and calling a capturing lambda routing `ir`, a
+function `use()` doing the same routing `ir` while nothing called it, and the
+module flipping to `ast` the moment `main` called `use()`. `FERN_STRICT_IR=1`
+named the bailing function as `main`, so the conclusion was "the CALL SITE cannot
+call a closure-bearing function", and the receiver was declared irrelevant.
+
+**`use` is a LEXER KEYWORD** (`lexer.fern`'s keyword list, for `use` declarations).
+Every one of those probe programs was malformed: `function use()` parsed with an
+empty name, which is why the eligibility report listed a function called `""`. The
+whole table was measuring a parse artifact. Renaming the function to anything else
+makes all of it route `ir`, so **there is no call-site gap and never was**.
+
+The lesson is not "bisect one variable at a time" — that was followed. It is that
+holding one variable fixed proves nothing if the CONSTANT is broken. A reduced
+repro must be validated as a real program before its verdict means anything; here
+the corpus programs were sitting right there and would have said so immediately.
+Reduce FROM the corpus program, don't re-type one from the description.
+
+Bisected properly, from the two corpus programs, there were TWO gaps:
+
+| program | route before |
 |---|---|
-| `main` itself binds and calls a capturing lambda | `ir` |
-| a function `use()` binds and calls one, and NOTHING CALLS `use` | `ir` |
-| …and `main` calls `use()` | **`ast`** |
-| a receiver method does it | `ast` — because it is not the entry, not because it is a method |
-| `return function(x) { … }` from a free function | `ir` (the returned-lambda desugar, #5266) |
+| method, escaping lambda reads the RECEIVER (`x + a.base`) | `ast` — bails on `make$wrap0` |
+| method or free fn, escaping lambda captures a local bound from a FIELD (`var b = a.base`) | `ast` — `make$clo not defined` |
+| method, escaping lambda captures a PARAM | `ir` (control) |
+| free fn, escaping lambda captures a local bound from ARITHMETIC | `ir` (control) |
+| either, with the local ANNOTATED (`var b: i32 = a.base`) | `ir` (control) |
 
-And `FERN_STRICT_IR=1` names the bailing function as **`main`**, not `use`. So the
-callee containing the closure lowers perfectly well; it is the CALL SITE that
-cannot handle calling a function that contains a lifted capturing closure. The
-arithmetic around the call is irrelevant (`return use();`, `return use() + 30;` and
-`var v = use();` all decline identically), and so is whether the closure's result
-is returned directly or via a local.
+Two different mechanisms behind one symptom:
 
-That makes the gap considerably WIDER than the two corpus programs implied — it is
-any cross-function call into a closure-bearing function, not a receiver-method
-quirk — and it means the mode-0 count under-represents it, since the corpus only
-contains programs some test happens to feed a wasm driver. Re-sweep after fixing
-it. The likely area is still the lift (`lift_lambdas` / `closure_lift_one`) or the
-caller-side closure_fns registry, but the evidence now points at what the CALLER
-believes about the callee's signature rather than at the lambda's own captures.
+- `lambda_captures` builds its "enclosing local" set from `fd.params` + the names
+  bound in `fd.body`, and **omitted `fd.receiver_name`**. So the receiver was not a
+  capture, `caps` came back EMPTY, and the NO-capture lift hoisted the body to a
+  `<fd>$wrapN` trampoline in which `a` is unbound — the module then bailed on the
+  wrapper, not on the method. `cap_type_at` had the same blind spot.
+- `cap_type_expr` knew literals, idents and arithmetic only. `var b = a.base`
+  resolved `""`, `cap_slot_ok("")` declined, and the lambda stayed an `ExprLambda`
+  whose lowering emits `const_func(<cur_fn>$clo)` naming a function nothing hoisted.
+  `cap_type_in_stmts` already did exactly this resolution for a for-in iter
+  (`for x in s.items`) and a match scrutinee — the plain `var` init arm simply never
+  did, which is what made ANNOTATING the local the only way through. Field-access,
+  call and index arms added, matching the arms already there.
+
+Both are pure route widenings: the AST emitter answered all of these correctly, so
+unlike the erased-wide family nothing was miscompiling — which is exactly why every
+pinned case asserts `-decide` as well as the exit code.
+
+**And the Map one, same shape.** `var p = m.get_or(k, P { … })` had no struct type,
+so `p.field` bailed; annotating `p` worked, annotating the MAP did not, which is
+what isolates the read. Three sites carry V now — the read (`expr_struct_type`), the
+unannotated `map_new_i32(n).insert(k, P { … })` chain, and the separate
+`m = m.insert(k, P { … })` assignment (`refine_map_struct_val`, since a bare
+`map_new_i32(n)` binding has no insert to read a value type from and would otherwise
+keep `Map[K, i32]` forever). Fact-only for op selection: a struct value is
+pointer-shaped exactly like the string case already handled (widekind 0), so no
+emitted op changes. As predicted, `TestSelfHostRcMapStructVal` did not fail before
+this — it asserted the AST answer — so the pin is a new test, not that one.
+
+All of the above is pinned by `TestSelfHostCaptureTypeGapsIR` (15 cases: each gap
+with the control that always worked).
+
+**Component mode has now been swept too, and it is clean.** `wasm_runio_run` gained
+the `-decide` probe (the component-mode sibling of `wasm_run`'s, reusing
+`ir_route_precheck` / `ir_route_final` with `component=true, io=true` so it cannot
+drift from the emitter). Its 50-program harvested corpus is **50/50 `ir`** — the
+extern/export bridge port left no component-mode decliners behind.
+
+### Where the mode-0 count now stands: 169 → 2, and BOTH are the budget
+
+Re-`-decide`d against the fixed tree, all nine of the previously-named decliners
+were re-checked individually. The seven CONSTRUCT ones — the three closed in #5979
+(`i32[][][]`, the `Option` alias, the two i64 consts) and the three closed here (the
+two `Adder` closure shapes, the struct-valued `Map`) — now route `ir`. The two that
+remain are the 531- and 538-line programs that trip the ~512-function merged-bundle
+budget, which is the deliberate decline, not a construct:
+
+| remaining mode-0 decliner | lines | why |
+|---|---|---|
+| `wasm_run-8bb9b6bff786` | 531 | 512-function merged-bundle budget |
+| `wasm_run-cacfbadaf490` | 538 | 512-function merged-bundle budget |
+
+So **the mode-0 construct gap is empty**, and the only thing standing between here
+and step 4 is #5980's parked budget removal.
+
+**Which is the structural point steps 4 and 5 have been missing: the budget
+removal, the IR-or-error reroute and the deletion of `wasm.fern` are ONE change,
+not three.** #5980 is blocked only because four tests
+(`TestSelfHostStrictIRRefusesBail`, `TestSelfHostTreeshakeStdlibIR`,
+`TestSelfHostWasmAstPathIoErrorTypeIds`, `TestSelfHostWasmIoErrorVariantLayout`)
+use the budget as their MECHANISM for reaching the AST emitter — the last two are
+tests OF the emitter being deleted. Rewriting them to chase some other still-open
+route would be wrong twice over: the remaining routes in are the decliners, which
+are scheduled to close, and two of the tests have no subject once `wasm.fern` goes.
+With the construct decliners now empty, step 4 is what retires those tests, so they
+are DELETED by it rather than rewritten before it. Landing #5980 on its own would
+mean writing code specifically to keep a path alive that the very next commit
+removes.
+
+Sweeping the whole 1,024-program corpus again is a several-hour local run (the
+`-decide` of a 500-line program under an interpreted driver takes minutes), so the
+per-decliner re-check above is the evidence for the count; the full sweep is a
+background confirmation, not the gate.
 
 **The ~512-function budget is no longer a fallback — it is a WALL, and that is a
 live regression.** Its own comment says it caps IR routing "until the native
@@ -5125,10 +5204,21 @@ looks like coverage of the IR path and is not — so it will turn into a hard er
 at the reroute rather than a test failure before it. `map_new_i32` is self-host
 dialect (E001 natively), so there is no interpreter oracle for it either.
 
-4. Reroute the drivers IR-or-error — only once 2 and 3 leave the decline set
-   empty. Rerouting first was the mistake this section records: on the asm side
-   the reroute WAS the enumeration tool because the subset was already mature; on
-   wasm it just turns a wide gap into a wide outage.
-5. Move the remaining pure helpers (`component_shape` + `module_calls` /
-   `stmts_call` / `expr_calls`, ~95 lines; plus the four type-spelling helpers the
-   three probe drivers use) and delete `wasm.fern`.
+4. **DONE for mode 0 AND component mode** — the decline set is empty of
+   CONSTRUCTS. Component mode's corpus is 50/50 `ir`; mode 0's two remaining
+   decliners are both the 512-function budget. Rerouting BEFORE this was the
+   mistake this section records: on the asm side the reroute WAS the enumeration
+   tool because the subset was already mature; on wasm it just turned a wide gap
+   into a wide outage.
+5. **Steps 4 and 5 are ONE commit, together with #5980's budget removal** (see the
+   structural point above — landing them separately means writing code to preserve
+   a path the next commit deletes). That commit:
+   - removes both budget gates (`eligible_core_known_impl`,
+     `emit_module_ir_gated`) and un-gates / CI-wires `TestSelfHostConstFuncGen2`,
+     which is the guard for the two-generation miscompile hazard the removal
+     creates;
+   - reroutes `wasm_run` / `wasm_runio_run` / `fern.fern` IR-or-error;
+   - moves the residual pure helpers (`component_shape` + `module_calls` /
+     `stmts_call` / `expr_calls`, ~95 lines, plus the four type-spelling helpers
+     the three probe drivers use);
+   - deletes `wasm.fern` and the four tests whose subject it is.
