@@ -795,6 +795,21 @@ pub function (s: LowerState) clo_rc_approved(name: string): boolean {
 }
 
 // is_str_slot / mark_str query and set the string-ness of slot i.
+// slot_is_rc_container reports whether slot i holds an rc-tracked heap value that
+// a CONTAINER store aliases: an array buffer, a string box, or a tuple box.
+//
+// It is the admission for the construction-store retain at the three container
+// constructors (array literal, tuple literal, Option/Result payload). Each already
+// had the retain for ARRAY slots only, so a string or tuple local stored into a
+// container kept rc 1 and __fern_rc_is_unique called it unique while the container
+// still pointed at it — the same degradation of the constructor-reuse guard the
+// array case was fixed for (#4350), two slot kinds over. Keeping the three sites on
+// ONE predicate is what stops them drifting apart again.
+pub function (s: LowerState) slot_is_rc_container(i: i32): boolean {
+    if (i < 0 || i >= s.locals.len()) { return false; }
+    return s.is_arr_slot(i) || s.is_str_slot(i) || s.locals[i].tuple_elems.len() > 0;
+}
+
 pub function (s: LowerState) is_str_slot(i: i32): boolean {
     if (i < 0) { return false; }
     if (i >= s.locals.len()) { return false; }
@@ -6583,7 +6598,7 @@ function lower_opt_make_payload(tag: i32, arg: parser.Expr, s: LowerState): Lowe
     // aren't array slots, so this never fires before the op_opt_make_w paths.
     match (arg) {
         parser.ExprIdent(paid) => {
-            if (so.is_arr_slot(so.slot_of(paid.name))) {
+            if (so.slot_is_rc_container(so.slot_of(paid.name))) {
                 so = so.emit(ir.op_call_direct("__fern_rc_inc", 1));
             }
         },
@@ -7636,8 +7651,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 sa = lower_expr(arr.elements[i], sa);
                 if (!sa.ok) { return sa; }
                 // Perceus alias-inc, mirroring lower_opt_make_payload: an element
-                // that is a bare ident on an array slot is a NEW reference to that
-                // buffer, so retain it. Without it `var both = [a, b]` left a's rc
+                // that is a bare ident on an rc-tracked ARRAY or STRING slot is a
+                // NEW reference to that buffer, so retain it. (The string half was
+                // missing: a `string[]` literal built from string LOCALS left each
+                // element's rc at 1, so is_unique called a container-retained string
+                // unique — the same degradation this comment describes for arrays,
+                // one slot kind over.) Without it `var both = [a, b]` left a's rc
                 // at 1, and __fern_rc_is_unique reported a container-retained array
                 // as UNIQUE on both IR backends where both AST emitters report it
                 // shared — silently degrading the constructor-reuse guard (#4350),
@@ -7647,7 +7666,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 // (discardable_scalar_arrarr_lit et al) are unaffected.
                 match (arr.elements[i]) {
                     parser.ExprIdent(eid) => {
-                        if (sa.is_arr_slot(sa.slot_of(eid.name))) {
+                        if (sa.slot_is_rc_container(sa.slot_of(eid.name))) {
                             sa = sa.emit(ir.op_call_direct("__fern_rc_inc", 1));
                         }
                     },
@@ -7698,6 +7717,23 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 if (tek == "i64") { ts = lower_i64(tup.elements[tj], ts); }
                 else { ts = lower_expr(tup.elements[tj], ts); }
                 if (!ts.ok) { return ts; }
+                // Construction-store retain, the tuple sibling of the struct
+                // literal's fav_alias_inc: an element that is a bare ident naming
+                // an rc-tracked ARRAY or STRING local is a SECOND owner once
+                // boxed, so the
+                // tuple must hold a counted reference. Without it
+                // __fern_rc_is_unique reports the source local unique while the
+                // tuple still points at its buffer — an answer a reuse decision
+                // may key on. rc_inc returns its argument, so the operand stack
+                // tuple_make_k expects is unchanged.
+                match (tup.elements[tj]) {
+                    parser.ExprIdent(teid) => {
+                        if (ts.slot_is_rc_container(ts.slot_of(teid.name))) {
+                            ts = ts.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                        }
+                    },
+                    _ => {}
+                }
                 tj = tj + 1;
             }
             return ts.emit(ir.op_tuple_make_k(tn, tkinds));
@@ -7838,16 +7874,42 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!sr.ok) { return sr; }
                         return sr.emit(ir.op_arr_rc());
                     }
-                    // __rc_dec(a): manual release (a test hook for exercising
-                    // the underflow detector); returns the pointer.
-                    if (cid.name == "__rc_dec") {
+                    // The RC test hooks come in TWO source spellings: the short
+                    // one below, and the RUNTIME SYMBOL's own name. The RC test
+                    // corpus uses the second — the AST emitters accept it because
+                    // the helper they emit happens to be called that (see
+                    // wasm.fern's module_calls gate) — and the IR path knew only
+                    // the short form, so ~140 uses across the self-host RC tests
+                    // routed to the AST emitter. Two thirds of the entire mode-0
+                    // decline set, for a NAME rather than a construct. Neither
+                    // spelling is natively valid (E001), so these are self-host
+                    // dialect programs either way; accepting both is what lets the
+                    // AST emitter retire without rewriting the corpus.
+                    //
+                    // __rc_dec(a) / __fern_rc_dec(a) / __fern_arr_dec(a): manual
+                    // release (a hook for exercising the underflow detector);
+                    // returns the pointer. All three lower to the IR's ONE array
+                    // release helper — ir_helper_symbol maps __fern_rc_dec to
+                    // __fn___fern_arr_dec, so `__fern_arr_dec` is a symbol name,
+                    // not an IR callee name, and emitting it verbatim would fail
+                    // calls_only_known (which admits only is_fern_helper names).
+                    if (cid.name == "__rc_dec" || cid.name == "__fern_rc_dec" || (cid.name == "__fern_arr_dec" && c.args.len() == 1)) {
                         if (c.args.len() != 1) { return s.fail(); }
                         var sd: LowerState = lower_expr(c.args[0], s);
                         if (!sd.ok) { return sd; }
                         return sd.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     }
-                    // __rc_underflow(): read the over-release counter.
-                    if (cid.name == "__rc_underflow") {
+                    // __rc_inc(a) / __fern_rc_inc(a): manual retain; returns the
+                    // pointer.
+                    if (cid.name == "__rc_inc" || cid.name == "__fern_rc_inc") {
+                        if (c.args.len() != 1) { return s.fail(); }
+                        var si: LowerState = lower_expr(c.args[0], s);
+                        if (!si.ok) { return si; }
+                        return si.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                    }
+                    // __rc_underflow() / __fern_rc_underflow_count(): read the
+                    // over-release counter.
+                    if (cid.name == "__rc_underflow" || cid.name == "__fern_rc_underflow_count") {
                         if (c.args.len() != 0) { return s.fail(); }
                         return s.emit(ir.op_call_direct("__fern_rc_underflow_get", 0));
                     }
