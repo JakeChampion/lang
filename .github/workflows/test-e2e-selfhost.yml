@@ -363,6 +363,43 @@ jobs:
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run "^($ISOLATED_DRIVER_TESTS)\$" -test.v -test.timeout 13m
 
+  gen2:
+    needs: build
+    name: const-func-gen2-x86_64
+    runs-on: ubuntu-latest
+    # The test builds an mmc1/mmc2 pair (a ~220 MB stage-1 binary and a heavy
+    # emit) — its own docs quote ~4 min, so 30 gives the runner room.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+        with:
+          gotestsum: "true"
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-x86_64
+      # TestSelfHostConstFuncGen2 is the ONLY guard for a self-referential
+      # miscompile: the IR path compiling the code that decides IR eligibility.
+      # It needs two generations to show up, so it is invisible to every
+      # single-generation test. It used to be env-gated and set by nothing, which
+      # meant the hazard was unguarded in CI at exactly the moment the
+      # ~512-function budget was removed and generation 2 became IR-BUILT by
+      # default (#3457). The variable is set here so the guard runs with the
+      # change that needs it. Native x86-64 only (the test skips under a qemu
+      # runner — it passes argv paths), which ubuntu-latest is.
+      - name: two-generation const_func eligibility check
+        env:
+          RUN_CONST_FUNC_GEN2: "1"
+          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
+        run: |
+          set -euo pipefail
+          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
+          chmod +x e2eselfhost.test
+          BIN="$PWD/e2eselfhost.test"
+          cd internal/e2eselfhost
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostConstFuncGen2$' -test.v -test.timeout 28m
+
   test:
     needs: [build, warm]
     strategy:

@@ -10,19 +10,21 @@ import (
 )
 
 // TestSelfHostWasmIoErrorVariantLayout pins the IoError variant box that
-// read_file's Err payload carries to the layout its CONSUMER reads.
+// read_file's Err payload carries to the layout its CONSUMER reads: field i at
+// 8*(1+i).
 //
-// $__fern_build_io_error is shared by both wasm emitters, but they lay a
-// variant out at different slot widths: the IR consumer puts field i at
-// 8*(1+i), the legacy AST emitter at 4*(1+i) (wasm.struct_field_off). The
-// boxer emitted the IR layout for both, so an AST-path `NotFound(p)` read its
-// path out of the upper half of the id slot and printed garbage, and the
-// two-field default arm `Other(path, msg)` — where every errno outside the
-// mapped five lands — was wrong in both fields (#5795).
+// $__fern_build_io_error used to be shared by BOTH wasm emitters, which laid a
+// variant out at different slot widths (the legacy AST emitter at 4*(1+i)), and
+// the boxer emitted the IR layout for both — so an AST-path `NotFound(p)` read
+// its path out of the upper half of the id slot and printed garbage, and the
+// two-field default arm `Other(path, msg)` was wrong in both fields (#5795).
+// The AST emitter is gone (#3457) and its two cases with it; what remains is the
+// IR layout itself, which is still worth pinning because the boxer writes those
+// offsets by hand.
 //
-// Each case asserts WHICH layout the emitted core carries before running it.
-// Without that, a change to IR eligibility would quietly route the ast case
-// through the IR path, and the case would keep passing while covering nothing.
+// Each case asserts WHICH layout the emitted core carries before running it, so
+// a silent change to the box geometry reads as a diff rather than as garbage
+// output.
 func TestSelfHostWasmIoErrorVariantLayout(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -31,7 +33,7 @@ func TestSelfHostWasmIoErrorVariantLayout(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -46,15 +48,6 @@ func TestSelfHostWasmIoErrorVariantLayout(t *testing.T) {
 	// outside the mapped five (ENOTDIR) and lands on the two-field Other arm.
 	if err := os.WriteFile(filepath.Join(dir, "reg.txt"), []byte("the file"), 0o644); err != nil {
 		t.Fatalf("write reg.txt: %v", err)
-	}
-
-	// The IR path takes any module inside its subset, so the AST case has to
-	// push the module out of it. eligible_core caps IR routing at 512
-	// functions; padding past that is the cheapest lever that leaves the
-	// program itself entirely ordinary.
-	var pad strings.Builder
-	for i := 0; i < 520; i++ {
-		fmt.Fprintf(&pad, "function fn%d(x: i32): i32 { return x + %d; }\n", i, i)
 	}
 
 	prog := func(path string) string {
@@ -87,38 +80,27 @@ function main(): i32 {
 
 	for _, tc := range []struct {
 		name string
-		ast  bool // pad the module out of the IR subset
 		path string
 		want string
 	}{
-		{"ir-notfound", false, "nope.txt", "notfound:nope.txt"},
-		{"ast-notfound", true, "nope.txt", "notfound:nope.txt"},
+		{"notfound", "nope.txt", "notfound:nope.txt"},
 		// Every unmapped errno lands on Other(path, msg): two fields, so it
 		// pins the stride and not just the first field's offset. The message
 		// is the empty string on wasm — the boxer builds Other(path, "").
-		{"ir-other", false, "reg.txt/nested", "other:reg.txt/nested/msg=:end"},
-		{"ast-other", true, "reg.txt/nested", "other:reg.txt/nested/msg=:end"},
+		{"other", "reg.txt/nested", "other:reg.txt/nested/msg=:end"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			src := prog(tc.path)
-			if tc.ast {
-				src = pad.String() + src
-			}
-			wat := runCapture(t, gcc, runner, wasmRun, []byte(src))
+			wat := runCapture(t, gcc, runner, wasmRun, []byte(prog(tc.path)))
 			if len(wat) == 0 {
 				t.Fatal("wasm emitter produced 0 bytes")
 			}
-			// Guard the case against becoming vacuous: confirm it really is on
-			// the emitter it means to cover.
-			want, other := storeAt(8), storeAt(4)
-			if tc.ast {
-				want, other = other, want
+			// Guard the case against becoming vacuous: confirm the box really
+			// carries the IR consumer's geometry.
+			if !strings.Contains(string(wat), storeAt(8)) {
+				t.Fatalf("emitted core does not carry the IR IoError layout %q", storeAt(8))
 			}
-			if !strings.Contains(string(wat), want) {
-				t.Fatalf("emitted core does not carry the expected IoError layout %q — this case is no longer covering the path it names", want)
-			}
-			if strings.Contains(string(wat), other) {
-				t.Fatalf("emitted core carries the other consumer's IoError layout %q", other)
+			if strings.Contains(string(wat), storeAt(4)) {
+				t.Fatalf("emitted core carries the retired AST emitter's IoError layout %q", storeAt(4))
 			}
 
 			watPath := filepath.Join(dir, tc.name+".wat")

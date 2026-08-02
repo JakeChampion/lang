@@ -171,15 +171,18 @@ its own squashed copy — then force-with-lease push.
 
 The standing objective is, in order:
 
-1. **A full IR implementation for the *entire* language in the
-   self-hosted compiler.** Today only a subset lowers through the IR
-   path (`irlower.fern` → `asm_ir.fern`); anything outside the subset
-   falls back to the legacy AST→asm emitters (`asm.fern` /
-   `asm_arm64.fern` / `wasm.fern`). Each task should widen the IR
-   subset until the AST fallback is never taken, so the legacy AST
-   backends can eventually be retired. When a feature works in the
-   native compiler and the self-host IR path but not the legacy
-   AST→asm backend, that legacy gap does **not** need fixing.
+1. **DONE — a full IR implementation for the *entire* language in the
+   self-hosted compiler.** All three legacy AST→asm emitters are
+   **deleted**: `asm.fern` + `asm_arm64.fern` (#5972) and `wasm.fern`
+   (#3457, the last one, 7,933 lines). Every backend routes
+   IR-or-error — `asm_ir.emit_module_or_error` /
+   `asm_arm64_ir.emit_module_or_error` /
+   `wasm_ir.emit_module_mode_or_error` — so a module outside the IR
+   subset is a diagnostic naming the bail site (`FERN_STRICT_IR=1`),
+   not a silent fall-through. There is no AST fallback left to widen
+   the subset *against*; a construct that does not lower is now a
+   plain bug report. The ~512-function merged-bundle budget went with
+   them, so the merged whole-compiler bundle is on the IR path too.
 2. **Then port the native Perceus implementation to the self-hosted
    compiler** (reference-counting / ownership: inc/dec insertion,
    borrow inference, drop specialisation, reuse analysis), so the
@@ -319,10 +322,10 @@ cross-local, enum-donor, consuming-match, tuple reuse, nested-struct
 fields), exercised by the byte-identical self-compile; see
 `docs/SELFHOST-PERCEUS-REUSE.md`'s correction header. The remaining reuse
 deltas are MARGINAL (struct reuse with enum / Map / closure / tuple
-pointer fields — §3 Delta B). The real remaining frontier for retiring
-the legacy AST emitters is the per-module epic's step 5 (#3457, still
-OPEN) — see **`docs/SELFHOST-AST-RETIREMENT.md`** for the code-verified
-slice plan (slice 1 done; **#3425 — the self-host-runtime memory leak
+pointer fields — §3 Delta B). Retiring the legacy AST emitters — the
+per-module epic's step 5 (#3457) — is **DONE**: all three are deleted and
+every backend routes IR-or-error. See
+**`docs/SELFHOST-AST-RETIREMENT.md`** for the record of how (slice 1 done; **#3425 — the self-host-runtime memory leak
 that gated 2/3/5 — is now CLOSED**: the native large-tier freelist was
 ported to the self-host runtime, x86 `asm_ir.fern` #5609 + arm64
 `asm_arm64.fern` #5614, and `TestSelfHostPerModuleFixpointX86_64`
@@ -469,9 +472,9 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   **BUT exit 137 from a *running* Fern-compiled binary is usually NOT an
   OOM-kill**: `__fern_alloc`'s bounds check deliberately `exit(137)`s when
   the fixed bump arena is exhausted — a REAL failure, reproducible locally,
-  that masquerades as SIGKILL. **The arena is 16 GiB** (0x400000000) on all
-  four emitters — native x86-64 + arm64 (`heapBytes`) and self-host
-  `asm.fern` / `asm_ir.fern` (`heap_size`), deliberately kept in lockstep;
+  that masquerades as SIGKILL. **The arena is 16 GiB** (0x400000000) on
+  every emitter — native x86-64 + arm64 (`heapBytes`) and self-host
+  `asm_ir.fern` / `asm_arm64_ir.fern` (`heap_size`), kept in lockstep;
   this note used to say 8 GiB, which was the pre-raise figure and makes any
   headroom calculation off by 2x in the direction that matters. The mmap is
   MAP_NORESERVE, so the reservation costs nothing until touched — only the
@@ -494,17 +497,17 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   **x86-64** equivalents (fixpoint, checker, CLI, e2e) plus the WASM
   tests, which give the same signal far faster; CI runs the full arm64
   matrix on every push. Reach for qemu locally only to **debug** a
-  specific arm64 failure CI surfaced, not as a pre-push gate. (The two
-  self-host asm backends now **share** their entire target-independent
-  frontend — the `Ty` type system, type inference, the pre-codegen
-  checker, and `EmitState` + its state methods — via
-  `examples/self_host/asmcore.fern`, which both `asm.fern` (x86-64) and
-  `asm_arm64.fern` import. That half can't drift; only the `emit_*`
-  instruction-selection layer is hand-maintained in parallel. So an
-  x86-64-green change is almost always arm64-green; CI is the backstop.
+  specific arm64 failure CI surfaced, not as a pre-push gate. (The
+  self-host backends **share** their entire target-independent frontend —
+  the `Ty` type system, type inference, the pre-codegen checker, and
+  `EmitState` + its state methods — via
+  `examples/self_host/asmcore.fern`, imported by `asm_ir.fern` (x86-64),
+  `asm_arm64_ir.fern` and `wasm_ir.fern`. That half can't drift; only the
+  `emit_*` instruction-selection layer is hand-maintained per target. So
+  an x86-64-green change is almost always arm64-green; CI is the backstop.
   When editing inference/checker/`Ty`/`EmitState`, edit `asmcore.fern`
-  once — it is *not* mirrored in the backends anymore. Anything compiling
-  `asm.fern`/`asm_arm64.fern` must also provide `asmcore.fern`.)
+  once — it is *not* mirrored in the backends. Anything compiling those
+  backends must also provide `asmcore.fern`.)
 - **Local CI sign-off (skip lanes you've already run).** CI supports
   Basecamp `gh-signoff`: after running a suite locally on the exact
   commit you're pushing, `scripts/signoff <step>` (or `--local` for the
@@ -544,9 +547,8 @@ a diff that removes lines is at least as valuable as one that adds them.
   that's a bad abstraction — untangle it if it's in your blast radius.
 - **Scope.** Full force on everything the current task touches. Deleting
   beyond that (retiring a backend, unifying parallel emit layers) is a
-  roadmap decision — propose it, don't drive-by it. The asm backends'
-  emit layers are deliberately parallel; the legacy AST emitters retire
-  via #3457, not opportunistically.
+  roadmap decision — propose it, don't drive-by it. The backends'
+  `emit_*` instruction-selection layers are deliberately parallel.
 - Before finishing any task: what did this change make obsolete, and did
   I delete it?
 

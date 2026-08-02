@@ -12,15 +12,17 @@ import (
 // differential gate for the wasm stack-IR emitter (wasm_ir.fern). The
 // wasm_ir_run driver's `-ir` flag, when the module is in the pure-i32 IR
 // subset, emits via the IR path (wasm_ir.emit_module_ir: AST -> stack IR ->
-// flat WAT); otherwise it uses the unchanged AST backend (wasm.emit_module).
-// Each program is emitted BOTH ways, run under wasmtime, and the two exit codes
-// must match — proving the wasm IR path is behaviour-equivalent to the
-// production wasm AST path on the shared i32 subset. wasm.fern and the wasm_run
-// bootstrap are UNCHANGED.
+// flat WAT); otherwise it takes the ordinary ROUTED path. Each program is
+// emitted BOTH ways, run under wasmtime, and the two exit codes must match.
+//
+// The two sides used to be IR-vs-AST — the AST emitter is gone (#3457), so this
+// now compares FORCED to ROUTED. It still catches a gate that declines a module
+// the IR path handles correctly, and a forced emit that diverges from the routed
+// one; it no longer compares two emitters. A program the gates decline is a
+// refusal on the routed side rather than an AST fallback.
 //
 // First wasm slice: pure i32 (arrays are a follow-up that reuses wasm's
-// linear-memory runtime), so array programs fall back to AST under `-ir` and
-// must still match.
+// linear-memory runtime).
 func TestSelfHostWasmIRPath(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm IR e2e")
@@ -29,7 +31,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
-		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
@@ -148,7 +150,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"loop-call", "function sq(x: i32): i32 { return x * x; } function main(): i32 { var i = 1; var s = 0; while (i <= 4) { s = s + sq(i); i = i + 1; } return s; }"},
 		// Arrays in the wasm IR path: linear-memory __fern_arr_box layout +
 		// Perceus array RC (alias-inc / move-on-return / borrowed params / exit
-		// dec-sweep / reassignment), reused from wasm.fern's heap runtime.
+		// dec-sweep / reassignment), reused from the shared heap runtime.
 		{"arr-index", "function main(): i32 { var a = [10, 20, 30]; return a[0] + a[2]; }"},
 		{"arr-loop-sum", "function main(): i32 { var a = [5, 10, 15, 20, 25]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }"},
 		{"arr-expr-elems", "function main(): i32 { var x = 4; var a = [x, x * 2, x + 100]; return a[1] + a[2]; }"},
@@ -164,7 +166,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"arr-rebind-loop", "function main(): i32 { var s = 0; var i = 0; while (i < 4) { var r = [i, i * 2, i * 3]; s = s + r[2]; i = i + 1; } return s; }"},
 		// Strings: literal + .len(), concat (+), equality (==/!=), incl. string
 		// params. wasm literals are data-section `[len@0][bytes@4]` blocks (so the
-		// layout shifts off the empty-table base); concat/eq lower to wasm.fern's
+		// layout shifts off the empty-table base); concat/eq lower to the runtime's
 		// $__fern_strcat / $__fern_streq. Exit codes must match the AST path.
 		{"str-len", `function main(): i32 { var s = "hello"; return s.len(); }`},
 		{"str-index-local", `function main(): i32 { var s = "hello"; return s[0] as i32; }`},

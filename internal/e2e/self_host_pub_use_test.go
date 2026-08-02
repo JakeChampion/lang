@@ -45,7 +45,7 @@ func writeSelfHostCLIProject(t *testing.T) string {
 	t.Helper()
 	dir := writeSelfHostAsmProject(t)
 	for _, name := range []string{
-		"flatten.fern", "wasm.fern", "wasm_ir.fern",
+		"flatten.fern", "wasm_ir.fern",
 		"checker.fern", "interp.fern", "printer.fern", "ssa.fern",
 		"ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "watbin.fern",
 		"constfold.fern", "arm64_native.fern", "elf.fern", "fern.fern",

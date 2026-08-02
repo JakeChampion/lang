@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -671,16 +670,28 @@ func runDriver(t *testing.T, runner []string, bin string, src []byte, strict boo
 	return stdout.Bytes(), stderr.String(), cmd.ProcessState.ExitCode()
 }
 
-// overBudgetProgram is a module past the 512-function merged-bundle budget
-// (#3425) — the one bail site that is deterministically reachable from a valid
-// program, and so the only way to prove the tripwire fires.
-func overBudgetProgram() []byte {
-	var b strings.Builder
-	for i := 0; i < 513; i++ {
-		fmt.Fprintf(&b, "function zf%d(): i32 { return %d; }\n", i, i%7)
-	}
-	b.WriteString("function main(): i32 { return zf0() + zf1(); }\n")
-	return []byte(b.String())
+// bailingProgram is a valid program the IR path deterministically declines, so
+// the strict-mode tripwire has something real to fire on.
+//
+// It used to be a module past the 512-function merged-bundle budget, described
+// here as "the one bail site deterministically reachable from a valid program".
+// That budget is gone (#3457), so the shape had to change — and the replacement
+// is better, because the budget was a whole-MODULE gate while this is a genuine
+// per-function `lower_func` bail, which is what the flag exists to name.
+//
+// Iterating a FOUR-deep array is the construct: `arrarr_elem` models one level of
+// array-of-array element ("arr", #5979) and no more, so the fourth `for` binds a
+// loop var with no element type and the function bails. That limit is deliberate,
+// not an oversight, which is what makes it a stable fixture — the three-deep form
+// lowers, and is covered by TestSelfHostMode0GapsIR.
+func bailingProgram() []byte {
+	return []byte(`function main(): i32 {
+    var hyper: i32[][][][] = [[[[1]], [[2, 3]]]];
+    var sum = 0;
+    for cube in hyper { for plane in cube { for row in plane { for v in row { sum = sum + v; } } } }
+    return sum;
+}
+`)
 }
 
 func strictIRDriver(t *testing.T) (string, []string, string) {
@@ -748,7 +759,7 @@ func TestSelfHostStrictIRX86_64(t *testing.T) {
 // site. That difference is the whole diagnostic value of the flag now.
 func TestSelfHostStrictIRRefusesBail(t *testing.T) {
 	_, runner, driverBin := strictIRDriver(t)
-	src := overBudgetProgram()
+	src := bailingProgram()
 
 	off, offErr, offCode := runDriver(t, runner, driverBin, src, false)
 	if offCode == 0 || len(off) != 0 {
@@ -761,8 +772,9 @@ func TestSelfHostStrictIRRefusesBail(t *testing.T) {
 	if onCode != 3 {
 		t.Fatalf("FERN_STRICT_IR=1: driver exited %d with %d bytes, want a refusal (3)\n%s", onCode, len(on), stderr)
 	}
-	if !strings.Contains(stderr, "FERN_STRICT_IR:") || !strings.Contains(stderr, "512-function") {
-		t.Errorf("refusal did not name the bail:\n%s", stderr)
+	// The bail is now a per-FUNCTION one, so the flag names the function.
+	if !strings.Contains(stderr, "FERN_STRICT_IR:") || !strings.Contains(stderr, "main") {
+		t.Errorf("refusal did not name the bailing function:\n%s", stderr)
 	}
 }
 
@@ -777,7 +789,7 @@ func TestSelfHostStrictIRWasm(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
-		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {

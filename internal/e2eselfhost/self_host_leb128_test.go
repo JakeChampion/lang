@@ -9,7 +9,7 @@ import (
 
 // TestSelfHostLEB128 exercises the self-hosted binary-wasm LEB128 byte
 // encoders, which live in examples/self_host/watbin.fern (the WAT-text
-// emitter is wasm.fern).
+// emitter is wasm_ir.fern).
 //
 // watbin.fern is a single import-free module, so this test reads it from
 // disk and concatenates it with a self-test main() that encodes the
@@ -25,7 +25,7 @@ func TestSelfHostLEB128(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

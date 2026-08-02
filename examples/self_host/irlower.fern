@@ -14435,6 +14435,12 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     // `str_split(s, sep)` yields a fresh owned string[] — a
                     // move, track as array (is_strarr comes from expr_is_strarr).
                     else if (fid.name == "str_split" && cc.args.len() == 2) { is_arr = true; }
+                    // `args()` likewise yields a fresh owned string[]. expr_is_strarr
+                    // has known this since the builtin landed, so an unannotated
+                    // `var a = args()` was strarr-tracked but NOT array-tracked, and
+                    // `for s in a` then bailed the function while `a[i]` / `a.len()`
+                    // lowered fine. The two predicates have to agree (#3457).
+                    else if (fid.name == "args" && cc.args.len() == 0) { is_arr = true; }
                     else if (se.is_arr_ret_fn(fid.name)) { is_arr = true; }
                 },
                 // `var b = s.bytes()` / `= s.as_bytes()`: op_str_bytes

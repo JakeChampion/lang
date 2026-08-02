@@ -2098,6 +2098,41 @@ pub function ir_route_final(cache: irlower.LowerResult[], component: boolean, io
     return wasm_ir_deferrals_ok(cache) && (!component || component_needs_ok(needs_of(cache), io));
 }
 
+// emit_module_mode_or_error is the wasm emit entry for every driver now that
+// `wasm.fern` is gone: it makes the same two-halves routing decision
+// wasm.emit_module_mode made, and where that fell THROUGH to the legacy AST
+// emitter it reports a hard error instead. The wasm sibling of
+// asm_ir.emit_module_or_error (#3457).
+//
+// `component` / `io` select the framing exactly as before: mode 0 is the preview1
+// command core, 1 the component run core, 2 the component run + stdout core. `fs`
+// is deliberately absent — it never selected an EMITTER, only which component
+// wrapper the caller builds around the mode-2 core, and component_needs_ok is the
+// gate that admits the filesystem ops. Callers that used emit_module_run_io_fs
+// pass component=true, io=true and wrap the result themselves.
+//
+// The fall-through this replaces was not a safety net by the end. On the
+// erased-wide family the AST emitter returned WRONG ANSWERS rather than bailing
+// (docs/SELFHOST-AST-RETIREMENT.md), and in mode 0 it silently dropped an
+// `@export` entirely, so a refusal is strictly better than what it did.
+pub function emit_module_mode_or_error(mod: parser.Module, component: boolean, io: boolean): string {
+    var lm: parser.Module = route_normalized(mod);
+    var mode: i32 = 0;
+    if (component) {
+        mode = 1;
+        if (io) { mode = 2; }
+    }
+    if (ir_route_precheck(lm)) {
+        var ir_cache: irlower.LowerResult[] = lower_all_for(lm);
+        if (ir_route_final(ir_cache, component, io)) {
+            return emit_ir_module_mode(lm, ir_cache, mode);
+        }
+    }
+    eprint("error: module is not IR-eligible; the AST emitter is no longer reachable from this driver (set FERN_STRICT_IR=1 to name the bail site)\n");
+    exit(1);
+    return "";
+}
+
 // Preview-2 component-model imports for the wasm reactor's timer-pollable ops
 // (#3457 / #4317). Emitted into the module header (caller-side, wasm_ir_run) when
 // the module uses the op, exactly like the preview1 import helpers — but these
@@ -10024,4 +10059,207 @@ pub function returns_value(ret_type: string): boolean {
     if (ret_type.len() == 0) { return false; }
     if (ret_type == "void") { return false; }
     return true;
+}
+
+// ---- helpers moved from the retired wasm.fern (#3457) --------------------
+//
+// These four are pure functions over parser.TypeRef / parser.Module with no
+// dependence on the AST emitter's state, and they outlived it: the three probe
+// drivers (wasm_option_payload_run) and the -target wasm-component CLI path in
+// fern.fern are their only callers. Moved verbatim rather than rewritten, so
+// the component classification and the payload spellings cannot shift with the
+// deletion.
+
+pub function parse_result_err_payload(t: string): string {
+    var r: parser.TypeRef = parser.parse_type_ref(t);
+    if (r.array_depth == 0 && r.base == "Result" && r.args.len() >= 2) {
+        return parser.render_type_ref(r.args[1]);
+    }
+    return "";
+}
+
+// parse_option_payload extracts the Some/Ok payload type T from an `Option[T]` /
+// `Result[T, E]` type spelling via the structured TypeRef, or "" for any other
+// type (incl. an ARRAY of option/result — `Option[…][]` is an array, not an
+// Option). Same SH-021 migration as parse_result_err_payload; the former scan
+// returned garbage on the array case, corrected here to "".
+pub function parse_option_payload(t: string): string {
+    var r: parser.TypeRef = parser.parse_type_ref(t);
+    if (r.array_depth == 0 && (r.base == "Option" || r.base == "Result") && r.args.len() >= 1) {
+        return parser.render_type_ref(r.args[0]);
+    }
+    return "";
+}
+
+
+function expr_calls(e: parser.Expr, fn: string): boolean {
+    match (e) {
+        parser.ExprUnary(u) => { return expr_calls(u.operand, fn); },
+        parser.ExprBinary(b) => { return expr_calls(b.left, fn) || expr_calls(b.right, fn); },
+        parser.ExprIndex(ix) => { return expr_calls(ix.array, fn) || expr_calls(ix.index, fn); },
+        parser.ExprSlice(sl) => { return expr_calls(sl.array, fn) || expr_calls(sl.start, fn) || expr_calls(sl.end, fn); },
+        parser.ExprTuple(tu) => {
+            var ti: i32 = 0;
+            while (ti < tu.elements.len()) {
+                if (expr_calls(tu.elements[ti], fn)) { return true; }
+                ti = ti + 1;
+            }
+            return false;
+        },
+        parser.ExprFieldAccess(fa) => { return expr_calls(fa.obj, fn); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                if (expr_calls(a.elements[i], fn)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                if (expr_calls(sl.field_values[i], fn)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { if (id.name == fn) { return true; } },
+                _ => {},
+            }
+            // Recurse the callee too — `args().len()` hides the args()
+            // call inside the .len() field-access receiver.
+            if (expr_calls(c.callee, fn)) { return true; }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                if (expr_calls(c.args[i], fn)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprLambda(lm) => { return stmts_call(lm.body, fn); },
+        _ => { return false; },
+    }
+    return false;
+}
+
+function stmts_call(body: parser.Stmt[], fn: string): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => { if (expr_calls(v.init, fn)) { return true; } },
+            parser.StmtAssign(a) => { if (expr_calls(a.value, fn)) { return true; } },
+            parser.StmtReturn(r) => { if (expr_calls(r.value, fn)) { return true; } },
+            parser.StmtExpr(e) => { if (expr_calls(e.value, fn)) { return true; } },
+            parser.StmtIf(f) => {
+                if (expr_calls(f.cond, fn)) { return true; }
+                if (stmts_call(f.then_body, fn)) { return true; }
+                if (stmts_call(f.else_body, fn)) { return true; }
+            },
+            parser.StmtWhile(w) => {
+                if (expr_calls(w.cond, fn)) { return true; }
+                if (stmts_call(w.body, fn)) { return true; }
+            },
+            parser.StmtFor(f) => {
+                if (expr_calls(f.iter, fn)) { return true; }
+                if (stmts_call(f.body, fn)) { return true; }
+            },
+            parser.StmtMatch(m) => {
+                if (expr_calls(m.scrutinee, fn)) { return true; }
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    if (stmts_call(m.arms[k].body, fn)) { return true; }
+                    k = k + 1;
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function module_calls(mod: parser.Module, fn: string): boolean {
+    if (stmts_call(mod.top_stmts, fn)) { return true; }
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (stmts_call(mod.funcs[i].body, fn)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// component_shape classifies a program for the -target wasm-component CLI.
+// Beyond no-I/O (0) and stdout (1), each *single* non-stdout WASI category a
+// program uses maps to the matching component_full_io_* wrap. A program using
+// two or more categories (e.g. read_file + env) has no single wrap yet, so it
+// is rejected (-1) rather than emitting a component whose imports the framing
+// can't satisfy. Shape codes:
+//   0 no-I/O · 1 stdout · 2 fs-read · 3 fs-write · 4 fs-rw · 5 random
+//   6 env · 7 args · 8 clock(wall) · 9 clock(mono) · 13 stderr · 14 exit
+pub function component_shape(mod: parser.Module): i32 {
+    var io: boolean = module_calls(mod, "print") || module_calls(mod, "write")
+        || module_calls(mod, "putchar") || module_calls(mod, "print_int");
+    var rd: boolean = module_calls(mod, "read_file");
+    var wr: boolean = module_calls(mod, "write_file");
+    var env: boolean = module_calls(mod, "env");
+    // arg_at reads argv just as args() does, so it belongs to the args
+    // category. Omitting it classified an arg_at program as plain-stdout and
+    // wrapped it in component_full_io — a framing with no get-arguments to
+    // satisfy the call (#5818).
+    var args: boolean = module_calls(mod, "args") || module_calls(mod, "arg_at");
+    var rnd: boolean = module_calls(mod, "random_bytes") || module_calls(mod, "random_i32");
+    var clkw: boolean = module_calls(mod, "now_unix_ms") || module_calls(mod, "now_ns");
+    var clkm: boolean = module_calls(mod, "monotonic_ns");
+    var ep: boolean = module_calls(mod, "eprint");
+    var ex: boolean = module_calls(mod, "exit");
+    // Count distinct non-stdout WASI categories. Single-category programs and
+    // a fixed set of two-category fs-paired combos have a wrapped wasi:cli/run
+    // shape; anything else is rejected.
+    var cats: i32 = 0;
+    if (rd || wr) { cats = cats + 1; }
+    if (env) { cats = cats + 1; }
+    if (args) { cats = cats + 1; }
+    if (rnd) { cats = cats + 1; }
+    if (clkw || clkm) { cats = cats + 1; }
+    if (ep) { cats = cats + 1; }
+    if (ex) { cats = cats + 1; }
+    if (cats > 2) { return 0 - 1; }
+    if (cats == 0) {
+        if (io) { return 1; }
+        return 0;
+    }
+    if (cats == 2) {
+        // Only specific fs-paired two-category combos have a single wrap.
+        if ((rd || wr) && env) {
+            if (rd && wr) { return 11; }   // fs read+write + env
+            if (rd) { return 10; }          // fs read + env
+            return 0 - 1;                   // write-only + env: no wrap
+        }
+        if ((rd || wr) && args) {
+            if (rd && wr) { return 16; }   // fs read+write + args
+            if (rd) { return 15; }          // fs read + args
+            return 0 - 1;
+        }
+        if (rnd && wr && !rd) { return 12; } // random + fs write
+        return 0 - 1;
+    }
+    if (rd || wr) {
+        if (rd && wr) { return 4; }
+        if (wr) { return 3; }
+        return 2;
+    }
+    if (rnd) { return 5; }
+    if (env) { return 6; }
+    if (args) { return 7; }
+    if (clkw || clkm) {
+        // No combined wall+mono wrap; only one of the two is supported alone.
+        if (clkw && clkm) { return 0 - 1; }
+        if (clkm) { return 9; }
+        return 8;
+    }
+    if (ep) { return 13; }
+    if (ex) { return 14; }
+    return 0 - 1;
 }

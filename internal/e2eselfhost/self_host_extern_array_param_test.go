@@ -102,7 +102,7 @@ func TestSelfHostExternArrayParamCustomProvider(t *testing.T) {
 	}
 
 	// --- Self-host backend: emit the core from the array-param program. ---
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_runio_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_runio_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

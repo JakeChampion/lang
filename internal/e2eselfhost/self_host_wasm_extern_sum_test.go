@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostWasmExternSum pins the wasm backend's flat-sum extern type checks
-// (examples/self_host/wasm.fern's extern_sum_param_supported /
+// (examples/self_host/wasm_ir.fern's extern_sum_param_supported /
 // extern_sum_param_is_option — SH-021, docs/SELF-HOST-AUDIT.md T2). Both now
 // decode an Option[…] / Result[…, …] spelling via the structured TypeRef
 // (parser.parse_type_ref) instead of the magic-byte `Option[` / `Result[`
@@ -34,8 +34,7 @@ func TestSelfHostWasmExternSum(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"util.fern", "lexer.fern", "astwalk.fern", "ir.fern", "parser.fern",
-		"asmcore.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern",
-		"wasm_extern_sum_run.fern",
+		"asmcore.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_extern_sum_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {

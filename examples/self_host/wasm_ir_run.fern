@@ -1,13 +1,16 @@
 // examples/self_host/wasm_ir_run.fern — differential driver for the wasm IR
-// code path (the wasm sibling of asm_ir_run, whose -target flag also covers arm64). With a `-ir`
-// flag: when set AND the module is in the pure-i32 IR subset, it emits via the
-// IR path (wasm_ir.emit_module_ir: AST -> stack IR -> WAT); otherwise it uses
-// the unchanged AST backend (wasm.emit_module). The companion Go test pipes
-// each program through both ways, runs the WAT under wasmtime, and asserts
-// identical exit codes — proving the wasm IR path is behaviour-equivalent to
-// the production AST path on the shared i32 subset.
+// code path (the wasm sibling of asm_ir_run, whose -target flag also covers arm64).
+// `-ir` FORCES the IR path (wasm_ir.emit_ir_module: AST -> stack IR -> WAT) past
+// the routing gates; without it the driver takes the ordinary ROUTED path, the
+// same one wasm_run takes. The companion Go test pipes each program through both
+// ways and asserts identical exit codes.
 //
-// A SEPARATE driver so wasm.fern + the wasm_run bootstrap stay untouched.
+// The two sides used to be IR-vs-AST, which is what made this a differential
+// driver at all. `wasm.fern` is gone (#3457), so the comparison is now
+// forced-vs-routed: it still catches a gate that declines a module the IR path
+// handles correctly, and a forced emit that diverges from the routed one, but it
+// no longer compares two emitters. A module the gates decline is an ERROR on the
+// routed side rather than an AST fallback.
 
 import "std/io";
 import "./lexer";
@@ -15,7 +18,6 @@ import "./parser";
 import "./util";
 import "./asmcore";
 import "./irlower";
-import "./wasm";
 import "./wasm_ir";
 
 function main(): i32 {
@@ -115,15 +117,13 @@ function main(): i32 {
         // O(passes) blowup that OOMed large modules (#4652).
         var ir_cache: irlower.LowerResult[] = wasm_ir.lower_all_for(mod);
         // The module emission itself lives in wasm_ir.emit_ir_module — the SINGLE
-        // source of truth shared with wasm.emit_module_mode's IR branch. This
-        // driver used to inline its own near-identical copy; the two drifted and
-        // the emit_module_mode copy lost the whole WASI env/args/clock/fs surface,
-        // emitting calls to helpers it never defined (#4801). It moved out of
-        // wasm.fern in wasm slice 1b, so the IR path no longer routes through the
-        // AST emitter's module at all.
+        // source of truth shared with the routed entry point. This driver used to
+        // inline its own near-identical copy; the two drifted and the routed copy
+        // lost the whole WASI env/args/clock/fs surface, emitting calls to helpers
+        // it never defined (#4801).
         emitted = wasm_ir.emit_ir_module(mod, ir_cache);
     } else {
-        emitted = wasm.emit_module(parser.module_with_builtins(mod));
+        emitted = wasm_ir.emit_module_mode_or_error(parser.module_with_builtins(mod), false, false);
     }
     write(emitted);
     return 0;

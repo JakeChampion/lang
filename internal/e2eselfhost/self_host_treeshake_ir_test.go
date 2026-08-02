@@ -139,7 +139,7 @@ func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 
 	t.Run("light-derive-eq", func(t *testing.T) { runProg("ts_light", treeshakeLightProg, 42) })
 
-	t.Run("heavy-flips-ast-to-ir", func(t *testing.T) {
+	t.Run("heavy", func(t *testing.T) {
 		entry := filepath.Join(dir, "ts_heavy.fern")
 		if err := os.WriteFile(entry, []byte(treeshakeHeavyProg+"\n"), 0o644); err != nil {
 			t.Fatalf("write entry: %v", err)
@@ -148,11 +148,14 @@ func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 		if _, code := runFixtureInterp(t, entry, ""); code != 7 {
 			t.Fatalf("heavy native interp = %d, want 7", code)
 		}
-		// The keystone: WITHOUT the prune (explicit -no-treeshake) the loaded
-		// module is over budget → ast; with the prune (the default once a stdlib
-		// root is given) it fits → ir.
-		if out, _ := runDriver(entry, root, "-no-treeshake", "-decide"); strings.TrimSpace(out) != "ast" {
-			t.Errorf("heavy decide (no treeshake) = %q, want \"ast\"", strings.TrimSpace(out))
+		// This case used to be "heavy-flips-ast-to-ir": the unpruned module was
+		// over the 512-function budget → `ast`, the pruned one fit → `ir`, and
+		// that flip was the keystone. The budget is gone (#3457), so BOTH route
+		// IR — which is the assertion now, and it is the one that proves the
+		// removal took. Treeshake is a size/compile-time optimisation again
+		// rather than the thing that makes a stdlib-heavy program compilable.
+		if out, _ := runDriver(entry, root, "-no-treeshake", "-decide"); strings.TrimSpace(out) != "ir" {
+			t.Errorf("heavy decide (no treeshake) = %q, want \"ir\" — the merged bundle is being refused again", strings.TrimSpace(out))
 		}
 		if out, _ := runDriver(entry, root, "-decide"); strings.TrimSpace(out) != "ir" {
 			t.Errorf("heavy decide (default treeshake) = %q, want \"ir\"", strings.TrimSpace(out))
@@ -173,14 +176,13 @@ func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 		if code := cmd.ProcessState.ExitCode(); code != 7 {
 			t.Errorf("heavy (pruned) run = %d, want 7", code)
 		}
-		// And the UNPRUNED one is REFUSED. This used to build too — the AST
-		// emitter took it, and the pair asserted "treeshake changes the path, not
-		// behaviour". #3457 slice 5 deleted that emitter, so the over-budget route
-		// the -decide above still reports has nowhere to go: emitting 0 bytes IS
-		// the contract now, and it is what makes the prune load-bearing rather
-		// than merely preferable.
-		if noPrune, _ := runDriver(entry, root, "-no-treeshake"); len(noPrune) != 0 {
-			t.Errorf("heavy (unpruned) emitted %d bytes, want a refusal (over budget, no AST emitter)", len(noPrune))
+		// And the UNPRUNED one builds too, restoring the original contract that
+		// treeshake changes the path, not behaviour. Between #3457 slice 5 (which
+		// deleted the AST emitter the over-budget module used to fall back to) and
+		// the budget removal, this asserted a REFUSAL instead — the prune was
+		// briefly load-bearing for compilability. It is not any more.
+		if noPrune, _ := runDriver(entry, root, "-no-treeshake"); len(noPrune) == 0 {
+			t.Error("heavy (unpruned) emitted 0 bytes, want a build — the merged bundle is being refused again")
 		}
 	})
 

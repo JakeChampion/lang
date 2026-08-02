@@ -1,5 +1,5 @@
 // examples/self_host/wasm_option_payload_run.fern — behaviour guard for the wasm
-// backend's Option/Result payload extractors (wasm.fern's parse_option_payload /
+// backend's Option/Result payload extractors (wasm_ir's parse_option_payload /
 // parse_result_err_payload, SH-021 slice — docs/SELF-HOST-AUDIT.md T2).
 //
 // Both now decode an `Option[T]` / `Result[T, E]` type spelling via the structured
@@ -22,7 +22,7 @@
 // the corrected "" (the old garbage would have failed the golden), which the three
 // x86 self-compile fixpoints confirm is unreachable during bootstrap.
 
-import "./wasm";
+import "./wasm_ir";
 
 function show(s: string): string { if (s.len() == 0) { return "<empty>"; } return s; }
 
@@ -40,8 +40,8 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < corpus.len()) {
         var t: string = corpus[i];
-        var opt: string = wasm.parse_option_payload(t);
-        var err: string = wasm.parse_result_err_payload(t);
+        var opt: string = wasm_ir.parse_option_payload(t);
+        var err: string = wasm_ir.parse_result_err_payload(t);
         out = out + show(t) + " opt=" + show(opt) + " err=" + show(err) + "\n";
         i = i + 1;
     }

@@ -27,14 +27,14 @@ import (
 // decides IR eligibility — so it is invisible to every single-generation test.
 // Pinning it needs two generations, which is what this test builds.
 //
-// It is env-gated because it is expensive in a way the ordinary suite is not:
-// it builds a full mmc1/mmc2 pair (~4 min, a ~220 MB stage-1 binary and a heavy
-// emit) with asm_ir.fern's 512-function budget removed in the temp-dir copy.
-// The budget removal is what makes generation 2 IR-BUILT: with the budget in
-// place the ~525-function merged bundle is refused outright (before #3457 slice
-// 5 it fell through to the AST emitter instead), so there is no second
-// generation to disagree with the first and the bug cannot manifest. Run it
-// with:
+// It is env-gated because it is expensive in a way the ordinary suite is not: it
+// builds a full mmc1/mmc2 pair (~4 min, a ~220 MB stage-1 binary and a heavy
+// emit). The gate keeps a plain `go test ./...` fast; CI runs it in the `gen2`
+// job of test-e2e-selfhost.yml, which sets the variable. That lane exists
+// because this is the ONLY guard for the hazard, and it was gated behind a
+// variable nothing set — unguarded in CI at exactly the moment the 512-function
+// budget was removed and generation 2 became IR-BUILT by default (#3457).
+// Locally:
 //
 //	RUN_CONST_FUNC_GEN2=1 go test ./internal/e2eselfhost/ -run TestSelfHostConstFuncGen2 -timeout 30m
 func TestSelfHostConstFuncGen2(t *testing.T) {
@@ -57,25 +57,13 @@ func TestSelfHostConstFuncGen2(t *testing.T) {
 		}
 	}
 
-	// Drop the 512-function IR budget in the temp-dir copy only. Both budget
-	// sites gate on the same predicate; neutering them routes the ~525-function
-	// merged bundle through IR, which is what makes generation 2 an IR-BUILT
-	// compiler rather than an AST-built one.
-	irPath := filepath.Join(dir, "asm_ir.fern")
-	irSrc, err := os.ReadFile(irPath)
-	if err != nil {
-		t.Fatalf("read asm_ir.fern: %v", err)
-	}
-	patched := strings.NewReplacer(
-		"if (mod.funcs.len() > 512) { return false; }", "if (false) { return false; }",
-		`if (mod.funcs.len() > 512) { return ""; }`, `if (false) { return ""; }`,
-	).Replace(string(irSrc))
-	if n := strings.Count(patched, "if (false) { return"); n != 2 {
-		t.Fatalf("budget-removal patch matched %d sites, want 2 — asm_ir.fern's budget shape changed", n)
-	}
-	if err := os.WriteFile(irPath, []byte(patched), 0o644); err != nil {
-		t.Fatalf("write patched asm_ir.fern: %v", err)
-	}
+	// No source patching any more. This test used to strip asm_ir.fern's
+	// 512-function IR budget in the temp-dir copy, because with the budget in
+	// place the ~525-function merged bundle was refused and there was no
+	// IR-built second generation to disagree with the first. The budget is now
+	// GONE from the real source (#3457), so the test exercises the shipped
+	// configuration rather than a simulation of it — which is the point: the
+	// hazard it guards is the one the removal creates.
 
 	// gen 1: native-built.
 	selfSrc := filepath.Join(dir, "asm_load_run.fern")
@@ -87,7 +75,7 @@ func TestSelfHostConstFuncGen2(t *testing.T) {
 		t.Fatalf("mmc1 compile self failed: %v", err)
 	}
 	if !strings.Contains(string(stage2Asm), ".Lir") {
-		t.Fatal("stage-2 asm has no .Lir labels — the budget removal did not take, so gen 2 is not IR-built")
+		t.Fatal("stage-2 asm has no .Lir labels — gen 2 is not IR-built, so the merged bundle is being refused again")
 	}
 	mmc2 := buildBin(t, gcc, dir, "cfg_mmc2", string(stage2Asm))
 

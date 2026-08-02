@@ -8,7 +8,7 @@ import (
 )
 
 // TestSelfHostWasmRun exercises the self-hosted wasm emitter
-// (examples/self_host/wasm.fern) end to end. wasm_run.fern reads Fern
+// (examples/self_host/wasm_ir.fern) end to end. wasm_run.fern reads Fern
 // source from stdin, runs it through the self-host lexer + parser +
 // wasm.emit_module, and prints a WASI core module in text format (WAT).
 // For each case the test:
@@ -29,7 +29,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

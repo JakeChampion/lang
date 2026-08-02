@@ -9,7 +9,7 @@ import (
 
 // TestSelfHostWatLex exercises the WAT tokenizer (examples/self_host/
 // wat_lex.fern) — slice 2 of the self-hosted binary wasm backend, which
-// assembles the folded-S-expr WAT that wasm.fern emits rather than
+// assembles the folded-S-expr WAT that the wasm emitter emits rather than
 // re-deriving lowering from the AST.
 //
 // Like leb128.fern, wat_lex.fern is import-free, so the test reads it from
@@ -25,7 +25,7 @@ func TestSelfHostWatLex(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)

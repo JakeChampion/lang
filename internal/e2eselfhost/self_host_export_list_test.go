@@ -15,7 +15,7 @@ import (
 // TestSelfHostExportListResultRunsViaConsumer is the self-host parity gate for
 // the P6 numeric-array (`list<T>`) result export (the Go side is
 // TestExportListResultRunsViaConsumer). The self-hosted compiler
-// (examples/self_host/wasm.fern) emits a wrapper that copies the Fern array's
+// (examples/self_host/wasm_ir.fern) emits a wrapper that copies the Fern array's
 // elements (block base `[len@0]`, elements @+8) into a fresh 8-aligned buffer
 // and writes the canonical (ptr,len) return area; the Go composer lifts it with
 // the memory lift (emitting the `list<s32>` component type); and a Fern consumer
@@ -40,7 +40,7 @@ func TestSelfHostExportListResultRunsViaConsumer(t *testing.T) {
 	}
 
 	// self-host emits the exporter core (command with main + list @export).
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm.fern", "wasm_runio_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_runio_run.fern"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
