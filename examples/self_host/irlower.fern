@@ -2907,6 +2907,17 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                         },
                         _ => {}
                     }
+                    // `m.get_or(k, d)` on a `Map[K, V]` whose VALUE is a struct
+                    // evaluates to V, so an UNANNOTATED `var p = m.get_or(…)` types
+                    // `p` and `p.field` resolves. get_or_recv_map_type is the same
+                    // receiver resolver the map-op lowering itself dispatches on, so
+                    // the two cannot disagree about what the receiver is. Without
+                    // this the read had no struct type and bailed the function to the
+                    // AST emitter — annotating `p` was the only way through (#3457).
+                    if (fa.field == "get_or" && c.args.len() == 2) {
+                        var mvt: string = map_value_of(get_or_recv_map_type(fa.obj, s));
+                        if (decl_is_struct(s.structs, mvt)) { return mvt; }
+                    }
                     // Method call `obj.make()` → key by "<Type>.<method>".
                     var rty: string = expr_struct_type(fa.obj, s);
                     if (rty == "") { return ""; }
@@ -15189,6 +15200,11 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                                 else if (expr_is_u64(uvc.args[1], sb)) { uvtag = "u64"; }
                                 else if (expr_is_f64(uvc.args[1], sb)) { uvtag = "f64"; }
                                 else if (infer_expr_width(uvc.args[1], sb) == 64) { uvtag = "i64"; }
+                                // A STRUCT value records `Map[K, P]`, so the get_or
+                                // read side recovers P and `p.field` resolves without
+                                // an annotation. Pointer-shaped like the string case
+                                // above (widekind 0), so no op selection changes.
+                                else if (decl_is_struct(sb.structs, expr_struct_type(uvc.args[1], sb))) { uvtag = expr_struct_type(uvc.args[1], sb); }
                             }
                         },
                         _ => {}
@@ -15650,6 +15666,41 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     return s.fail();
 }
 
+// refine_map_struct_val upgrades a map slot's VALUE tag from the default "i32" to
+// a struct name on `m = m.insert(k, P { … })` / `.set(…)`. The unannotated binding
+// `var m = map_new_i32(n)` has no insert to read a value type from, so it records
+// `Map[K, i32]`; when the first insert arrives as a separate assignment the slot
+// would keep that tag forever and a later `var p = m.get_or(…)` could not recover
+// P — the read bailed the function to the AST emitter. Fact-only: both tags are
+// pointer-shaped for op selection (map_value_widekind 0, map_insert_val_is_i64
+// false), so no emitted op changes; only the read side's type recovery does.
+function refine_map_struct_val(a: parser.StmtAssign, slot: i32, s: LowerState): LowerState {
+    var mt: string = s.map_type_of(slot);
+    if (!is_map_type_name(mt)) { return s; }
+    if (decl_is_struct(s.structs, map_value_of(mt))) { return s; }
+    match (a.value) {
+        parser.ExprCall(ic) => {
+            match (ic.callee) {
+                parser.ExprFieldAccess(ifa) => {
+                    if ((ifa.field != "insert" && ifa.field != "set") || ic.args.len() != 2) { return s; }
+                    var self_recv: boolean = false;
+                    match (ifa.obj) {
+                        parser.ExprIdent(iid) => { self_recv = iid.name == a.target; },
+                        _ => {}
+                    }
+                    if (!self_recv) { return s; }
+                    var vt: string = expr_struct_type(ic.args[1], s);
+                    if (!decl_is_struct(s.structs, vt)) { return s; }
+                    return s.mark_map_type(slot, "Map[" + map_key_of(mt) + ", " + vt + "]");
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return s;
+}
+
 // lower_stmt_assign: the parser.StmtAssign arm of lower_stmt, split out so no single
 // function's per-function emit accumulation can exhaust the fixed bump
 // arena on the whole-compiler per-module emits (a ~3,000-line lower_stmt
@@ -15659,6 +15710,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
 function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     var slot: i32 = s.slot_of(a.target);
     if (slot < 0) { return s.fail(); }
+    s = refine_map_struct_val(a, slot, s);
     // #4297 CS4: a REASSIGNMENT re-binds the slot's string box, so the
     // slot-carried ownership fact becomes the MEET of the old and new
     // bindings' classes -- the sound flow-insensitive summary (a branch-
@@ -40351,11 +40403,16 @@ function lambda_captures(lam: parser.ExprLambda, gfns: string[], fd: parser.Func
     while (pi < lam.params.len()) { bound = bound.append(lam.params[pi].name); pi = pi + 1; }
     var bi: i32 = 0;
     while (bi < lam.body.len()) { bound = astwalk.collect_bound_stmt(lam.body[bi], bound); bi = bi + 1; }
-    // Only an ENCLOSING LOCAL can be a capture (fd's params + every name bound in
-    // fd.body). Without this, a free ident that is a USER enum constructor or an
-    // I/O builtin (not in gfns) was wrongly captured, making make_clo_func decline
-    // (not an i32 local). Globals are referenced directly in the hoisted body.
+    // Only an ENCLOSING LOCAL can be a capture (fd's RECEIVER + params + every name
+    // bound in fd.body). Without this, a free ident that is a USER enum constructor
+    // or an I/O builtin (not in gfns) was wrongly captured, making make_clo_func
+    // decline (not an i32 local). Globals are referenced directly in the hoisted body.
+    // The receiver is an enclosing local like any param: a method's lambda reading
+    // `a.base` captures `a`. Omitting it made `caps` EMPTY for such a lambda, so the
+    // no-capture lift hoisted the body to a `<fd>$wrapN` trampoline where the
+    // receiver name is unbound — the module then bailed on the wrapper (#3457).
     var encl: string[] = [];
+    if (fd.receiver_name.len() > 0) { encl = encl.append(fd.receiver_name); }
     var ep: i32 = 0;
     while (ep < fd.params.len()) { encl = encl.append(fd.params[ep].name); ep = ep + 1; }
     var eb: i32 = 0;
@@ -40474,6 +40531,8 @@ function cap_type(name: string, fd: parser.FuncDecl, structs: parser.StructDecl[
 }
 
 function cap_type_at(name: string, fd: parser.FuncDecl, depth: i32, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): string {
+    // The receiver binds like a param (see lambda_captures), so resolve it first.
+    if (fd.receiver_name.len() > 0 && fd.receiver_name == name) { return fd.receiver_type; }
     var pi: i32 = 0;
     while (pi < fd.params.len()) {
         if (fd.params[pi].name == name) { return fd.params[pi].type_name; }
@@ -40764,6 +40823,37 @@ function cap_type_expr(e: parser.Expr, fd: parser.FuncDecl, depth: i32, structs:
             var r: string = cap_type_expr(b.right, fd, depth - 1, structs, mfuncs);
             if (l == "i32" && r == "i32") { return "i32"; }
             if (b.op == "+" && l == "string" && r == "string") { return "string"; }
+            return "";
+        },
+        // `var b = s.field` — the object's struct type resolves through the same
+        // recursion, then the field's DECLARED type. cap_type_in_stmts already did
+        // exactly this for a for-in iter (`for x in s.items`) and a match scrutinee;
+        // the plain `var` init arm simply never did, so a lambda capturing such a
+        // local resolved "" and the lift declined (#3457).
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = cap_type_expr(fa.obj, fd, depth - 1, structs, mfuncs);
+            if (oty.len() == 0) { return ""; }
+            return decl_field_type(structs, oty, fa.field);
+        },
+        // `var b = f(…)` / `var b = s.m(…)` — the callee's DECLARED return type,
+        // resolved exactly as the for-in / match-scrutinee arms do (callee_ret_type).
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return callee_ret_type(mfuncs, "", cid.name); },
+                parser.ExprFieldAccess(cfa) => {
+                    var rty: string = cap_type_expr(cfa.obj, fd, depth - 1, structs, mfuncs);
+                    if (rty.len() == 0) { return ""; }
+                    return callee_ret_type(mfuncs, rty, cfa.field);
+                },
+                _ => { return ""; }
+            }
+            return "";
+        },
+        // `var b = xs[i]` — the element type of the indexed array (`T[]` → T).
+        // A non-array (map / string index) resolves "" and still declines.
+        parser.ExprIndex(ix) => {
+            var aty: string = cap_type_expr(ix.array, fd, depth - 1, structs, mfuncs);
+            if (aty.len() > 2 && aty[aty.len() - 2 : aty.len()] == "[]") { return aty[0 : aty.len() - 2] + ""; }
             return "";
         },
         _ => { return ""; }

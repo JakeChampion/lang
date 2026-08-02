@@ -16,14 +16,38 @@ import "std/io";
 import "./lexer";
 import "./parser";
 import "./wasm";
+import "./wasm_ir";
 
 function main(): i32 {
+    // `-decide`: print the routing verdict ("ir" / "ast") instead of emitting —
+    // the COMPONENT-mode sibling of wasm_run's probe. Mode 0 has been swept over
+    // the harvested corpus since #5977; component mode never had a probe at all,
+    // so its decline set was unmeasured, and those declines are exactly what an
+    // IR-or-error reroute turns into hard errors.
+    var decide: boolean = false;
+    var av: string[] = args();
+    var ai: i32 = 1;
+    while (ai < av.len()) {
+        if (av[ai] == "-decide") { decide = true; }
+        ai = ai + 1;
+    }
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var mwb: parser.Module = parser.module_with_builtins(mod);
+    if (decide) {
+        // emit_module_run_io's own decision (component=true, io=true), reused
+        // from wasm_ir rather than restated so the probe cannot drift from the
+        // emitter it describes.
+        var plm: parser.Module = wasm_ir.route_normalized(mwb);
+        var pok: boolean = wasm_ir.ir_route_precheck(plm);
+        if (pok) { pok = wasm_ir.ir_route_final(wasm_ir.lower_all_for(plm), true, true); }
+        if (pok) { print("ir\n"); } else { print("ast\n"); }
+        return 0;
+    }
     // Still the AST entry: rerouting the wasm drivers IR-or-error is a separate
     // slice, gated on the mode-0 decline set being empty (see
     // docs/SELFHOST-AST-RETIREMENT.md). The blocker THIS slice removes is the
     // extern/export one — component mode no longer refuses such modules.
-    write(wasm.emit_module_run_io(parser.module_with_builtins(mod)));
+    write(wasm.emit_module_run_io(mwb));
     return 0;
 }
