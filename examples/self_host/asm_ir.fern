@@ -3346,20 +3346,20 @@ pub function all_eligible_lib_known_view(mod: parser.Module, known: string[], al
 // deleted rather than left inert (#3457 slice 5).
 pub function eligible_core_known_impl(mod: parser.Module, known: string[]): boolean {
     if (mod.funcs.len() == 0) { return false; }
-    // Module-size budget. emit_module_ir lowers every function into ir.Op
-    // lists built by repeated `.append`, which grow past the native runtime's
-    // 2048 B "large" freelist tier — and that tier currently does NOT recycle
-    // (a freed large block never returns to its size class), so each large
-    // buffer leaks for the duration of the emit. On a small module that waste
-    // is bounded and harmless, but the WHOLE self-host compiler, merged into
-    // one ~1000-function module (asm_*_run.fern's flatten.bundle feeds a single
-    // emit_module call), leaks enough to march the bump heap past its 3.875 GiB
-    // ceiling and exit-137 (#3425). Until the native large-tier freelist is
-    // fixed, cap IR routing at a function count that comfortably holds the
-    // largest real module (irlower, ~350) yet rejects the merged whole-compiler
-    // bundle, so a normal program / module compiles through IR while the
-    // bootstrap self-compile of the merged compiler stays on the AST emitter.
-    if (mod.funcs.len() > 512) { return false; }
+    // The 512-function module-size budget is GONE (#3457). It existed because
+    // emit_module_ir's per-function ir.Op lists grow past the runtime's 2048 B
+    // "large" freelist tier, and that tier did not recycle — so a merged
+    // ~1000-function bundle leaked enough to march the bump heap into exit-137
+    // (#3425). Its own comment said "until the native large-tier freelist is
+    // fixed"; that is done (ported to the self-host runtime, x86 #5609 / arm64
+    // #5614, with the per-module fixpoint green), so the precondition is met.
+    //
+    // Removing it is not just cleanup. Since #5972 deleted the AST emitters the
+    // budget stopped being a FALLBACK and became a WALL: a >512-function
+    // whole-program module was simply uncompilable on the register backends
+    // ("module is not IR-eligible; the AST emitter is no longer reachable"). It
+    // is also the last thing keeping the merged whole-compiler bundle off the IR
+    // path, which is what the wasm AST emitter's retirement needs.
     // Per-function eligibility lowers fd ONCE and runs all three checks (body
     // lowers / calls-only-known / const-funcs-only-known) on that single
     // LowerResult, rather than re-lowering it three times (ir_eligible +
@@ -6193,13 +6193,11 @@ pub function emit_module_or_error(mod: parser.Module): string {
 pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var sm: parser.Module = script_normalized(mod);
     // Module-level gates, mirroring eligible_core_known_impl's pre-checks: no
-    // functions / over the merged-bundle size budget (#3425) / no `main` (the
-    // whole-program emit writes `_start` → `call __fn_main`) all fall back to AST.
+    // functions falls back. The merged-bundle SIZE budget that stood here is
+    // gone with its twin in eligible_core_known_impl — see the note there for
+    // why (#3425's large-tier freelist is fixed, and since #5972 the budget was
+    // a wall rather than a fallback).
     if (sm.funcs.len() == 0) { return ""; }
-    if (sm.funcs.len() > 512) {
-        if (strict_ir_on()) { strict_ir_refuse("module over the 512-function merged-bundle budget (#3425)"); }
-        return "";
-    }
     // A main-less module is admitted now: emit_module_ir_unit's `_start` exits 0
     // instead of calling a __fn_main that does not exist (see its has_main branch).
     // Was a blanket refusal, which is what kept the bootstrap smoke test's
