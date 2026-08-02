@@ -43,6 +43,10 @@ function main(): i32 {
     // against a symbol nothing defines — an opaque load-time `unknown func`
     // instead of a diagnostic pointing at the source.
     arity_errs = arity_errs + asmcore.check_undefined_calls(mod);
+    // Nameless-declaration gate: the permissive parser leaves an empty name
+    // where a keyword was used (`function use()`), and nothing downstream
+    // notices — see asmcore.check_decl_names for what that cost.
+    arity_errs = arity_errs + asmcore.check_decl_names(mod);
     // Unclassifiable `fn[]` struct field (#5787 / #3457): a field whose
     // construction proves neither fn-pointers nor closures has no safe dispatch
     // — either default crashes — and used to bail to the AST emitter, which

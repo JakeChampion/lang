@@ -3716,6 +3716,49 @@ pub function check_call_arity(mod: parser.Module): string {
     });
 }
 
+// check_decl_names rejects a module holding a NAMELESS function or struct.
+//
+// The self-host parser is deliberately permissive — `Par` carries no error
+// channel, so a token it cannot use is skipped and the drivers' gates catch the
+// consequences. For a declaration NAME that leaves no consequence to catch:
+// `peek_member_name` returns "" for a keyword, and parse_func_decl then returns
+// a FuncDecl with an empty name. The module parses "successfully" and the
+// nameless function is simply carried through the whole pipeline.
+//
+// That is not hypothetical. `function use()` — `use` is in the lexer's keyword
+// set — produced exactly this, and the empty-named function it left behind cost
+// two sessions of #3457 a confidently WRONG bisection: probe programs that were
+// silently malformed were read as evidence about the IR subset, and the
+// conclusion was written into docs/SELFHOST-AST-RETIREMENT.md before anyone
+// noticed the eligibility report listing a function called "". The native
+// parser rejects the same source properly (`expected "Ident", got "use"`), so
+// this is a self-host-only blind spot, and the divergence is what made it
+// survive: every native oracle agreed the program was invalid while the
+// self-host pipeline reported verdicts about it.
+//
+// A gate rather than a parser error because the parser has nowhere to put one;
+// this is the same shape as check_call_arity / check_undefined_calls, and it
+// runs in the same place.
+pub function check_decl_names(mod: parser.Module): string {
+    var errs: string = "";
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].name.len() == 0) {
+            errs = errs + "error[P001]: line " + util.i32_to_string(mod.funcs[i].line)
+                + ": function declaration has no name (a keyword such as `use` / `type` / `match` cannot be used as one)\n";
+        }
+        i = i + 1;
+    }
+    var si: i32 = 0;
+    while (si < mod.structs.len()) {
+        if (mod.structs[si].name.len() == 0) {
+            errs = errs + "error[P001]: struct declaration has no name (a keyword cannot be used as one)\n";
+        }
+        si = si + 1;
+    }
+    return errs;
+}
+
 pub function check_undefined_calls(mod: parser.Module): string {
     // argc is filled even though the arity rule is off: the walk reads
     // `g.argc[ti]` under an `&&` with check_arity, and a parallel table is
