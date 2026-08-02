@@ -37,13 +37,19 @@ import (
 // arrays, structs and their methods, tuples, closures, higher-order functions,
 // user enums with match, i64 and f64.
 //
-// KNOWN GAPS, deliberately absent (each is a real divergence, tracked, not a
-// subset choice):
-//   - Option / Result. interp.fern does not mention Some / None / Ok / Err at
-//     all, so `Some(42)` evaluates to an error and the driver exits 254 while
-//     native and both compiled backends answer correctly.
-//   - `to_ascii_lower` / `to_ascii_upper` — same shape, absent from interp.fern.
-// Add the cases here when those land; a passing row is the definition of done.
+// Option / Result used to be listed here as a known gap: interp.fern mentioned
+// none of Some / None / Ok / Err, so `Some(42)` failed at CONSTRUCTION and the
+// driver exited 254 while native and both compiled backends answered correctly.
+// That is closed (#5990) and the rows are below, which is the definition of
+// done — a passing row, not a note.
+//
+// `to_ascii_lower` / `to_ascii_upper` were listed alongside it and do NOT
+// belong here: they are `std/string` methods, not builtins, so `"A".to_ascii_
+// lower()` is E043 on the native compiler too without `import "std/string"`.
+// interp_run.fern runs `parser.parse_module` on raw stdin with no module
+// loader, so NO stdlib import resolves in this suite regardless of engine.
+// Covering them needs a driver that loads modules (the self-hosted CLI's
+// `-interp`), not a row here.
 //
 // (A fourth engine — a bytecode VM, vm.fern — used to sit here too. It was
 // retired in #4392: an unreachable fifth implementation of Fern semantics with
@@ -272,6 +278,29 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		{"i64-arith", `function main(): i32 { var n: i64 = 5000000000; return (n % 97) as i32; }`, 73},
 		{"f64-arith", `function main(): i32 { var f: f64 = 2.5; var g: f64 = 1.5; return (f + g) as i32; }`, 4},
 		{"forward-declared-call", `function outer(n: i32): i32 { return inner(n) + 1; } function inner(n: i32): i32 { return n * 2; } function main(): i32 { return outer(20); }`, 41},
+		// ---- Option / Result (#5990) ------------------------------------
+		// The four builtin constructors are declared nowhere a program can
+		// see, so each engine has to know them. interp.fern did not, and
+		// every row below exited 254 there until #5990.
+		{"option-some-match", `function main(): i32 { var o: Option[i32] = Some(42); match (o) { Some(v) => { return v; }, None => { return 0; } } }`, 42},
+		{"option-none-match", `function main(): i32 { var o: Option[i32] = None; match (o) { Some(v) => { return v; }, None => { return 7; } } }`, 7},
+		{"option-string-payload", `function lookup(k: i32): Option[string] { if (k == 1) { return Some("one"); } return None; } function main(): i32 { match (lookup(1)) { Some(s) => { if (s == "one") { return 42; } return 3; }, None => { return 0; } } }`, 42},
+		{"option-struct-payload", `struct P { x: i32 } function main(): i32 { var o: Option[P] = Some(P { x: 42 }); match (o) { Some(p) => { return p.x; }, None => { return 0; } } }`, 42},
+		{"result-err-match", `function f(n: i32): Result[i32, string] { if (n < 0) { return Err("neg"); } return Ok(n * 2); } function main(): i32 { match (f(0 - 1)) { Ok(v) => { return v; }, Err(e) => { if (e == "neg") { return 42; } return 3; } } }`, 42},
+		// `?` — the half that cannot be expressed as a value: on Err/None it
+		// unwinds to the ENCLOSING function's return, so each engine needs a
+		// notion of abrupt completion that stops at exactly one frame.
+		{"try-propagates-err", `function f(n: i32): Result[i32, string] { if (n < 0) { return Err("neg"); } return Ok(n * 2); } function g(n: i32): Result[i32, string] { var v: i32 = f(n)?; return Ok(v + 1); } function main(): i32 { match (g(0 - 5)) { Ok(v) => { return v; }, Err(e) => { if (e == "neg") { return 42; } return 3; } } }`, 42},
+		{"try-unwraps-some", `function h(o: Option[i32]): Option[i32] { var v: i32 = o?; return Some(v * 3); } function main(): i32 { match (h(Some(14))) { Some(v) => { return v; }, None => { return 0; } } }`, 42},
+		{"try-propagates-none", `function h(o: Option[i32]): Option[i32] { var v: i32 = o?; return Some(v * 3); } function main(): i32 { match (h(None)) { Some(v) => { return v; }, None => { return 42; } } }`, 42},
+		// A CLOSURE is a function boundary too, so the unwind stops at the
+		// lambda. Found by this corpus: the native interpreter let the None
+		// escape the lambda and exit the whole program 0, while both compiled
+		// backends answered 42 — a divergence in the ORACLE leg, which is the
+		// one this suite cannot catch by construction unless a row disagrees
+		// with the other two. Also pinned as a four-backend fixture
+		// (testdata/cases/try_op_in_closure).
+		{"try-in-closure", `function main(): i32 { var f: (Option[i32]) => Option[i32] = function (o: Option[i32]): Option[i32] { var v: i32 = o?; return Some(v + 1); }; match (f(None)) { Some(a) => { return a; }, None => { match (f(Some(41))) { Some(b) => { return b; }, None => { return 0; } } } } }`, 42},
 	}
 
 	for _, tc := range cases {

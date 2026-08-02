@@ -91,7 +91,19 @@ pub struct VErr { msg: string }
 // single Cell[Value].
 pub struct VCellI { c: Cell[i32] }
 pub struct VCellF { c: Cell[f64] }
-pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VErr;
+
+// VTry is the `expr?` early-return in flight. `?` on a None / Err unwinds to
+// the enclosing function's return, which a value-returning eval_unary cannot
+// do on its own — so it yields this marker carrying the box to return, and
+// is_err reports it as abrupt so the existing "propagate the first error"
+// plumbing (`if (is_err(v)) { return v; }`, at every operand site) carries it
+// out of the expression for free. Every function boundary — call_func,
+// call_method, call_closure — unwraps it back into `box` as that function's
+// return value, which is what keeps the unwind from escaping one frame too
+// far. Distinct from VErr: an unwind is a normal result of a correct program,
+// not a diagnostic.
+pub struct VTry { box: Value }
+pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VErr | VTry;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 // v_int64 packs an i64 into a VInt64's two i32 halves; unpack_i64 rebuilds
@@ -210,12 +222,66 @@ function v_struct(type_name: string, names: string[], values: Value[]): Value {
 }
 function v_err(msg: string): Value { return VErr { msg: msg }; }
 
+// is_err reports an ABRUPT value — one that must propagate out of the
+// enclosing expression rather than being operated on. Both bottoms qualify:
+// VErr (a diagnostic, which runs to the top) and VTry (a `?` unwind, which
+// every function boundary catches and converts back into a return value).
 function is_err(v: Value): boolean {
     match (v) {
         VErr(_) => { return true; },
+        VTry(_) => { return true; },
         _ => { return false; }
     }
     return false;
+}
+
+// unwrap_try converts a `?` unwind that reached a function boundary into that
+// function's return value — the box (`None` / `Err(e)`) the operand carried.
+// A VErr or an ordinary value passes through untouched.
+function unwrap_try(v: Value): Value {
+    match (v) {
+        VTry(t) => { return t.box; },
+        _ => { return v; }
+    }
+    return v;
+}
+
+// is_builtin_variant_name names the four Option / Result constructors. They
+// are declared nowhere a program can see — the parser has no enum decl for
+// them and modload injects no module — so `Some(42)` reaches eval_expr as a
+// plain call to an undefined name and `None` as an unbound identifier. Both build
+// the same payload-variant VStruct a user enum's `E.Some(x)` / `E.Red` build,
+// so match arms, `variant_simple_name` and value_eq need no Option-specific
+// case (#5990).
+function is_builtin_variant_name(name: string): boolean {
+    return name == "Some" || name == "None" || name == "Ok" || name == "Err";
+}
+
+// user_func_exists reports whether the module declares a non-method function
+// of this name. A program is free to define its own `Ok(...)`; the declaration
+// wins, so the builtin constructor is only reached when nothing else answers.
+function user_func_exists(name: string, funcs: parser.FuncDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// v_variant builds the runtime shape a payload enum variant has: a VStruct
+// tagged with the variant name whose fields carry the parser's synthesised
+// `__ev` / `__ev1` / … names, which is the marker StmtMatch keys on to bind a
+// `V(a, b, …)` pattern positionally. A nullary variant has no fields.
+function v_variant(name: string, args: Value[]): Value {
+    var vnames: string[] = [];
+    var vi: i32 = 0;
+    while (vi < args.len()) {
+        if (vi == 0) { vnames = vnames.append("__ev"); }
+        else { vnames = vnames.append("__ev" + util.i32_to_string(vi)); }
+        vi = vi + 1;
+    }
+    return v_struct(name, vnames, args);
 }
 
 // =================== SCOPE ====================
@@ -988,6 +1054,25 @@ function eval_unary(op: string, ov: Value): Value {
             _ => { return v_err("`as` float cast operand not numeric"); }
         }
     }
+    // `expr?` (parsed as the unary `try_`): unwrap a Some / Ok payload, or
+    // unwind the None / Err box out to the enclosing function's return via
+    // VTry. The operand is the runtime shape v_variant builds, so the payload
+    // is field 0 of a `__ev`-tagged VStruct. A `?` on anything else is a
+    // checker error upstream (E042), so it can only be reached on an invalid
+    // program (#5990).
+    if (op == "try_") {
+        match (ov) {
+            VStruct(sv) => {
+                if (sv.type_name == "Some" || sv.type_name == "Ok") {
+                    if (sv.field_values.len() == 0) { return v_err("`?` on a payload-less " + sv.type_name); }
+                    return sv.field_values[0];
+                }
+                if (sv.type_name == "None" || sv.type_name == "Err") { return VTry { box: ov }; }
+                return v_err("`?` operand is not an Option or Result: " + sv.type_name);
+            },
+            _ => { return v_err("`?` operand is not an Option or Result"); }
+        }
+    }
     // A non-numeric `as <Type>` (`as_i32[]`, `as_string`, `as_Option[i32]`,
     // …) is a zero-cost type ascription — identity on the runtime value.
     // Pass the operand through unchanged (matching the AST/IR emitters, which
@@ -1040,6 +1125,14 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                         return call_func(id.name, no_args, env.funcs, env.aliases);
                     }
                     ci = ci + 1;
+                }
+                // `None` — the one builtin Option / Result constructor that
+                // takes no payload, so it appears as a bare identifier rather
+                // than a call (#5990). The const lookup above runs first, so a
+                // user `const None = …` still wins.
+                if (id.name == "None") {
+                    var none_args: Value[] = [];
+                    return v_variant("None", none_args);
                 }
             }
             return idv;
@@ -1094,6 +1187,15 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                     match (bound) {
                         VFunc(_) => { is_closure = true; closure_val = bound; },
                         _ => { name = id.name; }
+                    }
+                    // `Some(x)` / `Ok(x)` / `Err(e)` — the builtin Option /
+                    // Result constructors, which no function table declares.
+                    // Checked after the VFunc probe and behind user_func_exists
+                    // so a local closure or a user-declared function of the same
+                    // name still wins (#5990).
+                    if (!is_closure && is_builtin_variant_name(name) && !user_func_exists(name, env.funcs)) {
+                        is_variant = true;
+                        variant_name = name;
                     }
                 },
                 parser.ExprFieldAccess(fa) => {
@@ -1169,20 +1271,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                 arg_vals = arg_vals.append(av);
                 i = i + 1;
             }
-            if (is_variant) {
-                // Payload variant: tag a VStruct with the variant name and
-                // the parser's synthesised field names __ev, __ev1, __ev2,
-                // … so a `V(a, b, …)` pattern binds each payload field
-                // positionally (see StmtMatch).
-                var vnames: string[] = [];
-                var vi: i32 = 0;
-                while (vi < arg_vals.len()) {
-                    if (vi == 0) { vnames = vnames.append("__ev"); }
-                    else { vnames = vnames.append("__ev" + util.i32_to_string(vi)); }
-                    vi = vi + 1;
-                }
-                return v_struct(variant_name, vnames, arg_vals);
-            }
+            if (is_variant) { return v_variant(variant_name, arg_vals); }
             if (is_method) {
                 return call_method(recv, name, arg_vals, env.funcs, env.aliases);
             }
@@ -1495,7 +1584,9 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
     if (step.sig != 1) {
         return v_err("closure reached end without `return`");
     }
-    return step.ret;
+    // A `?` unwind stops at the frame that owns it: unwrap_try turns the
+    // in-flight VTry back into the None / Err box this call returns (#5990).
+    return unwrap_try(step.ret);
 }
 
 function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): Value {
@@ -1644,7 +1735,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             if (step.sig != 1) {
                 return v_err("method `" + name + "` reached end without `return`");
             }
-            return step.ret;
+            return unwrap_try(step.ret);
         }
         i = i + 1;
     }
@@ -1689,7 +1780,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             if (step.sig != 1) {
                 return v_err("function `" + name + "` reached end without `return`");
             }
-            return step.ret;
+            return unwrap_try(step.ret);
         }
         i = i + 1;
     }
@@ -1818,7 +1909,11 @@ function value_eq(a: Value, b: Value): boolean {
         // inventing an equality for a binding-site artifact.
         VCellI(_) => { return false; },
         VCellF(_) => { return false; },
-        VErr(_) => { return false; }
+        // Neither bottom compares equal — a diagnostic and a `?` unwind are
+        // both abrupt, and an abrupt value never reaches an ordinary operand
+        // position (is_err short-circuits ahead of every comparison).
+        VErr(_) => { return false; },
+        VTry(_) => { return false; }
     }
     return false;
 }

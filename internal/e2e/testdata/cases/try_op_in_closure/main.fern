@@ -1,0 +1,20 @@
+// `?` inside a lambda unwinds to the LAMBDA's return, not past it. The native
+// interpreter used to let the None escape the closure and terminate the whole
+// program with exit 0, while every compiled backend answered correctly — a
+// divergence in the engine the differential suite uses as its oracle.
+function main(): i32 {
+    var f: (Option[i32]) => Option[i32] = function (o: Option[i32]): Option[i32] {
+        var v: i32 = o?;
+        return Some(v + 1);
+    };
+    match (f(None)) {
+        Some(a) => { return a; },
+        None => {
+            match (f(Some(41))) {
+                Some(b) => { return b; },
+                None => { return 0; }
+            }
+        }
+    }
+    return 1;
+}
