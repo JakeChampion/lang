@@ -26,15 +26,7 @@ func TestSelfHostMapMemsetFreeIRProbeX86_64(t *testing.T) {
 		t.Skip("file-loading driver test runs only natively (argv paths)")
 	}
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "checker.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_load_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	mmc := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "mmc")
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {

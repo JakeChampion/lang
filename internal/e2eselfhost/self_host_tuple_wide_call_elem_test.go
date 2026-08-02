@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -35,15 +33,7 @@ import (
 func TestSelfHostTupleWideCallElem(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	for _, n := range []string{"asm_run.fern", "asm_pathprobe_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", n))
-		if err != nil {
-			t.Fatalf("read %s: %v", n, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, n), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", n, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
 	asmRun := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 	probe := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
 

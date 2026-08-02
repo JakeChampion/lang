@@ -62,15 +62,7 @@ func bigStdinInput() []byte { return bytes.Repeat([]byte("x"), 3145728) }
 func TestSelfHostReadAllStdinIRRoutingX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"asm_pathprobe_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "asm_pathprobe_run.fern")
 	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
 
 	src := []byte("function main(): i32 { var s: string = read_all_stdin(); return s.len(); }\n")

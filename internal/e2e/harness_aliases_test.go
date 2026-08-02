@@ -27,6 +27,7 @@ var compileStdProgModload = e2eharness.CompileStdProgModload
 var componentCoreSection = e2eharness.ComponentCoreSection
 var contains = e2eharness.Contains
 var copySelfHostFiles = e2eharness.CopySelfHostFiles
+var copySelfHostDriver = e2eharness.CopySelfHostDriver
 var eligBits = e2eharness.EligBits
 var extractComponentType = e2eharness.ExtractComponentType
 var hashSelfHostSources = e2eharness.HashSelfHostSources

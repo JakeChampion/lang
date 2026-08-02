@@ -31,15 +31,7 @@ import (
 func TestSelfHostFlattenX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "util.fern", "parser.fern", "flatten.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "flatten.fern")
 	prog, _, err := modload.Load(filepath.Join(dir, "flatten.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)

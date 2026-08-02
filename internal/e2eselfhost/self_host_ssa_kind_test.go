@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -25,15 +23,7 @@ func TestSelfHostSSAKindRegistry(t *testing.T) {
 		t.Skip("ssa_kind_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "lexer.fern", "parser.fern", "ssa.fern", "ssa_kind_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "ssa_kind_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "ssa_kind_run.fern", "ssa_kind_run")
 
 	const want = "kind_count=27\n" +

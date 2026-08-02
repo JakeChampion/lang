@@ -33,15 +33,7 @@ func TestSelfHostStatIR(t *testing.T) {
 		t.Skip("stat IR test runs only natively (stats host paths)")
 	}
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	// A known regular file (13 bytes) + a directory, both under the temp dir.

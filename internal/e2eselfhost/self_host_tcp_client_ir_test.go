@@ -3,9 +3,7 @@ package e2eselfhost
 import (
 	"fmt"
 	"net"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -75,15 +73,7 @@ func TestSelfHostTcpClientIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	port := startTcpPongServer(t)
 	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{"asm_run.fern", "asm_pathprobe_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
 	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "probe")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 

@@ -21,15 +21,7 @@ func TestSelfHostX86Gas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
 	enc, err := os.ReadFile("../../examples/self_host/x86_encode.fern")
@@ -146,15 +138,7 @@ func runX86GasNativeDriver(t *testing.T, name, driverMain string, wantExit int) 
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	for _, n := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", n))
-		if err != nil {
-			t.Fatalf("read %s: %v", n, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, n), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", n, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
 	enc, err := os.ReadFile("../../examples/self_host/x86_encode.fern")

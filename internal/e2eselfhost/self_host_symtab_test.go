@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -25,15 +23,7 @@ func TestSelfHostSymTab(t *testing.T) {
 		t.Skip("symtab_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	for _, name := range []string{"util.fern", "symtab.fern", "symtab_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "symtab_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "symtab_run.fern", "symtab_run")
 
 	const want = "alpha=0\n" +

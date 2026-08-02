@@ -19,15 +19,7 @@ func TestSelfHostSSAArgs(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "astwalk.fern", "ssa.fern", "util.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_emit_run.fern"} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	copySelfHostDriver(t, dir, "ssa_emit_run.fern")
 	bin := buildSelfHostBin(t, x86gcc, dir, "ssa_emit_run.fern", "ssa_emit_run")
 
 	emit := func(t *testing.T, src string, args ...string) []byte {
