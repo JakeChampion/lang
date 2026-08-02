@@ -1,0 +1,5 @@
+function main(): i32 {
+    function plus_one(x: i32): i32 { return x + 1; }
+    var f = plus_one;
+    return f(20) + f(20);
+}

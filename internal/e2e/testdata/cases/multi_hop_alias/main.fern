@@ -1,0 +1,7 @@
+function main(): i32 {
+    function answer(): i32 { return 17; }
+    var a = answer;
+    var b = a;
+    var c = b;
+    return c();
+}

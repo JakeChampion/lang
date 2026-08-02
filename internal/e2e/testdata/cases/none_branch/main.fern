@@ -1,0 +1,9 @@
+import "core/map";
+function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    match (m.get(7)) {
+        Some(v) => { return 99; },
+        None => { return 0; }
+    }
+    return 1;
+}

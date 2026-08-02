@@ -1,0 +1,7 @@
+import "std/i64";
+function main(): i32 {
+    var n: i64 = 9223372036854775807;
+    var s: string = n.to_string();
+    if (s == "9223372036854775807") { return 0; }
+    return 1;
+}

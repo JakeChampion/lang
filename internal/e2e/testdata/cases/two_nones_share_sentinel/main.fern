@@ -1,0 +1,10 @@
+function f(): Option[i32] { return None; }
+function g(): Option[i32] { return None; }
+function main(): i32 {
+    var _: Option[i32] = f();
+    var __: Option[i32] = g();
+    match (f()) {
+        Some(x) => { return 99; },
+        None => { return 1; }
+    }
+}

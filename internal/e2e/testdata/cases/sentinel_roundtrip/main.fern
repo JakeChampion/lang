@@ -1,0 +1,5 @@
+function main(): i32 {
+    var s: string = "world";
+    var empty: str = s[0:0];
+    return ("hello, " + empty + s).len();
+}

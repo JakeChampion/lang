@@ -1,0 +1,6 @@
+function main(): i32 {
+    var s: string = "abcd";
+    var a: str = s[0:0];
+    var b: str = s[0:0];
+    return (a + b).len();
+}

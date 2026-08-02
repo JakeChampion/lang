@@ -1,0 +1,9 @@
+enum Color { Red, Green, Blue }
+function pick(): Color { return Green; }
+function main(): i32 {
+    match (pick()) {
+        Red => { return 1; },
+        Green => { return 2; },
+        Blue => { return 3; }
+    }
+}

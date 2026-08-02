@@ -1,0 +1,4 @@
+# wasm excluded: this program diverges on the wasm backend (see the tracking
+# issue). It ran only on the register backends before being migrated here, which
+# is why the gap had never been observed. Re-add wasm when it is fixed.
+interp x86_64 arm64

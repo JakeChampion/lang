@@ -1,0 +1,7 @@
+function main(): i32 {
+    var u: u32 = 3000000000 as u32;
+    var f: f64 = u as f64;
+    var back: u32 = f as u32;
+    if (back == u) { return 0; }
+    return 1;
+}
