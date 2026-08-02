@@ -405,16 +405,16 @@ const p1Driver = `
 import "std/io";
 import "./lexer";
 import "./parser";
-import "./wasm";
-function main(): i32 { write(wasm.emit_module(parser.module_with_builtins(parser.parse_module(lexer.tokenize(io.read_all_stdin()))))); return 0; }
+import "./wasm_ir";
+function main(): i32 { write(wasm_ir.emit_module_mode_or_error(parser.module_with_builtins(parser.parse_module(lexer.tokenize(io.read_all_stdin()))), false, false)); return 0; }
 `
 
 const p2Driver = `
 import "std/io";
 import "./lexer";
 import "./parser";
-import "./wasm";
-function main(): i32 { write(wasm.emit_module_run(parser.module_with_builtins(parser.parse_module(lexer.tokenize(io.read_all_stdin()))))); return 0; }
+import "./wasm_ir";
+function main(): i32 { write(wasm_ir.emit_module_mode_or_error(parser.module_with_builtins(parser.parse_module(lexer.tokenize(io.read_all_stdin()))), true, false)); return 0; }
 `
 
 // componentCompileDriver reads a (preview2 run) core WAT, assembles it to a
@@ -666,8 +666,8 @@ const p2IODriver = `
 import "std/io";
 import "./lexer";
 import "./parser";
-import "./wasm";
-function main(): i32 { write(wasm.emit_module_run_io(parser.module_with_builtins(parser.parse_module(lexer.tokenize(io.read_all_stdin()))))); return 0; }
+import "./wasm_ir";
+function main(): i32 { write(wasm_ir.emit_module_mode_or_error(parser.module_with_builtins(parser.parse_module(lexer.tokenize(io.read_all_stdin()))), true, true)); return 0; }
 `
 
 // componentCompileIODriver reads a preview2 stdout core WAT, assembles it,
@@ -1004,8 +1004,8 @@ const p2FSDriver = `
 import "std/io";
 import "./lexer";
 import "./parser";
-import "./wasm";
-function main(): i32 { write(wasm.emit_module_run_io_fs(parser.module_with_builtins(parser.parse_module(lexer.tokenize(io.read_all_stdin()))))); return 0; }
+import "./wasm_ir";
+function main(): i32 { write(wasm_ir.emit_module_mode_or_error(parser.module_with_builtins(parser.parse_module(lexer.tokenize(io.read_all_stdin()))), true, true)); return 0; }
 `
 
 // componentCompileIOFSDriver reads a preview2 read_file+stdout core WAT,
