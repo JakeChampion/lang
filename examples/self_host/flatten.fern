@@ -352,7 +352,8 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                 obj: rewrite_expr(fa.obj, ctx),
                 field: fa.field,
                 line: fa.line,
-                col: fa.col
+                col: fa.col,
+                ty: fa.ty
             };
         },
         parser.ExprCall(c) => {

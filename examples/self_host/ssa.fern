@@ -1603,7 +1603,7 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
             left: parser.ExprIdent { name: i_name, line: 0, col: 0 },
             right: parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 } },
         right: parser.ExprCall {
-            callee: parser.ExprFieldAccess { obj: parser.ExprIdent { name: arr_name, line: 0, col: 0 }, field: "len", line: 0, col: 0 },
+            callee: parser.ExprFieldAccess { obj: parser.ExprIdent { name: arr_name, line: 0, col: 0 }, field: "len", line: 0, col: 0, ty: "" },
             args: [], line: 0, col: 0, type_argc: 0, ty: "" } };
 
     // body: $iN = $iN + 1; <element binding>; <body>
@@ -2181,7 +2181,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 var ebody: parser.Stmt[] = [];
                                 var cj: i32 = 0;
                                 while (cj < caps.len()) {
-                                    var acc: parser.Expr = parser.ExprFieldAccess { obj: parser.ExprIdent { name: "__env", line: 0, col: 0 }, field: int_str(cj + 1), line: 0, col: 0 };
+                                    var acc: parser.Expr = parser.ExprFieldAccess { obj: parser.ExprIdent { name: "__env", line: 0, col: 0 }, field: int_str(cj + 1), line: 0, col: 0, ty: "" };
                                     ebody = ebody.append(parser.StmtVar { name: caps[cj], type_name: ctypes[cj], init: acc, line: 0, col: 0, is_str: false });
                                     cj = cj + 1;
                                 }

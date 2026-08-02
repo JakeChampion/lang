@@ -95,8 +95,12 @@ pub struct ExprSlice { array: Expr, start: Expr, end: Expr }
 // docs/IMMUTABILITY-MIGRATION-PLAN.md.
 pub struct ExprStructLit { type_name: string, field_names: string[], field_values: Expr[], has_base: boolean, base: Expr, line: i32, col: i32 }
 // Postfix field access `obj.field`. obj can be any Expr that
-// evaluates to a struct value.
-pub struct ExprFieldAccess { obj: Expr, field: string, line: i32, col: i32 }
+// evaluates to a struct value. `ty` is the typed-IR carrier
+// (#5986, the ExprCall.ty sibling from #5531): checker's
+// annotate_module stamps the field read's inferred type tag so
+// irlower reads it instead of re-deriving the receiver's struct
+// type structurally. "" when unannotated.
+pub struct ExprFieldAccess { obj: Expr, field: string, line: i32, col: i32, ty: string }
 pub struct ExprUnknown { kind: string }
 
 pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
@@ -382,10 +386,10 @@ function e_struct_update(type_name: string, field_names: string[], field_values:
     return ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values, has_base: true, base: base, line: line, col: col };
 }
 function e_field_access(obj: Expr, field: string): Expr {
-    return ExprFieldAccess { obj: obj, field: field, line: 0, col: 0 };
+    return ExprFieldAccess { obj: obj, field: field, line: 0, col: 0, ty: "" };
 }
 function e_field_access_at(obj: Expr, field: string, line: i32, col: i32): Expr {
-    return ExprFieldAccess { obj: obj, field: field, line: line, col: col };
+    return ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "" };
 }
 function e_lambda(params: ParamDecl[], ret_type: string, body: Stmt[]): Expr {
     return ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false };
@@ -6650,7 +6654,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                                 var ct2: string = infer_inst(funcs[bi2], c.args, env, funcs);
                                 if (ct2.len() > 0) {
                                     cur = cur.iadd(qn, ct2);
-                                    return RExpr { rexpr: ExprCall { callee: ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + sanitize_key(ct2), line: fac.line, col: fac.col }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
+                                    return RExpr { rexpr: ExprCall { callee: ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + sanitize_key(ct2), line: fac.line, col: fac.col, ty: fac.ty }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
                                 }
                             }
                         },
@@ -6764,7 +6768,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
         },
         ExprFieldAccess(fa) => {
             var o: RExpr = mono_expr(fa.obj, env, funcs, ins);
-            return RExpr { rexpr: ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col }, rins: o.rins };
+            return RExpr { rexpr: ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: o.rins };
         },
         ExprStructLit(s) => {
             var vals: Expr[] = [];
@@ -6975,7 +6979,7 @@ function subst_expr(e: Expr, tparams: string[], cts: string[]): Expr {
             if (k >= 0) { return ExprIdent { name: cts[k], line: id.line, col: id.col }; }
             return e;
         },
-        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: subst_expr(fa.obj, tparams, cts), field: fa.field, line: fa.line, col: fa.col }; },
+        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: subst_expr(fa.obj, tparams, cts), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
         ExprCall(c) => {
             // A defaulted generic field `T.default()` where `T` substitutes to a
             // PRIMITIVE has no associated impl to dispatch to in the IR path —
@@ -7111,7 +7115,7 @@ function retarget_self_lit_expr(e: Expr, base: string, mang: string): Expr {
         ExprUnary(u) => { return ExprUnary { op: u.op, operand: retarget_self_lit_expr(u.operand, base, mang), line: u.line, col: u.col }; },
         ExprIndex(ix) => { return ExprIndex { array: retarget_self_lit_expr(ix.array, base, mang), index: retarget_self_lit_expr(ix.index, base, mang), unchecked: ix.unchecked }; },
         ExprSlice(sl2) => { return ExprSlice { array: retarget_self_lit_expr(sl2.array, base, mang), start: retarget_self_lit_expr(sl2.start, base, mang), end: retarget_self_lit_expr(sl2.end, base, mang) }; },
-        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: retarget_self_lit_expr(fa.obj, base, mang), field: fa.field, line: fa.line, col: fa.col }; },
+        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: retarget_self_lit_expr(fa.obj, base, mang), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
         _ => { return e; }
     }
     return e;
@@ -7712,7 +7716,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
         },
         ExprFieldAccess(fa) => {
             var o: RExpr = ms_expr(fa.obj, env, gstructs, funcs, ins);
-            return RExpr { rexpr: ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col }, rins: o.rins };
+            return RExpr { rexpr: ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: o.rins };
         },
         ExprStructLit(s) => {
             var cur: Insts = ins;
@@ -7774,7 +7778,7 @@ function retype_assoc_ctor(init: Expr, concrete: string, gstructs: StructDecl[])
                             if (gstruct_index(gstructs, oid.name) >= 0) {
                                 var pfx: string = oid.name + "__";
                                 if (concrete.len() > pfx.len() && concrete[0 : pfx.len()] == pfx) {
-                                    return ExprCall { callee: ExprFieldAccess { obj: ExprIdent { name: concrete, line: oid.line, col: oid.col }, field: fa.field, line: fa.line, col: fa.col }, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+                                    return ExprCall { callee: ExprFieldAccess { obj: ExprIdent { name: concrete, line: oid.line, col: oid.col }, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
                                 }
                             }
                         },
@@ -8626,7 +8630,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
                 _ => { }
             }
             var ob: RExpr = me_expr(fa.obj, "", env, enums, structs, funcs, ins);
-            return RExpr { rexpr: ExprFieldAccess { obj: ob.rexpr, field: fa.field, line: fa.line, col: fa.col }, rins: ob.rins };
+            return RExpr { rexpr: ExprFieldAccess { obj: ob.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: ob.rins };
         },
         ExprLambda(lm) => {
             var lb: RStmts = me_stmts(lm.body, env, lm.ret_type, enums, structs, funcs, ins);
@@ -10920,7 +10924,7 @@ function cf_rw_expr(e: Expr, f: string, target: string): Expr {
             while (i < sl.field_values.len()) { nv = nv.append(cf_rw_expr(sl.field_values[i], f, target)); i = i + 1; }
             return ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: cf_rw_expr(sl.base, f, target), line: sl.line, col: sl.col };
         },
-        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: cf_rw_expr(fa.obj, f, target), field: fa.field, line: fa.line, col: fa.col }; },
+        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: cf_rw_expr(fa.obj, f, target), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
         ExprLambda(lm) => { return ExprLambda { params: lm.params, ret_type: lm.ret_type, body: cf_rw_stmts(lm.body, f, target), use_infer: lm.use_infer }; },
         _ => { return e; }
     }
@@ -11320,7 +11324,7 @@ function elb_mark_expr(e: Expr, idx: string, arr: string): Expr {
             if (sl.has_base) { nbase = elb_mark_expr(sl.base, idx, arr); }
             return ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col };
         },
-        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: elb_mark_expr(fa.obj, idx, arr), field: fa.field, line: fa.line, col: fa.col }; },
+        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: elb_mark_expr(fa.obj, idx, arr), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
         _ => { return e; }
     }
     return e;
