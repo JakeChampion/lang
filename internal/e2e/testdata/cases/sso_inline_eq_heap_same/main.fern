@@ -1,0 +1,6 @@
+function main(): i32 {
+    var a: str = "abcdefghij"[0:3]; // inline "abc"
+    var b: string = "abc";              // heap "abc"
+    if (a == b) { return 1; }
+    return 0;
+}
