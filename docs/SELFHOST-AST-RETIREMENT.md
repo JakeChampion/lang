@@ -5134,6 +5134,42 @@ the `-decide` probe (the component-mode sibling of `wasm_run`'s, reusing
 drift from the emitter). Its 50-program harvested corpus is **50/50 `ir`** — the
 extern/export bridge port left no component-mode decliners behind.
 
+### Where the mode-0 count now stands: 169 → 2, and BOTH are the budget
+
+Re-`-decide`d against the fixed tree, all nine of the previously-named decliners
+were re-checked individually. The seven CONSTRUCT ones — the three closed in #5979
+(`i32[][][]`, the `Option` alias, the two i64 consts) and the three closed here (the
+two `Adder` closure shapes, the struct-valued `Map`) — now route `ir`. The two that
+remain are the 531- and 538-line programs that trip the ~512-function merged-bundle
+budget, which is the deliberate decline, not a construct:
+
+| remaining mode-0 decliner | lines | why |
+|---|---|---|
+| `wasm_run-8bb9b6bff786` | 531 | 512-function merged-bundle budget |
+| `wasm_run-cacfbadaf490` | 538 | 512-function merged-bundle budget |
+
+So **the mode-0 construct gap is empty**, and the only thing standing between here
+and step 4 is #5980's parked budget removal.
+
+**Which is the structural point steps 4 and 5 have been missing: the budget
+removal, the IR-or-error reroute and the deletion of `wasm.fern` are ONE change,
+not three.** #5980 is blocked only because four tests
+(`TestSelfHostStrictIRRefusesBail`, `TestSelfHostTreeshakeStdlibIR`,
+`TestSelfHostWasmAstPathIoErrorTypeIds`, `TestSelfHostWasmIoErrorVariantLayout`)
+use the budget as their MECHANISM for reaching the AST emitter — the last two are
+tests OF the emitter being deleted. Rewriting them to chase some other still-open
+route would be wrong twice over: the remaining routes in are the decliners, which
+are scheduled to close, and two of the tests have no subject once `wasm.fern` goes.
+With the construct decliners now empty, step 4 is what retires those tests, so they
+are DELETED by it rather than rewritten before it. Landing #5980 on its own would
+mean writing code specifically to keep a path alive that the very next commit
+removes.
+
+Sweeping the whole 1,024-program corpus again is a several-hour local run (the
+`-decide` of a 500-line program under an interpreted driver takes minutes), so the
+per-decliner re-check above is the evidence for the count; the full sweep is a
+background confirmation, not the gate.
+
 **The ~512-function budget is no longer a fallback — it is a WALL, and that is a
 live regression.** Its own comment says it caps IR routing "until the native
 large-tier freelist is fixed"; that landed (#3425, ported to the self-host runtime
@@ -5168,10 +5204,21 @@ looks like coverage of the IR path and is not — so it will turn into a hard er
 at the reroute rather than a test failure before it. `map_new_i32` is self-host
 dialect (E001 natively), so there is no interpreter oracle for it either.
 
-4. Reroute the drivers IR-or-error — only once 2 and 3 leave the decline set
-   empty. Rerouting first was the mistake this section records: on the asm side
-   the reroute WAS the enumeration tool because the subset was already mature; on
-   wasm it just turns a wide gap into a wide outage.
-5. Move the remaining pure helpers (`component_shape` + `module_calls` /
-   `stmts_call` / `expr_calls`, ~95 lines; plus the four type-spelling helpers the
-   three probe drivers use) and delete `wasm.fern`.
+4. **DONE for mode 0 AND component mode** — the decline set is empty of
+   CONSTRUCTS. Component mode's corpus is 50/50 `ir`; mode 0's two remaining
+   decliners are both the 512-function budget. Rerouting BEFORE this was the
+   mistake this section records: on the asm side the reroute WAS the enumeration
+   tool because the subset was already mature; on wasm it just turned a wide gap
+   into a wide outage.
+5. **Steps 4 and 5 are ONE commit, together with #5980's budget removal** (see the
+   structural point above — landing them separately means writing code to preserve
+   a path the next commit deletes). That commit:
+   - removes both budget gates (`eligible_core_known_impl`,
+     `emit_module_ir_gated`) and un-gates / CI-wires `TestSelfHostConstFuncGen2`,
+     which is the guard for the two-generation miscompile hazard the removal
+     creates;
+   - reroutes `wasm_run` / `wasm_runio_run` / `fern.fern` IR-or-error;
+   - moves the residual pure helpers (`component_shape` + `module_calls` /
+     `stmts_call` / `expr_calls`, ~95 lines, plus the four type-spelling helpers
+     the three probe drivers use);
+   - deletes `wasm.fern` and the four tests whose subject it is.
