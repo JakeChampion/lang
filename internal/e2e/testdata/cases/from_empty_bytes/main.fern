@@ -1,0 +1,4 @@
+function main(): i32 {
+    var bs: u8[] = __alloc_u8(0);
+    return (string_from_bytes_unchecked(bs)).len();
+}

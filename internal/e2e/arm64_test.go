@@ -8443,153 +8443,12 @@ function main(): i32 {
 	}
 }
 
-// arm64 empty-string sentinel: the string-constructing runtime
-// helpers (__fern_strcat, __str_slice, string_from_bytes_unchecked) skip
-// the alloc + memcpy and return the shared .LStr_Empty sentinel
-// when the result length is 0. Verified behaviourally: len()
-// returns 0, equality with "" holds, and downstream concat with
-// a non-empty operand still produces the right bytes.
-// Empty u8[] sentinel: `__alloc_u8(0)` returns a shared static
-// `[length=0]` buffer rather than allocating a fresh 4-byte
-// length-only block. Mirrors the x86_64 suite.
-func TestArm64EmptyU8Sentinel(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"len-on-empty-u8", `function main(): i32 {
-    var bs: u8[] = __alloc_u8(0);
-    return bs.len();
-}`, 0},
-		{"string-from-empty-bytes", `function main(): i32 {
-    var bs: u8[] = __alloc_u8(0);
-    var s: string = string_from_bytes_unchecked(bs);
-    return s.len();
-}`, 0},
-		{"to-lower-empty-string", `
-import "std/string";
-function main(): i32 {
-    var s: string = "".to_lower();
-    return s.len();
-}`, 0},
-	} {
-		_, code := compileAndRunArm64(t, c.src)
-		if code != c.want {
-			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
-		}
-	}
-}
-
-func TestArm64EmptyStringSentinel(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"concat-of-empties", `function main(): i32 {
-    var s: string = "abcd";
-    var a: str = s[0:0];
-    var b: str = s[0:0];
-    return (a + b).len();
-}`, 0},
-		{"zero-width-slice", `function main(): i32 {
-    var s: string = "abcd";
-    return s[2:2].len();
-}`, 0},
-		{"from-empty-bytes", `function main(): i32 {
-    var bs: u8[] = __alloc_u8(0);
-    return (string_from_bytes_unchecked(bs)).len();
-}`, 0},
-		{"sentinel-roundtrip", `function main(): i32 {
-    var s: string = "world";
-    var empty: str = s[0:0];
-    return ("hello, " + empty + s).len();
-}`, 12},
-	} {
-		_, code := compileAndRunArm64(t, c.src)
-		if code != c.want {
-			t.Errorf("%s: exit = %d, want %d", c.name, code, c.want)
-		}
-	}
-}
-
-// Enum sentinels: any payloadless enum variant returns a shared
-// static `[tag=N]` address rather than allocating a fresh tag-
-// only heap box. Mirrors the x86_64 suite.
-func TestArm64EnumPayloadlessSentinel(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"user-enum-payloadless", `enum Color { Red, Green, Blue }
-function pick(): Color { return Green; }
-function main(): i32 {
-    match (pick()) {
-        Red => { return 1; },
-        Green => { return 2; },
-        Blue => { return 3; }
-    }
-}`, 2},
-		{"user-enum-mixed", `enum Light { On, Off, Dim(i32) }
-function f(): Light { return Off; }
-function main(): i32 {
-    match (f()) {
-        On => { return 1; },
-        Off => { return 2; },
-        Dim(level) => { return level; }
-    }
-}`, 2},
-		{"user-enum-payloaded-then-payloadless", `enum Light { Dim(i32), On, Off }
-function main(): i32 {
-    match (Off) {
-        Dim(n) => { return n; },
-        On => { return 99; },
-        Off => { return 42; }
-    }
-}`, 42},
-	} {
-		_, code := compileAndRunArm64(t, c.src)
-		if code != c.want {
-			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
-		}
-	}
-}
-
-// Option.None sentinel: `None` returns a shared static address
-// rather than allocating a fresh 4-byte tag-only heap box.
-// Mirrors the x86_64 suite of the same shape.
 func TestArm64OptionNoneSentinel(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		src  string
 		want int
 	}{
-		{"match-none", `function f(): Option[i32] { return None; }
-function main(): i32 {
-    match (f()) {
-        Some(x) => { return 99; },
-        None => { return 42; }
-    }
-}`, 42},
-		{"match-some", `function f(): Option[i32] { return Some(7); }
-function main(): i32 {
-    match (f()) {
-        Some(x) => { return x; },
-        None => { return 99; }
-    }
-}`, 7},
-		{"two-nones-share-sentinel", `function f(): Option[i32] { return None; }
-function g(): Option[i32] { return None; }
-function main(): i32 {
-    var _: Option[i32] = f();
-    var __: Option[i32] = g();
-    match (f()) {
-        Some(x) => { return 99; },
-        None => { return 1; }
-    }
-}`, 1},
 		{"none-equal-none", `function main(): i32 {
     var a: Option[i32] = None;
     var b: Option[i32] = None;
@@ -8691,79 +8550,6 @@ function main(): i32 {
 	}
 }
 
-// Regression for the `Map[K, V].get(k)` + `match` segfault on
-// natives. The IR rewrites `__method_Map_get` →
-// `__map_get_impl` (returns `Option[usize]`) but the caller
-// keys its pair-form lookup off the user-visible
-// `__method_Map_get` name. That alias isn't in `pairForm` —
-// so the call-site emits OpCallDirect (heap-box ABI) — yet
-// `__map_get_impl`'s body IS pair-form-eligible
-// (`if … return None; … return Some(…)`) and gets lowered
-// with the (tag, payload) register-return shape. The caller
-// then pushes x0 only (treating tag as a heap-box pointer)
-// and `ldr w0, [x0]` segfaults at the match's tag read.
-//
-// Fix: exclude `__map_get_impl` from pair-form eligibility
-// so its ABI matches what the call site expects (heap-box).
-// `m.get_or(k, default)` was unaffected — it returns V
-// directly, no Option wrapper.
-func TestArm64MapGetMatch(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"some_branch", `
-import "core/map";
-function main(): i32 {
-    var m: Map[i32, i32] = map_new(4);
-    m = m.insert(7, 42);
-    match (m.get(7)) {
-        Some(v) => { return v; },
-        None => { return 0; }
-    }
-    return 1;
-}`, 42},
-		{"none_branch", `
-import "core/map";
-function main(): i32 {
-    var m: Map[i32, i32] = map_new(4);
-    match (m.get(7)) {
-        Some(v) => { return 99; },
-        None => { return 0; }
-    }
-    return 1;
-}`, 0},
-		{"string_key", `
-import "core/map";
-function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
-    m = m.insert("hello", 42);
-    match (m.get("hello")) {
-        Some(v) => { return v; },
-        None => { return 0; }
-    }
-    return 1;
-}`, 42},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, c.src); code != c.want {
-				t.Errorf("got exit %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// End-to-end exercise of the word-frequency pipeline that was
-// segfaulting on natives before the Map.get + match pair-form
-// fix. The shape: tokenize input → `Map[string, i32]` count
-// table populated via `m.insert(key, n + 1)` inside the
-// `Some(n) => …, None => …` match arm → snapshot keys +
-// values via `.keys() / .values()` → print rows. The match
-// branch inside the counting loop was the exact pattern
-// TestArm64MapGetMatch pins in isolation; this test ensures
-// the fix holds up in the realistic mix of slice keys (string
-// slicing from the tokenizer), Array.push, and Map iteration.
 func TestArm64MapGetMatchFullPipeline(t *testing.T) {
 	src := `
 import "core/map";
@@ -8835,22 +8621,6 @@ func TestArm64I64CmpDivWidth(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"to_string_round_trip", `
-import "std/i64";
-function main(): i32 {
-    var n: i64 = 1234567890123;
-    var s: string = n.to_string();
-    if (s == "1234567890123") { return 0; }
-    return 1;
-}`, 0},
-		{"i64_max_to_string", `
-import "std/i64";
-function main(): i32 {
-    var n: i64 = 9223372036854775807;
-    var s: string = n.to_string();
-    if (s == "9223372036854775807") { return 0; }
-    return 1;
-}`, 0},
 		{"i64_mul_then_divide", `function main(): i32 {
     var n: i64 = (1234567 as i64) * (1000000 as i64);  // 1234567000000
     var q: i64 = n / (1000000 as i64);                 // 1234567
@@ -11281,42 +11051,6 @@ function main(): i32 {
 	}
 }
 
-func TestArm64ClosureAliasing(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"single-alias", `function main(): i32 {
-    function answer(): i32 { return 42; }
-    var f = answer;
-    return f();
-}`, 42},
-		{"single-alias-with-arg", `function main(): i32 {
-    function double(x: i32): i32 { return x * 2; }
-    var f = double;
-    return f(21);
-}`, 42},
-		{"multi-hop-alias", `function main(): i32 {
-    function answer(): i32 { return 17; }
-    var a = answer;
-    var b = a;
-    var c = b;
-    return c();
-}`, 17},
-		{"aliased-and-used-twice", `function main(): i32 {
-    function plus_one(x: i32): i32 { return x + 1; }
-    var f = plus_one;
-    return f(20) + f(20);
-}`, 42},
-	} {
-		_, code := compileAndRunArm64(t, c.src)
-		if code != c.want {
-			t.Errorf("%s: exit = %d, want %d\n--- src ---\n%s", c.name, code, c.want, c.src)
-		}
-	}
-}
-
 func TestArm64ClosureFactory(t *testing.T) {
 	src := `function makeAdder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }
@@ -12249,41 +11983,6 @@ func TestArm64FloatBitCast(t *testing.T) {
 	}
 }
 
-func TestArm64UnsignedFloatConv(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"u32_large_to_f64_back", `function main(): i32 {
-    var u: u32 = 3000000000 as u32;
-    var f: f64 = u as f64;
-    var back: u32 = f as u32;
-    if (back == u) { return 0; }
-    return 1;
-}`, 0},
-		{"u64_max_to_f64_is_huge", `function main(): i32 {
-    var i: i64 = 0 - 1i64;
-    var u: u64 = i as u64;
-    var f: f64 = u as f64;
-    var threshold: f64 = 10000000000000000000.0f64;
-    if (f > threshold) { return 0; }
-    return 1;
-}`, 0},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, c.src); code != c.want {
-				t.Errorf("got %d, want %d", code, c.want)
-			}
-		})
-	}
-}
-
-// `stdin().read_line()` — exercises the .bss buffer + byte
-// loop + Some/None Option wrap. arm64's runtime used to be
-// stdin-only via __fern_read_line; this test now goes through
-// the receiver-aware __fern_reader_read_line (stdin() returns
-// a real Reader{fd:0} struct). Closes the parity-doc gap.
 func TestArm64ReadLine(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 

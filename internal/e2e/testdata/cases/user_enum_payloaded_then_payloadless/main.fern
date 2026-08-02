@@ -1,0 +1,8 @@
+enum Light { Dim(i32), On, Off }
+function main(): i32 {
+    match (Off) {
+        Dim(n) => { return n; },
+        On => { return 99; },
+        Off => { return 42; }
+    }
+}

@@ -1,0 +1,8 @@
+function main(): i32 {
+    var i: i64 = 0 - 1i64;
+    var u: u64 = i as u64;
+    var f: f64 = u as f64;
+    var threshold: f64 = 10000000000000000000.0f64;
+    if (f > threshold) { return 0; }
+    return 1;
+}

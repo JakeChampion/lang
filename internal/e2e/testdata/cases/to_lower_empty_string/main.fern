@@ -1,0 +1,5 @@
+import "std/string";
+function main(): i32 {
+    var s: string = "".to_lower();
+    return s.len();
+}

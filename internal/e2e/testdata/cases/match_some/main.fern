@@ -1,0 +1,7 @@
+function f(): Option[i32] { return Some(7); }
+function main(): i32 {
+    match (f()) {
+        Some(x) => { return x; },
+        None => { return 99; }
+    }
+}
