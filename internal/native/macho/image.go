@@ -37,7 +37,7 @@ func (m *image) machHeader() {
 	m.u32(mhExecute)
 	m.u32(0) // ncmds — patched in done()
 	m.u32(0) // sizeofcmds — patched in done()
-	m.u32(mhNoUndefs)
+	m.u32(mhNoUndefs | mhDyldLink | mhTwoLevel | mhPIE)
 	m.u32(0) // reserved
 	m.cmdsStart = m.off
 }
@@ -106,6 +106,83 @@ func (m *image) symtab(symoff, nsyms, stroff, strsize uint32) {
 	m.u32(nsyms)
 	m.u32(stroff)
 	m.u32(strsize)
+	m.ncmds++
+}
+
+// buildVersion writes an LC_BUILD_VERSION command declaring the image as
+// macOS. Apple Silicon's kernel refuses to exec an arm64 main executable that
+// names no platform: it SIGKILLs the process at exec (exit 137, no crash
+// report, nothing in the system log), which is indistinguishable from a
+// spurious kill unless you know to look for this command. A valid ad-hoc
+// signature is NOT sufficient on its own — this image had one and was still
+// rejected. ntools is 0: the tool-version list is informational.
+func (m *image) buildVersion() {
+	m.u32(lcBuildVersion)
+	m.u32(buildVersionLen)
+	m.u32(platformMacOS)
+	m.u32(minOSVersion)
+	m.u32(sdkVersion)
+	m.u32(0) // ntools
+	m.ncmds++
+}
+
+// dylinker writes an LC_LOAD_DYLINKER naming /usr/lib/dyld, and dylib writes an
+// LC_LOAD_DYLIB. Both are lc_str commands: a uint32 offset from the start of
+// the command to the NUL-terminated path, then the path padded to 8 bytes.
+func (m *image) lcStr(cmd uint32, path string) {
+	size := lcStrCmdLen(cmd, path)
+	m.u32(cmd)
+	m.u32(uint32(size))
+	if cmd == lcLoadDylib {
+		m.u32(24) // name offset: past cmd/cmdsize/offset/timestamp/versions
+		m.u32(0)  // timestamp
+		m.u32(0)  // current_version
+		m.u32(0)  // compatibility_version
+	} else {
+		m.u32(12) // name offset: past cmd/cmdsize/offset
+	}
+	copy(m.b[m.off:], path)
+	m.off += size - lcStrFixedLen(cmd)
+	m.ncmds++
+}
+
+// main writes LC_MAIN. entryoff is a FILE offset from the start of the mach
+// header, not a VM address — dyld adds the image's load address itself, which
+// is what makes the entry survive a slide.
+func (m *image) main(entryoff uint64) {
+	m.u32(lcMain)
+	m.u32(mainCmdLen)
+	m.u64(entryoff)
+	m.u64(0) // stacksize: 0 means the system default
+	m.ncmds++
+}
+
+// dysymtab writes an LC_DYSYMTAB with every index and count zero except the
+// local-symbol range, which covers the whole LC_SYMTAB. dyld requires the
+// command to be present on a two-level image; the content is degenerate here
+// because nothing is exported and nothing is imported.
+func (m *image) dysymtab(nlocal uint32) {
+	m.u32(lcDysymtab)
+	m.u32(dysymtabCmdLen)
+	m.u32(0)      // ilocalsym
+	m.u32(nlocal) // nlocalsym
+	for i := 0; i < 16; i++ {
+		m.u32(0) // extdef/undef ranges, toc, modtab, refsyms, indirect, ext/loc rel
+	}
+	m.ncmds++
+}
+
+// dyldInfo writes LC_DYLD_INFO_ONLY. Only the rebase stream is populated: the
+// image imports nothing, exports nothing and binds nothing, so every other
+// off/size pair is zero.
+func (m *image) dyldInfo(rebaseOff, rebaseSize uint32) {
+	m.u32(lcDyldInfoOnly)
+	m.u32(dyldInfoCmdLen)
+	m.u32(rebaseOff)
+	m.u32(rebaseSize)
+	for i := 0; i < 8; i++ {
+		m.u32(0) // bind, weak_bind, lazy_bind, export
+	}
 	m.ncmds++
 }
 

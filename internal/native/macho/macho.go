@@ -1,22 +1,44 @@
-// Package macho writes minimal static arm64 Mach-O executables — the
-// container half of the native arm64-darwin path, the counterpart of
-// internal/native/elf for Linux. It aims to replace the clang/ld64 link
-// step in cmd/fern for the simple, self-contained programs the code
-// generator emits (-static, no dyld, raw `svc #0x80` syscalls).
+// Package macho writes minimal arm64 Mach-O executables — the container half
+// of the native arm64-darwin path, the counterpart of internal/native/elf for
+// Linux. It replaces the clang/ld64 link step in cmd/fern for the
+// self-contained programs the code generator emits (raw `svc #0x80` syscalls,
+// no libc).
 //
-// The file is a fixed-address, non-PIE executable: __PAGEZERO, a r-x
-// __TEXT segment holding the Mach-O header + load commands + machine code,
-// an optional r/w __DATA segment (string constants + writable globals,
-// merged), and a __LINKEDIT segment carrying an ad-hoc code signature.
-// Apple Silicon's
-// kernel refuses to execute an unsigned arm64 binary, so the signature is
-// mandatory; "ad-hoc" means there is no CMS/certificate — the code
-// directory's page hashes are the identity.
+// The layout is __PAGEZERO, a r-x __TEXT segment holding the Mach-O header +
+// load commands + machine code, an optional r/w __DATA segment (string
+// constants + writable globals, merged), and a __LINKEDIT segment carrying the
+// rebase stream, the symbol table and an ad-hoc code signature.
 //
-// Execution starts via LC_UNIXTHREAD (the kernel sets PC directly), not
-// LC_MAIN (which needs dyld). The code generator's `_main` entry calls
-// `main` and then exits with a raw syscall, so it never returns — exactly
-// what a thread-state entry needs.
+// # What Apple Silicon requires, and how each requirement announces itself
+//
+// This writer originally emitted a static, dyld-free, non-PIE LC_UNIXTHREAD
+// image. Every such binary is SIGKILLed at exec on Apple Silicon — including
+// one built by Apple's own ld64, which is how we know it is a platform rule
+// and not a defect here. There is no crash report and nothing in the system
+// log; the process exits 137, indistinguishable from an OOM kill. The
+// requirements, in the order they bite:
+//
+//   - MH_PIE. Without it the kernel refuses the image before dyld runs at all.
+//     ld64 cannot even produce a non-PIE arm64 executable — it warns "-no_pie
+//     ignored for arm64*" — which is the tell that this is mandatory.
+//   - LC_LOAD_DYLINKER + LC_LOAD_DYLIB + LC_MAIN. Every arm64 main executable
+//     is dyld-loaded. Raw syscalls are fine (a dyld-loaded image making
+//     `svc #0x80` calls runs correctly); it is the dyld-free CONTAINER that is
+//     rejected.
+//   - LC_SYMTAB whenever LC_DYSYMTAB is present, else dyld aborts with
+//     "LC_DYSYMTAB but no LC_SYMTAB load command".
+//   - LC_BUILD_VERSION, naming the platform.
+//   - An ad-hoc LC_CODE_SIGNATURE. "Ad-hoc" means no CMS/certificate — the
+//     code directory's page hashes are the identity.
+//
+// PIE has a consequence the code generator has to answer for: dyld slides the
+// image, so any ABSOLUTE address baked into __DATA is stale on arrival.
+// Fern's code is otherwise entirely PC-relative (adrp/@PAGEOFF, b/bl), so the
+// complete set is the assembler's `.quad <symbol>` slots — jump tables and the
+// like. Those are declared to dyld as LC_DYLD_INFO_ONLY rebase opcodes. Miss
+// them and the image loads fine and then segfaults deep inside a program that
+// happens to use a jump table, which reads as a codegen bug rather than a
+// container one.
 //
 // References: Apple's loader.h / cs_blobs.h. Code-signing blobs are
 // big-endian; Mach-O headers are little-endian (arm64 host).
@@ -31,11 +53,38 @@ const (
 	cpuSubAll  = 0x00000000
 	mhExecute  = 0x2
 	mhNoUndefs = 0x1
+	mhDyldLink = 0x4
+	mhTwoLevel = 0x80
+	mhPIE      = 0x200000
 
 	lcSegment64     = 0x19
 	lcUnixThread    = 0x5
 	lcCodeSignature = 0x1D
 	lcSymtab        = 0x2
+	lcBuildVersion  = 0x32
+	lcLoadDylinker  = 0xE
+	lcLoadDylib     = 0xC
+	lcMain          = 0x80000028 // LC_MAIN | LC_REQ_DYLD
+	lcDysymtab      = 0xB
+	lcDyldInfoOnly  = 0x80000022 // LC_DYLD_INFO_ONLY | LC_REQ_DYLD
+
+	// Rebase opcodes (mach-o/loader.h). Only the three needed to say "rebase
+	// this one pointer, at this offset in this segment".
+	rebaseOpDone           = 0x00
+	rebaseOpSetTypeImm     = 0x10
+	rebaseOpSetSegOffULEB  = 0x20
+	rebaseOpDoRebaseImmTms = 0x50
+	rebaseTypePointer      = 1
+
+	dyldPath      = "/usr/lib/dyld"
+	libSystemPath = "/usr/lib/libSystem.B.dylib"
+
+	// LC_BUILD_VERSION payload. platformMacOS identifies the image to the
+	// kernel; minos / sdk are nibble-encoded XXXX.YY.ZZ. 11.0.0 is the first
+	// macOS with Apple Silicon, which is the floor for an arm64 executable.
+	platformMacOS = 0x1
+	minOSVersion  = 0x000B0000 // 11.0.0
+	sdkVersion    = 0x000B0000 // 11.0.0
 
 	vmProtRead    = 0x1
 	vmProtWrite   = 0x2
@@ -52,9 +101,11 @@ type layout struct {
 	textOff         int // file offset of code within __TEXT (after header+loadcmds)
 	textLen         int
 	dataLen         int
-	textVMSize      int    // page-aligned __TEXT segment size
-	dataFileLen     int    // page-aligned __DATA segment size (0 if no data)
-	linkeditFileOff int    // start of __LINKEDIT (symtab, then strtab, then sig)
+	textVMSize      int // page-aligned __TEXT segment size
+	dataFileLen     int // page-aligned __DATA segment size (0 if no data)
+	linkeditFileOff int // start of __LINKEDIT (fixups, symtab, strtab, then sig)
+	rebaseOff       int // file offset of the LC_DYLD_INFO_ONLY rebase stream
+	rebaseLen       int
 	textVAddr       uint64 // address of the first code byte (== entry)
 	dataVAddr       uint64 // __DATA segment base
 	// Symtab placement inside __LINKEDIT (zero-valued when no syms).
@@ -68,7 +119,7 @@ type layout struct {
 // (strtabLen bytes) sit at the front of __LINKEDIT, before the code signature.
 // The extra load command shifts textOff (hence every address), so the assembler
 // must lay out against a layout with the SAME hasSyms — see SegmentAddrsSyms.
-func layoutFor(textLen, dataLen, symtabLen, strtabLen int, hasSyms bool) layout {
+func layoutFor(textLen, dataLen, symtabLen, strtabLen, rebaseLen int, hasSyms bool) layout {
 	hasData := dataLen > 0
 	textOff := machHeaderLen + loadCommandsLen(hasData, hasSyms)
 	textVMSize := alignUp(textOff+textLen, pageSize)
@@ -77,14 +128,13 @@ func layoutFor(textLen, dataLen, symtabLen, strtabLen int, hasSyms bool) layout 
 		dataFileLen = alignUp(dataLen, pageSize)
 	}
 	linkeditFileOff := textVMSize + dataFileLen
-	symOff, strOff := 0, 0
-	sigOff := linkeditFileOff
-	if hasSyms {
-		symOff = linkeditFileOff
-		strOff = symOff + symtabLen
-		sigOff = alignUp(strOff+strtabLen, 16)
-	}
+	rebaseOff := linkeditFileOff
+	symOff := alignUp(rebaseOff+rebaseLen, 8)
+	strOff := symOff + symtabLen
+	sigOff := alignUp(strOff+strtabLen, 16)
 	return layout{
+		rebaseOff:       rebaseOff,
+		rebaseLen:       rebaseLen,
 		textOff:         textOff,
 		textLen:         textLen,
 		dataLen:         dataLen,
@@ -104,7 +154,7 @@ func layoutFor(textLen, dataLen, symtabLen, strtabLen int, hasSyms bool) layout 
 // @PAGEOFF references against these before StaticExecutable lays the same
 // blobs out at the same addresses.
 func SegmentAddrs(textLen, dataLen int) (textVAddr, dataVAddr uint64) {
-	lo := layoutFor(textLen, dataLen, 0, 0, false)
+	lo := layoutFor(textLen, dataLen, 0, 0, 0, false)
 	return lo.textVAddr, lo.dataVAddr
 }
 
@@ -114,7 +164,7 @@ func SegmentAddrs(textLen, dataLen int) (textVAddr, dataVAddr uint64) {
 // the code/data addresses (they live at the end, in __LINKEDIT), so zero
 // suffices here.
 func SegmentAddrsSyms(textLen, dataLen int) (textVAddr, dataVAddr uint64) {
-	lo := layoutFor(textLen, dataLen, 0, 0, true)
+	lo := layoutFor(textLen, dataLen, 0, 0, 0, true)
 	return lo.textVAddr, lo.dataVAddr
 }
 
@@ -124,8 +174,8 @@ func SegmentAddrsSyms(textLen, dataLen int) (textVAddr, dataVAddr uint64) {
 // the assembler) occupies a r/w __DATA segment. Execution begins at the
 // first code byte (the code generator's `_main`). The text/data sizes
 // must match those passed to SegmentAddrs so addresses line up.
-func StaticExecutable(text, data []byte, identifier string) []byte {
-	return staticExecutable(text, data, identifier, nil)
+func StaticExecutable(text, data []byte, identifier string, rebases []int) []byte {
+	return staticExecutable(text, data, identifier, nil, rebases)
 }
 
 // StaticExecutableSyms is StaticExecutable plus a static symbol table
@@ -134,17 +184,23 @@ func StaticExecutable(text, data []byte, identifier string) []byte {
 // they stay covered). Emitted under `fern -g` so lldb / nm / a backtrace can
 // symbolicate arm64-darwin binaries. The text/data must have been laid out
 // against SegmentAddrsSyms (the LC_SYMTAB command shifts every address).
-func StaticExecutableSyms(text, data []byte, identifier string, syms []Sym) []byte {
-	return staticExecutable(text, data, identifier, syms)
+func StaticExecutableSyms(text, data []byte, identifier string, syms []Sym, rebases []int) []byte {
+	return staticExecutable(text, data, identifier, syms, rebases)
 }
 
-func staticExecutable(text, data []byte, identifier string, syms []Sym) []byte {
+func staticExecutable(text, data []byte, identifier string, syms []Sym, rebases []int) []byte {
 	hasSyms := len(syms) > 0
 	var nlists, strtab []byte
 	if hasSyms {
 		nlists, strtab = buildSymtab(syms)
 	}
-	lo := layoutFor(len(text), len(data), len(nlists), len(strtab), hasSyms)
+	// __DATA is segment index 2 (__PAGEZERO 0, __TEXT 1); with no data blob
+	// there is nothing to rebase.
+	var rebase []byte
+	if len(data) > 0 {
+		rebase = rebaseOpcodes(2, rebases)
+	}
+	lo := layoutFor(len(text), len(data), len(nlists), len(strtab), len(rebase), hasSyms)
 	codeLimit := lo.sigOff
 
 	sig := codeSignature(nil, identifier, codeLimit, lo.textVMSize) // size probe
@@ -161,13 +217,17 @@ func staticExecutable(text, data []byte, identifier string, syms []Sym) []byte {
 		mh.segmentData(lo.dataVAddr, uint64(lo.dataFileLen), uint64(lo.textVMSize), len(data))
 	}
 	mh.segmentLinkedit(linkeditVAddr, uint64(linkeditVMSize), uint64(lo.linkeditFileOff), linkeditFileLen)
-	if hasSyms {
-		mh.symtab(uint32(lo.symOff), uint32(len(syms)), uint32(lo.strOff), uint32(len(strtab)))
-	}
-	mh.unixThread(lo.textVAddr)
+	mh.dyldInfo(uint32(lo.rebaseOff), uint32(lo.rebaseLen))
+	mh.symtab(uint32(lo.symOff), uint32(len(syms)), uint32(lo.strOff), uint32(len(strtab)))
+	mh.dysymtab(uint32(len(syms)))
+	mh.buildVersion()
+	mh.lcStr(lcLoadDylinker, dyldPath)
+	mh.lcStr(lcLoadDylib, libSystemPath)
+	mh.main(uint64(lo.textOff))
 	mh.codeSig(uint32(lo.sigOff), uint32(sigLen))
 	mh.done()
 
+	copy(buf[lo.rebaseOff:], rebase)
 	copy(buf[lo.textOff:], text)
 	if len(data) > 0 {
 		copy(buf[lo.textVMSize:], data)
@@ -184,26 +244,89 @@ func staticExecutable(text, data []byte, identifier string, syms []Sym) []byte {
 func alignUp(n, a int) int { return (n + a - 1) &^ (a - 1) }
 
 const (
-	machHeaderLen = 32
-	segCmdLen     = 72 // LC_SEGMENT_64 with no sections
-	sectLen       = 80
-	unixThreadLen = 16 + armThreadState64Cnt*4
-	codeSigCmdLen = 16
-	symtabCmdLen  = 24 // LC_SYMTAB: cmd/cmdsize + symoff/nsyms/stroff/strsize
-	nlistLen      = 16 // nlist_64
+	machHeaderLen   = 32
+	segCmdLen       = 72 // LC_SEGMENT_64 with no sections
+	sectLen         = 80
+	unixThreadLen   = 16 + armThreadState64Cnt*4
+	codeSigCmdLen   = 16
+	symtabCmdLen    = 24 // LC_SYMTAB: cmd/cmdsize + symoff/nsyms/stroff/strsize
+	nlistLen        = 16 // nlist_64
+	buildVersionLen = 24 // LC_BUILD_VERSION with ntools == 0
+	mainCmdLen      = 24 // LC_MAIN: cmd/cmdsize + entryoff + stacksize
+	dysymtabCmdLen  = 80 // LC_DYSYMTAB: cmd/cmdsize + 18 uint32 index/count pairs
+	dyldInfoCmdLen  = 48 // LC_DYLD_INFO_ONLY: cmd/cmdsize + 5 off/size pairs
 )
+
+// lcStrFixedLen is the size of an lc_str command's fixed part, before the path.
+func lcStrFixedLen(cmd uint32) int {
+	if cmd == lcLoadDylib {
+		return 24
+	}
+	return 12
+}
+
+// lcStrCmdLen is the padded size of an lc_str command carrying `path`: the
+// fixed part, the NUL-terminated path, rounded up to 8 bytes.
+func lcStrCmdLen(cmd uint32, path string) int {
+	return alignUp(lcStrFixedLen(cmd)+len(path)+1, 8)
+}
 
 // loadCommandsLen returns the total size of all load commands:
 // __PAGEZERO + __TEXT (1 section: __text) + optional __DATA (1 section) +
-// __LINKEDIT + optional LC_SYMTAB + LC_UNIXTHREAD + LC_CODE_SIGNATURE.
+// __LINKEDIT + optional LC_SYMTAB + LC_BUILD_VERSION + LC_LOAD_DYLINKER +
+// LC_LOAD_DYLIB + LC_MAIN + LC_CODE_SIGNATURE.
 func loadCommandsLen(hasData, hasSyms bool) int {
 	n := segCmdLen + (segCmdLen + sectLen) + segCmdLen
 	if hasData {
 		n += segCmdLen + sectLen
 	}
-	if hasSyms {
-		n += symtabCmdLen
-	}
-	n += unixThreadLen + codeSigCmdLen
+	// LC_SYMTAB is unconditional: dyld rejects an image carrying LC_DYSYMTAB
+	// without it, and LC_DYSYMTAB is itself required on a two-level image. With
+	// no `-g` symbols the command is present with zero counts.
+	_ = hasSyms
+	n += symtabCmdLen + buildVersionLen + dysymtabCmdLen + dyldInfoCmdLen + dyldInfoCmdLen
+	n += lcStrCmdLen(lcLoadDylinker, dyldPath)
+	n += lcStrCmdLen(lcLoadDylib, libSystemPath)
+	n += mainCmdLen + codeSigCmdLen
 	return n
+}
+
+// uleb appends `v` in unsigned LEB128, the encoding the rebase opcode stream
+// uses for offsets and counts.
+func uleb(b []byte, v uint64) []byte {
+	for {
+		c := byte(v & 0x7f)
+		v >>= 7
+		if v != 0 {
+			c |= 0x80
+		}
+		b = append(b, c)
+		if v == 0 {
+			return b
+		}
+	}
+}
+
+// rebaseOpcodes builds the LC_DYLD_INFO_ONLY rebase stream telling dyld to add
+// the slide to each 8-byte slot at `offs` within segment `segIdx`. Absolute
+// addresses are the only thing in a Fern image that a slide invalidates: the
+// code is entirely PC-relative, so the `.quad <symbol>` slots the assembler
+// reports are the complete set. Without this the image loads and then jumps
+// through a stale pointer — which presents as a segfault deep in a program
+// that uses a jump table, not as a load failure.
+func rebaseOpcodes(segIdx int, offs []int) []byte {
+	if len(offs) == 0 {
+		return nil
+	}
+	b := []byte{rebaseOpSetTypeImm | rebaseTypePointer}
+	for _, off := range offs {
+		b = append(b, byte(rebaseOpSetSegOffULEB|segIdx))
+		b = uleb(b, uint64(off))
+		b = append(b, rebaseOpDoRebaseImmTms|1)
+	}
+	b = append(b, rebaseOpDone)
+	for len(b)%8 != 0 {
+		b = append(b, 0)
+	}
+	return b
 }

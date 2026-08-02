@@ -19,7 +19,7 @@ func buildExit(t *testing.T, data []byte) []byte {
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
-	return StaticExecutable(text, data, "fern-test")
+	return StaticExecutable(text, data, "fern-test", nil)
 }
 
 // buildWithSyms assembles a two-function program and wraps it in a Mach-O with
@@ -45,7 +45,7 @@ func buildWithSyms(t *testing.T, data []byte) ([]byte, []Sym) {
 		rodata = data
 	}
 	syms := FuncSyms(a.TextLabelVAddrs(textVAddr), textVAddr+uint64(len(text)))
-	return StaticExecutableSyms(text, rodata, "fern-test", syms), syms
+	return StaticExecutableSyms(text, rodata, "fern-test", syms, nil), syms
 }
 
 // TestMachOSymtab guards the -g static symbol table (#5537 slice 1 for
@@ -177,16 +177,68 @@ func findLoad(t *testing.T, bin []byte, cmd uint32) []byte {
 	return nil
 }
 
-// The entry (LC_UNIXTHREAD pc) must point at the first text instruction.
+// hasLoad is findLoad's non-fatal twin, for asserting a command is ABSENT.
+func hasLoad(bin []byte, cmd uint32) bool {
+	ncmds := binary.LittleEndian.Uint32(bin[16:])
+	off := 32
+	for i := uint32(0); i < ncmds; i++ {
+		if binary.LittleEndian.Uint32(bin[off:]) == cmd {
+			return true
+		}
+		off += int(binary.LittleEndian.Uint32(bin[off+4:]))
+	}
+	return false
+}
+
+// The entry (LC_MAIN entryoff) must point at the first text instruction.
 func TestMachOEntryPoint(t *testing.T) {
 	bin := buildExit(t, nil)
-	body := findLoad(t, bin, lcUnixThread)
-	// body: flavor(4) count(4) then arm_thread_state64; pc is the 33rd u64.
-	pc := binary.LittleEndian.Uint64(body[8+32*8:])
+	// LC_MAIN carries a FILE offset from the start of the mach header, not a
+	// VM address — dyld adds the load address itself, which is what lets the
+	// image slide. So the check is against __text's file offset, not its addr.
+	body := findLoad(t, bin, lcMain)
+	entryoff := binary.LittleEndian.Uint64(body)
 	f, _ := macho.NewFile(bytes.NewReader(bin))
 	textSec := f.Section("__text")
-	if pc != textSec.Addr {
-		t.Errorf("entry pc = %#x, want __text addr %#x", pc, textSec.Addr)
+	if entryoff != uint64(textSec.Offset) {
+		t.Errorf("LC_MAIN entryoff = %#x, want __text file offset %#x", entryoff, textSec.Offset)
+	}
+}
+
+// TestMachODyldCommandSet pins the load commands Apple Silicon requires of a
+// main executable. Each was added because its absence was a HARD launch
+// failure, and the failures are silent in different ways, so the set is worth
+// asserting as a set:
+//   - MH_PIE: without it the kernel SIGKILLs at exec (exit 137) before dyld
+//     runs at all. ld64 cannot even produce a non-PIE arm64 executable
+//     ("-no_pie ignored for arm64*"), which is the tell.
+//   - LC_LOAD_DYLINKER + LC_MAIN: a static, dyld-free LC_UNIXTHREAD image is
+//     rejected the same way — verified by building one with Apple's own ld64,
+//     which is killed identically. Every arm64 main executable is dyld-loaded.
+//   - LC_SYMTAB alongside LC_DYSYMTAB: dyld errors "LC_DYSYMTAB but no
+//     LC_SYMTAB load command" and aborts (134).
+//   - LC_BUILD_VERSION: names the platform.
+func TestMachODyldCommandSet(t *testing.T) {
+	bin := buildExit(t, nil)
+	flags := binary.LittleEndian.Uint32(bin[24:])
+	if flags&mhPIE == 0 {
+		t.Errorf("header flags %#x missing MH_PIE — the kernel will refuse to exec this", flags)
+	}
+	for _, lc := range []struct {
+		cmd  uint32
+		name string
+	}{
+		{lcLoadDylinker, "LC_LOAD_DYLINKER"},
+		{lcLoadDylib, "LC_LOAD_DYLIB"},
+		{lcMain, "LC_MAIN"},
+		{lcSymtab, "LC_SYMTAB"},
+		{lcDysymtab, "LC_DYSYMTAB"},
+		{lcBuildVersion, "LC_BUILD_VERSION"},
+	} {
+		findLoad(t, bin, lc.cmd) // fatals when absent
+	}
+	if hasLoad(bin, lcUnixThread) {
+		t.Error("LC_UNIXTHREAD is still emitted; it is what made the image unlaunchable")
 	}
 }
 

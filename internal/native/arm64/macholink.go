@@ -1,6 +1,9 @@
 package arm64
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // MachOTextLen returns the final size of the .text (code) in bytes. It
 // flushes any pending literal pool and plants any branch veneers first,
@@ -16,6 +19,23 @@ func (a *Assembler) MachOTextLen() int {
 // MachODataLen returns the size of the data blob (merged __const + __bss /
 // __data) in bytes.
 func (a *Assembler) MachODataLen() int { return len(a.rodata) }
+
+// MachODataRebaseOffsets returns the offsets, within the data blob, of every
+// 8-byte slot holding an ABSOLUTE address (`.quad <symbol>` — jump tables and
+// the like). A Mach-O main executable on Apple Silicon must be PIE, so dyld
+// slides the image and every one of these needs rebasing by the slide; the
+// container turns them into LC_DYLD_INFO_ONLY rebase opcodes. Everything else
+// the code generator emits is PC-relative (adrp/@PAGEOFF, b/bl), which is why
+// this is the whole list. Sorted, so the opcode stream can be emitted in one
+// forward pass.
+func (a *Assembler) MachODataRebaseOffsets() []int {
+	offs := make([]int, 0, len(a.quadSymFixups))
+	for _, f := range a.quadSymFixups {
+		offs = append(offs, f.at)
+	}
+	sort.Ints(offs)
+	return offs
+}
 
 // LinkMachO resolves all vaddr-dependent fixups for a Mach-O layout where
 // code lives at textVAddr (the __TEXT segment) and the data blob lives at
