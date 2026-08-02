@@ -57,7 +57,10 @@ const (
 	mhTwoLevel = 0x80
 	mhPIE      = 0x200000
 
-	lcSegment64     = 0x19
+	lcSegment64 = 0x19
+	// lcUnixThread is retained only so TestMachODyldCommandSet can assert this
+	// image does NOT carry it: a static thread-state entry is what made the
+	// output unlaunchable on Apple Silicon. Nothing emits it.
 	lcUnixThread    = 0x5
 	lcCodeSignature = 0x1D
 	lcSymtab        = 0x2
@@ -89,9 +92,6 @@ const (
 	vmProtRead    = 0x1
 	vmProtWrite   = 0x2
 	vmProtExecute = 0x4
-
-	armThreadState64    = 6
-	armThreadState64Cnt = 68 // count in uint32 units (272 bytes)
 )
 
 // layout fixes the file/virtual-address layout of a Mach-O image given
@@ -247,7 +247,6 @@ const (
 	machHeaderLen   = 32
 	segCmdLen       = 72 // LC_SEGMENT_64 with no sections
 	sectLen         = 80
-	unixThreadLen   = 16 + armThreadState64Cnt*4
 	codeSigCmdLen   = 16
 	symtabCmdLen    = 24 // LC_SYMTAB: cmd/cmdsize + symoff/nsyms/stroff/strsize
 	nlistLen        = 16 // nlist_64

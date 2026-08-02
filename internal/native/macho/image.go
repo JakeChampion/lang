@@ -186,20 +186,6 @@ func (m *image) dyldInfo(rebaseOff, rebaseSize uint32) {
 	m.ncmds++
 }
 
-func (m *image) unixThread(entry uint64) {
-	m.u32(lcUnixThread)
-	m.u32(unixThreadLen)
-	m.u32(armThreadState64)
-	m.u32(armThreadState64Cnt)
-	// arm_thread_state64: x0..x28 (29), fp, lr, sp, pc, cpsr, pad.
-	// Only pc matters; the kernel sets up sp for the initial stack.
-	state := make([]byte, armThreadState64Cnt*4)
-	binary.LittleEndian.PutUint64(state[32*8:], entry) // pc is the 33rd u64
-	copy(m.b[m.off:], state)
-	m.off += len(state)
-	m.ncmds++
-}
-
 func (m *image) codeSig(dataoff, datasize uint32) {
 	m.u32(lcCodeSignature)
 	m.u32(codeSigCmdLen)
