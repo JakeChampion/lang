@@ -15,6 +15,15 @@ name: Lint
 #                lands beside an existing one).
 #   deadcode   — `make deadcode`: fails on any unreachable function
 #                not in tools/deadcode-allowlist.txt.
+#   freeze     — `make freeze`: reports the live state of the native-
+#                convergence freeze preconditions, derived from the tree.
+#                Fails only when ground is LOST (an AST emitter returns, a
+#                backend loses IR-or-error routing, the checker-codes filter
+#                comes back). It runs here rather than nowhere because the
+#                preconditions previously lived only as prose on #4451, and
+#                an audit found every stale claim pointing the same way —
+#                more pessimistic than the code. Prose does not re-check
+#                itself; this does, on every push.
 #
 # vet/build/fmt are cheap (sub-30s on warm cache); deadcode runs a
 # whole-program SSA reachability analysis so it's a touch slower but
@@ -97,3 +106,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
       - run: make deadcode
+
+  freeze:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+      - run: make freeze
