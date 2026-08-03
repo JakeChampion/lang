@@ -455,6 +455,13 @@ pub struct LowerState {
     // grow bracket skips them so the in-place accumulator fast paths stay
     // O(n). Set/cleared around each statement by lower_stmt's wrapper.
     grow_exempt: string[],
+    // own_params: the names of THIS function's `own` (consuming) parameters.
+    // An `own` param was TRANSFERRED by the caller, so — unlike the borrowed
+    // params the n_params boundary otherwise assumes — handing it back out of
+    // a `return` transfers it on rather than aliasing it, and needs no
+    // return-transfer retain. See the return path's use for why that retain is
+    // what made accumulator threading quadratic.
+    own_params: string[],
     // optret_pending: consumed-match Option/Result candidates whose arms are
     // CURRENTLY being lowered — "slot#s" (string payload) / "slot#a"
     // (leak-safe-array payload) entries. A `return` inside such an arm would
@@ -565,6 +572,12 @@ pub function (s: LowerState) slot_of(name: string): i32 {
 // in-place-vs-clone choice for the `a = a.with(i, v)` self-reassign (#3599).
 pub function (s: LowerState) is_aliased_name(name: string): boolean {
     return util.index_of_str(s.aliased_names, name) >= 0;
+}
+
+// is_own_param reports whether `name` is an `own` (consuming) parameter of the
+// function being lowered.
+pub function (s: LowerState) is_own_param(name: string): boolean {
+    return util.index_of_str(s.own_params, name) >= 0;
 }
 
 // add_local binds `name` to a fresh slot (its index = the old slot count),
@@ -13173,10 +13186,25 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
             }
             if (rpid.len() > 0) {
                 var rps: i32 = s.slot_of(rpid);
+                // An `own` param is EXCLUDED: the caller moved its reference in,
+                // so returning it moves that same reference back out and there is
+                // no second owner to count. Retaining it anyway ratcheted the
+                // buffer's rc to 2 permanently, which disabled __fern_arr_push's
+                // in-place fast path (it requires rc == 1) — so every push copied
+                // the whole array AND the pre-grow buffer never reached rc 0.
+                // A threaded accumulator (`buf = le32(buf, w)`, the shape every
+                // emitter is written in) cost O(n^2) time and unbounded memory:
+                // measured 7 GB and arena exhaustion for 40k appends, against
+                // 1 MB for the same appends written inline. The caller's
+                // overwrite release is already pointer-guarded (`if old != new
+                // then arr_dec(old)`), so dropping the retain leaves the buffer
+                // freed exactly once on the grow path and untouched in place.
                 if (rps >= 0 && rps < s.n_params && s.is_arr_slot(rps)) {
                     var rpl: LowerState = lower_expr(r.value, s);
                     if (!rpl.ok) { return rpl; }
-                    rpl = rpl.emit(ir.op_call_direct("__fern_rc_inc", 1));   // return-transfer retain
+                    if (!s.is_own_param(rpid)) {
+                        rpl = rpl.emit(ir.op_call_direct("__fern_rc_inc", 1));   // return-transfer retain
+                    }
                     rpl = emit_dec_sweep_except(rpl, 0 - 1);
                     return rpl.emit(ir.op_return());
                 }
@@ -32214,7 +32242,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0,  ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: closure_fns, closurearr_ret_fns: closurearr_ret_fns, const_fns: const_fns, closure_locals: noclos, closure_opt_rets: clo_opt_rets, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns_aug, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, aliased_names: aliased, fn_names: fn_names, return_fresh_struct_ret_fns: return_fresh_struct_ret_fns, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], n_params: names.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, locals: locals0,  ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: closure_fns, closurearr_ret_fns: closurearr_ret_fns, const_fns: const_fns, closure_locals: noclos, closure_opt_rets: clo_opt_rets, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns_aug, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, aliased_names: aliased, fn_names: fn_names, return_fresh_struct_ret_fns: return_fresh_struct_ret_fns, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], own_params: own_param_names_of(fn), n_params: names.len(), ok: true };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -36197,6 +36225,17 @@ function fnarr_param_all_closurearr(funcs: parser.FuncDecl[], fname: string, pid
     return nseen > 0 && nok == nseen && nident == nseen;
 }
 
+// own_param_names_of returns the names of `fn`'s `own` (consuming) parameters.
+function own_param_names_of(fn: parser.FuncDecl): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < fn.params.len()) {
+        if (fn.params[i].own) { out = out.append(fn.params[i].name); }
+        i = i + 1;
+    }
+    return out;
+}
+
 pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     // The closure registries feed the '3' (closure-array param) proof below.
     // Computed LAZILY — only when some receiver-less function actually has an
@@ -38623,7 +38662,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, i64_ret_fns: no_strs, fn_param_sigs: no_strs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: no_strs, closurearr_ret_fns: no_strs, const_fns: no_strs, closure_locals: no_strs, closure_opt_rets: no_strs, f64_ret_fns: no_strs, f64arr_ret_fns: no_strs, i64arr_ret_fns: no_strs, structs: structs, str_ret_fns: str_ret_fns_of(funcs), arr_ret_fns: no_strs, strarr_ret_fns: no_strs, arr_method_fns: no_strs, opt_ret_fns: no_strs, tuple_ret_fns: no_strs, struct_ret_fns: no_strs, map_ret_fns: no_strs, reclaimable_names: no_strs, aliased_names: no_strs, fn_names: no_strs, return_fresh_struct_ret_fns: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], n_params: fn.params.len(), ok: true };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, i64_ret_fns: no_strs, fn_param_sigs: no_strs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: no_strs, closurearr_ret_fns: no_strs, const_fns: no_strs, closure_locals: no_strs, closure_opt_rets: no_strs, f64_ret_fns: no_strs, f64arr_ret_fns: no_strs, i64arr_ret_fns: no_strs, structs: structs, str_ret_fns: str_ret_fns_of(funcs), arr_ret_fns: no_strs, strarr_ret_fns: no_strs, arr_method_fns: no_strs, opt_ret_fns: no_strs, tuple_ret_fns: no_strs, struct_ret_fns: no_strs, map_ret_fns: no_strs, reclaimable_names: no_strs, aliased_names: no_strs, fn_names: no_strs, return_fresh_struct_ret_fns: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
