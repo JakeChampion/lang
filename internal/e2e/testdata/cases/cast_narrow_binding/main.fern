@@ -1,0 +1,33 @@
+// A narrowing `as` cast must convert in BINDING position, not just in an
+// expression. `var x: u8 = e as u8` used to be rewritten to `var x: u8 = e`
+// on the self-host IR path — the rewrite that makes a zero-cost ascription
+// (`as string`, `as Option[T]`, the escape-severing `as usize`) free was
+// applied to a real width conversion too, silently dropping the 8-bit mask.
+// Expression position was unaffected, so only the binding forms regress.
+function main(): i32 {
+    var v: i32 = 250 + 10;                  // 260
+
+    // annotated binding
+    var a: u8 = v as u8;                    // 260 mod 256 = 4
+    if (a as i32 != 4) { print("FAIL annotated-binding"); return 11; }
+
+    // inferred binding — same rewrite, no annotation to fall back on
+    var b = v as u8;
+    if (b as i32 != 4) { print("FAIL inferred-binding"); return 12; }
+
+    // expression position (this always worked; here so a fix that trades one
+    // for the other cannot pass)
+    if (((v as u8) as i32) != 4) { print("FAIL expression"); return 13; }
+
+    // a second width, so the mask is not hard-coded to one value
+    var c: u8 = 300 as i32 as u8;           // 300 mod 256 = 44
+    if (c as i32 != 44) { print("FAIL other-value"); return 14; }
+
+    // reassignment, not just initialisation
+    var d: u8 = 0;
+    d = v as u8;
+    if (d as i32 != 4) { print("FAIL reassign"); return 15; }
+
+    print("OK");
+    return 0;
+}
