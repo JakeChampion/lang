@@ -55,6 +55,22 @@ func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 // batch=4 rather than the sibling's 8 because the arena is a hard wall: 6754 MB
 // peak vs 7909 MB against 8 GiB. The +36 s buys the margin that keeps this from
 // turning into an exit-137 flake as the compiler sources grow.
+//
+// WHAT THIS DOES NOT COVER. This is the emit-ALL fixpoint: one process emits
+// every unit. It is NOT the PER-MODULE fixpoint
+// (TestSelfHostPerModuleFixpointX86_64), which drives 33 separate per-module
+// emits and is the only guard that exercises the per-module windowing end to
+// end. That one runs ~1050 s — past the CI shard timeout — so it is env-gated
+// (RUN_PERMODULE_FIXPOINT=1) and does NOT run in any lane.
+//
+// So a change to the RC lowering that alters emitted code can reach main with
+// only this batch-4 guard behind it. Anything touching retain/release
+// placement, drop insertion or reuse should be run against the per-module
+// fixpoint by hand before pushing — that is the gate that caught nothing this
+// time only because it was run deliberately:
+//
+//	RUN_PERMODULE_FIXPOINT=1 go test ./internal/e2eselfhost/ \
+//	    -run TestSelfHostPerModuleFixpointX86_64 -timeout 60m
 func TestSelfHostPerModuleEmitAllFixpointBatch4X86_64(t *testing.T) {
 	runEmitAllFixpoint(t, 4, "eafix4")
 }
