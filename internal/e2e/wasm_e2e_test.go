@@ -222,7 +222,47 @@ func runComponent(t *testing.T, componentPath string, opts runOpts) (stdout, std
 	cmd.Stdout = &so
 	cmd.Stderr = &se
 	_ = cmd.Run()
-	return so.String(), se.String(), cmd.ProcessState.ExitCode()
+	code := cmd.ProcessState.ExitCode()
+	// An exit code alone cannot distinguish "the program returned N" from
+	// "wasmtime refused the module", because both are just a status — a
+	// validation failure and `return 1` are both exit 1. That conflation made
+	// #5992's two conversion bugs look like one for the length of an issue: one
+	// was a wrong ANSWER (u32 converted signed), the other did not COMPILE
+	// (an i32 opcode on an i64 operand). Rejection is a different kind of
+	// failure from a wrong result and should never be silently scored as one.
+	if rejected, why := wasmRejected(se.String()); rejected {
+		t.Fatalf("wasmtime REJECTED the module — this is not a wrong answer, the artifact is invalid or incomplete (%s)\nstderr:\n%s", why, se.String())
+	}
+	return so.String(), se.String(), code
+}
+
+// wasmRejected reports whether wasmtime's stderr describes a refusal to run the
+// module at all, rather than a program that ran and returned something. The
+// three shapes seen in practice, each from a real bug:
+//
+//   - "Invalid input WebAssembly code" / "type mismatch" — the module fails
+//     validation (#5992: f64.convert_i32_s applied to an i64 stack value).
+//   - "unknown func" / "failed to find name" — the module calls a function it
+//     never defines (#5992: $__fern_u32_to_string had no body on wasm).
+//   - "failed to compile" — wasmtime could not translate it.
+//
+// Deliberately conservative: it matches wasmtime's own diagnostics rather than
+// guessing from the exit code, so a program that legitimately prints one of
+// these strings is not mistaken for a rejected module.
+func wasmRejected(stderr string) (bool, string) {
+	for _, pair := range []struct{ needle, why string }{
+		{"Invalid input WebAssembly", "module failed validation"},
+		{"type mismatch", "module failed validation (stack type mismatch)"},
+		{"unknown func", "module calls a function it never defines"},
+		{"failed to find name", "module references an undefined name"},
+		{"failed to compile", "wasmtime could not translate the module"},
+		{"extra tokens remaining after parse", "emitted .wat is malformed"},
+	} {
+		if strings.Contains(stderr, pair.needle) {
+			return true, pair.why
+		}
+	}
+	return false, ""
 }
 
 // invokeWasmtime compiles src to a Component Model component and
