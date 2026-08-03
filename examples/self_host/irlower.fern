@@ -7972,9 +7972,17 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         if (!si.ok) { return si; }
                         return si.emit(ir.op_call_direct("__fern_rc_inc", 1));
                     }
-                    // __rc_underflow() / __fern_rc_underflow_count(): read the
-                    // over-release counter.
-                    if (cid.name == "__rc_underflow" || cid.name == "__fern_rc_underflow_count") {
+                    // __rc_underflow_count() / __rc_underflow(): read the
+                    // over-release counter. `__rc_underflow_count` is the
+                    // NATIVE spelling (internal/checker/checker.go registers
+                    // only that one), so it is what a source compiled by both
+                    // compilers must use — the self-host drivers' own guard
+                    // does. `__rc_underflow` is the older self-host-only alias
+                    // that ~730 call sites in internal/e2eselfhost still use;
+                    // it stays until those migrate. (The third spelling this
+                    // accepted, `__fern_rc_underflow_count`, was the RUNTIME
+                    // symbol leaking into surface syntax and had no callers.)
+                    if (cid.name == "__rc_underflow_count" || cid.name == "__rc_underflow") {
                         if (c.args.len() != 0) { return s.fail(); }
                         return s.emit(ir.op_call_direct("__fern_rc_underflow_get", 0));
                     }

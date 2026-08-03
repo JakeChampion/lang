@@ -405,3 +405,35 @@ function pf64_all_zero(b: i32[]): boolean {
     }
     return true;
 }
+
+// RC_UNDERFLOW_EXIT is the exit code a driver reports when its own heap
+// accounting is broken — distinct from 0 (clean) and 1 (a compile error in
+// the input program), so a harness cannot read the failure as either.
+pub const RC_UNDERFLOW_EXIT: i32 = 120;
+
+// rc_underflow_guard passes `code` through when the process-wide rc
+// over-release counter is clean, and turns a non-zero reading into a loud
+// failure.
+//
+// The counter (__rc_underflow_count — the Phase 3 detector, bumped by every
+// __fern_rc_dec that finds rc <= 0) has existed on all three backends for a
+// long time and NOTHING ran it. That is what let #6021 sit latent on main: a
+// compiler that over-releases one of its OWN blocks usually still emits
+// correct output — the doubly-freed block is recycled harmlessly — so the
+// damage surfaces as a segfault in some unrelated later build, once an
+// innocuous change shifts allocation sizes enough for the poisoned freelist
+// head to be popped. It presented as "adding a field to LowerState breaks the
+// compiler", ~50% of runs, and the per-module fixpoint, all 335 fixtures and
+// the native suite were green throughout.
+//
+// So the drivers check themselves, on every run, in every configuration: a
+// corrupted freelist is reported where it happened rather than diagnosed
+// weeks later somewhere else. Zero cost on the healthy path (one BSS load and
+// a branch), and no output change — the message only ever appears on a build
+// that is already broken.
+pub function rc_underflow_guard(who: string, code: i32): i32 {
+    var n: i32 = __rc_underflow_count();
+    if (n == 0) { return code; }
+    eprint(who + ": internal error: rc over-release detected (" + i32_to_string(n) + " dec(s) on an already-released block)\n");
+    return RC_UNDERFLOW_EXIT;
+}

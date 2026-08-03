@@ -34,7 +34,7 @@ import (
 // (computeConsumingMatchReuse), so the plan is immutable once
 // computeRcAnalyses returns (#4475).
 type rcPlan struct {
-	// consumedParams[name] is true for a pointer-shaped struct/tuple/enum
+	// consumedParams[name] is true for a pointer-shaped struct/tuple/enum/array
 	// PARAMETER that the borrow model would keep borrowed (its type is not
 	// owned-by-default — e.g. it carries a string field) but that the function
 	// THREADS: it is reassigned in the body (`s = s.emit(..)`, `ctx =
@@ -828,8 +828,8 @@ func (b *builder) computeConsumedParams() map[string]bool {
 		if !reassigned[p.Name] {
 			continue
 		}
-		// Structs / tuples / enums (incl. unions). Whatever the shape, a
-		// reassignment of a param slot emits the overwrite dec — so leaving a
+		// Structs / tuples / enums (incl. unions) / ARRAYS. Whatever the shape,
+		// a reassignment of a param slot emits the overwrite dec — so leaving a
 		// reassigned param on the borrow baseline releases a reference the
 		// caller never handed over. Enums were excluded here until the
 		// parse_postfix under-count (`base = e_unary_at(op, base, …)` on a
@@ -837,8 +837,20 @@ func (b *builder) computeConsumedParams() map[string]bool {
 		// exclusion is exactly the escape hatch the paragraph below closes for
 		// scalar-only structs: same one-reference undercount, same early free
 		// through a live alias. See TestX86_64UnionThreadedParam.
+		//
+		// ARRAYS were the last shape left out, and the sentence above already
+		// said why they should not be: #6021 is the same undercount reached
+		// through `acc = f(.., acc)` on a borrowed `string[]` param. It sat
+		// latent on main because the Assign catch-all's plain __fern_rc_dec
+		// does not FREE — it only corrupts the count, and the early free then
+		// happens at whichever site legitimately owns the buffer. In the
+		// self-host compiler that was astwalk.collect_idents_stmt's StmtIf arm
+		// stealing a count from irlower.precise_drop_names' `none`, which
+		// surfaced as a ~50% segfault in __fern_alloc's freelist pop on any
+		// change that shifted allocation sizes. See the
+		// array_param_threaded_by_reassignment rc-corpus case.
 		switch p.Type.(type) {
-		case ast.StructType, ast.TupleType, ast.EnumType:
+		case ast.StructType, ast.TupleType, ast.EnumType, ast.ArrayType:
 		default:
 			continue
 		}

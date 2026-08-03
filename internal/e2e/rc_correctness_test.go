@@ -3730,6 +3730,55 @@ function main(): i32 {
     return (total / 30) - 306 + __rc_underflow_count();
 }`,
 	},
+	{
+		// ARRAY param threaded by reassignment — the array sibling of the
+		// cursor-struct case above, and the #6021 latent double-free.
+		// computeConsumedParams promoted a reassigned struct / tuple / enum
+		// param but not an ARRAY one, while the Assign lowering emits the
+		// overwrite dec for every rc-tracked slot alike. So `acc = ce(n, acc)`
+		// on a borrowed `string[]` param released a reference the caller never
+		// handed over: `none`'s count went one short, the caller's own drop
+		// then freed a buffer its slot still held, and the exit sweep dec'd a
+		// freed block. Silent on main (the doubly-freed block was recycled
+		// harmlessly) until a heap-layout shift made the poisoned freelist head
+		// get popped — a ~50% segfault in the self-host driver, from
+		// irlower.precise_drop_names threading `none` through
+		// astwalk.collect_idents_stmt, whose StmtIf arm is exactly this shape.
+		//
+		// The match matters: one arm reassigns the param and one returns
+		// straight through, so the count is stolen on the first call and spent
+		// on the second. `work` wraps the loop so its exit sweep — where the
+		// over-release lands — runs BEFORE main reads the counter.
+		name: "array_param_threaded_by_reassignment",
+		src: `
+enum S { Leaf(i32), Node(i32) }
+function walk_expr(n: i32, acc: string[]): string[] { return acc.append("z"); }
+function walk_stmt(st: S, acc: string[]): string[] {
+    match (st) {
+        Leaf(n) => { return walk_expr(n, acc); },
+        Node(n) => {
+            acc = walk_expr(n, acc);
+            return acc;
+        }
+    }
+    return acc;
+}
+function work(body: S[]): i32 {
+    var none: string[] = [];
+    var k: i32 = 0;
+    var t: i32 = 0;
+    while (k < body.len()) {
+        var r: string[] = walk_stmt(body[k], none);
+        t = t + r.len();
+        k = k + 1;
+    }
+    return t + none.len();
+}
+function main(): i32 {
+    var d: i32 = work([Node(1), Leaf(2)]);
+    return (d - 2) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

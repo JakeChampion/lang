@@ -20,13 +20,23 @@
 // ~50 asm_run-based harnesses stay untouched.
 
 import "std/io";
+import "./util";
 import "./lexer";
 import "./parser";
 import "./asm_ir";
 import "./asm_arm64_ir";
 import "./irlower";
 
+// main wraps `run` in the shared rc-over-release guard: this driver is
+// exactly where #6021 hid — a native-compiler rc bug that corrupted the
+// driver's OWN freelist while still emitting correct asm — so it now reports
+// a broken heap on every run rather than leaving it to be found by a
+// segfault in an unrelated later build.
 function main(): i32 {
+    return util.rc_underflow_guard("asm_ir_run", run());
+}
+
+function run(): i32 {
     var av: string[] = args();
     var use_ir: boolean = false;
     var probe: boolean = false;
