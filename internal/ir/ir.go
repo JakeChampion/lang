@@ -14572,7 +14572,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpDrop})
 				b.emit(Op{Kind: OpEnd})
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp}) // restore new for the store
-			} else if at, isArr := localArrayType(t.Name, b); isArr && ast.RcFreeEnabled && (b.rc.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, at) || b.isSelfArrayPushLocal(n.Value, t.Name)) {
+			} else if at, isArr := localArrayType(t.Name, b); isArr && ast.RcFreeEnabled && !b.callConsumesIdent(n.Value, t.Name) && (b.rc.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, at) || b.isSelfArrayPushLocal(n.Value, t.Name)) {
 				// Phase 3 step-4: free the OLD array buffer at rc==0.
 				// On a push copy-grow the old buffer's pointer elements
 				// were transferred to the new buffer (no inc), so freeing
@@ -14621,10 +14621,22 @@ func (b *builder) assign(n *ast.Assign) error {
 				// `s = f(.., s, ..)` where f takes s by `own`: s is MOVED into f,
 				// which deep-drops it at its own exit. Dropping it here too frees
 				// the box twice — the own-struct-param move-and-rebind double-free.
-				// No drop: the callee owns it. (Array targets took the rc-gated
-				// __fern_arr_dec branch above, which is double-free-safe; this
-				// guards the struct / enum case that the flat / deep drop below
-				// would over-release.)
+				// No drop: the callee owns it.
+				//
+				// ARRAY targets reach here too (#6013). This comment used to say
+				// they "took the rc-gated __fern_arr_dec branch above, which is
+				// double-free-safe" — it is not. rc-gating only means the free
+				// happens at rc==0, and after the move there is no reference left
+				// to spend: `c = wr(c, …)` with `wr(own buf: i32[])` hands the
+				// slot's only reference to the callee, which returns it (the
+				// cow_inplace rc==1 path returns the SAME pointer), so the dec
+				// takes the live buffer from 1 to 0 and frees what the caller just
+				// stored. It read as correct because a freed-then-immediately-
+				// reused block still holds its old bytes: the same program was
+				// right with two calls and returned a corrupted length with four.
+				// The self-append / self-map / construction-move shapes are
+				// unaffected — their RHS is a method call or constructor, never an
+				// `own`-flagged user function, so callConsumesIdent is false.
 			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && (b.rc.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, sety)) {
 				// Struct / enum reassignment-overwrite — `s = Other{...}` /
 				// `e = Variant(...)` ends the old binding's ownership exactly

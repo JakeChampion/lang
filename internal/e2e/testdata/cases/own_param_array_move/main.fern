@@ -1,0 +1,70 @@
+// An `own` array parameter is a MOVE: the caller hands over its reference and
+// the callee gives one back. Two sites used to release that single reference a
+// second time, freeing a buffer still in use (#6013):
+//
+//   callee side — `return buf.with(i, v)`. With no pre-call inc,
+//     __fern_arr_cow_inplace consumes the receiver (rc==1 returns the SAME
+//     pointer; rc>1 copies and decs it itself), so the exit sweep's dec of the
+//     param released it again.
+//   caller side — `c = wr(c, …)`. The reference moved into the callee, so the
+//     assignment's overwrite-drop of the old `c` had nothing left to spend.
+//
+// Both read as correct under a bump allocator and for SHORT call chains: a
+// freed-then-immediately-reused block still holds its old bytes. Four calls is
+// where the freelist hands the block to something else and the length goes
+// wrong, so the repetition below is load-bearing — two calls passed while the
+// bug was live.
+function wr_direct(own buf: i32[], at: i32, w: i32): i32[] {
+    return buf.with(at, w);
+}
+
+function wr_via_local(own buf: i32[], at: i32, w: i32): i32[] {
+    var r: i32[] = buf.with(at, w);
+    return r;
+}
+
+function wr_self_reassign(own buf: i32[], at: i32, w: i32): i32[] {
+    buf = buf.with(at, w);
+    return buf;
+}
+
+struct Box { code: i32[], names: string[] }
+
+// The struct carrying the array is what makes the over-release observable: the
+// extra allocation per step (the rebuilt Box) is what claims the wrongly-freed
+// block.
+function step(own b: Box, at: i32, mode: i32): Box {
+    var c: i32[] = b.code;
+    b = Box { ...b, code: [] };
+    if (mode == 0) { c = wr_direct(c, at, 7); }
+    else if (mode == 1) { c = wr_via_local(c, at, 8); }
+    else { c = wr_self_reassign(c, at, 9); }
+    return Box { ...b, code: c };
+}
+
+function main(): i32 {
+    // Each mode, four calls deep.
+    var m: i32 = 0;
+    while (m < 3) {
+        var b: Box = Box { code: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], names: [] };
+        b = step(b, 0, m);
+        b = step(b, 1, m);
+        b = step(b, 2, m);
+        b = step(b, 3, m);
+        var c: i32[] = b.code;
+        if (c.len() != 12) { print("FAIL len"); return 11 + m; }
+        // The writes must have landed, not just the length survived.
+        if (c[3] == 0) { print("FAIL value"); return 21 + m; }
+        m = m + 1;
+    }
+
+    // No struct in the loop: the plain move chain must stay balanced too.
+    var xs: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
+    var i: i32 = 0;
+    while (i < 8) { xs = wr_direct(xs, i, i + 1); i = i + 1; }
+    if (xs.len() != 8) { print("FAIL plain len"); return 31; }
+    if (xs[7] != 8) { print("FAIL plain value"); return 32; }
+
+    print("OK");
+    return 0;
+}
