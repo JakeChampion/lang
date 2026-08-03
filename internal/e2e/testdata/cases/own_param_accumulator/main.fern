@@ -1,0 +1,42 @@
+import "std/i32";
+// An `own` array param threaded through a helper and returned, then patched
+// through a second one — the accumulator shape every emitter in this repo is
+// written in (`buf = le32(buf, w)`).
+//
+// The self-host compiler used to emit a return-transfer retain for ANY array
+// parameter handed back out of a `return`, which is right for a borrowed param
+// (the caller still owns it) and wrong for an `own` one (the caller moved its
+// reference in). The extra count pinned the buffer at rc 2, which permanently
+// disabled __fern_arr_push's in-place fast path — it requires rc == 1 — so
+// every push copied the whole array and no pre-grow buffer ever reached rc 0.
+// 40k appends through such a helper cost 7 GB and exhausted the arena, against
+// 1 MB for the same appends written inline.
+//
+// Asserts written VALUES, not lengths: a freed-then-reused block keeps its old
+// bytes, so a length-only check passes even when the buffer was released twice.
+function le32(own buf: i32[], w: i32): i32[] {
+    buf = buf.append(w & 255);
+    buf = buf.append((w >> 8) & 255);
+    return buf;
+}
+function patch(own buf: i32[], at: i32, v: i32): i32[] {
+    buf = buf.with(at, v);
+    return buf;
+}
+function main(): i32 {
+    var code: i32[] = [];
+    var i: i32 = 0;
+    while (i < 300) { code = le32(code, i * 7); i = i + 1; }
+    if (code.len() != 600) { return 91; }
+    var j: i32 = 0;
+    while (j < 300) { code = patch(code, j * 2, (j + 1) % 251); j = j + 1; }
+    var bad: i32 = 0;
+    var k: i32 = 0;
+    while (k < 300) {
+        if (code[k * 2] != (k + 1) % 251) { bad = bad + 1; }
+        if (code[k * 2 + 1] != (((k * 7) >> 8) & 255)) { bad = bad + 1; }
+        k = k + 1;
+    }
+    if (bad != 0) { return 92; }
+    return 0;
+}
