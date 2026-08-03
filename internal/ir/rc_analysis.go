@@ -16,6 +16,7 @@ package ir
 // it behind this boundary is the follow-up slice.
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -2551,7 +2552,13 @@ func (b *builder) computePreciseDrops() map[int][]string {
 		return true
 	})
 	out := map[int][]string{}
-	for name, di := range declIdx {
+	// Iterate in DECLARATION order, not Go map order. Two locals whose last
+	// use falls on the same statement both append to out[last], and ranging
+	// the map appended them in a random order — so the same source compiled
+	// twice emitted their drops in either order, and the binaries differed.
+	// Declaration order is the program's own order and is stable.
+	for _, name := range sortedByDeclIdx(declIdx) {
+		di := declIdx[name]
 		if reassigned[name] || b.rc.movedLocals[name] || !b.rc.freeEligible[name] || !b.localNameUnique(name) {
 			continue
 		}
@@ -3959,4 +3966,22 @@ func (b *builder) computeCtorAliasInced() map[string]bool {
 		return true
 	})
 	return out
+}
+
+// sortedByDeclIdx returns declIdx's names ordered by their declaration
+// statement index — the program's own order — so passes that consume it
+// produce identical output on every run. Ranging the map directly made
+// compilation nondeterministic wherever two names shared an output bucket.
+func sortedByDeclIdx(declIdx map[string]int) []string {
+	names := make([]string, 0, len(declIdx))
+	for n := range declIdx {
+		names = append(names, n)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if declIdx[names[i]] != declIdx[names[j]] {
+			return declIdx[names[i]] < declIdx[names[j]]
+		}
+		return names[i] < names[j]
+	})
+	return names
 }

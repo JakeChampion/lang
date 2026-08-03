@@ -15,6 +15,7 @@ function main(): i32 {
     var dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), p.data.len());
     p = arm64_native.arm64_gas_link(p, tv, dv);
     var pa2: arm64_native.Arm64Asm = p.asm;
-    print("text=" + pa2.code.len().to_string() + " data=" + p.data.len().to_string() + "\n");
+    print("text=" + pa2.code.len().to_string() + " data=" + p.data.len().to_string()
+        + " bump=" + __heap_bump_bytes().to_string() + "\n");
     return 0;
 }
