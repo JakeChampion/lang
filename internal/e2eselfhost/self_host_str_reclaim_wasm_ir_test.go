@@ -15,7 +15,7 @@ import (
 // single rc-headered inline block ($__fern_str_box), so __fern_str_free maps to
 // $__fern_arr_dec, whose over-release detector ($__fern_rc_underflow) ticks on any
 // dec below rc 0. Each case runs the string churn in a helper (lowered through the
-// IR reclaim path) and checks __fern_rc_underflow_count() == 0 in main: a nonzero
+// IR reclaim path) and checks __rc_underflow_count() == 0 in main: a nonzero
 // count (a double-free) surfaces as exit 99. Exit codes stay < 126 (WASI _start).
 func TestSelfHostStrReclaimWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -45,15 +45,15 @@ func TestSelfHostStrReclaimWasmIR(t *testing.T) {
 		// Fresh concat reclaimed each iteration, 2000 iters. churn returns sum%100
 		// (kept 0); main returns 99 if any string was double-freed (underflow > 0).
 		// "ab"+"cd" = len 4; sum stays a multiple of 4 → % 100 hits 0 at 2000 iters.
-		{"loop-concat", `function churn(n: i32): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < n) { var s: string = "ab" + "cd"; sum = (sum + s.len()) % 100; i = i + 1; } return sum; } function main(): i32 { var r: i32 = churn(2000); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`, 0},
+		{"loop-concat", `function churn(n: i32): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < n) { var s: string = "ab" + "cd"; sum = (sum + s.len()) % 100; i = i + 1; } return sum; } function main(): i32 { var r: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return r; }`, 0},
 		// Fresh .to_ascii_upper() reclaimed each iteration. base len 3; sum kept mod 100.
-		{"loop-to-upper", `function churn(n: i32): i32 { var base: string = "xyz"; var sum: i32 = 0; var i: i32 = 0; while (i < n) { var s: string = base.to_ascii_upper(); sum = (sum + s.len()) % 100; i = i + 1; } return sum; } function main(): i32 { var r: i32 = churn(2000); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`, 0},
+		{"loop-to-upper", `function churn(n: i32): i32 { var base: string = "xyz"; var sum: i32 = 0; var i: i32 = 0; while (i < n) { var s: string = base.to_ascii_upper(); sum = (sum + s.len()) % 100; i = i + 1; } return sum; } function main(): i32 { var r: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return r; }`, 0},
 		// Scope-exit reclaim of a single fresh string (no loop): freed once at return.
 		// A double free would tick underflow → 99. len("hi"+"!") = 3.
-		{"scope-exit", `function churn(): i32 { var s: string = "hi" + "!"; return s.len(); } function main(): i32 { var r: i32 = churn(); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`, 3},
+		{"scope-exit", `function churn(): i32 { var s: string = "hi" + "!"; return s.len(); } function main(): i32 { var r: i32 = churn(); if (__rc_underflow_count() != 0) { return 99; } return r; }`, 3},
 		// Aliased fresh string must NOT be reclaimed (would double-free the shared
 		// block) — the analysis excludes it; underflow stays 0, value correct. 3+3=6.
-		{"aliased-safe", `function churn(): i32 { var s: string = "ab" + "c"; var t: string = s; return s.len() + t.len(); } function main(): i32 { var r: i32 = churn(); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`, 6},
+		{"aliased-safe", `function churn(): i32 { var s: string = "ab" + "c"; var t: string = s; return s.len() + t.len(); } function main(): i32 { var r: i32 = churn(); if (__rc_underflow_count() != 0) { return 99; } return r; }`, 6},
 		// i32_to_string reclaimed each iteration. This one is VALUE-only (no
 		// __fern_rc_underflow_count in the module): the underflow builtin routes
 		// i32_to_string in every function to the legacy AST wasm path — which lacks

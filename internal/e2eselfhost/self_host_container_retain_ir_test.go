@@ -22,7 +22,7 @@ import (
 // apart again.
 //
 // These were invisible because the RC corpus reaches the counter through
-// `__fern_rc_underflow_count()`, a spelling only the AST emitters accepted — so ~15
+// `__rc_underflow_count()`, a spelling only the AST emitters accepted — so ~15
 // RC test files were exercising the AST emitter's discipline and never the IR
 // path's. irlower now accepts both spellings, which is what routes them here.
 func TestSelfHostContainerRetainIR(t *testing.T) {
@@ -60,7 +60,7 @@ func TestSelfHostContainerRetainIR(t *testing.T) {
 		// reports (a scalar-capture closure). rc_runtime_helpers rides the heap
 		// gate, so without pulling it in for a counter read the emitted core
 		// called a function it never defined.
-		{"scalar-closure-reads-counter", `function main(): i32 { var n: i32 = 5; var f = function (x: i32): i32 { return x + n; }; return f(37) + __fern_rc_underflow_count(); }`, 42},
+		{"scalar-closure-reads-counter", `function main(): i32 { var n: i32 = 5; var f = function (x: i32): i32 { return x + n; }; return f(37) + __rc_underflow_count(); }`, 42},
 	}
 
 	for _, tc := range cases {

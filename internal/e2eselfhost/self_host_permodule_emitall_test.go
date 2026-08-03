@@ -29,6 +29,12 @@ import (
 // treatment as the per-module fixpoint proof. The fast CI guard for the
 // per-module path stays TestSelfHostModloadPerModuleWholeCompilerX86_64.
 func TestSelfHostPerModuleEmitAllX86_64(t *testing.T) {
+	// CI-DARK: RUN_EMITALL_CHECK — ~19 min, because it runs the full
+	// per-process baseline AND the batched emit-all to compare them. The
+	// property it proves (emit-all's units are byte-identical to the
+	// per-process ones) is a one-off design proof, not a per-PR regression
+	// risk; the standing CI guard for the per-module path is
+	// TestSelfHostModloadPerModuleWholeCompilerX86_64.
 	if os.Getenv("RUN_EMITALL_CHECK") == "" {
 		t.Skip("set RUN_EMITALL_CHECK=1 to run the heavy emit-all byte-identity + speedup proof (~19 min; #3457 slice 2)")
 	}

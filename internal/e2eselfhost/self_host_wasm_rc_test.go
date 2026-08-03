@@ -132,7 +132,7 @@ func TestSelfHostRcFreeWasm(t *testing.T) {
 		{"freelist-distinct-class", "function main(): i32 { var a: i32[] = [1, 2, 3]; __fern_arr_dec(a); var b: i32[] = [1, 2, 3, 4, 5, 6, 7, 8]; if (a == b) { return 1; } return 7; }", 7},
 		// A build/discard churn far exceeding the heap completes (reuse keeps
 		// memory bounded) and stays value-correct + detector-clean.
-		{"reclaim-churn", "function work(n: i32): i32 { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs[n - 1]; } function main(): i32 { var k = 0; var s = 0; while (k < 100000) { s = work(64); k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 0},
+		{"reclaim-churn", "function work(n: i32): i32 { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs[n - 1]; } function main(): i32 { var k = 0; var s = 0; while (k < 100000) { s = work(64); k = k + 1; } return (s % 7) + __rc_underflow_count(); }", 0},
 		// A LARGE array (> 64 KiB block) is recycled too — the freelist cap
 		// (65536 classes / 512 KiB) matches the asm backends. gen(20000) has
 		// cap 32768 → a ~128 KiB block; freeing it and rebuilding the same
@@ -184,26 +184,26 @@ func TestSelfHostRcCallResultWasm(t *testing.T) {
 		exit int
 	}{
 		// Two call-result locals: both swept (freed) at exit, detector clean.
-		{"callresult-balanced", genFn + "function main(): i32 { var a: i32[] = gen(5); var b: i32[] = gen(7); return a[4] + b[6] + __fern_rc_underflow_count(); }", 10},
+		{"callresult-balanced", genFn + "function main(): i32 { var a: i32[] = gen(5); var b: i32[] = gen(7); return a[4] + b[6] + __rc_underflow_count(); }", 10},
 		// Aliasing a call result: the alias is inc'd, both swept, balanced.
-		{"callresult-aliased", genFn + "function main(): i32 { var a: i32[] = gen(5); var c = a; return a[0] + c[4] + __fern_rc_underflow_count(); }", 4},
+		{"callresult-aliased", genFn + "function main(): i32 { var a: i32[] = gen(5); var c = a; return a[0] + c[4] + __rc_underflow_count(); }", 4},
 		// Callee returns a BORROWED param: return-retain protects the buffer
 		// so the caller sweeping BOTH source and result is not a double-free.
-		{"callresult-borrowed-return", "function pick(xs: i32[]): i32[] { return xs; } function main(): i32 { var src: i32[] = [1, 2, 3]; var got: i32[] = pick(src); return got[1] + src[0] + __fern_rc_underflow_count(); }", 3},
+		{"callresult-borrowed-return", "function pick(xs: i32[]): i32[] { return xs; } function main(): i32 { var src: i32[] = [1, 2, 3]; var got: i32[] = pick(src); return got[1] + src[0] + __rc_underflow_count(); }", 3},
 		// A self-append (method call, in-place receiver) result is NOT swept,
 		// so it never double-frees the receiver's buffer.
-		{"self-append-not-double-freed", "function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs.append(3); return ys[2] + __fern_rc_underflow_count(); }", 3},
+		{"self-append-not-double-freed", "function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs.append(3); return ys[2] + __rc_underflow_count(); }", 3},
 		// Fresh-array builtins/methods bound to a local are reclaimed too.
-		{"freshbuiltin-random-swept", "function main(): i32 { var b: i32[] = random_bytes(4); return b.len() + __fern_rc_underflow_count(); }", 4},
-		{"freshbuiltin-mapkeys-swept", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var ks: i32[] = m.keys(); return ks.len() + __fern_rc_underflow_count(); }", 2},
+		{"freshbuiltin-random-swept", "function main(): i32 { var b: i32[] = random_bytes(4); return b.len() + __rc_underflow_count(); }", 4},
+		{"freshbuiltin-mapkeys-swept", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var ks: i32[] = m.keys(); return ks.len() + __rc_underflow_count(); }", 2},
 		// A .values() snapshot re-bound each loop iteration: fresh + swept +
 		// per-iteration dec-on-overwrite, value-correct + detector clean.
-		{"freshbuiltin-values-loop", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var s = 0; var k = 0; while (k < 100) { var vs: i32[] = m.values(); s = s + vs[0]; k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 6},
+		{"freshbuiltin-values-loop", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; var s = 0; var k = 0; while (k < 100) { var vs: i32[] = m.values(); s = s + vs[0]; k = k + 1; } return (s % 7) + __rc_underflow_count(); }", 6},
 		// A declared-array local inited from a USER method returning an array
 		// is counted/swept (the method's return-retain makes it safe).
-		{"method-result-swept", "struct Box { n: i32 } function (b: Box) make(): i32[] { var xs: i32[] = []; var i = 0; while (i < b.n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var box = Box { n: 5 }; var r: i32[] = box.make(); return r[4] + __fern_rc_underflow_count(); }", 4},
+		{"method-result-swept", "struct Box { n: i32 } function (b: Box) make(): i32[] { var xs: i32[] = []; var i = 0; while (i < b.n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var box = Box { n: 5 }; var r: i32[] = box.make(); return r[4] + __rc_underflow_count(); }", 4},
 		// Same, re-bound each loop iteration: per-iteration release, clean.
-		{"method-result-loop", "struct Box { n: i32 } function (b: Box) make(): i32[] { var xs: i32[] = []; var i = 0; while (i < b.n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var box = Box { n: 6 }; var s = 0; var k = 0; while (k < 50) { var r: i32[] = box.make(); s = s + r[5]; k = k + 1; } return (s % 7) + __fern_rc_underflow_count(); }", 5},
+		{"method-result-loop", "struct Box { n: i32 } function (b: Box) make(): i32[] { var xs: i32[] = []; var i = 0; while (i < b.n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var box = Box { n: 6 }; var s = 0; var k = 0; while (k < 50) { var r: i32[] = box.make(); s = s + r[5]; k = k + 1; } return (s % 7) + __rc_underflow_count(); }", 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -250,23 +250,23 @@ func TestSelfHostRcConstructWasm(t *testing.T) {
 	}{
 		// Array stored into a struct field: source local is no longer unique
 		// (the struct co-owns it), values intact, detector clean.
-		{"struct-field-retained", "struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2, 3]; var h = H { items: xs }; var u = __fern_rc_is_unique(xs); return u + h.items[2] + __fern_rc_underflow_count(); }", 3},
+		{"struct-field-retained", "struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2, 3]; var h = H { items: xs }; var u = __fern_rc_is_unique(xs); return u + h.items[2] + __rc_underflow_count(); }", 3},
 		// Array-of-arrays: each element array is retained by the outer array.
-		{"array-of-arrays-retained", "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = [3, 4]; var both = [a, b]; var ua = __fern_rc_is_unique(a); return ua + both[0][1] + both[1][0] + __fern_rc_underflow_count(); }", 5},
+		{"array-of-arrays-retained", "function main(): i32 { var a: i32[] = [1, 2]; var b: i32[] = [3, 4]; var both = [a, b]; var ua = __fern_rc_is_unique(a); return ua + both[0][1] + both[1][0] + __rc_underflow_count(); }", 5},
 		// Fresh literal stored (no source local): moved into the struct, NOT
 		// inc'd; still reads back correctly, detector clean.
-		{"struct-field-fresh-move", "struct H { items: i32[] } function main(): i32 { var h = H { items: [9, 8, 7] }; return h.items[0] + __fern_rc_underflow_count(); }", 9},
+		{"struct-field-fresh-move", "struct H { items: i32[] } function main(): i32 { var h = H { items: [9, 8, 7] }; return h.items[0] + __rc_underflow_count(); }", 9},
 		// Array stored into a tuple element is retained.
-		{"tuple-elem-retained", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var t = (xs, 99); var u = __fern_rc_is_unique(xs); return u + t.0[2] + __fern_rc_underflow_count(); }", 3},
+		{"tuple-elem-retained", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var t = (xs, 99); var u = __fern_rc_is_unique(xs); return u + t.0[2] + __rc_underflow_count(); }", 3},
 		// Array wrapped in Some(...) (Option payload) is retained.
-		{"option-payload-retained", "function main(): i32 { var xs: i32[] = [4, 5, 6]; var o = Some(xs); var u = __fern_rc_is_unique(xs); return u + xs[1] + __fern_rc_underflow_count(); }", 5},
+		{"option-payload-retained", "function main(): i32 { var xs: i32[] = [4, 5, 6]; var o = Some(xs); var u = __fern_rc_is_unique(xs); return u + xs[1] + __rc_underflow_count(); }", 5},
 		// Array wrapped in Ok(...) (Result payload) is retained.
-		{"result-payload-retained", "function main(): i32 { var xs: i32[] = [7, 8]; var r = Ok(xs); var u = __fern_rc_is_unique(xs); return u + xs[0] + __fern_rc_underflow_count(); }", 7},
+		{"result-payload-retained", "function main(): i32 { var xs: i32[] = [7, 8]; var r = Ok(xs); var u = __fern_rc_is_unique(xs); return u + xs[0] + __rc_underflow_count(); }", 7},
 		// struct-update base-copy: a non-overridden array field copied from
 		// the base struct is retained (both structs co-own it).
-		{"struct-update-base-copy-retained", "struct H { items: i32[], n: i32 } function main(): i32 { var xs: i32[] = [1, 2]; var h = H { items: xs, n: 0 }; var h2 = H { ...h, n: 5 }; var u = __fern_rc_is_unique(xs); return u + h2.items[1] + h2.n + __fern_rc_underflow_count(); }", 7},
+		{"struct-update-base-copy-retained", "struct H { items: i32[], n: i32 } function main(): i32 { var xs: i32[] = [1, 2]; var h = H { items: xs, n: 0 }; var h2 = H { ...h, n: 5 }; var u = __fern_rc_is_unique(xs); return u + h2.items[1] + h2.n + __rc_underflow_count(); }", 7},
 		// User enum variant with an array payload is retained.
-		{"enum-variant-payload-retained", "enum Box { Arr(i32[]), Empty } function main(): i32 { var xs: i32[] = [3, 4, 5]; var b = Arr(xs); var u = __fern_rc_is_unique(xs); return u + xs[2] + __fern_rc_underflow_count(); }", 5},
+		{"enum-variant-payload-retained", "enum Box { Arr(i32[]), Empty } function main(): i32 { var xs: i32[] = [3, 4, 5]; var b = Arr(xs); var u = __fern_rc_is_unique(xs); return u + xs[2] + __rc_underflow_count(); }", 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -290,7 +290,7 @@ func TestSelfHostRcConstructWasm(t *testing.T) {
 // TestSelfHostRcCountingWasm exercises the wasm Perceus array counting
 // milestone (inc-on-alias + function-exit release sweep, free still OFF)
 // on NORMAL array programs — no manual rc intrinsic calls. Each program
-// returns a computed value plus __fern_rc_underflow_count(): the value
+// returns a computed value plus __rc_underflow_count(): the value
 // proves array semantics are unchanged (free off), and the detector being
 // 0 proves the inc retains and the exit-sweep decs BALANCE across aliases,
 // append loops, multiple calls, and borrowed array params (callers' arrays
@@ -312,23 +312,23 @@ func TestSelfHostRcCountingWasm(t *testing.T) {
 		exit int
 	}{
 		// inc-on-alias + sweep balance: one alias, detector clean.
-		{"alias-balanced", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys = xs; return ys[1] + xs[0] + __fern_rc_underflow_count(); }", 3},
+		{"alias-balanced", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys = xs; return ys[1] + xs[0] + __rc_underflow_count(); }", 3},
 		// Multiple aliases of the same buffer: each inc, each swept.
-		{"multi-alias-balanced", "function main(): i32 { var xs: i32[] = [10, 20]; var a = xs; var b = xs; return a[0] + b[1] + __fern_rc_underflow_count(); }", 30},
+		{"multi-alias-balanced", "function main(): i32 { var xs: i32[] = [10, 20]; var a = xs; var b = xs; return a[0] + b[1] + __rc_underflow_count(); }", 30},
 		// Append-built array: owned, swept once, detector clean.
-		{"append-loop-balanced", "function main(): i32 { var xs: i32[] = []; var i = 0; while (i < 10) { xs = xs.append(i); i = i + 1; } return xs[9] + __fern_rc_underflow_count(); }", 9},
+		{"append-loop-balanced", "function main(): i32 { var xs: i32[] = []; var i = 0; while (i < 10) { xs = xs.append(i); i = i + 1; } return xs[9] + __rc_underflow_count(); }", 9},
 		// A helper that aliases + returns; called repeatedly, all balanced.
-		{"calls-balanced", "function f(): i32 { var xs: i32[] = [1, 2, 3]; var ys = xs; return ys[0]; } function main(): i32 { var r = f(); var s = f(); return r + s + __fern_rc_underflow_count(); }", 2},
+		{"calls-balanced", "function f(): i32 { var xs: i32[] = [1, 2, 3]; var ys = xs; return ys[0]; } function main(): i32 { var r = f(); var s = f(); return r + s + __rc_underflow_count(); }", 2},
 		// Borrowed array param: the callee aliases it (inc+sweep balanced)
 		// but does NOT release the caller's buffer, which stays usable.
-		{"borrowed-param-balanced", "function g(a: i32[]): i32 { var b = a; return b[0]; } function main(): i32 { var xs: i32[] = [7, 8]; var r = g(xs); return r + xs[0] + __fern_rc_underflow_count(); }", 14},
+		{"borrowed-param-balanced", "function g(a: i32[]): i32 { var b = a; return b[0]; } function main(): i32 { var xs: i32[] = [7, 8]; var r = g(xs); return r + xs[0] + __rc_underflow_count(); }", 14},
 		// Array local declared in a not-taken branch: zero-inited slot, the
 		// sweep's dec(0) is a no-op, detector clean.
-		{"branch-local-balanced", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0] + __fern_rc_underflow_count(); } return xs[1] + __fern_rc_underflow_count(); }", 6},
+		{"branch-local-balanced", "function main(): i32 { var xs: i32[] = [5, 6]; if (xs[0] > 100) { var ys: i32[] = [1, 2]; return ys[0] + __rc_underflow_count(); } return xs[1] + __rc_underflow_count(); }", 6},
 		// A loop-local array re-bound each iteration is released per-iteration
 		// (StmtVar cow-guarded dec-on-overwrite), not just at function exit —
 		// 1000 rebinds stay value-correct and over-release-detector clean.
-		{"loop-local-rebind-clean", "function gen(n: i32): i32[] { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var s = 0; var k = 0; while (k < 1000) { var r: i32[] = gen(8); s = s + r[7]; k = k + 1; } return (s % 100) + __fern_rc_underflow_count(); }", 0},
+		{"loop-local-rebind-clean", "function gen(n: i32): i32[] { var xs: i32[] = []; var i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { var s = 0; var k = 0; while (k < 1000) { var r: i32[] = gen(8); s = s + r[7]; k = k + 1; } return (s % 100) + __rc_underflow_count(); }", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -384,9 +384,9 @@ func TestSelfHostRcArrayLayoutWasm(t *testing.T) {
 		// An append-grown array is also rc-boxed (via $__fern_arr_box on grow).
 		{"appended-array-boxed", "function main(): i32 { var xs: i32[] = []; var i = 0; while (i < 10) { xs = xs.append(i); i = i + 1; } return __fern_rc_is_unique(xs) + xs[9]; }", 10},
 		// Balanced inc/dec on a real array: detector clean (0).
-		{"detector-clean", "function main(): i32 { var xs: i32[] = [1, 2, 3]; __fern_rc_inc(xs); __fern_rc_dec(xs); return __fern_rc_underflow_count(); }", 0},
+		{"detector-clean", "function main(): i32 { var xs: i32[] = [1, 2, 3]; __fern_rc_inc(xs); __fern_rc_dec(xs); return __rc_underflow_count(); }", 0},
 		// Over-release a real array (dec past rc==0): detector fires (1).
-		{"detector-over-release", "function main(): i32 { var xs: i32[] = [1, 2, 3]; __fern_rc_dec(xs); __fern_rc_dec(xs); return __fern_rc_underflow_count(); }", 1},
+		{"detector-over-release", "function main(): i32 { var xs: i32[] = [1, 2, 3]; __fern_rc_dec(xs); __fern_rc_dec(xs); return __rc_underflow_count(); }", 1},
 		// Peripheral producers are rc-boxed too (uniform layout): a
 		// random_bytes() array and a map .values() snapshot both carry rc==1.
 		{"random-bytes-boxed", "function main(): i32 { var b: i32[] = random_bytes(4); return __fern_rc_is_unique(b); }", 1},

@@ -15,7 +15,7 @@ import (
 // detector ticks on a dec below rc 0 (a data-section literal operand is a guarded
 // no-op). The churn evaluates a concat chain many times — freeing the fresh
 // intermediate + the final each iteration — and main checks
-// __fern_rc_underflow_count() == 0 (a double-free surfaces as exit 99).
+// __rc_underflow_count() == 0 (a double-free surfaces as exit 99).
 func TestSelfHostStrConcatTempWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host concat-temp wasm IR e2e")
@@ -44,7 +44,7 @@ func TestSelfHostStrConcatTempWasmIR(t *testing.T) {
 		// Concat chain `pre + "x" + suf` reclaimed each iteration (intermediate +
 		// final; the "x" literal is a data-section no-op). A double-free of any freed
 		// box would tick the underflow detector → 99. r = "aaxbb" len 5; t stays 0.
-		{"chain-churn", `function churn(n: i32): i32 { var pre: string = "aa"; var suf: string = "bb"; var t: i32 = 0; var i: i32 = 0; while (i < n) { var r: string = pre + "x" + suf; if (r.len() < 5) { t = 1; } i = i + 1; } return t; } function main(): i32 { var v: i32 = churn(2000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+		{"chain-churn", `function churn(n: i32): i32 { var pre: string = "aa"; var suf: string = "bb"; var t: i32 = 0; var i: i32 = 0; while (i < n) { var r: string = pre + "x" + suf; if (r.len() < 5) { t = 1; } i = i + 1; } return t; } function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

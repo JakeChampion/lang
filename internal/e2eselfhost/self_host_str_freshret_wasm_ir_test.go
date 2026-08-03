@@ -13,7 +13,7 @@ import (
 // never DOUBLE-FREES on the wasm IR backend. A wasm heap string is rc-headered, so
 // __fern_str_free maps to $__fern_arr_dec, whose over-release detector ticks on a
 // dec below rc 0. The churn calls a fresh-string-returning helper many times,
-// reclaiming each result; main checks __fern_rc_underflow_count() == 0 (a
+// reclaiming each result; main checks __rc_underflow_count() == 0 (a
 // double-free surfaces as exit 99). Concat-based (stays on the IR path under the
 // underflow probe). Exit codes stay < 126.
 func TestSelfHostStrFreshRetWasmIR(t *testing.T) {
@@ -43,7 +43,7 @@ func TestSelfHostStrFreshRetWasmIR(t *testing.T) {
 	}{
 		// build() returns a fresh concat; r = build(x) reclaimed each iteration. A
 		// double-free of any reclaimed result would tick the underflow detector → 99.
-		{"freshret-churn", `function build(x: string): string { return x + x; } function churn(n: i32): i32 { var base: string = "ab"; var t: i32 = 0; var i: i32 = 0; while (i < n) { var r: string = build(base); if (r.len() < 4) { t = 1; } i = i + 1; } return t; } function main(): i32 { var v: i32 = churn(2000); if (__fern_rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+		{"freshret-churn", `function build(x: string): string { return x + x; } function churn(n: i32): i32 { var base: string = "ab"; var t: i32 = 0; var i: i32 = 0; while (i < n) { var r: string = build(base); if (r.len() < 4) { t = 1; } i = i + 1; } return t; } function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

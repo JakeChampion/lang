@@ -165,6 +165,9 @@ var (
 // still finish). Measured on the asm_ir_run driver: this cap + the Op
 // shrink + the IR release run the emit at ~40 s / 3.7 GB RSS vs the
 // original 134 s / 9.0 GB, output byte-identical.
+// CI-DARK: FERN_EMIT_MEMLIMIT_MB — a tuning override with a default, not a
+// gate. CI exercises the default (3600), which is the configuration that
+// matters; the override exists to lower the cap on a smaller host.
 func emitMemLimitMB() int {
 	if v := strings.TrimSpace(os.Getenv("FERN_EMIT_MEMLIMIT_MB")); v != "" {
 		n, err := strconv.Atoi(v)

@@ -38,6 +38,10 @@ func TestX86_64HeapReclamationPeakRSS(t *testing.T) {
 	// map_growth_buffer_free / map_overwrite_churn_free corpus cases
 	// (they'd OOM/diverge if the freelist stopped recycling). Run
 	// with FERN_BENCH=1 to print the on/off peak-RSS comparison.
+	// CI-DARK: FERN_BENCH — a measurement tool, not a gate. ru_maxrss is
+	// environment-sensitive (it varies 12x with transparent hugepages), so a
+	// threshold here would be a flake, and the functional guarantee is already
+	// covered by the corpus cases named above.
 	if os.Getenv("FERN_BENCH") == "" {
 		t.Skip("set FERN_BENCH=1 to run the peak-RSS reclamation benchmark")
 	}

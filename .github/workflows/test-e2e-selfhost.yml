@@ -164,6 +164,13 @@ concurrency:
 # name here too, or it will cold-build inside a preemptable shard again.
 env:
   ISOLATED_DRIVER_TESTS: "TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds"
+  # OWN_JOB_TESTS: heavy whole-compiler proofs that RUN in CI but in a job of
+  # their own, so their minutes do not lengthen whichever shard the LPT
+  # partition happens to drop them into. Excluded from shard selection by the
+  # same regex as the two lists above, and each has a matching job below.
+  # (Distinct from ISOLATED_DRIVER_TESTS, which is about *where fern.fern gets
+  # cold-built*, not about run length.)
+  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only. EMPTY means nothing is
   # quarantined — the #4801 quarantine is fully retired.
@@ -442,6 +449,41 @@ jobs:
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostPerModuleFixpointX86_64$' -test.v -test.timeout 43m
 
+  # WHOLE-COMPILER EMIT-ALL FIXPOINT at batch=8 — the config that IS the
+  # pre-`-assume-eligible` OOM shape, so it is the one worth guarding.
+  #
+  # It was env-gated on RUN_EMITALL_FIXPOINT, which nothing set, on the grounds
+  # that its gen1 emit "peaks 7909 MB against the 8 GiB arena (~99% of the
+  # ceiling)". The arena has been 16 GiB for some time, making that ~45%, so the
+  # test had been retired by an argument that stopped being true. Re-measured
+  # 2026-08-03: gen0 42.0 s / 4.96 GB, gen1 108.8 s / 7.27 GB, 297.6 s total.
+  # Its own job because ~5 min is enough to matter inside an LPT shard and
+  # nothing about it needs to share one.
+  emitall-fixpoint:
+    needs: build
+    name: emitall-fixpoint-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+        with:
+          gotestsum: "true"
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-x86_64
+      - name: whole-compiler emit-all fixpoint at batch=8 (gen0 == gen1)
+        env:
+          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
+        run: |
+          set -euo pipefail
+          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
+          chmod +x e2eselfhost.test
+          BIN="$PWD/e2eselfhost.test"
+          cd internal/e2eselfhost
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostPerModuleEmitAllFixpointX86_64$' -test.v -test.timeout 23m
+
   # The fixture corpus, run through the SELF-HOST compiler. Nothing else does:
   # all four of TestFernFixtures' backends are the NATIVE compiler, so 335
   # fixture directories have been exercising the compiler that is meant to be
@@ -628,8 +670,8 @@ jobs:
           # Read from the prebuilt binaries (no recompile). The isolated
           # fern.fern driver tests (ISOLATED_DRIVER_TESTS) are filtered out
           # here — they run inside the `cli` job, not the shards.
-          mapfile -t SH_ALL < <("$SH_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS}|${QUARANTINED_TESTS})\$" | sort)
-          mapfile -t RES_ALL < <("$E2E_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS}|${QUARANTINED_TESTS})\$" | sort)
+          mapfile -t SH_ALL < <("$SH_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS}|${QUARANTINED_TESTS}|${OWN_JOB_TESTS})\$" | sort)
+          mapfile -t RES_ALL < <("$E2E_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS}|${QUARANTINED_TESTS}|${OWN_JOB_TESTS})\$" | sort)
           mapfile -t MINE < <(printf '%s\n' "${SH_ALL[@]}" "${RES_ALL[@]}" | sort | scripts/selfhost-shard-tests "$SHARD" "$NSHARD" .github/selfhost-test-weights.txt)
           SEL_SH=()
           SEL_RES=()

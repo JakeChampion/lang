@@ -32,14 +32,18 @@ import (
 // fix, which cut the per-unit emit peak ~3x and the wall with it.
 //
 // This test's batch=8 is load-bearing — it IS the pre-`-assume-eligible` OOM
-// config — so it stays gated: at batch=8 the gen1 emit peaks 7909 MB against the
-// 8 GiB arena (~99% of the ceiling), and would start failing with exit-137 on the
-// next compiler-source growth. The standing CI guard is its batch=4 sibling
-// below, which buys 1.15 GB of headroom for +36 s.
+// config — and it now runs UNGATED, in its own CI job (emitall-fixpoint-x86_64).
+//
+// It used to be env-gated on RUN_EMITALL_FIXPOINT, which NOTHING set, on the
+// stated grounds that "the gen1 emit peaks 7909 MB against the 8 GiB arena
+// (~99% of the ceiling)". The arena has been **16 GiB** for some time
+// (x86_64.go's heapBytes and arm64.go's, both 0x400000000), so that reasoning
+// was off by 2x in the direction that retires a test. Re-measured 2026-08-03 on
+// this tree: gen0 42.0 s / 4.96 GB, gen1 108.8 s / 7.27 GB, 297.6 s total —
+// **~45% of the ceiling**, with 8.7 GB of headroom rather than 0.2 GB. The
+// config that was supposedly one commit away from exit-137 has room for the
+// compiler sources to nearly double.
 func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
-	if os.Getenv("RUN_EMITALL_FIXPOINT") == "" {
-		t.Skip("set RUN_EMITALL_FIXPOINT=1 to run the batch=8 emit-all proof (~4.5 min; #3457 slice 2 / #5668)")
-	}
 	runEmitAllFixpoint(t, 8, "eafix8")
 }
 
@@ -52,9 +56,11 @@ func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 // something proves a self-host-built compiler emits the same units the Go-built
 // one does. Gated, that proof only existed when someone remembered to run it.
 //
-// batch=4 rather than the sibling's 8 because the arena is a hard wall: 6754 MB
-// peak vs 7909 MB against 8 GiB. The +36 s buys the margin that keeps this from
-// turning into an exit-137 flake as the compiler sources grow.
+// batch=4 rather than the sibling's 8 was chosen when the arena was 8 GiB and
+// 7909 MB looked like the edge of it. Against today's 16 GiB ceiling both fit
+// comfortably (batch=8 re-measured at 7.27 GB, ~45%), so the sibling is no
+// longer gated — this one stays at batch=4 as the in-shard guard, and batch=8
+// runs in its own job where its ~5 min does not lengthen a shard.
 //
 // WHAT THIS DOES NOT COVER. This is the emit-ALL fixpoint: one process emits
 // every unit. It is NOT the PER-MODULE fixpoint
@@ -248,7 +254,7 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 	if len(units) != totalUnits {
 		t.Fatalf("[%s] emit-all wrote %d units, plan has %d", label, len(units), totalUnits)
 	}
-	t.Logf("[%s] emit-all: %d units in %d batches of <=%d, %.1fs, peak %.2f GB (arena ceiling 8 GiB)",
+	t.Logf("[%s] emit-all: %d units in %d batches of <=%d, %.1fs, peak %.2f GB (arena ceiling 16 GiB)",
 		label, len(units), batches, batchUnits, time.Since(start).Seconds(), float64(peakRSSKB)/(1024*1024))
 	return units
 }
