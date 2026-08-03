@@ -516,6 +516,19 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   filling — stale `/tmp/selfhost-bincache-*` dirs (~1 GB each, one per build)
   pile up; `rm -rf /tmp/selfhost-bincache-*` reclaims them (regenerable
   caches).
+- **Measure a Fern program's memory with `__heap_bump_bytes()`, not peak
+  RSS.** RSS is not comparable across hosts here: the arena is a 16 GiB
+  `MAP_NORESERVE` mapping, so a first touch anywhere in it maps a 2 MB huge
+  page under `THP=always` and a 4 KB page under `madvise`. Measured 2026-08-03:
+  the same binary on the same input reported **43 MB locally (madvise) and
+  552 MB on the CI runner (always)** — a 12x spread with identical allocation,
+  which failed a 100 MB RSS ceiling on a change that had just made the code
+  50x leaner. `__heap_bump_bytes()` returns the bump allocator's high-water
+  mark (total bytes handed out fresh, i.e. everything the freelist could not
+  recycle); it is exact, host-independent, and meaningful under qemu, so it is
+  the right gate for a memory regression test. `cat
+  /sys/kernel/mm/transparent_hugepage/enabled` tells you which side of that
+  12x you are measuring on.
 - **Don't run arm64 / `qemu-aarch64` tests locally as a gate — let CI
   run them.** The aarch64 e2e + fixpoint tests under `qemu-aarch64` are
   the slow part of a local sweep (minutes). Locally, gate on the
