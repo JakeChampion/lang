@@ -3779,6 +3779,69 @@ function main(): i32 {
     return (d - 2) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A match payload binding and a differently-TYPED local in a SIBLING
+		// arm, both named `a`. Neither shadows the other — their scopes are
+		// disjoint — so shadowrename left both bare, and the IR builder's flat
+		// `locals[string]int32` map collapsed them onto one slot. The
+		// name-keyed type lookups then answer for whichever declaration they
+		// reach first, so one arm's value is released with the other's drop
+		// plan.
+		//
+		// The self-host compiler's irlower.alias_names_in_stmt is this shape
+		// verbatim (`parser.StmtAssign(a)` beside `var a: string[]` in the
+		// StmtIf / StmtMatch arms), which cost one over-release per ASSIGNMENT
+		// STATEMENT in every program it compiled — the largest single
+		// contributor to the driver's over-release count after #6021.
+		name: "sibling_scope_name_collision_binding_vs_local",
+		src: `
+struct Asg { k: i32 }
+struct Vr { k: i32 }
+enum St { SVar(Vr), SAssign(Asg), SIf(i32) }
+function vals(x: i32, acc: string[]): string[] { return acc.append("z"); }
+function walk(st: St, acc: string[]): string[] {
+    match (st) {
+        SVar(v) => { return vals(v.k, acc); },
+        SAssign(a) => { return vals(a.k, acc); },
+        SIf(n) => {
+            var a: string[] = acc;
+            a = vals(n, a);
+            return a;
+        }
+    }
+    return acc;
+}
+function work(body: St[]): i32 {
+    var acc: string[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) { acc = walk(body[i], acc); i = i + 1; }
+    return acc.len();
+}
+function main(): i32 {
+    var n: i32 = work([SVar(Vr{k:1}), SAssign(Asg{k:2}), SIf(3)]);
+    return (n - 3) + __rc_underflow_count();
+}`,
+	},
+	{
+		// A tuple destructure whose names SHADOW an enclosing local. The
+		// checker registers each destructure name as a synthetic *ast.Var
+		// that lives only in info.Locals, so renaming the Destructure node's
+		// []string left the slot registered under the old name: the compiler
+		// died outright with `ir: destructure name "a$1" has no slot
+		// (compiler bug)`. A hard compiler crash, on main, for a program the
+		// interpreter runs fine — reached here because the sibling-scope
+		// rename above makes the pass fire on far more programs.
+		name: "shadowed_tuple_destructure_keeps_its_slot",
+		src: `
+function f(): i32 {
+    var a: i32 = 1;
+    {
+        var (a, b) = (20, 3);
+        return a + b;
+    }
+}
+function main(): i32 { return f() - 23 + __rc_underflow_count(); }`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

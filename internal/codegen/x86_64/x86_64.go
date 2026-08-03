@@ -2346,6 +2346,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			g.emit("cmp ecx, 0")
 			g.emit(fmt.Sprintf("jg %s", decLbl))
 			g.emit("add dword ptr [rip + __fern_rc_underflow], 1")
+			g.rcUnderflowTrap()
 			g.label(decLbl)
 			g.emit("sub ecx, 1")
 		}
@@ -4628,6 +4629,7 @@ func (g *generator) emitArrDecRuntime() {
 	g.emit("cmp ecx, 0")
 	g.emit("jg .Larrdec_pos")
 	g.emit("add dword ptr [rip + __fern_rc_underflow], 1") // over-release
+		g.rcUnderflowTrap()
 	g.emit("jmp .Larrdec_dec")
 	g.label(".Larrdec_pos")
 	g.emit("cmp ecx, 1")
@@ -4698,6 +4700,7 @@ func (g *generator) emitMapDropRuntime() {
 	g.emit("cmp ecx, 0")
 	g.emit("jg .Lmapdrop_pos")
 	g.emit("add dword ptr [rip + __fern_rc_underflow], 1") // over-release
+		g.rcUnderflowTrap()
 	g.emit("jmp .Lmapdrop_dec")
 	g.label(".Lmapdrop_pos")
 	g.emit("cmp ecx, 1")
@@ -5099,12 +5102,25 @@ func (g *generator) emitRcDecRuntime() {
 	g.emit("cmp ecx, 0")
 	g.emit("jg .Lrcdec_dec")
 	g.emit("add dword ptr [rip + __fern_rc_underflow], 1")
+	g.rcUnderflowTrap()
 	g.label(".Lrcdec_dec")
 	g.emit("sub ecx, 1")
 	g.emit("mov dword ptr [rdi - 8], ecx")
 	g.label(".Lrcdec_ret")
 	g.emit("ret")
 	g.line(".size __fern_rc_dec, .-__fern_rc_dec")
+}
+
+// rcUnderflowTrap emits the `ud2` that follows every
+// __fern_rc_underflow bump under ast.RcUnderflowTrap
+// (FERN_RC_UNDERFLOW_TRAP=1), so an over-release dies with SIGILL at the
+// offending dec instead of only incrementing a counter nobody reads.
+// No-op otherwise — the emitted asm is byte-identical to a build without
+// the feature.
+func (g *generator) rcUnderflowTrap() {
+	if ast.RcUnderflowTrap {
+		g.emit("ud2")
+	}
 }
 
 // emitRcUnderflowCountRuntime emits `__fern_rc_underflow_count()

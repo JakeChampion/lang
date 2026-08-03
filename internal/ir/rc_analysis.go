@@ -3287,8 +3287,38 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 			switch x := n.(type) {
 			case *ast.Match:
 				_, consuming := matches[x]
+				// A non-qualifying arm that BINDS anything poisons the whole
+				// match, not just its own names. The canonical shape is a
+				// guarded arm followed by an unguarded one over the same
+				// variant (`Cons(h, t) when h > 3 => …, Cons(h, t) => …`): a
+				// failed guard falls through to a sibling that re-reads the
+				// same payloads, so consuming the box in that sibling is only
+				// safe if the guarded arm never ran. This used to fall out of
+				// the name-keyed disqualify — both arms wrote `t`, so
+				// poisoning the guarded arm's `t` poisoned the other's too.
+				// Shadowrename now gives sibling-scope redeclarations distinct
+				// names (it must: colliding names collapse onto one IR slot),
+				// which removed that accidental coupling. Stating it
+				// structurally keeps the guard independent of what the
+				// bindings happen to be called. Arms that bind nothing (a bare
+				// `_ =>` / `Nil =>`) poison nothing, as before.
+				armBindsNames := func(arm *ast.MatchArm) bool {
+					for _, nm := range arm.Bindings {
+						if nm != "" && nm != "_" {
+							return true
+						}
+					}
+					return false
+				}
+				poisoned := false
 				for _, arm := range x.Arms {
-					if consuming && !arm.IsWildcard && arm.Guard == nil && arm.Literal == nil {
+					qualifying := consuming && !arm.IsWildcard && arm.Guard == nil && arm.Literal == nil
+					if !qualifying && armBindsNames(arm) {
+						poisoned = true
+					}
+				}
+				for _, arm := range x.Arms {
+					if !poisoned && consuming && !arm.IsWildcard && arm.Guard == nil && arm.Literal == nil {
 						admit(arm)
 					} else {
 						disqualify(arm.Bindings)
