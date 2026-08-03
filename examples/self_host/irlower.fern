@@ -7565,7 +7565,15 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                 } else {
                     fv = lower_expr(u.operand, s);
                     if (!fv.ok) { return fv; }
-                    fv = fv.emit(ir.op_i32_to_f64());
+                    // Carry the operand's width + signedness (#5992). wasm needs
+                    // both to pick among f64.convert_i{32,64}_{s,u}; the register
+                    // backends ignore them (one 64-bit instruction covers all
+                    // four, with a u32 arriving zero-extended), which is why an
+                    // unsigned or 64-bit source was silently mis-converted only
+                    // there. Unsigned is asked BEFORE width because a u64 is both.
+                    var cw: i32 = infer_expr_width(u.operand, s);
+                    var cu: boolean = expr_is_u64(u.operand, s) || expr_is_u32(u.operand, s);
+                    fv = fv.emit(ir.op_int_to_f64(cw, cu));
                 }
                 if (u.op == "as_f32") {
                     fv = fv.emit(ir.op_f32_bits());

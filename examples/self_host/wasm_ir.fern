@@ -266,7 +266,8 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_divrem(cache)) { out = out.append("@uses_divrem"); }
     if (module_uses_i32_to_string(cache)) { out = out.append("@uses_i32_to_string"); }
     if (module_uses_i64_to_string(cache)) { out = out.append("@uses_i64_to_string"); }
-    if (module_uses_u64_to_string(cache)) { out = out.append("@uses_u64_to_string"); }
+    if (module_uses_u64_to_string(cache) || module_uses_u32_to_string(cache)) { out = out.append("@uses_u64_to_string"); }
+    if (module_uses_u32_to_string(cache)) { out = out.append("@uses_u32_to_string"); }
     if (module_uses_i64_divrem(cache)) { out = out.append("@uses_i64_divrem"); }
     if (module_uses_maps(cache)) { out = out.append("@uses_maps"); }
     if (module_uses_map_w64(cache)) { out = out.append("@uses_map_w64"); }
@@ -666,6 +667,13 @@ function wasm_helper_symbol(name: string): string {
     // as an i64 param and returning the string block.
     if (name == "__fern_i64_to_string") { return "$__fern_i64_to_str"; }
     if (name == "__fern_u64_to_string") { return "$__fern_u64_to_str"; }
+    // u32 (#5992). The register backends compile this from
+    // asmcore.rt_src_u32_to_string; wasm had neither a body nor a mapping, so
+    // the name fell through to the "$" + name default and the module called a
+    // $__fern_u32_to_string nothing defined — an instantiation failure, not a
+    // lowering bail, which is why `-decide` reported "ir" and it still did not
+    // run. Served by a zero-extending wrapper over the u64 formatter.
+    if (name == "__fern_u32_to_string") { return "$__fern_u32_to_str"; }
     return "$" + name;
 }
 
@@ -1097,6 +1105,13 @@ pub function module_uses_i64_to_string(cache: irlower.LowerResult[]): boolean {
 
 pub function module_uses_u64_to_string(cache: irlower.LowerResult[]): boolean {
     return module_calls_direct(cache, "__fern_u64_to_string");
+}
+
+// module_uses_u32_to_string gates the u32 wrapper (#5992). It pulls the u64
+// formatter in too — the wrapper delegates to it — so the need is emitted as a
+// pair rather than relying on the module happening to use u64 as well.
+pub function module_uses_u32_to_string(cache: irlower.LowerResult[]): boolean {
+    return module_calls_direct(cache, "__fern_u32_to_string");
 }
 
 // module_calls_arr_str_join reports whether any function emits the xs.join(sep)
@@ -2939,7 +2954,19 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // are declared (local f64), so local.get/set carry the stack type.
             out = out + "    f64.const " + o.str + "\n";
         } else if (o.kind_tag == 11) {  // i32_to_f64
-            out = out + "    f64.convert_i32_s\n";
+            // Four opcodes, selected by the op's width + unsigned (#5992). This
+            // was an unconditional convert_i32_s, which made `u32 as f64` convert
+            // a bit-31-set value as negative, and — worse — put an i32 opcode on
+            // an i64 stack value for `u64 as f64`, so the module failed to
+            // validate rather than answering wrongly.
+            if (o.width == 64) {
+                if (o.unsigned) { out = out + "    f64.convert_i64_u\n"; }
+                else { out = out + "    f64.convert_i64_s\n"; }
+            } else if (o.unsigned) {
+                out = out + "    f64.convert_i32_u\n";
+            } else {
+                out = out + "    f64.convert_i32_s\n";
+            }
         } else if (o.kind_tag == 12) {  // f64_to_i32
             // Saturating truncation: NaN -> 0, overflow -> clamp (#4332). The
             // non-saturating i32.trunc_f64_s TRAPS on NaN/overflow, aborting the
@@ -5646,6 +5673,17 @@ pub function i64_to_string_helper(): string {
 // u64 variant: same digit loop with no sign branch, so a value with the high
 // bit set renders as its unsigned magnitude (18446744073709551615) rather than
 // the -1 the signed formatter would print.
+// u32_to_string_helper serves `(u32).to_string()` by zero-extending into the
+// u64 formatter. Zero-extension is the whole point: i64.extend_i32_s would make
+// a bit-31-set u32 print as a negative number, the same signedness trap that
+// made `u32 as f64` wrong (#5992).
+pub function u32_to_string_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_u32_to_str (param $n i32) (result i32)\n";
+    o = o + "    (call $__fern_u64_to_str (i64.extend_i32_u (local.get $n))))\n";
+    return o;
+}
+
 pub function u64_to_string_helper(): string {
     var o: string = "";
     o = o + "  (func $__fern_u64_to_str (param $n i64) (result i32)\n";
@@ -7445,7 +7483,7 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // is emitted from the module's declarations. A program whose only allocation
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
-    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "remove_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
+    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "remove_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
         out = out + heap_alloc_helpers(heap_base_for_strs(sv), fl_base_for_strs(sv), fl_cells());
         out = out + rc_runtime_helpers(heap_base_for_strs(sv));
     }
@@ -7500,6 +7538,7 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     if (need(needs, "@uses_i32_to_string")) { out = out + i32_to_string_helper(); }
     if (need(needs, "@uses_i64_to_string")) { out = out + i64_to_string_helper(); }
     if (need(needs, "@uses_u64_to_string")) { out = out + u64_to_string_helper(); }
+    if (need(needs, "@uses_u32_to_string")) { out = out + u32_to_string_helper(); }
     // $__fern_now_ns / $__fern_now_unix_ms / $__fern_monotonic_ns back the
     // clock builtins (each result i64), reading the preview1 clock_time_get
     // import into the 8-byte scratch at addr 16 — emitted as a trio (the AST

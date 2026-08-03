@@ -45,6 +45,64 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		return out, cmd.ProcessState.ExitCode()
 	}
 
+	// The u32 decimal formatter is reachable ONLY through this driver. It needs
+	// `import "std/u32"` (or std/string, which uses it), and every other
+	// self-host wasm driver — wasm_run, wasm_ir_run, wasm_modload_run — parses
+	// raw source with no module loader, so the import never resolves there and
+	// the call is never emitted. That is exactly why #5992 recorded this as
+	// "to_lower is not IR-eligible on wasm": a no-modload driver reported `ast`
+	// for a program it could not resolve, and the real failure was one layer
+	// further on.
+	//
+	// The real failure: the register backends compile __fern_u32_to_string from
+	// asmcore.rt_src_u32_to_string, wasm had no body and no name mapping for it,
+	// so the emitted module CALLED a function it never DEFINED. That is an
+	// instantiation error, not a lowering bail — the module compiles clean and
+	// `-decide` says "ir" — so only running it catches the regression.
+	t.Run("wasm-u32-to-string-is-defined", func(t *testing.T) {
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Skip("wasmtime not on PATH; skipping u32-to-string wasm check")
+		}
+		stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+		if err != nil {
+			t.Fatalf("abs stdlib root: %v", err)
+		}
+		src := `import "std/u32";
+
+function main(): i32 {
+    var u: u32 = 3000000000 as u32;
+    var s: string = u.to_string();
+    if (s == "3000000000") { return 42; }
+    return 7;
+}
+`
+		srcPath := filepath.Join(dir, "u32_to_string.fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		wat, code := runDriver(t, "-target", "wasm", srcPath, stdlibRoot)
+		if code != 0 {
+			t.Fatalf("-target wasm emit exited %d, want 0", code)
+		}
+		if !bytes.Contains(wat, []byte("$__fern_u32_to_str")) {
+			t.Error("emitted WAT never defines/calls $__fern_u32_to_str")
+		}
+		if bytes.Contains(wat, []byte("call $__fern_u32_to_string")) {
+			t.Error("emitted WAT calls the unmapped $__fern_u32_to_string — that name has no body (#5992)")
+		}
+		watPath := filepath.Join(dir, "u32_to_string.wat")
+		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+			t.Fatalf("write wat: %v", err)
+		}
+		cmd := exec.Command("wasmtime", "run", watPath)
+		out, _ := cmd.CombinedOutput()
+		// 3000000000 has bit 31 set: a signed formatter prints it negative, so
+		// the string compare fails and this returns 7 rather than 42.
+		if got := cmd.ProcessState.ExitCode(); got != 42 {
+			t.Errorf("u32.to_string() on wasm exited %d, want 42\n%s", got, out)
+		}
+	})
+
 	t.Run("emit-stdout", func(t *testing.T) {
 		srcPath := filepath.Join(dir, "ret42.fern")
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 6 * 7; }\n"), 0o644); err != nil {
