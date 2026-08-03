@@ -84,12 +84,24 @@ func linkCacheBaseDir() (string, error) {
 	return linkCacheDir, linkCacheDirErr
 }
 
-// fernImportRe matches a local module import — `import "./lexer";` or
-// `import "lexer";`. The captured path is resolved to a sibling `.fern` file.
-// `std/…` / `core/…` imports resolve to paths that don't exist under the test
-// dir and so are naturally excluded (the stdlib + compiler are fixed for the
-// run; see the cache-key note above).
+// fernImportRe matches a module import — `import "./lexer";`, `import
+// "lexer";`, or `import "std/io";`. The captured path is classified by
+// isExternalFernImport and, when local, resolved to a sibling `.fern` file.
 var fernImportRe = regexp.MustCompile(`(?m)^\s*import\s+"([^"]+)"`)
+
+// isExternalFernImport reports whether an import path names a module OUTSIDE
+// the driver's project dir — `std/io`, `core/int` — which is deliberately not
+// part of the cache key: the stdlib and the compiler are fixed for the run (see
+// the cache-key note above), so hashing them would only add churn.
+//
+// Everything else (`./lexer`, a bare sibling `lexer`) is LOCAL and must
+// resolve. The distinction used to be implicit — an unresolvable path was
+// skipped whatever it was, and `std/…` happened to be unresolvable — which
+// meant a genuinely missing local source was indistinguishable from a stdlib
+// import and dropped out of the key without a word.
+func isExternalFernImport(imp string) bool {
+	return !strings.HasPrefix(imp, "./") && strings.Contains(imp, "/")
+}
 
 // SelfHostImportClosure returns the entry file plus the transitive set of local
 // `.fern` files it imports, resolved relative to each importing file's dir.
@@ -100,30 +112,62 @@ var fernImportRe = regexp.MustCompile(`(?m)^\s*import\s+"([^"]+)"`)
 // drivers a test happens to drop alongside it.
 func SelfHostImportClosure(t *testing.T, dir, fernName string) []string {
 	t.Helper()
+	files, err := selfHostImportClosure(dir, fernName)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	return files
+}
+
+// selfHostImportClosure is the error-returning core of SelfHostImportClosure,
+// split out so the closure's own contract (a missing local import is an ERROR,
+// a missing stdlib import is not) can be asserted directly instead of through a
+// deliberately-failing sub-test.
+func selfHostImportClosure(dir, fernName string) ([]string, error) {
 	seen := map[string]bool{}
 	var order []string
-	var visit func(path string)
-	visit = func(path string) {
+	var visit func(path string) error
+	visit = func(path string) error {
 		if seen[path] {
-			return
+			return nil
 		}
 		seen[path] = true
 		order = append(order, path)
 		src, err := os.ReadFile(path)
 		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
+			return fmt.Errorf("self-host import closure: read %s: %w", path, err)
 		}
 		base := filepath.Dir(path)
 		for _, m := range fernImportRe.FindAllStringSubmatch(string(src), -1) {
+			if isExternalFernImport(m[1]) {
+				continue
+			}
 			imp := strings.TrimPrefix(m[1], "./")
 			cand := filepath.Join(base, imp+".fern")
-			if _, statErr := os.Stat(cand); statErr == nil {
-				visit(cand)
+			if _, statErr := os.Stat(cand); statErr != nil {
+				// A LOCAL import that does not resolve is a staging bug — the
+				// test wrote an entry whose sibling is missing from its project
+				// dir. Skipping it silently (which is what this did) leaves the
+				// file OUT OF THE CACHE KEY, so the driver keeps hashing the
+				// same after that source changes and every later test in the run
+				// gets a stale binary. That is the failure mode where a fix
+				// looks applied and the tests are still exercising the old
+				// compiler. Fail here instead: the build was going to fail
+				// anyway, and this fails naming the missing file.
+				return fmt.Errorf("self-host import closure: %s imports %q but %s does not exist "+
+					"(the driver's project dir is missing a source; it would be silently "+
+					"omitted from the build-cache key)", path, m[1], cand)
+			}
+			if err := visit(cand); err != nil {
+				return err
 			}
 		}
+		return nil
 	}
-	visit(filepath.Join(dir, fernName))
-	return order
+	if err := visit(filepath.Join(dir, fernName)); err != nil {
+		return nil, err
+	}
+	return order, nil
 }
 
 // HashSelfHostSources hashes the entry name plus the contents of every `.fern`
