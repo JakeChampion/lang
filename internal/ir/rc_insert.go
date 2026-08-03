@@ -927,6 +927,15 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	for name := range b.rc.borrowedAlias {
 		seen[name] = true
 	}
+	// `.with` receivers consumed by __fern_arr_cow_inplace (#6013): no inc was
+	// emitted before the call, so the helper took the receiver's reference over
+	// — moved into the result on its rc==1 branch, dec'd by the helper itself on
+	// the copy branch. Dec-ing here releases it a second time, which with the
+	// freelist on frees the buffer the RESULT still points at. See
+	// arraySetConsumed for why a reassign-to-self is deliberately not in the set.
+	for name := range b.rc.arraySetConsumed {
+		seen[name] = true
+	}
 	// Borrowed `dyn Trait` views (#4787): a dyn local bound from an element /
 	// field / bare-ident read holds another value's cell pointer uncounted
 	// (dyn cells carry no rc header). The sweep's DynTraitType arm drops

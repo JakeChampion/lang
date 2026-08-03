@@ -89,6 +89,27 @@ type rcPlan struct {
 	// before __fern_arr_cow_inplace to force the copy path — otherwise the
 	// rc==1 in-place reuse aliases/mutates the still-live receiver (#2832).
 	arraySetInc map[*ast.Call]bool
+	// arraySetConsumed holds the names of bare-ident `.with` receivers whose
+	// reference __fern_arr_cow_inplace CONSUMES, so the exit sweep must not
+	// dec them a second time. It is exactly the complement of arraySetInc for
+	// a bare-ident receiver that is not a reassign-to-self: no pre-call inc is
+	// emitted there, so the helper sees the receiver's own rc and — per its
+	// contract, both branches — takes that reference over:
+	//
+	//   rc == 1 → returns arr unchanged, no rc change; the single reference
+	//             now lives in the RESULT, i.e. it moved out of the receiver.
+	//   rc  > 1 → copies and decrements arr's rc itself, returning a fresh
+	//             rc=1 buffer; the receiver's reference is already released.
+	//
+	// Either way the callee's obligation is discharged inside the helper, so
+	// sweeping the receiver at exit is an over-release: with the freelist on
+	// it FREES a buffer the result still points at. That is #6013 — an `own`
+	// array param returned through `.with` came back freed, and a second call
+	// on the recycled block read a corrupted length (3 for a 7-element array),
+	// silently, on every compiled backend. A reassign-to-self
+	// (`buf = buf.with(…)`) is NOT here: the result flows back into the same
+	// slot, which then genuinely owns a reference the sweep must release.
+	arraySetConsumed map[string]bool
 	// reuseSources pairs a construction site C (the *ast.StructLit or
 	// *ast.TupleLit node) with the name of a dead, owned struct/tuple local D
 	// whose box C reuses in place — the general FBIP win (Perceus reuse
@@ -1910,6 +1931,7 @@ func (b *builder) markConstructionMoves(val ast.Expr, order identOrder, moved ma
 // canonical allocation-free idiom is unaffected (#2832).
 func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 	incs := map[*ast.Call]bool{}
+	b.rc.arraySetConsumed = map[string]bool{}
 	if b.fn.Body == nil {
 		return incs
 	}
@@ -1980,6 +2002,16 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		// Live after the call iff this occurrence is NOT the receiver
 		// name's last use.
 		incs[c] = !order.isLast(rid)
+		// No inc means cow_inplace consumes this receiver's reference (see
+		// arraySetConsumed) — record it so the exit sweep skips it. Both roles
+		// the sweep releases qualify: a declared owned local, and an OWNED param
+		// (which the sweep reclaims in its own extra pass, `own` /
+		// owned-by-default / consumed — the same predicate used there). A
+		// borrowed param already took the incs=true path above, so it cannot
+		// reach here; an untracked name has nothing swept either way.
+		if !incs[c] && (b.isOwnedRcLocal(rid.Name) || b.isOwnedRcParam(rid.Name)) {
+			b.rc.arraySetConsumed[rid.Name] = true
+		}
 		return true
 	})
 	return incs
@@ -2842,6 +2874,23 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 			return true
 		}
 		return false
+	}
+	return false
+}
+
+// isOwnedRcParam reports whether `name` is a parameter the CALLEE owns and so
+// must release at exit — `own`-annotated, owned by default for its type, or
+// proven consumed. It is the param-side sibling of isOwnedRcLocal (which only
+// walks declared `var` locals), and the same predicate
+// emitRcDecLocalsAtExitExcept's owned-param pass releases on, so a caller that
+// wants to know "will the sweep dec this name?" gets one answer for both roles.
+func (b *builder) isOwnedRcParam(name string) bool {
+	for i, p := range b.fn.Params {
+		if p.Name != name {
+			continue
+		}
+		return rcTrackedSlotType(p.Type) &&
+			(p.Own || b.paramOwnedByDefault(p.Type, i) || b.rc.consumedParams[p.Name])
 	}
 	return false
 }
