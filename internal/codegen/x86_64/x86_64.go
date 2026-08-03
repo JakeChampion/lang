@@ -4629,7 +4629,7 @@ func (g *generator) emitArrDecRuntime() {
 	g.emit("cmp ecx, 0")
 	g.emit("jg .Larrdec_pos")
 	g.emit("add dword ptr [rip + __fern_rc_underflow], 1") // over-release
-		g.rcUnderflowTrap()
+	g.rcUnderflowTrap()
 	g.emit("jmp .Larrdec_dec")
 	g.label(".Larrdec_pos")
 	g.emit("cmp ecx, 1")
@@ -4700,7 +4700,7 @@ func (g *generator) emitMapDropRuntime() {
 	g.emit("cmp ecx, 0")
 	g.emit("jg .Lmapdrop_pos")
 	g.emit("add dword ptr [rip + __fern_rc_underflow], 1") // over-release
-		g.rcUnderflowTrap()
+	g.rcUnderflowTrap()
 	g.emit("jmp .Lmapdrop_dec")
 	g.label(".Lmapdrop_pos")
 	g.emit("cmp ecx, 1")
