@@ -206,6 +206,27 @@ surface (`internal/ir`, `internal/interp`, the codegen backends) or
 touches the differential/parity suites, so the debt stays visible in
 one place instead of tribal knowledge.
 
+**Fastest local self-host loop: `make selfhost-cli`.** It builds the
+self-host compiler to a native binary for this host — ~15 minutes once,
+then ~1.3s per program, versus minutes per program interpreted and
+90+ minutes for an unsharded `internal/e2eselfhost`:
+
+    make selfhost-cli
+    bin/fern-selfhost -target wasm /ABS/prog.fern $PWD/internal/stdlib -o p.wat
+    wasmtime run p.wat; echo $?     # oracle: ./bin/fern -interp /ABS/prog.fern
+
+This is what made it practical to run all 335 fixtures through the
+self-host compiler (`FERN_SELFHOST_FIXTURES=1 go test ./internal/e2e/
+-run TestFernFixturesSelfHostWasm`), which found twelve divergences on
+fixtures green for months. Two constraints: **absolute paths** (relative
+ones were unopenable from an arm64-darwin binary until #6002 — AT_FDCWD
+is -2 on XNU, not -100), and the exit code **cannot carry a value >=
+126** (WASI refuses anything outside [0..126), so wasmtime reports 1 —
+this alone produced 14 phantom "mismatches" on the leg's first run).
+On Apple Silicon it depends on the dyld-loaded PIE Mach-O container
+(#6000); before that every binary the native backend produced was
+SIGKILLed at exec.
+
 **Finding real IR-subset gaps (probing methodology — learned the hard
 way).** The *per-function* IR subset is now mature: most valid
 constructs (closures incl. nested, matches incl. guards/nested,
@@ -216,6 +237,10 @@ path-probe driver (`asm_pathprobe_run.fern`, which prints `ir`/`ast`) —
 "`ast`" verdict is NOT proof of a real gap. Always confirm the probe
 program is **native-valid first** (`go build -o /tmp/fern ./cmd/fern`
 then `/tmp/fern -interp prog.fern`) before treating a bail as a gap.
+The single-program drivers now WARN on stderr when a program has
+imports they cannot resolve (#6004) — if you see that warning, the
+verdict describes a broken program and means nothing about the
+language. Three filed issues were wrong for exactly this reason.
 Most apparent "gaps" turn out to be invalid programs — wrong keyword
 (match guards are `when`, not `if`), checker-rejected (a bare-ident
 arm on a SCALAR match is E035 — i32 matches only accept literals or
