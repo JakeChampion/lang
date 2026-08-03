@@ -1058,16 +1058,26 @@ function arm64_fmul(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
 function arm64_fdiv(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
     return arm64_le32(buf, 0x1e601800 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
 }
-function arm64_fneg(buf: i32[], rd: i32, rn: i32): i32[] {
-    return arm64_le32(buf, 0x1e614000 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+// The double-precision unary FP family — fneg / fabs / fsqrt and the four
+// frint rounding modes — shares one encoding shape `<op> Dd, Dn`: a base
+// opcode with Rn at bit 5 and Rd at bit 0. Only the base differs.
+// (Verified against internal/native/arm64's FNEG / FABS / FSQRT / FRINT*.)
+function arm64_funary_d_base(mnem: string): i64 {
+    if (mnem == "fneg") { return 0x1e614000; }
+    if (mnem == "fabs") { return 0x1e60c000; }
+    if (mnem == "fsqrt") { return 0x1e61c000; }
+    if (mnem == "frintm") { return 0x1e654000; } // floor
+    if (mnem == "frintp") { return 0x1e64c000; } // ceil
+    if (mnem == "frintz") { return 0x1e65c000; } // trunc
+    if (mnem == "frinta") { return 0x1e664000; } // round half away from zero
+    return 0 - 1;
+}
+function arm64_funary_d(buf: i32[], base: i64, rd: i32, rn: i32): i32[] {
+    return arm64_le32(buf, base | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
 }
 // fcmp Dn, Dm (Rd field = 0).
 function arm64_fcmp(buf: i32[], rn: i32, rm: i32): i32[] {
     return arm64_le32(buf, 0x1e602000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5));
-}
-// frinta Dd, Dn (round to nearest, ties away).
-function arm64_frinta(buf: i32[], rd: i32, rn: i32): i32[] {
-    return arm64_le32(buf, 0x1e664000 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
 }
 // fmov Dd, Dn (fp->fp).
 function arm64_fmov_dd(buf: i32[], rd: i32, rn: i32): i32[] {
@@ -1702,16 +1712,12 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         else { a = Arm64Asm { ...a, code: arm64_fdiv(a.code, fd, fn, fm) }; }
         return a;
     }
-    if (mnem == "fneg") {
-        a = Arm64Asm { ...a, code: arm64_fneg(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+    if (arm64_funary_d_base(mnem) >= 0) {
+        a = Arm64Asm { ...a, code: arm64_funary_d(a.code, arm64_funary_d_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
         return a;
     }
     if (mnem == "fcmp") {
         a = Arm64Asm { ...a, code: arm64_fcmp(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
-        return a;
-    }
-    if (mnem == "frinta") {
-        a = Arm64Asm { ...a, code: arm64_frinta(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
         return a;
     }
     if (mnem == "fcvtzs") { // Xd, Dn (double -> int)
@@ -1786,7 +1792,8 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "orr" || mnem == "eor" || mnem == "subs" || mnem == "udiv" || mnem == "sdiv" || mnem == "msub" || mnem == "rev16" || mnem == "clz") { return true; }
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") { return true; }
     if (mnem == "mrs") { return true; } // sysreg validity checked in the program loop
-    if (mnem == "fadd" || mnem == "fsub" || mnem == "fmul" || mnem == "fdiv" || mnem == "fneg" || mnem == "fcmp" || mnem == "frinta" || mnem == "fmov" || mnem == "fcvtzs" || mnem == "scvtf") { return true; }
+    if (mnem == "fadd" || mnem == "fsub" || mnem == "fmul" || mnem == "fdiv" || mnem == "fcmp" || mnem == "fmov" || mnem == "fcvtzs" || mnem == "scvtf") { return true; }
+    if (arm64_funary_d_base(mnem) >= 0) { return true; }
     if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { return true; } // b.<cond>
     if (mnem.len() == 3 && mnem[0] == 98 && arm64_gas_is_cond(mnem[1:3])) { return true; } // b<cond>
     return false;
