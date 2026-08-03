@@ -207,9 +207,12 @@ touches the differential/parity suites, so the debt stays visible in
 one place instead of tribal knowledge.
 
 **Fastest local self-host loop: `make selfhost-cli`.** It builds the
-self-host compiler to a native binary for this host — ~15 minutes once,
-then ~1.3s per program, versus minutes per program interpreted and
-90+ minutes for an unsharded `internal/e2eselfhost`:
+self-host compiler to a native binary for this host — **~2 minutes**
+once on an x86-64 host (this note said ~15 minutes, which was the
+arm64-darwin figure and is ~7x off in the direction that discourages
+using the loop at all), then ~1.3s per program, versus minutes per
+program interpreted and 90+ minutes for an unsharded
+`internal/e2eselfhost`:
 
     make selfhost-cli
     bin/fern-selfhost -target wasm /ABS/prog.fern $PWD/internal/stdlib -o p.wat
