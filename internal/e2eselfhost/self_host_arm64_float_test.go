@@ -8,9 +8,16 @@ import (
 )
 
 // TestSelfHostArm64Float byte-checks the f64 (scalar double) instruction
-// batch added to arm64_native.fern — fadd/fsub/fmul/fdiv, fneg, fcmp,
-// frinta, the three fmov forms, fcvtzs, scvtf — against the llvm-mc-pinned
-// encodings, via the self-host wasm pipeline.
+// batch added to arm64_native.fern — fadd/fsub/fmul/fdiv, fcmp, the three
+// fmov forms, fcvtzs, scvtf, and the whole `<op> Dd, Dn` unary family
+// (fneg / fabs / fsqrt / frintm / frintp / frintz / frinta) — against the
+// llvm-mc-pinned encodings, via the self-host wasm pipeline.
+//
+// All but fneg and frinta of that unary family were missing, so the
+// assembler rejected the asm_arm64 emitter's own output for any program
+// using __sqrt_f64 / floor / ceil / trunc / abs: `in-process assembler hit
+// an instruction it does not yet support: fsqrt`. Their encodings are
+// verified here against internal/native/arm64's FABS / FSQRT / FRINT*.
 func TestSelfHostArm64Float(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 float e2e")
@@ -63,6 +70,16 @@ function main(): i32 {
     if (k.code[0] != 106 || k.code[1] != 0 || k.code[2] != 120 || k.code[3] != 158) { return 11; }
     var l: Arm64Asm = arm64_gas_assemble("scvtf d3, x11");     // 0x9E620163
     if (l.code[0] != 99 || l.code[1] != 1 || l.code[2] != 98 || l.code[3] != 158) { return 12; }
+    var m: Arm64Asm = arm64_gas_assemble("fabs d0, d1");       // 0x1E60C020
+    if (m.code[0] != 32 || m.code[1] != 192 || m.code[2] != 96 || m.code[3] != 30) { return 13; }
+    var n: Arm64Asm = arm64_gas_assemble("fsqrt d0, d1");      // 0x1E61C020
+    if (n.code[0] != 32 || n.code[1] != 192 || n.code[2] != 97 || n.code[3] != 30) { return 14; }
+    var o: Arm64Asm = arm64_gas_assemble("frintm d0, d1");     // 0x1E654020
+    if (o.code[0] != 32 || o.code[1] != 64 || o.code[2] != 101 || o.code[3] != 30) { return 15; }
+    var q: Arm64Asm = arm64_gas_assemble("frintp d0, d1");     // 0x1E64C020
+    if (q.code[0] != 32 || q.code[1] != 192 || q.code[2] != 100 || q.code[3] != 30) { return 16; }
+    var r: Arm64Asm = arm64_gas_assemble("frintz d0, d1");     // 0x1E65C020
+    if (r.code[0] != 32 || r.code[1] != 192 || r.code[2] != 101 || r.code[3] != 30) { return 17; }
     return 0;
 }
 `

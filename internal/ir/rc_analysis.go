@@ -16,6 +16,7 @@ package ir
 // it behind this boundary is the follow-up slice.
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -67,6 +68,13 @@ type rcPlan struct {
 	// per-site so only the local's LAST alias moves — earlier aliases
 	// of the same local keep their inc.
 	moveSites map[ast.Node]bool
+	// ownCallMoveArgs[argExpr] is true for the specific argument NODE that
+	// move-on-call marked as the consuming transfer of an `own` param (the
+	// occurrence computeMovedLocals proved to be the param's last use). Every
+	// OTHER occurrence of that param in an `own` argument position is a
+	// transfer the exit sweep does NOT pay for, so it needs a compensating
+	// retain — see ownArgNeedsRetain.
+	ownCallMoveArgs map[ast.Node]bool
 	// ctorAliasInced[name] records a local that received a CONSTRUCTION
 	// alias-inc — its reference was retained into a container literal
 	// (array / tuple / struct field / enum payload) while the local itself
@@ -226,6 +234,7 @@ func (b *builder) computeRcAnalyses() {
 	// borrowed-derived locals are excluded (only the owner frees).
 	b.rc.freeEligible = b.computeFreeEligible()
 	b.rc.moveSites = map[ast.Node]bool{}
+	b.rc.ownCallMoveArgs = map[ast.Node]bool{}
 	b.rc.movedLocals = b.computeMovedLocals()
 	b.rc.ctorAliasInced = b.computeCtorAliasInced()
 	b.rc.borrowedMapFieldResults = b.computeBorrowedMapFieldResults()
@@ -1780,6 +1789,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 						if arg, ok := x.Args[i].(*ast.Ident); ok &&
 							ownParam[arg.Name] && order.isLast(arg) {
 							moved[arg.Name] = true
+							b.rc.ownCallMoveArgs[arg] = true
 						}
 					}
 				}
@@ -2542,7 +2552,13 @@ func (b *builder) computePreciseDrops() map[int][]string {
 		return true
 	})
 	out := map[int][]string{}
-	for name, di := range declIdx {
+	// Iterate in DECLARATION order, not Go map order. Two locals whose last
+	// use falls on the same statement both append to out[last], and ranging
+	// the map appended them in a random order — so the same source compiled
+	// twice emitted their drops in either order, and the binaries differed.
+	// Declaration order is the program's own order and is stable.
+	for _, name := range sortedByDeclIdx(declIdx) {
+		di := declIdx[name]
 		if reassigned[name] || b.rc.movedLocals[name] || !b.rc.freeEligible[name] || !b.localNameUnique(name) {
 			continue
 		}
@@ -3950,4 +3966,22 @@ func (b *builder) computeCtorAliasInced() map[string]bool {
 		return true
 	})
 	return out
+}
+
+// sortedByDeclIdx returns declIdx's names ordered by their declaration
+// statement index — the program's own order — so passes that consume it
+// produce identical output on every run. Ranging the map directly made
+// compilation nondeterministic wherever two names shared an output bucket.
+func sortedByDeclIdx(declIdx map[string]int) []string {
+	names := make([]string, 0, len(declIdx))
+	for n := range declIdx {
+		names = append(names, n)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if declIdx[names[i]] != declIdx[names[j]] {
+			return declIdx[names[i]] < declIdx[names[j]]
+		}
+		return names[i] < names[j]
+	})
+	return names
 }
