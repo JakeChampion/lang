@@ -392,6 +392,15 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
 
 ## Engineering bar (non-negotiable)
 
+- **Pick the gates that carry signal for what you touched —
+  `docs/TEST-GATES.md`.** Which suite proves what, which ones look
+  authoritative and are not (the fixpoint is SELF-REFERENTIAL: it proves the
+  compiler reproduces itself and is structurally blind to a stable miscompile,
+  so for self-host lowering changes `internal/e2eselfhost` is PRIMARY and the
+  fixpoint secondary), what nothing gates at all (allocation volume,
+  over-retains), and the rc diagnostic modes in the order you reach for them.
+  #6018 passed the per-module fixpoint AND all 335 fixtures AND the native
+  suite while segfaulting the driver.
 - **Confirm passing tests before opening a PR.** Run the full relevant
   suite locally (including the WASM e2e tests — the pinned toolchain is
   **wasmtime v46.0.1 + wasm-tools 1.253.0** (see

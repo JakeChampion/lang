@@ -333,7 +333,10 @@ gate is `internal/e2e/self_host_asm_ir_path_test.go`
 
 To make the IR path the default, the isolation that protected the bootstrap
 must finally give way — these steps are deliberately deferred to a careful,
-dedicated pass (highest regression risk; the fixpoint is the master gate):
+dedicated pass (highest regression risk; `internal/e2eselfhost` is the master
+gate, with the fixpoint alongside it — the fixpoint is self-referential and
+cannot see a miscompile that is stable across the compiler's own sources; see
+[TEST-GATES.md](TEST-GATES.md)):
 
 1. **Fold `asm_ir` → `asm.fern`.** Move `emit_module_ir`/`emit_function_via_ir`
    into `asm.fern` behind a `use_ir` flag (or `EmitState` field), so

@@ -1,0 +1,106 @@
+# Which gates prove what
+
+A guide to picking the suites a change actually has to pass, written after two
+compiler bugs shipped past three heavyweight green gates in a row.
+
+The mechanics of running and skipping lanes are in
+[CI-SIGNOFF.md](CI-SIGNOFF.md); this document is about *which* lanes carry
+signal for *which* kind of change, and — more usefully — which ones look
+authoritative and are not.
+
+## The one that surprises people: the fixpoint is self-referential
+
+The per-module / whole-compiler **fixpoint** tests compile the self-host
+compiler with itself and assert gen0 and gen1 are byte-identical. That is a
+strong property and it is easy to over-read. What it proves is that the
+compiler **reproduces itself**. It is structurally blind to any miscompile
+whose effect is confined to shapes that do not occur in the compiler's own
+sources — and equally blind to one that occurs there but is *stable*, because
+a consistently-wrong compiler still reproduces itself byte-for-byte.
+
+Both bugs behind #6021 were live during green fixpoint runs. The rc
+over-release corrupted the driver's freelist on nearly every program it
+compiled, and the fixpoint did not care: a doubly-freed block gets recycled,
+the emitted bytes are unchanged, gen0 == gen1.
+
+So for a change to self-host lowering or to the RC/Perceus machinery:
+
+- **`internal/e2eselfhost` is primary.** It runs *programs the compiler does
+  not contain* through the self-host compiler and checks their behaviour.
+- **The fixpoint is secondary.** It catches nondeterminism and
+  self-compilation breakage — real failure modes, different ones.
+
+Several comments in the tree read the other way around. They are wrong, and
+#6018 is what that cost: it passed the per-module fixpoint, all 335 fixtures,
+*and* the native suite while segfaulting the driver. `internal/e2eselfhost` is
+what caught it.
+
+## Gate → what it actually proves
+
+| Gate | Proves | Blind to |
+|---|---|---|
+| `internal/e2e` fixtures (`TestFernFixtures`) | The NATIVE compiler is right on the corpus | Anything self-host-only; anything about *how much* it allocated |
+| `TestFernFixturesSelfHostWasm` (`FERN_SELFHOST_FIXTURES=1`) | The self-host compiler agrees with native on the corpus, on wasm | The x86-64 / arm64 self-host legs |
+| `internal/e2eselfhost` | The self-host compiler is right on programs outside its own sources | Whole-program self-compilation; memory |
+| Per-module / emit-all fixpoint | The compiler reproduces itself, deterministically | Any *stable* miscompile, including one affecting every program it sees |
+| rc corpus (`rcCorpus`, all three backends) | No rc over-release on the shapes it enumerates | Shapes it does not enumerate — add one when you fix an rc bug |
+| Driver rc guard (`util.rc_underflow_guard`) | The compiler's OWN heap accounting stayed balanced while compiling | Leaks (an over-*retain* is silent), and anything outside the drivers |
+| `FERN_NATIVE_ASM=1` fixtures | The in-process assembler encodes what the backend emits | The gcc path, which the fallback silently hides behind |
+| Differential (`internal/e2e/diff_oracle_test.go`) | Two compilers agree on exit codes | Everything about memory — see below |
+
+## What nothing gates
+
+Worth knowing so you do not assume coverage you do not have:
+
+- **Allocation volume.** Nothing compares how much the two compilers allocate,
+  which is how they developed *opposite* cliffs undetected: `.with` through a
+  borrowed param was 4688 MB native / 0 MB self-host, while `.append` through a
+  call was 4 MB native / 7006 MB self-host. Both compilers support
+  `__heap_bump_bytes()`; use that and never peak RSS, which varies 12x with
+  transparent hugepages (measured: 43 MB local, 552 MB on a CI runner, same
+  binary and input).
+- **Over-retains.** The rc detector counts over-*releases* only. A leak reads
+  as a clean 0.
+
+## Practical rules
+
+1. **Match the gate to the layer you touched.** Parser-time desugar → parser
+   test. Checker rule → checker test. RC/lowering → the rc corpus *and*
+   `internal/e2eselfhost`.
+2. **A green fixpoint is not a substitute for `internal/e2eselfhost`** on any
+   self-host lowering change. It was three times in a row, and it was wrong
+   three times in a row.
+3. **Run flaky-looking things at least 10 times.** The #6021 segfault was
+   ~50%. A single-shot check passes and tells you the bug is gone.
+4. **Verify which binary you are testing.** Building `fern.fern` proves nothing
+   about a test that builds `asm_ir_run.fern`. Check what the test's
+   `copySelfHostDriver` / `buildSelfHostBin` call actually names.
+5. **Never pipe a test run through `tail` / `head`.** You get the pipeline's
+   exit status — `tail`'s, always 0 — so a failing suite is reported as a pass
+   and the detail is discarded. Redirect to a file and grep `--- FAIL`.
+6. **`ok` in 0.3s is a SKIP, not a pass.** Usually a missing toolchain; fix the
+   dependency rather than taking the green.
+
+## Diagnostic modes
+
+When a gate fails and the failure is a heap corruption rather than a wrong
+answer, these are the tools, in the order they are usually reached for:
+
+- **`__rc_underflow_count()`** — the counter. Exact yes/no signal for "did this
+  compile over-release anything", readable from Fern. The self-host drivers
+  call it themselves on every run (`util.rc_underflow_guard`).
+- **`FERN_RC_UNDERFLOW_TRAP=1`** — turns each counter bump into `ud2`, so the
+  process dies with SIGILL *at the offending dec* and a gdb backtrace names the
+  function. This is the one that locates a bug; the counter only detects it.
+- **`FERN_RC_FREE_DEBUG=1`** — quarantines freed array/map blocks and traps on
+  a later touch. Complementary, not redundant: it sees an over-release that
+  went through a free, and is blind to a plain dec taking a count 1 → 0 (which
+  frees nothing) followed by another. Use `FERN_RC_UNDERFLOW_TRAP` for that
+  case.
+- **`FERN_LEAKCHECK=1`** — alloc/free counts and live bytes at exit. The other
+  direction: what the rc detector cannot see.
+- **`-g`** — emits a `.symtab`, without which a gdb backtrace through a Fern
+  binary is addresses only.
+
+A worked example of the whole loop — counter to trap to backtrace to root
+cause — is #6021.
