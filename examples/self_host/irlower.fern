@@ -5011,9 +5011,26 @@ pub function for_iter_is_range_incl(iter: parser.Expr): boolean {
 // CONVERSION (truncate / sign-extend / float-round) rather than a
 // zero-cost type ascription. The conversions change the runtime value;
 // everything else (`as i32[]`, `as string`, `as Option`) is an ascription.
+//
+// Keyed on the TARGET TYPE NAME rather than spelled as a list of `as_<T>`
+// literals, because the op is built as `"as_" + tyname` (parse_unary) — so a
+// list silently misclassifies whatever it omits, and omitting one is not a
+// missing optimisation but a WRONG ANSWER: ascription_rebind rewrites
+// `var x: T = E as T` to `var x: T = E`, discarding the conversion. `as_u8`
+// was missing exactly that way, so `var w8: u8 = v8 as u8` dropped its 8-bit
+// mask and 260 as u8 stayed 260 instead of wrapping to 4 (#6010 —
+// audit_numeric_types' `FAIL u8-wrap`, exit 13). Expression position was
+// unaffected, which is why it survived: `(v8 as u8) as i32` masks correctly.
+// `usize` is deliberately NOT here: `x as usize` is an identity ascription used
+// to sever escape analysis (`return __fern_rc_inc(out as usize)` in
+// core/map.fern), not a width conversion. Classifying it as numeric stops
+// ascription_rebind firing and the module stops lowering at all — measured:
+// every std/map-importing fixture went IR-ineligible.
 pub function is_numeric_cast_op(op: string): boolean {
-    return op == "as_i32" || op == "as_u32" || op == "as_i64" || op == "as_u64"
-        || op == "as_f64" || op == "as_f32" || op == "as_float";
+    if (op.len() <= 3 || op[0:3] != "as_") { return false; }
+    var t: string = op[3:op.len()] + "";
+    return t == "i32" || t == "u32" || t == "u8" || t == "i64" || t == "u64"
+        || t == "f64" || t == "f32" || t == "float";
 }
 
 // ascription_target returns the target type name of an ascription cast

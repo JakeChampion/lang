@@ -7,9 +7,15 @@
 # divergence fails, and a listed fixture that starts PASSING also fails — an
 # allowlist nobody prunes is where bugs go to be forgotten.
 #
-# All twelve were found by the leg's first run over the existing corpus, on
-# fixtures that had been green for months because all four of TestFernFixtures'
-# backends are the native compiler. Each has been reproduced by hand with a
+# `audit_numeric_types` was here and is now FIXED (#6010): the self-host IR path
+# applied its zero-cost-ascription rewrite (`var x: T = E as T` -> `var x: T = E`)
+# to a real width conversion, so a narrowing `as u8` lost its mask in BINDING
+# position only — 260 as u8 stayed 260 and the fixture's u8-wrap check returned 13.
+# `cast_narrow_binding` now pins that shape directly.
+#
+# Eleven of the original twelve remain. All were found by the leg's first run
+# over the existing corpus, on fixtures that had been green for months because
+# all four of TestFernFixtures' backends are the native compiler. Each has been reproduced by hand with a
 # native self-host CLI (`make selfhost-cli`) before being written down; none is
 # a harness artifact. The first pass reported 26 mismatches and 14 of those WERE
 # artifacts — WASI caps exit status at 125, so nine regex fixtures whose expected
@@ -33,7 +39,6 @@ regex_named_groups #6008 traps (unreachable); native returns 255
 regex_replace_groups #6008 traps (unreachable); native returns 255
 
 # --- runs clean, wrong answer -------------------------------------------
-audit_numeric_types #6010 returns 13, native 0
 derive_json #6009 returns 4, native 42
 eq_struct_enum #6009 returns 18, native 63
 ord_struct_enum #6009 returns 87, native 31
