@@ -35,6 +35,9 @@ function main(): i32 {
     }
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    // This driver resolves no imports; say so loudly rather than letting a
+    // broken program produce a verdict that reads like a compiler gap.
+    var _unresolved: boolean = parser.warn_unresolved_imports(mod, "wasm_run");
     // Call-arity gate (#4360): an arg-count mismatch used to sail through the
     // wasm emitter and miscompile where the Go compiler rejects with E004.
     // Checked on a default-filled COPY so omitted defaulted args don't read

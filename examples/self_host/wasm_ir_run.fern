@@ -30,6 +30,9 @@ function main(): i32 {
     }
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    // This driver resolves no imports; say so loudly rather than letting a
+    // broken program produce a verdict that reads like a compiler gap.
+    var _unresolved: boolean = parser.warn_unresolved_imports(mod, "wasm_ir_run");
     // Call-arity gate (#4360): shared with wasm_run — an arg-count mismatch
     // must reject before either the IR or the AST-fallback emit runs, not
     // miscompile. Checked on a default-filled COPY (the emit input is
