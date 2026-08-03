@@ -1,0 +1,20 @@
+// examples/self_host/arm64_asm_bench_run.fern — perf harness for the
+// in-process arm64 assembler. Reads GAS text on stdin, runs the whole
+// assemble path (parse/emit + .ltorg flush + fixup resolve + @PAGE link)
+// and prints the section sizes. Exists so the assembler's memory profile
+// (#6011) can be measured against a real `.s` without a selfhost-cli
+// rebuild per experiment.
+import "std/io";
+import "./arm64_native";
+
+function main(): i32 {
+    var src: string = io.read_all_stdin();
+    var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(src);
+    var pa: arm64_native.Arm64Asm = p.asm;
+    var tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), p.data.len());
+    var dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), p.data.len());
+    p = arm64_native.arm64_gas_link(p, tv, dv);
+    var pa2: arm64_native.Arm64Asm = p.asm;
+    print("text=" + pa2.code.len().to_string() + " data=" + p.data.len().to_string() + "\n");
+    return 0;
+}

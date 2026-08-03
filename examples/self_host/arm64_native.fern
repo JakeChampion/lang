@@ -270,7 +270,16 @@ function arm64_read_word(buf: i32[], at: i32): i64 {
 
 // arm64_write_word overwrites the 4 little-endian bytes of the instruction
 // word at byte offset `at`.
-function arm64_write_word(buf: i32[], at: i32, w: i64): i32[] {
+//
+// `own buf` is what makes the patch path linear rather than O(code_len^2).
+// A BORROWED array parameter forces every `.with` down the copy-on-write
+// path — the callee cannot know the caller has no other reader — so each
+// patched word cloned the whole .text buffer. Consuming the buffer lets the
+// rc check see a unique owner and overwrite in place. The whole patch family
+// below threads it the same way, and so must every caller: an owned argument
+// has to be a fresh value, another `own` parameter, or a self-reassign
+// `code = arm64_patch_x(code, …)` (E051).
+function arm64_write_word(own buf: i32[], at: i32, w: i64): i32[] {
     buf = buf.with(at, (w & 255) as i32);
     buf = buf.with(at + 1, ((w >> 8) & 255) as i32);
     buf = buf.with(at + 2, ((w >> 16) & 255) as i32);
@@ -280,7 +289,7 @@ function arm64_write_word(buf: i32[], at: i32, w: i64): i32[] {
 
 // arm64_patch_b splices a rel into the imm26 field of a `b` placeholder at
 // byte offset `at`, preserving the top 6 opcode bits.
-function arm64_patch_b(buf: i32[], at: i32, rel: i32): i32[] {
+function arm64_patch_b(own buf: i32[], at: i32, rel: i32): i32[] {
     var w: i64 = (arm64_read_word(buf, at) & 0xfc000000) | (((rel >> 2) & 0x3ffffff) as i64);
     return arm64_write_word(buf, at, w);
 }
@@ -288,7 +297,7 @@ function arm64_patch_b(buf: i32[], at: i32, rel: i32): i32[] {
 // arm64_patch_b19 splices a rel into the imm19 field (bits 23:5) of a
 // `b.cond` / `cbz` / `cbnz` placeholder at byte offset `at`, preserving
 // the opcode plus the cond/Rt bits (the masked-out 0xff00001f).
-function arm64_patch_b19(buf: i32[], at: i32, rel: i32): i32[] {
+function arm64_patch_b19(own buf: i32[], at: i32, rel: i32): i32[] {
     var w: i64 = (arm64_read_word(buf, at) & 0xff00001f) | ((((rel >> 2) & 0x7ffff) as i64) << 5);
     return arm64_write_word(buf, at, w);
 }
@@ -354,17 +363,25 @@ pub function arm64_asm_label_off(a: Arm64Asm, name: string): i32 {
 // a.code (its instruction word at a.code.len()-4). `kind` selects the
 // immediate field. If the target label is already placed, patch now;
 // otherwise queue a fixup for arm64_asm_resolve.
-function arm64_asm_fixup_or_patch(a: Arm64Asm, name: string, kind: i32): Arm64Asm {
+function arm64_asm_fixup_or_patch(own a: Arm64Asm, name: string, kind: i32): Arm64Asm {
     var at: i32 = a.code.len() - 4;
     var target: i32 = arm64_asm_label_off(a, name);
     if (target >= 0) {
+        // Take the buffer OUT of the struct before patching. `a.code` read
+        // while `a` still holds it is a second reference, which sends the
+        // `.with` inside the patch helpers down the copy path — one full
+        // .text clone per backward branch. Owning `a` lets the field be
+        // emptied first, so the local below is the only reference.
+        var code: i32[] = a.code;
+        a = Arm64Asm { ...a, code: [] };
         if (kind == 1) {
-            a = Arm64Asm { ...a, code: arm64_patch_b19(a.code, at, target - at) };
+            code = arm64_patch_b19(code, at, target - at);
         } else if (kind == 2) {
-            a = Arm64Asm { ...a, code: arm64_patch_b14(a.code, at, target - at) };
+            code = arm64_patch_b14(code, at, target - at);
         } else {
-            a = Arm64Asm { ...a, code: arm64_patch_b(a.code, at, target - at) };
+            code = arm64_patch_b(code, at, target - at);
         }
+        a = Arm64Asm { ...a, code: code };
     } else {
         a = Arm64Asm { ...a, fix_offs: a.fix_offs.append(at) };
         a = Arm64Asm { ...a, fix_names: a.fix_names.append(name) };
@@ -375,26 +392,26 @@ function arm64_asm_fixup_or_patch(a: Arm64Asm, name: string, kind: i32): Arm64As
 
 // arm64_asm_b / arm64_asm_bl emit an unconditional branch / call to a
 // (possibly forward) label.
-function arm64_asm_b(a: Arm64Asm, name: string): Arm64Asm {
+function arm64_asm_b(own a: Arm64Asm, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_b(a.code, 0) };
     return arm64_asm_fixup_or_patch(a, name, 0);
 }
-function arm64_asm_bl(a: Arm64Asm, name: string): Arm64Asm {
+function arm64_asm_bl(own a: Arm64Asm, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_bl(a.code, 0) };
     return arm64_asm_fixup_or_patch(a, name, 0);
 }
 
 // arm64_asm_bcond / arm64_asm_cbz / arm64_asm_cbnz emit a conditional
 // branch to a (possibly forward) label.
-function arm64_asm_bcond(a: Arm64Asm, cond: i32, name: string): Arm64Asm {
+function arm64_asm_bcond(own a: Arm64Asm, cond: i32, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_bcond(a.code, cond, 0) };
     return arm64_asm_fixup_or_patch(a, name, 1);
 }
-function arm64_asm_cbz(a: Arm64Asm, rt: i32, name: string): Arm64Asm {
+function arm64_asm_cbz(own a: Arm64Asm, rt: i32, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_cbz(a.code, rt, 0) };
     return arm64_asm_fixup_or_patch(a, name, 1);
 }
-function arm64_asm_cbnz(a: Arm64Asm, rt: i32, name: string): Arm64Asm {
+function arm64_asm_cbnz(own a: Arm64Asm, rt: i32, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_cbnz(a.code, rt, 0) };
     return arm64_asm_fixup_or_patch(a, name, 1);
 }
@@ -402,21 +419,28 @@ function arm64_asm_cbnz(a: Arm64Asm, rt: i32, name: string): Arm64Asm {
 // arm64_asm_resolve patches every queued (forward) fixup now that all
 // labels are placed. Call once after emitting the whole program;
 // afterwards a.code is the final .text.
-function arm64_asm_resolve(a: Arm64Asm): Arm64Asm {
+// The buffer is pulled out of the struct ONCE and threaded through the whole
+// fixup loop as a uniquely-owned local, then folded back. Patching it in
+// place inside the struct — `a = Arm64Asm { ...a, code: arm64_patch_b(a.code,
+// …) }` — cloned the entire .text per fixup, which is the largest of the
+// three quadratic patch loops in this assembler (#6011).
+function arm64_asm_resolve(own a: Arm64Asm): Arm64Asm {
+    var code: i32[] = a.code;
+    a = Arm64Asm { ...a, code: [] };
     var i: i32 = 0;
     while (i < a.fix_offs.len()) {
         var at: i32 = a.fix_offs[i];
         var target: i32 = arm64_asm_label_off(a, a.fix_names[i]);
         if (a.fix_kinds[i] == 1) {
-            a = Arm64Asm { ...a, code: arm64_patch_b19(a.code, at, target - at) };
+            code = arm64_patch_b19(code, at, target - at);
         } else if (a.fix_kinds[i] == 2) {
-            a = Arm64Asm { ...a, code: arm64_patch_b14(a.code, at, target - at) };
+            code = arm64_patch_b14(code, at, target - at);
         } else {
-            a = Arm64Asm { ...a, code: arm64_patch_b(a.code, at, target - at) };
+            code = arm64_patch_b(code, at, target - at);
         }
         i = i + 1;
     }
-    return a;
+    return Arm64Asm { ...a, code: code };
 }
 
 // ---- load / store (64-bit, unsigned scaled immediate) ----
@@ -492,7 +516,7 @@ function arm64_adrp(buf: i32[], rd: i32, page_delta: i32): i32[] {
 
 // arm64_patch_adrp splices a page_delta into an `adrp` placeholder at byte
 // offset `at`, preserving the opcode + Rd (masked-out 0x9f00001f).
-function arm64_patch_adrp(buf: i32[], at: i32, page_delta: i32): i32[] {
+function arm64_patch_adrp(own buf: i32[], at: i32, page_delta: i32): i32[] {
     var immlo: i64 = (page_delta & 3) as i64;
     var immhi: i64 = ((page_delta >> 2) & 0x7ffff) as i64;
     var w: i64 = (arm64_read_word(buf, at) & 0x9f00001f) | (immlo << 29) | (immhi << 5);
@@ -502,7 +526,7 @@ function arm64_patch_adrp(buf: i32[], at: i32, page_delta: i32): i32[] {
 // arm64_patch_ldr_off splices a (scaled) byte offset into the imm12 field
 // (bits 21:10) of an `ldr` placeholder at byte offset `at`, preserving the
 // opcode + Rt/Rn (masked-out 0xffc003ff).
-function arm64_patch_ldr_off(buf: i32[], at: i32, off: i32): i32[] {
+function arm64_patch_ldr_off(own buf: i32[], at: i32, off: i32): i32[] {
     var w: i64 = (arm64_read_word(buf, at) & 0xffc003ff) | ((((off / 8) & 0xfff) as i64) << 10);
     return arm64_write_word(buf, at, w);
 }
@@ -523,7 +547,7 @@ function arm64_ldr_lit(buf: i32[], rt: i32, imm19: i32): i32[] {
 }
 // arm64_patch_ldr_lit splices imm19 (bits 23:5) into an LDR-literal
 // placeholder at byte offset `at`, preserving the opcode + Rt (0xff00001f).
-function arm64_patch_ldr_lit(buf: i32[], at: i32, imm19: i32): i32[] {
+function arm64_patch_ldr_lit(own buf: i32[], at: i32, imm19: i32): i32[] {
     var w: i64 = (arm64_read_word(buf, at) & 0xff00001f) | (((imm19 & 0x7ffff) as i64) << 5);
     return arm64_write_word(buf, at, w);
 }
@@ -607,7 +631,7 @@ function arm64_ldr_post(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
 // arm64_patch_addimm_off splices an unscaled 12-bit immediate into the
 // imm12 field (bits 21:10) of an `add` (immediate) placeholder — used for
 // `add Xd, Xn, sym@PAGEOFF`, preserving the opcode + Rd/Rn (0xffc003ff).
-function arm64_patch_addimm_off(buf: i32[], at: i32, off: i32): i32[] {
+function arm64_patch_addimm_off(own buf: i32[], at: i32, off: i32): i32[] {
     var w: i64 = (arm64_read_word(buf, at) & 0xffc003ff) | (((off & 0xfff) as i64) << 10);
     return arm64_write_word(buf, at, w);
 }
@@ -682,18 +706,18 @@ function arm64_tbnz(buf: i32[], rt: i32, bit: i32, rel: i32): i32[] {
 // arm64_patch_b14 splices a rel into the imm14 field (bits 18:5) of a
 // `tbz`/`tbnz` placeholder, preserving the opcode + b5/b40/Rt (mask
 // 0xfff8001f).
-function arm64_patch_b14(buf: i32[], at: i32, rel: i32): i32[] {
+function arm64_patch_b14(own buf: i32[], at: i32, rel: i32): i32[] {
     var w: i64 = (arm64_read_word(buf, at) & 0xfff8001f) | ((((rel >> 2) & 0x3fff) as i64) << 5);
     return arm64_write_word(buf, at, w);
 }
 
 // arm64_asm_tbz / arm64_asm_tbnz emit a test-bit branch to a (possibly
 // forward) label (fixup kind 2 = imm14).
-function arm64_asm_tbz(a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
+function arm64_asm_tbz(own a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_tbz(a.code, rt, bit, 0) };
     return arm64_asm_fixup_or_patch(a, name, 2);
 }
-function arm64_asm_tbnz(a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
+function arm64_asm_tbnz(own a: Arm64Asm, rt: i32, bit: i32, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_tbnz(a.code, rt, bit, 0) };
     return arm64_asm_fixup_or_patch(a, name, 2);
 }
@@ -1394,6 +1418,20 @@ function arm64_gas_lsl_amount(tok: string): i32 {
 
 // ---- instruction dispatch ----
 
+// arm64_gas_is_bcond reports whether `mnem` is a conditional branch, in
+// either GAS spelling: the dotted `b.lt` form or the no-dot `blt` alias.
+// arm64_gas_bcond_suffix returns the condition part of such a mnemonic.
+function arm64_gas_is_bcond(mnem: string): boolean {
+    if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { return true; } // 'b' '.'
+    return mnem.len() == 3 && mnem[0] == 98 && arm64_gas_is_cond(mnem[1:3]);
+}
+function arm64_gas_bcond_suffix(mnem: string): str {
+    if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) {
+        return mnem[2:mnem.len()];
+    }
+    return mnem[1:3];
+}
+
 // arm64_gas_emit assembles one mnemonic + operand string into a.code (or
 // queues a label fixup). Unknown mnemonics are ignored.
 function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
@@ -1406,29 +1444,9 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_svc(a.code, arm64_gas_imm(ops[0])) };
         return a;
     }
-    if (mnem == "b") {
-        return arm64_asm_b(a, ops[0]);
-    }
-    if (mnem == "bl") {
-        return arm64_asm_bl(a, ops[0]);
-    }
     if (mnem == "blr") {
         a = Arm64Asm { ...a, code: arm64_blr(a.code, arm64_gas_reg(ops[0])) };
         return a;
-    }
-    if (mnem == "cbz") {
-        return arm64_asm_cbz(a, arm64_gas_reg(ops[0]), ops[1]);
-    }
-    if (mnem == "cbnz") {
-        return arm64_asm_cbnz(a, arm64_gas_reg(ops[0]), ops[1]);
-    }
-    // b.<cond>
-    if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { // 'b' '.'
-        return arm64_asm_bcond(a, arm64_gas_cond(mnem[2:mnem.len()]), ops[0]);
-    }
-    // b<cond> (no-dot GAS alias: bhi / blt / bne / …)
-    if (mnem.len() == 3 && mnem[0] == 98 && arm64_gas_is_cond(mnem[1:3])) {
-        return arm64_asm_bcond(a, arm64_gas_cond(mnem[1:3]), ops[0]);
     }
     if (mnem == "mov" || mnem == "movz") {
         var rd: i32 = arm64_gas_reg(ops[0]);
@@ -1564,12 +1582,6 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     if (mnem == "sbfiz") {
         a = Arm64Asm { ...a, code: arm64_sbfiz(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_imm(ops[3])) };
         return a;
-    }
-    if (mnem == "tbnz") {
-        return arm64_asm_tbnz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), ops[2]);
-    }
-    if (mnem == "tbz") {
-        return arm64_asm_tbz(a, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), ops[2]);
     }
     if (mnem == "mul") {
         a = Arm64Asm { ...a, code: arm64_mul(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2])) };
@@ -2203,27 +2215,28 @@ function arm64_lit_le64(buf: i32[], v: i64): i32[] {
 // LDR-literal imm19 to the (PC-relative) pool slot and append the value's 8
 // bytes. asm_arm64 emits a `.ltorg` after every function so the pool stays
 // within the ±1 MiB LDR-literal reach; the pool sits after the function's
-// `ret`, so it is never executed. The pending lists are cleared.
-// It takes the .text buffer as an argument and hands it back inside the
-// returned prog rather than reading p.asm, so the buffer is uniquely owned here
-// too — see arm64_gas_program's note on why an alias makes every append copy.
-function arm64_gas_ltorg(p0: Arm64GasProg, a0: Arm64Asm): Arm64GasProg {
-    var p: Arm64GasProg = p0;
-    var aw: Arm64Asm = a0;
-    if (p.lit_sites.len() == 0) { return Arm64GasProg { ...p, asm: aw }; }
-    while ((aw.code.len() & 7) != 0) {
-        aw = Arm64Asm { ...aw, code: aw.code.append(0) };
+// `ret`, so it is never executed.
+// It takes the assembler state as an argument and hands it back rather than
+// reading p.asm, so the buffer is uniquely owned here too — see
+// arm64_gas_program's note on why an alias makes every append copy. It
+// consumes that state (`own`) so the .text buffer can be lifted out of the
+// struct for the patch loop; clearing the pending lists is the caller's job.
+function arm64_gas_ltorg(p: Arm64GasProg, own aw: Arm64Asm): Arm64Asm {
+    if (p.lit_sites.len() == 0) { return aw; }
+    var code: i32[] = aw.code;
+    aw = Arm64Asm { ...aw, code: [] };
+    while ((code.len() & 7) != 0) {
+        code = code.append(0);
     }
     var i: i32 = 0;
     while (i < p.lit_sites.len()) {
         var site: i32 = p.lit_sites[i];
-        var imm19: i32 = (aw.code.len() - site) / 4;
-        aw = Arm64Asm { ...aw, code: arm64_patch_ldr_lit(aw.code, site, imm19) };
-        aw = Arm64Asm { ...aw, code: arm64_lit_le64(aw.code, p.lit_vals[i] as i64) };
+        var imm19: i32 = (code.len() - site) / 4;
+        code = arm64_patch_ldr_lit(code, site, imm19);
+        code = arm64_lit_le64(code, p.lit_vals[i] as i64);
         i = i + 1;
     }
-    p = Arm64GasProg { ...p, asm: aw, lit_sites: [], lit_vals: [] };
-    return p;
+    return Arm64Asm { ...aw, code: code };
 }
 
 // ---- the assemble loop ----
@@ -2286,9 +2299,8 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // directives
         if (line[0] == 46) { // '.'
             if (line == ".ltorg") {
-                p = arm64_gas_ltorg(p, a);
-                a = p.asm;
-                p = Arm64GasProg { ...p, asm: arm64_asm_new() };
+                a = arm64_gas_ltorg(p, a);
+                p = Arm64GasProg { ...p, lit_sites: [], lit_vals: [] };
             } else if (line == ".text") {
                 section = 0;
             } else if (line == ".bss") {
@@ -2422,25 +2434,60 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         if (!arm64_gas_known(mnem)) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem) };
         }
+        // Label-relative branches are dispatched HERE rather than inside
+        // arm64_gas_emit so the transfer of `a` is a self-reassign of a LOCAL.
+        // Threaded through gas_emit instead, the transfer sits early in a
+        // 60-branch if-chain with `a` mentioned in every later branch, so it is
+        // not the parameter's last use and the compiler has to RETAIN across
+        // it — which leaves the .text buffer shared and sends every
+        // backward-branch patch down the copy path (the last of #6011's
+        // quadratic loops). Here the callee is the sole owner and patches in
+        // place.
+        if (mnem == "b" || mnem == "bl" || mnem == "cbz" || mnem == "cbnz"
+            || mnem == "tbz" || mnem == "tbnz" || arm64_gas_is_bcond(mnem)) {
+            var bops: string[] = arm64_gas_operands(rest);
+            if (mnem == "b") {
+                a = arm64_asm_b(a, bops[0]);
+            } else if (mnem == "bl") {
+                a = arm64_asm_bl(a, bops[0]);
+            } else if (mnem == "cbz") {
+                a = arm64_asm_cbz(a, arm64_gas_reg(bops[0]), bops[1]);
+            } else if (mnem == "cbnz") {
+                a = arm64_asm_cbnz(a, arm64_gas_reg(bops[0]), bops[1]);
+            } else if (mnem == "tbz") {
+                a = arm64_asm_tbz(a, arm64_gas_reg(bops[0]), arm64_gas_imm(bops[1]), bops[2]);
+            } else if (mnem == "tbnz") {
+                a = arm64_asm_tbnz(a, arm64_gas_reg(bops[0]), arm64_gas_imm(bops[1]), bops[2]);
+            } else {
+                a = arm64_asm_bcond(a, arm64_gas_cond(arm64_gas_bcond_suffix(mnem)), bops[0]);
+            }
+            continue;
+        }
         a = arm64_gas_emit(a, mnem, rest);
     }
-    p = arm64_gas_ltorg(p, a); // flush any literals after the final `.ltorg`
-    a = p.asm;
-    p = Arm64GasProg { ...p, asm: arm64_asm_new() };
+    a = arm64_gas_ltorg(p, a); // flush any literals after the final `.ltorg`
+    p = Arm64GasProg { ...p, lit_sites: [], lit_vals: [] };
     // 8-align the data blob so the .bss region that follows it in memory
     // (data_vaddr + data.len()) starts 8-aligned for the heap globals.
     while ((p.data.len() & 7) != 0) {
         p = Arm64GasProg { ...p, data: p.data.append(0) };
     }
-    return Arm64GasProg { ...p, asm: arm64_asm_resolve(a) };
+    a = arm64_asm_resolve(a);
+    return Arm64GasProg { ...p, asm: a };
 }
 
 // arm64_gas_link resolves the queued @PAGE/@PAGEOFF fixups now that the
 // final __TEXT / __DATA segment addresses are known (the caller supplies
 // them from macho.fern's macho_text_vaddr / macho_data_vaddr). After this,
 // p.asm.code + p.data are the final sections.
-pub function arm64_gas_link(p: Arm64GasProg, text_vaddr: i64, data_vaddr: i64): Arm64GasProg {
+// It consumes the prog (`own`) so the .text buffer can be lifted clear of both
+// enclosing structs before the loop: patched in place inside them, each fixup
+// cloned the whole .text.
+pub function arm64_gas_link(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: i64): Arm64GasProg {
     var aw: Arm64Asm = p.asm;
+    p = Arm64GasProg { ...p, asm: arm64_asm_new() };
+    var code: i32[] = aw.code;
+    aw = Arm64Asm { ...aw, code: [] };
     var i: i32 = 0;
     while (i < p.pf_sites.len()) {
         var site: i32 = p.pf_sites[i];
@@ -2457,14 +2504,15 @@ pub function arm64_gas_link(p: Arm64GasProg, text_vaddr: i64, data_vaddr: i64): 
         var kind: i32 = p.pf_kinds[i];
         if (kind == 0) {
             var adrp_addr: i64 = text_vaddr + (site as i64);
-            aw = Arm64Asm { ...aw, code: arm64_patch_adrp(aw.code, site, arm64_page_delta(target, adrp_addr)) };
+            code = arm64_patch_adrp(code, site, arm64_page_delta(target, adrp_addr));
         } else if (kind == 1) {
-            aw = Arm64Asm { ...aw, code: arm64_patch_ldr_off(aw.code, site, arm64_page_off(target)) };
+            code = arm64_patch_ldr_off(code, site, arm64_page_off(target));
         } else {
-            aw = Arm64Asm { ...aw, code: arm64_patch_addimm_off(aw.code, site, arm64_page_off(target)) };
+            code = arm64_patch_addimm_off(code, site, arm64_page_off(target));
         }
         i = i + 1;
     }
+    aw = Arm64Asm { ...aw, code: code };
     p = Arm64GasProg { ...p, asm: aw };
     return p;
 }
