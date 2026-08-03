@@ -400,6 +400,32 @@ jobs:
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostConstFuncGen2$' -test.v -test.timeout 28m
 
+  # The fixture corpus, run through the SELF-HOST compiler. Nothing else does:
+  # all four of TestFernFixtures' backends are the NATIVE compiler, so 335
+  # fixture directories have been exercising the compiler that is meant to be
+  # FROZEN while the one meant to become the product was covered only by inlined
+  # string literals in Go tests. Its first run found twelve real divergences on
+  # fixtures that had been green for months (see
+  # internal/e2e/testdata/selfhost-wasm-known-divergences.txt).
+  #
+  # Its own lane rather than part of the fixture run: it builds fern.fern (a
+  # heavy self-host driver, ~4.3 GB reserved by the harness limiter) where the
+  # native fixture run is 15 seconds. Paid once, then ~1.3s per fixture.
+  fixtures-selfhost:
+    needs: build
+    name: fixtures-selfhost-wasm-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true"
+      - name: run the fixture corpus through the self-host compiler
+        env:
+          FERN_SELFHOST_FIXTURES: "1"
+        run: go test ./internal/e2e/ -run '^TestFernFixturesSelfHostWasm$' -v -timeout 38m
+
   test:
     needs: [build, warm]
     strategy:

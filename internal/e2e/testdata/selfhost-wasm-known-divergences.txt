@@ -1,0 +1,49 @@
+# Fixtures where the SELF-HOST wasm path disagrees with the native compiler.
+#
+# Format: <fixture-name> <reason>
+#
+# TestFernFixturesSelfHostWasm lists these rather than skipping them, following
+# tools/deadcode-allowlist.txt: the lane is green with them listed, a NEW
+# divergence fails, and a listed fixture that starts PASSING also fails — an
+# allowlist nobody prunes is where bugs go to be forgotten.
+#
+# All twelve were found by the leg's first run over the existing corpus, on
+# fixtures that had been green for months because all four of TestFernFixtures'
+# backends are the native compiler. Each has been reproduced by hand with a
+# native self-host CLI (`make selfhost-cli`) before being written down; none is
+# a harness artifact. The first pass reported 26 mismatches and 14 of those WERE
+# artifacts — WASI caps exit status at 125, so nine regex fixtures whose expected
+# 255 is a feature bitmask looked like a broken regex engine — which is why every
+# entry here names a measured before/after rather than a symptom.
+
+# --- the self-host wasm path cannot lower these at all --------------------
+# Hard errors now the AST emitters are deleted (#3457), so these are real
+# IR-subset gaps, not fallbacks. "module is not IR-eligible" from the driver.
+generic_method_typeparams IR-ineligible on self-host wasm; native compiles it
+map_struct_value_field IR-ineligible on self-host wasm; native compiles it
+pure_collection_aliases IR-ineligible on self-host wasm; native compiles it
+
+# --- traps at runtime ----------------------------------------------------
+# `wasm trap: unreachable instruction executed`. Detected regardless of the
+# expected exit value, which is why these survived the exit>=126 cut. All four
+# are regex capture-group shapes, so plausibly one root cause.
+regex_captures traps (unreachable) on self-host wasm; native returns 255
+regex_captures_all traps (unreachable) on self-host wasm; native returns 255
+regex_named_groups traps (unreachable) on self-host wasm; native returns 255
+regex_replace_groups traps (unreachable) on self-host wasm; native returns 255
+
+# --- runs clean, wrong answer -------------------------------------------
+audit_numeric_types self-host wasm returns 13, native 0
+derive_json self-host wasm returns 4, native 42
+eq_struct_enum self-host wasm returns 18, native 63
+ord_struct_enum self-host wasm returns 87, native 31
+tuple_match_expr self-host wasm returns 20, native 42
+
+# --- suspicious but UNMEASURABLE by this oracle --------------------------
+# Not listed as divergences because the leg cannot prove it: their expected exit
+# is >= 126, so WASI reports 1 and the real answer is invisible. They neither
+# trap nor get rejected, which is all that can honestly be asserted. Both
+# returned a clean value that looks wrong (regex_captures_assert 47, regex_groups
+# 111) and both deserve a look through a stdout-based oracle:
+#   regex_captures_assert  (expected 255)
+#   regex_groups           (expected 127)
