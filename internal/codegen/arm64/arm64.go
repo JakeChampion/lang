@@ -6319,7 +6319,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emitStrDataPtr("x24", "x0", 208) // x24 = path byte ptr for openat; scratch lives at [x29 + 208]
 
 	// openat(AT_FDCWD=-100, path, O_RDONLY=0, 0)
-	g.emit("mov x0, #-100")
+	g.emit("mov x0, #%d", g.atFdCwd())
 	g.emit("mov x1, x24")
 	g.emit("mov x2, #0")
 	g.emit("mov x3, #0")
@@ -6432,7 +6432,7 @@ func (g *generator) emitReadFileRuntime2W() {
 	// NUL-terminate for openat (see emitNulTermPath2W).
 	g.emitNulTermPath2W("x25", "x25", "x20")
 	// openat(AT_FDCWD=-100, path, O_RDONLY=0, 0)
-	g.emit("mov x0, #-100")
+	g.emit("mov x0, #%d", g.atFdCwd())
 	g.emit("mov x1, x25")
 	g.emit("mov x2, #0")
 	g.emit("mov x3, #0")
@@ -6544,7 +6544,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emitStrDataPtr("x24", "x19", 64) // x24 = path byte ptr (preserves x19 = original)
 
 	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
-	g.emit("mov x0, #-100")
+	g.emit("mov x0, #%d", g.atFdCwd())
 	g.emit("mov x1, x24")
 	g.emit("mov x2, #577")
 	g.emit("mov x3, #0644")
@@ -6635,7 +6635,7 @@ func (g *generator) emitWriteFileRuntime2W() {
 	// NUL-terminate for openat (see emitNulTermPath2W).
 	g.emitNulTermPath2W("x25", "x25", "x20")
 	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC=577, 0644)
-	g.emit("mov x0, #-100")
+	g.emit("mov x0, #%d", g.atFdCwd())
 	g.emit("mov x1, x25")
 	g.emit("mov x2, #577")
 	g.emit("mov x3, #0644")
@@ -6702,7 +6702,7 @@ func (g *generator) atFdcwd(reg string) {
 	if g.darwin {
 		g.emit("mov %s, #-2", reg)
 	} else {
-		g.emit("mov %s, #-100", reg)
+		g.emit("mov %s, #%d", reg, g.atFdCwd())
 	}
 }
 
@@ -7543,7 +7543,7 @@ func (g *generator) emitReaderWriterRuntime() {
 			g.emitStrDataPtr2W("x21", "x19", "x20", 48) // x21 = byte ptr; scratch [x29+48]
 			// NUL-terminate for openat (see emitNulTermPath2W).
 			g.emitNulTermPath2W("x21", "x21", "x20")
-			g.emit("mov x0, #-100")
+			g.emit("mov x0, #%d", g.atFdCwd())
 			g.emit("mov x1, x21")
 			g.emit("mov w2, #%d", e.flags)
 			g.emit("mov w3, #%d", e.mode)
@@ -7580,8 +7580,8 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("stp x29, x30, [sp, #-32]!")
 		g.emit("mov x29, sp")
 		g.emit("stp x19, x20, [sp, #16]")
-		g.emit("mov x19, x0")   // stash path
-		g.emit("mov x0, #-100") // AT_FDCWD
+		g.emit("mov x19, x0")              // stash path
+		g.emit("mov x0, #%d", g.atFdCwd()) // AT_FDCWD
 		g.emit("mov x1, x19")
 		g.emit("mov w2, #%d", e.flags)
 		g.emit("mov w3, #%d", e.mode)
@@ -8738,6 +8738,21 @@ func (g *generator) syscallExit() {
 // Args must already be in x0..x5 per AAPCS64; the helper
 // only touches x0 (on the Darwin error path) and x8/x16
 // (syscall number).
+// atFdCwd is the AT_FDCWD dirfd for the target platform. Linux defines it as
+// -100 and XNU as -2, and the generator emitted the Linux value on both — so on
+// arm64-darwin every openat/unlinkat/mkdirat/fstatat got a dirfd that names
+// nothing. An ABSOLUTE path still worked, because openat ignores dirfd when the
+// path is absolute; a RELATIVE one could not be resolved at all, which is how
+// this hid: `fern` itself and every test drive binaries with absolute paths.
+// The symptom was a self-host driver reporting "cannot read entry file" for
+// exactly the paths a human would type.
+func (g *generator) atFdCwd() int {
+	if g.darwin {
+		return -2
+	}
+	return -100
+}
+
 func (g *generator) syscall(name string) {
 	if nums, ok := linuxDarwinSysno[name]; ok {
 		if g.darwin {

@@ -166,6 +166,44 @@ function main(): i32 {
 // fstat64 syscall (339) and st_size at struct-stat offset 96 — by reading
 // a known file and checking its length. Builds everywhere; executes only
 // on Apple Silicon.
+// TestArm64DarwinNativeReadFileRelative reads a RELATIVE path, resolved against
+// the process cwd. Its absolute-path sibling below passed throughout the period
+// this was broken, which is the whole point of having both: AT_FDCWD is -100 on
+// Linux and -2 on XNU, the generator emitted the Linux value on both, and
+// openat IGNORES dirfd when the path is absolute. So every existing test — and
+// the `fern` driver itself, which builds absolute paths — sailed past a bug that
+// made `read_file("data.txt")` fail unconditionally on arm64-darwin.
+func TestArm64DarwinNativeReadFileRelative(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	const content = "hello, fern!" // 12 bytes
+	if err := os.WriteFile(filepath.Join(dir, "data.txt"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write data: %v", err)
+	}
+	src := filepath.Join(dir, "prog.fern")
+	prog := "function main(): i32 {\n  match (read_file(\"data.txt\")) {\n    Ok(s) => { return s.len(); },\n    Err(e) => { return 99; }\n  }\n}\n"
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	out := filepath.Join(dir, "prog")
+	if o, err := exec.Command(bin, "-target", "arm64-darwin", "-o", out, src).CombinedOutput(); err != nil {
+		t.Fatalf("native arm64-darwin build failed: %v\n%s", err, o)
+	}
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("execution check only runs on Apple Silicon")
+	}
+	cmd := exec.Command(out)
+	cmd.Dir = dir // the relative path resolves against THIS
+	_ = cmd.Run()
+	ps := cmd.ProcessState
+	if ps == nil || !ps.Exited() {
+		t.Fatalf("native Mach-O did not run to a normal exit (state=%v)", ps)
+	}
+	if code := ps.ExitCode(); code != len(content) {
+		t.Errorf("read_file(\"data.txt\").len() = %d, want %d (99 = the Err arm: AT_FDCWD wrong for the target?)", code, len(content))
+	}
+}
+
 func TestArm64DarwinNativeReadFile(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
