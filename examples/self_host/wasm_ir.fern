@@ -103,6 +103,7 @@ pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[]
     var bp: string[] = irlower.borrowable_params_interproc(all_funcs);
     var csp: string[] = irlower.consume_safe_params_interproc(all_funcs, bp);
     var fnames: string[] = irlower.fn_names_of(all_funcs);
+    var clarf: string[] = irlower.closurearr_ret_fns_of(all_funcs, all_structs);
     var frsf: string[] = irlower.fresh_struct_ret_fns_of(all_funcs, all_structs);
     var rfrsf: string[] = irlower.return_fresh_struct_ret_fns_of(all_funcs, all_structs);
     var sfrf: string[] = irlower.str_fresh_ret_fns_of(all_funcs);
@@ -112,7 +113,7 @@ pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[]
     var out: irlower.LowerResult[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out.append(irlower.lower_func(mod.funcs[fi], arf, all_structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(all_funcs, all_structs), cnf, bp, fnames, frsf, csp, rfrsf, sfrf, ofrf, sfot, tfrf, true));
+        out = out.append(irlower.lower_func(mod.funcs[fi], arf, all_structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, bp, fnames, frsf, csp, rfrsf, sfrf, ofrf, sfot, tfrf, true));
         fi = fi + 1;
     }
     return out;

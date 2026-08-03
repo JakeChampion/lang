@@ -2204,10 +2204,13 @@ function arm64_lit_le64(buf: i32[], v: i64): i32[] {
 // bytes. asm_arm64 emits a `.ltorg` after every function so the pool stays
 // within the ±1 MiB LDR-literal reach; the pool sits after the function's
 // `ret`, so it is never executed. The pending lists are cleared.
-function arm64_gas_ltorg(p0: Arm64GasProg): Arm64GasProg {
+// It takes the .text buffer as an argument and hands it back inside the
+// returned prog rather than reading p.asm, so the buffer is uniquely owned here
+// too — see arm64_gas_program's note on why an alias makes every append copy.
+function arm64_gas_ltorg(p0: Arm64GasProg, a0: Arm64Asm): Arm64GasProg {
     var p: Arm64GasProg = p0;
-    if (p.lit_sites.len() == 0) { return p; }
-    var aw: Arm64Asm = p.asm;
+    var aw: Arm64Asm = a0;
+    if (p.lit_sites.len() == 0) { return Arm64GasProg { ...p, asm: aw }; }
     while ((aw.code.len() & 7) != 0) {
         aw = Arm64Asm { ...aw, code: aw.code.append(0) };
     }
@@ -2232,6 +2235,20 @@ function arm64_gas_ltorg(p0: Arm64GasProg): Arm64GasProg {
 // macho.fern enters at the first text byte.
 pub function arm64_gas_program(src: string): Arm64GasProg {
     var p: Arm64GasProg = arm64_gas_prog_new();
+    // The .text buffer is threaded through the loop as `a`, a UNIQUELY-owned
+    // local, and only folded back into p on return. Reading it out of p.asm per
+    // instruction — `arm64_gas_emit(p.asm, …)`, or the `var xas: Arm64Asm =
+    // p.asm; …; p = { ...p, asm: xas }` shape the special cases used — left the
+    // code array reachable through BOTH p and the local, so every append inside
+    // saw a shared array and copied the whole buffer instead of extending it:
+    // one full copy per emitted instruction, i.e. O(code_len^2) arena traffic.
+    // That is #6011 — the self-host arm64 CLI needed 8.5 GB (arena exhausted,
+    // exit 137) to compile an empty `main` importing std/array, where x86-64
+    // did it in 1.5 GB. The emitters were never at fault; only this assembler
+    // is on the arm64 CLI path, and x86-64's stops at `.s` text. Held uniquely,
+    // Perceus reuse extends the buffer in place and the cost is linear.
+    var a: Arm64Asm = p.asm;
+    p = Arm64GasProg { ...p, asm: arm64_asm_new() };
     var section: i32 = 0; // 0 = .text, 1 = data (__const / __data)
     var lines: string[] = arm64_str_split(src, "\n");
     var li: i32 = 0;
@@ -2258,7 +2275,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
                     p = Arm64GasProg { ...p, bss_names: p.bss_names.append(before) };
                     p = Arm64GasProg { ...p, bss_offs: p.bss_offs.append(p.bss_size) };
                 } else {
-                    p = Arm64GasProg { ...p, asm: arm64_asm_label(p.asm, before) };
+                    a = arm64_asm_label(a, before);
                 }
                 line = arm64_gas_trim(line[colon + 1:line.len()]);
                 if (line.len() == 0) {
@@ -2269,7 +2286,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // directives
         if (line[0] == 46) { // '.'
             if (line == ".ltorg") {
-                p = arm64_gas_ltorg(p);
+                p = arm64_gas_ltorg(p, a);
+                a = p.asm;
+                p = Arm64GasProg { ...p, asm: arm64_asm_new() };
             } else if (line == ".text") {
                 section = 0;
             } else if (line == ".bss") {
@@ -2314,10 +2333,8 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             var rops: string[] = arm64_gas_operands(rest);
             var litok: string = arm64_gas_trim(rops[1]);
             var nval: i32 = arm64_gas_atoi(arm64_gas_trim(litok[1:litok.len()]));
-            var llas: Arm64Asm = p.asm;
-            llas = Arm64Asm { ...llas, code: arm64_ldr_lit(llas.code, arm64_gas_reg(rops[0]), 0) };
-            p = Arm64GasProg { ...p, asm: llas };
-            p = Arm64GasProg { ...p, lit_sites: p.lit_sites.append(llas.code.len() - 4) };
+            a = Arm64Asm { ...a, code: arm64_ldr_lit(a.code, arm64_gas_reg(rops[0]), 0) };
+            p = Arm64GasProg { ...p, lit_sites: p.lit_sites.append(a.code.len() - 4) };
             p = Arm64GasProg { ...p, lit_vals: p.lit_vals.append(nval) };
             continue;
         }
@@ -2325,10 +2342,8 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // assembles directly into .text.
         if (mnem == "adrp") {
             var aops: string[] = arm64_gas_operands(rest);
-            var aas: Arm64Asm = p.asm;
-            aas = Arm64Asm { ...aas, code: arm64_adrp(aas.code, arm64_gas_reg(aops[0]), 0) };
-            p = Arm64GasProg { ...p, asm: aas };
-            p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(aas.code.len() - 4) };
+            a = Arm64Asm { ...a, code: arm64_adrp(a.code, arm64_gas_reg(aops[0]), 0) };
+            p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
             p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(aops[1])) };
             p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(0) };
             continue;
@@ -2341,20 +2356,16 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             var lb: i32 = arm64_str_indexof(linner, "[");
             var rb: i32 = arm64_str_indexof(linner, "]");
             var lparts: string[] = arm64_gas_operands(linner[lb + 1:rb]);
-            var las: Arm64Asm = p.asm;
-            las = Arm64Asm { ...las, code: arm64_ldr(las.code, arm64_gas_reg(lops[0]), lm.base, 0) };
-            p = Arm64GasProg { ...p, asm: las };
-            p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(las.code.len() - 4) };
+            a = Arm64Asm { ...a, code: arm64_ldr(a.code, arm64_gas_reg(lops[0]), lm.base, 0) };
+            p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
             p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(lparts[1])) };
             p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(1) };
             continue;
         }
         if (mnem == "add" && arm64_str_indexof(rest, "@PAGEOFF") >= 0) {
             var dops: string[] = arm64_gas_operands(rest);
-            var das: Arm64Asm = p.asm;
-            das = Arm64Asm { ...das, code: arm64_addimm(das.code, arm64_gas_reg(dops[0]), arm64_gas_reg(dops[1]), 0) };
-            p = Arm64GasProg { ...p, asm: das };
-            p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(das.code.len() - 4) };
+            a = Arm64Asm { ...a, code: arm64_addimm(a.code, arm64_gas_reg(dops[0]), arm64_gas_reg(dops[1]), 0) };
+            p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
             p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(dops[2])) };
             p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(2) };
             continue;
@@ -2365,10 +2376,8 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // `adrp Xd, sym` is handled by the adrp branch above (bare symbol).
         if (mnem == "add" && arm64_str_indexof(rest, ":lo12:") >= 0) {
             var lops: string[] = arm64_gas_operands(rest);
-            var las: Arm64Asm = p.asm;
-            las = Arm64Asm { ...las, code: arm64_addimm(las.code, arm64_gas_reg(lops[0]), arm64_gas_reg(lops[1]), 0) };
-            p = Arm64GasProg { ...p, asm: las };
-            p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(las.code.len() - 4) };
+            a = Arm64Asm { ...a, code: arm64_addimm(a.code, arm64_gas_reg(lops[0]), arm64_gas_reg(lops[1]), 0) };
+            p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
             p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_lo12(lops[2])) };
             p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(2) };
             continue;
@@ -2380,9 +2389,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             var nops: string[] = arm64_gas_operands(rest);
             var nimm: i32 = arm64_gas_imm(nops[2]);
             if (arm64_and_imm_ok(nimm)) {
-                var aand: Arm64Asm = p.asm;
-                aand = Arm64Asm { ...aand, code: arm64_and_imm(aand.code, arm64_gas_reg(nops[0]), arm64_gas_reg(nops[1]), nimm) };
-                p = Arm64GasProg { ...p, asm: aand };
+                a = Arm64Asm { ...a, code: arm64_and_imm(a.code, arm64_gas_reg(nops[0]), arm64_gas_reg(nops[1]), nimm) };
             } else {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("and#") };
             }
@@ -2394,9 +2401,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             var eops: string[] = arm64_gas_operands(rest);
             var eimm: i32 = arm64_gas_imm(eops[2]);
             if (arm64_eor_imm_ok(eimm)) {
-                var aeor: Arm64Asm = p.asm;
-                aeor = Arm64Asm { ...aeor, code: arm64_eor_imm(aeor.code, arm64_gas_reg(eops[0]), arm64_gas_reg(eops[1]), eimm) };
-                p = Arm64GasProg { ...p, asm: aeor };
+                a = Arm64Asm { ...a, code: arm64_eor_imm(a.code, arm64_gas_reg(eops[0]), arm64_gas_reg(eops[1]), eimm) };
             } else {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("eor#") };
             }
@@ -2408,9 +2413,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             var sops: string[] = arm64_gas_operands(rest);
             var sysn: string = arm64_gas_trim(sops[1]);
             if (arm64_mrs_base(sysn) >= 0) {
-                var amrs: Arm64Asm = p.asm;
-                amrs = Arm64Asm { ...amrs, code: arm64_mrs(amrs.code, arm64_gas_reg(sops[0]), sysn) };
-                p = Arm64GasProg { ...p, asm: amrs };
+                a = Arm64Asm { ...a, code: arm64_mrs(a.code, arm64_gas_reg(sops[0]), sysn) };
             } else {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("mrs:" + sysn) };
             }
@@ -2419,16 +2422,17 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         if (!arm64_gas_known(mnem)) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem) };
         }
-        p = Arm64GasProg { ...p, asm: arm64_gas_emit(p.asm, mnem, rest) };
+        a = arm64_gas_emit(a, mnem, rest);
     }
-    p = arm64_gas_ltorg(p); // flush any literals after the final `.ltorg`
+    p = arm64_gas_ltorg(p, a); // flush any literals after the final `.ltorg`
+    a = p.asm;
+    p = Arm64GasProg { ...p, asm: arm64_asm_new() };
     // 8-align the data blob so the .bss region that follows it in memory
     // (data_vaddr + data.len()) starts 8-aligned for the heap globals.
     while ((p.data.len() & 7) != 0) {
         p = Arm64GasProg { ...p, data: p.data.append(0) };
     }
-    p = Arm64GasProg { ...p, asm: arm64_asm_resolve(p.asm) };
-    return p;
+    return Arm64GasProg { ...p, asm: arm64_asm_resolve(a) };
 }
 
 // arm64_gas_link resolves the queued @PAGE/@PAGEOFF fixups now that the
