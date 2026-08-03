@@ -1,0 +1,52 @@
+// An `own` parameter transferred on ONE branch and returned on another.
+//
+// Move-on-call claims a param's textually-LAST occurrence as the consuming
+// transfer, so on a branchy function it claims the wrong one: in `emit` below
+// the last occurrence is the trailing `return a`, not the `bcond(a, …)` two
+// lines above it. That left the transfer unmarked — the callee dropped the
+// struct and this frame's exit sweep dropped it again — so the box was freed
+// twice and every field read afterwards saw freelist garbage. Compiled
+// backends returned nonsense or SIGSEGV'd while `-interp` was correct.
+//
+// The shape needs all of: a reassign-and-return branch, a guarded transfer
+// branch, a trailing fall-through return, and a further own hop inside the
+// callee — that is the arm64 in-process assembler's dispatch (`arm64_gas_emit`
+// -> `arm64_asm_bcond` -> `arm64_asm_fixup_or_patch`) reduced to its skeleton.
+struct Asm { code: i32[], fixups: i32[] }
+
+function fixup(own a: Asm, at: i32): Asm {
+    a = Asm { ...a, fixups: a.fixups.append(at) };
+    return a;
+}
+
+function bcond(own a: Asm, word: i32): Asm {
+    a = Asm { ...a, code: a.code.append(word) };
+    var at: i32 = a.code.len() - 1;
+    return fixup(a, at);
+}
+
+function emit(own a: Asm, mnem: string): Asm {
+    if (mnem == "ret") { a = Asm { ...a, code: a.code.append(0) }; return a; }
+    if (mnem == "bcond") { return bcond(a, 7); }
+    return a;                        // <- the param's LAST textual occurrence
+}
+
+function main(): i32 {
+    var a: Asm = Asm { code: [], fixups: [] };
+    // 4+ rounds: a freed-then-reused block still holds its old bytes, so a
+    // two-call probe reads correct values even when the box was double-freed.
+    var i: i32 = 0;
+    while (i < 16) {
+        a = emit(a, "bcond");
+        a = emit(a, "ret");
+        a = emit(a, "unknown");
+        i = i + 1;
+    }
+    if (a.code.len() != 32) { return 91; }
+    if (a.fixups.len() != 16) { return 92; }
+    // Assert the written VALUES, not just the lengths — a recycled block keeps
+    // its shape while its contents rot.
+    if (a.code[0] != 7 || a.code[1] != 0 || a.code[30] != 7 || a.code[31] != 0) { return 93; }
+    if (a.fixups[0] != 0 || a.fixups[15] != 30) { return 94; }
+    return 0;
+}

@@ -67,6 +67,13 @@ type rcPlan struct {
 	// per-site so only the local's LAST alias moves — earlier aliases
 	// of the same local keep their inc.
 	moveSites map[ast.Node]bool
+	// ownCallMoveArgs[argExpr] is true for the specific argument NODE that
+	// move-on-call marked as the consuming transfer of an `own` param (the
+	// occurrence computeMovedLocals proved to be the param's last use). Every
+	// OTHER occurrence of that param in an `own` argument position is a
+	// transfer the exit sweep does NOT pay for, so it needs a compensating
+	// retain — see ownArgNeedsRetain.
+	ownCallMoveArgs map[ast.Node]bool
 	// ctorAliasInced[name] records a local that received a CONSTRUCTION
 	// alias-inc — its reference was retained into a container literal
 	// (array / tuple / struct field / enum payload) while the local itself
@@ -226,6 +233,7 @@ func (b *builder) computeRcAnalyses() {
 	// borrowed-derived locals are excluded (only the owner frees).
 	b.rc.freeEligible = b.computeFreeEligible()
 	b.rc.moveSites = map[ast.Node]bool{}
+	b.rc.ownCallMoveArgs = map[ast.Node]bool{}
 	b.rc.movedLocals = b.computeMovedLocals()
 	b.rc.ctorAliasInced = b.computeCtorAliasInced()
 	b.rc.borrowedMapFieldResults = b.computeBorrowedMapFieldResults()
@@ -1780,6 +1788,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 						if arg, ok := x.Args[i].(*ast.Ident); ok &&
 							ownParam[arg.Name] && order.isLast(arg) {
 							moved[arg.Name] = true
+							b.rc.ownCallMoveArgs[arg] = true
 						}
 					}
 				}

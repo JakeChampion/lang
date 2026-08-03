@@ -12594,6 +12594,17 @@ func (b *builder) callBody(n *ast.Call) error {
 		if ownedByDefaultAt(ai) && needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
 			b.emitAliasInc(a)
 		}
+		// An explicit `own` position whose argument is one of THIS function's
+		// `own` params, at an occurrence move-on-call did NOT claim, is a
+		// transfer with nothing behind it: the callee consumes a reference and
+		// the exit sweep still decs the param, so the box is released twice.
+		// computeMovedLocals only claims the param's textually-LAST occurrence,
+		// which on a branchy function is a DIFFERENT one (`if (…) { return
+		// consume(a); } return a;` — the consume is not last, the bare `return
+		// a` is), so retain here and let the callee's drop spend the extra.
+		if ai < len(ownArgFlags) && ownArgFlags[ai] && b.ownArgNeedsRetain(a) {
+			b.emitAliasInc(a)
+		}
 		// Phase 2d-borrow: function parameters are borrowed, not
 		// owned, so passing a tracked argument is NOT an
 		// ownership-creating alias — no __fern_rc_inc here. The

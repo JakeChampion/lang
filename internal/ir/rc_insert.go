@@ -3013,3 +3013,40 @@ func rcTrackedForFlatDec(t ast.Type) bool {
 	}
 	return arrElemIsRcTracked(t)
 }
+
+// ownArgNeedsRetain reports whether an argument in an explicit `own` parameter
+// position must be retained before the call. It is true for an occurrence of
+// one of THIS function's `own` params that move-on-call did not mark as the
+// consuming transfer (b.rc.ownCallMoveArgs).
+//
+// The exit sweep decs an `own` param unless computeMovedLocals marked it moved,
+// and that marking is whole-function and keyed on the param's textually-LAST
+// occurrence. A function that transfers the param on one branch and returns it
+// on another has its last occurrence on the RETURN, so the transfer goes
+// unmarked: the callee consumes a reference the caller never gave up, and the
+// sweep frees the same box a second time. Retaining here restores the balance —
+// the callee's drop spends the extra reference and the sweep's dec spends this
+// frame's own. Where the move IS marked, nothing changes (no inc, sweep
+// skipped), so already-correct code keeps its exact rc traffic.
+//
+// Plain locals are excluded: E051 only admits one in an `own` position as a
+// self-reassign `x = f(…, x, …)`, whose old binding is dropped by the callee
+// and whose overwrite-dec callConsumesIdent already suppresses.
+func (b *builder) ownArgNeedsRetain(a ast.Expr) bool {
+	if !ast.RcFreeEnabled {
+		return false
+	}
+	id, ok := a.(*ast.Ident)
+	if !ok || b.rc.ownCallMoveArgs[a] {
+		return false
+	}
+	for _, p := range b.fn.Params {
+		if p.Name != id.Name {
+			continue
+		}
+		// Only an explicitly-`own` param is swept unconditionally here; a
+		// borrowed or owned-by-default one is covered by its own rules.
+		return p.Own && rcTrackedSlotType(p.Type) && b.rc.freeEligible[p.Name]
+	}
+	return false
+}
