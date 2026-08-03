@@ -1,0 +1,57 @@
+import "std/i32";
+// An `own` array param that is ALSO an assign target, threaded through a
+// mutually-recursive walker — the shape of ssa.fern's collect_assigned_loop /
+// collect_assigned_stmt / merge_names. `acc` is simultaneously an `own` param,
+// an assign target (`acc = f(acc)`), an argument in an `own` position, and a
+// returned value; no fixture covered that combination before.
+//
+// What this does and does not guard. It exercises the own-param lowering at
+// PROGRAM level, which nothing in the corpus did. It does NOT catch #6018:
+// verified by compiling it with a compiler built from that broken revision,
+// which produces a correct binary. #6018 miscompiled the COMPILER — ssa.fern's
+// own params — so it surfaced as the driver segfaulting on an unrelated
+// program with no `own` in it at all. Only internal/e2eselfhost catches that
+// class; the per-module fixpoint, all 335 fixtures and the native suite were
+// green throughout.
+//
+// Asserts written VALUES over 50 rounds: a freed-then-reused block keeps its
+// old bytes, so a length check passes even when a buffer was released twice.
+function push_pair(own acc: i32[], v: i32): i32[] {
+    acc = acc.append(v);
+    acc = acc.append(v * 2);
+    return acc;
+}
+
+function walk_inner(own acc: i32[], n: i32): i32[] {
+    if (n <= 0) { return acc; }
+    acc = push_pair(acc, n);
+    return walk_inner(acc, n - 1);
+}
+
+function walk(own acc: i32[], rounds: i32): i32[] {
+    var i: i32 = 0;
+    while (i < rounds) {
+        acc = walk_inner(acc, 4);
+        i = i + 1;
+    }
+    return acc;
+}
+
+function main(): i32 {
+    var out: i32[] = walk([], 50);
+    if (out.len() != 400) { return 91; }
+    // Each round appends n=4..1 as (n, 2n): 4,8, 3,6, 2,4, 1,2
+    var expect: i32[] = [4, 8, 3, 6, 2, 4, 1, 2];
+    var bad: i32 = 0;
+    var r: i32 = 0;
+    while (r < 50) {
+        var k: i32 = 0;
+        while (k < 8) {
+            if (out[r * 8 + k] != expect[k]) { bad = bad + 1; }
+            k = k + 1;
+        }
+        r = r + 1;
+    }
+    if (bad != 0) { return 92; }
+    return 0;
+}
