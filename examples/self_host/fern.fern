@@ -416,10 +416,10 @@ function main(): i32 {
 
     if (!have_entry) { return usage(); }
 
-    if (target != "x86-64" && target != "arm64" && target != "arm64-android" && target != "arm64-darwin" && target != "wasm" && target != "wasm-bin" && target != "wasm-component") {
+    if (target != "x86-64" && target != "arm64" && target != "arm64-asm" && target != "arm64-android" && target != "arm64-darwin" && target != "wasm" && target != "wasm-bin" && target != "wasm-component") {
         eprint("fern: unknown -target: ");
         eprint(target);
-        eprint(" (want x86-64, arm64, arm64-darwin, wasm, wasm-bin, or wasm-component)\n");
+        eprint(" (want x86-64, arm64, arm64-asm, arm64-darwin, wasm, wasm-bin, or wasm-component)\n");
         return 2;
     }
 
@@ -647,6 +647,20 @@ function main(): i32 {
         // the production default (AST shell → IR path); -ssa opts into the SSA
         // pipeline above instead.
         out_asm = arm64_elf_binary(asm_arm64_ir.emit_module_or_error(full, false));
+        if (out_asm.len() == 0) { return 2; }
+    } else if (target == "arm64-asm") {
+        // The arm64 emitter's GAS text, stopping short of the in-process
+        // assembler + linker that `-target arm64` runs on top of it — the
+        // arm64 sibling of what `-target x86-64` produces, and the shape a
+        // harness wants when it assembles with its own toolchain.
+        //
+        // It is also the only way to observe the emitter in isolation, which
+        // is what corrected #6011: measured through `-target arm64` the
+        // arm64 path looked 5x hungrier than x86-64, but that compared
+        // "emit + assemble + link" against x86-64's "emit". Emitter to
+        // emitter they are at parity (1.56 GB vs 1.50 GB on an empty `main`
+        // importing std/array); the excess is all in arm64_gas_program.
+        out_asm = asm_arm64_ir.emit_module_or_error(full, false);
         if (out_asm.len() == 0) { return 2; }
     } else if (target == "arm64-android") {
         // arm64-android is the arm64 emitter wrapped in a static-PIE (ET_DYN)

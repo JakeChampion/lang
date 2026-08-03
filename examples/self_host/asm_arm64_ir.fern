@@ -1507,9 +1507,11 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitSt
     var ofrf: string[] = irlower.opt_fresh_ret_fns_of(mod.funcs, mod.structs);
     var sfot: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
     var tfrf: string[] = irlower.tuple_fresh_ret_fns_of(mod.funcs);
+    var clarf: string[] = irlower.closurearr_ret_fns_of(mod.funcs, mod.structs);
+    var fnames: string[] = irlower.fn_names_of(mod.funcs);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs, mod.structs), cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
         fi = fi + 1;
     }
     s = s.write("_start:\n");
@@ -1598,10 +1600,11 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl
     var sfot: string[] = irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls);
     var tfrf: string[] = irlower.tuple_fresh_ret_fns_of(fns);
     var fnames: string[] = irlower.fn_names_of(fns);
+    var clarf: string[] = irlower.closurearr_ret_fns_of(fns, all_structs);
     var lit0: i32 = s.string_lits.len();
     var i: i32 = 0;
     while (i < fns.len()) {
-        s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(fns, all_structs), cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
         i = i + 1;
     }
     if (s.string_lits.len() > lit0) {
@@ -7253,6 +7256,8 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     var ofrf: string[] = irlower.opt_fresh_ret_fns_of(all_funcs, all_structs);
     var sfot: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
     var tfrf: string[] = irlower.tuple_fresh_ret_fns_of(all_funcs);
+    var clarf: string[] = irlower.closurearr_ret_fns_of(mod.funcs, mod.structs);
+    var fnames: string[] = irlower.fn_names_of(mod.funcs);
     // [lo, hi) function-index window (function-sharding, #3425 — the arm64
     // mirror of asm_ir.emit_module_funcs' windowing). A full window (lo=0,
     // hi<0 "to the end") is byte-identical to the unsharded emit; a partial
@@ -7267,7 +7272,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
             if (mod.funcs[fi].receiver_type.len() > 0) { gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name; }
             s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
         }
-        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, irlower.closurearr_ret_fns_of(mod.funcs, mod.structs), cnf, irlower.fn_names_of(mod.funcs), frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
         fi = fi + 1;
     }
     // #4355: admit the replaced-STRING-field arm per type from the
