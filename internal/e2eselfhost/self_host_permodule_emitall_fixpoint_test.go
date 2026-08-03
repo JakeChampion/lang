@@ -60,14 +60,16 @@ func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 // every unit. It is NOT the PER-MODULE fixpoint
 // (TestSelfHostPerModuleFixpointX86_64), which drives 33 separate per-module
 // emits and is the only guard that exercises the per-module windowing end to
-// end. That one runs ~1050 s — past the CI shard timeout — so it is env-gated
-// (RUN_PERMODULE_FIXPOINT=1) and does NOT run in any lane.
+// end.
 //
-// So a change to the RC lowering that alters emitted code can reach main with
-// only this batch-4 guard behind it. Anything touching retain/release
-// placement, drop insertion or reuse should be run against the per-module
-// fixpoint by hand before pushing — that is the gate that caught nothing this
-// time only because it was run deliberately:
+// That one is still env-gated (RUN_PERMODULE_FIXPOINT=1) because it runs
+// ~1050 s, past the 13-minute timeout on the sharded `test` job — but it now
+// has its OWN CI job (permodule-fixpoint-x86_64 in test-e2e-selfhost.yml,
+// timeout 45m), which sets the variable. The shard timeout never bound a
+// dedicated job, so the gate had been costing the coverage for no reason.
+//
+// Run it by hand when iterating locally on retain/release placement, drop
+// insertion or reuse:
 //
 //	RUN_PERMODULE_FIXPOINT=1 go test ./internal/e2eselfhost/ \
 //	    -run TestSelfHostPerModuleFixpointX86_64 -timeout 60m

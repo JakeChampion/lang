@@ -400,6 +400,48 @@ jobs:
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostConstFuncGen2$' -test.v -test.timeout 28m
 
+  # The PER-MODULE fixpoint: 33 separate per-module emits, gen0 (Go-built) vs
+  # gen1 (self-host-BUILT), asserting byte identity across every unit. It is the
+  # only guard that exercises the per-module windowing end to end.
+  #
+  # It was env-gated and run by NOTHING, because it takes ~1050 s — past the
+  # 13-minute timeout on the sharded `test` job. That timeout does not bind a
+  # dedicated job, so gating it cost the coverage for no reason: a change to the
+  # RC lowering could reach main with only the batch-4 emit-all sibling behind
+  # it. #6018 is what that looks like — it passed the fixpoint locally, all 335
+  # fixtures and the native suite, and still segfaulted the driver.
+  #
+  # Memory is the real constraint, not time: gen1's emit peaks ~7.6 GB against
+  # the arena, so its emit runs SERIALLY inside the test (concurrent large-module
+  # emits thrash the host). If this job starts failing with exit 137 from a Fern
+  # binary rather than the runner, that is arena exhaustion as the compiler
+  # sources grow — see the note on __fern_alloc in CLAUDE.md, not an infra flake.
+  permodule-fixpoint:
+    needs: build
+    name: permodule-fixpoint-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+        with:
+          gotestsum: "true"
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-x86_64
+      - name: per-module whole-compiler fixpoint (gen0 == gen1)
+        env:
+          RUN_PERMODULE_FIXPOINT: "1"
+          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
+        run: |
+          set -euo pipefail
+          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
+          chmod +x e2eselfhost.test
+          BIN="$PWD/e2eselfhost.test"
+          cd internal/e2eselfhost
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostPerModuleFixpointX86_64$' -test.v -test.timeout 43m
+
   # The fixture corpus, run through the SELF-HOST compiler. Nothing else does:
   # all four of TestFernFixtures' backends are the NATIVE compiler, so 335
   # fixture directories have been exercising the compiler that is meant to be
