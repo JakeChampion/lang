@@ -6,7 +6,7 @@ ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 LANG_SRCS := $(wildcard examples/*.fern)
 
-.PHONY: all build test vet deadcode clean examples run-% fmt fmt-check gofmt gofmt-check
+.PHONY: all build test vet deadcode freeze clean examples run-% fmt fmt-check gofmt gofmt-check
 
 all: build test
 
@@ -26,6 +26,12 @@ vet:
 # tools/deadcode_gate.sh and tools/deadcode-allowlist.txt.
 deadcode:
 	./tools/deadcode_gate.sh
+
+# Report the live state of the native-convergence freeze preconditions,
+# derived from the tree rather than read off #4451. Fails only on a
+# REGRESSION (ground lost). See tools/freeze_gate.sh.
+freeze:
+	./tools/freeze_gate.sh
 
 # Compile every example to arm64 Linux assembly and (if the
 # cross-compiler is present) link to a static arm64 binary.

@@ -111,14 +111,31 @@ the self-host backends reach parity; retiring the native *interpreter* is not.
 
 ## Freeze preconditions (all must be green before native is frozen)
 
+**Read the live state from `make freeze`, not from this list.** The rows below
+are the *definitions*; `tools/freeze_gate.sh` derives every mechanically-checkable
+one from the tree and runs in CI on every push. An audit on 2026-08-02 found
+this list, the tracker (#4451) and `SELFHOST-PERCEUS-REUSE.md` all carrying
+stale claims, and all three stale in the same direction — more pessimistic than
+the code. Prose does not re-check itself. Precondition 1's parity question is
+the only one that genuinely needs a human, and the gate prints it as
+UNVERIFIABLE rather than guessing.
+
 1. Roadmap **goal 2** complete — the Perceus port (inc/dec, borrow inference,
    drop specialisation, reuse analysis) at parity in the self-host compiler.
 2. #3451 / #3457 complete (the bootstrap-budget / bundle prerequisites).
-   **#3457 is CLOSED** (2026-08-02): all three legacy AST→asm emitters are
-   deleted — `asm.fern` + `asm_arm64.fern` (#5972) and `wasm.fern` (#5983) —
-   every backend routes IR-or-error, and the ~512-function merged-bundle budget
-   went with them. #3451 (the per-module epic) is still OPEN, so this row is
-   HALF green.
+   **GREEN as of 2026-08-02.** #3457 is closed: all three legacy AST→asm
+   emitters are deleted — `asm.fern` + `asm_arm64.fern` (#5972) and `wasm.fern`
+   (#5983) — every backend routes IR-or-error, and the ~512-function
+   merged-bundle budget went with them. #3451 remains open, but only on step 6
+   (#3458, incremental codegen / per-module object cache). That is build
+   performance, and self-host-only, so it does not bear on the question this
+   precondition asks — whether native has stopped being where features land.
+   This row's stated end condition was always "ending with the legacy AST
+   emitters deleted", and that is met, so the gate scores it on the emitters and
+   the IR-or-error routing rather than on the epic being closed. (It was
+   previously recorded as HALF green, and #4451 called it "the sole substantial
+   remaining gate" while citing a wasm component-model chain, #4315–#4320, that
+   had already closed in full.)
 3. **Checker-codes filter empty** — `selfHostImplementedCodes` deleted, the
    six-code gap above closed, all three differentials comparing unfiltered
    sets. **GREEN as of 2026-07-12.**
@@ -151,8 +168,9 @@ So the policy doesn't rot into ambient drift before it fires:
   Prefer landing new surface self-host-first even now, where the fixpoint
   allows it.
 - Keep the three differential suites green in CI (they already run).
-- When a precondition goes green, update its row here; when the last one does,
-  open `NATIVE-FREEZE.md` recording the freeze date and the final gate state,
-  and start rejecting new non-bootstrap surface in `internal/`.
+- When a precondition goes green, update its row here AND the check in
+  `tools/freeze_gate.sh`, so the derivable half stays derivable. When the last
+  one does, open `NATIVE-FREEZE.md` recording the freeze date and the final
+  gate state, and start rejecting new non-bootstrap surface in `internal/`.
 - New checker rules land self-host-side too and shrink the six-code table;
   don't grow `selfHostImplementedCodes`, shrink toward deleting it.
