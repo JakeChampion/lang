@@ -14,6 +14,9 @@ import "./interp";
 function main(): i32 {
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    // This driver resolves no imports; say so loudly rather than letting a
+    // broken program produce a verdict that reads like a compiler gap.
+    var _unresolved: boolean = parser.warn_unresolved_imports(mod, "interp_run");
     var result: interp.Value = interp.eval_module(mod);
     match (result) {
         interp.VInt(i) => { return i.v; },

@@ -280,6 +280,55 @@ pub struct TypeAlias { name: string, variants: string[], line: i32, col: i32 }
 // mangled symbol. See flatten.bundle / docs/PRELUDE-TO-MODULES.md.
 pub struct Import { path: string, is_reexport: boolean, reexport_names: string[], alias: string }
 
+// warn_unresolved_imports prints a stderr diagnostic when `mod` declares imports
+// that the CALLER has no module loader to resolve, and reports whether it did.
+//
+// The single-program drivers — interp_run, wasm_run, asm_ir_run, wasm_ir_run,
+// asm_run, asm_pathprobe_run — run `parse_module` on raw stdin and resolve
+// nothing. Feed one a program that imports `std/string` and it does not
+// complain: the import is ignored, the qualified names go undefined, and the
+// driver reports whatever a broken program reports — `ast` from a path probe,
+// exit 254 from an interpreter, a bail from an eligibility check. Every one of
+// those reads exactly like a compiler gap.
+//
+// It is not a hypothetical. Three issue diagnoses were wrong for this reason:
+// #5990 recorded "to_ascii_lower absent from interp.fern" (really: std/string
+// never loaded; the true blocker is that interp.fern implements none of the
+// raw-memory intrinsics, #5998), #5992 recorded "to_lower is not IR-eligible on
+// wasm" from a wasm_run `ast` verdict (it is eligible — the emitted module
+// called an undefined helper), and a third was made while fixing the second.
+// CLAUDE.md documents the trap in prose; a trap that careful readers walk into
+// repeatedly needs to announce itself at the point of use.
+//
+// Deliberately a WARNING, not an error, and deliberately not touching the exit
+// code: dozens of existing tests feed these drivers programs whose imports are
+// incidental (they use builtin `Map` syntax while carrying `import "core/map"`),
+// and those programs compile correctly. Breaking them would buy nothing — the
+// harm was always to a human reading a verdict, and a human reads stderr.
+// FERN_STRICT_IMPORTS=1 promotes it to a hard exit for anyone who wants the
+// stronger guarantee, mirroring FERN_STRICT_IR.
+pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
+    if (mod.imports.len() == 0) { return false; }
+    var paths: string = "";
+    var i: i32 = 0;
+    while (i < mod.imports.len()) {
+        if (i > 0) { paths = paths + ", "; }
+        paths = paths + "\"" + mod.imports[i].path + "\"";
+        i = i + 1;
+    }
+    eprint("warning: " + driver + " has no module loader; UNRESOLVED imports: " + paths + "\n");
+    eprint("warning: any verdict below (ir/ast, exit code, eligibility bail) describes a BROKEN program, not the language.\n");
+    eprint("warning: to judge this program use a loading driver: `fern <prog> <stdlib-root>`, or asm_load_run.\n");
+    match (env("FERN_STRICT_IMPORTS")) {
+        Some(_) => {
+            eprint("error: FERN_STRICT_IMPORTS=1 refuses an unresolvable-import run\n");
+            exit(3);
+        },
+        None => {},
+    }
+    return true;
+}
+
 // A whole compilation unit: the funcs declared at top level and
 // any stmts that appear outside a function decl. The interp /
 // checker treat funcs first (build a signature table) and then
