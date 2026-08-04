@@ -1261,9 +1261,41 @@ function arm64_fmov_from_gpr(buf: i32[], rd_fp: i32, rn_gpr: i32): i32[] {
 function arm64_fmov_to_gpr(buf: i32[], rd_gpr: i32, rn_fp: i32): i32[] {
     return arm64_le32(buf, 0x9e660000 | (((rn_fp & 31) as i64) << 5) | ((rd_gpr & 31) as i64));
 }
-// fcvtzs Xd, Dn (double -> signed int, round toward zero).
-function arm64_fcvtzs(buf: i32[], rd_gpr: i32, rn_fp: i32): i32[] {
-    return arm64_le32(buf, 0x9e780000 | (((rn_fp & 31) as i64) << 5) | ((rd_gpr & 31) as i64));
+// The SINGLE-precision siblings, `fmov Sd, Wn` and `fmov Wd, Sn` — the f32
+// bit-reinterpret pair the float path emits either side of an fcvt. Verified vs
+// clang: fmov s0,w0 = 0x1e270000, fmov w0,s0 = 0x1e260000.
+function arm64_fmov_s_from_gpr(buf: i32[], rd_fp: i32, rn_gpr: i32): i32[] {
+    return arm64_le32(buf, 0x1e270000 | (((rn_gpr & 31) as i64) << 5) | ((rd_fp & 31) as i64));
+}
+function arm64_fmov_s_to_gpr(buf: i32[], rd_gpr: i32, rn_fp: i32): i32[] {
+    return arm64_le32(buf, 0x1e260000 | (((rn_fp & 31) as i64) << 5) | ((rd_gpr & 31) as i64));
+}
+// fcvt Sd, Dn (double -> single) and fcvt Dd, Sn (single -> double) — the
+// FP-to-FP precision conversions. Same one-source shape as the funary family:
+// base | Rn<<5 | Rd. Verified vs clang --target=aarch64-linux-gnu:
+// fcvt s0,d0 = 0x1e624000, fcvt s3,d4 = 0x1e624083, fcvt d0,s0 = 0x1e22c000,
+// fcvt d5,s6 = 0x1e22c0c5.
+//
+// This was the single largest hole in the assembler: 605 of these in six
+// fixtures' emitted asm, and no encoder at all, so `-target arm64` refused any
+// program whose runtime helpers touch floats — 64 corpus fixtures, most of them
+// (fizzbuzz, empty_array, map_keys) with no float in their source (#6044).
+function arm64_fcvt_s_d(buf: i32[], rd: i32, rn: i32): i32[] {
+    return arm64_le32(buf, 0x1e624000 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+function arm64_fcvt_d_s(buf: i32[], rd: i32, rn: i32): i32[] {
+    return arm64_le32(buf, 0x1e22c000 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
+// fcvtzs Xd, Dn / fcvtzs Wd, Dn (double -> signed int, round toward zero).
+// The GP destination's width is in the sf bit: 0x9e780000 for X, 0x1e780000 for
+// W. It was hardcoded to the X form, so `fcvtzs w5, d6` sign-extended into the
+// full 64-bit register — the #6054 width class again, on the FP boundary.
+// Verified vs clang: fcvtzs x0,d0 = 0x9e780000, fcvtzs w5,d6 = 0x1e7800c5.
+function arm64_fcvtzs(buf: i32[], rd_gpr: i32, rn_fp: i32, w: boolean): i32[] {
+    var base: i64 = 0x9e780000;
+    if (w) { base = 0x1e780000; }
+    return arm64_le32(buf, base | (((rn_fp & 31) as i64) << 5) | ((rd_gpr & 31) as i64));
 }
 // scvtf Dd, Xn (signed int -> double).
 function arm64_scvtf(buf: i32[], rd_fp: i32, rn_gpr: i32): i32[] {
@@ -1527,6 +1559,16 @@ function arm64_gas_is_w(tok: string): boolean {
 function arm64_gas_is_d(tok: string): boolean {
     var s: string = arm64_gas_trim(tok);
     return s.len() >= 1 && s[0] == 100; // 'd'
+}
+
+// arm64_gas_is_s distinguishes a SINGLE-precision FP register from the
+// double-precision `d` and the general-purpose `w`/`x`. Without it the fmov
+// dispatch could not tell `fmov s0, w0` from `fmov x0, d0` and encoded the
+// latter — the wrong register file at the wrong width, 121 times in one
+// float-heavy fixture (#6044).
+function arm64_gas_is_s(tok: string): boolean {
+    var t: string = arm64_gas_trim(tok);
+    return t.len() >= 1 && t[0] == 115; // 's'
 }
 
 // arm64_gas_operands splits an operand list on top-level commas, ignoring
@@ -2054,8 +2096,16 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_fcmp(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
         return a;
     }
-    if (mnem == "fcvtzs") { // Xd, Dn (double -> int)
-        a = Arm64Asm { ...a, code: arm64_fcvtzs(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+    if (mnem == "fcvtzs") { // Xd/Wd, Dn (double -> int)
+        a = Arm64Asm { ...a, code: arm64_fcvtzs(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
+        return a;
+    }
+    if (mnem == "fcvt") { // Sd, Dn (narrow) or Dd, Sn (widen)
+        if (arm64_gas_is_d(ops[0])) {
+            a = Arm64Asm { ...a, code: arm64_fcvt_d_s(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+        } else {
+            a = Arm64Asm { ...a, code: arm64_fcvt_s_d(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+        }
         return a;
     }
     if (mnem == "scvtf") { // Dd, Xn (int -> double)
@@ -2065,6 +2115,11 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     if (mnem == "fmov") {
         var d0: boolean = arm64_gas_is_d(ops[0]);
         var d1: boolean = arm64_gas_is_d(ops[1]);
+        // Single-precision first: `fmov Sd, Wn` / `fmov Wd, Sn` are neither
+        // d-registers, so they used to fall into the `Xd, Dn` arm below and
+        // encode a 64-bit fp->gpr move instead (#6044).
+        if (arm64_gas_is_s(ops[0])) { return Arm64Asm { ...a, code: arm64_fmov_s_from_gpr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) }; }
+        if (arm64_gas_is_s(ops[1])) { return Arm64Asm { ...a, code: arm64_fmov_s_to_gpr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) }; }
         if (d0 && d1) { a = Arm64Asm { ...a, code: arm64_fmov_dd(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) }; }
         else if (d0) { a = Arm64Asm { ...a, code: arm64_fmov_from_gpr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) }; } // Dd, Xn
         else { a = Arm64Asm { ...a, code: arm64_fmov_to_gpr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) }; } // Xd, Dn
@@ -2127,6 +2182,14 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") { return true; }
     if (mnem == "mrs") { return true; } // sysreg validity checked in the program loop
     if (mnem == "fadd" || mnem == "fsub" || mnem == "fmul" || mnem == "fdiv" || mnem == "fcmp" || mnem == "fmov" || mnem == "fcvtzs" || mnem == "scvtf") { return true; }
+    // This list and the dispatch in arm64_gas_emit must agree, and they have
+    // drifted in BOTH directions: movn was listed here with no branch to
+    // assemble it (silently emitted nothing, #6060), while the unary FP family
+    // below had a branch and encoders but was missing from this list — so the
+    // program loop refused instructions the assembler could already encode
+    // perfectly (#6044). Add to both places, or to neither.
+    if (mnem == "fcvt" || mnem == "fneg" || mnem == "fabs" || mnem == "fsqrt") { return true; }
+    if (mnem == "frinta" || mnem == "frintm" || mnem == "frintp" || mnem == "frintz") { return true; }
     if (arm64_funary_d_base(mnem) >= 0) { return true; }
     if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { return true; } // b.<cond>
     if (mnem.len() == 3 && mnem[0] == 98 && arm64_gas_is_cond(mnem[1:3])) { return true; } // b<cond>

@@ -140,6 +140,39 @@ _start:
     add x0, sp, x0
     add x3, sp, x4
     sub x0, sp, x1
+    // #6044: the FP conversion/rounding family. fcvt had no encoder at all (605
+    // uses in six fixtures), so -target arm64 refused 60 corpus fixtures --
+    // most of them, like fizzbuzz and map_keys, with no float in their source,
+    // because the runtime helpers carry one. fneg/fabs/fsqrt/frint* had
+    // encoders AND a dispatch branch but were missing from arm64_gas_known, so
+    // the program loop refused what the assembler could already encode. The
+    // fmov S/W pair fell through to the 64-bit fp->gpr arm: the wrong register
+    // file at the wrong width, 121 times in one fixture.
+    fcvt s0, d0
+    fcvt s3, d4
+    fcvt d0, s0
+    fcvt d5, s6
+    fcvtzs x0, d0
+    fcvtzs w5, d6
+    frinta d0, d0
+    frintm d0, d1
+    frintp d2, d3
+    frintz d4, d5
+    fsqrt d0, d1
+    fneg d2, d3
+    fabs d4, d5
+    fmov s0, w0
+    fmov w0, s0
+    fmov s3, w4
+    fmov d0, x0
+    fmov x0, d0
+    fmov d1, d2
+    fadd d0, d1, d2
+    fsub d0, d1, d2
+    fmul d0, d1, d2
+    fdiv d0, d1, d2
+    fcmp d1, d0
+    scvtf d0, x0
 .Ldone:
     ret
 `
