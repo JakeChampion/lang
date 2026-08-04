@@ -1,18 +1,16 @@
 ---
 title: Build an HTTP handler
-description: Write an edge-function-style HTTP handler that compiles to a native server or a WASI component.
+description: Write one function and get both a native HTTP server and a WebAssembly handler.
 sidebar:
   order: 6
 ---
 
 import FernPlayground from "../../../components/FernPlayground.astro";
 
-The other workload Fern is tuned hardest for is **edge-function-style
-HTTP servers** — short-lived handlers that take a request, do a little
-work, and return a response. (Fern is general-purpose, but this shape and
-fast-startup CLI tools are its two sweet spots.) You write one function;
-Fern gives you both a standalone native server *and* a WASI HTTP
-component from the same source.
+An HTTP handler in Fern is one function: it takes a request, does a
+little work, and returns a response. From that same source you get both
+a standalone native server and a WebAssembly handler you can hand to
+`wasmtime serve`.
 
 ## The handler signature
 

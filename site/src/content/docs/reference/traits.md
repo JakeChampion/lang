@@ -1,6 +1,6 @@
 ---
 title: Traits
-description: Static ad-hoc polymorphism — shared behaviour via trait / impl and bounded generics.
+description: Shared behaviour across types — trait / impl and bounded generics.
 sidebar:
   order: 3
 ---

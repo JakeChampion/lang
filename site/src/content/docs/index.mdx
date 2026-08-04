@@ -1,6 +1,6 @@
 ---
 title: Fern
-description: A small statically-typed language with no runtime and no garbage collector, compiling to native arm64 / x86-64 binaries and WASI Preview 2 components.
+description: A small statically typed language that compiles to fast standalone binaries and to WebAssembly — no runtime, no garbage collector, nothing else to install.
 template: splash
 # Hero `link:` values are passed verbatim to `<a href>` by
 # Starlight's Hero / LinkButton — base path is NOT auto-prepended
@@ -8,7 +8,7 @@ template: splash
 # resolve to `/lang/tutorial/install/` etc. instead of 404-ing
 # at the apex `/tutorial/install/`.
 hero:
-  tagline: Statically typed, no runtime, no garbage collector. One source file becomes a native arm64 / x86-64 binary or a WASI Preview 2 component — with no external toolchain in the way.
+  tagline: A small statically typed language that compiles to a fast standalone binary — or to WebAssembly, from the same source. No runtime, no garbage collector, nothing else to install.
   actions:
     - text: Get started
       link: /lang/tutorial/install/
@@ -32,13 +32,10 @@ import SpecSheet from "../../components/SpecSheet.astro";
 
 <div class="fern-lead">
 
-Fern compiles a single source file to a lean native executable or a
-self-contained `.wasm` component — the same program, unchanged, across
-arm64 (Linux and macOS), x86-64 (Linux), and WebAssembly. It is at its
-best where startup time and binary size are the whole story: short-lived
-CLI tools and edge-function HTTP handlers. Reference counting instead of
-a collector means long-running work is fair game too — Fern's own
-compiler is written in Fern.
+Fern is made for programs that start, do their job and exit — command
+line tools, scripts, small HTTP services. Nothing boots ahead of your
+code and nothing pauses it while it runs, so it is quick from the first
+millisecond. Longer-running programs are fair game too.
 
 </div>
 
@@ -51,8 +48,8 @@ Needs Go 1.24+. Prefer a prebuilt binary? See the
 
 </CommandCard>
 
-Every program is a `main` returning an `i32` exit code. This one is
-compiling and running in your browser, right here on the page:
+Every program is a `main` returning an exit code. This one is compiling
+and running in your browser, right here on the page:
 
 <FernPlayground
   minimal
@@ -63,57 +60,53 @@ compiling and running in your browser, right here on the page:
 />
 
 <FacetRail>
-  <Facet index="01" title="Nothing to warm up">
+  <Facet index="01" title="Starts instantly">
 
-Statically linked, with no runtime, no interpreter boot and no JIT.
-`main` runs the instant the process does, and there is no collector
-waiting to pause it.
-
-  </Facet>
-  <Facet index="02" title="The toolchain is one binary">
-
-The native backends assemble *and* link in-process with a pure-Go
-assembler — producing an executable needs no `gcc`, no `clang`, no `ld`.
-Pass `-cc` when you would rather use your own.
+There is no runtime to boot and no garbage collector waiting to pause
+you. Your `main` runs the moment the process does.
 
   </Facet>
-  <Facet index="03" title="WebAssembly without the glue">
+  <Facet index="02" title="One command, one binary">
 
-`-target wasm` emits a self-contained WASI Preview 2 component.
-`wasmtime run` it, or `wasmtime serve` it as an HTTP handler through
-`wasi:http/incoming-handler`. No JS shim, no adapter wrangling.
+A source file becomes a standalone executable in a single command — no C
+compiler, no linker, no build file to configure. Copy it to a machine
+and it runs.
 
   </Facet>
-  <Facet index="04" title="Types that stay put">
+  <Facet index="03" title="WebAssembly from the same source">
 
-Integers carry their width and never coerce silently, so an `i32` can't
-drift into an `i64`. Enums are tagged unions and `match` is exhaustive —
-miss a variant and the build fails. Generics are monomorphised, so none
-of it costs anything at runtime.
+`-target wasm` gives you a self-contained `.wasm` to run with
+`wasmtime run`; `-target wasi-http` gives you an HTTP handler for
+`wasmtime serve`. No JavaScript glue in between.
+
+  </Facet>
+  <Facet index="04" title="No quiet surprises">
+
+Numbers keep the size you gave them and never convert behind your back.
+Every case of an enum has to be handled — miss one and the build stops
+instead of your program.
 
   </Facet>
   <Facet index="05" title="Errors are values">
 
-`Option` and `Result` are part of the language, `?` threads a failure up
-without ceremony, and `let … else` handles the unhappy path first. No
-exceptions, no hidden control flow to reason about.
+`Option` and `Result` are part of the language, and `?` passes a failure
+up the call stack without ceremony. No exceptions, no invisible jumps.
 
   </Facet>
   <Facet index="06" title="The tools come with it">
 
-`fern-lsp` gives hover, goto-definition, completion, signature help,
-inlay hints, workspace rename and format-on-save to any LSP client, with
-a VS Code extension ready to install. A formatter, a test runner and
-literate `.fern.md` programs are in the box.
+An editor server with completion, hover and rename for any LSP client,
+plus a VS Code extension, a formatter and a test runner. All included,
+none to assemble.
 
   </Facet>
 </FacetRail>
 
-## Read a program before you install one
+## A real program
 
-Fern reads `argv`, streams stdin or files, and returns `Result` from
-anything fallible — so a Unix-style filter stays short and total. Here
-is the core of a `grep`-like line filter; edit it and press Run.
+Fern reads arguments, streams stdin or files, and returns a `Result`
+from anything that can fail — so a Unix-style filter stays short. Here
+is the heart of a `grep`. Edit it and press Run.
 
 <FernPlayground
   code={`import "std/string";
@@ -153,10 +146,10 @@ function main(): i32 {
 The [CLI tutorial](tutorial/cli-tool/) grows this into a real tool with
 flags and multiple input files.
 
-## Exhaustiveness you can feel
+## Every case, handled
 
-`match` covers every variant or the build stops. Add a `Triangle` to
-`Shape` below and watch the checker point straight at `area`:
+`match` has to cover every variant or the build stops. Add a `Triangle`
+to `Shape` below and watch the compiler point straight at `area`:
 
 <FernPlayground
   code={`import "std/i32";
@@ -180,26 +173,7 @@ function main(): i32 {
 }`}
 />
 
-A **trait bound** constrains a type parameter to types that implement a
-trait — here, anything orderable and printable. The generic is
-monomorphised per instantiation, so the dispatch is direct:
-
-```fern
-import "core/cmp";
-
-function max[T: cmp.Ord + cmp.Display](a: T, b: T): T {
-    if (a.cmp(b) >= 0) { return a; }
-    return b;
-}
-
-function main(): i32 {
-    print(max(3, 9).to_string());   // 9
-    print(max("apple", "pear"));    // pear
-    return 0;
-}
-```
-
-And failure is just a value moving up the call stack:
+Failure travels the same way — as an ordinary value, passed up by `?`:
 
 ```fern
 import "std/string";
@@ -219,56 +193,41 @@ system, and the error-handling rules.
   caption="Specification"
   items={[
     {
-      term: "Targets",
-      value: "arm64 Linux ELF (default) · arm64 macOS Mach-O · x86-64 Linux ELF · WASI Preview 2 component",
+      term: "Runs on",
+      value: "Linux on arm64 and x86-64, macOS on Apple Silicon, and WebAssembly anywhere WASI runs",
     },
     {
       term: "Memory",
-      value: "Reference counting with Perceus-style elision and in-place reuse — no garbage collector, no pauses",
+      value: "Freed as soon as it stops being used — no garbage collector, no pauses, nothing to tune",
     },
     {
-      term: "Build needs",
-      value: "Go 1.24+ to build the compiler itself; nothing external to emit a native binary or a .wasm",
+      term: "Install",
+      value: "A single binary; Go 1.24+ only if you build it from source",
     },
     {
       term: "Editors",
-      value: "fern-lsp for any LSP client, plus a VS Code extension carrying Fern's own TextMate grammar",
+      value: "Works with any LSP editor, with a VS Code extension ready to install",
     },
     {
       term: "Testing",
-      value: "std/test, a TAP-13 runner written in Fern rather than bolted on beside it",
+      value: "A test runner in the standard library, not a separate thing to pick",
     },
     {
-      term: "Sandboxing",
-      value: "Per-package capability grants — net, fs, env, subprocess, time, random — checked at compile time",
-    },
-    {
-      term: "Compiler",
-      value: "Written in Go, and again in Fern; the self-hosted compiler compiles itself byte-for-byte",
-    },
-    {
-      term: "Releases",
-      value: "Rolling nightly builds for Linux x86-64, Linux arm64 and macOS arm64",
+      term: "Permissions",
+      value: "A package declares what it may touch — network, files, environment, subprocesses, time, randomness — and the compiler holds it to that",
     },
   ]}
   note="Pre-1.0. The language surface still moves between nightlies."
 />
 
-## Where Fern is today
+## Good to know
 
-Worth knowing before you pick it up:
-
-- **The nightly *is* the release channel.** There is no tagged stable
-  version yet, and syntax occasionally changes under you.
-- **The self-hosted compiler is mid-port.** A widening subset of the
-  language lowers through its own IR; the rest still routes through the
-  older AST emitters. Both produce working programs — the difference is
-  visible in the source, not the output.
-- **macOS means Apple Silicon.** There is no x86-64 Darwin target, and
-  32-bit ARM was retired rather than half-maintained.
-- **The wasm target is narrower than native.** C FFI and subprocesses
-  are native-only, and say so with a real error rather than failing at
-  runtime.
+- **Pre-1.0.** Nightly builds are the release channel; syntax still
+  changes under you now and then.
+- **macOS means Apple Silicon.** There is no Intel Mac build.
+- **WebAssembly covers less than native.** C libraries and subprocesses
+  are native-only, and you get a clear error at build time rather than a
+  surprise at runtime.
 - **The standard library is small on purpose.** Strings, collections,
   iterators, JSON, I/O, HTTP, time, math — it grows when a real program
   needs it to.
@@ -280,32 +239,27 @@ Worth knowing before you pick it up:
     {
       label: "Tutorial",
       href: "tutorial/install/",
-      blurb: "Install the toolchain, then learn the language one concept at a time — variables through to a working HTTP handler.",
+      blurb: "Install Fern, then learn the language one idea at a time — variables through to a working HTTP handler.",
     },
     {
       label: "Build a CLI tool",
       href: "tutorial/cli-tool/",
-      blurb: "Arguments, stdin and files, exit codes, and the Result-shaped error handling a filter needs.",
+      blurb: "Arguments, stdin and files, exit codes, and the error handling a filter needs.",
     },
     {
       label: "Build an HTTP handler",
       href: "tutorial/http-server/",
-      blurb: "Routing, JSON, and a WASI component you can hand straight to wasmtime serve.",
+      blurb: "Routing, JSON, and a .wasm you can hand straight to wasmtime serve.",
     },
     {
       label: "Reference",
       href: "reference/syntax/",
-      blurb: "Syntax, types, traits, error handling, language features, and the tooling around them.",
+      blurb: "Syntax, types, traits, error handling, and the tools around them.",
     },
     {
       label: "Standard library",
       href: "stdlib/",
-      blurb: "Every std/* module with signatures, generated from the source it documents.",
-    },
-    {
-      label: "Playground",
-      href: "playground/",
-      blurb: "Compile and run Fern in the browser — including a look at the assembly it emits.",
+      blurb: "Every module, with signatures, generated from the source it documents.",
     },
   ]}
 />
