@@ -29,7 +29,8 @@ install -m755 fern ~/.local/bin/fern    # anywhere on your $PATH
 ```
 
 Each asset ships a `*.tar.gz.sha256` alongside it if you want to verify
-the download.
+the download. [Releases](../../releases/) covers what the nightly
+channel promises and how to pin a build.
 
 ## Option B — build from source
 
