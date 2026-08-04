@@ -37,6 +37,10 @@ import (
 // — if the escape analysis re-tainted the param (it flows into a retain
 // sink) it is not deep-dropped, so no entry-inc is owed.
 //
+// ARRAY params are the exception: an entry retain would cost them the
+// in-place append, so they express the same ownership as an explicit bit
+// (isConsumedArrayParam / emitConsumedArrayOverwriteDec) instead.
+//
 // `pos` is the builder's curPos at the boundary (the zero Position at
 // function entry) so the spliced ops carry exactly the source positions the
 // in-build emission stamped. The splice allocates no slots and shifts only
@@ -62,6 +66,12 @@ func (b *builder) insertConsumedParamEntryIncs(at int, pos ast.Position) {
 		// extra count out — a bounded safe leak, matching the existing
 		// leak-over-UAF stance elsewhere in this file.
 		if !b.rc.consumedParams[p.Name] {
+			continue
+		}
+		// ARRAY params buy the same balance with a hidden ownership flag
+		// instead of a retain, because the retain would cost them the
+		// in-place append. See isConsumedArrayParam.
+		if b.isConsumedArrayParam(p.Name) {
 			continue
 		}
 		slot, ok := b.locals[p.Name]
@@ -973,6 +983,18 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		seen[p.Name] = true
 		slot, ok := b.locals[p.Name]
 		if !ok {
+			continue
+		}
+		// A consumed-threaded ARRAY param owns its slot only once a
+		// reassignment has replaced the incoming borrow — it never took an
+		// entry retain, so sweeping it unconditionally would release the
+		// caller's reference on the paths that never reassigned. Its
+		// ownership bit says which.
+		if flagSlot, hasFlag := b.locals[consumedArrayFlagName(p.Name)]; hasFlag && b.isConsumedArrayParam(p.Name) {
+			b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			emitDec(slot, p.Type, true, p.Name)
+			b.emit(Op{Kind: OpEnd})
 			continue
 		}
 		emitDec(slot, p.Type, true, p.Name)

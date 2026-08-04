@@ -849,6 +849,14 @@ func (b *builder) computeConsumedParams() map[string]bool {
 		// surfaced as a ~50% segfault in __fern_alloc's freelist pop on any
 		// change that shifted allocation sizes. See the
 		// array_param_threaded_by_reassignment rc-corpus case.
+		//
+		// Arrays do NOT pay for this with an entry retain, though — they carry
+		// a hidden ownership flag instead (isConsumedArrayParam). An entry
+		// retain would make the incoming rc 2, and rc==1 is exactly the
+		// uniqueness test __fern_arr_push_grow's in-place fast path gates on,
+		// so every append in the function — and in everything it threads the
+		// buffer through — would copy the whole buffer. See
+		// emitConsumedArrayOverwriteDec.
 		switch p.Type.(type) {
 		case ast.StructType, ast.TupleType, ast.EnumType, ast.ArrayType:
 		default:

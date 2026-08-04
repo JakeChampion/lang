@@ -5018,6 +5018,19 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 			b.emit(Op{Kind: OpStoreLocal, I32: slot})
 		}
 	}
+	// Consumed-threaded ARRAY params carry their ownership as an explicit bit
+	// rather than as an entry retain, because a retain costs them the in-place
+	// append (isConsumedArrayParam). Allocate and zero the bit here, in
+	// parameter order, so the slot numbering is deterministic.
+	for _, p := range fn.Params {
+		if !b.isConsumedArrayParam(p.Name) {
+			continue
+		}
+		slot := b.allocSlot()
+		b.locals[consumedArrayFlagName(p.Name)] = slot
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		b.emit(Op{Kind: OpStoreLocal, I32: slot})
+	}
 	// Consumed-threaded param entry-incs are no longer emitted here: they are
 	// the first RC insertion converted to true post-lowering []Op insertion
 	// (insertConsumedParamEntryIncs, rc_insert.go — #4393 slice 4), spliced at
@@ -14612,10 +14625,18 @@ func (b *builder) assign(n *ast.Assign) error {
 				// on every grow (the copy path orphans it; the flat
 				// __fern_rc_dec the catch-all else emits never frees) — the
 				// dominant churn in the self-host SSA build_func loops.
-				b.emit(Op{Kind: OpLoadLocal, I32: idx})
-				b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
-				b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
-				b.emit(Op{Kind: OpDrop})
+				stride := int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))
+				arrDec := func() {
+					b.emit(Op{Kind: OpLoadLocal, I32: idx})
+					b.emit(Op{Kind: OpConstI32, I32: stride})
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
+					b.emit(Op{Kind: OpDrop})
+				}
+				if b.isConsumedArrayParam(t.Name) {
+					b.emitConsumedArrayOverwriteDec(t.Name, arrDec)
+				} else {
+					arrDec()
+				}
 			} else if !b.enumRcPayloadsEligibleForValue(n.Value) && b.constructionMovesIdent(n.Value, t.Name) {
 				// `x = Ctor(.., x, ..)` (e.g. `acc = Cons(1, acc)`): under the
 				// move model the old `x` is MOVED into the new box's payload —
@@ -14667,9 +14688,21 @@ func (b *builder) assign(n *ast.Assign) error {
 				// the store below.
 				b.emitStructEnumSlotDrop(idx, sety)
 			} else {
-				b.emit(Op{Kind: OpLoadLocal, I32: idx})
-				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
-				b.emit(Op{Kind: OpDrop})
+				flatDec := func() {
+					b.emit(Op{Kind: OpLoadLocal, I32: idx})
+					b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+					b.emit(Op{Kind: OpDrop})
+				}
+				// A consumed-threaded array param that borrow-taint kept out
+				// of freeEligible lands here. It gets no entry retain either
+				// (isConsumedArrayParam), so this flat dec would steal the
+				// caller's count — the #6021 undercount — unless it is gated
+				// on the same ownership flag.
+				if b.isConsumedArrayParam(t.Name) {
+					b.emitConsumedArrayOverwriteDec(t.Name, flatDec)
+				} else {
+					flatDec()
+				}
 			}
 		} else if strAppended {
 			// `s = s + piece` lowered to __fern_str_append, which took over
@@ -15290,6 +15323,94 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 		return !mentions
 	})
 	return mentions
+}
+
+// consumedArrayFlagName is the hidden i32 local that tracks, at runtime,
+// whether a consumed-threaded ARRAY param's slot still holds the caller's
+// borrow (0) or a reference this frame owns (1).
+func consumedArrayFlagName(param string) string { return "__ownflag_" + param }
+
+// isConsumedArrayParam reports whether `name` is a parameter that
+// computeConsumedParams promoted AND whose type is an array.
+//
+// These are the promoted params that must NOT get the entry retain
+// (insertConsumedParamEntryIncs). The retain is the standard way to say "this
+// frame now owns a reference", and it is what balances the first
+// reassignment's overwrite dec — but rc==1 is also the uniqueness test
+// __fern_arr_push_grow gates its in-place fast path on. A retained array param
+// enters at rc 2, so every append inside the function, and inside every
+// function it threads the buffer through, takes the copy path and clones the
+// whole buffer. That is O(n²): arm64_native's `arm64_le32(buf, v)` (four
+// self-appends, once per assembled instruction word) went from 18 MB of arena
+// traffic to 8.9 GB on ~900 KB of input when #6021 admitted arrays here, which
+// is what TestSelfHostArm64AsmMemoryLinear caught.
+//
+// So arrays get the ownership bit explicitly instead of encoding it in the
+// refcount — see emitConsumedArrayOverwriteDec for the discipline it buys.
+func (b *builder) isConsumedArrayParam(name string) bool {
+	if !b.rc.consumedParams[name] {
+		return false
+	}
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			_, isArr := p.Type.(ast.ArrayType)
+			return isArr
+		}
+	}
+	return false
+}
+
+// emitConsumedArrayOverwriteDec emits the overwrite dec for `param = <rhs>`
+// where `param` is a consumed-threaded ARRAY param. The RHS result is on the
+// operand stack; the op sequence consumes it and leaves it back on top, so the
+// caller's store is unchanged.
+//
+// The rule is:
+//
+//	if (new == old) { dec(old) }                  // same buffer, +1 count
+//	else            { if (owned) dec(old)         // ours to release
+//	                  owned = 1 }                 // else: the caller's borrow
+//
+// It rests on one invariant: an rc-tracked RHS hands this slot an OWNED
+// reference, so when the new pointer equals the old, exactly one extra count
+// was added to that pointer and the dec balances it. Both producers satisfy
+// it — __fern_arr_push_grow's in-place path bumps rc 1→2 before returning the
+// same buffer, and a callee that returns its own param retains it on the way
+// out (the return transfer inc). A DIFFERENT pointer means the old value was
+// released by this binding, which is only ours to dec once we have replaced
+// the incoming borrow — hence the flag.
+//
+// The entry-retain alternative encodes that same bit in the refcount and is
+// what structs / tuples / enums use; arrays cannot afford it (see
+// isConsumedArrayParam).
+func (b *builder) emitConsumedArrayOverwriteDec(name string, emitDec func()) {
+	idx, hasSlot := b.locals[name]
+	flagSlot, ok := b.locals[consumedArrayFlagName(name)]
+	if !ok || !hasSlot {
+		// No flag was allocated (the prologue only allocates for promoted
+		// array params); fall back to the unconditional dec.
+		emitDec()
+		return
+	}
+	newTmp := b.allocSlot()
+	b.locals[fmt.Sprintf("__ownarr_new_%d", newTmp)] = newTmp
+	b.emit(Op{Kind: OpStoreLocal, I32: newTmp})
+	b.emit(Op{Kind: OpLoadLocal, I32: idx})
+	b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
+	b.emit(Op{Kind: OpNe})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	// Replaced: dec only what this frame owns, then take ownership.
+	b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	emitDec()
+	b.emit(Op{Kind: OpEnd})
+	b.emit(Op{Kind: OpConstI32, I32: 1})
+	b.emit(Op{Kind: OpStoreLocal, I32: flagSlot})
+	b.emit(Op{Kind: OpElse})
+	// Same buffer: the RHS added exactly one count to it.
+	emitDec()
+	b.emit(Op{Kind: OpEnd})
+	b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
 }
 
 // isSelfArrayPushLocal reports whether `rhs` is `name.append(x)` — lowered to

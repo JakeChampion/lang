@@ -22,12 +22,18 @@ import (
 // target-independently at both pointer widths.
 //
 // `selfp` REASSIGNS its param, so since #6021 it is a consumed-threaded
-// param: computeConsumedParams promotes it and the prologue carries one
-// entry retain (without which the reassignment's overwrite-dec releases a
-// reference the caller never handed over — the latent double-free). That
-// retain is emitted once, in the prologue; a forced copy would be emitted
-// per iteration, INSIDE the loop. So the O(n²) guard for this shape counts
-// rc-incs at or after the first OpLoop rather than over the whole body.
+// param: computeConsumedParams promotes it, and the promotion owes the
+// reassignment's overwrite-dec a matching claim (without which that dec
+// releases a reference the caller never handed over — the latent
+// double-free). For structs / tuples / enums that claim is a prologue entry
+// retain. For ARRAYS it must not be: rc==1 is the uniqueness test
+// __fern_arr_push_grow gates its in-place fast path on, so an entry-retained
+// array param enters at rc 2 and every append in the function — and in
+// everything it threads the buffer through — clones the whole buffer. Arrays
+// carry an explicit ownership bit instead (isConsumedArrayParam /
+// emitConsumedArrayOverwriteDec), so the rc-inc count here stays at zero
+// EVERYWHERE, prologue included. That is the property this asserts: an
+// rc-inc anywhere in `selfp` means the array accumulator went quadratic.
 func TestAppendForcedCopyExemptions(t *testing.T) {
 	src := `function retpos(acc: i32[], x: i32): i32[] {
     if (x > 0) { return acc.append(x); }
@@ -55,13 +61,11 @@ function main(): i32 { return 0; }`
 		}
 		// Exempt: consumed-threaded param self-reassign (outside
 		// isSelfArrayPushLocal's local/own scope, but the rebind means no later
-		// read of the old value). The prologue entry retain is expected; nothing
-		// inside the loop may be.
-		if n := countRcIncsInLoop(prog, "selfp"); n != 0 {
-			t.Errorf("ptrW=%d: selfp emitted %d in-loop rc-incs, want 0 (borrowed-param self-reassign append force-copied)", ptrW, n)
-		}
-		if n := countRcIncs(prog, "selfp"); n != 1 {
-			t.Errorf("ptrW=%d: selfp emitted %d rc-incs, want 1 (the consumed-param prologue entry retain)", ptrW, n)
+		// read of the old value). No retain may survive anywhere — an entry
+		// retain is as quadratic as an in-loop one, just harder to spot.
+		if n := countRcIncs(prog, "selfp"); n != 0 {
+			t.Errorf("ptrW=%d: selfp emitted %d rc-incs, want 0 — a retained array param enters at rc 2, "+
+				"so every append copies the whole buffer (#6021's O(n²) regression of #6011)", ptrW, n)
 		}
 		// Still forced: a reused-after append in expression position — the
 		// #4827 bug shape. The first append must keep the copy-forcing inc.
@@ -81,28 +85,6 @@ func countRcIncs(p *Program, fnName string) int {
 		}
 		for _, op := range fn.Ops {
 			if op.Kind == OpRcInc {
-				n++
-			}
-		}
-	}
-	return n
-}
-
-// countRcIncsInLoop counts the OpRcInc ops at or after a function's first
-// OpLoop — the per-iteration copy-forcing bracket, as distinct from a
-// once-per-call prologue retain.
-func countRcIncsInLoop(p *Program, fnName string) int {
-	n := 0
-	for _, fn := range p.Funcs {
-		if fn.Name != fnName {
-			continue
-		}
-		inLoop := false
-		for _, op := range fn.Ops {
-			if op.Kind == OpLoop {
-				inLoop = true
-			}
-			if inLoop && op.Kind == OpRcInc {
 				n++
 			}
 		}
