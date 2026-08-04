@@ -86,6 +86,44 @@ _start:
     orr x0, x1, x2
     eor x0, x1, x2
     sxtw x0, w0
+    and x10, x9, #255
+    eor x0, x1, #1
+    // 32-bit (W) forms. AArch64 encodes operand width in the instruction, and
+    // arm64_gas_reg maps w0 and x0 to the same number, so every one of these was
+    // assembled as its 64-bit sibling until #6054: str w wrote 8 bytes where 4
+    // were meant, and ldr w / cmp w pulled the neighbouring 4 bytes into the
+    // value. Note ldr/str differ from the ALU forms in TWO ways: the size field,
+    // and an immediate scaled by 4 rather than 8 -- so ldr w3, [x4, #4] is a
+    // legal scaled encoding where the 64-bit form needs the unscaled ldur.
+    ldr w0, [sp, #8]
+    ldr w3, [x4, #4]
+    ldr w5, [x6]
+    str w0, [x1]
+    str w2, [x0, #8]
+    str w7, [sp, #12]
+    ldur w1, [x0, #-8]
+    stur w1, [x0, #-16]
+    cmp w1, #0
+    cmp w9, #255
+    cmp w1, w2
+    add w0, w0, #16
+    sub w2, w3, #1
+    and w0, w1, w2
+    mov w0, w1
+    mov w2, #1
+    mov w5, #4095
+    rev16 w3, w4
+    lsr w0, w1, #2
+    lsl w0, w1, #3
+    asr w0, w1, #4
+    and w10, w9, #255
+    and w9, w9, #1
+    and w0, w1, #31
+    eor w9, w9, #1
+    cbz w0, .Ldone
+    cbnz w1, .Ldone
+    tbnz w2, #31, .Ldone
+.Ldone:
     ret
 `
 
@@ -176,7 +214,7 @@ func snippetInsns(src string) []string {
 	var out []string
 	for _, ln := range strings.Split(src, "\n") {
 		s := strings.TrimSpace(ln)
-		if s == "" || strings.HasPrefix(s, ".") || strings.HasSuffix(s, ":") {
+		if s == "" || strings.HasPrefix(s, ".") || strings.HasSuffix(s, ":") || strings.HasPrefix(s, "//") {
 			continue
 		}
 		out = append(out, s)
