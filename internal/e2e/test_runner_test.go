@@ -1344,8 +1344,8 @@ function test_failing(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("failure-shape");
-    r = r.it("passing", test_passing());
-    r = r.it("failing", test_failing());
+    r = r.it("passing", () => test_passing());
+    r = r.it("failing", () => test_failing());
     return r.finish();
 }
 `)
@@ -1599,11 +1599,11 @@ function main(): i32 {
             r = r.defer_cleanup(dir);
             match (write_file(dir + "/x.txt", "x")) {
                 None => { },
-                Some(_) => { r = r.it("write", test.fail("write failed")); return r.finish(); }
+                Some(_) => { r = r.it("write", () => test.fail("write failed")); return r.finish(); }
             }
             match (read_file(dir + "/x.txt")) {
-                Ok(s) => { r = r.it("roundtrip", test.assert_eq(s, "x")); },
-                Err(_) => { r = r.it("roundtrip", test.fail("read failed")); }
+                Ok(s) => { r = r.it("roundtrip", () => test.assert_eq(s, "x")); },
+                Err(_) => { r = r.it("roundtrip", () => test.fail("read failed")); }
             }
         },
         Err(_) => { r = r.skip("setup", "temp_dir failed"); }

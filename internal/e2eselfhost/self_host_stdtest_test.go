@@ -63,7 +63,7 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 		"function bad(): test.TestOutcome { return test.assert_eq(1, 2); }\n" +
 		"function main(): i32 {\n" +
 		"    var r: test.TestRunner = test.test_new(\"synthetic\");\n" +
-		"    r = r.it(\"one is two\", bad());\n" +
+		"    r = r.it(\"one is two\", bad);\n" +
 		"    return r.finish();\n" +
 		"}\n"
 	if err := os.WriteFile(failing, []byte(failSrc), 0o644); err != nil {
@@ -157,7 +157,7 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 		"function bad(): test.TestOutcome { return test.assert_eq(1, 2); }\n" +
 		"function main(): i32 {\n" +
 		"    var r: test.TestRunner = test.test_new(\"synthetic\");\n" +
-		"    r = r.it(\"one is two\", bad());\n" +
+		"    r = r.it(\"one is two\", bad);\n" +
 		"    return r.finish();\n" +
 		"}\n"
 	if err := os.WriteFile(failing, []byte(failSrc), 0o644); err != nil {

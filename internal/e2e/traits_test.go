@@ -362,11 +362,11 @@ func TestInterpGenericArrayAsserts(t *testing.T) {
 	if err := os.WriteFile(src, []byte(`import "std/test";
 function main(): i32 {
     var r: test.TestRunner = test.test_new("arr");
-    r = r.it("eq i32[]", test.assert_eq_array([1, 2, 3], [1, 2, 3]));
-    r = r.it("eq string[]", test.assert_eq_array(["a", "b"], ["a", "b"]));
-    r = r.it("at", test.assert_at([10, 20, 30], 1, 20));
-    r = r.it("contains", test.assert_array_contains(["x", "y"], "y"));
-    r = r.it("not_contains", test.assert_array_not_contains([1, 2], 9));
+    r = r.it("eq i32[]", () => test.assert_eq_array([1, 2, 3], [1, 2, 3]));
+    r = r.it("eq string[]", () => test.assert_eq_array(["a", "b"], ["a", "b"]));
+    r = r.it("at", () => test.assert_at([10, 20, 30], 1, 20));
+    r = r.it("contains", () => test.assert_array_contains(["x", "y"], "y"));
+    r = r.it("not_contains", () => test.assert_array_not_contains([1, 2], 9));
     return r.finish();
 }
 `), 0o644); err != nil {
@@ -403,13 +403,13 @@ function main(): i32 {
     var s: Map[string, string] = map_new(4);
     s = s.insert("k", "v");
     var r: test.TestRunner = test.test_new("map");
-    r = r.it("len i32",       test.assert_map_len(a, 2));
-    r = r.it("has i32",       test.assert_map_has(a, 1, 10));
-    r = r.it("lacks i32",     test.assert_map_lacks(a, 9));
-    r = r.it("len string",    test.assert_map_len(s, 1));
-    r = r.it("has string",    test.assert_map_has(s, "k", "v"));
-    r = r.it("eq i32",        test.assert_eq_map(a, a));
-    r = r.it("eq string",     test.assert_eq_map(s, s));
+    r = r.it("len i32",       () => test.assert_map_len(a, 2));
+    r = r.it("has i32",       () => test.assert_map_has(a, 1, 10));
+    r = r.it("lacks i32",     () => test.assert_map_lacks(a, 9));
+    r = r.it("len string",    () => test.assert_map_len(s, 1));
+    r = r.it("has string",    () => test.assert_map_has(s, "k", "v"));
+    r = r.it("eq i32",        () => test.assert_eq_map(a, a));
+    r = r.it("eq string",     () => test.assert_eq_map(s, s));
     return r.finish();
 }
 `), 0o644); err != nil {
