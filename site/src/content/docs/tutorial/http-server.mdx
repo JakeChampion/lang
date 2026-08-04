@@ -69,6 +69,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 
 `HttpRequest` exposes the parts you need directly:
 
+
 | Access                | Type     | What it is                          |
 | --------------------- | -------- | ----------------------------------- |
 | `req.method`          | `string` | `"GET"`, `"POST"`, …                |
@@ -76,10 +77,12 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 | `req.body_string()`   | `string` | The request body as a string        |
 | `req.body_len()`      | `i32`    | Body length in bytes                |
 
+
 ## Building the response
 
 `std/http` has constructors for the common cases, so you rarely write an
 `HttpResponse { ... }` literal by hand:
+
 
 | Constructor                              | Result                  |
 | ---------------------------------------- | ----------------------- |
@@ -88,6 +91,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 | `http.http_response_not_found()`         | `404 Not Found`         |
 | `http.http_response_bad_request(body)`   | `400` + body            |
 | `http.http_response_redirect(location)`  | `302` + `Location`      |
+
 
 Set headers functionally with `.with_header(name, value)`, which returns
 a new response — chain as many as you like.
