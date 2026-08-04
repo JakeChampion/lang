@@ -14608,7 +14608,69 @@ func (b *builder) assign(n *ast.Assign) error {
 		// differs from the old (i.e. cow copied). Other rc-tracked
 		// reassignments keep the unconditional dec.
 		if isArrayTypeOfLocal(t.Name, b) {
-			if isSelfMapMutation(n.Value, t.Name) {
+			if flagSlot, hasFlag := b.locals[consumedArrayFlagName(t.Name)]; hasFlag &&
+				isSelfArraySetReassign(n.Value, t.Name) && b.isConsumedArrayParam(t.Name) {
+				// `p = p.with(i, v)` on a consumed-threaded ARRAY param. Whether
+				// an overwrite dec is owed depends on whether THIS frame owns
+				// the old buffer, which for such a param is a runtime fact —
+				// the ownership bit — not a static one:
+				//
+				//   - bit 0 (still the caller's borrow): the forced #2832 inc
+				//     put the buffer at rc >= 2, so cow_inplace copies and DECS
+				//     THE SOURCE ITSELF, cancelling that inc. The frame's books
+				//     are square; dec'ing again releases the CALLER's reference.
+				//     `bump(xs) { xs = xs.with(0, 99) }` called as `a = bump(a)`
+				//     drove the caller's buffer to rc -1 while still emitting
+				//     correct output (#6057).
+				//   - bit 1 (a copy this frame already owns): the helper's dec
+				//     only cancels the forced inc, so the frame's own claim on
+				//     the previous copy is still outstanding and MUST be
+				//     released, or every loop iteration orphans a buffer.
+				//
+				// Either way the frame owns what comes back, so the bit is set.
+				// No `else` arm for new == old: an in-place cow released
+				// nothing and nothing changed hands. (That branch is anyway
+				// unreachable here — the forced inc guarantees rc >= 2.)
+				//
+				// The old grouping under isSelfMapMutation could express
+				// neither case: it dec'd purely on "did the pointer change",
+				// which is right for __map_cow_inplace — that helper documents
+				// leaving "the source handle's rc to the normal dec-on-overwrite
+				// at the assignment site" — and wrong for the array helper,
+				// which decs its own source.
+				setAt, _ := localArrayType(t.Name, b)
+				stride := int32(ast.ElemSizeBytesFor(setAt.Elem, b.ptrW))
+				newTmp := b.allocSlot()
+				b.locals[fmt.Sprintf("__setown_new_%d", newTmp)] = newTmp
+				b.emit(Op{Kind: OpStoreLocal, I32: newTmp})
+				b.emit(Op{Kind: OpLoadLocal, I32: idx})
+				b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
+				b.emit(Op{Kind: OpNe})
+				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+				b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
+				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+				b.emit(Op{Kind: OpLoadLocal, I32: idx})
+				b.emit(Op{Kind: OpConstI32, I32: stride})
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
+				b.emit(Op{Kind: OpDrop})
+				b.emit(Op{Kind: OpEnd})
+				b.emit(Op{Kind: OpConstI32, I32: 1})
+				b.emit(Op{Kind: OpStoreLocal, I32: flagSlot})
+				b.emit(Op{Kind: OpEnd})
+				b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
+			} else if isSelfArraySetReassign(n.Value, t.Name) {
+				// Array `.with` self-reassign on anything OTHER than a
+				// consumed-threaded param (an owned local, or a local aliasing
+				// one). No overwrite dec: __fern_arr_cow_inplace balances the
+				// receiver itself on both branches — in place it hands back the
+				// same buffer having released nothing, and on the copy branch it
+				// DECS the source, which is precisely this frame's claim. The
+				// pointer-changed test that serves __map_cow_inplace (whose doc
+				// leaves "the source handle's rc to the normal dec-on-overwrite
+				// at the assignment site") therefore double-releases here: for
+				// `var a = acc; a = a.with(..)` the second dec landed on the
+				// CALLER's buffer (#6057).
+			} else if isSelfMapMutation(n.Value, t.Name) {
 				newTmp := b.allocSlot()
 				b.locals[fmt.Sprintf("__selfmap_new_%d", newTmp)] = newTmp
 				b.emit(Op{Kind: OpStoreLocal, I32: newTmp}) // stash new (RHS result)
@@ -15111,10 +15173,33 @@ func isSelfMapMutation(value ast.Expr, targetName string) bool {
 	// copy happened) as `m = m.set(...)`; an unconditional dec over-releases
 	// the in-place handle (the rc-underflow / unbounded-leak the wasm
 	// OwnInplaceSort + LiteralAllocReclaim tests caught).
-	if callee.Name != "__method_Map_set" && callee.Name != "__method_Map_clear" && callee.Name != "__method_Array_set" {
+	//
+	// A consumed-threaded ARRAY PARAM is the one receiver this cannot serve,
+	// and the assign lowering peels it off before reaching here: its
+	// ownership is a runtime bit, so "did the pointer change" cannot say
+	// whether a dec is owed. See the isSelfArraySetReassign branch (#6057).
+	if callee.Name != "__method_Map_set" && callee.Name != "__method_Map_clear" {
 		return false
 	}
 	if len(call.Args) == 0 {
+		return false
+	}
+	recv, ok := call.Args[0].(*ast.Ident)
+	return ok && recv.Name == targetName
+}
+
+// isSelfArraySetReassign reports whether `value` is `name.with(i, v)` — the
+// desugared `__method_Array_set` — reassigned back to `name`. Split out of
+// isSelfMapMutation because __fern_arr_cow_inplace self-balances the
+// receiver's refcount and __map_cow_inplace does not, so the two shapes owe
+// opposite things at the assignment site.
+func isSelfArraySetReassign(value ast.Expr, targetName string) bool {
+	call, ok := value.(*ast.Call)
+	if !ok {
+		return false
+	}
+	callee, ok := call.Callee.(*ast.Ident)
+	if !ok || callee.Name != "__method_Array_set" || len(call.Args) == 0 {
 		return false
 	}
 	recv, ok := call.Args[0].(*ast.Ident)
