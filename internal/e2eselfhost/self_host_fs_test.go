@@ -23,8 +23,8 @@ const fsBuiltinsProgram = `function main(): i32 {
     }
     var f: string = dir + "/hello.txt";
     match (write_file(f, "0123456789")) {
-        Some(_) => { return 2; },
-        None => {}
+        Err(_) => { return 2; },
+        Ok(_) => {}
     }
     match (stat(f)) {
         Ok(st) => {
@@ -42,8 +42,8 @@ const fsBuiltinsProgram = `function main(): i32 {
         Err(_) => { return 9; }
     }
     match (remove_dir_all(dir)) {
-        Some(_) => { return 10; },
-        None => {}
+        Err(_) => { return 10; },
+        Ok(_) => {}
     }
     match (stat(dir)) {
         Ok(_) => { return 11; },

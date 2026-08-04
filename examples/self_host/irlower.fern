@@ -8558,7 +8558,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // path + content args (path first, content second — op_write_file
                     // pops content then path). The Option type is resolved by
                     // read_file_result_type's write_file case so `match (write_file(p,
-                    // c)) { Some(_) => .., None => .. }` lowers. No wasm file I/O, so
+                    // c)) { Err(_) => .., Ok(_) => .. }` lowers. No wasm file I/O, so
                     // wasm_eligible rejects write_file modules; x86 / arm64 lower it.
                     if (cid.name == "write_file" && c.args.len() == 2) {
                         var wfs: LowerState = lower_expr(c.args[0], s);

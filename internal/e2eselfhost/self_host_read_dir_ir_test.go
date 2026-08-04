@@ -30,12 +30,12 @@ func TestSelfHostReadDirIR(t *testing.T) {
 	const src = `function main(): i32 {
     match (temp_dir("fern-readdir-ir")) {
         Ok(d) => {
-            match (write_file(d + "/a.txt", "x")) { Some(_) => { return 1; }, None => {}, }
-            match (write_file(d + "/b.txt", "y")) { Some(_) => { return 2; }, None => {}, }
+            match (write_file(d + "/a.txt", "x")) { Err(_) => { return 1; }, Ok(_) => {}, }
+            match (write_file(d + "/b.txt", "y")) { Err(_) => { return 2; }, Ok(_) => {}, }
             match (read_dir(d)) {
                 Ok(names) => {
                     var n: i32 = names.len();
-                    match (remove_dir_all(d)) { Some(_) => { return 3; }, None => {}, }
+                    match (remove_dir_all(d)) { Err(_) => { return 3; }, Ok(_) => {}, }
                     if (n != 2) { return 4; }
                     return 0;
                 },

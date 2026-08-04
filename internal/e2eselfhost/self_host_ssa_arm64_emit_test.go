@@ -342,7 +342,7 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 			ioPath := filepath.Join(dir, "io_roundtrip_"+mode.name+".txt")
 			_ = os.Remove(ioPath)
 			const content = "hello, fern"
-			src := fmt.Sprintf("function main(): i32 { match (write_file(%q, %q)) { Some(e) => { return 1; }, None => {} } match (read_file(%q)) { Ok(s) => { if (s == %q) { return 42; } return 2; }, Err(e) => { return 3; } } }", ioPath, content, ioPath, content)
+			src := fmt.Sprintf("function main(): i32 { match (write_file(%q, %q)) { Err(e) => { return 1; }, Ok(_) => {} } match (read_file(%q)) { Ok(s) => { if (s == %q) { return 42; } return 2; }, Err(e) => { return 3; } } }", ioPath, content, ioPath, content)
 			run(t, "file-io-roundtrip", 42, runDriver(t, src, mode.args...))
 			got, err := os.ReadFile(ioPath)
 			if err != nil {

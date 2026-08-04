@@ -1911,14 +1911,14 @@ func TestX86_64ReadFileNotFound(t *testing.T) {
 func TestX86_64WriteFileOk(t *testing.T) {
 	src := `function main(): i32 {
     match (write_file("out.txt", "wrote it\n")) {
-        Some(_) => { return 1; },
-        None => { return 0; }
+        Err(_) => { return 1; },
+        Ok(_) => { return 0; }
     }
     return 0 - 1;
 }`
 	_, code, dir := compileX86_64InDir(t, src, nil)
 	if code != 0 {
-		t.Errorf("write_file exit = %d, want 0 (None path)", code)
+		t.Errorf("write_file exit = %d, want 0 (Ok path)", code)
 	}
 	got, err := os.ReadFile(filepath.Join(dir, "out.txt"))
 	if err != nil {
@@ -1934,8 +1934,8 @@ func TestX86_64WriteFileOk(t *testing.T) {
 func TestX86_64ReadWriteFileRoundtrip(t *testing.T) {
 	src := `function main(): i32 {
     match (write_file("rt.txt", "round trip")) {
-        Some(_) => { return 1; },
-        None => {}
+        Err(_) => { return 1; },
+        Ok(_) => {}
     }
     match (read_file("rt.txt")) {
         Ok(s) => { return s.len(); },

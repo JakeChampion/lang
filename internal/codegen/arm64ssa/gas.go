@@ -1097,6 +1097,35 @@ func emitWriterHandleAlloc(w func(string, ...any), dst, fdReg string) {
 // `tag` is 1 for None (rc + tag only), 0 for Some (rc + tag + payload), where
 // `payloadReg` (a 64-bit reg) holds the IoError pointer stored at box+8. Clobbers
 // x3-x6.
+// emitResultUnitBox builds a Result[void, IoError] box: Ok(()) puts the
+// unit in the payload slot, Err puts the IoError there. BOTH arms are 24
+// bytes (rc + tag + payload) — unlike Option, whose None arm is 16 with
+// no payload at all.
+//
+// Deliberately separate from emitOptionBox: most of that function's
+// callers (close, writer_write, the reader helpers) still return
+// Option[IoError], and shifting their layout here would corrupt them.
+func emitResultUnitBox(w func(string, ...any), ok bool, payloadReg string) {
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	if ok {
+		w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+		w("\tstr xzr, [x0, #8]") // unit payload
+	} else {
+		w("\tmov w6, #1")
+		w("\tstr w6, [x0]")                 // tag = 1 (Err)
+		w("\tstr %s, [x0, #8]", payloadReg) // IoError payload
+	}
+}
+
 func emitOptionBox(w func(string, ...any), tag int, payloadReg string) {
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
@@ -2332,13 +2361,13 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tldr x4, [x3]")
 	w("\tadd x4, x4, #7")
 	w("\tand x4, x4, #-8")
-	w("\tadd x5, x4, #16")
+	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
 	w("\tmov w6, #1")
-	w("\tstr w6, [x4]")   // rc = 1
-	w("\tadd x0, x4, #8") // box data
-	w("\tmov w6, #1")
-	w("\tstr w6, [x0]") // tag = 1 (None)
+	w("\tstr w6, [x4]")      // rc = 1
+	w("\tadd x0, x4, #8")    // box data
+	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+	w("\tstr xzr, [x0, #8]") // unit payload
 	w("\tb .Lssa_wf_ret")
 	w(".Lssa_wf_err:")
 	w("\tneg x0, x0") // errno = -fd
@@ -2356,7 +2385,7 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
-	w("\tstr wzr, [x0]")  // tag = 0 (Some)
+	w("\tstr w6, [x0]")   // tag = 1 (Err) — w6 still holds 1 from rc
 	w("\tstr x22, [x0, #8]")
 	w(".Lssa_wf_ret:")
 	w("\tldp x21, x22, [sp, #32]")
@@ -2551,13 +2580,13 @@ func emitRemoveFileHelper(w func(string, ...any)) {
 	w("\tldr x4, [x3]")
 	w("\tadd x4, x4, #7")
 	w("\tand x4, x4, #-8")
-	w("\tadd x5, x4, #16")
+	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
 	w("\tmov w6, #1")
-	w("\tstr w6, [x4]")   // rc = 1
-	w("\tadd x0, x4, #8") // box data
-	w("\tmov w6, #1")
-	w("\tstr w6, [x0]") // tag = 1 (None)
+	w("\tstr w6, [x4]")      // rc = 1
+	w("\tadd x0, x4, #8")    // box data
+	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+	w("\tstr xzr, [x0, #8]") // unit payload
 	w("\tb .Lssa_rmf_ret")
 	w(".Lssa_rmf_err:")
 	w("\tneg x0, x0") // errno = -ret
@@ -2575,7 +2604,7 @@ func emitRemoveFileHelper(w func(string, ...any)) {
 	w("\tmov w6, #1")
 	w("\tstr w6, [x4]")   // rc = 1
 	w("\tadd x0, x4, #8") // box data
-	w("\tstr wzr, [x0]")  // tag = 0 (Some)
+	w("\tstr w6, [x0]")   // tag = 1 (Err) — w6 still holds 1 from rc
 	w("\tstr x20, [x0, #8]")
 	w(".Lssa_rmf_ret:")
 	w("\tldp x19, x20, [sp, #16]")
@@ -2769,7 +2798,7 @@ func emitRemoveDirAllHelper(w func(string, ...any)) {
 	w("\tmov x8, #35")  // unlinkat
 	w("\tsvc #0")
 	w(".Lssa_rda_none:")
-	emitOptionBox(w, 1, "")
+	emitResultUnitBox(w, true, "")
 	w("\tb .Lssa_rda_ret")
 	w(".Lssa_rda_some:")
 	w("\tneg x24, x0") // errno
@@ -2777,7 +2806,7 @@ func emitRemoveDirAllHelper(w func(string, ...any)) {
 	w("\tmov x0, x24")
 	w("\tbl %s", fnLabel("__fern_io_error"))
 	w("\tmov x24, x0") // IoError box
-	emitOptionBox(w, 0, "x24")
+	emitResultUnitBox(w, false, "x24")
 	w(".Lssa_rda_ret:")
 	w("\tldp x23, x24, [sp], #16")
 	w("\tldp x21, x22, [sp], #16")

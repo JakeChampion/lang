@@ -334,8 +334,8 @@ func TestBuildWriteFile(t *testing.T) {
 	const content = "wrote some bytes\n"
 	src := `function main(): i32 {
     match (write_file("scratch_output.txt", "wrote some bytes\n")) {
-        Some(_) => { return 1; },
-        None => { return 0; }
+        Err(_) => { return 1; },
+        Ok(_) => { return 0; }
     }
     return -1;
 }`
@@ -388,8 +388,8 @@ func TestBuildWriteFileRoundtrip(t *testing.T) {
 	}
 	src := `function main(): i32 {
     match (write_file("roundtrip.txt", "round trip content")) {
-        Some(_) => { return -1; },
-        None => {}
+        Err(_) => { return -1; },
+        Ok(_) => {}
     }
     match (read_file("roundtrip.txt")) {
         Ok(s) => { return s.len(); },

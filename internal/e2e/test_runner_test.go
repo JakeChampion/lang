@@ -1598,8 +1598,8 @@ function main(): i32 {
             print("# tempdir: " + dir);
             r = r.defer_cleanup(dir);
             match (write_file(dir + "/x.txt", "x")) {
-                None => { },
-                Some(_) => { r = r.it("write", () => test.fail("write failed")); return r.finish(); }
+                Ok(_) => { },
+                Err(_) => { r = r.it("write", () => test.fail("write failed")); return r.finish(); }
             }
             match (read_file(dir + "/x.txt")) {
                 Ok(s) => { r = r.it("roundtrip", () => test.assert_eq(s, "x")); },

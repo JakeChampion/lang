@@ -59,11 +59,11 @@ function main(): i32 {
       payload = existing(path) + data;
     }
     match (write_file(path, payload)) {
-      Some(_) => {
+      Err(_) => {
         eprint("tee: " + path + ": cannot write");
         status = 1;
       },
-      None => {}
+      Ok(_) => {}
     }
     j = j + 1;
   }

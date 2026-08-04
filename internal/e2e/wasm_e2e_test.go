@@ -6013,8 +6013,8 @@ func TestWASMReadFileNotFound(t *testing.T) {
 func TestWASMWriteFileOk(t *testing.T) {
 	src := `function main(): i32 {
 		match (write_file("out.txt", "wrote it\n")) {
-			Some(_) => { return 1; },
-			None => { return 0; }
+			Err(_) => { return 1; },
+			Ok(_) => { return 0; }
 		}
 		return -1;
 	}`
@@ -6034,8 +6034,8 @@ func TestWASMWriteFileOk(t *testing.T) {
 func TestWASMReadWriteFileRoundtrip(t *testing.T) {
 	src := `function main(): i32 {
 		match (write_file("rt.txt", "round trip")) {
-			Some(_) => { return 1; },
-			None => {}
+			Err(_) => { return 1; },
+			Ok(_) => {}
 		}
 		match (read_file("rt.txt")) {
 			Ok(s) => { return s.len(); },
@@ -10411,8 +10411,8 @@ func TestCmdLangComponentWrapCliComposedFileWrite(t *testing.T) {
 	// write_file + exit: write "composed!\n", exit 0 on success.
 	wfe := build("wfe", `function main(): i32 {
     match (write_file("wfe_out.txt", "composed!\n")) {
-        Some(e) => { exit(2); return 2; },
-        None => { exit(0); return 0; }
+        Err(e) => { exit(2); return 2; },
+        Ok(_) => { exit(0); return 0; }
     }
     return 5;
 }`)
@@ -10427,8 +10427,8 @@ func TestCmdLangComponentWrapCliComposedFileWrite(t *testing.T) {
 	// the shared blocking-write-and-flush. stdout = "ok", file = "data\n".
 	wfp := build("wfp", `function main(): i32 {
     match (write_file("wfp_out.txt", "data\n")) {
-        Some(e) => { print("fail"); return 2; },
-        None => { print("ok"); return 0; }
+        Err(e) => { print("fail"); return 2; },
+        Ok(_) => { print("ok"); return 0; }
     }
     return 5;
 }`)
@@ -10864,8 +10864,8 @@ func TestCmdLangComponentWrapCliWithWriteFile(t *testing.T) {
 	srcPath := filepath.Join(dir, "wf.fern")
 	src := []byte(`function main(): i32 {
     match (write_file("out.txt", "` + strings.Repeat("z", n) + `")) {
-        Some(e) => { return 1; },
-        None => { return 0; }
+        Err(e) => { return 1; },
+        Ok(_) => { return 0; }
     }
     return 1;
 }`)

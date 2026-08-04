@@ -290,7 +290,7 @@ func TestWasmPreview2FileReadWriteAdapterFree(t *testing.T) {
 	src := `function main(): i32 {
     match (read_file("in.txt")) {
         Ok(content) => {
-            match (write_file("out.txt", content)) { Some(e) => { return 2; }, None => {} }
+            match (write_file("out.txt", content)) { Err(e) => { return 2; }, Ok(_) => {} }
             return 0;
         },
         Err(e) => { return 1; }
@@ -450,8 +450,8 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
         i = i + 1;
     }
     match (write_file("rwf.txt", content)) {
-        Some(_) => { return 1; },
-        None => {}
+        Err(_) => { return 1; },
+        Ok(_) => {}
     }
     match (read_file("rwf.txt")) {
         Ok(s) => {
@@ -1089,7 +1089,7 @@ func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
 
 	run("wsrv", `function main(): i32 {
     print("write server");
-    match (write_file("access.log", "GET / 200\n")) { Some(e) => { return 3; }, None => {} }
+    match (write_file("access.log", "GET / 200\n")) { Err(e) => { return 3; }, Ok(_) => {} }
     var s: i32 = tcp_listen(`+p+`);
     if (s < 0) { return 1; }
     tcp_close(s);

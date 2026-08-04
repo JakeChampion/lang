@@ -965,7 +965,7 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			// None -> 0. Exercises the path NUL-termination, openat/write/close, and
 			// the Option[IoError] None box.
 			name: "write_file_ok",
-			src:  `function main(): i32 { return match (write_file("/tmp/fern_ssa_e2e_wf.txt", "hi")) { Some(e) => 1, None => 0 }; }`,
+			src:  `function main(): i32 { return match (write_file("/tmp/fern_ssa_e2e_wf.txt", "hi")) { Err(e) => 1, Ok(_) => 0 }; }`,
 			want: 0,
 		},
 		{
@@ -975,8 +975,8 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			name: "write_file_err",
 			src: `function main(): i32 {
   return match (write_file("/no_such_dir_ssa_9137/f.txt", "x")) {
-    Some(e) => match (e) { NotFound(p) => 10, _ => 19 },
-    None => 0
+    Err(e) => match (e) { NotFound(p) => 10, _ => 19 },
+    Ok(_) => 0
   };
 }`,
 			want: 10,
@@ -1011,7 +1011,7 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			name: "remove_file_ok",
 			src: `function main(): i32 {
   var w = write_file("/tmp/fern_ssa_e2e_rmf.txt", "gone");
-  var r = match (remove_file("/tmp/fern_ssa_e2e_rmf.txt")) { Some(e) => 1, None => 5 };
+  var r = match (remove_file("/tmp/fern_ssa_e2e_rmf.txt")) { Err(e) => 1, Ok(_) => 5 };
   var g = match (read_file("/tmp/fern_ssa_e2e_rmf.txt")) { Ok(s) => 0, Err(e) => 2 };
   return r + g;
 }`,
@@ -1024,8 +1024,8 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			name: "remove_file_err",
 			src: `function main(): i32 {
   return match (remove_file("/no_such_file_ssa_rmf_9137")) {
-    None => 1,
-    Some(e) => match (e) { NotFound(p) => 10, _ => 19 }
+    Ok(_) => 1,
+    Err(e) => match (e) { NotFound(p) => 10, _ => 19 }
   };
 }`,
 			want: 10,
@@ -1047,8 +1047,8 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			src: `function main(): i32 {
   return match (temp_dir("fern_ssa")) {
     Ok(p) => match (write_file(p + "/g.txt", "hello")) {
-      Some(e) => 3,
-      None => match (read_file(p + "/g.txt")) { Ok(s) => s.len(), Err(e) => 1 }
+      Err(e) => 3,
+      Ok(_) => match (read_file(p + "/g.txt")) { Ok(s) => s.len(), Err(e) => 1 }
     },
     Err(e) => 2
   };
@@ -1119,7 +1119,7 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
     Ok(d) => {
       var a = write_file(d + "/a.txt", "x");
       var b = write_file(d + "/b.txt", "y");
-      var r = match (remove_dir_all(d)) { Some(e) => 40, None => 0 };
+      var r = match (remove_dir_all(d)) { Err(e) => 40, Ok(_) => 0 };
       var g = match (read_dir(d)) { Ok(es) => 50, Err(e) => 0 };
       r + g + 5
     },
@@ -1134,9 +1134,9 @@ function main(): i32 { var x: f64 = 3.14; return x.to_string().len(); }`,
 			// gone afterward.
 			name: "remove_dir_all_missing_and_file",
 			src: `function main(): i32 {
-  var m = match (remove_dir_all("/no_such_ssa_rda_dir")) { Some(e) => 1, None => 0 };
+  var m = match (remove_dir_all("/no_such_ssa_rda_dir")) { Err(e) => 1, Ok(_) => 0 };
   var t = write_file("/tmp/fern_ssa_e2e_rda_file.txt", "z");
-  var f = match (remove_dir_all("/tmp/fern_ssa_e2e_rda_file.txt")) { Some(e) => 2, None => 0 };
+  var f = match (remove_dir_all("/tmp/fern_ssa_e2e_rda_file.txt")) { Err(e) => 2, Ok(_) => 0 };
   var g = match (read_file("/tmp/fern_ssa_e2e_rda_file.txt")) { Ok(s) => 4, Err(e) => 0 };
   return m + f + g + 7;
 }`,

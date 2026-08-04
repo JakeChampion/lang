@@ -10,7 +10,7 @@ import (
 )
 
 // TestSelfHostRemoveFileIR pins `remove_file(path)` lowering on the self-host
-// x86-64 IR path. remove_file unlinks a file and returns Option[IoError]; it had
+// x86-64 IR path. remove_file unlinks a file and returns Result[(), IoError]; it had
 // a full AST runtime (__fern_remove_file) but no IR lowering, so it bailed
 // `BAIL call[remove_file]` -> AST (#3457: filesystem_ops). It now lowers to
 // op_remove_file -> the same __fern_remove_file runtime the AST path calls. The
@@ -26,12 +26,12 @@ func TestSelfHostRemoveFileIR(t *testing.T) {
 	const src = `function main(): i32 {
     match (temp_dir("fern-rmfile-ir")) {
         Ok(d) => {
-            match (write_file(d + "/f.txt", "x")) { Some(_) => { return 1; }, None => {}, }
-            match (remove_file(d + "/f.txt")) { Some(_) => { return 2; }, None => {}, }
+            match (write_file(d + "/f.txt", "x")) { Err(_) => { return 1; }, Ok(_) => {}, }
+            match (remove_file(d + "/f.txt")) { Err(_) => { return 2; }, Ok(_) => {}, }
             match (read_dir(d)) {
                 Ok(names) => {
                     var n: i32 = names.len();
-                    match (remove_dir_all(d)) { Some(_) => { return 3; }, None => {}, }
+                    match (remove_dir_all(d)) { Err(_) => { return 3; }, Ok(_) => {}, }
                     if (n != 0) { return 4; }
                     return 0;
                 },
@@ -72,7 +72,7 @@ func TestSelfHostRemoveFileIR(t *testing.T) {
 // TestSelfHostRemoveFileIRWasm is the wasm mirror: remove_file now lowers through
 // the wasm IR path too (it was a wasm_eligible exclusion). The wasm op_remove_file
 // handler calls a fresh runtime ($__fern_remove_file: preview1 path_unlink_file ->
-// Option[IoError] box [tag@0, payload@4], None=1 on success / Some=0 on failure
+// Result[(), IoError] box [tag@0, payload@4], Ok=0 on success / Err=1 on failure
 // with the same null-IoError placeholder $__fern_stat's Err arm uses — the match
 // binds it with a wildcard). Unlike the x86 test this exercises remove_file alone
 // (temp_dir / read_dir are not yet wasm-eligible): it removes a known file (None)
@@ -107,13 +107,13 @@ func TestSelfHostRemoveFileIRWasm(t *testing.T) {
 	// Relative paths resolved against the preopen (the temp dir, mapped to /).
 	const src = `function main(): i32 {
     match (remove_file("rmtarget.txt")) {
-        None => {
+        Ok(_) => {
             match (remove_file("does_not_exist.txt")) {
-                Some(_) => { return 0; },
-                None => { return 1; },
+                Err(_) => { return 0; },
+                Ok(_) => { return 1; },
             }
         },
-        Some(_) => { return 2; },
+        Err(_) => { return 2; },
     }
 }`
 

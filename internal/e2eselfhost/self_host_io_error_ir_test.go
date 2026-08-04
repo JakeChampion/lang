@@ -46,10 +46,10 @@ func ioErrorCases(t *testing.T) []ioErrorCase {
 		{"ok-control", `function main(): i32 { match (read_file("` + okPath + `")) { Ok(s) => { return s.len(); }, Err(_) => { return 90; } } return 0; }`, 6},
 		// write_file's Some(IoError) payload: an open failure (missing parent
 		// dir -> ENOENT) must carry NotFound, not NULL.
-		{"writefile-notfound", `function main(): i32 { match (write_file("/nonexistent-dir-fern/x.txt", "hi")) { Some(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, None => { return 1; } } return 0; }`, 2},
+		{"writefile-notfound", `function main(): i32 { match (write_file("/nonexistent-dir-fern/x.txt", "hi")) { Err(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, Ok(_) => { return 1; } } return 0; }`, 2},
 		// write_file success still returns None (the error-path rework touched
 		// the shared epilogue on both backends).
-		{"writefile-ok-control", `function main(): i32 { match (write_file("` + filepath.Join(t.TempDir(), "out.txt") + `", "hi")) { Some(_) => { return 90; }, None => { return 1; } } return 0; }`, 1},
+		{"writefile-ok-control", `function main(): i32 { match (write_file("` + filepath.Join(t.TempDir(), "out.txt") + `", "hi")) { Err(_) => { return 90; }, Ok(_) => { return 1; } } return 0; }`, 1},
 		// stat / remove_file error payloads (the same NULL-payload class).
 		{"stat-notfound-payload-len", `function main(): i32 { match (stat("/nonexistent-fern-probe")) { Ok(_) => { return 1; }, Err(e) => { match (e) { NotFound(p) => { return p.len(); }, _ => { return 4; } } } } return 0; }`, 23},
 		// stat ENOTDIR (non-ENOENT errno) → Other, NOT NotFound. Guards the full
@@ -60,8 +60,8 @@ func ioErrorCases(t *testing.T) []ioErrorCase {
 		// the same full-errno-mapping guard for those two Fern helpers, whose initial
 		// migration also flattened every failure to NotFound. Matches native interp.
 		{"readfile-notdir-is-other", `function main(): i32 { match (read_file("` + notDir + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { Other(_, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } } } return 0; }`, 5},
-		{"removefile-notdir-is-other", `function main(): i32 { match (remove_file("` + notDir + `")) { Some(e) => { match (e) { Other(_, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } }, None => { return 1; } } return 0; }`, 5},
-		{"removefile-notfound", `function main(): i32 { match (remove_file("/nonexistent-fern-probe")) { Some(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, None => { return 1; } } return 0; }`, 2},
+		{"removefile-notdir-is-other", `function main(): i32 { match (remove_file("` + notDir + `")) { Err(e) => { match (e) { Other(_, _) => { return 5; }, NotFound(_) => { return 6; }, _ => { return 7; } } }, Ok(_) => { return 1; } } return 0; }`, 5},
+		{"removefile-notfound", `function main(): i32 { match (remove_file("/nonexistent-fern-probe")) { Err(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, Ok(_) => { return 1; } } return 0; }`, 2},
 	}
 }
 

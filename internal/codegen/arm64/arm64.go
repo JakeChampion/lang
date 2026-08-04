@@ -6617,11 +6617,14 @@ func (g *generator) emitWriteFileRuntime() {
 	g.label(".Lwf_done")
 	g.emit("mov x0, x21")
 	g.syscall("close")
-	// Return None: 8-byte box, tag=1.
-	g.emit("mov x0, #8")
+	// Return Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
+	// value occupies a payload slot like any other value — the reader
+	// loads it by the declared layout — so the success arm cannot be
+	// the 8-byte tag-only box the Option shape used.
+	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_box")
-	g.emit("mov w1, #1")
-	g.emit("str w1, [x0]")
+	g.emit("str wzr, [x0]")
+	g.emit("str xzr, [x0, #8]")
 	g.emit("b .Lwf_return")
 
 	g.label(".Lwf_err_close")
@@ -6642,7 +6645,8 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("mov x19, x0")
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_box")
-	g.emit("str wzr, [x0]")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
 
 	g.label(".Lwf_return")
@@ -6709,11 +6713,14 @@ func (g *generator) emitWriteFileRuntime2W() {
 	g.label(".Lwf2w_done")
 	g.emit("mov x0, x21")
 	g.syscall("close")
-	// Return None: 8-byte box, tag=1.
-	g.emit("mov x0, #8")
+	// Return Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
+	// value occupies a payload slot like any other value — the reader
+	// loads it by the declared layout — so the success arm cannot be
+	// the 8-byte tag-only box the Option shape used.
+	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_box")
-	g.emit("mov w1, #1")
-	g.emit("str w1, [x0]")
+	g.emit("str wzr, [x0]")
+	g.emit("str xzr, [x0, #8]")
 	g.emit("b .Lwf2w_return")
 	g.label(".Lwf2w_err_close")
 	g.emit("neg x22, x0") // errno
@@ -6731,7 +6738,8 @@ func (g *generator) emitWriteFileRuntime2W() {
 	g.emit("mov x19, x0") // stash IoError box
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_box")
-	g.emit("str wzr, [x0]")     // tag = 0 (Some)
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]")      // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]") // payload
 	g.label(".Lwf2w_return")
 	g.emit("ldr x25, [sp, #64]")
@@ -6848,10 +6856,14 @@ func (g *generator) emitRemoveFileRuntime() {
 	g.emit("mov x2, #0")
 	g.syscall("unlinkat")
 	g.emit("tbnz x0, #63, .Lrmf2w_some")
-	g.emit("mov x0, #8")
+	// Return Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
+	// value occupies a payload slot like any other value — the reader
+	// loads it by the declared layout — so the success arm cannot be
+	// the 8-byte tag-only box the Option shape used.
+	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_box")
-	g.emit("mov w1, #1")
-	g.emit("str w1, [x0]") // Option.None
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str xzr, [x0, #8]") // unit payload
 	g.emit("b .Lrmf2w_return")
 
 	g.label(".Lrmf2w_some")
@@ -6863,7 +6875,8 @@ func (g *generator) emitRemoveFileRuntime() {
 	g.emit("mov x19, x0") // stash IoError box across the alloc
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_box")
-	g.emit("str wzr, [x0]") // Option.Some
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
 
 	g.label(".Lrmf2w_return")
@@ -7463,10 +7476,14 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.syscall("unlinkat")
 
 	g.label(".Lrda2w_none")
-	g.emit("mov x0, #8")
+	// Return Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
+	// value occupies a payload slot like any other value — the reader
+	// loads it by the declared layout — so the success arm cannot be
+	// the 8-byte tag-only box the Option shape used.
+	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_box")
-	g.emit("mov w1, #1")
-	g.emit("str w1, [x0]") // Option.None
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str xzr, [x0, #8]") // unit payload
 	g.emit("b .Lrda2w_return")
 
 	g.label(".Lrda2w_some")
@@ -7478,7 +7495,8 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("mov x22, x0")
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_box")
-	g.emit("str wzr, [x0]") // Option.Some
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
 	g.emit("str x22, [x0, #8]")
 
 	g.label(".Lrda2w_return")

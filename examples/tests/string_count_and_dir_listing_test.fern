@@ -52,16 +52,16 @@ function test_dir_listing_pass(r: test.TestRunner): test.TestRunner {
     if (dir == "") { return rr; }
     // Write three files in arbitrary order.
     match (write_file(dir + "/zebra.txt", "z")) {
-        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        None => {}
+        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
+        Ok(_) => {}
     }
     match (write_file(dir + "/alpha.txt", "a")) {
-        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        None => {}
+        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
+        Ok(_) => {}
     }
     match (write_file(dir + "/mid.txt", "m")) {
-        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        None => {}
+        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
+        Ok(_) => {}
     }
     // Expected list in different order — sort-then-compare
     // means this still matches.
@@ -82,12 +82,12 @@ function test_dir_listing_extra_file_fails(r: test.TestRunner): test.TestRunner 
     var (dir, rr) = test.must_temp_dir(r, "listing-extra");
     if (dir == "") { return rr; }
     match (write_file(dir + "/a.txt", "")) {
-        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        None => {}
+        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
+        Ok(_) => {}
     }
     match (write_file(dir + "/b.txt", "")) {
-        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        None => {}
+        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
+        Ok(_) => {}
     }
     // Expected lacks b.txt — must fail.
     match (test.assert_eq_dir_listing(dir, ["a.txt"])) {

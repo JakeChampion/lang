@@ -1357,16 +1357,21 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
-	// write_file(path, content): Option[IoError] — writes the
-	// content to the named file, truncating it first. Returns
-	// `None` on success and `Some(err)` on failure. We use
-	// Option[IoError] rather than Result[void, IoError] because
-	// the language doesn't have a usable unit type yet — None /
-	// Some(err) pattern reads naturally and matches the Go-style
-	// "error or nil" shape.
+	// write_file(path, content): Result[void, IoError] — writes the
+	// content to the named file, truncating it first. `Ok(())` on
+	// success, `Err(e)` on failure.
+	//
+	// This was Option[IoError], with `Some` meaning FAILURE, because
+	// the language had no way to write a unit value so Result[void, E]
+	// could not be constructed. That inverted the polarity of every
+	// other Option, split the filesystem builtins across two shapes
+	// (read_file / read_dir / stat are Results), and made `?` silently
+	// wrong — on failure it yielded the error and carried on, on
+	// success it returned early. `()` (#6040) closed that.
 	c.info.FuncSigs["write_file"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
-		Result: ast.EnumType{Name: "Option", Args: []ast.Type{
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
@@ -1525,26 +1530,28 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
-	// remove_file(path): Option[IoError] — unlink the file.
-	// `None` on success, `Some(err)` on failure (mirrors
+	// remove_file(path): Result[void, IoError] — unlink the file.
+	// `Ok(())` on success, `Err(e)` on failure (mirrors
 	// `write_file`). Removing a non-existent file is an
 	// error — callers that don't care about that distinction
 	// should ignore the return value.
 	c.info.FuncSigs["remove_file"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
-		Result: ast.EnumType{Name: "Option", Args: []ast.Type{
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
-	// remove_dir_all(path): Option[IoError] — recursively
+	// remove_dir_all(path): Result[void, IoError] — recursively
 	// remove `path` (mirrors POSIX `rm -rf`). Used by tests
-	// to scrub `temp_dir` output. Same `Option[IoError]`
-	// return shape as `remove_file` / `write_file`. Removing
+	// to scrub `temp_dir` output. Same return shape as
+	// `remove_file` / `write_file`. Removing
 	// a non-existent directory is silently ignored — matches
 	// Go's `os.RemoveAll` semantics.
 	c.info.FuncSigs["remove_dir_all"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
-		Result: ast.EnumType{Name: "Option", Args: []ast.Type{
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
 			ast.EnumType{Name: "IoError"},
 		}},
 	}

@@ -166,7 +166,7 @@ sentinel) so CI can tell it apart from a real test failure.
 Companion filesystem builtins:
 `read_dir(path) -> Result[string[], IoError]` lists immediate
 children; `remove_file(path)` and `remove_dir_all(path)` return
-`Option[IoError]` (`None` on success).
+`Result[(), IoError]` (`Ok(())` on success).
 
 ## Fuzzing
 

@@ -523,10 +523,10 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"readfile-len", "function main(): i32 { match (read_file(\"rf_test.txt\")) { Ok(s) => { return s.len(); }, Err(e) => { return 0; } } return 1; }", 17, ""},
 		{"readfile-method", "function main(): i32 { match (read_file(\"rf_test.txt\")) { Ok(s) => { if (s.starts_with(\"file-\")) { return 42; } return 1; }, Err(e) => { return 2; } } return 3; }", 42, ""},
 		{"readfile-missing", "function main(): i32 { match (read_file(\"nope_missing.txt\")) { Ok(s) => { write(s); return 0; }, Err(e) => { write(\"err\"); return 0; } } return 2; }", 0, "err"},
-		// write_file(path, content): Option[IoError] (None = ok). Tested by
+		// write_file(path, content): Result[(), IoError] (Ok(()) = ok). Tested by
 		// a write→read round-trip in-program (preopened dir is writable).
-		{"writefile-roundtrip", "function main(): i32 { match (write_file(\"wt.txt\", \"roundtrip!\")) { Some(e) => { return 1; }, None => {} } match (read_file(\"wt.txt\")) { Ok(s) => { write(s); return 0; }, Err(e) => { write(\"err\"); return 2; } } return 3; }", 0, "roundtrip!"},
-		{"writefile-ok-none", "function main(): i32 { match (write_file(\"wt2.txt\", \"x\")) { Some(e) => { return 1; }, None => { return 0; } } return 2; }", 0, ""},
+		{"writefile-roundtrip", "function main(): i32 { match (write_file(\"wt.txt\", \"roundtrip!\")) { Err(e) => { return 1; }, Ok(_) => {} } match (read_file(\"wt.txt\")) { Ok(s) => { write(s); return 0; }, Err(e) => { write(\"err\"); return 2; } } return 3; }", 0, "roundtrip!"},
+		{"writefile-ok-none", "function main(): i32 { match (write_file(\"wt2.txt\", \"x\")) { Err(e) => { return 1; }, Ok(_) => { return 0; } } return 2; }", 0, ""},
 		{"writefile-built-content", "function main(): i32 { var c = \"a\" + \"b\" + \"c\"; var e = write_file(\"wt3.txt\", c); match (read_file(\"wt3.txt\")) { Ok(s) => { write(s); return 0; }, Err(x) => { return 1; } } return 2; }", 0, "abc"},
 
 		// i64 value path. Literals / arithmetic that exceed the i32 range

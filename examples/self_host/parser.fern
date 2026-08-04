@@ -1801,6 +1801,16 @@ function parse_primary(p: Par): (Expr, Par) {
                 var tpl: i32 = p.peek_line();
                 var tpc: i32 = p.peek_col();
                 p = p.advance();
+                // `()` — the unit value (#6040), the sole inhabitant of
+                // `void` and the payload of a Result that succeeded with
+                // nothing to report (`write_file(...)` → `Ok(())`). It
+                // lowers to a constant 0, exactly as the native compiler
+                // lowers its UnitLit, so both agree on the payload slot.
+                // arrow_lambda_at() already claimed `() => e` above.
+                if (p.peek_punct() == ")") {
+                    p = p.advance();
+                    return parse_postfix(p, e_number_at("0", "", false, tpl, tpc));
+                }
                 var (inner_expr, inner_p) = parse_expr(p);
                 p = inner_p;
                 if (p.peek_punct() == ",") {

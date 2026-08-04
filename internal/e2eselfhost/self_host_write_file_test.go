@@ -29,8 +29,8 @@ func TestSelfHostWriteFileX86_64(t *testing.T) {
 	prog := `function main(): i32 {
     var p: string = "` + path + `";
     match (write_file(p, "hello-selfhost")) {
-        Some(_) => { return 1; },
-        None => {}
+        Err(_) => { return 1; },
+        Ok(_) => {}
     }
     match (read_file(p)) {
         Ok(c) => {

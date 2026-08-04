@@ -1571,7 +1571,7 @@ function main(): i32 {
 		}
 
 		// write: create a file, then verify its contents.
-		writeBin := build(t, "write", "function main(): i32 { match (write_file(\"out.txt\", \"written\")) { Some(e) => { return 1; }, None => {} } return 0; }\n")
+		writeBin := build(t, "write", "function main(): i32 { match (write_file(\"out.txt\", \"written\")) { Err(e) => { return 1; }, Ok(_) => {} } return 0; }\n")
 		wDir := t.TempDir()
 		if ec := exec.Command(wasmtime, "run", "--dir", wDir+"::/", writeBin).Run(); ec != nil {
 			t.Fatalf("write: wasmtime run failed: %v", ec)
@@ -1581,7 +1581,7 @@ function main(): i32 {
 		}
 
 		// read+write: copy in.txt -> out.txt.
-		rwBin := build(t, "rw", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { match (write_file(\"out.txt\", s)) { Some(e) => { return 2; }, None => {} } return 0; }, Err(e) => { return 1; } } }\n")
+		rwBin := build(t, "rw", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { match (write_file(\"out.txt\", s)) { Err(e) => { return 2; }, Ok(_) => {} } return 0; }, Err(e) => { return 1; } } }\n")
 		rwDir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(rwDir, "in.txt"), []byte("copy me"), 0o644); err != nil {
 			t.Fatalf("write in.txt: %v", err)
@@ -1712,7 +1712,7 @@ function main(): i32 {
 		}
 
 		// fs read+write + env: copy in.txt -> out.txt prefixed by env.
-		rwEnv := build(t, "rw_env", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { match (env(\"P\")) { Some(v) => { match (write_file(\"out.txt\", v)) { Some(e) => { return 2; }, None => {} } return 0; }, None => { return 3; } } }, Err(e) => { return 1; } } }\n")
+		rwEnv := build(t, "rw_env", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { match (env(\"P\")) { Err(v) => { match (write_file(\"out.txt\", v)) { Err(e) => { return 2; }, Ok(_) => {} } return 0; }, Ok(_) => { return 3; } } }, Err(e) => { return 1; } } }\n")
 		d2 := mkdir(t)
 		if ec := exec.Command(wasmtime, "run", "--dir", d2+"::/", "--env", "P=ENV", rwEnv).Run(); ec != nil {
 			t.Fatalf("rw+env: run failed: %v", ec)
@@ -1722,7 +1722,7 @@ function main(): i32 {
 		}
 
 		// random + fs-write: draw a random i32, write a fixed file.
-		rndWrite := build(t, "rnd_write", "function main(): i32 { var x: i32 = random_i32(); if (x != x) { return 9; } match (write_file(\"out.txt\", \"R\")) { Some(e) => { return 1; }, None => {} } return 0; }\n")
+		rndWrite := build(t, "rnd_write", "function main(): i32 { var x: i32 = random_i32(); if (x != x) { return 9; } match (write_file(\"out.txt\", \"R\")) { Err(e) => { return 1; }, Ok(_) => {} } return 0; }\n")
 		d3 := t.TempDir()
 		if ec := exec.Command(wasmtime, "run", "--dir", d3+"::/", rndWrite).Run(); ec != nil {
 			t.Fatalf("random+write: run failed: %v", ec)
@@ -1739,7 +1739,7 @@ function main(): i32 {
 		}
 
 		// fs read+write + args: copy in.txt -> out.txt, using args.
-		rwArgs := build(t, "rw_args", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { var n = args().len(); match (write_file(\"out.txt\", s)) { Some(e) => { return 2; }, None => {} } return n - n; }, Err(e) => { return 1; } } }\n")
+		rwArgs := build(t, "rw_args", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { var n = args().len(); match (write_file(\"out.txt\", s)) { Err(e) => { return 2; }, Ok(_) => {} } return n - n; }, Err(e) => { return 1; } } }\n")
 		d5 := mkdir(t)
 		if ec := exec.Command(wasmtime, "run", "--dir", d5+"::/", rwArgs, "x", "y").Run(); ec != nil {
 			t.Fatalf("rw+args: run failed: %v", ec)

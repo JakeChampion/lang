@@ -194,8 +194,8 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 	wfPath := filepath.Join(dir, "wf_data.txt")
 	runCase("write_file_trunc_roundtrip",
 		`function main(): i32 {
-  match (write_file("`+wfPath+`", "longcontent")) { Some(e) => { return 91; }, None => {} }
-  match (write_file("`+wfPath+`", "hi")) { Some(e) => { return 92; }, None => {} }
+  match (write_file("`+wfPath+`", "longcontent")) { Err(e) => { return 91; }, Ok(_) => {} }
+  match (write_file("`+wfPath+`", "hi")) { Err(e) => { return 92; }, Ok(_) => {} }
   match (read_file("`+wfPath+`")) { Ok(s) => { return s.len(); }, Err(e) => { return 93; } }
 }`,
 		2)
@@ -222,8 +222,8 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 	rmPath := filepath.Join(dir, "rm_target.txt")
 	runCase("remove_file_lifecycle",
 		`function main(): i32 {
-  match (write_file("`+rmPath+`", "x")) { Some(e) => { return 1; }, None => {} }
-  match (remove_file("`+rmPath+`")) { Some(e) => { return 2; }, None => {} }
+  match (write_file("`+rmPath+`", "x")) { Err(e) => { return 1; }, Ok(_) => {} }
+  match (remove_file("`+rmPath+`")) { Err(e) => { return 2; }, Ok(_) => {} }
   match (stat("`+rmPath+`")) { Ok(fs) => { return 3; }, Err(e) => { return 7; } }
 }`,
 		7)
