@@ -10,6 +10,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "og": "node scripts/render-og.mjs",
+    "fonts": "node scripts/fetch-fonts.mjs",
     "astro": "astro"
   },
   "dependencies": {

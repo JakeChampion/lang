@@ -69,36 +69,10 @@ export default defineConfig({
         alt: "Fern",
       },
       description: tagline,
-      // Two webfonts, both `display=swap` behind real fallback stacks
-      // so a blocked or slow font-CDN costs layout only, never content:
-      // Fraunces (variable, with its SOFT + WONK axes) sets headings and
-      // the landing page's display type, IBM Plex Mono carries code and
-      // the small-caps metadata labels. Plus the Open Graph / Twitter
-      // card tags Starlight doesn't emit itself.
+      // The Open Graph / Twitter card tags Starlight doesn't emit itself.
+      // (The two webfonts are self-hosted — see ./src/styles/fonts.css in
+      // `customCss` below.)
       head: [
-        {
-          tag: "link",
-          attrs: { rel: "preconnect", href: "https://fonts.googleapis.com" },
-        },
-        {
-          tag: "link",
-          attrs: {
-            rel: "preconnect",
-            href: "https://fonts.gstatic.com",
-            crossorigin: "anonymous",
-          },
-        },
-        {
-          tag: "link",
-          attrs: {
-            rel: "stylesheet",
-            href:
-              "https://fonts.googleapis.com/css2" +
-              "?family=Fraunces:opsz,wght,SOFT,WONK@9..144,400..700,0..100,0..1" +
-              "&family=IBM+Plex+Mono:wght@400;500;600" +
-              "&display=swap",
-          },
-        },
         {
           tag: "meta",
           attrs: { property: "og:type", content: "website" },
@@ -197,7 +171,12 @@ export default defineConfig({
           attrs: { target: "_blank" },
         },
       ],
-      customCss: ["./src/styles/fern.css"],
+      // fonts.css first: the @font-face rules it generates are what
+      // fern.css's `--fern-font-display` / `--fern-font-mono` stacks
+      // resolve to. Both are bundled into the same stylesheet, so this is
+      // one request rather than the three (two preconnects + a
+      // cross-origin stylesheet) the Google Fonts link used to cost.
+      customCss: ["./src/styles/fonts.css", "./src/styles/fern.css"],
       lastUpdated: true,
       editLink: {
         baseUrl:
