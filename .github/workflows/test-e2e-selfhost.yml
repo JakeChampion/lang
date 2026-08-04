@@ -512,14 +512,20 @@ jobs:
     needs: build
     name: fixtures-selfhost-${{ matrix.leg }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: ${{ matrix.job-minutes }}
     strategy:
       fail-fast: false
+      # Per-leg time budget, measured rather than guessed. wasm and x86-64 finish
+      # the corpus in ~11 minutes each. arm64 does not: `-target arm64` assembles
+      # AND links in-process per fixture, which measured ~13s per fixture on the
+      # 2026-08-04 run — ~69 min for 317 fixtures. That run hit a 43m wall two
+      # thirds through and reported a red lane that could not say what else was
+      # red, which is worse than a slow lane.
       matrix:
         include:
-          - { leg: wasm, test: TestFernFixturesSelfHostWasm, wasmtime: "true", qemu: "false" }
-          - { leg: x86-64, test: TestFernFixturesSelfHostX86_64, wasmtime: "false", qemu: "false" }
-          - { leg: arm64, test: TestFernFixturesSelfHostArm64, wasmtime: "false", qemu: "true" }
+          - { leg: wasm, test: TestFernFixturesSelfHostWasm, wasmtime: "true", qemu: "false", job-minutes: 45, go-timeout: 43m }
+          - { leg: x86-64, test: TestFernFixturesSelfHostX86_64, wasmtime: "false", qemu: "false", job-minutes: 45, go-timeout: 43m }
+          - { leg: arm64, test: TestFernFixturesSelfHostArm64, wasmtime: "false", qemu: "true", job-minutes: 100, go-timeout: 95m }
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
@@ -541,7 +547,7 @@ jobs:
       - name: run the fixture corpus through the self-host compiler
         env:
           FERN_SELFHOST_FIXTURES: "1"
-        run: go test ./internal/e2e/ -run '^${{ matrix.test }}$' -v -timeout 43m
+        run: go test ./internal/e2e/ -run '^${{ matrix.test }}$' -v -timeout ${{ matrix.go-timeout }}
 
   test:
     needs: [build, warm]
