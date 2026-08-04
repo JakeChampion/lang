@@ -2116,6 +2116,10 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // negative. Matches native's FuncSigs; the wasm backend
                     // zero-extends its i32 cursor difference to suit.
                     if (id.name == "__heap_bump_bytes") { return ty_i64(); }
+                    // __arr_push_shared_count(): the rc==1 cliff counter. i32,
+                    // unlike the bump mark above — it counts appends, not bytes,
+                    // and a healthy run reports 0. Matches native's FuncSigs.
+                    if (id.name == "__arr_push_shared_count") { return ty_i32(); }
                     if (id.name == "__load_i32") { return ty_i32(); }
                     if (id.name == "exit") { return ty_i32(); }
                     if (id.name == "args_count") { return ty_i32(); }

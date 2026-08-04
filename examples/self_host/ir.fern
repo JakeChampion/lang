@@ -531,6 +531,18 @@ pub function op_open_file(flags: i32): Op {
 // arena and records the end); wasm reads `$heap − heap_base` and zero-extends
 // it to the declared i64. Mirrors native's __fern_heap_bump_bytes.
 pub function op_heap_bump_bytes(): Op { return op0("heap_bump_bytes"); }
+// `__arr_push_shared_count` takes no operands → an i32: the number of appends
+// that copied a buffer which still had SPARE CAPACITY, i.e. the copy was bought
+// by an extra reference rather than by a full buffer. `__fern_arr_push` mutates
+// in place only at rc == 1, so that threshold is a performance-correctness
+// boundary with no diagnostic of its own — one stray retain upstream turns a
+// threaded accumulator from O(n) into O(n²) while the program stays correct.
+// 0 on a healthy run, which is what makes it usable as an assertion. Like
+// heap_bump_bytes it reads a runtime store rather than allocating (op_allocates
+// admits it so an introspection-only module still emits the heap runtime): the
+// register backends read the `__fern_arr_push_shared` word, wasm a fixed
+// low-memory slot. Mirrors native's __fern_arr_push_shared_count.
+pub function op_arr_push_shared_count(): Op { return op0("arr_push_shared_count"); }
 // `str_bytes` pops [str] → a fresh u8[] (one i32 slot per byte). Backs both
 // `s.bytes()` (copying) and `s.as_bytes()` — the self-host's slot-array model
 // has no separate zero-copy slice view, so as_bytes returns the same fresh
@@ -1371,6 +1383,7 @@ function kind_id_4(name: string): i32 {
     // Builtin fresh-array builders (#3457): xs.reverse() / xs.concat(ys).
     if (name == "arr_reverse") { return 214; }
     if (name == "arr_concat") { return 215; }
+    if (name == "arr_push_shared_count") { return 216; }
     return 0;
 }
 
@@ -1615,6 +1628,7 @@ function kind_name_4(id: i32): string {
     if (id == 213) { return "proc_exec"; }
     if (id == 214) { return "arr_reverse"; }
     if (id == 215) { return "arr_concat"; }
+    if (id == 216) { return "arr_push_shared_count"; }
     return "invalid";
 }
 
@@ -1810,6 +1824,10 @@ pub function op_allocates(tag: i32): boolean {
     // + base, so it needs that runtime emitted — fold it into the same gate
     // (the predicate's contract per the doc above is "needs the heap runtime").
     if (tag == 80) { return true; }
+    // arr_push_shared_count does not allocate either, but it reads the counter
+    // __fern_arr_push bumps, which only exists when the heap runtime is emitted.
+    // Same gate, same reason as heap_bump_bytes above.
+    if (tag == 216) { return true; }
     return false;
 }
 
