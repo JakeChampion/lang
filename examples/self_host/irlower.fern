@@ -31733,7 +31733,7 @@ function emit_trmc(fn: parser.FuncDecl, ctor: string, sin: LowerState): LowerSta
 }
 
 pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[],
-    map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], closurearr_ret_fns: string[], const_fns: string[], borrowable_params: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[], opt_fresh_ret_fns: string[], strfld_ok_types: string[], tuple_fresh_ret_fns: string[], for_wasm: boolean): LowerResult {
+    map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], closurearr_ret_fns: string[], const_fns: string[], borrowable_params: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[], opt_fresh_ret_fns: string[], strfld_ok_types: string[], tuple_fresh_ret_fns: string[], move_arr_params: string[], for_wasm: boolean): LowerResult {
     // #4380 lever 3: mark in-bounds `arr[i]` reads (a `while (i < arr.len())`
     // guard proves them) so the ExprIndex lowering emits op_arr_get_nc. Runs
     // here — after every AST transform — so no later pass clobbers the flag.
@@ -32342,7 +32342,7 @@ pub function lower_func(fn: parser.FuncDecl, arr_ret_fns: string[], structs: par
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0,  ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: closure_fns, closurearr_ret_fns: closurearr_ret_fns, const_fns: const_fns, closure_locals: noclos, closure_opt_rets: clo_opt_rets, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns_aug, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, aliased_names: aliased, fn_names: fn_names, return_fresh_struct_ret_fns: return_fresh_struct_ret_fns, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], own_params: own_param_names_of(fn), n_params: names.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, locals: locals0,  ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, i64_ret_fns: i64_ret_fns, fn_param_sigs: fn_param_sigs, cur_fn: fn.name, cur_ret: fn.ret_type, closure_fns: closure_fns, closurearr_ret_fns: closurearr_ret_fns, const_fns: const_fns, closure_locals: noclos, closure_opt_rets: clo_opt_rets, f64_ret_fns: f64_ret_fns, f64arr_ret_fns: f64arr_ret_fns, i64arr_ret_fns: i64arr_ret_fns, structs: structs, str_ret_fns: str_ret_fns, arr_ret_fns: arr_ret_fns_aug, strarr_ret_fns: strarr_ret_fns, arr_method_fns: arr_method_fns, opt_ret_fns: opt_ret_fns, tuple_ret_fns: tuple_ret_fns, struct_ret_fns: struct_ret_fns_aug, map_ret_fns: map_ret_fns, reclaimable_names: reclaim, aliased_names: aliased, fn_names: fn_names, return_fresh_struct_ret_fns: return_fresh_struct_ret_fns, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], own_params: mv_own_params_for(fn, move_arr_params), n_params: names.len(), ok: true };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -36325,6 +36325,26 @@ function fnarr_param_all_closurearr(funcs: parser.FuncDecl[], fname: string, pid
     return nseen > 0 && nok == nseen && nident == nseen;
 }
 
+// mv_own_params_for returns `fn`'s DECLARED `own` params plus the array params
+// move_arr_params_of inferred for it ("fname|pname" entries). Both reach
+// LowerState.own_params, whose only consumer is lower_stmt_return's
+// return-transfer retain — an inferred name skips that retain and nothing else,
+// because every other ownership decision reads `fn.params[i].own` off the decl.
+// See the move-inference block comment (#6074).
+function mv_own_params_for(fn: parser.FuncDecl, move_arr_params: string[]): string[] {
+    var out: string[] = own_param_names_of(fn);
+    if (move_arr_params.len() == 0) { return out; }
+    var i: i32 = 0;
+    while (i < fn.params.len()) {
+        var key: string = fn.name + "|" + fn.params[i].name;
+        if (util.index_of_str(move_arr_params, key) >= 0 && util.index_of_str(out, fn.params[i].name) < 0) {
+            out = out.append(fn.params[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // own_param_names_of returns the names of `fn`'s `own` (consuming) parameters.
 function own_param_names_of(fn: parser.FuncDecl): string[] {
     var out: string[] = [];
@@ -36831,7 +36851,7 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // fixed-point `borrowable_params` that is deliberately NOT
 // `borrowable_params_of(funcs)`, so they keep calling lower_func directly.
 pub function lower_func_for(fn: parser.FuncDecl, arr_ret_fns: string[], structs: parser.StructDecl[], funcs: parser.FuncDecl[]): LowerResult {
-    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs, structs), closure_and_fnptr_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs), false);
+    return lower_func(fn, arr_ret_fns, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs, structs), closure_and_fnptr_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs), move_arr_params_of(funcs), false);
 }
 
 // lower_func_for_noret is lower_func_for with the array- and string-return name
@@ -36856,7 +36876,7 @@ pub function lower_func_for_noret(fn: parser.FuncDecl, structs: parser.StructDec
         if (is_array_type_name(funcs[k].ret_type)) { arr_ret = arr_ret.append(funcs[k].name); }
         k = k + 1;
     }
-    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs, structs), closure_and_fnptr_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs), false);
+    return lower_func(fn, arr_ret, structs, str_ret_fns_of(funcs), strarr_ret_fns_of(funcs), arr_method_fns_of(funcs), opt_ret_fns_of(funcs), i64_ret_fns_of(funcs), tuple_ret_fns_of(funcs), struct_ret_fns_of(funcs, structs), map_ret_fns_of(funcs), f64_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), fn_param_sigs_of(funcs, structs), closure_and_fnptr_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), strfld_reclaim_ok_types_of(funcs, structs), tuple_fresh_ret_fns_of(funcs), move_arr_params_of(funcs), false);
 }
 
 // rc_scalar_type_name: the leak-free scalar value types — no heap box, so
@@ -39398,7 +39418,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var out: LoweredFn[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs, structs), closure_and_fnptr_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), sfot, tuple_fresh_ret_fns_of(funcs), false);
+        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs, structs), closure_and_fnptr_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), sfot, tuple_fresh_ret_fns_of(funcs), move_arr_params_of(funcs), false);
         // A receiver method is registered under the receiver-qualified name
         // `<BaseType>.<method>` — the SAME label a method call lowers to
         // (op_call_direct(receiver_type + "." + field)) and the backends'
@@ -43661,6 +43681,290 @@ function grow_dying_passes_stmt(st: parser.Stmt, params: string[], acc: string[]
         _ => { return acc; }
     }
     return acc;
+}
+
+// --- inferred array-param MOVE (#6074) ---------------------------------------
+//
+// `return <bare array param>` emits a return-transfer retain (lower_stmt_return):
+// the callee is handing out an alias of a buffer the CALLER still owns, and
+// without the retain the two exit sweeps over-release it. An `own` param is
+// excluded — the caller MOVED its reference in, so there is no second owner to
+// count.
+//
+// That retain is what makes a threaded accumulator quadratic here. On a
+// self-reassign call site nothing balances it: the caller's overwrite dec is
+// cow-guarded (`if (old != new)`), an identity return leaves the pointer
+// unchanged, so the dec is skipped and the buffer's rc ratchets to 2 and STAYS
+// there. rc == 1 is exactly the uniqueness test __fern_arr_push's in-place fast
+// path gates on, so every later append copies the whole buffer — correct
+// output, O(n^2) bytes moved. Measured on 20k threaded appends: 2.3 GB here
+// against native's 223 KB, because native promotes the same param to
+// consumed-threading (computeConsumedParams admits ArrayType). #6074.
+//
+// The retain is only OWED when the caller might keep its reference. When every
+// call site moves the argument in, the callee can skip it exactly as it does
+// for `own` — which is what this infers. The admission rule is the one the
+// checker already applies to `own` arguments (ow_self_move_admits, native's
+// selfMoveArgs): the call is `x = f(.., x, ..)` with `x` a bare ident passed
+// EXACTLY once. Every other shape disqualifies the param — a bind
+// (`var c = g(b)`, where b and c are both swept and one count cannot cover two
+// sweeps), a nested call, an argument position, or a bare reference to the
+// function as a value (calls through it are invisible here).
+//
+// `funcs` is the modload-MERGED program (every module's decls, mangled
+// `<mod>__name`), so this sees every call site in the build rather than one
+// module's — the same basis grow_param_flags_of's caller-side grow bracket
+// relies on.
+//
+// Returns "fname|pname" entries. lower_func folds them into own_params, whose
+// only consumer is that retain, so nothing else in the lowering shifts.
+
+// mv_returns_bare reports whether `stmts` contains `return <name>;` — the one
+// emission site this inference changes.
+function mv_returns_bare(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                match (r.value) {
+                    parser.ExprIdent(id) => { if (id.name == name) { return true; } },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(f) => {
+                if (mv_returns_bare(f.then_body, name)) { return true; }
+                if (mv_returns_bare(f.else_body, name)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (mv_returns_bare(w.body, name)) { return true; } },
+            parser.StmtFor(fr) => { if (mv_returns_bare(fr.body, name)) { return true; } },
+            parser.StmtMatch(m) => {
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    if (mv_returns_bare(m.arms[ai].body, name)) { return true; }
+                    ai = ai + 1;
+                }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                if (mv_returns_bare(one, name)) { return true; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// mv_violate_expr disqualifies every candidate call it can reach: any call to a
+// candidate that is NOT the self-move statement shape handled in mv_scan_stmt,
+// and any bare reference to a candidate's NAME (a function value hides its call
+// sites from this scan entirely). Entries are "B:<fname>|<argidx>", plus
+// "B:<fname>|*" for the bare-reference case, which disqualifies every param.
+function mv_violate_expr(e: parser.Expr, fnames: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (util.index_of_str(fnames, cid.name) >= 0) {
+                        var vi: i32 = 0;
+                        while (vi < c.args.len()) {
+                            a = push_str_unique(a, "B:" + cid.name + "|" + util.i32_to_string(vi));
+                            vi = vi + 1;
+                        }
+                    }
+                },
+                _ => { a = mv_violate_expr(c.callee, fnames, a); }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { a = mv_violate_expr(c.args[i], fnames, a); i = i + 1; }
+            return a;
+        },
+        parser.ExprIdent(id) => {
+            if (util.index_of_str(fnames, id.name) >= 0) { a = push_str_unique(a, "B:" + id.name + "|*"); }
+            return a;
+        },
+        parser.ExprBinary(b) => { a = mv_violate_expr(b.left, fnames, a); return mv_violate_expr(b.right, fnames, a); },
+        parser.ExprUnary(u) => { return mv_violate_expr(u.operand, fnames, a); },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) { a = mv_violate_expr(ar.elements[i], fnames, a); i = i + 1; }
+            return a;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { a = mv_violate_expr(t.elements[i], fnames, a); i = i + 1; }
+            return a;
+        },
+        parser.ExprIndex(x) => { a = mv_violate_expr(x.array, fnames, a); return mv_violate_expr(x.index, fnames, a); },
+        parser.ExprSlice(sl) => {
+            a = mv_violate_expr(sl.array, fnames, a);
+            a = mv_violate_expr(sl.start, fnames, a);
+            return mv_violate_expr(sl.end, fnames, a);
+        },
+        parser.ExprStructLit(sl2) => {
+            if (sl2.has_base) { a = mv_violate_expr(sl2.base, fnames, a); }
+            var i: i32 = 0;
+            while (i < sl2.field_values.len()) { a = mv_violate_expr(sl2.field_values[i], fnames, a); i = i + 1; }
+            return a;
+        },
+        parser.ExprFieldAccess(fa) => { return mv_violate_expr(fa.obj, fnames, a); },
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) { a = mv_scan_stmt(lm.body[i], fnames, a); i = i + 1; }
+            return a;
+        },
+        _ => { return a; }
+    }
+    return a;
+}
+
+// mv_scan_stmt walks one statement, admitting the self-move shape
+// `x = f(.., x, ..)` ("S:<fname>|<argidx>" for the position holding x, and a
+// violation for every OTHER position of that call — those arguments are not
+// moves) and disqualifying every other reachable candidate call.
+function mv_scan_stmt(st: parser.Stmt, fnames: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    match (st) {
+        parser.StmtAssign(asg) => {
+            match (asg.value) {
+                parser.ExprCall(c) => {
+                    match (c.callee) {
+                        parser.ExprIdent(cid) => {
+                            if (util.index_of_str(fnames, cid.name) >= 0) {
+                                // The target ident must be passed EXACTLY once:
+                                // twice and one occurrence outlives the move.
+                                var occ: i32 = 0;
+                                var oi: i32 = 0;
+                                while (oi < c.args.len()) {
+                                    match (c.args[oi]) {
+                                        parser.ExprIdent(aid) => { if (aid.name == asg.target) { occ = occ + 1; } },
+                                        _ => {}
+                                    }
+                                    oi = oi + 1;
+                                }
+                                var ai2: i32 = 0;
+                                while (ai2 < c.args.len()) {
+                                    var isself: boolean = false;
+                                    match (c.args[ai2]) {
+                                        parser.ExprIdent(aid2) => {
+                                            if (aid2.name == asg.target && occ == 1) { isself = true; }
+                                        },
+                                        _ => {}
+                                    }
+                                    var key: string = cid.name + "|" + util.i32_to_string(ai2);
+                                    if (isself) { a = push_str_unique(a, "S:" + key); }
+                                    else { a = push_str_unique(a, "B:" + key); }
+                                    ai2 = ai2 + 1;
+                                }
+                                var aj: i32 = 0;
+                                while (aj < c.args.len()) { a = mv_violate_expr(c.args[aj], fnames, a); aj = aj + 1; }
+                                return a;
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            return mv_violate_expr(asg.value, fnames, a);
+        },
+        parser.StmtVar(v) => { return mv_violate_expr(v.init, fnames, a); },
+        parser.StmtReturn(r) => { return mv_violate_expr(r.value, fnames, a); },
+        parser.StmtExpr(e) => { return mv_violate_expr(e.value, fnames, a); },
+        parser.StmtDefer(d) => { return mv_scan_stmt(d.action, fnames, a); },
+        parser.StmtIf(f) => {
+            a = mv_violate_expr(f.cond, fnames, a);
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { a = mv_scan_stmt(f.then_body[ti], fnames, a); ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { a = mv_scan_stmt(f.else_body[ei], fnames, a); ei = ei + 1; }
+            return a;
+        },
+        parser.StmtWhile(w) => {
+            a = mv_violate_expr(w.cond, fnames, a);
+            var wi: i32 = 0;
+            while (wi < w.body.len()) { a = mv_scan_stmt(w.body[wi], fnames, a); wi = wi + 1; }
+            return a;
+        },
+        parser.StmtFor(fr) => {
+            a = mv_violate_expr(fr.iter, fnames, a);
+            var fi: i32 = 0;
+            while (fi < fr.body.len()) { a = mv_scan_stmt(fr.body[fi], fnames, a); fi = fi + 1; }
+            return a;
+        },
+        parser.StmtMatch(m) => {
+            a = mv_violate_expr(m.scrutinee, fnames, a);
+            var mi: i32 = 0;
+            while (mi < m.arms.len()) {
+                var bi: i32 = 0;
+                while (bi < m.arms[mi].body.len()) { a = mv_scan_stmt(m.arms[mi].body[bi], fnames, a); bi = bi + 1; }
+                mi = mi + 1;
+            }
+            return a;
+        },
+        _ => { return a; }
+    }
+    return a;
+}
+
+// move_arr_params_of is the pass: "fname|pname" for every free-function array
+// param whose every call site moves it in. See the block comment above.
+pub function move_arr_params_of(funcs: parser.FuncDecl[]): string[] {
+    // Candidate function names first, so the scan below can recognise a call
+    // to one (and a bare reference to one) in a single walk.
+    var fnames: string[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        var fk: parser.FuncDecl = funcs[k];
+        if (fk.receiver_type.len() == 0) {
+            var reassigned: string[] = body_assign_targets(fk.body);
+            var pj: i32 = 0;
+            while (pj < fk.params.len()) {
+                var p: parser.ParamDecl = fk.params[pj];
+                if (!p.own && is_array_type_name(p.type_name)
+                    && util.index_of_str(reassigned, p.name) >= 0
+                    && mv_returns_bare(fk.body, p.name)) {
+                    fnames = push_str_unique(fnames, fk.name);
+                }
+                pj = pj + 1;
+            }
+        }
+        k = k + 1;
+    }
+    if (fnames.len() == 0) { return []; }
+    // One scan of the whole program's statements.
+    var marks: string[] = [];
+    var si: i32 = 0;
+    while (si < funcs.len()) {
+        var bi2: i32 = 0;
+        while (bi2 < funcs[si].body.len()) { marks = mv_scan_stmt(funcs[si].body[bi2], fnames, marks); bi2 = bi2 + 1; }
+        si = si + 1;
+    }
+    var out: string[] = [];
+    var k2: i32 = 0;
+    while (k2 < funcs.len()) {
+        var f2: parser.FuncDecl = funcs[k2];
+        if (f2.receiver_type.len() == 0 && util.index_of_str(fnames, f2.name) >= 0) {
+            var reassigned2: string[] = body_assign_targets(f2.body);
+            var pj2: i32 = 0;
+            while (pj2 < f2.params.len()) {
+                var p2: parser.ParamDecl = f2.params[pj2];
+                var key2: string = f2.name + "|" + util.i32_to_string(pj2);
+                if (!p2.own && is_array_type_name(p2.type_name)
+                    && util.index_of_str(reassigned2, p2.name) >= 0
+                    && mv_returns_bare(f2.body, p2.name)
+                    && util.index_of_str(marks, "S:" + key2) >= 0
+                    && util.index_of_str(marks, "B:" + key2) < 0
+                    && util.index_of_str(marks, "B:" + f2.name + "|*") < 0) {
+                    out = out.append(f2.name + "|" + p2.name);
+                }
+                pj2 = pj2 + 1;
+            }
+        }
+        k2 = k2 + 1;
+    }
+    return out;
 }
 
 // grow_param_flags_of computes, per FREE function, a '0'/'1'-per-param mask
