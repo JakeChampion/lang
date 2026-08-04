@@ -30,7 +30,8 @@ import (
 //
 // The i32 controls are the same programs with a narrow capture — they lowered
 // before this change and must keep lowering, which is what isolates the width as
-// the variable.
+// the variable. The direct-call cases guard the other direction: a lambda that
+// never reaches the env box must not be cellared.
 func TestSelfHostWideCaptureIR(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -94,6 +95,14 @@ func TestSelfHostWideCaptureIR(t *testing.T) {
 		// observe the post-write value. 42 proves the shared cell is still in
 		// play; a creation-time snapshot would answer 1.
 		{"reassigned-wide-capture-stays-shared", outcome + "function main(): i32 { var a: i64 = 1 as i64; var g = function(): Outcome { return Fail(a as i32); }; a = 42 as i64; return run(g); }", 42},
+
+		// Direct-called bindings: no env box is built at all — the param-lift
+		// threads the captures as call arguments (#5301), which carries a wide
+		// scalar natively — so box_wide_captures must leave them alone. Both had
+		// always lowered; the arrow form is the exact program the first draft of
+		// the pass regressed by cellaring it anyway.
+		{"direct-called-i64-binding", "function main(): i32 { var base: i64 = 7000000000; var f = () => base + 2000000000; return (f() / 1000000000) as i32; }", 9},
+		{"direct-called-f64-binding", "function main(): i32 { var d: f64 = 10.5; var f = () => d * 4.0; return f() as i32; }", 42},
 	}
 
 	for _, tc := range cases {
