@@ -1993,9 +1993,23 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 	// underlying buffer is the caller's. Same borrow predicate as
 	// computeFreeEligible (which runs before this — b.rc.consumedParams /
 	// b.rc.freeEligible are already populated). Force the inc so cow copies.
+	//
+	// A consumed ARRAY param counts as borrowed here even though it is
+	// promoted. The other promoted shapes take an entry retain, which is what
+	// let this predicate treat "consumed" as "rc >= 2, cow will copy anyway".
+	// Arrays deliberately do not (isConsumedArrayParam — the retain costs them
+	// the in-place append), so a promoted array param sits at rc==1 holding the
+	// CALLER's buffer until its first reassignment replaces it, and an in-place
+	// cow there mutates the caller's array. `bump(xs) { xs = xs.with(0, 99) }`
+	// left the caller's `a[0]` at 99 — the with_reassign_self_borrowed_param
+	// corpus case, whose comment already says a reassign-to-self does not make
+	// the buffer ours. Forcing the inc costs a copy on the paths where the slot
+	// HAS been replaced, which is the pre-#6021 behaviour and rare: `.with`
+	// threading is not the append accumulator this promotion exists for.
 	borrowedParam := map[string]bool{}
 	for i, p := range b.fn.Params {
-		if !p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.rc.consumedParams[p.Name] {
+		if !p.Own && !b.paramOwnedByDefault(p.Type, i) &&
+			(!b.rc.consumedParams[p.Name] || b.isConsumedArrayParam(p.Name)) {
 			borrowedParam[p.Name] = true
 		}
 	}
