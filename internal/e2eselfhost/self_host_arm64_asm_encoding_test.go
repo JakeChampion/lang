@@ -50,6 +50,12 @@ import (
 // deliberately position-independent: registers and immediates only. Add a row
 // whenever the emitter learns a new instruction form; both assemblers then have
 // to agree about it.
+//
+// Three oracle limitations shape the snippet, all worth knowing before editing
+// it: internal/native/arm64 treats any line starting with '.' as a directive (so
+// the branch target is a bare Lend:, not a .L local label), has no movn
+// mnemonic, and has no stur/ldur FP form. None is a self-host limitation --
+// #6064 tracks closing them so the snippet can cover those forms too.
 func TestSelfHostArm64AsmEncodingMatchesNative(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
@@ -86,6 +92,103 @@ _start:
     orr x0, x1, x2
     eor x0, x1, x2
     sxtw x0, w0
+    and x10, x9, #255
+    eor x0, x1, #1
+    // 32-bit (W) forms. AArch64 encodes operand width in the instruction, and
+    // arm64_gas_reg maps w0 and x0 to the same number, so every one of these was
+    // assembled as its 64-bit sibling until #6054: str w wrote 8 bytes where 4
+    // were meant, and ldr w / cmp w pulled the neighbouring 4 bytes into the
+    // value. Note ldr/str differ from the ALU forms in TWO ways: the size field,
+    // and an immediate scaled by 4 rather than 8 -- so ldr w3, [x4, #4] is a
+    // legal scaled encoding where the 64-bit form needs the unscaled ldur.
+    ldr w0, [sp, #8]
+    ldr w3, [x4, #4]
+    ldr w5, [x6]
+    str w0, [x1]
+    str w2, [x0, #8]
+    str w7, [sp, #12]
+    ldur w1, [x0, #-8]
+    stur w1, [x0, #-16]
+    cmp w1, #0
+    cmp w9, #255
+    cmp w1, w2
+    add w0, w0, #16
+    sub w2, w3, #1
+    and w0, w1, w2
+    mov w0, w1
+    mov w2, #1
+    mov w5, #4095
+    rev16 w3, w4
+    lsr w0, w1, #2
+    lsl w0, w1, #3
+    asr w0, w1, #4
+    and w10, w9, #255
+    and w9, w9, #1
+    and w0, w1, #31
+    eor w9, w9, #1
+    cbz w0, Lend
+    cbnz w1, Lend
+    tbnz w2, #31, Lend
+    // #6060: four forms that encoded a DIFFERENT instruction than the source
+    // says, plus movn, which had no dispatch branch at all and emitted nothing
+    // while arm64_gas_known claimed it was handled.
+    movz x5, #0x400, lsl #16
+    movz x2, #1, lsl #16
+    movk x2, #0xffff, lsl #32
+    // No explicit movn row: the NATIVE assembler used as this test's oracle does
+    // not implement that mnemonic ("unsupported instruction movn"), so a row for
+    // it fails at the oracle rather than testing anything. The self-host side
+    // does implement it (#6060 -- it used to emit nothing at all), and the
+    // mov x0, #-100 line below reaches the same encoder through the path the
+    // emitter actually takes.
+    mov x0, #-100
+    mov w0, #-100
+    mov x1, #-1
+    str d8, [sp, #-16]!
+    ldr d8, [sp], #16
+    ldr d0, [x12, #8]
+    // No plain-negative FP offset row (str d0, [x12, #-8]): the oracle rejects it
+    // outright ("str FP offset must be a non-negative multiple of 8") because
+    // internal/native/arm64 has no stur/ldur FP form. The self-host now does
+    // (#6060 -- without it the offset wrapped to +8184 and the writeback was
+    // dropped), so that is a gap in the oracle, not in the assembler under test.
+    add x0, sp, x0
+    add x3, sp, x4
+    sub x0, sp, x1
+    // #6044: the FP conversion/rounding family. fcvt had no encoder at all (605
+    // uses in six fixtures), so -target arm64 refused 60 corpus fixtures --
+    // most of them, like fizzbuzz and map_keys, with no float in their source,
+    // because the runtime helpers carry one. fneg/fabs/fsqrt/frint* had
+    // encoders AND a dispatch branch but were missing from arm64_gas_known, so
+    // the program loop refused what the assembler could already encode. The
+    // fmov S/W pair fell through to the 64-bit fp->gpr arm: the wrong register
+    // file at the wrong width, 121 times in one fixture.
+    fcvt s0, d0
+    fcvt s3, d4
+    fcvt d0, s0
+    fcvt d5, s6
+    fcvtzs x0, d0
+    fcvtzs w5, d6
+    frinta d0, d0
+    frintm d0, d1
+    frintp d2, d3
+    frintz d4, d5
+    fsqrt d0, d1
+    fneg d2, d3
+    fabs d4, d5
+    fmov s0, w0
+    fmov w0, s0
+    fmov s3, w4
+    fmov d0, x0
+    fmov x0, d0
+    fmov d1, d2
+    fadd d0, d1, d2
+    fsub d0, d1, d2
+    fmul d0, d1, d2
+    fdiv d0, d1, d2
+    fcmp d1, d0
+    scvtf d0, x0
+Lend:
     ret
 `
 
@@ -176,7 +279,7 @@ func snippetInsns(src string) []string {
 	var out []string
 	for _, ln := range strings.Split(src, "\n") {
 		s := strings.TrimSpace(ln)
-		if s == "" || strings.HasPrefix(s, ".") || strings.HasSuffix(s, ":") {
+		if s == "" || strings.HasPrefix(s, ".") || strings.HasSuffix(s, ":") || strings.HasPrefix(s, "//") {
 			continue
 		}
 		out = append(out, s)

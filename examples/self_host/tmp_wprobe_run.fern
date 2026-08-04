@@ -1,0 +1,8 @@
+import "./arm64_native";
+
+function main(): i32 {
+    var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program("_start:\n    mov x0, #-100\n    ret\n");
+    var pa: arm64_native.Arm64Asm = p.asm;
+    if (pa.code.len() != 8) { return 1; }
+    return 0;
+}

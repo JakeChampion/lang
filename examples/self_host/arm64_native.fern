@@ -82,14 +82,25 @@ function arm64_movn_word(rd: i32, imm16: i32, shift: i32): i64 {
     return 0x92800000 | (hw << 21) | (((imm16 & 0xffff) as i64) << 5) | ((rd & 31) as i64);
 }
 
-function arm64_movz(buf: i32[], rd: i32, imm16: i32, shift: i32): i32[] {
-    return arm64_le32(buf, arm64_movz_word(rd, imm16, shift));
+// The `w` flag selects the 32-bit form. AArch64 encodes operand width in the
+// instruction, not the register name, and arm64_gas_reg deliberately maps w0 and
+// x0 to the same number — so every site that can see a `w` operand must pass the
+// flag or the assembler silently widens the operation (#6054).
+function arm64_movz(buf: i32[], rd: i32, imm16: i32, shift: i32, w: boolean): i32[] {
+    var word: i64 = arm64_movz_word(rd, imm16, shift);
+    if (w) { word = word & 0x7fffffff; }   // sf=0: 0xd2800000 -> 0x52800000
+    return arm64_le32(buf, word);
 }
 function arm64_movk(buf: i32[], rd: i32, imm16: i32, shift: i32): i32[] {
     return arm64_le32(buf, arm64_movk_word(rd, imm16, shift));
 }
-function arm64_movn(buf: i32[], rd: i32, imm16: i32, shift: i32): i32[] {
-    return arm64_le32(buf, arm64_movn_word(rd, imm16, shift));
+// `w` clears sf: 0x92800000 -> 0x12800000. Verified vs clang:
+// mov x0,#-100 = 0x92800c60 (movn x0,#99), mov w0,#-100 = 0x12800c60,
+// mov x1,#-1 = 0x92800001 (movn x1,#0).
+function arm64_movn(buf: i32[], rd: i32, imm16: i32, shift: i32, w: boolean): i32[] {
+    var word: i64 = arm64_movn_word(rd, imm16, shift);
+    if (w) { word = word & 0x7fffffff; }
+    return arm64_le32(buf, word);
 }
 
 // ---- add / sub (immediate) ----
@@ -105,14 +116,34 @@ function arm64_subimm_word(rd: i32, rn: i32, imm12: i32): i64 {
     return 0xd1000000 | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
 }
 
-function arm64_addimm(buf: i32[], rd: i32, rn: i32, imm12: i32): i32[] {
-    return arm64_le32(buf, arm64_addimm_word(rd, rn, imm12));
+// `w` clears sf: add 0x91000000 -> 0x11000000, sub 0xd1000000 -> 0x51000000.
+function arm64_addimm(buf: i32[], rd: i32, rn: i32, imm12: i32, w: boolean): i32[] {
+    var word: i64 = arm64_addimm_word(rd, rn, imm12);
+    if (w) { word = word & 0x7fffffff; }
+    return arm64_le32(buf, word);
 }
-function arm64_subimm(buf: i32[], rd: i32, rn: i32, imm12: i32): i32[] {
-    return arm64_le32(buf, arm64_subimm_word(rd, rn, imm12));
+function arm64_subimm(buf: i32[], rd: i32, rn: i32, imm12: i32, w: boolean): i32[] {
+    var word: i64 = arm64_subimm_word(rd, rn, imm12);
+    if (w) { word = word & 0x7fffffff; }
+    return arm64_le32(buf, word);
 }
 
 // ---- add / sub / mov (register) ----
+
+// SP is not addressable as Rn in the shifted-register form — there Rn=31 means
+// XZR — so `add x0, sp, x0` assembled as a shifted-register add computes
+// `x0 = 0 + x0` and silently DROPS THE STACK BASE (#6060). GAS uses the
+// extended-register form (option=011 UXTX, imm3=0) when an operand is SP.
+// Verified vs clang: add x0,sp,x0 = 0x8b2063e0, add x3,sp,x4 = 0x8b2463e3,
+// sub x0,sp,x1 = 0xcb2163e0.
+function arm64_addsub_ext_sp_word(is_sub: boolean, rd: i32, rn: i32, rm: i32): i64 {
+    var base: i64 = 0x8b200000;
+    if (is_sub) { base = 0xcb200000; }
+    return base | (((rm & 31) as i64) << 16) | 0x6000 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+function arm64_addsub_ext_sp(buf: i32[], is_sub: boolean, rd: i32, rn: i32, rm: i32): i32[] {
+    return arm64_le32(buf, arm64_addsub_ext_sp_word(is_sub, rd, rn, rm));
+}
 
 // arm64_addreg_word encodes `add Xd, Xn, Xm` (shifted-register, zero shift).
 //   sf=1 op=0 S=0 01011 -> 0x8B000000 | Rm<<16 | Rn<<5 | Rd
@@ -137,8 +168,10 @@ function arm64_addreg(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
 function arm64_subreg(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
     return arm64_le32(buf, arm64_subreg_word(rd, rn, rm));
 }
-function arm64_movreg(buf: i32[], rd: i32, rm: i32): i32[] {
-    return arm64_le32(buf, arm64_movreg_word(rd, rm));
+function arm64_movreg(buf: i32[], rd: i32, rm: i32, w: boolean): i32[] {
+    var word: i64 = arm64_movreg_word(rd, rm);
+    if (w) { word = word & 0x7fffffff; }   // orr 0xaa.. -> 0x2a..
+    return arm64_le32(buf, word);
 }
 
 // ---- system / control ----
@@ -186,11 +219,19 @@ function arm64_cmpimm_word(rn: i32, imm12: i32): i64 {
     return 0xf1000000 | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | 31;
 }
 
-function arm64_cmpreg(buf: i32[], rn: i32, rm: i32): i32[] {
-    return arm64_le32(buf, arm64_cmpreg_word(rn, rm));
+// `w` clears sf: cmp-reg 0xeb.. -> 0x6b.., cmp-imm 0xf1.. -> 0x71... A 64-bit
+// compare of a value produced by 32-bit arithmetic reads the neighbouring bytes
+// as part of the operand, which is why this matters even when the low half is
+// correct (#6054).
+function arm64_cmpreg(buf: i32[], rn: i32, rm: i32, w: boolean): i32[] {
+    var word: i64 = arm64_cmpreg_word(rn, rm);
+    if (w) { word = word & 0x7fffffff; }
+    return arm64_le32(buf, word);
 }
-function arm64_cmpimm(buf: i32[], rn: i32, imm12: i32): i32[] {
-    return arm64_le32(buf, arm64_cmpimm_word(rn, imm12));
+function arm64_cmpimm(buf: i32[], rn: i32, imm12: i32, w: boolean): i32[] {
+    var word: i64 = arm64_cmpimm_word(rn, imm12);
+    if (w) { word = word & 0x7fffffff; }
+    return arm64_le32(buf, word);
 }
 
 // ---- condition codes (the 4-bit cond field of B.cond) ----
@@ -237,11 +278,18 @@ function arm64_b(buf: i32[], rel: i32): i32[] {
 function arm64_bcond(buf: i32[], cond: i32, rel: i32): i32[] {
     return arm64_le32(buf, arm64_bcond_word(cond, rel));
 }
-function arm64_cbz(buf: i32[], rt: i32, rel: i32): i32[] {
-    return arm64_le32(buf, arm64_cbz_word(rt, rel));
+// `w` clears sf: cbz 0xb4.. -> 0x34.., cbnz 0xb5.. -> 0x35... The 64-bit form
+// tests all 64 bits, so a `cbz w0` assembled as `cbz x0` takes the branch on a
+// different condition whenever the upper half is dirty.
+function arm64_cbz(buf: i32[], rt: i32, rel: i32, w: boolean): i32[] {
+    var word: i64 = arm64_cbz_word(rt, rel);
+    if (w) { word = word & 0x7fffffff; }
+    return arm64_le32(buf, word);
 }
-function arm64_cbnz(buf: i32[], rt: i32, rel: i32): i32[] {
-    return arm64_le32(buf, arm64_cbnz_word(rt, rel));
+function arm64_cbnz(buf: i32[], rt: i32, rel: i32, w: boolean): i32[] {
+    var word: i64 = arm64_cbnz_word(rt, rel);
+    if (w) { word = word & 0x7fffffff; }
+    return arm64_le32(buf, word);
 }
 
 // ---- forward references (placeholder + patch) ----
@@ -407,12 +455,12 @@ function arm64_asm_bcond(own a: Arm64Asm, cond: i32, name: string): Arm64Asm {
     a = Arm64Asm { ...a, code: arm64_bcond(a.code, cond, 0) };
     return arm64_asm_fixup_or_patch(a, name, 1);
 }
-function arm64_asm_cbz(own a: Arm64Asm, rt: i32, name: string): Arm64Asm {
-    a = Arm64Asm { ...a, code: arm64_cbz(a.code, rt, 0) };
+function arm64_asm_cbz(own a: Arm64Asm, rt: i32, name: string, w: boolean): Arm64Asm {
+    a = Arm64Asm { ...a, code: arm64_cbz(a.code, rt, 0, w) };
     return arm64_asm_fixup_or_patch(a, name, 1);
 }
-function arm64_asm_cbnz(own a: Arm64Asm, rt: i32, name: string): Arm64Asm {
-    a = Arm64Asm { ...a, code: arm64_cbnz(a.code, rt, 0) };
+function arm64_asm_cbnz(own a: Arm64Asm, rt: i32, name: string, w: boolean): Arm64Asm {
+    a = Arm64Asm { ...a, code: arm64_cbnz(a.code, rt, 0, w) };
     return arm64_asm_fixup_or_patch(a, name, 1);
 }
 
@@ -462,10 +510,24 @@ function arm64_ldr_word(rt: i32, rn: i32, off: i32): i64 {
     return 0xf9400000 | ((((off / 8) & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
 }
 
-function arm64_str(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+// The 32-bit forms are NOT a cleared sf bit: the width lives in the size field
+// (bits 31:30), 11 -> 10, and the scaled immediate is divided by the ACCESS SIZE,
+// so a 32-bit offset scales by 4 where the 64-bit one scales by 8. Getting only
+// the base right would keep the width bug and add an addressing bug.
+// Verified vs clang: str w0,[x1] = 0xb9000020, str w2,[x0,#8] = 0xb9000802,
+// ldr w0,[sp,#8] = 0xb9400be0, ldr w3,[x4,#4] = 0xb9400483.
+function arm64_str_word_w(rt: i32, rn: i32, off: i32): i64 {
+    return 0xb9000000 | ((((off / 4) & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_ldr_word_w(rt: i32, rn: i32, off: i32): i64 {
+    return 0xb9400000 | ((((off / 4) & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+}
+function arm64_str(buf: i32[], rt: i32, rn: i32, off: i32, w: boolean): i32[] {
+    if (w) { return arm64_le32(buf, arm64_str_word_w(rt, rn, off)); }
     return arm64_le32(buf, arm64_str_word(rt, rn, off));
 }
-function arm64_ldr(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+function arm64_ldr(buf: i32[], rt: i32, rn: i32, off: i32, w: boolean): i32[] {
+    if (w) { return arm64_le32(buf, arm64_ldr_word_w(rt, rn, off)); }
     return arm64_le32(buf, arm64_ldr_word(rt, rn, off));
 }
 // 64-bit SIMD&FP load/store `ldr/str Dt, [Xn{, #off}]` — the float path
@@ -477,6 +539,25 @@ function arm64_ldr_fp(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
 }
 function arm64_str_fp(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
     return arm64_le32(buf, 0xfd000000 | ((((off / 8) & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
+}
+// The scaled unsigned forms above cannot express a NEGATIVE offset or a
+// writeback, and the float path emits both — `str d8, [sp, #-16]!` on entry and
+// `ldr d8, [sp], #16` on exit. Routing those through the scaled encoder wrapped
+// -16 into a +8184 offset and dropped the writeback entirely: a stack store to
+// the wrong address with sp never adjusted (#6060). imm9 is signed and unscaled
+// in all three. Verified vs clang: str d8,[sp,#-16]! = 0xfc1f0fe8,
+// ldr d8,[sp],#16 = 0xfc4107e8, stur d0,[x12,#-8] = 0xfc1f8180.
+function arm64_stur_fp(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, 0xfc000000 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
+}
+function arm64_ldur_fp(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, 0xfc400000 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
+}
+function arm64_str_fp_pre(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, 0xfc000c00 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
+}
+function arm64_ldr_fp_post(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, 0xfc400400 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
 }
 
 // ---- PC-relative page addressing (@PAGE / @PAGEOFF) ----
@@ -699,6 +780,13 @@ function arm64_tbnz_word(rt: i32, bit: i32, rel: i32): i64 {
 function arm64_tbz(buf: i32[], rt: i32, bit: i32, rel: i32): i32[] {
     return arm64_le32(buf, arm64_tbz_word(rt, bit, rel));
 }
+// tbz/tbnz put the bit index's high bit in position 31 (b5), so a 32-bit test
+// simply has b5 = 0 — which arm64_tbnz_word already produces for bit < 32. The
+// `w` flag is accepted for symmetry with the other forms and asserts nothing:
+// clearing bit 31 for a bit index >= 32 would silently test the WRONG BIT, so
+// the width comes from the index, not from the register spelling. Verified vs
+// clang: tbnz w2,#31 = 0x37f800a2 (same word the 64-bit builder emits for
+// bit 31).
 function arm64_tbnz(buf: i32[], rt: i32, bit: i32, rel: i32): i32[] {
     return arm64_le32(buf, arm64_tbnz_word(rt, bit, rel));
 }
@@ -771,12 +859,19 @@ function arm64_ldrb_strb_reg(buf: i32[], is_load: boolean, rt: i32, rn: i32, rm:
 // arm64_ldur / arm64_stur encode `ldur/stur Xt, [Xn, #off]` — the unscaled
 // signed-imm9 load/store (no writeback, no scaling), the form the backend
 // uses for frame-slot access. 0xF8400000 / 0xF8000000 | imm9<<12 | Rn<<5 | Rt.
-function arm64_ldur(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
-    var w: i64 = 0xf8400000 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+// Unscaled (imm9), so unlike ldr/str above only the size field changes:
+// 0xf8400000 -> 0xb8400000 and 0xf8000000 -> 0xb8000000. Verified vs clang:
+// ldur w1,[x0,#-8] = 0xb85f8001, stur w1,[x0,#-16] = 0xb81f0001.
+function arm64_ldur(buf: i32[], rt: i32, rn: i32, off: i32, w32: boolean): i32[] {
+    var base: i64 = 0xf8400000;
+    if (w32) { base = 0xb8400000; }
+    var w: i64 = base | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
     return arm64_le32(buf, w);
 }
-function arm64_stur(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
-    var w: i64 = 0xf8000000 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+function arm64_stur(buf: i32[], rt: i32, rn: i32, off: i32, w32: boolean): i32[] {
+    var base: i64 = 0xf8000000;
+    if (w32) { base = 0xb8000000; }
+    var w: i64 = base | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
     return arm64_le32(buf, w);
 }
 
@@ -864,8 +959,10 @@ function arm64_csel(buf: i32[], rd: i32, rn: i32, rm: i32, cond: i32): i32[] {
 }
 
 // arm64_andreg encodes `and Xd, Xn, Xm` (logical shifted-register, zero shift).
-function arm64_andreg(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
-    return arm64_le32(buf, 0x8a000000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+function arm64_andreg(buf: i32[], rd: i32, rn: i32, rm: i32, w: boolean): i32[] {
+    var word: i64 = 0x8a000000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (w) { word = word & 0x7fffffff; }   // 0x8a.. -> 0x0a..
+    return arm64_le32(buf, word);
 }
 
 // ---- AArch64 bitmask (logical) immediate encoder ----
@@ -976,11 +1073,35 @@ function arm64_and_imm_ok(imm: i32): boolean {
     return arm64_encode_bitmask(imm as i64).ok;
 }
 
-// arm64_and_imm encodes `and Xd, Xn, #imm` (logical immediate). Callers
-// must check arm64_and_imm_ok(imm) first.
-function arm64_and_imm(buf: i32[], rd: i32, rn: i32, imm: i32): i32[] {
+// arm64_and_imm encodes `and Xd, Xn, #imm` / `and Wd, Wn, #imm` (logical
+// immediate). Callers must check arm64_and_imm_ok(imm) — and, for the 32-bit
+// form, arm64_logical_imm_w_ok(imm) — first.
+//
+// The 32-bit form is base 0x12000000 with **N = 0**: a 32-bit logical immediate
+// has no 64-bit element size to select, so the N bit is not merely the sf bit
+// moved. immr/imms carry over unchanged for a single contiguous run, which is
+// every mask this emitter produces (1, 31, 127, 255). Verified vs clang:
+// and w10,w9,#255 = 0x12001d2a, and w9,w9,#1 = 0x12000129,
+// and w0,w1,#31 = 0x12001020, and x10,x9,#255 = 0x92401d2a.
+function arm64_and_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32[] {
     var bm: Arm64Bm = arm64_encode_bitmask(imm as i64);
-    return arm64_le32(buf, 0x92000000 | ((bm.n as i64) << 22) | ((bm.immr as i64) << 16) | ((bm.imms as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+    var base: i64 = 0x92000000;
+    var nbit: i64 = bm.n as i64;
+    if (w) { base = 0x12000000; nbit = 0; }
+    return arm64_le32(buf, base | (nbit << 22) | ((bm.immr as i64) << 16) | ((bm.imms as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
+// arm64_logical_imm_w_ok reports whether `imm` can be re-encoded as a 32-bit
+// logical immediate by dropping the N bit — i.e. it fits in 32 bits and the
+// 64-bit encoding is the single-run (N=1) shape whose immr/imms transfer
+// unchanged. Anything else (a mask that needs a 64-bit element size, or one
+// wider than 32 bits) is REFUSED by the caller rather than encoded on a guess:
+// silently emitting the wrong mask is the #6047 / #6054 failure mode.
+function arm64_logical_imm_w_ok(imm: i32): boolean {
+    if (imm < 0) { return false; }
+    var bm: Arm64Bm = arm64_encode_bitmask(imm as i64);
+    if (!bm.ok) { return false; }
+    return bm.n == 1;
 }
 
 // eor (exclusive-or). asm_arm64 emits the register form `eor Rd, Rn, Rm`
@@ -998,9 +1119,14 @@ function arm64_eor(buf: i32[], rd: i32, rn: i32, rm: i32, w: boolean): i32[] {
 function arm64_eor_imm_ok(imm: i32): boolean {
     return arm64_encode_bitmask(imm as i64).ok;
 }
-function arm64_eor_imm(buf: i32[], rd: i32, rn: i32, imm: i32): i32[] {
+// 32-bit form: base 0x52000000, N=0 — same rule as arm64_and_imm above.
+// Verified vs clang: eor w9,w9,#1 = 0x52000129.
+function arm64_eor_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32[] {
     var bm: Arm64Bm = arm64_encode_bitmask(imm as i64);
-    return arm64_le32(buf, 0xd2000000 | ((bm.n as i64) << 22) | ((bm.immr as i64) << 16) | ((bm.imms as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+    var base: i64 = 0xd2000000;
+    var nbit: i64 = bm.n as i64;
+    if (w) { base = 0x52000000; nbit = 0; }
+    return arm64_le32(buf, base | (nbit << 22) | ((bm.immr as i64) << 16) | ((bm.imms as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
 }
 
 // ---- orr / subs / divide / multiply-subtract / rev16 ----
@@ -1031,8 +1157,12 @@ function arm64_msub(buf: i32[], rd: i32, rn: i32, rm: i32, ra: i32): i32[] {
     return arm64_le32(buf, 0x9b008000 | (((rm & 31) as i64) << 16) | (((ra & 31) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
 }
 // rev16 Xd, Xn -> 0xDAC00400 | Rn<<5 | Rd.
-function arm64_rev16(buf: i32[], rd: i32, rn: i32): i32[] {
-    return arm64_le32(buf, 0xdac00400 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+// `w` clears sf: 0xdac00400 -> 0x5ac00400. rev16 on a 32-bit value byte-swaps
+// two halfwords; the 64-bit form swaps four, so the width is the operation.
+function arm64_rev16(buf: i32[], rd: i32, rn: i32, w: boolean): i32[] {
+    var word: i64 = 0xdac00400 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (w) { word = word & 0x7fffffff; }
+    return arm64_le32(buf, word);
 }
 // clz Xd, Xn -> 0xDAC01000 | Rn<<5 | Rd (same DP-1-source family as rev16;
 // the Go arm64 backend emits it for the freelist size-class log2).
@@ -1131,9 +1261,41 @@ function arm64_fmov_from_gpr(buf: i32[], rd_fp: i32, rn_gpr: i32): i32[] {
 function arm64_fmov_to_gpr(buf: i32[], rd_gpr: i32, rn_fp: i32): i32[] {
     return arm64_le32(buf, 0x9e660000 | (((rn_fp & 31) as i64) << 5) | ((rd_gpr & 31) as i64));
 }
-// fcvtzs Xd, Dn (double -> signed int, round toward zero).
-function arm64_fcvtzs(buf: i32[], rd_gpr: i32, rn_fp: i32): i32[] {
-    return arm64_le32(buf, 0x9e780000 | (((rn_fp & 31) as i64) << 5) | ((rd_gpr & 31) as i64));
+// The SINGLE-precision siblings, `fmov Sd, Wn` and `fmov Wd, Sn` — the f32
+// bit-reinterpret pair the float path emits either side of an fcvt. Verified vs
+// clang: fmov s0,w0 = 0x1e270000, fmov w0,s0 = 0x1e260000.
+function arm64_fmov_s_from_gpr(buf: i32[], rd_fp: i32, rn_gpr: i32): i32[] {
+    return arm64_le32(buf, 0x1e270000 | (((rn_gpr & 31) as i64) << 5) | ((rd_fp & 31) as i64));
+}
+function arm64_fmov_s_to_gpr(buf: i32[], rd_gpr: i32, rn_fp: i32): i32[] {
+    return arm64_le32(buf, 0x1e260000 | (((rn_fp & 31) as i64) << 5) | ((rd_gpr & 31) as i64));
+}
+// fcvt Sd, Dn (double -> single) and fcvt Dd, Sn (single -> double) — the
+// FP-to-FP precision conversions. Same one-source shape as the funary family:
+// base | Rn<<5 | Rd. Verified vs clang --target=aarch64-linux-gnu:
+// fcvt s0,d0 = 0x1e624000, fcvt s3,d4 = 0x1e624083, fcvt d0,s0 = 0x1e22c000,
+// fcvt d5,s6 = 0x1e22c0c5.
+//
+// This was the single largest hole in the assembler: 605 of these in six
+// fixtures' emitted asm, and no encoder at all, so `-target arm64` refused any
+// program whose runtime helpers touch floats — 64 corpus fixtures, most of them
+// (fizzbuzz, empty_array, map_keys) with no float in their source (#6044).
+function arm64_fcvt_s_d(buf: i32[], rd: i32, rn: i32): i32[] {
+    return arm64_le32(buf, 0x1e624000 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+function arm64_fcvt_d_s(buf: i32[], rd: i32, rn: i32): i32[] {
+    return arm64_le32(buf, 0x1e22c000 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
+// fcvtzs Xd, Dn / fcvtzs Wd, Dn (double -> signed int, round toward zero).
+// The GP destination's width is in the sf bit: 0x9e780000 for X, 0x1e780000 for
+// W. It was hardcoded to the X form, so `fcvtzs w5, d6` sign-extended into the
+// full 64-bit register — the #6054 width class again, on the FP boundary.
+// Verified vs clang: fcvtzs x0,d0 = 0x9e780000, fcvtzs w5,d6 = 0x1e7800c5.
+function arm64_fcvtzs(buf: i32[], rd_gpr: i32, rn_fp: i32, w: boolean): i32[] {
+    var base: i64 = 0x9e780000;
+    if (w) { base = 0x1e780000; }
+    return arm64_le32(buf, base | (((rn_fp & 31) as i64) << 5) | ((rd_gpr & 31) as i64));
 }
 // scvtf Dd, Xn (signed int -> double).
 function arm64_scvtf(buf: i32[], rd_fp: i32, rn_gpr: i32): i32[] {
@@ -1399,6 +1561,16 @@ function arm64_gas_is_d(tok: string): boolean {
     return s.len() >= 1 && s[0] == 100; // 'd'
 }
 
+// arm64_gas_is_s distinguishes a SINGLE-precision FP register from the
+// double-precision `d` and the general-purpose `w`/`x`. Without it the fmov
+// dispatch could not tell `fmov s0, w0` from `fmov x0, d0` and encoded the
+// latter — the wrong register file at the wrong width, 121 times in one
+// float-heavy fixture (#6044).
+function arm64_gas_is_s(tok: string): boolean {
+    var t: string = arm64_gas_trim(tok);
+    return t.len() >= 1 && t[0] == 115; // 's'
+}
+
 // arm64_gas_operands splits an operand list on top-level commas, ignoring
 // commas inside `[ … ]` (so a memory operand stays one token).
 function arm64_gas_operands(rest: string): string[] {
@@ -1468,6 +1640,45 @@ function arm64_gas_mem(op: string): Arm64Mem {
         }
     }
     return Arm64Mem { base: base, off: off, off_reg: off_reg };
+}
+
+// arm64_movwide_hw finds the single nonzero 16-bit chunk of `v` and returns its
+// shift (0/16/32/48), or -1 when more than one chunk is set.
+//
+// GAS accepts `mov x9, #0x10000` and encodes it `movz x9, #1, lsl #16` — the
+// immediate names a value, and the assembler picks the chunk. This assembler
+// masked the value into imm16 instead, so `mov x9, #0x10000` LOADED ZERO. That
+// is 20 sites in one hello-world build, one of them the freelist size-class cap
+// (#6060).
+function arm64_movwide_hw(v: i64): i32 {
+    if (v == 0) { return 0; }
+    var sh: i32 = 0;
+    var found: i32 = 0 - 1;
+    while (sh < 64) {
+        var chunk: i64 = (v >> sh) & 0xffff;
+        if (chunk != 0) {
+            if (found >= 0) { return 0 - 1; }   // more than one chunk: needs movz+movk
+            found = sh;
+        }
+        sh = sh + 16;
+    }
+    return found;
+}
+
+// arm64_gas_movwide_out_of_range reports whether a mov/movz/movn immediate needs
+// MORE THAN ONE mov-wide instruction (two or more nonzero 16-bit chunks), which
+// this one-instruction-per-line assembler cannot emit. Anything expressible as a
+// single chunk plus a shift is encoded, not refused. The emitter builds wider
+// constants through the literal pool (`ldr Xt, =N`).
+function arm64_gas_movwide_out_of_range(mnem: string, rest: string): boolean {
+    if (mnem != "mov" && mnem != "movz" && mnem != "movn") { return false; }
+    var ops: string[] = arm64_gas_operands(rest);
+    if (ops.len() < 2) { return false; }
+    if (ops[1].len() == 0 || ops[1][0] != 35) { return false; }   // register form
+    if (ops.len() > 2 && arm64_gas_lsl_amount(ops[2]) != 0) { return false; }  // explicit shift
+    var v: i64 = arm64_gas_imm(ops[1]) as i64;
+    if (v < 0) { v = (0 - v) - 1; }
+    return arm64_movwide_hw(v) < 0;
 }
 
 // arm64_gas_regoff_unsupported reports whether `rest` puts a REGISTER in the
@@ -1541,13 +1752,42 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     if (mnem == "mov" || mnem == "movz") {
         var rd: i32 = arm64_gas_reg(ops[0]);
         if (ops[1].len() > 0 && ops[1][0] == 35) { // '#'
-            a = Arm64Asm { ...a, code: arm64_movz(a.code, rd, arm64_gas_imm(ops[1]), 0) };
+            // The `lsl #N` operand is part of the VALUE, not decoration: movk
+            // below already parsed it, this path passed 0, and
+            // `movz x5, #0x400, lsl #16` therefore loaded 0x400 instead of
+            // 0x4000000 (#6060).
+            var mvsh: i32 = 0;
+            if (ops.len() > 2) { mvsh = arm64_gas_lsl_amount(ops[2]); }
+            var mvimm: i32 = arm64_gas_imm(ops[1]);
+            // No explicit `lsl`: the immediate names the whole value, so pick the
+            // chunk it lives in (GAS does the same). Without this `mov x9,
+            // #0x10000` masked to imm16 = 0 and loaded ZERO.
+            if (mvsh == 0) {
+                var mvmag: i64 = mvimm as i64;
+                if (mvmag < 0) { mvmag = (0 - mvmag) - 1; }
+                var hw: i32 = arm64_movwide_hw(mvmag);
+                if (hw > 0) {
+                    mvsh = hw;
+                    var shifted: i64 = mvmag >> hw;
+                    if (mvimm < 0) { mvimm = 0 - (((shifted as i32)) + 1); } else { mvimm = shifted as i32; }
+                }
+            }
+            if (mvimm < 0) {
+                // A negative immediate needs MOVN, which loads the COMPLEMENT:
+                // `mov x0, #-100` is `movn x0, #99`. Encoding it as MOVZ of the
+                // truncated low half loaded 65436 (#6060). The line loop's
+                // range guard has already refused anything whose complement
+                // does not fit in imm16.
+                a = Arm64Asm { ...a, code: arm64_movn(a.code, rd, (0 - mvimm) - 1, mvsh, arm64_gas_is_w(ops[0])) };
+            } else {
+                a = Arm64Asm { ...a, code: arm64_movz(a.code, rd, mvimm, mvsh, arm64_gas_is_w(ops[0])) };
+            }
         } else if (arm64_gas_trim(ops[0]) == "sp" || arm64_gas_trim(ops[1]) == "sp") {
             // `mov Xd, sp` / `mov sp, Xn` is the `add Xd, Xn, #0` alias
             // (ORR can't name SP).
-            a = Arm64Asm { ...a, code: arm64_addimm(a.code, rd, arm64_gas_reg(ops[1]), 0) };
+            a = Arm64Asm { ...a, code: arm64_addimm(a.code, rd, arm64_gas_reg(ops[1]), 0, arm64_gas_is_w(ops[0])) };
         } else {
-            a = Arm64Asm { ...a, code: arm64_movreg(a.code, rd, arm64_gas_reg(ops[1])) };
+            a = Arm64Asm { ...a, code: arm64_movreg(a.code, rd, arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
         }
         return a;
     }
@@ -1559,11 +1799,27 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_movk(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), sh) };
         return a;
     }
+    // `movn Rd, #imm{, lsl #N}` written out explicitly. arm64_gas_known has
+    // always claimed movn was handled, but there was no branch for it: the
+    // mnemonic fell through to the end of this function and emitted NOTHING,
+    // with nothing recorded on p.unknown either — a silently dropped
+    // instruction. The emitter only reaches MOVN through `mov Rd, #-imm`
+    // today, which is why it went unnoticed.
+    if (mnem == "movn") {
+        var nsh: i32 = 0;
+        if (ops.len() > 2) {
+            nsh = arm64_gas_lsl_amount(ops[2]);
+        }
+        a = Arm64Asm { ...a, code: arm64_movn(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), nsh, arm64_gas_is_w(ops[0])) };
+        return a;
+    }
     if (mnem == "add") {
         var ad: i32 = arm64_gas_reg(ops[0]);
         var an: i32 = arm64_gas_reg(ops[1]);
         if (ops[2].len() > 0 && ops[2][0] == 35) {
-            a = Arm64Asm { ...a, code: arm64_addimm(a.code, ad, an, arm64_gas_imm(ops[2])) };
+            a = Arm64Asm { ...a, code: arm64_addimm(a.code, ad, an, arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
+        } else if (arm64_gas_trim(ops[1]) == "sp") {
+            a = Arm64Asm { ...a, code: arm64_addsub_ext_sp(a.code, false, ad, an, arm64_gas_reg(ops[2])) };
         } else {
             a = Arm64Asm { ...a, code: arm64_addreg(a.code, ad, an, arm64_gas_reg(ops[2])) };
         }
@@ -1573,7 +1829,9 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         var sd: i32 = arm64_gas_reg(ops[0]);
         var sn: i32 = arm64_gas_reg(ops[1]);
         if (ops[2].len() > 0 && ops[2][0] == 35) {
-            a = Arm64Asm { ...a, code: arm64_subimm(a.code, sd, sn, arm64_gas_imm(ops[2])) };
+            a = Arm64Asm { ...a, code: arm64_subimm(a.code, sd, sn, arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
+        } else if (arm64_gas_trim(ops[1]) == "sp") {
+            a = Arm64Asm { ...a, code: arm64_addsub_ext_sp(a.code, true, sd, sn, arm64_gas_reg(ops[2])) };
         } else {
             a = Arm64Asm { ...a, code: arm64_subreg(a.code, sd, sn, arm64_gas_reg(ops[2])) };
         }
@@ -1582,9 +1840,9 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     if (mnem == "cmp") {
         var cn: i32 = arm64_gas_reg(ops[0]);
         if (ops[1].len() > 0 && ops[1][0] == 35) {
-            a = Arm64Asm { ...a, code: arm64_cmpimm(a.code, cn, arm64_gas_imm(ops[1])) };
+            a = Arm64Asm { ...a, code: arm64_cmpimm(a.code, cn, arm64_gas_imm(ops[1]), arm64_gas_is_w(ops[0])) };
         } else {
-            a = Arm64Asm { ...a, code: arm64_cmpreg(a.code, cn, arm64_gas_reg(ops[1])) };
+            a = Arm64Asm { ...a, code: arm64_cmpreg(a.code, cn, arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
         }
         return a;
     }
@@ -1593,7 +1851,26 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         // SIMD&FP `ldr/str Dt, [Xn{, #off}]` — d-register dest (the f64
         // constant-load path). Scalar [Xn] / [Xn, #off] only.
         if (ops[0].len() > 0 && ops[0][0] == 100) { // 'd'
+            // Post-index `ldr Dt, [Xn], #off` arrives as three operands, exactly
+            // like the GP form below.
+            if (ops.len() >= 3) {
+                var fpb: i32 = arm64_gas_mem(ops[1]).base;
+                var fpo: i32 = arm64_gas_imm(ops[2]);
+                if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr_fp_post(a.code, rt, fpb, fpo) }; }
+                return Arm64Asm { ...a, code: arm64_str_fp_pre(a.code, rt, fpb, fpo) };
+            }
             var fm: Arm64Mem = arm64_gas_mem(ops[1]);
+            if (arm64_gas_has_bang(ops[1])) {
+                // pre-index with writeback `[Xn, #off]!`
+                if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldur_fp(a.code, rt, fm.base, fm.off) }; }
+                return Arm64Asm { ...a, code: arm64_str_fp_pre(a.code, rt, fm.base, fm.off) };
+            }
+            // A negative offset cannot use the scaled unsigned form (it wrapped
+            // to a large POSITIVE offset); use the unscaled signed imm9.
+            if (fm.off < 0 || (fm.off & 7) != 0) {
+                if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldur_fp(a.code, rt, fm.base, fm.off) }; }
+                return Arm64Asm { ...a, code: arm64_stur_fp(a.code, rt, fm.base, fm.off) };
+            }
             if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr_fp(a.code, rt, fm.base, fm.off) }; }
             return Arm64Asm { ...a, code: arm64_str_fp(a.code, rt, fm.base, fm.off) };
         }
@@ -1622,16 +1899,24 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
             if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr_pre(a.code, rt, m.base, m.off) }; }
             return Arm64Asm { ...a, code: arm64_str_pre(a.code, rt, m.base, m.off) };
         }
-        // A negative or non-8-aligned offset can't use the scaled unsigned
-        // form (imm12 is unsigned, scaled by 8); fall back to the unscaled
-        // signed-imm9 ldur/stur, exactly as GAS does. asm_arm64 stores frame
-        // locals at `[x29, #-N]`, so this is the common case.
-        if (m.off < 0 || (m.off & 7) != 0) {
-            if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldur(a.code, rt, m.base, m.off) }; }
-            return Arm64Asm { ...a, code: arm64_stur(a.code, rt, m.base, m.off) };
+        // A negative or misaligned offset can't use the scaled unsigned form
+        // (imm12 is unsigned, scaled by the ACCESS SIZE); fall back to the
+        // unscaled signed-imm9 ldur/stur, exactly as GAS does. asm_arm64 stores
+        // frame locals at `[x29, #-N]`, so this is the common case.
+        //
+        // The alignment the scaled form requires is the access width, so a
+        // 32-bit load/store needs 4, not 8 — `ldr w3, [x4, #4]` is a legal
+        // scaled encoding. Testing 8 unconditionally sent every 4-aligned W
+        // access down the unscaled path: correct code, but not the encoding GAS
+        // picks, which the encoding differential reports as a divergence.
+        var align: i32 = 7;
+        if (arm64_gas_is_w(ops[0])) { align = 3; }
+        if (m.off < 0 || (m.off & align) != 0) {
+            if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldur(a.code, rt, m.base, m.off, arm64_gas_is_w(ops[0])) }; }
+            return Arm64Asm { ...a, code: arm64_stur(a.code, rt, m.base, m.off, arm64_gas_is_w(ops[0])) };
         }
-        if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr(a.code, rt, m.base, m.off) }; }
-        return Arm64Asm { ...a, code: arm64_str(a.code, rt, m.base, m.off) };
+        if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr(a.code, rt, m.base, m.off, arm64_gas_is_w(ops[0])) }; }
+        return Arm64Asm { ...a, code: arm64_str(a.code, rt, m.base, m.off, arm64_gas_is_w(ops[0])) };
     }
     if (mnem == "stp") {
         var sm: Arm64Mem = arm64_gas_mem(ops[2]);
@@ -1679,12 +1964,12 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     }
     if (mnem == "ldur") {
         var um: Arm64Mem = arm64_gas_mem(ops[1]);
-        a = Arm64Asm { ...a, code: arm64_ldur(a.code, arm64_gas_reg(ops[0]), um.base, um.off) };
+        a = Arm64Asm { ...a, code: arm64_ldur(a.code, arm64_gas_reg(ops[0]), um.base, um.off, arm64_gas_is_w(ops[0])) };
         return a;
     }
     if (mnem == "stur") {
         var sm2: Arm64Mem = arm64_gas_mem(ops[1]);
-        a = Arm64Asm { ...a, code: arm64_stur(a.code, arm64_gas_reg(ops[0]), sm2.base, sm2.off) };
+        a = Arm64Asm { ...a, code: arm64_stur(a.code, arm64_gas_reg(ops[0]), sm2.base, sm2.off, arm64_gas_is_w(ops[0])) };
         return a;
     }
     if (mnem == "cset") {
@@ -1729,7 +2014,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     if (mnem == "and") {
         // register form only here; `and Xd, Xn, #imm` is handled in the
         // program loop (it needs the unknown-immediate guard).
-        a = Arm64Asm { ...a, code: arm64_andreg(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2])) };
+        a = Arm64Asm { ...a, code: arm64_andreg(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_w(ops[0])) };
         return a;
     }
     if (mnem == "orr") {
@@ -1763,7 +2048,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         return a;
     }
     if (mnem == "rev16") {
-        a = Arm64Asm { ...a, code: arm64_rev16(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+        a = Arm64Asm { ...a, code: arm64_rev16(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
         return a;
     }
     if (mnem == "clz") {
@@ -1811,8 +2096,16 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_fcmp(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
         return a;
     }
-    if (mnem == "fcvtzs") { // Xd, Dn (double -> int)
-        a = Arm64Asm { ...a, code: arm64_fcvtzs(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+    if (mnem == "fcvtzs") { // Xd/Wd, Dn (double -> int)
+        a = Arm64Asm { ...a, code: arm64_fcvtzs(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
+        return a;
+    }
+    if (mnem == "fcvt") { // Sd, Dn (narrow) or Dd, Sn (widen)
+        if (arm64_gas_is_d(ops[0])) {
+            a = Arm64Asm { ...a, code: arm64_fcvt_d_s(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+        } else {
+            a = Arm64Asm { ...a, code: arm64_fcvt_s_d(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+        }
         return a;
     }
     if (mnem == "scvtf") { // Dd, Xn (int -> double)
@@ -1822,6 +2115,11 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     if (mnem == "fmov") {
         var d0: boolean = arm64_gas_is_d(ops[0]);
         var d1: boolean = arm64_gas_is_d(ops[1]);
+        // Single-precision first: `fmov Sd, Wn` / `fmov Wd, Sn` are neither
+        // d-registers, so they used to fall into the `Xd, Dn` arm below and
+        // encode a 64-bit fp->gpr move instead (#6044).
+        if (arm64_gas_is_s(ops[0])) { return Arm64Asm { ...a, code: arm64_fmov_s_from_gpr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) }; }
+        if (arm64_gas_is_s(ops[1])) { return Arm64Asm { ...a, code: arm64_fmov_s_to_gpr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) }; }
         if (d0 && d1) { a = Arm64Asm { ...a, code: arm64_fmov_dd(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) }; }
         else if (d0) { a = Arm64Asm { ...a, code: arm64_fmov_from_gpr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) }; } // Dd, Xn
         else { a = Arm64Asm { ...a, code: arm64_fmov_to_gpr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) }; } // Xd, Dn
@@ -1884,6 +2182,14 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") { return true; }
     if (mnem == "mrs") { return true; } // sysreg validity checked in the program loop
     if (mnem == "fadd" || mnem == "fsub" || mnem == "fmul" || mnem == "fdiv" || mnem == "fcmp" || mnem == "fmov" || mnem == "fcvtzs" || mnem == "scvtf") { return true; }
+    // This list and the dispatch in arm64_gas_emit must agree, and they have
+    // drifted in BOTH directions: movn was listed here with no branch to
+    // assemble it (silently emitted nothing, #6060), while the unary FP family
+    // below had a branch and encoders but was missing from this list — so the
+    // program loop refused instructions the assembler could already encode
+    // perfectly (#6044). Add to both places, or to neither.
+    if (mnem == "fcvt" || mnem == "fneg" || mnem == "fabs" || mnem == "fsqrt") { return true; }
+    if (mnem == "frinta" || mnem == "frintm" || mnem == "frintp" || mnem == "frintz") { return true; }
     if (arm64_funary_d_base(mnem) >= 0) { return true; }
     if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { return true; } // b.<cond>
     if (mnem.len() == 3 && mnem[0] == 98 && arm64_gas_is_cond(mnem[1:3])) { return true; } // b<cond>
@@ -2443,6 +2749,14 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         if (arm64_gas_regoff_unsupported(mnem, rest)) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":regoff") };
         }
+        // A mov-wide immediate that does not fit imm16 (or whose complement does
+        // not, for the MOVN path) would be silently TRUNCATED into a different
+        // constant. Refuse it: the emitter builds anything wider through the
+        // literal pool (`ldr Xt, =N`), so this only ever fires on a form the
+        // assembler genuinely cannot express.
+        if (arm64_gas_movwide_out_of_range(mnem, rest)) {
+            p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":imm16") };
+        }
         // `ldr Xd, =N` (literal-pool load): emit an LDR-literal placeholder
         // and queue the 64-bit value; `.ltorg` (or end of program) flushes
         // the pool into .text and patches the imm19.
@@ -2473,7 +2787,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             var lb: i32 = arm64_str_indexof(linner, "[");
             var rb: i32 = arm64_str_indexof(linner, "]");
             var lparts: string[] = arm64_gas_operands(linner[lb + 1:rb]);
-            a = Arm64Asm { ...a, code: arm64_ldr(a.code, arm64_gas_reg(lops[0]), lm.base, 0) };
+            a = Arm64Asm { ...a, code: arm64_ldr(a.code, arm64_gas_reg(lops[0]), lm.base, 0, arm64_gas_is_w(lops[0])) };
             p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
             p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(lparts[1])) };
             p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(1) };
@@ -2481,7 +2795,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         }
         if (mnem == "add" && arm64_str_indexof(rest, "@PAGEOFF") >= 0) {
             var dops: string[] = arm64_gas_operands(rest);
-            a = Arm64Asm { ...a, code: arm64_addimm(a.code, arm64_gas_reg(dops[0]), arm64_gas_reg(dops[1]), 0) };
+            a = Arm64Asm { ...a, code: arm64_addimm(a.code, arm64_gas_reg(dops[0]), arm64_gas_reg(dops[1]), 0, false) };
             p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
             p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_at(dops[2])) };
             p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(2) };
@@ -2493,7 +2807,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // `adrp Xd, sym` is handled by the adrp branch above (bare symbol).
         if (mnem == "add" && arm64_str_indexof(rest, ":lo12:") >= 0) {
             var lops: string[] = arm64_gas_operands(rest);
-            a = Arm64Asm { ...a, code: arm64_addimm(a.code, arm64_gas_reg(lops[0]), arm64_gas_reg(lops[1]), 0) };
+            a = Arm64Asm { ...a, code: arm64_addimm(a.code, arm64_gas_reg(lops[0]), arm64_gas_reg(lops[1]), 0, false) };
             p = Arm64GasProg { ...p, pf_sites: p.pf_sites.append(a.code.len() - 4) };
             p = Arm64GasProg { ...p, pf_syms: p.pf_syms.append(arm64_gas_strip_lo12(lops[2])) };
             p = Arm64GasProg { ...p, pf_kinds: p.pf_kinds.append(2) };
@@ -2505,8 +2819,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         if (mnem == "and" && arm64_str_indexof(rest, "#") >= 0) {
             var nops: string[] = arm64_gas_operands(rest);
             var nimm: i32 = arm64_gas_imm(nops[2]);
-            if (arm64_and_imm_ok(nimm)) {
-                a = Arm64Asm { ...a, code: arm64_and_imm(a.code, arm64_gas_reg(nops[0]), arm64_gas_reg(nops[1]), nimm) };
+            var nw: boolean = arm64_gas_is_w(nops[0]);
+            if (arm64_and_imm_ok(nimm) && (!nw || arm64_logical_imm_w_ok(nimm))) {
+                a = Arm64Asm { ...a, code: arm64_and_imm(a.code, arm64_gas_reg(nops[0]), arm64_gas_reg(nops[1]), nimm, nw) };
             } else {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("and#") };
             }
@@ -2517,8 +2832,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         if (mnem == "eor" && arm64_str_indexof(rest, "#") >= 0) {
             var eops: string[] = arm64_gas_operands(rest);
             var eimm: i32 = arm64_gas_imm(eops[2]);
-            if (arm64_eor_imm_ok(eimm)) {
-                a = Arm64Asm { ...a, code: arm64_eor_imm(a.code, arm64_gas_reg(eops[0]), arm64_gas_reg(eops[1]), eimm) };
+            var ew: boolean = arm64_gas_is_w(eops[0]);
+            if (arm64_eor_imm_ok(eimm) && (!ew || arm64_logical_imm_w_ok(eimm))) {
+                a = Arm64Asm { ...a, code: arm64_eor_imm(a.code, arm64_gas_reg(eops[0]), arm64_gas_reg(eops[1]), eimm, ew) };
             } else {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("eor#") };
             }
@@ -2556,9 +2872,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             } else if (mnem == "bl") {
                 a = arm64_asm_bl(a, bops[0]);
             } else if (mnem == "cbz") {
-                a = arm64_asm_cbz(a, arm64_gas_reg(bops[0]), bops[1]);
+                a = arm64_asm_cbz(a, arm64_gas_reg(bops[0]), bops[1], arm64_gas_is_w(bops[0]));
             } else if (mnem == "cbnz") {
-                a = arm64_asm_cbnz(a, arm64_gas_reg(bops[0]), bops[1]);
+                a = arm64_asm_cbnz(a, arm64_gas_reg(bops[0]), bops[1], arm64_gas_is_w(bops[0]));
             } else if (mnem == "tbz") {
                 a = arm64_asm_tbz(a, arm64_gas_reg(bops[0]), arm64_gas_imm(bops[1]), bops[2]);
             } else if (mnem == "tbnz") {
