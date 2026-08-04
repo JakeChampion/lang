@@ -192,9 +192,13 @@ _start:
     // needs it, a signed convert reading a value >= 2^63 as negative — was
     // refused outright by -target arm64. The w-source rows pin the sf bit:
     // scvtf was hardcoded to the X form, the same width class as fcvtzs above.
+    // fcvtzu — the INVERSE conversion, which "f64 as u32" lowers to — was
+    // missing for the same reason and is fixed in the same pass.
     scvtf d0, w0
     ucvtf d0, x0
     ucvtf d1, w2
+    fcvtzu x0, d1
+    fcvtzu w5, d6
 Lend:
     ret
 `
