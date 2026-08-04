@@ -392,6 +392,15 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
 
 ## Engineering bar (non-negotiable)
 
+- **Pick the gates that carry signal for what you touched —
+  `docs/TEST-GATES.md`.** Which suite proves what, which ones look
+  authoritative and are not (the fixpoint is SELF-REFERENTIAL: it proves the
+  compiler reproduces itself and is structurally blind to a stable miscompile,
+  so for self-host lowering changes `internal/e2eselfhost` is PRIMARY and the
+  fixpoint secondary), what nothing gates at all (allocation volume,
+  over-retains), and the rc diagnostic modes in the order you reach for them.
+  #6018 passed the per-module fixpoint AND all 335 fixtures AND the native
+  suite while segfaulting the driver.
 - **Confirm passing tests before opening a PR.** Run the full relevant
   suite locally (including the WASM e2e tests — the pinned toolchain is
   **wasmtime v46.0.1 + wasm-tools 1.253.0** (see
@@ -531,7 +540,13 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   recycle); it is exact, host-independent, and meaningful under qemu, so it is
   the right gate for a memory regression test. `cat
   /sys/kernel/mm/transparent_hugepage/enabled` tells you which side of that
-  12x you are measuring on.
+  12x you are measuring on. **It returns i32, so it WRAPS past 2 GiB** —
+  the runtime helper computes the offset in 64 bits and the builtin's
+  declared result truncates it (`__heap_mark` is i64 for exactly this
+  reason). A quadratic run measured 141 MB / 555 MB / **-2.09 GB** / 202 MB
+  across a 2x-per-step size sweep: the third reading is visibly wrong, the
+  fourth is not. Sanity-check against the input size, or keep the probe
+  under 2 GiB, until the builtin is widened.
 - **Don't run arm64 / `qemu-aarch64` tests locally as a gate — let CI
   run them.** The aarch64 e2e + fixpoint tests under `qemu-aarch64` are
   the slow part of a local sweep (minutes). Locally, gate on the

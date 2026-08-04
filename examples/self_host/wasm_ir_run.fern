@@ -20,7 +20,14 @@ import "./asmcore";
 import "./irlower";
 import "./wasm_ir";
 
+// main wraps `run` in the shared rc-over-release guard — see
+// util.rc_underflow_guard. Every self-host driver run self-checks its own
+// heap accounting; a corrupted freelist is otherwise silent (#6021).
 function main(): i32 {
+    return util.rc_underflow_guard("wasm_ir_run", run());
+}
+
+function run(): i32 {
     var av: string[] = args();
     var use_ir: boolean = false;
     var ai: i32 = 1;

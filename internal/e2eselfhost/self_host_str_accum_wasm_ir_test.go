@@ -15,7 +15,7 @@ import (
 // rc-headered block, so __fern_str_free maps to $__fern_arr_dec, whose over-release
 // detector ($__fern_rc_underflow) ticks on any dec below rc 0. Each case runs the
 // accumulator in a churn helper (lowered through the IR reclaim) and checks
-// __fern_rc_underflow_count() == 0 in main: a double-free surfaces as exit 99. The
+// __rc_underflow_count() == 0 in main: a double-free surfaces as exit 99. The
 // reset uses a loop-invariant operand + a fresh .to_ascii_upper() (both stay on the IR
 // path under the underflow probe, unlike i32_to_string). Exit codes stay < 126.
 func TestSelfHostStrAccumWasmIR(t *testing.T) {
@@ -46,15 +46,15 @@ func TestSelfHostStrAccumWasmIR(t *testing.T) {
 		// Bounded accumulator (grow via `s + x`, reset to a fresh `x.to_ascii_upper()` at
 		// len > 40) over 3000 iters. Every superseded box is freed exactly once; a
 		// double-free would tick the underflow detector → 99. return 0.
-		{"accum-churn", `function churn(n: i32): i32 { var x: string = "yy"; var s: string = ""; var i: i32 = 0; while (i < n) { s = s + x; if (s.len() > 40) { s = x.to_ascii_upper(); } i = i + 1; } return 0; } function main(): i32 { var r: i32 = churn(3000); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`, 0},
+		{"accum-churn", `function churn(n: i32): i32 { var x: string = "yy"; var s: string = ""; var i: i32 = 0; while (i < n) { s = s + x; if (s.len() > 40) { s = x.to_ascii_upper(); } i = i + 1; } return 0; } function main(): i32 { var r: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return r; }`, 0},
 		// Small accumulator whose final value's length is returned — exercises the
 		// exit-sweep free of the final box with no double-free. "a"+"b"+"b"+"b" len 4.
-		{"accum-len", `function build(): i32 { var s: string = "a"; var i: i32 = 0; while (i < 3) { s = s + "b"; i = i + 1; } return s.len(); } function main(): i32 { var r: i32 = build(); if (__fern_rc_underflow_count() != 0) { return 99; } return r; }`, 4},
+		{"accum-len", `function build(): i32 { var s: string = "a"; var i: i32 = 0; while (i < 3) { s = s + "b"; i = i + 1; } return s.len(); } function main(): i32 { var r: i32 = build(); if (__rc_underflow_count() != 0) { return 99; } return r; }`, 4},
 		// MOVE-ON-RETURN: a returned string builder called many times. The
 		// intermediates are freed inside build (consume-rebind) and the final is
 		// MOVED OUT (kept from build's exit sweep). A double-free of any superseded
 		// or moved box would tick the underflow detector → 99. 500 builds, return 0.
-		{"accum-return-churn", `function build(n: i32): string { var x: string = "z"; var s: string = ""; var i: i32 = 0; while (i < n) { s = s + x; i = i + 1; } return s; } function main(): i32 { var t: i32 = 0; var k: i32 = 0; while (k < 500) { var r: string = build(30); t = (t + r.len()) % 7; k = k + 1; } if (__fern_rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+		{"accum-return-churn", `function build(n: i32): string { var x: string = "z"; var s: string = ""; var i: i32 = 0; while (i < n) { s = s + x; i = i + 1; } return s; } function main(): i32 { var t: i32 = 0; var k: i32 = 0; while (k < 500) { var r: string = build(30); t = (t + r.len()) % 7; k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

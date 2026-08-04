@@ -15,12 +15,25 @@ import (
 // the bump-arena ceiling (exit 137) and OOM-killed the 16 GB CI runners
 // on every PR.
 //
-// The forced copy is a bare rc-inc/rc-dec pair bracketing the grow call;
-// these functions have no other rc-inc source (borrowed params get no
-// entry inc, i32 elements need no element retain, and none RETURNS the
-// param itself — a returned borrow gets its own transfer inc), so
-// counting OpRcInc per function pins the behaviour target-independently
-// at both pointer widths.
+// The forced copy is a bare rc-inc/rc-dec pair bracketing the grow call.
+// `retpos` / `reused` have no other rc-inc source (i32 elements need no
+// element retain, and neither RETURNS the param itself — a returned borrow
+// gets its own transfer inc), so a whole-function OpRcInc count pins them
+// target-independently at both pointer widths.
+//
+// `selfp` REASSIGNS its param, so since #6021 it is a consumed-threaded
+// param: computeConsumedParams promotes it, and the promotion owes the
+// reassignment's overwrite-dec a matching claim (without which that dec
+// releases a reference the caller never handed over — the latent
+// double-free). For structs / tuples / enums that claim is a prologue entry
+// retain. For ARRAYS it must not be: rc==1 is the uniqueness test
+// __fern_arr_push_grow gates its in-place fast path on, so an entry-retained
+// array param enters at rc 2 and every append in the function — and in
+// everything it threads the buffer through — clones the whole buffer. Arrays
+// carry an explicit ownership bit instead (isConsumedArrayParam /
+// emitConsumedArrayOverwriteDec), so the rc-inc count here stays at zero
+// EVERYWHERE, prologue included. That is the property this asserts: an
+// rc-inc anywhere in `selfp` means the array accumulator went quadratic.
 func TestAppendForcedCopyExemptions(t *testing.T) {
 	src := `function retpos(acc: i32[], x: i32): i32[] {
     if (x > 0) { return acc.append(x); }
@@ -46,10 +59,13 @@ function main(): i32 { return 0; }`
 		if n := countRcIncs(prog, "retpos"); n != 0 {
 			t.Errorf("ptrW=%d: retpos emitted %d rc-incs, want 0 (return-position append force-copied — the #4838 O(n²) accumulator regression)", ptrW, n)
 		}
-		// Exempt: borrowed-param self-reassign (outside isSelfArrayPushLocal's
-		// local/own scope, but the rebind means no later read of the old value).
+		// Exempt: consumed-threaded param self-reassign (outside
+		// isSelfArrayPushLocal's local/own scope, but the rebind means no later
+		// read of the old value). No retain may survive anywhere — an entry
+		// retain is as quadratic as an in-loop one, just harder to spot.
 		if n := countRcIncs(prog, "selfp"); n != 0 {
-			t.Errorf("ptrW=%d: selfp emitted %d rc-incs, want 0 (borrowed-param self-reassign append force-copied)", ptrW, n)
+			t.Errorf("ptrW=%d: selfp emitted %d rc-incs, want 0 — a retained array param enters at rc 2, "+
+				"so every append copies the whole buffer (#6021's O(n²) regression of #6011)", ptrW, n)
 		}
 		// Still forced: a reused-after append in expression position — the
 		// #4827 bug shape. The first append must keep the copy-forcing inc.

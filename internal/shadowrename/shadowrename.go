@@ -33,6 +33,9 @@ import (
 func Rename(prog *ast.Program, info *checker.Info) {
 	for _, fn := range prog.Funcs {
 		r := newRenamer()
+		if info != nil {
+			r.locals = info.Locals[fn]
+		}
 		r.pushFrame()
 		for _, p := range fn.Params {
 			r.bindFresh(p.Name)
@@ -43,11 +46,52 @@ func Rename(prog *ast.Program, info *checker.Info) {
 }
 
 type renamer struct {
-	stack   []map[string]string
+	stack []map[string]string
+	// declared holds every name bound anywhere in this function so far,
+	// including scopes already popped. `stack` alone only sees ENCLOSING
+	// scopes, so two declarations in DISJOINT SIBLING scopes — a match
+	// payload binding in one arm and a `var` of the same name in another —
+	// both kept the bare name and collapsed onto one slot in the IR
+	// builder's flat locals map. That is a real miscompile whenever the two
+	// have different types: the name-keyed type lookups
+	// (isArrayTypeOfLocal / localArrayType / …) answer with whichever
+	// declaration they find first, so one arm's binding is released with
+	// the other's drop plan. In the self-host compiler
+	// irlower.alias_names_in_stmt is exactly this shape — a
+	// `parser.StmtAssign(a)` payload binding beside a `var a: string[]` in
+	// the StmtIf/StmtMatch arms — and it over-released once per assignment
+	// statement in every program the compiler saw.
+	declared map[string]bool
+	// locals is info.Locals for the function being walked. A tuple /
+	// struct DESTRUCTURE binds through a plain []string on the
+	// Destructure node, and the checker registers each name as a
+	// SYNTHETIC *ast.Var that lives only in this slice — so renaming
+	// the Destructure's string alone leaves the slot registered under
+	// the old name and the IR build dies with `destructure name %q has
+	// no slot (compiler bug)`. Every other binding form the pass
+	// touches carries its name on a node the IR reads directly, which
+	// is why only this one needs the extra hop.
+	locals  []*ast.Var
 	counter int
 }
 
-func newRenamer() *renamer { return &renamer{} }
+func newRenamer() *renamer { return &renamer{declared: map[string]bool{}} }
+
+// renameSyntheticLocal points the checker's synthetic *ast.Var for a
+// destructure name at the renamed form. Matched on (position, old name):
+// the synthetic Var carries the Destructure's own position, so this is
+// exact even with several destructures in one function.
+func (r *renamer) renameSyntheticLocal(pos ast.Position, from, to string) {
+	if from == to {
+		return
+	}
+	for _, v := range r.locals {
+		if v.Name == from && v.P == pos {
+			v.Name = to
+			return
+		}
+	}
+}
 
 func (r *renamer) pushFrame() { r.stack = append(r.stack, map[string]string{}) }
 func (r *renamer) popFrame()  { r.stack = r.stack[:len(r.stack)-1] }
@@ -68,18 +112,23 @@ func (r *renamer) lookup(name string) (string, bool) {
 // rename — used for params and the first decl of a name).
 func (r *renamer) bindFresh(name string) string {
 	r.stack[len(r.stack)-1][name] = name
+	r.declared[name] = true
 	return name
 }
 
-// bindShadow handles a Var/binding declaration. If the name
-// already binds in any enclosing scope, the new declaration
-// gets a unique form `name$N`. Otherwise the binding is kept
-// as-is. Returns the resolved name to store on the AST node.
+// bindShadow handles a Var/binding declaration. If the name is
+// already bound anywhere in this function — an enclosing scope
+// (true shadowing) or a sibling scope already closed (see the
+// `declared` field) — the new declaration gets a unique form
+// `name$N`. Otherwise the binding is kept as-is. Returns the
+// resolved name to store on the AST node.
 func (r *renamer) bindShadow(name string) string {
-	if _, shadowed := r.lookup(name); shadowed {
+	_, shadowed := r.lookup(name)
+	if shadowed || r.declared[name] {
 		r.counter++
 		out := name + "$" + strconv.Itoa(r.counter)
 		r.stack[len(r.stack)-1][name] = out
+		r.declared[out] = true
 		return out
 	}
 	return r.bindFresh(name)
@@ -168,6 +217,7 @@ func (r *renamer) walkStmt(s ast.Stmt) {
 		}
 		for i, name := range n.Names {
 			n.Names[i] = r.bindShadow(name)
+			r.renameSyntheticLocal(n.P, name, n.Names[i])
 		}
 	case *ast.Return:
 		if n.Value != nil {

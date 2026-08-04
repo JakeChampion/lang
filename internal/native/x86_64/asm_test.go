@@ -26,6 +26,12 @@ func TestEncodeIntegerSurface(t *testing.T) {
 	cases := []struct{ src, want string }{
 		{"ret", "c3"},
 		{"syscall", "0f05"},
+		// The RcFreeDebug (FERN_RC_FREE_DEBUG=1) use-after-free detector traps
+		// through `ud2`. Without this encoding the in-process assembler — the
+		// DEFAULT for -target x86-64 — refused the whole build, so the detector
+		// could not be used at all on the production path (it is what pinned
+		// down #6021).
+		{"ud2", "0f0b"},
 		{"cdq", "99"},
 		{"cqo", "4899"},
 		{"push rbp", "55"},

@@ -404,6 +404,9 @@ func (a *Assembler) insn(line string) error {
 	case "syscall":
 		a.emit(0x0F, 0x05)
 		return nil
+	case "ud2":
+		a.emit(0x0F, 0x0B)
+		return nil
 	case "cdq":
 		a.emit(0x99)
 		return nil

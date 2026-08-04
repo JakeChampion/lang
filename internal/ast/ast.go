@@ -1186,6 +1186,23 @@ var LeakCheckEnabled = os.Getenv("FERN_LEAKCHECK") == "1"
 // counters say a block was never freed, this says a live block was.
 var RcFreeDebug = os.Getenv("FERN_RC_FREE_DEBUG") == "1"
 
+// RcUnderflowTrap turns the Phase 3 over-release COUNTER into a TRAP
+// (x86-64 only; a diagnostic build mode). Every site that bumps
+// __fern_rc_underflow — the inline dec, the __fern_rc_dec /
+// __fern_arr_dec / __fern_map_drop helpers — follows the bump with
+// `ud2`, so the process dies with SIGILL at the exact dec that
+// over-released and a gdb backtrace names the function.
+//
+// This is the companion RcFreeDebug is not: RcFreeDebug quarantines
+// FREED array/map blocks and traps a later touch, so it only sees an
+// over-release that went through a free. A plain __fern_rc_dec taking a
+// count 1 → 0 frees nothing, and the next dec on that block underflows
+// with no quarantined block to trip over — invisible to RcFreeDebug,
+// counted by __rc_underflow_count(), and located by nothing until this.
+//
+// Settable via FERN_RC_UNDERFLOW_TRAP=1 (the RcFreeDebug precedent).
+var RcUnderflowTrap = os.Getenv("FERN_RC_UNDERFLOW_TRAP") == "1"
+
 // TrmcEnabled gates tail-recursion-modulo-cons. A function whose recursive
 // call sits in the LAST payload position of a constructor in tail position
 // (the canonical `map(xs) -> Cons(g(h), map(t))` shape) is normally

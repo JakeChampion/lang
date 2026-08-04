@@ -34,7 +34,7 @@ import (
 // (computeConsumingMatchReuse), so the plan is immutable once
 // computeRcAnalyses returns (#4475).
 type rcPlan struct {
-	// consumedParams[name] is true for a pointer-shaped struct/tuple/enum
+	// consumedParams[name] is true for a pointer-shaped struct/tuple/enum/array
 	// PARAMETER that the borrow model would keep borrowed (its type is not
 	// owned-by-default — e.g. it carries a string field) but that the function
 	// THREADS: it is reassigned in the body (`s = s.emit(..)`, `ctx =
@@ -828,8 +828,8 @@ func (b *builder) computeConsumedParams() map[string]bool {
 		if !reassigned[p.Name] {
 			continue
 		}
-		// Structs / tuples / enums (incl. unions). Whatever the shape, a
-		// reassignment of a param slot emits the overwrite dec — so leaving a
+		// Structs / tuples / enums (incl. unions) / ARRAYS. Whatever the shape,
+		// a reassignment of a param slot emits the overwrite dec — so leaving a
 		// reassigned param on the borrow baseline releases a reference the
 		// caller never handed over. Enums were excluded here until the
 		// parse_postfix under-count (`base = e_unary_at(op, base, …)` on a
@@ -837,8 +837,28 @@ func (b *builder) computeConsumedParams() map[string]bool {
 		// exclusion is exactly the escape hatch the paragraph below closes for
 		// scalar-only structs: same one-reference undercount, same early free
 		// through a live alias. See TestX86_64UnionThreadedParam.
+		//
+		// ARRAYS were the last shape left out, and the sentence above already
+		// said why they should not be: #6021 is the same undercount reached
+		// through `acc = f(.., acc)` on a borrowed `string[]` param. It sat
+		// latent on main because the Assign catch-all's plain __fern_rc_dec
+		// does not FREE — it only corrupts the count, and the early free then
+		// happens at whichever site legitimately owns the buffer. In the
+		// self-host compiler that was astwalk.collect_idents_stmt's StmtIf arm
+		// stealing a count from irlower.precise_drop_names' `none`, which
+		// surfaced as a ~50% segfault in __fern_alloc's freelist pop on any
+		// change that shifted allocation sizes. See the
+		// array_param_threaded_by_reassignment rc-corpus case.
+		//
+		// Arrays do NOT pay for this with an entry retain, though — they carry
+		// a hidden ownership flag instead (isConsumedArrayParam). An entry
+		// retain would make the incoming rc 2, and rc==1 is exactly the
+		// uniqueness test __fern_arr_push_grow's in-place fast path gates on,
+		// so every append in the function — and in everything it threads the
+		// buffer through — would copy the whole buffer. See
+		// emitConsumedArrayOverwriteDec.
 		switch p.Type.(type) {
-		case ast.StructType, ast.TupleType, ast.EnumType:
+		case ast.StructType, ast.TupleType, ast.EnumType, ast.ArrayType:
 		default:
 			continue
 		}
@@ -1973,9 +1993,23 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 	// underlying buffer is the caller's. Same borrow predicate as
 	// computeFreeEligible (which runs before this — b.rc.consumedParams /
 	// b.rc.freeEligible are already populated). Force the inc so cow copies.
+	//
+	// A consumed ARRAY param counts as borrowed here even though it is
+	// promoted. The other promoted shapes take an entry retain, which is what
+	// let this predicate treat "consumed" as "rc >= 2, cow will copy anyway".
+	// Arrays deliberately do not (isConsumedArrayParam — the retain costs them
+	// the in-place append), so a promoted array param sits at rc==1 holding the
+	// CALLER's buffer until its first reassignment replaces it, and an in-place
+	// cow there mutates the caller's array. `bump(xs) { xs = xs.with(0, 99) }`
+	// left the caller's `a[0]` at 99 — the with_reassign_self_borrowed_param
+	// corpus case, whose comment already says a reassign-to-self does not make
+	// the buffer ours. Forcing the inc costs a copy on the paths where the slot
+	// HAS been replaced, which is the pre-#6021 behaviour and rare: `.with`
+	// threading is not the append accumulator this promotion exists for.
 	borrowedParam := map[string]bool{}
 	for i, p := range b.fn.Params {
-		if !p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.rc.consumedParams[p.Name] {
+		if !p.Own && !b.paramOwnedByDefault(p.Type, i) &&
+			(!b.rc.consumedParams[p.Name] || b.isConsumedArrayParam(p.Name)) {
 			borrowedParam[p.Name] = true
 		}
 	}
@@ -3275,8 +3309,38 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 			switch x := n.(type) {
 			case *ast.Match:
 				_, consuming := matches[x]
+				// A non-qualifying arm that BINDS anything poisons the whole
+				// match, not just its own names. The canonical shape is a
+				// guarded arm followed by an unguarded one over the same
+				// variant (`Cons(h, t) when h > 3 => …, Cons(h, t) => …`): a
+				// failed guard falls through to a sibling that re-reads the
+				// same payloads, so consuming the box in that sibling is only
+				// safe if the guarded arm never ran. This used to fall out of
+				// the name-keyed disqualify — both arms wrote `t`, so
+				// poisoning the guarded arm's `t` poisoned the other's too.
+				// Shadowrename now gives sibling-scope redeclarations distinct
+				// names (it must: colliding names collapse onto one IR slot),
+				// which removed that accidental coupling. Stating it
+				// structurally keeps the guard independent of what the
+				// bindings happen to be called. Arms that bind nothing (a bare
+				// `_ =>` / `Nil =>`) poison nothing, as before.
+				armBindsNames := func(arm *ast.MatchArm) bool {
+					for _, nm := range arm.Bindings {
+						if nm != "" && nm != "_" {
+							return true
+						}
+					}
+					return false
+				}
+				poisoned := false
 				for _, arm := range x.Arms {
-					if consuming && !arm.IsWildcard && arm.Guard == nil && arm.Literal == nil {
+					qualifying := consuming && !arm.IsWildcard && arm.Guard == nil && arm.Literal == nil
+					if !qualifying && armBindsNames(arm) {
+						poisoned = true
+					}
+				}
+				for _, arm := range x.Arms {
+					if !poisoned && consuming && !arm.IsWildcard && arm.Guard == nil && arm.Literal == nil {
 						admit(arm)
 					} else {
 						disqualify(arm.Bindings)

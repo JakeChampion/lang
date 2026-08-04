@@ -43,6 +43,11 @@ import (
 
 // InterpDriverMode reports whether FERN_SELFHOST_INTERP selects
 // interpret-the-driver mode.
+// CI-DARK: FERN_SELFHOST_INTERP — an alternative WAY to run the self-host
+// suites (interpret the driver instead of building a binary), not extra
+// coverage. Every test it affects runs in CI on the compiled path, which is
+// also the only path that exercises the x86-64 emit itself. Wiring a lane
+// would re-run the same assertions through a slower driver.
 func InterpDriverMode() bool {
 	v := os.Getenv("FERN_SELFHOST_INTERP")
 	return v != "" && v != "0"
