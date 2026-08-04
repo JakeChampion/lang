@@ -1186,6 +1186,33 @@ var LeakCheckEnabled = os.Getenv("FERN_LEAKCHECK") == "1"
 // counters say a block was never freed, this says a live block was.
 var RcFreeDebug = os.Getenv("FERN_RC_FREE_DEBUG") == "1"
 
+// SandboxEnabled installs a seccomp-bpf filter at `_start` permitting
+// exactly the syscalls the emitted binary can issue, killing the
+// process on anything else (x86-64 Linux only; #6071).
+//
+// The allowlist is the backend's recorded syscall set — see
+// x86_64.EmitWithSyscalls. Deriving it from the emitted text rather
+// than from capability declarations is the whole point: caps.Analyze
+// models user-callable builtins, not the runtime's own mmap /
+// exit_group / write / clock_gettime, so a caps-derived filter would
+// need a hand-maintained floor that silently rots the moment the
+// runtime grows a syscall. A filter derived from what was actually
+// emitted cannot omit a syscall the program can make.
+//
+// This does NOT replace the compile-time capability system, which
+// already rejects out-of-grant reach with E070. It is exploitation
+// hardening: static analysis proves what the code CAN CALL, seccomp
+// constrains what the process can do once control flow has been
+// hijacked — the case a use-after-free in the rc runtime (the class
+// RcFreeDebug exists for) could otherwise open.
+//
+// Opt-in via FERN_SANDBOX=1 (the LeakCheckEnabled precedent). Default
+// off, and the emitted asm is byte-identical to a build without the
+// feature when off. Defaulting it on waits on the whole fixture corpus
+// running clean under it — an over-tight filter is a crash, not a
+// warning, so the burden of proof sits on the feature.
+var SandboxEnabled = os.Getenv("FERN_SANDBOX") == "1"
+
 // RcTrace makes every heap event self-describing (x86-64 only; a
 // diagnostic build mode). __fern_alloc and __fern_free each write one
 // line to stderr:
