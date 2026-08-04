@@ -44,15 +44,20 @@ function main(): i32 {
     }
 
     // 1b. Extension-tag sweep — the registered ids BEYOND kind_count()
-    //     (struct_copy=198 … arr_concat=215). Each must sit past the dense
-    //     table and round-trip through kind_name, so a tag reachable from
-    //     kind_id but unrendered by kind_name (the #5452 skew, which made
+    //     (struct_copy=198 … arr_push_shared_count=216). Each must sit past
+    //     the dense table and round-trip through kind_name, so a tag reachable
+    //     from kind_id but unrendered by kind_name (the #5452 skew, which made
     //     ssa_lift's struct_copy bail read "invalid") fails here.
+    //
+    //     Adding an extension tag means adding it HERE too: `oob` below probes
+    //     ext_max + 1, so an unregistered tag silently becomes the
+    //     "past every registered id" probe and reports its own name where the
+    //     invalid sentinel belongs.
     var ext_names: string[] = [
         "struct_copy", "store_i64", "tcp_listen", "tcp_accept", "writer_write",
         "open_file", "syscall3", "raw_scratch", "syscall4", "raw_environ",
         "udp_send", "read_all_stdin", "arg_at", "proc_fork", "proc_waitpid",
-        "proc_exec", "arr_reverse", "arr_concat"
+        "proc_exec", "arr_reverse", "arr_concat", "arr_push_shared_count"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;
