@@ -417,6 +417,14 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		// the flag — a no-alloc program just reports zeros.
 		g.emitLcReportRuntime()
 	}
+	if ast.RcTrace {
+		// Heap event tracer (#6068). Both hook sites live inside
+		// __fern_alloc / __fern_free, so the helper is only reachable
+		// when those are, but emit it under the flag alone — the
+		// gating that matters is the flag, and an unreferenced helper
+		// in a diagnostic build costs nothing worth a use-flag.
+		g.emitRctRuntime()
+	}
 	if g.usesStrBuf {
 		g.emitStrBufRuntime()
 	}
@@ -3959,7 +3967,7 @@ func (g *generator) emitDataSections() {
 	}
 	needsEmpty := g.usesStrcat || g.usesStrSlice || g.usesStringFromBytes || g.usesRemoveDirAll
 	needsEnumSentinels := len(g.enumSentinelTags) > 0
-	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels || g.usesArrEmpty || ast.LeakCheckEnabled {
+	if len(g.stringOrder) > 0 || g.usesPuts || g.usesEprint || needsEmpty || needsEnumSentinels || g.usesArrEmpty || ast.LeakCheckEnabled || ast.RcTrace {
 		g.line("")
 		g.line(".section .rodata")
 		for _, s := range g.stringOrder {
@@ -4048,6 +4056,19 @@ func (g *generator) emitDataSections() {
 				g.line(fmt.Sprintf(".LEnumSentinel_%d:", t))
 				g.line(fmt.Sprintf("\t.4byte %d", t))
 			}
+		}
+		if ast.RcTrace {
+			// Heap event tracer (#6068): the fixed text of a
+			// __fern_rct_ev line. The writer passes exact lengths, so
+			// the `.asciz` NULs are never emitted — the separator and
+			// newline labels are one byte each as far as write(2) is
+			// concerned.
+			g.label(".Lrct_str_pre")
+			g.line(`	.asciz "rctrace "`)
+			g.label(".Lrct_str_sp")
+			g.line(`	.asciz " "`)
+			g.label(".Lrct_str_nl")
+			g.line(`	.asciz "\n"`)
 		}
 		if ast.LeakCheckEnabled {
 			// Leak detector (#5362 slice 1): the fixed text of
@@ -4351,6 +4372,136 @@ func (g *generator) emitAbortRuntime() {
 	g.line(".text")
 }
 
+// emitRcTraceEvent emits the ast.RcTrace (FERN_RC_TRACE=1) hook that
+// reports one heap event: kind 'a' (alloc) or 'f' (free), with the
+// block pointer in ptrReg and its 16-rounded size in sizeReg. No-op
+// when the flag is off, so an untraced build is byte-identical.
+//
+// The site reported is `[rsp]` — the caller's return address — read
+// BEFORE the saves below move the stack pointer. At an alloc this hook
+// sits after the epilogue's pops (so [rsp] is __fern_alloc's own return
+// address); at a free it sits at the leaf entry, where [rsp] is
+// likewise the caller's. Either way that address belongs to the code
+// that asked for or released the memory, which is the only thing worth
+// naming — every block on the heap came from the same two helpers.
+//
+// ptrReg/sizeReg are saved and restored around the call rather than
+// left to the callee, because at both hook sites they carry values the
+// surrounding code still needs (__fern_alloc's result, __fern_free's
+// two arguments) and the argument setup below overwrites the argument
+// registers themselves. Two pushes keeps rsp 16-byte aligned.
+func (g *generator) emitRcTraceEvent(kind byte, ptrReg, sizeReg string) {
+	if !ast.RcTrace {
+		return
+	}
+	g.emit("mov rcx, [rsp]") // site: caller return address, before any push
+	g.emit(fmt.Sprintf("push %s", ptrReg))
+	g.emit(fmt.Sprintf("push %s", sizeReg))
+	g.emit(fmt.Sprintf("mov rdx, %s", sizeReg)) // arg 3: size
+	g.emit(fmt.Sprintf("mov rsi, %s", ptrReg))  // arg 2: ptr
+	g.emit(fmt.Sprintf("mov edi, %d", kind))    // arg 1: 'a' | 'f'
+	g.emit("call __fern_rct_ev")
+	g.emit(fmt.Sprintf("pop %s", sizeReg))
+	g.emit(fmt.Sprintf("pop %s", ptrReg))
+}
+
+// emitRctRuntime emits `__fern_rct_ev(kind, ptr, size, site)` — the
+// ast.RcTrace (FERN_RC_TRACE=1) event writer. One line to stderr:
+//
+//	rctrace <a|f> <ptr> <size> <site>
+//
+// with each number fixed-width 16 hex digits (see ast.RcTrace for why
+// fixed-width). System V: edi = kind char, rsi = ptr, rdx = size,
+// rcx = site.
+//
+// Every register the helper touches is saved, because it is injected
+// mid-flow at sites that have live values in caller-saved registers —
+// including rcx and r11, which `syscall` itself clobbers, so the three
+// numbers are parked in rbx/r12/r13/r14 before the first write rather
+// than re-read from argument registers between syscalls. Like
+// __fern_lc_report the formatting is self-contained (a hex loop into a
+// stack buffer): the language's own i64-to-string paths are Fern-level
+// and cannot be assumed present in an arbitrary program.
+func (g *generator) emitRctRuntime() {
+	g.line("")
+	g.line(".globl __fern_rct_ev")
+	g.line(".type __fern_rct_ev, @function")
+	g.label("__fern_rct_ev")
+	saved := []string{"rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "rbx", "r12", "r13", "r14"}
+	for _, r := range saved {
+		g.emit("push " + r)
+	}
+	g.emit("mov rbx, rdi") // kind char
+	g.emit("mov r12, rsi") // ptr
+	g.emit("mov r13, rdx") // size
+	// Round to the same (size+15)&-16 __fern_alloc applies, so an `a`
+	// line and the `f` line that retires the same block report the
+	// same size — the alloc hook sits after that rounding but the free
+	// hook sits at the leaf entry, ahead of __fern_free's own copy of
+	// it. Rounding an already-rounded size is identity, so doing it
+	// here once covers both sites. Also keeps the trace's arithmetic
+	// agreeing with leakcheck's, which rounds identically.
+	g.emit("add r13, 15")
+	g.emit("and r13, -16")
+	g.emit("mov r14, rcx") // site
+	g.emit("lea rsi, [rip + .Lrct_str_pre]")
+	g.emit("mov edx, 8")
+	g.emit("call .Lrct_write")
+	// The kind char is a value, not a literal, so it needs a byte of
+	// memory to point write(2) at: borrow 16 bytes of stack.
+	g.emit("sub rsp, 16")
+	g.emit("mov [rsp], bl")
+	g.emit("mov rsi, rsp")
+	g.emit("mov edx, 1")
+	g.emit("call .Lrct_write")
+	g.emit("add rsp, 16")
+	for _, r := range []string{"r12", "r13", "r14"} {
+		g.emit("lea rsi, [rip + .Lrct_str_sp]")
+		g.emit("mov edx, 1")
+		g.emit("call .Lrct_write")
+		g.emit("mov rdi, " + r)
+		g.emit("call .Lrct_wrhex")
+	}
+	g.emit("lea rsi, [rip + .Lrct_str_nl]")
+	g.emit("mov edx, 1")
+	g.emit("call .Lrct_write")
+	for i := len(saved) - 1; i >= 0; i-- {
+		g.emit("pop " + saved[i])
+	}
+	g.emit("ret")
+	// .Lrct_write(rsi = buf, edx = len): one write(2) to stderr.
+	g.label(".Lrct_write")
+	g.emit("mov edi, 2")
+	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
+	g.emit("syscall")
+	g.emit("ret")
+	// .Lrct_wrhex(rdi = value): 16 hex digits, most-significant first,
+	// built into a stack buffer then written in one write(2). Fixed
+	// width, so no leading-zero suppression and no length bookkeeping.
+	g.label(".Lrct_wrhex")
+	g.emit("sub rsp, 32")
+	g.emit("mov rcx, 16")
+	g.emit("mov rax, rdi")
+	g.label(".Lrct_wrhex_loop")
+	g.emit("mov rdx, rax")
+	g.emit("and rdx, 15")
+	g.emit("cmp rdx, 10")
+	g.emit("jb .Lrct_wrhex_dig")
+	g.emit("add rdx, 39") // 'a' - '0' - 10, i.e. skip ':'..'`'
+	g.label(".Lrct_wrhex_dig")
+	g.emit("add rdx, 48") // → ASCII
+	g.emit("mov byte ptr [rsp + rcx - 1], dl")
+	g.emit("shr rax, 4")
+	g.emit("sub rcx, 1")
+	g.emit("jnz .Lrct_wrhex_loop")
+	g.emit("mov rsi, rsp")
+	g.emit("mov edx, 16")
+	g.emit("call .Lrct_write")
+	g.emit("add rsp, 32")
+	g.emit("ret")
+	g.line(".size __fern_rct_ev, .-__fern_rct_ev")
+}
+
 func (g *generator) emitAllocRuntime() {
 	const heapBytes = 17179869184 // 0x400000000 (16 GiB) per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source in one process. Raised from 8 GiB (0x200000000) when the stage-2 x86 self-compile crossed the 8 GiB exit-137 alloc trap — the same wall arm64 hit and cleared: the compiler's live set grows with every compiler-source addition and reached ~8 GiB (0.6% headroom under the old ceiling), so an IR-widening addition tipped it. The mmap is MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE (0x22|0x4000), so the wider reservation is exempt from Linux overcommit accounting and costs nothing until touched — the ~8 GiB actually touched is unchanged, only the exit-137 ceiling moves. The length loads via `movabs rsi` (64-bit imm). The arm64 backend is already at 16 GiB (internal/codegen/arm64's heapBytes) — this brings x86 up to match. Matches the self-host emitters' own `heap_size` (asm.fern / asm_ir.fern = 17179869184) — keeping the native (stage-0 mmc) and self-host x86 heaps in lockstep. This native heap is an mmap region addressed via REGISTER (not a static `.bss` block), so it has no RIP-relative / imm32 displacement ceiling — heap_base + heap_size may exceed 2 GiB. The heap-END is built `movabs rcx, heapBytes` + `add rcx, rax` rather than a signed-disp32 `lea [base + heapBytes]` (which caps at 0x7FFFFFFF). The self-host emitters reach their `.bss` heap via 64-bit-absolute `movabs $__fern_heap` with __fern_heap emitted LAST in .bss so its > 2 GiB base never truncates a PC32 relocation.
 	g.line("")
@@ -4449,6 +4600,7 @@ func (g *generator) emitAllocRuntime() {
 		g.emit("pop r12")
 		g.emit("pop rbx")
 		g.emit("pop rbp")
+		g.emitRcTraceEvent('a', "rax", "rdi")
 		g.emit("ret")
 		g.label(".Lalloc_bump")
 	}
@@ -4498,6 +4650,7 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("pop r12")
 	g.emit("pop rbx")
 	g.emit("pop rbp")
+	g.emitRcTraceEvent('a', "rax", "rdi")
 	g.emit("ret")
 	g.label(".Lalloc_oom")
 	g.emitAbort("__fern_msg_oom")
@@ -4520,6 +4673,7 @@ func (g *generator) emitFreeRuntime() {
 	g.line(".globl __fern_free")
 	g.line(".type __fern_free, @function")
 	g.label("__fern_free")
+	g.emitRcTraceEvent('f', "rdi", "rsi")
 	if ast.LeakCheckEnabled {
 		// Leak detector (#5362 slice 1): every reclamation site funnels
 		// through this helper (box_free / arr_dec / map_drop /

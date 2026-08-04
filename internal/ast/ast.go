@@ -1186,6 +1186,35 @@ var LeakCheckEnabled = os.Getenv("FERN_LEAKCHECK") == "1"
 // counters say a block was never freed, this says a live block was.
 var RcFreeDebug = os.Getenv("FERN_RC_FREE_DEBUG") == "1"
 
+// RcTrace makes every heap event self-describing (x86-64 only; a
+// diagnostic build mode). __fern_alloc and __fern_free each write one
+// line to stderr:
+//
+//	rctrace <a|f> <ptr> <size> <site>
+//
+// all three numbers fixed-width 16-digit hex, `a` = alloc, `f` = free.
+// `site` is the RETURN ADDRESS of the alloc/free call — i.e. the code
+// that asked for the memory, not the helper that handed it out — so
+// `-g` plus addr2line names the source line directly.
+//
+// This is to LeakCheckEnabled what RcUnderflowTrap is to the underflow
+// counter: the counter says a leak happened, this says WHERE. A
+// `leakcheck: ... live_bytes=4096` line is a true statement nothing can
+// act on; pairing the trace's allocs against its frees leaves exactly
+// the sites that allocated memory the program never gave back. The two
+// compose — run both and the summary tells you how much to look for.
+//
+// Fixed-width hex is deliberate: the consumer is a pairing script, and
+// a uniform record needs no field-splitting to match an `a` line to its
+// `f` line by pointer. Note the addresses are RUNTIME addresses, which
+// match a `-g` symtab directly for the default (non-PIE) x86-64 target;
+// under -pie subtract the load base first.
+//
+// Settable via FERN_RC_TRACE=1 (the RcFreeDebug precedent). With the
+// flag OFF the emitted asm is byte-identical to a build without the
+// feature — every emission site is gated, nothing is left behind.
+var RcTrace = os.Getenv("FERN_RC_TRACE") == "1"
+
 // RcUnderflowTrap turns the Phase 3 over-release COUNTER into a TRAP
 // (x86-64 only; a diagnostic build mode). Every site that bumps
 // __fern_rc_underflow — the inline dec, the __fern_rc_dec /
