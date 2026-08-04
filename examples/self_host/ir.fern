@@ -718,14 +718,14 @@ pub function op_read_line(): Op { return op0("read_line"); }
 // module is wasm-ineligible (wasm_eligible) and stays on the AST path there.
 pub function op_read_file(): Op { return op0("read_file"); }
 // `write_file` pops a content string value and a path string value and writes the
-// content to the named file, pushing a fresh Option[IoError]: None on success,
+// content to the named file, pushing a fresh Result[(), IoError]: Ok(()) on success,
 // Some(_) on any I/O error (a VALUE op — two args consumed, the box left on the
 // stack). Lowers to each backend's __fern_write_file helper (the same one the AST
 // path calls). No wasm file I/O here, so a write_file module is wasm-ineligible
 // (wasm_eligible) and stays on the AST path there.
 pub function op_write_file(): Op { return op0("write_file"); }
 // `remove_dir_all` pops a path string value and recursively removes the named
-// directory tree (rm -rf), pushing a fresh Option[IoError]: None on success
+// directory tree (rm -rf), pushing a fresh Result[(), IoError]: Ok(()) on success
 // (including an already-missing path), Some(_) on an open error other than
 // ENOENT/ENOTDIR (a VALUE op — one arg consumed, the box left on the stack).
 // Lowers to each backend's __fern_remove_dir_all helper (the same one the AST
@@ -733,7 +733,7 @@ pub function op_write_file(): Op { return op0("write_file"); }
 // ineligible (wasm_eligible) and stays on the AST path there.
 pub function op_remove_dir_all(): Op { return op0("remove_dir_all"); }
 // `remove_file` pops a path string value and unlinks the named file, pushing a
-// fresh Option[IoError]: None on success, Some(_) on error (a VALUE op — one arg
+// fresh Result[(), IoError]: Ok(()) on success, Err(_) on error (a VALUE op — one arg
 // consumed, the box left on the stack). Lowers to each backend's
 // __fern_remove_file helper (the same one the AST path calls). No wasm file I/O
 // here, so a remove_file module is wasm-ineligible and stays on the AST path.
@@ -1788,12 +1788,12 @@ pub function op_allocates(tag: i32): boolean {
     // arg_at(i) boxes the one entry it reads, so it needs it too.
     if (tag == 180 || tag == 210) { return true; }
     // read_file boxes the file contents + a Result wrapper; write_file boxes its
-    // Option[IoError] result — both via __fern_str_box, so they need the heap.
+    // Result[(), IoError] result — both via __fern_str_box, so they need the heap.
     if (tag == 169 || tag == 170) { return true; }
-    // remove_dir_all boxes its Option[IoError] result and heap-builds child path
+    // remove_dir_all boxes its Result[(), IoError] result and heap-builds child path
     // strings while recursing, so it needs the heap runtime.
     if (tag == 172) { return true; }
-    // remove_file boxes its Option[IoError] result, so it needs the heap runtime.
+    // remove_file boxes its Result[(), IoError] result, so it needs the heap runtime.
     if (tag == 173) { return true; }
     // temp_dir boxes the path string + a Result wrapper, so it needs the heap.
     if (tag == 174) { return true; }
