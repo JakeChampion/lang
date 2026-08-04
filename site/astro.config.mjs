@@ -31,7 +31,7 @@ const siteUrl = process.env.SITE_URL ?? "https://jakechampion.github.io";
 // card, and Starlight's own `description` — so search results, chat
 // unfurls, and the site itself all say the same thing.
 const tagline =
-  "Fern is a small statically-typed language with no runtime and no garbage collector, compiling to native arm64 / x86-64 binaries and WASI Preview 2 components.";
+  "Fern is a small statically typed language that compiles to a fast standalone binary — or to WebAssembly, from the same source. No runtime, no garbage collector, nothing else to install.";
 
 // Load the real Fern TextMate grammar (the same one the VS Code
 // extension ships) so ```fern code fences highlight as actual Fern

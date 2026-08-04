@@ -13,9 +13,8 @@ write functions that return `TestOutcome`, list them in `main`,
 and the runner prints [TAP-13](https://testanything.org/) to
 stdout.
 
-The runner doesn't depend on the Go toolchain, so the same program
-runs under `fern -interp`, compiles to a native binary, and (once
-the compiler is self-hosted) keeps working unchanged.
+A test file is an ordinary Fern program: run it with `fern -interp`,
+or compile it and run the binary. There is nothing else to install.
 
 ## Hello, test
 
@@ -282,9 +281,7 @@ function test_modulo_table(): test.TestOutcome {
 
 Fern has no reflection, so `main` lists the cases it runs. That
 mirrors Zig's `test` blocks and keeps the runner a plain library —
-no build-system magic, no framework runtime. A future
-`discover_tests()` macro would lower to the same
-`r.it("name", func())` chain.
+no build-system magic, no framework runtime.
 
 ## Failing tests in CI
 
@@ -293,15 +290,9 @@ failure. Drop it into any CI runner — GitHub Actions, GitLab CI,
 Buildkite — without further configuration. TAP consumers
 (`prove`, `tape`, `tap-junit`) parse the stream directly.
 
-## Migrating from Go-side tests
+## Examples
 
-Today the compiler's own tests live in Go (`internal/e2e/*.go`).
-The plan ([`docs/ROADMAP-AND-SELF-HOSTING.md`](https://github.com/JakeChampion/lang/blob/main/docs/ROADMAP-AND-SELF-HOSTING.md))
-is to retire them once the compiler is self-hosted; write new
-tests for stdlib helpers and Fern code against `std/test` so
-they're already in the right shape for the migration.
-
-See the working examples under
+Working examples live under
 [`examples/tests/`](https://github.com/JakeChampion/lang/tree/main/examples/tests)
 in the repo:
 

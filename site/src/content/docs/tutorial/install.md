@@ -47,12 +47,10 @@ cd lang
 go build -o ~/.local/bin/fern ./cmd/fern
 ```
 
-Building needs **Go 1.24+** ([download](https://go.dev/dl/)). The
-compiler is a single Go module with no external dependencies, and the
-native backends assemble *and* link in-process — so emitting an ELF,
-Mach-O, or `.wasm` binary needs no `gcc`, `clang`, or `ld` on your
-machine. Pass `-cc` (for example `-cc clang`) if you would rather route
-through your own assembler and linker.
+Building needs **Go 1.24+** ([download](https://go.dev/dl/)) and nothing
+else. Compiling a Fern program needs nothing else either — no `gcc`, no
+`clang`, no `ld`. Pass `-cc` (for example `-cc clang`) if you would
+rather use your own assembler and linker.
 
 ## Verify the install
 
