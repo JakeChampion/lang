@@ -2037,7 +2037,12 @@ func (p *parser) parseType() (ast.Type, error) {
 			// group.
 			base = elems[0]
 		} else {
-			return nil, p.errorfCode(t.Pos, "P001", "expected `=>` after parameter list (function type) or 2+ comma-separated types (tuple type)")
+			// `()` — the unit type, void's other spelling. Written
+			// where a generic needs a "nothing to report" argument:
+			// `Result[(), IoError]`. The `=>` form above already
+			// claimed the zero-arg function type, so reaching here
+			// with no elements means the bare unit type.
+			base = ast.VoidType{}
 		}
 	case t.Kind == lexer.Keyword && t.Text == "dyn":
 		// `dyn Trait` (single) or `dyn A + B` (multi-trait object) — a
@@ -5855,6 +5860,11 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			// a tuple literal. Single-element "tuples" don't exist
 			// as a syntactic form — `(e)` always groups.
 			open := p.advance()
+			// `()` — the unit value. looksLikeArrowLambda already
+			// claimed `() => e`, so an empty pair here is the literal.
+			if _, ok := p.accept(lexer.Punct, ")"); ok {
+				return &ast.UnitLit{P: open.Pos}, nil
+			}
 			first, err := p.parseExpr()
 			if err != nil {
 				return nil, err

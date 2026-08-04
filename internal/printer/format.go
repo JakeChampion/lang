@@ -1149,6 +1149,8 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		} else {
 			fmt.Fprintf(&f.b, "%d%s", x.Value, suffix)
 		}
+	case *ast.UnitLit:
+		f.b.WriteString("()")
 	case *ast.BoolLit:
 		if x.Value {
 			f.b.WriteString("true")

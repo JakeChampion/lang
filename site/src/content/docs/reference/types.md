@@ -18,6 +18,28 @@ sidebar:
 `usize` is target-aware: 4 bytes on wasm32, 8 on arm64 and x86-64.
 Use it for "size of a thing in memory" semantics.
 
+## The unit type
+
+`void` is the type of "no interesting value", and `()` is its sole
+value — the **unit value**. Write `()` when a generic needs a type
+argument but there is nothing to carry:
+
+```fern
+function ensure_readable(path: string): Result[(), IoError] {
+    read_file(path)?;   // the contents don't matter, only that it worked
+    return Ok(());
+}
+```
+
+`()` is also accepted as a type, so `Result[(), IoError]` and
+`Result[void, IoError]` are the same type spelled two ways — much as
+`float` is an alias for `f64`. `fern -fmt` normalises the type spelling
+to `void`; the value is always `()`.
+
+A void-returning *call* is not a value: `Ok(log_it())` is an error, not
+a unit value (`fern -explain E072`). Call it as a statement, then return
+`Ok(())`.
+
 There is no `i8`, `i16` or `u16`: they cost a full set of per-stride
 backend paths for a handful of call sites, so `i32` / `u32` cover that
 ground instead. `u8` stays because bytes are genuinely a different thing.

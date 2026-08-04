@@ -8121,6 +8121,11 @@ func (b *builder) expr(e ast.Expr) error {
 			v = 1
 		}
 		b.emit(Op{Kind: OpConstI32, I32: v})
+	case *ast.UnitLit:
+		// The unit value is a constant, not an absence: it occupies a
+		// slot so an enum payload holding it loads and stores like any
+		// other single-word value.
+		b.emit(Op{Kind: OpConstI32, I32: 0})
 	case *ast.StringLit:
 		b.emit(Op{Kind: OpConstStr, Str: n.Value})
 	case *ast.FString:
