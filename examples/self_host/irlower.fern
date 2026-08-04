@@ -42961,10 +42961,115 @@ function box_wide_captures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, gfns
     return WCapBody { stmts: out, changed: changed };
 }
 
+// has_wide_cap_expr / _stmt / _stmts are the READ-ONLY detector: the same walk
+// wcap_expr does, but answering "is there a wide capture here?" without building
+// a single node. It exists because the rewriting walk rebuilds every statement
+// and expression it visits, so running it speculatively on every function copied
+// the whole compiler AST once per function and exhausted the 16 GiB arena
+// (exit 125) long before it reached a function that needed rewriting. Detect
+// first, rebuild only where it pays.
+function has_wide_cap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], atargets: string[]): boolean {
+    match (e) {
+        parser.ExprLambda(lm) => {
+            var caps: string[] = lambda_captures(lm, gfns, fd);
+            var ci: i32 = 0;
+            while (ci < caps.len()) {
+                var cn: string = caps[ci];
+                if (util.index_of_str(atargets, cn) < 0 && is_wide_cap_type(cap_type(cn, fd, structs, mfuncs))) { return true; }
+                ci = ci + 1;
+            }
+            var si: i32 = 0;
+            while (si < lm.body.len()) {
+                if (has_wide_cap_stmt(lm.body[si], fd, gfns, structs, mfuncs, atargets)) { return true; }
+                si = si + 1;
+            }
+            return false;
+        },
+        parser.ExprBinary(b) => { return has_wide_cap_expr(b.left, fd, gfns, structs, mfuncs, atargets) || has_wide_cap_expr(b.right, fd, gfns, structs, mfuncs, atargets); },
+        parser.ExprUnary(u) => { return has_wide_cap_expr(u.operand, fd, gfns, structs, mfuncs, atargets); },
+        parser.ExprCall(c) => {
+            if (has_wide_cap_expr(c.callee, fd, gfns, structs, mfuncs, atargets)) { return true; }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                if (has_wide_cap_expr(c.args[i], fd, gfns, structs, mfuncs, atargets)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) {
+                if (has_wide_cap_expr(ar.elements[i], fd, gfns, structs, mfuncs, atargets)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                if (has_wide_cap_expr(t.elements[i], fd, gfns, structs, mfuncs, atargets)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprIndex(x) => { return has_wide_cap_expr(x.array, fd, gfns, structs, mfuncs, atargets) || has_wide_cap_expr(x.index, fd, gfns, structs, mfuncs, atargets); },
+        parser.ExprSlice(sl) => { return has_wide_cap_expr(sl.array, fd, gfns, structs, mfuncs, atargets) || has_wide_cap_expr(sl.start, fd, gfns, structs, mfuncs, atargets) || has_wide_cap_expr(sl.end, fd, gfns, structs, mfuncs, atargets); },
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                if (has_wide_cap_expr(sl.field_values[i], fd, gfns, structs, mfuncs, atargets)) { return true; }
+                i = i + 1;
+            }
+            if (sl.has_base) { return has_wide_cap_expr(sl.base, fd, gfns, structs, mfuncs, atargets); }
+            return false;
+        },
+        parser.ExprFieldAccess(fa) => { return has_wide_cap_expr(fa.obj, fd, gfns, structs, mfuncs, atargets); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function has_wide_cap_stmt(st: parser.Stmt, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], atargets: string[]): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return has_wide_cap_expr(v.init, fd, gfns, structs, mfuncs, atargets); },
+        parser.StmtAssign(a) => { return has_wide_cap_expr(a.value, fd, gfns, structs, mfuncs, atargets); },
+        parser.StmtReturn(r) => { return has_wide_cap_expr(r.value, fd, gfns, structs, mfuncs, atargets); },
+        parser.StmtExpr(e) => { return has_wide_cap_expr(e.value, fd, gfns, structs, mfuncs, atargets); },
+        parser.StmtIf(f) => { return has_wide_cap_expr(f.cond, fd, gfns, structs, mfuncs, atargets) || has_wide_cap_stmts(f.then_body, fd, gfns, structs, mfuncs, atargets) || has_wide_cap_stmts(f.else_body, fd, gfns, structs, mfuncs, atargets); },
+        parser.StmtWhile(w) => { return has_wide_cap_expr(w.cond, fd, gfns, structs, mfuncs, atargets) || has_wide_cap_stmts(w.body, fd, gfns, structs, mfuncs, atargets); },
+        parser.StmtFor(fr) => { return has_wide_cap_expr(fr.iter, fd, gfns, structs, mfuncs, atargets) || has_wide_cap_stmts(fr.body, fd, gfns, structs, mfuncs, atargets); },
+        parser.StmtMatch(m) => {
+            if (has_wide_cap_expr(m.scrutinee, fd, gfns, structs, mfuncs, atargets)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && has_wide_cap_expr(m.arms[ai].guard, fd, gfns, structs, mfuncs, atargets)) { return true; }
+                if (has_wide_cap_stmts(m.arms[ai].body, fd, gfns, structs, mfuncs, atargets)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function has_wide_cap_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], atargets: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (has_wide_cap_stmt(stmts[i], fd, gfns, structs, mfuncs, atargets)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // box_wide_captures is the per-function entry point (step 0-pre of the lift
-// pipeline). Returns `fd` untouched when it holds no wide capture.
+// pipeline). The read-only detector runs first: the rewriting walk rebuilds
+// every node it visits, so it must only run on a function that actually has a
+// wide capture — otherwise it copies the entire compiler AST function by
+// function and exhausts the arena.
 function box_wide_captures(fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): parser.FuncDecl {
     var atargets: string[] = body_assign_targets(fd.body);
+    if (!has_wide_cap_stmts(fd.body, fd, gfns, structs, mfuncs, atargets)) { return fd; }
     var b: WCapBody = box_wide_captures_stmts(fd.body, fd, gfns, structs, mfuncs, atargets);
     if (!b.changed) { return fd; }
     return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: b.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str };
