@@ -33,22 +33,35 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
+	// wantOut is checked when non-empty. It exists because the `print` case
+	// below compared ONLY the exit code for as long as it existed, so it could
+	// not fail for the reason it was written: #6047 had every printed string
+	// coming out the right length with the wrong bytes ("Hello, Fern!" ->
+	// "eeeeeeeeeeeeF") on this exact path, and this test stayed green through it.
+	// A print case that ignores stdout is not a print case.
 	cases := []struct {
 		name     string
 		src      string
 		wantExit int
+		wantOut  string
 	}{
-		{"exit_42", `function main(): i32 { return 42; }`, 42},
-		{"arith", `function main(): i32 { var x = 6; var y = 7; return x * y; }`, 42},
-		{"fib", `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(10); }`, 55},
-		{"loop_sum", `function main(): i32 { var s: i32 = 0; var i: i32 = 1; while (i <= 10) { s = s + i; i = i + 1; } return s; }`, 55},
-		{"concat", `function main(): i32 { var s: string = "hello, " + "world!"; return s.len(); }`, 13},
-		{"print", `function main(): i32 { print("hi"); return 0; }`, 0},
-		{"struct_method", `struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = Box { v: 4 }; return x.scale(3); }`, 12},
-		{"array_sum", `function main(): i32 { var a = [1, 2, 3, 4, 5]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15},
-		{"option", `function pick(n: i32): Option[i32] { if (n == 0) { return None; } return Some(n + 1); } function main(): i32 { match (pick(41)) { Some(v) => { return v; }, None => { return 0; } } return 99; }`, 42},
-		{"enum", `enum Shape { Circle(i32), Square(i32) } function area(s: Shape): i32 { match (s) { Circle(r) => { return r*r*3; }, Square(w) => { return w*w; } } } function main(): i32 { return area(Circle(2)) + area(Square(3)); }`, 21},
-		{"floats", `function main(): i32 { var x: f64 = 3.5; var y: f64 = 2.0; var z: f64 = x*y + x/y - x; if (z > 5.0) { return 7; } return 1; }`, 7},
+		{"exit_42", `function main(): i32 { return 42; }`, 42, ""},
+		{"arith", `function main(): i32 { var x = 6; var y = 7; return x * y; }`, 42, ""},
+		{"fib", `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(10); }`, 55, ""},
+		{"loop_sum", `function main(): i32 { var s: i32 = 0; var i: i32 = 1; while (i <= 10) { s = s + i; i = i + 1; } return s; }`, 55, ""},
+		{"concat", `function main(): i32 { var s: string = "hello, " + "world!"; return s.len(); }`, 13, ""},
+		{"print", `function main(): i32 { print("hi"); return 0; }`, 0, "hi\n"},
+		// The #6047 shapes: a literal long enough that a stuck source index
+		// repeats a byte visibly, and a runtime-built string (concat, which is
+		// where the base+index `ldrb w0, [x0, x1]` copy loop lives).
+		{"print_literal", `function main(): i32 { print("Hello, Fern!"); return 0; }`, 0, "Hello, Fern!\n"},
+		{"print_concat", `function main(): i32 { var s: string = "Hello, " + "Fern!"; print(s); return 0; }`, 0, "Hello, Fern!\n"},
+		{"index_byte", `function main(): i32 { var s: string = "abcdef"; return (s[3] as i32) - 90; }`, 10, ""},
+		{"struct_method", `struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = Box { v: 4 }; return x.scale(3); }`, 12, ""},
+		{"array_sum", `function main(): i32 { var a = [1, 2, 3, 4, 5]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15, ""},
+		{"option", `function pick(n: i32): Option[i32] { if (n == 0) { return None; } return Some(n + 1); } function main(): i32 { match (pick(41)) { Some(v) => { return v; }, None => { return 0; } } return 99; }`, 42, ""},
+		{"enum", `enum Shape { Circle(i32), Square(i32) } function area(s: Shape): i32 { match (s) { Circle(r) => { return r*r*3; }, Square(w) => { return w*w; } } } function main(): i32 { return area(Circle(2)) + area(Square(3)); }`, 21, ""},
+		{"floats", `function main(): i32 { var x: f64 = 3.5; var y: f64 = 2.0; var z: f64 = x*y + x/y - x; if (z > 5.0) { return 7; } return 1; }`, 7, ""},
 	}
 
 	for _, c := range cases {
@@ -76,9 +89,16 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 				t.Fatalf("chmod: %v", err)
 			}
 			cmd := exec.Command("qemu-aarch64", binPath)
+			var so, se bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &so, &se
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != c.wantExit {
-				t.Errorf("self-host arm64 %q exit = %d, want %d", c.name, code, c.wantExit)
+				t.Errorf("self-host arm64 %q exit = %d, want %d (stderr: %s)", c.name, code, c.wantExit, se.String())
+			}
+			// Byte-for-byte: #6047 produced output of exactly the right LENGTH,
+			// so a length or prefix check would have passed through it.
+			if c.wantOut != "" && so.String() != c.wantOut {
+				t.Errorf("self-host arm64 %q stdout = %q, want %q", c.name, so.String(), c.wantOut)
 			}
 		})
 	}

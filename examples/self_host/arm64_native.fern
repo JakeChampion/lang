@@ -748,6 +748,26 @@ function arm64_ldr_str_reg(buf: i32[], is_load: boolean, rt: i32, rn: i32, rm: i
     return arm64_le32(buf, arm64_ldr_str_reg_word(is_load, rt, rn, rm, shifted));
 }
 
+// arm64_ldrb_strb_reg encodes the REGISTER-offset byte forms
+// `ldrb/strb Wt, [Xn, Xm]` — the size=00 siblings of arm64_ldr_str_reg above,
+// same option bits (0x6800 = UXTX / LSL #0; a byte has nothing to scale, so
+// there is no shifted variant). ldrb base 0x38600000, strb base 0x38200000.
+// Verified vs clang --target=aarch64-linux-gnu: ldrb w0,[x0,x1] = 0x38616800,
+// strb w2,[x3,x4] = 0x38246862, ldrb w5,[x6,x7] = 0x386768c5,
+// strb w0,[x1,x2] = 0x38226820.
+//
+// This form is what the string-copy loops emit (`ldrb w0, [x0, x1]` — base +
+// index). Its absence was #6047: arm64_gas_mem read the index REGISTER as an
+// immediate, so `[x0, x1]` assembled as `[x0, #1]` and every iteration reloaded
+// the string's second byte — printed output came out the right length with the
+// wrong bytes ("Hello, Fern!" -> "eeeeeeeeeeeeF").
+function arm64_ldrb_strb_reg(buf: i32[], is_load: boolean, rt: i32, rn: i32, rm: i32): i32[] {
+    var base: i64 = 0x38200000;
+    if (is_load) { base = 0x38600000; }
+    var w: i64 = base | (((rm & 31) as i64) << 16) | 0x6800 | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+    return arm64_le32(buf, w);
+}
+
 // arm64_ldur / arm64_stur encode `ldur/stur Xt, [Xn, #off]` — the unscaled
 // signed-imm9 load/store (no writeback, no scaling), the form the backend
 // uses for frame-slot access. 0xF8400000 / 0xF8000000 | imm9<<12 | Rn<<5 | Rt.
@@ -786,6 +806,26 @@ function arm64_lsr_imm(buf: i32[], rd: i32, rn: i32, sh: i32, w: boolean): i32[]
     var width: i32 = 64;
     var base: i64 = 0xd3400000;
     if (w) { width = 32; base = 0x53000000; }
+    var immr: i64 = (sh & (width - 1)) as i64;
+    var imms: i64 = ((width - 1) & 63) as i64;
+    return arm64_le32(buf, base | (immr << 16) | (imms << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+// asr's immediate form is SBFM (the SIGNED sibling of lsr's UBFM): same
+// immr=sh / imms=width-1 fields, base 0x93400000 (64-bit) / 0x13000000 (32-bit).
+// Verified vs clang --target=aarch64-linux-gnu: asr x0,x1,#4 = 0x9344fc20,
+// asr x3,x4,#1 = 0x9341fc83, asr x5,x6,#63 = 0x937ffcc5.
+//
+// The dispatcher previously sent `asr Xd, Xn, #k` down the REGISTER path on the
+// grounds that the emitter only produces the variable form. That was true and
+// still is, but the fallback was silent and wrong: arm64_gas_reg("#4") is -1,
+// masked to 31, so it assembled as `asrv Xd, Xn, xzr` — a shift by ZERO. The
+// same silent-wrong-encoding shape as #6047, found by the encoding differential
+// added with that fix, so it is closed here rather than left as a trap for
+// whoever teaches the emitter a signed constant shift.
+function arm64_asr_imm(buf: i32[], rd: i32, rn: i32, sh: i32, w: boolean): i32[] {
+    var width: i32 = 64;
+    var base: i64 = 0x93400000;
+    if (w) { width = 32; base = 0x13000000; }
     var immr: i64 = (sh & (width - 1)) as i64;
     var imms: i64 = ((width - 1) & 63) as i64;
     return arm64_le32(buf, base | (immr << 16) | (imms << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
@@ -1387,11 +1427,25 @@ function arm64_gas_operands(rest: string): string[] {
 struct Arm64Mem {
     base: i32,
     off: i32,
+    // Register in the OFFSET position (`[Xn, Xm]`), or -1 when the offset is an
+    // immediate. Callers that cannot encode a register offset must refuse the
+    // line (arm64_gas_regoff_unsupported records it on p.unknown) rather than
+    // fall back to `off`, which is 0 for this shape and would silently encode
+    // `[Xn]`.
+    off_reg: i32,
 }
 
-// arm64_gas_mem parses `[Xn]` or `[Xn, #off]`, tolerating a trailing `!`
-// (pre-index writeback marker — detect it separately with
+// arm64_gas_mem parses `[Xn]`, `[Xn, #off]` or `[Xn, Xm]`, tolerating a trailing
+// `!` (pre-index writeback marker — detect it separately with
 // arm64_gas_has_bang).
+//
+// The offset position is a REGISTER or an immediate, and the two must be told
+// apart: this read `arm64_gas_imm(parts[1])` unconditionally, so `[x0, x1]` came
+// back as offset 1 — the digit lifted out of the register name — and assembled
+// as `[x0, #1]`. That is #6047, and it was silent, because 1 is a perfectly
+// legal immediate. The strict-register work (SH-006) had already established
+// that a register token which does not decode must refuse the line rather than
+// encode garbage; a register in the wrong POSITION needs the same treatment.
 function arm64_gas_mem(op: string): Arm64Mem {
     var s: string = arm64_gas_trim(op);
     var lb: i32 = arm64_str_indexof(s, "[");
@@ -1403,10 +1457,36 @@ function arm64_gas_mem(op: string): Arm64Mem {
     var parts: string[] = arm64_gas_operands(inner);
     var base: i32 = arm64_gas_reg(parts[0]);
     var off: i32 = 0;
+    var off_reg: i32 = 0 - 1;
     if (parts.len() > 1) {
-        off = arm64_gas_imm(parts[1]);
+        var p1: string = arm64_gas_trim(parts[1]);
+        var r: i32 = arm64_gas_reg(p1);
+        if (arm64_str_indexof(p1, "#") < 0 && r >= 0) {
+            off_reg = r;
+        } else {
+            off = arm64_gas_imm(p1);
+        }
     }
-    return Arm64Mem { base: base, off: off };
+    return Arm64Mem { base: base, off: off, off_reg: off_reg };
+}
+
+// arm64_gas_regoff_unsupported reports whether `rest` puts a REGISTER in the
+// offset position of a memory operand that `mnem`'s encoder cannot express.
+// The register-offset forms the assembler implements are the 64-bit
+// `ldr/str Xt, [Xn, Xm]` (arm64_ldr_str_reg) and the byte
+// `ldrb/strb Wt, [Xn, Xm]` (arm64_ldrb_strb_reg); everything else — ldrh, strh,
+// ldrsw, ldur, stur, the FP forms — has only an immediate-offset encoder, and
+// must refuse rather than quietly drop the index register.
+function arm64_gas_regoff_unsupported(mnem: string, rest: string): boolean {
+    if (mnem == "ldr" || mnem == "str" || mnem == "ldrb" || mnem == "strb") { return false; }
+    if (mnem != "ldrh" && mnem != "strh" && mnem != "ldrsw" && mnem != "ldur" && mnem != "stur") { return false; }
+    var ops: string[] = arm64_gas_operands(rest);
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (arm64_str_indexof(ops[i], "[") >= 0 && arm64_gas_mem(ops[i]).off_reg >= 0) { return true; }
+        i = i + 1;
+    }
+    return false;
 }
 
 // arm64_gas_has_bang reports whether an operand carries the `!` pre-index
@@ -1628,9 +1708,14 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         return a;
     }
     if (mnem == "asr") {
-        // asr is only emitted in register (variable) form (ASRV); signed
-        // `x >> #k` lowers via sbfm elsewhere.
-        a = Arm64Asm { ...a, code: arm64_asrv(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_w(ops[0])) };
+        // Same immediate/register split as lsl and lsr above. The emitter only
+        // produces the register (ASRV) form today, but the immediate one used to
+        // fall through to it and encode a shift by xzr — i.e. by ZERO.
+        if (ops[2].len() > 0 && ops[2][0] == 35) { // '#' → immediate form (SBFM)
+            a = Arm64Asm { ...a, code: arm64_asr_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
+        } else {
+            a = Arm64Asm { ...a, code: arm64_asrv(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_w(ops[0])) };
+        }
         return a;
     }
     if (mnem == "cmn") {
@@ -1695,6 +1780,12 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
             return Arm64Asm { ...a, code: arm64_strb_post(a.code, arm64_gas_reg(ops[0]), pbb, poo) };
         }
         var bm: Arm64Mem = arm64_gas_mem(ops[1]);
+        // `ldrb/strb Wt, [Xn, Xm]` — base + index, what every string-copy loop
+        // emits. #6047: this fell through to the immediate encoder below with
+        // bm.off carrying the digit from the index register's NAME.
+        if (bm.off_reg >= 0 && (mnem == "ldrb" || mnem == "strb")) {
+            return Arm64Asm { ...a, code: arm64_ldrb_strb_reg(a.code, mnem == "ldrb", arm64_gas_reg(ops[0]), bm.base, bm.off_reg) };
+        }
         if (mnem == "ldrb") { a = Arm64Asm { ...a, code: arm64_ldrb(a.code, arm64_gas_reg(ops[0]), bm.base, bm.off) }; }
         else if (mnem == "strb") { a = Arm64Asm { ...a, code: arm64_strb(a.code, arm64_gas_reg(ops[0]), bm.base, bm.off) }; }
         else if (mnem == "ldrh") { a = Arm64Asm { ...a, code: arm64_ldrh(a.code, arm64_gas_reg(ops[0]), bm.base, bm.off) }; }
@@ -2344,6 +2435,13 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         var badreg: string = arm64_gas_bad_reg_token(rest);
         if (badreg.len() > 0) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badreg) };
+        }
+        // Same discipline for a register in the OFFSET position of a form whose
+        // only encoder takes an immediate: refuse the line instead of silently
+        // dropping the index. #6047 was exactly this hole, on ldrb/strb, which
+        // now encode the register form properly.
+        if (arm64_gas_regoff_unsupported(mnem, rest)) {
+            p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":regoff") };
         }
         // `ldr Xd, =N` (literal-pool load): emit an LDR-literal placeholder
         // and queue the 64-bit value; `.ltorg` (or end of program) flushes
