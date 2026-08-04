@@ -9,11 +9,12 @@ import (
 	"testing"
 )
 
-// The two introspection counters — `__heap_bump_bytes()` and
-// `__arr_push_shared_count()` — are the ONLY builtins whose self-host lowering
-// reads a runtime `.bss` word INLINE (kind_tag 80 and 216) rather than calling a
-// global accessor that reads the word from inside its own unit, the way
-// `__rc_underflow_count()` does through `__fn___fern_rc_underflow_count`.
+// The introspection readouts — `__heap_bump_bytes()`,
+// `__arr_push_shared_count()` and `__arr_push_shared_bytes()` — are the ONLY
+// builtins whose self-host lowering reads a runtime `.bss` word INLINE
+// (kind_tag 80, 216 and 217) rather than calling a global accessor that reads
+// the word from inside its own unit, the way `__rc_underflow_count()` does
+// through `__fn___fern_rc_underflow_count`.
 //
 // The runtime — and so every one of those words — is emitted into the ENTRY unit
 // alone. An inline `movq __fern_heap_ptr(%rip)` / `adrp x0, __fern_heap_ptr`
@@ -27,19 +28,22 @@ import (
 // unusable from a non-entry unit since #6023 with nothing to notice. It fixed
 // that one symbol and left the heap cursor/end pair carrying the identical
 // latent hazard, documented at both backend sites. This is that pair's guard, and
-// it covers the cliff counter alongside it so the whole class is pinned by one
-// test rather than one symbol by accident.
+// it covers the cliff counter and its byte-weight sibling alongside it so the
+// whole class is pinned by one test rather than one symbol by accident — every
+// new inline-.bss-reading builtin belongs here at the same time as its `.globl`.
 //
 // The shape is the minimal trigger: the counters are called from a LIBRARY
 // module, never the entry, so the reference and the definition land in different
 // translation units. Exit 42 proves the read also executed and returned
 // something sane (a positive high-water mark after an array literal, and a zero
-// cliff count for a program that never appends to a shared buffer).
+// cliff count — and so a zero cliff WEIGHT — for a program that never appends to
+// a shared buffer).
 const perModuleCounterLibSrc = `pub function probe(): i32 {
     var xs: i32[] = [1, 2, 3];
     var mark: i64 = __heap_bump_bytes();
     if (mark <= (0 as i64)) { return 1; }
     if (xs.len() != 3) { return 2; }
+    if (__arr_push_shared_bytes() != (0 as i64)) { return 3; }
     return 42 + __arr_push_shared_count();
 }
 `
@@ -94,16 +98,26 @@ func perModuleUnits(t *testing.T, driverBin, entry string, targetArgs []string, 
 
 	dir := filepath.Dir(entry)
 	var objs []string
-	var sawLibRef bool
+	// Every word the probe reads INLINE must actually be referenced from a
+	// non-entry unit — otherwise the link below passes for the wrong reason
+	// (nothing to resolve). One entry per symbol, so dropping any one builtin's
+	// inline read fails here rather than silently narrowing the test.
+	sawLibRef := map[string]bool{
+		"__fern_heap_ptr":        false,
+		"__fern_arr_push_shared": false,
+		"__fern_arr_push_copied": false,
+	}
 	for i := 0; i < n; i++ {
 		unit := drive(append([]string{"-per-module-emit", strconv.Itoa(i)}, needArgs...)...)
 		if len(unit) == 0 {
 			t.Fatalf("module %d emitted 0 bytes", i)
 		}
-		// The library unit must actually carry the inline reference — otherwise
-		// the link below would pass for the wrong reason (nothing to resolve).
-		if !strings.Contains(unit, "_start:") && strings.Contains(unit, "__fern_heap_ptr") {
-			sawLibRef = true
+		if !strings.Contains(unit, "_start:") {
+			for sym := range sawLibRef {
+				if strings.Contains(unit, sym) {
+					sawLibRef[sym] = true
+				}
+			}
 		}
 		p := filepath.Join(dir, "cu"+strconv.Itoa(i)+".s")
 		if err := os.WriteFile(p, []byte(unit), 0o644); err != nil {
@@ -111,8 +125,10 @@ func perModuleUnits(t *testing.T, driverBin, entry string, targetArgs []string, 
 		}
 		objs = append(objs, p)
 	}
-	if !sawLibRef {
-		t.Fatalf("no library unit referenced __fern_heap_ptr — the test no longer drives the cross-unit shape")
+	for _, sym := range []string{"__fern_heap_ptr", "__fern_arr_push_shared", "__fern_arr_push_copied"} {
+		if !sawLibRef[sym] {
+			t.Fatalf("no library unit referenced %s — the test no longer drives the cross-unit shape for it", sym)
+		}
 	}
 	return objs
 }
