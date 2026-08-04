@@ -109,5 +109,18 @@ func (b *builder) dumpRcPlan() string {
 		return a < b
 	})
 	line("preciseDrops", strings.Join(drops, ","))
+
+	// Nested-block precise drops key on the statement to drop after rather than
+	// a top-level index, so they render as nodePos "line:col" (like moveSites).
+	// Native-only for now — the self-host's irlower has no counterpart, so the
+	// differential harness ignores this line as a documented port gap.
+	nested := make([]string, 0, len(b.rc.nestedDrops))
+	for st, names := range b.rc.nestedDrops {
+		ns := append([]string(nil), names...)
+		sort.Strings(ns)
+		nested = append(nested, fmt.Sprintf("%s=%s", nodePos(st), strings.Join(ns, "+")))
+	}
+	sort.Strings(nested)
+	line("nestedDrops", strings.Join(nested, ","))
 	return sb.String()
 }

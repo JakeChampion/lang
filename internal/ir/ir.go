@@ -5039,14 +5039,16 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	// zero-init) is the entry prologue.
 	entryIncAt := len(out.Ops)
 	entryIncPos := b.curPos
-	// Perceus precise drops (garbage-free, straight-line subset): drop an
-	// owned rc local right after its last top-level use instead of at the
-	// exit sweep, lowering peak memory. Iterate the function body's top-
-	// level statements directly (the Block case is a bare loop) so we can
-	// splice the per-statement precise drops in; nested blocks still lower
-	// through b.stmt unchanged. b.rc.preciseDrops[i] is empty when RcFreeEnabled is
-	// off, so this is identical to b.stmt(fn.Body) on the no-free path.
+	// Perceus precise drops (garbage-free): drop an owned rc local right after
+	// its last use instead of at the exit sweep, lowering peak memory. Iterate
+	// the function body's top-level statements directly (the Block case is a
+	// bare loop) so we can splice the per-statement precise drops in; a local
+	// declared in a NESTED block is keyed by statement node instead and
+	// spliced by that Block case (computeNestedDrops). Both tables are nil
+	// when RcFreeEnabled is off, so this is identical to b.stmt(fn.Body) on
+	// the no-free path.
 	b.rc.preciseDrops = b.computePreciseDrops()
+	b.rc.nestedDrops = b.computeNestedDrops()
 	if b.tryEmitTrmc() {
 		// TRMC took over the whole body (a single `match`); skip normal
 		// statement lowering. Scratch-type recording below still runs.
@@ -6768,6 +6770,13 @@ func (b *builder) stmt(s ast.Stmt) error {
 		for _, ss := range n.Stmts {
 			if err := b.stmt(ss); err != nil {
 				return err
+			}
+			// Precise drops for locals declared in THIS block, released at
+			// their last use inside it rather than at the exit sweep
+			// (computeNestedDrops) — the nested-scope sibling of the
+			// top-level splice in lowerFunc.
+			for _, name := range b.rc.nestedDrops[ss] {
+				b.emitPreciseDrop(name)
 			}
 		}
 	case *ast.If:

@@ -16661,11 +16661,12 @@ function main(): i32 {
     var inner: u8[] = __alloc_u8(8);
     var h: Holder = Holder { items: inner };
     var alias: u8[] = h.items;
-    // Precise drops (RC-Perceus) release the now-dead struct h at its last
-    // use; reference it in the return so it stays live through the check —
-    // this measures the fully-aliased rc (inner + h.items + alias).
-    // h.items.len()-8 == 0, so the result is unchanged.
-    return __rc_get(inner) - 3 + h.items.len() - 8;
+    // Precise drops (RC-Perceus) release the now-dead struct h AND the
+    // now-dead alias at their last use; reference both in the return so they
+    // stay live through the check — this measures the fully-aliased rc
+    // (inner + h.items + alias). Both .len()-8 terms are 0, so the result is
+    // unchanged.
+    return __rc_get(inner) - 3 + h.items.len() - 8 + alias.len() - 8;
 }`},
 		{"index_load", `function main(): i32 {
     var inner: u8[] = __alloc_u8(8);

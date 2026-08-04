@@ -23,8 +23,14 @@ func arrDecCount(fn *ir.Func) int {
 // Phase 5h: a loop-body `var row` of an owned array type releases the
 // prior iteration's buffer before the re-init store. The dec-on-reinit
 // (__fern_arr_dec inside the loop) is in addition to the one the exit
-// sweep emits for the function-scoped slot — so an eligible unique-name
-// loop-body array var lowers exactly two __fern_arr_dec.
+// sweep emits for the function-scoped slot.
+//
+// A THIRD one is the nested-block precise drop (computeNestedDrops, #6024):
+// `row` is dead after `sum = sum + row[0] + row[2]`, so it is released there
+// rather than a whole iteration later. The other two stay because they are
+// the paths a `break` / `continue` before the precise point still exits
+// through; the precise drop zeroes the slot, so on the ordinary path they
+// null-guard to no-ops.
 func TestLoopVarDropFiresForArray(t *testing.T) {
 	ip := lowerForTest(t, `function churn(n: i32): i32 {
     var sum: i32 = 0;
@@ -41,8 +47,8 @@ function main(): i32 { return churn(3); }`)
 	if f == nil {
 		t.Fatal("no func churn")
 	}
-	if got := arrDecCount(f); got != 2 {
-		t.Errorf("loop-body array var should lower 2 __fern_arr_dec (1 dec-on-reinit + 1 exit sweep), got %d", got)
+	if got := arrDecCount(f); got != 3 {
+		t.Errorf("loop-body array var should lower 3 __fern_arr_dec (1 precise drop at its last use + 1 dec-on-reinit + 1 exit sweep), got %d", got)
 	}
 }
 
