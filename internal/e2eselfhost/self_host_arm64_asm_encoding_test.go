@@ -169,6 +169,8 @@ _start:
     fcvt d5, s6
     fcvtzs x0, d0
     fcvtzs w5, d6
+    fcvtzu x0, d0
+    fcvtzu w5, d6
     frinta d0, d0
     frintm d0, d1
     frintp d2, d3

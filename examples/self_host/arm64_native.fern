@@ -1297,6 +1297,19 @@ function arm64_fcvtzs(buf: i32[], rd_gpr: i32, rn_fp: i32, w: boolean): i32[] {
     if (w) { base = 0x1e780000; }
     return arm64_le32(buf, base | (((rn_fp & 31) as i64) << 5) | ((rd_gpr & 31) as i64));
 }
+// fcvtzu — the UNSIGNED sibling (double -> unsigned int, round toward zero),
+// one opcode bit above fcvtzs: 0x9e790000 for an X destination, 0x1e790000 for
+// W. Found by the #6045 re-measurement, which surfaced one corpus fixture the
+// assembler refused for lack of it; the six-program sample behind #6044's
+// mnemonic enumeration happened not to contain one, which is the argument for
+// enumerating over the whole corpus rather than a sample. Verified vs clang:
+// fcvtzu x0,d0 = 0x9e790000, fcvtzu x3,d4 = 0x9e790083,
+// fcvtzu w0,d0 = 0x1e790000, fcvtzu w5,d6 = 0x1e7900c5.
+function arm64_fcvtzu(buf: i32[], rd_gpr: i32, rn_fp: i32, w: boolean): i32[] {
+    var base: i64 = 0x9e790000;
+    if (w) { base = 0x1e790000; }
+    return arm64_le32(buf, base | (((rn_fp & 31) as i64) << 5) | ((rd_gpr & 31) as i64));
+}
 // scvtf Dd, Xn (signed int -> double).
 function arm64_scvtf(buf: i32[], rd_fp: i32, rn_gpr: i32): i32[] {
     return arm64_le32(buf, 0x9e620000 | (((rn_gpr & 31) as i64) << 5) | ((rd_fp & 31) as i64));
@@ -2100,6 +2113,10 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_fcvtzs(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
         return a;
     }
+    if (mnem == "fcvtzu") { // Xd/Wd, Dn (double -> unsigned int)
+        a = Arm64Asm { ...a, code: arm64_fcvtzu(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
+        return a;
+    }
     if (mnem == "fcvt") { // Sd, Dn (narrow) or Dd, Sn (widen)
         if (arm64_gas_is_d(ops[0])) {
             a = Arm64Asm { ...a, code: arm64_fcvt_d_s(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
@@ -2188,7 +2205,7 @@ function arm64_gas_known(mnem: string): boolean {
     // below had a branch and encoders but was missing from this list — so the
     // program loop refused instructions the assembler could already encode
     // perfectly (#6044). Add to both places, or to neither.
-    if (mnem == "fcvt" || mnem == "fneg" || mnem == "fabs" || mnem == "fsqrt") { return true; }
+    if (mnem == "fcvt" || mnem == "fcvtzu" || mnem == "fneg" || mnem == "fabs" || mnem == "fsqrt") { return true; }
     if (mnem == "frinta" || mnem == "frintm" || mnem == "frintp" || mnem == "frintz") { return true; }
     if (arm64_funary_d_base(mnem) >= 0) { return true; }
     if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { return true; } // b.<cond>
