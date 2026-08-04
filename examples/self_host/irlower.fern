@@ -42903,6 +42903,30 @@ function wcap_stmt(st: parser.Stmt, fd: parser.FuncDecl, gfns: string[], structs
     return WCapStmt { stmt: st, caps: acc, changed: false };
 }
 
+// wcap_stmt_needs_env_box reports whether the lambda(s) in `stmts[i]` can reach
+// the closure env box, i.e. whether a wide capture there needs a cell at all.
+// The one shape that cannot is `var f = <lambda>` where `f` is only direct-
+// called afterwards: the param-lift passes its captures as call arguments, no
+// box involved, and a wide scalar rides an argument fine. Every other shape —
+// a returned lambda, a lambda in call-argument / array-element / struct-field
+// position, or a binding used as a value — goes through the box.
+function wcap_stmt_needs_env_box(stmts: parser.Stmt[], i: i32): boolean {
+    var bname: string = "";
+    match (stmts[i]) {
+        parser.StmtVar(v) => {
+            match (v.init) { parser.ExprLambda(_) => { bname = v.name; }, _ => {} }
+        },
+        _ => {}
+    }
+    if (bname.len() == 0) { return true; }
+    var j: i32 = i + 1;
+    while (j < stmts.len()) {
+        if (ident_used_as_value_stmt(stmts[j], bname)) { return true; }
+        j = j + 1;
+    }
+    return false;
+}
+
 // box_wide_captures_stmts rewrites a statement list, emitting each statement's
 // wide-capture cell decls immediately before it — so the cell is created after
 // everything it reads is in scope, and inside whatever block that is.
@@ -42911,6 +42935,17 @@ function box_wide_captures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, gfns
     var changed: boolean = false;
     var i: i32 = 0;
     while (i < stmts.len()) {
+        // A `var f = <lambda>` whose `f` is only ever DIRECTLY CALLED never
+        // builds an env box: the param-lift hoists it to __lam_<k>(origparams…,
+        // captures…) and threads the captures as call ARGUMENTS (#5301), which
+        // carries a wide scalar natively. Cellaring those would be pure damage —
+        // it broke `var f = () => base + 2000000000` over an i64 base, which had
+        // always lowered. Same escape test box_mutated_scalar_captures uses.
+        if (!wcap_stmt_needs_env_box(stmts, i)) {
+            out = out.append(stmts[i]);
+            i = i + 1;
+            continue;
+        }
         var empty: WCaps = WCaps { names: [], types: [] };
         var r: WCapStmt = wcap_stmt(stmts[i], fd, gfns, structs, mfuncs, empty, atargets);
         if (r.changed) { changed = true; }
