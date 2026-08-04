@@ -1297,9 +1297,22 @@ function arm64_fcvtzs(buf: i32[], rd_gpr: i32, rn_fp: i32, w: boolean): i32[] {
     if (w) { base = 0x1e780000; }
     return arm64_le32(buf, base | (((rn_fp & 31) as i64) << 5) | ((rd_gpr & 31) as i64));
 }
-// scvtf Dd, Xn (signed int -> double).
-function arm64_scvtf(buf: i32[], rd_fp: i32, rn_gpr: i32): i32[] {
-    return arm64_le32(buf, 0x9e620000 | (((rn_gpr & 31) as i64) << 5) | ((rd_fp & 31) as i64));
+// scvtf Dd, Xn / Dd, Wn (signed int -> double) and ucvtf Dd, Xn / Dd, Wn
+// (unsigned int -> double). Same encoding but for the opcode field — 010 for
+// signed, 011 for unsigned — and, as with fcvtzs, the GP SOURCE's width lives
+// in the sf bit: 0x9e6.0000 for X, 0x1e6.0000 for W. ucvtf was missing
+// entirely, so `u64 as f64` (which needs it — a signed convert reads a value
+// >= 2^63 as negative, #6051) was refused by the in-process assembler.
+// Verified vs clang: scvtf d0,x1 = 0x9e620020, ucvtf d0,x1 = 0x9e630020,
+// ucvtf d0,w1 = 0x1e630020.
+function arm64_cvtf(buf: i32[], rd_fp: i32, rn_gpr: i32, w: boolean, unsigned: boolean): i32[] {
+    var base: i64 = 0x9e620000;
+    if (unsigned) { base = 0x9e630000; }
+    if (w) {
+        base = 0x1e620000;
+        if (unsigned) { base = 0x1e630000; }
+    }
+    return arm64_le32(buf, base | (((rn_gpr & 31) as i64) << 5) | ((rd_fp & 31) as i64));
 }
 
 // ============================================================
@@ -2108,8 +2121,8 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         }
         return a;
     }
-    if (mnem == "scvtf") { // Dd, Xn (int -> double)
-        a = Arm64Asm { ...a, code: arm64_scvtf(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+    if (mnem == "scvtf" || mnem == "ucvtf") { // Dd, Xn/Wn (int -> double)
+        a = Arm64Asm { ...a, code: arm64_cvtf(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[1]), mnem == "ucvtf") };
         return a;
     }
     if (mnem == "fmov") {
@@ -2181,7 +2194,7 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "orr" || mnem == "eor" || mnem == "subs" || mnem == "udiv" || mnem == "sdiv" || mnem == "msub" || mnem == "rev16" || mnem == "clz") { return true; }
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") { return true; }
     if (mnem == "mrs") { return true; } // sysreg validity checked in the program loop
-    if (mnem == "fadd" || mnem == "fsub" || mnem == "fmul" || mnem == "fdiv" || mnem == "fcmp" || mnem == "fmov" || mnem == "fcvtzs" || mnem == "scvtf") { return true; }
+    if (mnem == "fadd" || mnem == "fsub" || mnem == "fmul" || mnem == "fdiv" || mnem == "fcmp" || mnem == "fmov" || mnem == "fcvtzs" || mnem == "scvtf" || mnem == "ucvtf") { return true; }
     // This list and the dispatch in arm64_gas_emit must agree, and they have
     // drifted in BOTH directions: movn was listed here with no branch to
     // assemble it (silently emitted nothing, #6060), while the unary FP family

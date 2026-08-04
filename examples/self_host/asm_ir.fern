@@ -5337,8 +5337,31 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    .section .rodata\n" + flb.name + ": .long " + util.i32_to_string(flo) + ", " + util.i32_to_string(fhi) + "\n    .text\n");
             s = s.write("    movsd " + flb.name + "(%rip), %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 11) {  // i32_to_f64
-            // signed i32 -> f64 (cvtsi2sd); value rides the stack as bits.
-            s = s.write("    popq %rax\n    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
+            // int -> f64, selected by the op's width + signedness. x86 has only
+            // the SIGNED cvtsi2sd, so the two unsigned cases need help: a u32 is
+            // zero-extended into the 64-bit source first (its value fits i64, so
+            // the signed convert is then exact), and a u64 >= 2^63 — where a bare
+            // cvtsi2sd reads the all-ones pattern as -1.0 (#6051) — goes through
+            // the round-to-odd halving `y = (x >> 1) | (x & 1)`, converts that,
+            // and doubles. Mirrors native emitFConvertI64's sequence exactly.
+            // The old unconditional cvtsi2sd was justified by "one instruction
+            // covers i32 and i64 alike"; that holds for every source EXCEPT a
+            // u64 with bit 63 set, which is the whole bug.
+            if (o.width == 64 && o.unsigned) {
+                var u2d: string = lp + "u2d" + util.i32_to_string(i);
+                s = s.write("    popq %rax\n");
+                s = s.write("    testq %rax, %rax\n    js " + u2d + "_big\n");
+                s = s.write("    cvtsi2sd %rax, %xmm0\n    jmp " + u2d + "_done\n");
+                s = s.write(u2d + "_big:\n");
+                s = s.write("    movq %rax, %rcx\n    shrq $1, %rcx\n    andl $1, %eax\n    orq %rax, %rcx\n");
+                s = s.write("    cvtsi2sd %rcx, %xmm0\n    addsd %xmm0, %xmm0\n");
+                s = s.write(u2d + "_done:\n");
+                s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
+            } else if (o.unsigned) {
+                s = s.write("    popq %rax\n    movl %eax, %eax\n    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
+            } else {
+                s = s.write("    popq %rax\n    cvtsi2sd %rax, %xmm0\n    movq %xmm0, %rax\n    pushq %rax\n");
+            }
         } else if (o.kind_tag == 12) {  // f64_to_i32
             // Saturating f64 -> i32 / u32 (#4332); needs a per-op-unique label base.
             if (o.unsigned) { s = s.write(ir_f2u_sat(32, lp + util.i32_to_string(i))); }

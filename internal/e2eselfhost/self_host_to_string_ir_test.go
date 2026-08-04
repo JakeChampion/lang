@@ -36,6 +36,15 @@ var toStringIRCases = []struct {
 	// only that a non-empty string is produced and starts with 'P').
 	{"derive-display",
 		`trait Display { function to_string(self: Self): string; } @derive(Display) struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 1, y: 2 }; var s: string = p.to_string(); if (s.len() < 1) { return 90; } if (s[0] != 80) { return 91; } return 1; }`, 1},
+	// INT_MIN — the one i32 whose negation overflows back to itself (#6050).
+	// The helper carried its magnitude SIGNED, so the wrapped value stayed
+	// negative, the digit loop never ran, and -2147483648 rendered as a bare
+	// "-": sign emitted, every digit dropped. The value arrives through a call
+	// so it cannot be constant-folded into a literal string. Asserts the exact
+	// length and the first / second / last byte, so a formatter that produces
+	// the right LENGTH of wrong digits still fails.
+	{"i32-int-min",
+		`function inc(n: i32): i32 { return n + 1; } function main(): i32 { var s: string = inc(2147483647).to_string(); if (s.len() != 11) { return 90; } if (s[0] != 45) { return 91; } if (s[1] != 50) { return 92; } if (s[10] != 56) { return 93; } return 11; }`, 11},
 	// multi-digit + boundary: (100).to_string() == "100", (9).to_string() == "9".
 	{"i32-multidigit",
 		`function main(): i32 { var a: string = (100).to_string(); var b: string = (9).to_string(); if (a.len() != 3) { return 40; } if (a[0] != 49) { return 41; } if (a[1] != 48) { return 42; } if (b.len() != 1) { return 43; } return a.len() + b.len(); }`, 4},
