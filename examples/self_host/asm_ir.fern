@@ -956,6 +956,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .align 8\n");
     s = s.write("__fern_rc_underflow: .quad 0\n");
     s = s.write("    .align 8\n");
+    // The rc==1 append cliff counter (#6023): appends that copied a buffer which
+    // still had spare capacity, so the copy was bought by an extra reference
+    // rather than a full buffer. Bumped on the un-share path in __fern_arr_push,
+    // read by __arr_push_shared_count. 0 on a healthy run.
+    s = s.write("__fern_arr_push_shared: .quad 0\n");
+    s = s.write("    .align 8\n");
     s = s.write("__fern_freelist: .skip 524288\n");
     s = s.write("    .align 8\n");
     // Large-tier segregated freelist (#3425): the 65536-word __fern_freelist above
@@ -2643,10 +2649,20 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // halving the copy's arena footprint (the leak-mode self-compile is
     // arena-bound, #3425). True growth (len >= cap) still doubles.
     s = s.write("    cmpq %r15, %r14\n");
-    s = s.write("    jl .Larr_push_cap\n");
+    s = s.write("    jl .Larr_push_shared_cliff\n");
     s = s.write("    cmpq $0, %rcx\n");
     s = s.write("    jne .Larr_push_dbl\n");
     s = s.write("    movq $4, %rcx\n");
+    s = s.write("    jmp .Larr_push_cap\n");
+    // len < cap at .Larr_push_grow is only reachable from the rc-shared jump
+    // above (the rc-ok path gets here only on len >= cap), so this branch IS the
+    // cliff: a copy bought by an extra reference, not by a full buffer. Count it
+    // — the same diagnostic the native backends keep — then fall through to
+    // .Larr_push_cap with the cap UNDOUBLED, as the un-share copy needs no
+    // growth. Off the fast path: this costs one add on a run already about to
+    // copy the whole buffer.
+    s = s.write(".Larr_push_shared_cliff:\n");
+    s = s.write("    incq __fern_arr_push_shared(%rip)\n");
     s = s.write("    jmp .Larr_push_cap\n");
     s = s.write(".Larr_push_dbl:\n");
     s = s.write("    shlq $1, %rcx\n");
@@ -4625,6 +4641,13 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    testq %rax, %rax\n");                   // ptr == 0 ?
             s = s.write("    cmovneq %rdx, %rcx\n");                 // 0 if uninit, else ptr−base
             s = s.write("    pushq %rcx\n");
+            s = s.need("heap");
+        } else if (o.kind_tag == 216) {  // arr_push_shared_count
+            // The rc==1 append cliff counter, a plain .bss word bumped by
+            // __fern_arr_push's un-share path. Needs the heap runtime for the
+            // same reason heap_bump_bytes does: that is what defines the word.
+            s = s.write("    movq __fern_arr_push_shared(%rip), %rax\n");
+            s = s.write("    pushq %rax\n");
             s = s.need("heap");
         } else if (o.kind_tag == 138) {  // struct_make
             // nf field values on the operand stack (field nf-1 on top, decl

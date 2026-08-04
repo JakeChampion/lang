@@ -154,10 +154,22 @@ pub function str_values(cache: irlower.LowerResult[]): string[] {
 // str_offset returns the data-section offset of literal index `idx`: 24 + the
 // summed block sizes (4 + len) of all prior literals.
 // str_region_base is where a unit's string-literal region starts: the 24-byte
-// low scratch (fd_write iovec at 0/4/8, the newline byte at 12) sits below it.
+// low scratch (fd_write iovec at 0/4/8, the newline byte at 12, the rc==1
+// append-cliff counter at 16 — see arr_push_shared_addr; 20 is still spare)
+// sits below it.
 // Named rather than inlined because const_str now emits offsets RELATIVE to it
 // (#5331 step 1), so the two must agree by construction.
 pub function str_region_base(): i32 { return 24; }
+
+// arr_push_shared_addr is the 4-byte slot holding the rc==1 append cliff
+// counter (#6023): appends that copied a buffer which still had SPARE
+// CAPACITY, so the copy was bought by an extra reference rather than a full
+// buffer. Bumped by $__fern_arr_push's un-share path, read by
+// __arr_push_shared_count; 0 on a healthy run. It lives in the reserved low
+// scratch below str_region_base rather than in the data section so a module
+// that never emits a string literal still has somewhere to keep it — the same
+// reason the native wasm backend puts it at a fixed low address.
+pub function arr_push_shared_addr(): i32 { return 16; }
 
 // fn_table_base is where a unit's funcref-table region starts. The elem
 // segment is emitted at index 0 today, so whole-program emit uses 0 — but
@@ -3195,6 +3207,11 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // address difference. Zero-, not sign-extend: the cursor never sits
             // below heap_base, so the difference is a non-negative byte count.
             out = out + "    global.get $heap\n    i32.const " + util.i32_to_string((str_offset(str_vals, str_vals.len()) + 16 + 7) / 8 * 8 + fl_cells() * 4) + "\n    i32.sub\n    i64.extend_i32_u\n";
+        } else if (o.kind_tag == 216) {  // arr_push_shared_count
+            // The rc==1 append cliff counter — a plain i32 load from the fixed
+            // low-memory slot $__fern_arr_push bumps on its un-share path. i32,
+            // not i64: it counts appends, not bytes.
+            out = out + "    i32.const " + util.i32_to_string(arr_push_shared_addr()) + "\n    i32.load\n";
         } else if (o.kind_tag == 74) {  // memcpy
             // stack: dst, src, n -> copy n bytes src->dst via the bulk-memory
             // memory.copy (operand order [dest, src, size] matches the lowering
@@ -5240,6 +5257,13 @@ pub function arr_push_helper(): string {
     // arena-footprint lesson from the register port). True growth
     // (len >= cap) doubles (or starts at 4).
     o = o + "    (local.set $ncap (local.get $cap))\n";
+    // Reaching the copy path with len < cap means the receiver was SHARED (the
+    // in-place branch above already took every sole-owner-with-room case), so
+    // this copy was bought by an extra reference rather than a full buffer:
+    // the rc==1 cliff. Count it at arr_push_shared_addr — off the fast path,
+    // one add on a run already about to copy the whole buffer.
+    o = o + "    (if (i32.lt_s (local.get $len) (local.get $cap)) (then\n";
+    o = o + "      (i32.store (i32.const " + util.i32_to_string(arr_push_shared_addr()) + ") (i32.add (i32.load (i32.const " + util.i32_to_string(arr_push_shared_addr()) + ")) (i32.const 1)))))\n";
     o = o + "    (if (i32.ge_s (local.get $len) (local.get $cap)) (then\n";
     o = o + "      (local.set $ncap (i32.const 4))\n";
     o = o + "      (if (i32.gt_s (local.get $cap) (i32.const 0)) (then (local.set $ncap (i32.mul (local.get $cap) (i32.const 2)))))))\n";
