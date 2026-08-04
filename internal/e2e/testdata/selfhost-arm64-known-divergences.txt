@@ -24,5 +24,41 @@
 # ("module is not IR-eligible") or the in-process assembler refusing an
 # instruction it does not implement (the message names the mnemonic).
 #
-# Empty: the leg has not yet had its first full run. Populate from the CI lane's
-# first red, one row per confirmed finding, with an issue number.
+# Measured 2026-08-04 on the run that closed #6045: 317 fixtures run, 298 pass,
+# the 19 below listed. Every row was reproduced by hand with bin/fern-selfhost
+# and checked against BOTH `bin/fern -interp` and the self-host x86-64 path,
+# which is what splits the list into its two halves:
+#
+#   * 16 rows the x86-64 leg lists too, with the SAME measured value. Those are
+#     shared frontend/irlower bugs that arm64 merely re-observes; fixing one
+#     flips two legs. Keep the issue numbers in sync with
+#     selfhost-x86_64-known-divergences.txt.
+#   * 3 rows that pass on x86-64 AND interp and fail only here (#6081/#6082/
+#     #6083). Those are the arm64-specific frontier.
+#
+# No assembler-refusal row survives: every "hit an instruction it does not yet
+# support" failure is gone, and the three compile rows below are the shared
+# #6007 IR-eligibility bails the x86-64 leg carries verbatim.
+
+# --- shared with the x86-64 leg (same bug, same measured value) ---
+regex_basic #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
+regex_ci #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
+regex_ops #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
+regex_wordbound #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
+regex_captures_assert #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
+regex_groups #6049 SEGV; x86-64 hangs on the same fixture, native returns 127 in ms
+derive_json #6009 returns 4, native 42 — identical to the wasm + x86-64 figure
+eq_struct_enum #6009 returns 18, native 63 — identical to the wasm + x86-64 figure
+ord_struct_enum #6009 returns 87, native 31 — identical to the wasm + x86-64 figure
+tuple_match_expr #6010 returns 20, native 42 — identical to the wasm + x86-64 figure
+generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
+pure_collection_aliases #6007 IR-ineligible; bails at main (call to unknown symbol Map.cleared)
+map_struct_value_field #6007 IR-ineligible; bails at main (no symbol named)
+int_wrap #6050 prints "-" for -2147483648 — sign emitted, every digit dropped
+u64_max_to_f64_is_huge #6051 returns 1, native 0 — u64::MAX as f64 converts signed
+multiline_stdin #6052 returns 10, native 42 — only the first stdin line is consumed
+
+# --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---
+map_struct_enum_keys #6081 returns 1, native 0 — a struct key with a string field misses on a value-equal probe key, so the keyKind-3 runtime is not hashing structurally
+url_codec #6082 stdout mismatch on one line — url_parse takes the None arm and the printed line splices bytes from neighbouring string constants; the exit code still matches, so only the stdout oracle sees it
+audit_io_builtins #6083 SEGV after 4ms, having printed "Hi!" and "to-stderr" — faults in a later IO builtin; native and self-host x86-64 both reach "done" and exit 0

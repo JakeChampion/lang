@@ -194,37 +194,7 @@ Lend:
     ret
 `
 
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "arm64_asm_bench_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "arm64_asm_bench_run.fern", "arm64_asm_bench")
-
-	args := []string{"-words"}
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(bin, args...)
-	} else {
-		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), bin), args...)...)
-	}
-	cmd.Stdin = strings.NewReader(snippet)
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("self-host assembler driver failed: %v\nstderr: %s", err, errb.String())
-	}
-	// A refused line (p.unknown) means the assembler declined a form the
-	// emitter can produce. That is a finding, not a pass: the driver would
-	// otherwise report a short word list and the comparison below would
-	// misalign.
-	if strings.Contains(out.String(), "unknown=") {
-		var refused []string
-		for _, ln := range strings.Split(out.String(), "\n") {
-			if strings.HasPrefix(ln, "unknown=") {
-				refused = append(refused, strings.TrimPrefix(ln, "unknown="))
-			}
-		}
-		t.Fatalf("the self-host assembler REFUSED %d line(s) of the snippet: %v", len(refused), refused)
-	}
-	got := parseAsmWords(t, out.String())
+	got := assembleSelfHost(t, buildAsmBenchDriver(t, gcc), runner, snippet)
 
 	text, _, err := nativearm64.AssembleProgram(snippet, nativeelf.TextVAddr)
 	if err != nil {
@@ -247,6 +217,198 @@ Lend:
 			}
 			t.Errorf("word %d (%s): self-host %08x, native %08x", i, src, got[i], want[i])
 		}
+	}
+}
+
+// buildAsmBenchDriver builds the in-process-assembler harness. buildSelfHostBin
+// caches on the sources, so the second and later callers in a package run pay
+// nothing.
+func buildAsmBenchDriver(t *testing.T, gcc string) string {
+	t.Helper()
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "arm64_asm_bench_run.fern")
+	return buildSelfHostBin(t, gcc, dir, "arm64_asm_bench_run.fern", "arm64_asm_bench")
+}
+
+// assembleSelfHost feeds GAS text to the driver and returns the assembled
+// words. A refused line (p.unknown) is a finding, not a pass: the driver would
+// otherwise report a short word list and every comparison against it would
+// misalign. Refusals now cover unresolved LABELS and SYMBOLS as well as unknown
+// mnemonics — before that, an unfound branch target was patched as though the
+// "not placed" sentinel were an offset, which is the whole reason #6045's
+// numeric-local-label bug produced runnable binaries instead of an error.
+func assembleSelfHost(t *testing.T, bin string, runner []string, snippet string) []uint32 {
+	t.Helper()
+	args := []string{"-words"}
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(bin, args...)
+	} else {
+		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), bin), args...)...)
+	}
+	cmd.Stdin = strings.NewReader(snippet)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("self-host assembler driver failed: %v\nstderr: %s", err, errb.String())
+	}
+	if strings.Contains(out.String(), "unknown=") {
+		var refused []string
+		for _, ln := range strings.Split(out.String(), "\n") {
+			if strings.HasPrefix(ln, "unknown=") {
+				refused = append(refused, strings.TrimPrefix(ln, "unknown="))
+			}
+		}
+		t.Fatalf("the self-host assembler REFUSED %d line(s) of the snippet: %v", len(refused), refused)
+	}
+	return parseAsmWords(t, out.String())
+}
+
+// TestSelfHostArm64AsmNumericLocalLabels pins GAS numeric local labels — `1:`
+// defined repeatedly, with `1f` / `1b` naming the next / previous definition.
+//
+// The arm64 emitter writes every bounds check that way:
+//
+//	cmp x1, x2 / b.lo 1f / b __fern_oob_abort / 1: …
+//
+// and the in-process assembler did not implement them. `1:` became a label
+// literally named "1", so the lookup returned the FIRST definition in the
+// program for all of them, and `1f` matched nothing at all and came back as the
+// -1 "not placed" sentinel, which the fixup pass then patched as if it were an
+// offset. Every array index and string slice therefore branched to `-1 - here`,
+// a word inside the ELF header, which is zero, which is UDF #0. 129 of 317
+// corpus fixtures died on SIGILL before printing a byte (#6045).
+//
+// The oracle cannot assemble numeric locals (internal/native/arm64 has no
+// notion of them — #6075), so this compares two spellings of the SAME control
+// flow instead: one using numeric locals, one using ordinary named labels. The
+// named version goes through the oracle, which anchors the expected encodings;
+// the numeric version must then produce byte-identical words. That tests the
+// semantics — which definition each reference selects, in both directions —
+// rather than re-asserting the branch encoder the snippet above already covers.
+func TestSelfHostArm64AsmNumericLocalLabels(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+
+	// Two definitions of `1` and one of `2`, exercising: a forward reference
+	// resolving past an intervening definition-free stretch, a SECOND forward
+	// reference that must pick the second `1:` rather than the first, a
+	// backward `2b` in a loop, and a backward `1b` that must select the most
+	// recent `1:` and not the earliest.
+	const numeric = `.text
+.globl _start
+_start:
+    cmp x1, x2
+    b.lo 1f
+    b Labort
+1:
+    add x1, x1, #1
+    cmp x1, x2
+    b.lo 1f
+    b Labort
+1:
+    add x1, x1, #2
+2:
+    sub x1, x1, #1
+    cbnz x1, 2b
+    b 1b
+Labort:
+    ret
+`
+	const named = `.text
+.globl _start
+_start:
+    cmp x1, x2
+    b.lo Lone
+    b Labort
+Lone:
+    add x1, x1, #1
+    cmp x1, x2
+    b.lo Ltwo
+    b Labort
+Ltwo:
+    add x1, x1, #2
+Lloop:
+    sub x1, x1, #1
+    cbnz x1, Lloop
+    b Ltwo
+Labort:
+    ret
+`
+
+	bin := buildAsmBenchDriver(t, gcc)
+	gotNumeric := assembleSelfHost(t, bin, runner, numeric)
+	gotNamed := assembleSelfHost(t, bin, runner, named)
+
+	// Anchor: the named spelling must match the oracle, so a bug shared by both
+	// spellings cannot pass by cancelling out.
+	text, _, err := nativearm64.AssembleProgram(named, nativeelf.TextVAddr)
+	if err != nil {
+		t.Fatalf("native assembler rejected the named snippet (the oracle must accept it): %v", err)
+	}
+	var want []uint32
+	for i := 0; i+4 <= len(text); i += 4 {
+		want = append(want, binary.LittleEndian.Uint32(text[i:]))
+	}
+	lines := snippetInsns(named)
+	if len(gotNamed) != len(want) {
+		t.Fatalf("named snippet word count differs: self-host %d, native %d", len(gotNamed), len(want))
+	}
+	for i := range want {
+		if gotNamed[i] != want[i] {
+			src := "?"
+			if i < len(lines) {
+				src = lines[i]
+			}
+			t.Errorf("named word %d (%s): self-host %08x, native %08x", i, src, gotNamed[i], want[i])
+		}
+	}
+
+	if len(gotNumeric) != len(gotNamed) {
+		t.Fatalf("numeric-local snippet assembled to %d words, the named equivalent to %d", len(gotNumeric), len(gotNamed))
+	}
+	nlines := snippetInsns(numeric)
+	for i := range gotNamed {
+		if gotNumeric[i] != gotNamed[i] {
+			src := "?"
+			if i < len(nlines) {
+				src = nlines[i]
+			}
+			t.Errorf("word %d (%s): numeric-local %08x, named equivalent %08x", i, src, gotNumeric[i], gotNamed[i])
+		}
+	}
+}
+
+// TestSelfHostArm64AsmLiteralPool64Bit pins the literal pool's width. `ldr Xt,
+// =N` is how the emitter materialises any constant too wide for a mov-wide
+// immediate, and the pool parsed its value with a 32-bit accumulator: `ldr x0,
+// =1234567890123` laid down 1912767691. That is why the arm64 leg failed
+// i64_max_to_string, to_string_round_trip, divmod_inline and the u64 half of
+// int_byte_swap while the u32/i32 checks inside those same fixtures passed —
+// the truncation tracked the CONSTANT's width, not the operation's.
+//
+// No oracle here: the assertion is arithmetic (the pool must contain the
+// constant's 64 bits, little-endian), not an encoding choice.
+func TestSelfHostArm64AsmLiteralPool64Bit(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+
+	const want uint64 = 1234567890123 // 0x0000011F71FB04CB — needs 41 bits
+	const snippet = `.text
+.globl _start
+_start:
+    ldr x0, =1234567890123
+    ret
+`
+	got := assembleSelfHost(t, buildAsmBenchDriver(t, gcc), runner, snippet)
+
+	var found bool
+	for i := 0; i+1 < len(got); i++ {
+		if uint64(got[i])|uint64(got[i+1])<<32 == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("the literal pool does not contain %d (%#016x); assembled words: %08x", want, want, got)
 	}
 }
 

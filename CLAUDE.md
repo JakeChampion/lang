@@ -220,16 +220,27 @@ program interpreted and 90+ minutes for an unsharded
 
 This is what made it practical to run all 335 fixtures through the
 self-host compiler (`FERN_SELFHOST_FIXTURES=1 go test ./internal/e2e/
--run 'TestFernFixturesSelfHost(Wasm|X86_64)'` — one leg per target, each
-with its own
+-run 'TestFernFixturesSelfHost(Wasm|X86_64|Arm64)'` — one leg per target,
+each with its own
 `internal/e2e/testdata/selfhost-<target>-known-divergences.txt`), which
 found twelve divergences on
-fixtures green for months, and sixteen more on x86-64. There is **no arm64
-leg**: it was written, run once, and held back because `-target arm64`
-fails 100+ fixtures on three in-process-assembler bugs (#6044 no `fcvt`,
-#6045 SIGILL on rc/closure shapes, #6047 printed strings right-length
-wrong-bytes) — see the "missing third leg" note in
-`internal/e2e/fixture_selfhost_test.go`. Two constraints: **absolute paths** (relative
+fixtures green for months, and sixteen more on x86-64. The **arm64 leg is
+now live too**, after being held back through #6044/#6045/#6047. It is the
+highest-value of the three, because `-target arm64` is the only path where
+the self-host compiler produces the finished binary ITSELF (emit +
+assemble + link in-process, no gcc, no wasmtime), so it is the only gate
+on `arm64_native.fern`. Its first valid run measured 298/317 passing with
+19 listed rows, 16 of which are the x86-64 leg's own rows at the same
+measured values — i.e. shared frontend bugs, not arm64 ones. Reaching that
+took three assembler fixes, all of which had been mis-attributed to
+codegen: GAS **numeric local labels** (`b.lo 1f` … `1:`) were not
+implemented at all, so every array index and string slice branched into
+the ELF header (129 SIGILLs); `arm64_gas_link` had no **.text symbol**
+case, so every function value resolved into .data and `blr`'d into it (23
+SEGVs); and the **literal pool held i32**, so every constant wider than 32
+bits arrived wrapped (`ldr x0, =1234567890123` loaded 1912767691). All
+three now REFUSE rather than emit garbage when they cannot resolve
+something. Two constraints: **absolute paths** (relative
 ones were unopenable from an arm64-darwin binary until #6002 — AT_FDCWD
 is -2 on XNU, not -100), and the exit code **cannot carry a value >=
 126** (WASI refuses anything outside [0..126), so wasmtime reports 1 —

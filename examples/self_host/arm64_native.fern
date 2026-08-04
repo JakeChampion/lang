@@ -380,11 +380,15 @@ pub struct Arm64Asm {
     fix_offs: i32[],
     fix_names: string[],
     fix_kinds: i32[],
+    // Branch targets arm64_asm_resolve could not find. Collected there rather
+    // than rescanned afterwards: resolve already looks every fixup name up, and
+    // a second pass over both tables would be quadratic on a real program.
+    unres: string[],
 }
 
 // arm64_asm_new returns an empty assembler state.
 function arm64_asm_new(): Arm64Asm {
-    return Arm64Asm { code: [], lab_names: [], lab_offs: [], fix_offs: [], fix_names: [], fix_kinds: [] };
+    return Arm64Asm { code: [], lab_names: [], lab_offs: [], fix_offs: [], fix_names: [], fix_kinds: [], unres: [] };
 }
 
 // arm64_asm_label records `name` at the current code offset.
@@ -479,6 +483,19 @@ function arm64_asm_resolve(own a: Arm64Asm): Arm64Asm {
     while (i < a.fix_offs.len()) {
         var at: i32 = a.fix_offs[i];
         var target: i32 = arm64_asm_label_off(a, a.fix_names[i]);
+        if (target < 0) {
+            // A target that was never defined used to be patched as if the -1
+            // sentinel were an offset, producing a well-formed binary that
+            // branched to `-1 - here` — inside the ELF header, where the word is
+            // zero, which is UDF #0. That silence is what let #6045 read as a
+            // codegen mystery for as long as it did. Record the name and leave
+            // the placeholder alone; arm64_gas_program folds these into the
+            // refusal list, so the CLI reports the label instead of emitting a
+            // binary that traps.
+            a = Arm64Asm { ...a, unres: a.unres.append(a.fix_names[i]) };
+            i = i + 1;
+            continue;
+        }
         if (a.fix_kinds[i] == 1) {
             code = arm64_patch_b19(code, at, target - at);
         } else if (a.fix_kinds[i] == 2) {
@@ -2165,7 +2182,7 @@ pub struct Arm64GasProg {
     pf_syms: string[],  // target data symbol
     pf_kinds: i32[],    // 0 = adrp@PAGE, 1 = ldr@PAGEOFF, 2 = add@PAGEOFF
     lit_sites: i32[],   // byte offset of a pending `ldr Xd, =N` (LDR-literal) to patch
-    lit_vals: i32[],    // the value each pending literal loads (sign-extended to 64-bit at flush)
+    lit_vals: i64[],    // the value each pending literal loads
     bss_size: i32,      // total zero-init .bss bytes (ELF memsz beyond filesz; e.g. the heap)
     bss_names: string[],// .bss symbol names
     bss_offs: i32[],    // each .bss symbol's offset within the bss region
@@ -2211,6 +2228,154 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { return true; } // b.<cond>
     if (mnem.len() == 3 && mnem[0] == 98 && arm64_gas_is_cond(mnem[1:3])) { return true; } // b<cond>
     return false;
+}
+
+// arm64_gas_atoi64 is arm64_gas_atoi with a 64-bit accumulator, for the
+// operands that are genuinely 64 bits wide: a `.quad` and a literal-pool `ldr
+// Xt, =N`. Both used to parse through the i32 version and then widen, so every
+// constant that did not fit 32 bits arrived WRAPPED — `ldr x0, =1234567890123`
+// loaded 1912767691. That is why the arm64 leg failed i64_max_to_string,
+// to_string_round_trip, divmod_inline and the u64 half of int_byte_swap while
+// their u32/i32 siblings in the same fixture passed: the emitter routes
+// anything wider than a mov-wide immediate through the literal pool, so the
+// truncation tracked the CONSTANT's width, not the operation's.
+function arm64_gas_atoi64(tok: string): i64 {
+    var s: string = tok;
+    var neg: boolean = false;
+    var i: i32 = 0;
+    if (s.len() > 0 && s[0] == 45) { // '-'
+        neg = true;
+        i = 1;
+    }
+    var v: i64 = 0;
+    if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
+        i = i + 2;
+        while (i < s.len()) {
+            var c: i32 = s[i] as i32;
+            var d: i32 = 0 - 1;
+            if (c >= 48 && c <= 57) { d = c - 48; }
+            else { if (c >= 97 && c <= 102) { d = c - 97 + 10; }
+            else { if (c >= 65 && c <= 70) { d = c - 65 + 10; } } }
+            if (d >= 0) { v = v * 16 + (d as i64); }
+            i = i + 1;
+        }
+    } else {
+        while (i < s.len()) {
+            var c2: i32 = s[i] as i32;
+            if (c2 >= 48 && c2 <= 57) { v = v * 10 + ((c2 - 48) as i64); }
+            i = i + 1;
+        }
+    }
+    if (neg) {
+        return 0 - v;
+    }
+    return v;
+}
+
+// ---- GAS numeric local labels (`1:` … `b.lo 1f`) ----
+//
+// The arm64 emitter writes every bounds check as
+//   cmp x1, x2 / b.lo 1f / b __fern_oob_abort / 1: …
+// which is GAS's numeric local label: `1:` may be defined any number of times,
+// and `1f` / `1b` name the NEXT / PREVIOUS definition rather than a unique
+// symbol. This assembler had no notion of them. `1:` was recorded as a label
+// literally named "1", so arm64_asm_label_off returned the FIRST definition in
+// the program for all of them; `1f` was looked up verbatim and matched nothing,
+// coming back as the -1 "not placed" sentinel, which arm64_asm_resolve then
+// patched as if it were an offset. Every array index and string slice therefore
+// branched to `-1 - here` — a word inside the ELF header, which is zero, which
+// is UDF #0. That is #6045: 129 of 317 corpus fixtures died on SIGILL before
+// printing a byte, and the survivors were the programs that never indexed
+// anything.
+//
+// Definitions are renamed `<n>#<k>`, k counting definitions of n so far. `#`
+// opens an immediate in GAS, so no real symbol can collide with the mangled
+// name. A reference resolves against the same counter — `<n>f` is definition k
+// (not yet placed, so it queues a forward fixup), `<n>b` is definition k-1.
+function arm64_gas_is_digits(s: string): boolean {
+    if (s.len() == 0) {
+        return false;
+    }
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] < 48 || s[i] > 57) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// arm64_gas_numref_dir returns 1 for a forward numeric reference (`1f`), 0 for
+// a backward one (`1b`), and -1 when the token is an ordinary symbol.
+function arm64_gas_numref_dir(s: string): i32 {
+    if (s.len() < 2) {
+        return 0 - 1;
+    }
+    var last: i32 = s[s.len() - 1] as i32;
+    if (last != 102 && last != 98) { // 'f' / 'b'
+        return 0 - 1;
+    }
+    if (!arm64_gas_is_digits(s[0:s.len() - 1] + "")) {
+        return 0 - 1;
+    }
+    if (last == 102) {
+        return 1;
+    }
+    return 0;
+}
+
+// arm64_gas_dec renders a non-negative i32 in decimal. The module is
+// deliberately import-free (the native emitter imports it), so it carries its
+// own rather than reaching for core/int.
+function arm64_gas_dec(n: i32): string {
+    if (n <= 0) {
+        return "0";
+    }
+    var out: string = "";
+    var v: i32 = n;
+    while (v > 0) {
+        var d: i32 = v % 10;
+        out = ("0123456789"[d:d + 1] + "") + out;
+        v = v / 10;
+    }
+    return out;
+}
+
+// arm64_gas_nl_name is the mangled name of definition `k` of numeric label `n`.
+// Both the definition and reference sides go through it, so a padded spelling
+// (`01:` against `1f`) cannot split them into two symbols.
+function arm64_gas_nl_name(n: i32, k: i32): string {
+    return arm64_gas_dec(n) + "#" + arm64_gas_dec(k);
+}
+
+// arm64_gas_nl_grow widens the per-number definition counter table so index `n`
+// is addressable.
+function arm64_gas_nl_grow(c: i32[], n: i32): i32[] {
+    var out: i32[] = c;
+    while (out.len() <= n) {
+        out = out.append(0);
+    }
+    return out;
+}
+
+// arm64_gas_nl_ref maps a branch's label operand through the numeric-local
+// rules, leaving an ordinary symbol untouched.
+function arm64_gas_nl_ref(cnt: i32[], tok: string): string {
+    var s: string = arm64_gas_trim(tok);
+    var dir: i32 = arm64_gas_numref_dir(s);
+    if (dir < 0) {
+        return s;
+    }
+    var n: i32 = arm64_gas_atoi(s[0:s.len() - 1] + "");
+    var k: i32 = 0;
+    if (n < cnt.len()) {
+        k = cnt[n];
+    }
+    if (dir == 0) {
+        k = k - 1; // `<n>b` — the most recent definition, already placed
+    }
+    return arm64_gas_nl_name(n, k);
 }
 
 // arm64_gas_dlabel_off returns the data-blob offset of a data symbol, or
@@ -2572,12 +2737,12 @@ function arm64_gas_bss_off(p: Arm64GasProg, name: string): i32 {
 // arm64_gas_data_directive handles a `.`-directive inside a data section.
 function arm64_gas_data_directive(p: Arm64GasProg, line: string): Arm64GasProg {
     if (arm64_str_starts_with(line, ".quad")) {
-        return arm64_gas_data_le(p, arm64_gas_atoi(arm64_gas_trim(line[5:line.len()])) as i64, 8);
+        return arm64_gas_data_le(p, arm64_gas_atoi64(arm64_gas_trim(line[5:line.len()])), 8);
     }
     if (arm64_str_starts_with(line, ".4byte") || arm64_str_starts_with(line, ".word")) {
         var off: i32 = 6;
         if (arm64_str_starts_with(line, ".word")) { off = 5; }
-        return arm64_gas_data_le(p, arm64_gas_atoi(arm64_gas_trim(line[off:line.len()])) as i64, 4);
+        return arm64_gas_data_le(p, arm64_gas_atoi64(arm64_gas_trim(line[off:line.len()])), 4);
     }
     if (arm64_str_starts_with(line, ".long")) {
         // `.long a, b, …`: each comma-separated value as 4 little-endian bytes.
@@ -2590,7 +2755,7 @@ function arm64_gas_data_directive(p: Arm64GasProg, line: string): Arm64GasProg {
         var lp: Arm64GasProg = p;
         while (lci < lrest.len()) {
             if (lrest[lci] == 44) {   // ','
-                lp = arm64_gas_data_le(lp, arm64_gas_atoi(arm64_gas_trim(ltok)) as i64, 4);
+                lp = arm64_gas_data_le(lp, arm64_gas_atoi64(arm64_gas_trim(ltok)), 4);
                 ltok = "";
             } else {
                 ltok = ltok + lrest[lci:lci + 1];
@@ -2598,12 +2763,12 @@ function arm64_gas_data_directive(p: Arm64GasProg, line: string): Arm64GasProg {
             lci = lci + 1;
         }
         if (arm64_gas_trim(ltok).len() > 0) {
-            lp = arm64_gas_data_le(lp, arm64_gas_atoi(arm64_gas_trim(ltok)) as i64, 4);
+            lp = arm64_gas_data_le(lp, arm64_gas_atoi64(arm64_gas_trim(ltok)), 4);
         }
         return lp;
     }
     if (arm64_str_starts_with(line, ".byte")) {
-        return arm64_gas_data_le(p, arm64_gas_atoi(arm64_gas_trim(line[5:line.len()])) as i64, 1);
+        return arm64_gas_data_le(p, arm64_gas_atoi64(arm64_gas_trim(line[5:line.len()])), 1);
     }
     if (arm64_str_starts_with(line, ".asciz") || arm64_str_starts_with(line, ".string")) {
         return arm64_gas_data_asciz(p, line);
@@ -2654,7 +2819,7 @@ function arm64_gas_ltorg(p: Arm64GasProg, own aw: Arm64Asm): Arm64Asm {
         var site: i32 = p.lit_sites[i];
         var imm19: i32 = (code.len() - site) / 4;
         code = arm64_patch_ldr_lit(code, site, imm19);
-        code = arm64_lit_le64(code, p.lit_vals[i] as i64);
+        code = arm64_lit_le64(code, p.lit_vals[i]);
         i = i + 1;
     }
     return Arm64Asm { ...aw, code: code };
@@ -2684,6 +2849,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
     var a: Arm64Asm = p.asm;
     p = Arm64GasProg { ...p, asm: arm64_asm_new() };
     var section: i32 = 0; // 0 = .text, 1 = data (__const / __data)
+    var nl_cnt: i32[] = []; // definitions seen per numeric local label
     var lines: string[] = arm64_str_split(src, "\n");
     var li: i32 = 0;
     while (li < lines.len()) {
@@ -2708,6 +2874,11 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
                 } else if (section == 2) {
                     p = Arm64GasProg { ...p, bss_names: p.bss_names.append(before) };
                     p = Arm64GasProg { ...p, bss_offs: p.bss_offs.append(p.bss_size) };
+                } else if (arm64_gas_is_digits(before + "")) {
+                    var nv: i32 = arm64_gas_atoi(before + "");
+                    nl_cnt = arm64_gas_nl_grow(nl_cnt, nv);
+                    a = arm64_asm_label(a, arm64_gas_nl_name(nv, nl_cnt[nv]));
+                    nl_cnt = nl_cnt.with(nv, nl_cnt[nv] + 1);
                 } else {
                     a = arm64_asm_label(a, before);
                 }
@@ -2780,7 +2951,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         if (mnem == "ldr" && arm64_str_indexof(rest, "=") >= 0) {
             var rops: string[] = arm64_gas_operands(rest);
             var litok: string = arm64_gas_trim(rops[1]);
-            var nval: i32 = arm64_gas_atoi(arm64_gas_trim(litok[1:litok.len()]));
+            var nval: i64 = arm64_gas_atoi64(arm64_gas_trim(litok[1:litok.len()]));
             a = Arm64Asm { ...a, code: arm64_ldr_lit(a.code, arm64_gas_reg(rops[0]), 0) };
             p = Arm64GasProg { ...p, lit_sites: p.lit_sites.append(a.code.len() - 4) };
             p = Arm64GasProg { ...p, lit_vals: p.lit_vals.append(nval) };
@@ -2885,19 +3056,19 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             || mnem == "tbz" || mnem == "tbnz" || arm64_gas_is_bcond(mnem)) {
             var bops: string[] = arm64_gas_operands(rest);
             if (mnem == "b") {
-                a = arm64_asm_b(a, bops[0]);
+                a = arm64_asm_b(a, arm64_gas_nl_ref(nl_cnt, bops[0]));
             } else if (mnem == "bl") {
-                a = arm64_asm_bl(a, bops[0]);
+                a = arm64_asm_bl(a, arm64_gas_nl_ref(nl_cnt, bops[0]));
             } else if (mnem == "cbz") {
-                a = arm64_asm_cbz(a, arm64_gas_reg(bops[0]), bops[1], arm64_gas_is_w(bops[0]));
+                a = arm64_asm_cbz(a, arm64_gas_reg(bops[0]), arm64_gas_nl_ref(nl_cnt, bops[1]), arm64_gas_is_w(bops[0]));
             } else if (mnem == "cbnz") {
-                a = arm64_asm_cbnz(a, arm64_gas_reg(bops[0]), bops[1], arm64_gas_is_w(bops[0]));
+                a = arm64_asm_cbnz(a, arm64_gas_reg(bops[0]), arm64_gas_nl_ref(nl_cnt, bops[1]), arm64_gas_is_w(bops[0]));
             } else if (mnem == "tbz") {
-                a = arm64_asm_tbz(a, arm64_gas_reg(bops[0]), arm64_gas_imm(bops[1]), bops[2]);
+                a = arm64_asm_tbz(a, arm64_gas_reg(bops[0]), arm64_gas_imm(bops[1]), arm64_gas_nl_ref(nl_cnt, bops[2]));
             } else if (mnem == "tbnz") {
-                a = arm64_asm_tbnz(a, arm64_gas_reg(bops[0]), arm64_gas_imm(bops[1]), bops[2]);
+                a = arm64_asm_tbnz(a, arm64_gas_reg(bops[0]), arm64_gas_imm(bops[1]), arm64_gas_nl_ref(nl_cnt, bops[2]));
             } else {
-                a = arm64_asm_bcond(a, arm64_gas_cond(arm64_gas_bcond_suffix(mnem)), bops[0]);
+                a = arm64_asm_bcond(a, arm64_gas_cond(arm64_gas_bcond_suffix(mnem)), arm64_gas_nl_ref(nl_cnt, bops[0]));
             }
             continue;
         }
@@ -2911,6 +3082,11 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         p = Arm64GasProg { ...p, data: p.data.append(0) };
     }
     a = arm64_asm_resolve(a);
+    var ui: i32 = 0;
+    while (ui < a.unres.len()) {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append("label:" + a.unres[ui]) };
+        ui = ui + 1;
+    }
     return Arm64GasProg { ...p, asm: a };
 }
 
@@ -2929,15 +3105,35 @@ pub function arm64_gas_link(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: i6
     var i: i32 = 0;
     while (i < p.pf_sites.len()) {
         var site: i32 = p.pf_sites[i];
-        // A symbol is either in the rodata/data blob (dlab) or the zero-init
-        // .bss region, which is laid out immediately after the data in memory
-        // (vaddr data_vaddr + data.len() + bss_off).
+        // A symbol lives in one of THREE places: the rodata/data blob (dlab),
+        // the zero-init .bss region laid out immediately after the data in
+        // memory (data_vaddr + data.len() + bss_off), or — for a function
+        // VALUE, which the emitter takes as `adrp x0, fn` + `add x0, x0,
+        // :lo12:fn` — .text.
+        //
+        // The .text arm was missing, and the .bss arm did not check that it had
+        // actually found anything: a text symbol fell through to bss_off's -1
+        // "not found" sentinel and resolved to `data_vaddr + data.len() - 1`.
+        // So every function value was a data address one byte inside the wrong
+        // segment, and calling one was a SEGV on `blr`. That is the second half
+        // of #6045 — invisible until the numeric-local-label fix above stopped
+        // the program dying on SIGILL before it ever reached an indirect call.
         var doff: i32 = arm64_gas_dlabel_off(p, p.pf_syms[i]);
         var target: i64 = 0;
         if (doff >= 0) {
             target = data_vaddr + (doff as i64);
         } else {
-            target = data_vaddr + (p.data.len() as i64) + (arm64_gas_bss_off(p, p.pf_syms[i]) as i64);
+            var boff: i32 = arm64_gas_bss_off(p, p.pf_syms[i]);
+            if (boff >= 0) {
+                target = data_vaddr + (p.data.len() as i64) + (boff as i64);
+            } else {
+                var toff: i32 = arm64_asm_label_off(aw, p.pf_syms[i]);
+                if (toff >= 0) {
+                    target = text_vaddr + (toff as i64);
+                } else {
+                    p = Arm64GasProg { ...p, unknown: p.unknown.append("symbol:" + p.pf_syms[i]) };
+                }
+            }
         }
         var kind: i32 = p.pf_kinds[i];
         if (kind == 0) {

@@ -11,27 +11,9 @@ import (
 	"time"
 )
 
-// Two legs run the fixture corpus through the SELF-HOST compiler:
-// TestFernFixturesSelfHostWasm and TestFernFixturesSelfHostX86_64. Nothing else
-// does.
-//
-// # The missing third leg
-//
-// An arm64 leg (`-target arm64`) was written alongside the x86-64 one and is NOT
-// here, deliberately. It ran once, and the `-target arm64` path — which
-// assembles + links in-process via arm64_native + elf.fern — failed 100+ of the
-// ~200 fixtures it reached, on three independent bugs: no `fcvt` encoding in the
-// in-process assembler (#6044, 64 fixtures rejected at compile), an illegal
-// encoding that SIGILLs on rc/reuse and closure shapes (#6045, 25 fixtures), and
-// a string copy whose source pointer never advances, so printed output has the
-// right length and the wrong bytes (#6047, 8 fixtures).
-//
-// Landing it now would mean either a 100-row known-divergences file — which the
-// file's own contract makes worse than useless, since fixing #6044 alone flips 64
-// rows at once — or a permanently red lane. So it waits for those three, on
-// branch `selfhost-fixture-leg-arm64-hold`. The three issues carry the findings;
-// this comment carries why the coverage gap is open on purpose. Do not close that
-// gap by weakening the assertions.
+// Three legs run the fixture corpus through the SELF-HOST compiler:
+// TestFernFixturesSelfHostWasm, TestFernFixturesSelfHostX86_64 and
+// TestFernFixturesSelfHostArm64. Nothing else does.
 //
 // # Why these exist
 //
@@ -97,7 +79,7 @@ import (
 // Building fern.fern is a heavy self-host driver build (~4.3 GB reserved by the
 // harness's memory limiter). It is paid ONCE per leg and amortised over the whole
 // corpus; each fixture is then a native-binary invocation plus a run. Still, that
-// is minutes rather than the 15s the native fixture run takes, so both are
+// is minutes rather than the 15s the native fixture run takes, so all three are
 // gated on FERN_SELFHOST_FIXTURES=1 and run as their own CI lanes rather than
 // slowing every local `go test ./internal/e2e`.
 //
