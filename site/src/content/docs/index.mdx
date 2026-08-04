@@ -2,6 +2,13 @@
 title: Fern
 description: A small statically typed language that compiles to fast standalone binaries and to WebAssembly — no runtime, no garbage collector, nothing else to install.
 template: splash
+# Starlight builds `<title>` as "<page title> | <site title>", which on
+# this page alone renders as "Fern | Fern". A `title` tag in `head`
+# replaces it outright, so the tab and the search result get a headline
+# that says something.
+head:
+  - tag: title
+    content: "Fern — a small statically typed language"
 # Hero `link:` values are passed verbatim to `<a href>` by
 # Starlight's Hero / LinkButton — base path is NOT auto-prepended
 # (unlike the sidebar). Bake the `/lang/` base in so the buttons
@@ -229,6 +236,9 @@ system, and the error-handling rules.
 - **The standard library is small on purpose.** Strings, collections,
   iterators, JSON, I/O, HTTP, time, math — it grows when a real program
   needs it to.
+
+[Why Fern](why/) has the fuller account: what it gives up, and how it
+compares to Go, Rust, Zig and TypeScript.
 
 ## Where next
 

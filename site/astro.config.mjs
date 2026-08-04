@@ -33,6 +33,13 @@ const siteUrl = process.env.SITE_URL ?? "https://jakechampion.github.io";
 const tagline =
   "Fern is a small statically typed language that compiles to a fast standalone binary — or to WebAssembly, from the same source. No runtime, no garbage collector, nothing else to install.";
 
+// Social-card image. Crawlers won't resolve a relative URL, so this has to
+// be absolute — built from the same two vars the rest of the site's URLs
+// come from, so a Netlify deploy (SITE_URL set, base rewritten to root)
+// points at its own copy rather than the Pages one. Rendered by
+// `npm run og` from src/assets/og-card.svg.
+const ogImage = `${siteUrl.replace(/\/$/, "")}${base.replace(/\/$/, "")}/og.png`;
+
 // Load the real Fern TextMate grammar (the same one the VS Code
 // extension ships) so ```fern code fences highlight as actual Fern
 // rather than borrowing TypeScript's grammar. Read from the repo
@@ -62,36 +69,10 @@ export default defineConfig({
         alt: "Fern",
       },
       description: tagline,
-      // Two webfonts, both `display=swap` behind real fallback stacks
-      // so a blocked or slow font-CDN costs layout only, never content:
-      // Fraunces (variable, with its SOFT + WONK axes) sets headings and
-      // the landing page's display type, IBM Plex Mono carries code and
-      // the small-caps metadata labels. Plus the Open Graph / Twitter
-      // card tags Starlight doesn't emit itself.
+      // The Open Graph / Twitter card tags Starlight doesn't emit itself.
+      // (The two webfonts are self-hosted — see ./src/styles/fonts.css in
+      // `customCss` below.)
       head: [
-        {
-          tag: "link",
-          attrs: { rel: "preconnect", href: "https://fonts.googleapis.com" },
-        },
-        {
-          tag: "link",
-          attrs: {
-            rel: "preconnect",
-            href: "https://fonts.gstatic.com",
-            crossorigin: "anonymous",
-          },
-        },
-        {
-          tag: "link",
-          attrs: {
-            rel: "stylesheet",
-            href:
-              "https://fonts.googleapis.com/css2" +
-              "?family=Fraunces:opsz,wght,SOFT,WONK@9..144,400..700,0..100,0..1" +
-              "&family=IBM+Plex+Mono:wght@400;500;600" +
-              "&display=swap",
-          },
-        },
         {
           tag: "meta",
           attrs: { property: "og:type", content: "website" },
@@ -106,7 +87,27 @@ export default defineConfig({
         },
         {
           tag: "meta",
-          attrs: { name: "twitter:card", content: "summary" },
+          attrs: { property: "og:image", content: ogImage },
+        },
+        {
+          tag: "meta",
+          attrs: { property: "og:image:width", content: "1200" },
+        },
+        {
+          tag: "meta",
+          attrs: { property: "og:image:height", content: "630" },
+        },
+        {
+          tag: "meta",
+          attrs: { property: "og:image:alt", content: tagline },
+        },
+        {
+          tag: "meta",
+          attrs: { name: "twitter:card", content: "summary_large_image" },
+        },
+        {
+          tag: "meta",
+          attrs: { name: "twitter:image", content: ogImage },
         },
         {
           tag: "meta",
@@ -143,6 +144,7 @@ export default defineConfig({
       ],
       sidebar: [
         { label: "Overview", link: "/" },
+        { label: "Why Fern", link: "/why/" },
         // Starlight 0.39 removed the `{label, autogenerate}`
         // shorthand — groups now wrap autogenerate inside their
         // items list. Same end result; one extra layer.
@@ -170,7 +172,12 @@ export default defineConfig({
           attrs: { target: "_blank" },
         },
       ],
-      customCss: ["./src/styles/fern.css"],
+      // fonts.css first: the @font-face rules it generates are what
+      // fern.css's `--fern-font-display` / `--fern-font-mono` stacks
+      // resolve to. Both are bundled into the same stylesheet, so this is
+      // one request rather than the three (two preconnects + a
+      // cross-origin stylesheet) the Google Fonts link used to cost.
+      customCss: ["./src/styles/fonts.css", "./src/styles/fern.css"],
       lastUpdated: true,
       editLink: {
         baseUrl:

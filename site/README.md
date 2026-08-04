@@ -8,14 +8,21 @@ GitHub Pages at the repo root, with the playground bundled at
 
 ```
 site/
-├── astro.config.mjs            Starlight + sidebar + fonts/meta config
+├── astro.config.mjs            Starlight + sidebar + meta config
 ├── package.json
+├── scripts/
+│   ├── fetch-fonts.mjs         Refresh the self-hosted webfonts
+│   └── render-og.mjs           Render the social card to public/og.png
 ├── src/
 │   ├── content/docs/
 │   │   ├── index.mdx           Landing page
 │   │   ├── tutorial/*.md(x)    Narrative learn-the-language
 │   │   ├── reference/*.md      Syntax, types, tooling
 │   │   └── stdlib/*.md         Auto-generated (gitignored)
+│   ├── assets/
+│   │   ├── fonts/              Self-hosted woff2 + OFL.txt
+│   │   ├── fern-logo.svg       The frond mark
+│   │   └── og-card.svg         Social-card source
 │   ├── components/
 │   │   ├── FernPlayground.astro  Embedded playground iframe
 │   │   ├── CommandCard.astro     Copyable shell commands
@@ -23,7 +30,10 @@ site/
 │   │   ├── FacetRail.astro       The landing feature rail
 │   │   ├── NextSteps.astro       Closing signpost grid
 │   │   └── SpecSheet.astro       Label/value fact panel
-│   └── styles/fern.css         Theme: palette, type, landing layout
+│   └── styles/
+│       ├── fern.css            Theme: palette, type, landing layout
+│       └── fonts.css           @font-face rules (generated)
+├── public/og.png               Social card (generated)
 └── public/playground/          Playground bundle (gitignored,
                                   copied in at build time)
 ```
@@ -40,9 +50,11 @@ The identity is a botanist's field guide: pressed-frond greens on warm
 paper, a muted spore ochre as the single sharp accent (section ticks,
 specimen indices, focus ring), hairline rules instead of boxes, and
 small-caps monospace for metadata. Headings are set in Fraunces and code
-in IBM Plex Mono, both loaded `display=swap` from the font CDN behind
-real fallback stacks (see the `head` array in `astro.config.mjs`) — if
-the fonts never arrive the page still reads correctly.
+in IBM Plex Mono, both self-hosted: `src/styles/fonts.css` is generated
+by `npm run fonts`, which downloads the woff2 files into
+`src/assets/fonts/` (latin + latin-ext, SIL OFL 1.1). They load
+`display=swap` behind real fallback stacks, so if a font never arrives
+the page still reads correctly.
 
 Two rules worth keeping:
 
