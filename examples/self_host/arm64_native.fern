@@ -2374,6 +2374,15 @@ function arm64_gas_nl_ref(cnt: i32[], tok: string): string {
     }
     if (dir == 0) {
         k = k - 1; // `<n>b` — the most recent definition, already placed
+        if (k < 0) {
+            // `1b` with no `1:` anywhere before it. GAS rejects that outright,
+            // and so must this: naming definition 0 would aim the branch at a
+            // label defined LATER in the file, which is a silently wrong target
+            // of exactly the kind the rest of this change exists to stop. The
+            // name below cannot be produced by arm64_gas_nl_name, so it is
+            // never placed and the fixup pass refuses it.
+            return arm64_gas_dec(n) + "#none";
+        }
     }
     return arm64_gas_nl_name(n, k);
 }

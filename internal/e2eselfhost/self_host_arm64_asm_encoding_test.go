@@ -252,16 +252,71 @@ func assembleSelfHost(t *testing.T, bin string, runner []string, snippet string)
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("self-host assembler driver failed: %v\nstderr: %s", err, errb.String())
 	}
-	if strings.Contains(out.String(), "unknown=") {
-		var refused []string
-		for _, ln := range strings.Split(out.String(), "\n") {
-			if strings.HasPrefix(ln, "unknown=") {
-				refused = append(refused, strings.TrimPrefix(ln, "unknown="))
-			}
-		}
+	if refused := asmRefusals(out.String()); len(refused) > 0 {
 		t.Fatalf("the self-host assembler REFUSED %d line(s) of the snippet: %v", len(refused), refused)
 	}
 	return parseAsmWords(t, out.String())
+}
+
+// asmRefusals extracts the driver's `unknown=` lines — the assembler's refusal
+// list, covering unknown mnemonics, unresolved labels and unresolved symbols.
+func asmRefusals(out string) []string {
+	var refused []string
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.HasPrefix(ln, "unknown=") {
+			refused = append(refused, strings.TrimPrefix(ln, "unknown="))
+		}
+	}
+	return refused
+}
+
+// refusalsFor assembles a snippet the assembler is EXPECTED to reject and
+// returns what it refused.
+func refusalsFor(t *testing.T, bin string, runner []string, snippet string) []string {
+	t.Helper()
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(bin, "-words")
+	} else {
+		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), bin), "-words")...)
+	}
+	cmd.Stdin = strings.NewReader(snippet)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("self-host assembler driver failed: %v\nstderr: %s", err, errb.String())
+	}
+	return asmRefusals(out.String())
+}
+
+// TestSelfHostArm64AsmUnresolvedBranchRefused pins the behaviour that made the
+// three #6045 bugs survivable in the first place: a branch whose target does not
+// resolve used to be patched as though the -1 "not placed" sentinel were an
+// offset, so the assembler emitted a well-formed binary that branched into the
+// ELF header instead of reporting anything. It must refuse.
+//
+// Both shapes here are ones the emitter cannot produce, which is the point — the
+// guard has to hold for input nobody is currently generating, or it is not a
+// guard. `1b` with no preceding `1:` is the subtler of the two: resolving it to
+// definition 0 would aim the branch at a label defined LATER in the file, a
+// silently wrong target rather than an error.
+func TestSelfHostArm64AsmUnresolvedBranchRefused(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+
+	t.Run("undefined named label", func(t *testing.T) {
+		got := refusalsFor(t, bin, runner, ".text\n_start:\n    b Lnowhere\n    ret\n")
+		if len(got) != 1 || got[0] != "label:Lnowhere" {
+			t.Errorf("refusals = %v, want exactly [label:Lnowhere]", got)
+		}
+	})
+
+	t.Run("backward numeric ref with no definition before it", func(t *testing.T) {
+		got := refusalsFor(t, bin, runner, ".text\n_start:\n    b 1b\n1:\n    ret\n")
+		if len(got) != 1 || got[0] != "label:1#none" {
+			t.Errorf("refusals = %v, want exactly [label:1#none] — a `1b` before any `1:` must not silently resolve to the `1:` that follows", got)
+		}
+	})
 }
 
 // TestSelfHostArm64AsmNumericLocalLabels pins GAS numeric local labels — `1:`
