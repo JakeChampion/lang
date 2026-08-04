@@ -17024,7 +17024,7 @@ func (b *builder) curAppendOrder() identOrder {
 	if b.appendOrderFn != b.fn {
 		b.appendOrder = identOrderOf(b.fn.Body)
 		b.appendInPlaceOK = inPlacePushes(b.fn.Body)
-		b.callArgDies = callArgDeaths(b.fn.Body)
+		b.callArgDies = callArgDeaths(b.fn)
 		b.appendOrderFn = b.fn
 	}
 	return b.appendOrder

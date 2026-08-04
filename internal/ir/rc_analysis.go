@@ -3901,7 +3901,7 @@ const (
 
 // callArgDeaths marks, per call node, the ident arguments whose value can
 // no longer be observed through that binding in this function after the
-// call, so the #4873 bracket may skip them. Two shapes qualify:
+// call, so the #4873 bracket may skip them. Three shapes qualify:
 //
 //   - the strict self-reassign `x = f(.., x, ..)`: the RHS is exactly the
 //     call and x occurs in it exactly once, directly as an argument — the
@@ -3911,13 +3911,53 @@ const (
 //     exactly-once rule: a return exits the function (loop or not), so no
 //     later read exists. This is what keeps recursive accumulator tails
 //     (`return walk(acc, …)`) on the in-place fast path — bracketing them
-//     would force one copy per recursion level, the #4838 O(n²) class.
+//     would force one copy per recursion level, the #4838 O(n²) class;
+//   - the SOLE-OCCURRENCE shape (#6036): a PARAMETER read exactly once in
+//     the whole body, at a straight-line position — no later read of the
+//     binding exists at all, whatever the syntax around the call. This is
+//     what covers `var t = f(b, v); return t;` and the inner call of
+//     `return f(f(b, v), v + 1)`, neither of which is a reassign or a
+//     direct return argument, yet both of which were paying one
+//     full-buffer copy per call.
 //
 // A textually-last occurrence is deliberately NOT sufficient: inside a
 // loop the "last" occurrence re-executes, and an unbracketed in-place
-// growth would be observed by the next iteration (interp copies).
-func callArgDeaths(body ast.Node) map[*ast.Call]map[string]bool {
+// growth would be observed by the next iteration (interp copies). That is
+// exactly why the sole-occurrence shape is restricted to a position no
+// loop or lambda body encloses — a single textual read inside a repeating
+// construct is still many dynamic reads, and the next one would observe
+// the previous iteration's in-place growth.
+//
+// It is restricted to PARAMS deliberately, and that restriction is free:
+// every probe in #6036 that this rule rescues is rescued through the
+// param, so widening it to other bindings measurably buys nothing. What
+// it costs is the need to re-establish safety for binding forms whose
+// ownership is less clear-cut than a param's. A param is bound once per
+// frame from the caller, and the caller's own bracket already contains
+// what the callee does to it (that is the whole shape of #4873's
+// caller-side containment), so a param that dies here is a complete
+// account of this frame's interest in the buffer. A match-arm payload
+// binding is a view into a scrutinee that outlives the arm, and the
+// #4402 borrowed-view exemption means not every `var` local takes the
+// retain that would push a callee onto its copy path — neither was shown
+// to break under the wider rule, and neither is worth the argument.
+func callArgDeaths(fn *ast.FuncDecl) map[*ast.Call]map[string]bool {
+	body := fn.Body
 	out := map[*ast.Call]map[string]bool{}
+	// Occurrence census over the whole body, for the sole-occurrence shape.
+	// A shadowing inner declaration of the same name inflates the count,
+	// which only ever withholds the death verdict — the safe direction.
+	occurrences := map[string]int{}
+	ast.Walk(body, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok {
+			occurrences[id.Name]++
+		}
+		return true
+	})
+	isParam := map[string]bool{}
+	for _, p := range fn.Params {
+		isParam[p.Name] = true
+	}
 	markOnce := func(c *ast.Call, name string) {
 		direct := 0
 		for _, a := range c.Args {
@@ -3961,6 +4001,41 @@ func callArgDeaths(body ast.Node) map[*ast.Call]map[string]bool {
 					markOnce(c, aid.Name)
 				}
 			}
+		}
+		return true
+	})
+	// Sole-occurrence shape. `repeating` is every call reachable from a
+	// loop or lambda body — a single textual read there is still many
+	// dynamic reads, so those calls are excluded.
+	repeating := map[*ast.Call]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		switch n.(type) {
+		case *ast.While, *ast.Loop, *ast.For, *ast.ForEach, *ast.Lambda:
+		default:
+			return true
+		}
+		ast.Walk(n, func(m ast.Node) bool {
+			if c, ok := m.(*ast.Call); ok {
+				repeating[c] = true
+			}
+			return true
+		})
+		return true
+	})
+	ast.Walk(body, func(n ast.Node) bool {
+		c, ok := n.(*ast.Call)
+		if !ok || repeating[c] {
+			return true
+		}
+		for _, a := range c.Args {
+			aid, ok := a.(*ast.Ident)
+			if !ok || !isParam[aid.Name] || occurrences[aid.Name] != 1 {
+				continue
+			}
+			if out[c] == nil {
+				out[c] = map[string]bool{}
+			}
+			out[c][aid.Name] = true
 		}
 		return true
 	})
@@ -4051,7 +4126,7 @@ func computeGrowParams(prog *ast.Program, info *checker.Info) map[string][]uint8
 		changed = false
 		for name, fn := range decls {
 			g := grow[name]
-			deaths := callArgDeaths(fn.Body)
+			deaths := callArgDeaths(fn)
 			ast.Walk(fn.Body, func(n ast.Node) bool {
 				c, ok := n.(*ast.Call)
 				if !ok {

@@ -977,12 +977,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	// at the end of the transfer chain; an own param that escaped is not
 	// freeEligible (re-tainted) and is likewise skipped.
 	for i, p := range b.fn.Params {
-		if (!p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.rc.consumedParams[p.Name]) || !rcTracked(p.Type) || seen[p.Name] || !b.rc.freeEligible[p.Name] {
-			continue
-		}
-		seen[p.Name] = true
-		slot, ok := b.locals[p.Name]
-		if !ok {
+		if (!p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.rc.consumedParams[p.Name]) || !rcTracked(p.Type) || seen[p.Name] {
 			continue
 		}
 		// A consumed-threaded ARRAY param owns its slot only once a
@@ -990,7 +985,28 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// entry retain, so sweeping it unconditionally would release the
 		// caller's reference on the paths that never reassigned. Its
 		// ownership bit says which.
-		if flagSlot, hasFlag := b.locals[consumedArrayFlagName(p.Name)]; hasFlag && b.isConsumedArrayParam(p.Name) {
+		//
+		// That bit is a RUNTIME ownership proof, so this arm deliberately
+		// does not consult the static freeEligible taint (#6036): the flag
+		// is set only where emitConsumedArrayOverwriteDec has already
+		// replaced the incoming borrow with a reference this frame owns.
+		// Requiring freeEligible dropped exactly the exit half of that
+		// protocol whenever the reassignment's RHS was a CALL whose result
+		// may alias a param — `b = f(b, v); return b;` — leaving the
+		// return-transfer inc unbalanced. One leaked reference per call
+		// makes the accumulator's buffer permanently shared, so every
+		// subsequent append copies it: correct, but O(n²) in bytes moved.
+		flagSlot, hasFlag := b.locals[consumedArrayFlagName(p.Name)]
+		flagGated := hasFlag && b.isConsumedArrayParam(p.Name)
+		if !flagGated && !b.rc.freeEligible[p.Name] {
+			continue
+		}
+		seen[p.Name] = true
+		slot, ok := b.locals[p.Name]
+		if !ok {
+			continue
+		}
+		if flagGated {
 			b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			emitDec(slot, p.Type, true, p.Name)
