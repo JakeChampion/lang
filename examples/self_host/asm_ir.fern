@@ -2134,18 +2134,18 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // __fern_write_file is now a Fern runtime function (#2649): emitted via
     // emit_ir_runtime_fern_fn in the entry block (need-gated on write_file) —
     // openat(O_CREAT) via __syscall4 + write/close via __syscall3, returns
-    // Option[IoError]. The op_write_file handler calls the stack-ABI
+    // Result[(), IoError]. The op_write_file handler calls the stack-ABI
     // __fn___fern_write_file symbol.
     // __fern_remove_dir_all is now a Fern runtime function (#2649): emitted via
     // emit_ir_runtime_fern_fn in the fs bundle (need-gated on remove_dir_all) — a
     // best-effort recursive rm -rf that classifies the target with a probe openat
-    // (ENOENT → None, ENOTDIR → unlink, else Some(io_error)), delegates directory
+    // (ENOENT → Ok, ENOTDIR → unlink, else Err(io_error)), delegates directory
     // enumeration to the (Fern) read_dir, recurses into each child, then rmdirs.
     // The op-172 handler calls the stack-ABI __fn___fern_remove_dir_all symbol;
     // arm64/AST keep the register-ABI hand-asm.
     // __fern_remove_file is now a Fern runtime function (#2649): emitted via
     // emit_ir_runtime_fern_fn in the entry block (need-gated on remove_file) —
-    // unlinkat via __syscall3, returns Option[IoError]. The op_remove_file handler
+    // unlinkat via __syscall3, returns Result[(), IoError]. The op_remove_file handler
     // calls the stack-ABI __fn___fern_remove_file symbol.
     // __fern_temp_dir is now a Fern runtime function (#2649): emitted via
     // emit_ir_runtime_fern_fn in the entry block (need-gated on temp_dir) — builds
@@ -4736,20 +4736,20 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
         } else if (o.kind_tag == 170) {  // write_file
             // operand stack [pathbox, contentbox] (content on top). Call the
             // Fern-compiled __fn___fern_write_file (#2649) via the stack ABI:
-            // param[0]=path on top (+16), param[1]=content (+24). -> Option[IoError].
+            // param[0]=path on top (+16), param[1]=content (+24). -> Result[(), IoError].
             s = s.write("    popq %rsi\n    popq %rdi\n");
             s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_write_file\n    addq $16, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("write_file");
         } else if (o.kind_tag == 172) {  // remove_dir_all
             // [pathbox] IS param[0] (+16); call the Fern-compiled __fn___fern_remove_dir_all
-            // (#2649) via the stack ABI — pushes a fresh Option[IoError]. The helper is
+            // (#2649) via the stack ABI — pushes a fresh Result[(), IoError]. The helper is
             // pure raw-memory (inline getdents64, no read_dir array — the RC array
             // corrupts under recursion), so it only marks heap.
             s = s.write("    call __fn___fern_remove_dir_all\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("remove_dir_all");
         } else if (o.kind_tag == 173) {  // remove_file
             // [pathbox] IS param[0] (+16); call the Fern-compiled __fn___fern_remove_file
-            // (#2649) via the stack ABI — pushes a fresh Option[IoError].
+            // (#2649) via the stack ABI — pushes a fresh Result[(), IoError].
             s = s.write("    call __fn___fern_remove_file\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("remove_file");
         } else if (o.kind_tag == 174) {  // temp_dir

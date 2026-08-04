@@ -1494,9 +1494,9 @@ func builtinWriteFile(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("write_file: expected string content, got %T", args[1])
 	}
 	if err := os.WriteFile(string(path), []byte(content), 0o644); err != nil {
-		return optionSome(classifyIoError(string(path), err)), nil
+		return resultErr(classifyIoError(string(path), err)), nil
 	}
-	return optionNone(), nil
+	return resultOk(unitValue()), nil
 }
 
 // builtinNowUnixMS returns wall-clock milliseconds since
@@ -1679,9 +1679,9 @@ func builtinRemoveFile(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("remove_file: expected string path, got %T", args[0])
 	}
 	if err := os.Remove(string(path)); err != nil {
-		return optionSome(classifyIoError(string(path), err)), nil
+		return resultErr(classifyIoError(string(path), err)), nil
 	}
-	return optionNone(), nil
+	return resultOk(unitValue()), nil
 }
 
 // builtinRemoveDirAll recursively removes `path`. Mirrors
@@ -1698,9 +1698,9 @@ func builtinRemoveDirAll(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("remove_dir_all: expected string path, got %T", args[0])
 	}
 	if err := os.RemoveAll(string(path)); err != nil {
-		return optionSome(classifyIoError(string(path), err)), nil
+		return resultErr(classifyIoError(string(path), err)), nil
 	}
-	return optionNone(), nil
+	return resultOk(unitValue()), nil
 }
 
 // builtinSubprocess spawns `cmd` with `args` as its argv (NOT
@@ -1796,6 +1796,11 @@ func classifyIoError(path string, err error) *Enum {
 
 // resultOk / resultErr wrap a value into the canonical
 // Result enum's variant.
+// unitValue is `()` — the payload of a Result that succeeded with
+// nothing to report. Same representation a UnitLit evaluates to, so
+// `Ok(u)` binds the same value however the Ok was built.
+func unitValue() Value { return Number(0) }
+
 func resultOk(v Value) *Enum {
 	return &Enum{EnumName: "Result", VariantName: "Ok", Index: 0, Payloads: []Value{v}}
 }

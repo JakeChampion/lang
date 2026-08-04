@@ -90,7 +90,7 @@ func TestSelfHostWasmIRWasiHelpers(t *testing.T) {
 		},
 		{
 			name:   "write-file-roundtrip",
-			src:    `function main(): i32 { match (write_file("rt.txt", "roundtrip!")) { Some(e) => { return 1; }, None => { } } match (read_file("rt.txt")) { Ok(s) => { write(s); return 0; }, Err(e) => { return 2; } } return 3; }`,
+			src:    `function main(): i32 { match (write_file("rt.txt", "roundtrip!")) { Err(e) => { return 1; }, Ok(_) => { } } match (read_file("rt.txt")) { Ok(s) => { write(s); return 0; }, Err(e) => { return 2; } } return 3; }`,
 			stdout: "roundtrip!",
 		},
 		{

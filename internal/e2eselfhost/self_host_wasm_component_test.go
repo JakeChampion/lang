@@ -992,7 +992,7 @@ func TestSelfHostWasmComponentFullIOFSWrite(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { match (write_file("out.txt", "hello from fern\n")) { Some(_) => { return 1; }, None => {} } write("wrote it\n"); return 0; }`
+	src := `function main(): i32 { match (write_file("out.txt", "hello from fern\n")) { Err(_) => { return 1; }, Ok(_) => {} } write("wrote it\n"); return 0; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -1163,7 +1163,7 @@ func TestSelfHostWasmComponentWriteFile(t *testing.T) {
 	}
 
 	t.Run("write", func(t *testing.T) {
-		comp := build(t, `function main(): i32 { match (write_file("w.txt", "self-hosted write\n")) { Some(_) => { return 1; }, None => {} } write("ok\n"); return 0; }`)
+		comp := build(t, `function main(): i32 { match (write_file("w.txt", "self-hosted write\n")) { Err(_) => { return 1; }, Ok(_) => {} } write("ok\n"); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp).Output()
 		if string(out) != "ok\n" {
 			t.Errorf("write: stdout = %q, want %q", string(out), "ok\n")
@@ -1182,7 +1182,7 @@ func TestSelfHostWasmComponentWriteFile(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "t.txt"), []byte("OLD LONGER CONTENT HERE"), 0o644); err != nil {
 			t.Fatalf("seed t.txt: %v", err)
 		}
-		comp := build(t, `function main(): i32 { match (write_file("t.txt", "new")) { Some(_) => { return 1; }, None => {} } return 0; }`)
+		comp := build(t, `function main(): i32 { match (write_file("t.txt", "new")) { Err(_) => { return 1; }, Ok(_) => {} } return 0; }`)
 		if _, err := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp).Output(); err != nil {
 			t.Fatalf("run: %v", err)
 		}
@@ -1197,7 +1197,7 @@ func TestSelfHostWasmComponentWriteFile(t *testing.T) {
 
 	t.Run("large-write-loop", func(t *testing.T) {
 		// 10000 bytes forces multiple <=4096-byte blocking-write chunks.
-		comp := build(t, `function main(): i32 { var s: string = ""; var i: i32 = 0; while (i < 10000) { s = s + "x"; i = i + 1; } match (write_file("big.txt", s)) { Some(_) => { return 1; }, None => {} } return 0; }`)
+		comp := build(t, `function main(): i32 { var s: string = ""; var i: i32 = 0; while (i < 10000) { s = s + "x"; i = i + 1; } match (write_file("big.txt", s)) { Err(_) => { return 1; }, Ok(_) => {} } return 0; }`)
 		if _, err := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp).Output(); err != nil {
 			t.Fatalf("run: %v", err)
 		}
@@ -1251,7 +1251,7 @@ func TestSelfHostWasmComponentFullIOFSRW(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { match (read_file("in.txt")) { Ok(s) => { match (write_file("out.txt", s)) { Some(_) => { return 1; }, None => {} } write("done\n"); return 0; }, Err(e) => { return 2; } } return 3; }`
+	src := `function main(): i32 { match (read_file("in.txt")) { Ok(s) => { match (write_file("out.txt", s)) { Err(_) => { return 1; }, Ok(_) => {} } write("done\n"); return 0; }, Err(e) => { return 2; } } return 3; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -1424,7 +1424,7 @@ func TestSelfHostWasmComponentReadWriteFile(t *testing.T) {
 	}
 
 	t.Run("copy", func(t *testing.T) {
-		comp := build(t, `function main(): i32 { match (read_file("src.txt")) { Ok(s) => { match (write_file("dst.txt", s)) { Some(_) => { return 1; }, None => {} } write("copied\n"); return 0; }, Err(e) => { return 2; } } return 3; }`)
+		comp := build(t, `function main(): i32 { match (read_file("src.txt")) { Ok(s) => { match (write_file("dst.txt", s)) { Err(_) => { return 1; }, Ok(_) => {} } write("copied\n"); return 0; }, Err(e) => { return 2; } } return 3; }`)
 		if err := os.WriteFile(filepath.Join(dir, "src.txt"), []byte("round-trip via self-host"), 0o644); err != nil {
 			t.Fatalf("write src.txt: %v", err)
 		}
@@ -1446,7 +1446,7 @@ func TestSelfHostWasmComponentReadWriteFile(t *testing.T) {
 		// wasi:cli/run convention collapses any nonzero main() to an err
 		// result (exit 1), so the "ERR" marker on stdout is the signal
 		// that the Err arm ran, not the specific return value.
-		comp := build(t, `function main(): i32 { match (read_file("nope.txt")) { Ok(s) => { match (write_file("dst.txt", s)) { Some(_) => { return 1; }, None => {} } return 0; }, Err(e) => { write("ERR"); return 9; } } return 3; }`)
+		comp := build(t, `function main(): i32 { match (read_file("nope.txt")) { Ok(s) => { match (write_file("dst.txt", s)) { Err(_) => { return 1; }, Ok(_) => {} } return 0; }, Err(e) => { write("ERR"); return 9; } } return 3; }`)
 		cmd := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp)
 		out, _ := cmd.Output()
 		if string(out) != "ERR" {
@@ -2867,7 +2867,7 @@ func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { match (read_file("in.txt")) { Ok(cfg) => { var line: string = cfg; match (env("SUFFIX")) { Some(s) => { line = line + s; }, None => {} } match (write_file("out.txt", line)) { Some(e) => { return 1; }, None => {} } write("done\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`
+	src := `function main(): i32 { match (read_file("in.txt")) { Ok(cfg) => { var line: string = cfg; match (env("SUFFIX")) { Some(s) => { line = line + s; }, None => {} } match (write_file("out.txt", line)) { Err(e) => { return 1; }, Ok(_) => {} } write("done\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -3037,7 +3037,7 @@ func TestSelfHostWasmComponentReadWriteEnv(t *testing.T) {
 
 	t.Run("read-transform-write", func(t *testing.T) {
 		// Read in.txt, append env PREFIX-derived text, write out.txt, respond.
-		comp := build(t, `function main(): i32 { match (read_file("in.txt")) { Ok(c) => { var o: string = c; match (env("TAG")) { Some(tg) => { o = o + "[" + tg + "]"; }, None => { o = o + "[none]"; } } match (write_file("out.txt", o)) { Some(e) => { return 1; }, None => {} } write("wrote\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`)
+		comp := build(t, `function main(): i32 { match (read_file("in.txt")) { Ok(c) => { var o: string = c; match (env("TAG")) { Some(tg) => { o = o + "[" + tg + "]"; }, None => { o = o + "[none]"; } } match (write_file("out.txt", o)) { Err(e) => { return 1; }, Ok(_) => {} } write("wrote\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`)
 		if err := os.WriteFile(filepath.Join(dir, "in.txt"), []byte("payload"), 0o644); err != nil {
 			t.Fatalf("write in.txt: %v", err)
 		}
@@ -3095,7 +3095,7 @@ func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { var id: string = random_bytes(8); match (write_file("id.bin", id)) { Some(e) => { return 1; }, None => {} } write("saved\n"); return 0; }`
+	src := `function main(): i32 { var id: string = random_bytes(8); match (write_file("id.bin", id)) { Err(e) => { return 1; }, Ok(_) => {} } write("saved\n"); return 0; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -3262,7 +3262,7 @@ func TestSelfHostWasmComponentRandomWrite(t *testing.T) {
 
 	t.Run("gen-and-persist", func(t *testing.T) {
 		// Draw 16 random bytes (as a string), write them, report the count.
-		comp := build(t, `function main(): i32 { var id: string = random_bytes(16); match (write_file("token.bin", id)) { Some(e) => { return 1; }, None => {} } print_int(id.len()); return 0; }`)
+		comp := build(t, `function main(): i32 { var id: string = random_bytes(16); match (write_file("token.bin", id)) { Err(e) => { return 1; }, Ok(_) => {} } print_int(id.len()); return 0; }`)
 		out, _ := exec.Command(wasmtime, "run", "--dir", dir+"::/", comp).Output()
 		if string(out) != "16" {
 			t.Errorf("gen-and-persist: stdout = %q, want %q", string(out), "16")
@@ -4007,7 +4007,7 @@ func TestSelfHostWasmComponentFullIOFSRWArgs(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { var a: string[] = args(); if (a.len() < 3) { write("usage: tool IN OUT\n"); return 1; } match (read_file(a[1])) { Ok(s) => { match (write_file(a[2], s)) { Some(e) => { write("write err\n"); return 2; }, None => {} } write("ok\n"); return 0; }, Err(e) => { write("read err\n"); return 3; } } return 4; }`
+	src := `function main(): i32 { var a: string[] = args(); if (a.len() < 3) { write("usage: tool IN OUT\n"); return 1; } match (read_file(a[1])) { Ok(s) => { match (write_file(a[2], s)) { Err(e) => { write("write err\n"); return 2; }, Ok(_) => {} } write("ok\n"); return 0; }, Err(e) => { write("read err\n"); return 3; } } return 4; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -4176,7 +4176,7 @@ func TestSelfHostWasmComponentArgsReadWrite(t *testing.T) {
 	}
 
 	t.Run("transform-in-to-out", func(t *testing.T) {
-		comp := build(t, `function main(): i32 { var a: string[] = args(); if (a.len() < 3) { write("usage\n"); return 1; } match (read_file(a[1])) { Ok(s) => { match (write_file(a[2], s)) { Some(e) => { return 2; }, None => {} } write("done\n"); return 0; }, Err(e) => { write("ERR\n"); return 3; } } return 4; }`)
+		comp := build(t, `function main(): i32 { var a: string[] = args(); if (a.len() < 3) { write("usage\n"); return 1; } match (read_file(a[1])) { Ok(s) => { match (write_file(a[2], s)) { Err(e) => { return 2; }, Ok(_) => {} } write("done\n"); return 0; }, Err(e) => { write("ERR\n"); return 3; } } return 4; }`)
 		if err := os.WriteFile(filepath.Join(dir, "src.dat"), []byte("copy this payload"), 0o644); err != nil {
 			t.Fatalf("write src.dat: %v", err)
 		}

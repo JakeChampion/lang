@@ -13,7 +13,7 @@ import (
 // through the self-hosted x86-64 IR path (newly added op_write_file, the write
 // sibling of op_read_file) and verifies: routing is pinned to "ir", the compiled
 // binary's exit matches the interpreter oracle, AND the bytes actually landed in
-// the file. write_file returns Option[IoError] (None on success), reusing the
+// the file. write_file returns Result[(), IoError] (Ok(()) on success), reusing the
 // existing __fern_write_file runtime. x86-64 only — no wasm file I/O
 // (wasm_eligible rejects write_file, like read_file). This was the last non-libm
 // CLI bail (tee); with it the whole CLI corpus except bc routes IR.
@@ -45,7 +45,7 @@ func TestSelfHostWriteFileIRX86_64(t *testing.T) {
 			interpOut := filepath.Join(t.TempDir(), "interp.out")
 			binOut := filepath.Join(t.TempDir(), "bin.out")
 			mk := func(path string) string {
-				return "function main(): i32 { match (write_file(\"" + path + "\", \"" + tc.src + "\")) { Some(_) => { return 1; }, None => { return 0; } } }\n"
+				return "function main(): i32 { match (write_file(\"" + path + "\", \"" + tc.src + "\")) { Err(_) => { return 1; }, Ok(_) => { return 0; } } }\n"
 			}
 
 			// Oracle: interpret, writing to interpOut.
@@ -121,7 +121,7 @@ func TestSelfHostWriteFileIRWasm(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			outPath := "wf_" + tc.name + ".txt"
-			src := []byte("function main(): i32 { match (write_file(\"" + outPath + "\", \"" + tc.src + "\")) { Some(_) => { return 1; }, None => { return 0; } } }\n")
+			src := []byte("function main(): i32 { match (write_file(\"" + outPath + "\", \"" + tc.src + "\")) { Err(_) => { return 1; }, Ok(_) => { return 0; } } }\n")
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
 				cmd = exec.Command(driverBin, "-ir")

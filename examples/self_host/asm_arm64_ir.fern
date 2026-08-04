@@ -744,19 +744,19 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_read_file\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 170) {  // write_file
             // [pathbox][contentbox] -> write content to the named file, push a fresh
-            // Option[IoError] box (asm_arm64.emit_runtime's __fern_write_file, in its
+            // Result[(), IoError] box (asm_arm64.emit_runtime's __fern_write_file, in its
             // heap block). Pop content into x1, path into x0; push the result box.
             s = s.need("heap"); s = s.need("write_file");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_write_file\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 172) {  // remove_dir_all
             // [pathbox] -> recursively rm -rf the named dir tree, push a fresh
-            // Option[IoError] box (asm_arm64.emit_runtime's __fern_remove_dir_all,
+            // Result[(), IoError] box (asm_arm64.emit_runtime's __fern_remove_dir_all,
             // emitted in its heap block — the same recursive runtime the AST path
             // calls). Pop the path box into x0, push the result box.
             s = s.need("heap");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_remove_dir_all\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 173) {  // remove_file
-            // [pathbox] -> unlink the named file, push a fresh Option[IoError] box
+            // [pathbox] -> unlink the named file, push a fresh Result[(), IoError] box
             // (asm_arm64.emit_runtime's __fern_remove_file, in its heap block). Pop
             // the path box into x0, push the result box.
             s = s.need("heap");
@@ -4185,7 +4185,7 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         s = s.write(".size __fern_read_file, .-__fern_read_file\n");
 
         // __fern_write_file(x0 = path box, x1 = content box) →
-        // Option[IoError]: tag=1 None on success, tag=0 Some(_) on any
+        // Result[(), IoError]: tag=0 Ok(()) on success, tag=1 Err(_) on any
         // I/O error (payload 0, like __fern_read_file's Err). NUL-
         // terminates the path, openat(AT_FDCWD, O_WRONLY|O_CREAT|
         // O_TRUNC=577, 0644), writes the content bytes, closes. Linux
@@ -4255,10 +4255,10 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         s = s.write("    mov x0, x23\n");
         s = s.write("    mov x8, #57\n");            // close
         s = s.write("    svc #0\n");
-        s = s.write("    mov x0, #16\n");            // None box
+        s = s.write("    mov x0, #16\n");            // Ok(()) box
         s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x1, #1\n");
-        s = s.write("    str x1, [x0]\n");           // tag = None
+        s = s.write("    str xzr, [x0]\n");          // tag = 0 (Ok)
+        s = s.write("    str xzr, [x0, #8]\n");      // unit payload
         s = s.write("    b .Lwf_ret\n");
         s = s.write(".Lwf_err_close:\n");
         // Write failed: preserve -errno (the close would clobber x0), then
@@ -4267,7 +4267,7 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         s = s.write("    neg x0, x0\n    mov x24, x0\n    mov x0, x23\n    mov x8, #57\n    svc #0\n    b .Lwf_mkerr\n.Lwf_err:\n    neg x0, x0\n    mov x24, x0\n.Lwf_mkerr:\n");
         // x21/x22 = the caller's path data + length (untouched since entry):
         // box the path and map errno → variant.
-        s = s.write("    mov x0, #16\n    bl __fern_alloc\n    str x21, [x0]\n    str x22, [x0, #8]\n    mov x1, x0\n    mov x0, x24\n    bl __fern_io_error\n    mov x24, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #0\n    str x1, [x0]\n    str x24, [x0, #8]\n");
+        s = s.write("    mov x0, #16\n    bl __fern_alloc\n    str x21, [x0]\n    str x22, [x0, #8]\n    mov x1, x0\n    mov x0, x24\n    bl __fern_io_error\n    mov x24, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #1\n    str x1, [x0]\n    str x24, [x0, #8]\n");
         s = s.write(".Lwf_ret:\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
@@ -4806,7 +4806,7 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         s = s.write("    ret\n");
         s = s.write(".size __fern_read_dir, .-__fern_read_dir\n");
 
-        // __fern_remove_dir_all(x0 = path box) → Option[IoError].
+        // __fern_remove_dir_all(x0 = path box) → Result[(), IoError].
         // Recursive rm -rf, mirror of asm.fern. arm64 syscalls:
         // openat=56, getdents64=61, close=57, unlinkat=35.
         s = s.write(".globl __fern_remove_dir_all\n");
@@ -4854,9 +4854,9 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         s = s.write("    cmp x0, #0\n");
         s = s.write("    b.ge .Lrda_dir\n");
         s = s.write("    cmn x0, #2\n");             // x0 == -2 (ENOENT)?
-        s = s.write("    b.eq .Lrda_none\n");
+        s = s.write("    b.eq .Lrda_ok\n");
         s = s.write("    cmn x0, #20\n");            // x0 == -20 (ENOTDIR)?
-        s = s.write("    b.ne .Lrda_some\n");
+        s = s.write("    b.ne .Lrda_err\n");
         if (darwin) {
             s = s.write("    mov x0, #-2\n");        // unlinkat(file)
         } else {
@@ -4866,7 +4866,7 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         s = s.write("    mov x2, #0\n");
         s = s.write("    mov x8, #35\n");            // unlinkat
         s = s.write("    svc #0\n");
-        s = s.write("    b .Lrda_none\n");
+        s = s.write("    b .Lrda_ok\n");
         s = s.write(".Lrda_dir:\n");
         s = s.write("    mov x20, x0\n");            // fd
         s = s.write("    ldr x0, =65536\n");         // 64 KiB getdents buffer
@@ -4991,19 +4991,17 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         }
         s = s.write("    mov x8, #35\n");
         s = s.write("    svc #0\n");
-        s = s.write(".Lrda_none:\n");
+        s = s.write(".Lrda_ok:\n");
         s = s.write("    mov x0, #16\n");
         s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x1, #1\n");
-        s = s.write("    str x1, [x0]\n");           // None
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    str xzr, [x0]\n");          // tag = 0 (Ok)
+        s = s.write("    str xzr, [x0, #8]\n");      // unit payload
         s = s.write("    b .Lrda_ret\n");
-        s = s.write(".Lrda_some:\n");
+        s = s.write(".Lrda_err:\n");
         // x0 = -errno from the initial openat (the only route here);
         // x19/x21 = NUL-terminated path copy + length (both live). Real
         // IoError payload instead of NULL (#4624).
-        s = s.write("    neg x0, x0\n    mov x22, x0\n    mov x0, #16\n    bl __fern_alloc\n    str x19, [x0]\n    str x21, [x0, #8]\n    mov x1, x0\n    mov x0, x22\n    bl __fern_io_error\n    mov x21, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #0\n    str x1, [x0]\n    str x21, [x0, #8]\n");
+        s = s.write("    neg x0, x0\n    mov x22, x0\n    mov x0, #16\n    bl __fern_alloc\n    str x19, [x0]\n    str x21, [x0, #8]\n    mov x1, x0\n    mov x0, x22\n    bl __fern_io_error\n    mov x21, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #1\n    str x1, [x0]\n    str x21, [x0, #8]\n");
         s = s.write(".Lrda_ret:\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
@@ -5012,9 +5010,9 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         s = s.write("    ret\n");
         s = s.write(".size __fern_remove_dir_all, .-__fern_remove_dir_all\n");
 
-        // __fern_remove_file(x0 = path box) → Option[IoError]. arm64
+        // __fern_remove_file(x0 = path box) → Result[(), IoError]. arm64
         // mirror of asm.fern: NUL-terminate the path, unlinkat(AT_FDCWD,
-        // pathz, 0). Returns None on success, Some(_) on error.
+        // pathz, 0). Returns Ok(()) on success, Err(_) on error.
         s = s.write(".globl __fern_remove_file\n");
         s = s.write(".type __fern_remove_file, %function\n");
         s = s.write("__fern_remove_file:\n");
@@ -5056,16 +5054,14 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         s = s.write("    b.lt .Lrf_err\n");
         s = s.write("    mov x0, #16\n");
         s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x1, #1\n");
-        s = s.write("    str x1, [x0]\n");           // None
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    str x1, [x0, #8]\n");
+        s = s.write("    str xzr, [x0]\n");          // tag = 0 (Ok)
+        s = s.write("    str xzr, [x0, #8]\n");      // unit payload
         s = s.write("    b .Lrf_ret\n");
         s = s.write(".Lrf_err:\n");
         // x0 = -errno from unlinkat; x19 = the ORIGINAL path box
         // (callee-saved, untouched). Real IoError payload instead of NULL
         // (#4624).
-        s = s.write("    neg x0, x0\n    mov x1, x19\n    bl __fern_io_error\n    mov x21, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #0\n    str x1, [x0]\n    str x21, [x0, #8]\n");
+        s = s.write("    neg x0, x0\n    mov x1, x19\n    bl __fern_io_error\n    mov x21, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #1\n    str x1, [x0]\n    str x21, [x0, #8]\n");
         s = s.write(".Lrf_ret:\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");

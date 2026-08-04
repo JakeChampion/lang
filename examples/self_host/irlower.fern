@@ -8553,12 +8553,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         return rfs.emit(ir.op_read_file());
                     }
                     // Built-in `write_file(path, content)` — write the whole content
-                    // to the named file, push a fresh Option[IoError] box (None on
-                    // success / Some(_) on error). A value op consuming the lowered
+                    // to the named file, push a fresh Result[(), IoError] box (Ok(())
+                    // on success / Err(_) on error). A value op consuming the lowered
                     // path + content args (path first, content second — op_write_file
-                    // pops content then path). The Option type is resolved by
+                    // pops content then path). The Result type is resolved by
                     // read_file_result_type's write_file case so `match (write_file(p,
-                    // c)) { Some(_) => .., None => .. }` lowers. No wasm file I/O, so
+                    // c)) { Err(_) => .., Ok(_) => .. }` lowers. No wasm file I/O, so
                     // wasm_eligible rejects write_file modules; x86 / arm64 lower it.
                     if (cid.name == "write_file" && c.args.len() == 2) {
                         var wfs: LowerState = lower_expr(c.args[0], s);
@@ -8568,11 +8568,11 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         return wfs.emit(ir.op_write_file());
                     }
                     // Built-in `remove_dir_all(path)` — recursively rm -rf the named
-                    // directory tree, push a fresh Option[IoError] box (None on
-                    // success / Some(_) on a non-ENOENT/ENOTDIR open error). A value
-                    // op consuming the lowered path arg. The Option type is resolved
+                    // directory tree, push a fresh Result[(), IoError] box (Ok(()) on
+                    // success / Err(_) on a non-ENOENT/ENOTDIR open error). A value
+                    // op consuming the lowered path arg. The Result type is resolved
                     // by read_file_result_type's remove_dir_all case so `match
-                    // (remove_dir_all(p)) { Some(_) => .., None => .. }` lowers. No
+                    // (remove_dir_all(p)) { Err(_) => .., Ok(_) => .. }` lowers. No
                     // wasm file I/O, so wasm_eligible rejects remove_dir_all modules;
                     // x86 / arm64 lower it (the same recursive runtime the AST path
                     // calls — `TestRunner.finish`'s cleanup path, the universal
@@ -8584,8 +8584,8 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         return rdas.emit(ir.op_remove_dir_all());
                     }
                     // Built-in `remove_file(path)` — unlink the named file, push a
-                    // fresh Option[IoError] box (None / Some(_)). opt_ret_type's
-                    // remove_file case resolves the Option so `match (remove_file(p))`
+                    // fresh Result[(), IoError] box (Ok(()) / Err(_)). opt_ret_type's
+                    // remove_file case resolves the Result so `match (remove_file(p))`
                     // binds; wasm-ineligible, x86 / arm64 lower it (#3457:
                     // filesystem_ops' remove_file).
                     if (cid.name == "remove_file" && c.args.len() == 1) {
@@ -39034,9 +39034,9 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     // op_read_file). Checked AFTER the registry so a user decl of the same name
     // still wins. read_file → Result[string, IoError].
     if (name == "read_file") { return "Result[string, IoError]"; }
-    if (name == "write_file") { return "Option[IoError]"; }
-    if (name == "remove_dir_all") { return "Option[IoError]"; }
-    if (name == "remove_file") { return "Option[IoError]"; }
+    if (name == "write_file") { return "Result[void, IoError]"; }
+    if (name == "remove_dir_all") { return "Result[void, IoError]"; }
+    if (name == "remove_file") { return "Result[void, IoError]"; }
     if (name == "temp_dir") { return "Result[string, IoError]"; }
     if (name == "read_dir") { return "Result[string[], IoError]"; }
     if (name == "env") { return "Option[string]"; }

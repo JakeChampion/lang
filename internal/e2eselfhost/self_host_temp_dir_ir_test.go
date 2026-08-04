@@ -31,8 +31,8 @@ func TestSelfHostTempDirIR(t *testing.T) {
             if (d.len() < 6) { return 1; }
             if (d[0] != 47) { return 2; }
             match (remove_dir_all(d)) {
-                None => { return 0; },
-                Some(_) => { return 3; },
+                Ok(_) => { return 0; },
+                Err(_) => { return 3; },
             }
         },
         Err(_) => { return 4; },

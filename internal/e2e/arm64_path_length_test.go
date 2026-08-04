@@ -67,13 +67,13 @@ func TestArm64WriteFilePathLengthSweep(t *testing.T) {
 			content := "wrote"
 			src := fmt.Sprintf(`function main(): i32 {
     match (write_file("%s", "%s")) {
-        None => {
+        Ok(_) => {
             match (read_file("%s")) {
                 Ok(s) => { return s.len(); },
                 Err(_) => { return 0 - 3; }
             }
         },
-        Some(_) => { return 0 - 1; }
+        Err(_) => { return 0 - 1; }
     }
     return 0 - 2;
 }`, path, content, path)

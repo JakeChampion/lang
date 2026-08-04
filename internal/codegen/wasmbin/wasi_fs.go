@@ -864,7 +864,7 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 		body = inst.InstI32Const(body, 8)
 		body = inst.InstCall(body, allocBox)
 		body = inst.InstLocalTee(body, 16) // $result
-		body = inst.InstI32Const(body, 0)  // tag = 0 (Some)
+		body = inst.InstI32Const(body, 1)  // tag = 1 (Err)
 		body = memory.InstI32Store(body, 2, 0)
 		body = inst.InstLocalGet(body, 16)
 		body = inst.InstI32Const(body, 4)
@@ -949,11 +949,18 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, fdClose)
 	body = inst.InstDrop(body)
 
-	// Return None (4-byte alloc, tag = 1).
-	body = inst.InstI32Const(body, 4)
+	// Return Ok(()): 8-byte alloc, tag = 0 @ +0, unit payload @ +4.
+	// The unit occupies a payload slot like any other value, so the
+	// success arm is no longer the 4-byte tag-only box Option used.
+	body = inst.InstI32Const(body, 8)
 	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 16)
-	body = inst.InstI32Const(body, 1)
+	body = inst.InstI32Const(body, 0) // tag = 0 (Ok)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 16)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, 0) // unit payload
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 16)
 
@@ -1105,11 +1112,16 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body)
 	body = inst.InstEnd(body)
 
-	// Success → None (box(4), tag=1).
-	body = inst.InstI32Const(body, 4)
+	// Success → Ok(()): box(8), tag=0 @ +0, unit payload @ +4.
+	body = inst.InstI32Const(body, 8)
 	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 15)
-	body = inst.InstI32Const(body, 1)
+	body = inst.InstI32Const(body, 0) // tag = 0 (Ok)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 15)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, 0) // unit payload
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 15)
 
@@ -1133,7 +1145,7 @@ func buildWriteFileErr(body []byte, buildIoErr, allocBox, errnoLocal uint32) []b
 	body = inst.InstI32Const(body, 8)
 	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 15)
-	body = inst.InstI32Const(body, 0) // tag = 0 (Some)
+	body = inst.InstI32Const(body, 1) // tag = 1 (Err)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 15)
 	body = inst.InstI32Const(body, 4)

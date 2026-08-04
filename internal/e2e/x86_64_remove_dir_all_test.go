@@ -85,8 +85,8 @@ func compileRunX86_64WithSetup(t *testing.T, src string, setup func(dir string))
 func TestX86_64RemoveDirAllNestedTree(t *testing.T) {
 	src := `function main(): i32 {
     match (remove_dir_all("tree")) {
-        Some(e) => { return 40; },
-        None => { return 0; }
+        Err(e) => { return 40; },
+        Ok(_) => { return 0; }
     }
     return 0 - 1;
 }`
@@ -101,13 +101,13 @@ func TestX86_64RemoveDirAllNestedTree(t *testing.T) {
 	}
 }
 
-// remove_dir_all on a missing path is a silent success (None),
+// remove_dir_all on a missing path is a silent success (Ok(())),
 // mirroring os.RemoveAll — the ENOENT from openat maps to None.
 func TestX86_64RemoveDirAllMissing(t *testing.T) {
 	src := `function main(): i32 {
     match (remove_dir_all("no_such_dir")) {
-        Some(e) => { return 1; },
-        None => { return 0; }
+        Err(e) => { return 1; },
+        Ok(_) => { return 0; }
     }
     return 0 - 1;
 }`
@@ -123,8 +123,8 @@ func TestX86_64RemoveDirAllMissing(t *testing.T) {
 func TestX86_64RemoveDirAllFile(t *testing.T) {
 	src := `function main(): i32 {
     match (remove_dir_all("a_file.txt")) {
-        Some(e) => { return 2; },
-        None => { return 0; }
+        Err(e) => { return 2; },
+        Ok(_) => { return 0; }
     }
     return 0 - 1;
 }`

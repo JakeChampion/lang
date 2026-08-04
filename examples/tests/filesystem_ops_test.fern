@@ -15,7 +15,7 @@ function test_temp_dir_returns_abs_path(): test.TestOutcome {
             // a Fern target; on POSIX-likes the prefix holds.)
             var ok: boolean = dir.starts_with("/") || dir.starts_with("\\");
             // Don't leak: remove the directory we just made.
-            match (remove_dir_all(dir)) { None => { }, Some(_) => { } }
+            match (remove_dir_all(dir)) { Ok(_) => { }, Err(_) => { } }
             if (ok) { return test.pass(); }
             return test.fail("temp_dir returned non-absolute path \"" + dir + "\"");
         },
@@ -30,17 +30,17 @@ function test_read_dir_lists_what_we_wrote(): test.TestOutcome {
             // Write three files, then list. Sort the output so
             // the comparison is order-independent (read_dir
             // promises only the set of names, not the order).
-            match (write_file(dir + "/a.txt", "a")) { None => {}, Some(_) => { return test.fail("write a failed"); } }
-            match (write_file(dir + "/b.txt", "b")) { None => {}, Some(_) => { return test.fail("write b failed"); } }
-            match (write_file(dir + "/c.txt", "c")) { None => {}, Some(_) => { return test.fail("write c failed"); } }
+            match (write_file(dir + "/a.txt", "a")) { Ok(_) => {}, Err(_) => { return test.fail("write a failed"); } }
+            match (write_file(dir + "/b.txt", "b")) { Ok(_) => {}, Err(_) => { return test.fail("write b failed"); } }
+            match (write_file(dir + "/c.txt", "c")) { Ok(_) => {}, Err(_) => { return test.fail("write c failed"); } }
             match (read_dir(dir)) {
                 Ok(names) => {
                     var sorted: string[] = cmp.sort(names);
-                    match (remove_dir_all(dir)) { None => {}, Some(_) => {} }
+                    match (remove_dir_all(dir)) { Ok(_) => {}, Err(_) => {} }
                     return test.assert_eq_array(sorted, ["a.txt", "b.txt", "c.txt"]);
                 },
                 Err(_) => {
-                    match (remove_dir_all(dir)) { None => {}, Some(_) => {} }
+                    match (remove_dir_all(dir)) { Ok(_) => {}, Err(_) => {} }
                     return test.fail("read_dir returned Err");
                 }
             }
@@ -55,20 +55,20 @@ function test_remove_file_removes_a_single_file(): test.TestOutcome {
         Ok(dir) => {
             var keep: string = dir + "/keep.txt";
             var doomed: string = dir + "/doomed.txt";
-            match (write_file(keep, "keep")) { None => {}, Some(_) => { return test.fail("write keep failed"); } }
-            match (write_file(doomed, "doomed")) { None => {}, Some(_) => { return test.fail("write doomed failed"); } }
-            match (remove_file(doomed)) { None => {}, Some(_) => {
-                match (remove_dir_all(dir)) { None => {}, Some(_) => {} }
+            match (write_file(keep, "keep")) { Ok(_) => {}, Err(_) => { return test.fail("write keep failed"); } }
+            match (write_file(doomed, "doomed")) { Ok(_) => {}, Err(_) => { return test.fail("write doomed failed"); } }
+            match (remove_file(doomed)) { Ok(_) => {}, Err(_) => {
+                match (remove_dir_all(dir)) { Ok(_) => {}, Err(_) => {} }
                 return test.fail("remove_file returned Err");
             } }
             // After the targeted unlink, only keep.txt is left.
             match (read_dir(dir)) {
                 Ok(names) => {
-                    match (remove_dir_all(dir)) { None => {}, Some(_) => {} }
+                    match (remove_dir_all(dir)) { Ok(_) => {}, Err(_) => {} }
                     return test.assert_eq_array(names, ["keep.txt"]);
                 },
                 Err(_) => {
-                    match (remove_dir_all(dir)) { None => {}, Some(_) => {} }
+                    match (remove_dir_all(dir)) { Ok(_) => {}, Err(_) => {} }
                     return test.fail("post-rm read_dir failed");
                 }
             }
@@ -83,8 +83,8 @@ function test_remove_file_on_missing_target_is_an_error(): test.TestOutcome {
     // doesn't exist returns an error. Callers that don't care
     // about that distinction should ignore the return value.
     match (remove_file("/tmp/lang-this-file-definitely-does-not-exist-83274")) {
-        None => { return test.fail("expected error on missing target, got None"); },
-        Some(_) => { return test.pass(); }
+        Ok(_) => { return test.fail("expected error on missing target, got None"); },
+        Err(_) => { return test.pass(); }
     }
     return test.pass();
 }
@@ -94,8 +94,8 @@ function test_remove_dir_all_silently_ok_on_missing_target(): test.TestOutcome {
     // the postcondition (path does not exist) is already
     // satisfied.
     match (remove_dir_all("/tmp/lang-this-dir-definitely-does-not-exist-83274")) {
-        None => { return test.pass(); },
-        Some(_) => { return test.fail("expected None on missing target, got Err"); }
+        Ok(_) => { return test.pass(); },
+        Err(_) => { return test.fail("expected None on missing target, got Err"); }
     }
     return test.pass();
 }

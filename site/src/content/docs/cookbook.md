@@ -41,16 +41,25 @@ as stdin — the convention most Unix filters follow.
 
 ## Write a file
 
-`write_file` returns `Option[IoError]`: `None` means it worked.
+Everything fallible returns a `Result`, so `?` propagates a failure the
+same way whatever the operation is — even when success carries nothing.
+`()` is that nothing.
 
 ```fern
+function save(path: string, body: string): Result[(), IoError] {
+    write_file(path, body)?;
+    return Ok(());
+}
+
 function main(): i32 {
-    match (write_file("out.txt", "hello\n")) {
-        Some(_) => { eprint("write failed"); return 1; },
-        None    => { return 0; }
+    match (save("out.txt", "hello\n")) {
+        Ok(_)  => { return 0; },
+        Err(_) => { eprint("write failed"); return 1; }
     }
 }
 ```
+
+`remove_file` and `remove_dir_all` have the same shape.
 
 ## Read an environment variable
 

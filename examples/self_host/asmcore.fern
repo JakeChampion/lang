@@ -354,16 +354,16 @@ pub function rt_src_io_error(): string {
 }
 
 // rt_src_remove_file backs `remove_file(path)` (#2649, syscall-leaf) →
-// Option[IoError]. NUL-terminate the path, unlinkat(AT_FDCWD, path, 0) (syscall
-// 263, 3-arg so __syscall3 suffices), return None on success / on failure the
+// Result[void, IoError]. NUL-terminate the path, unlinkat(AT_FDCWD, path, 0)
+// (syscall 263, 3-arg so __syscall3 suffices), Ok(()) on success / on failure the
 // errno classified by the shared __fern_io_error (bundled with this helper) —
 // handed a FRESH path string, so the borrowed `path` param is never stored.
 pub function rt_src_remove_file(): string {
-    return "function __fern_remove_file(path: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(263, -100, pathz, 0); if (rc < 0) { return Some(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return None; }";
+    return "function __fern_remove_file(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(263, -100, pathz, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_write_file backs `write_file(path, contents)` (#2649, syscall-leaf) →
-// Option[IoError]. NUL-terminate the path, openat(AT_FDCWD, path,
+// Result[void, IoError]. NUL-terminate the path, openat(AT_FDCWD, path,
 // O_WRONLY|O_CREAT|O_TRUNC=577, mode=420=0644) — the mode arg is meaningful, so
 // this is the first __syscall4 user. Copy the contents bytes into a buffer and
 // write them in ONE write (single write, no offset-loop, like read_file's single
@@ -371,7 +371,7 @@ pub function rt_src_remove_file(): string {
 // openat failure the errno classified by the shared __fern_io_error (bundled with
 // this helper), handed a FRESH path string. x86-64-only (arch-specific syscalls).
 pub function rt_src_write_file(): string {
-    return "function __fern_write_file(path: string, contents: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(257, -100, pathz, 577, 420); if (fd < 0) { return Some(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var clen: i32 = contents.len(); var cbuf: i32 = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j]); j = j + 1; } __syscall3(1, fd, cbuf, clen); __syscall3(3, fd, 0, 0); return None; }";
+    return "function __fern_write_file(path: string, contents: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(257, -100, pathz, 577, 420); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var clen: i32 = contents.len(); var cbuf: i32 = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j]); j = j + 1; } __syscall3(1, fd, cbuf, clen); __syscall3(3, fd, 0, 0); return Ok(()); }";
 }
 
 // rt_src_env backs `env(name)` (#2649) → Option[string]. Walks the process envp
@@ -433,10 +433,10 @@ pub function rt_src_read_dir(): string {
 }
 
 // rt_src_remove_dir_all backs `remove_dir_all(path)` (#2649, the last fs
-// syscall-leaf) → Option[IoError]: a best-effort recursive rm -rf. It classifies
+// syscall-leaf) → Result[void, IoError]: a best-effort recursive rm -rf. It classifies
 // the target with openat(AT_FDCWD, path, O_RDONLY|O_DIRECTORY=65536): ENOENT (2) →
 // None (already gone); ENOTDIR (20) → unlinkat the file, None; any other error →
-// Some(__fern_io_error(e, path)); success → it is a directory, so it DRAINS the
+// Err(__fern_io_error(e, path)); success → it is a directory, so it DRAINS the
 // dir with a getdents64 loop over a fresh 64 KiB buffer per read (the read_dir
 // shape), building each child path (path + "/" + name) directly in a raw buffer
 // and recursing, then rmdirs via unlinkat(..., AT_REMOVEDIR=512).
@@ -449,13 +449,13 @@ pub function rt_src_read_dir(): string {
 // The raw getdents buffer + child-path buffers are __raw_alloc'd (bump-only, never
 // freed → never reclaimed → never reused by the recursion), so they stay valid
 // across the recursive call; the only RC value crossing the recursion is the
-// returned Option[IoError], which is safe. The fd is held open across the
+// returned Result[void, IoError], which is safe. The fd is held open across the
 // recursion (best-effort; realistic tree depth only). Bundled with io_error in the
 // fs module so its error-path call threads as an ordinary call-graph edge, and
 // recurses by its own name (→ __fn___fern_remove_dir_all). x86-64-only (arch-
 // specific syscall numbers); arm64/AST keep their hand-asm.
 pub function rt_src_remove_dir_all(): string {
-    return "function __fern_remove_dir_all(path: string): Option[IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 65536); if (fd < 0) { var e: i32 = 0 - fd; if (e == 2) { return None; } if (e == 20) { __syscall3(263, -100, pathz, 0); return None; } return Some(__fern_io_error(e, __raw_string(pathz, plen))); } var done: i32 = 0; while (done == 0) { var buf: i32 = __raw_alloc(65536); var n: i32 = __syscall3(217, fd, buf, 65536); if (n <= 0) { done = 1; } else { var pos: i32 = 0; while (pos < n) { var reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; var nl: i32 = 0; while (__raw_load8(buf, pos + 19 + nl) != 0) { nl = nl + 1; } var skip: i32 = 0; if (nl == 1) { if (__raw_load8(buf, pos + 19) == 46) { skip = 1; } } if (nl == 2) { if (__raw_load8(buf, pos + 19) == 46) { if (__raw_load8(buf, pos + 20) == 46) { skip = 1; } } } if (skip == 0) { var cl: i32 = plen + 1 + nl; var cb: i32 = __raw_alloc(cl + 1); var a: i32 = 0; while (a < plen) { __raw_store8(cb, a, path[a]); a = a + 1; } __raw_store8(cb, plen, 47); var b: i32 = 0; while (b < nl) { __raw_store8(cb, plen + 1 + b, __raw_load8(buf, pos + 19 + b)); b = b + 1; } __raw_store8(cb, cl, 0); match (__fern_remove_dir_all(__raw_string(cb, cl))) { Some(_) => {}, None => {} } } pos = pos + reclen; } } } __syscall3(3, fd, 0, 0); __syscall3(263, -100, pathz, 512); return None; }";
+    return "function __fern_remove_dir_all(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 65536); if (fd < 0) { var e: i32 = 0 - fd; if (e == 2) { return Ok(()); } if (e == 20) { __syscall3(263, -100, pathz, 0); return Ok(()); } return Err(__fern_io_error(e, __raw_string(pathz, plen))); } var done: i32 = 0; while (done == 0) { var buf: i32 = __raw_alloc(65536); var n: i32 = __syscall3(217, fd, buf, 65536); if (n <= 0) { done = 1; } else { var pos: i32 = 0; while (pos < n) { var reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; var nl: i32 = 0; while (__raw_load8(buf, pos + 19 + nl) != 0) { nl = nl + 1; } var skip: i32 = 0; if (nl == 1) { if (__raw_load8(buf, pos + 19) == 46) { skip = 1; } } if (nl == 2) { if (__raw_load8(buf, pos + 19) == 46) { if (__raw_load8(buf, pos + 20) == 46) { skip = 1; } } } if (skip == 0) { var cl: i32 = plen + 1 + nl; var cb: i32 = __raw_alloc(cl + 1); var a: i32 = 0; while (a < plen) { __raw_store8(cb, a, path[a]); a = a + 1; } __raw_store8(cb, plen, 47); var b: i32 = 0; while (b < nl) { __raw_store8(cb, plen + 1 + b, __raw_load8(buf, pos + 19 + b)); b = b + 1; } __raw_store8(cb, cl, 0); match (__fern_remove_dir_all(__raw_string(cb, cl))) { Ok(_) => {}, Err(_) => {} } } pos = pos + reclen; } } } __syscall3(3, fd, 0, 0); __syscall3(263, -100, pathz, 512); return Ok(()); }";
 }
 
 // rt_src_clock backs the clock builtins (#2649, syscall-leaf slice 2): `which`
@@ -2005,7 +2005,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     }
                     if (id.name == "Err" && c.args.len() == 1) { return ty_result(ty_unknown()); }
                     if (id.name == "read_file") { return ty_result(ty_string()); }
-                    if (id.name == "write_file") { return ty_option(ty_unknown()); }
+                    if (id.name == "write_file") { return ty_result(ty_unknown()); }
                     // now_unix_ms / monotonic_ns return i64. The self-host
                     // has no distinct i64 tag — integers live in 64-bit x0
                     // slots and compare via cmp — so "i32" routes them

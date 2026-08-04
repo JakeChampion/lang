@@ -12,8 +12,8 @@ function test_file_lines_pass(r: test.TestRunner): test.TestRunner {
     if (dir == "") { return rr; }
     var path: string = dir + "/output.txt";
     match (write_file(path, "alpha\nbeta\ngamma\n")) {
-        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        None => {}
+        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
+        Ok(_) => {}
     }
     rr = rr.it("file_lines exact match",
                () => test.assert_file_lines(path, ["alpha", "beta", "gamma"]));
@@ -28,8 +28,8 @@ function test_file_lines_no_trailing_newline(r: test.TestRunner): test.TestRunne
     var path: string = dir + "/output.txt";
     // No trailing newline — `.lines()` still returns 3 lines.
     match (write_file(path, "one\ntwo\nthree")) {
-        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        None => {}
+        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
+        Ok(_) => {}
     }
     rr = rr.it("file_lines no-trail match",
                () => test.assert_file_lines(path, ["one", "two", "three"]));
@@ -41,8 +41,8 @@ function test_file_lines_mismatch_reports(r: test.TestRunner): test.TestRunner {
     if (dir == "") { return rr; }
     var path: string = dir + "/output.txt";
     match (write_file(path, "alpha\nWRONG\ngamma\n")) {
-        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        None => {}
+        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
+        Ok(_) => {}
     }
     match (test.assert_file_lines(path, ["alpha", "beta", "gamma"])) {
         Pass => { return rr.it("expected mismatch fail", () => test.fail("missed")); },
@@ -65,8 +65,8 @@ function test_file_line_count_wrong_reports(r: test.TestRunner): test.TestRunner
     if (dir == "") { return rr; }
     var path: string = dir + "/output.txt";
     match (write_file(path, "a\nb\n")) {
-        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        None => {}
+        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
+        Ok(_) => {}
     }
     match (test.assert_file_line_count(path, 5)) {
         Pass => { return rr.it("count mismatch missed", () => test.fail("expected fail")); },

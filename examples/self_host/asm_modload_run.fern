@@ -311,11 +311,11 @@ function emit_unit_to_file(out_dir: string, unit_spec: string, infmods: parser.M
     }
     var outpath: string = out_dir + "/" + unit_file_name(unit_spec);
     match (write_file(outpath, unit)) {
-        Some(werr) => {
+        Err(werr) => {
             eprint("per-module: unit write failed: " + outpath + "\n");
             return false;
         },
-        None => { },
+        Ok(_) => { },
     }
     return true;
 }
@@ -413,7 +413,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
         if (rc != 0) {
             eprint("per-module spawned: unit batch " + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + " failed (exit " + util.i32_to_string(rc) + "), falling back to the AST emitter\n");
             var ce1: i32 = 0;
-            match (remove_dir_all(tmp)) { Some(rr1) => { ce1 = 1; }, None => { }, }
+            match (remove_dir_all(tmp)) { Err(rr1) => { ce1 = 1; }, Ok(_) => { }, }
             return 1;
         }
         lo = hi;
@@ -432,7 +432,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
         if (!present) {
             eprint("per-module spawned: missing emitted unit " + vpath + "\n");
             var ce2: i32 = 0;
-            match (remove_dir_all(tmp)) { Some(rr2) => { ce2 = 1; }, None => { }, }
+            match (remove_dir_all(tmp)) { Err(rr2) => { ce2 = 1; }, Ok(_) => { }, }
             return 1;
         }
         vi = vi + 1;
@@ -454,13 +454,13 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
         if (!read_ok) {
             eprint("per-module spawned: unit vanished mid-stream: " + rpath + "\n");
             var ce3: i32 = 0;
-            match (remove_dir_all(tmp)) { Some(rr3) => { ce3 = 1; }, None => { }, }
+            match (remove_dir_all(tmp)) { Err(rr3) => { ce3 = 1; }, Ok(_) => { }, }
             return 2;
         }
         ri = ri + 1;
     }
     var ce4: i32 = 0;
-    match (remove_dir_all(tmp)) { Some(rr4) => { ce4 = 1; }, None => { }, }
+    match (remove_dir_all(tmp)) { Err(rr4) => { ce4 = 1; }, Ok(_) => { }, }
     return 0;
 }
 
@@ -774,8 +774,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     if (cachefile.len() > 0) {
         eprint("cache-miss " + parts[pm_index].ns + "\n");
         match (write_file(cachefile, unit)) {
-            Some(werr) => { eprint("per-module: cache write failed for " + parts[pm_index].ns + "\n"); },
-            None => { },
+            Err(werr) => { eprint("per-module: cache write failed for " + parts[pm_index].ns + "\n"); },
+            Ok(_) => { },
         }
     }
     return 0;

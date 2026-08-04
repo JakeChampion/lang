@@ -234,20 +234,20 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			[]string{"\n__fern_read_file:"},
 		},
 		{
-			// remove_file — Option[IoError] leaf (#2649): unlinkat via __syscall3.
+			// remove_file — Result[(), IoError] leaf (#2649): unlinkat via __syscall3.
 			// The old hand-asm IR body (__fern_remove_file:) is gone; op_remove_file
 			// calls __fn___fern_remove_file.
 			"remove_file",
-			`function main(): i32 { match (remove_file("/nonexistent-xyz")) { None => { return 0; }, Some(e) => { return 1; } } }`,
+			`function main(): i32 { match (remove_file("/nonexistent-xyz")) { Ok(_) => { return 0; }, Err(e) => { return 1; } } }`,
 			"__fn___fern_remove_file",
 			[]string{"\n__fern_remove_file:"},
 		},
 		{
-			// write_file — Option[IoError] leaf (#2649), first __syscall4 user
+			// write_file — Result[(), IoError] leaf (#2649), first __syscall4 user
 			// (openat with O_CREAT mode). Old hand-asm IR body (__fern_write_file:)
 			// gone; op_write_file calls __fn___fern_write_file.
 			"write_file",
-			`function main(): i32 { match (write_file("/tmp/fern-lockin-wf", "x")) { None => { return 0; }, Some(e) => { return 1; } } }`,
+			`function main(): i32 { match (write_file("/tmp/fern-lockin-wf", "x")) { Ok(_) => { return 0; }, Err(e) => { return 1; } } }`,
 			"__fn___fern_write_file",
 			[]string{"\n__fern_write_file:"},
 		},
@@ -288,7 +288,7 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			// __fn___fern_remove_dir_all. The .Lrda_* local labels of the retired
 			// hand-asm body must be gone.
 			"remove_dir_all",
-			`function main(): i32 { match (remove_dir_all("/nonexistent-fern-xyz")) { None => { return 0; }, Some(e) => { return 1; } } }`,
+			`function main(): i32 { match (remove_dir_all("/nonexistent-fern-xyz")) { Ok(_) => { return 0; }, Err(e) => { return 1; } } }`,
 			"__fn___fern_remove_dir_all",
 			[]string{"\n__fern_remove_dir_all:", ".Lrda_copy", ".Lrda_it"},
 		},
@@ -346,11 +346,11 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
     var r: i32 = 0;
     match (stat("/nope")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
     match (read_file("/nope")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
-    match (remove_file("/nope")) { Some(_) => { r = r + 1; }, None => {} }
-    match (write_file("/nope-dir/x", "y")) { Some(_) => { r = r + 1; }, None => {} }
+    match (remove_file("/nope")) { Err(_) => { r = r + 1; }, Ok(_) => {} }
+    match (write_file("/nope-dir/x", "y")) { Err(_) => { r = r + 1; }, Ok(_) => {} }
     match (temp_dir("/nope-parent/p")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
     match (read_dir("/nope")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
-    match (remove_dir_all("/nope-parent/deep/tree")) { Some(_) => { r = r + 1; }, None => {} }
+    match (remove_dir_all("/nope-parent/deep/tree")) { Err(_) => { r = r + 1; }, Ok(_) => {} }
     return r;
 }`
 		var cmd *exec.Cmd

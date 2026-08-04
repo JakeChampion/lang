@@ -8384,10 +8384,14 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("mov edi, r13d")
 	g.emit("mov eax, 3") // close
 	g.emit("syscall")
-	// Option.None: 8-byte box, tag=1.
-	g.emit("mov edi, 8")
+	// Result.Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
+	// value occupies a payload slot like any other value — the reader
+	// loads it by the declared layout — so the success arm cannot be
+	// the 8-byte tag-only box the Option shape used.
+	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
-	g.emit("mov dword ptr [rax], 1")
+	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
+	g.emit("mov qword ptr [rax + 8], 0") // unit payload
 	g.emit("jmp .Lwf_return")
 
 	g.label(".Lwf_err_close")
@@ -8409,7 +8413,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("mov r14, rax") // stash IoError box
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
-	g.emit("mov dword ptr [rax], 0") // tag=0 (Some)
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
 	g.emit("mov [rax + 8], r14")
 
 	g.label(".Lwf_return")
@@ -8620,9 +8624,14 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("syscall")
 
 	g.label(".Lrda_none")
-	g.emit("mov edi, 8")
+	// Result.Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
+	// value occupies a payload slot like any other value — the reader
+	// loads it by the declared layout — so the success arm cannot be
+	// the 8-byte tag-only box the Option shape used.
+	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
-	g.emit("mov dword ptr [rax], 1") // Option.None
+	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
+	g.emit("mov qword ptr [rax + 8], 0") // unit payload
 	g.emit("jmp .Lrda_return")
 
 	g.label(".Lrda_some")
@@ -8634,7 +8643,7 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("mov r12, rax") // stash IoError box across the alloc
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
-	g.emit("mov dword ptr [rax], 0") // Option.Some
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
 	g.emit("mov [rax + 8], r12")
 
 	g.label(".Lrda_return")
@@ -8695,9 +8704,14 @@ func (g *generator) emitRemoveFileRuntime() {
 	g.emit("syscall")
 	g.emit("test rax, rax")
 	g.emit("js .Lrmf_some")
-	g.emit("mov edi, 8")
+	// Result.Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
+	// value occupies a payload slot like any other value — the reader
+	// loads it by the declared layout — so the success arm cannot be
+	// the 8-byte tag-only box the Option shape used.
+	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
-	g.emit("mov dword ptr [rax], 1") // Option.None
+	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
+	g.emit("mov qword ptr [rax + 8], 0") // unit payload
 	g.emit("jmp .Lrmf_return")
 
 	g.label(".Lrmf_some")
@@ -8709,7 +8723,7 @@ func (g *generator) emitRemoveFileRuntime() {
 	g.emit("mov r12, rax") // stash IoError box across the alloc
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
-	g.emit("mov dword ptr [rax], 0") // Option.Some
+	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
 	g.emit("mov [rax + 8], r12")
 
 	g.label(".Lrmf_return")

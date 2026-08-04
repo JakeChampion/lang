@@ -55,8 +55,8 @@ function test_stat_workflow(r: test.TestRunner): test.TestRunner {
 
     var path: string = dir + "/payload.dat";
     match (write_file(path, "0123456789")) {
-        None => { },
-        Some(_) => { return rr.it("write fixture", () => test.fail("write_file failed")); }
+        Ok(_) => { },
+        Err(_) => { return rr.it("write fixture", () => test.fail("write_file failed")); }
     }
 
     rr = rr.it("is_file true",             () => test.assert_is_file(path));

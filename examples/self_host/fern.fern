@@ -446,13 +446,13 @@ function main(): i32 {
         var formatted: string = printer.print_module(entry_mod);
         if (out_path.len() > 0) {
             match (write_file(out_path, formatted)) {
-                Some(e) => {
+                Err(e) => {
                     eprint("fern: cannot write output: ");
                     eprint(out_path);
                     eprint("\n");
                     return 1;
                 },
-                None => {},
+                Ok(_) => {},
             }
         } else {
             write(formatted);
@@ -625,13 +625,13 @@ function main(): i32 {
             }
             if (out_path.len() > 0) {
                 match (write_file(out_path, ssa_out)) {
-                    Some(e) => {
+                    Err(e) => {
                         eprint("fern: cannot write output: ");
                         eprint(out_path);
                         eprint("\n");
                         return 1;
                     },
-                    None => {},
+                    Ok(_) => {},
                 }
             } else {
                 write(ssa_out);
@@ -763,13 +763,13 @@ function main(): i32 {
     }
     if (out_path.len() > 0) {
         match (write_file(out_path, out_asm)) {
-            Some(e) => {
+            Err(e) => {
                 eprint("fern: cannot write output: ");
                 eprint(out_path);
                 eprint("\n");
                 return 1;
             },
-            None => {},
+            Ok(_) => {},
         }
     } else {
         write(out_asm);

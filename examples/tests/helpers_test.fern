@@ -108,8 +108,8 @@ function test_file_helpers(r: test.TestRunner): test.TestRunner {
     if (dir == "") { return rr; }
     var path: string = dir + "/payload.txt";
     match (write_file(path, "hello\nworld\n")) {
-        None => { },
-        Some(_) => { return rr.it("write setup", () => test.fail("write_file failed")); }
+        Ok(_) => { },
+        Err(_) => { return rr.it("write setup", () => test.fail("write_file failed")); }
     }
     rr = rr.it("file exists",        () => test.assert_file_exists(path));
     rr = rr.it("file does not exist", () => test.assert_file_not_exists(dir + "/missing.txt"));

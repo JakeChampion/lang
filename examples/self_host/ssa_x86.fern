@@ -447,7 +447,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         return store_res(reg_of, widths, ins.result, "a", out);  // Result box ptr ← %rax
     }
     if (ins.kind_tag == 27) {  // write_file
-        // write_file(path, content) → Option box;
+        // write_file(path, content) → Result box;
         // __fern_ssa_write_file(rdi=path, rsi=content) → rax.
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // path → %rax
         out = out + "    movq %rax, %rdi\n";
@@ -817,8 +817,8 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     out = out + ".Lssa_rdf_err:\n    movl $16, %edi\n    call __fern_ssa_alloc\n    movq $1, (%rax)\n    movq $0, 8(%rax)\n";   // Err box
     out = out + ".Lssa_rdf_ret:\n";
     out = out + "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
-    // __fern_ssa_write_file(rdi = path box, rsi = content box) → rax = Option
-    // box: [tag=1@0, 0@8] None on success, [tag=0@0, 0@8] Some on I/O error.
+    // __fern_ssa_write_file(rdi = path box, rsi = content box) → rax = Result
+    // box: [tag=0@0, 0@8] Ok(()) on success, [tag=1@0, 0@8] Err on I/O error.
     out = out + "__fern_ssa_write_file:\n";
     out = out + "    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n";
     out = out + "    movq %rdi, %rbx\n";              // path box
@@ -843,10 +843,10 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     out = out + "    movq %r12, %rdi\n    leaq (%r14,%r15), %rsi\n    movl %r13d, %edx\n    subl %r15d, %edx\n    movl $1, %eax\n    syscall\n";   // write remaining
     out = out + "    testq %rax, %rax\n    js .Lssa_wf_errclose\n    addq %rax, %r15\n    jmp .Lssa_wf_loop\n";
     out = out + ".Lssa_wf_done:\n    movq %r12, %rdi\n    movl $3, %eax\n    syscall\n";   // close
-    out = out + "    movl $16, %edi\n    call __fern_ssa_alloc\n    movq $1, (%rax)\n    movq $0, 8(%rax)\n";   // None box
+    out = out + "    movl $16, %edi\n    call __fern_ssa_alloc\n    movq $0, (%rax)\n    movq $0, 8(%rax)\n";   // Ok(()) box
     out = out + "    jmp .Lssa_wf_ret\n";
     out = out + ".Lssa_wf_errclose:\n    movq %r12, %rdi\n    movl $3, %eax\n    syscall\n";   // close, ignore result
-    out = out + ".Lssa_wf_err:\n    movl $16, %edi\n    call __fern_ssa_alloc\n    movq $0, (%rax)\n    movq $0, 8(%rax)\n";   // Some box
+    out = out + ".Lssa_wf_err:\n    movl $16, %edi\n    call __fern_ssa_alloc\n    movq $1, (%rax)\n    movq $0, 8(%rax)\n";   // Err box
     out = out + ".Lssa_wf_ret:\n";
     out = out + "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    ret\n";
     // __fern_ssa_write(rdi = string handle): like __fern_ssa_print but with NO

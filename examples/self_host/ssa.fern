@@ -753,7 +753,7 @@ function build_expr(e: parser.Expr, s: BState): BState {
                     // lowering (ssa_wasm.inst_supported rejects them → AST
                     // fallback). Both results are heap-box pointers:
                     // read_file → Result[string, IoError] (Ok/Err box),
-                    // write_file → Option[IoError] (None/Some box), matched via
+                    // write_file → Result[(), IoError] (Ok/Err box), matched via
                     // the fixed-tag chain like Some/Ok/Err. As dedicated ops they
                     // are not generic calls, so calls_all_known doesn't bail.
                     if (cid.name == "read_file" && c.args.len() == 1) {

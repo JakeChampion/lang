@@ -163,8 +163,8 @@ function load_unit(dir: string, entry_path: string, parts: flatten.PerModule[], 
         if (ck.len() > 0) {
             eprint("cache-miss " + parts[idx].ns + "\n");
             match (write_file(ck, wasm_objfile.encode(obj))) {
-                Some(werr) => { eprint("wasm per-module: cache write failed for " + parts[idx].ns + "\n"); },
-                None => { },
+                Err(werr) => { eprint("wasm per-module: cache write failed for " + parts[idx].ns + "\n"); },
+                Ok(_) => { },
             }
         }
     }

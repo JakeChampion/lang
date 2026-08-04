@@ -56,8 +56,8 @@ function test_interp_reads_a_file(lang_bin: string, dir: string): test.TestOutco
     var src_path: string = dir + "/prog.fern";
     var src: string = "function main(): i32 { print(\"file-mode\"); return 42; }";
     match (write_file(src_path, src)) {
-        None => { },
-        Some(_) => { return test.fail("write_file failed for " + src_path); }
+        Ok(_) => { },
+        Err(_) => { return test.fail("write_file failed for " + src_path); }
     }
     var r: ProcessResult = subprocess(lang_bin, ["-interp", src_path], "");
     return test.assert_process(r, 42, "file-mode");

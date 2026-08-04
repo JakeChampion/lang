@@ -418,7 +418,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 				"if (f64_from_bits(f64_bits(a)) != a) { return 1; } " +
 				"if (f32_from_bits(f32_bits(a)) != a) { return 2; } " +
 				"sleep_ms(0); " +
-				"match (remove_file(\"/tmp/lang-no-such-file-zzz\")) { Some(_) => {}, None => { return 3; } } " +
+				"match (remove_file(\"/tmp/lang-no-such-file-zzz\")) { Err(_) => {}, Ok(_) => { return 3; } } " +
 				"return 42; }",
 			42,
 			"",

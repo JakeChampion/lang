@@ -66,13 +66,13 @@ func TestSelfHostIoErrorIRWasm(t *testing.T) {
 		// Success path unchanged by the error-path rework.
 		{"read-ok-control", `function main(): i32 { match (read_file("ok.txt")) { Ok(s) => { return s.len(); }, Err(_) => { return 90; } } return 0; }`, 6},
 		// write_file into a missing parent dir -> ENOENT -> Some(NotFound), not NULL.
-		{"writefile-notfound", `function main(): i32 { match (write_file("nodir-fern/x.txt", "hi")) { Some(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, None => { return 1; } } return 0; }`, 2},
+		{"writefile-notfound", `function main(): i32 { match (write_file("nodir-fern/x.txt", "hi")) { Err(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, Ok(_) => { return 1; } } return 0; }`, 2},
 		// write_file success still returns None.
-		{"writefile-ok-control", `function main(): i32 { match (write_file("out-fern.txt", "hi")) { Some(_) => { return 90; }, None => { return 1; } } return 0; }`, 1},
+		{"writefile-ok-control", `function main(): i32 { match (write_file("out-fern.txt", "hi")) { Err(_) => { return 90; }, Ok(_) => { return 1; } } return 0; }`, 1},
 		// stat's Err payload carries NotFound(path) with the right length.
 		{"stat-notfound-payload-len", `function main(): i32 { match (stat("` + missing + `")) { Ok(_) => { return 1; }, Err(e) => { match (e) { NotFound(p) => { return p.len(); }, _ => { return 4; } } } } return 0; }`, missingLen},
 		// remove_file's Some payload matches NotFound.
-		{"removefile-notfound", `function main(): i32 { match (remove_file("` + missing + `")) { Some(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, None => { return 1; } } return 0; }`, 2},
+		{"removefile-notfound", `function main(): i32 { match (remove_file("` + missing + `")) { Err(e) => { match (e) { NotFound(p) => { return 2; }, _ => { return 4; } } }, Ok(_) => { return 1; } } return 0; }`, 2},
 	}
 
 	for _, tc := range cases {

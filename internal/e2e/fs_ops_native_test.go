@@ -38,7 +38,7 @@ import (
 const fsOpsRoundTripSrc = `function main(): i32 {
     match (temp_dir("fsops-native")) {
         Ok(dir) => {
-            match (write_file(dir + "/probe.txt", "hello")) { Some(e) => { return 10; }, None => { } }
+            match (write_file(dir + "/probe.txt", "hello")) { Err(e) => { return 10; }, Ok(_) => { } }
             match (stat(dir + "/probe.txt")) {
                 Ok(fs) => {
                     if (fs.is_file) {
@@ -57,9 +57,9 @@ const fsOpsRoundTripSrc = `function main(): i32 {
                 Ok(names) => { if (names.len() == 1) { } else { return 14; } },
                 Err(e) => { return 15; }
             }
-            match (remove_file(dir + "/probe.txt")) { Some(e) => { return 16; }, None => { } }
-            match (remove_file(dir + "/probe.txt")) { Some(e) => { }, None => { return 23; } }
-            match (remove_dir_all(dir)) { Some(e) => { return 17; }, None => { } }
+            match (remove_file(dir + "/probe.txt")) { Err(e) => { return 16; }, Ok(_) => { } }
+            match (remove_file(dir + "/probe.txt")) { Err(e) => { }, Ok(_) => { return 23; } }
+            match (remove_dir_all(dir)) { Err(e) => { return 17; }, Ok(_) => { } }
             match (stat(dir)) {
                 Ok(fs) => { return 18; },
                 Err(e) => { return 0; }
@@ -166,8 +166,8 @@ func TestArm64FsOpsRoundTrip(t *testing.T) {
 func TestArm64RemoveDirAllNestedTree(t *testing.T) {
 	src := `function main(): i32 {
     match (remove_dir_all("tree")) {
-        Some(e) => { return 40; },
-        None => { return 0; }
+        Err(e) => { return 40; },
+        Ok(_) => { return 0; }
     }
     return 41;
 }`

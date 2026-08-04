@@ -18,8 +18,8 @@ function test_is_ok_string_pass(r: test.TestRunner): test.TestRunner {
     if (dir == "") { return rr; }
     var path: string = dir + "/file.txt";
     match (write_file(path, "hello")) {
-        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        None => {}
+        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
+        Ok(_) => {}
     }
     return rr.it("is_ok_string after successful read",
                  () => test.assert_is_ok_string(read_file(path)));
@@ -51,8 +51,8 @@ function test_is_err_string_ok_fails_with_value(r: test.TestRunner): test.TestRu
     if (dir == "") { return rr; }
     var path: string = dir + "/file.txt";
     match (write_file(path, "data")) {
-        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        None => {}
+        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
+        Ok(_) => {}
     }
     match (test.assert_is_err_string(read_file(path))) {
         Pass => {
@@ -75,8 +75,8 @@ function test_is_ok_eq_string_pass(r: test.TestRunner): test.TestRunner {
     if (dir == "") { return rr; }
     var path: string = dir + "/file.txt";
     match (write_file(path, "exact-value")) {
-        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        None => {}
+        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
+        Ok(_) => {}
     }
     return rr.it("is_ok_eq_string matches",
                  () => test.assert_is_ok_eq_string(read_file(path), "exact-value"));
@@ -87,8 +87,8 @@ function test_is_ok_eq_string_wrong_value(r: test.TestRunner): test.TestRunner {
     if (dir == "") { return rr; }
     var path: string = dir + "/file.txt";
     match (write_file(path, "actual")) {
-        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        None => {}
+        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
+        Ok(_) => {}
     }
     match (test.assert_is_ok_eq_string(read_file(path), "expected")) {
         Pass => {
@@ -140,8 +140,8 @@ function test_is_err_string_array_ok_embeds_length(r: test.TestRunner): test.Tes
     if (dir == "") { return rr; }
     // Drop one file in so the Ok payload has a non-zero length.
     match (write_file(dir + "/a.txt", "")) {
-        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
-        None => {}
+        Err(_) => { return rr.it("write fixture", () => test.fail("io")); },
+        Ok(_) => {}
     }
     match (test.assert_is_err_string_array(read_dir(dir))) {
         Pass => { return rr.it("Ok-array should fail is_err",

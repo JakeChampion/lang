@@ -44,11 +44,11 @@ func TestSelfHostRemoveDirAllIR(t *testing.T) {
 
 	src := fmt.Sprintf(`function main(): i32 {
     match (remove_dir_all(%q)) {
-        Some(_) => { return 1; },
-        None => {
+        Err(_) => { return 1; },
+        Ok(_) => {
             match (remove_dir_all(%q)) {
-                Some(_) => { return 2; },
-                None => { return 0; },
+                Err(_) => { return 2; },
+                Ok(_) => { return 0; },
             }
         },
     }
@@ -85,7 +85,7 @@ func TestSelfHostRemoveDirAllIR(t *testing.T) {
 }
 
 // TestSelfHostRemoveDirAllIRWasm pins `remove_dir_all(path)` lowering on the wasm
-// IR path. remove_dir_all is a recursive rm -rf returning Option[IoError] (None on
+// IR path. remove_dir_all is a recursive rm -rf returning Result[(), IoError] (Ok(()) on
 // success / Some(IoError) on failure); it was a wasm_eligible exclusion (no wasm
 // IR runtime), so any module using it fell back to the legacy AST emitter. It now
 // lowers to op_remove_dir_all -> a fresh recursive wasm runtime
@@ -140,11 +140,11 @@ func TestSelfHostRemoveDirAllIRWasm(t *testing.T) {
 
 	const src = `function main(): i32 {
     match (remove_dir_all("rda_dir")) {
-        Some(_) => { return 1; },
-        None => {
+        Err(_) => { return 1; },
+        Ok(_) => {
             match (remove_dir_all("rda_missing")) {
-                Some(_) => { return 2; },
-                None => { return 0; },
+                Err(_) => { return 2; },
+                Ok(_) => { return 0; },
             }
         },
     }

@@ -49,8 +49,8 @@ function test_temp_dir_writes_and_reads(): test.TestOutcome {
         Ok(dir) => {
             var path: string = dir + "/fixture.txt";
             match (write_file(path, "hello tempdir")) {
-                None => { },
-                Some(_) => { return test.fail("write_file failed under " + dir); }
+                Ok(_) => { },
+                Err(_) => { return test.fail("write_file failed under " + dir); }
             }
             // Confirm `cat` reads what we just wrote.
             var r: ProcessResult = subprocess("cat", [path], "");

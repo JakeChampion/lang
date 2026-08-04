@@ -33,10 +33,10 @@ function test_corpus_loads_and_runs(r: test.TestRunner): test.TestRunner {
     // Write three seed files. The `_skipme` underscore-
     // prefix gets filtered out so transient metadata doesn't
     // pollute the corpus.
-    match (write_file(dir + "/01.bin", "hello"))   { None => {}, Some(_) => { return rr.it("write 01", () => test.fail("io")); } }
-    match (write_file(dir + "/02.bin", "world"))   { None => {}, Some(_) => { return rr.it("write 02", () => test.fail("io")); } }
-    match (write_file(dir + "/03.bin", "anything")) { None => {}, Some(_) => { return rr.it("write 03", () => test.fail("io")); } }
-    match (write_file(dir + "/_skipme", "meta"))   { None => {}, Some(_) => { return rr.it("write meta", () => test.fail("io")); } }
+    match (write_file(dir + "/01.bin", "hello"))   { Ok(_) => {}, Err(_) => { return rr.it("write 01", () => test.fail("io")); } }
+    match (write_file(dir + "/02.bin", "world"))   { Ok(_) => {}, Err(_) => { return rr.it("write 02", () => test.fail("io")); } }
+    match (write_file(dir + "/03.bin", "anything")) { Ok(_) => {}, Err(_) => { return rr.it("write 03", () => test.fail("io")); } }
+    match (write_file(dir + "/_skipme", "meta"))   { Ok(_) => {}, Err(_) => { return rr.it("write meta", () => test.fail("io")); } }
 
     match (fuzz.fuzz_corpus_from_dir(dir)) {
         Ok(seeds) => {

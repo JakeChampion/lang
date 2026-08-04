@@ -607,8 +607,8 @@ pub function (r: TestRunner) finish(): i32 {
     while (k < r.cleanup_paths.len()) {
         var p: string = r.cleanup_paths[k];
         match (remove_dir_all(p)) {
-            None => { },
-            Some(_) => {
+            Ok(_) => { },
+            Err(_) => {
                 print("# cleanup failed for " + p);
                 cleanup_errored = true;
             },
@@ -2269,11 +2269,11 @@ pub function assert_matches_golden(path: string, actual: string): TestOutcome {
             // visible in logs so accidental "approve by
             // running on CI" is easy to spot.
             match (write_file(path, actual)) {
-                None => {
+                Ok(_) => {
                     print("# golden file bootstrapped at " + path);
                     return Pass;
                 },
-                Some(_) => {
+                Err(_) => {
                     return Fail("assert_matches_golden: could not write " + path);
                 }
             }
