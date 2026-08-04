@@ -75,15 +75,15 @@ function main(): i32 {
     var t: i32 = 0;
     // Each phase: warm up, sample, churn 10x more, sample again. Equal
     // samples == every buffer the 10 extra calls allocated was reclaimed.
-    t = t + churnNone(3); var a1: i32 = __heap_bump_bytes(); t = t + churnNone(10); var a2: i32 = __heap_bump_bytes();
+    t = t + churnNone(3); var a1: i32 = (__heap_bump_bytes() as i32); t = t + churnNone(10); var a2: i32 = (__heap_bump_bytes() as i32);
     if (a2 != a1) { return 11; }
-    t = t + churnOne(3); var b1: i32 = __heap_bump_bytes(); t = t + churnOne(10); var b2: i32 = __heap_bump_bytes();
+    t = t + churnOne(3); var b1: i32 = (__heap_bump_bytes() as i32); t = t + churnOne(10); var b2: i32 = (__heap_bump_bytes() as i32);
     if (b2 != b1) { return 12; }
-    t = t + churnTwo(3); var c1: i32 = __heap_bump_bytes(); t = t + churnTwo(10); var c2: i32 = __heap_bump_bytes();
+    t = t + churnTwo(3); var c1: i32 = (__heap_bump_bytes() as i32); t = t + churnTwo(10); var c2: i32 = (__heap_bump_bytes() as i32);
     if (c2 != c1) { return 13; }
-    t = t + churnLoop(3); var d1: i32 = __heap_bump_bytes(); t = t + churnLoop(10); var d2: i32 = __heap_bump_bytes();
+    t = t + churnLoop(3); var d1: i32 = (__heap_bump_bytes() as i32); t = t + churnLoop(10); var d2: i32 = (__heap_bump_bytes() as i32);
     if (d2 != d1) { return 14; }
-    t = t + churnDistinct(3); var e1: i32 = __heap_bump_bytes(); t = t + churnDistinct(10); var e2: i32 = __heap_bump_bytes();
+    t = t + churnDistinct(3); var e1: i32 = (__heap_bump_bytes() as i32); t = t + churnDistinct(10); var e2: i32 = (__heap_bump_bytes() as i32);
     if (e2 != e1) { return 15; }
 `
 

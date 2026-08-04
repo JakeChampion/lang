@@ -1111,16 +1111,21 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{},
 	}
-	// __heap_bump_bytes(): i32 — Phase 6 measurement probe. Returns the
+	// __heap_bump_bytes(): i64 — Phase 6 measurement probe. Returns the
 	// bump allocator's high-water mark (cursor − region base) in bytes; 0
 	// before the first alloc. The cursor only advances on a fresh bump,
 	// never on a freelist reuse, so a reclaiming loop keeps it flat while
 	// a leaking loop grows it — the metric for asserting reclaim/boundedness
 	// and for profiling hot allocations. See the IR lowering / per-backend
 	// runtime reader.
+	//
+	// i64 for the same reason as __heap_mark below: the arena is 16 GiB and
+	// the runtime already computes the offset in 64 bits, so an i32 result
+	// silently WRAPS past 2 GiB — a sweep once read 141 MB / 555 MB /
+	// -2.09 GB / 202 MB, where only the third reading looks wrong.
 	c.info.FuncSigs["__heap_bump_bytes"] = &ast.FuncType{
 		Params: []ast.Type{},
-		Result: ast.NumberType{},
+		Result: ast.NumberType{Width: 64, Signed: true},
 	}
 	// __heap_mark(): i64 / __heap_release_to(mark: i64) — one-level arena
 	// checkpoint. Mark captures the bump cursor (plus a freelist-head

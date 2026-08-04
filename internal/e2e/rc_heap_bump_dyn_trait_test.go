@@ -32,7 +32,7 @@ impl Shape for Boxed {
     function area(self: Self): i32 { return 1; }
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
@@ -40,7 +40,7 @@ function main(): i32 {
         sum = sum + d.area();
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -113,7 +113,7 @@ impl B for Both {
     function b2(self: Self): i32 { return 3; }
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
@@ -121,7 +121,7 @@ function main(): i32 {
         sum = sum + d.a1() + d.b1() + d.b2();
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 	}
 	small := runWasm(t, src("50"))
@@ -176,7 +176,7 @@ function main(): i32 {
 	// Bounded check: the caller's local still reclaims; no leak from the
 	// borrow.
 	bumped := func(n string) string {
-		return mk(`var before: i32 = __heap_bump_bytes();
+		return mk(`var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
@@ -184,7 +184,7 @@ function main(): i32 {
         sum = sum + use_it(d);
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;`)
+    return (__heap_bump_bytes() as i32) - before;`)
 	}
 	small := runWasm(t, bumped("50"))
 	large := runWasm(t, bumped("5000"))

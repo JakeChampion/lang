@@ -2110,6 +2110,12 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "__raw_scratch") { return ty_i32(); }
                     // i64-typed raw word load (kernel-written tv_sec / tv_nsec).
                     if (id.name == "__load_i64") { return ty_i64(); }
+                    // __heap_bump_bytes(): the bump high-water mark. i64, not
+                    // i32 — the arena is 16 GiB, so the mark passes 2^31 on a
+                    // long enough run and an i32 result would report it
+                    // negative. Matches native's FuncSigs; the wasm backend
+                    // zero-extends its i32 cursor difference to suit.
+                    if (id.name == "__heap_bump_bytes") { return ty_i64(); }
                     if (id.name == "__load_i32") { return ty_i32(); }
                     if (id.name == "exit") { return ty_i32(); }
                     if (id.name == "args_count") { return ty_i32(); }

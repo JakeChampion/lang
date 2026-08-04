@@ -37,10 +37,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { var o: Option[(i32, P)] = Some((i, P { xs: [i, i + 1], y: i })); match (o) { Some(g) => { acc = (acc + g.0) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[(i32, P)] = Some((j, P { xs: [j, j + 1], y: j })); match (o2) { Some(g) => { acc = (acc + g.0) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -52,10 +52,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { var xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })]; acc = (acc + xs[0].0) % 251; i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 5000) { var ys: (i32, P)[] = [(j, P { xs: [j, j + 1], y: j })]; acc = (acc + ys[0].0) % 251; j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -98,10 +98,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 5000) { var o: Option[(i32, i32[])] = Some((i, [i, i + 1])); match (o) { Some(g) => { acc = (acc + g.0 + g.1[0]) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[(i32, i32[])] = Some((j, [j, j + 1])); match (o2) { Some(g) => { acc = (acc + g.1[1]) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;

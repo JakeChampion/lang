@@ -32,7 +32,7 @@ func matchScrutineeExprBumpSrc(n string) string {
 	return `enum E3 { A(i32), B(i32), C }
 function mk(v: i32): E3 { return A(v); }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -41,7 +41,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -50,7 +50,7 @@ func matchScrutineeStmtBumpSrc(n string) string {
 	return `enum E3 { A(i32), B(i32), C }
 function mk(v: i32): E3 { return A(v); }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -62,7 +62,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

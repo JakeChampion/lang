@@ -42,7 +42,7 @@ func seqDead4Src() string {
     var b: i32[] = ` + l + `; var sb: i32 = b[0];
     var c: i32[] = ` + l + `; var sc: i32 = c[0];
     var d: i32[] = ` + l + `; var sd: i32 = d[0];
-    return __heap_bump_bytes() + sa + sb + sc + sd;
+    return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
 }`
 }
 
@@ -55,7 +55,7 @@ func live4Src() string {
     var b: i32[] = ` + l + `;
     var c: i32[] = ` + l + `;
     var d: i32[] = ` + l + `;
-    return __heap_bump_bytes() + a[0] + b[0] + c[0] + d[0];
+    return (__heap_bump_bytes() as i32) + a[0] + b[0] + c[0] + d[0];
 }`
 }
 
@@ -134,7 +134,7 @@ func rcArrDead4Src() string {
     var b: i32[][] = ` + mk + `; var sb: i32 = b[0][0];
     var c: i32[][] = ` + mk + `; var sc: i32 = c[0][0];
     var d: i32[][] = ` + mk + `; var sd: i32 = d[0][0];
-    return __heap_bump_bytes() + sa + sb + sc + sd;
+    return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
 }`
 }
 
@@ -146,7 +146,7 @@ func rcArrLive4Src() string {
     var b: i32[][] = ` + mk + `;
     var c: i32[][] = ` + mk + `;
     var d: i32[][] = ` + mk + `;
-    return __heap_bump_bytes() + a[0][0] + b[0][0] + c[0][0] + d[0][0];
+    return (__heap_bump_bytes() as i32) + a[0][0] + b[0][0] + c[0][0] + d[0][0];
 }`
 }
 

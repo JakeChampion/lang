@@ -56,7 +56,7 @@ func TestSelfHostClosureEnvRcIRX86_64(t *testing.T) {
 	// 3000-iteration warmup a second churn stays flat (< 256 B slack).
 	run(t, `function go(pre: string): i32 { var nm: string = pre + "xyz"; var c = () => nm.len(); return c(); }
 function churn(m: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(3000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"closure-string-capture-flat", 0)
 
 	// SCALAR-ARRAY capture, balanced: xs is swept by its own slot AND released
@@ -64,7 +64,7 @@ function main(): i32 { var w: i32 = churn(3000); var b1: i32 = __heap_bump_bytes
 	// exactly once (underflow 0), flat across the second churn.
 	run(t, `function go(k: i32): i32 { var xs: i32[] = [k, k + 1, k + 2]; var c = () => xs[0] + xs[2]; return c(); }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(i)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(3000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"closure-array-capture-flat", 0)
 
 	// CAPTURE USED AFTER the closure: nm read directly after c() — the release
@@ -111,10 +111,10 @@ func TestSelfHostClosureEnvRcWasmIR(t *testing.T) {
 	}{
 		{"closure-string-capture-flat-wasm", `function go(pre: string): i32 { var nm: string = pre + "xyz"; var c = () => nm.len(); return c(); }
 function churn(m: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 		{"closure-array-capture-flat-wasm", `function go(k: i32): i32 { var xs: i32[] = [k, k + 1, k + 2]; var c = () => xs[0] + xs[2]; return c(); }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(i)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,7 +155,7 @@ func TestSelfHostClosureEnvRcIRArm64(t *testing.T) {
 
 	prog := `function go(pre: string): i32 { var nm: string = pre + "xyz"; var c = () => nm.len(); return c(); }
 function churn(m: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`
+function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`
 	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64")
 	if len(asm) == 0 {
 		t.Fatalf("self-host arm64 compiler emitted 0 bytes")

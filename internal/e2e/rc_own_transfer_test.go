@@ -88,13 +88,13 @@ func TestWASMOwnTransfer(t *testing.T) {
 	bumpSrc := func(n string) string {
 		return `function consume(own xs: i32[]): i32 { return xs[0]; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) {
         var unused: i32 = consume([i, i + 1, i + 2, i + 3]);
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 	}
 	small := runWasm(t, bumpSrc("5000"))

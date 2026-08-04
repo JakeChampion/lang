@@ -27,11 +27,19 @@ var heapBumpBytesIRCases = []struct {
 	want int
 }{
 	// Before any allocation the high-water mark is 0.
-	{"zero-before-alloc", `function main(): i32 { if (__heap_bump_bytes() == 0) { return 7; } return 1; }`, 7},
+	{"zero-before-alloc", `function main(): i32 { if ((__heap_bump_bytes() as i32) == 0) { return 7; } return 1; }`, 7},
 	// A fresh allocation advances the cursor above the zero baseline.
-	{"grows-on-alloc", `function main(): i32 { var before: i32 = __heap_bump_bytes(); var a: i32[] = [1, 2, 3, 4, 5]; var after: i32 = __heap_bump_bytes(); if (before == 0) { if (after > before) { return 7; } } return 1; }`, 7},
+	{"grows-on-alloc", `function main(): i32 { var before: i32 = (__heap_bump_bytes() as i32); var a: i32[] = [1, 2, 3, 4, 5]; var after: i32 = (__heap_bump_bytes() as i32); if (before == 0) { if (after > before) { return 7; } } return 1; }`, 7},
 	// Read across a call boundary + an explicit "after > 0" check.
-	{"after-positive", `function main(): i32 { var a: i32[] = [1, 2, 3]; if (__heap_bump_bytes() > 0) { return 11; } return 1; }`, 11},
+	{"after-positive", `function main(): i32 { var a: i32[] = [1, 2, 3]; if ((__heap_bump_bytes() as i32) > 0) { return 11; } return 1; }`, 11},
+	// The probe's declared result is i64 on the self-host too, not just
+	// natively: the arena is 16 GiB, so the mark passes 2^31 on a long run and
+	// an i32 result reads it back negative. Binding it to i64 locals and
+	// comparing in 64 bits is the type assertion — if either compiler narrows
+	// it again this stops compiling rather than quietly returning a wrapped
+	// number. It also covers the wasm zero-extend, whose i32 cursor difference
+	// has to reach the i64 the builtin promises.
+	{"i64-typed", `function main(): i32 { var before: i64 = __heap_bump_bytes(); var a: i32[] = [1, 2, 3]; var after: i64 = __heap_bump_bytes(); if (before != (0 as i64)) { return 1; } if (after <= before) { return 2; } return 9; }`, 9},
 }
 
 // TestSelfHostHeapBumpBytesIRX86_64 routes each case through the self-hosted
@@ -105,11 +113,11 @@ var heapBumpFixpointCases = []struct {
 	// would corrupt them), so this is bounded AND value-correct.
 	{"precise-drop-array", func(n string) string {
 		return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { var v: i32[] = [i, i + 1, i + 2]; acc = acc + v[0] + v[1] + v[2]; i = i + 1; }
     if (acc == 987654) { return 200; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 	}},
 	// Loop-reassigned array local: each rebind releases the prior iteration's
@@ -117,11 +125,11 @@ var heapBumpFixpointCases = []struct {
 	// so the loop's high-water stays one box wide.
 	{"loop-reassign-array", func(n string) string {
 		return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { var v: i32[] = [i, i + 1]; v = [i, i + 2, i + 3]; acc = acc + v[0] + v[1] + v[2]; i = i + 1; }
     if (acc == 987654) { return 200; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 	}},
 	// Literal-sized owned buffer (`__alloc_u8(8)`) whose only borrowed input is
@@ -131,11 +139,11 @@ var heapBumpFixpointCases = []struct {
 	// keeps the borrow reads live so a wrongly-freed buffer would corrupt them.
 	{"literal-alloc", func(n string) string {
 		return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { var b: u8[] = __alloc_u8(8); b = b.with(0, (i % 200) as u8); acc = acc + (b[0] as i32); i = i + 1; }
     if (acc < 0) { return 0 - 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 	}},
 }

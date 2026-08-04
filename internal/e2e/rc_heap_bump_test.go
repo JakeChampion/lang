@@ -24,7 +24,7 @@ import (
 // bump cursor advanced across an n-iteration build-and-discard loop.
 func heapBumpGrowthSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
@@ -32,13 +32,13 @@ func heapBumpGrowthSrc(n string) string {
         sum = sum + row[0];
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
 // heapBumpZeroSrc never allocates, so the probe must read 0.
 const heapBumpZeroSrc = `function main(): i32 {
-    return __heap_bump_bytes();
+    return (__heap_bump_bytes() as i32);
 }`
 
 func TestX86_64HeapBumpBounded(t *testing.T) {

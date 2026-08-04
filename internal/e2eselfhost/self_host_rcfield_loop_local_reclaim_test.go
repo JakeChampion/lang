@@ -26,11 +26,11 @@ import (
 func rcFieldLoopLocalLiteralSrc(n string) string {
 	return `struct P { x: i32, xs: i32[] }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { var t: P = P { x: i, xs: [i, i + 1] }; acc = acc + t.x; i = i + 1; }
     if (acc < 0) { return 5; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -38,11 +38,11 @@ func rcFieldLoopLocalCallSrc(n string) string {
 	return `struct P { x: i32, xs: i32[] }
 function f(v: i32): P { return P { x: v, xs: [v, v + 1] }; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { var t: P = f(i); acc = acc + t.x; i = i + 1; }
     if (acc < 0) { return 5; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -55,11 +55,11 @@ func scalarLoopLocalCallSrc(n string) string {
 	return `struct P { x: i32, y: i32 }
 function mk(v: i32): P { return P { x: v, y: v + 1 }; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { var t: P = mk(i); acc = acc + t.x + t.y; i = i + 1; }
     if (acc < 0) { return 5; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

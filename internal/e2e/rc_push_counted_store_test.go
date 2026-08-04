@@ -30,7 +30,7 @@ func pushProjectionSrc(n string) string {
     return e[0] + e[1];
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var s: i32 = 0;
     while (i < ` + n + `) {
@@ -38,7 +38,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (s == 0) { return 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -216,7 +216,7 @@ const deadAliasBalanceSrc = `function work(k: i32): i32 {
     return y[1][0] + y[0][1] + x[0][0];
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var s: i32 = 0;
     while (i < 5000) {
@@ -225,7 +225,7 @@ function main(): i32 {
     }
     if (s == 0) { return 1; }
     if (__rc_underflow_count() != 0) { return 2; }
-    if (__heap_bump_bytes() - before > 65536) { return 3; }
+    if ((__heap_bump_bytes() as i32) - before > 65536) { return 3; }
     return 0;
 }`
 

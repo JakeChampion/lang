@@ -54,10 +54,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { acc = acc + readit("ab"); i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 2000) { acc = acc + readit("ab"); j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc != 4400) { return 97; }
@@ -92,10 +92,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { acc = acc + readit(base + "bc"); i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 2000) { acc = acc + readit(base + "bc"); j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (base.len() != 1) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -112,10 +112,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { acc = acc + readit(src.to_ascii_upper()); i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 2000) { acc = acc + readit(src.to_ascii_upper()); j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (src.len() != 4) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -149,10 +149,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { acc = acc + pick("x", live); i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 2000) { acc = acc + pick("x", live); j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (live.len() != 4) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }

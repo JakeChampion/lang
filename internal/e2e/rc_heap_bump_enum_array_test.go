@@ -32,7 +32,7 @@ import (
 func enumArrBumpSrc(n string) string {
 	return `enum Box { Val(string), Empty }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -41,7 +41,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

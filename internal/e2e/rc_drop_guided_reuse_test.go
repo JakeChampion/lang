@@ -150,7 +150,7 @@ function main(): i32 {
         warm = warm + row[0];
         w = w + 1;
     }
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var acc: i32 = warm;
     var i: i32 = 0;
     while (i < 2000) {
@@ -158,7 +158,7 @@ function main(): i32 {
         acc = acc + row[0];
         i = i + 1;
     }
-    print((__heap_bump_bytes() - before).to_string());
+    print(((__heap_bump_bytes() as i32) - before).to_string());
     if (acc < 0) { return 1; }
     return 0;
 }`, false},
@@ -167,7 +167,7 @@ function main(): i32 {
 	{"struct_churn", `import "std/i32";
 struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 2000) {
@@ -177,7 +177,7 @@ function main(): i32 {
         acc = acc + b.x + b.y;
         i = i + 1;
     }
-    print((__heap_bump_bytes() - before).to_string());
+    print(((__heap_bump_bytes() as i32) - before).to_string());
     if (acc < 0) { return 1; }
     return 0;
 }`, false},
@@ -185,13 +185,13 @@ function main(): i32 {
 	{"r3_dead_chain", `import "std/i32";
 struct Box { a: i32, b: i32, c: i32, d: i32 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var p: Box = Box { a: 1, b: 2, c: 3, d: 4 };
     var s: i32 = p.a + p.d;
     var q: Box = Box { a: s, b: 0, c: 0, d: 0 };
     var u: i32 = q.a;
     var r: Box = Box { a: u, b: 0, c: 0, d: 0 };
-    print((__heap_bump_bytes() - before).to_string());
+    print(((__heap_bump_bytes() as i32) - before).to_string());
     if (r.a != 5) { return 1; }
     return 0;
 }`, false},
@@ -201,7 +201,7 @@ function main(): i32 {
 	{"arm_shape_loop", `import "std/i32";
 struct Wide { a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 2000) {
@@ -213,7 +213,7 @@ function main(): i32 {
         }
         i = i + 1;
     }
-    print((__heap_bump_bytes() - before).to_string());
+    print(((__heap_bump_bytes() as i32) - before).to_string());
     if (acc < 0) { return 1; }
     return 0;
 }`, true},

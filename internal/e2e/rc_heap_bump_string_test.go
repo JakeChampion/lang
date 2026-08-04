@@ -27,7 +27,7 @@ import (
 
 func stringConcatBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var a: string = "hello";
     var b: string = "world";
     var i: i32 = 0;
@@ -35,7 +35,7 @@ func stringConcatBumpSrc(n string) string {
         var s: string = a + b;
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -66,13 +66,13 @@ func longStringReinitBumpSrc(n string) string {
     return "odd";
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) {
         var s: string = "a-fairly-long-heap-string-prefix-" + tag(i);
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

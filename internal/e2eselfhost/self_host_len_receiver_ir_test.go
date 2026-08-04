@@ -36,12 +36,12 @@ var lenRecvIRCases = []struct {
     return "prefix-block-aaaa" + "suffix-block-bbbb";
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + f(i).len(); i = i + 1; }
     if (acc != ` + n + ` * 34) { return 121; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -51,12 +51,12 @@ function main(): i32 {
     return [k, k + 1, k + 2, k + 3, k + 4, k + 5, k + 6, k + 7, k + 8, k + 9];
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + mk(i).len(); i = i + 1; }
     if (acc != ` + n + ` * 10) { return 121; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`

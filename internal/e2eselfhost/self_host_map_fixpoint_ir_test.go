@@ -40,7 +40,7 @@ var mapFixpointIRCases = []struct {
 	{name: "cow-loop-getor", src: func(n string) string {
 		return `import "core/map";
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) {
         var m: Map[i32, i32] = map_new(8);
@@ -49,7 +49,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc < 0) { return 121; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -63,11 +63,11 @@ function step2(k: i32): i32 {
     return m.get_or(k, 0) + m.get_or(k + 1, 0);
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + step2(i); i = i + 1; }
     if (acc < 0) { return 121; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -80,11 +80,11 @@ function step(k: i32): i32 {
     return m.get_or(k, 7);
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + step(i); i = i + 1; }
     if (acc < 0) { return 121; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -96,11 +96,11 @@ function step(k: i32): i32 {
     return m.get_or(k, 7);
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + step(i); i = i + 1; }
     if (acc != ` + n + ` * 7) { return 121; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -118,7 +118,7 @@ function mk(k: i32): Map[i32, i32] {
     return m;
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) {
         var m: Map[i32, i32] = mk(i);
@@ -126,7 +126,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc != ` + n + ` * (` + n + ` - 1)) { return 121; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -144,11 +144,11 @@ function step(k: i32): i32 {
     return m.get_or(k, 0) + m.get_or(k + 1, 0);
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + step(i); i = i + 1; }
     if (acc < 0) { return 121; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -166,10 +166,10 @@ function mk(k: i32): Map[i32, i32] {
     return m;
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`

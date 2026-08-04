@@ -19,7 +19,7 @@ import (
 
 func genEnumArrBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -30,7 +30,7 @@ func genEnumArrBumpSrc(n string) string {
         }
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

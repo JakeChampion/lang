@@ -200,7 +200,7 @@ func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
 	src := `function main(): i32 {
     var m: i64 = __heap_mark();
     __heap_release_to(m);
-    return __heap_bump_bytes();
+    return (__heap_bump_bytes() as i32);
 }`
 	for _, target := range []string{"x86-64", "arm64", "arm64-darwin", "arm64-android"} {
 		t.Run(target+"/allowed", func(t *testing.T) {

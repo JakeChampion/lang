@@ -26,9 +26,9 @@ function inc_all(xs: List): List {
 function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
 function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var ys: List = inc_all(build(` + n + `));
-    var peak: i32 = __heap_bump_bytes() - before;
+    var peak: i32 = (__heap_bump_bytes() as i32) - before;
     if (sum(ys) < 0) { return 255; }
     return peak / ` + div + `;
 }`

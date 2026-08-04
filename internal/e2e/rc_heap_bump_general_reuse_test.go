@@ -67,7 +67,7 @@ function main(): i32 {
     var q: Box = Box { a: s, b: 0, c: 0, d: 0 };   // reuses p's box
     var t: i32 = q.a;
     var r: Box = Box { a: t, b: 0, c: 0, d: 0 };   // reuses q's box
-    return __heap_bump_bytes() + r.a;
+    return (__heap_bump_bytes() as i32) + r.a;
 }`
 }
 
@@ -77,7 +77,7 @@ function main(): i32 {
     var p: Box = Box { a: 1, b: 2, c: 3, d: 4 };
     var q: Box = Box { a: 5, b: 6, c: 7, d: 8 };
     var r: Box = Box { a: 9, b: 10, c: 11, d: 12 };
-    return __heap_bump_bytes() + p.a + q.a + r.a;
+    return (__heap_bump_bytes() as i32) + p.a + q.a + r.a;
 }`
 }
 

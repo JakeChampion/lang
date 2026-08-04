@@ -74,10 +74,10 @@ function build(n: i32): List { if (n == 0) { return Nil; } return Cons(n, build(
 function sum(l: List): i32 { match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } } }
 function dup(xs: List): List { match (xs) { Cons(h, t) => { return Cons(h, dup(t)); }, Nil => { return Nil; } } }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { var u: i32 = sum(dup(build(5))); i = i + 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 	}
 	if small, large := runWasm(t, bump("500")), runWasm(t, bump("5000")); small != large {

@@ -51,7 +51,7 @@ var fnptrArrayRebindCases = []struct {
 	// Repeated rebinds in a loop: the superseded buffer is released by
 	// emit_arr_store's cow-guarded dec, so the heap must not grow without bound
 	// and nothing may be released twice.
-	{"rebind-rc-soundness", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction churn(n: i32): i32 { var a: (() => i32)[] = [seven]; var i: i32 = 0; var s: i32 = 0; while (i < n) { a = [nine]; s = a[0](); i = i + 1; } return s; }\nfunction main(): i32 { var w: i32 = churn(3000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(3000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 4096) { return 98; } if (w != x) { return 97; } return w; }", 9},
+	{"rebind-rc-soundness", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction churn(n: i32): i32 { var a: (() => i32)[] = [seven]; var i: i32 = 0; var s: i32 = 0; while (i < n) { a = [nine]; s = a[0](); i = i + 1; } return s; }\nfunction main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 4096) { return 98; } if (w != x) { return 97; } return w; }", 9},
 }
 
 // TestSelfHostFnptrArrayRebindIRX86_64 — the x86-64 leg, through the production

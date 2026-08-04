@@ -38,7 +38,7 @@ function main(): i32 {
     var b: Box = Box { data: ` + l + `, n: 2 }; var sb: i32 = b.data[0] + b.n;
     var c: Box = Box { data: ` + l + `, n: 3 }; var sc: i32 = c.data[0] + c.n;
     var d: Box = Box { data: ` + l + `, n: 4 }; var sd: i32 = d.data[0] + d.n;
-    return __heap_bump_bytes() + sa + sb + sc + sd;
+    return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
 }`
 }
 
@@ -50,7 +50,7 @@ function main(): i32 {
     var b: Box = Box { data: ` + l + `, n: 2 };
     var c: Box = Box { data: ` + l + `, n: 3 };
     var d: Box = Box { data: ` + l + `, n: 4 };
-    return __heap_bump_bytes() + a.n + b.n + c.n + d.n;
+    return (__heap_bump_bytes() as i32) + a.n + b.n + c.n + d.n;
 }`
 }
 
@@ -82,7 +82,7 @@ function main(): i32 {
     var b: E = Wrap(` + l + `); var sb: i32 = match (b) { Wrap(x) => x[0], Two(p, q) => p + q };
     var c: E = Wrap(` + l + `); var sc: i32 = match (c) { Wrap(x) => x[0], Two(p, q) => p + q };
     var d: E = Wrap(` + l + `); var sd: i32 = match (d) { Wrap(x) => x[0], Two(p, q) => p + q };
-    return __heap_bump_bytes() + sa + sb + sc + sd;
+    return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
 }`
 }
 

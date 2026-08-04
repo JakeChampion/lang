@@ -3189,7 +3189,12 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // native's __fern_heap_bump_bytes. heap_base is recomputed from the
             // data-section layout (identical to heap_base_for(mod), since
             // str_vals == str_values(mod)).
-            out = out + "    global.get $heap\n    i32.const " + util.i32_to_string((str_offset(str_vals, str_vals.len()) + 16 + 7) / 8 * 8 + fl_cells() * 4) + "\n    i32.sub\n";
+            //
+            // The op's declared result is i64 (asmcore types the builtin i64 so
+            // a >2 GiB mark cannot read back negative), so zero-extend the i32
+            // address difference. Zero-, not sign-extend: the cursor never sits
+            // below heap_base, so the difference is a non-negative byte count.
+            out = out + "    global.get $heap\n    i32.const " + util.i32_to_string((str_offset(str_vals, str_vals.len()) + 16 + 7) / 8 * 8 + fl_cells() * 4) + "\n    i32.sub\n    i64.extend_i32_u\n";
         } else if (o.kind_tag == 74) {  // memcpy
             // stack: dst, src, n -> copy n bytes src->dst via the bulk-memory
             // memory.copy (operand order [dest, src, size] matches the lowering

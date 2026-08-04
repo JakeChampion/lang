@@ -33,10 +33,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { var o: Option[P] = Some(P { xs: [i, i + 1] }); match (o) { Some(p) => { acc = (acc + p.xs[0]) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[P] = Some(P { xs: [j, j + 1] }); match (o2) { Some(p) => { acc = (acc + p.xs[0]) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -49,10 +49,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { var o: Option[P] = Some(P { n: i, xs: [i, i + 1] }); match (o) { Some(p) => { acc = (acc + p.n + p.xs[0] + p.xs.len()) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[P] = Some(P { n: j, xs: [j, j + 1] }); match (o2) { Some(p) => { acc = (acc + p.xs[1]) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }

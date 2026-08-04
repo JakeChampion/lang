@@ -45,13 +45,13 @@ func cfLit(n int) string {
 func cfUsedInIfSrc() string {
 	l := cfLit(100)
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var big: i32[] = ` + l + `;
     var acc: i32 = 0;
     if (before >= 0) { acc = acc + big[0] + big[99]; }
     var tail: i32[] = ` + l + `;
     acc = acc + tail[0];
-    return (__heap_bump_bytes() - before) + acc;
+    return ((__heap_bump_bytes() as i32) - before) + acc;
 }`
 }
 
@@ -59,10 +59,10 @@ func cfUsedInIfSrc() string {
 func cfBothLiveSrc() string {
 	l := cfLit(100)
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var big: i32[] = ` + l + `;
     var tail: i32[] = ` + l + `;
-    return (__heap_bump_bytes() - before) + big[0] + tail[0];
+    return ((__heap_bump_bytes() as i32) - before) + big[0] + tail[0];
 }`
 }
 

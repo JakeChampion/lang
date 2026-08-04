@@ -66,10 +66,10 @@ function inc(own t: Tree): Tree { match (t) { Node(l,r,v) => { return Node(inc(l
 function total(t: Tree): i32 { match (t) { Node(l,r,v) => { return total(l)+total(r)+v; }, Leaf => { return 0; } } }
 function build(d: i32): Tree { if (d == 0) { return Leaf; } return Node(build(d-1), build(d-1), d); }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { var u: i32 = total(inc(build(5))); i = i + 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 	}
 	small := runWasm(t, bump("1000"))

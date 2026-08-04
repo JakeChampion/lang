@@ -66,13 +66,13 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { acc = acc + build_sk(i) + build_ik(i); i = i + 1; }
-    var s1: i32 = __heap_bump_bytes();
+    var s1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 2000) { acc = acc + build_sk(j); j = j + 1; }
-    var s2: i32 = __heap_bump_bytes();
+    var s2: i32 = (__heap_bump_bytes() as i32);
     var k: i32 = 0;
     while (k < 2000) { acc = acc + build_ik(k); k = k + 1; }
-    var k2: i32 = __heap_bump_bytes();
+    var k2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
     if (acc < 0) { return 97; }
@@ -92,13 +92,13 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { acc = acc + build_ss(i) + build_ii(i); i = i + 1; }
-    var s1: i32 = __heap_bump_bytes();
+    var s1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 2000) { acc = acc + build_ss(j); j = j + 1; }
-    var s2: i32 = __heap_bump_bytes();
+    var s2: i32 = (__heap_bump_bytes() as i32);
     var k: i32 = 0;
     while (k < 2000) { acc = acc + build_ii(k); k = k + 1; }
-    var k2: i32 = __heap_bump_bytes();
+    var k2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
     if (acc < 0) { return 97; }
@@ -162,13 +162,13 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { acc = acc + build_sk_over(i) + build_ik_over(i); i = i + 1; }
-    var s1: i32 = __heap_bump_bytes();
+    var s1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 2000) { acc = acc + build_sk_over(j); j = j + 1; }
-    var s2: i32 = __heap_bump_bytes();
+    var s2: i32 = (__heap_bump_bytes() as i32);
     var k: i32 = 0;
     while (k < 2000) { acc = acc + build_ik_over(k); k = k + 1; }
-    var k2: i32 = __heap_bump_bytes();
+    var k2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
     if (acc < 0) { return 97; }

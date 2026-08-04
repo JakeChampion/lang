@@ -53,7 +53,7 @@ function make(seed: i32): () => i32 {
     return function (): i32 { return dc.area(); };
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
@@ -61,7 +61,7 @@ function main(): i32 {
         sum = sum + f();
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

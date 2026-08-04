@@ -36,14 +36,14 @@ impl Show for i32 {
 }
 function go(k: i32): i32 { var d: dyn Show = k; return d.show(); }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
         sum = (sum + go(41)) % 251;
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -60,14 +60,14 @@ impl Show for string {
 }
 function go(k: i32): i32 { var d: dyn Show = "hello"; return d.show() + k; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
         sum = (sum + go(3)) % 251;
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -172,14 +172,14 @@ impl Show for Op {
 }
 function go(k: i32): i32 { var d: dyn Show = Add(41); return d.show() + k; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
         sum = (sum + go(3)) % 251;
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -224,14 +224,14 @@ impl Show for Dot {
 }
 function go(k: i32): i32 { var d: dyn Show = Dot { r: 41 }; return d.show() + k; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
         sum = (sum + go(3)) % 251;
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -281,14 +281,14 @@ impl Show for Dot {
 }
 function go(k: i32): i32 { var xs: dyn Show[] = [k, Dot { r: k }, 7]; return xs[0].show() + xs[1].show() + xs[2].show(); }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
         sum = (sum + go(3)) % 251;
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

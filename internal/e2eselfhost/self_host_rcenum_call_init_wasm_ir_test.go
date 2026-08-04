@@ -53,14 +53,14 @@ function main(): i32 {
         match (e) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 1500) {
         var e2: E = mk(base, j);
         match (e2) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         j = j + 1;
     }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }

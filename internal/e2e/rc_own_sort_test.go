@@ -60,14 +60,14 @@ func TestWASMOwnInplaceSort(t *testing.T) {
 		return `
 import "std/sort";
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) {
         var a: i32[] = sort.sort_i32_inplace_asc([5, 3, 8, 1, 9, 2, 7, 4, 6]);
         var u: i32 = a[0];
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 	}
 	if small, large := runWasm(t, bump("500")), runWasm(t, bump("5000")); small != large {

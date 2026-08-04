@@ -32,7 +32,7 @@ import (
 // scalarCapClosureArrSrc: a `(() => i32)[]` of scalar-capture closures.
 func scalarCapClosureArrSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -41,7 +41,7 @@ func scalarCapClosureArrSrc(n string) string {
         acc = acc + fs[0]() + fs[1]();
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -50,7 +50,7 @@ func scalarCapClosureArrSrc(n string) string {
 // reclaims the captured array) is exercised through the drop-fn pointer.
 func ptrCapClosureArrSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -59,7 +59,7 @@ func ptrCapClosureArrSrc(n string) string {
         acc = acc + fs[0]() + fs[1]();
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

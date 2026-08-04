@@ -41,7 +41,7 @@ struct Circle { tag: string }
 impl Shape for Circle { function area(self: Self): i32 { return 1; } }
 enum Box { Wrap(dyn Shape), Empty }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
@@ -53,7 +53,7 @@ function main(): i32 {
         }
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

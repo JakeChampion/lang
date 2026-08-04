@@ -62,9 +62,9 @@ function churn(n: i32): i32 {
 }
 function main(): i32 {
   var w: i32 = churn(3);
-  var b1: i32 = __heap_bump_bytes();
+  var b1: i32 = (__heap_bump_bytes() as i32);
   var x: i32 = churn(3);
-  var b2: i32 = __heap_bump_bytes();
+  var b2: i32 = (__heap_bump_bytes() as i32);
   if (__rc_underflow() != 0) { return 99; }
   if (b2 - b1 >= 1048576) { return 98; }
   if (w != x) { return 97; }

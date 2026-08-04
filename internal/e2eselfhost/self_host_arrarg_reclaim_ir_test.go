@@ -34,10 +34,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;
     while (w < 200) { acc = (acc + take([w, w + 1])) % 251; w = w + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < 5000) { acc = (acc + take([i, i + 1])) % 251; i = i + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -69,14 +69,14 @@ function main(): i32 {
         acc = (acc + slen(["ab", "c"])) % 251;
         w = w + 1;
     }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < 5000) {
         acc = (acc + take2([i, i], [i, i + 1])) % 251;
         acc = (acc + fwd([i, i + 2])) % 251;
         i = i + 1;
     }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     var f3: i32 = fsum([2.0, 1.0]);
     if (f3 != 3) { return 96; }
     var s3: i32 = slen(["xy", "z"]);

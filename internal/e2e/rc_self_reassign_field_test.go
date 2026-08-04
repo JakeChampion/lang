@@ -34,12 +34,12 @@ func selfReassignFieldBumpSrc(n string) string {
 struct St { cur: Blk }
 function (s: St) emit(x: i32): St { return St { cur: Blk { insts: s.cur.insts.append(x) } }; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var s: St = St { cur: Blk { insts: [] } };
     var i: i32 = 0;
     while (i < ` + n + `) { s = s.emit(i); i = i + 1; }
     if (s.cur.insts.len() != ` + n + `) { return 999; }
-    return (__heap_bump_bytes() - before) / 64;
+    return ((__heap_bump_bytes() as i32) - before) / 64;
 }`
 }
 
@@ -85,13 +85,13 @@ func selfReassignStringFieldBumpSrc(n string) string {
 	return `struct Acc { tag: string, xs: i32[] }
 function (a: Acc) step(v: i32): Acc { return Acc { tag: a.tag, xs: a.xs.append(v) }; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var a: Acc = Acc { tag: "seed-" + "tag", xs: [] };
     var i: i32 = 0;
     while (i < ` + n + `) { a = a.step(i); i = i + 1; }
     if (a.xs.len() != ` + n + `) { return 999; }
     if (a.tag.len() != 8) { return 998; }
-    return (__heap_bump_bytes() - before) / 64;
+    return ((__heap_bump_bytes() as i32) - before) / 64;
 }`
 }
 
@@ -112,10 +112,10 @@ function build(s: Bld, n: i32): Bld {
     return s;
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var s: Bld = build(Bld { name: "fn", insts: [] }, ` + n + `);
     if (s.insts.len() != ` + n + `) { return 200; }
-    return (__heap_bump_bytes() - before) / 64;
+    return ((__heap_bump_bytes() as i32) - before) / 64;
 }`
 }
 

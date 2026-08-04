@@ -522,14 +522,14 @@ pub function op_writer_write(): Op { return op0("writer_write"); }
 pub function op_open_file(flags: i32): Op {
     return Op { kind_tag: kind_id("open_file"), i32_imm: flags, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
-// `__heap_bump_bytes` takes no operands → an i32: the bump allocator's
+// `__heap_bump_bytes` takes no operands → an i64: the bump allocator's
 // high-water mark (cursor − region base; 0 before the first allocation). It
 // reads the heap runtime's cursor + base — so it does NOT allocate, but it
 // DOES need the heap runtime present (op_allocates admits it for the gate). The
 // register backends compute cursor − base inline (base recovered as
 // __fern_heap_end − heap_size on both x86 and arm64, since each mmap's its
-// arena and records the end); wasm reads `$heap − heap_base`. Mirrors
-// native's __fern_heap_bump_bytes.
+// arena and records the end); wasm reads `$heap − heap_base` and zero-extends
+// it to the declared i64. Mirrors native's __fern_heap_bump_bytes.
 pub function op_heap_bump_bytes(): Op { return op0("heap_bump_bytes"); }
 // `str_bytes` pops [str] → a fresh u8[] (one i32 slot per byte). Backs both
 // `s.bytes()` (copying) and `s.as_bytes()` — the self-host's slot-array model

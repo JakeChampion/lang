@@ -37,7 +37,7 @@ func strArrDead4Src() string {
     var b: string[] = ` + l + `; var sb: i32 = b[0].len();
     var c: string[] = ` + l + `; var sc: i32 = c[0].len();
     var d: string[] = ` + l + `; var sd: i32 = d[0].len();
-    return __heap_bump_bytes() + sa + sb + sc + sd;
+    return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
 }`
 }
 
@@ -48,7 +48,7 @@ func strArrLive4Src() string {
     var b: string[] = ` + l + `;
     var c: string[] = ` + l + `;
     var d: string[] = ` + l + `;
-    return __heap_bump_bytes() + a[0].len() + b[0].len() + c[0].len() + d[0].len();
+    return (__heap_bump_bytes() as i32) + a[0].len() + b[0].len() + c[0].len() + d[0].len();
 }`
 }
 

@@ -14,6 +14,7 @@ package wasmbin
 import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/memory"
@@ -1551,12 +1552,17 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildArrPushSharedCountBody,
 	},
 	"__fern_heap_bump_bytes": {
-		// () → i32. Phase 6 measurement probe. Returns the bump
+		// () → i64. Phase 6 measurement probe. Returns the bump
 		// high-water mark (cursor at allocCursorAddr − seed at
 		// heapBaseAddr). The natives implement the same entry point
 		// over __fern_heap_ptr − __fern_heap_base.
+		//
+		// i64 even though wasm32's cursor is an i32 address: the
+		// builtin's declared result is i64 on every target, so the
+		// operand stack has to agree. The difference is bridged by a
+		// zero-extend in the body, not by a per-target result type.
 		params:  nil,
-		results: []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI64},
 		body:    buildHeapBumpBytesBody,
 	},
 	"__alloc_u8": {
@@ -4115,10 +4121,16 @@ func buildArrPushSharedCountBody(_ map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
-// buildHeapBumpBytesBody assembles __fern_heap_bump_bytes: () → i32.
+// buildHeapBumpBytesBody assembles __fern_heap_bump_bytes: () → i64.
 // Returns the bump high-water mark (cursor at allocCursorAddr minus the
 // seed at heapBaseAddr) — 0 at start, growing only on fresh bumps and
 // flat across freelist reuse. Mirrors the natives' heap_ptr − heap_base.
+//
+// The difference is computed in i32 (both operands are wasm32 linear-memory
+// addresses) and zero-extended to the i64 the builtin declares. Zero-, not
+// sign-extend: the cursor is never below the seed, so the difference is a
+// non-negative byte count, and a sign-extend would turn a >2 GiB mark into
+// the negative number this widening exists to remove.
 func buildHeapBumpBytesBody(_ map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstI32Const(body, allocCursorAddr)
@@ -4126,6 +4138,7 @@ func buildHeapBumpBytesBody(_ map[string]uint32) []byte {
 	body = inst.InstI32Const(body, heapBaseAddr)
 	body = memory.InstI32Load(body, 2, 0)
 	body = numeric.InstI32Sub(body)
+	body = convert.InstI64ExtendI32U(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

@@ -58,7 +58,8 @@ Worth knowing so you do not assume coverage you do not have:
   call was 4 MB native / 7006 MB self-host. Both compilers support
   `__heap_bump_bytes()`; use that and never peak RSS, which varies 12x with
   transparent hugepages (measured: 43 MB local, 552 MB on a CI runner, same
-  binary and input).
+  binary and input). It returns i64 — bind it to an `i64` and narrow with an
+  explicit `as i32` only where the value has to become an exit code.
 - **Over-retains.** The rc detector counts over-*releases* only. A leak reads
   as a clean 0.
 

@@ -21,7 +21,7 @@ import (
 func arrOfStructBumpSrc(n string) string {
 	return `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -29,13 +29,13 @@ function main(): i32 {
         acc = acc + g[0][0].x;
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
 func arrOf3DBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -43,7 +43,7 @@ func arrOf3DBumpSrc(n string) string {
         acc = acc + g[0][0][1];
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

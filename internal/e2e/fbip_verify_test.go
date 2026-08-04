@@ -36,9 +36,9 @@ function build(n: i32): List {
     return Cons(n, build(n - 1));
 }
 function run(own xs: List): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var r: List = loop_map(xs, 100);
-    var grew: i32 = __heap_bump_bytes() - before;
+    var grew: i32 = (__heap_bump_bytes() as i32) - before;
     if (sum(r) != 6275) { return 998; }
     if (grew != 0) { return 999; }
     return 0;

@@ -25,7 +25,7 @@ import (
 // __fern_arr_dec.
 func destructureBumpGrowthSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
@@ -34,7 +34,7 @@ func destructureBumpGrowthSrc(n string) string {
         sum = sum + a[0] + b;
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

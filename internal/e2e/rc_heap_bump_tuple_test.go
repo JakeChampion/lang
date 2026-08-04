@@ -25,7 +25,7 @@ import (
 // box_free path (no rc-tracked element to deep-drop).
 func tupleBumpGrowthSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
@@ -33,7 +33,7 @@ func tupleBumpGrowthSrc(n string) string {
         sum = sum + p.0 + p.1;
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -43,7 +43,7 @@ func tupleBumpGrowthSrc(n string) string {
 // deep drop this leaks the array buffer in addition to the box.
 func tupleArrBumpGrowthSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
@@ -51,7 +51,7 @@ func tupleArrBumpGrowthSrc(n string) string {
         sum = sum + p.1;
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

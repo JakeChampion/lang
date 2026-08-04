@@ -46,10 +46,10 @@ function main(): i32 {
     var s: S = S { xs: [1, 2], name: "a" + "b", n: 0 };
     var i: i32 = 0;
     while (i < 200) { s = step(s); i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 1500) { s = S { xs: [1, 2], name: "a" + "b", n: 0 }; var k: i32 = 0; while (k < 3) { s = step(s); k = k + 1; } j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (s.n != 3) { return 97; }
@@ -74,10 +74,10 @@ function main(): i32 {
     var b: B = B { name: "a" + "b", n: 0 };
     var i: i32 = 0;
     while (i < 200) { b = step(b); i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 1500) { b = B { name: "a" + "b", n: 0 }; var k: i32 = 0; while (k < 3) { b = step(b); k = k + 1; } j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (b.n != 3) { return 97; }

@@ -28,17 +28,17 @@ var tupleRetIntermediateCases = []struct {
 	{"tupret-flat", `function mk(k: i32): (i32, i32) { return (k, k + 1); }
 function go(k: i32): i32 { var t = mk(k); return t.0 + t.1; }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(i)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(3000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 	// Loop-local rebind in one frame — per-iteration boxes reclaim at the rebind.
 	{"tupret-loop-rebind-flat", `function mk(k: i32): (i32, i32) { return (k, k + 1); }
 function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 3000) { var t = mk(i); acc = (acc + t.0 + t.1) % 251; i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 3000) { var t2 = mk(j); acc = (acc + t2.0 + t2.1) % 251; j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
     if (acc < 0) { return 97; }
@@ -50,10 +50,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 3000) { var t = mk(i); acc = (acc + t.0 + t.1) % 251; i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 3000) { var t2 = mk(j); acc = (acc + t2.0 + t2.1) % 251; j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
     if (acc < 0) { return 97; }

@@ -53,11 +53,11 @@ function step(k: i32): i32 {
     return r;
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + step(i); i = i + 1; }
     if (acc != ` + n + ` * 2) { return 121; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 3000) { return 119; }
     return g / 16;
 }`
@@ -79,11 +79,11 @@ function step(k: i32): i32 {
     return m.len();
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + step(i); i = i + 1; }
     if (acc != ` + n + ` * 5) { return 121; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 3000) { return 119; }
     return g / 16;
 }`
@@ -101,11 +101,11 @@ function step(k: i32): i32 {
     return m.len();
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + step(i); i = i + 1; }
     if (acc != ` + n + ` * 5) { return 121; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 3000) { return 119; }
     return g / 16;
 }`

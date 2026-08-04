@@ -63,10 +63,10 @@ func TestWASMIterBuildConsume(t *testing.T) {
 function eat(own xs: List): i32 { match (xs) { Cons(h, t) => { return h + eat(t); }, Nil => { return 0; } } }
 function ib(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(2, acc); i = i + 1; } return acc; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { var u: i32 = eat(ib(10)); i = i + 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 	}
 	if small, large := runWasm(t, bump("500")), runWasm(t, bump("5000")); small != large {

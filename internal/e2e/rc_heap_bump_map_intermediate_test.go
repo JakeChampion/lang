@@ -34,7 +34,7 @@ function mk(k: i32): Map[i32, i32] {
     return m;
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -43,7 +43,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc < 0) { return 121; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -57,10 +57,10 @@ function mk(k: i32): Map[i32, i32] {
     return m;
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`

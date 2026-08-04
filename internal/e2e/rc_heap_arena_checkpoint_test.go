@@ -71,12 +71,12 @@ function main(): i32 {
     // Warm the runtime so the cursor is seeded and b0 is a real address:
     // a mark of 0 means "no checkpoint" and release_to would ignore it.
     if (window(4) != 32) { return 80; }
-    var b0: i32 = __heap_bump_bytes();
+    var b0: i32 = (__heap_bump_bytes() as i32);
     var m: i64 = __heap_mark();
     if (window(400) != 3200) { return 81; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     __heap_release_to(m);
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (b1 <= b0) { return 82; }
     if (b2 != b0) { return 83; }
     return 0;
@@ -113,7 +113,7 @@ function window(k: i32): i32 {
 }
 function main(): i32 {
     if (window(4) != 32) { return 80; }
-    var b0: i32 = __heap_bump_bytes();
+    var b0: i32 = (__heap_bump_bytes() as i32);
     var c: i32 = 0;
     while (c < 300) {
         var m: i64 = __heap_mark();
@@ -122,7 +122,7 @@ function main(): i32 {
         c = c + 1;
     }
     // 300 windows of ~200 nodes each, and the cursor has not moved at all.
-    if (__heap_bump_bytes() != b0) { return 82; }
+    if ((__heap_bump_bytes() as i32) != b0) { return 82; }
     // The arena is still usable after the releases.
     if (window(50) != 400) { return 83; }
     return 0;

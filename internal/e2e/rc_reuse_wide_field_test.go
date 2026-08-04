@@ -68,7 +68,7 @@ func TestWASMWideFieldReuse(t *testing.T) {
 	bump := func(n string) string {
 		return `struct Acc { total: i64, scale: f64, n: i32 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var p: Acc = Acc { total: 0, scale: 1.0, n: 0 };
     var i: i32 = 0;
     while (i < ` + n + `) {
@@ -76,7 +76,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (p.n < 1) { return 0 - 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 	}
 	small := runWasm(t, bump("2000"))
