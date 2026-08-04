@@ -56,6 +56,35 @@ import (
 	"github.com/jakechampion/lang/internal/treeshake"
 )
 
+// emitSyscall emits `mov eax, n` + `syscall` and records n in the
+// generator's syscall set. Every syscall the backend emits goes
+// through here or emitSyscallPreloaded, which is what makes
+// g.syscalls exact rather than a best-effort inventory: there is no
+// other way to emit the instruction, so a new syscall cannot be added
+// without landing in the set. TestNoBareSyscallEmit enforces that.
+//
+// The recorded set is the ground truth for `-syscalls` and, later, for
+// the seccomp-bpf filter (#6071) — a filter derived from a
+// hand-maintained table would silently kill legitimate paths the
+// moment the runtime grew a syscall nobody remembered to list.
+func (g *generator) emitSyscall(n int) {
+	g.emit(fmt.Sprintf("mov eax, %d", n))
+	g.emit("syscall")
+	g.syscalls[n] = true
+}
+
+// emitSyscallPreloaded emits `syscall` alone, for the handful of sites
+// that load eax by other means — either several instructions earlier
+// (the abort path interleaves its argument setup) or via `xor eax, eax`
+// for read=0, which is a byte shorter than the immediate. It records n
+// identically. Callers pass the number the site actually issues; a
+// wrong argument here is the one way the set could lie, so the sites
+// are few and each keeps the eax-load visible directly above it.
+func (g *generator) emitSyscallPreloaded(n int) {
+	g.emit("syscall")
+	g.syscalls[n] = true
+}
+
 // Linux x86-64 syscall numbers. See the asm-generic table
 // for the full set.
 const (
@@ -125,6 +154,28 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 	return EmitWithOptions(prog, info, Options{})
 }
 
+// EmitWithSyscalls is EmitWithOptions plus the exact set of Linux
+// syscall numbers the emitted text can issue, ascending.
+//
+// "Exact" is a real claim, not a best effort: every syscall the backend
+// emits goes through emitSyscall / emitSyscallPreloaded, so the set is
+// accumulated by construction rather than recovered afterwards, and
+// TestNoBareSyscallEmit fails the build if a site bypasses them. Nor is
+// it a whole-language over-approximation — treeshake and dead-code
+// elimination have already run, so the set describes THIS program: a
+// binary that never opens a file does not carry `openat`.
+//
+// This is the input the seccomp-bpf filter is derived from (#6071).
+// Deriving it from the emitted text rather than from capability
+// declarations is what removes the under-approximation hazard: a
+// filter built from a hand-maintained table would kill the process the
+// moment the runtime grew a syscall nobody remembered to list, whereas
+// this cannot omit a syscall the program can actually make.
+func EmitWithSyscalls(prog *ast.Program, info *checker.Info, opts Options) (string, []int, error) {
+	asm, syscalls, err := emitCollecting(prog, info, opts)
+	return asm, syscalls, err
+}
+
 // EmitWithOptions runs treeshake, lowers to IR with ptrW=8,
 // then walks each surviving function emitting GAS-flavoured
 // AT&T assembly... no wait, Intel syntax. We deliberately use
@@ -135,6 +186,13 @@ func Emit(prog *ast.Program, info *checker.Info) (string, error) {
 // dst) flips the operands and is harder to align with the
 // arm64 emit.
 func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (string, error) {
+	asm, _, err := emitCollecting(prog, info, opts)
+	return asm, err
+}
+
+// emitCollecting is the body of EmitWithOptions, additionally returning
+// the generator's recorded syscall set (see EmitWithSyscalls).
+func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string, []int, error) {
 	// Acquire `ast.CodegenMu` so `ir.LowerWith`'s read of
 	// `ast.TwoWordOverride` isn't races against a concurrent
 	// `arm64.Emit` that's mid-toggle. x86_64 doesn't write the
@@ -167,7 +225,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	ip, err := ir.LowerWith(prog, info, 8, lowerOpts...)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	// Tail-call optimisation. The pass rewrites
 	// `OpCallDirect <self> ; OpReturn` into a parameter
@@ -217,7 +275,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	ir.FlattenBranches(ip)
 	ir.EliminateDeadCode(ip)
 	ir.OptimizeCleanup(ip)
-	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, vtables: ip.Vtables, pie: opts.PIE, noPeephole: opts.NoPeephole}
+	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, vtables: ip.Vtables, pie: opts.PIE, noPeephole: opts.NoPeephole, syscalls: map[int]bool{}}
 	// Pre-scan call sites for runtime-helper use-flags before
 	// touching any code emission, so emitDataSections + the
 	// runtime emitters below know which helpers to include
@@ -259,7 +317,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	g.emitStartRuntime()
 	for i, fn := range prog.Funcs {
 		if err := g.emitFunc(fn, ip.Funcs[i]); err != nil {
-			return "", err
+			return "", nil, err
 		}
 		// A function's IR is dead the moment it is emitted — nothing after
 		// this loop reads ip.Funcs — but holding the whole slice keeps the
@@ -551,7 +609,12 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// the binary having an implicit executable stack.
 	g.line(".section .note.GNU-stack,\"\",@progbits")
 	g.flushPeep()
-	return g.out.String(), nil
+	nums := make([]int, 0, len(g.syscalls))
+	for n := range g.syscalls {
+		nums = append(nums, n)
+	}
+	sort.Ints(nums)
+	return g.out.String(), nums, nil
 }
 
 // generator carries the running output buffer plus per-
@@ -746,6 +809,13 @@ type generator struct {
 	// overflow — x86-64's rel32 jumps never overflow, so here the sole
 	// motive is `.s` size / assembler memory.
 	rcInlineOK bool
+
+	// syscalls is the exact set of Linux syscall numbers this program's
+	// emitted text can issue, accumulated by emitSyscall /
+	// emitSyscallPreloaded. Exact rather than approximate because those
+	// two are the only way to emit the instruction — see their comments.
+	// Read back by Syscalls() after Emit.
+	syscalls map[int]bool
 	// usesRcUnderflowCount gates the Phase 3 detector reader
 	// `__fern_rc_underflow_count` (returns the BSS over-release
 	// counter __fern_rc_dec bumps). Set when the IR emits the
@@ -1306,8 +1376,7 @@ func (g *generator) emitStartRuntime() {
 	} else {
 		g.emit("mov edi, eax") // exit code = main's return value
 	}
-	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
-	g.emit("syscall")
+	g.emitSyscall(sysExitGroup)
 }
 
 // rcInlineMaxOps is the per-function IR-op ceiling for the opt-2b inline rc
@@ -4291,8 +4360,8 @@ func (g *generator) emitAbortRuntime() {
 	g.label("__fern_report") // rsi = msg ptr, edx = length, edi = exit code
 	g.emit("mov r15d, edi")  // save exit code (r15 survives the writes below; we never return)
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
-	g.emit("mov edi, 2") // fd = stderr
-	g.emit("syscall")    // write(2, msg, len)
+	g.emit("mov edi, 2")             // fd = stderr
+	g.emitSyscallPreloaded(sysWrite) // write(2, msg, len)
 	// Backtrace (#5538): walk the frame-pointer chain and print each return
 	// address in hex. With `-g` (the .symtab) they resolve to functions via
 	// addr2line / nm. Bounded to 64 frames; terminates at rbp == 0 (main's
@@ -4301,7 +4370,7 @@ func (g *generator) emitAbortRuntime() {
 	g.emit(fmt.Sprintf("mov edx, %d", len(abortBacktraceMsg)))
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("mov edi, 2")
-	g.emit("syscall")
+	g.emitSyscallPreloaded(sysWrite)
 	g.emit("mov rbx, rbp") // rbx = frame pointer (survives __fern_print_hex + syscalls)
 	g.emit("mov r14d, 64") // frame budget
 	g.label(".Lbt_loop")
@@ -4318,8 +4387,7 @@ func (g *generator) emitAbortRuntime() {
 	g.emit("jmp .Lbt_loop")
 	g.label(".Lbt_done")
 	g.emit("mov edi, r15d")
-	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
-	g.emit("syscall") // exit_group(code)
+	g.emitSyscall(sysExitGroup) // exit_group(code)
 	g.line(".size __fern_report, .-__fern_report")
 
 	// __fern_print_hex(rsi = value) writes "  0x<16 hex>\n" to stderr. Uses
@@ -4357,7 +4425,7 @@ func (g *generator) emitAbortRuntime() {
 	g.emit("mov edi, 2") // stderr
 	g.emit("mov rsi, rsp")
 	g.emit("mov edx, 21")
-	g.emit("syscall")
+	g.emitSyscallPreloaded(sysWrite)
 	g.emit("add rsp, 32")
 	g.emit("ret")
 	g.line(".size __fern_print_hex, .-__fern_print_hex")
@@ -4472,8 +4540,7 @@ func (g *generator) emitRctRuntime() {
 	// .Lrct_write(rsi = buf, edx = len): one write(2) to stderr.
 	g.label(".Lrct_write")
 	g.emit("mov edi, 2")
-	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
-	g.emit("syscall")
+	g.emitSyscall(sysWrite)
 	g.emit("ret")
 	// .Lrct_wrhex(rdi = value): 16 hex digits, most-significant first,
 	// built into a stack buffer then written in one write(2). Fixed
@@ -4625,8 +4692,7 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov r10d, 0x4022")
 	g.emit("mov r8d, -1")
 	g.emit("xor r9d, r9d")
-	g.emit(fmt.Sprintf("mov eax, %d", sysMmap))
-	g.emit("syscall")
+	g.emitSyscall(sysMmap)
 	g.emit("add rsp, 8")
 	g.emit("pop rdi")
 	g.emit("cmp rax, 0")
@@ -6475,14 +6541,12 @@ func (g *generator) emitPutsRuntime() {
 	g.emitStrLen("edx", "rdi") // length
 	g.emitStrDataPtr("rsi", "rdi", "[rbp - 16]")
 	g.emit("mov edi, 1") // fd = stdout
-	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
-	g.emit("syscall")
+	g.emitSyscall(sysWrite)
 	// write(1, "\n", 1)
 	g.emit("lea rsi, [rip + .LLangNewline]")
 	g.emit("mov edx, 1")
 	g.emit("mov edi, 1")
-	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
-	g.emit("syscall")
+	g.emitSyscall(sysWrite)
 	g.emit("mov rax, r12") // return the original string value (heap or inline)
 	g.emit("add rsp, 16")
 	g.emit("pop r12")
@@ -6508,8 +6572,7 @@ func (g *generator) emitWriteRuntime() {
 	g.emitStrLen("edx", "rdi")   // length
 	g.emitStrDataPtr("rsi", "rdi", "[rbp - 16]")
 	g.emit("mov edi, 1") // fd = stdout
-	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
-	g.emit("syscall")
+	g.emitSyscall(sysWrite)
 	g.emit("mov rax, [rbp - 8]") // return original
 	g.emit("add rsp, 16")
 	g.emit("pop rbp")
@@ -6533,13 +6596,11 @@ func (g *generator) emitEprintRuntime() {
 	g.emitStrLen("edx", "rdi")
 	g.emitStrDataPtr("rsi", "rdi", "[rbp - 16]")
 	g.emit("mov edi, 2") // fd = stderr
-	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
-	g.emit("syscall")
+	g.emitSyscall(sysWrite)
 	g.emit("lea rsi, [rip + .LLangNewline]")
 	g.emit("mov edx, 1")
 	g.emit("mov edi, 2")
-	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
-	g.emit("syscall")
+	g.emitSyscall(sysWrite)
 	g.emit("mov rax, r12")
 	g.emit("add rsp, 16")
 	g.emit("pop r12")
@@ -6679,8 +6740,7 @@ func (g *generator) emitExitRuntime() {
 		g.emit("call __fern_lc_report")
 		g.emit("mov edi, ebx")
 	}
-	g.emit(fmt.Sprintf("mov eax, %d", sysExitGroup))
-	g.emit("syscall")
+	g.emitSyscall(sysExitGroup)
 	g.emit("ret")
 	g.line(".size __fern_exit, .-__fern_exit")
 }
@@ -6726,8 +6786,7 @@ func (g *generator) emitLcReportRuntime() {
 	// .Llc_write(rsi = buf, edx = len): one write(2) to stderr.
 	g.label(".Llc_write")
 	g.emit("mov edi, 2")
-	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
-	g.emit("syscall")
+	g.emitSyscall(sysWrite)
 	g.emit("ret")
 	// .Llc_wrnum(rdi = signed i64): decimal itoa, digits built
 	// backwards from the end of a 32-byte stack buffer (an i64 is at
@@ -6759,8 +6818,7 @@ func (g *generator) emitLcReportRuntime() {
 	g.emit("sub rdx, rcx") // len
 	g.emit("mov rsi, rcx")
 	g.emit("mov edi, 2")
-	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
-	g.emit("syscall")
+	g.emitSyscall(sysWrite)
 	g.emit("add rsp, 40")
 	g.emit("ret")
 	g.line(".size __fern_lc_report, .-__fern_lc_report")
@@ -6791,8 +6849,7 @@ func (g *generator) emitNowUnixMsRuntime() {
 	g.emit("sub rsp, 24")  // 16 timespec + 8 alignment
 	g.emit("xor edi, edi") // CLOCK_REALTIME = 0
 	g.emit("mov rsi, rsp") // &timespec
-	g.emit(fmt.Sprintf("mov eax, %d", sysClockGettime))
-	g.emit("syscall")
+	g.emitSyscall(sysClockGettime)
 	g.emit("mov r10, [rsp]")      // r10 = tv_sec
 	g.emit("imul r10, r10, 1000") // sec * 1000
 	g.emit("xor edx, edx")        // clear high for div
@@ -6827,8 +6884,7 @@ func (g *generator) emitMonotonicNsRuntime() {
 	g.emit("sub rsp, 24")  // 16 timespec + 8 alignment
 	g.emit("mov edi, 1")   // CLOCK_MONOTONIC = 1
 	g.emit("mov rsi, rsp") // &timespec
-	g.emit(fmt.Sprintf("mov eax, %d", sysClockGettime))
-	g.emit("syscall")
+	g.emitSyscall(sysClockGettime)
 	g.emit("mov rax, [rsp]")            // rax = tv_sec
 	g.emit("imul rax, rax, 1000000000") // sec * 1e9
 	g.emit("add rax, [rsp + 8]")        // + tv_nsec
@@ -6855,8 +6911,7 @@ func (g *generator) emitNowNsRuntime() {
 	g.emit("sub rsp, 24")  // 16 timespec + 8 alignment
 	g.emit("xor edi, edi") // CLOCK_REALTIME = 0
 	g.emit("mov rsi, rsp") // &timespec
-	g.emit(fmt.Sprintf("mov eax, %d", sysClockGettime))
-	g.emit("syscall")
+	g.emitSyscall(sysClockGettime)
 	g.emit("mov rax, [rsp]")            // rax = tv_sec
 	g.emit("imul rax, rax, 1000000000") // sec * 1e9
 	g.emit("add rax, [rsp + 8]")        // + tv_nsec
@@ -6896,8 +6951,7 @@ func (g *generator) emitSleepMsRuntime() {
 	g.emit("mov [rsp + 8], rax")
 	g.emit("mov rdi, rsp") // &req
 	g.emit("xor esi, esi") // rem = NULL
-	g.emit(fmt.Sprintf("mov eax, %d", sysNanosleep))
-	g.emit("syscall")
+	g.emitSyscall(sysNanosleep)
 	g.label(".Lsleep_ms_done")
 	g.emit("mov rsp, rbp")
 	g.emit("pop rbp")
@@ -6918,8 +6972,7 @@ func (g *generator) emitProcForkRuntime() {
 	g.label("__fern_proc_fork")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit(fmt.Sprintf("mov eax, %d", sysFork))
-	g.emit("syscall")
+	g.emitSyscall(sysFork)
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_proc_fork, .-__fern_proc_fork")
@@ -7032,8 +7085,7 @@ func (g *generator) emitProcExecRuntime() {
 	g.emit("mov rdi, [rbp - 56]") // path cstr
 	g.emit("mov rsi, r13")        // argv
 	g.emit("mov rdx, [rip + __fern_envp]")
-	g.emit(fmt.Sprintf("mov eax, %d", sysExecve))
-	g.emit("syscall")
+	g.emitSyscall(sysExecve)
 	// Only reachable on failure; rax holds -errno.
 	g.emit("add rsp, 72")
 	g.emit("pop r15")
@@ -7068,8 +7120,7 @@ func (g *generator) emitProcWaitpidRuntime() {
 	g.emit("mov rsi, rsp")    // &status
 	g.emit("xor edx, edx")    // options = 0
 	g.emit("xor r10d, r10d")  // rusage = NULL
-	g.emit(fmt.Sprintf("mov eax, %d", sysWait4))
-	g.emit("syscall")
+	g.emitSyscall(sysWait4)
 	g.emit("test rax, rax")
 	g.emit("js .Lproc_wait_done")      // -errno → return as-is
 	g.emit("mov ecx, dword ptr [rsp]") // status word
@@ -7105,8 +7156,7 @@ func (g *generator) emitPutcharRuntime() {
 	g.emit("mov edi, 1")     // fd = stdout
 	g.emit("mov rsi, rsp")   // buf = &slot
 	g.emit("mov edx, 1")     // count = 1
-	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
-	g.emit("syscall")
+	g.emitSyscall(sysWrite)
 	g.emit("add rsp, 16")
 	g.emit("pop rbp")
 	g.emit("ret")
@@ -7137,8 +7187,7 @@ func (g *generator) emitTcpListenRuntime() {
 	g.emit("mov edi, 2")
 	g.emit("mov esi, 1")
 	g.emit("xor edx, edx")
-	g.emit(fmt.Sprintf("mov eax, %d", sysSocket))
-	g.emit("syscall")
+	g.emitSyscall(sysSocket)
 	g.emit("test eax, eax")
 	g.emit("js .Ltcp_lst_err")
 	g.emit("mov ebx, eax") // ebx = listener fd
@@ -7157,15 +7206,13 @@ func (g *generator) emitTcpListenRuntime() {
 	g.emit("mov edi, ebx")
 	g.emit("mov rsi, rsp")
 	g.emit("mov edx, 16")
-	g.emit(fmt.Sprintf("mov eax, %d", sysBind))
-	g.emit("syscall")
+	g.emitSyscall(sysBind)
 	g.emit("test eax, eax")
 	g.emit("js .Ltcp_lst_err")
 	// listen(fd, 128)
 	g.emit("mov edi, ebx")
 	g.emit("mov esi, 128")
-	g.emit(fmt.Sprintf("mov eax, %d", sysListen))
-	g.emit("syscall")
+	g.emitSyscall(sysListen)
 	g.emit("test eax, eax")
 	g.emit("js .Ltcp_lst_err")
 	// Return listener fd.
@@ -7206,8 +7253,7 @@ func (g *generator) emitTcpConnectRuntime() {
 	g.emit("mov edi, 2")
 	g.emit("mov esi, 1")
 	g.emit("xor edx, edx")
-	g.emit(fmt.Sprintf("mov eax, %d", sysSocket))
-	g.emit("syscall")
+	g.emitSyscall(sysSocket)
 	g.emit("test eax, eax")
 	g.emit("js .Ltcp_con_err")
 	g.emit("mov ebx, eax") // fd
@@ -7223,8 +7269,7 @@ func (g *generator) emitTcpConnectRuntime() {
 	g.emit("mov edi, ebx")
 	g.emit("mov rsi, rsp")
 	g.emit("mov edx, 16")
-	g.emit(fmt.Sprintf("mov eax, %d", sysConnect))
-	g.emit("syscall")
+	g.emitSyscall(sysConnect)
 	g.emit("test eax, eax")
 	g.emit("js .Ltcp_con_err")
 	g.emit("mov eax, ebx") // return fd
@@ -7252,8 +7297,7 @@ func (g *generator) emitTcpAcceptRuntime() {
 	// fd in rdi; pass NULL/NULL for addr/addrlen.
 	g.emit("xor esi, esi")
 	g.emit("xor edx, edx")
-	g.emit(fmt.Sprintf("mov eax, %d", sysAccept))
-	g.emit("syscall")
+	g.emitSyscall(sysAccept)
 	g.emit("ret")
 	g.line(".size __fern_tcp_accept, .-__fern_tcp_accept")
 }
@@ -7283,8 +7327,7 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.emit("mov edi, ebx")
 	g.emit("mov rsi, r13")
 	g.emit("mov edx, r12d")
-	g.emit(fmt.Sprintf("mov eax, %d", sysRead))
-	g.emit("syscall")
+	g.emitSyscall(sysRead)
 	// Clamp to >= 0 (read returns -errno or 0 on EOF).
 	g.emit("test rax, rax")
 	g.emit("jns .Ltcp_recv_ok")
@@ -7321,8 +7364,7 @@ func (g *generator) emitTcpSendRuntime() {
 	g.emit("sub rsp, 16")
 	g.emitStrLen("edx", "rsi")                  // length from data
 	g.emitStrDataPtr("rsi", "rsi", "[rbp - 8]") // byte pointer for syscall
-	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
-	g.emit("syscall")
+	g.emitSyscall(sysWrite)
 	g.emit("add rsp, 16")
 	g.emit("pop rbp")
 	g.emit("ret")
@@ -7410,8 +7452,7 @@ func (g *generator) emitTcpCloseRuntime() {
 	g.line(".globl __fern_tcp_close")
 	g.line(".type __fern_tcp_close, @function")
 	g.label("__fern_tcp_close")
-	g.emit(fmt.Sprintf("mov eax, %d", sysClose))
-	g.emit("syscall")
+	g.emitSyscall(sysClose)
 	g.emit("ret")
 	g.line(".size __fern_tcp_close, .-__fern_tcp_close")
 }
@@ -7617,8 +7658,7 @@ func (g *generator) emitRandomBytesRuntime() {
 	g.emit("mov rdi, r12")
 	g.emit("mov rsi, rbx")
 	g.emit("xor edx, edx")
-	g.emit(fmt.Sprintf("mov eax, %d", sysGetrandom))
-	g.emit("syscall")
+	g.emitSyscall(sysGetrandom)
 	// Trailing NUL at data + n. (getrandom doesn't write
 	// past the requested length.)
 	g.emit("mov byte ptr [r12 + rbx], 0")
@@ -7680,8 +7720,7 @@ func (g *generator) emitPollRuntime() {
 	g.emit("mov rdi, r13")
 	g.emit("mov esi, ebx")
 	g.emit("mov edx, r14d")
-	g.emit(fmt.Sprintf("mov eax, %d", sysPoll))
-	g.emit("syscall")
+	g.emitSyscall(sysPoll)
 	// Scan revents for the first POLLIN-ready fd; return its index.
 	g.emit("xor r15, r15")
 	g.label(".Lpoll_scan")
@@ -7728,8 +7767,7 @@ func (g *generator) emitTimerFdRuntime() {
 	// fd = timerfd_create(CLOCK_MONOTONIC, 0)
 	g.emit(fmt.Sprintf("mov edi, %d", clockMonotonic))
 	g.emit("xor esi, esi")
-	g.emit(fmt.Sprintf("mov eax, %d", sysTimerfdCreate))
-	g.emit("syscall")
+	g.emitSyscall(sysTimerfdCreate)
 	g.emit("mov r12, rax")
 	g.emit("test rax, rax")
 	g.emit("js .Ltimerfd_ret") // create failed → return -errno
@@ -7751,8 +7789,7 @@ func (g *generator) emitTimerFdRuntime() {
 	g.emit("xor esi, esi")
 	g.emit("mov rdx, rsp")
 	g.emit("xor r10d, r10d") // 4th syscall arg is r10
-	g.emit(fmt.Sprintf("mov eax, %d", sysTimerfdSettime))
-	g.emit("syscall")
+	g.emitSyscall(sysTimerfdSettime)
 	g.emit("mov rax, r12") // return fd
 	g.label(".Ltimerfd_ret")
 	g.emit("add rsp, 32")
@@ -7780,8 +7817,7 @@ func (g *generator) emitRandomI32Runtime() {
 	g.emit("lea rdi, [rsp - 8]")
 	g.emit("mov esi, 4")
 	g.emit("xor edx, edx")
-	g.emit(fmt.Sprintf("mov eax, %d", sysGetrandom))
-	g.emit("syscall")
+	g.emitSyscall(sysGetrandom)
 	g.emit("mov eax, [rsp - 8]") // sign-extends into rax via 32-bit load semantics
 	g.emit("ret")
 	g.line(".size __fern_random_i32, .-__fern_random_i32")
@@ -7886,8 +7922,7 @@ func (g *generator) emitReadLineRuntime() {
 	g.emit("xor edi, edi")
 	g.emit("lea rsi, [rbx + r12]")
 	g.emit("mov edx, 1")
-	g.emit(fmt.Sprintf("mov eax, %d", sysRead))
-	g.emit("syscall")
+	g.emitSyscall(sysRead)
 	// EOF (0) or error (<0) → finish.
 	g.emit("cmp rax, 1")
 	g.emit("jl .Lrl_done")
@@ -8396,8 +8431,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("mov rsi, rbx")
 	g.emit("xor edx, edx")
 	g.emit("xor r10d, r10d")
-	g.emit("mov eax, 257")
-	g.emit("syscall")
+	g.emitSyscall(257)
 	g.emit("test rax, rax")
 	g.emit("js .Lrf_err_open")
 	g.emit("mov r12, rax") // fd
@@ -8405,8 +8439,7 @@ func (g *generator) emitReadFileRuntime() {
 	// fstat(fd, [rsp]) — statbuf at top of stack (152 bytes).
 	g.emit("mov edi, r12d")
 	g.emit("mov rsi, rsp")
-	g.emit("mov eax, 5")
-	g.emit("syscall")
+	g.emitSyscall(5)
 	g.emit("test rax, rax")
 	g.emit("js .Lrf_err_close")
 	g.emit("mov r14, [rsp + 48]") // st_size
@@ -8427,7 +8460,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("mov rdx, r14")
 	g.emit("sub rdx, r15")
 	g.emit("xor eax, eax") // read = 0
-	g.emit("syscall")
+	g.emitSyscallPreloaded(sysRead)
 	g.emit("test rax, rax")
 	g.emit("js .Lrf_err_close")
 	g.emit("jz .Lrf_done") // EOF (file shrunk between fstat and read)
@@ -8436,8 +8469,7 @@ func (g *generator) emitReadFileRuntime() {
 
 	g.label(".Lrf_done")
 	g.emit("mov edi, r12d")
-	g.emit("mov eax, 3") // close
-	g.emit("syscall")
+	g.emitSyscall(3)
 	// Result.Ok(string): 16-byte box, tag=0 @0, str_ptr @8.
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
@@ -8450,8 +8482,7 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("neg rax")
 	g.emit("mov r13, rax") // r13 = errno (buf base no longer needed)
 	g.emit("mov edi, r12d")
-	g.emit("mov eax, 3")
-	g.emit("syscall")
+	g.emitSyscall(3)
 	g.emit("jmp .Lrf_err_dispatch")
 
 	g.label(".Lrf_err_open")
@@ -8513,8 +8544,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("mov rsi, rbx")
 	g.emit("mov edx, 577")
 	g.emit("mov r10d, 0644")
-	g.emit("mov eax, 257")
-	g.emit("syscall")
+	g.emitSyscall(257)
 	g.emit("test rax, rax")
 	g.emit("js .Lwf_err_open")
 	g.emit("mov r13, rax") // fd
@@ -8527,8 +8557,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("lea rsi, [r12 + r15]")
 	g.emit("mov rdx, r14")
 	g.emit("sub rdx, r15")
-	g.emit("mov eax, 1") // write
-	g.emit("syscall")
+	g.emitSyscall(1)
 	g.emit("test rax, rax")
 	g.emit("js .Lwf_err_close")
 	g.emit("add r15, rax")
@@ -8536,8 +8565,7 @@ func (g *generator) emitWriteFileRuntime() {
 
 	g.label(".Lwf_done")
 	g.emit("mov edi, r13d")
-	g.emit("mov eax, 3") // close
-	g.emit("syscall")
+	g.emitSyscall(3)
 	// Result.Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
 	// value occupies a payload slot like any other value — the reader
 	// loads it by the declared layout — so the success arm cannot be
@@ -8552,8 +8580,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("neg rax")
 	g.emit("mov r14, rax") // errno
 	g.emit("mov edi, r13d")
-	g.emit("mov eax, 3")
-	g.emit("syscall")
+	g.emitSyscall(3)
 	g.emit("jmp .Lwf_err_dispatch")
 
 	g.label(".Lwf_err_open")
@@ -8651,8 +8678,7 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("mov rsi, rbx")
 	g.emit("mov edx, 0x10000")
 	g.emit("xor r10d, r10d")
-	g.emit("mov eax, 257")
-	g.emit("syscall")
+	g.emitSyscall(257)
 	g.emit("test rax, rax")
 	g.emit("jns .Lrda_dir") // fd >= 0 → directory
 	g.emit("cmp rax, -2")   // -ENOENT → already gone
@@ -8663,8 +8689,7 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("mov edi, -100")
 	g.emit("mov rsi, rbx")
 	g.emit("xor edx, edx")
-	g.emit("mov eax, 263")
-	g.emit("syscall")
+	g.emitSyscall(263)
 	g.emit("jmp .Lrda_none")
 
 	g.label(".Lrda_dir")
@@ -8680,8 +8705,7 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("jz .Lrda_gd") // buffer full → stop (small-tree cap)
 	g.emit("mov edi, r12d")
 	g.emit("lea rsi, [r13 + r14]")
-	g.emit("mov eax, 217") // getdents64
-	g.emit("syscall")
+	g.emitSyscall(217)
 	g.emit("test rax, rax")
 	g.emit("jle .Lrda_gd") // 0 (end) or <0 (error) → stop draining
 	g.emit("add r14, rax")
@@ -8769,13 +8793,11 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.label(".Lrda_itd")
 	// close(fd), then rmdir the now-empty directory.
 	g.emit("mov edi, r12d")
-	g.emit("mov eax, 3") // close
-	g.emit("syscall")
+	g.emitSyscall(3)
 	g.emit("mov edi, -100")
 	g.emit("mov rsi, rbx")
 	g.emit("mov edx, 512") // AT_REMOVEDIR
-	g.emit("mov eax, 263") // unlinkat
-	g.emit("syscall")
+	g.emitSyscall(263)
 
 	g.label(".Lrda_none")
 	// Result.Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
@@ -8854,8 +8876,7 @@ func (g *generator) emitRemoveFileRuntime() {
 	g.emit("mov edi, -100")
 	g.emit("mov rsi, r13")
 	g.emit("xor edx, edx")
-	g.emit("mov eax, 263")
-	g.emit("syscall")
+	g.emitSyscall(263)
 	g.emit("test rax, rax")
 	g.emit("js .Lrmf_some")
 	// Result.Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
@@ -8973,8 +8994,7 @@ func (g *generator) emitTempDirRuntime() {
 	g.emit("mov edi, -100")
 	g.emit("mov rsi, r13")
 	g.emit("mov edx, 448")
-	g.emit("mov eax, 258")
-	g.emit("syscall")
+	g.emitSyscall(258)
 	g.emit("test rax, rax")
 	g.emit("jnz .Ltd_err")
 	// Ok: copy the path into an exactly-sized rc=1 string.
@@ -9071,8 +9091,7 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("mov rsi, rbx")
 	g.emit("mov edx, 0x10000")
 	g.emit("xor r10d, r10d")
-	g.emit("mov eax, 257")
-	g.emit("syscall")
+	g.emitSyscall(257)
 	g.emit("test rax, rax")
 	g.emit("js .Lrdd_err")
 	g.emit("mov r12, rax") // fd
@@ -9087,16 +9106,14 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("jz .Lrdd_gd")
 	g.emit("mov edi, r12d")
 	g.emit("lea rsi, [r13 + r14]")
-	g.emit("mov eax, 217") // getdents64
-	g.emit("syscall")
+	g.emitSyscall(217)
 	g.emit("test rax, rax")
 	g.emit("jle .Lrdd_gd")
 	g.emit("add r14, rax")
 	g.emit("jmp .Lrdd_g")
 	g.label(".Lrdd_gd")
 	g.emit("mov edi, r12d")
-	g.emit("mov eax, 3") // close
-	g.emit("syscall")
+	g.emitSyscall(3)
 	// Pass 1: count entries that aren't "." / "..".
 	g.emit("xor r12d, r12d") // count (fd is closed)
 	g.emit("xor r15, r15")   // offset
@@ -9258,8 +9275,7 @@ func (g *generator) emitStatRuntime() {
 	g.emit("mov rsi, rbx")
 	g.emit("mov rdx, rsp")
 	g.emit("xor r10d, r10d")
-	g.emit("mov eax, 262")
-	g.emit("syscall")
+	g.emitSyscall(262)
 	g.emit("test rax, rax")
 	g.emit("js .Lst_err")
 	g.emit("mov eax, [rsp + 24]") // st_mode
@@ -9387,8 +9403,7 @@ func (g *generator) emitReaderWriterRuntime() {
 		g.emit("mov rsi, rbx")
 		g.emit(fmt.Sprintf("mov edx, %d", e.flags))
 		g.emit(fmt.Sprintf("mov r10d, %d", e.mode))
-		g.emit("mov eax, 257") // openat
-		g.emit("syscall")
+		g.emitSyscall(257)
 		g.emit("test rax, rax")
 		g.emit("js .Lorw_err_" + e.sym)
 		// Success: alloc handle, store fd, wrap in Ok box.
@@ -9439,7 +9454,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("lea rsi, [r12 + r13]")
 	g.emit("mov edx, 1")
 	g.emit("xor eax, eax")
-	g.emit("syscall")
+	g.emitSyscallPreloaded(sysRead)
 	g.emit("cmp rax, 1")
 	g.emit("jl .Lrrl_done")
 	g.emit("movzx r14d, byte ptr [r12 + r13]")
@@ -9504,7 +9519,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("mov rsi, r13")
 	g.emit("mov rdx, r12")
 	g.emit("xor eax, eax")
-	g.emit("syscall")
+	g.emitSyscallPreloaded(sysRead)
 	g.emit("test rax, rax")
 	g.emit("jle .Lrrc_none")
 	g.emit("mov [r13 - 4], eax")          // length prefix at data-4
@@ -9559,8 +9574,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("lea rsi, [r12 + r14]")
 	g.emit("mov rdx, r13")
 	g.emit("sub rdx, r14")
-	g.emit("mov eax, 1") // write
-	g.emit("syscall")
+	g.emitSyscall(1)
 	g.emit("test rax, rax")
 	g.emit("js .Lww_err")
 	g.emit("add r14, rax")
@@ -9601,8 +9615,7 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("push rbx")
 	g.emit("sub rsp, 8")
 	g.emit("mov edi, [rdi]") // fd
-	g.emit("mov eax, 3")     // close
-	g.emit("syscall")
+	g.emitSyscall(3)
 	g.emit("test rax, rax")
 	g.emit("js .Lcfb_err")
 	g.emit("mov edi, 4")
