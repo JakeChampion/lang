@@ -2120,6 +2120,12 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // unlike the bump mark above — it counts appends, not bytes,
                     // and a healthy run reports 0. Matches native's FuncSigs.
                     if (id.name == "__arr_push_shared_count") { return ty_i32(); }
+                    // __arr_push_shared_bytes(): the SAME cliff weighted by the
+                    // bytes each crossing copied. i64, like the bump mark and
+                    // for the same reason — the quantity is arena-scale, and an
+                    // i32 would wrap on exactly the runs it exists to measure.
+                    // Matches native's FuncSigs.
+                    if (id.name == "__arr_push_shared_bytes") { return ty_i64(); }
                     if (id.name == "__load_i32") { return ty_i32(); }
                     if (id.name == "exit") { return ty_i32(); }
                     if (id.name == "args_count") { return ty_i32(); }

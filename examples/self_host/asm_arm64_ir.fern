@@ -610,6 +610,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             s = s.write("    cmp x0, #0\n");
             s = s.write("    csel x2, x2, xzr, ne\n");            // 0 if uninit, else ptr−base
             s = s.write("    str x2, [sp, #-16]!\n");
+        } else if (o.kind_tag == 217) {  // arr_push_shared_bytes
+            // The cliff WEIGHT: bytes copied at the crossings the counter
+            // counts. Same inline .bss read + heap gate as its sibling.
+            s = s.mark_heap();
+            s = s.write("    adrp x0, __fern_arr_push_copied\n    add x0, x0, :lo12:__fern_arr_push_copied\n    ldr x0, [x0]\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 216) {  // arr_push_shared_count
             // The rc==1 append cliff counter, a plain .bss word bumped by
             // __fern_arr_push's un-share path. Needs the heap runtime for the
@@ -2850,6 +2856,13 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         // under -per-module-emit-all. See the x86-64 comment in asm_ir.fern.
         s = s.write("    .globl __fern_arr_push_shared\n");
         s = s.write("__fern_arr_push_shared: .quad 0\n");
+        s = s.write("    .align 8\n");
+        // The same crossings WEIGHTED by the bytes they copied (len * 8 — the
+        // self-host array model is uniform 8-byte slots), read by
+        // __arr_push_shared_bytes. .globl for the same inline-read reason as
+        // the counter above (#6058, #6066).
+        s = s.write("    .globl __fern_arr_push_copied\n");
+        s = s.write("__fern_arr_push_copied: .quad 0\n");
         s = s.write("    .align 3\n");
         // Phase 3 size-class freelist (mirror of x86-64): head pointers
         // indexed by idx = roundup8(size)/8; <= 8 KiB classes. Pushed by
@@ -6640,6 +6653,17 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         s = s.write("    add x3, x3, :lo12:__fern_arr_push_shared\n");
         s = s.write("    ldr x4, [x3]\n");
         s = s.write("    add x4, x4, #1\n");
+        s = s.write("    str x4, [x3]\n");
+        // Weight the crossing by the len * 8 bytes the copy is about to move.
+        // x3/x4/x5 are the scratch this arm already owns (x2 holds the newcap
+        // .Larr_push_cap consumes, so it stays untouched); the shift is
+        // separate because the in-process assembler encodes no shifted-register
+        // add.
+        s = s.write("    lsl x5, x21, #3\n");
+        s = s.write("    adrp x3, __fern_arr_push_copied\n");
+        s = s.write("    add x3, x3, :lo12:__fern_arr_push_copied\n");
+        s = s.write("    ldr x4, [x3]\n");
+        s = s.write("    add x4, x4, x5\n");
         s = s.write("    str x4, [x3]\n");
         s = s.write("    b .Larr_push_cap\n");
         s = s.write(".Larr_push_dbl:\n");

@@ -6165,6 +6165,9 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                     // rc probe uses — which routes through lower_i64 + int_wrap
                     // only when the operand reads 64 here.
                     if (cid.name == "__heap_bump_bytes") { return 64; }
+                    // Same for the cliff WEIGHT: bytes copied, arena-scale, so
+                    // i64 — and read through `as i32` by the same probe shape.
+                    if (cid.name == "__arr_push_shared_bytes") { return 64; }
                     // f64_bits reinterprets an f64 as its i64 bit pattern.
                     if (cid.name == "f64_bits") { return 64; }
                     if (s.is_i64_ret_fn(cid.name)) { return 64; }
@@ -6426,6 +6429,9 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                     // result, where the width-32 sign-extend below would drop it
                     // back to the truncating read this widening removed.
                     if (cid.name == "__heap_bump_bytes") { return lower_expr(e, s); }
+                    // Likewise the cliff weight: an i64 value whose full width
+                    // the normal call path pushes.
+                    if (cid.name == "__arr_push_shared_bytes") { return lower_expr(e, s); }
                     // f64_bits returns an i64 bit pattern: lower via the normal
                     // call path (lower_expr emits op_f64_bits + pushes the result).
                     if (cid.name == "f64_bits") { return lower_expr(e, s); }
@@ -8327,6 +8333,12 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // the backends read the counter __fern_arr_push bumps.
                     if (cid.name == "__arr_push_shared_count" && c.args.len() == 0) {
                         return s.emit(ir.op_arr_push_shared_count());
+                    }
+                    // __arr_push_shared_bytes(): the same crossings weighted by
+                    // the bytes they copied (i64). The counter says whether the
+                    // cliff was crossed; this says whether it cost anything.
+                    if (cid.name == "__arr_push_shared_bytes" && c.args.len() == 0) {
+                        return s.emit(ir.op_arr_push_shared_bytes());
                     }
                     if (decl_is_struct(s.structs, cid.name)) {
                         if (!decl_is_leaksafe(s.structs, cid.name)) { return s.fail(); }

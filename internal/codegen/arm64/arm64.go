@@ -512,6 +512,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesArrPushSharedCount {
 		g.emitArrPushSharedCountRuntime()
 	}
+	if g.usesArrPushSharedBytes {
+		g.emitArrPushSharedBytesRuntime()
+	}
 	if g.usesHeapBumpBytes {
 		g.emitHeapBumpBytesRuntime()
 	}
@@ -1021,12 +1024,17 @@ func (g *generator) emitDataSections() {
 		g.label("__fern_rc_underflow")
 		g.line(`	.quad 0`)
 	}
-	if g.usesArrPushGrow || g.usesArrPushSharedCount {
+	if g.usesArrPushGrow || g.usesArrPushSharedCount || g.usesArrPushSharedBytes {
 		// The rc==1 cliff counter. __fern_arr_push_grow bumps it when it
 		// copies a buffer that had SPARE CAPACITY — the copy was bought by
 		// an extra reference, not by a full buffer.
 		g.line(`.align 3`)
 		g.label("__fern_arr_push_shared")
+		g.line(`	.quad 0`)
+		// The same crossings WEIGHTED by the bytes they copied (oldLen *
+		// stride, summed as an i64) — the reading that ranks one crossing
+		// site against another. See emitArrPushSharedBytesRuntime.
+		g.label("__fern_arr_push_copied")
 		g.line(`	.quad 0`)
 	}
 	if ast.RcFreeEnabled && (g.usesAlloc || g.usesFree) {
@@ -1984,6 +1992,26 @@ func (g *generator) emitArrPushSharedCountRuntime() {
 	g.sizeDirective("__fern_arr_push_shared_count")
 }
 
+// emitArrPushSharedBytesRuntime emits `__fern_arr_push_shared_bytes() -> i64`
+// — the same cliff the counter counts, weighted by the bytes each crossing
+// copied (oldLen * stride, summed).
+//
+// The count answers "did anything cross the cliff"; only the weight answers
+// "does it matter". A whole-module self-host compile crosses 188 times and
+// copies 812 bytes doing it, while one threaded accumulator over 20k appends
+// copies 2.3 GB — identical in kind, three orders of magnitude apart in cost.
+// See the x86-64 twin for the full rationale.
+func (g *generator) emitArrPushSharedBytesRuntime() {
+	g.line("")
+	g.line(".global __fern_arr_push_shared_bytes")
+	g.typeDirective("__fern_arr_push_shared_bytes")
+	g.label("__fern_arr_push_shared_bytes")
+	g.adrpAdd("x0", "__fern_arr_push_copied")
+	g.emit("ldr x0, [x0]")
+	g.emit("ret")
+	g.sizeDirective("__fern_arr_push_shared_bytes")
+}
+
 // emitHeapBumpBytesRuntime emits `__fern_heap_bump_bytes() -> i64`,
 // the Phase 6 measurement reader: returns the bump high-water mark
 // (__fern_heap_ptr − __fern_heap_base) in bytes, or 0 before the first
@@ -2181,6 +2209,19 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("ldr w4, [x3]")
 	g.emit("add w4, w4, #1")
 	g.emit("str w4, [x3]")
+	// Weight the crossing by what it costs: oldLen * stride bytes about to
+	// be copied. Still ahead of the copy path's frame, so x3-x5 are all
+	// free. The two `mov w` zero-extend their 32-bit inputs into the full
+	// x registers, so the 64-bit multiply is exact for a buffer past 4 GiB
+	// (umull would say this in one instruction, but the in-process
+	// assembler encodes mul and not umull).
+	g.emit("mov w3, w1") // oldLen, zero-extended
+	g.emit("mov w4, w2") // stride, zero-extended
+	g.emit("mul x3, x3, x4")
+	g.adrpAdd("x4", "__fern_arr_push_copied")
+	g.emit("ldr x5, [x4]")
+	g.emit("add x5, x5, x3")
+	g.emit("str x5, [x4]")
 	// Copy path: allocate new buffer, memcpy, return new data.
 	// Frame layout (80 bytes):
 	//   sp+0..15  : saved x29, x30
@@ -8415,6 +8456,10 @@ type generator struct {
 	// `__fern_arr_push_shared_count` (returns the BSS counter
 	// __fern_arr_push_grow bumps when it copies a buffer that had room).
 	usesArrPushSharedCount bool
+	// usesArrPushSharedBytes gates the cliff WEIGHT reader
+	// `__fern_arr_push_shared_bytes` (returns the BSS accumulator
+	// __fern_arr_push_grow adds oldLen * stride to at each crossing).
+	usesArrPushSharedBytes bool
 	// usesHeapBumpBytes gates the Phase 6 measurement reader
 	// `__fern_heap_bump_bytes` (returns __fern_heap_ptr − __fern_heap_base,
 	// the bump high-water mark). Set when the IR emits the matching
@@ -11306,6 +11351,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRcUnderflowCount = true
 		case "__fern_arr_push_shared_count":
 			g.usesArrPushSharedCount = true
+		case "__fern_arr_push_shared_bytes":
+			g.usesArrPushSharedBytes = true
 		case "__fern_heap_bump_bytes":
 			g.usesHeapBumpBytes = true
 			g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base

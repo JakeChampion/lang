@@ -562,6 +562,19 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   **-2.09 GB** / 202 MB, where only the third of the four looks wrong. Bind
   it to an `i64` (`var b: i64 = __heap_bump_bytes();`); narrowing to an exit
   code needs an explicit `as i32`, which is what the existing corpus does.
+- **The rc==1 append cliff has two readings, and only the WEIGHT ranks work.**
+  `__arr_push_shared_count()` counts crossings; `__arr_push_shared_bytes()`
+  (i64) sums the bytes those crossings copied. Never scope accumulator work
+  against the count alone: measured 2026-08-04, a whole-module compile of
+  `checker.fern` by the self-host compiler crosses the cliff **188 times and
+  copies 812 bytes** doing it — 4-byte loop-depth stacks in `irlower`'s
+  `enter_loop`, i.e. noise — while one threaded accumulator over 20k appends
+  copies **2.3 GB**. Two rounds of `own`-conversion work were scoped against
+  the unweighted count and aimed at sites that could not have paid.
+  `FERN_CLIFF_REPORT=1` prints both. Attributing crossings to a function needs
+  no flag: build with `-g`, break on the counter bump inside
+  `__fern_arr_push_grow` under gdb and report
+  `info symbol *(unsigned long *)$rsp` — details in `docs/TEST-GATES.md`.
 - **Don't run arm64 / `qemu-aarch64` tests locally as a gate — let CI
   run them.** The aarch64 e2e + fixpoint tests under `qemu-aarch64` are
   the slow part of a local sweep (minutes). Locally, gate on the
