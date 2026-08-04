@@ -42647,6 +42647,291 @@ function ident_used_as_value_stmts(stmts: parser.Stmt[], name: string): boolean 
     return false;
 }
 
+// ---- wide (8-byte scalar) captures (#6046) ----------------------------
+//
+// The closure env box is an i32[] (arr_make …, 32), so a capture has to fit a
+// 32-bit slot — cap_slot_ok's rule. Pointer-shaped captures do (every heap and
+// code address in the -no-pie -static binary is 32-bit), but an i64 / u64 / f64
+// does not, so make_clo_func declined and the module bailed. Since the AST
+// emitters were deleted (#3457) that bail is a hard compile error, which made a
+// closure over a duration, a file size or a timestamp simply not compile.
+//
+// box_wide_captures fixes it WITHOUT widening the box: it snapshots each wide
+// capture into a 1-element cell (`var $wc$b: i64[] = [b];`) immediately before
+// the statement that builds the closure, and re-binds the original name from
+// that cell at the top of the lambda body (`var b: i64 = $wc$b[0];`). After the
+// rewrite `b` is bound INSIDE the lambda, so it is no longer free: the capture
+// the lift passes see is `$wc$b`, an `i64[]` — pointer-shaped, so cap_slot_ok
+// accepts it as-is and make_clo_func, the env box and all three backends are
+// untouched.
+//
+// The 1-element cell is the SAME representation box_mutated_scalar_captures
+// uses (box_rewrite_stmt builds `var x: T[] = [init]` and reads `x[0]`), reused
+// rather than duplicated; only the reason differs — slot width here, write
+// sharing there.
+//
+// A capture the enclosing function REASSIGNS is skipped: the cell holds a
+// creation-time snapshot, so a later outer write would not show through it.
+// Those keep the old behaviour, leaving #5394's shared-cell path as the place
+// that handles them.
+//
+// A function with no wide capture is returned unchanged, so every other
+// function stays byte-identical — including all of the self-host's own, which
+// contain no wide capture (they could not compile today if they did).
+function is_wide_cap_type(t: string): boolean {
+    return t == "i64" || t == "u64" || t == "f64";
+}
+
+// wcap_cell_name is the cell local for a wide capture. The `$` prefix cannot
+// collide with a user ident (the guarantee `$lamret$` already relies on).
+function wcap_cell_name(c: string): string { return "$wc$" + c; }
+
+struct WCaps { names: string[], types: string[] }
+struct WCapExpr { expr: parser.Expr, caps: WCaps }
+struct WCapStmt { stmt: parser.Stmt, caps: WCaps, changed: boolean }
+struct WCapBody { stmts: parser.Stmt[], changed: boolean }
+
+// wcaps_add records one capture name + type when it is wide, not already
+// recorded, and not reassigned by the enclosing function.
+function wcaps_add(acc: WCaps, name: string, ty: string, atargets: string[]): WCaps {
+    if (!is_wide_cap_type(ty)) { return acc; }
+    if (util.index_of_str(acc.names, name) >= 0) { return acc; }
+    if (util.index_of_str(atargets, name) >= 0) { return acc; }
+    return WCaps { names: acc.names.append(name), types: acc.types.append(ty) };
+}
+
+function wcaps_join(a: WCaps, b: WCaps): WCaps {
+    var out: WCaps = a;
+    var i: i32 = 0;
+    while (i < b.names.len()) {
+        if (util.index_of_str(out.names, b.names[i]) < 0) {
+            out = WCaps { names: out.names.append(b.names[i]), types: out.types.append(b.types[i]) };
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// wcap_cell_decl builds `var $wc$c: T[] = [c];` — the snapshot cell.
+function wcap_cell_decl(c: string, ty: string): parser.Stmt {
+    var src: parser.Expr = parser.ExprIdent { name: c, line: 0, col: 0 };
+    return parser.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: parser.ExprArray { elements: [src] }, line: 0, col: 0, is_str: false };
+}
+
+// wcap_cell_read builds `var c: T = $wc$c[0];` — the lambda-body re-bind.
+function wcap_cell_read(c: string, ty: string): parser.Stmt {
+    var cell: parser.Expr = parser.ExprIdent { name: wcap_cell_name(c), line: 0, col: 0 };
+    var idx: parser.Expr = parser.ExprIndex { array: cell, index: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 }, unchecked: false };
+    return parser.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, is_str: false };
+}
+
+// wcap_expr walks one expression, rewriting every lambda in it (prepending the
+// cell reads for ITS wide captures) and accumulating the wide captures seen, so
+// the caller can emit their cell decls before the enclosing statement. Mirrors
+// box_rewrite_expr's recursion set — the proven list of forms a lambda can hide
+// in. Collection and rewriting are fused so the tree is walked once.
+function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], acc: WCaps, atargets: string[]): WCapExpr {
+    match (e) {
+        parser.ExprLambda(lm) => {
+            // This lambda's own wide captures, in lambda_captures order.
+            var mine: WCaps = WCaps { names: [], types: [] };
+            var caps: string[] = lambda_captures(lm, gfns, fd);
+            var ci: i32 = 0;
+            while (ci < caps.len()) {
+                mine = wcaps_add(mine, caps[ci], cap_type(caps[ci], fd, structs, mfuncs), atargets);
+                ci = ci + 1;
+            }
+            // Rewrite the body first (a nested lambda's own cells are emitted
+            // by the recursive statement walk), then re-bind this lambda's wide
+            // captures from their cells at the top of the body.
+            var inner: WCaps = acc;
+            var nb: parser.Stmt[] = [];
+            var bi: i32 = 0;
+            while (bi < lm.body.len()) {
+                var rs: WCapStmt = wcap_stmt(lm.body[bi], fd, gfns, structs, mfuncs, inner, atargets);
+                inner = rs.caps;
+                nb = nb.append(rs.stmt);
+                bi = bi + 1;
+            }
+            var pre: parser.Stmt[] = [];
+            var mi: i32 = 0;
+            while (mi < mine.names.len()) { pre = pre.append(wcap_cell_read(mine.names[mi], mine.types[mi])); mi = mi + 1; }
+            var full: parser.Stmt[] = pre;
+            var fi: i32 = 0;
+            while (fi < nb.len()) { full = full.append(nb[fi]); fi = fi + 1; }
+            return WCapExpr { expr: parser.ExprLambda { params: lm.params, ret_type: lm.ret_type, body: full, use_infer: lm.use_infer }, caps: wcaps_join(inner, mine) };
+        },
+        parser.ExprBinary(b) => {
+            var l: WCapExpr = wcap_expr(b.left, fd, gfns, structs, mfuncs, acc, atargets);
+            var r: WCapExpr = wcap_expr(b.right, fd, gfns, structs, mfuncs, l.caps, atargets);
+            return WCapExpr { expr: parser.ExprBinary { op: b.op, left: l.expr, right: r.expr, line: b.line, col: b.col }, caps: r.caps };
+        },
+        parser.ExprUnary(u) => {
+            var o: WCapExpr = wcap_expr(u.operand, fd, gfns, structs, mfuncs, acc, atargets);
+            return WCapExpr { expr: parser.ExprUnary { op: u.op, operand: o.expr, line: u.line, col: u.col }, caps: o.caps };
+        },
+        parser.ExprCall(c) => {
+            var cal: WCapExpr = wcap_expr(c.callee, fd, gfns, structs, mfuncs, acc, atargets);
+            var a: WCaps = cal.caps;
+            var na: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                var ar: WCapExpr = wcap_expr(c.args[i], fd, gfns, structs, mfuncs, a, atargets);
+                a = ar.caps; na = na.append(ar.expr); i = i + 1;
+            }
+            return WCapExpr { expr: parser.ExprCall { callee: cal.expr, args: na, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, caps: a };
+        },
+        parser.ExprArray(ar) => {
+            var a: WCaps = acc;
+            var ne: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < ar.elements.len()) {
+                var er: WCapExpr = wcap_expr(ar.elements[i], fd, gfns, structs, mfuncs, a, atargets);
+                a = er.caps; ne = ne.append(er.expr); i = i + 1;
+            }
+            return WCapExpr { expr: parser.ExprArray { elements: ne }, caps: a };
+        },
+        parser.ExprTuple(t) => {
+            var a: WCaps = acc;
+            var ne: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                var er: WCapExpr = wcap_expr(t.elements[i], fd, gfns, structs, mfuncs, a, atargets);
+                a = er.caps; ne = ne.append(er.expr); i = i + 1;
+            }
+            return WCapExpr { expr: parser.ExprTuple { elements: ne, line: t.line, col: t.col }, caps: a };
+        },
+        parser.ExprIndex(x) => {
+            var ax: WCapExpr = wcap_expr(x.array, fd, gfns, structs, mfuncs, acc, atargets);
+            var ix: WCapExpr = wcap_expr(x.index, fd, gfns, structs, mfuncs, ax.caps, atargets);
+            return WCapExpr { expr: parser.ExprIndex { array: ax.expr, index: ix.expr, unchecked: x.unchecked }, caps: ix.caps };
+        },
+        parser.ExprSlice(sl) => {
+            var sa: WCapExpr = wcap_expr(sl.array, fd, gfns, structs, mfuncs, acc, atargets);
+            var ss: WCapExpr = wcap_expr(sl.start, fd, gfns, structs, mfuncs, sa.caps, atargets);
+            var se: WCapExpr = wcap_expr(sl.end, fd, gfns, structs, mfuncs, ss.caps, atargets);
+            return WCapExpr { expr: parser.ExprSlice { array: sa.expr, start: ss.expr, end: se.expr }, caps: se.caps };
+        },
+        parser.ExprStructLit(sl) => {
+            var a: WCaps = acc;
+            var nv: parser.Expr[] = [];
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                var fr: WCapExpr = wcap_expr(sl.field_values[i], fd, gfns, structs, mfuncs, a, atargets);
+                a = fr.caps; nv = nv.append(fr.expr); i = i + 1;
+            }
+            var nbase: parser.Expr = sl.base;
+            if (sl.has_base) {
+                var br: WCapExpr = wcap_expr(sl.base, fd, gfns, structs, mfuncs, a, atargets);
+                a = br.caps; nbase = br.expr;
+            }
+            return WCapExpr { expr: parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col }, caps: a };
+        },
+        parser.ExprFieldAccess(fa) => {
+            var o: WCapExpr = wcap_expr(fa.obj, fd, gfns, structs, mfuncs, acc, atargets);
+            return WCapExpr { expr: parser.ExprFieldAccess { obj: o.expr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, caps: o.caps };
+        },
+        _ => { return WCapExpr { expr: e, caps: acc }; }
+    }
+    return WCapExpr { expr: e, caps: acc };
+}
+
+// wcap_stmt rewrites the lambdas in one statement's OWN expressions, returning
+// the caps whose cell decls the caller must emit before it. A statement with a
+// nested block (if / while / for / match / defer) has that block rewritten by
+// box_wide_captures_stmts, which places its cells INSIDE the block — a capture
+// declared in the block must not have its cell hoisted out of scope.
+function wcap_stmt(st: parser.Stmt, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], acc: WCaps, atargets: string[]): WCapStmt {
+    match (st) {
+        parser.StmtVar(v) => {
+            var r: WCapExpr = wcap_expr(v.init, fd, gfns, structs, mfuncs, acc, atargets);
+            return WCapStmt { stmt: parser.StmtVar { name: v.name, type_name: v.type_name, init: r.expr, line: v.line, col: v.col, is_str: v.is_str }, caps: r.caps, changed: false };
+        },
+        parser.StmtAssign(a) => {
+            var r: WCapExpr = wcap_expr(a.value, fd, gfns, structs, mfuncs, acc, atargets);
+            return WCapStmt { stmt: parser.StmtAssign { target: a.target, value: r.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, caps: r.caps, changed: false };
+        },
+        parser.StmtReturn(r) => {
+            var rr: WCapExpr = wcap_expr(r.value, fd, gfns, structs, mfuncs, acc, atargets);
+            return WCapStmt { stmt: parser.StmtReturn { value: rr.expr, line: r.line, col: r.col }, caps: rr.caps, changed: false };
+        },
+        parser.StmtExpr(e) => {
+            var er: WCapExpr = wcap_expr(e.value, fd, gfns, structs, mfuncs, acc, atargets);
+            return WCapStmt { stmt: parser.StmtExpr { value: er.expr }, caps: er.caps, changed: false };
+        },
+        parser.StmtIf(f) => {
+            var cr: WCapExpr = wcap_expr(f.cond, fd, gfns, structs, mfuncs, acc, atargets);
+            var tb: WCapBody = box_wide_captures_stmts(f.then_body, fd, gfns, structs, mfuncs, atargets);
+            var eb: WCapBody = box_wide_captures_stmts(f.else_body, fd, gfns, structs, mfuncs, atargets);
+            return WCapStmt { stmt: parser.StmtIf { cond: cr.expr, then_body: tb.stmts, else_body: eb.stmts }, caps: cr.caps, changed: tb.changed || eb.changed };
+        },
+        parser.StmtWhile(w) => {
+            var cr: WCapExpr = wcap_expr(w.cond, fd, gfns, structs, mfuncs, acc, atargets);
+            var wb: WCapBody = box_wide_captures_stmts(w.body, fd, gfns, structs, mfuncs, atargets);
+            return WCapStmt { stmt: parser.StmtWhile { cond: cr.expr, body: wb.stmts, label: w.label }, caps: cr.caps, changed: wb.changed };
+        },
+        parser.StmtFor(fr) => {
+            var itr: WCapExpr = wcap_expr(fr.iter, fd, gfns, structs, mfuncs, acc, atargets);
+            var fb: WCapBody = box_wide_captures_stmts(fr.body, fd, gfns, structs, mfuncs, atargets);
+            return WCapStmt { stmt: parser.StmtFor { var_name: fr.var_name, iter: itr.expr, body: fb.stmts, label: fr.label }, caps: itr.caps, changed: fb.changed };
+        },
+        parser.StmtMatch(m) => {
+            var sr: WCapExpr = wcap_expr(m.scrutinee, fd, gfns, structs, mfuncs, acc, atargets);
+            var a: WCaps = sr.caps;
+            var mchanged: boolean = false;
+            var na: parser.MatchArm[] = [];
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var arm: parser.MatchArm = m.arms[ai];
+                var ng: parser.Expr = arm.guard;
+                if (arm.has_guard) {
+                    var gr: WCapExpr = wcap_expr(arm.guard, fd, gfns, structs, mfuncs, a, atargets);
+                    a = gr.caps; ng = gr.expr;
+                }
+                var ab: WCapBody = box_wide_captures_stmts(arm.body, fd, gfns, structs, mfuncs, atargets);
+                if (ab.changed) { mchanged = true; }
+                na = na.append(parser.MatchArm { pattern: arm.pattern, body: ab.stmts, line: arm.line, col: arm.col, guard: ng, has_guard: arm.has_guard });
+                ai = ai + 1;
+            }
+            return WCapStmt { stmt: parser.StmtMatch { scrutinee: sr.expr, arms: na, line: m.line, col: m.col, origin: m.origin }, caps: a, changed: mchanged };
+        },
+        _ => { return WCapStmt { stmt: st, caps: acc, changed: false }; }
+    }
+    return WCapStmt { stmt: st, caps: acc, changed: false };
+}
+
+// box_wide_captures_stmts rewrites a statement list, emitting each statement's
+// wide-capture cell decls immediately before it — so the cell is created after
+// everything it reads is in scope, and inside whatever block that is.
+function box_wide_captures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], atargets: string[]): WCapBody {
+    var out: parser.Stmt[] = [];
+    var changed: boolean = false;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var empty: WCaps = WCaps { names: [], types: [] };
+        var r: WCapStmt = wcap_stmt(stmts[i], fd, gfns, structs, mfuncs, empty, atargets);
+        if (r.changed) { changed = true; }
+        var ci: i32 = 0;
+        while (ci < r.caps.names.len()) {
+            out = out.append(wcap_cell_decl(r.caps.names[ci], r.caps.types[ci]));
+            changed = true;
+            ci = ci + 1;
+        }
+        out = out.append(r.stmt);
+        i = i + 1;
+    }
+    return WCapBody { stmts: out, changed: changed };
+}
+
+// box_wide_captures is the per-function entry point (step 0-pre of the lift
+// pipeline). Returns `fd` untouched when it holds no wide capture.
+function box_wide_captures(fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): parser.FuncDecl {
+    var atargets: string[] = body_assign_targets(fd.body);
+    var b: WCapBody = box_wide_captures_stmts(fd.body, fd, gfns, structs, mfuncs, atargets);
+    if (!b.changed) { return fd; }
+    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: b.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str };
+}
+
 // box_mutated_scalar_captures finds `fd`'s locals to box into shared cells
 // (see the block comment above): i32/boolean captures a lambda body writes
 // (#2850), and — for ESCAPING bindings — captures of any type that the outer
@@ -42834,6 +43119,11 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         // statements the lifts below can reach (#nested-capture). Inline, not
         // hoist — control flow + captures stay in scope.
         fd = unwrap_sole_iife_return(fd);
+        // 0-pre. Snapshot 8-byte scalar captures (i64 / u64 / f64) into 1-element
+        // cells so they fit the env box's 32-bit slot (#6046). Must run BEFORE
+        // the lifts so they see the `i64[]` cell — pointer-shaped, which
+        // cap_slot_ok already accepts — instead of a wide scalar it declines.
+        fd = box_wide_captures(fd, gfns, mod.structs, sigs);
         // 0. Box captured-and-mutated scalar locals into 1-element array cells so
         // a closure's write to a captured outer scalar is shared by reference
         // (#2850). Must run BEFORE the closure lifts so they see the boxed cell
