@@ -32,17 +32,18 @@ import "./asmcore";
 import "./astwalk";
 
 // Linear-memory layout for the no-string array subset, computed exactly as
-// wasm.emit_module does for an empty string table (tab.next = 24, heap_extra =
-// 0): fl_base = roundup8(24 + 16) = 40, the 65536-class freelist, then the
-// bump heap at heap_base. heap_base is also the rc helpers' low-address guard.
-pub function fl_base(): i32 { return 40; }
+// wasm.emit_module does for an empty string table (tab.next = str_region_base()
+// = 32, heap_extra = 0): fl_base = roundup8(32 + 16) = 48, the 65536-class
+// freelist, then the bump heap at heap_base. heap_base is also the rc helpers'
+// low-address guard.
+pub function fl_base(): i32 { return 48; }
 pub function fl_cells(): i32 { return 65536; }
-pub function heap_base(): i32 { return 40 + 65536 * 4; }
+pub function heap_base(): i32 { return 48 + 65536 * 4; }
 
 // ---- string literals (data section) -----------------------------------------
 // In the IR subset, string literals live in the data section exactly as
 // wasm.fern's StrTable lays them out: one `[len:i32 LE][bytes]` block per
-// distinct literal, the first at offset 24, each `4 + len` bytes. A string
+// distinct literal, the first at str_region_base(), each `4 + len` bytes. A string
 // VALUE is a pointer to its block; `.len()` reads the i32 at offset 0. Literals
 // are static (no heap) — only str_concat allocates (via $__fern_str_box). The
 // blocks sit below the freelist/heap, so any literal shifts fl_base/heap_base
@@ -151,16 +152,31 @@ pub function str_values(cache: irlower.LowerResult[]): string[] {
     return vals;
 }
 
-// str_offset returns the data-section offset of literal index `idx`: 24 + the
+// str_offset returns the data-section offset of literal index `idx`:
+// str_region_base() + the
 // summed block sizes (4 + len) of all prior literals.
-// str_region_base is where a unit's string-literal region starts: the 24-byte
-// low scratch sits below it. That scratch is fully spoken for now — fd_write
+// str_region_base is where a unit's string-literal region starts: the 32-byte
+// low scratch sits below it. That scratch is fully spoken for — fd_write
 // iovec at 0/4/8, the newline byte at 12, the WASI out-parameter slot at 16
 // (path_open writes the opened fd there, fd_readdir / fd_write their counts),
-// and the rc==1 append-cliff counter at 20 (see arr_push_shared_addr).
+// the rc==1 append-cliff counter at 20 (see arr_push_shared_addr), and the
+// 8-byte cliff WEIGHT accumulator at 24 (see arr_push_copied_addr).
 // Named rather than inlined because const_str now emits offsets RELATIVE to it
-// (#5331 step 1), so the two must agree by construction.
-pub function str_region_base(): i32 { return 24; }
+// (#5331 step 1), so the two must agree by construction — and because the
+// weight accumulator moved this base from 24 to 32, which every literal offset
+// and both derived bases (fl_base / heap_base) follow automatically.
+pub function str_region_base(): i32 { return 32; }
+
+// arr_push_copied_addr is the 8-byte slot holding the SAME cliff, weighted by
+// the bytes each crossing copied (len * 4 — wasm-IR arrays are 4-byte slots),
+// accumulated by $__fern_arr_push's un-share path and read by
+// __arr_push_shared_bytes. i64 because the quantity is arena-scale.
+//
+// The count alone cannot rank crossing sites: a whole-module compile of
+// checker.fern crosses 188 times and copies 812 bytes doing it, while one
+// threaded accumulator over 20k appends copies 2.3 GB. 24 is 8-aligned and was
+// the first word of the string region before this took it.
+pub function arr_push_copied_addr(): i32 { return 24; }
 
 // arr_push_shared_addr is the 4-byte slot holding the rc==1 append cliff
 // counter (#6023): appends that copied a buffer which still had SPARE
@@ -404,7 +420,7 @@ pub function tid_globals_section(structs: parser.StructDecl[]): string {
 }
 
 pub function str_offset(vals: string[], idx: i32): i32 {
-    var off: i32 = 24;
+    var off: i32 = str_region_base();
     var i: i32 = 0;
     while (i < idx) {
         off = off + 4 + vals[i].len();
@@ -415,7 +431,7 @@ pub function str_offset(vals: string[], idx: i32): i32 {
 
 // offset_of_value returns the data-section offset of literal value `v`.
 // A miss means the literal escaped the collection pre-pass — a compiler
-// bug; returning the scratch base (24) silently pointed the emitted code
+// bug; returning the scratch base silently pointed the emitted code
 // at the iovec scratch area (SH-008's wasm-IR sibling), so fail loudly.
 function offset_of_value(vals: string[], v: string): i32 {
     var i: i32 = 0;
@@ -3213,6 +3229,11 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // address difference. Zero-, not sign-extend: the cursor never sits
             // below heap_base, so the difference is a non-negative byte count.
             out = out + "    global.get $heap\n    i32.const " + util.i32_to_string((str_offset(str_vals, str_vals.len()) + 16 + 7) / 8 * 8 + fl_cells() * 4) + "\n    i32.sub\n    i64.extend_i32_u\n";
+        } else if (o.kind_tag == 217) {  // arr_push_shared_bytes
+            // The cliff WEIGHT — an i64 load from the fixed low-memory slot
+            // $__fern_arr_push accumulates on its un-share path. i64, not i32:
+            // it counts bytes, not appends.
+            out = out + "    i32.const " + util.i32_to_string(arr_push_copied_addr()) + "\n    i64.load\n";
         } else if (o.kind_tag == 216) {  // arr_push_shared_count
             // The rc==1 append cliff counter — a plain i32 load from the fixed
             // low-memory slot $__fern_arr_push bumps on its un-share path. i32,
@@ -5267,7 +5288,10 @@ pub function arr_push_helper(): string {
     // the rc==1 cliff. Count it at arr_push_shared_addr — off the fast path,
     // one add on a run already about to copy the whole buffer.
     o = o + "    (if (i32.lt_s (local.get $len) (local.get $cap)) (then\n";
-    o = o + "      (i32.store (i32.const " + util.i32_to_string(arr_push_shared_addr()) + ") (i32.add (i32.load (i32.const " + util.i32_to_string(arr_push_shared_addr()) + ")) (i32.const 1)))))\n";
+    o = o + "      (i32.store (i32.const " + util.i32_to_string(arr_push_shared_addr()) + ") (i32.add (i32.load (i32.const " + util.i32_to_string(arr_push_shared_addr()) + ")) (i32.const 1)))\n";
+    // Weight the crossing by the len * 4 bytes the copy below is about to
+    // move, accumulated as an i64 at arr_push_copied_addr.
+    o = o + "      (i64.store (i32.const " + util.i32_to_string(arr_push_copied_addr()) + ") (i64.add (i64.load (i32.const " + util.i32_to_string(arr_push_copied_addr()) + ")) (i64.extend_i32_u (i32.mul (local.get $len) (i32.const 4)))))))\n";
     o = o + "    (if (i32.ge_s (local.get $len) (local.get $cap)) (then\n";
     o = o + "      (local.set $ncap (i32.const 4))\n";
     o = o + "      (if (i32.gt_s (local.get $cap) (i32.const 0)) (then (local.set $ncap (i32.mul (local.get $cap) (i32.const 2)))))))\n";

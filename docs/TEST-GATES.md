@@ -44,7 +44,7 @@ what caught it.
 | `internal/e2eselfhost` | The self-host compiler is right on programs outside its own sources | Whole-program self-compilation; memory |
 | Per-module / emit-all fixpoint | The compiler reproduces itself, deterministically | Any *stable* miscompile, including one affecting every program it sees |
 | rc corpus (`rcCorpus`, all three backends) | No rc over-release on the shapes it enumerates | Shapes it does not enumerate — add one when you fix an rc bug |
-| Cliff corpus (`rc_arr_push_cliff_test.go`, `rc_call_result_materialise_test.go`) | The NATIVE compiler emits no stray retain on the accumulator shapes it enumerates — i.e. they are not quadratic | Over-*retains* on any other shape, and every self-host emitter |
+| Cliff corpus (`rc_arr_push_cliff_test.go`, `rc_call_result_materialise_test.go`, `rc_cliff_bytes_test.go`) | The NATIVE compiler emits no stray retain on the accumulator shapes it enumerates — i.e. they are not quadratic — and that the crossing COUNT and its byte WEIGHT stay in step | Over-*retains* on any other shape, and every self-host emitter |
 | Driver rc guard (`util.rc_underflow_guard`) | The compiler's OWN heap accounting stayed balanced while compiling | Leaks (an over-*retain* is silent), and anything outside the drivers |
 | `FERN_NATIVE_ASM=1` fixtures | The in-process assembler encodes what the backend emits | The gcc path, which the fallback silently hides behind |
 | Differential (`internal/e2e/diff_oracle_test.go`) | Two compilers agree on exit codes | Everything about memory — see below |
@@ -133,6 +133,25 @@ answer, these are the tools, in the order they are usually reached for:
   a profiling curiosity. Reach for it whenever memory grows faster than the
   data does; it names the cause where `__heap_bump_bytes()` only shows the
   symptom.
+- **`__arr_push_shared_bytes()`** — the same crossings WEIGHTED by the bytes
+  they copied, as an i64. Use the count to answer "did anything cross"; use
+  this to answer "does it matter", and **never rank work by the count alone**.
+  The two readings differ by three orders of magnitude on real runs: a
+  whole-module compile of `checker.fern` by the self-host compiler crosses 188
+  times and copies **812 bytes** doing it (they are 4-byte loop-depth stacks in
+  `irlower`'s `enter_loop`, reachable only by attribution — see below), while
+  one threaded accumulator over 20k appends crosses ~20k times and copies
+  **2.3 GB**. Two rounds of accumulator work were scoped against the unweighted
+  count and aimed at sites that could not have paid. The compiler's own readout
+  (`FERN_CLIFF_REPORT=1`, `util.arr_push_cliff_report`) prints both.
+- **Attributing a crossing to a function** needs no flag: build with `-g`, find
+  the counter-bump instruction inside `__fern_arr_push_grow`
+  (`objdump -d --disassemble=__fern_arr_push_grow`), break on it under gdb and
+  report `info symbol *(unsigned long *)$rsp` — the return address names the
+  function whose append copied. That is how the 188 crossings above were traced
+  to two functions in one file; `printf "%d %d", $esi, $edx` at the same
+  breakpoint gives each crossing's oldLen / stride if you want the distribution
+  rather than the total.
 - **`FERN_LEAKCHECK=1`** — alloc/free counts and live bytes at exit. The other
   direction: what the rc detector cannot see.
 - **`FERN_RC_TRACE=1`** — one stderr line per heap event:

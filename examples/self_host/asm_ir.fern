@@ -987,6 +987,17 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .globl __fern_arr_push_shared\n");
     s = s.write("__fern_arr_push_shared: .quad 0\n");
     s = s.write("    .align 8\n");
+    // The same crossings WEIGHTED by the bytes they copied (len * 8 — the
+    // self-host array model is uniform 8-byte slots), read by
+    // __arr_push_shared_bytes. The count says whether the cliff was crossed;
+    // this says whether it cost anything, and the two readings differ by three
+    // orders of magnitude on real runs. .globl for exactly the reason the
+    // counter above is: its reader lowers to an INLINE read of this word, which
+    // cannot reach a file-local symbol in another unit under
+    // -per-module-emit-all (#6058, #6066).
+    s = s.write("    .globl __fern_arr_push_copied\n");
+    s = s.write("__fern_arr_push_copied: .quad 0\n");
+    s = s.write("    .align 8\n");
     s = s.write("__fern_freelist: .skip 524288\n");
     s = s.write("    .align 8\n");
     // Large-tier segregated freelist (#3425): the 65536-word __fern_freelist above
@@ -2692,6 +2703,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // copy the whole buffer.
     s = s.write(".Larr_push_shared_cliff:\n");
     s = s.write("    incq __fern_arr_push_shared(%rip)\n");
+    // Weight the crossing by what it costs: the len * 8 bytes the copy below
+    // is about to move. %rax is free here (it only takes the result at
+    // .Larr_push_ret) and %r14 holds len.
+    s = s.write("    movq %r14, %rax\n");
+    s = s.write("    shlq $3, %rax\n");
+    s = s.write("    addq %rax, __fern_arr_push_copied(%rip)\n");
     s = s.write("    jmp .Larr_push_cap\n");
     s = s.write(".Larr_push_dbl:\n");
     s = s.write("    shlq $1, %rcx\n");
@@ -4670,6 +4687,13 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    testq %rax, %rax\n");                   // ptr == 0 ?
             s = s.write("    cmovneq %rdx, %rcx\n");                 // 0 if uninit, else ptr−base
             s = s.write("    pushq %rcx\n");
+            s = s.need("heap");
+        } else if (o.kind_tag == 217) {  // arr_push_shared_bytes
+            // The cliff WEIGHT: bytes copied at the crossings the counter
+            // counts, a plain .bss word accumulated by __fern_arr_push's
+            // un-share path. Same inline read + heap gate as its sibling.
+            s = s.write("    movq __fern_arr_push_copied(%rip), %rax\n");
+            s = s.write("    pushq %rax\n");
             s = s.need("heap");
         } else if (o.kind_tag == 216) {  // arr_push_shared_count
             // The rc==1 append cliff counter, a plain .bss word bumped by

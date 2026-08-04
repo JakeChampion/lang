@@ -544,6 +544,10 @@ func New() *Interp {
 	// is 0 therefore passes under -interp for the right reason, and one
 	// asserting it is NON-zero is a codegen-only test by construction.
 	i.Builtins["__arr_push_shared_count"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	// __arr_push_shared_bytes(): the same cliff weighted by bytes copied. No
+	// cliff to cross under the interpreter, so no bytes copied either — 0,
+	// for exactly the reason the counter beside it reports 0.
+	i.Builtins["__arr_push_shared_bytes"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	// __heap_mark() / __heap_release_to(mark): the arena checkpoint pair. The
 	// interpreter is GC'd, so there is no cursor to capture or rewind — mark
 	// hands back the same "no checkpoint" 0 the codegen backends use when

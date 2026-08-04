@@ -347,7 +347,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	//	56..59  print ret
 	//	60..63  random buf
 	//	64..71  __str_idx scratch (data, len) for inline-form strings
-	//	72..79  reserved for future per-helper scratch
+	//	72..79  rc==1 append-cliff bytes copied (i64 accumulator)
 	//	80..83  preview-2 stdout-handle init flag
 	//	84..87  preview-2 stdout-handle cache
 	//	88..91  preview-2 stderr-handle init flag

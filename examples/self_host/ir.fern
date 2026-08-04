@@ -543,6 +543,18 @@ pub function op_heap_bump_bytes(): Op { return op0("heap_bump_bytes"); }
 // register backends read the `__fern_arr_push_shared` word, wasm a fixed
 // low-memory slot. Mirrors native's __fern_arr_push_shared_count.
 pub function op_arr_push_shared_count(): Op { return op0("arr_push_shared_count"); }
+// `__arr_push_shared_bytes` takes no operands → an i64: the same cliff the
+// counter above counts, WEIGHTED by the bytes each crossing copied (oldLen *
+// stride, summed). The count says whether anything crossed; only the weight
+// says whether it mattered, and the two readings differ by three orders of
+// magnitude on real runs — a whole-module compile of checker.fern crosses 188
+// times and copies 812 bytes doing it (4-byte loop-depth stacks), while one
+// threaded accumulator over 20k appends copies 2.3 GB. i64 because the
+// quantity is arena-scale. Same runtime-store read as its sibling (op_allocates
+// admits it for the heap-runtime gate): the register backends read the
+// `__fern_arr_push_copied` word, wasm a fixed low-memory slot. Mirrors
+// native's __fern_arr_push_shared_bytes.
+pub function op_arr_push_shared_bytes(): Op { return op0("arr_push_shared_bytes"); }
 // `str_bytes` pops [str] → a fresh u8[] (one i32 slot per byte). Backs both
 // `s.bytes()` (copying) and `s.as_bytes()` — the self-host's slot-array model
 // has no separate zero-copy slice view, so as_bytes returns the same fresh
@@ -1384,6 +1396,7 @@ function kind_id_4(name: string): i32 {
     if (name == "arr_reverse") { return 214; }
     if (name == "arr_concat") { return 215; }
     if (name == "arr_push_shared_count") { return 216; }
+    if (name == "arr_push_shared_bytes") { return 217; }
     return 0;
 }
 
@@ -1629,6 +1642,7 @@ function kind_name_4(id: i32): string {
     if (id == 214) { return "arr_reverse"; }
     if (id == 215) { return "arr_concat"; }
     if (id == 216) { return "arr_push_shared_count"; }
+    if (id == 217) { return "arr_push_shared_bytes"; }
     return "invalid";
 }
 
@@ -1826,8 +1840,9 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 80) { return true; }
     // arr_push_shared_count does not allocate either, but it reads the counter
     // __fern_arr_push bumps, which only exists when the heap runtime is emitted.
-    // Same gate, same reason as heap_bump_bytes above.
-    if (tag == 216) { return true; }
+    // Same gate, same reason as heap_bump_bytes above — and the same for its
+    // byte-weighted sibling, which reads the accumulator beside that counter.
+    if (tag == 216 || tag == 217) { return true; }
     return false;
 }
 

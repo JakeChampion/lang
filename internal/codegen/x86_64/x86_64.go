@@ -408,6 +408,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesArrPushSharedCount {
 		g.emitArrPushSharedCountRuntime()
 	}
+	if g.usesArrPushSharedBytes {
+		g.emitArrPushSharedBytesRuntime()
+	}
 	if g.usesHeapBumpBytes {
 		g.emitHeapBumpBytesRuntime()
 	}
@@ -826,6 +829,11 @@ type generator struct {
 	// __fern_arr_push_grow bumps when it copies a buffer that had room).
 	// Set when the IR emits the matching OpCallDirect.
 	usesArrPushSharedCount bool
+	// usesArrPushSharedBytes gates the reader
+	// `__fern_arr_push_shared_bytes` (returns the BSS accumulator
+	// __fern_arr_push_grow adds to at the same cliff the counter counts).
+	// Set when the IR emits the matching OpCallDirect.
+	usesArrPushSharedBytes bool
 	// usesHeapBumpBytes gates the Phase 6 measurement reader
 	// `__fern_heap_bump_bytes` (returns __fern_heap_ptr − __fern_heap_base,
 	// the bump high-water mark). Set when the IR emits the matching
@@ -1019,6 +1027,8 @@ func (g *generator) recordUse(target string) {
 		g.usesRcUnderflowCount = true
 	case "__fern_arr_push_shared_count":
 		g.usesArrPushSharedCount = true
+	case "__fern_arr_push_shared_bytes":
+		g.usesArrPushSharedBytes = true
 	case "__fern_heap_bump_bytes":
 		g.usesHeapBumpBytes = true
 		g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
@@ -4242,13 +4252,19 @@ func (g *generator) emitDataSections() {
 			g.label("__fern_rc_underflow")
 			g.line("\t.quad 0")
 		}
-		if g.usesArrPushGrow || g.usesArrPushSharedCount {
+		if g.usesArrPushGrow || g.usesArrPushSharedCount || g.usesArrPushSharedBytes {
 			// The rc==1 cliff counter (i32 in the low word).
 			// __fern_arr_push_grow bumps it when it copies a buffer
 			// that had SPARE CAPACITY — i.e. the copy was forced by an
 			// extra reference, not by a full buffer.
 			g.line(".align 8")
 			g.label("__fern_arr_push_shared")
+			g.line("\t.quad 0")
+			// The same crossings WEIGHTED by the bytes they copied
+			// (oldLen * stride, summed as an i64). See
+			// emitArrPushSharedBytesRuntime for why the count alone is
+			// not a ranking signal.
+			g.label("__fern_arr_push_copied")
 			g.line("\t.quad 0")
 		}
 		if ast.RcFreeEnabled && g.usesAlloc {
@@ -5418,6 +5434,29 @@ func (g *generator) emitArrPushSharedCountRuntime() {
 	g.line(".size __fern_arr_push_shared_count, .-__fern_arr_push_shared_count")
 }
 
+// emitArrPushSharedBytesRuntime emits `__fern_arr_push_shared_bytes() -> i64`
+// — the same cliff the counter counts, weighted by the bytes each crossing
+// copied (oldLen * stride, summed).
+//
+// The count answers "did anything cross the cliff"; only the weight answers
+// "does it matter". Measured 2026-08-04: a whole-module compile of
+// checker.fern by the self-host compiler crosses the cliff 188 times and
+// copies 812 bytes doing it — the crossings are 4-byte loop-depth stacks, and
+// a conversion that eliminated every one of them would save under a kilobyte.
+// The same reading for one threaded accumulator over 20k appends is 2.3 GB.
+// Two rounds of accumulator work were scoped against the unweighted count and
+// aimed at sites that could not have paid; this is the number that ranks them.
+// Mirrors __fern_heap_bump_bytes (i64, leaf, no frame).
+func (g *generator) emitArrPushSharedBytesRuntime() {
+	g.line("")
+	g.line(".globl __fern_arr_push_shared_bytes")
+	g.line(".type __fern_arr_push_shared_bytes, @function")
+	g.label("__fern_arr_push_shared_bytes")
+	g.emit("mov rax, qword ptr [rip + __fern_arr_push_copied]")
+	g.emit("ret")
+	g.line(".size __fern_arr_push_shared_bytes, .-__fern_arr_push_shared_bytes")
+}
+
 // emitHeapBumpBytesRuntime emits `__fern_heap_bump_bytes() -> i64`,
 // the Phase 6 measurement reader: returns the bump high-water mark
 // (__fern_heap_ptr − __fern_heap_base) in bytes, or 0 before the first
@@ -5615,6 +5654,14 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("cmp esi, eax")
 	g.emit("jge .Lpush_copy") // genuinely full: not the cliff
 	g.emit("add dword ptr [rip + __fern_arr_push_shared], 1")
+	// Weight the crossing by what it actually costs: oldLen * stride bytes
+	// about to be memcpy'd. rax / rcx are caller-saved and dead here (rax
+	// held the capacity the compare above consumed), and the multiply is
+	// 64-bit so a buffer past 4 GiB still accumulates exactly.
+	g.emit("mov eax, esi") // zero-extend oldLen into rax
+	g.emit("mov ecx, edx") // zero-extend stride into rcx
+	g.emit("imul rax, rcx")
+	g.emit("add qword ptr [rip + __fern_arr_push_copied], rax")
 	g.label(".Lpush_copy")
 	// Copy path. Stash arr / oldLen / stride / newLen / newCap /
 	// headerBytes / new_data in callee-saves so they survive the

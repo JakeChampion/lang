@@ -752,6 +752,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_rc_underflow_count")
 				case "__fern_arr_push_shared_count":
 					needs.add("__fern_arr_push_shared_count")
+				case "__fern_arr_push_shared_bytes":
+					needs.add("__fern_arr_push_shared_bytes")
 				case "__fern_heap_bump_bytes":
 					needs.add("__fern_heap_bump_bytes")
 				case "__str_idx":
@@ -1551,6 +1553,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildArrPushSharedCountBody,
 	},
+	"__fern_arr_push_shared_bytes": {
+		// () → i64. The same cliff the counter beside it counts, weighted
+		// by the bytes each crossing copied (oldLen * stride, summed at
+		// arrPushCopiedAddr). The native backends implement the same entry
+		// point over a BSS global.
+		params:  nil,
+		results: []byte{encode.ValtypeI64},
+		body:    buildArrPushSharedBytesBody,
+	},
 	"__fern_heap_bump_bytes": {
 		// () → i64. Phase 6 measurement probe. Returns the bump
 		// high-water mark (cursor at allocCursorAddr − seed at
@@ -1991,6 +2002,18 @@ const heapBaseAddr = 52
 // the `__arr_push_shared_count` builtin. The natives implement the same
 // entry point over a BSS global.
 const arrPushSharedAddr = 56
+
+// arrPushCopiedAddr is the 8-byte slot at mem [72..80) — the "reserved for
+// future per-helper scratch" window in the low-memory layout — holding the
+// same cliff WEIGHTED by bytes: buildArrPushGrowBody adds oldLen * stride
+// there on each crossing, and `__arr_push_shared_bytes` reads it back. i64
+// because the quantity is arena-scale; the natives keep the same pair over
+// two BSS globals.
+//
+// The count alone cannot rank crossing sites: a whole-module self-host
+// compile crosses 188 times and copies 812 bytes doing it, while one
+// threaded accumulator over 20k appends copies 2.3 GB.
+const arrPushCopiedAddr = 72
 
 // buildStrLenBody assembles the wasm bytes for __fern_str_len.
 //
@@ -3464,6 +3487,18 @@ func buildArrPushGrowBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 1)
 	body = numeric.InstI32Add(body)
 	body = memory.InstI32Store(body, 2, 0)
+	// Weight the crossing by the bytes it is about to copy — oldLen *
+	// stride, accumulated as an i64 at arrPushCopiedAddr. The product is
+	// computed in i32 (wasm32 memory bounds it) and zero-extended.
+	body = inst.InstI32Const(body, arrPushCopiedAddr)
+	body = inst.InstI32Const(body, arrPushCopiedAddr)
+	body = memory.InstI64Load(body, 3, 0)
+	body = inst.InstLocalGet(body, 1) // oldLen
+	body = inst.InstLocalGet(body, 2) // stride
+	body = numeric.InstI32Mul(body)
+	body = convert.InstI64ExtendI32U(body)
+	body = numeric.InstI64Add(body)
+	body = memory.InstI64Store(body, 3, 0)
 	body = inst.InstEnd(body)
 	// Copy path. newLen = oldLen + 1.
 	body = inst.InstLocalGet(body, 1)
@@ -4118,6 +4153,18 @@ func buildArrPushSharedCountBody(_ map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstI32Const(body, arrPushSharedAddr)
 	body = memory.InstI32Load(body, 2, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildArrPushSharedBytesBody — () → i64. Returns the cliff WEIGHT at
+// arrPushCopiedAddr (accumulated by buildArrPushGrowBody): the bytes the
+// crossings the counter counts actually copied. The count says whether
+// anything crossed; only this says whether it mattered. The native backends
+// provide the same entry over a BSS global.
+func buildArrPushSharedBytesBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, arrPushCopiedAddr)
+	body = memory.InstI64Load(body, 3, 0)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

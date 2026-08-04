@@ -11919,6 +11919,16 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __arr_push_shared_bytes(): i64 — the same cliff weighted by bytes
+	// copied (oldLen * stride, summed at each crossing). Same runtime-helper
+	// shape as the counter beside it; the weight is what ranks one crossing
+	// site against another, which the count cannot do.
+	if id.Name == "__arr_push_shared_bytes" && len(n.Args) == 0 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_push_shared_bytes", I32: 0})
+			return nil
+		}
+	}
 	// __heap_bump_bytes(): i64 — Phase 6 measurement probe. Returns the
 	// bump allocator's high-water mark in bytes (current cursor minus the
 	// region base; 0 before the first allocation). The cursor only moves
