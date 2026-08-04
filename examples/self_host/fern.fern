@@ -349,7 +349,24 @@ function ssa_scan(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): i32 {
     return 0;
 }
 
+// main wraps `run` in the two whole-run self-checks the probe drivers already
+// carry. This is the production CLI — the most-run driver in the tree — and it
+// had neither.
+//
+// rc_underflow_guard is the #6021 detector: a compiler that over-releases one
+// of its own blocks still emits correct output (the doubly-freed block is
+// recycled harmlessly), so the damage surfaces as a segfault in an unrelated
+// later build once an innocuous change shifts allocation sizes. asm_ir_run and
+// wasm_ir_run check themselves on every run; `fern` did not, which left the
+// one binary users actually run as the blind spot.
+//
+// arr_push_cliff_report is the opt-in quadratic-copy readout (FERN_CLIFF_REPORT,
+// #6056) — off by default, so an ordinary run is unchanged.
 function main(): i32 {
+    return util.rc_underflow_guard("fern", util.arr_push_cliff_report("fern", run()));
+}
+
+function run(): i32 {
     var av: string[] = args();
 
     var entry_path: string = "";

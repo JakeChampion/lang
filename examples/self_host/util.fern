@@ -437,3 +437,37 @@ pub function rc_underflow_guard(who: string, code: i32): i32 {
     eprint(who + ": internal error: rc over-release detected (" + i32_to_string(n) + " dec(s) on an already-released block)\n");
     return RC_UNDERFLOW_EXIT;
 }
+
+// arr_push_cliff_report prints the process-wide rc==1 append-cliff count to
+// stderr when FERN_CLIFF_REPORT is set, and passes `code` through unchanged.
+//
+// This is the compiler's own dose of the medicine #6023 built for compiled
+// PROGRAMS. __fern_arr_push_grow mutates in place only at rc == 1, so a stray
+// retain upstream makes every append in a threaded accumulator copy the whole
+// buffer — correct output, quadratic bytes moved. The counter reports the
+// appends that copied a buffer which still had SPARE CAPACITY, i.e. the copies
+// bought by a reference rather than by a full buffer.
+//
+// Deliberately a REPORT, not a guard. rc_underflow_guard above turns a
+// non-zero reading into a failure because an over-release is never legitimate;
+// a cliff crossing sometimes is (a genuinely shared buffer must copy), so a
+// non-zero count here is a number to compare across builds, not a verdict.
+// Hence opt-in via the environment and no effect on the exit code — a run
+// without FERN_CLIFF_REPORT is byte-identical in behaviour and output.
+//
+// Why this exists: wall-clock cannot resolve this. Timing the self-host
+// compiler per module on a 4-core box gave a ~27% spread run-to-run, which
+// swamped the effect of #6043 entirely and produced an apparent 16% "win" on
+// one module that five repetitions showed to be sampling noise. The counter is
+// exact and host-independent — the same argument docs/TEST-GATES.md makes for
+// __heap_bump_bytes() over peak RSS — so it is the instrument any accumulator
+// work should be measured with. See #6056.
+pub function arr_push_cliff_report(who: string, code: i32): i32 {
+    match (env("FERN_CLIFF_REPORT")) {
+        Some(_) => {
+            eprint(who + ": arr_push_shared_count=" + i32_to_string(__arr_push_shared_count()) + "\n");
+            return code;
+        },
+        None => { return code; }
+    }
+}
