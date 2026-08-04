@@ -164,6 +164,13 @@ test("home → tutorial link navigates correctly", async ({ page }) => {
   await expect(page.locator("h1")).toContainText("Install");
 });
 
+test("home → why link navigates correctly", async ({ page }) => {
+  await page.goto("./");
+  await page.getByRole("link", { name: /^Why Fern$/ }).first().click();
+  await expect(page).toHaveURL(/\/lang\/why\/?$/);
+  await expect(page.locator("h1")).toContainText("Why Fern");
+});
+
 test("home → reference link navigates correctly", async ({ page }) => {
   await page.goto("./");
   await page.getByRole("link", { name: /^Reference$/ }).first().click();
