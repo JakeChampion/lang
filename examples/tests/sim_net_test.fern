@@ -159,12 +159,12 @@ function test_hits_and_wildcard(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/sim net");
-    r = r.it("gather returns bodies in input order", test_gather_input_order());
-    r = r.it("race picks the fast endpoint", test_race_picks_fast());
-    r = r.it("with_deadline drops only the slow endpoint", test_deadline_drops_only_slow());
-    r = r.it("chunked body accumulates completely", test_chunked_accumulates());
-    r = r.it("chunked future re-suspends per chunk", test_chunked_resuspends_per_chunk());
-    r = r.it("unregistered endpoint is Ready empty", test_unregistered_is_ready_empty());
-    r = r.it("hits counter and wildcard path", test_hits_and_wildcard());
+    r = r.it("gather returns bodies in input order", test_gather_input_order);
+    r = r.it("race picks the fast endpoint", test_race_picks_fast);
+    r = r.it("with_deadline drops only the slow endpoint", test_deadline_drops_only_slow);
+    r = r.it("chunked body accumulates completely", test_chunked_accumulates);
+    r = r.it("chunked future re-suspends per chunk", test_chunked_resuspends_per_chunk);
+    r = r.it("unregistered endpoint is Ready empty", test_unregistered_is_ready_empty);
+    r = r.it("hits counter and wildcard path", test_hits_and_wildcard);
     return r.finish();
 }

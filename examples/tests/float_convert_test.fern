@@ -69,16 +69,16 @@ function test_signum_lerp_f32(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/float convert");
-    r = r.it("signum positive",     test_signum_positive());
-    r = r.it("signum negative",     test_signum_negative());
-    r = r.it("signum zero",         test_signum_zero());
-    r = r.it("lerp mid",            test_lerp_mid());
-    r = r.it("lerp quarter",        test_lerp_quarter());
-    r = r.it("lerp endpoints",      test_lerp_endpoints());
-    r = r.it("lerp extrapolate",    test_lerp_extrapolate());
-    r = r.it("to_radians",          test_to_radians());
-    r = r.it("to_degrees",          test_to_degrees());
-    r = r.it("deg-rad round trip",  test_deg_rad_round_trip());
-    r = r.it("signum/lerp f32",     test_signum_lerp_f32());
+    r = r.it("signum positive",     test_signum_positive);
+    r = r.it("signum negative",     test_signum_negative);
+    r = r.it("signum zero",         test_signum_zero);
+    r = r.it("lerp mid",            test_lerp_mid);
+    r = r.it("lerp quarter",        test_lerp_quarter);
+    r = r.it("lerp endpoints",      test_lerp_endpoints);
+    r = r.it("lerp extrapolate",    test_lerp_extrapolate);
+    r = r.it("to_radians",          test_to_radians);
+    r = r.it("to_degrees",          test_to_degrees);
+    r = r.it("deg-rad round trip",  test_deg_rad_round_trip);
+    r = r.it("signum/lerp f32",     test_signum_lerp_f32);
     return r.finish();
 }

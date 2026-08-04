@@ -112,17 +112,17 @@ function test_to_string_paths(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("floats");
-    r = r.it("f64 addition",                    test_f64_addition());
-    r = r.it("f64 multiplication",              test_f64_multiplication());
-    r = r.it("f64 division by negative",        test_f64_division_by_negative());
-    r = r.it("f32 precision loss tolerance",    test_f32_precision_loss());
-    r = r.it("f64 exact on integral",           test_f64_exact_equality_on_integral());
-    r = r.it("NaN detection",                   test_nan_detection());
-    r = r.it("NaN compares unequal to itself",  test_nan_compares_unequal_to_itself());
-    r = r.it("f32_bits gives expected pattern", test_f32_bits_round_trip());
-    r = r.it("f32_from_bits round trips",       test_f32_from_bits_round_trips());
-    r = r.it("negative zero",                   test_negative_zero());
-    r = r.it("Inf vs Inf",                      test_inf_handling());
-    r = r.it("to_string digit paths",           test_to_string_paths());
+    r = r.it("f64 addition",                    test_f64_addition);
+    r = r.it("f64 multiplication",              test_f64_multiplication);
+    r = r.it("f64 division by negative",        test_f64_division_by_negative);
+    r = r.it("f32 precision loss tolerance",    test_f32_precision_loss);
+    r = r.it("f64 exact on integral",           test_f64_exact_equality_on_integral);
+    r = r.it("NaN detection",                   test_nan_detection);
+    r = r.it("NaN compares unequal to itself",  test_nan_compares_unequal_to_itself);
+    r = r.it("f32_bits gives expected pattern", test_f32_bits_round_trip);
+    r = r.it("f32_from_bits round trips",       test_f32_from_bits_round_trips);
+    r = r.it("negative zero",                   test_negative_zero);
+    r = r.it("Inf vs Inf",                      test_inf_handling);
+    r = r.it("to_string digit paths",           test_to_string_paths);
     return r.finish();
 }

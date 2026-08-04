@@ -53,10 +53,10 @@ function test_negatives(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/sort f64");
-    r = r.it("ascending",   test_ascending());
-    r = r.it("descending",  test_descending());
-    r = r.it("immutable",   test_immutable());
-    r = r.it("edge cases",  test_edge_cases());
-    r = r.it("negatives",   test_negatives());
+    r = r.it("ascending",   test_ascending);
+    r = r.it("descending",  test_descending);
+    r = r.it("immutable",   test_immutable);
+    r = r.it("edge cases",  test_edge_cases);
+    r = r.it("negatives",   test_negatives);
     return r.finish();
 }

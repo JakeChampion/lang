@@ -109,29 +109,29 @@ function test_file_helpers(r: test.TestRunner): test.TestRunner {
     var path: string = dir + "/payload.txt";
     match (write_file(path, "hello\nworld\n")) {
         None => { },
-        Some(_) => { return rr.it("write setup", test.fail("write_file failed")); }
+        Some(_) => { return rr.it("write setup", () => test.fail("write_file failed")); }
     }
-    rr = rr.it("file exists",        test.assert_file_exists(path));
-    rr = rr.it("file does not exist", test.assert_file_not_exists(dir + "/missing.txt"));
-    rr = rr.it("file contains",      test.assert_file_contains(path, "world"));
-    rr = rr.it("file contents eq",   test.assert_file_contents(path, "hello\nworld\n"));
+    rr = rr.it("file exists",        () => test.assert_file_exists(path));
+    rr = rr.it("file does not exist", () => test.assert_file_not_exists(dir + "/missing.txt"));
+    rr = rr.it("file contains",      () => test.assert_file_contains(path, "world"));
+    rr = rr.it("file contents eq",   () => test.assert_file_contents(path, "hello\nworld\n"));
     return rr;
 }
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("helpers");
 
-    r = r.it("contains_all pass",                test_contains_all_pass());
-    r = r.it("contains_all names missing",       test_contains_all_localises_missing());
-    r = r.it("contains_any one matches",         test_contains_any_one_matches());
-    r = r.it("contains_in_order pass",           test_contains_in_order());
-    r = r.it("contains_in_order rejects reorder", test_contains_in_order_rejects_wrong_order());
-    r = r.it("in_range_i32 pass",                test_in_range_i32_pass());
-    r = r.it("in_range_i32 boundary pass",       test_in_range_i32_boundary_pass());
-    r = r.it("in_range_i32 below fails",         test_in_range_i32_below_fails());
-    r = r.it("in_range_i64 pass",                test_in_range_i64_pass());
-    r = r.it("string diff equal",                test_string_diff_equal_strings());
-    r = r.it("string diff localises line",       test_string_diff_localises_line());
+    r = r.it("contains_all pass",                test_contains_all_pass);
+    r = r.it("contains_all names missing",       test_contains_all_localises_missing);
+    r = r.it("contains_any one matches",         test_contains_any_one_matches);
+    r = r.it("contains_in_order pass",           test_contains_in_order);
+    r = r.it("contains_in_order rejects reorder", test_contains_in_order_rejects_wrong_order);
+    r = r.it("in_range_i32 pass",                test_in_range_i32_pass);
+    r = r.it("in_range_i32 boundary pass",       test_in_range_i32_boundary_pass);
+    r = r.it("in_range_i32 below fails",         test_in_range_i32_below_fails);
+    r = r.it("in_range_i64 pass",                test_in_range_i64_pass);
+    r = r.it("string diff equal",                test_string_diff_equal_strings);
+    r = r.it("string diff localises line",       test_string_diff_localises_line);
 
     r = test_file_helpers(r);
 

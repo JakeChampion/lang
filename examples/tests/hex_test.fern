@@ -92,18 +92,18 @@ function test_encode_upper(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/hex");
-    r = r.it("encode",                   test_encode());
-    r = r.it("encode empty",             test_encode_empty());
-    r = r.it("decode",                   test_decode());
-    r = r.it("decode empty",             test_decode_empty());
-    r = r.it("decode uppercase",         test_decode_uppercase());
-    r = r.it("decode lowercase",         test_decode_lowercase());
-    r = r.it("decode stops at non-hex",  test_decode_stops_at_nonhex());
-    r = r.it("decode odd tail",          test_decode_odd_tail());
-    r = r.it("round-trip",               test_roundtrip());
-    r = r.it("encode emits lowercase",   test_encode_lowercase_digits());
-    r = r.it("decode_strict valid",      test_decode_strict_valid());
-    r = r.it("decode_strict rejects",    test_decode_strict_rejects());
-    r = r.it("encode_upper",             test_encode_upper());
+    r = r.it("encode",                   test_encode);
+    r = r.it("encode empty",             test_encode_empty);
+    r = r.it("decode",                   test_decode);
+    r = r.it("decode empty",             test_decode_empty);
+    r = r.it("decode uppercase",         test_decode_uppercase);
+    r = r.it("decode lowercase",         test_decode_lowercase);
+    r = r.it("decode stops at non-hex",  test_decode_stops_at_nonhex);
+    r = r.it("decode odd tail",          test_decode_odd_tail);
+    r = r.it("round-trip",               test_roundtrip);
+    r = r.it("encode emits lowercase",   test_encode_lowercase_digits);
+    r = r.it("decode_strict valid",      test_decode_strict_valid);
+    r = r.it("decode_strict rejects",    test_decode_strict_rejects);
+    r = r.it("encode_upper",             test_encode_upper);
     return r.finish();
 }

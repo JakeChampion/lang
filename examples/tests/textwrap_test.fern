@@ -38,11 +38,11 @@ function test_collapses_spaces_and_edges(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/textwrap");
-    r = r.it("greedy wrap",        test_greedy_wrap());
-    r = r.it("fits one line",      test_fits_on_one_line());
-    r = r.it("boundary",           test_boundary());
-    r = r.it("long word",          test_long_word());
-    r = r.it("hard newlines",      test_preserves_hard_newlines());
-    r = r.it("collapse + edges",   test_collapses_spaces_and_edges());
+    r = r.it("greedy wrap",        test_greedy_wrap);
+    r = r.it("fits one line",      test_fits_on_one_line);
+    r = r.it("boundary",           test_boundary);
+    r = r.it("long word",          test_long_word);
+    r = r.it("hard newlines",      test_preserves_hard_newlines);
+    r = r.it("collapse + edges",   test_collapses_spaces_and_edges);
     return r.finish();
 }

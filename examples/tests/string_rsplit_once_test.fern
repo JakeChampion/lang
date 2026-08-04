@@ -62,14 +62,14 @@ function test_differs_from_split_once(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/string rsplit_once");
-    r = r.it("last wins",            test_last_wins());
-    r = r.it("extension",            test_extension());
-    r = r.it("path segment",         test_path_segment());
-    r = r.it("no match",             test_no_match());
-    r = r.it("empty sep",            test_empty_sep());
-    r = r.it("sep at start",         test_sep_at_start());
-    r = r.it("sep at end",           test_sep_at_end());
-    r = r.it("multichar sep",        test_multichar_sep());
-    r = r.it("differs from split_once", test_differs_from_split_once());
+    r = r.it("last wins",            test_last_wins);
+    r = r.it("extension",            test_extension);
+    r = r.it("path segment",         test_path_segment);
+    r = r.it("no match",             test_no_match);
+    r = r.it("empty sep",            test_empty_sep);
+    r = r.it("sep at start",         test_sep_at_start);
+    r = r.it("sep at end",           test_sep_at_end);
+    r = r.it("multichar sep",        test_multichar_sep);
+    r = r.it("differs from split_once", test_differs_from_split_once);
     return r.finish();
 }

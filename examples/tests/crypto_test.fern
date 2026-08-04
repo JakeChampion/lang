@@ -160,23 +160,23 @@ function test_hotp_and_digits(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/crypto");
-    r = r.it("sha256 empty",       test_sha256_empty());
-    r = r.it("sha256 abc",         test_sha256_abc());
-    r = r.it("sha256 pangram",     test_sha256_pangram());
-    r = r.it("sha256_bytes len",   test_sha256_bytes_len());
-    r = r.it("hmac-sha256 vector", test_hmac_sha256());
-    r = r.it("hmac_bytes len",     test_hmac_bytes_len());
-    r = r.it("consteq",            test_consteq());
-    r = r.it("hmac_verify",        test_hmac_verify());
-    r = r.it("hmac_verify_hex",    test_hmac_verify_hex());
-    r = r.it("pbkdf2 c=1",         test_pbkdf2_c1());
-    r = r.it("pbkdf2 c=2",         test_pbkdf2_c2());
-    r = r.it("pbkdf2 truncated",   test_pbkdf2_truncated());
-    r = r.it("pbkdf2 verify",      test_pbkdf2_verify());
-    r = r.it("hkdf TC1",           test_hkdf_tc1());
-    r = r.it("hkdf TC3 empty",     test_hkdf_tc3_empty());
-    r = r.it("hkdf expand==oneshot", test_hkdf_expand_matches_oneshot());
-    r = r.it("totp RFC 6238",      test_totp_rfc6238());
-    r = r.it("hotp + digits",      test_hotp_and_digits());
+    r = r.it("sha256 empty",       test_sha256_empty);
+    r = r.it("sha256 abc",         test_sha256_abc);
+    r = r.it("sha256 pangram",     test_sha256_pangram);
+    r = r.it("sha256_bytes len",   test_sha256_bytes_len);
+    r = r.it("hmac-sha256 vector", test_hmac_sha256);
+    r = r.it("hmac_bytes len",     test_hmac_bytes_len);
+    r = r.it("consteq",            test_consteq);
+    r = r.it("hmac_verify",        test_hmac_verify);
+    r = r.it("hmac_verify_hex",    test_hmac_verify_hex);
+    r = r.it("pbkdf2 c=1",         test_pbkdf2_c1);
+    r = r.it("pbkdf2 c=2",         test_pbkdf2_c2);
+    r = r.it("pbkdf2 truncated",   test_pbkdf2_truncated);
+    r = r.it("pbkdf2 verify",      test_pbkdf2_verify);
+    r = r.it("hkdf TC1",           test_hkdf_tc1);
+    r = r.it("hkdf TC3 empty",     test_hkdf_tc3_empty);
+    r = r.it("hkdf expand==oneshot", test_hkdf_expand_matches_oneshot);
+    r = r.it("totp RFC 6238",      test_totp_rfc6238);
+    r = r.it("hotp + digits",      test_hotp_and_digits);
     return r.finish();
 }

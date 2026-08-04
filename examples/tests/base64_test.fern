@@ -125,22 +125,22 @@ function test_url_decode_strict_rejects(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/base64");
-    r = r.it("encode (no pad)", test_encode_no_pad());
-    r = r.it("encode (one pad)", test_encode_one_pad());
-    r = r.it("encode (two pad)", test_encode_two_pad());
-    r = r.it("encode (longer)", test_encode_longer());
-    r = r.it("encode (empty)", test_encode_empty());
-    r = r.it("decode (no pad)", test_decode_no_pad());
-    r = r.it("decode (one pad)", test_decode_one_pad());
-    r = r.it("decode (two pad)", test_decode_two_pad());
-    r = r.it("decode (empty)", test_decode_empty());
-    r = r.it("roundtrip", test_roundtrip());
-    r = r.it("decode_strict valid", test_decode_strict_valid());
-    r = r.it("decode_strict rejects", test_decode_strict_rejects());
-    r = r.it("url alphabet", test_url_alphabet());
-    r = r.it("url no padding", test_url_no_padding());
-    r = r.it("url roundtrip", test_url_roundtrip());
-    r = r.it("url decode_strict valid", test_url_decode_strict_valid());
-    r = r.it("url decode_strict rejects", test_url_decode_strict_rejects());
+    r = r.it("encode (no pad)", test_encode_no_pad);
+    r = r.it("encode (one pad)", test_encode_one_pad);
+    r = r.it("encode (two pad)", test_encode_two_pad);
+    r = r.it("encode (longer)", test_encode_longer);
+    r = r.it("encode (empty)", test_encode_empty);
+    r = r.it("decode (no pad)", test_decode_no_pad);
+    r = r.it("decode (one pad)", test_decode_one_pad);
+    r = r.it("decode (two pad)", test_decode_two_pad);
+    r = r.it("decode (empty)", test_decode_empty);
+    r = r.it("roundtrip", test_roundtrip);
+    r = r.it("decode_strict valid", test_decode_strict_valid);
+    r = r.it("decode_strict rejects", test_decode_strict_rejects);
+    r = r.it("url alphabet", test_url_alphabet);
+    r = r.it("url no padding", test_url_no_padding);
+    r = r.it("url roundtrip", test_url_roundtrip);
+    r = r.it("url decode_strict valid", test_url_decode_strict_valid);
+    r = r.it("url decode_strict rejects", test_url_decode_strict_rejects);
     return r.finish();
 }

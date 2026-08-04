@@ -140,24 +140,24 @@ function test_http_header_value_missing_is_none(): test.TestOutcome {
 function main(): i32 {
     var r: test.TestRunner = test.test_new("HTTP request headers (migrated)");
     r = r.it("Content-Type reachable case-insensitively",
-             test_parsed_headers_reachable_on_req());
+             test_parsed_headers_reachable_on_req);
     r = r.it("3 wire headers -> size() = 3",
-             test_parsed_header_count_is_3());
+             test_parsed_header_count_is_3);
     r = r.it("duplicate Set-Cookie preserves insertion order",
-             test_duplicate_header_insertion_order());
+             test_duplicate_header_insertion_order);
     r = r.it("missing header returns None",
-             test_missing_header_returns_none());
+             test_missing_header_returns_none);
     r = r.it("get_all on missing returns []",
-             test_get_all_on_missing_is_empty());
+             test_get_all_on_missing_is_empty);
     r = r.it("X-*-Content-Length is not the body length",
-             test_x_prefixed_cl_not_content_length());
+             test_x_prefixed_cl_not_content_length);
     r = r.it("duplicate Content-Length rejected",
-             test_duplicate_content_length_rejected());
+             test_duplicate_content_length_rejected);
     r = r.it("Transfer-Encoding rejected",
-             test_transfer_encoding_rejected());
+             test_transfer_encoding_rejected);
     r = r.it("http_header_value via HeaderMap",
-             test_http_header_value_via_headermap());
+             test_http_header_value_via_headermap);
     r = r.it("http_header_value missing returns None",
-             test_http_header_value_missing_is_none());
+             test_http_header_value_missing_is_none);
     return r.finish();
 }

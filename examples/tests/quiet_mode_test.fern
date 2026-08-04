@@ -32,9 +32,9 @@ function test_quiet_preserves_counters(): test.TestOutcome {
     // should reflect the work even though no per-case
     // lines were printed.
     var sub: test.TestRunner = test.test_new_quiet("quiet-counters");
-    sub = sub.it("p1", trivial_pass());
-    sub = sub.it("p2", trivial_pass());
-    sub = sub.it("p3", trivial_pass());
+    sub = sub.it("p1", trivial_pass);
+    sub = sub.it("p2", trivial_pass);
+    sub = sub.it("p3", trivial_pass);
     if (sub.passed != 3 || sub.failed != 0 || sub.skipped != 0) {
         return test.fail("quiet counters off: p=" + sub.passed.to_string() +
                     " f=" + sub.failed.to_string() +
@@ -89,18 +89,18 @@ function test_test_new_quiet_constructor(): test.TestOutcome {
 function main(): i32 {
     var r: test.TestRunner = test.test_new("quiet mode");
     r = r.it("quiet preserves counters across passes",
-             test_quiet_preserves_counters());
+             test_quiet_preserves_counters);
     r = r.it("skip in quiet still increments counter",
-             test_quiet_skip_still_counted());
+             test_quiet_skip_still_counted);
     r = r.it("parse_quiet detects --quiet",
-             test_parse_quiet_present());
+             test_parse_quiet_present);
     r = r.it("parse_quiet no false-positive",
-             test_parse_quiet_absent());
+             test_parse_quiet_absent);
     r = r.it("with_quiet preserves filter",
-             test_with_quiet_preserves_filter());
+             test_with_quiet_preserves_filter);
     r = r.it("with_quiet preserves fail_fast",
-             test_with_quiet_preserves_fail_fast());
+             test_with_quiet_preserves_fail_fast);
     r = r.it("test_new_quiet enables flag",
-             test_test_new_quiet_constructor());
+             test_test_new_quiet_constructor);
     return r.finish();
 }

@@ -117,24 +117,24 @@ function test_doc_serialize_roundtrip(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/csv");
-    r = r.it("escape plain",            test_escape_plain());
-    r = r.it("escape comma",            test_escape_comma());
-    r = r.it("escape quote",            test_escape_quote());
-    r = r.it("escape newline",          test_escape_newline());
-    r = r.it("join",                    test_join());
-    r = r.it("join escapes fields",     test_join_escapes());
-    r = r.it("join empty",              test_join_empty());
-    r = r.it("join many mixed",         test_join_many());
-    r = r.it("parse plain",             test_parse_plain());
-    r = r.it("parse quoted comma",      test_parse_quoted_comma());
-    r = r.it("parse doubled quote",     test_parse_doubled_quote());
-    r = r.it("parse empty",             test_parse_empty());
-    r = r.it("round-trip join/parse",   test_roundtrip());
-    r = r.it("parse multibyte + growth", test_parse_multibyte_and_growth());
-    r = r.it("doc multi-record",        test_doc_multi_record());
-    r = r.it("doc embedded newline",    test_doc_embedded_newline());
-    r = r.it("doc CRLF + trailing",     test_doc_crlf_and_trailing());
-    r = r.it("doc empty + trailing fld", test_doc_empty_and_trailing_field());
-    r = r.it("doc serialize roundtrip", test_doc_serialize_roundtrip());
+    r = r.it("escape plain",            test_escape_plain);
+    r = r.it("escape comma",            test_escape_comma);
+    r = r.it("escape quote",            test_escape_quote);
+    r = r.it("escape newline",          test_escape_newline);
+    r = r.it("join",                    test_join);
+    r = r.it("join escapes fields",     test_join_escapes);
+    r = r.it("join empty",              test_join_empty);
+    r = r.it("join many mixed",         test_join_many);
+    r = r.it("parse plain",             test_parse_plain);
+    r = r.it("parse quoted comma",      test_parse_quoted_comma);
+    r = r.it("parse doubled quote",     test_parse_doubled_quote);
+    r = r.it("parse empty",             test_parse_empty);
+    r = r.it("round-trip join/parse",   test_roundtrip);
+    r = r.it("parse multibyte + growth", test_parse_multibyte_and_growth);
+    r = r.it("doc multi-record",        test_doc_multi_record);
+    r = r.it("doc embedded newline",    test_doc_embedded_newline);
+    r = r.it("doc CRLF + trailing",     test_doc_crlf_and_trailing);
+    r = r.it("doc empty + trailing fld", test_doc_empty_and_trailing_field);
+    r = r.it("doc serialize roundtrip", test_doc_serialize_roundtrip);
     return r.finish();
 }

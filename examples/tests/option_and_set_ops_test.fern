@@ -165,24 +165,24 @@ function test_disjoint_string_pass(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("Options + array set ops");
-    r = r.it("is_some_i32 pass",                  test_is_some_i32_pass());
-    r = r.it("is_some_i32 None fails",            test_is_some_i32_none_fails());
-    r = r.it("is_none_i32 pass",                  test_is_none_i32_pass());
-    r = r.it("is_none_i32 Some fails with value", test_is_none_i32_some_fails_with_value());
-    r = r.it("is_some_eq_i32 pass",               test_is_some_eq_i32_pass());
-    r = r.it("is_some_eq_i32 wrong value",        test_is_some_eq_i32_wrong_value());
-    r = r.it("is_some_eq_i32 None distinct msg",  test_is_some_eq_i32_none_fails());
-    r = r.it("is_some_eq_string pass",            test_is_some_eq_string_pass());
-    r = r.it("is_some_string pass",               test_is_some_string_pass());
-    r = r.it("is_none_string pass",               test_is_none_string_pass());
-    r = r.it("is_none_string quotes payload",     test_is_none_string_some_quotes_value());
-    r = r.it("intersects_i32 pass",               test_intersects_i32_pass());
-    r = r.it("intersects_i32 no overlap + lens",  test_intersects_i32_no_overlap_fails());
-    r = r.it("intersects_i32 empty fails",        test_intersects_i32_empty_fails());
-    r = r.it("intersects_string pass",            test_intersects_string_pass());
-    r = r.it("disjoint_i32 pass",                 test_disjoint_i32_pass());
-    r = r.it("disjoint_i32 shared names value",   test_disjoint_i32_shared_fails());
-    r = r.it("disjoint_i32 empty vacuous",        test_disjoint_i32_empty_vacuous());
-    r = r.it("disjoint_string pass",              test_disjoint_string_pass());
+    r = r.it("is_some_i32 pass",                  test_is_some_i32_pass);
+    r = r.it("is_some_i32 None fails",            test_is_some_i32_none_fails);
+    r = r.it("is_none_i32 pass",                  test_is_none_i32_pass);
+    r = r.it("is_none_i32 Some fails with value", test_is_none_i32_some_fails_with_value);
+    r = r.it("is_some_eq_i32 pass",               test_is_some_eq_i32_pass);
+    r = r.it("is_some_eq_i32 wrong value",        test_is_some_eq_i32_wrong_value);
+    r = r.it("is_some_eq_i32 None distinct msg",  test_is_some_eq_i32_none_fails);
+    r = r.it("is_some_eq_string pass",            test_is_some_eq_string_pass);
+    r = r.it("is_some_string pass",               test_is_some_string_pass);
+    r = r.it("is_none_string pass",               test_is_none_string_pass);
+    r = r.it("is_none_string quotes payload",     test_is_none_string_some_quotes_value);
+    r = r.it("intersects_i32 pass",               test_intersects_i32_pass);
+    r = r.it("intersects_i32 no overlap + lens",  test_intersects_i32_no_overlap_fails);
+    r = r.it("intersects_i32 empty fails",        test_intersects_i32_empty_fails);
+    r = r.it("intersects_string pass",            test_intersects_string_pass);
+    r = r.it("disjoint_i32 pass",                 test_disjoint_i32_pass);
+    r = r.it("disjoint_i32 shared names value",   test_disjoint_i32_shared_fails);
+    r = r.it("disjoint_i32 empty vacuous",        test_disjoint_i32_empty_vacuous);
+    r = r.it("disjoint_string pass",              test_disjoint_string_pass);
     return r.finish();
 }

@@ -136,19 +136,19 @@ function test_object_size_wrong(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("JSON detail assertions");
-    r = r.it("has_key pass",                     test_has_key_pass());
-    r = r.it("has_key missing names size",       test_has_key_missing());
-    r = r.it("has_key invalid JSON diag",        test_has_key_invalid_json());
-    r = r.it("has_key array top-level rejected", test_has_key_array_top_level());
-    r = r.it("has_key null top-level rejected",  test_has_key_null_top_level());
-    r = r.it("lacks_key pass",                   test_lacks_key_pass());
-    r = r.it("lacks_key present fails",          test_lacks_key_present_fails());
-    r = r.it("array_len pass",                   test_array_len_pass());
-    r = r.it("array_len empty",                  test_array_len_empty());
-    r = r.it("array_len wrong shows both",       test_array_len_wrong());
-    r = r.it("array_len object rejected",        test_array_len_object_top_level());
-    r = r.it("object_size pass",                 test_object_size_pass());
-    r = r.it("object_size empty",                test_object_size_empty());
-    r = r.it("object_size wrong shows both",     test_object_size_wrong());
+    r = r.it("has_key pass",                     test_has_key_pass);
+    r = r.it("has_key missing names size",       test_has_key_missing);
+    r = r.it("has_key invalid JSON diag",        test_has_key_invalid_json);
+    r = r.it("has_key array top-level rejected", test_has_key_array_top_level);
+    r = r.it("has_key null top-level rejected",  test_has_key_null_top_level);
+    r = r.it("lacks_key pass",                   test_lacks_key_pass);
+    r = r.it("lacks_key present fails",          test_lacks_key_present_fails);
+    r = r.it("array_len pass",                   test_array_len_pass);
+    r = r.it("array_len empty",                  test_array_len_empty);
+    r = r.it("array_len wrong shows both",       test_array_len_wrong);
+    r = r.it("array_len object rejected",        test_array_len_object_top_level);
+    r = r.it("object_size pass",                 test_object_size_pass);
+    r = r.it("object_size empty",                test_object_size_empty);
+    r = r.it("object_size wrong shows both",     test_object_size_wrong);
     return r.finish();
 }

@@ -98,15 +98,15 @@ function test_stderr_line_count_pass(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("process output shortcuts");
-    r = r.it("exit_zero pass",                test_exit_zero_pass());
-    r = r.it("exit_zero on non-zero fails",   test_exit_zero_fail_reports());
-    r = r.it("exit_nonzero pass",             test_exit_nonzero_pass());
-    r = r.it("exit_nonzero on 0 names code",  test_exit_nonzero_zero_fails());
-    r = r.it("stdout_lines pass",             test_stdout_lines_pass());
-    r = r.it("stdout_lines mismatch line N",  test_stdout_lines_mismatch());
-    r = r.it("stderr_lines pass",             test_stderr_lines_pass());
-    r = r.it("stdout_line_count pass",        test_stdout_line_count_pass());
-    r = r.it("stdout_line_count wrong reports", test_stdout_line_count_wrong_reports());
-    r = r.it("stderr_line_count pass",        test_stderr_line_count_pass());
+    r = r.it("exit_zero pass",                test_exit_zero_pass);
+    r = r.it("exit_zero on non-zero fails",   test_exit_zero_fail_reports);
+    r = r.it("exit_nonzero pass",             test_exit_nonzero_pass);
+    r = r.it("exit_nonzero on 0 names code",  test_exit_nonzero_zero_fails);
+    r = r.it("stdout_lines pass",             test_stdout_lines_pass);
+    r = r.it("stdout_lines mismatch line N",  test_stdout_lines_mismatch);
+    r = r.it("stderr_lines pass",             test_stderr_lines_pass);
+    r = r.it("stdout_line_count pass",        test_stdout_line_count_pass);
+    r = r.it("stdout_line_count wrong reports", test_stdout_line_count_wrong_reports);
+    r = r.it("stderr_line_count pass",        test_stderr_line_count_pass);
     return r.finish();
 }

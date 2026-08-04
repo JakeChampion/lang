@@ -27,36 +27,36 @@ function main(): i32 {
 
     // A top-level case before any subsuite — sanity check that
     // the parent's numbering starts at 1.
-    r = r.it("top-level pass", test_pass());
+    r = r.it("top-level pass", test_pass);
 
     // Unconditional skip — toolchain missing, OS-conditional.
     r = r.skip("wasmtime-only", "wasmtime not on $PATH");
 
     // skip_if — the cond is true so the test doesn't run.
-    r = r.skip_if(true, "ci-only", "not running under CI", test_pass());
+    r = r.skip_if(true, "ci-only", "not running under CI", test_pass);
 
     // skip_if — the cond is false so the test runs normally.
-    r = r.skip_if(false, "always-runs", "(unused reason)", test_pass());
+    r = r.skip_if(false, "always-runs", "(unused reason)", test_pass);
 
     // Subsuite: nested grouping. Cases print with the
     // "arithmetic / " prefix; the bottom-of-stream summary
     // shows the prefixed names.
     var arith: test.TestRunner = r.subsuite("arithmetic");
-    arith = arith.it("addition", test_addition());
-    arith = arith.it("subtraction", test_subtraction());
+    arith = arith.it("addition", test_addition);
+    arith = arith.it("subtraction", test_subtraction);
     arith = arith.skip("multiplication", "out of scope for this slice");
     r = r.merge(arith);
 
     // Two subsuites can be opened consecutively as long as
     // each is merged back before the next sibling case runs.
     var str: test.TestRunner = r.subsuite("strings");
-    str = str.it("to_upper", test_to_upper());
-    str = str.it("to_lower", test_to_lower());
+    str = str.it("to_upper", test_to_upper);
+    str = str.it("to_lower", test_to_lower);
     r = r.merge(str);
 
     // Another top-level case after the subsuites — numbering
     // continues from where the last subsuite finished.
-    r = r.it("trailing top-level", test_pass());
+    r = r.it("trailing top-level", test_pass);
 
     return r.finish();
 }

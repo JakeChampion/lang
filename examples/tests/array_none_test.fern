@@ -36,10 +36,10 @@ function test_all_match(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array none");
-    r = r.it("none true",      test_none_true());
-    r = r.it("none false",     test_none_false());
-    r = r.it("free fn",        test_free_fn());
-    r = r.it("empty vacuous",  test_empty_vacuous());
-    r = r.it("all match",      test_all_match());
+    r = r.it("none true",      test_none_true);
+    r = r.it("none false",     test_none_false);
+    r = r.it("free fn",        test_free_fn);
+    r = r.it("empty vacuous",  test_empty_vacuous);
+    r = r.it("all match",      test_all_match);
     return r.finish();
 }

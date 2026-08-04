@@ -45,12 +45,12 @@ function test_free_fn(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array all_equal");
-    r = r.it("all equal",     test_all_equal());
-    r = r.it("all distinct",  test_distinct());
-    r = r.it("last differs",  test_last_differs());
-    r = r.it("first differs", test_first_differs());
-    r = r.it("empty vacuous", test_empty_vacuous());
-    r = r.it("single",        test_single());
-    r = r.it("free fn",       test_free_fn());
+    r = r.it("all equal",     test_all_equal);
+    r = r.it("all distinct",  test_distinct);
+    r = r.it("last differs",  test_last_differs);
+    r = r.it("first differs", test_first_differs);
+    r = r.it("empty vacuous", test_empty_vacuous);
+    r = r.it("single",        test_single);
+    r = r.it("free fn",       test_free_fn);
     return r.finish();
 }

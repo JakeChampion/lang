@@ -205,13 +205,13 @@ function test_seed_sweep(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/sim faults");
-    r = r.it("fail-mode resolves Ready empty immediately", test_fail_immediate());
-    r = r.it("stall-mode dropped at the exact deadline", test_stall_dropped_at_deadline());
-    r = r.it("stalled gather slot lands on_incomplete", test_stall_gather_incomplete());
-    r = r.it("partial delivers the prefix then goes silent", test_partial_prefix_then_silent());
-    r = r.it("partial under with_deadline is None at the deadline", test_partial_deadline_none());
-    r = r.it("flaky(50) seed-1 golden pattern", test_flaky_golden());
-    r = r.it("same seed reproduces, different seed diverges", test_same_seed_reproducible());
-    r = r.it("seed sweep: invariant holds, failing seed found", test_seed_sweep());
+    r = r.it("fail-mode resolves Ready empty immediately", test_fail_immediate);
+    r = r.it("stall-mode dropped at the exact deadline", test_stall_dropped_at_deadline);
+    r = r.it("stalled gather slot lands on_incomplete", test_stall_gather_incomplete);
+    r = r.it("partial delivers the prefix then goes silent", test_partial_prefix_then_silent);
+    r = r.it("partial under with_deadline is None at the deadline", test_partial_deadline_none);
+    r = r.it("flaky(50) seed-1 golden pattern", test_flaky_golden);
+    r = r.it("same seed reproduces, different seed diverges", test_same_seed_reproducible);
+    r = r.it("seed sweep: invariant holds, failing seed found", test_seed_sweep);
     return r.finish();
 }

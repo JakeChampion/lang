@@ -33,25 +33,25 @@ function test_corpus_loads_and_runs(r: test.TestRunner): test.TestRunner {
     // Write three seed files. The `_skipme` underscore-
     // prefix gets filtered out so transient metadata doesn't
     // pollute the corpus.
-    match (write_file(dir + "/01.bin", "hello"))   { None => {}, Some(_) => { return rr.it("write 01", test.fail("io")); } }
-    match (write_file(dir + "/02.bin", "world"))   { None => {}, Some(_) => { return rr.it("write 02", test.fail("io")); } }
-    match (write_file(dir + "/03.bin", "anything")) { None => {}, Some(_) => { return rr.it("write 03", test.fail("io")); } }
-    match (write_file(dir + "/_skipme", "meta"))   { None => {}, Some(_) => { return rr.it("write meta", test.fail("io")); } }
+    match (write_file(dir + "/01.bin", "hello"))   { None => {}, Some(_) => { return rr.it("write 01", () => test.fail("io")); } }
+    match (write_file(dir + "/02.bin", "world"))   { None => {}, Some(_) => { return rr.it("write 02", () => test.fail("io")); } }
+    match (write_file(dir + "/03.bin", "anything")) { None => {}, Some(_) => { return rr.it("write 03", () => test.fail("io")); } }
+    match (write_file(dir + "/_skipme", "meta"))   { None => {}, Some(_) => { return rr.it("write meta", () => test.fail("io")); } }
 
     match (fuzz.fuzz_corpus_from_dir(dir)) {
         Ok(seeds) => {
             rr = rr.it("loads three seeds (skips _-prefixed)",
-                       test.assert_len_string(seeds, 3));
+                       () => test.assert_len_string(seeds, 3));
             // Seeds should arrive in name-sorted order — the
             // helper sorts them so the verbatim pass is
             // deterministic across OS readdir orderings.
             rr = rr.it("first seed is 01.bin's content",
-                       test.assert_eq(seeds[0], "hello"));
+                       () => test.assert_eq(seeds[0], "hello"));
             // Use the loaded corpus to drive a fuzz target.
             rr = rr.fuzz_shrink("corpus-loaded fuzz harness",
                                 seeds, 50, check_no_x);
         },
-        Err(_) => { rr = rr.it("load", test.fail("load returned Err")); }
+        Err(_) => { rr = rr.it("load", () => test.fail("load returned Err")); }
     }
     return rr;
 }
@@ -68,7 +68,7 @@ function test_corpus_dir_empty_uses_fallback(r: test.TestRunner): test.TestRunne
     if (dir == "") { return rr; }
     // Empty directory — should fall back to the inline seeds.
     var seeds: string[] = fuzz.fuzz_corpus_from_dir_or(dir, ["fallback"]);
-    return rr.it("empty corpus falls back", test.assert_len_string(seeds, 1));
+    return rr.it("empty corpus falls back", () => test.assert_len_string(seeds, 1));
 }
 
 function test_new_mutators_dont_crash(): test.TestOutcome {
@@ -87,8 +87,8 @@ function main(): i32 {
     var r: test.TestRunner = test.test_new("fuzz corpus");
     r = test_corpus_loads_and_runs(r);
     r = r.it("missing corpus dir falls back",
-             test_corpus_dir_missing_uses_fallback());
+             test_corpus_dir_missing_uses_fallback);
     r = test_corpus_dir_empty_uses_fallback(r);
-    r = r.it("new mutators don't crash", test_new_mutators_dont_crash());
+    r = r.it("new mutators don't crash", test_new_mutators_dont_crash);
     return r.finish();
 }

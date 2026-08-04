@@ -104,14 +104,14 @@ function test_max_by_single(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array extremum-by");
-    r = r.it("max_by",            test_max_by());
-    r = r.it("min_by",            test_min_by());
-    r = r.it("max_by empty",      test_max_by_empty());
-    r = r.it("min_by empty",      test_min_by_empty());
-    r = r.it("max_by len",        test_max_by_len());
-    r = r.it("min_by len",        test_min_by_len());
-    r = r.it("max_by ties first", test_max_by_ties_first());
-    r = r.it("min_by ties first", test_min_by_ties_first());
-    r = r.it("max_by single",     test_max_by_single());
+    r = r.it("max_by",            test_max_by);
+    r = r.it("min_by",            test_min_by);
+    r = r.it("max_by empty",      test_max_by_empty);
+    r = r.it("min_by empty",      test_min_by_empty);
+    r = r.it("max_by len",        test_max_by_len);
+    r = r.it("min_by len",        test_min_by_len);
+    r = r.it("max_by ties first", test_max_by_ties_first);
+    r = r.it("min_by ties first", test_min_by_ties_first);
+    r = r.it("max_by single",     test_max_by_single);
     return r.finish();
 }

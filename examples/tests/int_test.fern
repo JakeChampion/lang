@@ -116,24 +116,24 @@ function test_roundtrip(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("core/int");
-    r = r.it("to_string zero",          test_to_string_zero());
-    r = r.it("to_string positive",      test_to_string_pos());
-    r = r.it("to_string negative",      test_to_string_neg());
-    r = r.it("to_string INT_MAX",       test_to_string_max());
-    r = r.it("to_string INT_MIN",       test_to_string_min());
-    r = r.it("parse hex",               test_parse_hex());
-    r = r.it("parse binary",            test_parse_binary());
-    r = r.it("parse negative base36",   test_parse_neg_base36());
-    r = r.it("parse plus sign",         test_parse_plus_sign());
-    r = r.it("parse empty is None",     test_parse_empty_none());
-    r = r.it("parse bad base is None",  test_parse_bad_base_none());
-    r = r.it("parse digit>=base None",  test_parse_digit_ge_base_none());
-    r = r.it("parse sign-only None",    test_parse_sign_only_none());
-    r = r.it("radix hex",               test_radix_hex());
-    r = r.it("radix binary",            test_radix_binary());
-    r = r.it("radix zero",              test_radix_zero());
-    r = r.it("radix negative",          test_radix_neg());
-    r = r.it("radix INT_MIN",           test_radix_min());
-    r = r.it("radix round-trip",        test_roundtrip());
+    r = r.it("to_string zero",          test_to_string_zero);
+    r = r.it("to_string positive",      test_to_string_pos);
+    r = r.it("to_string negative",      test_to_string_neg);
+    r = r.it("to_string INT_MAX",       test_to_string_max);
+    r = r.it("to_string INT_MIN",       test_to_string_min);
+    r = r.it("parse hex",               test_parse_hex);
+    r = r.it("parse binary",            test_parse_binary);
+    r = r.it("parse negative base36",   test_parse_neg_base36);
+    r = r.it("parse plus sign",         test_parse_plus_sign);
+    r = r.it("parse empty is None",     test_parse_empty_none);
+    r = r.it("parse bad base is None",  test_parse_bad_base_none);
+    r = r.it("parse digit>=base None",  test_parse_digit_ge_base_none);
+    r = r.it("parse sign-only None",    test_parse_sign_only_none);
+    r = r.it("radix hex",               test_radix_hex);
+    r = r.it("radix binary",            test_radix_binary);
+    r = r.it("radix zero",              test_radix_zero);
+    r = r.it("radix negative",          test_radix_neg);
+    r = r.it("radix INT_MIN",           test_radix_min);
+    r = r.it("radix round-trip",        test_roundtrip);
     return r.finish();
 }

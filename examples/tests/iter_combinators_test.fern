@@ -60,13 +60,13 @@ function test_count_by(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("core/iter combinators");
-    r = r.it("to_array",      test_to_array());
-    r = r.it("take",          test_take());
-    r = r.it("skip",          test_skip());
-    r = r.it("find",          test_find());
-    r = r.it("find miss",     test_find_miss());
-    r = r.it("position",      test_position());
-    r = r.it("position_by",   test_position_by());
-    r = r.it("count_by",      test_count_by());
+    r = r.it("to_array",      test_to_array);
+    r = r.it("take",          test_take);
+    r = r.it("skip",          test_skip);
+    r = r.it("find",          test_find);
+    r = r.it("find miss",     test_find_miss);
+    r = r.it("position",      test_position);
+    r = r.it("position_by",   test_position_by);
+    r = r.it("count_by",      test_count_by);
     return r.finish();
 }

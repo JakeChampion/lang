@@ -49,12 +49,12 @@ function test_skips_malformed(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/dotenv");
-    r = r.it("basic + trim",       test_basic());
-    r = r.it("comments/blanks",    test_comments_blanks());
-    r = r.it("export prefix",      test_export_prefix());
-    r = r.it("double-quoted",      test_double_quoted());
-    r = r.it("single-quoted",      test_single_quoted_literal());
-    r = r.it("last wins + empty",  test_last_wins_and_empty());
-    r = r.it("skips malformed",    test_skips_malformed());
+    r = r.it("basic + trim",       test_basic);
+    r = r.it("comments/blanks",    test_comments_blanks);
+    r = r.it("export prefix",      test_export_prefix);
+    r = r.it("double-quoted",      test_double_quoted);
+    r = r.it("single-quoted",      test_single_quoted_literal);
+    r = r.it("last wins + empty",  test_last_wins_and_empty);
+    r = r.it("skips malformed",    test_skips_malformed);
     return r.finish();
 }

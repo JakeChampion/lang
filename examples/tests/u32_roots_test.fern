@@ -53,11 +53,11 @@ function test_log2_floor(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/u32 roots");
-    r = r.it("sqrt_floor",          test_sqrt_floor());
-    r = r.it("sqrt_floor large",    test_sqrt_floor_large());
-    r = r.it("is_power_of_2",       test_is_power_of_2());
-    r = r.it("next_power_of_2",     test_next_power_of_2());
-    r = r.it("next_power_of_2 cap", test_next_power_of_2_cap());
-    r = r.it("log2_floor",          test_log2_floor());
+    r = r.it("sqrt_floor",          test_sqrt_floor);
+    r = r.it("sqrt_floor large",    test_sqrt_floor_large);
+    r = r.it("is_power_of_2",       test_is_power_of_2);
+    r = r.it("next_power_of_2",     test_next_power_of_2);
+    r = r.it("next_power_of_2 cap", test_next_power_of_2_cap);
+    r = r.it("log2_floor",          test_log2_floor);
     return r.finish();
 }

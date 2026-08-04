@@ -96,23 +96,23 @@ function test_log_kv_chains(r: test.TestRunner): test.TestRunner {
     r = r.log_kv_i32("retry_count", 3);
     r = r.log_kv_i64("bytes_seen", 1234567890123 as i64);
     return r.it("log_kv chained without breaking state",
-                test.assert_true(true));
+                () => test.assert_true(true));
 }
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("ci-string + log_kv");
-    r = r.it("eq_string_ci same case",          test_eq_string_ci_same_case());
-    r = r.it("eq_string_ci different case",     test_eq_string_ci_different_case());
-    r = r.it("eq_string_ci mismatch raw quoted", test_eq_string_ci_truly_different_reports());
-    r = r.it("neq_string_ci pass",              test_neq_string_ci_pass());
-    r = r.it("neq_string_ci matches CI fails",  test_neq_string_ci_matches_ci_fails());
-    r = r.it("contains_ci pass",                test_contains_ci_pass());
-    r = r.it("contains_ci subseq",              test_contains_ci_pass_subseq());
-    r = r.it("contains_ci missing reports",     test_contains_ci_missing_reports());
-    r = r.it("starts_with_ci pass",             test_starts_with_ci_pass());
-    r = r.it("starts_with_ci fail",             test_starts_with_ci_fail());
-    r = r.it("ends_with_ci pass",               test_ends_with_ci_pass());
-    r = r.it("ends_with_ci fail",               test_ends_with_ci_fail());
+    r = r.it("eq_string_ci same case",          test_eq_string_ci_same_case);
+    r = r.it("eq_string_ci different case",     test_eq_string_ci_different_case);
+    r = r.it("eq_string_ci mismatch raw quoted", test_eq_string_ci_truly_different_reports);
+    r = r.it("neq_string_ci pass",              test_neq_string_ci_pass);
+    r = r.it("neq_string_ci matches CI fails",  test_neq_string_ci_matches_ci_fails);
+    r = r.it("contains_ci pass",                test_contains_ci_pass);
+    r = r.it("contains_ci subseq",              test_contains_ci_pass_subseq);
+    r = r.it("contains_ci missing reports",     test_contains_ci_missing_reports);
+    r = r.it("starts_with_ci pass",             test_starts_with_ci_pass);
+    r = r.it("starts_with_ci fail",             test_starts_with_ci_fail);
+    r = r.it("ends_with_ci pass",               test_ends_with_ci_pass);
+    r = r.it("ends_with_ci fail",               test_ends_with_ci_fail);
     r = test_log_kv_chains(r);
     return r.finish();
 }

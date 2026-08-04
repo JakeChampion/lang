@@ -83,15 +83,15 @@ function test_subset_empty_subset_always_passes(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("set eq");
-    r = r.it("set_eq i32 same order",            test_set_eq_i32_same_order());
-    r = r.it("set_eq i32 reversed",              test_set_eq_i32_reversed());
-    r = r.it("set_eq i32 multiset matches",      test_set_eq_i32_multiset());
-    r = r.it("set_eq i32 multiset mismatch fails", test_set_eq_i32_multiset_mismatch());
-    r = r.it("set_eq strings",                   test_set_eq_strings());
-    r = r.it("set_eq length mismatch reported",  test_set_eq_length_mismatch());
-    r = r.it("subset i32 pass",                  test_subset_i32_pass());
-    r = r.it("subset i32 multiplicity required", test_subset_i32_requires_multiplicity());
-    r = r.it("subset string pass",               test_subset_string_pass());
-    r = r.it("subset empty is vacuous",          test_subset_empty_subset_always_passes());
+    r = r.it("set_eq i32 same order",            test_set_eq_i32_same_order);
+    r = r.it("set_eq i32 reversed",              test_set_eq_i32_reversed);
+    r = r.it("set_eq i32 multiset matches",      test_set_eq_i32_multiset);
+    r = r.it("set_eq i32 multiset mismatch fails", test_set_eq_i32_multiset_mismatch);
+    r = r.it("set_eq strings",                   test_set_eq_strings);
+    r = r.it("set_eq length mismatch reported",  test_set_eq_length_mismatch);
+    r = r.it("subset i32 pass",                  test_subset_i32_pass);
+    r = r.it("subset i32 multiplicity required", test_subset_i32_requires_multiplicity);
+    r = r.it("subset string pass",               test_subset_string_pass);
+    r = r.it("subset empty is vacuous",          test_subset_empty_subset_always_passes);
     return r.finish();
 }

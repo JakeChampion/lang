@@ -23,6 +23,18 @@ Installing or updating is the same command either way; see the
   Fern and rebuilt from `main` continuously, so a change that breaks
   real programs tends to be caught by the largest Fern program there is.
 
+## Which build do I have?
+
+```bash
+$ fern -version
+fern be167834e1b8 (2026-08-04T13:06:07Z)
+built with go1.24.7 for linux/amd64
+```
+
+Because the tag rolls, the commit is the answer — quote that line in a
+bug report. A binary installed with `go install` prints its module
+version instead, and a build from a modified checkout says so.
+
 ## Pinning a build
 
 Because the `nightly` tag moves, pinning means keeping the artefact

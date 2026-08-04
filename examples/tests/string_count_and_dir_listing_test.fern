@@ -52,21 +52,21 @@ function test_dir_listing_pass(r: test.TestRunner): test.TestRunner {
     if (dir == "") { return rr; }
     // Write three files in arbitrary order.
     match (write_file(dir + "/zebra.txt", "z")) {
-        Some(_) => { return rr.it("write fixture", test.fail("io")); },
+        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
         None => {}
     }
     match (write_file(dir + "/alpha.txt", "a")) {
-        Some(_) => { return rr.it("write fixture", test.fail("io")); },
+        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
         None => {}
     }
     match (write_file(dir + "/mid.txt", "m")) {
-        Some(_) => { return rr.it("write fixture", test.fail("io")); },
+        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
         None => {}
     }
     // Expected list in different order — sort-then-compare
     // means this still matches.
     return rr.it("listing matches multiset (sorted)",
-                 test.assert_eq_dir_listing(dir,
+                 () => test.assert_eq_dir_listing(dir,
                      ["mid.txt", "zebra.txt", "alpha.txt"]));
 }
 
@@ -75,28 +75,28 @@ function test_dir_listing_empty_dir(r: test.TestRunner): test.TestRunner {
     if (dir == "") { return rr; }
     var empty: string[] = [];
     return rr.it("empty dir matches empty list",
-                 test.assert_eq_dir_listing(dir, empty));
+                 () => test.assert_eq_dir_listing(dir, empty));
 }
 
 function test_dir_listing_extra_file_fails(r: test.TestRunner): test.TestRunner {
     var (dir, rr) = test.must_temp_dir(r, "listing-extra");
     if (dir == "") { return rr; }
     match (write_file(dir + "/a.txt", "")) {
-        Some(_) => { return rr.it("write fixture", test.fail("io")); },
+        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
         None => {}
     }
     match (write_file(dir + "/b.txt", "")) {
-        Some(_) => { return rr.it("write fixture", test.fail("io")); },
+        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
         None => {}
     }
     // Expected lacks b.txt — must fail.
     match (test.assert_eq_dir_listing(dir, ["a.txt"])) {
-        Pass => { return rr.it("missing-from-expected", test.fail("missed")); },
+        Pass => { return rr.it("missing-from-expected", () => test.fail("missed")); },
         Fail(msg) => {
             if (!msg.contains("length differs")) {
-                return rr.it("listing diff length msg", test.fail("got: " + msg));
+                return rr.it("listing diff length msg", () => test.fail("got: " + msg));
             }
-            return rr.it("extra file flagged via length diff", test.pass());
+            return rr.it("extra file flagged via length diff", test.pass);
         }
     }
 }
@@ -117,15 +117,15 @@ function test_dir_listing_missing_dir(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("string count + dir listing");
-    r = r.it("string_count multiple matches",     test_string_count_pass());
-    r = r.it("string_count zero matches",         test_string_count_zero());
-    r = r.it("string_count single char",          test_string_count_single_char());
-    r = r.it("string_count non-overlapping",      test_string_count_overlap_non_overlap());
-    r = r.it("string_count wrong reports both",   test_string_count_wrong_reports());
-    r = r.it("string_count empty haystack",       test_string_count_empty_haystack());
+    r = r.it("string_count multiple matches",     test_string_count_pass);
+    r = r.it("string_count zero matches",         test_string_count_zero);
+    r = r.it("string_count single char",          test_string_count_single_char);
+    r = r.it("string_count non-overlapping",      test_string_count_overlap_non_overlap);
+    r = r.it("string_count wrong reports both",   test_string_count_wrong_reports);
+    r = r.it("string_count empty haystack",       test_string_count_empty_haystack);
     r = test_dir_listing_pass(r);
     r = test_dir_listing_empty_dir(r);
     r = test_dir_listing_extra_file_fails(r);
-    r = r.it("dir_listing missing dir",           test_dir_listing_missing_dir());
+    r = r.it("dir_listing missing dir",           test_dir_listing_missing_dir);
     return r.finish();
 }

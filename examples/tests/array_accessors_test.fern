@@ -71,14 +71,14 @@ function test_get_negative(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array accessors");
-    r = r.it("is_empty true",     test_is_empty_true());
-    r = r.it("is_empty false",    test_is_empty_false());
-    r = r.it("first",             test_first());
-    r = r.it("last",              test_last());
-    r = r.it("first empty None",  test_first_empty_none());
-    r = r.it("last empty None",   test_last_empty_none());
-    r = r.it("get in range",      test_get_in_range());
-    r = r.it("get out of range",  test_get_out_of_range());
-    r = r.it("get negative",      test_get_negative());
+    r = r.it("is_empty true",     test_is_empty_true);
+    r = r.it("is_empty false",    test_is_empty_false);
+    r = r.it("first",             test_first);
+    r = r.it("last",              test_last);
+    r = r.it("first empty None",  test_first_empty_none);
+    r = r.it("last empty None",   test_last_empty_none);
+    r = r.it("get in range",      test_get_in_range);
+    r = r.it("get out of range",  test_get_out_of_range);
+    r = r.it("get negative",      test_get_negative);
     return r.finish();
 }

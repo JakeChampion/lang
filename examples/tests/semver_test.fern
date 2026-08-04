@@ -75,12 +75,12 @@ function test_rejects_malformed(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/semver");
-    r = r.it("parse fields",           test_parse_fields());
-    r = r.it("to_string canonical",    test_to_string());
-    r = r.it("core precedence",        test_core_precedence());
-    r = r.it("prerelease < release",   test_prerelease_lt_release());
-    r = r.it("precedence chain",       test_precedence_chain());
-    r = r.it("build ignored",          test_build_ignored());
-    r = r.it("rejects malformed",      test_rejects_malformed());
+    r = r.it("parse fields",           test_parse_fields);
+    r = r.it("to_string canonical",    test_to_string);
+    r = r.it("core precedence",        test_core_precedence);
+    r = r.it("prerelease < release",   test_prerelease_lt_release);
+    r = r.it("precedence chain",       test_precedence_chain);
+    r = r.it("build ignored",          test_build_ignored);
+    r = r.it("rejects malformed",      test_rejects_malformed);
     return r.finish();
 }

@@ -56,15 +56,15 @@ function test_ones_plus_zeros(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/i32 bit + arith");
-    r = r.it("abs_diff pos",           test_abs_diff_pos());
-    r = r.it("abs_diff reversed",      test_abs_diff_reversed());
-    r = r.it("abs_diff mixed sign",    test_abs_diff_mixed_sign());
-    r = r.it("abs_diff both negative", test_abs_diff_both_negative());
-    r = r.it("abs_diff equal",         test_abs_diff_equal());
-    r = r.it("count_zeros zero",       test_count_zeros_zero());
-    r = r.it("count_zeros all ones",   test_count_zeros_all_ones());
-    r = r.it("count_zeros one",        test_count_zeros_one());
-    r = r.it("count_zeros seven",      test_count_zeros_seven());
-    r = r.it("ones + zeros == 32",     test_ones_plus_zeros());
+    r = r.it("abs_diff pos",           test_abs_diff_pos);
+    r = r.it("abs_diff reversed",      test_abs_diff_reversed);
+    r = r.it("abs_diff mixed sign",    test_abs_diff_mixed_sign);
+    r = r.it("abs_diff both negative", test_abs_diff_both_negative);
+    r = r.it("abs_diff equal",         test_abs_diff_equal);
+    r = r.it("count_zeros zero",       test_count_zeros_zero);
+    r = r.it("count_zeros all ones",   test_count_zeros_all_ones);
+    r = r.it("count_zeros one",        test_count_zeros_one);
+    r = r.it("count_zeros seven",      test_count_zeros_seven);
+    r = r.it("ones + zeros == 32",     test_ones_plus_zeros);
     return r.finish();
 }

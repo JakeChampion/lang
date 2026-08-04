@@ -61,17 +61,17 @@ function test_f32_fract(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/float hypot");
-    r = r.it("hypot 3,4,5",       test_hypot_345());
-    r = r.it("hypot 5,12,13",     test_hypot_51213());
-    r = r.it("hypot 0,0",         test_hypot_zero());
-    r = r.it("hypot negative",    test_hypot_negative());
-    r = r.it("hypot one axis",    test_hypot_one_axis());
-    r = r.it("fract positive",    test_fract_positive());
-    r = r.it("fract negative",    test_fract_negative());
-    r = r.it("fract integer",     test_fract_integer());
-    r = r.it("tan zero",          test_tan_zero());
-    r = r.it("tan pi/4",          test_tan_quarter_pi());
-    r = r.it("f32 hypot",         test_f32_hypot());
-    r = r.it("f32 fract",         test_f32_fract());
+    r = r.it("hypot 3,4,5",       test_hypot_345);
+    r = r.it("hypot 5,12,13",     test_hypot_51213);
+    r = r.it("hypot 0,0",         test_hypot_zero);
+    r = r.it("hypot negative",    test_hypot_negative);
+    r = r.it("hypot one axis",    test_hypot_one_axis);
+    r = r.it("fract positive",    test_fract_positive);
+    r = r.it("fract negative",    test_fract_negative);
+    r = r.it("fract integer",     test_fract_integer);
+    r = r.it("tan zero",          test_tan_zero);
+    r = r.it("tan pi/4",          test_tan_quarter_pi);
+    r = r.it("f32 hypot",         test_f32_hypot);
+    r = r.it("f32 fract",         test_f32_fract);
     return r.finish();
 }

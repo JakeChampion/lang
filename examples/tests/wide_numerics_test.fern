@@ -32,10 +32,10 @@ function test_u64_neq(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("wide-numerics");
-    r = r.it("i64 addition",  test_i64_addition());
-    r = r.it("i64 max",       test_i64_max());
-    r = r.it("u32 max",       test_u32_max());
-    r = r.it("u64 max",       test_u64_max());
-    r = r.it("u64 neq",       test_u64_neq());
+    r = r.it("i64 addition",  test_i64_addition);
+    r = r.it("i64 max",       test_i64_max);
+    r = r.it("u32 max",       test_u32_max);
+    r = r.it("u64 max",       test_u64_max);
+    r = r.it("u64 neq",       test_u64_neq);
     return r.finish();
 }

@@ -55,11 +55,11 @@ function test_dst_false_for_unknown(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/time timezone");
-    r = r.it("iana UTC/GMT",             test_iana_utc());
-    r = r.it("iana offsets",             test_iana_offsets());
-    r = r.it("iana unknown",             test_iana_unknown());
-    r = r.it("dst true for DST zones",   test_dst_true_for_dst_zones());
-    r = r.it("dst false for fixed zones", test_dst_false_for_fixed_zones());
-    r = r.it("dst false for unknown",    test_dst_false_for_unknown());
+    r = r.it("iana UTC/GMT",             test_iana_utc);
+    r = r.it("iana offsets",             test_iana_offsets);
+    r = r.it("iana unknown",             test_iana_unknown);
+    r = r.it("dst true for DST zones",   test_dst_true_for_dst_zones);
+    r = r.it("dst false for fixed zones", test_dst_false_for_fixed_zones);
+    r = r.it("dst false for unknown",    test_dst_false_for_unknown);
     return r.finish();
 }

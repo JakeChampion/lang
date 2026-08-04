@@ -98,21 +98,21 @@ function test_truncate(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("strings");
-    r = r.it("to_upper", test_uppercase());
-    r = r.it("to_lower", test_lowercase());
-    r = r.it("contains substring", test_contains_substring());
-    r = r.it("not contains", test_not_contains());
-    r = r.it("starts_with", test_starts_with());
-    r = r.it("ends_with", test_ends_with());
-    r = r.it("concatenation", test_concat());
-    r = r.it("split/join roundtrip", test_split_join_roundtrip());
-    r = r.it("split yields 4 parts", test_split_yields_four_parts());
-    r = r.it("find hit", test_find_hit());
-    r = r.it("find miss", test_find_miss());
-    r = r.it("rfind hit", test_rfind_hit());
-    r = r.it("find_ci hit", test_find_ci_hit());
-    r = r.it("empty string", test_empty_string());
-    r = r.it("non-empty string", test_non_empty_string());
-    r = r.it("truncate", test_truncate());
+    r = r.it("to_upper", test_uppercase);
+    r = r.it("to_lower", test_lowercase);
+    r = r.it("contains substring", test_contains_substring);
+    r = r.it("not contains", test_not_contains);
+    r = r.it("starts_with", test_starts_with);
+    r = r.it("ends_with", test_ends_with);
+    r = r.it("concatenation", test_concat);
+    r = r.it("split/join roundtrip", test_split_join_roundtrip);
+    r = r.it("split yields 4 parts", test_split_yields_four_parts);
+    r = r.it("find hit", test_find_hit);
+    r = r.it("find miss", test_find_miss);
+    r = r.it("rfind hit", test_rfind_hit);
+    r = r.it("find_ci hit", test_find_ci_hit);
+    r = r.it("empty string", test_empty_string);
+    r = r.it("non-empty string", test_non_empty_string);
+    r = r.it("truncate", test_truncate);
     return r.finish();
 }

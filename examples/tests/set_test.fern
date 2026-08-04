@@ -128,19 +128,19 @@ function test_symmetric_difference(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/set");
-    r = r.it("set_of dedup + order", test_set_of_dedup());
-    r = r.it("contains",            test_contains());
-    r = r.it("add dedup",           test_add());
-    r = r.it("add is pure",         test_add_is_pure());
-    r = r.it("remove",              test_remove());
-    r = r.it("remove absent",       test_remove_absent());
-    r = r.it("union",               test_union());
-    r = r.it("intersect",           test_intersect());
-    r = r.it("difference",          test_difference());
-    r = r.it("subset and equals",   test_subset_and_equals());
-    r = r.it("empty",               test_empty());
-    r = r.it("string elements",     test_string_elems());
-    r = r.it("superset + disjoint",  test_superset_and_disjoint());
-    r = r.it("symmetric difference", test_symmetric_difference());
+    r = r.it("set_of dedup + order", test_set_of_dedup);
+    r = r.it("contains",            test_contains);
+    r = r.it("add dedup",           test_add);
+    r = r.it("add is pure",         test_add_is_pure);
+    r = r.it("remove",              test_remove);
+    r = r.it("remove absent",       test_remove_absent);
+    r = r.it("union",               test_union);
+    r = r.it("intersect",           test_intersect);
+    r = r.it("difference",          test_difference);
+    r = r.it("subset and equals",   test_subset_and_equals);
+    r = r.it("empty",               test_empty);
+    r = r.it("string elements",     test_string_elems);
+    r = r.it("superset + disjoint",  test_superset_and_disjoint);
+    r = r.it("symmetric difference", test_symmetric_difference);
     return r.finish();
 }

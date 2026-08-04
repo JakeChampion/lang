@@ -51,13 +51,13 @@ function test_round_trip(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/i32 to_string_radix");
-    r = r.it("hex",        test_hex());
-    r = r.it("binary",     test_binary());
-    r = r.it("octal",      test_octal());
-    r = r.it("base36",     test_base36());
-    r = r.it("negative",   test_negative());
-    r = r.it("zero",       test_zero());
-    r = r.it("bad base",   test_bad_base());
-    r = r.it("round trip", test_round_trip());
+    r = r.it("hex",        test_hex);
+    r = r.it("binary",     test_binary);
+    r = r.it("octal",      test_octal);
+    r = r.it("base36",     test_base36);
+    r = r.it("negative",   test_negative);
+    r = r.it("zero",       test_zero);
+    r = r.it("bad base",   test_bad_base);
+    r = r.it("round trip", test_round_trip);
     return r.finish();
 }

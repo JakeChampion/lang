@@ -45,10 +45,10 @@ function test_cumsum_empty(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array f64 product/cumsum");
-    r = r.it("product",           test_product());
-    r = r.it("product empty",     test_product_empty());
-    r = r.it("cumsum",            test_cumsum());
-    r = r.it("cumsum negatives",  test_cumsum_negatives());
-    r = r.it("cumsum empty",      test_cumsum_empty());
+    r = r.it("product",           test_product);
+    r = r.it("product empty",     test_product_empty);
+    r = r.it("cumsum",            test_cumsum);
+    r = r.it("cumsum negatives",  test_cumsum_negatives);
+    r = r.it("cumsum empty",      test_cumsum_empty);
     return r.finish();
 }

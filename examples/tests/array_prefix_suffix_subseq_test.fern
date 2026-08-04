@@ -168,25 +168,25 @@ function test_subseq_string_missing(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("array prefix / suffix / subseq");
-    r = r.it("starts_with_i32 pass",              test_starts_with_i32_pass());
-    r = r.it("starts_with_i32 empty vacuous",     test_starts_with_i32_empty_prefix_vacuous());
-    r = r.it("starts_with_i32 full is prefix",    test_starts_with_i32_full_array_is_own_prefix());
-    r = r.it("starts_with_i32 prefix too long",   test_starts_with_i32_prefix_too_long());
-    r = r.it("starts_with_i32 mismatch at index", test_starts_with_i32_mismatch_at_index());
-    r = r.it("starts_with_string pass",           test_starts_with_string_pass());
-    r = r.it("ends_with_i32 pass",                test_ends_with_i32_pass());
-    r = r.it("ends_with_i32 empty vacuous",       test_ends_with_i32_empty_suffix_vacuous());
-    r = r.it("ends_with_i32 suffix too long",     test_ends_with_i32_suffix_too_long());
-    r = r.it("ends_with_i32 arr-coords index",    test_ends_with_i32_mismatch_reports_arr_index());
-    r = r.it("ends_with_string pass",             test_ends_with_string_pass());
-    r = r.it("subseq_i32 middle",                 test_subseq_i32_pass_middle());
-    r = r.it("subseq_i32 at start",               test_subseq_i32_pass_at_start());
-    r = r.it("subseq_i32 at end",                 test_subseq_i32_pass_at_end());
-    r = r.it("subseq_i32 empty vacuous",          test_subseq_i32_empty_vacuous());
-    r = r.it("subseq_i32 needle longer fails",    test_subseq_i32_needle_longer());
-    r = r.it("subseq_i32 order matters",          test_subseq_i32_order_matters());
-    r = r.it("subseq_i32 retries after partial",  test_subseq_i32_almost_match());
-    r = r.it("subseq_string pass",                test_subseq_string_pass());
-    r = r.it("subseq_string missing fails",       test_subseq_string_missing());
+    r = r.it("starts_with_i32 pass",              test_starts_with_i32_pass);
+    r = r.it("starts_with_i32 empty vacuous",     test_starts_with_i32_empty_prefix_vacuous);
+    r = r.it("starts_with_i32 full is prefix",    test_starts_with_i32_full_array_is_own_prefix);
+    r = r.it("starts_with_i32 prefix too long",   test_starts_with_i32_prefix_too_long);
+    r = r.it("starts_with_i32 mismatch at index", test_starts_with_i32_mismatch_at_index);
+    r = r.it("starts_with_string pass",           test_starts_with_string_pass);
+    r = r.it("ends_with_i32 pass",                test_ends_with_i32_pass);
+    r = r.it("ends_with_i32 empty vacuous",       test_ends_with_i32_empty_suffix_vacuous);
+    r = r.it("ends_with_i32 suffix too long",     test_ends_with_i32_suffix_too_long);
+    r = r.it("ends_with_i32 arr-coords index",    test_ends_with_i32_mismatch_reports_arr_index);
+    r = r.it("ends_with_string pass",             test_ends_with_string_pass);
+    r = r.it("subseq_i32 middle",                 test_subseq_i32_pass_middle);
+    r = r.it("subseq_i32 at start",               test_subseq_i32_pass_at_start);
+    r = r.it("subseq_i32 at end",                 test_subseq_i32_pass_at_end);
+    r = r.it("subseq_i32 empty vacuous",          test_subseq_i32_empty_vacuous);
+    r = r.it("subseq_i32 needle longer fails",    test_subseq_i32_needle_longer);
+    r = r.it("subseq_i32 order matters",          test_subseq_i32_order_matters);
+    r = r.it("subseq_i32 retries after partial",  test_subseq_i32_almost_match);
+    r = r.it("subseq_string pass",                test_subseq_string_pass);
+    r = r.it("subseq_string missing fails",       test_subseq_string_missing);
     return r.finish();
 }

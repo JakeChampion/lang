@@ -108,19 +108,19 @@ function test_duration_to_string_negative(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/time iso + span");
-    r = r.it("format_iso",            test_format_iso());
-    r = r.it("format_iso pad year",   test_format_iso_pad_year());
-    r = r.it("parse_iso ok",          test_parse_iso_ok());
-    r = r.it("parse_iso bad len",     test_parse_iso_bad_len());
-    r = r.it("parse_iso bad sep",     test_parse_iso_bad_sep());
-    r = r.it("iso round trip",        test_iso_round_trip());
-    r = r.it("add_span days",         test_add_span_days());
-    r = r.it("add_span weeks",        test_add_span_weeks());
-    r = r.it("add_span months clamp leap",  test_add_span_months_clamp_leap());
-    r = r.it("add_span months clamp plain", test_add_span_months_clamp_plain());
-    r = r.it("add_span years clamp",  test_add_span_years_clamp());
-    r = r.it("add_span months rollover", test_add_span_months_rollover());
-    r = r.it("duration to_string",    test_duration_to_string());
-    r = r.it("duration to_string neg", test_duration_to_string_negative());
+    r = r.it("format_iso",            test_format_iso);
+    r = r.it("format_iso pad year",   test_format_iso_pad_year);
+    r = r.it("parse_iso ok",          test_parse_iso_ok);
+    r = r.it("parse_iso bad len",     test_parse_iso_bad_len);
+    r = r.it("parse_iso bad sep",     test_parse_iso_bad_sep);
+    r = r.it("iso round trip",        test_iso_round_trip);
+    r = r.it("add_span days",         test_add_span_days);
+    r = r.it("add_span weeks",        test_add_span_weeks);
+    r = r.it("add_span months clamp leap",  test_add_span_months_clamp_leap);
+    r = r.it("add_span months clamp plain", test_add_span_months_clamp_plain);
+    r = r.it("add_span years clamp",  test_add_span_years_clamp);
+    r = r.it("add_span months rollover", test_add_span_months_rollover);
+    r = r.it("duration to_string",    test_duration_to_string);
+    r = r.it("duration to_string neg", test_duration_to_string_negative);
     return r.finish();
 }

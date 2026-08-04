@@ -75,13 +75,13 @@ function main(): i32 {
         return r.finish();
     }
 
-    r = r.it("echo stdout eq",          test_echo_stdout_eq());
-    r = r.it("echo exit code",          test_echo_exit_code());
-    r = r.it("cat passthrough",         test_cat_passthrough());
-    r = r.it("sh nonzero exit",         test_sh_nonzero_exit());
-    r = r.it("sh stderr contains",      test_sh_stderr_contains());
-    r = r.it("spawn missing binary",    test_spawn_missing_binary());
-    r = r.it("temp_dir writes + reads", test_temp_dir_writes_and_reads());
+    r = r.it("echo stdout eq",          test_echo_stdout_eq);
+    r = r.it("echo exit code",          test_echo_exit_code);
+    r = r.it("cat passthrough",         test_cat_passthrough);
+    r = r.it("sh nonzero exit",         test_sh_nonzero_exit);
+    r = r.it("sh stderr contains",      test_sh_stderr_contains);
+    r = r.it("spawn missing binary",    test_spawn_missing_binary);
+    r = r.it("temp_dir writes + reads", test_temp_dir_writes_and_reads);
 
     return r.finish();
 }

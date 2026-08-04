@@ -47,12 +47,12 @@ function test_len_equals_count(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/string find_all");
-    r = r.it("multiple matches",   test_multiple());
-    r = r.it("non-overlapping",    test_non_overlapping());
-    r = r.it("no match",           test_no_match());
-    r = r.it("empty needle",       test_empty_needle());
-    r = r.it("leading match",      test_leading());
-    r = r.it("trailing match",     test_trailing());
-    r = r.it("len equals count",   test_len_equals_count());
+    r = r.it("multiple matches",   test_multiple);
+    r = r.it("non-overlapping",    test_non_overlapping);
+    r = r.it("no match",           test_no_match);
+    r = r.it("empty needle",       test_empty_needle);
+    r = r.it("leading match",      test_leading);
+    r = r.it("trailing match",     test_trailing);
+    r = r.it("len equals count",   test_len_equals_count);
     return r.finish();
 }

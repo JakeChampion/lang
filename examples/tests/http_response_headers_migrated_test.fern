@@ -110,20 +110,20 @@ function test_status_reason_unknown_falls_back(): test.TestOutcome {
 function main(): i32 {
     var r: test.TestRunner = test.test_new("HTTP response headers (migrated)");
     r = r.it("user-set headers before auto block",
-             test_user_headers_before_auto_block());
+             test_user_headers_before_auto_block);
     r = r.it("redirect helper sets Location",
-             test_redirect_sets_location_header());
+             test_redirect_sets_location_header);
     r = r.it("user Content-Length overridden by auto",
-             test_user_content_length_is_ignored());
+             test_user_content_length_is_ignored);
     r = r.it("bogus Content-Length absent from wire",
-             test_user_content_length_does_not_leak_into_wire());
+             test_user_content_length_does_not_leak_into_wire);
     r = r.it("duplicate Set-Cookie both appear",
-             test_duplicate_set_cookie_via_append());
+             test_duplicate_set_cookie_via_append);
     r = r.it("duplicate Set-Cookie preserves order",
-             test_duplicate_set_cookie_both_in_order());
+             test_duplicate_set_cookie_both_in_order);
     r = r.it("status reason for extended codes",
-             test_status_reason_for_extended_codes());
+             test_status_reason_for_extended_codes);
     r = r.it("unknown status falls back to Status",
-             test_status_reason_unknown_falls_back());
+             test_status_reason_unknown_falls_back);
     return r.finish();
 }

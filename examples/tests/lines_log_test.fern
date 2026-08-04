@@ -56,12 +56,12 @@ function main(): i32 {
     // them with `ok`/`not ok` lines so the log breadcrumbs
     // are attributable to a stage of the suite.
     r = r.log("phase 1: positive cases");
-    r = r.it("lines match",                   test_lines_match());
-    r = r.it("empty input",                   test_lines_empty_input());
+    r = r.it("lines match",                   test_lines_match);
+    r = r.it("empty input",                   test_lines_empty_input);
 
     r = r.log("phase 2: failure cases (inverted)");
-    r = r.it("line count mismatch reports",   test_lines_line_count_mismatch());
-    r = r.it("first diff line localised",     test_lines_first_diff_localised());
+    r = r.it("line count mismatch reports",   test_lines_line_count_mismatch);
+    r = r.it("first diff line localised",     test_lines_first_diff_localised);
 
     return r.finish();
 }

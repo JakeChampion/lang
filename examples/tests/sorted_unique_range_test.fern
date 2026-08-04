@@ -144,24 +144,24 @@ function test_unique_empty_is_vacuous(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("sorted / unique / range");
-    r = r.it("in_range_f64 pass",                test_in_range_f64_pass());
-    r = r.it("in_range_f64 inclusive lo",        test_in_range_f64_inclusive_lo());
-    r = r.it("in_range_f64 inclusive hi",        test_in_range_f64_inclusive_hi());
-    r = r.it("in_range_f64 below names bound",   test_in_range_f64_below());
-    r = r.it("in_range_f64 above names bound",   test_in_range_f64_above());
-    r = r.it("in_range_f64 NaN fails",           test_in_range_f64_nan_fails());
-    r = r.it("sorted_asc_i32 pass",              test_sorted_i32_pass());
-    r = r.it("sorted_asc_i32 empty vacuous",     test_sorted_i32_empty());
-    r = r.it("sorted_asc_i32 single vacuous",    test_sorted_i32_single());
-    r = r.it("sorted_asc_i32 equal runs ok",     test_sorted_i32_equal_runs());
-    r = r.it("sorted_asc_i32 inversion + index", test_sorted_i32_inversion());
-    r = r.it("sorted_asc_string pass",           test_sorted_string_pass());
-    r = r.it("sorted_asc_string inversion",      test_sorted_string_inversion());
-    r = r.it("unique_i32 pass",                  test_unique_i32_pass());
-    r = r.it("unique_i32 unsorted input",        test_unique_i32_unsorted_input());
-    r = r.it("unique_i32 duplicate fails",       test_unique_i32_duplicate_fails());
-    r = r.it("unique_string pass",               test_unique_string_pass());
-    r = r.it("unique_string duplicate fails",    test_unique_string_duplicate_fails());
-    r = r.it("unique empty vacuous",             test_unique_empty_is_vacuous());
+    r = r.it("in_range_f64 pass",                test_in_range_f64_pass);
+    r = r.it("in_range_f64 inclusive lo",        test_in_range_f64_inclusive_lo);
+    r = r.it("in_range_f64 inclusive hi",        test_in_range_f64_inclusive_hi);
+    r = r.it("in_range_f64 below names bound",   test_in_range_f64_below);
+    r = r.it("in_range_f64 above names bound",   test_in_range_f64_above);
+    r = r.it("in_range_f64 NaN fails",           test_in_range_f64_nan_fails);
+    r = r.it("sorted_asc_i32 pass",              test_sorted_i32_pass);
+    r = r.it("sorted_asc_i32 empty vacuous",     test_sorted_i32_empty);
+    r = r.it("sorted_asc_i32 single vacuous",    test_sorted_i32_single);
+    r = r.it("sorted_asc_i32 equal runs ok",     test_sorted_i32_equal_runs);
+    r = r.it("sorted_asc_i32 inversion + index", test_sorted_i32_inversion);
+    r = r.it("sorted_asc_string pass",           test_sorted_string_pass);
+    r = r.it("sorted_asc_string inversion",      test_sorted_string_inversion);
+    r = r.it("unique_i32 pass",                  test_unique_i32_pass);
+    r = r.it("unique_i32 unsorted input",        test_unique_i32_unsorted_input);
+    r = r.it("unique_i32 duplicate fails",       test_unique_i32_duplicate_fails);
+    r = r.it("unique_string pass",               test_unique_string_pass);
+    r = r.it("unique_string duplicate fails",    test_unique_string_duplicate_fails);
+    r = r.it("unique empty vacuous",             test_unique_empty_is_vacuous);
     return r.finish();
 }

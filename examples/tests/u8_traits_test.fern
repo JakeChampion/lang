@@ -93,13 +93,13 @@ function test_generic_bound(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("core/cmp u8 impls");
-    r = r.it("Display", test_display());
-    r = r.it("Eq", test_eq());
-    r = r.it("Ord unsigned order", test_ord());
-    r = r.it("Hash", test_hash());
-    r = r.it("Debug", test_debug());
-    r = r.it("derived Debug over a byte field", test_derive_debug());
-    r = r.it("Default", test_default());
-    r = r.it("generic Eq+Display bound", test_generic_bound());
+    r = r.it("Display", test_display);
+    r = r.it("Eq", test_eq);
+    r = r.it("Ord unsigned order", test_ord);
+    r = r.it("Hash", test_hash);
+    r = r.it("Debug", test_debug);
+    r = r.it("derived Debug over a byte field", test_derive_debug);
+    r = r.it("Default", test_default);
+    r = r.it("generic Eq+Display bound", test_generic_bound);
     return r.finish();
 }

@@ -98,15 +98,15 @@ function test_empty_key(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/json pointer");
-    r = r.it("whole doc (empty pointer)", test_whole_doc());
-    r = r.it("nested object",            test_nested_object());
-    r = r.it("array index",              test_array_index());
-    r = r.it("missing key",              test_missing_key());
-    r = r.it("array out of range",       test_array_out_of_range());
-    r = r.it("descend into scalar",      test_descend_into_scalar());
-    r = r.it("bad array index",          test_bad_array_index());
-    r = r.it("must start with slash",    test_must_start_with_slash());
-    r = r.it("escaped keys ~1 ~0",       test_escaped_keys());
-    r = r.it("empty key",                test_empty_key());
+    r = r.it("whole doc (empty pointer)", test_whole_doc);
+    r = r.it("nested object",            test_nested_object);
+    r = r.it("array index",              test_array_index);
+    r = r.it("missing key",              test_missing_key);
+    r = r.it("array out of range",       test_array_out_of_range);
+    r = r.it("descend into scalar",      test_descend_into_scalar);
+    r = r.it("bad array index",          test_bad_array_index);
+    r = r.it("must start with slash",    test_must_start_with_slash);
+    r = r.it("escaped keys ~1 ~0",       test_escaped_keys);
+    r = r.it("empty key",                test_empty_key);
     return r.finish();
 }

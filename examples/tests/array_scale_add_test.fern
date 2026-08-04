@@ -53,11 +53,11 @@ function test_empty(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array f64 scale/add");
-    r = r.it("scale",           test_scale());
-    r = r.it("scale zero/neg",  test_scale_zero_negate());
-    r = r.it("add",             test_add());
-    r = r.it("add mismatch",    test_add_mismatch());
-    r = r.it("saxpy",           test_saxpy());
-    r = r.it("empty",           test_empty());
+    r = r.it("scale",           test_scale);
+    r = r.it("scale zero/neg",  test_scale_zero_negate);
+    r = r.it("add",             test_add);
+    r = r.it("add mismatch",    test_add_mismatch);
+    r = r.it("saxpy",           test_saxpy);
+    r = r.it("empty",           test_empty);
     return r.finish();
 }

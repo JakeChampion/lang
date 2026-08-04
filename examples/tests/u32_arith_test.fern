@@ -77,15 +77,15 @@ function test_rotr_roundtrip(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/u32 wrapping arithmetic");
-    r = r.it("wrap add",          test_wrap_add());
-    r = r.it("wrap add two high", test_wrap_add_two_high());
-    r = r.it("wrap sub",          test_wrap_sub());
-    r = r.it("wrap mul",          test_wrap_mul());
-    r = r.it("shl overflow mask", test_shl_overflow_mask());
-    r = r.it("shl to bit31",      test_shl_to_bit31());
-    r = r.it("logical shr",       test_logical_shr());
-    r = r.it("rotr",              test_rotr());
-    r = r.it("rotl",              test_rotl());
-    r = r.it("rotr roundtrip",    test_rotr_roundtrip());
+    r = r.it("wrap add",          test_wrap_add);
+    r = r.it("wrap add two high", test_wrap_add_two_high);
+    r = r.it("wrap sub",          test_wrap_sub);
+    r = r.it("wrap mul",          test_wrap_mul);
+    r = r.it("shl overflow mask", test_shl_overflow_mask);
+    r = r.it("shl to bit31",      test_shl_to_bit31);
+    r = r.it("logical shr",       test_logical_shr);
+    r = r.it("rotr",              test_rotr);
+    r = r.it("rotl",              test_rotl);
+    r = r.it("rotr roundtrip",    test_rotr_roundtrip);
     return r.finish();
 }

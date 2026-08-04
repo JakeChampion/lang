@@ -12,13 +12,13 @@ function test_file_lines_pass(r: test.TestRunner): test.TestRunner {
     if (dir == "") { return rr; }
     var path: string = dir + "/output.txt";
     match (write_file(path, "alpha\nbeta\ngamma\n")) {
-        Some(_) => { return rr.it("write fixture", test.fail("io")); },
+        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
         None => {}
     }
     rr = rr.it("file_lines exact match",
-               test.assert_file_lines(path, ["alpha", "beta", "gamma"]));
+               () => test.assert_file_lines(path, ["alpha", "beta", "gamma"]));
     rr = rr.it("file_line_count 3",
-               test.assert_file_line_count(path, 3));
+               () => test.assert_file_line_count(path, 3));
     return rr;
 }
 
@@ -28,11 +28,11 @@ function test_file_lines_no_trailing_newline(r: test.TestRunner): test.TestRunne
     var path: string = dir + "/output.txt";
     // No trailing newline — `.lines()` still returns 3 lines.
     match (write_file(path, "one\ntwo\nthree")) {
-        Some(_) => { return rr.it("write fixture", test.fail("io")); },
+        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
         None => {}
     }
     rr = rr.it("file_lines no-trail match",
-               test.assert_file_lines(path, ["one", "two", "three"]));
+               () => test.assert_file_lines(path, ["one", "two", "three"]));
     return rr;
 }
 
@@ -41,19 +41,19 @@ function test_file_lines_mismatch_reports(r: test.TestRunner): test.TestRunner {
     if (dir == "") { return rr; }
     var path: string = dir + "/output.txt";
     match (write_file(path, "alpha\nWRONG\ngamma\n")) {
-        Some(_) => { return rr.it("write fixture", test.fail("io")); },
+        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
         None => {}
     }
     match (test.assert_file_lines(path, ["alpha", "beta", "gamma"])) {
-        Pass => { return rr.it("expected mismatch fail", test.fail("missed")); },
+        Pass => { return rr.it("expected mismatch fail", () => test.fail("missed")); },
         Fail(msg) => {
             // assert_lines_eq names the differing line; the
             // file wrapper just routes through it.
             if (!msg.contains("line 2")) {
                 rr = rr.it("file_lines diff names line",
-                           test.fail("expected 'line 2': " + msg));
+                           () => test.fail("expected 'line 2': " + msg));
             } else {
-                rr = rr.it("file_lines mismatch named", test.pass());
+                rr = rr.it("file_lines mismatch named", test.pass);
             }
         }
     }
@@ -65,17 +65,17 @@ function test_file_line_count_wrong_reports(r: test.TestRunner): test.TestRunner
     if (dir == "") { return rr; }
     var path: string = dir + "/output.txt";
     match (write_file(path, "a\nb\n")) {
-        Some(_) => { return rr.it("write fixture", test.fail("io")); },
+        Some(_) => { return rr.it("write fixture", () => test.fail("io")); },
         None => {}
     }
     match (test.assert_file_line_count(path, 5)) {
-        Pass => { return rr.it("count mismatch missed", test.fail("expected fail")); },
+        Pass => { return rr.it("count mismatch missed", () => test.fail("expected fail")); },
         Fail(msg) => {
             if (!msg.contains("2") || !msg.contains("5")) {
                 rr = rr.it("count mismatch context",
-                           test.fail("expected '2' + '5': " + msg));
+                           () => test.fail("expected '2' + '5': " + msg));
             } else {
-                rr = rr.it("count mismatch reports both", test.pass());
+                rr = rr.it("count mismatch reports both", test.pass);
             }
         }
     }
@@ -133,12 +133,12 @@ function main(): i32 {
     r = test_file_lines_mismatch_reports(r);
     r = test_file_line_count_wrong_reports(r);
     r = r.it("file_lines missing file",
-             test_file_lines_missing_file());
+             test_file_lines_missing_file);
     r = r.it("close_to_now_ms now passes",
-             test_close_to_now_ms_now_passes());
+             test_close_to_now_ms_now_passes);
     r = r.it("close_to_now_ms 1h-old fails",
-             test_close_to_now_ms_old_fails());
+             test_close_to_now_ms_old_fails);
     r = r.it("close_to_now_ms future-skew fails",
-             test_close_to_now_ms_future_skew_fails());
+             test_close_to_now_ms_future_skew_fails);
     return r.finish();
 }

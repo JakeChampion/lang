@@ -117,20 +117,20 @@ function test_checked(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/u64");
-    r = r.it("min",                test_min());
-    r = r.it("max",                test_max());
-    r = r.it("min unsigned",       test_min_unsigned());
-    r = r.it("max unsigned",       test_max_unsigned());
-    r = r.it("clamp above hi",     test_clamp_hi());
-    r = r.it("clamp below lo",     test_clamp_lo());
-    r = r.it("clamp in range",     test_clamp_in());
-    r = r.it("clamp unsigned hi",  test_clamp_unsigned_hi());
-    r = r.it("to_string small",    test_to_string_small());
-    r = r.it("to_string wide",     test_to_string_wide());
-    r = r.it("to_string umax",     test_to_string_umax());
-    r = r.it("predicates",         test_predicates());
-    r = r.it("pow",                test_pow());
-    r = r.it("saturating",         test_saturating());
-    r = r.it("checked",            test_checked());
+    r = r.it("min",                test_min);
+    r = r.it("max",                test_max);
+    r = r.it("min unsigned",       test_min_unsigned);
+    r = r.it("max unsigned",       test_max_unsigned);
+    r = r.it("clamp above hi",     test_clamp_hi);
+    r = r.it("clamp below lo",     test_clamp_lo);
+    r = r.it("clamp in range",     test_clamp_in);
+    r = r.it("clamp unsigned hi",  test_clamp_unsigned_hi);
+    r = r.it("to_string small",    test_to_string_small);
+    r = r.it("to_string wide",     test_to_string_wide);
+    r = r.it("to_string umax",     test_to_string_umax);
+    r = r.it("predicates",         test_predicates);
+    r = r.it("pow",                test_pow);
+    r = r.it("saturating",         test_saturating);
+    r = r.it("checked",            test_checked);
     return r.finish();
 }

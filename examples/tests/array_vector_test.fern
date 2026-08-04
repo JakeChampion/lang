@@ -52,11 +52,11 @@ function test_identity(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array f64 vector");
-    r = r.it("dot",           test_dot());
-    r = r.it("dot negatives", test_dot_negatives());
-    r = r.it("dot mismatch",  test_dot_mismatch());
-    r = r.it("norm",          test_norm());
-    r = r.it("empty",         test_empty());
-    r = r.it("norm^2 == dot", test_identity());
+    r = r.it("dot",           test_dot);
+    r = r.it("dot negatives", test_dot_negatives);
+    r = r.it("dot mismatch",  test_dot_mismatch);
+    r = r.it("norm",          test_norm);
+    r = r.it("empty",         test_empty);
+    r = r.it("norm^2 == dot", test_identity);
     return r.finish();
 }

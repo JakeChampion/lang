@@ -45,11 +45,11 @@ function float_near(a: f64, b: f64): boolean {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/float cbrt/hypot3");
-    r = r.it("cbrt perfect cube",   test_cbrt_perfect());
-    r = r.it("cbrt negative",       test_cbrt_negative());
-    r = r.it("cbrt fractional",     test_cbrt_fractional());
-    r = r.it("hypot3 pythagorean",  test_hypot3_pythagorean());
-    r = r.it("hypot3 zero and 2d",  test_hypot3_zero_and_2d());
-    r = r.it("f32",                 test_f32());
+    r = r.it("cbrt perfect cube",   test_cbrt_perfect);
+    r = r.it("cbrt negative",       test_cbrt_negative);
+    r = r.it("cbrt fractional",     test_cbrt_fractional);
+    r = r.it("hypot3 pythagorean",  test_hypot3_pythagorean);
+    r = r.it("hypot3 zero and 2d",  test_hypot3_zero_and_2d);
+    r = r.it("f32",                 test_f32);
     return r.finish();
 }

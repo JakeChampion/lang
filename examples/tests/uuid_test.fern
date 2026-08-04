@@ -79,17 +79,17 @@ function test_version_malformed(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/uuid");
-    r = r.it("v4 length 36",       test_v4_len());
-    r = r.it("v4 is_uuid shape",   test_v4_is_uuid());
-    r = r.it("v4 hyphen positions", test_v4_hyphens());
-    r = r.it("v4 version nibble",   test_v4_version());
-    r = r.it("v4 variant nibble",   test_v4_variant());
-    r = r.it("v4 distinct draws",   test_v4_distinct());
-    r = r.it("v7 length 36",       test_v7_len());
-    r = r.it("v7 is_uuid shape",   test_v7_is_uuid());
-    r = r.it("v7 version nibble",   test_v7_version());
-    r = r.it("nil + is_nil",        test_nil());
-    r = r.it("version extract",     test_version_extract());
-    r = r.it("version malformed",   test_version_malformed());
+    r = r.it("v4 length 36",       test_v4_len);
+    r = r.it("v4 is_uuid shape",   test_v4_is_uuid);
+    r = r.it("v4 hyphen positions", test_v4_hyphens);
+    r = r.it("v4 version nibble",   test_v4_version);
+    r = r.it("v4 variant nibble",   test_v4_variant);
+    r = r.it("v4 distinct draws",   test_v4_distinct);
+    r = r.it("v7 length 36",       test_v7_len);
+    r = r.it("v7 is_uuid shape",   test_v7_is_uuid);
+    r = r.it("v7 version nibble",   test_v7_version);
+    r = r.it("nil + is_nil",        test_nil);
+    r = r.it("version extract",     test_version_extract);
+    r = r.it("version malformed",   test_version_malformed);
     return r.finish();
 }

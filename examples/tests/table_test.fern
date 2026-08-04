@@ -36,11 +36,11 @@ function test_render_with_header(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/table");
-    r = r.it("render basic",       test_render_basic());
-    r = r.it("single column",      test_render_single_column());
-    r = r.it("empty",              test_render_empty());
-    r = r.it("short rows",         test_render_short_rows());
-    r = r.it("codepoint align",    test_codepoint_alignment());
-    r = r.it("with header",        test_render_with_header());
+    r = r.it("render basic",       test_render_basic);
+    r = r.it("single column",      test_render_single_column);
+    r = r.it("empty",              test_render_empty);
+    r = r.it("short rows",         test_render_short_rows);
+    r = r.it("codepoint align",    test_codepoint_alignment);
+    r = r.it("with header",        test_render_with_header);
     return r.finish();
 }

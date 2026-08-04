@@ -46,13 +46,13 @@ function test_non_numeric(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/string zfill");
-    r = r.it("unsigned",      test_unsigned());
-    r = r.it("negative",      test_negative());
-    r = r.it("positive sign", test_positive_sign());
-    r = r.it("already wide",  test_already_wide());
-    r = r.it("empty",         test_empty());
-    r = r.it("lone sign",     test_lone_sign());
-    r = r.it("width zero",    test_width_zero());
-    r = r.it("non numeric",   test_non_numeric());
+    r = r.it("unsigned",      test_unsigned);
+    r = r.it("negative",      test_negative);
+    r = r.it("positive sign", test_positive_sign);
+    r = r.it("already wide",  test_already_wide);
+    r = r.it("empty",         test_empty);
+    r = r.it("lone sign",     test_lone_sign);
+    r = r.it("width zero",    test_width_zero);
+    r = r.it("non numeric",   test_non_numeric);
     return r.finish();
 }

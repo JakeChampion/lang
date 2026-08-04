@@ -44,12 +44,12 @@ function test_involution(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/string swap_case");
-    r = r.it("mixed",             test_mixed());
-    r = r.it("all lower",         test_all_lower());
-    r = r.it("all upper",         test_all_upper());
-    r = r.it("non letters",       test_non_letters());
-    r = r.it("empty",             test_empty());
-    r = r.it("mixed with digits", test_mixed_with_digits());
-    r = r.it("involution",        test_involution());
+    r = r.it("mixed",             test_mixed);
+    r = r.it("all lower",         test_all_lower);
+    r = r.it("all upper",         test_all_upper);
+    r = r.it("non letters",       test_non_letters);
+    r = r.it("empty",             test_empty);
+    r = r.it("mixed with digits", test_mixed_with_digits);
+    r = r.it("involution",        test_involution);
     return r.finish();
 }

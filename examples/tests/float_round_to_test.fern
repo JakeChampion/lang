@@ -51,13 +51,13 @@ function float_near(a: f64, b: f64): boolean {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/float round_to");
-    r = r.it("two places",       test_two_places());
-    r = r.it("zero places",      test_zero_places());
-    r = r.it("half away",        test_half_away());
-    r = r.it("four places",      test_four_places());
-    r = r.it("negative value",   test_negative_value());
-    r = r.it("negative digits",  test_negative_digits());
-    r = r.it("whole number",     test_whole_number());
-    r = r.it("f32",              test_f32());
+    r = r.it("two places",       test_two_places);
+    r = r.it("zero places",      test_zero_places);
+    r = r.it("half away",        test_half_away);
+    r = r.it("four places",      test_four_places);
+    r = r.it("negative value",   test_negative_value);
+    r = r.it("negative digits",  test_negative_digits);
+    r = r.it("whole number",     test_whole_number);
+    r = r.it("f32",              test_f32);
     return r.finish();
 }

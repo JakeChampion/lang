@@ -126,21 +126,21 @@ function test_flatten(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/result combinators");
-    r = r.it("is_ok / is_err",   test_is_ok_is_err());
-    r = r.it("unwrap_or",        test_unwrap_or());
-    r = r.it("unwrap_or_else",   test_unwrap_or_else());
-    r = r.it("map",              test_map());
-    r = r.it("and_then",         test_and_then());
-    r = r.it("map_err",          test_map_err());
-    r = r.it("ok",               test_ok());
-    r = r.it("err",              test_err());
-    r = r.it("map_or",           test_map_or());
-    r = r.it("is_ok_and",        test_is_ok_and());
-    r = r.it("is_err_and",       test_is_err_and());
-    r = r.it("or",               test_or());
-    r = r.it("and",              test_and());
-    r = r.it("or_else",          test_or_else());
-    r = r.it("map_or_else",      test_map_or_else());
-    r = r.it("flatten",          test_flatten());
+    r = r.it("is_ok / is_err",   test_is_ok_is_err);
+    r = r.it("unwrap_or",        test_unwrap_or);
+    r = r.it("unwrap_or_else",   test_unwrap_or_else);
+    r = r.it("map",              test_map);
+    r = r.it("and_then",         test_and_then);
+    r = r.it("map_err",          test_map_err);
+    r = r.it("ok",               test_ok);
+    r = r.it("err",              test_err);
+    r = r.it("map_or",           test_map_or);
+    r = r.it("is_ok_and",        test_is_ok_and);
+    r = r.it("is_err_and",       test_is_err_and);
+    r = r.it("or",               test_or);
+    r = r.it("and",              test_and);
+    r = r.it("or_else",          test_or_else);
+    r = r.it("map_or_else",      test_map_or_else);
+    r = r.it("flatten",          test_flatten);
     return r.finish();
 }

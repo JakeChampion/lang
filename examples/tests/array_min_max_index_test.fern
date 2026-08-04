@@ -53,11 +53,11 @@ function test_all_equal(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array min/max index");
-    r = r.it("max_index",          test_max_index());
-    r = r.it("min_index tie first", test_min_index_tie_first());
-    r = r.it("free fn",            test_free_fn());
-    r = r.it("single",             test_single());
-    r = r.it("empty",              test_empty());
-    r = r.it("all equal",          test_all_equal());
+    r = r.it("max_index",          test_max_index);
+    r = r.it("min_index tie first", test_min_index_tie_first);
+    r = r.it("free fn",            test_free_fn);
+    r = r.it("single",             test_single);
+    r = r.it("empty",              test_empty);
+    r = r.it("all equal",          test_all_equal);
     return r.finish();
 }

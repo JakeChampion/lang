@@ -46,10 +46,10 @@ function test_normalize_empty(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array f64 distance/normalize");
-    r = r.it("distance",        test_distance());
-    r = r.it("distance equal",  test_distance_equal());
-    r = r.it("normalize",       test_normalize());
-    r = r.it("normalize zero",  test_normalize_zero());
-    r = r.it("normalize empty", test_normalize_empty());
+    r = r.it("distance",        test_distance);
+    r = r.it("distance equal",  test_distance_equal);
+    r = r.it("normalize",       test_normalize);
+    r = r.it("normalize zero",  test_normalize_zero);
+    r = r.it("normalize empty", test_normalize_empty);
     return r.finish();
 }

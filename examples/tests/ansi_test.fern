@@ -49,11 +49,11 @@ function test_256_and_truecolor(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/ansi");
-    r = r.it("strip roundtrip",       test_strip_roundtrip());
-    r = r.it("strip preserves text",  test_strip_preserves_surrounding());
-    r = r.it("styles",                test_styles());
-    r = r.it("custom sgr",            test_custom_sgr());
-    r = r.it("codes emitted",         test_codes_emitted());
-    r = r.it("256 + truecolour",      test_256_and_truecolor());
+    r = r.it("strip roundtrip",       test_strip_roundtrip);
+    r = r.it("strip preserves text",  test_strip_preserves_surrounding);
+    r = r.it("styles",                test_styles);
+    r = r.it("custom sgr",            test_custom_sgr);
+    r = r.it("codes emitted",         test_codes_emitted);
+    r = r.it("256 + truecolour",      test_256_and_truecolor);
     return r.finish();
 }

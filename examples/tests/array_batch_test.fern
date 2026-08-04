@@ -69,15 +69,15 @@ function test_windows_full_width(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array batch");
-    r = r.it("slice basic",             test_slice_basic());
-    r = r.it("slice clamped",           test_slice_clamped());
-    r = r.it("slice empty",             test_slice_empty());
-    r = r.it("chunks even",             test_chunks_even());
-    r = r.it("chunks uneven",           test_chunks_uneven());
-    r = r.it("chunks size <= 0",        test_chunks_nonpositive_size());
-    r = r.it("chunks empty input",      test_chunks_empty_input());
-    r = r.it("windows basic",           test_windows_basic());
-    r = r.it("windows too wide",        test_windows_too_wide());
-    r = r.it("windows full width",      test_windows_full_width());
+    r = r.it("slice basic",             test_slice_basic);
+    r = r.it("slice clamped",           test_slice_clamped);
+    r = r.it("slice empty",             test_slice_empty);
+    r = r.it("chunks even",             test_chunks_even);
+    r = r.it("chunks uneven",           test_chunks_uneven);
+    r = r.it("chunks size <= 0",        test_chunks_nonpositive_size);
+    r = r.it("chunks empty input",      test_chunks_empty_input);
+    r = r.it("windows basic",           test_windows_basic);
+    r = r.it("windows too wide",        test_windows_too_wide);
+    r = r.it("windows full width",      test_windows_full_width);
     return r.finish();
 }

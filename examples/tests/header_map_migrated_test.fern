@@ -73,16 +73,16 @@ function test_get_all_on_missing_is_empty(): test.TestOutcome {
 function main(): i32 {
     var r: test.TestRunner = test.test_new("HeaderMap (migrated)");
     r = r.it("case-insensitive get",
-             test_case_insensitive_get());
+             test_case_insensitive_get);
     r = r.it("get_all preserves insertion order",
-             test_get_all_preserves_insertion_order());
+             test_get_all_preserves_insertion_order);
     r = r.it("set replaces drops dupes (size=2)",
-             test_set_replaces_then_size_2());
+             test_set_replaces_then_size_2);
     r = r.it("set replaces; get returns new value",
-             test_set_replaces_get_returns_new());
+             test_set_replaces_get_returns_new);
     r = r.it("set on absent name appends",
-             test_set_on_absent_appends());
+             test_set_on_absent_appends);
     r = r.it("get_all on missing name is empty",
-             test_get_all_on_missing_is_empty());
+             test_get_all_on_missing_is_empty);
     return r.finish();
 }

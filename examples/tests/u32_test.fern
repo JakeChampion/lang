@@ -47,9 +47,9 @@ function test_checked(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/u32 helpers");
-    r = r.it("predicates",  test_predicates());
-    r = r.it("pow",         test_pow());
-    r = r.it("saturating",  test_saturating());
-    r = r.it("checked",     test_checked());
+    r = r.it("predicates",  test_predicates);
+    r = r.it("pow",         test_pow);
+    r = r.it("saturating",  test_saturating);
+    r = r.it("checked",     test_checked);
     return r.finish();
 }

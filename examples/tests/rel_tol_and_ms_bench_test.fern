@@ -93,23 +93,23 @@ function workload_tiny(): void {
 function main(): i32 {
     var r: test.TestRunner = test.test_new("rel-tol + ms-bench");
     r = r.it("rel_tol passes within ratio",
-             test_rel_tol_passes_within_ratio());
+             test_rel_tol_passes_within_ratio);
     r = r.it("rel_tol fails outside ratio",
-             test_rel_tol_fails_outside_ratio());
+             test_rel_tol_fails_outside_ratio);
     r = r.it("rel_tol scale invariance (1e-9 + 1e9)",
-             test_rel_tol_scale_invariance());
+             test_rel_tol_scale_invariance);
     r = r.it("rel_tol zero expected falls back to abs",
-             test_rel_tol_zero_expected_falls_back_to_abs());
+             test_rel_tol_zero_expected_falls_back_to_abs);
     r = r.it("rel_tol zero expected with too-large actual",
-             test_rel_tol_zero_expected_with_too_large_actual());
+             test_rel_tol_zero_expected_with_too_large_actual);
     r = r.it("rel_tol NaN actual fails",
-             test_rel_tol_nan_actual_fails());
+             test_rel_tol_nan_actual_fails);
     r = r.it("rel_tol NaN expected fails",
-             test_rel_tol_nan_expected_fails());
+             test_rel_tol_nan_expected_fails);
     r = r.it("rel_tol handles negative expected",
-             test_rel_tol_negative_expected());
+             test_rel_tol_negative_expected);
     r = r.it("rel_tol f32 mirror",
-             test_rel_tol_f32_mirror());
+             test_rel_tol_f32_mirror);
 
     // ms-budget bench — 1000 ms is plenty for a 100-iter
     // tiny arithmetic loop. Same generous slack as the

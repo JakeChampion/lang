@@ -51,12 +51,12 @@ function test_u64_range_max(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/uint range");
-    r = r.it("u32 abs_diff",       test_u32_abs_diff());
-    r = r.it("u32 abs_diff max",   test_u32_abs_diff_max());
-    r = r.it("u32 in_range",       test_u32_in_range());
-    r = r.it("u32 range max",      test_u32_range_max());
-    r = r.it("u64 abs_diff",       test_u64_abs_diff());
-    r = r.it("u64 in_range",       test_u64_in_range());
-    r = r.it("u64 range max",      test_u64_range_max());
+    r = r.it("u32 abs_diff",       test_u32_abs_diff);
+    r = r.it("u32 abs_diff max",   test_u32_abs_diff_max);
+    r = r.it("u32 in_range",       test_u32_in_range);
+    r = r.it("u32 range max",      test_u32_range_max);
+    r = r.it("u64 abs_diff",       test_u64_abs_diff);
+    r = r.it("u64 in_range",       test_u64_in_range);
+    r = r.it("u64 range max",      test_u64_range_max);
     return r.finish();
 }
