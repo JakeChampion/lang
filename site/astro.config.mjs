@@ -33,6 +33,13 @@ const siteUrl = process.env.SITE_URL ?? "https://jakechampion.github.io";
 const tagline =
   "Fern is a small statically typed language that compiles to a fast standalone binary — or to WebAssembly, from the same source. No runtime, no garbage collector, nothing else to install.";
 
+// Social-card image. Crawlers won't resolve a relative URL, so this has to
+// be absolute — built from the same two vars the rest of the site's URLs
+// come from, so a Netlify deploy (SITE_URL set, base rewritten to root)
+// points at its own copy rather than the Pages one. Rendered by
+// `npm run og` from src/assets/og-card.svg.
+const ogImage = `${siteUrl.replace(/\/$/, "")}${base.replace(/\/$/, "")}/og.png`;
+
 // Load the real Fern TextMate grammar (the same one the VS Code
 // extension ships) so ```fern code fences highlight as actual Fern
 // rather than borrowing TypeScript's grammar. Read from the repo
@@ -106,7 +113,27 @@ export default defineConfig({
         },
         {
           tag: "meta",
-          attrs: { name: "twitter:card", content: "summary" },
+          attrs: { property: "og:image", content: ogImage },
+        },
+        {
+          tag: "meta",
+          attrs: { property: "og:image:width", content: "1200" },
+        },
+        {
+          tag: "meta",
+          attrs: { property: "og:image:height", content: "630" },
+        },
+        {
+          tag: "meta",
+          attrs: { property: "og:image:alt", content: tagline },
+        },
+        {
+          tag: "meta",
+          attrs: { name: "twitter:card", content: "summary_large_image" },
+        },
+        {
+          tag: "meta",
+          attrs: { name: "twitter:image", content: ogImage },
         },
         {
           tag: "meta",

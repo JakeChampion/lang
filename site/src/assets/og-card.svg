@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#faf7f0"/>
+
+  <!-- oversized frond, pressed against the right edge like a specimen -->
+  <g transform="translate(652 44) scale(16.5)" stroke="#2d6a4f" stroke-width="1.0" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.10">
+    <path d="M6 29 C 9 22, 13 14, 18 9 C 21 6, 24 6, 25 8" />
+    <path d="M7.6 25 C 4.5 24, 3 21.5, 3.2 18.8" />
+    <path d="M9.6 21 C 7 20, 5.7 17.8, 6 15.4" />
+    <path d="M11.8 17 C 9.6 16.2, 8.6 14.3, 9 12.2" />
+    <path d="M14 13.5 C 12.2 12.9, 11.5 11.3, 12 9.6" />
+    <path d="M9.4 23 C 12.5 22, 14 19.5, 13.8 16.8" />
+    <path d="M11.4 19 C 14 18, 15.3 15.8, 15 13.4" />
+    <path d="M13.6 15 C 15.8 14.2, 16.8 12.3, 16.4 10.2" />
+    <path d="M25 8 C 26.8 9.5, 26.4 12.2, 24.2 12.2 C 22.6 12.2, 22.6 10.2, 24 10" />
+  </g>
+
+  <!-- specimen-label hairline frame -->
+  <rect x="48" y="48" width="1104" height="534" fill="none" stroke="#ddd3bf" stroke-width="2"/>
+
+  <!-- wordmark: frond mark + name -->
+  <g transform="translate(104 104) scale(2.6)" stroke="#2d6a4f" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M6 29 C 9 22, 13 14, 18 9 C 21 6, 24 6, 25 8" />
+    <path d="M7.6 25 C 4.5 24, 3 21.5, 3.2 18.8" />
+    <path d="M9.6 21 C 7 20, 5.7 17.8, 6 15.4" />
+    <path d="M11.8 17 C 9.6 16.2, 8.6 14.3, 9 12.2" />
+    <path d="M14 13.5 C 12.2 12.9, 11.5 11.3, 12 9.6" />
+    <path d="M9.4 23 C 12.5 22, 14 19.5, 13.8 16.8" />
+    <path d="M11.4 19 C 14 18, 15.3 15.8, 15 13.4" />
+    <path d="M13.6 15 C 15.8 14.2, 16.8 12.3, 16.4 10.2" />
+    <path d="M25 8 C 26.8 9.5, 26.4 12.2, 24.2 12.2 C 22.6 12.2, 22.6 10.2, 24 10" />
+  </g>
+  <text x="212" y="182" font-family="Fraunces 144pt Wonky" font-size="104" font-weight="600" fill="#143026">Fern</text>
+
+  <!-- tagline -->
+  <text font-family="Fraunces 144pt Wonky" font-size="46" font-weight="600" fill="#22392e">
+    <tspan x="104" y="316">A small statically typed language</tspan>
+    <tspan x="104" y="380">that compiles to a fast standalone</tspan>
+    <tspan x="104" y="444">binary — or to WebAssembly.</tspan>
+  </text>
+
+  <!-- specimen label -->
+  <line x1="104" y1="506" x2="1096" y2="506" stroke="#ddd3bf" stroke-width="2"/>
+  <text x="104" y="546" font-family="IBM Plex Mono Medium" font-size="23" font-weight="500" fill="#b08331" letter-spacing="2.6">NO RUNTIME · NO GARBAGE COLLECTOR</text>
+</svg>
