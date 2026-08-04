@@ -737,8 +737,14 @@ func TestUnimportedStdlibMethodIsRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a type error for .split() without import \"std/string\", got nil")
 	}
-	if !strings.Contains(err.Error(), "non-struct value of type string") {
-		t.Errorf("error %q does not look like the expected unresolved-method diagnostic", err.Error())
+	// The diagnostic names the method and the module that would define
+	// it. It used to read "field access on non-struct value of type
+	// string", which described neither the call the user wrote nor the
+	// import they were missing.
+	for _, want := range []string{`no method "split" on string`, "add `import \"std/string\"`"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err.Error(), want)
+		}
 	}
 }
 

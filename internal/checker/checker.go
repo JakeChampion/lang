@@ -7025,6 +7025,81 @@ var pureCollectionMutators = map[string]string{
 	"__method_Array_push": "append",
 }
 
+// retiredCollectionSpellings maps the mutable-looking collection method
+// names that were REMOVED (docs/PURE-COLLECTION-API-PLAN.md §3a's hard
+// removal) to the value-returning name that replaced each one. They are
+// registered in Info.Methods and then deleted, so a call to one resolves
+// to nothing — and the reader is left guessing at a rename they never
+// saw. Naming the replacement is the whole difference between "that's
+// gone" and "that's gone, here's what to write".
+var retiredCollectionSpellings = map[string]string{
+	"Array.push": "append",
+	"Array.set":  "with",
+	"Map.set":    "insert",
+	"Map.delete": "without",
+	"Map.clear":  "cleared",
+}
+
+// collectionNamespace maps a composite receiver to the name its methods
+// are registered under in Info.Methods. ast.ReceiverTypeName covers the
+// nominal and scalar receivers but returns nothing for arrays and
+// slices — their methods are registered under fixed namespaces rather
+// than derived from the type — which is exactly why a bad method call on
+// one of them fell through to the bare "non-struct value" message. (A
+// Map is a StructType named "Map", so methodTypeName already finds it.)
+func collectionNamespace(t ast.Type) (string, bool) {
+	switch t.(type) {
+	case ast.ArrayType:
+		return "Array", true
+	case ast.SliceType:
+		return "slice", true
+	}
+	return methodTypeName(t)
+}
+
+// methodsOn lists the method names registered for a receiver namespace
+// (`Array`, `Map`, `String`, …), sorted so a suggestion is deterministic
+// when two candidates tie on edit distance.
+func (c *checker) methodsOn(typeName string) []string {
+	prefix := typeName + "."
+	var names []string
+	for k := range c.info.Methods {
+		if strings.HasPrefix(k, prefix) {
+			names = append(names, strings.TrimPrefix(k, prefix))
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// unknownMethodMessage builds the E043 text for a method call whose
+// receiver is a non-struct with a method namespace of its own — an
+// array, a map, a slice. The bare "field access on non-struct value of
+// type i32[]" it replaces names neither the method nor the receiver's
+// actual API, which is the worst case for exactly the two situations
+// that produce it: a typo, and a spelling that was deliberately retired.
+func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) string {
+	msg := fmt.Sprintf("no method %q on %s", method, recv)
+	if repl, ok := retiredCollectionSpellings[typeName+"."+method]; ok {
+		return fmt.Sprintf("%s — the in-place spelling was removed; use %q, which returns the updated %s (assign the result back)",
+			msg, repl, typeName)
+	}
+	if s := diag.Suggest(method, c.methodsOn(typeName)); s != "" {
+		return fmt.Sprintf("%s — did you mean %q?", msg, s)
+	}
+	// A scalar or string receiver keeps most of its methods in a stdlib
+	// module, so the likeliest cause of an unrecognised name is a missing
+	// import rather than a wrong name. Listing the two builtins the type
+	// has without it would point the reader away from the fix.
+	if mod := scalarModuleFor(recv); mod != "" {
+		return fmt.Sprintf("%s — if it comes from %s, add `import %q`", msg, mod, mod)
+	}
+	if names := c.methodsOn(typeName); len(names) > 0 {
+		return fmt.Sprintf("%s (it has: %s)", msg, strings.Join(names, ", "))
+	}
+	return msg
+}
+
 // checkUnusedCollectionResult implements E055: a bare statement whose whole
 // expression is a value-returning collection mutator (`m.insert(k, v);`,
 // `arr.append(x);`, …) silently discards the new collection. Under CoW that's
@@ -7300,6 +7375,25 @@ func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 // (Phase 5) a program sees only what it imports, which is what makes this class
 // of confusion reachable at all. #5494.
 func scalarMethodModule(t ast.Type, method string) string {
+	mod := scalarModuleFor(t)
+	if mod == "" {
+		return ""
+	}
+	// to_string is the one every scalar module defines, and the f-string
+	// desugar target — the case that motivates this. Keep the set tight.
+	switch method {
+	case "to_string", "to_string_radix", "to_string_padded", "to_string_with_sep", "to_string_prec":
+		return mod
+	}
+	return ""
+}
+
+// scalarModuleFor names the stdlib module that carries a scalar type's
+// method surface, or "" for a type whose methods aren't in one. Unlike
+// scalarMethodModule it does not check that the module actually defines
+// the method — callers that only want to say "if this method exists, it
+// comes from here" use this one.
+func scalarModuleFor(t ast.Type) string {
 	var mod string
 	switch x := t.(type) {
 	case ast.NumberType:
@@ -7321,16 +7415,19 @@ func scalarMethodModule(t ast.Type, method string) string {
 	default:
 		return ""
 	}
-	// to_string is the one every scalar module defines, and the f-string
-	// desugar target — the case that motivates this. Keep the set tight.
-	switch method {
-	case "to_string", "to_string_radix", "to_string_padded", "to_string_with_sep", "to_string_prec":
-		return mod
-	}
-	return ""
+	return mod
 }
 
 func (c *checker) errUnknownField(pos, namePos ast.Position, structName, field string, declared []string) {
+	// A retired method spelling reads as a missing FIELD here, because
+	// `m.set(k, v)` parses as a field access before it is a call — and
+	// "struct Map has no field \"set\"" tells the reader nothing about
+	// the rename that removed it. Answer the question they actually
+	// have.
+	if _, retired := retiredCollectionSpellings[structName+"."+field]; retired {
+		c.errfCode(pos, "E043", "%s", c.unknownMethodMessage(structName, field, ast.StructType{Name: structName}))
+		return
+	}
 	e := &Error{
 		Pos:     pos,
 		Msg:     fmt.Sprintf("struct %s has no field %q", structName, field),
@@ -12612,6 +12709,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					}
 					c.errfCode(n.P, "E043",
 						"no method %q on %s — add `import %q`%s", n.Field, tt, mod, hint)
+					return nil
+				}
+				// A receiver with a method namespace of its own — an
+				// array, a map, a slice — reaching here means the
+				// method does not exist. Say so, and say what does.
+				if tn, ok := collectionNamespace(tt); ok && len(c.methodsOn(tn)) > 0 {
+					c.errfCode(n.P, "E043", "%s", c.unknownMethodMessage(tn, n.Field, tt))
 					return nil
 				}
 				c.errfCode(n.P, "E043", "field access on non-struct value of type %s", tt)
