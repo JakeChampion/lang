@@ -3447,6 +3447,60 @@ function main(): i32 {
 }`,
 	},
 	{
+		// The case above with ONE line changed at the caller — `a = bump(a)`
+		// instead of `var b = bump(a)` — and that line was the whole gap
+		// (#6057). The callee's `.with` self-reassign released the receiver a
+		// second time (__fern_arr_cow_inplace decs its own source on the copy
+		// branch, unlike __map_cow_inplace, whose policy the shared code path
+		// applied to both), and the caller's binding is what made that release
+		// land on a buffer nothing else was keeping alive: `a` reached rc -1
+		// while the program still printed the right answer.
+		//
+		// The sibling above passes either way, because its caller keeps `a`
+		// live and the #4873 grow bracket's inc/dec pair happens to absorb the
+		// extra release. That is why the corpus had this construct covered and
+		// still missed the bug for as long as it existed.
+		name: "with_reassign_self_borrowed_param_caller_rebind",
+		src: `
+function bump(xs: i32[]): i32[] { xs = xs.with(0, 99); return xs; }
+function main(): i32 {
+    var a: i32[] = [1, 2];
+    a = bump(a);
+    return (a[0] - 99) + (a[1] - 2) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The same `.with` self-reassign reached through a LOCAL ALIAS of the
+		// borrowed param rather than the param itself, threaded recursively —
+		// the shape the self-host checker's e060_collect_dyn_locals is built
+		// from, and where #6057 was first caught in the wild (52 over-releases
+		// compiling parser.fern, 92 compiling checker.fern, while emitting
+		// byte-identical output).
+		//
+		// It needs its own case because the alias is NOT a consumed-threaded
+		// param, so it takes a different arm of the fix: no overwrite dec at
+		// all, where the param arm decs under its ownership bit.
+		name: "with_reassign_local_alias_threaded",
+		src: `
+function collect(depth: i32, acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < 3) {
+        if (a.len() > 0) { a = a.with(0, "x"); }
+        a = a.append("n");
+        if (depth > 0) { a = collect(depth - 1, a); }
+        i = i + 1;
+    }
+    return a;
+}
+function main(): i32 {
+    var s: string[] = [];
+    s = collect(3, s);
+    if (s.len() < 1) { return 91; }
+    return __rc_underflow_count();
+}`,
+	},
+	{
 		// `.with` on an array of rc-tracked STRUCT elements through a functional
 		// record update, reassigned in a loop (`r = upd(r, i, ...)`). Each upd
 		// copies r.ops (the receiver stays live, forcing the CoW copy branch) and
