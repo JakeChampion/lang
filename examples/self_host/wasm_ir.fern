@@ -154,9 +154,10 @@ pub function str_values(cache: irlower.LowerResult[]): string[] {
 // str_offset returns the data-section offset of literal index `idx`: 24 + the
 // summed block sizes (4 + len) of all prior literals.
 // str_region_base is where a unit's string-literal region starts: the 24-byte
-// low scratch (fd_write iovec at 0/4/8, the newline byte at 12, the rc==1
-// append-cliff counter at 16 — see arr_push_shared_addr; 20 is still spare)
-// sits below it.
+// low scratch sits below it. That scratch is fully spoken for now — fd_write
+// iovec at 0/4/8, the newline byte at 12, the WASI out-parameter slot at 16
+// (path_open writes the opened fd there, fd_readdir / fd_write their counts),
+// and the rc==1 append-cliff counter at 20 (see arr_push_shared_addr).
 // Named rather than inlined because const_str now emits offsets RELATIVE to it
 // (#5331 step 1), so the two must agree by construction.
 pub function str_region_base(): i32 { return 24; }
@@ -169,7 +170,12 @@ pub function str_region_base(): i32 { return 24; }
 // scratch below str_region_base rather than in the data section so a module
 // that never emits a string literal still has somewhere to keep it — the same
 // reason the native wasm backend puts it at a fixed low address.
-pub function arr_push_shared_addr(): i32 { return 16; }
+//
+// 20, not 16: 16 is the WASI out-parameter slot (path_open writes the opened
+// fd there and the fs helpers load it straight back), so a counter there would
+// be clobbered by any file I/O and would in turn corrupt the fd. 20 is the
+// last untouched word of the scratch block.
+pub function arr_push_shared_addr(): i32 { return 20; }
 
 // fn_table_base is where a unit's funcref-table region starts. The elem
 // segment is emitted at index 0 today, so whole-program emit uses 0 — but
