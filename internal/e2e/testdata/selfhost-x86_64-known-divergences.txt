@@ -22,7 +22,9 @@
 # checked. Six rows below exist BECAUSE of that — they expect >= 126, so the wasm
 # leg only ever logged "exit value unmeasurable" for them.
 #
-# All 16 measured on the first two runs (49e762e0, d67de908), 317 fixtures run.
+# All 16 were measured on the first two runs (49e762e0, d67de908), 317 fixtures
+# run; `eq_struct_enum` and `ord_struct_enum` have since been FIXED (#6009 — see
+# the note in the wasm sibling), leaving 14.
 
 # --- the six the wasm leg could never judge: they never terminate -----------
 # Killed at the leg's 20s cap with no output. Natively each returns in
@@ -43,8 +45,6 @@ regex_groups #6049 hangs (killed at 20s, no output); native returns 127 in ms
 # Commented onto #6007/#6009/#6010 with the cross-target evidence; those issues
 # are titled "self-host wasm:" and should be re-scoped.
 derive_json #6009 returns 4, native 42 — identical to the wasm leg's figure
-eq_struct_enum #6009 returns 18, native 63 — identical to the wasm leg's figure
-ord_struct_enum #6009 returns 87, native 31 — identical to the wasm leg's figure
 tuple_match_expr #6010 returns 20, native 42 — identical to the wasm leg's figure
 
 # --- IR-ineligible, hard error since #3457 deleted the AST emitters ---------
@@ -54,7 +54,13 @@ generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown sy
 pure_collection_aliases #6007 IR-ineligible; bails at main (call to unknown symbol Map.cleared)
 map_struct_value_field #6007 IR-ineligible; bails at main (no symbol named)
 
-# --- new, x86-64 only (the wasm leg checks these and passes) ----------------
+# --- new, first seen on x86-64 ---------------------------------------------
+# The first two the wasm leg checks and passes. The third it does NOT check:
+# the wasm leg sets skipStdin, so all four stdin-carrying fixtures are excluded
+# there — "the wasm leg passes it" was never true of multiline_stdin, it was
+# never asked. Hand-run through the self-host wasm path with stdin actually fed,
+# it returns the same 10, so #6052 is a SHARED-frontend bug like the rows above,
+# not an x86-64 one.
 int_wrap #6050 prints "-" for -2147483648 — sign emitted, every digit dropped
 u64_max_to_f64_is_huge #6051 returns 1, native 0 — u64::MAX as f64 converts signed
 multiline_stdin #6052 returns 10, native 42 — only the first stdin line is consumed
