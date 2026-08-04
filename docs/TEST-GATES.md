@@ -52,11 +52,33 @@ what caught it.
 
 Worth knowing so you do not assume coverage you do not have:
 
-- **Allocation volume.** Nothing compares how much the two compilers allocate,
-  which is how they developed *opposite* cliffs undetected: `.with` through a
-  borrowed param was 4688 MB native / 0 MB self-host, while `.append` through a
-  call was 4 MB native / 7006 MB self-host. Both compilers support
-  `__heap_bump_bytes()`; use that and never peak RSS, which varies 12x with
+- **Allocation volume — now gated, by
+  `TestSelfHostAllocDifferentialX86_64`.** Nothing used to compare how much the
+  two compilers allocate, which is how they developed *opposite* cliffs
+  undetected: this entry recorded `.with` through a borrowed param at 4688 MB
+  native / 0 MB self-host and `.append` through a call at 4 MB native / 7006 MB
+  self-host. Re-measured 2026-08-04 by the gate itself: `.with` is 31 KB native
+  / 1 KB self-host at n=80 (31x, direction unchanged), and `.append` through a
+  call is 3 KB native / 0 KB self-host at n=400 — the **opposite** of the figure
+  above, i.e. the self-host side of that one was fixed at some point and nobody
+  noticed, which is the argument for the gate rather than against it. Treat
+  unmeasured allocation figures in these docs as expired.
+
+  Quote figures the gate produced, not ones from a hand-run `fern` CLI: the two
+  compile through different pipelines and report different totals for identical
+  source (the same `.with` shape read 48 KB / 2 KB via the CLI). The gate is
+  sound either way — it compares the two COMPILERS under one consistent
+  pipeline — but the two sets of numbers are not interchangeable.
+
+  The gate compares the two probes both compilers now support and asserts what
+  survives a layout difference: `__arr_push_shared_count()` agreeing on ZERO vs
+  NON-ZERO (it counts events, not bytes — but not exact equality, since the two
+  runtimes grow capacity on different schedules), and per-churn
+  `__heap_bump_bytes()` growth within a ratio. Divergences are listed in
+  `internal/e2eselfhost/testdata/alloc-differential-known-divergences.txt`, and
+  a listed shape that comes back within bound fails too.
+
+  Use `__heap_bump_bytes()` and never peak RSS, which varies 12x with
   transparent hugepages (measured: 43 MB local, 552 MB on a CI runner, same
   binary and input). It returns i64 — bind it to an `i64` and narrow with an
   explicit `as i32` only where the value has to become an exit code.

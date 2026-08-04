@@ -1,0 +1,21 @@
+# Shapes where the NATIVE and SELF-HOST compilers allocate materially
+# different amounts for the same program.
+#
+# Format: <case-name> <native-kb> <selfhost-kb> <reason>
+#
+# TestSelfHostAllocDifferentialX86_64 lists these rather than skipping them,
+# following selfhost-wasm-known-divergences.txt: the lane is green with them
+# listed, a NEW divergence fails, and a listed shape that comes back WITHIN
+# the ratio bound also fails — an allowlist nobody prunes is where bugs go to
+# be forgotten.
+#
+# The KB figures are per-churn growth measured when the entry was written, on
+# x86-64. They are reported next to the live numbers on failure, so drift is
+# visible without digging through git. They are NOT expected to be stable to
+# the byte: they are there to show direction and severity.
+#
+# Neither compiler is automatically "the wrong one". These entries record a
+# disagreement; which side is at fault is decided per entry, and the reason
+# says so.
+
+with-through-borrowed-param 31 1 native leaks the pre-update buffer on every `buf = buf.with(i, v)` through a borrowed param, where the self-host reclaims it — 31x at this case's n=80. This is the shape docs/TEST-GATES.md cites as having gone 4688 MB native / 0 MB self-host, so the direction has held even as the magnitude came down. The native side is the one at fault here; fixing it is separate work from building this gate.
