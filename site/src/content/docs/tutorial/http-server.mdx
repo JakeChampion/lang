@@ -79,42 +79,23 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
   </thead>
   <tbody>
     <tr>
-      <td>
-        <code>req.method</code>
-      </td>
-      <td>
-        <code>string</code>
-      </td>
-      <td>
-        <code>&quot;GET&quot;</code>, <code>&quot;POST&quot;</code>, …
-      </td>
+      <td><code>req.method</code></td>
+      <td><code>string</code></td>
+      <td><code>&quot;GET&quot;</code>, <code>&quot;POST&quot;</code>, …</td>
     </tr>
     <tr>
-      <td>
-        <code>req.path</code>
-      </td>
-      <td>
-        <code>string</code>
-      </td>
-      <td>Path <strong>and</strong> query, e.g. <code>/s?q=hi</code>
-      </td>
+      <td><code>req.path</code></td>
+      <td><code>string</code></td>
+      <td>Path <strong>and</strong> query, e.g. <code>/s?q=hi</code></td>
     </tr>
     <tr>
-      <td>
-        <code>req.body_string()</code>
-      </td>
-      <td>
-        <code>string</code>
-      </td>
+      <td><code>req.body_string()</code></td>
+      <td><code>string</code></td>
       <td>The request body as a string</td>
     </tr>
     <tr>
-      <td>
-        <code>req.body_len()</code>
-      </td>
-      <td>
-        <code>i32</code>
-      </td>
+      <td><code>req.body_len()</code></td>
+      <td><code>i32</code></td>
       <td>Body length in bytes</td>
     </tr>
   </tbody>
@@ -134,42 +115,24 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
   </thead>
   <tbody>
     <tr>
-      <td>
-        <code>http.http_response_ok(body)</code>
-      </td>
-      <td>
-        <code>200 OK</code> with <code>body</code>
-      </td>
+      <td><code>http.http_response_ok(body)</code></td>
+      <td><code>200 OK</code> with <code>body</code></td>
     </tr>
     <tr>
-      <td>
-        <code>http.http_response_text(status, body)</code>
-      </td>
+      <td><code>http.http_response_text(status, body)</code></td>
       <td>any status + body</td>
     </tr>
     <tr>
-      <td>
-        <code>http.http_response_not_found()</code>
-      </td>
-      <td>
-        <code>404 Not Found</code>
-      </td>
+      <td><code>http.http_response_not_found()</code></td>
+      <td><code>404 Not Found</code></td>
     </tr>
     <tr>
-      <td>
-        <code>http.http_response_bad_request(body)</code>
-      </td>
-      <td>
-        <code>400</code> + body
-      </td>
+      <td><code>http.http_response_bad_request(body)</code></td>
+      <td><code>400</code> + body</td>
     </tr>
     <tr>
-      <td>
-        <code>http.http_response_redirect(location)</code>
-      </td>
-      <td>
-        <code>302</code> + <code>Location</code>
-      </td>
+      <td><code>http.http_response_redirect(location)</code></td>
+      <td><code>302</code> + <code>Location</code></td>
     </tr>
   </tbody>
 </table>
