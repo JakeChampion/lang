@@ -42670,10 +42670,13 @@ function ident_used_as_value_stmts(stmts: parser.Stmt[], name: string): boolean 
 // rather than duplicated; only the reason differs — slot width here, write
 // sharing there.
 //
-// A capture the enclosing function REASSIGNS is skipped: the cell holds a
-// creation-time snapshot, so a later outer write would not show through it.
-// Those keep the old behaviour, leaving #5394's shared-cell path as the place
-// that handles them.
+// A capture the enclosing function REASSIGNS is skipped — not declined.
+// box_mutated_scalar_captures already boxes those into a SHARED cell (#5394,
+// its escaping-binding branch, which takes a capture of any type), and a shared
+// cell is what they need: the closure must see the live value, which this
+// creation-time snapshot could not give. Skipping is therefore deferring to the
+// right mechanism. Both paths land on the same `T[]` shape, so either way the
+// capture reaching cap_slot_ok is pointer-shaped.
 //
 // A function with no wide capture is returned unchanged, so every other
 // function stays byte-identical — including all of the self-host's own, which
