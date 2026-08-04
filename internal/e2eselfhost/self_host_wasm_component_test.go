@@ -2867,7 +2867,7 @@ func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { match (read_file("in.txt")) { Ok(cfg) => { var line: string = cfg; match (env("SUFFIX")) { Err(s) => { line = line + s; }, Ok(_) => {} } match (write_file("out.txt", line)) { Err(e) => { return 1; }, Ok(_) => {} } write("done\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`
+	src := `function main(): i32 { match (read_file("in.txt")) { Ok(cfg) => { var line: string = cfg; match (env("SUFFIX")) { Some(s) => { line = line + s; }, None => {} } match (write_file("out.txt", line)) { Err(e) => { return 1; }, Ok(_) => {} } write("done\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -3037,7 +3037,7 @@ func TestSelfHostWasmComponentReadWriteEnv(t *testing.T) {
 
 	t.Run("read-transform-write", func(t *testing.T) {
 		// Read in.txt, append env PREFIX-derived text, write out.txt, respond.
-		comp := build(t, `function main(): i32 { match (read_file("in.txt")) { Ok(c) => { var o: string = c; match (env("TAG")) { Err(tg) => { o = o + "[" + tg + "]"; }, Ok(_) => { o = o + "[none]"; } } match (write_file("out.txt", o)) { Err(e) => { return 1; }, Ok(_) => {} } write("wrote\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`)
+		comp := build(t, `function main(): i32 { match (read_file("in.txt")) { Ok(c) => { var o: string = c; match (env("TAG")) { Some(tg) => { o = o + "[" + tg + "]"; }, None => { o = o + "[none]"; } } match (write_file("out.txt", o)) { Err(e) => { return 1; }, Ok(_) => {} } write("wrote\n"); return 0; }, Err(e) => { write("ERR"); return 2; } } return 3; }`)
 		if err := os.WriteFile(filepath.Join(dir, "in.txt"), []byte("payload"), 0o644); err != nil {
 			t.Fatalf("write in.txt: %v", err)
 		}

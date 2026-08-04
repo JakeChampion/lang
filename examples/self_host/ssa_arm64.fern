@@ -423,7 +423,7 @@ function emit_inst(ins: ssa.SInst, reg_of: i32[], widths: i32[], isfloat: i32[],
         return store_reg(reg_of, ins.result, "x0", 64, out);    // Result box ptr ← x0
     }
     if (ins.kind_tag == 27) {  // write_file
-        // write_file(path, content) → Option box; __fern_ssa_write_file(x0 =
+        // write_file(path, content) → Result box; __fern_ssa_write_file(x0 =
         // path, x1 = content) → x0.
         out = load_op(reg_of, widths, ins.args[0], "a", out);   // path → x9
         out = out + "    mov x0, x9\n";
@@ -803,8 +803,8 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     out = out + ".Lssa_rdf_err:\n    mov x0, #16\n    bl __fern_ssa_alloc\n    mov x1, #1\n    str x1, [x0]\n    mov x1, #0\n    str x1, [x0, #8]\n";   // Err box
     out = out + ".Lssa_rdf_ret:\n";
     out = out + "    ldp x23, x24, [sp], #16\n    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n";
-    // __fern_ssa_write_file(x0 = path box, x1 = content box) → x0 = Option box:
-    // [tag=1@0, 0@8] None on success, [tag=0@0, 0@8] Some on any I/O error.
+    // __fern_ssa_write_file(x0 = path box, x1 = content box) → x0 = Result box:
+    // [tag=0@0, 0@8] Ok(()) on success, [tag=1@0, 0@8] Err on any I/O error.
     // Packs the content (SSA word-per-byte → raw bytes) and the NUL-terminated
     // path, opens O_WRONLY|O_CREAT|O_TRUNC=577 mode 0644, writes, closes.
     out = out + "__fern_ssa_write_file:\n";
@@ -832,10 +832,10 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     out = out + "    mov x0, x23\n    add x1, x22, x24\n    sub x2, x21, x24\n    mov x8, #64\n    svc #0\n";   // write remaining
     out = out + "    cmp x0, #0\n    b.lt .Lssa_wf_errclose\n    add x24, x24, x0\n    b .Lssa_wf_loop\n";
     out = out + ".Lssa_wf_done:\n    mov x0, x23\n    mov x8, #57\n    svc #0\n";   // close
-    out = out + "    mov x0, #16\n    bl __fern_ssa_alloc\n    mov x1, #1\n    str x1, [x0]\n    mov x1, #0\n    str x1, [x0, #8]\n";   // None box
+    out = out + "    mov x0, #16\n    bl __fern_ssa_alloc\n    str xzr, [x0]\n    str xzr, [x0, #8]\n";   // Ok(()) box
     out = out + "    b .Lssa_wf_ret\n";
     out = out + ".Lssa_wf_errclose:\n    mov x0, x23\n    mov x8, #57\n    svc #0\n";   // close, ignore result
-    out = out + ".Lssa_wf_err:\n    mov x0, #16\n    bl __fern_ssa_alloc\n    mov x1, #0\n    str x1, [x0]\n    mov x1, #0\n    str x1, [x0, #8]\n";   // Some box
+    out = out + ".Lssa_wf_err:\n    mov x0, #16\n    bl __fern_ssa_alloc\n    mov x1, #1\n    str x1, [x0]\n    str xzr, [x0, #8]\n";   // Err box
     out = out + ".Lssa_wf_ret:\n";
     out = out + "    ldp x23, x24, [sp], #16\n    ldp x21, x22, [sp], #16\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n";
     // __fern_ssa_write(x0 = string handle): like __fern_ssa_print but with NO

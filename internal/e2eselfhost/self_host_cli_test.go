@@ -1712,7 +1712,7 @@ function main(): i32 {
 		}
 
 		// fs read+write + env: copy in.txt -> out.txt prefixed by env.
-		rwEnv := build(t, "rw_env", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { match (env(\"P\")) { Err(v) => { match (write_file(\"out.txt\", v)) { Err(e) => { return 2; }, Ok(_) => {} } return 0; }, Ok(_) => { return 3; } } }, Err(e) => { return 1; } } }\n")
+		rwEnv := build(t, "rw_env", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { match (env(\"P\")) { Some(v) => { match (write_file(\"out.txt\", v)) { Err(e) => { return 2; }, Ok(_) => {} } return 0; }, None => { return 3; } } }, Err(e) => { return 1; } } }\n")
 		d2 := mkdir(t)
 		if ec := exec.Command(wasmtime, "run", "--dir", d2+"::/", "--env", "P=ENV", rwEnv).Run(); ec != nil {
 			t.Fatalf("rw+env: run failed: %v", ec)
