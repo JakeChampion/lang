@@ -1100,6 +1100,17 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{},
 	}
+	// __arr_push_shared_count(): i32 — the rc==1 cliff counter. Returns how
+	// many appends copied the whole buffer even though it had SPARE CAPACITY,
+	// so the copy was bought by an extra reference rather than by a full
+	// buffer. __fern_arr_push_grow's in-place fast path requires rc==1; one
+	// stray retain upstream silently turns a threaded accumulator from O(n)
+	// into O(n²), and nothing reported it until this. Zero on a healthy run,
+	// which is what makes it usable as a test assertion.
+	c.info.FuncSigs["__arr_push_shared_count"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
 	// __heap_bump_bytes(): i32 — Phase 6 measurement probe. Returns the
 	// bump allocator's high-water mark (cursor − region base) in bytes; 0
 	// before the first alloc. The cursor only advances on a fresh bump,

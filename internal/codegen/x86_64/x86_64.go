@@ -347,6 +347,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesRcUnderflowCount {
 		g.emitRcUnderflowCountRuntime()
 	}
+	if g.usesArrPushSharedCount {
+		g.emitArrPushSharedCountRuntime()
+	}
 	if g.usesHeapBumpBytes {
 		g.emitHeapBumpBytesRuntime()
 	}
@@ -740,6 +743,11 @@ type generator struct {
 	// counter __fern_rc_dec bumps). Set when the IR emits the
 	// matching OpCallDirect.
 	usesRcUnderflowCount bool
+	// usesArrPushSharedCount gates the reader
+	// `__fern_arr_push_shared_count` (returns the BSS counter
+	// __fern_arr_push_grow bumps when it copies a buffer that had room).
+	// Set when the IR emits the matching OpCallDirect.
+	usesArrPushSharedCount bool
 	// usesHeapBumpBytes gates the Phase 6 measurement reader
 	// `__fern_heap_bump_bytes` (returns __fern_heap_ptr − __fern_heap_base,
 	// the bump high-water mark). Set when the IR emits the matching
@@ -931,6 +939,8 @@ func (g *generator) recordUse(target string) {
 		g.usesRcDec = true
 	case "__fern_rc_underflow_count":
 		g.usesRcUnderflowCount = true
+	case "__fern_arr_push_shared_count":
+		g.usesArrPushSharedCount = true
 	case "__fern_heap_bump_bytes":
 		g.usesHeapBumpBytes = true
 		g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
@@ -4142,6 +4152,15 @@ func (g *generator) emitDataSections() {
 			g.label("__fern_rc_underflow")
 			g.line("\t.quad 0")
 		}
+		if g.usesArrPushGrow || g.usesArrPushSharedCount {
+			// The rc==1 cliff counter (i32 in the low word).
+			// __fern_arr_push_grow bumps it when it copies a buffer
+			// that had SPARE CAPACITY — i.e. the copy was forced by an
+			// extra reference, not by a full buffer.
+			g.line(".align 8")
+			g.label("__fern_arr_push_shared")
+			g.line("\t.quad 0")
+		}
 		if ast.RcFreeEnabled && g.usesAlloc {
 			// Two-tier segregated freelist heads (256 slots).
 			//   0..127  — small tier: 16-byte exact-fit classes; head i is
@@ -5137,6 +5156,29 @@ func (g *generator) emitRcUnderflowCountRuntime() {
 	g.line(".size __fern_rc_underflow_count, .-__fern_rc_underflow_count")
 }
 
+// emitArrPushSharedCountRuntime emits `__fern_arr_push_shared_count() -> i32`
+// — returns the count of appends that copied the whole buffer even though it
+// had room, i.e. the copy was bought by an extra reference alone.
+//
+// This is the diagnostic for __fern_arr_push_grow's rc==1 cliff. That cliff is
+// a performance CORRECTNESS boundary with no diagnostic of its own: one stray
+// retain anywhere upstream — a return-transfer inc on an `own` param, a
+// consumed-param entry retain, a caller-side alias inc — turns every append in
+// a threaded accumulator into a full copy, and the program stays correct while
+// going quadratic. Three separate regressions of exactly that shape landed and
+// were each found somewhere else entirely, as an arena exhaustion or an OOM.
+// A counter that says "you copied N times with room to spare" names the cliff
+// at the point it is crossed. Mirrors __fern_rc_underflow_count.
+func (g *generator) emitArrPushSharedCountRuntime() {
+	g.line("")
+	g.line(".globl __fern_arr_push_shared_count")
+	g.line(".type __fern_arr_push_shared_count, @function")
+	g.label("__fern_arr_push_shared_count")
+	g.emit("mov eax, dword ptr [rip + __fern_arr_push_shared]")
+	g.emit("ret")
+	g.line(".size __fern_arr_push_shared_count, .-__fern_arr_push_shared_count")
+}
+
 // emitHeapBumpBytesRuntime emits `__fern_heap_bump_bytes() -> i64`,
 // the Phase 6 measurement reader: returns the bump high-water mark
 // (__fern_heap_ptr − __fern_heap_base) in bytes, or 0 before the first
@@ -5313,7 +5355,7 @@ func (g *generator) emitArrPushGrowRuntime() {
 	// Fast path: rc == 1 AND oldLen < cap.
 	g.emit("mov eax, dword ptr [rdi - 8]") // rc
 	g.emit("cmp eax, 1")
-	g.emit("jne .Lpush_copy")
+	g.emit("jne .Lpush_shared")
 	g.emit("mov eax, dword ptr [rdi - 12]") // cap
 	g.emit("cmp esi, eax")
 	g.emit("jge .Lpush_copy")
@@ -5323,6 +5365,17 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("mov dword ptr [rdi - 4], eax")
 	g.emit("mov rax, rdi")
 	g.emit("ret")
+	// rc != 1. If the buffer ALSO had spare capacity then the copy below is
+	// bought entirely by the extra reference — the rc==1 cliff. Count it, so
+	// an accumulator that has silently gone from O(n) to O(n²) can be seen
+	// rather than inferred from an arena exhaustion somewhere downstream.
+	// Off the fast path, so this costs one compare on a run that is about to
+	// memcpy the whole buffer anyway.
+	g.label(".Lpush_shared")
+	g.emit("mov eax, dword ptr [rdi - 12]") // cap
+	g.emit("cmp esi, eax")
+	g.emit("jge .Lpush_copy") // genuinely full: not the cliff
+	g.emit("add dword ptr [rip + __fern_arr_push_shared], 1")
 	g.label(".Lpush_copy")
 	// Copy path. Stash arr / oldLen / stride / newLen / newCap /
 	// headerBytes / new_data in callee-saves so they survive the

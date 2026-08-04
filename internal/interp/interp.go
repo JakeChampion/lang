@@ -536,6 +536,14 @@ func New() *Interp {
 	// under -interp without erroring (the metric is only meaningful in
 	// codegen).
 	i.Builtins["__heap_bump_bytes"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	// __arr_push_shared_count(): the rc==1 cliff counter on the compiled
+	// backends — appends that copied a buffer which still had room, so the
+	// copy was bought by an extra reference. The interpreter has no refcounts
+	// and copies nothing, so there is no cliff to cross: return 0, which is
+	// also the healthy value on every backend. A program asserting the count
+	// is 0 therefore passes under -interp for the right reason, and one
+	// asserting it is NON-zero is a codegen-only test by construction.
+	i.Builtins["__arr_push_shared_count"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	// __heap_mark() / __heap_release_to(mark): the arena checkpoint pair. The
 	// interpreter is GC'd, so there is no cursor to capture or rewind — mark
 	// hands back the same "no checkpoint" 0 the codegen backends use when

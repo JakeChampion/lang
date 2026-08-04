@@ -17,11 +17,16 @@
 //     enters at rc 2 and every append clones it. Arena traffic went 14x here
 //     and 490x on the arm64 assembler (18 MB -> 8.9 GB on ~900 KB of input).
 //
-// So neither number alone is the contract — the program asserts both. The
-// return value is arena bytes per live byte, which is flat in N when the
-// appends stay in place (4) and grows with the buffer when they do not
-// (44..94 over the range below, rising as N shrinks). A ceiling of 8 sits an
-// order of magnitude clear of both regimes at every size.
+// So neither number alone is the contract — the program asserts both, plus
+// __arr_push_shared_count(), which reports the second failure at its cause
+// rather than through its symptom: an append that copied a buffer which still
+// had room copied it because of an extra reference, and that count is exactly
+// 0 here on all three backends when the threading is right. The bytes-per-
+// live-byte ratio is kept as a backstop for the copies the counter cannot
+// attribute (a genuinely full buffer growing more often than it should). It is
+// flat in N when the appends stay in place (4) and grows with the buffer when
+// they do not (44..94 over the range below, rising as N shrinks), so a ceiling
+// of 8 sits an order of magnitude clear of both regimes at every size.
 package e2e
 
 import (
@@ -46,6 +51,7 @@ function main(): i32 {
     if (acc.len() != ` + twoN + `) { return 254; }
     if (acc[0] != 0 || acc[2] != 1 || acc[6] != 3 || acc[7] != 0) { return 253; }
     if (__rc_underflow_count() != 0) { return 200; }
+    if (__arr_push_shared_count() != 0) { return 201; }
     return (__heap_bump_bytes() - before) / (acc.len() * 4);
 }`
 }
@@ -64,6 +70,9 @@ func checkThreadedArrayParam(t *testing.T, backend string, n, got int) {
 	case 200:
 		t.Fatalf("%s: N=%d __rc_underflow_count() != 0 — the overwrite dec released the caller's "+
 			"reference (the #6021 count-steal)", backend, n)
+	case 201:
+		t.Fatalf("%s: N=%d __arr_push_shared_count() != 0 — an append copied a buffer that had room, "+
+			"so something upstream is holding an extra reference across it", backend, n)
 	}
 	if got > threadedArrayParamOverheadCeiling {
 		t.Errorf("%s: N=%d allocated %d arena bytes per live byte, over the %d ceiling — the threaded "+

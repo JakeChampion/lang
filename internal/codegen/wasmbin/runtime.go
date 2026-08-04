@@ -749,6 +749,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_rc_is_unique")
 				case "__fern_rc_underflow_count":
 					needs.add("__fern_rc_underflow_count")
+				case "__fern_arr_push_shared_count":
+					needs.add("__fern_arr_push_shared_count")
 				case "__fern_heap_bump_bytes":
 					needs.add("__fern_heap_bump_bytes")
 				case "__str_idx":
@@ -1539,6 +1541,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildRcUnderflowCountBody,
 	},
+	"__fern_arr_push_shared_count": {
+		// () → i32. The rc==1 cliff probe. Returns the counter
+		// buildArrPushGrowBody bumps at arrPushSharedAddr when it copies
+		// a buffer that had room. The native backends implement the same
+		// entry point over a BSS global.
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrPushSharedCountBody,
+	},
 	"__fern_heap_bump_bytes": {
 		// () → i32. Phase 6 measurement probe. Returns the bump
 		// high-water mark (cursor at allocCursorAddr − seed at
@@ -1965,6 +1976,15 @@ const rcUnderflowAddr = 48
 // bumps — matching the natives' (heap_ptr − heap_base) and giving a
 // backend-consistent "bytes bump-allocated since start" high-water mark.
 const heapBaseAddr = 52
+
+// arrPushSharedAddr is a 4-byte slot in the reserved low-memory gap (mem
+// [56..60), after heapBaseAddr at 52 and before the first allocation at 64).
+// The rc==1 cliff counter: buildArrPushGrowBody bumps it whenever it takes
+// the COPY path on a buffer that still had spare capacity, so the copy was
+// bought by an extra reference rather than by a full buffer. Read back by
+// the `__arr_push_shared_count` builtin. The natives implement the same
+// entry point over a BSS global.
+const arrPushSharedAddr = 56
 
 // buildStrLenBody assembles the wasm bytes for __fern_str_len.
 //
@@ -3420,6 +3440,25 @@ func buildArrPushGrowBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
+	// Reaching here means rc != 1 OR the buffer was full. If it still had
+	// room then rc != 1 was the sole reason, and the copy below is bought
+	// entirely by an extra reference — the rc==1 cliff. Count it, so an
+	// accumulator that has silently gone quadratic can be seen rather than
+	// inferred from an arena exhaustion downstream. See arrPushSharedAddr.
+	body = inst.InstLocalGet(body, 1) // oldLen
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0) // cap
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, arrPushSharedAddr)
+	body = inst.InstI32Const(body, arrPushSharedAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstEnd(body)
 	// Copy path. newLen = oldLen + 1.
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstI32Const(body, 1)
@@ -4060,6 +4099,18 @@ func buildArrCowInPlacePtrBody(helperIdxs map[string]uint32) []byte {
 func buildRcUnderflowCountBody(_ map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstI32Const(body, rcUnderflowAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildArrPushSharedCountBody — () → i32. Returns the rc==1 cliff counter at
+// arrPushSharedAddr (bumped by buildArrPushGrowBody): how many appends copied
+// the whole buffer even though it had room, i.e. the copy was bought by an
+// extra reference alone. The native backends provide the same entry over a
+// BSS global.
+func buildArrPushSharedCountBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, arrPushSharedAddr)
 	body = memory.InstI32Load(body, 2, 0)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
