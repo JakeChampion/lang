@@ -1,0 +1,28 @@
+# Fixtures where the SELF-HOST arm64 path disagrees with the native compiler.
+#
+# Format: <fixture-name> <#issue> <reason>
+#
+# Same contract as selfhost-wasm-known-divergences.txt: TestFernFixturesSelfHostArm64
+# lists these rather than skipping them, so the lane is green with them listed, a
+# NEW divergence fails, and a listed fixture that starts PASSING also fails — an
+# allowlist nobody prunes is where bugs go to be forgotten.
+#
+# Two rules for adding a row, both learned from the wasm leg's first run (which
+# reported 26 mismatches, 14 of them harness artifacts):
+#
+#   1. Reproduce it by hand with a native self-host CLI (`make selfhost-cli`,
+#      ~1.3s per program) before writing it down, and record the measured
+#      self-host and native values in the reason.
+#   2. Rule out the harness's `import "core/int"` injection first. The native
+#      legs inject that import into the entry file (LoadCheckMono, for wasmbin's
+#      PrintMainResult); the self-host CLI injects nothing. A compile failure
+#      naming a missing method is that asymmetry, not a compiler divergence.
+#
+# This leg's failures come from TWO layers, and the reason should say which:
+# `-target arm64` emits AND assembles AND links in-process (asm_arm64_ir +
+# arm64_native + elf.fern), so a compile failure is either an emitter bail
+# ("module is not IR-eligible") or the in-process assembler refusing an
+# instruction it does not implement (the message names the mnemonic).
+#
+# Empty: the leg has not yet had its first full run. Populate from the CI lane's
+# first red, one row per confirmed finding, with an issue number.
