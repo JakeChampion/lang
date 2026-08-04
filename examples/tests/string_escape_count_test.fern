@@ -121,24 +121,24 @@ function test_starts_with_any_empty(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/string escape + count");
-    r = r.it("escape_html",          test_escape_html());
-    r = r.it("escape_html all",      test_escape_html_all());
-    r = r.it("escape_html empty",    test_escape_html_empty());
-    r = r.it("escape_html plain",    test_escape_html_plain());
-    r = r.it("escape_c",             test_escape_c());
-    r = r.it("escape_c all",         test_escape_c_all());
-    r = r.it("escape_shell plain",   test_escape_shell_plain());
-    r = r.it("escape_shell quote",   test_escape_shell_quote());
-    r = r.it("count_byte",           test_count_byte());
-    r = r.it("count_chars_in",       test_count_chars_in());
-    r = r.it("count_chars_in empty", test_count_chars_in_empty_set());
-    r = r.it("fields",               test_fields());
-    r = r.it("fields empty",         test_fields_empty());
-    r = r.it("center",               test_center());
-    r = r.it("center odd",           test_center_odd());
-    r = r.it("center noop",          test_center_noop());
-    r = r.it("starts_with_any",      test_starts_with_any());
-    r = r.it("ends_with_any",        test_ends_with_any());
-    r = r.it("starts_with_any empty", test_starts_with_any_empty());
+    r = r.it("escape_html",          test_escape_html);
+    r = r.it("escape_html all",      test_escape_html_all);
+    r = r.it("escape_html empty",    test_escape_html_empty);
+    r = r.it("escape_html plain",    test_escape_html_plain);
+    r = r.it("escape_c",             test_escape_c);
+    r = r.it("escape_c all",         test_escape_c_all);
+    r = r.it("escape_shell plain",   test_escape_shell_plain);
+    r = r.it("escape_shell quote",   test_escape_shell_quote);
+    r = r.it("count_byte",           test_count_byte);
+    r = r.it("count_chars_in",       test_count_chars_in);
+    r = r.it("count_chars_in empty", test_count_chars_in_empty_set);
+    r = r.it("fields",               test_fields);
+    r = r.it("fields empty",         test_fields_empty);
+    r = r.it("center",               test_center);
+    r = r.it("center odd",           test_center_odd);
+    r = r.it("center noop",          test_center_noop);
+    r = r.it("starts_with_any",      test_starts_with_any);
+    r = r.it("ends_with_any",        test_ends_with_any);
+    r = r.it("starts_with_any empty", test_starts_with_any_empty);
     return r.finish();
 }

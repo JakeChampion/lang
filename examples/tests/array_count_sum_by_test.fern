@@ -63,13 +63,13 @@ function test_sum_by_empty(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array count/sum by");
-    r = r.it("count_where",         test_count_where());
-    r = r.it("count_where method",  test_count_where_method());
-    r = r.it("count_where none",    test_count_where_none());
-    r = r.it("count_where empty",   test_count_where_empty());
-    r = r.it("sum_by strings",      test_sum_by_strings());
-    r = r.it("sum_by method",       test_sum_by_method());
-    r = r.it("sum_by identity",     test_sum_by_identity());
-    r = r.it("sum_by empty",        test_sum_by_empty());
+    r = r.it("count_where",         test_count_where);
+    r = r.it("count_where method",  test_count_where_method);
+    r = r.it("count_where none",    test_count_where_none);
+    r = r.it("count_where empty",   test_count_where_empty);
+    r = r.it("sum_by strings",      test_sum_by_strings);
+    r = r.it("sum_by method",       test_sum_by_method);
+    r = r.it("sum_by identity",     test_sum_by_identity);
+    r = r.it("sum_by empty",        test_sum_by_empty);
     return r.finish();
 }

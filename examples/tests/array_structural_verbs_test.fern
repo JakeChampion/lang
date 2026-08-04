@@ -97,18 +97,18 @@ function test_concat_method(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("array structural verbs");
-    r = r.it("reverse",                  test_reverse());
-    r = r.it("reverse empty",            test_reverse_empty());
-    r = r.it("reverse single",           test_reverse_single());
-    r = r.it("take",                     test_take());
-    r = r.it("take zero",                test_take_zero());
-    r = r.it("take over length clamps",  test_take_over_len());
-    r = r.it("drop",                     test_drop());
-    r = r.it("drop over length clamps",  test_drop_over_len());
-    r = r.it("drop zero",                test_drop_zero());
-    r = r.it("take ++ drop complement",  test_take_drop_complement());
-    r = r.it("concat",                   test_concat());
-    r = r.it("concat empty",             test_concat_empty());
-    r = r.it("concat method form",       test_concat_method());
+    r = r.it("reverse",                  test_reverse);
+    r = r.it("reverse empty",            test_reverse_empty);
+    r = r.it("reverse single",           test_reverse_single);
+    r = r.it("take",                     test_take);
+    r = r.it("take zero",                test_take_zero);
+    r = r.it("take over length clamps",  test_take_over_len);
+    r = r.it("drop",                     test_drop);
+    r = r.it("drop over length clamps",  test_drop_over_len);
+    r = r.it("drop zero",                test_drop_zero);
+    r = r.it("take ++ drop complement",  test_take_drop_complement);
+    r = r.it("concat",                   test_concat);
+    r = r.it("concat empty",             test_concat_empty);
+    r = r.it("concat method form",       test_concat_method);
     return r.finish();
 }

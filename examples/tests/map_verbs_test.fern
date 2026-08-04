@@ -137,21 +137,21 @@ function test_contains_value_empty(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("map verbs");
-    r = r.it("entries sum k+v",            test_entries_sum());
-    r = r.it("entries len (string keys)",  test_entries_len());
-    r = r.it("entries empty",              test_entries_empty());
-    r = r.it("from pairs",                 test_from());
-    r = r.it("from duplicate last wins",   test_from_dup_last_wins());
-    r = r.it("from string keys",           test_from_string_keys());
-    r = r.it("merge other wins",           test_merge_other_wins());
-    r = r.it("merge with empty",           test_merge_empty());
-    r = r.it("extend aliases merge",       test_extend_alias());
-    r = r.it("get_or_insert present",      test_get_or_insert_present());
-    r = r.it("get_or_insert absent",       test_get_or_insert_absent());
-    r = r.it("get_or_insert word count",   test_get_or_insert_word_count());
-    r = r.it("update word count",          test_update_word_count());
-    r = r.it("update present and absent",   test_update_present_and_absent());
-    r = r.it("contains_value",             test_contains_value());
-    r = r.it("contains_value empty",       test_contains_value_empty());
+    r = r.it("entries sum k+v",            test_entries_sum);
+    r = r.it("entries len (string keys)",  test_entries_len);
+    r = r.it("entries empty",              test_entries_empty);
+    r = r.it("from pairs",                 test_from);
+    r = r.it("from duplicate last wins",   test_from_dup_last_wins);
+    r = r.it("from string keys",           test_from_string_keys);
+    r = r.it("merge other wins",           test_merge_other_wins);
+    r = r.it("merge with empty",           test_merge_empty);
+    r = r.it("extend aliases merge",       test_extend_alias);
+    r = r.it("get_or_insert present",      test_get_or_insert_present);
+    r = r.it("get_or_insert absent",       test_get_or_insert_absent);
+    r = r.it("get_or_insert word count",   test_get_or_insert_word_count);
+    r = r.it("update word count",          test_update_word_count);
+    r = r.it("update present and absent",   test_update_present_and_absent);
+    r = r.it("contains_value",             test_contains_value);
+    r = r.it("contains_value empty",       test_contains_value_empty);
     return r.finish();
 }

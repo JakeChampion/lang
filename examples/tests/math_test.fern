@@ -140,21 +140,21 @@ function test_random_int_empty(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/math");
-    r = r.it("range",                   test_range());
-    r = r.it("range empty",             test_range_empty());
-    r = r.it("range single",            test_range_single());
-    r = r.it("range_step",              test_range_step());
-    r = r.it("range_step exact end",    test_range_step_exact());
-    r = r.it("range_step nonpositive",  test_range_step_nonpositive());
-    r = r.it("i32 bounds",              test_i32_bounds());
-    r = r.it("i64 bounds",              test_i64_bounds());
-    r = r.it("pack_rgb",                test_pack_rgb());
-    r = r.it("pack_rgb wraps",          test_pack_rgb_wraps());
-    r = r.it("parse_rgb_hex",           test_parse_rgb_hex());
-    r = r.it("parse_rgb_hex invalid",   test_parse_rgb_hex_invalid());
-    r = r.it("rgb_luminance",           test_rgb_luminance());
-    r = r.it("rgb_is_dark",             test_rgb_is_dark());
-    r = r.it("random_int range",        test_random_int_range());
-    r = r.it("random_int empty",        test_random_int_empty());
+    r = r.it("range",                   test_range);
+    r = r.it("range empty",             test_range_empty);
+    r = r.it("range single",            test_range_single);
+    r = r.it("range_step",              test_range_step);
+    r = r.it("range_step exact end",    test_range_step_exact);
+    r = r.it("range_step nonpositive",  test_range_step_nonpositive);
+    r = r.it("i32 bounds",              test_i32_bounds);
+    r = r.it("i64 bounds",              test_i64_bounds);
+    r = r.it("pack_rgb",                test_pack_rgb);
+    r = r.it("pack_rgb wraps",          test_pack_rgb_wraps);
+    r = r.it("parse_rgb_hex",           test_parse_rgb_hex);
+    r = r.it("parse_rgb_hex invalid",   test_parse_rgb_hex_invalid);
+    r = r.it("rgb_luminance",           test_rgb_luminance);
+    r = r.it("rgb_is_dark",             test_rgb_is_dark);
+    r = r.it("random_int range",        test_random_int_range);
+    r = r.it("random_int empty",        test_random_int_empty);
     return r.finish();
 }

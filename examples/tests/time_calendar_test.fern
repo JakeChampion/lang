@@ -115,20 +115,20 @@ function test_format_iso_zero_pad(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/time calendar");
-    r = r.it("is_leap_year",        test_is_leap_year());
-    r = r.it("days_in_month feb",   test_days_in_month_feb());
-    r = r.it("days_in_month others", test_days_in_month_others());
-    r = r.it("is_valid true",       test_is_valid_true());
-    r = r.it("is_valid false",      test_is_valid_false());
-    r = r.it("add_days within",     test_add_days_within());
-    r = r.it("add_days leap",       test_add_days_leap_boundary());
-    r = r.it("add_days year",       test_add_days_year_boundary());
-    r = r.it("add_days backward",   test_add_days_backward());
-    r = r.it("days_since year",     test_days_since_year());
-    r = r.it("days_since leap feb", test_days_since_leap_feb());
-    r = r.it("day_of_year",         test_day_of_year());
-    r = r.it("weekday",             test_weekday());
-    r = r.it("format_iso basic",    test_format_iso_basic());
-    r = r.it("format_iso zero-pad", test_format_iso_zero_pad());
+    r = r.it("is_leap_year",        test_is_leap_year);
+    r = r.it("days_in_month feb",   test_days_in_month_feb);
+    r = r.it("days_in_month others", test_days_in_month_others);
+    r = r.it("is_valid true",       test_is_valid_true);
+    r = r.it("is_valid false",      test_is_valid_false);
+    r = r.it("add_days within",     test_add_days_within);
+    r = r.it("add_days leap",       test_add_days_leap_boundary);
+    r = r.it("add_days year",       test_add_days_year_boundary);
+    r = r.it("add_days backward",   test_add_days_backward);
+    r = r.it("days_since year",     test_days_since_year);
+    r = r.it("days_since leap feb", test_days_since_leap_feb);
+    r = r.it("day_of_year",         test_day_of_year);
+    r = r.it("weekday",             test_weekday);
+    r = r.it("format_iso basic",    test_format_iso_basic);
+    r = r.it("format_iso zero-pad", test_format_iso_zero_pad);
     return r.finish();
 }

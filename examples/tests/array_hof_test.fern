@@ -123,23 +123,23 @@ function test_scan_method(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array higher-order");
-    r = r.it("flat_map",         test_flat_map());
-    r = r.it("flat_map empty",   test_flat_map_empty());
-    r = r.it("reduce sum",       test_reduce_sum());
-    r = r.it("reduce single",    test_reduce_single());
-    r = r.it("reduce empty",     test_reduce_empty());
-    r = r.it("reduce max",       test_reduce_max());
-    r = r.it("sort_by asc",      test_sort_by_asc());
-    r = r.it("sort_by desc",     test_sort_by_desc());
-    r = r.it("intersperse",         test_intersperse());
-    r = r.it("intersperse single",  test_intersperse_single());
-    r = r.it("intersperse empty",   test_intersperse_empty());
-    r = r.it("intersperse strings", test_intersperse_strings());
-    r = r.it("flatten",           test_flatten());
-    r = r.it("flatten empty",     test_flatten_empty());
-    r = r.it("partition",         test_partition());
-    r = r.it("partition method",  test_partition_method());
-    r = r.it("scan",              test_scan());
-    r = r.it("scan method",       test_scan_method());
+    r = r.it("flat_map",         test_flat_map);
+    r = r.it("flat_map empty",   test_flat_map_empty);
+    r = r.it("reduce sum",       test_reduce_sum);
+    r = r.it("reduce single",    test_reduce_single);
+    r = r.it("reduce empty",     test_reduce_empty);
+    r = r.it("reduce max",       test_reduce_max);
+    r = r.it("sort_by asc",      test_sort_by_asc);
+    r = r.it("sort_by desc",     test_sort_by_desc);
+    r = r.it("intersperse",         test_intersperse);
+    r = r.it("intersperse single",  test_intersperse_single);
+    r = r.it("intersperse empty",   test_intersperse_empty);
+    r = r.it("intersperse strings", test_intersperse_strings);
+    r = r.it("flatten",           test_flatten);
+    r = r.it("flatten empty",     test_flatten_empty);
+    r = r.it("partition",         test_partition);
+    r = r.it("partition method",  test_partition_method);
+    r = r.it("scan",              test_scan);
+    r = r.it("scan method",       test_scan_method);
     return r.finish();
 }

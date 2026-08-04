@@ -104,16 +104,16 @@ function test_avg_f64(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("array reductions");
-    r = r.it("sum_i64",                   test_sum_i64());
-    r = r.it("sum_i64 empty returns 0",   test_sum_i64_empty());
-    r = r.it("max_i64",                   test_max_i64());
-    r = r.it("min_i64",                   test_min_i64());
-    r = r.it("max_i64 empty returns None", test_max_i64_empty());
-    r = r.it("avg_i64",                   test_avg_i64());
-    r = r.it("sum_u32",                   test_sum_u32());
-    r = r.it("max_u64 unsigned semantics", test_max_u64_unsigned());
-    r = r.it("sum_f64",                   test_sum_f64());
-    r = r.it("max_f64",                   test_max_f64());
-    r = r.it("avg_f64",                   test_avg_f64());
+    r = r.it("sum_i64",                   test_sum_i64);
+    r = r.it("sum_i64 empty returns 0",   test_sum_i64_empty);
+    r = r.it("max_i64",                   test_max_i64);
+    r = r.it("min_i64",                   test_min_i64);
+    r = r.it("max_i64 empty returns None", test_max_i64_empty);
+    r = r.it("avg_i64",                   test_avg_i64);
+    r = r.it("sum_u32",                   test_sum_u32);
+    r = r.it("max_u64 unsigned semantics", test_max_u64_unsigned);
+    r = r.it("sum_f64",                   test_sum_f64);
+    r = r.it("max_f64",                   test_max_f64);
+    r = r.it("avg_f64",                   test_avg_f64);
     return r.finish();
 }

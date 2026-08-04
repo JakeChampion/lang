@@ -48,13 +48,13 @@ function test_bad_base(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/i64 to_string_radix");
-    r = r.it("hex",       test_hex());
-    r = r.it("binary",    test_binary());
-    r = r.it("zero",      test_zero());
-    r = r.it("negative",  test_negative());
-    r = r.it("base36",    test_base36());
-    r = r.it("wide",      test_wide());
-    r = r.it("extremes",  test_extremes());
-    r = r.it("bad base",  test_bad_base());
+    r = r.it("hex",       test_hex);
+    r = r.it("binary",    test_binary);
+    r = r.it("zero",      test_zero);
+    r = r.it("negative",  test_negative);
+    r = r.it("base36",    test_base36);
+    r = r.it("wide",      test_wide);
+    r = r.it("extremes",  test_extremes);
+    r = r.it("bad base",  test_bad_base);
     return r.finish();
 }

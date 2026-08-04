@@ -54,23 +54,23 @@ function test_string_sort(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("core/cmp helpers");
-    r = r.it("min",                 test_min());
-    r = r.it("max",                 test_max());
-    r = r.it("clamp above hi",      test_clamp_hi());
-    r = r.it("clamp below lo",      test_clamp_lo());
-    r = r.it("clamp in range",      test_clamp_in());
-    r = r.it("lt",                  test_lt());
-    r = r.it("gte",                 test_gte());
-    r = r.it("lt false",            test_lt_false());
-    r = r.it("sort",                test_sort());
-    r = r.it("is_sorted",           test_is_sorted());
-    r = r.it("is_sorted false",     test_is_sorted_false());
-    r = r.it("contains",            test_contains());
-    r = r.it("index_of",            test_index_of());
-    r = r.it("index_of absent",     test_index_of_absent());
-    r = r.it("distinct",            test_distinct());
-    r = r.it("eq_arrays",           test_eq_arrays());
-    r = r.it("eq_arrays false",     test_eq_arrays_false());
-    r = r.it("string sort",         test_string_sort());
+    r = r.it("min",                 test_min);
+    r = r.it("max",                 test_max);
+    r = r.it("clamp above hi",      test_clamp_hi);
+    r = r.it("clamp below lo",      test_clamp_lo);
+    r = r.it("clamp in range",      test_clamp_in);
+    r = r.it("lt",                  test_lt);
+    r = r.it("gte",                 test_gte);
+    r = r.it("lt false",            test_lt_false);
+    r = r.it("sort",                test_sort);
+    r = r.it("is_sorted",           test_is_sorted);
+    r = r.it("is_sorted false",     test_is_sorted_false);
+    r = r.it("contains",            test_contains);
+    r = r.it("index_of",            test_index_of);
+    r = r.it("index_of absent",     test_index_of_absent);
+    r = r.it("distinct",            test_distinct);
+    r = r.it("eq_arrays",           test_eq_arrays);
+    r = r.it("eq_arrays false",     test_eq_arrays_false);
+    r = r.it("string sort",         test_string_sort);
     return r.finish();
 }

@@ -57,12 +57,12 @@ function test_edges(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/glob");
-    r = r.it("literal",         test_literal());
-    r = r.it("star no-cross",   test_star_no_cross());
-    r = r.it("question",        test_question());
-    r = r.it("globstar",        test_globstar());
-    r = r.it("char class",      test_char_class());
-    r = r.it("negated class",   test_negated_class());
-    r = r.it("edges",           test_edges());
+    r = r.it("literal",         test_literal);
+    r = r.it("star no-cross",   test_star_no_cross);
+    r = r.it("question",        test_question);
+    r = r.it("globstar",        test_globstar);
+    r = r.it("char class",      test_char_class);
+    r = r.it("negated class",   test_negated_class);
+    r = r.it("edges",           test_edges);
     return r.finish();
 }

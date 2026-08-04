@@ -109,18 +109,18 @@ function test_sort_key_stable(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/sort comparator + ci");
-    r = r.it("string_cmp",          test_string_cmp());
-    r = r.it("string_cmp_ci",       test_string_cmp_ci());
-    r = r.it("sort_strings_desc",   test_sort_strings_desc());
-    r = r.it("sort_strings_asc_ci", test_sort_strings_asc_ci());
-    r = r.it("sort_strings_asc_ci stable", test_sort_strings_asc_ci_stable());
-    r = r.it("sort_by desc",        test_sort_by_desc());
-    r = r.it("sort_by stable",      test_sort_by_stable());
-    r = r.it("is_sorted_by true",   test_is_sorted_by_true());
-    r = r.it("is_sorted_by false",  test_is_sorted_by_false());
-    r = r.it("sort_by_i32_key",     test_sort_by_i32_key());
-    r = r.it("sort_key i32",        test_sort_key_i32());
-    r = r.it("sort_key string",     test_sort_key_string());
-    r = r.it("sort_key stable",     test_sort_key_stable());
+    r = r.it("string_cmp",          test_string_cmp);
+    r = r.it("string_cmp_ci",       test_string_cmp_ci);
+    r = r.it("sort_strings_desc",   test_sort_strings_desc);
+    r = r.it("sort_strings_asc_ci", test_sort_strings_asc_ci);
+    r = r.it("sort_strings_asc_ci stable", test_sort_strings_asc_ci_stable);
+    r = r.it("sort_by desc",        test_sort_by_desc);
+    r = r.it("sort_by stable",      test_sort_by_stable);
+    r = r.it("is_sorted_by true",   test_is_sorted_by_true);
+    r = r.it("is_sorted_by false",  test_is_sorted_by_false);
+    r = r.it("sort_by_i32_key",     test_sort_by_i32_key);
+    r = r.it("sort_key i32",        test_sort_key_i32);
+    r = r.it("sort_key string",     test_sort_key_string);
+    r = r.it("sort_key stable",     test_sort_key_stable);
     return r.finish();
 }

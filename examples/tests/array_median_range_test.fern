@@ -58,10 +58,10 @@ function test_empty_none(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array f64 median/range");
-    r = r.it("median odd",    test_median_odd());
-    r = r.it("median even",   test_median_even());
-    r = r.it("median single", test_median_single());
-    r = r.it("range",         test_range());
-    r = r.it("empty -> none", test_empty_none());
+    r = r.it("median odd",    test_median_odd);
+    r = r.it("median even",   test_median_even);
+    r = r.it("median single", test_median_single);
+    r = r.it("range",         test_range);
+    r = r.it("empty -> none", test_empty_none);
     return r.finish();
 }

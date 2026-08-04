@@ -88,11 +88,11 @@ function test_sample_edges(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/rand");
-    r = r.it("shuffle permutation", test_shuffle_is_permutation());
-    r = r.it("shuffle is pure",     test_shuffle_pure());
-    r = r.it("choice in bounds",    test_choice_in_bounds());
-    r = r.it("choice empty None",   test_choice_empty_none());
-    r = r.it("sample distinct",     test_sample_without_replacement());
-    r = r.it("sample edges",        test_sample_edges());
+    r = r.it("shuffle permutation", test_shuffle_is_permutation);
+    r = r.it("shuffle is pure",     test_shuffle_pure);
+    r = r.it("choice in bounds",    test_choice_in_bounds);
+    r = r.it("choice empty None",   test_choice_empty_none);
+    r = r.it("sample distinct",     test_sample_without_replacement);
+    r = r.it("sample edges",        test_sample_edges);
     return r.finish();
 }

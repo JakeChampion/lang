@@ -82,14 +82,14 @@ function test_reset_then_reuse(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/io_buffered BytesWriter");
-    r = r.it("empty",            test_empty());
-    r = r.it("write_string",     test_write_string());
-    r = r.it("write_byte",       test_write_byte());
-    r = r.it("write_bytes",      test_write_bytes());
-    r = r.it("chained build",    test_chained_build());
-    r = r.it("mixed writes",     test_mixed_writes());
-    r = r.it("into_bytes",       test_into_bytes());
-    r = r.it("reset",            test_reset());
-    r = r.it("reset then reuse", test_reset_then_reuse());
+    r = r.it("empty",            test_empty);
+    r = r.it("write_string",     test_write_string);
+    r = r.it("write_byte",       test_write_byte);
+    r = r.it("write_bytes",      test_write_bytes);
+    r = r.it("chained build",    test_chained_build);
+    r = r.it("mixed writes",     test_mixed_writes);
+    r = r.it("into_bytes",       test_into_bytes);
+    r = r.it("reset",            test_reset);
+    r = r.it("reset then reuse", test_reset_then_reuse);
     return r.finish();
 }

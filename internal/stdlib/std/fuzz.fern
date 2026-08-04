@@ -230,7 +230,7 @@ pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => test
 // Pass at most one fuzz target per `it`-equivalent line so
 // the failure attribution stays clean.
 pub function (r: test.TestRunner) fuzz(name: string, seeds: string[], iterations: i32, target: (string) => test.TestOutcome): test.TestRunner {
-    return r.it(name, fuzz_run(seeds, iterations, target));
+    return r.it(name, () => fuzz_run(seeds, iterations, target));
 }
 
 // =================== SHRINKING ===================
@@ -418,7 +418,7 @@ function __fuzz_format_failure(origin: string, raw: string, minimised: string, m
 // minimised counter-example so CI logs preserve a clean
 // reproducer.
 pub function (r: test.TestRunner) fuzz_shrink(name: string, seeds: string[], iterations: i32, target: (string) => test.TestOutcome): test.TestRunner {
-    return r.it(name, fuzz_run_shrink(seeds, iterations, target));
+    return r.it(name, () => fuzz_run_shrink(seeds, iterations, target));
 }
 
 // =================== CORPUS LOADING ===================

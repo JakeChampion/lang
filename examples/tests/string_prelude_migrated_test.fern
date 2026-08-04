@@ -77,20 +77,20 @@ function test_string_from_bytes_roundtrip(): test.TestOutcome {
 function main(): i32 {
     var r: test.TestRunner = test.test_new("string prelude (migrated)");
     r = r.it("s.bytes() length is 5",
-             test_bytes_len_is_5());
+             test_bytes_len_is_5);
     r = r.it("s.bytes()[0] is 'H' (72)",
-             test_bytes_first_byte_is_H());
+             test_bytes_first_byte_is_H);
     r = r.it("s.bytes()[4] is 'o' (111)",
-             test_bytes_last_byte_is_lowercase_o());
+             test_bytes_last_byte_is_lowercase_o);
     r = r.it("s.as_bytes() length is 5",
-             test_as_bytes_len_is_5());
+             test_as_bytes_len_is_5);
     r = r.it("s.as_bytes()[0] is 'H'",
-             test_as_bytes_first_byte_is_H());
+             test_as_bytes_first_byte_is_H);
     r = r.it("s.to_upper() returns HELLO",
-             test_to_upper_HELLO());
+             test_to_upper_HELLO);
     r = r.it("s.to_lower() returns hello",
-             test_to_lower_hello());
+             test_to_lower_hello);
     r = r.it("string_from_bytes_unchecked(s.bytes()) round-trips",
-             test_string_from_bytes_roundtrip());
+             test_string_from_bytes_roundtrip);
     return r.finish();
 }

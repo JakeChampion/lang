@@ -68,18 +68,18 @@ function test_lit_negative(): test.TestOutcome {
 function main(): i32 {
     var r: test.TestRunner = test.test_new("unions + match (migrated)");
     r = r.it("Add(10, 32) = 42",
-             test_add_two_positives());
+             test_add_two_positives);
     r = r.it("Add(0, 7) = 7 (left identity)",
-             test_add_left_identity_zero());
+             test_add_left_identity_zero);
     r = r.it("Add(7, 0) = 7 (right identity)",
-             test_add_right_identity_zero());
+             test_add_right_identity_zero);
     r = r.it("Add(5, -5) = 0",
-             test_add_negatives_cancel());
+             test_add_negatives_cancel);
     r = r.it("Lit(99) = 99",
-             test_lit_positive());
+             test_lit_positive);
     r = r.it("Lit(0) = 0",
-             test_lit_zero());
+             test_lit_zero);
     r = r.it("Lit(-100) = -100",
-             test_lit_negative());
+             test_lit_negative);
     return r.finish();
 }

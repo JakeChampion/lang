@@ -56,15 +56,15 @@ function test_stat_workflow(r: test.TestRunner): test.TestRunner {
     var path: string = dir + "/payload.dat";
     match (write_file(path, "0123456789")) {
         None => { },
-        Some(_) => { return rr.it("write fixture", test.fail("write_file failed")); }
+        Some(_) => { return rr.it("write fixture", () => test.fail("write_file failed")); }
     }
 
-    rr = rr.it("is_file true",             test.assert_is_file(path));
-    rr = rr.it("is_dir false on file",     match_invert_to_pass(test.assert_is_dir(path)));
-    rr = rr.it("file_size matches",        test.assert_file_size(path, 10 as i64));
+    rr = rr.it("is_file true",             () => test.assert_is_file(path));
+    rr = rr.it("is_dir false on file",     () => match_invert_to_pass(test.assert_is_dir(path)));
+    rr = rr.it("file_size matches",        () => test.assert_file_size(path, 10 as i64));
 
-    rr = rr.it("is_dir true on dir",       test.assert_is_dir(dir));
-    rr = rr.it("is_file false on dir",     match_invert_to_pass(test.assert_is_file(dir)));
+    rr = rr.it("is_dir true on dir",       () => test.assert_is_dir(dir));
+    rr = rr.it("is_file false on dir",     () => match_invert_to_pass(test.assert_is_file(dir)));
 
     return rr;
 }
@@ -110,24 +110,24 @@ function test_json_invalid_actual_fails(): test.TestOutcome {
 function main(): i32 {
     var r: test.TestRunner = test.test_new("batch 7");
 
-    r = r.it("i64 lt",                        test_i64_lt());
-    r = r.it("i64 le",                        test_i64_le());
-    r = r.it("i64 gt",                        test_i64_gt());
-    r = r.it("i64 ge",                        test_i64_ge());
-    r = r.it("u32 lt",                        test_u32_lt());
-    r = r.it("u64 gt",                        test_u64_gt());
-    r = r.it("i64 lt failure message",        test_i64_lt_failure_message());
+    r = r.it("i64 lt",                        test_i64_lt);
+    r = r.it("i64 le",                        test_i64_le);
+    r = r.it("i64 gt",                        test_i64_gt);
+    r = r.it("i64 ge",                        test_i64_ge);
+    r = r.it("u32 lt",                        test_u32_lt);
+    r = r.it("u64 gt",                        test_u64_gt);
+    r = r.it("i64 lt failure message",        test_i64_lt_failure_message);
 
-    r = r.it("f64_bits gives expected pattern", test_f64_bits_round_trip());
-    r = r.it("f64_from_bits round trips",       test_f64_from_bits_round_trips());
+    r = r.it("f64_bits gives expected pattern", test_f64_bits_round_trip);
+    r = r.it("f64_from_bits round trips",       test_f64_from_bits_round_trips);
 
     r = test_stat_workflow(r);
 
-    r = r.it("json simple equal",             test_json_simple_equal());
-    r = r.it("json key order independent",    test_json_key_order_independent());
-    r = r.it("json nested arrays",            test_json_nested_arrays());
-    r = r.it("json differing values fails",   test_json_differing_values_fails());
-    r = r.it("json invalid actual fails",     test_json_invalid_actual_fails());
+    r = r.it("json simple equal",             test_json_simple_equal);
+    r = r.it("json key order independent",    test_json_key_order_independent);
+    r = r.it("json nested arrays",            test_json_nested_arrays);
+    r = r.it("json differing values fails",   test_json_differing_values_fails);
+    r = r.it("json invalid actual fails",     test_json_invalid_actual_fails);
 
     return r.finish();
 }

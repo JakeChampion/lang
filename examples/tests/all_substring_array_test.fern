@@ -131,18 +131,18 @@ function test_ends_with_any_no_match(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("all-substring + multi-option substring");
-    r = r.it("all_starts_with pass",            test_all_starts_with_pass());
-    r = r.it("all_starts_with empty vacuous",   test_all_starts_with_empty_array_vacuous());
-    r = r.it("all_starts_with first violation", test_all_starts_with_first_violation_reports());
-    r = r.it("all_ends_with pass",              test_all_ends_with_pass());
-    r = r.it("all_ends_with violation",         test_all_ends_with_violation());
-    r = r.it("all_contain pass",                test_all_contain_pass());
-    r = r.it("all_contain violation",           test_all_contain_violation());
-    r = r.it("starts_with_any second matches",  test_starts_with_any_pass());
-    r = r.it("starts_with_any first matches",   test_starts_with_any_first_option());
-    r = r.it("starts_with_any no match + count", test_starts_with_any_no_match_reports());
-    r = r.it("starts_with_any empty list fails", test_starts_with_any_empty_options_fails());
-    r = r.it("ends_with_any pass",              test_ends_with_any_pass());
-    r = r.it("ends_with_any no match",          test_ends_with_any_no_match());
+    r = r.it("all_starts_with pass",            test_all_starts_with_pass);
+    r = r.it("all_starts_with empty vacuous",   test_all_starts_with_empty_array_vacuous);
+    r = r.it("all_starts_with first violation", test_all_starts_with_first_violation_reports);
+    r = r.it("all_ends_with pass",              test_all_ends_with_pass);
+    r = r.it("all_ends_with violation",         test_all_ends_with_violation);
+    r = r.it("all_contain pass",                test_all_contain_pass);
+    r = r.it("all_contain violation",           test_all_contain_violation);
+    r = r.it("starts_with_any second matches",  test_starts_with_any_pass);
+    r = r.it("starts_with_any first matches",   test_starts_with_any_first_option);
+    r = r.it("starts_with_any no match + count", test_starts_with_any_no_match_reports);
+    r = r.it("starts_with_any empty list fails", test_starts_with_any_empty_options_fails);
+    r = r.it("ends_with_any pass",              test_ends_with_any_pass);
+    r = r.it("ends_with_any no match",          test_ends_with_any_no_match);
     return r.finish();
 }

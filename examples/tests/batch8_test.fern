@@ -76,12 +76,12 @@ function test_golden_bootstrap_and_compare(r: test.TestRunner): test.TestRunner 
     var path: string = dir + "/golden.txt";
     var actual: string = "line 1\nline 2\n";
     // First call: file missing → bootstrap (writes + passes).
-    rr = rr.it("bootstrap golden",      test.assert_matches_golden(path, actual));
+    rr = rr.it("bootstrap golden",      () => test.assert_matches_golden(path, actual));
     // Second call: file present → compare equal.
-    rr = rr.it("compare existing",      test.assert_matches_golden(path, actual));
+    rr = rr.it("compare existing",      () => test.assert_matches_golden(path, actual));
     // Strict mode on a missing file must fail.
     rr = rr.it("strict missing fails",
-               invert_pass_b8(test.assert_matches_golden_strict(dir + "/no-such.txt", "x")));
+               () => invert_pass_b8(test.assert_matches_golden_strict(dir + "/no-such.txt", "x")));
     return rr;
 }
 
@@ -100,12 +100,12 @@ function main(): i32 {
     var filter: string = test.parse_filter_from_args(args());
     var r: test.TestRunner = test.test_new_filtered("batch 8", filter);
 
-    r = r.it("argv populated",                  test_argv_basic());
-    r = r.it("map len string-string",           test_map_len_string_string());
-    r = r.it("map has string-string",           test_map_has_string_string());
-    r = r.it("map lacks string-string",         test_map_lacks_string_string());
-    r = r.it("map has i32-i32",                 test_map_has_i32_i32());
-    r = r.it("map has wrong-value diagnostic",  test_map_has_wrong_value_reports());
+    r = r.it("argv populated",                  test_argv_basic);
+    r = r.it("map len string-string",           test_map_len_string_string);
+    r = r.it("map has string-string",           test_map_has_string_string);
+    r = r.it("map lacks string-string",         test_map_lacks_string_string);
+    r = r.it("map has i32-i32",                 test_map_has_i32_i32);
+    r = r.it("map has wrong-value diagnostic",  test_map_has_wrong_value_reports);
 
     r = test_golden_bootstrap_and_compare(r);
 

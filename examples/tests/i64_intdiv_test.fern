@@ -44,10 +44,10 @@ function test_log2_floor(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/i64 intdiv");
-    r = r.it("is_multiple_of",      test_is_multiple_of());
-    r = r.it("next_power_of_2",     test_next_power_of_2());
-    r = r.it("next_power_of_2 cap", test_next_power_of_2_cap());
-    r = r.it("ceil_div",            test_ceil_div());
-    r = r.it("log2_floor",          test_log2_floor());
+    r = r.it("is_multiple_of",      test_is_multiple_of);
+    r = r.it("next_power_of_2",     test_next_power_of_2);
+    r = r.it("next_power_of_2 cap", test_next_power_of_2_cap);
+    r = r.it("ceil_div",            test_ceil_div);
+    r = r.it("log2_floor",          test_log2_floor);
     return r.finish();
 }

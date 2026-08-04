@@ -28,8 +28,8 @@
 //
 //   function main(): i32 {
 //       var r: test.TestRunner = test.test_new("arithmetic");
-//       r = r.it("addition", test_addition());
-//       r = r.it("strings", test_strings());
+//       r = r.it("addition", test_addition);
+//       r = r.it("strings", test_strings);
 //       return r.finish();
 //   }
 //
@@ -76,7 +76,7 @@ import "std/string";
 import "std/json";
 
 // TestRunner — per-suite accumulator. Threaded through each
-// `.it(name, result)` call. `failures` keeps the formatted
+// `.it(name, body)` call. `failures` keeps the formatted
 // "<name>: <message>" line for every failing case so finish()
 // can repeat them at the bottom of the run (TAP consumers can
 // look at the per-line not-ok output; humans want a summary).
@@ -151,8 +151,8 @@ pub struct TestRunner {
 // `Option[string]` with `None` = pass, which inverted the usual
 // "None means absent/bad" intuition — see issue #2666.) Construct
 // outcomes with the `pass()` / `fail(msg)` helpers (or the bare
-// `Pass` / `Fail(msg)` variants), and feed them to `(r).it(name,
-// outcome)`.
+// `Pass` / `Fail(msg)` variants), and pass them unevaluated to
+// `(r).it(name, body)`.
 pub enum TestOutcome {
     Pass,
     Fail(string),
@@ -314,11 +314,22 @@ pub function test_new_verbose(suite: string): TestRunner {
     return TestRunner { ...r, verbose: true };
 }
 
-// (r) it(name, result) — record the outcome of one test.
-// `result` is the value returned by the test function:
+// (r) it(name, body) — run one test and record its outcome.
+// `body` is the test itself, passed unevaluated — a bare
+// function name, or `() => …` for anything taking arguments:
+//
+//   r = r.it("parses", test_parses);
+//   r = r.it("adds",   () => assert_eq(add(2, 2), 4));
+//
+// Its outcome decides the line:
 //   Pass       prints "ok N - name"
 //   Fail(msg)  prints "not ok N - name" + the YAML-ish ---
 //              block TAP uses for diagnostic detail
+//
+// Taking the test unevaluated is what makes the runner's own
+// controls real: a case the filter excludes, or one cut short
+// by fail-fast, is never RUN — where an already-evaluated
+// outcome had done its work before `it` could see it.
 //
 // The displayed name is `r.prefix + name`, so a subsuite's
 // cases land as "parent / child / actual case" in the flat
@@ -326,7 +337,7 @@ pub function test_new_verbose(suite: string): TestRunner {
 // failures summary at the bottom of finish() — typically the
 // prefix duplicates the suite line so the bottom summary
 // stays scannable.
-pub function (r: TestRunner) it(name: string, result: TestOutcome): TestRunner {
+pub function (r: TestRunner) it(name: string, body: () => TestOutcome): TestRunner {
     var display: string = r.prefix + name;
     // Pre-filter: skip cases whose display name doesn't match
     // the runner's filter pattern (set via `test_new_filter`).
@@ -345,7 +356,9 @@ pub function (r: TestRunner) it(name: string, result: TestOutcome): TestRunner {
         return r.skip(name, "fail-fast: prior case failed");
     }
     var idx: i32 = r.base_idx + r.passed + r.failed + r.skipped + 1;
-    match (result) {
+    // Everything that could skip this case has been decided, so
+    // now the test actually runs.
+    match (body()) {
         Pass => {
             // Suppress the per-case line in quiet mode —
             // failures still print below (they always
@@ -379,7 +392,7 @@ pub function (r: TestRunner) it(name: string, result: TestOutcome): TestRunner {
 //   if (env("WASMTIME_PATH").is_none()) {
 //       r = r.skip("wasm e2e", "wasmtime not on $PATH");
 //   } else {
-//       r = r.it("wasm e2e", run_wasm_test());
+//       r = r.it("wasm e2e", run_wasm_test);
 //   }
 pub function (r: TestRunner) skip(name: string, reason: string): TestRunner {
     var idx: i32 = r.base_idx + r.passed + r.failed + r.skipped + 1;
@@ -391,20 +404,18 @@ pub function (r: TestRunner) skip(name: string, reason: string): TestRunner {
     return TestRunner { ...r, skipped: r.skipped + 1, skip_reasons: sr };
 }
 
-// (r) skip_if(cond, name, reason, result) — conditional run.
+// (r) skip_if(cond, name, reason, body) — conditional run.
 // If `cond` is true, the case skips with `reason`; otherwise
-// `result` is recorded as usual. Lets callers keep the test
-// list flat without an `if`/`else` per gated case.
+// `body` runs and is recorded as usual. Lets callers keep the
+// test list flat without an `if`/`else` per gated case.
 //
-//   r = r.skip_if(env("CI").is_none(), "ci-only", "not CI", run_test());
+//   r = r.skip_if(env("CI").is_none(), "ci-only", "not CI", run_test);
 //
-// `result` is evaluated eagerly (lang has no lazy params), so
-// any setup the test does runs whether or not it's skipped.
-// For setup that's expensive or has side effects, branch on
-// `cond` yourself and use `skip` / `it` directly.
-pub function (r: TestRunner) skip_if(cond: boolean, name: string, reason: string, result: TestOutcome): TestRunner {
+// A skipped case does not run: `body` is passed unevaluated, so
+// setup that is expensive or touches the world is skipped too.
+pub function (r: TestRunner) skip_if(cond: boolean, name: string, reason: string, body: () => TestOutcome): TestRunner {
     if (cond) { return r.skip(name, reason); }
-    return r.it(name, result);
+    return r.it(name, body);
 }
 
 // (r) subsuite(name) — start a nested grouping. Returns a
@@ -415,12 +426,12 @@ pub function (r: TestRunner) skip_if(cond: boolean, name: string, reason: string
 // with the combined prefix so the flat TAP stream stays
 // hierarchical:
 //
-//   r = r.it("standalone", run_standalone());
+//   r = r.it("standalone", run_standalone);
 //   var arm = r.subsuite("arm64");
-//   arm = arm.it("exit-code", run_arm64_exit());
-//   arm = arm.it("stdout",    run_arm64_stdout());
+//   arm = arm.it("exit-code", run_arm64_exit);
+//   arm = arm.it("stdout",    run_arm64_stdout);
 //   r = r.merge(arm);
-//   r = r.it("after subsuite", run_after());
+//   r = r.it("after subsuite", run_after);
 //
 // The child runner does NOT print a `# Suite:` line — that's
 // reserved for top-level `test_new`. The prefix string is
@@ -516,7 +527,7 @@ pub function (r: TestRunner) defer_cleanup(path: string): TestRunner {
 // so the call chains cleanly between `.it(...)` records:
 //
 //   r = r.log("about to spawn child");
-//   r = r.it("spawned", spawn_test());
+//   r = r.it("spawned", spawn_test);
 //
 // Newlines in `msg` get printed verbatim — multiple TAP
 // comment lines if `msg` contains `\n`. Lang's `print`
@@ -2008,7 +2019,7 @@ function __bench_sort_us(samples: i64[]): i64[] {
 // Always passes; use `bench_max_us` for a regression bound.
 pub function (r: TestRunner) bench(name: string, iterations: i32, fn: () => void): TestRunner {
     if (iterations <= 0) {
-        return r.it(name, fail("bench: iterations must be > 0"));
+        return r.it(name, () => fail("bench: iterations must be > 0"));
     }
     var samples: i64[] = [];
     var i: i32 = 0;
@@ -2035,7 +2046,7 @@ pub function (r: TestRunner) bench(name: string, iterations: i32, fn: () => void
           "median=" + median_us.to_string() + "us " +
           "mean=" + mean_us.to_string() + "us " +
           "max=" + max_us.to_string() + "us");
-    return r.it(name, Pass);
+    return r.it(name, () => Pass);
 }
 
 // `(r) bench_max_us(name, iterations, fn, max_us)` — same as
@@ -2045,7 +2056,7 @@ pub function (r: TestRunner) bench(name: string, iterations: i32, fn: () => void
 // leaves the median honest.
 pub function (r: TestRunner) bench_max_us(name: string, iterations: i32, fn: () => void, max_us: i64): TestRunner {
     if (iterations <= 0) {
-        return r.it(name, fail("bench: iterations must be > 0"));
+        return r.it(name, () => fail("bench: iterations must be > 0"));
     }
     var samples: i64[] = [];
     var i: i32 = 0;
@@ -2064,11 +2075,11 @@ pub function (r: TestRunner) bench_max_us(name: string, iterations: i32, fn: () 
           "max=" + max_us_observed.to_string() + "us " +
           "budget=" + max_us.to_string() + "us");
     if (median_us > max_us) {
-        return r.it(name, Fail("bench_max_us: median " +
+        return r.it(name, () => Fail("bench_max_us: median " +
                                median_us.to_string() +
                                "us > budget " + max_us.to_string() + "us"));
     }
-    return r.it(name, Pass);
+    return r.it(name, () => Pass);
 }
 
 // `(r) bench_max_ms(name, iterations, fn, max_ms)` —

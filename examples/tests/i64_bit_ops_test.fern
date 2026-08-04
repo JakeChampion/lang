@@ -49,12 +49,12 @@ function test_bit_length_extremes(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/i64 bit ops");
-    r = r.it("count_ones basic",     test_count_ones_basic());
-    r = r.it("count_ones all ones",  test_count_ones_all());
-    r = r.it("count_ones wide",      test_count_ones_wide());
-    r = r.it("bit_length small",     test_bit_length_small());
-    r = r.it("bit_length wide",      test_bit_length_wide());
-    r = r.it("bit_length negative",  test_bit_length_negative());
-    r = r.it("bit_length extremes",  test_bit_length_extremes());
+    r = r.it("count_ones basic",     test_count_ones_basic);
+    r = r.it("count_ones all ones",  test_count_ones_all);
+    r = r.it("count_ones wide",      test_count_ones_wide);
+    r = r.it("bit_length small",     test_bit_length_small);
+    r = r.it("bit_length wide",      test_bit_length_wide);
+    r = r.it("bit_length negative",  test_bit_length_negative);
+    r = r.it("bit_length extremes",  test_bit_length_extremes);
     return r.finish();
 }

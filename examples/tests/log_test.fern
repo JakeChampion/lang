@@ -88,16 +88,16 @@ function test_at_explicit_level(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("leveled logger");
-    r = r.it("text basic",                 test_text_basic());
-    r = r.it("text fields",                test_text_fields());
-    r = r.it("threshold filters below",    test_threshold_filters_below());
-    r = r.it("threshold passes at/above",  test_threshold_passes_at_or_above());
-    r = r.it("json basic",                 test_json_basic());
-    r = r.it("json fields",                test_json_fields());
-    r = r.it("json escaping",              test_json_escaping());
-    r = r.it("level names",                test_level_names());
-    r = r.it("at explicit level",          test_at_explicit_level());
-    r = r.it("json escaping whitespace",   test_json_escaping_whitespace());
-    r = r.it("json escaping control",      test_json_escaping_control());
+    r = r.it("text basic",                 test_text_basic);
+    r = r.it("text fields",                test_text_fields);
+    r = r.it("threshold filters below",    test_threshold_filters_below);
+    r = r.it("threshold passes at/above",  test_threshold_passes_at_or_above);
+    r = r.it("json basic",                 test_json_basic);
+    r = r.it("json fields",                test_json_fields);
+    r = r.it("json escaping",              test_json_escaping);
+    r = r.it("level names",                test_level_names);
+    r = r.it("at explicit level",          test_at_explicit_level);
+    r = r.it("json escaping whitespace",   test_json_escaping_whitespace);
+    r = r.it("json escaping control",      test_json_escaping_control);
     return r.finish();
 }

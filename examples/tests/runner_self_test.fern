@@ -147,25 +147,25 @@ function test_fail_returns_fail(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("runner self-test");
-    r = r.it("assert_true pass", test_assert_true_pass());
-    r = r.it("assert_true fail message", test_assert_true_fail());
-    r = r.it("assert_false pass", test_assert_false_pass());
-    r = r.it("assert_false fail message", test_assert_false_fail());
-    r = r.it("assert_eq pass", test_eq_i32_pass());
-    r = r.it("assert_eq fail embeds both values", test_eq_i32_fail_message());
-    r = r.it("assert_eq pass", test_eq_string_pass());
-    r = r.it("assert_eq fail", test_eq_string_fail());
-    r = r.it("assert_neq", test_neq_i32());
-    r = r.it("assert_contains pass", test_contains_pass());
-    r = r.it("assert_contains fail", test_contains_fail());
-    r = r.it("assert_starts_with pass", test_starts_with_pass());
-    r = r.it("assert_starts_with fail", test_starts_with_fail());
-    r = r.it("assert_ends_with pass", test_ends_with_pass());
-    r = r.it("assert_len_i32 pass", test_len_i32_pass());
-    r = r.it("assert_len_i32 fail", test_len_i32_fail());
-    r = r.it("assert_eq_array pass", test_eq_i32_array_pass());
-    r = r.it("assert_eq_array fail localises index", test_eq_i32_array_fail_index());
-    r = r.it("pass() returns Pass", test_pass_returns_pass());
-    r = r.it("fail(msg) returns Fail(msg)", test_fail_returns_fail());
+    r = r.it("assert_true pass", test_assert_true_pass);
+    r = r.it("assert_true fail message", test_assert_true_fail);
+    r = r.it("assert_false pass", test_assert_false_pass);
+    r = r.it("assert_false fail message", test_assert_false_fail);
+    r = r.it("assert_eq pass", test_eq_i32_pass);
+    r = r.it("assert_eq fail embeds both values", test_eq_i32_fail_message);
+    r = r.it("assert_eq pass", test_eq_string_pass);
+    r = r.it("assert_eq fail", test_eq_string_fail);
+    r = r.it("assert_neq", test_neq_i32);
+    r = r.it("assert_contains pass", test_contains_pass);
+    r = r.it("assert_contains fail", test_contains_fail);
+    r = r.it("assert_starts_with pass", test_starts_with_pass);
+    r = r.it("assert_starts_with fail", test_starts_with_fail);
+    r = r.it("assert_ends_with pass", test_ends_with_pass);
+    r = r.it("assert_len_i32 pass", test_len_i32_pass);
+    r = r.it("assert_len_i32 fail", test_len_i32_fail);
+    r = r.it("assert_eq_array pass", test_eq_i32_array_pass);
+    r = r.it("assert_eq_array fail localises index", test_eq_i32_array_fail_index);
+    r = r.it("pass() returns Pass", test_pass_returns_pass);
+    r = r.it("fail(msg) returns Fail(msg)", test_fail_returns_fail);
     return r.finish();
 }

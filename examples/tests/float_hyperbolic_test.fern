@@ -52,11 +52,11 @@ function float_near(a: f64, b: f64): boolean {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/float sinh/cosh/tanh");
-    r = r.it("at zero",          test_at_zero());
-    r = r.it("at one",           test_at_one());
-    r = r.it("symmetry",         test_symmetry());
-    r = r.it("identity",         test_identity());
-    r = r.it("tanh saturation",  test_tanh_saturation());
-    r = r.it("f32",              test_f32());
+    r = r.it("at zero",          test_at_zero);
+    r = r.it("at one",           test_at_one);
+    r = r.it("symmetry",         test_symmetry);
+    r = r.it("identity",         test_identity);
+    r = r.it("tanh saturation",  test_tanh_saturation);
+    r = r.it("f32",              test_f32);
     return r.finish();
 }

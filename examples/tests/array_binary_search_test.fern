@@ -70,15 +70,15 @@ function test_strings(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array binary_search");
-    r = r.it("found middle",    test_found_middle());
-    r = r.it("found first",     test_found_first());
-    r = r.it("found last",      test_found_last());
-    r = r.it("absent in range", test_absent_in_range());
-    r = r.it("absent below",    test_absent_below());
-    r = r.it("absent above",    test_absent_above());
-    r = r.it("free fn",         test_free_fn());
-    r = r.it("empty",           test_empty());
-    r = r.it("single",          test_single());
-    r = r.it("strings",         test_strings());
+    r = r.it("found middle",    test_found_middle);
+    r = r.it("found first",     test_found_first);
+    r = r.it("found last",      test_found_last);
+    r = r.it("absent in range", test_absent_in_range);
+    r = r.it("absent below",    test_absent_below);
+    r = r.it("absent above",    test_absent_above);
+    r = r.it("free fn",         test_free_fn);
+    r = r.it("empty",           test_empty);
+    r = r.it("single",          test_single);
+    r = r.it("strings",         test_strings);
     return r.finish();
 }

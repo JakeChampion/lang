@@ -52,13 +52,13 @@ function float_near(a: f64, b: f64): boolean {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/float exp2/exp10");
-    r = r.it("exp2 power of two",   test_exp2_pow2());
-    r = r.it("exp2 large",          test_exp2_large());
-    r = r.it("exp2 zero",           test_exp2_zero());
-    r = r.it("exp2 negative",       test_exp2_negative());
-    r = r.it("exp10 power of ten",  test_exp10_pow10());
-    r = r.it("exp10 hundred",       test_exp10_hundred());
-    r = r.it("log/exp round-trip",  test_roundtrip());
-    r = r.it("f32",                 test_f32());
+    r = r.it("exp2 power of two",   test_exp2_pow2);
+    r = r.it("exp2 large",          test_exp2_large);
+    r = r.it("exp2 zero",           test_exp2_zero);
+    r = r.it("exp2 negative",       test_exp2_negative);
+    r = r.it("exp10 power of ten",  test_exp10_pow10);
+    r = r.it("exp10 hundred",       test_exp10_hundred);
+    r = r.it("log/exp round-trip",  test_roundtrip);
+    r = r.it("f32",                 test_f32);
     return r.finish();
 }

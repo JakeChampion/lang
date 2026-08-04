@@ -59,10 +59,10 @@ function is_zero(x: f64): boolean {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array f64 stats");
-    r = r.it("variance",     test_variance());
-    r = r.it("stddev",       test_stddev());
-    r = r.it("single value", test_single());
-    r = r.it("constant",     test_constant());
-    r = r.it("empty -> none", test_empty_none());
+    r = r.it("variance",     test_variance);
+    r = r.it("stddev",       test_stddev);
+    r = r.it("single value", test_single);
+    r = r.it("constant",     test_constant);
+    r = r.it("empty -> none", test_empty_none);
     return r.finish();
 }

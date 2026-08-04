@@ -157,22 +157,22 @@ function test_invalid_utf8_replaced(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/unicode");
-    r = r.it("ascii",             test_ascii());
-    r = r.it("latin-1",           test_latin1());
-    r = r.it("greek",             test_greek());
-    r = r.it("cyrillic",          test_cyrillic());
-    r = r.it("mixed unchanged",   test_mixed_unchanged());
-    r = r.it("char level",        test_char_level());
-    r = r.it("sharp-s expands",   test_sharp_s_expands());
-    r = r.it("eq_ignore_case",    test_eq_ignore_case());
-    r = r.it("roundtrip",         test_roundtrip());
-    r = r.it("is_letter",         test_is_letter());
-    r = r.it("is_digit",          test_is_digit());
-    r = r.it("is_alnum/space",    test_is_alnum_whitespace());
-    r = r.it("is_upper/lower",    test_is_upper_lower());
-    r = r.it("ascii fast path",   test_ascii_fast_path_agrees());
-    r = r.it("alternating run",   test_alternating_run());
-    r = r.it("big delta/non-BMP", test_large_delta_and_non_bmp());
-    r = r.it("invalid utf-8",     test_invalid_utf8_replaced());
+    r = r.it("ascii",             test_ascii);
+    r = r.it("latin-1",           test_latin1);
+    r = r.it("greek",             test_greek);
+    r = r.it("cyrillic",          test_cyrillic);
+    r = r.it("mixed unchanged",   test_mixed_unchanged);
+    r = r.it("char level",        test_char_level);
+    r = r.it("sharp-s expands",   test_sharp_s_expands);
+    r = r.it("eq_ignore_case",    test_eq_ignore_case);
+    r = r.it("roundtrip",         test_roundtrip);
+    r = r.it("is_letter",         test_is_letter);
+    r = r.it("is_digit",          test_is_digit);
+    r = r.it("is_alnum/space",    test_is_alnum_whitespace);
+    r = r.it("is_upper/lower",    test_is_upper_lower);
+    r = r.it("ascii fast path",   test_ascii_fast_path_agrees);
+    r = r.it("alternating run",   test_alternating_run);
+    r = r.it("big delta/non-BMP", test_large_delta_and_non_bmp);
+    r = r.it("invalid utf-8",     test_invalid_utf8_replaced);
     return r.finish();
 }

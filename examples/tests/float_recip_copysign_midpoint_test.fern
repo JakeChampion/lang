@@ -53,13 +53,13 @@ function float_near(a: f64, b: f64): boolean {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/float recip/copysign/midpoint");
-    r = r.it("recip",                   test_recip());
-    r = r.it("recip negative",          test_recip_negative());
-    r = r.it("recip round-trip",        test_recip_roundtrip());
-    r = r.it("copysign negate",         test_copysign_negate());
-    r = r.it("copysign make positive",  test_copysign_make_positive());
-    r = r.it("midpoint",                test_midpoint());
-    r = r.it("midpoint straddle zero",  test_midpoint_straddle_zero());
-    r = r.it("f32",                     test_f32());
+    r = r.it("recip",                   test_recip);
+    r = r.it("recip negative",          test_recip_negative);
+    r = r.it("recip round-trip",        test_recip_roundtrip);
+    r = r.it("copysign negate",         test_copysign_negate);
+    r = r.it("copysign make positive",  test_copysign_make_positive);
+    r = r.it("midpoint",                test_midpoint);
+    r = r.it("midpoint straddle zero",  test_midpoint_straddle_zero);
+    r = r.it("f32",                     test_f32);
     return r.finish();
 }

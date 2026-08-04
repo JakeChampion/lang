@@ -164,25 +164,25 @@ function test_query_has_and_all(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/url");
-    r = r.it("encode space",            test_encode_space());
-    r = r.it("encode unreserved",       test_encode_unreserved());
-    r = r.it("encode reserved",         test_encode_reserved());
-    r = r.it("decode space",            test_decode_space());
-    r = r.it("decode lowercase hex",    test_decode_lowercase_hex());
-    r = r.it("decode truncated escape", test_decode_truncated());
-    r = r.it("round-trip",              test_roundtrip());
-    r = r.it("parse full URL",          test_parse_full());
-    r = r.it("parse minimal URL",       test_parse_minimal());
-    r = r.it("parse empty is None",     test_parse_empty());
-    r = r.it("form_decode plus",        test_form_decode_plus());
-    r = r.it("url_decode keeps plus",   test_url_decode_keeps_plus());
-    r = r.it("form_encode space",       test_form_encode_space());
-    r = r.it("form round-trip",         test_form_roundtrip());
-    r = r.it("query_encode",            test_query_encode());
-    r = r.it("query_encode edges",      test_query_encode_edges());
-    r = r.it("query_parse plus",        test_query_parse_plus());
-    r = r.it("query_get",               test_query_get());
-    r = r.it("query_get missing",       test_query_get_missing());
-    r = r.it("query_has + get_all",     test_query_has_and_all());
+    r = r.it("encode space",            test_encode_space);
+    r = r.it("encode unreserved",       test_encode_unreserved);
+    r = r.it("encode reserved",         test_encode_reserved);
+    r = r.it("decode space",            test_decode_space);
+    r = r.it("decode lowercase hex",    test_decode_lowercase_hex);
+    r = r.it("decode truncated escape", test_decode_truncated);
+    r = r.it("round-trip",              test_roundtrip);
+    r = r.it("parse full URL",          test_parse_full);
+    r = r.it("parse minimal URL",       test_parse_minimal);
+    r = r.it("parse empty is None",     test_parse_empty);
+    r = r.it("form_decode plus",        test_form_decode_plus);
+    r = r.it("url_decode keeps plus",   test_url_decode_keeps_plus);
+    r = r.it("form_encode space",       test_form_encode_space);
+    r = r.it("form round-trip",         test_form_roundtrip);
+    r = r.it("query_encode",            test_query_encode);
+    r = r.it("query_encode edges",      test_query_encode_edges);
+    r = r.it("query_parse plus",        test_query_parse_plus);
+    r = r.it("query_get",               test_query_get);
+    r = r.it("query_get missing",       test_query_get_missing);
+    r = r.it("query_has + get_all",     test_query_has_and_all);
     return r.finish();
 }

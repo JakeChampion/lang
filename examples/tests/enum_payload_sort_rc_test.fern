@@ -83,7 +83,7 @@ function test_empty_payload_sort(): test.TestOutcome {
 
 function main(): i32 {
   var r: test.TestRunner = test.test_new("enum payload sort RC (#5311)");
-  r = r.it("match-extracted array into consuming sort", test_match_payload_sort());
-  r = r.it("empty extracted array into consuming sort", test_empty_payload_sort());
+  r = r.it("match-extracted array into consuming sort", test_match_payload_sort);
+  r = r.it("empty extracted array into consuming sort", test_empty_payload_sort);
   return r.finish();
 }

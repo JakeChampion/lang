@@ -77,8 +77,8 @@ function test_field_reclaim(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("rc struct drop");
-    r = r.it("scalar-array field drop", test_scalar_array_field());
-    r = r.it("struct-array field drop", test_struct_array_field());
-    r = r.it("consume-rebind field reclaim", test_field_reclaim());
+    r = r.it("scalar-array field drop", test_scalar_array_field);
+    r = r.it("struct-array field drop", test_struct_array_field);
+    r = r.it("consume-rebind field reclaim", test_field_reclaim);
     return r.finish();
 }

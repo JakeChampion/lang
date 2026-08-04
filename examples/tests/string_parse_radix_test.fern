@@ -64,15 +64,15 @@ function test_empty_and_lone_sign(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/string parse_int_radix");
-    r = r.it("hex",            test_hex());
-    r = r.it("binary",         test_binary());
-    r = r.it("octal",          test_octal());
-    r = r.it("base36",         test_base36());
-    r = r.it("negative",       test_negative());
-    r = r.it("plus sign",      test_plus_sign());
-    r = r.it("uppercase",      test_uppercase());
-    r = r.it("digit >= base",  test_digit_ge_base());
-    r = r.it("bad base",       test_bad_base());
-    r = r.it("empty/lone sign", test_empty_and_lone_sign());
+    r = r.it("hex",            test_hex);
+    r = r.it("binary",         test_binary);
+    r = r.it("octal",          test_octal);
+    r = r.it("base36",         test_base36);
+    r = r.it("negative",       test_negative);
+    r = r.it("plus sign",      test_plus_sign);
+    r = r.it("uppercase",      test_uppercase);
+    r = r.it("digit >= base",  test_digit_ge_base);
+    r = r.it("bad base",       test_bad_base);
+    r = r.it("empty/lone sign", test_empty_and_lone_sign);
     return r.finish();
 }

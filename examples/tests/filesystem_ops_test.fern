@@ -102,10 +102,10 @@ function test_remove_dir_all_silently_ok_on_missing_target(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("filesystem ops");
-    r = r.it("temp_dir returns absolute path",          test_temp_dir_returns_abs_path());
-    r = r.it("read_dir lists what we wrote",            test_read_dir_lists_what_we_wrote());
-    r = r.it("remove_file removes a single file",       test_remove_file_removes_a_single_file());
-    r = r.it("remove_file on missing target errors",    test_remove_file_on_missing_target_is_an_error());
-    r = r.it("remove_dir_all on missing target is ok",  test_remove_dir_all_silently_ok_on_missing_target());
+    r = r.it("temp_dir returns absolute path",          test_temp_dir_returns_abs_path);
+    r = r.it("read_dir lists what we wrote",            test_read_dir_lists_what_we_wrote);
+    r = r.it("remove_file removes a single file",       test_remove_file_removes_a_single_file);
+    r = r.it("remove_file on missing target errors",    test_remove_file_on_missing_target_is_an_error);
+    r = r.it("remove_dir_all on missing target is ok",  test_remove_dir_all_silently_ok_on_missing_target);
     return r.finish();
 }

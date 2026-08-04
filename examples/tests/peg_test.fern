@@ -200,23 +200,23 @@ function test_pattern_ref_without_grammar(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("peg");
-    r = r.it("literal match", test_lit_match());
-    r = r.it("furthest failure position", test_furthest_failure_pos());
-    r = r.it("ordered choice first wins", test_ordered_choice_first_wins());
-    r = r.it("star greedy", test_star_greedy());
-    r = r.it("nullable star terminates", test_star_nullable_terminates());
-    r = r.it("plus requires one", test_plus_requires_one());
-    r = r.it("negative lookahead", test_not_lookahead());
-    r = r.it("positive lookahead zero-width", test_and_lookahead_zero_width());
-    r = r.it("capture last wins", test_capture_last_wins());
-    r = r.it("backtracked capture discarded", test_capture_backtrack_discarded());
-    r = r.it("recursive balanced parens", test_recursive_grammar_balanced());
-    r = r.it("grammar validation", test_grammar_validation());
-    r = r.it("left recursion fails fast", test_left_recursion_fails_fast());
-    r = r.it("eof rejects trailing", test_eof_rejects_trailing());
-    r = r.it("http request line", test_http_request_line());
-    r = r.it("config line", test_config_line());
-    r = r.it("class helpers", test_class_helpers());
-    r = r.it("ref without grammar", test_pattern_ref_without_grammar());
+    r = r.it("literal match", test_lit_match);
+    r = r.it("furthest failure position", test_furthest_failure_pos);
+    r = r.it("ordered choice first wins", test_ordered_choice_first_wins);
+    r = r.it("star greedy", test_star_greedy);
+    r = r.it("nullable star terminates", test_star_nullable_terminates);
+    r = r.it("plus requires one", test_plus_requires_one);
+    r = r.it("negative lookahead", test_not_lookahead);
+    r = r.it("positive lookahead zero-width", test_and_lookahead_zero_width);
+    r = r.it("capture last wins", test_capture_last_wins);
+    r = r.it("backtracked capture discarded", test_capture_backtrack_discarded);
+    r = r.it("recursive balanced parens", test_recursive_grammar_balanced);
+    r = r.it("grammar validation", test_grammar_validation);
+    r = r.it("left recursion fails fast", test_left_recursion_fails_fast);
+    r = r.it("eof rejects trailing", test_eof_rejects_trailing);
+    r = r.it("http request line", test_http_request_line);
+    r = r.it("config line", test_config_line);
+    r = r.it("class helpers", test_class_helpers);
+    r = r.it("ref without grammar", test_pattern_ref_without_grammar);
     return r.finish();
 }

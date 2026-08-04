@@ -102,11 +102,11 @@ function main(): i32 {
         }
     }
 
-    r = r.it("interp returns exit code",     test_interp_returns_exit_code(lang_bin));
-    r = r.it("interp stdout contains",       test_interp_stdout_contains(lang_bin));
-    r = r.it("check passes clean program",   test_check_passes_clean_program(lang_bin));
-    r = r.it("check rejects type error",     test_check_rejects_type_error(lang_bin));
-    r = r.it("interp reads a file",          test_interp_reads_a_file(lang_bin, dir));
+    r = r.it("interp returns exit code",     () => test_interp_returns_exit_code(lang_bin));
+    r = r.it("interp stdout contains",       () => test_interp_stdout_contains(lang_bin));
+    r = r.it("check passes clean program",   () => test_check_passes_clean_program(lang_bin));
+    r = r.it("check rejects type error",     () => test_check_rejects_type_error(lang_bin));
+    r = r.it("interp reads a file",          () => test_interp_reads_a_file(lang_bin, dir));
 
     return r.finish();
 }

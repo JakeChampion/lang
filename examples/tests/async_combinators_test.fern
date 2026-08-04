@@ -58,10 +58,10 @@ function test_gather_empty(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("async combinators");
-    r = r.it("gather all", test_gather_all());
-    r = r.it("gather strings", test_gather_strings());
-    r = r.it("race first ready", test_race_first_ready());
-    r = r.it("with_deadline all ready", test_deadline_all_ready());
-    r = r.it("gather empty", test_gather_empty());
+    r = r.it("gather all", test_gather_all);
+    r = r.it("gather strings", test_gather_strings);
+    r = r.it("race first ready", test_race_first_ready);
+    r = r.it("with_deadline all ready", test_deadline_all_ready);
+    r = r.it("gather empty", test_gather_empty);
     return r.finish();
 }

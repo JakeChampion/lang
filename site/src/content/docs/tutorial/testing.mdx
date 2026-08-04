@@ -37,8 +37,8 @@ function test_strings(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("hello");
-    r = r.it("addition", test_addition());
-    r = r.it("strings", test_strings());
+    r = r.it("addition", test_addition);
+    r = r.it("strings", test_strings);
     return r.finish();
 }`}
 />
@@ -105,7 +105,7 @@ function main(): i32 {
     var r: TestRunner = test_new("backends");
     r = r.skip_if(env("WASMTIME_PATH").is_none(),
                   "wasm e2e", "wasmtime not on $PATH",
-                  run_wasm_test());
+                  run_wasm_test);
     return r.finish();
 }
 ```
@@ -119,8 +119,8 @@ the log.
 
 ```fern
 var arm: TestRunner = r.subsuite("arm64");
-arm = arm.it("exit code", run_arm64_exit());
-arm = arm.it("stdout",    run_arm64_stdout());
+arm = arm.it("exit code", run_arm64_exit);
+arm = arm.it("stdout",    run_arm64_stdout);
 r = r.merge(arm);   // fold counts back into parent
 ```
 
@@ -209,8 +209,8 @@ The example file lifts the pattern off `args()`:
 function main(): i32 {
     var f: string = parse_filter_from_args(args());
     var r: TestRunner = test_new_filtered("my suite", f);
-    r = r.it("addition basic",    test_a());
-    r = r.it("subtraction basic", test_b());
+    r = r.it("addition basic",    test_a);
+    r = r.it("subtraction basic", test_b);
     return r.finish();
 }
 ```
@@ -225,8 +225,8 @@ against a saved file on disk:
 
 ```fern
 r = r.it("renderer matches golden",
-         assert_matches_golden("testdata/render.golden",
-                               render(input)));
+         () => assert_matches_golden("testdata/render.golden",
+                                     render(input)));
 ```
 
 `assert_matches_golden` bootstraps the file when it doesn't exist

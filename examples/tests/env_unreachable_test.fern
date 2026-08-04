@@ -71,10 +71,10 @@ function test_unreachable_embeds_label(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("env + unreachable");
-    r = r.it("PATH is set",                          test_path_is_set());
-    r = r.it("fake var is unset",                    test_dummy_var_is_unset());
-    r = r.it("env_set failure message names var",    test_env_set_failure_message());
-    r = r.it("env_eq distinguishes missing",         test_env_eq_distinguishes_missing_vs_wrong_value());
-    r = r.it("unreachable() embeds label + prefix",  test_unreachable_embeds_label());
+    r = r.it("PATH is set",                          test_path_is_set);
+    r = r.it("fake var is unset",                    test_dummy_var_is_unset);
+    r = r.it("env_set failure message names var",    test_env_set_failure_message);
+    r = r.it("env_eq distinguishes missing",         test_env_eq_distinguishes_missing_vs_wrong_value);
+    r = r.it("unreachable() embeds label + prefix",  test_unreachable_embeds_label);
     return r.finish();
 }

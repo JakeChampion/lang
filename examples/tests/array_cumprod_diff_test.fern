@@ -49,10 +49,10 @@ function test_edge_cases(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array f64 cumprod/diff");
-    r = r.it("cumprod",           test_cumprod());
-    r = r.it("diff",              test_diff());
-    r = r.it("diff negatives",    test_diff_negatives());
-    r = r.it("diff inverts cumsum", test_diff_inverts_cumsum());
-    r = r.it("edge cases",        test_edge_cases());
+    r = r.it("cumprod",           test_cumprod);
+    r = r.it("diff",              test_diff);
+    r = r.it("diff negatives",    test_diff_negatives);
+    r = r.it("diff inverts cumsum", test_diff_inverts_cumsum);
+    r = r.it("edge cases",        test_edge_cases);
     return r.finish();
 }

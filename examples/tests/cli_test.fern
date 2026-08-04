@@ -134,23 +134,23 @@ function test_color_bold(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/cli");
-    r = r.it("option --long V",        test_option_long());
-    r = r.it("option --long=V",        test_option_equals());
-    r = r.it("option -short V",        test_option_short());
-    r = r.it("boolean flag",           test_bool_flag());
-    r = r.it("positional operands",    test_positionals());
-    r = r.it("-- ends options",        test_end_of_options());
-    r = r.it("value_or default",       test_value_or_default());
-    r = r.it("unknown option errors",  test_unknown_option_errors());
-    r = r.it("missing value errors",   test_missing_value_errors());
-    r = r.it("value on bool errors",   test_value_on_bool_errors());
-    r = r.it("usage lists flags",      test_usage_lists_flags());
-    r = r.it("short glued value -n5",  test_short_glued_value());
-    r = r.it("short bundled bools -vs", test_short_bundled_bools());
-    r = r.it("short bundle ending valued -vn5", test_short_bundle_ending_valued());
-    r = r.it("short bundle next-token value -vn 5", test_short_bundle_next_token_value());
-    r = r.it("lone dash is positional", test_short_lone_dash_is_positional());
-    r = r.it("colour red wraps or passes", test_color_red());
-    r = r.it("colour bold wraps or passes", test_color_bold());
+    r = r.it("option --long V",        test_option_long);
+    r = r.it("option --long=V",        test_option_equals);
+    r = r.it("option -short V",        test_option_short);
+    r = r.it("boolean flag",           test_bool_flag);
+    r = r.it("positional operands",    test_positionals);
+    r = r.it("-- ends options",        test_end_of_options);
+    r = r.it("value_or default",       test_value_or_default);
+    r = r.it("unknown option errors",  test_unknown_option_errors);
+    r = r.it("missing value errors",   test_missing_value_errors);
+    r = r.it("value on bool errors",   test_value_on_bool_errors);
+    r = r.it("usage lists flags",      test_usage_lists_flags);
+    r = r.it("short glued value -n5",  test_short_glued_value);
+    r = r.it("short bundled bools -vs", test_short_bundled_bools);
+    r = r.it("short bundle ending valued -vn5", test_short_bundle_ending_valued);
+    r = r.it("short bundle next-token value -vn 5", test_short_bundle_next_token_value);
+    r = r.it("lone dash is positional", test_short_lone_dash_is_positional);
+    r = r.it("colour red wraps or passes", test_color_red);
+    r = r.it("colour bold wraps or passes", test_color_bold);
     return r.finish();
 }

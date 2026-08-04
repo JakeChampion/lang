@@ -38,9 +38,9 @@ function test_boundaries_and_range(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/http status");
-    r = r.it("status text",        test_status_text());
-    r = r.it("class predicates",   test_classes());
-    r = r.it("is_error",           test_is_error());
-    r = r.it("boundaries + range", test_boundaries_and_range());
+    r = r.it("status text",        test_status_text);
+    r = r.it("class predicates",   test_classes);
+    r = r.it("is_error",           test_is_error);
+    r = r.it("boundaries + range", test_boundaries_and_range);
     return r.finish();
 }

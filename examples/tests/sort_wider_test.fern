@@ -168,15 +168,15 @@ function test_i64_single(): test.TestOutcome {
 
 function main(): i32 {
   var r: test.TestRunner = test.test_new("wider sorts");
-  r = r.it("sort_i64_asc", test_i64_asc());
-  r = r.it("sort_i64_desc", test_i64_desc());
-  r = r.it("sort_u32_asc", test_u32_asc());
-  r = r.it("sort_u64_asc near u64-max", test_u64_asc_with_large_values());
-  r = r.it("sort_i64_asc 100 elements", test_i64_asc_large());
-  r = r.it("sort_i64_desc 100 elements", test_i64_desc_large());
-  r = r.it("sort_u32_asc 96 elements", test_u32_asc_large());
-  r = r.it("sort_u64_asc 80 elements", test_u64_asc_large());
-  r = r.it("sort_i64_asc empty input", test_i64_empty());
-  r = r.it("sort_i64_asc singleton", test_i64_single());
+  r = r.it("sort_i64_asc", test_i64_asc);
+  r = r.it("sort_i64_desc", test_i64_desc);
+  r = r.it("sort_u32_asc", test_u32_asc);
+  r = r.it("sort_u64_asc near u64-max", test_u64_asc_with_large_values);
+  r = r.it("sort_i64_asc 100 elements", test_i64_asc_large);
+  r = r.it("sort_i64_desc 100 elements", test_i64_desc_large);
+  r = r.it("sort_u32_asc 96 elements", test_u32_asc_large);
+  r = r.it("sort_u64_asc 80 elements", test_u64_asc_large);
+  r = r.it("sort_i64_asc empty input", test_i64_empty);
+  r = r.it("sort_i64_asc singleton", test_i64_single);
   return r.finish();
 }

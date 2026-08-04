@@ -126,18 +126,18 @@ function test_at_f32_outside_tolerance(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("assert_at wider widths");
-    r = r.it("at_u32 pass",                 test_at_u32_pass());
-    r = r.it("at_u32 wrong value diag",     test_at_u32_wrong_value());
-    r = r.it("at_u32 out of bounds",        test_at_u32_out_of_bounds());
-    r = r.it("at_u64 pass",                 test_at_u64_pass());
-    r = r.it("at_u64 wrong value",          test_at_u64_wrong_value());
-    r = r.it("at_f64 exact pass",           test_at_f64_pass_exact());
-    r = r.it("at_f64 within tolerance",     test_at_f64_pass_within_tolerance());
-    r = r.it("at_f64 outside tol + eps",    test_at_f64_outside_tolerance());
-    r = r.it("at_f64 NaN actual",           test_at_f64_nan_actual_fails());
-    r = r.it("at_f64 NaN expected",         test_at_f64_nan_expected_fails());
-    r = r.it("at_f64 out of bounds",        test_at_f64_out_of_bounds());
-    r = r.it("at_f32 pass",                 test_at_f32_pass());
-    r = r.it("at_f32 outside tolerance",    test_at_f32_outside_tolerance());
+    r = r.it("at_u32 pass",                 test_at_u32_pass);
+    r = r.it("at_u32 wrong value diag",     test_at_u32_wrong_value);
+    r = r.it("at_u32 out of bounds",        test_at_u32_out_of_bounds);
+    r = r.it("at_u64 pass",                 test_at_u64_pass);
+    r = r.it("at_u64 wrong value",          test_at_u64_wrong_value);
+    r = r.it("at_f64 exact pass",           test_at_f64_pass_exact);
+    r = r.it("at_f64 within tolerance",     test_at_f64_pass_within_tolerance);
+    r = r.it("at_f64 outside tol + eps",    test_at_f64_outside_tolerance);
+    r = r.it("at_f64 NaN actual",           test_at_f64_nan_actual_fails);
+    r = r.it("at_f64 NaN expected",         test_at_f64_nan_expected_fails);
+    r = r.it("at_f64 out of bounds",        test_at_f64_out_of_bounds);
+    r = r.it("at_f32 pass",                 test_at_f32_pass);
+    r = r.it("at_f32 outside tolerance",    test_at_f32_outside_tolerance);
     return r.finish();
 }

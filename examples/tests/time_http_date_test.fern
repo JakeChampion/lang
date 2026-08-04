@@ -89,16 +89,16 @@ function test_weekday_name(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/time http-date");
-    r = r.it("format canonical",       test_format_canonical());
-    r = r.it("format epoch",           test_format_epoch());
-    r = r.it("format drops subsecond", test_format_drops_subsecond());
-    r = r.it("parse canonical",        test_parse_canonical());
-    r = r.it("round trip",             test_round_trip());
-    r = r.it("parse bad len",          test_parse_bad_len());
-    r = r.it("parse bad month",        test_parse_bad_month());
-    r = r.it("parse bad zone",         test_parse_bad_zone());
-    r = r.it("parse bad sep",          test_parse_bad_sep());
-    r = r.it("month_name",             test_month_name());
-    r = r.it("weekday_name",           test_weekday_name());
+    r = r.it("format canonical",       test_format_canonical);
+    r = r.it("format epoch",           test_format_epoch);
+    r = r.it("format drops subsecond", test_format_drops_subsecond);
+    r = r.it("parse canonical",        test_parse_canonical);
+    r = r.it("round trip",             test_round_trip);
+    r = r.it("parse bad len",          test_parse_bad_len);
+    r = r.it("parse bad month",        test_parse_bad_month);
+    r = r.it("parse bad zone",         test_parse_bad_zone);
+    r = r.it("parse bad sep",          test_parse_bad_sep);
+    r = r.it("month_name",             test_month_name);
+    r = r.it("weekday_name",           test_weekday_name);
     return r.finish();
 }

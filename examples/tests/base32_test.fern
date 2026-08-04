@@ -63,11 +63,11 @@ function test_decode_strict_rejects(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/base32");
-    r = r.it("encode vectors", test_encode_vectors());
-    r = r.it("decode vectors", test_decode_vectors());
-    r = r.it("roundtrip",      test_roundtrip());
-    r = r.it("empty",          test_empty_decode());
-    r = r.it("decode_strict valid",   test_decode_strict_valid());
-    r = r.it("decode_strict rejects", test_decode_strict_rejects());
+    r = r.it("encode vectors", test_encode_vectors);
+    r = r.it("decode vectors", test_decode_vectors);
+    r = r.it("roundtrip",      test_roundtrip);
+    r = r.it("empty",          test_empty_decode);
+    r = r.it("decode_strict valid",   test_decode_strict_valid);
+    r = r.it("decode_strict rejects", test_decode_strict_rejects);
     return r.finish();
 }

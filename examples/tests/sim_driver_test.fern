@@ -145,13 +145,13 @@ function test_time_only_advances_in_poll(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/sim driver");
-    r = r.it("with_deadline some and none", test_deadline_some_and_none());
-    r = r.it("with_deadline all in time", test_deadline_all_in_time());
-    r = r.it("race tie seeded", test_race_tie_seeded());
-    r = r.it("race tie seed sweep", test_race_tie_seed_sweep());
-    r = r.it("gather out of order", test_gather_out_of_order());
-    r = r.it("chain resolves after resuspensions", test_chain_resolves_after_resuspensions());
-    r = r.it("chain suspension count", test_chain_suspension_count());
-    r = r.it("time only advances in poll_ready", test_time_only_advances_in_poll());
+    r = r.it("with_deadline some and none", test_deadline_some_and_none);
+    r = r.it("with_deadline all in time", test_deadline_all_in_time);
+    r = r.it("race tie seeded", test_race_tie_seeded);
+    r = r.it("race tie seed sweep", test_race_tie_seed_sweep);
+    r = r.it("gather out of order", test_gather_out_of_order);
+    r = r.it("chain resolves after resuspensions", test_chain_resolves_after_resuspensions);
+    r = r.it("chain suspension count", test_chain_suspension_count);
+    r = r.it("time only advances in poll_ready", test_time_only_advances_in_poll);
     return r.finish();
 }

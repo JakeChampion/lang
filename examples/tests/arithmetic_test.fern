@@ -55,15 +55,15 @@ function test_ge(): test.TestOutcome { return test.assert_ge(9, 9); }
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("arithmetic");
-    r = r.it("addition", test_addition());
-    r = r.it("subtraction", test_subtraction());
-    r = r.it("multiplication", test_multiplication());
-    r = r.it("integer division", test_integer_division());
-    r = r.it("modulo", test_modulo());
-    r = r.it("modulo table", test_modulo_table());
-    r = r.it("less than", test_lt());
-    r = r.it("less or equal", test_le());
-    r = r.it("greater than", test_gt());
-    r = r.it("greater or equal", test_ge());
+    r = r.it("addition", test_addition);
+    r = r.it("subtraction", test_subtraction);
+    r = r.it("multiplication", test_multiplication);
+    r = r.it("integer division", test_integer_division);
+    r = r.it("modulo", test_modulo);
+    r = r.it("modulo table", test_modulo_table);
+    r = r.it("less than", test_lt);
+    r = r.it("less or equal", test_le);
+    r = r.it("greater than", test_gt);
+    r = r.it("greater or equal", test_ge);
     return r.finish();
 }

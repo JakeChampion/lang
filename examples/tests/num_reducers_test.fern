@@ -42,13 +42,13 @@ function test_sum_iter_range(): test.TestOutcome {
 }
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/num reducers");
-    r = r.it("sum_with",      test_sum_with());
-    r = r.it("product_with",  test_product_with());
-    r = r.it("sum",           test_sum());
-    r = r.it("product",       test_product());
-    r = r.it("sum empty",     test_sum_empty());
-    r = r.it("sum_iter",      test_sum_iter());
-    r = r.it("product_iter",  test_product_iter());
-    r = r.it("sum_iter range", test_sum_iter_range());
+    r = r.it("sum_with",      test_sum_with);
+    r = r.it("product_with",  test_product_with);
+    r = r.it("sum",           test_sum);
+    r = r.it("product",       test_product);
+    r = r.it("sum empty",     test_sum_empty);
+    r = r.it("sum_iter",      test_sum_iter);
+    r = r.it("product_iter",  test_product_iter);
+    r = r.it("sum_iter range", test_sum_iter_range);
     return r.finish();
 }

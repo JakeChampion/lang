@@ -134,23 +134,23 @@ function test_f32_sqrt(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("float math");
-    r = r.it("abs(negative)",             test_abs_negative());
-    r = r.it("floor",                     test_floor());
-    r = r.it("ceil",                      test_ceil());
-    r = r.it("round",                     test_round());
-    r = r.it("trunc positive",            test_trunc_positive());
-    r = r.it("trunc negative",            test_trunc_negative());
-    r = r.it("sqrt(2)",                   test_sqrt());
-    r = r.it("pow(2, 10)",                test_pow());
-    r = r.it("exp(log(x)) round-trips",   test_log_exp_round_trip());
-    r = r.it("sin(pi) ~= 0",              test_sin_pi());
-    r = r.it("cos(0) == 1",               test_cos_zero());
-    r = r.it("sin^2 + cos^2 = 1",         test_sin_cos_pythagoras());
-    r = r.it("is_nan",                    test_is_nan());
-    r = r.it("is_finite",                 test_is_finite());
-    r = r.it("is_inf (both signs)",       test_is_inf());
-    r = r.it("min / max",                 test_min_max());
-    r = r.it("clamp",                     test_clamp());
-    r = r.it("f32 sqrt round-trip",       test_f32_sqrt());
+    r = r.it("abs(negative)",             test_abs_negative);
+    r = r.it("floor",                     test_floor);
+    r = r.it("ceil",                      test_ceil);
+    r = r.it("round",                     test_round);
+    r = r.it("trunc positive",            test_trunc_positive);
+    r = r.it("trunc negative",            test_trunc_negative);
+    r = r.it("sqrt(2)",                   test_sqrt);
+    r = r.it("pow(2, 10)",                test_pow);
+    r = r.it("exp(log(x)) round-trips",   test_log_exp_round_trip);
+    r = r.it("sin(pi) ~= 0",              test_sin_pi);
+    r = r.it("cos(0) == 1",               test_cos_zero);
+    r = r.it("sin^2 + cos^2 = 1",         test_sin_cos_pythagoras);
+    r = r.it("is_nan",                    test_is_nan);
+    r = r.it("is_finite",                 test_is_finite);
+    r = r.it("is_inf (both signs)",       test_is_inf);
+    r = r.it("min / max",                 test_min_max);
+    r = r.it("clamp",                     test_clamp);
+    r = r.it("f32 sqrt round-trip",       test_f32_sqrt);
     return r.finish();
 }

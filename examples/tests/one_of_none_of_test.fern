@@ -115,18 +115,18 @@ function test_none_of_string_match_reports(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("one_of / none_of");
-    r = r.it("one_of_i32 middle element",        test_one_of_i32_pass());
-    r = r.it("one_of_i32 single-element set",    test_one_of_i32_single_element());
-    r = r.it("one_of_i32 first element",         test_one_of_i32_first_element());
-    r = r.it("one_of_i32 last element",          test_one_of_i32_last_element());
-    r = r.it("one_of_i32 missing renders set",   test_one_of_i32_missing_reports_set());
-    r = r.it("one_of_i32 empty set always fails", test_one_of_i32_empty_set_always_fails());
-    r = r.it("one_of_string pass",               test_one_of_string_pass());
-    r = r.it("one_of_string missing quotes both", test_one_of_string_missing_reports());
-    r = r.it("none_of_i32 pass",                 test_none_of_i32_pass());
-    r = r.it("none_of_i32 match reports value",  test_none_of_i32_match_reports());
-    r = r.it("none_of_i32 empty list vacuous",   test_none_of_i32_empty_forbidden_always_passes());
-    r = r.it("none_of_string pass",              test_none_of_string_pass());
-    r = r.it("none_of_string match quoted",      test_none_of_string_match_reports());
+    r = r.it("one_of_i32 middle element",        test_one_of_i32_pass);
+    r = r.it("one_of_i32 single-element set",    test_one_of_i32_single_element);
+    r = r.it("one_of_i32 first element",         test_one_of_i32_first_element);
+    r = r.it("one_of_i32 last element",          test_one_of_i32_last_element);
+    r = r.it("one_of_i32 missing renders set",   test_one_of_i32_missing_reports_set);
+    r = r.it("one_of_i32 empty set always fails", test_one_of_i32_empty_set_always_fails);
+    r = r.it("one_of_string pass",               test_one_of_string_pass);
+    r = r.it("one_of_string missing quotes both", test_one_of_string_missing_reports);
+    r = r.it("none_of_i32 pass",                 test_none_of_i32_pass);
+    r = r.it("none_of_i32 match reports value",  test_none_of_i32_match_reports);
+    r = r.it("none_of_i32 empty list vacuous",   test_none_of_i32_empty_forbidden_always_passes);
+    r = r.it("none_of_string pass",              test_none_of_string_pass);
+    r = r.it("none_of_string match quoted",      test_none_of_string_match_reports);
     return r.finish();
 }

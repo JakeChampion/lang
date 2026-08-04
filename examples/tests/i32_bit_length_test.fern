@@ -44,12 +44,12 @@ function test_min(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/i32 bit_length");
-    r = r.it("zero",             test_zero());
-    r = r.it("one",              test_one());
-    r = r.it("five",             test_five());
-    r = r.it("powers of two",    test_powers());
-    r = r.it("negative",         test_negative());
-    r = r.it("i32 max",          test_max());
-    r = r.it("i32 min",          test_min());
+    r = r.it("zero",             test_zero);
+    r = r.it("one",              test_one);
+    r = r.it("five",             test_five);
+    r = r.it("powers of two",    test_powers);
+    r = r.it("negative",         test_negative);
+    r = r.it("i32 max",          test_max);
+    r = r.it("i32 min",          test_min);
     return r.finish();
 }

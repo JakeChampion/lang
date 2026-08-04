@@ -53,13 +53,13 @@ function test_empty(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array rotate");
-    r = r.it("rotate_left",   test_left());
-    r = r.it("rotate_right",  test_right());
-    r = r.it("free fn",       test_free_fn());
-    r = r.it("wrap n>=len",   test_wrap());
-    r = r.it("zero shift",    test_zero_shift());
-    r = r.it("full shift",    test_full_shift());
-    r = r.it("negative",      test_negative());
-    r = r.it("empty",         test_empty());
+    r = r.it("rotate_left",   test_left);
+    r = r.it("rotate_right",  test_right);
+    r = r.it("free fn",       test_free_fn);
+    r = r.it("wrap n>=len",   test_wrap);
+    r = r.it("zero shift",    test_zero_shift);
+    r = r.it("full shift",    test_full_shift);
+    r = r.it("negative",      test_negative);
+    r = r.it("empty",         test_empty);
     return r.finish();
 }

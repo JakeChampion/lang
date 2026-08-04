@@ -102,23 +102,23 @@ function test_checked(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/i64");
-    r = r.it("abs",                test_abs());
-    r = r.it("min",                test_min());
-    r = r.it("max",                test_max());
-    r = r.it("clamp above hi",     test_clamp_hi());
-    r = r.it("clamp in range",     test_clamp_in());
-    r = r.it("pow",                test_pow());
-    r = r.it("pow zero",           test_pow_zero());
-    r = r.it("pow wide",           test_pow_wide());
-    r = r.it("gcd",                test_gcd());
-    r = r.it("lcm",                test_lcm());
-    r = r.it("to_string wide",     test_to_string_wide());
-    r = r.it("to_string negative", test_to_string_neg());
-    r = r.it("is_even",            test_is_even());
-    r = r.it("is_odd",             test_is_odd());
-    r = r.it("signum",             test_signum());
-    r = r.it("sign predicates",    test_sign_predicates());
-    r = r.it("saturating",         test_saturating());
-    r = r.it("checked",            test_checked());
+    r = r.it("abs",                test_abs);
+    r = r.it("min",                test_min);
+    r = r.it("max",                test_max);
+    r = r.it("clamp above hi",     test_clamp_hi);
+    r = r.it("clamp in range",     test_clamp_in);
+    r = r.it("pow",                test_pow);
+    r = r.it("pow zero",           test_pow_zero);
+    r = r.it("pow wide",           test_pow_wide);
+    r = r.it("gcd",                test_gcd);
+    r = r.it("lcm",                test_lcm);
+    r = r.it("to_string wide",     test_to_string_wide);
+    r = r.it("to_string negative", test_to_string_neg);
+    r = r.it("is_even",            test_is_even);
+    r = r.it("is_odd",             test_is_odd);
+    r = r.it("signum",             test_signum);
+    r = r.it("sign predicates",    test_sign_predicates);
+    r = r.it("saturating",         test_saturating);
+    r = r.it("checked",            test_checked);
     return r.finish();
 }

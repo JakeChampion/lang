@@ -35,9 +35,9 @@ function test_unit_ladder(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/time relative_to");
-    r = r.it("just now",           test_just_now());
-    r = r.it("seconds + direction", test_seconds_and_direction());
-    r = r.it("singular vs plural", test_singular_vs_plural());
-    r = r.it("unit ladder",        test_unit_ladder());
+    r = r.it("just now",           test_just_now);
+    r = r.it("seconds + direction", test_seconds_and_direction);
+    r = r.it("singular vs plural", test_singular_vs_plural);
+    r = r.it("unit ladder",        test_unit_ladder);
     return r.finish();
 }

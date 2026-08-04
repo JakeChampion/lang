@@ -41,9 +41,9 @@ function test_u64_no_overflow(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/uint midpoint");
-    r = r.it("u32 basic",       test_u32_basic());
-    r = r.it("u32 no overflow", test_u32_no_overflow());
-    r = r.it("u64 basic",       test_u64_basic());
-    r = r.it("u64 no overflow", test_u64_no_overflow());
+    r = r.it("u32 basic",       test_u32_basic);
+    r = r.it("u32 no overflow", test_u32_no_overflow);
+    r = r.it("u64 basic",       test_u64_basic);
+    r = r.it("u64 no overflow", test_u64_no_overflow);
     return r.finish();
 }

@@ -50,9 +50,9 @@ function test_rejections(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/format parse_duration_ms");
-    r = r.it("single units",   test_single_units());
-    r = r.it("multi part",     test_multi_part());
-    r = r.it("beyond i32",     test_beyond_i32());
-    r = r.it("rejections",     test_rejections());
+    r = r.it("single units",   test_single_units);
+    r = r.it("multi part",     test_multi_part);
+    r = r.it("beyond i32",     test_beyond_i32);
+    r = r.it("rejections",     test_rejections);
     return r.finish();
 }

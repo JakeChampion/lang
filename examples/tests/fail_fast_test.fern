@@ -39,10 +39,10 @@ function test_fail_fast_short_circuits_post_fail(): test.TestOutcome {
     // header + three cases), but its counters live in
     // an isolated value we then inspect.
     var sub: test.TestRunner = test.test_new_fail_fast("ff-inner");
-    sub = sub.it("c1 pass before fail", trivial_pass());
-    sub = sub.it("c2 fail triggers fast", intentional_fail());
+    sub = sub.it("c1 pass before fail", trivial_pass);
+    sub = sub.it("c2 fail triggers fast", intentional_fail);
     sub = sub.it("c3 should auto-skip after fail",
-                 trivial_pass());
+                 trivial_pass);
     // Expectations: 1 pass, 1 fail, 1 skip. Any deviation
     // means fail-fast didn't behave as documented.
     if (sub.passed != 1) {
@@ -62,9 +62,9 @@ function test_fail_fast_off_runs_every_case(): test.TestOutcome {
     // produces 2 pass + 1 test.fail(c3 actually runs).
     // Pins the contract that fail-fast is OPT-IN.
     var sub: test.TestRunner = test.test_new("ff-control");
-    sub = sub.it("c1 pass", trivial_pass());
-    sub = sub.it("c2 fail", intentional_fail());
-    sub = sub.it("c3 still runs", trivial_pass());
+    sub = sub.it("c1 pass", trivial_pass);
+    sub = sub.it("c2 fail", intentional_fail);
+    sub = sub.it("c3 still runs", trivial_pass);
     if (sub.passed != 2 || sub.failed != 1 || sub.skipped != 0) {
         return test.fail("default mode counters off: passed=" +
                     sub.passed.to_string() + " failed=" +
@@ -96,14 +96,14 @@ function test_with_fail_fast_preserves_filter(): test.TestOutcome {
 function main(): i32 {
     var r: test.TestRunner = test.test_new("fail-fast");
     r = r.it("fail-fast short-circuits post-fail",
-             test_fail_fast_short_circuits_post_fail());
+             test_fail_fast_short_circuits_post_fail);
     r = r.it("default mode runs every case",
-             test_fail_fast_off_runs_every_case());
+             test_fail_fast_off_runs_every_case);
     r = r.it("parse_fail_fast detects --fail-fast",
-             test_parse_fail_fast_present());
+             test_parse_fail_fast_present);
     r = r.it("parse_fail_fast no false-positive",
-             test_parse_fail_fast_absent());
+             test_parse_fail_fast_absent);
     r = r.it("with_fail_fast preserves filter",
-             test_with_fail_fast_preserves_filter());
+             test_with_fail_fast_preserves_filter);
     return r.finish();
 }

@@ -42,11 +42,11 @@ function test_single(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/array dedup");
-    r = r.it("runs",                 test_runs());
-    r = r.it("all equal",            test_all_equal());
-    r = r.it("no dups",              test_no_dups());
-    r = r.it("sorted like distinct", test_sorted_like_distinct());
-    r = r.it("empty",                test_empty());
-    r = r.it("single",               test_single());
+    r = r.it("runs",                 test_runs);
+    r = r.it("all equal",            test_all_equal);
+    r = r.it("no dups",              test_no_dups);
+    r = r.it("sorted like distinct", test_sorted_like_distinct);
+    r = r.it("empty",                test_empty);
+    r = r.it("single",               test_single);
     return r.finish();
 }

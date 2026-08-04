@@ -84,6 +84,35 @@ func TestRunnerArithmeticExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/runner_lazy_test.fern` pins the contract that makes
+// the runner's own controls real: `it(name, body)` takes the case
+// UNEVALUATED, so a case the runner drops never runs. The fixture bumps
+// a Cell from inside a filtered-out body and asserts the counter is
+// still zero — with an already-evaluated outcome (the pre-#6042 API) the
+// work was over before `it` could see it, so a filter could only
+// suppress the OUTPUT of a test that had already run.
+func TestRunnerLazyExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/runner_lazy_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	wantSubstrings := []string{
+		"ok 1 - dropped by the filter # SKIP filtered out",
+		"ok 2 - checks the dropped body never ran",
+		"ok 4 - checks the kept body ran once",
+		"# pass 3",
+		"# fail 0",
+		"# skip 1",
+	}
+	for _, w := range wantSubstrings {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/strings_test.fern` covers the string-method
 // assertion helpers (contains, starts_with, ends_with, etc.).
 // Passing suite → exit 0.

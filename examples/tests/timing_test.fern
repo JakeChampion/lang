@@ -82,11 +82,11 @@ function test_negative_sleep_is_immediate(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("timing");
-    r = r.it("now_unix_ms advances",                test_now_unix_ms_advances());
-    r = r.it("monotonic_ns is non-decreasing",      test_monotonic_ns_advances());
-    r = r.it("sleep_ms actually sleeps",            test_sleep_actually_sleeps());
-    r = r.it("assert_elapsed_lt_ms pass",           test_assert_elapsed_lt_ms_pass());
-    r = r.it("elapsed failure embeds context",      test_assert_elapsed_lt_ms_fail_message());
-    r = r.it("negative sleep returns immediately",  test_negative_sleep_is_immediate());
+    r = r.it("now_unix_ms advances",                test_now_unix_ms_advances);
+    r = r.it("monotonic_ns is non-decreasing",      test_monotonic_ns_advances);
+    r = r.it("sleep_ms actually sleeps",            test_sleep_actually_sleeps);
+    r = r.it("assert_elapsed_lt_ms pass",           test_assert_elapsed_lt_ms_pass);
+    r = r.it("elapsed failure embeds context",      test_assert_elapsed_lt_ms_fail_message);
+    r = r.it("negative sleep returns immediately",  test_negative_sleep_is_immediate);
     return r.finish();
 }

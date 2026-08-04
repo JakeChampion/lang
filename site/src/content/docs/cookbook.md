@@ -288,7 +288,7 @@ function test_slugify(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("slug");
-    r = r.it("lowercases and hyphenates", test_slugify());
+    r = r.it("lowercases and hyphenates", test_slugify);
     return r.finish();
 }
 ```

@@ -91,19 +91,19 @@ function test_to_acronym_empty(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/string replace + split");
-    r = r.it("replace",          test_replace());
-    r = r.it("replace overlap",  test_replace_overlap());
-    r = r.it("replace_first",    test_replace_first());
-    r = r.it("replace_n",        test_replace_n());
-    r = r.it("replace_byte",     test_replace_byte());
-    r = r.it("remove_all",       test_remove_all());
-    r = r.it("without_byte",     test_without_byte());
-    r = r.it("without_chars",    test_without_chars());
-    r = r.it("splitn",           test_splitn());
-    r = r.it("splitn under cap", test_splitn_under_cap());
-    r = r.it("split_at",         test_split_at());
-    r = r.it("split_at clamp",   test_split_at_clamp());
-    r = r.it("to_acronym",       test_to_acronym());
-    r = r.it("to_acronym empty", test_to_acronym_empty());
+    r = r.it("replace",          test_replace);
+    r = r.it("replace overlap",  test_replace_overlap);
+    r = r.it("replace_first",    test_replace_first);
+    r = r.it("replace_n",        test_replace_n);
+    r = r.it("replace_byte",     test_replace_byte);
+    r = r.it("remove_all",       test_remove_all);
+    r = r.it("without_byte",     test_without_byte);
+    r = r.it("without_chars",    test_without_chars);
+    r = r.it("splitn",           test_splitn);
+    r = r.it("splitn under cap", test_splitn_under_cap);
+    r = r.it("split_at",         test_split_at);
+    r = r.it("split_at clamp",   test_split_at_clamp);
+    r = r.it("to_acronym",       test_to_acronym);
+    r = r.it("to_acronym empty", test_to_acronym_empty);
     return r.finish();
 }

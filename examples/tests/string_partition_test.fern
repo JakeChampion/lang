@@ -52,13 +52,13 @@ function test_empty_sep(): test.TestOutcome {
 
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/string partition");
-    r = r.it("partition found",    test_partition_found());
-    r = r.it("partition absent",   test_partition_absent());
-    r = r.it("rpartition found",   test_rpartition_found());
-    r = r.it("rpartition absent",  test_rpartition_absent());
-    r = r.it("sep at start",       test_sep_at_start());
-    r = r.it("sep at end",         test_sep_at_end());
-    r = r.it("multichar",          test_multichar());
-    r = r.it("empty sep",          test_empty_sep());
+    r = r.it("partition found",    test_partition_found);
+    r = r.it("partition absent",   test_partition_absent);
+    r = r.it("rpartition found",   test_rpartition_found);
+    r = r.it("rpartition absent",  test_rpartition_absent);
+    r = r.it("sep at start",       test_sep_at_start);
+    r = r.it("sep at end",         test_sep_at_end);
+    r = r.it("multichar",          test_multichar);
+    r = r.it("empty sep",          test_empty_sep);
     return r.finish();
 }
