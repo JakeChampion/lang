@@ -114,7 +114,7 @@ function main(): i32 {
     // -> 0x14000002 -> 02 00 00 14
     var a: Arm64Asm = arm64_asm_new();
     a = arm64_asm_b(a, "skip");
-    a.code = arm64_movz(a.code, arm64_x0(), 99, 0);
+    a.code = arm64_movz(a.code, arm64_x0(), 99, 0, false);
     a = arm64_asm_label(a, "skip");
     a = arm64_asm_resolve(a);
     if (a.code[0] != 2 || a.code[1] != 0 || a.code[2] != 0 || a.code[3] != 20) { return 1; }
@@ -123,7 +123,7 @@ function main(): i32 {
     // 0x54000040 -> 40 00 00 54
     var b: Arm64Asm = arm64_asm_new();
     b = arm64_asm_bcond(b, arm64_eq(), "end");
-    b.code = arm64_movz(b.code, arm64_x0(), 7, 0);
+    b.code = arm64_movz(b.code, arm64_x0(), 7, 0, false);
     b = arm64_asm_label(b, "end");
     b = arm64_asm_resolve(b);
     if (b.code[0] != 64 || b.code[1] != 0 || b.code[2] != 0 || b.code[3] != 84) { return 2; }
@@ -140,7 +140,7 @@ function main(): i32 {
     // off 0, rel -4 (patched immediately) -> 0xB5FFFFE1 -> E1 FF FF B5
     var d: Arm64Asm = arm64_asm_new();
     d = arm64_asm_label(d, "top");
-    d.code = arm64_movz(d.code, arm64_x0(), 1, 0);
+    d.code = arm64_movz(d.code, arm64_x0(), 1, 0, false);
     d = arm64_asm_cbnz(d, arm64_x1(), "top");
     if (d.code[4] != 225 || d.code[5] != 255 || d.code[6] != 255 || d.code[7] != 181) { return 4; }
 
@@ -158,14 +158,14 @@ const arm64MachOCallDriverMain = `
 function main(): i32 {
     var a: Arm64Asm = arm64_asm_new();
     a = arm64_asm_bl(a, "compute");                    // call compute (forward)
-    a.code = arm64_movz(a.code, arm64_x16(), 1, 0);    // SYS_exit (Darwin)
+    a.code = arm64_movz(a.code, arm64_x16(), 1, 0, false);    // SYS_exit (Darwin)
     a.code = arm64_svc(a.code, 128);                    // svc #0x80
     a = arm64_asm_label(a, "compute");
-    a.code = arm64_movz(a.code, arm64_x0(), 0, 0);     // acc = 0
-    a.code = arm64_movz(a.code, arm64_x1(), 7, 0);     // counter = 7
+    a.code = arm64_movz(a.code, arm64_x0(), 0, 0, false);     // acc = 0
+    a.code = arm64_movz(a.code, arm64_x1(), 7, 0, false);     // counter = 7
     a = arm64_asm_label(a, "loop");
-    a.code = arm64_addimm(a.code, arm64_x0(), arm64_x0(), 6); // acc += 6
-    a.code = arm64_subimm(a.code, arm64_x1(), arm64_x1(), 1); // counter -= 1
+    a.code = arm64_addimm(a.code, arm64_x0(), arm64_x0(), 6, false); // acc += 6
+    a.code = arm64_subimm(a.code, arm64_x1(), arm64_x1(), 1, false); // counter -= 1
     a = arm64_asm_cbnz(a, arm64_x1(), "loop");          // loop if != 0 (backward)
     a.code = arm64_ret(a.code, arm64_lr());             // return to caller
     a = arm64_asm_resolve(a);

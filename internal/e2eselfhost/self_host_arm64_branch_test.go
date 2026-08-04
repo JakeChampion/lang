@@ -106,10 +106,10 @@ func TestSelfHostArm64DarwinMachOLoopRuns(t *testing.T) {
 const arm64BranchSelfTestMain = `
 function main(): i32 {
     // cmp x1, #1 (subs xzr, x1, #1) -> 0xF100043F -> 3F 04 00 F1
-    var a: i32[] = arm64_cmpimm([], arm64_x1(), 1);
+    var a: i32[] = arm64_cmpimm([], arm64_x1(), 1, false);
     if (a[0] != 63 || a[1] != 4 || a[2] != 0 || a[3] != 241) { return 1; }
     // cmp x1, x2 (subs xzr, x1, x2) -> 0xEB02003F -> 3F 00 02 EB
-    var b: i32[] = arm64_cmpreg([], arm64_x1(), arm64_x2());
+    var b: i32[] = arm64_cmpreg([], arm64_x1(), arm64_x2(), false);
     if (b[0] != 63 || b[1] != 0 || b[2] != 2 || b[3] != 235) { return 2; }
     // b #-8 -> 0x17FFFFFE -> FE FF FF 17
     var c: i32[] = arm64_b([], 0 - 8);
@@ -124,10 +124,10 @@ function main(): i32 {
     var f: i32[] = arm64_bcond([], arm64_eq(), 8);
     if (f[0] != 64 || f[1] != 0 || f[2] != 0 || f[3] != 84) { return 6; }
     // cbnz x1, #-8 -> 0xB5FFFFC1 -> C1 FF FF B5
-    var g: i32[] = arm64_cbnz([], arm64_x1(), 0 - 8);
+    var g: i32[] = arm64_cbnz([], arm64_x1(), 0 - 8, false);
     if (g[0] != 193 || g[1] != 255 || g[2] != 255 || g[3] != 181) { return 7; }
     // cbz x0, #+8 -> 0xB4000040 -> 40 00 00 B4
-    var h: i32[] = arm64_cbz([], arm64_x0(), 8);
+    var h: i32[] = arm64_cbz([], arm64_x0(), 8, false);
     if (h[0] != 64 || h[1] != 0 || h[2] != 0 || h[3] != 180) { return 8; }
     // condition-code field values.
     if (arm64_eq() != 0 || arm64_ne() != 1 || arm64_lt() != 11 || arm64_ge() != 10) { return 9; }
@@ -142,13 +142,13 @@ function main(): i32 {
 const arm64MachOLoopDriverMain = `
 function main(): i32 {
     var code: i32[] = [];
-    code = arm64_movz(code, arm64_x0(), 0, 0);   // acc = 0
-    code = arm64_movz(code, arm64_x1(), 7, 0);   // counter = 7
+    code = arm64_movz(code, arm64_x0(), 0, 0, false);   // acc = 0
+    code = arm64_movz(code, arm64_x1(), 7, 0, false);   // counter = 7
     var loop_off: i32 = code.len();
-    code = arm64_addimm(code, arm64_x0(), arm64_x0(), 6); // acc += 6
-    code = arm64_subimm(code, arm64_x1(), arm64_x1(), 1); // counter -= 1
-    code = arm64_cbnz(code, arm64_x1(), loop_off - code.len()); // loop if != 0
-    code = arm64_movz(code, arm64_x16(), 1, 0);  // SYS_exit (Darwin)
+    code = arm64_addimm(code, arm64_x0(), arm64_x0(), 6, false); // acc += 6
+    code = arm64_subimm(code, arm64_x1(), arm64_x1(), 1, false); // counter -= 1
+    code = arm64_cbnz(code, arm64_x1(), loop_off - code.len(), false); // loop if != 0
+    code = arm64_movz(code, arm64_x16(), 1, 0, false);  // SYS_exit (Darwin)
     code = arm64_svc(code, 128);                  // svc #0x80
     var none: i32[] = [];
     var bin: i32[] = macho_static_executable(code, none, "fern");

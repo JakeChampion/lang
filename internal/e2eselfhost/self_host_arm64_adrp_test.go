@@ -131,7 +131,7 @@ function main(): i32 {
     c = arm64_patch_adrp(c, 0, 4);
     if (c[0] != 33 || c[1] != 0 || c[2] != 0 || c[3] != 144) { return 6; }
     // patch ldr x0, [x1, #0] (0xF9400020) with off 16 -> 0xF9400820.
-    var d: i32[] = arm64_ldr([], arm64_x0(), arm64_x1(), 0);
+    var d: i32[] = arm64_ldr([], arm64_x0(), arm64_x1(), 0, false);
     d = arm64_patch_ldr_off(d, 0, 16);
     if (d[0] != 32 || d[1] != 8 || d[2] != 64 || d[3] != 249) { return 7; }
     return 0;
@@ -146,8 +146,8 @@ const arm64MachODataDriverMain = `
 function main(): i32 {
     var code: i32[] = [];
     code = arm64_adrp(code, arm64_x1(), 0);            // adrp x1, answer@PAGE (placeholder)
-    code = arm64_ldr(code, arm64_x0(), arm64_x1(), 0); // ldr x0, [x1, answer@PAGEOFF] (placeholder)
-    code = arm64_movz(code, arm64_x16(), 1, 0);        // SYS_exit (Darwin)
+    code = arm64_ldr(code, arm64_x0(), arm64_x1(), 0, false); // ldr x0, [x1, answer@PAGEOFF] (placeholder)
+    code = arm64_movz(code, arm64_x16(), 1, 0, false);        // SYS_exit (Darwin)
     code = arm64_svc(code, 128);                        // svc #0x80
     var data: i32[] = [42, 0, 0, 0, 0, 0, 0, 0];       // answer: .quad 42
 

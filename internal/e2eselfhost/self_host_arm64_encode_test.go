@@ -136,22 +136,22 @@ func TestSelfHostArm64DarwinMachOExitRuns(t *testing.T) {
 const arm64EncodeSelfTestMain = `
 function main(): i32 {
     // movz x0, #42 -> 0xD2800540 -> 40 05 80 D2
-    var a: i32[] = arm64_movz([], arm64_x0(), 42, 0);
+    var a: i32[] = arm64_movz([], arm64_x0(), 42, 0, false);
     if (a.len() != 4 || a[0] != 64 || a[1] != 5 || a[2] != 128 || a[3] != 210) { return 1; }
     // movz x16, #1 -> 0xD2800030 -> 30 00 80 D2
-    var b: i32[] = arm64_movz([], arm64_x16(), 1, 0);
+    var b: i32[] = arm64_movz([], arm64_x16(), 1, 0, false);
     if (b.len() != 4 || b[0] != 48 || b[1] != 0 || b[2] != 128 || b[3] != 210) { return 2; }
     // movk x0, #0x10 -> 0xF2800200 -> 00 02 80 F2
     var c: i32[] = arm64_movk([], arm64_x0(), 16, 0);
     if (c[0] != 0 || c[1] != 2 || c[2] != 128 || c[3] != 242) { return 3; }
     // movn x0, #0 -> 0x92800000 -> 00 00 80 92
-    var d: i32[] = arm64_movn([], arm64_x0(), 0, 0);
+    var d: i32[] = arm64_movn([], arm64_x0(), 0, 0, false);
     if (d[0] != 0 || d[1] != 0 || d[2] != 128 || d[3] != 146) { return 4; }
     // add x0, x1, #5 -> 0x91001420 -> 20 14 00 91
-    var e: i32[] = arm64_addimm([], arm64_x0(), arm64_x1(), 5);
+    var e: i32[] = arm64_addimm([], arm64_x0(), arm64_x1(), 5, false);
     if (e[0] != 32 || e[1] != 20 || e[2] != 0 || e[3] != 145) { return 5; }
     // sub x0, x1, #5 -> 0xD1001420 -> 20 14 00 D1
-    var f: i32[] = arm64_subimm([], arm64_x0(), arm64_x1(), 5);
+    var f: i32[] = arm64_subimm([], arm64_x0(), arm64_x1(), 5, false);
     if (f[0] != 32 || f[1] != 20 || f[2] != 0 || f[3] != 209) { return 6; }
     // add x0, x1, x2 -> 0x8B020020 -> 20 00 02 8B
     var g: i32[] = arm64_addreg([], arm64_x0(), arm64_x1(), arm64_x2());
@@ -160,7 +160,7 @@ function main(): i32 {
     var h: i32[] = arm64_subreg([], arm64_x0(), arm64_x1(), arm64_x2());
     if (h[0] != 32 || h[1] != 0 || h[2] != 2 || h[3] != 203) { return 8; }
     // mov x0, x1 (orr x0, xzr, x1) -> 0xAA0103E0 -> E0 03 01 AA
-    var i: i32[] = arm64_movreg([], arm64_x0(), arm64_x1());
+    var i: i32[] = arm64_movreg([], arm64_x0(), arm64_x1(), false);
     if (i[0] != 224 || i[1] != 3 || i[2] != 1 || i[3] != 170) { return 9; }
     // svc #0x80 -> 0xD4001001 -> 01 10 00 D4
     var j: i32[] = arm64_svc([], 128);
@@ -181,8 +181,8 @@ function main(): i32 {
 const arm64MachOExitDriverMain = `
 function main(): i32 {
     var code: i32[] = [];
-    code = arm64_movz(code, arm64_x0(), 42, 0);  // exit status
-    code = arm64_movz(code, arm64_x16(), 1, 0);  // SYS_exit (Darwin)
+    code = arm64_movz(code, arm64_x0(), 42, 0, false);  // exit status
+    code = arm64_movz(code, arm64_x16(), 1, 0, false);  // SYS_exit (Darwin)
     code = arm64_svc(code, 128);                  // svc #0x80
     var none: i32[] = [];
     var bin: i32[] = macho_static_executable(code, none, "fern");

@@ -121,12 +121,12 @@ function main(): i32 {
     if (b[0] != 254 || b[1] != 255 || b[2] != 255 || b[3] != 23) { return 3; }
     // patch a cbnz x1, #0 placeholder (0xB5000001) with rel -8, preserving
     // Rt=1 -> 0xB5FFFFC1 -> C1 FF FF B5
-    var c: i32[] = arm64_cbnz([], arm64_x1(), 0);
+    var c: i32[] = arm64_cbnz([], arm64_x1(), 0, false);
     c = arm64_patch_b19(c, 0, 0 - 8);
     if (c[0] != 193 || c[1] != 255 || c[2] != 255 || c[3] != 181) { return 4; }
     // patch must not disturb neighbouring bytes: emit nop-ish movz, a
     // placeholder, then patch — the movz word stays intact.
-    var d: i32[] = arm64_movz([], arm64_x0(), 42, 0); // 40 05 80 D2
+    var d: i32[] = arm64_movz([], arm64_x0(), 42, 0, false); // 40 05 80 D2
     d = arm64_bcond(d, arm64_eq(), 0);
     d = arm64_patch_b19(d, 4, 8); // patch the branch at offset 4
     if (d[0] != 64 || d[1] != 5 || d[2] != 128 || d[3] != 210) { return 5; }
@@ -143,15 +143,15 @@ function main(): i32 {
 const arm64MachOMaxDriverMain = `
 function main(): i32 {
     var code: i32[] = [];
-    code = arm64_movz(code, arm64_x0(), 42, 0);        // a = 42 (result)
-    code = arm64_movz(code, arm64_x1(), 17, 0);        // b = 17
-    code = arm64_cmpreg(code, arm64_x0(), arm64_x1()); // cmp a, b
+    code = arm64_movz(code, arm64_x0(), 42, 0, false);        // a = 42 (result)
+    code = arm64_movz(code, arm64_x1(), 17, 0, false);        // b = 17
+    code = arm64_cmpreg(code, arm64_x0(), arm64_x1(), false); // cmp a, b
     var br_off: i32 = code.len();
     code = arm64_bcond(code, arm64_ge(), 0);           // b.ge done (forward)
-    code = arm64_movreg(code, arm64_x0(), arm64_x1()); // a = b (skipped)
+    code = arm64_movreg(code, arm64_x0(), arm64_x1(), false); // a = b (skipped)
     var done_off: i32 = code.len();
     code = arm64_patch_b19(code, br_off, arm64_rel(done_off, br_off));
-    code = arm64_movz(code, arm64_x16(), 1, 0);        // SYS_exit (Darwin)
+    code = arm64_movz(code, arm64_x16(), 1, 0, false);        // SYS_exit (Darwin)
     code = arm64_svc(code, 128);                        // svc #0x80
     var none: i32[] = [];
     var bin: i32[] = macho_static_executable(code, none, "fern");

@@ -46,22 +46,22 @@ func TestSelfHostArm64Bitmask(t *testing.T) {
 const arm64BitmaskSelfTestMain = `
 function main(): i32 {
     // and x0, x0, #-16 -> 0x927CEC00 -> 00 EC 7C 92
-    var a: i32[] = arm64_and_imm([], arm64_x0(), arm64_x0(), 0 - 16);
+    var a: i32[] = arm64_and_imm([], arm64_x0(), arm64_x0(), 0 - 16, false);
     if (a[0] != 0 || a[1] != 236 || a[2] != 124 || a[3] != 146) { return 1; }
     // and x0, x0, #-256 -> 0x9278DC00 -> 00 DC 78 92
-    var b: i32[] = arm64_and_imm([], arm64_x0(), arm64_x0(), 0 - 256);
+    var b: i32[] = arm64_and_imm([], arm64_x0(), arm64_x0(), 0 - 256, false);
     if (b[0] != 0 || b[1] != 220 || b[2] != 120 || b[3] != 146) { return 2; }
     // and x0, x0, #7 -> 0x92400800 -> 00 08 40 92
-    var c: i32[] = arm64_and_imm([], arm64_x0(), arm64_x0(), 7);
+    var c: i32[] = arm64_and_imm([], arm64_x0(), arm64_x0(), 7, false);
     if (c[0] != 0 || c[1] != 8 || c[2] != 64 || c[3] != 146) { return 3; }
     // and x0, x0, #0xff -> 0x92401C00 -> 00 1C 40 92
-    var d: i32[] = arm64_and_imm([], arm64_x0(), arm64_x0(), 255);
+    var d: i32[] = arm64_and_imm([], arm64_x0(), arm64_x0(), 255, false);
     if (d[0] != 0 || d[1] != 28 || d[2] != 64 || d[3] != 146) { return 4; }
     // and x0, x0, #1 -> 0x92400000 -> 00 00 40 92
-    var e: i32[] = arm64_and_imm([], arm64_x0(), arm64_x0(), 1);
+    var e: i32[] = arm64_and_imm([], arm64_x0(), arm64_x0(), 1, false);
     if (e[0] != 0 || e[1] != 0 || e[2] != 64 || e[3] != 146) { return 5; }
     // and x3, x5, #0xf -> 0x92400CA3 -> A3 0C 40 92
-    var f: i32[] = arm64_and_imm([], 3, 5, 15);
+    var f: i32[] = arm64_and_imm([], 3, 5, 15, false);
     if (f[0] != 163 || f[1] != 12 || f[2] != 64 || f[3] != 146) { return 6; }
     // legality: 0 and -1 (all ones) are not encodable; -16 and 0xff are.
     if (arm64_and_imm_ok(0)) { return 7; }
