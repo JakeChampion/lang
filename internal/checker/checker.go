@@ -6992,6 +6992,27 @@ func (c *checker) errfCode(pos ast.Position, code, format string, args ...any) {
 	c.errors = append(c.errors, &Error{Pos: pos, Msg: fmt.Sprintf(format, args...), Path: c.currentFile(), ErrCode: code})
 }
 
+// requireValue rejects a void-typed expression used where a value is
+// stored. `void` is the type of "returns nothing", and `()` — the unit
+// literal — is its one and only value; a void-returning *call* produced
+// no value to store.
+//
+// Without this, `Ok(f())` for a void `f` type-checked and then diverged
+// by backend: the interpreter and the native backends invented a zero
+// for the payload slot, while wasm emitted a store with nothing on the
+// stack and failed module verification. One spelling for the unit value
+// means no backend has to guess.
+func (c *checker) requireValue(e ast.Expr, t ast.Type) {
+	if _, isVoid := t.(ast.VoidType); !isVoid {
+		return
+	}
+	if _, isUnit := e.(*ast.UnitLit); isUnit {
+		return
+	}
+	c.errfCode(e.Pos(), "E072",
+		"a void expression is not a value here; call it as a statement, and write `()` if you meant the unit value")
+}
+
 // pureCollectionMutators maps each value-returning collection mutator's
 // mangled lowering to its source-level spelling. These are the operations
 // that return a (possibly fresh) collection rather than mutating in place;
@@ -10532,6 +10553,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		return n.Target
 	case *ast.BoolLit:
 		return ast.BoolType{}
+	case *ast.UnitLit:
+		return ast.VoidType{}
 	case *ast.StringLit:
 		return ast.StringType{}
 	case *ast.FString:
@@ -11037,6 +11060,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					if i >= len(vr.payloads) || at == nil {
 						continue
 					}
+					c.requireValue(a, at)
 					// Concrete→`dyn Trait` boxing in a variant-payload position.
 					// The dyn boxing-site list (var init / assignment / argument /
 					// array element / return / struct field) omitted the user-enum

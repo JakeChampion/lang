@@ -48,6 +48,18 @@ function parse_int(s: string): Result[i32, ParseError] {
 }
 ```
 
+When an operation can fail but has nothing to hand back on success, the
+success type is the [unit type](../types/#the-unit-type): `Result[(),
+E]`, built with `Ok(())`. That keeps every fallible operation the same
+shape, so `?` works on all of them.
+
+```fern
+function ensure_readable(path: string): Result[(), IoError] {
+    read_file(path)?;   // nothing to bind — just propagate the failure
+    return Ok(());
+}
+```
+
 Both `Option` and `Result` are **built into the language** — always in
 scope, no import needed. Importing [`std/option`](../../stdlib/option/)
 or [`std/result`](../../stdlib/result/) only adds the combinator methods

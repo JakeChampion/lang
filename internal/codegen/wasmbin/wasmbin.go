@@ -1227,6 +1227,13 @@ func valtypeFor(t ast.Type) (byte, error) {
 		return encode.ValtypeF32, nil
 	case ast.ArrayType, ast.SliceType, ast.TupleType, ast.StructType, ast.EnumType:
 		return encode.ValtypeI32, nil
+	case ast.VoidType:
+		// The unit value `()` is a constant zero in a slot, so void in a
+		// *value* position (an enum payload, a generic argument) is an
+		// i32 like any other single-word type. A void-returning call is
+		// not a value — the checker rejects that (E072) rather than
+		// leaving this seam to invent a slot nothing pushed.
+		return encode.ValtypeI32, nil
 	case ast.HandleType:
 		// own/borrow R — a resource handle is an opaque i32 (P5).
 		return encode.ValtypeI32, nil

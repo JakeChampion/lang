@@ -3130,6 +3130,10 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		return nil, fmt.Errorf("cast from %T to %s not supported in the interpreter", v, x.Target)
 	case *ast.BoolLit:
 		return Bool(x.Value), nil
+	case *ast.UnitLit:
+		// `()` carries no information; it rides the same zero every
+		// backend stores in the payload slot.
+		return Number(0), nil
 	case *ast.StringLit:
 		return String(x.Value), nil
 	case *ast.FString:

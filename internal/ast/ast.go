@@ -1554,6 +1554,18 @@ type BoolLit struct {
 	P     Position
 	Value bool
 }
+
+// UnitLit is `()` — the sole value of type void, and the only way to
+// write one. It exists so a type that has to name "no interesting
+// payload" can do so: `Result[(), IoError]` is the shape every fallible
+// operation with nothing to hand back returns, and `Ok(())` builds it.
+//
+// A void-returning *call* is not a value (`Ok(f())` is E072) — the
+// literal is the one spelling, so backends never have to invent a slot
+// for a value that was never pushed.
+type UnitLit struct {
+	P Position
+}
 type StringLit struct {
 	P     Position
 	Value string
@@ -2081,6 +2093,7 @@ func (e *CastExpr) Pos() Position     { return e.P }
 func (e *DowncastExpr) Pos() Position { return e.P }
 func (e *BlockExpr) Pos() Position    { return e.P }
 func (e *BoolLit) Pos() Position      { return e.P }
+func (e *UnitLit) Pos() Position      { return e.P }
 func (e *StringLit) Pos() Position    { return e.P }
 func (e *FString) Pos() Position      { return e.P }
 func (e *FloatLit) Pos() Position     { return e.P }
@@ -2129,6 +2142,7 @@ func (e *BlockExpr) String() string {
 	return fmt.Sprintf("{ <%d stmt(s)>; %s }", len(e.Stmts), tail)
 }
 func (*BoolLit) isExpr()     {}
+func (*UnitLit) isExpr()     {}
 func (*StringLit) isExpr()   {}
 func (*FString) isExpr()     {}
 func (*FloatLit) isExpr()    {}

@@ -298,6 +298,8 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		} else {
 			fmt.Fprintf(b, "%d", x.Value)
 		}
+	case *ast.UnitLit:
+		b.WriteString("()")
 	case *ast.BoolLit:
 		if x.Value {
 			b.WriteString("true")
