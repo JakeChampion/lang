@@ -2836,6 +2836,12 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         // reference rather than a full buffer. Bumped on the un-share path in
         // __fern_arr_push, read by __arr_push_shared_count. 0 on a healthy run.
         // Mirrors the x86-64 backend + the native detector.
+        //
+        // .globl for the same reason as the x86-64 sibling: __arr_push_shared_count
+        // lowers to an INLINE adrp/add/ldr of this word, not to a call through a
+        // global accessor, so a file-local symbol is unreachable from another unit
+        // under -per-module-emit-all. See the x86-64 comment in asm_ir.fern.
+        s = s.write("    .globl __fern_arr_push_shared\n");
         s = s.write("__fern_arr_push_shared: .quad 0\n");
         s = s.write("    .align 3\n");
         // Phase 3 size-class freelist (mirror of x86-64): head pointers

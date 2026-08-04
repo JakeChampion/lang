@@ -349,7 +349,29 @@ function ssa_scan(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): i32 {
     return 0;
 }
 
+// main wraps `run` in the opt-in quadratic-copy readout (FERN_CLIFF_REPORT,
+// #6056). Off by default, so an ordinary run is byte-identical in behaviour,
+// output and exit code.
+//
+// rc_underflow_guard — which asm_ir_run and wasm_ir_run DO carry on every run —
+// is deliberately NOT here yet, and that absence is a finding rather than an
+// oversight. Wrapping `run` in it immediately turned an exit-0 compile into
+// exit 120: this CLI over-releases 52 blocks compiling parser.fern and 92
+// compiling checker.fern, while emitting byte-identical output. That is the
+// #6021 signature exactly — correct output over a corrupted freelist, invisible
+// until an unrelated change shifts allocation sizes and the poisoned head is
+// popped — and it is why the production CLI being the one driver without the
+// guard mattered. It is pre-existing, not a regression: a compiler built from
+// the pre-#6043 native compiler reports the identical 52.
+//
+// Enabling the guard here is the acceptance test for that fix, so it goes in
+// with it. Adding it now would only convert a silent corruption into a broken
+// CLI. See #6057.
 function main(): i32 {
+    return util.arr_push_cliff_report("fern", run());
+}
+
+function run(): i32 {
     var av: string[] = args();
 
     var entry_path: string = "";
