@@ -26,6 +26,7 @@ fern -repl
 | `-fmt`     | off     | Format the source. `-w` writes back; `-d` prints a diff.   |
 | `-interp`  | off     | Run the AST interpreter (skips codegen entirely).          |
 | `-check`   | off     | Type-check and exit. Silent on success, diagnostics on failure. |
+| `-version` | off     | Print the commit this binary was built from, plus the Go version and platform. |
 | `-O`       | off     | Release build: drop every `assert()` after type-checking.  |
 | `-g`       | off     | Emit a symbol table so debuggers and profilers can name functions. |
 | `-capabilities` | off | Report what each package can reach — net, fs, env, subprocess, time, random. |

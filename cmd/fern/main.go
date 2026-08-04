@@ -612,6 +612,7 @@ func main() {
 	weaveHTML := flag.Bool("html", false, "with -weave, emit a self-contained styled HTML page (embedded CSS, Fern syntax highlighting, and clickable `<<chunk>>` cross-reference links) instead of Markdown.")
 	tangleChunk := flag.String("chunk", "", "with -tangle, expand and print only the named chunk (e.g. -chunk 'the main loop') instead of the <<*>> root — for inspecting or extracting one chunk. Works on single- and multi-file documents.")
 	doDoctest := flag.Bool("doctest", false, "run the `test`-directive example blocks in a literate FILE.fern.md. Each ```fern test block is tangled (its `<<refs>>` expand against the document's chunks) into a standalone program, compiled, and run; exit 0 = pass. Results print as TAP; the command exits non-zero if any example fails.")
+	showVersion := flag.Bool("version", false, "print the commit this binary was built from (plus the Go version and platform) and exit — the nightly tag rolls, so this is how to say which build you have")
 	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/platforms) as the canonical source of truth for what each target accepts.")
 	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
 	colorMode := flag.String("color", "auto", "colourise diagnostics: auto (default — colour only when stderr is a terminal and NO_COLOR is unset), always, or never.")
@@ -638,6 +639,11 @@ func main() {
 	// same text as always.
 	diag.SetColor(shouldColorize(*colorMode))
 	diag.SetASCII(shouldUseASCII(*asciiBoxes))
+
+	if *showVersion {
+		fmt.Println(versionString())
+		return
+	}
 
 	if *listTargets {
 		for _, name := range platforms.Targets() {
