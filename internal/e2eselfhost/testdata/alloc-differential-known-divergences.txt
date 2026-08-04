@@ -18,4 +18,4 @@
 # disagreement; which side is at fault is decided per entry, and the reason
 # says so.
 
-with-through-borrowed-param 48 2 native leaks the pre-update buffer on every `buf = buf.with(i, v)` through a borrowed param, where the self-host reclaims it — 24x. This is the shape docs/TEST-GATES.md cites as having gone 4688 MB native / 0 MB self-host, so the direction has held even as the magnitude came down. The native side is the one at fault here; fixing it is separate work from building this gate.
+with-through-borrowed-param 31 1 native leaks the pre-update buffer on every `buf = buf.with(i, v)` through a borrowed param, where the self-host reclaims it — 31x at this case's n=80. This is the shape docs/TEST-GATES.md cites as having gone 4688 MB native / 0 MB self-host, so the direction has held even as the magnitude came down. The native side is the one at fault here; fixing it is separate work from building this gate.

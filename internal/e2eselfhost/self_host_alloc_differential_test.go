@@ -304,6 +304,16 @@ func TestSelfHostAllocDifferentialX86_64(t *testing.T) {
 
 			ratio := allocRatio(natKB, shKB)
 			entry, listed := known[tc.name]
+
+			// Report the measurement on every case, not just the failing or
+			// listed ones. These four numbers are the whole point of the gate;
+			// a run that prints only PASS tells a human nothing about whether
+			// the two compilers are drifting toward the bound, and the figures
+			// written into the testdata allowlist have to come from HERE rather
+			// than from a hand-run CLI, which measures a different pipeline.
+			t.Logf("n=%d  bump: native=%d KB self-host=%d KB (%dx, bound %dx)  "+
+				"cliff: native=%d self-host=%d",
+				tc.n, natKB, shKB, ratio, tc.maxRatio, natCliff, shCliff)
 			switch {
 			case listed && ratio <= tc.maxRatio:
 				t.Errorf("%s is listed as a known divergence (recorded native=%d KB "+
