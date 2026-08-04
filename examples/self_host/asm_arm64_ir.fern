@@ -2816,8 +2816,15 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         // assembler's literal parser is 32-bit and would sign-extend.
         s = s.write("    .bss\n");
         s = s.write("    .align 3\n");
+        // .globl for the same reason as __fern_arr_push_shared below:
+        // __heap_bump_bytes lowers to an INLINE adrp/add/ldr of BOTH words
+        // (kind_tag 80), not to a call through a global accessor, so a file-local
+        // symbol is unreachable from any unit but the one holding the runtime.
+        // See the x86-64 comment in asm_ir.fern.
+        s = s.write("    .globl __fern_heap_ptr\n");
         s = s.write("__fern_heap_ptr: .quad 0\n");       // bump cursor (0 until first mmap)
         s = s.write("    .align 3\n");
+        s = s.write("    .globl __fern_heap_end\n");
         s = s.write("__fern_heap_end: .quad 0\n");        // arena end (base + heap_size)
         s = s.write("    .align 3\n");
         // arena BASE (mmap return), set once at first alloc — the freeable-range
