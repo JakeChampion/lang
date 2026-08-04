@@ -9,7 +9,8 @@ import (
 
 // allocTrapSrc drives the bump cursor past the arena end with raw `__alloc`
 // calls. The self-host's __fern_alloc bounds check must trap with a clean,
-// recognisable exit code (137) rather than silently running past the heap into
+// recognisable exit code (125, ExitArenaExhausted) rather than silently running
+// past the heap into
 // adjacent .bss (the strbuf output accumulator) and corrupting it.
 //
 // Why raw `__alloc` and not cumulative string growth: `__alloc(n)` returns a
@@ -17,14 +18,14 @@ import (
 // is a scalar — no rc, so no reclaim ever recycles it). Each call advances the
 // bump CURSOR by ~2 GiB (pow2-rounded) while touching ZERO physical pages, so
 // residency stays flat at a few MB no matter how far the cursor races. ~8 calls
-// overrun the 16 GiB arena and the ~9th trips the bounds check → exit(137) in
+// overrun the 16 GiB arena and the ~9th trips the bounds check → exit(125) in
 // ~1 ms.
 //
 // This replaced the old approach (grow `s` by concat, `a.append(s)` to keep
 // every intermediate live so ~10.5 GiB of string bytes overflowed the arena):
 // once the arena reached 16 GiB (#5218) that no longer worked on a 16 GB CI
 // runner. Touching ~16 GiB to reach the arena wall host-OOMs FIRST — a SIGKILL,
-// which Go reports as ExitCode -1, not the clean 137 this asserts — and any
+// which Go reports as ExitCode -1, not the clean 125 this asserts — and any
 // count small enough to fit RAM stays UNDER the 16 GiB arena and COMPLETES
 // (exit 0). Decoupling cursor advance from residency removes that dependency on
 // arena-size ≈ runner-RAM entirely, and the loop bound (100000 × ~2 GiB, far
@@ -57,8 +58,9 @@ func TestSelfHostAllocTrapX86_64(t *testing.T) {
 		cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
 	}
 	_ = cmd.Run()
-	if code := cmd.ProcessState.ExitCode(); code != 137 {
-		t.Errorf("heap-overflow program exited %d, want 137 (clean OOM trap)", code)
+	if code := cmd.ProcessState.ExitCode(); code != 125 {
+		t.Errorf("heap-overflow program exited %d, want 125 (clean arena trap; 137 "+
+			"would mean the HOST OOM-killed it, a different failure)", code)
 	}
 }
 
@@ -77,7 +79,8 @@ func TestSelfHostAllocTrapArm64(t *testing.T) {
 	progBin := buildBin(t, arm64gcc, dir, "alloc_trap", string(asm))
 	cmd := runArm64Bin(qemu, progBin)
 	_ = cmd.Run()
-	if code := cmd.ProcessState.ExitCode(); code != 137 {
-		t.Errorf("heap-overflow program exited %d, want 137 (clean OOM trap)", code)
+	if code := cmd.ProcessState.ExitCode(); code != 125 {
+		t.Errorf("heap-overflow program exited %d, want 125 (clean arena trap; 137 "+
+			"would mean the HOST OOM-killed it, a different failure)", code)
 	}
 }

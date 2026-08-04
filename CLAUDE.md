@@ -506,22 +506,30 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   ```
   fallocate -l 8G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
   ```
-  **BUT exit 137 from a *running* Fern-compiled binary is usually NOT an
-  OOM-kill**: `__fern_alloc`'s bounds check deliberately `exit(137)`s when
-  the fixed bump arena is exhausted — a REAL failure, reproducible locally,
-  that masquerades as SIGKILL. **The arena is 16 GiB** (0x400000000) on
+  **Arena exhaustion is exit 125; a host OOM-kill is 137 — distinguishable by
+  status alone.** `__fern_alloc`'s bounds check exits **125**
+  (`ExitArenaExhausted`) when the fixed bump arena is full: a REAL failure,
+  reproducible locally, and almost always a leak. 137 is 128+9 (SIGKILL) — the
+  host ran out of RAM; retry with a smaller budget. These used to share 137,
+  which made every occurrence a manual investigation and had three harness
+  sites treating genuine compiler regressions as infra. 125 is clear of the
+  128+signal range so nothing can forge it, and under WASI's 126 ceiling so it
+  survives wasmtime; the stderr line is unchanged. Pinned across all five
+  emitters by `internal/e2e/arena_exit_code_test.go`.
+  **The arena is 16 GiB** (0x400000000) on
   every emitter — native x86-64 + arm64 (`heapBytes`) and self-host
   `asm_ir.fern` / `asm_arm64_ir.fern` (`heap_size`), kept in lockstep;
   this note used to say 8 GiB, which was the pre-raise figure and makes any
   headroom calculation off by 2x in the direction that matters. The mmap is
   MAP_NORESERVE, so the reservation costs nothing until touched — only the
-  exit-137 ceiling moves. The stage-2
+  exit-125 ceiling moves. The stage-2
   self-compile (gen1/mmc2 in the fixpoint tests) is the usual victim: the
   self-host-built compiler's live set grows with every compiler-source
   addition, and when it hits the arena wall the test "OOMs" on CI with no
-  kernel OOM anywhere. Before writing off a 137 as infra, check WHICH
-  process died: `as`/gcc/the Go emit during a build = host-RAM OOM (lower the
-  budget knobs / add swap); a Fern binary mid-run = arena exhaustion (measure
+  kernel OOM anywhere. The status now says which happened without further
+  digging: 137 (or `as`/gcc/the Go emit dying during a build) = host-RAM OOM
+  (lower the budget knobs / add swap); 125 from a Fern binary mid-run =
+  arena exhaustion (measure
   with /proc RSS vs the arena size — see docs/RC-PERCEUS-SELF-HOST-PORT.md,
   2026-07-11 entry). Host-RAM OOM is *total-RAM* pressure, not a cgroup cap
   (`memory.limit_in_bytes` is effectively unlimited). Also keep `/` from

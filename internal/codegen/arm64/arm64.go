@@ -1079,10 +1079,16 @@ var abortMessages = []struct {
 }{
 	{"__fern_msg_arr_oob", "fern: array index out of range\n", 134},
 	{"__fern_msg_slice_oob", "fern: slice index out of range\n", 134},
-	{"__fern_msg_oom", "fern: out of memory (heap arena exhausted)\n", 137},
+	{"__fern_msg_oom", "fern: out of memory (heap arena exhausted)\n", ExitArenaExhausted},
 	{"__fern_msg_slice_range", "fern: slice range out of bounds\n", 134},
 	{"__fern_msg_str_slice", "fern: string index out of range\n", 134},
 }
+
+// ExitArenaExhausted mirrors the x86-64 backend's constant — see the comment
+// there for why this is not 137. Duplicated rather than shared because the two
+// codegen packages are deliberately independent; the value is pinned across
+// both (and across the self-host emitters) by internal/e2e/arena_exit_code_test.go.
+const ExitArenaExhausted = 125
 
 func abortMsg(label string) (text string, code int) {
 	for _, m := range abortMessages {

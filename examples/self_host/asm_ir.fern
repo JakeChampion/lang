@@ -1079,7 +1079,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write(".Lalloc_oom:\n");
     s = s.write("    movq $60, %rax\n");
-    s = s.write("    movq $137, %rdi\n");
+    // 125, not 137: 137 is 128+9, what a shell reports for SIGKILL, so an arena
+    // trap could not be told apart from the kernel OOM-killer. Opposite causes,
+    // opposite fixes. Lockstep with the native backends' ExitArenaExhausted.
+    s = s.write("    movq $125, %rdi\n");
     s = s.write("    syscall\n");
     // __fern_oob_abort — shared out-of-bounds trap for arr_get / arr_set.
     // Aborts with exit 134, matching the native backends + docs/ARRAY-BOUNDS.md
@@ -2352,13 +2355,14 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq 8(%rdi), %rcx\n");               // src len
         s = s.write("    leaq __fern_strbuf_data(%rip), %rdx\n");
         s = s.write("    addq __fern_strbuf_len(%rip), %rdx\n");// dst = data + len
-        // Bounds check: trap (exit 137) if this append would run past the buffer.
+        // Bounds check: trap (exit 125, ExitArenaExhausted) if this append would
+        // run past the buffer.
         s = s.write("    movq __fern_strbuf_len(%rip), %rax\n");
         s = s.write("    addq %rcx, %rax\n");
         s = s.write("    cmpq $67108864, %rax\n");
         s = s.write("    jbe .Lsbapp_inbounds\n");
         s = s.write("    movq $60, %rax\n");
-        s = s.write("    movq $137, %rdi\n");
+        s = s.write("    movq $125, %rdi\n");
         s = s.write("    syscall\n");
         s = s.write(".Lsbapp_inbounds:\n");
         s = s.write("    cmpq $0, %rcx\n");

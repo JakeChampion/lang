@@ -2975,7 +2975,10 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         s = s.write("    ret\n");
         s = s.write(".Lalloc_oom:\n");
         s = s.write("    mov x8, #93\n");
-        s = s.write("    mov x0, #137\n");
+        // 125, not 137: 137 is 128+9, what a shell reports for SIGKILL, so an
+        // arena trap could not be told apart from the kernel OOM-killer.
+        // Lockstep with the native backends' ExitArenaExhausted and asm_ir.
+        s = s.write("    mov x0, #125\n");
         s = s.write("    svc #0\n");
         s = s.write(".size __fern_alloc, .-__fern_alloc\n");
 
@@ -3103,14 +3106,14 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         s = s.write("    add x4, x4, :lo12:__fern_strbuf_len\n");
         s = s.write("    ldr x5, [x4]\n");
         s = s.write("    add x3, x3, x5\n");                    // dst = data + len
-        // Bounds check: trap (exit 137, like __fern_alloc) if this append would
+        // Bounds check: trap (exit 125, like __fern_alloc) if this append would
         // run past the 64 MiB buffer, rather than silently corrupting adjacent
         // .bss and segfaulting later. x5 = strbuf_len, x2 = src len.
         s = s.write("    add x6, x5, x2\n");                    // new total len
         s = s.write("    movz x5, #0x400, lsl #16\n");          // 0x4000000 = 64 MiB
         s = s.write("    cmp x6, x5\n");
         s = s.write("    b.ls .Lsbapp_inbounds\n");
-        s = s.write("    mov x0, #137\n");
+        s = s.write("    mov x0, #125\n");
         s = s.write("    mov x8, #93\n");                       // exit
         s = s.write("    svc #0\n");
         s = s.write(".Lsbapp_inbounds:\n");
