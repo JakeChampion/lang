@@ -69,25 +69,73 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 
 `HttpRequest` exposes the parts you need directly:
 
-| Access                | Type     | What it is                          |
-| --------------------- | -------- | ----------------------------------- |
-| `req.method`          | `string` | `"GET"`, `"POST"`, …                |
-| `req.path`            | `string` | Path **and** query, e.g. `/s?q=hi`  |
-| `req.body_string()`   | `string` | The request body as a string        |
-| `req.body_len()`      | `i32`    | Body length in bytes                |
+<table>
+  <thead>
+    <tr>
+      <th>Access</th>
+      <th>Type</th>
+      <th>What it is</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>req.method</code></td>
+      <td><code>string</code></td>
+      <td><code>&quot;GET&quot;</code>, <code>&quot;POST&quot;</code>, …</td>
+    </tr>
+    <tr>
+      <td><code>req.path</code></td>
+      <td><code>string</code></td>
+      <td>Path <strong>and</strong> query, e.g. <code>/s?q=hi</code></td>
+    </tr>
+    <tr>
+      <td><code>req.body_string()</code></td>
+      <td><code>string</code></td>
+      <td>The request body as a string</td>
+    </tr>
+    <tr>
+      <td><code>req.body_len()</code></td>
+      <td><code>i32</code></td>
+      <td>Body length in bytes</td>
+    </tr>
+  </tbody>
+</table>
 
 ## Building the response
 
 `std/http` has constructors for the common cases, so you rarely write an
 `HttpResponse { ... }` literal by hand:
 
-| Constructor                              | Result                  |
-| ---------------------------------------- | ----------------------- |
-| `http.http_response_ok(body)`            | `200 OK` with `body`    |
-| `http.http_response_text(status, body)`  | any status + body       |
-| `http.http_response_not_found()`         | `404 Not Found`         |
-| `http.http_response_bad_request(body)`   | `400` + body            |
-| `http.http_response_redirect(location)`  | `302` + `Location`      |
+<table>
+  <thead>
+    <tr>
+      <th>Constructor</th>
+      <th>Result</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>http.http_response_ok(body)</code></td>
+      <td><code>200 OK</code> with <code>body</code></td>
+    </tr>
+    <tr>
+      <td><code>http.http_response_text(status, body)</code></td>
+      <td>any status + body</td>
+    </tr>
+    <tr>
+      <td><code>http.http_response_not_found()</code></td>
+      <td><code>404 Not Found</code></td>
+    </tr>
+    <tr>
+      <td><code>http.http_response_bad_request(body)</code></td>
+      <td><code>400</code> + body</td>
+    </tr>
+    <tr>
+      <td><code>http.http_response_redirect(location)</code></td>
+      <td><code>302</code> + <code>Location</code></td>
+    </tr>
+  </tbody>
+</table>
 
 Set headers functionally with `.with_header(name, value)`, which returns
 a new response — chain as many as you like.
