@@ -484,31 +484,53 @@ jobs:
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostPerModuleEmitAllFixpointX86_64$' -test.v -test.timeout 23m
 
-  # The fixture corpus, run through the SELF-HOST compiler. Nothing else does:
-  # all four of TestFernFixtures' backends are the NATIVE compiler, so 335
-  # fixture directories have been exercising the compiler that is meant to be
-  # FROZEN while the one meant to become the product was covered only by inlined
-  # string literals in Go tests. Its first run found twelve real divergences on
-  # fixtures that had been green for months (see
-  # internal/e2e/testdata/selfhost-wasm-known-divergences.txt).
+  # The fixture corpus, run through the SELF-HOST compiler, once per target it
+  # emits. Nothing else does: all four of TestFernFixtures' backends are the
+  # NATIVE compiler, so 335 fixture directories have been exercising the compiler
+  # that is meant to be FROZEN while the one meant to become the product was
+  # covered only by inlined string literals in Go tests. The wasm leg's first run
+  # found twelve real divergences on fixtures that had been green for months
+  # (internal/e2e/testdata/selfhost-wasm-known-divergences.txt); the x86-64 and
+  # arm64 legs exist because one-target coverage left the other two asserting
+  # nothing, and each has its own known-divergences file beside that one.
   #
-  # Its own lane rather than part of the fixture run: it builds fern.fern (a
-  # heavy self-host driver, ~4.3 GB reserved by the harness limiter) where the
-  # native fixture run is 15 seconds. Paid once, then ~1.3s per fixture.
+  # Its own lane rather than part of the fixture run: each leg builds fern.fern
+  # (a heavy self-host driver, ~4.3 GB reserved by the harness limiter) where the
+  # native fixture run is 15 seconds. Paid once per leg, then ~1.3s per fixture.
+  #
+  # One job PER TARGET rather than both legs in one job. The driver build is then
+  # paid twice instead of once, which is the deliberate trade: the legs run
+  # concurrently, so wall-clock is one build plus the slower corpus rather than
+  # one build plus both — and a red leg does not hide behind one that ran first.
+  #
+  # Both legs need a NATIVE x86_64 host: the driver is always emitted as x86-64
+  # asm (e2eharness.emitDriverAsm calls x86_64.Emit) and takes host paths as
+  # argv, so it cannot run under a qemu prefix.
   fixtures-selfhost:
     needs: build
-    name: fixtures-selfhost-wasm-x86_64
+    name: fixtures-selfhost-${{ matrix.leg }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: ${{ matrix.job-minutes }}
+    strategy:
+      fail-fast: false
+      # Per-leg time budget, measured rather than guessed: wasm and x86-64 each
+      # finish the corpus in ~11 minutes. The arm64 leg is NOT here — see the
+      # "missing third leg" section in internal/e2e/fixture_selfhost_test.go: it
+      # needs ~69 min (in-process assemble + link per fixture, ~13s each) and is
+      # blocked on #6044 / #6045 / #6047 regardless.
+      matrix:
+        include:
+          - { leg: wasm, test: TestFernFixturesSelfHostWasm, wasmtime: "true", job-minutes: 45, go-timeout: 43m }
+          - { leg: x86-64, test: TestFernFixturesSelfHostX86_64, wasmtime: "false", job-minutes: 45, go-timeout: 43m }
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
         with:
-          wasmtime: "true"
+          wasmtime: ${{ matrix.wasmtime }}
       - name: run the fixture corpus through the self-host compiler
         env:
           FERN_SELFHOST_FIXTURES: "1"
-        run: go test ./internal/e2e/ -run '^TestFernFixturesSelfHostWasm$' -v -timeout 38m
+        run: go test ./internal/e2e/ -run '^${{ matrix.test }}$' -v -timeout ${{ matrix.go-timeout }}
 
   test:
     needs: [build, warm]

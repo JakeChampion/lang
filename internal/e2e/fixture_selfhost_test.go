@@ -1,18 +1,39 @@
 package e2e
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
-// TestFernFixturesSelfHostWasm runs the fixture corpus through the SELF-HOST
-// compiler, which nothing else does.
+// Two legs run the fixture corpus through the SELF-HOST compiler:
+// TestFernFixturesSelfHostWasm and TestFernFixturesSelfHostX86_64. Nothing else
+// does.
 //
-// # Why this exists
+// # The missing third leg
+//
+// An arm64 leg (`-target arm64`) was written alongside the x86-64 one and is NOT
+// here, deliberately. It ran once, and the `-target arm64` path — which
+// assembles + links in-process via arm64_native + elf.fern — failed 100+ of the
+// ~200 fixtures it reached, on three independent bugs: no `fcvt` encoding in the
+// in-process assembler (#6044, 64 fixtures rejected at compile), an illegal
+// encoding that SIGILLs on rc/reuse and closure shapes (#6045, 25 fixtures), and
+// a string copy whose source pointer never advances, so printed output has the
+// right length and the wrong bytes (#6047, 8 fixtures).
+//
+// Landing it now would mean either a 100-row known-divergences file — which the
+// file's own contract makes worse than useless, since fixing #6044 alone flips 64
+// rows at once — or a permanently red lane. So it waits for those three, on
+// branch `selfhost-fixture-leg-arm64-hold`. The three issues carry the findings;
+// this comment carries why the coverage gap is open on purpose. Do not close that
+// gap by weakening the assertions.
+//
+// # Why these exist
 //
 // TestFernFixtures has four backends — interp, x86_64, arm64, wasm — and all
 // four are the NATIVE compiler: arm64codegen.Emit, x86_64codegen.Emit,
@@ -39,127 +60,109 @@ import (
 // thinking to look, which is the point: coverage that has to be remembered is
 // coverage that lapses.
 //
+// The wasm leg came first (#6005) and found twelve divergences on fixtures green
+// for months. It covers ONE of the three targets the self-host compiler emits, so
+// x86-64 parity was unmeasured at corpus level — an assumption of exactly the kind
+// the wasm leg's first run disproved. The x86-64 leg closes that, and it is not
+// merely the wasm leg with a flag changed; it reaches three things wasm
+// structurally cannot:
+//
+//   - Full exit-code fidelity. A native binary propagates main's return over
+//     0..255, so the VALUE check always applies — including the nine regex
+//     fixtures whose expected 255 is a feature bitmask that WASI's [0..126)
+//     cap makes permanently unmeasurable on the wasm leg (#6008's second half
+//     asked for a stdout oracle to see them; this leg just sees them). Measured
+//     on the first run: the wasm leg leaves SIXTEEN fixtures' values unchecked,
+//     and six of those crash here.
+//   - stdin. This leg feeds it, so the four stdin fixtures the wasm leg skips
+//     are covered.
+//   - The link step, which on wasm does not exist. `-target x86-64` emits GAS
+//     text that gcc must accept, so the leg can catch the #5862/#6022 class (a
+//     Fern function named after a register/mnemonic emitting asm the assembler
+//     rejects).
+//   - Crashes. A trap on wasm is a clean "wasm trap:" string; a native
+//     miscompile is a SIGSEGV or an exit-137 arena abort, both distinguished
+//     here from a wrong answer.
+//
 // # Driver choice
 //
-// fern.fern — the real CLI — rather than wasm_ir_run, because it LOADS MODULES.
-// Roughly a third of the corpus imports std/ or core/, and a driver without a
-// loader silently ignores the import and then reports a broken program's verdict
-// (see parser.warn_unresolved_imports, #6004). Using the loading driver is also
-// what makes the leg a faithful test of what a user runs.
+// fern.fern — the real CLI — rather than wasm_ir_run / asm_ir_run, because it
+// LOADS MODULES. Roughly a third of the corpus imports std/ or core/, and a
+// driver without a loader silently ignores the import and then reports a broken
+// program's verdict (see parser.warn_unresolved_imports, #6004). Using the
+// loading driver is also what makes the legs a faithful test of what a user runs.
 //
-// # Cost, and why it is opt-in
+// # Cost, and why they are opt-in
 //
 // Building fern.fern is a heavy self-host driver build (~4.3 GB reserved by the
-// harness's memory limiter). It is paid ONCE and amortised over the whole
-// corpus; each fixture is then a native-binary invocation plus a wasmtime run.
-// Still, that is minutes rather than the 15s the native fixture run takes, so it
-// is gated on FERN_SELFHOST_FIXTURES=1 and run as its own CI lane rather than
+// harness's memory limiter). It is paid ONCE per leg and amortised over the whole
+// corpus; each fixture is then a native-binary invocation plus a run. Still, that
+// is minutes rather than the 15s the native fixture run takes, so both are
+// gated on FERN_SELFHOST_FIXTURES=1 and run as their own CI lanes rather than
 // slowing every local `go test ./internal/e2e`.
 //
-// # What it skips, and why each skip is principled
+// # What they skip, and why each skip is principled
 //
 //   - compile-error fixtures (expected.error): front-end only, backend-agnostic,
 //     already covered once by TestFernFixtures.
-//   - fixtures whose `backends` file omits `wasm`: if a program cannot run on
-//     the native wasm backend it will not run on the self-host one either, and
-//     a shared opt-out beats inventing a second exclusion mechanism.
-//   - fixtures with stdin: the self-host CLI compiles to a .wat that wasmtime
-//     runs, and threading stdin through that adds a variable this leg is not
-//     trying to test. Four fixtures.
+//   - fixtures whose `backends` file omits this leg's target: if a program cannot
+//     run on the native backend for a target it will not run on the self-host one
+//     either, and a shared opt-out beats inventing a second exclusion mechanism.
+//   - fixtures with stdin, on the WASM leg only: the self-host CLI compiles to a
+//     .wat that wasmtime runs, and threading stdin through that adds a variable
+//     that leg is not trying to test. Four fixtures. The native legs feed stdin
+//     normally.
+//   - fixtures listed in the leg's known-divergences file: programs where the
+//     self-host path is KNOWN to disagree with the native compiler today.
+//     Following the deadcode-gate pattern, they are listed rather than silently
+//     skipped, each with the reason, so the lane is green and a NEW divergence
+//     fails. A listed fixture that starts PASSING also fails — an allowlist
+//     nobody prunes becomes a place bugs go to be forgotten.
 //
-// A fixture whose expected.exit is >= 126 keeps its trap/rejection check but
-// loses its VALUE check: WASI refuses an exit status outside [0..126), so
-// wasmtime reports 1 and the program's answer is invisible. Measured: return 125
-// exits 125; return 126, and 255, both exit 1 with "exit with invalid exit
-// status outside of [0..126)". The native wasm leg dodges this by folding main's
-// result into stdout (wasmbin's PrintMainResult); the self-host emit has no
-// equivalent.
+// # One harness asymmetry to know about before filing a divergence
 //
-// This distinction is load-bearing, and getting it wrong in both directions is
-// easy. The first run of this leg reported 26 mismatches; 14 were only the clamp
-// — including nine regex fixtures whose expected 255 is a feature bitmask, which
-// read as a broken regex engine and was not. But blanket-skipping those
-// fixtures then discarded four REAL findings, because wasmtime distinguishes the
-// two cases in its cause chain and a trap is detectable no matter what the
-// program meant to return:
-//
-//		exit with invalid exit status outside of [0..126)   → unmeasurable, fine
-//		wasm trap: wasm `unreachable` instruction executed  → a real failure
-//	  - fixtures in testdata/selfhost-wasm-known-divergences.txt: programs where
-//	    the self-host wasm path is KNOWN to disagree with the native compiler
-//	    today. Following the deadcode-gate pattern, they are listed rather than
-//	    silently skipped, each with the reason, so the lane is green and a NEW
-//	    divergence fails. A listed fixture that starts PASSING also fails — an
-//	    allowlist nobody prunes becomes a place bugs go to be forgotten.
+// The native legs' front end (LoadCheckMono) INJECTS `import "core/int";` into
+// the entry file so wasmbin's PrintMainResult can stringify main's result. The
+// self-host CLI injects nothing. So a fixture that leans on a name that import
+// happens to supply passes natively and fails here with a missing-name error.
+// That is a harness artifact, not a compiler divergence: check a suspicious
+// compile failure against `bin/fern -check` on the unmodified fixture before
+// writing it down.
 func TestFernFixturesSelfHostWasm(t *testing.T) {
-	if os.Getenv("FERN_SELFHOST_FIXTURES") == "" {
-		t.Skip("set FERN_SELFHOST_FIXTURES=1 to run the fixture corpus through the self-host compiler")
-	}
+	requireSelfHostFixtureLeg(t)
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
-	gcc, _ := x86_64Tooling(t)
-	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
-	if err != nil {
-		t.Fatalf("abs stdlib root: %v", err)
-	}
-
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-
-	root := "testdata/cases"
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatalf("read %s: %v", root, err)
-	}
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-
-	known := loadKnownDivergences(t)
-	var ran, skipped, expectedFail int
-	for _, name := range names {
-		abs, err := filepath.Abs(filepath.Join(root, name))
-		if err != nil {
-			t.Fatalf("abs %s: %v", name, err)
-		}
-		if _, err := os.Stat(filepath.Join(abs, "main.fern")); err != nil {
-			continue
-		}
-		f := loadFixture(t, abs)
-		if f.compileError || !f.backends["wasm"] || f.stdin != "" {
-			skipped++
-			continue
-		}
-		ran++
-		reason, isKnown := known[name]
-		if isKnown {
-			expectedFail++
-		}
-		t.Run(name, func(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	runSelfHostFixtureLeg(t, selfHostLeg{
+		backend:   "wasm",
+		target:    "wasm",
+		gcc:       gcc,
+		runner:    runner,
+		knownFile: "selfhost-wasm-known-divergences.txt",
+		skipStdin: true,
+		// A fixture whose expected.exit is >= 126 keeps its trap/rejection check
+		// but loses its VALUE check: WASI refuses an exit status outside
+		// [0..126), so wasmtime reports 1 and the program's answer is invisible.
+		// Measured: return 125 exits 125; return 126, and 255, both exit 1 with
+		// "exit with invalid exit status outside of [0..126)". The native wasm
+		// leg dodges this by folding main's result into stdout (wasmbin's
+		// PrintMainResult); the self-host emit has no equivalent. The x86-64 leg has
+		// no such blind spot, which is half of why it exists.
+		//
+		// This distinction is load-bearing, and getting it wrong in both
+		// directions is easy. The first run of this leg reported 26 mismatches;
+		// 14 were only the clamp — including nine regex fixtures whose expected
+		// 255 is a feature bitmask, which read as a broken regex engine and was
+		// not. But blanket-skipping those fixtures then discarded four REAL
+		// findings, because wasmtime distinguishes the two cases in its cause
+		// chain and a trap is detectable no matter what the program meant to
+		// return:
+		//
+		//	exit with invalid exit status outside of [0..126)   → unmeasurable, fine
+		//	wasm trap: wasm `unreachable` instruction executed  → a real failure
+		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			watPath := filepath.Join(t.TempDir(), "prog.wat")
-			// A known divergence reports through `diverged` instead of failing,
-			// so the same assertions describe both directions and cannot drift
-			// apart.
-			diverged := false
-			failf := func(format string, args ...any) {
-				if isKnown {
-					diverged = true
-					t.Logf("known divergence (%s): "+format, append([]any{reason}, args...)...)
-					return
-				}
-				t.Errorf(format, args...)
-			}
-
-			// The self-host CLI takes `<entry> [stdlib-root]` positionally.
-			// Absolute paths throughout: a relative one was unopenable from an
-			// arm64-darwin binary until #6002, and absolute is what every other
-			// harness does anyway.
 			cmd := exec.Command(fernBin, "-target", "wasm", f.mainPath, stdlibRoot, "-o", watPath)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				failf("self-host compile failed: %v\n%s", err, out)
@@ -199,25 +202,283 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 					failf("stdout missing expected output\n got: %q\nwant: %q", out, f.wantOut)
 				}
 			}
+		},
+	})
+}
+
+// TestFernFixturesSelfHostX86_64 runs the corpus through `fern -target x86-64`:
+// the self-host x86 emitter's GAS text, assembled + linked by gcc and executed.
+//
+// gcc rather than the in-process assembler because the self-host x86-64 path has
+// none — it stops at asm text, where `-target arm64` links in-process
+// (arm64_native + elf.fern) and native x86-64 has internal/native/x86_64. That
+// gap is itself worth knowing about when weighing native retirement, and it puts
+// the external assembler on this leg's critical path, so an emitted-asm defect
+// gcc rejects (the #5862 / #6022 class: a Fern function named `and` / `not` /
+// after an x86 register) fails here as a link error rather than hiding.
+func TestFernFixturesSelfHostX86_64(t *testing.T) {
+	requireSelfHostFixtureLeg(t)
+	gcc, runner := x86_64Tooling(t)
+	runSelfHostFixtureLeg(t, selfHostLeg{
+		backend:   "x86_64",
+		target:    "x86-64",
+		gcc:       gcc,
+		runner:    runner,
+		knownFile: "selfhost-x86_64-known-divergences.txt",
+		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
+			dir := t.TempDir()
+			asmPath := filepath.Join(dir, "prog.s")
+			cmd := exec.Command(fernBin, "-target", "x86-64", f.mainPath, stdlibRoot, "-o", asmPath)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "x86-64", f.mainPath, stdlibRoot, out))
+				return
+			}
+			binPath := filepath.Join(dir, "prog")
+			// -static -nostdlib -no-pie: the flags every other self-host x86
+			// link uses (linkSelfHostAsm's small path). Non-fatal, unlike
+			// buildBin/cachedLink — a link failure is a finding this leg is
+			// meant to report, not a reason to abort the run.
+			if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
+				failf("the assembler/linker REJECTED the self-host asm — the artifact never ran (%v):\n%s", err, out)
+				return
+			}
+			// No runner prefix: runSelfHostFixtureLeg has already skipped the
+			// hosts that need one (they cannot exec the driver either).
+			checkSelfHostNativeRun(t, f, runSelfHostBin(exec.Command(binPath), f.stdin), failf)
+		},
+	})
+}
+
+// failFunc reports a divergence. It is t.Errorf for an unlisted fixture and a
+// t.Logf for a listed one, so the same assertions describe both directions and
+// cannot drift apart.
+type failFunc func(format string, args ...any)
+
+// selfHostLeg is one (target, artifact, runner) triple over the shared corpus
+// walk. Everything target-specific lives in check; everything else — the driver
+// build, the skip rules, the known-divergence bookkeeping — is shared, so a leg
+// cannot quietly grow its own idea of what counts as covered.
+type selfHostLeg struct {
+	backend   string   // the `backends` sidecar token this leg gates on; also its label
+	target    string   // -target value passed to the self-host CLI
+	gcc       string   // links the self-host DRIVER (always x86-64 asm), whatever the leg's target
+	runner    []string // non-empty when the host cannot exec x86-64 binaries directly
+	knownFile string   // testdata/<file> listing this leg's known divergences
+	skipStdin bool
+	check     func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc)
+}
+
+func requireSelfHostFixtureLeg(t *testing.T) {
+	t.Helper()
+	if os.Getenv("FERN_SELFHOST_FIXTURES") == "" {
+		t.Skip("set FERN_SELFHOST_FIXTURES=1 to run the fixture corpus through the self-host compiler")
+	}
+}
+
+func runSelfHostFixtureLeg(t *testing.T, leg selfHostLeg) {
+	t.Helper()
+	if len(leg.runner) != 0 {
+		// The driver takes host filesystem paths as argv, so a qemu runner
+		// would not see the same paths. Native-only, like every other
+		// fern.fern test (see TestSelfHostCLIX86_64).
+		t.Skip("self-host CLI driver runs only natively (argv paths)")
+	}
+	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
+
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	fernBin := buildSelfHostBin(t, leg.gcc, dir, "fern.fern", "fern")
+
+	root := "testdata/cases"
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read %s: %v", root, err)
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+
+	known := loadKnownDivergences(t, leg.knownFile)
+	var ran, skipped, expectedFail int
+	for _, name := range names {
+		abs, err := filepath.Abs(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("abs %s: %v", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(abs, "main.fern")); err != nil {
+			continue
+		}
+		f := loadFixture(t, abs)
+		if f.compileError || !f.backends[leg.backend] || (leg.skipStdin && f.stdin != "") {
+			skipped++
+			continue
+		}
+		ran++
+		reason, isKnown := known[name]
+		if isKnown {
+			expectedFail++
+		}
+		t.Run(name, func(t *testing.T) {
+			diverged := false
+			failf := func(format string, args ...any) {
+				if isKnown {
+					diverged = true
+					t.Logf("known divergence (%s): "+format, append([]any{reason}, args...)...)
+					return
+				}
+				t.Errorf(format, args...)
+			}
+			// Absolute paths throughout: a relative one was unopenable from an
+			// arm64-darwin binary until #6002, and absolute is what every other
+			// harness does anyway. The self-host CLI takes `<entry>
+			// [stdlib-root]` positionally.
+			leg.check(t, fernBin, stdlibRoot, f, failf)
 			if isKnown && !diverged {
-				t.Errorf("listed in selfhost-wasm-known-divergences.txt (%s) but it PASSES now — delete the entry", reason)
+				t.Errorf("listed in %s (%s) but it PASSES now — delete the entry", leg.knownFile, reason)
 			}
 		})
 	}
-	t.Logf("self-host wasm leg: %d fixtures run (%d of them known divergences), %d skipped (compile-error / wasm-excluded / stdin / exit>=126)", ran, expectedFail, skipped)
+	skipReasons := "compile-error / " + leg.backend + "-excluded"
+	if leg.skipStdin {
+		skipReasons += " / stdin"
+	}
+	t.Logf("self-host %s leg: %d fixtures run (%d of them known divergences), %d skipped (%s)",
+		leg.backend, ran, expectedFail, skipped, skipReasons)
 }
 
-// loadKnownDivergences reads testdata/selfhost-wasm-known-divergences.txt:
-// blank/`#` lines ignored, otherwise `<fixture-name>  <reason>`.
-func loadKnownDivergences(t *testing.T) map[string]string {
+// strictIRBailSite re-runs a FAILED compile under FERN_STRICT_IR=1 and returns
+// the bail site it names, or "" when the failure was not an eligibility bail.
+// The driver's own message says to set the variable and re-run; doing it here
+// means the CI log carries the answer instead of an instruction, which is the
+// difference between triaging from a log and having to reproduce first. Costs one
+// extra ~1.3s compile, and only on a fixture that already failed.
+func strictIRBailSite(fernBin, target, mainPath, stdlibRoot string, firstOut []byte) string {
+	if !strings.Contains(string(firstOut), "not IR-eligible") {
+		return ""
+	}
+	cmd := exec.Command(fernBin, "-target", target, mainPath, stdlibRoot, "-o", os.DevNull)
+	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+	out, _ := cmd.CombinedOutput()
+	return "\n--- FERN_STRICT_IR=1 ---\n" + string(out)
+}
+
+// selfHostRun is a finished run of a self-host-compiled native binary. stderr is
+// kept separately from stdout so an exact stdout comparison stays exact while
+// diagnostics still get the runtime's own complaint (an rc abort, a bounds
+// abort) instead of dropping it.
+type selfHostRun struct {
+	stdout   string
+	stderr   string
+	exit     int
+	exited   bool // false → killed by a signal
+	state    string
+	elapsed  time.Duration
+	timedOut bool // we killed it at selfHostRunTimeout
+}
+
+// selfHostRunTimeout bounds ONE fixture's run. Every fixture in the corpus
+// finishes in well under a second natively; a self-host-compiled one that does
+// not is diverging, and the leg should say so in seconds rather than let one
+// program spend the lane's budget. Measured on the first run: six x86-64 regex
+// fixtures burned ~83s each before dying, and the held-back arm64 leg (see the
+// file header) hit its 43m lane wall two thirds through the corpus — a red lane
+// that could not report what else was red. Generous enough (20s,
+// ~100x the slowest honest fixture) that a slow qemu start is never mistaken for
+// a hang.
+const selfHostRunTimeout = 20 * time.Second
+
+func runSelfHostBin(cmd *exec.Cmd, stdin string) selfHostRun {
+	cmd.Stdin = strings.NewReader(stdin)
+	var so, se bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &so, &se
+	start := time.Now()
+	if err := cmd.Start(); err != nil {
+		return selfHostRun{stderr: err.Error(), exit: -1}
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	timedOut := false
+	select {
+	case <-done:
+	case <-time.After(selfHostRunTimeout):
+		timedOut = true
+		_ = cmd.Process.Kill()
+		<-done
+	}
+	r := selfHostRun{stdout: so.String(), stderr: se.String(), exit: -1, elapsed: time.Since(start), timedOut: timedOut}
+	if ps := cmd.ProcessState; ps != nil {
+		r.exit, r.exited, r.state = ps.ExitCode(), ps.Exited(), ps.String()
+	}
+	return r
+}
+
+// checkSelfHostNativeRun holds the x86-64 leg to the same contract
+// TestFernFixtures holds the native backends to: exit code is main's return over
+// the full 0..255, and stdout matches exactly (or contains each required line).
+// The three failure modes are kept apart because they mean different things: a
+// signal is a miscompile, exit 137 is the arena, a wrong number is a wrong
+// answer.
+func checkSelfHostNativeRun(t *testing.T, f *fixtureSpec, r selfHostRun, failf failFunc) {
+	t.Helper()
+	if r.timedOut {
+		failf("the self-host-compiled binary HUNG — killed at %s (natively this fixture finishes in milliseconds)\nstdout so far: %q\nstderr: %s",
+			selfHostRunTimeout, r.stdout, r.stderr)
+		return
+	}
+	if !r.exited {
+		// The signal is the whole diagnosis and it must be printed: SIGSEGV is a
+		// miscompile in the emitted code, SIGKILL after a long run is the host's
+		// OOM killer reaping a program that walked the 16 GiB MAP_NORESERVE arena,
+		// SIGILL is FERN_RC_UNDERFLOW_TRAP. Reporting only "killed by a signal"
+		// (as this did on its first run, over six regex fixtures at ~83s each)
+		// leaves the reader unable to tell a wrong instruction from a runaway
+		// allocation, which are opposite ends of the compiler.
+		failf("the self-host-compiled binary CRASHED after %s — %s (not a wrong answer)\nstdout: %q\nstderr: %s",
+			r.elapsed.Round(time.Millisecond), r.state, r.stdout, r.stderr)
+		return
+	}
+	if r.exit != f.wantExit {
+		// exit 137 from a running Fern binary is __fern_alloc's arena-exhaustion
+		// abort, not a SIGKILL/OOM — the misreading docs/RC-PERCEUS notes and
+		// CLAUDE.md both warn about, so say it here rather than leaving the next
+		// reader to rediscover it.
+		hint := ""
+		if r.exit == 137 {
+			hint = " — 137 is __fern_alloc's arena-exhaustion abort, not an OOM-kill"
+		}
+		failf("exit = %d, want %d%s\nstdout: %q\nstderr: %s", r.exit, f.wantExit, hint, r.stdout, r.stderr)
+	}
+	if f.exact {
+		if r.stdout != f.wantOut {
+			failf("stdout mismatch\n got: %q\nwant: %q\nstderr: %s", r.stdout, f.wantOut, r.stderr)
+		}
+		return
+	}
+	for _, sub := range f.contains {
+		if !strings.Contains(r.stdout, sub) {
+			failf("stdout missing %q\nfull stdout:\n%s\nstderr: %s", sub, r.stdout, r.stderr)
+		}
+	}
+}
+
+// loadKnownDivergences reads testdata/<file>: blank/`#` lines ignored, otherwise
+// `<fixture-name>  <reason>`.
+func loadKnownDivergences(t *testing.T, file string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
-	raw, err := os.ReadFile(filepath.Join("testdata", "selfhost-wasm-known-divergences.txt"))
+	raw, err := os.ReadFile(filepath.Join("testdata", file))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return out
 		}
-		t.Fatalf("read known-divergences: %v", err)
+		t.Fatalf("read %s: %v", file, err)
 	}
 	for _, ln := range strings.Split(string(raw), "\n") {
 		ln = strings.TrimSpace(ln)
