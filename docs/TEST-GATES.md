@@ -97,6 +97,16 @@ answer, these are the tools, in the order they are usually reached for:
   went through a free, and is blind to a plain dec taking a count 1 → 0 (which
   frees nothing) followed by another. Use `FERN_RC_UNDERFLOW_TRAP` for that
   case.
+- **`__arr_push_shared_count()`** — the rc==1 cliff counter, for the other
+  failure mode: a compile that is CORRECT but quadratic. `__fern_arr_push_grow`
+  mutates in place only at rc == 1; one stray retain upstream makes every
+  append in a threaded accumulator copy the whole buffer, and nothing about the
+  program's output changes. This counts the appends that copied a buffer which
+  still had spare capacity — so the copy was bought by an extra reference, not
+  by a full buffer. 0 on a healthy run, which makes it an assertion rather than
+  a profiling curiosity. Reach for it whenever memory grows faster than the
+  data does; it names the cause where `__heap_bump_bytes()` only shows the
+  symptom.
 - **`FERN_LEAKCHECK=1`** — alloc/free counts and live bytes at exit. The other
   direction: what the rc detector cannot see.
 - **`-g`** — emits a `.symtab`, without which a gdb backtrace through a Fern

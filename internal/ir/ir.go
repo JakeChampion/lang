@@ -11894,6 +11894,17 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __arr_push_shared_count(): i32 — the rc==1 cliff probe. Reads the
+	// counter __fern_arr_push_grow bumps when it copies a buffer that had
+	// SPARE CAPACITY, so the copy was forced by an extra reference alone.
+	// Same runtime-helper shape as __rc_underflow_count: each backend reads
+	// its own store (wasm a linear-memory slot, the natives a BSS global).
+	if id.Name == "__arr_push_shared_count" && len(n.Args) == 0 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_push_shared_count", I32: 0})
+			return nil
+		}
+	}
 	// __heap_bump_bytes(): i32 — Phase 6 measurement probe. Returns the
 	// bump allocator's high-water mark in bytes (current cursor minus the
 	// region base; 0 before the first allocation). The cursor only moves

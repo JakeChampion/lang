@@ -509,6 +509,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesRcUnderflowCount {
 		g.emitRcUnderflowCountRuntime()
 	}
+	if g.usesArrPushSharedCount {
+		g.emitArrPushSharedCountRuntime()
+	}
 	if g.usesHeapBumpBytes {
 		g.emitHeapBumpBytesRuntime()
 	}
@@ -1016,6 +1019,14 @@ func (g *generator) emitDataSections() {
 		// word of an 8-byte aligned slot.
 		g.line(`.align 3`)
 		g.label("__fern_rc_underflow")
+		g.line(`	.quad 0`)
+	}
+	if g.usesArrPushGrow || g.usesArrPushSharedCount {
+		// The rc==1 cliff counter. __fern_arr_push_grow bumps it when it
+		// copies a buffer that had SPARE CAPACITY — the copy was bought by
+		// an extra reference, not by a full buffer.
+		g.line(`.align 3`)
+		g.label("__fern_arr_push_shared")
 		g.line(`	.quad 0`)
 	}
 	if ast.RcFreeEnabled && (g.usesAlloc || g.usesFree) {
@@ -1947,6 +1958,26 @@ func (g *generator) emitRcUnderflowCountRuntime() {
 	g.sizeDirective("__fern_rc_underflow_count")
 }
 
+// emitArrPushSharedCountRuntime emits `__fern_arr_push_shared_count() -> i32`
+// — the count of appends that copied the whole buffer even though it had room,
+// i.e. the copy was bought by an extra reference alone.
+//
+// The diagnostic for __fern_arr_push_grow's rc==1 cliff, which is a
+// performance CORRECTNESS boundary with no diagnostic of its own: one stray
+// retain upstream turns every append in a threaded accumulator into a full
+// copy, and the program stays correct while going quadratic. Mirrors
+// __fern_rc_underflow_count; see the x86-64 twin for the full rationale.
+func (g *generator) emitArrPushSharedCountRuntime() {
+	g.line("")
+	g.line(".global __fern_arr_push_shared_count")
+	g.typeDirective("__fern_arr_push_shared_count")
+	g.label("__fern_arr_push_shared_count")
+	g.adrpAdd("x0", "__fern_arr_push_shared")
+	g.emit("ldr w0, [x0]")
+	g.emit("ret")
+	g.sizeDirective("__fern_arr_push_shared_count")
+}
+
 // emitHeapBumpBytesRuntime emits `__fern_heap_bump_bytes() -> i64`,
 // the Phase 6 measurement reader: returns the bump high-water mark
 // (__fern_heap_ptr − __fern_heap_base) in bytes, or 0 before the first
@@ -2122,7 +2153,7 @@ func (g *generator) emitArrPushGrowRuntime() {
 	//   x0 = arr, x1 = oldLen (i32), x2 = stride (i32).
 	g.emit("ldur w3, [x0, #-8]") // w3 = rc
 	g.emit("cmp w3, #1")
-	g.emit("b.ne .Lpush_copy")
+	g.emit("b.ne .Lpush_shared")
 	g.emit("ldur w4, [x0, #-12]") // w4 = cap
 	g.emit("cmp w1, w4")
 	g.emit("b.ge .Lpush_copy")
@@ -2132,6 +2163,18 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("add w4, w1, #1")
 	g.emit("stur w4, [x0, #-4]")
 	g.emit("ret")
+	// rc != 1. If the buffer ALSO had room, the copy below is bought
+	// entirely by the extra reference — the rc==1 cliff. Count it (see
+	// emitArrPushSharedCountRuntime). x3/x4 are scratch here, before the
+	// copy path establishes its frame.
+	g.label(".Lpush_shared")
+	g.emit("ldur w4, [x0, #-12]") // w4 = cap
+	g.emit("cmp w1, w4")
+	g.emit("b.ge .Lpush_copy") // genuinely full: not the cliff
+	g.adrpAdd("x3", "__fern_arr_push_shared")
+	g.emit("ldr w4, [x3]")
+	g.emit("add w4, w4, #1")
+	g.emit("str w4, [x3]")
 	// Copy path: allocate new buffer, memcpy, return new data.
 	// Frame layout (80 bytes):
 	//   sp+0..15  : saved x29, x30
@@ -8344,6 +8387,10 @@ type generator struct {
 	// counter that __fern_rc_dec bumps). Set when the IR emits the
 	// matching OpCallDirect (the `__rc_underflow_count()` builtin).
 	usesRcUnderflowCount bool
+	// usesArrPushSharedCount gates the rc==1 cliff reader
+	// `__fern_arr_push_shared_count` (returns the BSS counter
+	// __fern_arr_push_grow bumps when it copies a buffer that had room).
+	usesArrPushSharedCount bool
 	// usesHeapBumpBytes gates the Phase 6 measurement reader
 	// `__fern_heap_bump_bytes` (returns __fern_heap_ptr − __fern_heap_base,
 	// the bump high-water mark). Set when the IR emits the matching
@@ -11233,6 +11280,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesFree = true
 		case "__fern_rc_underflow_count":
 			g.usesRcUnderflowCount = true
+		case "__fern_arr_push_shared_count":
+			g.usesArrPushSharedCount = true
 		case "__fern_heap_bump_bytes":
 			g.usesHeapBumpBytes = true
 			g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
