@@ -30,10 +30,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;
     while (w < 200) { (w, [w, w + 1]); mk(w); w = w + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < 5000) { (i, [i, i + 1]); mk(i); i = i + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }

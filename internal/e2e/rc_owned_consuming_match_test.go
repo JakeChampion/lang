@@ -85,14 +85,14 @@ function step(l: List): List { match (l) { Cons(h, t) => { return Cons(h + 1, t)
 function sum(l: List): i32 { match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } } }
 function build(n: i32): List { if (n == 0) { return Nil; } return Cons(n, build(n - 1)); }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) {
         var l2: List = step(build(8));
         var unused: i32 = sum(l2);
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 	}
 	small := runWasm(t, bump("2000"))

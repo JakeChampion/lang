@@ -38,7 +38,7 @@ function churn(n: i32): i32 {
     var i: i32 = 0;
     while (i < n) { r = upd(r, i % 8, i); i = i + 1; }
     if (r.ops[0].a == 999999) { return 99; }
-    if (__heap_bump_bytes() < 1048576) { return 0; }
+    if ((__heap_bump_bytes() as i32) < 1048576) { return 0; }
     return 1;
 }
 function main(): i32 { return churn(100000); }`

@@ -6159,6 +6159,12 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                     // binding `var a = monotonic_ns()` width-tracks i64.
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return 64; }
                     if (cid.name == "__load_i64") { return 64; }
+                    // The bump high-water mark is i64 (the arena is 16 GiB, so
+                    // it passes 2^31 on a long run). Width-tracking it matters
+                    // most for `__heap_bump_bytes() as i32` — the shape every
+                    // rc probe uses — which routes through lower_i64 + int_wrap
+                    // only when the operand reads 64 here.
+                    if (cid.name == "__heap_bump_bytes") { return 64; }
                     // f64_bits reinterprets an f64 as its i64 bit pattern.
                     if (cid.name == "f64_bits") { return 64; }
                     if (s.is_i64_ret_fn(cid.name)) { return 64; }
@@ -6415,6 +6421,11 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                     // normal call path (which emits the op + pushes the result).
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return lower_expr(e, s); }
                     if (cid.name == "__load_i64") { return lower_expr(e, s); }
+                    // The bump high-water mark is an i64 value: the normal call
+                    // path emits op_heap_bump_bytes and pushes the full-width
+                    // result, where the width-32 sign-extend below would drop it
+                    // back to the truncating read this widening removed.
+                    if (cid.name == "__heap_bump_bytes") { return lower_expr(e, s); }
                     // f64_bits returns an i64 bit pattern: lower via the normal
                     // call path (lower_expr emits op_f64_bits + pushes the result).
                     if (cid.name == "f64_bits") { return lower_expr(e, s); }
@@ -8305,7 +8316,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                         return tac.emit(ir.op_tcp_accept());
                     }
                     // __heap_bump_bytes(): the bump allocator's high-water mark
-                    // (cursor − base) as an i32. Allocation-free introspection;
+                    // (cursor − base) as an i64. Allocation-free introspection;
                     // the IR backends compute it inline from their heap cursor.
                     if (cid.name == "__heap_bump_bytes" && c.args.len() == 0) {
                         return s.emit(ir.op_heap_bump_bytes());

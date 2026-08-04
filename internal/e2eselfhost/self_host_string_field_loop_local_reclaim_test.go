@@ -27,12 +27,12 @@ import (
 func stringFieldLoopLocalFreshSrc(n string) string {
 	return `struct S { x: i32, name: string }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var pre: string = "n";
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { var t: S = S { x: i, name: pre + "x" }; acc = acc + t.x + t.name.len(); i = i + 1; }
     if (acc < 0) { return 5; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -41,12 +41,12 @@ function main(): i32 {
 func stringAndArrayFieldLoopLocalSrc(n string) string {
 	return `struct S { x: i32, xs: i32[], name: string }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var pre: string = "n";
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { var t: S = S { x: i, xs: [i, i + 1], name: pre + "x" }; acc = acc + t.x + t.xs[0] + t.name.len(); i = i + 1; }
     if (acc < 0) { return 5; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

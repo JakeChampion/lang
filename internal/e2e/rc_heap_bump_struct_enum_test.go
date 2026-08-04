@@ -19,7 +19,7 @@ import (
 func structFieldBumpSrc(n string) string {
 	return `struct Box { data: i32[], tag: i32 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
@@ -27,14 +27,14 @@ function main(): i32 {
         sum = sum + b.data[0] + b.tag;
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
 func enumPayloadBumpSrc(n string) string {
 	return `enum E { Arr(i32[]), Empty }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
@@ -45,7 +45,7 @@ function main(): i32 {
         }
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

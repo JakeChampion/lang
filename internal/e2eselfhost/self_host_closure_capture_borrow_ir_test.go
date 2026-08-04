@@ -97,10 +97,10 @@ function main(): i32 {
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < 3000) { acc = (acc + go(i)) % 251; i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     i = 0;
     while (i < 3000) { acc = (acc + go(i)) % 251; i = i + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 97; }
     return 0;

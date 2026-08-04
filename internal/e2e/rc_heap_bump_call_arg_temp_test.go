@@ -31,7 +31,7 @@ function slen(s: string): i32 { return s.len(); }
 
 func callArgTempBumpSrc(n string) string {
 	return callArgTempProlog + `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -39,7 +39,7 @@ func callArgTempBumpSrc(n string) string {
         i = i + 1;
     }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -77,7 +77,7 @@ const callArgTempStrUnderflowSrc = callArgTempProlog + `function main(): i32 {
 
 func callArgTempStrBumpSrc(n string) string {
 	return callArgTempProlog + `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var a: string = "hello there friend";
     var b: string = "general kenobi!!!";
     var i: i32 = 0;
@@ -87,7 +87,7 @@ func callArgTempStrBumpSrc(n string) string {
         i = i + 1;
     }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

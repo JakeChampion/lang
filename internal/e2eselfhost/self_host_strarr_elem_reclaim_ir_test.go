@@ -100,7 +100,7 @@ func TestSelfHostStrArrElemReclaimIRX86_64(t *testing.T) {
 	// A double-free ticks the underflow detector → 99. acc value checked (97).
 	run(t, `function build(pre: string): i32 { var xs: string[] = ["lit", pre + "c"]; xs = xs.append(pre + "de"); var tl: i32 = 0; var j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(5000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(5000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"strarr-elem-reclaim-flat", 0, "yes")
 
 	// LOOP-BODY REINIT, BOUNDED HIGH-WATER (#4353 item 4): a string[] local
@@ -113,7 +113,7 @@ function main(): i32 { var w: i32 = churn(5000); var b1: i32 = __heap_bump_bytes
 	// the freelist and the bump high-water stays flat. Element leaks → 98; a
 	// double-free (reinit + exit sweep both freeing the final box) → 99.
 	run(t, `function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var xs: string[] = ["lit", pre + "x", pre + "yy"]; acc = (acc + xs[0].len() + xs[2].len()) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(5000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(5000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"strarr-elem-reinit-loop", 0, "yes")
 
 	// ELEMENT ALIAS BINDING excludes: `var t = xs[0]` is a lasting element alias

@@ -29,7 +29,7 @@ function build(k: i32): St { return St { xs: [k, k + 1, k + 2], n: k }; }
 function bump(s: St): St { return St { xs: [s.n + 1, 2, 3], n: s.n + 1 }; }
 function f(s: St): i32 { var t: St = bump(s); var u: St = bump(t); return u.n + u.xs[0]; }
 function churn(m: i32): i32 { var s: St = build(1); var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`
+function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`
 
 const intermediateLocalAliasedSafe = `struct St { xs: i32[], n: i32 }
 function build(k: i32): St { return St { xs: [k, k + 1, k + 2], n: k }; }

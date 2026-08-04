@@ -29,10 +29,10 @@ var nestedTupleReclaimCases = []struct {
     var acc: i32 = 0;
     var w: i32 = 0;
     while (w < 200) { var t: ((i32, i32[]), i32) = ((w, [w, w + 1]), w); acc = (acc + t.1) % 251; w = w + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < 5000) { var t2: ((i32, i32[]), i32) = ((i, [i, i + 1]), i); acc = (acc + t2.1) % 251; i = i + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -48,14 +48,14 @@ var nestedTupleReclaimCases = []struct {
         acc = (acc + t.0.1[0] + t.0.1[1]) % 251;
         i = i + 1;
     }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 5000) {
         var t2: ((i32, i32[]), i32) = ((j, [j, j + 1]), j);
         acc = (acc + t2.0.1[0]) % 251;
         j = j + 1;
     }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -92,10 +92,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;
     while (w < 200) { var t: (((i32, i32[]), i32), i32) = (((w, [w, w + 1]), w), w); acc = (acc + t.1) % 251; w = w + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < 5000) { var t2: (((i32, i32[]), i32), i32) = (((i, [i, i + 1]), i), i); acc = (acc + t2.1) % 251; i = i + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -107,10 +107,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;
     while (w < 200) { var t: ((i32, i32[]), i32[]) = ((w, [w, w + 1]), [w, w]); acc = (acc + t.1[0]) % 251; w = w + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < 5000) { var t2: ((i32, i32[]), i32[]) = ((i, [i, i + 1]), [i, i]); acc = (acc + t2.1[0]) % 251; i = i + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -124,10 +124,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;
     while (w < 200) { ((w, [w, w + 1]), w); w = w + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < 5000) { ((i, [i, i + 1]), i); i = i + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }

@@ -37,7 +37,7 @@ function build(k: i32): i32[] {
     return a;
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     var sum: i32 = 0;
     while (j < ` + iters + `) {
@@ -46,7 +46,7 @@ function main(): i32 {
         j = j + 1;
     }
     if (sum != 0) { return 201; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

@@ -43,13 +43,13 @@ func heapBumpStrLiteralAccumSrc(n string) string {
 	return `function main(): i32 {
     var p: string = "0123456789abcdefghij";
     var s: string = "";
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) {
         s = p + "!";
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

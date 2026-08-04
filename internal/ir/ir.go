@@ -11914,7 +11914,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
-	// __heap_bump_bytes(): i32 — Phase 6 measurement probe. Returns the
+	// __heap_bump_bytes(): i64 — Phase 6 measurement probe. Returns the
 	// bump allocator's high-water mark in bytes (current cursor minus the
 	// region base; 0 before the first allocation). The cursor only moves
 	// forward on a fresh bump and never on a freelist reuse, so this is

@@ -63,14 +63,14 @@ function main(): i32 {
         acc = acc + g.len() + g[0].x;
         i = i + 1;
     }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 2000) {
         var g2 = [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }];
         acc = acc + g2.len() + g2[1].y;
         j = j + 1;
     }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -88,14 +88,14 @@ function main(): i32 {
         acc = acc + g.len() + g[0].y;
         i = i + 1;
     }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 2000) {
         var g2: P[] = [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }];
         acc = acc + g2.len() + g2[0].x;
         j = j + 1;
     }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -114,14 +114,14 @@ function main(): i32 {
         for p in g { acc = acc + p.x + p.y; }
         i = i + 1;
     }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 2000) {
         var g2 = [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }];
         for p in g2 { acc = acc + p.x; }
         j = j + 1;
     }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }

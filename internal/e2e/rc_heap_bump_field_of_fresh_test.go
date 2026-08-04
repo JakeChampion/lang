@@ -26,22 +26,22 @@ func fieldOfFreshStructBump(n string) string {
 	return `struct P { x: i32, data: i32[] }
 function mk(v: i32): P { return P { x: v, data: [v, v + 1, v + 2] }; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { var v: i32 = mk(i).x; acc = acc + v; i = i + 1; }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
 func fieldOfFreshTupleBump(n string) string {
 	return `function mk(v: i32): (i32, i32[]) { return (v, [v, v + 1]); }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { var v: i32 = mk(i).0; acc = acc + v; i = i + 1; }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

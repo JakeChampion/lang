@@ -25,10 +25,10 @@ import (
 
 func stmtTempArrBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { [i, i + 1, i + 2]; i = i + 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -55,20 +55,20 @@ const stmtTempReclaimDetectorSrc = `function main(): i32 {
 
 func stmtTempTupleBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { (i, i + 1); i = i + 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
 func stmtTempStructBumpSrc(n string) string {
 	return `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { P { x: i, y: i + 1 }; i = i + 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -76,10 +76,10 @@ func stmtTempStrConcatBumpSrc(n string) string {
 	return `function main(): i32 {
     var a: string = "hello";
     var b: string = "world";
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { a + b; i = i + 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -94,10 +94,10 @@ func stmtTempStrConcatBumpSrc(n string) string {
 func stmtTempRcFieldStructBumpSrc(n string) string {
 	return `struct H { id: i32, xs: i32[] }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { H { id: i, xs: [i, i + 1, i + 2] }; i = i + 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -109,10 +109,10 @@ func stmtTempFreshCallBumpSrc(n string) string {
 	return `struct P { x: i32, y: i32 }
 function mk(a: i32): P { return P { x: a, y: a + 1 }; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -125,10 +125,10 @@ function main(): i32 {
 func stmtTempFreshCallArrBumpSrc(n string) string {
 	return `function mk(a: i32): i32[] { return [a, a + 1, a + 2]; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -145,11 +145,11 @@ func stmtTempLenReceiverBumpSrc(n string) string {
     var s1: string = "ab";
     var s2: string = "cd";
     var acc: i32 = 0;
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { acc = (acc + (s1 + s2).len()) % 251; i = i + 1; }
     if (acc < 0) { return 0 - 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -162,10 +162,10 @@ func stmtTempFreshCallRcFieldBumpSrc(n string) string {
 	return `struct H { id: i32, xs: i32[] }
 function mk(a: i32): H { return H { id: a, xs: [a, a + 1, a + 2] }; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -181,10 +181,10 @@ function main(): i32 {
 func stmtTempFreshStrArrBumpSrc(n string) string {
 	return `function main(): i32 {
     var p: string = "x";
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) { [p + "a", p + "b"]; i = i + 1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

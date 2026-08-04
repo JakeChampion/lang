@@ -62,7 +62,7 @@ func TestSelfHostEnumStrPayloadReclaimIRX86_64(t *testing.T) {
 	run(t, `enum Tok { Word(string), Num(i32) }
 function go(pre: string): i32 { var x = Word(pre + "abc"); var r = 0; match (x) { Word(s) => { r = s.len(); }, Num(n) => { r = n; }, } return r; }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(5000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(5000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"enum-str-payload-flat", 0)
 
 	// OPTION string payload (`Option[string] = Some(<fresh concat>)`), consumed
@@ -70,13 +70,13 @@ function main(): i32 { var w: i32 = churn(5000); var b1: i32 = __heap_bump_bytes
 	// __fern_str_free) then the box. Flat across the second churn.
 	run(t, `function go(pre: string): i32 { var o: Option[string] = Some(pre + "xyz"); var r = 0; match (o) { Some(s) => { r = s.len(); }, None => { r = 1; }, } return r; }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(5000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(5000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"option-str-payload-flat", 0)
 
 	// RESULT Err string payload (variant-aware opt_payload_type reads E for Err).
 	run(t, `function go(pre: string): i32 { var r2: Result[i32, string] = Err(pre + "e"); var r = 0; match (r2) { Ok(v) => { r = v; }, Err(e) => { r = e.len(); }, } return r; }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(5000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(5000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"result-err-str-payload-flat", 0)
 
 	// NON-FRESH payload excluded: `Some(nm)` aliases the live local nm — the

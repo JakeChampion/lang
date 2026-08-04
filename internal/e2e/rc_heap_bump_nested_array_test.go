@@ -19,7 +19,7 @@ import (
 
 func nestedArrBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -27,7 +27,7 @@ func nestedArrBumpSrc(n string) string {
         acc = acc + g[0][1] + g[1][0];
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

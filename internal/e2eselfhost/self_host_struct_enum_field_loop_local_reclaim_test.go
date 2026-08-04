@@ -34,7 +34,7 @@ func structEnumFieldLoopLocalSrc(n string) string {
 	return `enum Shape { Poly(i32[]), Dot }
 struct Tagged { e: Shape, n: i32 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) {
         var t: Tagged = Tagged { e: Poly([i, i + 1]), n: i };
@@ -45,7 +45,7 @@ function main(): i32 {
     // /8 keeps the bounded high-water (exactly 256 bytes here) off the 256-byte exit-
     // code wrap boundary — 256/8 = 32, a meaningful non-zero sanity value — while any
     // per-iteration leak still diverges N=50 vs N=5000.
-    return (__heap_bump_bytes() - before) / 8;
+    return ((__heap_bump_bytes() as i32) - before) / 8;
 }`
 }
 

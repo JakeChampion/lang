@@ -85,11 +85,11 @@ func obdStructBoundedSrc(n string) string {
 	return `struct P{x:i32,y:i32}
 function sx(p:P):i32{return p.x+p.y;}
 function main():i32{
-    var before:i32=__heap_bump_bytes();
+    var before:i32=(__heap_bump_bytes() as i32);
     var i:i32=0; var s:i32=0;
     while(i<` + n + `){ s=s+sx(P{x:i,y:1}); i=i+1; }
     if(s<0){return 1;}
-    return __heap_bump_bytes()-before;
+    return (__heap_bump_bytes() as i32)-before;
 }`
 }
 

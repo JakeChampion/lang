@@ -4,6 +4,7 @@
 // and prints the section sizes. Exists so the assembler's memory profile
 // (#6011) can be measured against a real `.s` without a selfhost-cli
 // rebuild per experiment.
+import "std/i64";
 import "std/io";
 import "./arm64_native";
 

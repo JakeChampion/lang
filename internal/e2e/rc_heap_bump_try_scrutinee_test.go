@@ -34,7 +34,7 @@ func tryScrutScalarBumpSrc(n string) string {
 	return `function mk(pre: string): Result[i32, i32] { return Ok(pre.len()); }
 function go(pre: string): Result[i32, i32] { var v: i32 = mk(pre)?; return Ok(v + 1); }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -42,7 +42,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -52,7 +52,7 @@ func tryScrutOptionBumpSrc(n string) string {
 	return `function mko(pre: string, k: i32): Option[i32] { if (k > 0) { return None; } return Some(pre.len()); }
 function go(pre: string, k: i32): Option[i32] { var v: i32 = mko(pre, k)?; return Some(v + 1); }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -60,7 +60,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -82,7 +82,7 @@ func tryScrutStringBumpSrc(n string) string {
 	return `function mk(pre: string, k: i32): Result[string, i32] { if (k > 2) { return Err(7); } return Ok(pre + "abc"); }
 function go(pre: string, k: i32): Result[i32, i32] { var s: string = mk(pre, k)?; return Ok(s.len()); }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -90,7 +90,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -101,7 +101,7 @@ func tryScrutStrLitBumpSrc(n string) string {
 	return `function mk(pre: string, k: i32): Result[string, i32] { if (k > 2) { return Err(7); } return Ok("abcde"); }
 function go(pre: string, k: i32): Result[i32, i32] { var s: string = mk(pre, k)?; return Ok(s.len()); }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -109,7 +109,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

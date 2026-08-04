@@ -28,10 +28,10 @@ var optAarrReclaimCases = []struct {
     var acc: i32 = 0;
     var w: i32 = 0;
     while (w < 200) { var xs: Option[i32[]][] = [Some([w, w + 1]), None]; acc = (acc + xs.len()) % 251; w = w + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < 5000) { var xs2: Option[i32[]][] = [Some([i, i + 1]), None]; acc = (acc + xs2.len()) % 251; i = i + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -48,14 +48,14 @@ var optAarrReclaimCases = []struct {
         match (xs[1]) { Some(q) => { acc = acc + q[0]; }, None => { acc = acc + 1; } }
         w = w + 1;
     }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < 5000) {
         var xs2: Option[i32[]][] = [Some([i, i + 1]), None];
         match (xs2[0]) { Some(p) => { acc = (acc + p[0] + p[1]) % 251; }, None => {} }
         i = i + 1;
     }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }

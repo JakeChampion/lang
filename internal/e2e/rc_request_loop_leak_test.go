@@ -63,12 +63,12 @@ function serve(iters: i32): i32 {
 function main(): i32 {
     // Warm the freelist to steady state, then measure two equal batches.
     var warm: i32 = serve(5000);
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var a: i32 = serve(50000);
-    var g1: i32 = __heap_bump_bytes() - b1;
-    var b2: i32 = __heap_bump_bytes();
+    var g1: i32 = (__heap_bump_bytes() as i32) - b1;
+    var b2: i32 = (__heap_bump_bytes() as i32);
     var c: i32 = serve(50000);
-    var g2: i32 = __heap_bump_bytes() - b2;
+    var g2: i32 = (__heap_bump_bytes() as i32) - b2;
     if (a != c) { return 5; }                               // value correctness
     if (__rc_underflow_count() != 0) { return 4; }          // no over-release
     if (g1 / 50000 > 700) { return 2; }                     // absolute ceiling (gross leak / reclaim broken)

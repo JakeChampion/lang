@@ -27,10 +27,10 @@ var arrArrDiscReclaimCases = []struct {
     var acc: i32 = 0;
     var w: i32 = 0;
     while (w < 200) { [[w, w + 1], [w]]; w = w + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < 5000) { [[i, i + 1], [i]]; i = i + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -42,10 +42,10 @@ var arrArrDiscReclaimCases = []struct {
     var acc: i32 = 0;
     var w: i32 = 0;
     while (w < 200) { [[1.5, 2.5], [3.5]]; w = w + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < 5000) { [[1.5, 2.5], [3.5]]; i = i + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }

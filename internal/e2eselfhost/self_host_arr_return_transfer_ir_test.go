@@ -67,7 +67,7 @@ function main(): i32 { var w: i32 = churn(2000); var x: i32 = churn(2000); if (_
 	run(t, `function mk(k: i32): i32[] { return [k, k + 1, k + 2]; }
 function f(s: i32[]): i32 { var t: i32[] = mk(s[0]); var u: i32 = t[0] + s[1]; return u; }
 function churn(m: i32): i32 { var s: i32[] = [1, 2, 3]; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"arr-return-transfer-fresh-flat", 0)
 
 	// MIXED per-path returns: one path returns the param (inc'd), the other a
@@ -75,7 +75,7 @@ function main(): i32 { var w: i32 = churn(2000); var b1: i32 = __heap_bump_bytes
 	run(t, `function pick(a: i32[], b: i32[], c: i32): i32[] { if (c > 0) { return a; } return [b[0], 9]; }
 function f(s: i32[]): i32 { var t: i32[] = pick(s, s, 1); var u: i32[] = pick(s, s, 0); return t[0] + u[1] + s[1]; }
 function churn(m: i32): i32 { var s: i32[] = [1, 2, 3]; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(2000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"arr-return-transfer-mixed-paths", 0)
 }
 
@@ -113,7 +113,7 @@ function main(): i32 { var w: i32 = churn(1000); var x: i32 = churn(1000); if (_
 		{"arr-return-transfer-fresh-flat-wasm", `function mk(k: i32): i32[] { return [k, k + 1, k + 2]; }
 function f(s: i32[]): i32 { var t: i32[] = mk(s[0]); var u: i32 = t[0] + s[1]; return u; }
 function churn(m: i32): i32 { var s: i32[] = [1, 2, 3]; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(1000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(1000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function main(): i32 { var w: i32 = churn(1000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(1000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

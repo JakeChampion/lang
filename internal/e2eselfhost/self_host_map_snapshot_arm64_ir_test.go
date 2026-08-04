@@ -67,10 +67,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 50) { acc = acc + build(i); i = i + 1; }
-    var s1: i32 = __heap_bump_bytes();
+    var s1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 500) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = __heap_bump_bytes();
+    var s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc < 0) { return 97; }
@@ -91,10 +91,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 50) { acc = acc + build(i); i = i + 1; }
-    var s1: i32 = __heap_bump_bytes();
+    var s1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 500) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = __heap_bump_bytes();
+    var s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc < 0) { return 97; }

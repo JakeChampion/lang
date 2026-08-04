@@ -36,7 +36,7 @@ func enumPayloadStructStrLitBumpSrc(n string) string {
 enum E { A(S), B }
 function mk(n: i32): E { return A(S { name: "ab", n: n }); }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < ` + n + `) {
@@ -46,7 +46,7 @@ function main(): i32 {
     }
     if (acc < 0) { return -1; }
     if (__rc_underflow_count() != 0) { return -2; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -58,7 +58,7 @@ func enumPayloadStructStrConcatBumpSrc(n string) string {
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "x", n: n }, n); }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < ` + n + `) {
@@ -68,7 +68,7 @@ function main(): i32 {
     }
     if (acc < 0) { return -1; }
     if (__rc_underflow_count() != 0) { return -2; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

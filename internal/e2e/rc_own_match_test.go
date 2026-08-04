@@ -67,13 +67,13 @@ function map_inc(own xs: List): List { match (xs) { Cons(h,t) => { return Cons(h
 function sum(l: List): i32 { match (l) { Cons(h,t) => { return h + sum(t); }, Nil => { return 0; } } }
 function build(n: i32): List { if (n == 0) { return Nil; } return Cons(n, build(n - 1)); }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < ` + n + `) {
         var unused: i32 = sum(map_inc(build(8)));
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 	}
 	small := runWasm(t, bump("2000"))

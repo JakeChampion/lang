@@ -22,7 +22,7 @@ import (
 
 func nestedConcatBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var a: string = "longer_string_one_here";
     var b: string = "longer_string_two_here";
     var i: i32 = 0;
@@ -31,7 +31,7 @@ func nestedConcatBumpSrc(n string) string {
         acc = acc + (a + b + a + b).len();
         i = i + 1;
     }
-    return (__heap_bump_bytes() - before) + (acc - acc);
+    return ((__heap_bump_bytes() as i32) - before) + (acc - acc);
 }`
 }
 

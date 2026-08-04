@@ -66,7 +66,7 @@ var fnptrArrayFieldCases = []struct {
 	// the field buffer is a real rc box the struct owns at rc=1, so struct-drop
 	// buffer-only-frees it exactly once (elements are raw code addresses, never
 	// touched), and the whole-array alias's read-inc is balanced by its exit sweep.
-	{"rc-soundness", "function f0(): i32 { return 1; } function f1(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function one(): i32 { var r = Reg { hs: [f0, f1] }; var f = r.hs[0]; var acc: i32 = f(); var xs = r.hs; acc = acc + xs[1](); acc = acc + r.hs[0](); return acc; } function churn(n: i32): i32 { var i: i32 = 0; var s: i32 = 0; while (i < n) { s = one(); i = i + 1; } return s; } function main(): i32 { var w: i32 = churn(3000); var b1: i32 = __heap_bump_bytes(); var x: i32 = churn(3000); var b2: i32 = __heap_bump_bytes(); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 4096) { return 98; } if (w != x) { return 97; } return 0; }", 0},
+	{"rc-soundness", "function f0(): i32 { return 1; } function f1(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function one(): i32 { var r = Reg { hs: [f0, f1] }; var f = r.hs[0]; var acc: i32 = f(); var xs = r.hs; acc = acc + xs[1](); acc = acc + r.hs[0](); return acc; } function churn(n: i32): i32 { var i: i32 = 0; var s: i32 = 0; while (i < n) { s = one(); i = i + 1; } return s; } function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 4096) { return 98; } if (w != x) { return 97; } return 0; }", 0},
 }
 
 // TestSelfHostFnptrArrayFieldIRX86_64 — the x86-64 irlower fix, through the

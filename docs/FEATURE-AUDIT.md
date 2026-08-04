@@ -172,7 +172,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `f32_bits/f32_from_bits/f64_bits/f64_from_bits` | | | | | | ⬜ | |
 | float math builtins `__sqrt_f64` etc. | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | via std/float; self-host IR path (`op_funary`; `TestSelfHostFloatMathIR`): `__sqrt_f64`/`__floor_f64`/`__ceil_f64`/`__trunc_f64`/`__abs_f64` lower to a single hardware instruction on all three backends, and `__round_f64` (round-half-away) lowers too — one instruction on arm64 (`frinta`), emulated as `trunc(x+copysign(0.5,x))` on x86/wasm (`roundsd`/`f64.nearest` have no ties-away mode). Only the libm transcendentals (`__log_f64`/`__exp_f64`/`__sin_f64`/`__cos_f64`/`__pow_f64`) still route AST |
 | `strbuf_reset/append/take` | ✅ | ✅ | ✅ | | ✅ | ✅ | global string-builder (reset zeroes / append adds bytes / take returns + resets). interp impl added [#3579](https://github.com/JakeChampion/lang/pull/3579); native x86-64/arm64 + self-host IR lower it. **wasm (native) does not implement it** (`unknown callee "strbuf_reset"`) — W left blank. Tests: `interp_strbuf_test.go`, `self_host_strbuf_ir_test.go`, `arm64_strbuf_test.go` |
-| `__heap_bump_bytes` | ⚠️ | ✅ | ✅ | ✅ | ✅ | 🔧 | bump high-water mark (cursor − region base; 0 before the first alloc). self-host **IR path** ([#3534](https://github.com/JakeChampion/lang/issues/3534)) lowers it inline — x86-64 `__fern_heap_ptr − &__fern_heap`, arm64 `__fern_heap_ptr − (__fern_heap_end − heap_size)`, wasm `$heap − heap_base` — with `ir.op_allocates` admitting it so an introspection-only module still emits the heap runtime. Guarded by `TestSelfHostHeapBumpBytesIR{X86_64,Wasm}` (+ native x86-64 cross-check). interp has no bump allocator so it reports 0 (the pre-alloc zero baseline holds; the growth contract does not). Legacy AST self-host path unchanged (IR-path-only, per goal 1) |
+| `__heap_bump_bytes` | ⚠️ | ✅ | ✅ | ✅ | ✅ | 🔧 | bump high-water mark (cursor − region base; 0 before the first alloc), **i64** on every target — the natives return the full 64-bit register, wasm zero-extends its i32 cursor difference. self-host **IR path** ([#3534](https://github.com/JakeChampion/lang/issues/3534)) lowers it inline — x86-64 `__fern_heap_ptr − &__fern_heap`, arm64 `__fern_heap_ptr − (__fern_heap_end − heap_size)`, wasm `$heap − heap_base` — with `ir.op_allocates` admitting it so an introspection-only module still emits the heap runtime. Guarded by `TestSelfHostHeapBumpBytesIR{X86_64,Wasm}` (+ native x86-64 cross-check). interp has no bump allocator so it reports 0 (the pre-alloc zero baseline holds; the growth contract does not). Legacy AST self-host path unchanged (IR-path-only, per goal 1) |
 | `__rc_*` (inc/dec/get/underflow_count) | | | | | | ⬜ | RC introspection |
 | `__arr_push_shared_count` | ✅ | ✅ | ✅ | ✅ | | ⚠️ | the rc==1 cliff counter: appends that copied a buffer which still had SPARE CAPACITY, so the copy was bought by an extra reference rather than a full buffer. `__fern_arr_push_grow` mutates in place only at rc == 1, making that threshold a performance-correctness boundary with no diagnostic of its own — a stray retain upstream turns a threaded accumulator from O(n) into O(n²) while the program stays correct. Bumped on the copy path (zero cost on the fast path) and read back over a BSS global on the natives / a low-memory slot on wasm (`arrPushSharedAddr`). interp returns 0: it has no refcounts and copies nothing, which is also the healthy value everywhere. Guarded by `Test{X86_64,Arm64,WASM}ArrPushCliffCounter` (healthy = 0 AND shared = 1, so a counter that never fires cannot pass) and asserted by `Test{X86_64,WASM}ThreadedArrayParamBounded`. Self-host lowering does not know the builtin yet |
 | TCP: `tcp_listen/accept/recv/send/close` | | | | | | ⬜ | |
@@ -252,6 +252,39 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-08-04 — `__heap_bump_bytes()` is i64, so a reading past 2 GiB is no longer negative
+
+Every backend's runtime already computed the bump high-water mark in 64 bits —
+the natives subtract in `rax` / `x0`, and wasm's WAT reader had the full i32
+address range available. Only the *declared* result was i32, and that was
+enough to truncate: a quadratic sweep read 141 MB / 555 MB / **-2.09 GB** /
+202 MB across a 2x-per-step size progression, where only the third of the four
+readings looks wrong. The arena is 16 GiB, so the mark passes 2^31 on exactly
+the long runs the probe exists to measure — and it is the sanctioned memory
+gate (peak RSS varies 12x with transparent hugepages), so a silently wrapping
+reading is a silently wrong regression test.
+
+- **Declared type.** `checker.FuncSigs["__heap_bump_bytes"]` and the self-host's
+  `asmcore.infer_expr_type` both say i64 now. The self-host previously fell
+  through to `unknown`, which is what let the two compilers disagree without
+  anything noticing.
+- **Backends.** The natives needed nothing — `emitHeapBumpBytesRuntime` already
+  returned a full register on both, and the self-host emitters already pushed a
+  64-bit slot. wasm needed a real instruction: both operands are i32
+  linear-memory addresses, so `buildHeapBumpBytesBody` (and its self-host
+  sibling in `wasm_ir.fern`) subtracts in i32 and appends
+  `i64.extend_i32_u`. Zero-, not sign-extend — a sign-extend would turn back
+  into a negative number the very reading this widening exists to fix.
+- **Corpus.** The ~540 existing probe sites read the mark straight into an i32
+  exit code or delta, and there is no implicit narrowing, so each call site
+  gained an explicit `as i32`. That preserves every existing assertion exactly:
+  all of them measure well under 2 GiB.
+- **Gate.** `internal/e2e/rc_heap_bump_i64_test.go`. `HeapBumpIsI64` binds the
+  probe to an i64 local and does 64-bit-only arithmetic on all three backends,
+  so a re-narrowing is a compile error rather than a wrong number;
+  `TestX86_64HeapBumpAbove2GiB` bumps the cursor to 2400000032 bytes and reads
+  it back, which under the old i32 result came out as -1894967264.
 
 ### 2026-07-30 — the arm64 branch-range wall is gone: the native assembler emits veneers
 

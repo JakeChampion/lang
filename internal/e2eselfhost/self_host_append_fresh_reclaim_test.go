@@ -34,11 +34,11 @@ function churnOne(n: i32): i32 { var k: i32 = n & 3; var i: i32 = 0; var a: i32 
 function churnLoop(n: i32): i32 { var k: i32 = n & 3; var i: i32 = 0; var a: i32 = 0; while (i < n) { var z: i32[] = loopGrows(k); a = (a + z.len()) % 251; i = i + 1; } return a; }
 function main(): i32 {
     var t: i32 = 0;
-    t = t + churnNone(3); var a1: i32 = __heap_bump_bytes(); t = t + churnNone(10); var a2: i32 = __heap_bump_bytes();
+    t = t + churnNone(3); var a1: i32 = (__heap_bump_bytes() as i32); t = t + churnNone(10); var a2: i32 = (__heap_bump_bytes() as i32);
     if (a2 != a1) { return 11; }
-    t = t + churnOne(3); var b1: i32 = __heap_bump_bytes(); t = t + churnOne(10); var b2: i32 = __heap_bump_bytes();
+    t = t + churnOne(3); var b1: i32 = (__heap_bump_bytes() as i32); t = t + churnOne(10); var b2: i32 = (__heap_bump_bytes() as i32);
     if (b2 != b1) { return 12; }
-    t = t + churnLoop(3); var c1: i32 = __heap_bump_bytes(); t = t + churnLoop(10); var c2: i32 = __heap_bump_bytes();
+    t = t + churnLoop(3); var c1: i32 = (__heap_bump_bytes() as i32); t = t + churnLoop(10); var c2: i32 = (__heap_bump_bytes() as i32);
     if (c2 != c1) { return 13; }
     var v: i32[] = loopGrows(7);
     if (v.len() != 13) { return 20; }

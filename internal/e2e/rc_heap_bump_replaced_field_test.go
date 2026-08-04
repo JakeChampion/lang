@@ -32,14 +32,14 @@ import (
 func replacedFieldBumpSrc(n string) string {
 	return `struct Box { items: i32[], n: i32 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var p: Box = Box{ items: [0], n: 0 };
     var i: i32 = 0;
     while (i < ` + n + `) {
         p = Box{ items: [i, i + 1, i + 2, i + 3], n: i };
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

@@ -110,14 +110,14 @@ function main(): i32 { match (f(0 - 2)) { Some(v) => {}, None => { print("none")
 function step_bare(): Option[i32] { var acc: i32 = 0; defer acc = acc + 1; var x: i32 = fails()?; return Some(x); }
 function step_owned(): Option[i32] { var acc: i32 = 0; defer acc = acc + 1; var owned: i32[] = [1, 2, 3, 4, 5]; var x: i32 = fails()?; return Some(x + owned[0]); }
 function main(): i32 {
-    var b0: i32 = __heap_bump_bytes();
+    var b0: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     while (i < 20000) { match (step_bare()) { Some(_) => {}, None => {} } i = i + 1; }
-    var base: i32 = __heap_bump_bytes() - b0;
-    var b1: i32 = __heap_bump_bytes();
+    var base: i32 = (__heap_bump_bytes() as i32) - b0;
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 20000) { match (step_owned()) { Some(_) => {}, None => {} } j = j + 1; }
-    if (__heap_bump_bytes() - b1 - base < 100000) { return 7; }
+    if ((__heap_bump_bytes() as i32) - b1 - base < 100000) { return 7; }
     return 1;
 }`, "", 7},
 }

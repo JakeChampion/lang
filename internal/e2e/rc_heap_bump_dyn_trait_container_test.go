@@ -41,7 +41,7 @@ struct Rect   { label: string }
 impl Shape for Circle { function area(self: Self): i32 { return 1; } }
 impl Shape for Rect   { function area(self: Self): i32 { return 2; } }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
@@ -52,7 +52,7 @@ function main(): i32 {
         sum = sum + shapes[0].area() + shapes[1].area();
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -139,7 +139,7 @@ impl B for Both  { function b1(self: Self): i32 { return 2; } function b2(self: 
 impl A for Other { function a1(self: Self): i32 { return 4; } }
 impl B for Other { function b1(self: Self): i32 { return 5; } function b2(self: Self): i32 { return 6; } }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var sum: i32 = 0;
     while (i < ` + n + `) {
@@ -150,7 +150,7 @@ function main(): i32 {
         sum = sum + xs[0].a1() + xs[1].b2();
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

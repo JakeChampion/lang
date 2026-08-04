@@ -65,11 +65,11 @@ function innerB(pre: string): Result[i32, i32] { var t: i32 = 0; match (mk(pre))
 function churnT(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerT(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
 function churnB(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerB(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
 function main(): i32 {
-    var b0: i32 = __heap_bump_bytes();
+    var b0: i32 = (__heap_bump_bytes() as i32);
     var w: i32 = churnB(3000);
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churnT(3000);
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (w != x) { return 97; }
     var gb: i32 = b1 - b0;
@@ -87,11 +87,11 @@ function innerB(pre: string): Result[i32, i32] { var t: i32 = 0; match (mk(pre))
 function churnT(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerT(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
 function churnB(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerB(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
 function main(): i32 {
-    var b0: i32 = __heap_bump_bytes();
+    var b0: i32 = (__heap_bump_bytes() as i32);
     var w: i32 = churnB(3000);
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churnT(3000);
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (w != x) { return 97; }
     var gb: i32 = b1 - b0;
@@ -108,11 +108,11 @@ function innerB(pre: string, k: i32): Option[i32] { var t: i32 = 0; var got: i32
 function churnT(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerT(pre, i % 2); match (r) { Some(k) => { acc = (acc + k) % 251; }, None => { acc = (acc + 1) % 251; }, } i = i + 1; } return acc; }
 function churnB(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerB(pre, i % 2); match (r) { Some(k) => { acc = (acc + k) % 251; }, None => { acc = (acc + 1) % 251; }, } i = i + 1; } return acc; }
 function main(): i32 {
-    var b0: i32 = __heap_bump_bytes();
+    var b0: i32 = (__heap_bump_bytes() as i32);
     var w: i32 = churnB(3000);
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churnT(3000);
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (w != x) { return 97; }
     var gb: i32 = b1 - b0;

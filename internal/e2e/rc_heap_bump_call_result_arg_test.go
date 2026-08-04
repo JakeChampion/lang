@@ -27,11 +27,11 @@ func callResultArgStructBump(n string) string {
 function mk(v: i32): P { return P { x: v, y: v }; }
 function take(p: P): i32 { return p.x + p.y; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + take(mk(i)); i = i + 1; }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -39,11 +39,11 @@ func callResultArgArrBump(n string) string {
 	return `function inner(v: i32): i32[] { return [v, v + 1, v + 2]; }
 function outer(xs: i32[]): i32 { return xs[0] + xs[1] + xs[2]; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + outer(inner(i)); i = i + 1; }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

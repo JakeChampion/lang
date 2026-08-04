@@ -26,7 +26,7 @@ import (
 
 func lenRecvBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var a: string = "hello there friend, ";
     var b: string = "general kenobi!!!";
     var i: i32 = 0;
@@ -36,7 +36,7 @@ func lenRecvBumpSrc(n string) string {
         i = i + 1;
     }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
@@ -119,12 +119,12 @@ func lenCallRecvStrBumpSrc(n, tail string) string {
     return "(func $x" + p + " (param i32) (result i32)" + p + " local.get 0" + p + " i32.const 1" + p + " i32.add)" + p;
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + f(i).len(); i = i + 1; }
     if (acc < 0) { return 121; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
 ` + tail
 }
 
@@ -133,12 +133,12 @@ func lenCallRecvArrBumpSrc(n, tail string) string {
     return [k, k + 1, k + 2, k + 3, k + 4, k + 5, k + 6, k + 7, k + 8, k + 9];
 }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + f(i).len(); i = i + 1; }
     if (acc != ` + n + ` * 10) { return 121; }
-    var g: i32 = __heap_bump_bytes() - before;
+    var g: i32 = (__heap_bump_bytes() as i32) - before;
 ` + tail
 }
 

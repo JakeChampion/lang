@@ -540,13 +540,12 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   recycle); it is exact, host-independent, and meaningful under qemu, so it is
   the right gate for a memory regression test. `cat
   /sys/kernel/mm/transparent_hugepage/enabled` tells you which side of that
-  12x you are measuring on. **It returns i32, so it WRAPS past 2 GiB** —
-  the runtime helper computes the offset in 64 bits and the builtin's
-  declared result truncates it (`__heap_mark` is i64 for exactly this
-  reason). A quadratic run measured 141 MB / 555 MB / **-2.09 GB** / 202 MB
-  across a 2x-per-step size sweep: the third reading is visibly wrong, the
-  fourth is not. Sanity-check against the input size, or keep the probe
-  under 2 GiB, until the builtin is widened.
+  12x you are measuring on. **It returns i64**, so readings past 2 GiB are
+  now exact — it used to be declared i32 while every runtime helper computed
+  the offset in 64 bits, and a quadratic sweep read 141 MB / 555 MB /
+  **-2.09 GB** / 202 MB, where only the third of the four looks wrong. Bind
+  it to an `i64` (`var b: i64 = __heap_bump_bytes();`); narrowing to an exit
+  code needs an explicit `as i32`, which is what the existing corpus does.
 - **Don't run arm64 / `qemu-aarch64` tests locally as a gate — let CI
   run them.** The aarch64 e2e + fixpoint tests under `qemu-aarch64` are
   the slow part of a local sweep (minutes). Locally, gate on the

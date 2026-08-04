@@ -20,7 +20,7 @@ import (
 func mapReinitBumpSrc(n string) string {
 	return `import "core/map";
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
     while (i < ` + n + `) {
@@ -30,7 +30,7 @@ function main(): i32 {
         acc = acc + m.get_or(i, 0);
         i = i + 1;
     }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

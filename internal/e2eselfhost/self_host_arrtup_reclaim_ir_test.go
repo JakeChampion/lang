@@ -35,10 +35,10 @@ var arrtupReclaimCases = []struct {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { var xs: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2, i + 3])]; acc = (acc + xs[0].0) % 251; i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 5000) { var ys: (i32, i32[])[] = [(j, [j, j + 1]), (j + 1, [j + 2, j + 3])]; acc = (acc + ys[0].0) % 251; j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -54,10 +54,10 @@ var arrtupReclaimCases = []struct {
         acc = (acc + xs[0].0 + xs[1].1[0] + xs[0].1.len()) % 251;
         i = i + 1;
     }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 5000) { var ys: (i32, i32[])[] = [(j, [j, j + 1])]; acc = (acc + ys[0].1[1]) % 251; j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }

@@ -23,11 +23,11 @@ import (
 func indexFreshBumpSrc(n string) string {
 	return `function mk(v: i32): i32[] { return [v, v + 1, v + 2]; }
 function main(): i32 {
-    var before: i32 = __heap_bump_bytes();
+    var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < ` + n + `) { var v: i32 = mk(i)[1]; acc = acc + v; i = i + 1; }
     if (acc < 0) { return -1; }
-    return __heap_bump_bytes() - before;
+    return (__heap_bump_bytes() as i32) - before;
 }`
 }
 

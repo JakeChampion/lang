@@ -32,10 +32,10 @@ var optTupReclaimCases = []struct {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { var o: Option[(i32, i32[])] = Some((i, [i, i + 1])); match (o) { Some(p) => { acc = (acc + p.0) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[(i32, i32[])] = Some((j, [j, j + 1])); match (o2) { Some(p) => { acc = (acc + p.0) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -47,10 +47,10 @@ var optTupReclaimCases = []struct {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { var o: Option[(i32, i32[])] = Some((i, [i, i + 1])); match (o) { Some(p) => { acc = (acc + p.0 + p.1[0] + p.1[1] + p.1.len()) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[(i32, i32[])] = Some((j, [j, j + 1])); match (o2) { Some(p) => { acc = (acc + p.1[1]) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -109,10 +109,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { var o: Option[(i32, string)] = Some((i, "v" + i.to_string())); match (o) { Some(p) => { acc = (acc + p.0 + p.1.len()) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[(i32, string)] = Some((j, "v" + j.to_string())); match (o2) { Some(p) => { acc = (acc + p.1.len()) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -123,10 +123,10 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { var o: Option[(string, i32[])] = Some(("tag", [i, i + 1])); match (o) { Some(p) => { acc = (acc + p.0.len() + p.1[0]) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = __heap_bump_bytes();
+    var b1: i32 = (__heap_bump_bytes() as i32);
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[(string, i32[])] = Some(("tag", [j, j + 1])); match (o2) { Some(p) => { acc = (acc + p.1[1]) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = __heap_bump_bytes();
+    var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
