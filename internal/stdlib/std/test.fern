@@ -2075,9 +2075,13 @@ pub function (r: TestRunner) bench_max_us(name: string, iterations: i32, fn: () 
           "max=" + max_us_observed.to_string() + "us " +
           "budget=" + max_us.to_string() + "us");
     if (median_us > max_us) {
-        return r.it(name, () => Fail("bench_max_us: median " +
-                               median_us.to_string() +
-                               "us > budget " + max_us.to_string() + "us"));
+        // Format before the lambda so it captures a string, not the two
+        // i64s: the self-host compiler's IR path cannot lower an i64
+        // capture and bails the whole module to the (deleted) AST
+        // emitter. Building the message once is better here anyway.
+        var over_us: string = "bench_max_us: median " + median_us.to_string() +
+                              "us > budget " + max_us.to_string() + "us";
+        return r.it(name, () => Fail(over_us));
     }
     return r.it(name, () => Pass);
 }
