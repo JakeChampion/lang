@@ -141,7 +141,7 @@ function main(): i32 {
     var d: Arm64Asm = arm64_asm_new();
     d = arm64_asm_label(d, "top");
     d.code = arm64_movz(d.code, arm64_x0(), 1, 0, false);
-    d = arm64_asm_cbnz(d, arm64_x1(), "top");
+    d = arm64_asm_cbnz(d, arm64_x1(), "top", false);
     if (d.code[4] != 225 || d.code[5] != 255 || d.code[6] != 255 || d.code[7] != 181) { return 4; }
 
     // label lookup: unknown -> -1; placed -> its offset.
@@ -166,7 +166,7 @@ function main(): i32 {
     a = arm64_asm_label(a, "loop");
     a.code = arm64_addimm(a.code, arm64_x0(), arm64_x0(), 6, false); // acc += 6
     a.code = arm64_subimm(a.code, arm64_x1(), arm64_x1(), 1, false); // counter -= 1
-    a = arm64_asm_cbnz(a, arm64_x1(), "loop");          // loop if != 0 (backward)
+    a = arm64_asm_cbnz(a, arm64_x1(), "loop", false);          // loop if != 0 (backward)
     a.code = arm64_ret(a.code, arm64_lr());             // return to caller
     a = arm64_asm_resolve(a);
     var none: i32[] = [];

@@ -50,6 +50,12 @@ import (
 // deliberately position-independent: registers and immediates only. Add a row
 // whenever the emitter learns a new instruction form; both assemblers then have
 // to agree about it.
+//
+// Three oracle limitations shape the snippet, all worth knowing before editing
+// it: internal/native/arm64 treats any line starting with '.' as a directive (so
+// the branch target is a bare Lend:, not a .L local label), has no movn
+// mnemonic, and has no stur/ldur FP form. None is a self-host limitation --
+// #6064 tracks closing them so the snippet can cover those forms too.
 func TestSelfHostArm64AsmEncodingMatchesNative(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
@@ -120,23 +126,32 @@ _start:
     and w9, w9, #1
     and w0, w1, #31
     eor w9, w9, #1
-    cbz w0, .Ldone
-    cbnz w1, .Ldone
-    tbnz w2, #31, .Ldone
+    cbz w0, Lend
+    cbnz w1, Lend
+    tbnz w2, #31, Lend
     // #6060: four forms that encoded a DIFFERENT instruction than the source
     // says, plus movn, which had no dispatch branch at all and emitted nothing
     // while arm64_gas_known claimed it was handled.
     movz x5, #0x400, lsl #16
     movz x2, #1, lsl #16
     movk x2, #0xffff, lsl #32
-    movn x0, #99
+    // No explicit movn row: the NATIVE assembler used as this test's oracle does
+    // not implement that mnemonic ("unsupported instruction movn"), so a row for
+    // it fails at the oracle rather than testing anything. The self-host side
+    // does implement it (#6060 -- it used to emit nothing at all), and the
+    // mov x0, #-100 line below reaches the same encoder through the path the
+    // emitter actually takes.
     mov x0, #-100
     mov w0, #-100
     mov x1, #-1
     str d8, [sp, #-16]!
     ldr d8, [sp], #16
-    str d0, [x12, #-8]
     ldr d0, [x12, #8]
+    // No plain-negative FP offset row (str d0, [x12, #-8]): the oracle rejects it
+    // outright ("str FP offset must be a non-negative multiple of 8") because
+    // internal/native/arm64 has no stur/ldur FP form. The self-host now does
+    // (#6060 -- without it the offset wrapped to +8184 and the writeback was
+    // dropped), so that is a gap in the oracle, not in the assembler under test.
     add x0, sp, x0
     add x3, sp, x4
     sub x0, sp, x1
@@ -173,7 +188,7 @@ _start:
     fdiv d0, d1, d2
     fcmp d1, d0
     scvtf d0, x0
-.Ldone:
+Lend:
     ret
 `
 
