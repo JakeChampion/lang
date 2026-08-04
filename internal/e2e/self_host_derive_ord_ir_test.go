@@ -48,6 +48,19 @@ function main(): i32 { var a = Outer { inner: Inner { v: 5 }, tag: 1 }; var b = 
 @derive(cmp.Ord)
 enum E { A(i32), B(i32), C }
 function main(): i32 { if (A(1).cmp(A(2)) < 0 && A(5).cmp(B(0)) < 0 && C.cmp(A(0)) > 0 && A(3).cmp(A(3)) == 0) { return 42; } return 0; }`, 42},
+	// The OPERATOR form: `a < b` is `a.cmp(b) < 0`. The self-host IR path used
+	// to compare the two box POINTERS instead, so the answer was the boxes'
+	// relative allocation addresses — which for equal values made `a < c` true
+	// and `a >= c` false (#6009).
+	{"struct-operator", `import "core/cmp";
+@derive(cmp.Ord)
+struct P { x: i32, y: i32 }
+function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 1, y: 5 }; var c = P { x: 1, y: 2 }; if (a < b && b > a && a <= c && a >= c && !(a < c) && !(c > a)) { return 42; } return 0; }`, 42},
+	// Enum operands, both freshly constructed and held in locals.
+	{"enum-operator", `import "core/cmp";
+@derive(cmp.Ord)
+enum E { A(i32), B(i32), C }
+function main(): i32 { var p = A(3); if (A(1) < A(2) && A(5) < B(0) && C > A(0) && !(A(3) < A(3)) && p <= A(3) && p >= A(3)) { return 42; } return 0; }`, 42},
 }
 
 // TestNativeDeriveOrd runs the derived-Ord programs through the native

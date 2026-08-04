@@ -4987,6 +4987,40 @@ pub function binop_overload_method(op: string): string {
     return "";
 }
 
+// binop_cmp_method maps a comparison operator to the method that gives it
+// STRUCTURAL meaning on a composite operand: `==` / `!=` go through `Eq`'s
+// `eq`, the four ordering ops through `Ord`'s `cmp` (which returns -1/0/1).
+// Returns "" for any other operator.
+pub function binop_cmp_method(op: string): string {
+    if (op == "==" || op == "!=") { return "eq"; }
+    if (op == "<" || op == "<=" || op == ">" || op == ">=") { return "cmp"; }
+    return "";
+}
+
+// composite_cmp_type returns the type name a structural `==` / `<` on `e`
+// dispatches its `eq` / `cmp` under — the struct's own name, or the OWNING
+// enum for an enum value (methods are keyed "<Enum>.<m>", never
+// "<Variant>.<m>"). Returns "" for everything the numeric / string / f64
+// dispatch handles itself: a typed scalar (expr_struct_type also reports a
+// `u8` local's name, which is not a decl), a string, an array, a tuple.
+// decl_is_enum, not the syntactic is_enum_like_name, is what keeps a sized
+// scalar like `u8` out.
+pub function composite_cmp_type(e: parser.Expr, s: LowerState): string {
+    var t: string = expr_struct_type(e, s);
+    if (t != "") {
+        // A local bound from a variant construction records the ENUM name
+        // (`var p = A(5)` → "E"); one bound from a unit variant records the
+        // VARIANT ("Dot"), which redirects to its owner.
+        var owner: string = variant_enum_owner(s.structs, t);
+        if (owner != "") { return owner; }
+        if (decl_is_struct(s.structs, t) || decl_is_enum(s.structs, t)) { return t; }
+        return "";
+    }
+    // A fresh variant construction (`Line(7)`) or a bare unit variant (`Dot`)
+    // is not a local, so expr_struct_type does not type it.
+    return expr_enum_type(e, s);
+}
+
 // for_iter_is_range reports whether a for-loop iter is the synthetic
 // `__range(LOW, HIGH)` / `__range_incl(LOW, HIGH)` call the parser emits
 // for `for i in LOW..HIGH` / `for i in LOW..=HIGH`. Mirrors the checker's
@@ -7359,6 +7393,33 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     if (s.struct_ret_type(blt + "." + ovm) == "") { return s.fail(); }
                     var ovcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: b.left, field: ovm, line: b.line, col: b.col, ty: "" }, args: [b.right], line: b.line, col: b.col, type_argc: 0, ty: "" };
                     return lower_expr(ovcall, s);
+                }
+            }
+            // Composite structural comparison, the same desugar the native
+            // checker applies: `a == b` on a struct or enum is `a.eq(b)`
+            // (`!a.eq(b)` for `!=`), and `a < b` is `a.cmp(b) < 0` — NOT the
+            // heap-pointer compare the integer dispatch below would emit.
+            // Without it two structurally-equal boxes compared unequal and
+            // ordering compared allocation ADDRESSES, silently: the operands
+            // are pointers, so the i32 compare is well-formed and nothing
+            // downstream could notice. Rewriting to a method call reuses the
+            // whole method-dispatch path, including the variant -> enum_owner
+            // redirect a `Line(7) == Line(7)` needs.
+            if (binop_cmp_method(b.op) != "") {
+                var cty: string = composite_cmp_type(b.left, s);
+                if (cty != "") {
+                    var cm: string = binop_cmp_method(b.op);
+                    var cmcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: b.left, field: cm, line: b.line, col: b.col, ty: "" }, args: [b.right], line: b.line, col: b.col, type_argc: 0, ty: "" };
+                    var cms: LowerState = lower_expr(cmcall, s);
+                    if (!cms.ok) { return cms; }
+                    // `eq` yields the boolean directly; `!=` negates it.
+                    if (cm == "eq") {
+                        if (b.op == "!=") { return cms.emit(ir.op_bin("not", 0, false)); }
+                        return cms;
+                    }
+                    // `cmp` yields -1/0/1; the operator applies against 0.
+                    cms = cms.emit(ir.op_const_i32(0));
+                    return cms.emit(ir.op_bin(map_binop(b.op), 0, false));
                 }
             }
             // Short-circuit `&&` / `||`. When the RIGHT operand is trap-free and

@@ -47,6 +47,27 @@ function main(): i32 { var a = Outer { inner: Inner { v: 5 }, tag: 1 }; var b = 
 @derive(cmp.Eq)
 enum E { A(i32), B(string), C }
 function main(): i32 { if (A(5).eq(A(5)) && !A(5).eq(A(6)) && C.eq(C) && !A(5).eq(C) && B("x").eq(B("x"))) { return 42; } return 0; }`, 42},
+	// The OPERATOR form of the same thing. `==` / `!=` on a struct or enum is
+	// structural equality through the derived `eq`, not heap-pointer identity —
+	// the self-host IR path used to lower the two box pointers into a plain i32
+	// compare, so `a == b` on distinct-but-equal boxes was false and `a != c`
+	// was true for every pair (#6009).
+	{"struct-operator", `import "core/cmp";
+@derive(cmp.Eq)
+struct P { x: i32, y: i32 }
+function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 1, y: 2 }; var c = P { x: 1, y: 9 }; if (a == b && a != c && !(a == c) && a == a) { return 42; } return 0; }`, 42},
+	// Enum operands: a fresh variant construction and a bare unit variant both
+	// dispatch under the OWNING enum, so `Line(7) == Line(7)` is payload-wise.
+	{"enum-operator", `import "core/cmp";
+@derive(cmp.Eq)
+enum E { A(i32), B(string), C }
+function main(): i32 { if (A(5) == A(5) && A(5) != A(6) && C == C && A(5) != C && B("x") == B("x")) { return 42; } return 0; }`, 42},
+	// An enum held in a LOCAL types as its variant, so the dispatch has to
+	// redirect variant -> owning enum before naming the method.
+	{"enum-local-operator", `import "core/cmp";
+@derive(cmp.Eq)
+enum E { A(i32), C }
+function main(): i32 { var p = A(5); var q = A(5); var r = A(6); if (p == q && p != r) { return 42; } return 0; }`, 42},
 }
 
 // TestNativeDeriveEq runs the derived-Eq programs through the native

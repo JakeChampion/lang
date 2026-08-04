@@ -7,13 +7,21 @@
 # divergence fails, and a listed fixture that starts PASSING also fails — an
 # allowlist nobody prunes is where bugs go to be forgotten.
 #
+# `eq_struct_enum` and `ord_struct_enum` were here and are now FIXED (#6009):
+# the self-host had no composite-comparison desugar at all, so `a == b` and
+# `a < b` on a struct or enum lowered the two BOX POINTERS into a plain i32
+# compare — structural equality answered "are these the same allocation" and
+# ordering answered "which was allocated first". irlower now rewrites both to
+# the type's derived `eq` / `cmp` the way the native checker does. The operator
+# forms in self_host_derive_{eq,ord}_ir_test.go pin the shape directly.
+#
 # `audit_numeric_types` was here and is now FIXED (#6010): the self-host IR path
 # applied its zero-cost-ascription rewrite (`var x: T = E as T` -> `var x: T = E`)
 # to a real width conversion, so a narrowing `as u8` lost its mask in BINDING
 # position only — 260 as u8 stayed 260 and the fixture's u8-wrap check returned 13.
 # `cast_narrow_binding` now pins that shape directly.
 #
-# Eleven of the original twelve remain. All were found by the leg's first run
+# Nine of the original twelve remain. All were found by the leg's first run
 # over the existing corpus, on fixtures that had been green for months because
 # all four of TestFernFixtures' backends are the native compiler. Each has been reproduced by hand with a
 # native self-host CLI (`make selfhost-cli`) before being written down; none is
@@ -40,8 +48,6 @@ regex_replace_groups #6008 traps (unreachable); native returns 255
 
 # --- runs clean, wrong answer -------------------------------------------
 derive_json #6009 returns 4, native 42
-eq_struct_enum #6009 returns 18, native 63
-ord_struct_enum #6009 returns 87, native 31
 tuple_match_expr #6010 returns 20, native 42
 
 # --- suspicious but UNMEASURABLE by this oracle --------------------------

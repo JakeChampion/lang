@@ -432,6 +432,19 @@ function is_composite_type(t: Type): boolean {
     return false;
 }
 
+// cmp_method_receiver names the type a structural `==` / `<` on `t` would
+// dispatch its `eq` / `cmp` under — a struct's or a union's (enum's) own
+// name. Arrays and tuples have no structural comparison to dispatch, so they
+// report "" and the caller rejects them outright.
+function cmp_method_receiver(t: Type): string {
+    match (t) {
+        TypeStruct(st) => { return st.name; },
+        TypeUnion(u) => { return u.name; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // is_primitive_type reports whether t is one of the scalar primitives
 // (i32 / bool / string / f64). Used by the E034 array-element check to
 // stay conservative — it only compares element types when both are
@@ -4733,11 +4746,17 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                 if (!is_unknown(elt) && !is_unknown(ert) && !type_eq(elt, ert)) {
                     out = out.append(dg_at("E041", "cannot compare " + type_label(elt) + " and " + type_label(ert), b.line, b.col));
                 } else if (!is_unknown(elt) && type_eq(elt, ert) && is_composite_type(elt)) {
-                    // Composite `==` / `!=` would mean heap-pointer identity,
-                    // not value equality. Reject it (the native compiler
-                    // routes it to a structural `Eq` impl; the self-host has
-                    // no traits yet).
-                    out = out.append(dg_at("E041", "cannot compare " + type_label(elt) + " values with \"" + b.op + "\": composite (struct / enum / array / tuple) equality is not supported", b.line, b.col));
+                    // Composite `==` / `!=` is STRUCTURAL equality via the
+                    // type's `Eq` impl — it desugars to `a.eq(b)`, so a struct
+                    // or enum that HAS an `eq` is well-formed. Without one the
+                    // operator would mean heap-pointer identity; arrays and
+                    // tuples have no structural equality at all.
+                    var eqrecv: string = cmp_method_receiver(elt);
+                    if (eqrecv == "") {
+                        out = out.append(dg_at("E041", "cannot compare values of type " + type_label(elt) + " with \"" + b.op + "\": structural equality for arrays / slices / tuples is not supported — compare elements individually", b.line, b.col));
+                    } else if (s.lookup_method("eq", eqrecv).name.len() == 0) {
+                        out = out.append(dg_at("E041", "cannot compare values of type " + type_label(elt) + " with \"" + b.op + "\": type does not implement `Eq` — add `@derive(Eq)` (or `impl Eq for " + eqrecv + "`) so `==` can use structural equality", b.line, b.col));
+                    }
                 }
             }
             // E009: `+` is overloaded — both string (concat), both i32, or
@@ -4816,14 +4835,21 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     var okf_o: boolean = type_eq(olt, t_float()) && type_eq(ort, t_float());
                     if (!oki_o && !okf_o) {
                         if (type_eq(olt, ort) && is_composite_type(olt)) {
-                            // E041: ordering two values of the SAME composite
-                            // type (struct / enum / array / tuple) would mean a
-                            // structural comparison the self-host has no `Ord`
-                            // for. Mirrors the Go checker, which routes
+                            // Ordering two values of the SAME composite type is
+                            // structural comparison via the type's `Ord` impl —
+                            // `a.cmp(b) <op> 0` — so a struct or enum that HAS a
+                            // `cmp` is well-formed. Without one, and for arrays /
+                            // tuples (which have no structural ordering at all),
+                            // it is E041. Mirrors the Go checker, which routes
                             // same-composite ordering to E041 — mixed
                             // composite/scalar operands, or two differing types,
                             // stay E009 (verified against the Go checker).
-                            out = out.append(dg_at("E041", "cannot order " + type_label(olt) + " values with \"" + b.op + "\": composite (struct / enum / array / tuple) ordering is not supported", b.line, b.col));
+                            var ordrecv: string = cmp_method_receiver(olt);
+                            if (ordrecv == "") {
+                                out = out.append(dg_at("E041", "cannot order values of type " + type_label(olt) + " with \"" + b.op + "\": structural ordering for arrays / slices / tuples is not supported", b.line, b.col));
+                            } else if (s.lookup_method("cmp", ordrecv).name.len() == 0) {
+                                out = out.append(dg_at("E041", "cannot order values of type " + type_label(olt) + " with \"" + b.op + "\": type does not implement `Ord` — add `@derive(Ord)` (or `impl Ord for " + ordrecv + "`) so ordering can use structural comparison", b.line, b.col));
+                            }
                         } else {
                             out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(olt) + " and " + type_label(ort), b.line, b.col));
                         }
