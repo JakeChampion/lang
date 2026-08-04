@@ -84,7 +84,9 @@ Worth knowing so you do not assume coverage you do not have:
   binary and input). It returns i64 — bind it to an `i64` and narrow with an
   explicit `as i32` only where the value has to become an exit code.
 - **Over-retains.** The rc detector counts over-*releases* only. A leak reads
-  as a clean 0.
+  as a clean 0. `FERN_LEAKCHECK=1` sees that a leak happened and
+  `FERN_RC_TRACE=1` names the alloc site it came from (both below), but
+  neither runs as part of any gate — you have to go looking.
 
 ## Practical rules
 
@@ -133,6 +135,18 @@ answer, these are the tools, in the order they are usually reached for:
   symptom.
 - **`FERN_LEAKCHECK=1`** — alloc/free counts and live bytes at exit. The other
   direction: what the rc detector cannot see.
+- **`FERN_RC_TRACE=1`** — one stderr line per heap event:
+  `rctrace <a|f> <ptr> <size> <site>`, all three numbers fixed-width 16-hex,
+  `site` being the *caller's* return address. Stands to `FERN_LEAKCHECK` as
+  `FERN_RC_UNDERFLOW_TRAP` stands to the underflow counter: leakcheck says a
+  leak happened, this says which alloc site it came from. Pair the `a` lines
+  against the `f` lines by pointer and what is left never came back; resolve
+  those sites with `-g`. Run both flags together and the summary tells you how
+  much to look for. Two caveats: it is per-event output, so reduce to a repro
+  before reaching for it on the self-host compiler, and **`f` sites are much
+  less informative than `a` sites** — every release funnels through the shared
+  drop helpers, so a free line usually names `__fern_arr_dec` rather than your
+  code. The alloc site is the one that locates a leak. x86-64 only.
 - **`-g`** — emits a `.symtab`, without which a gdb backtrace through a Fern
   binary is addresses only.
 
