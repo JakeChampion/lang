@@ -101,7 +101,11 @@ function churn(n: i32): i32 {
     b = fill(b, n);
     return b[n - 1];
 }`,
-		n:        200,
+		// n is small because this shape's native leak is QUADRATIC — each
+		// `.with` abandons an n-element buffer, n times — so the per-churn
+		// figure has to stay inside the byte the exit code can carry. At
+		// n=200 it overflowed and the guard reported 252.
+		n:        80,
 		maxRatio: 8,
 	},
 	{
