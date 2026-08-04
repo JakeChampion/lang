@@ -536,11 +536,23 @@ jobs:
         include:
           - { leg: wasm, test: TestFernFixturesSelfHostWasm, wasmtime: "true", job-minutes: 45, go-timeout: 43m }
           - { leg: x86-64, test: TestFernFixturesSelfHostX86_64, wasmtime: "false", job-minutes: 45, go-timeout: 43m }
+          # Re-measurement lane for #6045 (25 SIGILLs) after the assembler fixes
+          # in #6047/#6054/#6060/#6044. Temporary: it either comes back clean
+          # enough to land the leg for real, or it reports what is left.
+          - { leg: arm64, test: TestFernFixturesSelfHostArm64, wasmtime: "false", qemu: "true", job-minutes: 100, go-timeout: 95m }
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: ${{ matrix.wasmtime }}
+      - name: aarch64 cross toolchain + qemu (arm64 leg)
+        if: matrix.qemu == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu qemu-user-static
+          qemu-aarch64-static --version | head -1
       - name: run the fixture corpus through the self-host compiler
         env:
           FERN_SELFHOST_FIXTURES: "1"

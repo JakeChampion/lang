@@ -249,6 +249,52 @@ func TestFernFixturesSelfHostX86_64(t *testing.T) {
 	})
 }
 
+// TestFernFixturesSelfHostArm64 runs the corpus through `fern -target arm64`:
+// the self-host arm64 emitter, assembled + linked IN-PROCESS by arm64_native +
+// elf.fern (no `.s`, no gcc — the production path since the ELF flip), executed
+// under qemu-aarch64.
+//
+// This is the only leg where the self-host compiler produces the finished binary
+// by itself, so it is the closest thing the corpus has to a test of the
+// self-hosted toolchain end to end. It also means an in-process-assembler gap
+// surfaces as a compile failure naming the instruction, not as a link error.
+func TestFernFixturesSelfHostArm64(t *testing.T) {
+	requireSelfHostFixtureLeg(t)
+	gcc, runner := x86_64Tooling(t)
+	// arm64Tooling is reused for its qemu discovery and its clean skip; the gcc
+	// it returns is deliberately unused, because `-target arm64` assembles and
+	// links in-process. On a native arm64 Linux host qemu comes back "" and
+	// runArm64Bin execs directly — though that host cannot run the x86-64
+	// driver binary anyway, which the runner check in runSelfHostFixtureLeg
+	// turns into a skip.
+	_, qemu := arm64Tooling(t)
+	runSelfHostFixtureLeg(t, selfHostLeg{
+		backend:   "arm64",
+		target:    "arm64",
+		gcc:       gcc,
+		runner:    runner,
+		knownFile: "selfhost-arm64-known-divergences.txt",
+		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
+			binPath := filepath.Join(t.TempDir(), "prog")
+			cmd := exec.Command(fernBin, "-target", "arm64", f.mainPath, stdlibRoot, "-o", binPath)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				// Includes the in-process assembler's own refusal ("hit an
+				// instruction it does not yet support: …"), which names the
+				// mnemonic — a different and more actionable failure than the
+				// x86 leg's link error.
+				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "arm64", f.mainPath, stdlibRoot, out))
+				return
+			}
+			// write_file does not set the exec bit (the Makefile chmods
+			// bin/fern-selfhost for the same reason).
+			if err := os.Chmod(binPath, 0o755); err != nil {
+				t.Fatalf("chmod: %v", err)
+			}
+			checkSelfHostNativeRun(t, f, runSelfHostBin(runArm64Bin(qemu, binPath), f.stdin), failf)
+		},
+	})
+}
+
 // failFunc reports a divergence. It is t.Errorf for an unlisted fixture and a
 // t.Logf for a listed one, so the same assertions describe both directions and
 // cannot drift apart.
