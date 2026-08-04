@@ -17,7 +17,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "parse:", err)
 		os.Exit(1)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		fmt.Fprintln(os.Stderr, "constfold:", err)
 		os.Exit(1)
 	}

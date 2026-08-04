@@ -41,7 +41,7 @@ func lowerWithFreeFlag(t *testing.T, src string, freeOn bool) *ir.Program {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)

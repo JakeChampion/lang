@@ -68,7 +68,7 @@ func checkGenerated(t *testing.T, src string) error {
 	if err != nil {
 		return err
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		return err
 	}
 	_, err = checker.Check(prog)
@@ -140,7 +140,7 @@ func TestGenMainProducesRunnablePrograms(t *testing.T) {
 		if err != nil {
 			t.Fatalf("seed=%d modload:\nsrc:\n%s\nerr: %v", seed, src, err)
 		}
-		if err := constfold.Fold(prog); err != nil {
+		if err := constfold.Fold(prog, nil); err != nil {
 			t.Fatalf("seed=%d constfold:\nsrc:\n%s\nerr: %v", seed, src, err)
 		}
 		info, err := checker.Check(prog)

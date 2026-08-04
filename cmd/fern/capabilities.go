@@ -28,7 +28,7 @@ func runCapabilities(srcPath string, w io.Writer) error {
 		return err
 	}
 	prog := e.prog
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		return e.format(err)
 	}
 	if _, err := checker.Check(prog); err != nil {

@@ -62,6 +62,7 @@ import (
 	x86_64codegen "github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/embed"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/literate"
@@ -276,6 +277,13 @@ var mainFuncRe = regexp.MustCompile(`(?m)^\s*(pub\s+)?(function|fn)\s+main\b`)
 // binaries so debuggers / nm / backtraces / profilers can name code addresses.
 var emitDebugSyms bool
 
+// embeddedAssets is set from the -embed flag: the asset bundle that
+// __fern_asset("name") resolves against during const folding. nil when
+// -embed was not passed, which makes any use of the builtin an error.
+// It is compile-time state shared by the check / interp / build paths
+// rather than a parameter because `run` already carries fifteen.
+var embeddedAssets *embed.Set
+
 func definesMain(code string) bool { return mainFuncRe.MatchString(code) }
 
 // format renders err against the right source for each entry it
@@ -400,7 +408,7 @@ func runDoctestCase(srcPath, src string, tc literate.Doctest) error {
 	if err != nil {
 		return fmtErr(err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		return fmtErr(err)
 	}
 	info, err := checker.Check(prog)
@@ -597,6 +605,7 @@ func main() {
 	asyncExport := flag.Bool("async-export", false, "with -target wasm-bin: wrap the core as a WASI Preview-3 component-model-async component exporting `run: async func() -> u32` (lifted from main, which must return i32). The result is delivered via `canon task.return`. Run with `wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
 	var asyncProviders repeatedString
 	flag.Var(&asyncProviders, "async-provider", "with -target wasm-bin and an `@import async` (WASI Preview-3) program: bundle a pre-built provider *component* (.wasm) that exports the matching async function, so the result is a single self-contained runnable component (no separate host needed). Repeatable: `WITNAME=PATH` maps a provider to the async import whose WIT name is WITNAME; a single bare `PATH` is shorthand when the program has exactly one async import. Each provider must export its WITNAME. Scalar params + scalar result only (e.g. `@import(\"iface\",\"name\") async function add(a: i32, b: i32): i32;`). See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
+	embedDir := flag.String("embed", "", "embed a directory of assets into the binary at compile time. `__fern_asset(\"NAME\")` in the source is replaced with a string literal holding that file's bytes, where NAME is the file's slash-separated path relative to DIR. Assets are ordinary string literals: immortal (no refcount traffic), zero-copy to hand to user code, and NUL-safe, so binary assets (images, fonts, wasm) work unchanged.")
 	emitDebug := flag.Bool("g", false, "emit a static symbol table (.symtab) into the native binary so debuggers, nm, backtraces, and profilers can map code addresses to function names")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
@@ -631,6 +640,14 @@ func main() {
 	}
 	flag.Parse()
 	emitDebugSyms = *emitDebug
+	if *embedDir != "" {
+		set, err := embed.Load(*embedDir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fern:", err)
+			os.Exit(1)
+		}
+		embeddedAssets = set
+	}
 
 	// Diagnostics colourise per -color (docs/DIAGNOSTIC-UX-RESEARCH.md
 	// Rec §7). Decided once, up front, so every diag.Format call below
@@ -955,7 +972,7 @@ func runInterp(srcPath string, argv []string) (int, error) {
 		prog = e.prog
 		formatErr = e.format
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, embeddedAssets); err != nil {
 		return 1, formatErr(err)
 	}
 	info, err := checker.Check(prog)
@@ -1043,7 +1060,7 @@ func runCheck(srcPath string) error {
 		prog = e.prog
 		formatErr = e.format
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, embeddedAssets); err != nil {
 		return formatErr(err)
 	}
 	info, err := checker.Check(prog)
@@ -1080,7 +1097,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		return 1, err
 	}
 	prog := e.prog
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, embeddedAssets); err != nil {
 		return 1, e.format(err)
 	}
 	info, err := checker.Check(prog)

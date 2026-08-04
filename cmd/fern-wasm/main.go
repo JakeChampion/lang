@@ -139,7 +139,7 @@ func interpret(src string) map[string]any {
 		result["exit"] = 1
 		return result
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		result["error"] = diag.Format("<playground>", src, err)
 		result["exit"] = 1
 		return result
@@ -247,7 +247,7 @@ func compile(src, target string) map[string]any {
 		result["error"] = diag.Format("<playground>", src, err)
 		return result
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		result["error"] = diag.Format("<playground>", src, err)
 		return result
 	}

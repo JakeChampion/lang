@@ -31,7 +31,7 @@ func buildAsyncProviderComponent(t *testing.T, src, srcFn, exportName string) []
 	if err != nil {
 		t.Fatalf("provider modload: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("provider constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
@@ -131,7 +131,7 @@ func buildAsyncProviderComponentParams(t *testing.T, src, srcFn, exportName stri
 	if err != nil {
 		t.Fatalf("provider modload: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("provider constfold: %v", err)
 	}
 	info, err := checker.Check(prog)

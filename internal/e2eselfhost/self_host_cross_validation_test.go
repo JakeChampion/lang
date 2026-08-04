@@ -146,7 +146,7 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		if err != nil {
 			t.Fatalf("native interp modload: %v\n--- source ---\n%s", err, source)
 		}
-		if err := constfold.Fold(prog); err != nil {
+		if err := constfold.Fold(prog, nil); err != nil {
 			t.Fatalf("native interp constfold: %v\n--- source ---\n%s", err, source)
 		}
 		// The full pipeline, matching cmd/fern's `-interp`: modload → constfold

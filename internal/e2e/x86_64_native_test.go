@@ -46,7 +46,7 @@ func compileAndRunX86Native(t *testing.T, src string) (stdout string, exitCode i
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)

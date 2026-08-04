@@ -34,7 +34,7 @@ func loadChecked(t *testing.T, entry string) *ast.Program {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := checker.Check(prog); err != nil {

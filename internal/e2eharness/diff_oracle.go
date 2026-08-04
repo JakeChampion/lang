@@ -40,7 +40,7 @@ func CompileAndRunWasmbinMain(t *testing.T, src string) int {
 	if err != nil {
 		t.Fatalf("load: %v\nsrc:\n%s", err, src)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold: %v\nsrc:\n%s", err, src)
 	}
 	info, err := checker.Check(prog)

@@ -44,7 +44,7 @@ func lowerFixture(t *testing.T, path string, ptrW int) (rendered string, ok bool
 	if err != nil {
 		return "", false
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		return "", false
 	}
 	info, err := checker.Check(prog)

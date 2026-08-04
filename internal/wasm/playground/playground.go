@@ -113,7 +113,7 @@ func frontEnd(src string) (*ast.Program, *checker.Info, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s", diag.Format("<playground>", src, err))
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		return nil, nil, fmt.Errorf("%s", diag.Format("<playground>", src, err))
 	}
 	info, err := checker.Check(prog)

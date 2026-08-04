@@ -100,11 +100,11 @@ func TestFoldIdempotent(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
-			if err := constfold.Fold(prog); err != nil {
+			if err := constfold.Fold(prog, nil); err != nil {
 				t.Fatalf("fold pass 1: %v", err)
 			}
 			once := printer.Print(prog)
-			if err := constfold.Fold(prog); err != nil {
+			if err := constfold.Fold(prog, nil); err != nil {
 				t.Fatalf("fold pass 2: %v", err)
 			}
 			twice := printer.Print(prog)
@@ -122,7 +122,7 @@ func mustParseFoldPrint(t *testing.T, src string) string {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("fold: %v", err)
 	}
 	return printer.Print(prog)

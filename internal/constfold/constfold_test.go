@@ -17,7 +17,7 @@ func fold(t *testing.T, src string) *ast.Program {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if err := Fold(prog); err != nil {
+	if err := Fold(prog, nil); err != nil {
 		t.Fatalf("fold: %v", err)
 	}
 	return prog
@@ -30,7 +30,7 @@ func foldErr(t *testing.T, src string) string {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if err := Fold(prog); err != nil {
+	if err := Fold(prog, nil); err != nil {
 		return err.Error()
 	}
 	t.Fatal("expected fold error but got none")

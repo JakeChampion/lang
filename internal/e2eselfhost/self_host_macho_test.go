@@ -344,7 +344,7 @@ func buildSelfHostBinArm64Darwin(t *testing.T, dir, fernName, out string) string
 	if err != nil {
 		t.Fatalf("modload %s: %v", fernName, err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold %s: %v", fernName, err)
 	}
 	info, err := checker.Check(prog)

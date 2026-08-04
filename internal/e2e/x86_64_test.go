@@ -521,7 +521,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
@@ -681,7 +681,7 @@ func TestX86_64Args(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
@@ -749,7 +749,7 @@ function main(): i32 {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
@@ -886,7 +886,7 @@ func TestX86_64ReadLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
@@ -943,7 +943,7 @@ func TestX86_64ReadLineBuiltin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
@@ -1830,7 +1830,7 @@ func compileX86_64InDir(t *testing.T, src string, seed map[string]string) (stdou
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
