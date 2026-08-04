@@ -341,6 +341,20 @@ jobs:
         with:
           wasmtime: "true" # the CLI tests' `-target wasm` sub-legs run wasmtime
           gotestsum: "true"
+      # TestSelfHostArm64LinuxBuilds and TestSelfHostArm64DarwinBuilds are in
+      # this job's -test.run list, and the Linux one EXECUTES its arm64 output —
+      # under qemu-aarch64, which was never installed here, so it t.Skipped every
+      # run. That skip is why #6047 (every printed string right-length /
+      # wrong-bytes on `-target arm64`) survived having a `print` test case.
+      # Installing qemu makes the test actually run; the encoding differential
+      # (TestSelfHostArm64AsmEncodingMatchesNative) is the deterministic gate
+      # that needs no emulator.
+      - name: qemu-aarch64 (the arm64 driver tests execute their output)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user
+          qemu-aarch64 --version | head -1
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-x86_64

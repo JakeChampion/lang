@@ -1,14 +1,30 @@
-// examples/self_host/arm64_asm_bench_run.fern — perf harness for the
-// in-process arm64 assembler. Reads GAS text on stdin, runs the whole
-// assemble path (parse/emit + .ltorg flush + fixup resolve + @PAGE link)
-// and prints the section sizes. Exists so the assembler's memory profile
-// (#6011) can be measured against a real `.s` without a selfhost-cli
-// rebuild per experiment.
+// examples/self_host/arm64_asm_bench_run.fern — harness for the in-process
+// arm64 assembler. Reads GAS text on stdin, runs the whole assemble path
+// (parse/emit + .ltorg flush + fixup resolve + @PAGE link) and prints the
+// section sizes. Exists so the assembler's memory profile (#6011) can be
+// measured against a real `.s` without a selfhost-cli rebuild per experiment.
+//
+// With `-words` it also dumps each assembled instruction word as hex, one per
+// line, after the summary. That makes the assembler's ENCODINGS comparable
+// against the native Go assembler (internal/native/arm64, itself gated against
+// gcc by TestNativeLinkArm64MatchesGccLink) on identical input, with no qemu and
+// no execution — see TestSelfHostArm64AsmEncodingMatchesNative. #6047 was an
+// encoding bug (`[x0, x1]` assembled as `[x0, #1]`, because the index register
+// was read as an immediate) that produced a perfectly runnable binary printing
+// the right number of wrong bytes; only comparing encodings catches that class
+// cheaply.
 import "std/i64";
 import "std/io";
 import "./arm64_native";
 
 function main(): i32 {
+    var av: string[] = args();
+    var dump: boolean = false;
+    var i: i32 = 0;
+    while (i < av.len()) {
+        if (av[i] == "-words") { dump = true; }
+        i = i + 1;
+    }
     var src: string = io.read_all_stdin();
     var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(src);
     var pa: arm64_native.Arm64Asm = p.asm;
@@ -18,5 +34,23 @@ function main(): i32 {
     var pa2: arm64_native.Arm64Asm = p.asm;
     print("text=" + pa2.code.len().to_string() + " data=" + p.data.len().to_string()
         + " bump=" + __heap_bump_bytes().to_string() + "\n");
+    if (p.unknown.len() > 0) {
+        var u: i32 = 0;
+        while (u < p.unknown.len()) {
+            print("unknown=" + p.unknown[u]);
+            u = u + 1;
+        }
+    }
+    if (dump) {
+        // Little-endian bytes back into 32-bit words, so the output is directly
+        // comparable with the native assembler's instruction stream.
+        var b: i32 = 0;
+        while (b + 3 < pa2.code.len()) {
+            var w: i64 = (pa2.code[b] as i64) | ((pa2.code[b + 1] as i64) << 8)
+                | ((pa2.code[b + 2] as i64) << 16) | ((pa2.code[b + 3] as i64) << 24);
+            print("word " + (b / 4).to_string() + " " + w.to_string());
+            b = b + 4;
+        }
+    }
     return 0;
 }
