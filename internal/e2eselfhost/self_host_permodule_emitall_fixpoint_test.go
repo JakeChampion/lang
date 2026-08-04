@@ -225,9 +225,19 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 			peakRSSKB = rss
 		}
 		if derr != nil {
+			// The two memory failures need opposite responses, and until the arena
+			// trap got its own status both arrived as 137 and this hint had to
+			// guess. 125 is the emitted binary exhausting its own fixed arena —
+			// reproducible, a real bound-the-batch bug. 137 is 128+9, the HOST
+			// kernel OOM-killing the process — infra, retry with a smaller budget.
 			hint := ""
-			if ee, ok := derr.(*exec.ExitError); ok && ee.ExitCode() == 137 {
-				hint = " — arena OOM (exit 137); -assume-eligible did not bound the batch"
+			if ee, ok := derr.(*exec.ExitError); ok {
+				switch ee.ExitCode() {
+				case 125:
+					hint = " — arena exhausted (exit 125); -assume-eligible did not bound the batch"
+				case 137:
+					hint = " — SIGKILLed (exit 137): the HOST ran out of RAM, not the arena; lower the concurrency or the budget knobs"
+				}
 			}
 			t.Fatalf("[%s] emit-all batch [%d:%d]: %v%s", label, b, hi, derr, hint)
 		}

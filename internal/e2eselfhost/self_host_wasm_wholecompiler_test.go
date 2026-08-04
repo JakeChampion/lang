@@ -118,9 +118,20 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	// assertion failure) reproducibly at the irlower windows. 2 keeps the peak
 	// ~10 GB at ~1.5x wall-clock, still well under the 18m test budget.
 	const workers = 2
+	// Both memory-exhaustion causes mean the same thing HERE — the window is too
+	// big, halve it and retry — so both are accepted. They are not the same event:
+	// 125 is the emitted binary tripping __fern_alloc's bounds check on its own
+	// fixed arena, 137 is 128+9, the HOST kernel OOM-killing the process. Before
+	// the arena trap had its own status both arrived as 137 and were
+	// indistinguishable; keep them named so a change that cares about the
+	// difference has something to key on.
 	isOOM := func(err error) bool {
 		var ee *exec.ExitError
-		return errors.As(err, &ee) && ee.ExitCode() == 137
+		if !errors.As(err, &ee) {
+			return false
+		}
+		const arenaExhausted, sigkilled = 125, 137
+		return ee.ExitCode() == arenaExhausted || ee.ExitCode() == sigkilled
 	}
 	type job struct {
 		idx, lo, hi int

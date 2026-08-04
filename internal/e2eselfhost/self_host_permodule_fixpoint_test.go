@@ -182,12 +182,20 @@ func perModuleEmitWholeCompiler(t *testing.T, runner []string, compilerBin, entr
 		}
 		unit, err := drive(t, emitArgs...)
 		if err != nil || len(unit) == 0 {
-			// Surface an arena OOM (exit 137) distinctly — it is the documented
+			// Surface an arena exhaustion distinctly — it is the documented
 			// self-host large-module-emit blocker (goal #2 reclamation), not a
-			// codegen bail.
+			// codegen bail. 137 is a DIFFERENT event with a different fix: the HOST
+			// kernel OOM-killed the process. Both used to arrive as 137, so this
+			// hint could not tell them apart and named the wrong one whenever the
+			// runner was simply short of RAM.
 			hint := "a module is not IR-eligible or the shard OOMed"
-			if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 137 {
-				hint = "arena OOM (exit 137) — the self-host large-module-emit blocker (#3425 / goal #2)"
+			if ee, ok := err.(*exec.ExitError); ok {
+				switch ee.ExitCode() {
+				case 125:
+					hint = "arena exhausted (exit 125) — the self-host large-module-emit blocker (#3425 / goal #2)"
+				case 137:
+					hint = "SIGKILLed (exit 137) — the HOST ran out of RAM, not the arena; infra, not a compiler regression"
+				}
 			}
 			j.err = &pmEmitError{modIdx: j.modIdx, tag: tag, bytes: len(unit), err: err, hint: hint}
 			return
