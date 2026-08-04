@@ -940,11 +940,17 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // mmap'd lazily at runtime (see __fern_alloc below) rather than reserved as
     // a multi-GiB `.bss` block, so the emitted binary makes no assumption about
     // the linker's .bss layout — bfd / lld / mold all work (issue #4081).
-    // Mirrors asm.fern's AST path. Keep in sync with asm.fern.
     s = s.write("    .section .bss\n");
     s = s.write("    .align 8\n");
+    // .globl on the cursor + end pair for the reason spelled out on
+    // __fern_arr_push_shared below: __heap_bump_bytes lowers to an INLINE read of
+    // BOTH (`movq __fern_heap_ptr(%rip)` / `movq __fern_heap_end(%rip)`, kind_tag
+    // 80), never a call through a global accessor, so a file-local symbol is
+    // unreachable from any unit but the one holding the runtime.
+    s = s.write("    .globl __fern_heap_ptr\n");
     s = s.write("__fern_heap_ptr: .quad 0\n");       // bump cursor (0 until first mmap)
     s = s.write("    .align 8\n");
+    s = s.write("    .globl __fern_heap_end\n");
     s = s.write("__fern_heap_end: .quad 0\n");        // arena end (base + heap_size), set at mmap time
     s = s.write("    .align 8\n");
     // arena BASE (the mmap return), set once at first alloc. Bounds the freeable
@@ -970,9 +976,14 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // every function whether or not the bundle calls it — a caller landing in
     // any unit but this one failed to link with "undefined reference to
     // __fern_arr_push_shared". Whole-program builds never saw it: one unit, one
-    // file, local resolution. __fern_heap_ptr / __fern_heap_base carry the same
-    // latent hazard for __heap_bump_bytes, which is inline-read the same way;
-    // left alone here because nothing calls it cross-unit yet. See #6058.
+    // file, local resolution. See #6058.
+    //
+    // These two — the cliff counter and the heap cursor/end pair above — are the
+    // ONLY .bss words an op lowering reads inline; every other reference
+    // (__fern_rc_underflow, __fern_freelist, __fern_envp, __fern_strbuf_*,
+    // __fern_heap_base) is emitted inside a runtime helper, which lands in this
+    // same unit. That is why __fern_heap_base stays local: only __fern_str_free
+    // reads it.
     s = s.write("    .globl __fern_arr_push_shared\n");
     s = s.write("__fern_arr_push_shared: .quad 0\n");
     s = s.write("    .align 8\n");
