@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Three legs run the fixture corpus through the SELF-HOST compiler, one per
@@ -211,7 +212,7 @@ func TestFernFixturesSelfHostX86_64(t *testing.T) {
 			asmPath := filepath.Join(dir, "prog.s")
 			cmd := exec.Command(fernBin, "-target", "x86-64", f.mainPath, stdlibRoot, "-o", asmPath)
 			if out, err := cmd.CombinedOutput(); err != nil {
-				failf("self-host compile failed: %v\n%s", err, out)
+				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "x86-64", f.mainPath, stdlibRoot, out))
 				return
 			}
 			binPath := filepath.Join(dir, "prog")
@@ -263,7 +264,7 @@ func TestFernFixturesSelfHostArm64(t *testing.T) {
 				// instruction it does not yet support: …"), which names the
 				// mnemonic — a different and more actionable failure than the
 				// x86 leg's link error.
-				failf("self-host compile failed: %v\n%s", err, out)
+				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "arm64", f.mainPath, stdlibRoot, out))
 				return
 			}
 			// write_file does not set the exec bit (the Makefile chmods
@@ -380,25 +381,68 @@ func runSelfHostFixtureLeg(t *testing.T, leg selfHostLeg) {
 		leg.backend, ran, expectedFail, skipped, skipReasons)
 }
 
+// strictIRBailSite re-runs a FAILED compile under FERN_STRICT_IR=1 and returns
+// the bail site it names, or "" when the failure was not an eligibility bail.
+// The driver's own message says to set the variable and re-run; doing it here
+// means the CI log carries the answer instead of an instruction, which is the
+// difference between triaging from a log and having to reproduce first. Costs one
+// extra ~1.3s compile, and only on a fixture that already failed.
+func strictIRBailSite(fernBin, target, mainPath, stdlibRoot string, firstOut []byte) string {
+	if !strings.Contains(string(firstOut), "not IR-eligible") {
+		return ""
+	}
+	cmd := exec.Command(fernBin, "-target", target, mainPath, stdlibRoot, "-o", os.DevNull)
+	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+	out, _ := cmd.CombinedOutput()
+	return "\n--- FERN_STRICT_IR=1 ---\n" + string(out)
+}
+
 // selfHostRun is a finished run of a self-host-compiled native binary. stderr is
 // kept separately from stdout so an exact stdout comparison stays exact while
 // diagnostics still get the runtime's own complaint (an rc abort, a bounds
 // abort) instead of dropping it.
 type selfHostRun struct {
-	stdout string
-	stderr string
-	exit   int
-	exited bool // false → killed by a signal
+	stdout   string
+	stderr   string
+	exit     int
+	exited   bool // false → killed by a signal
+	state    string
+	elapsed  time.Duration
+	timedOut bool // we killed it at selfHostRunTimeout
 }
+
+// selfHostRunTimeout bounds ONE fixture's run. Every fixture in the corpus
+// finishes in well under a second natively; a self-host-compiled one that does
+// not is diverging, and the leg should say so in seconds rather than let one
+// program spend the lane's budget. Measured on the first run: six x86-64 regex
+// fixtures burned ~83s each before dying, and the arm64 leg hit the 43m lane
+// wall two thirds of the way through the corpus at ~32s per crashing qemu run —
+// a red lane that could not report what else was red. Generous enough (20s,
+// ~100x the slowest honest fixture) that a slow qemu start is never mistaken for
+// a hang.
+const selfHostRunTimeout = 20 * time.Second
 
 func runSelfHostBin(cmd *exec.Cmd, stdin string) selfHostRun {
 	cmd.Stdin = strings.NewReader(stdin)
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se
-	_ = cmd.Run()
-	r := selfHostRun{stdout: so.String(), stderr: se.String(), exit: -1}
+	start := time.Now()
+	if err := cmd.Start(); err != nil {
+		return selfHostRun{stderr: err.Error(), exit: -1}
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	timedOut := false
+	select {
+	case <-done:
+	case <-time.After(selfHostRunTimeout):
+		timedOut = true
+		_ = cmd.Process.Kill()
+		<-done
+	}
+	r := selfHostRun{stdout: so.String(), stderr: se.String(), exit: -1, elapsed: time.Since(start), timedOut: timedOut}
 	if ps := cmd.ProcessState; ps != nil {
-		r.exit, r.exited = ps.ExitCode(), ps.Exited()
+		r.exit, r.exited, r.state = ps.ExitCode(), ps.Exited(), ps.String()
 	}
 	return r
 }
@@ -411,8 +455,21 @@ func runSelfHostBin(cmd *exec.Cmd, stdin string) selfHostRun {
 // answer.
 func checkSelfHostNativeRun(t *testing.T, f *fixtureSpec, r selfHostRun, failf failFunc) {
 	t.Helper()
+	if r.timedOut {
+		failf("the self-host-compiled binary HUNG — killed at %s (natively this fixture finishes in milliseconds)\nstdout so far: %q\nstderr: %s",
+			selfHostRunTimeout, r.stdout, r.stderr)
+		return
+	}
 	if !r.exited {
-		failf("the self-host-compiled binary CRASHED (killed by a signal, not a wrong answer)\nstdout: %q\nstderr: %s", r.stdout, r.stderr)
+		// The signal is the whole diagnosis and it must be printed: SIGSEGV is a
+		// miscompile in the emitted code, SIGKILL after a long run is the host's
+		// OOM killer reaping a program that walked the 16 GiB MAP_NORESERVE arena,
+		// SIGILL is FERN_RC_UNDERFLOW_TRAP. Reporting only "killed by a signal"
+		// (as this did on its first run, over six regex fixtures at ~83s each)
+		// leaves the reader unable to tell a wrong instruction from a runaway
+		// allocation, which are opposite ends of the compiler.
+		failf("the self-host-compiled binary CRASHED after %s — %s (not a wrong answer)\nstdout: %q\nstderr: %s",
+			r.elapsed.Round(time.Millisecond), r.state, r.stdout, r.stderr)
 		return
 	}
 	if r.exit != f.wantExit {
