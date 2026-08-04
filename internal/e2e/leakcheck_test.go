@@ -950,6 +950,51 @@ const ctorOuterAliasSrc = `function main(): i32 {
     return s % 251;
 }`
 
+// --- Construction-retained source, drop ORDER (#6024) ----------------
+//
+// The release a ctorAliasInced source gets is the FLAT `__fern_rc_dec`, and a
+// flat dec only decrements — it never frees. The buffer comes back solely
+// through the container's deep drop (`__drop_tuple_*` → `__fern_arr_dec`),
+// which frees at the last reference. So the container must be released AFTER
+// its source, and on the exit sweep it is: declaration order puts the source
+// first.
+//
+// A precise drop is the one thing that can invert that. `o` is dead after the
+// read, so it was released at its last use, its deep drop took `xs` from rc 2
+// to rc 1, and then `xs`'s own flat dec at the sweep took the rc to zero
+// without freeing anything — the buffer leaked, on plain top-level code with
+// no loop and no nested block in sight. retainsCtorAliasedSource keeps such a
+// container on the exit sweep.
+const ctorRetainedDropOrderSrc = `function main(): i32 {
+    var xs: i32[] = [4, 5, 6];
+    var o = (xs, 9);
+    var s: i32 = xs[1] + o.1;
+    return s % 251;
+}`
+
+func TestX86_64LeakCheckCtorRetainedDropOrder(t *testing.T) {
+	_, stderr, code := runLeakCheckX86_64(t, ctorRetainedDropOrderSrc)
+	if code != 14 {
+		t.Fatalf("exit=%d, want 14 — the read is wrong, not just its accounting", code)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs != 2 || frees != 2 || live != 0 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want 2/2/0 — the container's drop "+
+			"ran before its source's, so nothing freed the buffer", allocs, frees, live)
+	}
+}
+
+func TestArm64LeakCheckCtorRetainedDropOrder(t *testing.T) {
+	_, stderr, code := runLeakCheckArm64(t, ctorRetainedDropOrderSrc)
+	if code != 14 {
+		t.Fatalf("exit=%d, want 14 — the read is wrong, not just its accounting", code)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	if allocs != 2 || frees != 2 || live != 0 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want 2/2/0", allocs, frees, live)
+	}
+}
+
 func TestX86_64LeakCheckCtorRetainedLoopSource(t *testing.T) {
 	for _, tc := range []struct {
 		name string

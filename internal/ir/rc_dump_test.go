@@ -39,7 +39,17 @@ function dropper(): i32 {
 	var s: i32 = big[0];
 	return s + 1;
 }
-function main(): i32 { return thread(Ctx { name: "a", n: 1 }) + mover() + dropper() + wrapped(); }
+function nester(n: i32): i32 {
+	var s: i32 = 0;
+	var i: i32 = 0;
+	while (i < n) {
+		var row: i32[] = [1, 2, 3, 4];
+		s = s + row[0];
+		i = i + 1;
+	}
+	return s;
+}
+function main(): i32 { return thread(Ctx { name: "a", n: 1 }) + mover() + dropper() + nester(3) + wrapped(); }
 function wrapped(): i32 {
 	match (wrapper(Leaf { v: [1] })) {
 		Leaf(l) => { return l.v[0]; },
@@ -71,6 +81,10 @@ function wrapped(): i32 {
 	// dropper: big's last use is `big[0]` at top-level statement 1 — the
 	// precise drop lands right after it.
 	check("dropper", "freeEligible: big", "preciseDrops: 1=big")
+	// nester: `row` is declared in the loop BODY, so it is not a top-level
+	// candidate at all — it lands in nestedDrops instead, keyed by the position
+	// of the statement to drop after (`s = s + row[0]`).
+	check("nester", "nestedDrops: 28:5=row")
 
 	if len(dumps) == 0 {
 		t.Fatal("RcPlanHook never fired")

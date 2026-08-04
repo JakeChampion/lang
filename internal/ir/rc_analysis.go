@@ -169,6 +169,10 @@ type rcPlan struct {
 	// after lowering that top-level statement (Perceus garbage-free precise
 	// drops — computePreciseDrops).
 	preciseDrops map[int][]string
+	// nestedDrops[stmt] is the same precise-drop list for a local declared
+	// inside a NESTED block, keyed by the block statement to drop after
+	// rather than by a top-level index (computeNestedDrops).
+	nestedDrops map[ast.Stmt][]string
 	// Dead-alias dup/drop cancellation (#4402 opt 1): borrowedAlias[y] marks a
 	// `var y = x` alias local proven to be a pure BORROWED VIEW of an owned
 	// local x for its whole life — its transfer inc and its exit-sweep dec are
@@ -2552,39 +2556,8 @@ func (b *builder) computePreciseDrops() map[int][]string {
 		return nil
 	}
 	stmts := b.fn.Body.Stmts
-	declIdx := map[string]int{}
-	reassigned := map[string]bool{}
-	for i, st := range stmts {
-		switch s := st.(type) {
-		case *ast.Var:
-			if _, dup := declIdx[s.Name]; dup {
-				reassigned[s.Name] = true // shadowed redeclaration — bail
-			} else {
-				declIdx[s.Name] = i
-			}
-		case *ast.ExprStmt:
-			if a, ok := s.Expr.(*ast.Assign); ok {
-				if id, ok := a.Target.(*ast.Ident); ok {
-					reassigned[id.Name] = true
-				}
-			}
-		}
-	}
-	// A precise drop now allows the last use to sit inside a nested block
-	// (control-flow-aware placement — slice 5), so reassignment must be
-	// detected at ANY depth: a `name = ...` inside an `if`/`while` rebinds the
-	// slot, and precise-dropping the post-loop value at its last use is only
-	// sound if the slot wasn't re-overwritten on some path in a way the
-	// straight-line `last` index can't see. Conservatively bail on any
-	// assignment to the local anywhere in the body.
-	ast.Walk(b.fn.Body, func(n ast.Node) bool {
-		if a, ok := n.(*ast.Assign); ok {
-			if id, ok := a.Target.(*ast.Ident); ok {
-				reassigned[id.Name] = true
-			}
-		}
-		return true
-	})
+	reassigned := b.reassignedAnywhere()
+	declIdx := blockDeclIndices(stmts, reassigned)
 	out := map[int][]string{}
 	// Iterate in DECLARATION order, not Go map order. Two locals whose last
 	// use falls on the same statement both append to out[last], and ranging
@@ -2592,123 +2565,283 @@ func (b *builder) computePreciseDrops() map[int][]string {
 	// twice emitted their drops in either order, and the binaries differed.
 	// Declaration order is the program's own order and is stable.
 	for _, name := range sortedByDeclIdx(declIdx) {
-		di := declIdx[name]
-		if reassigned[name] || b.rc.movedLocals[name] || !b.rc.freeEligible[name] || !b.localNameUnique(name) {
-			continue
-		}
-		// #4402 opt 1: a borrow source releases ONLY at the exit sweep (a
-		// live borrowed view reads through its buffer until then); a
-		// borrowed alias is a view and is never dropped at all.
-		if b.rc.borrowSources[name] || b.rc.borrowedAlias[name] {
-			continue
-		}
-		// A local whose box is handed off to a general-FBIP reuse site
-		// (computeReuseSources) is already consumed there (its box taken, or
-		// dec'd on the shared path, and its slot zeroed) — dropping it again
-		// here would double-release. The reuse site subsumes its drop.
-		if b.rc.reuseConsumed[name] {
-			continue
-		}
-		if !b.preciseDroppableType(name) {
-			continue
-		}
-		// The local's INIT may itself produce an uncounted alias of a still-
-		// live value — a slice (view), a pointer-typed if/match expr, or a
-		// call whose result could BE a pointer argument (`var v3 = id(v2)`).
-		// Precise-dropping such a local would free a buffer the source still
-		// holds. A scalar-arg call (`fill(100)`) returns a fresh value and
-		// stays eligible (the common builder-call win). The OTHER end — the
-		// source flowing INTO the call — is handled by flowsIntoUncountedAlias
-		// below.
-		if v, ok := stmts[di].(*ast.Var); ok {
-			if b.initMayAliasLive(v.Init) {
-				continue
-			}
-			// Slice 1 targets dead OWNED values (fresh literals / scalar-arg
-			// builder calls) — the clear peak-memory win. A local whose init
-			// is a counted ALIAS (`var y = x` / `x.field` / `x[i]` —
-			// needsRcIncOnAlias) is excluded: precise-dropping it only cancels
-			// the alias inc (sound, but a marginal win that needlessly churns
-			// the rc-count golden tests). Dead-alias cancellation is a later
-			// slice.
-			if needsRcIncOnAlias(v.Init, b) {
-				continue
-			}
-		}
-		unsafe := false
-		last := -1
-		for i := di + 1; i < len(stmts); i++ {
-			if !stmtReferencesName(stmts[i], name) {
-				continue
-			}
-			// Control-flow-aware placement (slice 5): the last use may now sit
-			// INSIDE a nested if / while / for / match. We still drop the local
-			// right after the whole top-level statement that contains its last
-			// use — by then the local is dead on EVERY path through that
-			// statement, so a single top-level drop + zero-slot is sound, and
-			// any early `return` on a path keeps the value live to its own exit
-			// sweep (the zeroed slot makes the post-statement drop a no-op on
-			// the paths that already returned). Slightly less precise than a
-			// per-branch drop, but it reclaims before the (often long) tail
-			// after an `if`, which is where the win is.
-			//
-			// A reference inside a pointer-producing call / slice / if-expr /
-			// match-expr can create an UNCOUNTED alias of `name` that outlives
-			// the drop point (e.g. `var v3 = id(v2)` — a generic identity
-			// returns its borrowed arg with no inc). The inc'd-alias sites
-			// (`var y = x` / `x.field` / `x[i]`, container literals) are SAFE —
-			// the precise drop only decs there. Bail on the uncounted-alias
-			// shapes (flowsIntoUncountedAlias walks the whole nested statement).
-			if b.flowsIntoUncountedAlias(stmts[i], name) {
-				unsafe = true
-				break
-			}
-			last = i
-		}
-		if unsafe {
-			continue
-		}
-		if last < 0 {
-			// Declared but never used after — drop right after the decl
-			// (a dead owned alloc reclaims immediately).
-			last = di
-		}
-		// Control-flow placement guard: when the last use sits INSIDE a
-		// nested control-flow statement (if / while / for / match / block),
-		// the precise drop fires after that whole top-level statement —
-		// the slice-5 extension over the straight-line slices 1-3, which
-		// only placed drops after a simple top-level use. That extension is
-		// only enabled for PRIMITIVE-element arrays (i32[] / f64[] / …): a
-		// dead `int[]` freed early is the clean peak-memory win (the
-		// headline two-KiB-array case) with no per-element rc to balance.
-		//
-		// A pointer-element array (string[] / struct[] / T[][] / tuple[])
-		// is EXCLUDED from this nested placement: its deep drop dec's each
-		// element, and an element aliased out across the drop point (e.g.
-		// the self-host driver's `entry_path = av[1]` / `root = av[2]` from
-		// `var av: string[] = args()`, last-used at `av[2]` inside an `if`)
-		// relies on the per-element retain/release balancing exactly on
-		// EVERY backend. On arm64 two-word heap strings that balance rides
-		// the native heap-string reclamation path the plan still defers
-		// (slice 5g, "arm64 native heap-string rc — verify on hardware"),
-		// so an early drop there corrupts under allocation-reuse pressure
-		// (the args buffer reclaimed and reused while a still-live element
-		// alias points into it). Falling back to the exit sweep for these
-		// keeps the nested-use win for primitive arrays without crossing
-		// that unverified arm64 boundary. Straight-line (simple top-level
-		// last use) placement keeps the full slice 1-3 element scope.
-		if b.isControlFlowStmt(stmts[last]) && !b.safeForControlFlowDrop(name) {
-			continue
-		}
-		// A `return` whose value is this local is handled by the Return
-		// lowering's own move-on-return / sweep; dropping after it is dead
-		// code. Skip — the value reclaims at the return instead.
-		if _, isRet := stmts[last].(*ast.Return); isRet {
+		last, ok := b.preciseDropTarget(stmts, declIdx[name], name, reassigned)
+		if !ok {
 			continue
 		}
 		out[last] = append(out[last], name)
 	}
 	return out
+}
+
+// blockDeclIndices maps each name a `var` declares at the TOP level of one
+// block's statement list to that statement's index, and marks a shadowed
+// redeclaration in `reassigned` so it bails out of precise-drop candidacy.
+func blockDeclIndices(stmts []ast.Stmt, reassigned map[string]bool) map[string]int {
+	declIdx := map[string]int{}
+	for i, st := range stmts {
+		v, ok := st.(*ast.Var)
+		if !ok {
+			continue
+		}
+		if _, dup := declIdx[v.Name]; dup {
+			reassigned[v.Name] = true // shadowed redeclaration — bail
+		} else {
+			declIdx[v.Name] = i
+		}
+	}
+	return declIdx
+}
+
+// reassignedAnywhere collects every local the function body assigns to, at ANY
+// depth. A precise drop allows the last use to sit inside a nested block, so a
+// `name = ...` buried in an `if`/`while` rebinds the slot and the straight-line
+// `last` index can't see it — bail on any such local.
+func (b *builder) reassignedAnywhere() map[string]bool {
+	out := map[string]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if a, ok := n.(*ast.Assign); ok {
+			if id, ok := a.Target.(*ast.Ident); ok {
+				out[id.Name] = true
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// computeNestedDrops extends precise-drop placement into NESTED block scopes:
+// a local declared inside an if / while / for / match body drops right after
+// its last use WITHIN that block, instead of surviving to the block's next
+// entry (a loop body's re-init drop) or the function-exit sweep. Returns the
+// statement to drop AFTER → the names to drop there.
+//
+// computePreciseDrops only ever considered TOP-LEVEL declarations, so a
+// binding made inside a loop held its reference for the rest of the iteration
+// no matter how early it died. That is what made a dead ALIAS expensive
+// (#6024): `var keep = acc` in a loop body leaves `acc` at rc 2, and
+// __fern_arr_push_grow mutates in place only at rc 1, so all 200 appends
+// behind the alias copied the whole buffer — 199 wasted copies bought by a
+// binding nothing reads again. Releasing `keep` at its last read restores
+// rc 1 and the appends run in place.
+//
+// Soundness is the top-level pass's argument (deep drop + zeroed slot, so
+// every re-init drop and exit sweep that follows null-guards to a no-op) plus
+// one gate the top-level pass gets for free: the drop and the declaration sit
+// in the SAME block, so they run the same number of times. A local declared
+// OUTSIDE a loop whose last use is inside it keeps its top-level placement —
+// after the whole loop — because only names `blk` itself declares are
+// candidates here; dropping such a local at the inner use would free it on
+// the first iteration and leave the second reading a zeroed slot.
+func (b *builder) computeNestedDrops() map[ast.Stmt][]string {
+	if !ast.RcFreeEnabled || b.fn.Body == nil {
+		return nil
+	}
+	var blocks []*ast.Block
+	for _, st := range b.fn.Body.Stmts {
+		collectNestedBlocks(st, &blocks)
+	}
+	if len(blocks) == 0 {
+		return nil
+	}
+	reassigned := b.reassignedAnywhere()
+	bodyRefs := identCounts(b.fn.Body)
+	out := map[ast.Stmt][]string{}
+	for _, blk := range blocks {
+		declIdx := blockDeclIndices(blk.Stmts, reassigned)
+		if len(declIdx) == 0 {
+			continue
+		}
+		blkRefs := identCounts(blk)
+		// Declaration order, not Go map order — same determinism requirement
+		// as the top-level pass (two locals dying on one statement must drop
+		// in a stable order or the same source emits two different binaries).
+		for _, name := range sortedByDeclIdx(declIdx) {
+			// Every reference must be inside this block. Scoping and the
+			// localNameUnique gate already imply it, but the last-use scan
+			// only reads blk.Stmts, so make the pass answerable for that on
+			// its own rather than on a property of another layer.
+			if bodyRefs[name] != blkRefs[name] {
+				continue
+			}
+			last, ok := b.preciseDropTarget(blk.Stmts, declIdx[name], name, reassigned)
+			if !ok {
+				continue
+			}
+			out[blk.Stmts[last]] = append(out[blk.Stmts[last]], name)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// collectNestedBlocks appends every statement `*ast.Block` reachable from `s`
+// — the bodies and arms of the control-flow statements, plus bare blocks — in
+// source order. Nested FuncDecl bodies are NOT traversed: they lower through
+// their own lowerFunc with their own tables. Mirrors collectDefers' recursion.
+func collectNestedBlocks(s ast.Stmt, out *[]*ast.Block) {
+	if s == nil {
+		return
+	}
+	switch x := s.(type) {
+	case *ast.Block:
+		*out = append(*out, x)
+		for _, st := range x.Stmts {
+			collectNestedBlocks(st, out)
+		}
+	case *ast.If:
+		collectNestedBlocks(x.Then, out)
+		collectNestedBlocks(x.Else, out)
+	case *ast.IfLet:
+		collectNestedBlocks(x.Then, out)
+		collectNestedBlocks(x.Else, out)
+	case *ast.LetElse:
+		collectNestedBlocks(x.Else, out)
+	case *ast.While:
+		collectNestedBlocks(x.Body, out)
+	case *ast.Loop:
+		collectNestedBlocks(x.Body, out)
+	case *ast.For:
+		collectNestedBlocks(x.Body, out)
+	case *ast.Match:
+		for _, arm := range x.Arms {
+			collectNestedBlocks(arm.Body, out)
+		}
+	}
+}
+
+// identCounts tallies how many times each name occurs as an *ast.Ident under
+// `n`. Comparing a block's tally against the whole body's is how
+// computeNestedDrops proves a candidate is referenced nowhere else.
+func identCounts(n ast.Node) map[string]int {
+	out := map[string]int{}
+	ast.Walk(n, func(m ast.Node) bool {
+		if id, ok := m.(*ast.Ident); ok {
+			out[id.Name]++
+		}
+		return true
+	})
+	return out
+}
+
+// preciseDropTarget runs the precise-drop candidacy gates for `name`, declared
+// by `stmts[di]` in ONE block's statement list, and returns the index of the
+// statement after which its drop belongs. ok=false leaves the local on the
+// function-exit sweep. The two callers differ only in which statement list
+// they hand it: computePreciseDrops passes the function body's top-level
+// statements, computeNestedDrops passes a nested block's.
+func (b *builder) preciseDropTarget(stmts []ast.Stmt, di int, name string, reassigned map[string]bool) (int, bool) {
+	if reassigned[name] || b.rc.movedLocals[name] || !b.rc.freeEligible[name] || !b.localNameUnique(name) {
+		return 0, false
+	}
+	// #4402 opt 1: a borrow source releases ONLY at the exit sweep (a
+	// live borrowed view reads through its buffer until then); a
+	// borrowed alias is a view and is never dropped at all.
+	if b.rc.borrowSources[name] || b.rc.borrowedAlias[name] {
+		return 0, false
+	}
+	// A local whose box is handed off to a general-FBIP reuse site
+	// (computeReuseSources) is already consumed there (its box taken, or
+	// dec'd on the shared path, and its slot zeroed) — dropping it again
+	// here would double-release. The reuse site subsumes its drop.
+	if b.rc.reuseConsumed[name] {
+		return 0, false
+	}
+	if !b.preciseDroppableType(name) {
+		return 0, false
+	}
+	// The local's INIT may itself produce an uncounted alias of a still-
+	// live value — a slice (view), a pointer-typed if/match expr, or a
+	// call whose result could BE a pointer argument (`var v3 = id(v2)`).
+	// Precise-dropping such a local would free a buffer the source still
+	// holds. A scalar-arg call (`fill(100)`) returns a fresh value and
+	// stays eligible (the common builder-call win). The OTHER end — the
+	// source flowing INTO the call — is handled by flowsIntoUncountedAlias
+	// below.
+	//
+	// A COUNTED-ALIAS init (`var y = x` / `x.field` / `x[i]` —
+	// needsRcIncOnAlias) is NOT excluded: the precise drop gives back
+	// exactly the inc the init took, and giving it back at the last read
+	// rather than at scope exit is what restores the source to rc 1 — the
+	// uniqueness `__fern_arr_push_grow` gates its in-place append on
+	// (#6024: 200 appends behind a dead alias cost 199 full buffer copies).
+	if v, ok := stmts[di].(*ast.Var); ok {
+		if b.initMayAliasLive(v.Init) {
+			return 0, false
+		}
+		if b.retainsCtorAliasedSource(v.Init) {
+			return 0, false
+		}
+	}
+	last := -1
+	for i := di + 1; i < len(stmts); i++ {
+		if !stmtReferencesName(stmts[i], name) {
+			continue
+		}
+		// Control-flow-aware placement (slice 5): the last use may now sit
+		// INSIDE a nested if / while / for / match. We still drop the local
+		// right after the whole statement that contains its last use — by
+		// then the local is dead on EVERY path through that statement, so a
+		// single drop + zero-slot is sound, and any early `return` on a path
+		// keeps the value live to its own exit sweep (the zeroed slot makes
+		// the post-statement drop a no-op on the paths that already
+		// returned). Slightly less precise than a per-branch drop, but it
+		// reclaims before the (often long) tail after an `if`, which is
+		// where the win is.
+		//
+		// A reference inside a pointer-producing call / slice / if-expr /
+		// match-expr can create an UNCOUNTED alias of `name` that outlives
+		// the drop point (e.g. `var v3 = id(v2)` — a generic identity
+		// returns its borrowed arg with no inc). The inc'd-alias sites
+		// (`var y = x` / `x.field` / `x[i]`, container literals) are SAFE —
+		// the precise drop only decs there. Bail on the uncounted-alias
+		// shapes (flowsIntoUncountedAlias walks the whole nested statement).
+		if b.flowsIntoUncountedAlias(stmts[i], name) {
+			return 0, false
+		}
+		last = i
+	}
+	if last < 0 {
+		// Declared but never used after — drop right after the decl
+		// (a dead owned alloc reclaims immediately).
+		last = di
+	}
+	// Control-flow placement guard: when the last use sits INSIDE a
+	// nested control-flow statement (if / while / for / match / block),
+	// the precise drop fires after that whole statement — the slice-5
+	// extension over the straight-line slices 1-3, which only placed
+	// drops after a simple top-level use. That extension is
+	// only enabled for PRIMITIVE-element arrays (i32[] / f64[] / …): a
+	// dead `int[]` freed early is the clean peak-memory win (the
+	// headline two-KiB-array case) with no per-element rc to balance.
+	//
+	// A pointer-element array (string[] / struct[] / T[][] / tuple[])
+	// is EXCLUDED from this nested placement: its deep drop dec's each
+	// element, and an element aliased out across the drop point (e.g.
+	// the self-host driver's `entry_path = av[1]` / `root = av[2]` from
+	// `var av: string[] = args()`, last-used at `av[2]` inside an `if`)
+	// relies on the per-element retain/release balancing exactly on
+	// EVERY backend. On arm64 two-word heap strings that balance rides
+	// the native heap-string reclamation path the plan still defers
+	// (slice 5g, "arm64 native heap-string rc — verify on hardware"),
+	// so an early drop there corrupts under allocation-reuse pressure
+	// (the args buffer reclaimed and reused while a still-live element
+	// alias points into it). Falling back to the exit sweep for these
+	// keeps the nested-use win for primitive arrays without crossing
+	// that unverified arm64 boundary. Straight-line (simple top-level
+	// last use) placement keeps the full slice 1-3 element scope.
+	if b.isControlFlowStmt(stmts[last]) && !b.safeForControlFlowDrop(name) {
+		return 0, false
+	}
+	// A `return` whose value is this local is handled by the Return
+	// lowering's own move-on-return / sweep; dropping after it is dead
+	// code. Skip — the value reclaims at the return instead.
+	if _, isRet := stmts[last].(*ast.Return); isRet {
+		return 0, false
+	}
+	return last, true
 }
 
 // isControlFlowStmt reports whether `st` is a control-flow statement whose
@@ -4002,34 +4135,67 @@ func (b *builder) computeCtorAliasInced() map[string]bool {
 		}
 		out[id.Name] = true
 	}
-	ast.Walk(b.fn.Body, func(n ast.Node) bool {
-		switch x := n.(type) {
+	b.ctorRetainedOperands(b.fn.Body, mark)
+	return out
+}
+
+// ctorRetainedOperands calls `f` for every operand of a container construction
+// under `n`: array / tuple / struct-literal elements, and the payloads of an
+// rc-payload enum-variant call (`Some(xs)` / `Ok(xs)` — inc'd under
+// EnumRcPayloads exactly like a struct field). These are the four sites that
+// emit a construction alias-inc.
+func (b *builder) ctorRetainedOperands(n ast.Node, f func(ast.Expr)) {
+	ast.Walk(n, func(m ast.Node) bool {
+		switch x := m.(type) {
 		case *ast.ArrayLit:
 			for _, el := range x.Elems {
-				mark(el)
+				f(el)
 			}
 		case *ast.TupleLit:
 			for _, el := range x.Elems {
-				mark(el)
+				f(el)
 			}
 		case *ast.StructLit:
-			for _, f := range x.Fields {
-				mark(f.Value)
+			for _, fl := range x.Fields {
+				f(fl.Value)
 			}
 		case *ast.Call:
-			// Enum-variant construction (`Some(xs)` / `Ok(xs)`): the payload is
-			// inc\'d under EnumRcPayloads exactly like a struct field.
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if en, _, _, isVar := b.lookupVariant(id.Name); isVar && b.enumRcPayloadsEligible(en) {
 					for _, a := range x.Args {
-						mark(a)
+						f(a)
 					}
 				}
 			}
 		}
 		return true
 	})
-	return out
+}
+
+// retainsCtorAliasedSource reports whether `e` is a container construction that
+// RETAINS a ctorAliasInced local — the shape whose drop order is load-bearing.
+//
+// Such a source cannot free itself. Being ineligible for the deep free, its own
+// release is the flat `__fern_rc_dec` in emitVarReinitDropOld and in the exit
+// sweep's ineligible fall-through, and a flat dec only decrements: the buffer
+// comes back solely through the type-aware `__fern_arr_dec` / `__drop_*` inside
+// THIS container's deep drop, which frees at the last reference. So the
+// container must never be released before its source. Declaration order gives
+// that for free on the exit sweep (the source is declared first, so it is
+// dec'd first) — a precise drop is the one thing that can invert it, and then
+// the flat dec runs last, takes the rc to zero, and the buffer is unreachable.
+// Keep such containers on the exit sweep.
+func (b *builder) retainsCtorAliasedSource(e ast.Expr) bool {
+	if e == nil {
+		return false
+	}
+	found := false
+	b.ctorRetainedOperands(e, func(op ast.Expr) {
+		if id, ok := op.(*ast.Ident); ok && b.rc.ctorAliasInced[id.Name] {
+			found = true
+		}
+	})
+	return found
 }
 
 // sortedByDeclIdx returns declIdx's names ordered by their declaration
