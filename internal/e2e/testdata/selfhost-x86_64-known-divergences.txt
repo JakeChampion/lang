@@ -10,9 +10,8 @@
 # Two rules for adding a row, both learned from the wasm leg's first run (which
 # reported 26 mismatches, 14 of them harness artifacts):
 #
-#   1. Reproduce it by hand with a native self-host CLI (`make selfhost-cli`,
-#      ~1.3s per program) before writing it down, and record the measured
-#      self-host and native values in the reason.
+#   1. Reproduce the value before writing it down, and record the measured
+#      self-host and native figures in the reason.
 #   2. Rule out the harness's `import "core/int"` injection first. The native
 #      legs inject that import into the entry file (LoadCheckMono, for wasmbin's
 #      PrintMainResult); the self-host CLI injects nothing. A compile failure
@@ -20,8 +19,42 @@
 #
 # Unlike the wasm leg, this one has no exit-code blind spot: a native binary
 # carries main's return over the full 0..255, so every fixture's VALUE is
-# checked, including the nine regex fixtures whose expected 255 WASI cannot
-# express.
+# checked. Six rows below exist BECAUSE of that — they expect >= 126, so the wasm
+# leg only ever logged "exit value unmeasurable" for them.
 #
-# Empty: the leg has not yet had its first full run. Populate from the CI lane's
-# first red, one row per confirmed finding, with an issue number.
+# All 16 measured on the first two runs (49e762e0, d67de908), 317 fixtures run.
+
+# --- the six the wasm leg could never judge: they never terminate -----------
+# Killed at the leg's 20s cap with no output. Natively each returns in
+# milliseconds. Before the cap existed they ran ~83s and died on a signal,
+# consistent with an unbounded-allocation loop being OOM-reaped (the arena
+# bounds check exits 137 cleanly, so it is not that). Complementary to #6008:
+# the four capture-group fixtures that TRAP on wasm all PASS here.
+regex_basic #6049 hangs (killed at 20s, no output); native returns 255 in ms
+regex_ci #6049 hangs (killed at 20s, no output); native returns 255 in ms
+regex_ops #6049 hangs (killed at 20s, no output); native returns 255 in ms
+regex_wordbound #6049 hangs (killed at 20s, no output); native returns 255 in ms
+regex_captures_assert #6049 hangs (killed at 20s, no output); native returns 255 in ms
+regex_groups #6049 hangs (killed at 20s, no output); native returns 127 in ms
+
+# --- shared with the wasm leg: same fixtures, same wrong values -------------
+# Byte-identical wrong answers on two backends with no shared instruction
+# selection, so these live in the shared frontend/irlower, NOT in wasm_ir.fern.
+# Commented onto #6007/#6009/#6010 with the cross-target evidence; those issues
+# are titled "self-host wasm:" and should be re-scoped.
+derive_json #6009 returns 4, native 42 — identical to the wasm leg's figure
+eq_struct_enum #6009 returns 18, native 63 — identical to the wasm leg's figure
+ord_struct_enum #6009 returns 87, native 31 — identical to the wasm leg's figure
+tuple_match_expr #6010 returns 20, native 42 — identical to the wasm leg's figure
+
+# --- IR-ineligible, hard error since #3457 deleted the AST emitters ---------
+# The leg re-runs these under FERN_STRICT_IR=1 and logs the named bail site; two
+# of the three are unresolved METHOD SYMBOLS rather than missing lowering.
+generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
+pure_collection_aliases #6007 IR-ineligible; bails at main (call to unknown symbol Map.cleared)
+map_struct_value_field #6007 IR-ineligible; bails at main (no symbol named)
+
+# --- new, x86-64 only (the wasm leg checks these and passes) ----------------
+int_wrap #6050 prints "-" for -2147483648 — sign emitted, every digit dropped
+u64_max_to_f64_is_huge #6051 returns 1, native 0 — u64::MAX as f64 converts signed
+multiline_stdin #6052 returns 10, native 42 — only the first stdin line is consumed

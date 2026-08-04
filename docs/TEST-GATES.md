@@ -40,7 +40,7 @@ what caught it.
 | Gate | Proves | Blind to |
 |---|---|---|
 | `internal/e2e` fixtures (`TestFernFixtures`) | The NATIVE compiler is right on the corpus | Anything self-host-only; anything about *how much* it allocated |
-| `TestFernFixturesSelfHost{Wasm,X86_64,Arm64}` (`FERN_SELFHOST_FIXTURES=1`) | The self-host compiler agrees with native on the corpus, on all three targets it emits | Values >= 126 on the wasm leg only (WASI caps the exit status; the native legs check them) |
+| `TestFernFixturesSelfHost{Wasm,X86_64}` (`FERN_SELFHOST_FIXTURES=1`) | The self-host compiler agrees with native on the corpus, on wasm and x86-64 | **arm64 entirely** (no leg yet — blocked on #6044/#6045/#6047); and values >= 126 on the wasm leg, which WASI cannot express — the x86-64 leg checks those |
 | `internal/e2eselfhost` | The self-host compiler is right on programs outside its own sources | Whole-program self-compilation; memory |
 | Per-module / emit-all fixpoint | The compiler reproduces itself, deterministically | Any *stable* miscompile, including one affecting every program it sees |
 | rc corpus (`rcCorpus`, all three backends) | No rc over-release on the shapes it enumerates | Shapes it does not enumerate — add one when you fix an rc bug |

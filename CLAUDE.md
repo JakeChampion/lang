@@ -220,11 +220,16 @@ program interpreted and 90+ minutes for an unsharded
 
 This is what made it practical to run all 335 fixtures through the
 self-host compiler (`FERN_SELFHOST_FIXTURES=1 go test ./internal/e2e/
--run 'TestFernFixturesSelfHost(Wasm|X86_64|Arm64)'` — one leg per target
-it emits, each with its own
+-run 'TestFernFixturesSelfHost(Wasm|X86_64)'` — one leg per target, each
+with its own
 `internal/e2e/testdata/selfhost-<target>-known-divergences.txt`), which
 found twelve divergences on
-fixtures green for months. Two constraints: **absolute paths** (relative
+fixtures green for months, and sixteen more on x86-64. There is **no arm64
+leg**: it was written, run once, and held back because `-target arm64`
+fails 100+ fixtures on three in-process-assembler bugs (#6044 no `fcvt`,
+#6045 SIGILL on rc/closure shapes, #6047 printed strings right-length
+wrong-bytes) — see the "missing third leg" note in
+`internal/e2e/fixture_selfhost_test.go`. Two constraints: **absolute paths** (relative
 ones were unopenable from an arm64-darwin binary until #6002 — AT_FDCWD
 is -2 on XNU, not -100), and the exit code **cannot carry a value >=
 126** (WASI refuses anything outside [0..126), so wasmtime reports 1 —

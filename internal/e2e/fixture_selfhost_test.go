@@ -11,9 +11,27 @@ import (
 	"time"
 )
 
-// Three legs run the fixture corpus through the SELF-HOST compiler, one per
-// target it can emit: TestFernFixturesSelfHostWasm, …SelfHostX86_64,
-// …SelfHostArm64. Nothing else does.
+// Two legs run the fixture corpus through the SELF-HOST compiler:
+// TestFernFixturesSelfHostWasm and TestFernFixturesSelfHostX86_64. Nothing else
+// does.
+//
+// # The missing third leg
+//
+// An arm64 leg (`-target arm64`) was written alongside the x86-64 one and is NOT
+// here, deliberately. It ran once, and the `-target arm64` path — which
+// assembles + links in-process via arm64_native + elf.fern — failed 100+ of the
+// ~200 fixtures it reached, on three independent bugs: no `fcvt` encoding in the
+// in-process assembler (#6044, 64 fixtures rejected at compile), an illegal
+// encoding that SIGILLs on rc/reuse and closure shapes (#6045, 25 fixtures), and
+// a string copy whose source pointer never advances, so printed output has the
+// right length and the wrong bytes (#6047, 8 fixtures).
+//
+// Landing it now would mean either a 100-row known-divergences file — which the
+// file's own contract makes worse than useless, since fixing #6044 alone flips 64
+// rows at once — or a permanently red lane. So it waits for those three, on
+// branch `selfhost-fixture-leg-arm64-hold`. The three issues carry the findings;
+// this comment carries why the coverage gap is open on purpose. Do not close that
+// gap by weakening the assertions.
 //
 // # Why these exist
 //
@@ -43,25 +61,25 @@ import (
 // coverage that lapses.
 //
 // The wasm leg came first (#6005) and found twelve divergences on fixtures green
-// for months. It covers ONE of the three targets the self-host compiler emits,
-// so x86-64 and arm64 parity was unmeasured at corpus level — an assumption of
-// exactly the kind the wasm leg's first run disproved. These two legs close
-// that, and they are not merely the wasm leg again with a flag changed; each
-// reaches something wasm structurally cannot:
+// for months. It covers ONE of the three targets the self-host compiler emits, so
+// x86-64 parity was unmeasured at corpus level — an assumption of exactly the kind
+// the wasm leg's first run disproved. The x86-64 leg closes that, and it is not
+// merely the wasm leg with a flag changed; it reaches three things wasm
+// structurally cannot:
 //
 //   - Full exit-code fidelity. A native binary propagates main's return over
 //     0..255, so the VALUE check always applies — including the nine regex
 //     fixtures whose expected 255 is a feature bitmask that WASI's [0..126)
 //     cap makes permanently unmeasurable on the wasm leg (#6008's second half
-//     asked for a stdout oracle to see them; the native legs just see them).
-//   - stdin. The native legs feed it, so the four stdin fixtures the wasm leg
-//     skips are covered.
-//   - The link/assemble step, which on wasm does not exist. `-target x86-64`
-//     emits GAS text that gcc must accept, so the leg can catch the
-//     #5862/#6022 class (a Fern function named after a register/mnemonic
-//     emitting asm the assembler rejects). `-target arm64` links in-process
-//     via arm64_native + elf.fern, so the leg covers that assembler's
-//     instruction coverage on 300-odd real programs.
+//     asked for a stdout oracle to see them; this leg just sees them). Measured
+//     on the first run: the wasm leg leaves SIXTEEN fixtures' values unchecked,
+//     and six of those crash here.
+//   - stdin. This leg feeds it, so the four stdin fixtures the wasm leg skips
+//     are covered.
+//   - The link step, which on wasm does not exist. `-target x86-64` emits GAS
+//     text that gcc must accept, so the leg can catch the #5862/#6022 class (a
+//     Fern function named after a register/mnemonic emitting asm the assembler
+//     rejects).
 //   - Crashes. A trap on wasm is a clean "wasm trap:" string; a native
 //     miscompile is a SIGSEGV or an exit-137 arena abort, both distinguished
 //     here from a wrong answer.
@@ -79,7 +97,7 @@ import (
 // Building fern.fern is a heavy self-host driver build (~4.3 GB reserved by the
 // harness's memory limiter). It is paid ONCE per leg and amortised over the whole
 // corpus; each fixture is then a native-binary invocation plus a run. Still, that
-// is minutes rather than the 15s the native fixture run takes, so all three are
+// is minutes rather than the 15s the native fixture run takes, so both are
 // gated on FERN_SELFHOST_FIXTURES=1 and run as their own CI lanes rather than
 // slowing every local `go test ./internal/e2e`.
 //
@@ -129,8 +147,8 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 		// Measured: return 125 exits 125; return 126, and 255, both exit 1 with
 		// "exit with invalid exit status outside of [0..126)". The native wasm
 		// leg dodges this by folding main's result into stdout (wasmbin's
-		// PrintMainResult); the self-host emit has no equivalent. The x86-64 and
-		// arm64 legs have no such blind spot, which is half of why they exist.
+		// PrintMainResult); the self-host emit has no equivalent. The x86-64 leg has
+		// no such blind spot, which is half of why it exists.
 		//
 		// This distinction is load-bearing, and getting it wrong in both
 		// directions is easy. The first run of this leg reported 26 mismatches;
@@ -227,52 +245,6 @@ func TestFernFixturesSelfHostX86_64(t *testing.T) {
 			// No runner prefix: runSelfHostFixtureLeg has already skipped the
 			// hosts that need one (they cannot exec the driver either).
 			checkSelfHostNativeRun(t, f, runSelfHostBin(exec.Command(binPath), f.stdin), failf)
-		},
-	})
-}
-
-// TestFernFixturesSelfHostArm64 runs the corpus through `fern -target arm64`:
-// the self-host arm64 emitter, assembled + linked IN-PROCESS by arm64_native +
-// elf.fern (no `.s`, no gcc — the production path since the ELF flip), executed
-// under qemu-aarch64.
-//
-// This is the only leg where the self-host compiler produces the finished binary
-// by itself, so it is the closest thing the corpus has to a test of the
-// self-hosted toolchain end to end. It also means an in-process-assembler gap
-// surfaces as a compile failure naming the instruction, not as a link error.
-func TestFernFixturesSelfHostArm64(t *testing.T) {
-	requireSelfHostFixtureLeg(t)
-	gcc, runner := x86_64Tooling(t)
-	// arm64Tooling is reused for its qemu discovery and its clean skip; the gcc
-	// it returns is deliberately unused, because `-target arm64` assembles and
-	// links in-process. On a native arm64 Linux host qemu comes back "" and
-	// runArm64Bin execs directly — though that host cannot run the x86-64
-	// driver binary anyway, which the runner check in runSelfHostFixtureLeg
-	// turns into a skip.
-	_, qemu := arm64Tooling(t)
-	runSelfHostFixtureLeg(t, selfHostLeg{
-		backend:   "arm64",
-		target:    "arm64",
-		gcc:       gcc,
-		runner:    runner,
-		knownFile: "selfhost-arm64-known-divergences.txt",
-		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
-			binPath := filepath.Join(t.TempDir(), "prog")
-			cmd := exec.Command(fernBin, "-target", "arm64", f.mainPath, stdlibRoot, "-o", binPath)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				// Includes the in-process assembler's own refusal ("hit an
-				// instruction it does not yet support: …"), which names the
-				// mnemonic — a different and more actionable failure than the
-				// x86 leg's link error.
-				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "arm64", f.mainPath, stdlibRoot, out))
-				return
-			}
-			// write_file does not set the exec bit (the Makefile chmods
-			// bin/fern-selfhost for the same reason).
-			if err := os.Chmod(binPath, 0o755); err != nil {
-				t.Fatalf("chmod: %v", err)
-			}
-			checkSelfHostNativeRun(t, f, runSelfHostBin(runArm64Bin(qemu, binPath), f.stdin), failf)
 		},
 	})
 }
@@ -415,9 +387,9 @@ type selfHostRun struct {
 // finishes in well under a second natively; a self-host-compiled one that does
 // not is diverging, and the leg should say so in seconds rather than let one
 // program spend the lane's budget. Measured on the first run: six x86-64 regex
-// fixtures burned ~83s each before dying, and the arm64 leg hit the 43m lane
-// wall two thirds of the way through the corpus at ~32s per crashing qemu run —
-// a red lane that could not report what else was red. Generous enough (20s,
+// fixtures burned ~83s each before dying, and the held-back arm64 leg (see the
+// file header) hit its 43m lane wall two thirds through the corpus — a red lane
+// that could not report what else was red. Generous enough (20s,
 // ~100x the slowest honest fixture) that a slow qemu start is never mistaken for
 // a hang.
 const selfHostRunTimeout = 20 * time.Second
@@ -447,7 +419,7 @@ func runSelfHostBin(cmd *exec.Cmd, stdin string) selfHostRun {
 	return r
 }
 
-// checkSelfHostNativeRun holds the x86-64 and arm64 legs to the same contract
+// checkSelfHostNativeRun holds the x86-64 leg to the same contract
 // TestFernFixtures holds the native backends to: exit code is main's return over
 // the full 0..255, and stdout matches exactly (or contains each required line).
 // The three failure modes are kept apart because they mean different things: a

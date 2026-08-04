@@ -498,16 +498,14 @@ jobs:
   # (a heavy self-host driver, ~4.3 GB reserved by the harness limiter) where the
   # native fixture run is 15 seconds. Paid once per leg, then ~1.3s per fixture.
   #
-  # One job PER TARGET rather than three legs in one job. The driver build is
-  # then paid three times instead of once, which is the deliberate trade: the
-  # legs run concurrently, so wall-clock is one build plus the slowest corpus
-  # rather than one build plus all three corpora — and a red arm64 leg does not
-  # hide behind a wasm leg that ran first.
+  # One job PER TARGET rather than both legs in one job. The driver build is then
+  # paid twice instead of once, which is the deliberate trade: the legs run
+  # concurrently, so wall-clock is one build plus the slower corpus rather than
+  # one build plus both — and a red leg does not hide behind one that ran first.
   #
-  # Every leg needs a NATIVE x86_64 host: the driver is always emitted as x86-64
+  # Both legs need a NATIVE x86_64 host: the driver is always emitted as x86-64
   # asm (e2eharness.emitDriverAsm calls x86_64.Emit) and takes host paths as
-  # argv, so it cannot run under a qemu prefix. The arm64 leg cross-emits and
-  # runs its binaries under qemu-aarch64 from that same x86 host.
+  # argv, so it cannot run under a qemu prefix.
   fixtures-selfhost:
     needs: build
     name: fixtures-selfhost-${{ matrix.leg }}
@@ -515,35 +513,20 @@ jobs:
     timeout-minutes: ${{ matrix.job-minutes }}
     strategy:
       fail-fast: false
-      # Per-leg time budget, measured rather than guessed. wasm and x86-64 finish
-      # the corpus in ~11 minutes each. arm64 does not: `-target arm64` assembles
-      # AND links in-process per fixture, which measured ~13s per fixture on the
-      # 2026-08-04 run — ~69 min for 317 fixtures. That run hit a 43m wall two
-      # thirds through and reported a red lane that could not say what else was
-      # red, which is worse than a slow lane.
+      # Per-leg time budget, measured rather than guessed: wasm and x86-64 each
+      # finish the corpus in ~11 minutes. The arm64 leg is NOT here — see the
+      # "missing third leg" section in internal/e2e/fixture_selfhost_test.go: it
+      # needs ~69 min (in-process assemble + link per fixture, ~13s each) and is
+      # blocked on #6044 / #6045 / #6047 regardless.
       matrix:
         include:
-          - { leg: wasm, test: TestFernFixturesSelfHostWasm, wasmtime: "true", qemu: "false", job-minutes: 45, go-timeout: 43m }
-          - { leg: x86-64, test: TestFernFixturesSelfHostX86_64, wasmtime: "false", qemu: "false", job-minutes: 45, go-timeout: 43m }
-          - { leg: arm64, test: TestFernFixturesSelfHostArm64, wasmtime: "false", qemu: "true", job-minutes: 100, go-timeout: 95m }
+          - { leg: wasm, test: TestFernFixturesSelfHostWasm, wasmtime: "true", job-minutes: 45, go-timeout: 43m }
+          - { leg: x86-64, test: TestFernFixturesSelfHostX86_64, wasmtime: "false", job-minutes: 45, go-timeout: 43m }
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: ${{ matrix.wasmtime }}
-      # The arm64 leg runs the self-host compiler's OWN in-process ELF output, so
-      # it needs no aarch64 assembler — but Arm64Tooling discovers the qemu
-      # runner and the cross gcc together and skips unless it finds both, and a
-      # skip here would read as green (the #5937/#5940 lesson from the shard
-      # toolchain step above).
-      - name: aarch64 cross toolchain + qemu (arm64 leg)
-        if: matrix.qemu == 'true'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gcc-aarch64-linux-gnu qemu-user-static
-          qemu-aarch64-static --version | head -1
       - name: run the fixture corpus through the self-host compiler
         env:
           FERN_SELFHOST_FIXTURES: "1"
