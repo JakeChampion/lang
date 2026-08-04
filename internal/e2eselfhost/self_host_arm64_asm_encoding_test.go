@@ -123,6 +123,23 @@ _start:
     cbz w0, .Ldone
     cbnz w1, .Ldone
     tbnz w2, #31, .Ldone
+    // #6060: four forms that encoded a DIFFERENT instruction than the source
+    // says, plus movn, which had no dispatch branch at all and emitted nothing
+    // while arm64_gas_known claimed it was handled.
+    movz x5, #0x400, lsl #16
+    movz x2, #1, lsl #16
+    movk x2, #0xffff, lsl #32
+    movn x0, #99
+    mov x0, #-100
+    mov w0, #-100
+    mov x1, #-1
+    str d8, [sp, #-16]!
+    ldr d8, [sp], #16
+    str d0, [x12, #-8]
+    ldr d0, [x12, #8]
+    add x0, sp, x0
+    add x3, sp, x4
+    sub x0, sp, x1
 .Ldone:
     ret
 `

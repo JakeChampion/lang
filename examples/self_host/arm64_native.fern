@@ -94,8 +94,13 @@ function arm64_movz(buf: i32[], rd: i32, imm16: i32, shift: i32, w: boolean): i3
 function arm64_movk(buf: i32[], rd: i32, imm16: i32, shift: i32): i32[] {
     return arm64_le32(buf, arm64_movk_word(rd, imm16, shift));
 }
-function arm64_movn(buf: i32[], rd: i32, imm16: i32, shift: i32): i32[] {
-    return arm64_le32(buf, arm64_movn_word(rd, imm16, shift));
+// `w` clears sf: 0x92800000 -> 0x12800000. Verified vs clang:
+// mov x0,#-100 = 0x92800c60 (movn x0,#99), mov w0,#-100 = 0x12800c60,
+// mov x1,#-1 = 0x92800001 (movn x1,#0).
+function arm64_movn(buf: i32[], rd: i32, imm16: i32, shift: i32, w: boolean): i32[] {
+    var word: i64 = arm64_movn_word(rd, imm16, shift);
+    if (w) { word = word & 0x7fffffff; }
+    return arm64_le32(buf, word);
 }
 
 // ---- add / sub (immediate) ----
@@ -124,6 +129,21 @@ function arm64_subimm(buf: i32[], rd: i32, rn: i32, imm12: i32, w: boolean): i32
 }
 
 // ---- add / sub / mov (register) ----
+
+// SP is not addressable as Rn in the shifted-register form — there Rn=31 means
+// XZR — so `add x0, sp, x0` assembled as a shifted-register add computes
+// `x0 = 0 + x0` and silently DROPS THE STACK BASE (#6060). GAS uses the
+// extended-register form (option=011 UXTX, imm3=0) when an operand is SP.
+// Verified vs clang: add x0,sp,x0 = 0x8b2063e0, add x3,sp,x4 = 0x8b2463e3,
+// sub x0,sp,x1 = 0xcb2163e0.
+function arm64_addsub_ext_sp_word(is_sub: boolean, rd: i32, rn: i32, rm: i32): i64 {
+    var base: i64 = 0x8b200000;
+    if (is_sub) { base = 0xcb200000; }
+    return base | (((rm & 31) as i64) << 16) | 0x6000 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+function arm64_addsub_ext_sp(buf: i32[], is_sub: boolean, rd: i32, rn: i32, rm: i32): i32[] {
+    return arm64_le32(buf, arm64_addsub_ext_sp_word(is_sub, rd, rn, rm));
+}
 
 // arm64_addreg_word encodes `add Xd, Xn, Xm` (shifted-register, zero shift).
 //   sf=1 op=0 S=0 01011 -> 0x8B000000 | Rm<<16 | Rn<<5 | Rd
@@ -519,6 +539,25 @@ function arm64_ldr_fp(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
 }
 function arm64_str_fp(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
     return arm64_le32(buf, 0xfd000000 | ((((off / 8) & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
+}
+// The scaled unsigned forms above cannot express a NEGATIVE offset or a
+// writeback, and the float path emits both — `str d8, [sp, #-16]!` on entry and
+// `ldr d8, [sp], #16` on exit. Routing those through the scaled encoder wrapped
+// -16 into a +8184 offset and dropped the writeback entirely: a stack store to
+// the wrong address with sp never adjusted (#6060). imm9 is signed and unscaled
+// in all three. Verified vs clang: str d8,[sp,#-16]! = 0xfc1f0fe8,
+// ldr d8,[sp],#16 = 0xfc4107e8, stur d0,[x12,#-8] = 0xfc1f8180.
+function arm64_stur_fp(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, 0xfc000000 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
+}
+function arm64_ldur_fp(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, 0xfc400000 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
+}
+function arm64_str_fp_pre(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, 0xfc000c00 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
+}
+function arm64_ldr_fp_post(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
+    return arm64_le32(buf, 0xfc400400 | (((off & 0x1ff) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
 }
 
 // ---- PC-relative page addressing (@PAGE / @PAGEOFF) ----
@@ -1561,6 +1600,45 @@ function arm64_gas_mem(op: string): Arm64Mem {
     return Arm64Mem { base: base, off: off, off_reg: off_reg };
 }
 
+// arm64_movwide_hw finds the single nonzero 16-bit chunk of `v` and returns its
+// shift (0/16/32/48), or -1 when more than one chunk is set.
+//
+// GAS accepts `mov x9, #0x10000` and encodes it `movz x9, #1, lsl #16` — the
+// immediate names a value, and the assembler picks the chunk. This assembler
+// masked the value into imm16 instead, so `mov x9, #0x10000` LOADED ZERO. That
+// is 20 sites in one hello-world build, one of them the freelist size-class cap
+// (#6060).
+function arm64_movwide_hw(v: i64): i32 {
+    if (v == 0) { return 0; }
+    var sh: i32 = 0;
+    var found: i32 = 0 - 1;
+    while (sh < 64) {
+        var chunk: i64 = (v >> sh) & 0xffff;
+        if (chunk != 0) {
+            if (found >= 0) { return 0 - 1; }   // more than one chunk: needs movz+movk
+            found = sh;
+        }
+        sh = sh + 16;
+    }
+    return found;
+}
+
+// arm64_gas_movwide_out_of_range reports whether a mov/movz/movn immediate needs
+// MORE THAN ONE mov-wide instruction (two or more nonzero 16-bit chunks), which
+// this one-instruction-per-line assembler cannot emit. Anything expressible as a
+// single chunk plus a shift is encoded, not refused. The emitter builds wider
+// constants through the literal pool (`ldr Xt, =N`).
+function arm64_gas_movwide_out_of_range(mnem: string, rest: string): boolean {
+    if (mnem != "mov" && mnem != "movz" && mnem != "movn") { return false; }
+    var ops: string[] = arm64_gas_operands(rest);
+    if (ops.len() < 2) { return false; }
+    if (ops[1].len() == 0 || ops[1][0] != 35) { return false; }   // register form
+    if (ops.len() > 2 && arm64_gas_lsl_amount(ops[2]) != 0) { return false; }  // explicit shift
+    var v: i64 = arm64_gas_imm(ops[1]) as i64;
+    if (v < 0) { v = (0 - v) - 1; }
+    return arm64_movwide_hw(v) < 0;
+}
+
 // arm64_gas_regoff_unsupported reports whether `rest` puts a REGISTER in the
 // offset position of a memory operand that `mnem`'s encoder cannot express.
 // The register-offset forms the assembler implements are the 64-bit
@@ -1632,7 +1710,36 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     if (mnem == "mov" || mnem == "movz") {
         var rd: i32 = arm64_gas_reg(ops[0]);
         if (ops[1].len() > 0 && ops[1][0] == 35) { // '#'
-            a = Arm64Asm { ...a, code: arm64_movz(a.code, rd, arm64_gas_imm(ops[1]), 0, arm64_gas_is_w(ops[0])) };
+            // The `lsl #N` operand is part of the VALUE, not decoration: movk
+            // below already parsed it, this path passed 0, and
+            // `movz x5, #0x400, lsl #16` therefore loaded 0x400 instead of
+            // 0x4000000 (#6060).
+            var mvsh: i32 = 0;
+            if (ops.len() > 2) { mvsh = arm64_gas_lsl_amount(ops[2]); }
+            var mvimm: i32 = arm64_gas_imm(ops[1]);
+            // No explicit `lsl`: the immediate names the whole value, so pick the
+            // chunk it lives in (GAS does the same). Without this `mov x9,
+            // #0x10000` masked to imm16 = 0 and loaded ZERO.
+            if (mvsh == 0) {
+                var mvmag: i64 = mvimm as i64;
+                if (mvmag < 0) { mvmag = (0 - mvmag) - 1; }
+                var hw: i32 = arm64_movwide_hw(mvmag);
+                if (hw > 0) {
+                    mvsh = hw;
+                    var shifted: i64 = mvmag >> hw;
+                    if (mvimm < 0) { mvimm = 0 - (((shifted as i32)) + 1); } else { mvimm = shifted as i32; }
+                }
+            }
+            if (mvimm < 0) {
+                // A negative immediate needs MOVN, which loads the COMPLEMENT:
+                // `mov x0, #-100` is `movn x0, #99`. Encoding it as MOVZ of the
+                // truncated low half loaded 65436 (#6060). The line loop's
+                // range guard has already refused anything whose complement
+                // does not fit in imm16.
+                a = Arm64Asm { ...a, code: arm64_movn(a.code, rd, (0 - mvimm) - 1, mvsh, arm64_gas_is_w(ops[0])) };
+            } else {
+                a = Arm64Asm { ...a, code: arm64_movz(a.code, rd, mvimm, mvsh, arm64_gas_is_w(ops[0])) };
+            }
         } else if (arm64_gas_trim(ops[0]) == "sp" || arm64_gas_trim(ops[1]) == "sp") {
             // `mov Xd, sp` / `mov sp, Xn` is the `add Xd, Xn, #0` alias
             // (ORR can't name SP).
@@ -1650,11 +1757,27 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_movk(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), sh) };
         return a;
     }
+    // `movn Rd, #imm{, lsl #N}` written out explicitly. arm64_gas_known has
+    // always claimed movn was handled, but there was no branch for it: the
+    // mnemonic fell through to the end of this function and emitted NOTHING,
+    // with nothing recorded on p.unknown either — a silently dropped
+    // instruction. The emitter only reaches MOVN through `mov Rd, #-imm`
+    // today, which is why it went unnoticed.
+    if (mnem == "movn") {
+        var nsh: i32 = 0;
+        if (ops.len() > 2) {
+            nsh = arm64_gas_lsl_amount(ops[2]);
+        }
+        a = Arm64Asm { ...a, code: arm64_movn(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), nsh, arm64_gas_is_w(ops[0])) };
+        return a;
+    }
     if (mnem == "add") {
         var ad: i32 = arm64_gas_reg(ops[0]);
         var an: i32 = arm64_gas_reg(ops[1]);
         if (ops[2].len() > 0 && ops[2][0] == 35) {
             a = Arm64Asm { ...a, code: arm64_addimm(a.code, ad, an, arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
+        } else if (arm64_gas_trim(ops[1]) == "sp") {
+            a = Arm64Asm { ...a, code: arm64_addsub_ext_sp(a.code, false, ad, an, arm64_gas_reg(ops[2])) };
         } else {
             a = Arm64Asm { ...a, code: arm64_addreg(a.code, ad, an, arm64_gas_reg(ops[2])) };
         }
@@ -1665,6 +1788,8 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         var sn: i32 = arm64_gas_reg(ops[1]);
         if (ops[2].len() > 0 && ops[2][0] == 35) {
             a = Arm64Asm { ...a, code: arm64_subimm(a.code, sd, sn, arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
+        } else if (arm64_gas_trim(ops[1]) == "sp") {
+            a = Arm64Asm { ...a, code: arm64_addsub_ext_sp(a.code, true, sd, sn, arm64_gas_reg(ops[2])) };
         } else {
             a = Arm64Asm { ...a, code: arm64_subreg(a.code, sd, sn, arm64_gas_reg(ops[2])) };
         }
@@ -1684,7 +1809,26 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         // SIMD&FP `ldr/str Dt, [Xn{, #off}]` — d-register dest (the f64
         // constant-load path). Scalar [Xn] / [Xn, #off] only.
         if (ops[0].len() > 0 && ops[0][0] == 100) { // 'd'
+            // Post-index `ldr Dt, [Xn], #off` arrives as three operands, exactly
+            // like the GP form below.
+            if (ops.len() >= 3) {
+                var fpb: i32 = arm64_gas_mem(ops[1]).base;
+                var fpo: i32 = arm64_gas_imm(ops[2]);
+                if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr_fp_post(a.code, rt, fpb, fpo) }; }
+                return Arm64Asm { ...a, code: arm64_str_fp_pre(a.code, rt, fpb, fpo) };
+            }
             var fm: Arm64Mem = arm64_gas_mem(ops[1]);
+            if (arm64_gas_has_bang(ops[1])) {
+                // pre-index with writeback `[Xn, #off]!`
+                if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldur_fp(a.code, rt, fm.base, fm.off) }; }
+                return Arm64Asm { ...a, code: arm64_str_fp_pre(a.code, rt, fm.base, fm.off) };
+            }
+            // A negative offset cannot use the scaled unsigned form (it wrapped
+            // to a large POSITIVE offset); use the unscaled signed imm9.
+            if (fm.off < 0 || (fm.off & 7) != 0) {
+                if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldur_fp(a.code, rt, fm.base, fm.off) }; }
+                return Arm64Asm { ...a, code: arm64_stur_fp(a.code, rt, fm.base, fm.off) };
+            }
             if (mnem == "ldr") { return Arm64Asm { ...a, code: arm64_ldr_fp(a.code, rt, fm.base, fm.off) }; }
             return Arm64Asm { ...a, code: arm64_str_fp(a.code, rt, fm.base, fm.off) };
         }
@@ -2541,6 +2685,14 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // now encode the register form properly.
         if (arm64_gas_regoff_unsupported(mnem, rest)) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":regoff") };
+        }
+        // A mov-wide immediate that does not fit imm16 (or whose complement does
+        // not, for the MOVN path) would be silently TRUNCATED into a different
+        // constant. Refuse it: the emitter builds anything wider through the
+        // literal pool (`ldr Xt, =N`), so this only ever fires on a form the
+        // assembler genuinely cannot express.
+        if (arm64_gas_movwide_out_of_range(mnem, rest)) {
+            p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":imm16") };
         }
         // `ldr Xd, =N` (literal-pool load): emit an LDR-literal placeholder
         // and queue the 64-bit value; `.ltorg` (or end of program) flushes
