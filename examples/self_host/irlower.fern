@@ -1,151 +1,120 @@
 // examples/self_host/irlower.fern — AST -> stack-IR lowering for the
-// self-hosted compiler (slice 2 of the IR rebuild, see
-// docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md), plus a stack-machine
-// interpreter that evaluates the lowered Op[] so lowering is checkable
-// end-to-end WITHOUT a backend (mirrors how ssa.fern validates its builder
-// with an SSA interpreter).
+// self-hosted compiler (see docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md), plus a
+// stack-machine interpreter that evaluates the lowered Op[] so lowering is
+// checkable end-to-end WITHOUT a backend (mirrors how ssa.fern validates its
+// builder with an SSA interpreter).
 //
-// SCOPE (slice 2): the straight-line i32 subset — params, `var` / `=`
-// locals, integer / bool literals, the binary + unary operators, and
-// `return`. This is the IR analogue of ssa.fern's slice-1 subset. Anything
-// outside it (control flow, calls, strings, floats, composites) makes
-// lower_func return ok=false, so the driver can fall back / report a bail.
-// Control flow (block/loop/if/br) + calls land in later slices, mirroring
-// the native builder's expression/statement lowering.
+// The lowering is a textbook stack-machine emit: an expression lowers to ops
+// that PUSH its value (operands first, then the operator), a `var` binds the
+// next local slot and stores into it, `return` lowers its value then emits
+// `return`. Params occupy slots 0..n_params-1.
 //
-// The lowering is a textbook stack-machine emit: an expression lowers to
-// ops that PUSH its value (operands first, then the operator), a `var`
-// binds the next local slot and stores into it, `return` lowers its value
-// then emits `return`. Params occupy slots 0..n_params-1.
+// Coverage is the whole language — control flow, calls, closures, strings,
+// floats, composites, generics, traits. `lower_func` returning ok=false is a
+// BUG REPORT, not a routine fallback: there is no AST emitter left behind it
+// (all three were deleted; see docs/SELFHOST-AST-RETIREMENT.md), so every
+// backend routes IR-or-error and a bail is a diagnostic naming the bail site
+// under FERN_STRICT_IR=1.
+//
+// Three concerns are threaded through the lowering, and knowing which one you
+// are looking at is most of reading this file:
+//   - TYPE tracking — LocalInfo per slot and FnSigs per module, together
+//     deciding which opcode a value's operations select (str_len vs arr_len,
+//     8-byte vs 4-byte element loads, env-first vs direct call dispatch);
+//   - OWNERSHIP — the Perceus refcounting: where inc/dec land, which values
+//     are fresh and sole-owned (so a drop may reclaim them) versus borrowed
+//     or a zero-copy view (where a drop would over-release);
+//   - CONTROL — the structured block/loop/if nesting that br-depths index.
 
 import "./ir";
 import "./parser";
 import "./util";
 import "./astwalk";
 
-// LowerState threads the accumulated Op[] and the local-slot table
-// (slot i -> name) immutably, in the self-host style. `n_params` records
-// the borrow boundary the later RC slices need; `ok` latches a bail.
-// LocalInfo field reference (one entry per local slot; collapsed from the former
-// 17+ parallel local_* arrays in LowerState into one array-of-structs so the
-// per-statement LowerState rebuild copies ONE field pointer, not 20):
-// local_is_arr[i] marks slot i as holding an array value (drives the
-// Perceus alias-inc: a new reference to an array must retain it).
-// local_is_str[i] marks slot i as holding a string value — used for type
-// dispatch only (str_len vs arr_len, str_concat vs add, str_eq vs eq).
-// Strings are not reference-counted, so this drives no RC; it just keeps
-// string slots out of the array machinery and selects the string opcodes.
-// local_is_strarr[i] marks slot i as holding a string[] array (alongside
-// local_is_arr, which still drives the array's RC). It only affects element
-// typing: arr[i] on a string[] yields a string (str_len etc.), while the
-// array itself is rc-tracked like any array and its string elements leak.
-// local_struct_type[i] holds the struct type name of slot i (""=not a
-// struct), so `p.x` resolves x's field index in p's decl. Like local_is_str,
-// dispatch-only — the scalar-field structs this slice covers are leak-only.
-// local_opt_type[i] holds the Option[T]/Result[T,E] type string of slot i
-// (""=not an Option/Result), set when `var r = f()` binds an Option/Result-
-// returning call (or for an Option/Result param). Lets a `match (r)` on a
-// local recover the bound payload type, the same way a direct-call scrutinee
-// uses opt_ret_fns.
-// local_tuple_elems[i] holds slot i's tuple element-type tags, comma-joined
-// (e.g. "string,i32,Point"), "" if not a tuple. Lets `t.N` and a tuple
-// destructure recover each element's type for dispatch.
-// local_is_i64[i] marks slot i as holding an i64 value (drives i64
-// instruction selection + wasm i64 local typing). i32 stays the default.
-// local_is_f64[i] marks slot i as holding an f64 value (drives float
-// instruction selection: arithmetic / comparison use the float registers).
-// The slot itself is an 8-byte bit pattern like any value; only the ops on
-// it differ. i32 stays the default.
-// local_is_f32[i] marks slot i as holding an f32 value. f32 is STORED as an
-// 8-byte f64 (so it is also local_is_f64 — storage/arith/compare are the
-// f64 ops), but its TYPE is tracked distinctly here so method dispatch keys
-// "f32.<m>" (not "f64.<m>") — they differ for `to_string`/`to_json`
-// (precision). expr_recv_prim_type returns "f32" when this is set.
-// local_is_f64arr[i] marks slot i as holding an f64[] array (alongside
-// local_is_arr, which still drives the array's RC). It only affects element
-// WIDTH: a[i] on an f64-array slot reads an 8-byte f64 (arr_get width 64,
-// f64.load on wasm) and types as f64, and an f64 array literal allocates an
-// 8-byte-stride buffer. i32 / string[] arrays (4-byte wasm stride) stay the
-// default. The register backends already use 8-byte element slots, so this
-// only steers the wasm backend's element load/store width.
-// local_is_i64arr[i] marks slot i as holding an i64[] array. Like
-// local_is_f64arr it drives an 8-byte element stride, but a[i] reads an
-// 8-byte i64 (arr_get_i64 -> i64.load on wasm) and types as i64 (flowing
-// through lower_i64), and an i64 array literal stores i64 elements. i32 /
-// f64 / string[] arrays stay the default.
-// local_is_closurearr[i] marks slot i as holding a closure[] — an array of
-// function VALUES (closure boxes). a[i] yields a closure box, so a local
-// bound from such an element is marked a closure local (mark_closure_local)
-// and `c()` unpacks the box instead of calling the raw pointer as a table
-// index (which traps).
-// local_is_fnarr[i] marks slot i as holding a PLAIN-fn-pointer array — an
-// array of bare named-function VALUES (`(() => T)[]`), as opposed to the
-// closure boxes of local_is_closurearr. The distinction matters at
-// `.append(f)`: a bare 0-arg fn-name appended to such a slot is a fn POINTER
-// (const_func), not a `const`-style call — without the flag the appended `f`
-// const-calls and stores its result, so `fns[i]()` segfaults. A plain
-// fn-pointer element calls via the plain call_indirect path (NOT env-first),
-// so this flag is deliberately separate from local_is_closurearr. (#3574)
-// local_is_arrarr[i] marks slot i as holding an ARRAY-of-arrays (`i32[][]`,
-// `string[][]`, …). Its element `a[i]` is itself an array, so a local bound
-// from such an element — `var row = a[i]` or the loop var of `for row in a` —
-// is marked is_arr, which lets `for x in row` / `row` flow as an array source
-// (a plain `row[i]` / `row.len()` works without the flag; only ITERATING or
-// re-binding the inner array needs it). Set from a `T[][]` annotation or an
-// array-of-array literal (`[[…], …]`); a single nesting level (depth 2).
-// local_arrarr_elem[i] records the INNER element kind of a T[][] slot —
-// "i64" / "f64" (the 8-byte element kinds) or "" (i32/string, 4-byte/ptr).
-// local_is_arrarr only records THAT a slot is array-of-arrays, not what T is,
-// so a nested read a[i][j] couldn't recover the inner width and truncated an
-// i64/f64 element to 32 bits. This lets arr_index_is_i64/_f64 pick the 8-byte
-// load for a nested element. (#2691 nested-array i64/f64 fix.)
-// local_is_u32[i] marks slot i as holding a u32 value (scalar) OR a u32[]
-// array (disambiguated by local_is_arr). It drives u32 WRAPPING: arithmetic
-// whose result is u32 masks to 32 bits on the register backends, and a u32
-// `>>` lowers to a LOGICAL shift (shr_u). Native wraps every u32 op at 2^32;
-// without this the self-host kept 64-bit results, so u32-heavy code (the
-// SHA-256 schedule / __rotr `x << (32-n)`) accumulated stray high bits and
-// miscompiled. u8 rides the parallel local_subword slot below.
-// local_is_u64[i] marks slot i as holding a u64 value (scalar) OR a u64[]
-// array. u64 lives in the i64 64-bit domain (alongside local_is_i64) but is
-// UNSIGNED: its `>`/`<`/… compare, `>>`, and `/`/`%` select the unsigned ops
-// (lt_u/shr_u/div_u/…) instead of the signed ones, which are wrong once bit
-// 63 is set (#2904). Unlike u32 there is no wrap step — i64-domain ops are
-// already full-width; only signedness differs.
-// local_subword[i] holds the sub-32-bit integer kind of slot i ("u8"),
-// or "" if not a sub-word int. For a u8[] array slot it holds the ELEMENT
-// kind (disambiguated by local_is_arr). It drives the post-arithmetic WIDTH
-// WRAP: a u8 `+`/`-`/`*`/`<<` whose result can exceed the width is masked
-// back via an int_cast, matching the interpreter's per-width wrap
-// (`255u8 + 1 == 0`). Without it the IR backends kept the full 64-bit
-// result and miscompiled (the u32 sibling of this is local_is_u32 /
-// op_u32_wrap).
-// ctrl: count of structured-control constructs (block/loop/if) currently
-// open at this point — auto-maintained in emit(). loop_blk: a stack holding,
-// per enclosing loop, the ctrl level just after that loop's exit-block opener
-// (the loop header sits one deeper). break = br(ctrl - top); continue =
-// br(ctrl - top - 1). Together they let break/continue compute relative br
-// depths through arbitrary if/match nesting.
+// LocalInfo is the per-local-slot type record — one entry per slot, indexed by
+// slot number. Everything here answers "what does this slot hold?", which is
+// what selects the opcode a use of the slot lowers to.
 pub struct LocalInfo {
     slot_name: string,
+    // is_arr: an array value. The one flag here that drives RC as well as
+    // dispatch — a new reference to an array must retain it (the Perceus
+    // alias-inc).
     is_arr: boolean,
+    // is_str: a string value. Dispatch only (str_len vs arr_len, str_concat vs
+    // add, str_eq vs eq) — strings are not reference-counted.
     is_str: boolean,
+    // is_strarr: a string[] — the element-typing overlay on is_arr, which still
+    // drives the array's RC. Makes arr[i] type as a string.
     is_strarr: boolean,
+    // struct_type: the slot's struct type name ("" = not a struct), so `p.x`
+    // resolves x's field index in p's decl.
     struct_type: string,
+    // opt_type: the slot's Option[T] / Result[T, E] spelling ("" = neither), so
+    // a `match (r)` on a local recovers the bound payload type the same way a
+    // direct-call scrutinee uses FnSigs.opt_ret_fns.
     opt_type: string,
+    // tuple_elems: the slot's tuple element-type tags, comma-joined (e.g.
+    // "string,i32,Point"), "" if not a tuple. Lets `t.N` and tuple destructuring
+    // recover each element's type.
     tuple_elems: string,
     map_type: string,
+    // is_i64: an i64 value — drives i64 instruction selection and wasm i64 local
+    // typing. i32 is the default.
     is_i64: boolean,
+    // is_f64: an f64 value — arithmetic and comparison use the float registers.
+    // The slot is an 8-byte bit pattern like any other; only the ops differ.
     is_f64: boolean,
+    // is_f32: an f32 value. STORED as an 8-byte f64 (so is_f64 is set too, and
+    // storage/arith/compare are the f64 ops), but tracked distinctly because
+    // method dispatch keys "f32.<m>" — `to_string` / `to_json` differ in
+    // precision. expr_recv_prim_type returns "f32" when this is set.
     is_f32: boolean,
+    // is_f64arr: an f64[] — an element-WIDTH overlay on is_arr. a[i] reads an
+    // 8-byte f64 and an f64 array literal allocates an 8-byte stride. Only the
+    // wasm backend needs steering; the register backends already use 8-byte
+    // element slots.
     is_f64arr: boolean,
+    // is_i64arr: an i64[]. Like is_f64arr an 8-byte stride, but a[i] reads an
+    // i64 and types as i64 (flowing through lower_i64).
     is_i64arr: boolean,
+    // is_closurearr: an array of closure BOXES. a[i] yields a box, so a local
+    // bound from such an element is marked a closure local and `c()` unpacks the
+    // box instead of calling the raw pointer as a table index (which traps).
     is_closurearr: boolean,
+    // is_fnarr: an array of BARE named-function values (`(() => T)[]`), as
+    // opposed to is_closurearr's boxes — deliberately separate, because these
+    // call through the plain call_indirect path, not env-first. The distinction
+    // bites at `.append(f)`: a bare 0-arg fn name appended to such a slot is a
+    // fn POINTER (const_func), not a `const`-style call. Without the flag the
+    // appended `f` const-calls and stores its RESULT, so `fns[i]()` segfaults.
     is_fnarr: boolean,
+    // is_arrarr: an array-of-arrays (`i32[][]`, `string[][]`, …), one nesting
+    // level. Its element is itself an array, so a local bound from `a[i]` — or
+    // the loop var of `for row in a` — is marked is_arr. A plain `row[i]` /
+    // `row.len()` works without the flag; only ITERATING or re-binding the inner
+    // array needs it.
     is_arrarr: boolean,
+    // arrarr_elem: the INNER element kind of a T[][] slot — "i64" / "f64" (the
+    // 8-byte kinds) or "" (i32/string). is_arrarr records only THAT a slot is
+    // array-of-arrays, so without this a nested read a[i][j] could not recover
+    // the inner width and truncated an i64/f64 element to 32 bits.
     arrarr_elem: string,
+    // is_u32: a u32 scalar OR a u32[] (disambiguated by is_arr). Drives u32
+    // WRAPPING — arithmetic masks to 32 bits on the register backends and `>>`
+    // lowers to a LOGICAL shift. Native wraps every u32 op at 2^32; without this
+    // the self-host kept 64-bit results, so u32-heavy code (the SHA-256 schedule,
+    // __rotr's `x << (32-n)`) accumulated stray high bits.
     is_u32: boolean,
+    // is_u64: a u64 scalar OR a u64[]. Lives in the i64 64-bit domain (is_i64 is
+    // set too) but UNSIGNED: compares, `>>`, `/` and `%` select the unsigned ops,
+    // which the signed ones get wrong once bit 63 is set. No wrap step — i64
+    // ops are already full-width, only signedness differs.
     is_u64: boolean,
+    // subword: the sub-32-bit integer kind ("u8"), or "" if not one; for a u8[]
+    // slot it holds the ELEMENT kind (disambiguated by is_arr). Drives the
+    // post-arithmetic WIDTH WRAP — a u8 `+`/`-`/`*`/`<<` whose result can exceed
+    // the width is masked back via an int_cast, matching the interpreter's
+    // per-width wrap (`255u8 + 1 == 0`). The u32 sibling is is_u32.
     subword: string,
     // is_cell / cell_elem: a Cell[T] slot (#5510). A Cell is lowered as a
     // 1-element array of T, so cell_new(v) -> [v], c.get() -> c[0], c.set(x)

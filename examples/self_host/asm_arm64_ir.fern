@@ -1965,12 +1965,8 @@ function emit_arm64_struct_arr_elems_drop_one(s: asmcore.EmitState, ety: string)
 // bodies (the sibling of x86's asm_ir.emit_ir_runtime), a near-verbatim copy
 // of asm_arm64.emit_runtime differing only in that its Fern-source helpers
 // lower through emit_ir_runtime_fern_fn (the IR selector) rather than the AST
-// emit_function. Keeping it here frees the arm64 IR module emitters from any
-// call into asm_arm64.fern's runtime, so that file can be deleted (#3457
-// slice 5); the AST fallback keeps asm_arm64.emit_runtime until then.
-// emit_ldc / emit_ccall_shim1_arm64 / emit_ccall_shims_arm64 /
-// emit_rodata_pools_arm64 are copied alongside because emit_ir_runtime calls
-// them; asm_arm64.fern retains its own copies for the AST path.
+// emit_function. emit_ldc / emit_ccall_shim1_arm64 / emit_ccall_shims_arm64 /
+// emit_rodata_pools_arm64 live alongside it because emit_ir_runtime calls them.
 
 function emit_ldc(s: asmcore.EmitState, reg: string, lbl: string): asmcore.EmitState {
     s = s.write("    adrp x12, " + lbl + "\n");

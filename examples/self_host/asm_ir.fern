@@ -1,20 +1,15 @@
-// examples/self_host/asm_ir.fern — the IR code path for the production
-// x86-64 backend, the first integration of the native-shaped stack IR
-// (ir.fern / irlower.fern) into asm.fern's world (docs/RC-PERCEUS-SELF-HOST-
-// IR-REBUILD.md §3). emit_module_ir lowers each function AST -> stack IR ->
-// asm and instruction-selects it into asm.fern's OWN dialect: same
-// `__fn_<name>:` label, same rbp frame + leave/ret, same machine-stack
-// operand discipline (every value `pushq`-ed, consumers `popq`), so an
-// IR-emitted function is ABI-identical to an AST-emitted one — and the two
-// must produce identical behaviour (the differential gate).
+// examples/self_host/asm_ir.fern — the x86-64 backend
+// (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3). emit_module_ir lowers each
+// function AST -> stack IR -> asm and instruction-selects it: `__fn_<name>:`
+// label, rbp frame + leave/ret, and a machine-stack operand discipline where
+// every value is `pushq`-ed and consumers `popq`.
 //
-// SCOPE (slice 16): pure i32 functions — no params, no user calls, no arrays
-// — proving the seam end-to-end. asm.fern itself is UNCHANGED (this module is
-// imported only by asm_run via its `-ir` flag), so the byte-identical
-// self-bootstrap and every asm.fern-based harness are unaffected. emit_module_ir
-// only handles modules where EVERY function is eligible (all_eligible); the
-// driver falls back to asm.emit_module otherwise. As the eligible subset
-// widens, this folds back into asm.fern's emit_module behind a flag.
+// This is the only x86-64 emitter — the AST one it grew up beside was deleted
+// (#5972). emit_module_ir handles a module only when EVERY function is
+// eligible (all_eligible); otherwise it REFUSES, and that refusal is a
+// diagnostic naming the bail site under FERN_STRICT_IR=1, not a route to some
+// other emitter. Comments below that describe a body as "transcribed verbatim
+// from asm.fern" are recording where it came from, not a file you can go read.
 
 import "./lexer";
 import "./parser";
@@ -41,10 +36,8 @@ pub function ir_eligible(fd: parser.FuncDecl, mod: parser.Module): boolean {
     // as an array only when `mk` is in arr_ret_fns, and a later `for x in a`
     // bails when its slot isn't array-typed; str_ret_fns likewise decides whether
     // `for b in greet()` (a string-returning-call iterable) types as a string and
-    // lowers via the byte-foreach path (#2822). An empty registry here
-    // under-approximates, routing such modules to the AST path even though they
-    // lower; all three backends now thread the real registries through emission
-    // too, so the gate and the emitter agree.
+    // lowers via the byte-foreach path (#2822). An empty registry here would
+    // under-approximate and refuse modules that do in fact lower.
     var r: irlower.LowerResult = irlower.lower_func_for(fd, array_ret_fns(mod), mod.structs, mod.funcs);
     if (!r.ok) { return false; }
     return true;
@@ -85,9 +78,7 @@ pub function array_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // use asm.fern's OWN stack-arg ABI + symbols (so the IR path is a drop-in for
 // asm.fern's array RC) — see ir_helper_symbol for the name map. The whitelist
 // is exact: any OTHER __fern_* / __rc_* call is NOT provided here, so
-// calls_only_known disqualifies the module from the IR path and it falls back
-// to the AST emitter. (__fern_heap_used has no asm.fern equivalent, so a
-// program using it now routes through the AST path.)
+// calls_only_known refuses the module rather than emitting a call with no body.
 pub function is_fern_helper(name: string): boolean {
     return name == "__fern_rc_inc"
         || name == "__fern_rc_dec"
@@ -3805,9 +3796,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
 // AND every direct call targets a function defined in the module (or an IR
 // runtime helper). A call to a BUILTIN (read_int / print_int / chr /
 // i32_to_string / ...) lowers to call_direct but has no `__fn_<name>` body —
-// the IR path can't emit it, so such modules fall back to the AST emitter
-// (which handles builtins in emit_expr). The whole module goes one way or the
-// other, so a single builtin call disqualifies the IR path for the module.
+// the IR path can't emit it, so such a module is REFUSED. There is no fallback
+// emitter behind this — a bail is a diagnostic, not a routing decision — so a
+// builtin reaching here is a gap to close in lowering.
 // eligible_core is the target-independent eligibility check: a non-empty module
 // with a `main` where every function is ir_eligible, every direct call targets a
 // known function, and every function-VALUE reference (const_func) names a real
