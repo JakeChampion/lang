@@ -199,21 +199,28 @@ function __fuzz_escape(s: string): string {
 // the receiver-method form folds the result into the
 // runner's TAP stream.
 // The body is spelled out here rather than delegating to `fuzz_run_seeded`
-// with a freshly drawn seed, which is what it obviously wants to be. That
-// one-line delegation MISCOMPILES on the self-host x86-64 IR path: the
-// callee ends up invoking a DIFFERENT function value than the one passed, so
-// `fuzz_run(seeds, n, always_passing_target)` reported a failure raised by a
-// target from an earlier call. Verified by bisection — the pre-delegation
-// shape and this inlined shape both behave; tail and non-tail delegation both
-// misbehave.
+// with a freshly drawn seed, which is what it obviously wants to be.
 //
-// The trigger is narrower than "forwarding a function parameter", which is
-// why this is inlined rather than reported as a blanket hazard: a
-// single-module forward of an i32-returning fn, of an enum-returning fn, and
-// std/array's own `(xs: T[]) any(pred) { return any(xs, pred); }` receiver
-// delegations all lower correctly. Something about this particular shape does
-// not. Do NOT "simplify" this back into a delegation without re-running
-// internal/e2e's fuzz coverage through the self-host x86-64 backend.
+// THE ROOT CAUSE IS A NAME COLLISION, not delegation (#6191). The parameter
+// below is called `target`, and a fuzz program conventionally names its target
+// function `target` too. Compilers that resolve a bare fn-name ident against
+// the MODULE function table when boxing it into an env trampoline pick the
+// module function over the shadowing parameter, and the callee then invokes an
+// unrelated top-level function — silently, with no diagnostic and no crash.
+// That is why `fuzz_run(seeds, n, always_passing_target)` reported a failure
+// raised by a completely different target.
+//
+// Delegation is not the trigger; it only matters because it puts `target` in a
+// fn-value ARGUMENT position, which is where the boxing happens. The collision
+// reproduces with a single call site and with the shadowing function never
+// called — merely declared. The self-host lift pass is fixed for the
+// PARAMETER case, but the NATIVE WASM backend still has it, so restoring the
+// delegation here would trade a fixed backend for a broken one.
+//
+// Do NOT "simplify" this back into a delegation until #6191 closes on every
+// backend. Renaming the parameter would also dodge it, and is deliberately not
+// done: `target` is the right name, and a stdlib that has to avoid words its
+// users might pick is a worse outcome than the bug being visible here.
 pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => test.TestOutcome): test.TestOutcome {
     var rng_seed: i64 = (math.random_int(0 - 2000000000, 2000000000)) as i64;
     if (iterations <= 0) {
