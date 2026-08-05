@@ -934,6 +934,388 @@ function any_ccall_need(s: asmcore.EmitState): boolean {
     return false;
 }
 
+// rc_trace_on reports whether FERN_RC_TRACE is set — the self-host port of
+// ast.RcTrace (#6068). Every heap event becomes self-describing: one stderr
+// line per alloc/free, `rctrace <a|f> <ptr> <size> <site>`, three fixed-width
+// 16-hex numbers. Pair the `a` lines against the `f` lines by POINTER and what
+// is left is a leak, attributed to the code that asked for the memory.
+//
+// The native backend has had this since #6076; the self-host runtime had only
+// the over-release detector (__fern_rc_underflow), so it could see a block
+// freed twice but not one never freed at all. That asymmetry mattered: the
+// remaining goal-2 deltas (docs/SELFHOST-PERCEUS-REUSE.md §3 Delta B — reuse
+// admission for rc-element-array struct fields) are an ALLOCATION-VOLUME
+// difference against native, and volume is the one thing no gate covered.
+// With both compilers tracing, `a` lines the self-host emits that native does
+// not name the construction sites where reuse was missed.
+function rc_trace_on(): boolean {
+    match (env("FERN_RC_TRACE")) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+}
+
+// leak_check_on reports whether FERN_LEAKCHECK is set — the self-host port of
+// ast.LeakCheckEnabled. Counts every alloc and every free (count + bytes) and
+// prints one line at exit:
+//
+//	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
+//
+// The detector half of the pair above: this says a leak happened, the trace
+// says where. Both counters tick in the same __fern_hev_* helpers, off the
+// same rounded size, so the trace's own tallies reproduce this line exactly.
+function leak_check_on(): boolean {
+    match (env("FERN_LEAKCHECK")) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+}
+
+// hev_on reports whether either heap-event diagnostic is on, i.e. whether the
+// __fern_hev_a / __fern_hev_f hooks and their shared writer are emitted at
+// all. Every emission site below is gated on it, so a build with both flags
+// off is byte-identical to one from a compiler without the feature.
+function hev_on(): boolean {
+    if (rc_trace_on()) { return true; }
+    return leak_check_on();
+}
+
+// hev_free emits one heap-FREE event hook: the block at `ptr` is `words`
+// 8-byte words. Both operands are pushed, never moved through a scratch
+// register, so the hook clobbers nothing the surrounding free site still
+// needs — the self-host's free sites are open-coded freelist pushes with 15
+// different live-register sets, and a hook that had to pick a scratch at each
+// would be 15 chances to corrupt a reclamation path.
+//
+// `ptr` is a register operand; `words` is a register or an immediate ($2 for
+// a 16-byte map box, $3 for a 24-byte string box). The pushes are undone
+// before control returns to the site, so a site that later reads its stack
+// argument (__fn___fern_alloc_reuse's `8(%rsp)`) is unaffected.
+function hev_free(s: asmcore.EmitState, ptr: string, words: string): asmcore.EmitState {
+    if (!hev_on()) { return s; }
+    s = s.write("    pushq " + words + "\n");
+    s = s.write("    pushq " + ptr + "\n");
+    s = s.write("    call __fern_hev_f\n");
+    s = s.write("    addq $16, %rsp\n");
+    return s;
+}
+
+// emit_hev_runtime emits the heap-event diagnostics block: the leakcheck
+// counters, the fixed report/trace text, the two event entry points, the
+// shared stderr writer, and the exit-time summary. Entry-module-only (one
+// definition per program) and emitted whenever either flag is on, INDEPENDENT
+// of the heap runtime — a heap-free program still has an `exit` builtin that
+// calls __fern_lc_report, and it must resolve.
+//
+// Sizes are carried in WORDS, not bytes. The self-host heap is uniformly
+// 8-byte-granular (__fern_alloc rounds every request to 8 and classes by
+// bytes/8), so words is the unit both sides can state exactly: an alloc's
+// (bytes+7)>>3 and a free site's own class index are then the same number for
+// the same block, and a block's alloc cancels its free precisely. The large
+// tier is the one place the two differ from what was physically consumed —
+// alloc BUMPS at a 512-KiB-rounded capacity while both events report the
+// logical size — so live_bytes measures demand, not arena footprint. That is
+// the same definition __fern_large_push already bins by.
+function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
+    if (!hev_on()) { return s; }
+    s = s.write("    .section .bss\n");
+    s = s.write("    .align 8\n");
+    s = s.write("__fern_lc_alloc_count: .quad 0\n");
+    s = s.write("    .align 8\n");
+    s = s.write("__fern_lc_alloc_bytes: .quad 0\n");
+    s = s.write("    .align 8\n");
+    s = s.write("__fern_lc_free_count: .quad 0\n");
+    s = s.write("    .align 8\n");
+    s = s.write("__fern_lc_free_bytes: .quad 0\n");
+    s = s.write("    .align 8\n");
+    // Site override, set by the box shims (hev_shim_site) and consumed by the
+    // next __fern_hev_a. 0 = no claim, so __fern_alloc's own caller is used.
+    s = s.write("__fern_hev_site: .quad 0\n");
+    s = s.write("    .section .rodata\n");
+    // The writer passes exact lengths, so no NUL is ever emitted; .ascii
+    // rather than .asciz keeps that explicit.
+    s = s.write(".Lhev_sp:\n    .ascii \" \"\n");
+    s = s.write(".Lhev_nl:\n    .ascii \"\\n\"\n");
+    if (rc_trace_on()) {
+        s = s.write(".Lhev_pre:\n    .ascii \"rctrace \"\n");
+    }
+    if (leak_check_on()) {
+        s = s.write(".Llc_a:\n    .ascii \"leakcheck: allocs=\"\n");
+        s = s.write(".Llc_f:\n    .ascii \" frees=\"\n");
+        s = s.write(".Llc_l:\n    .ascii \" live_bytes=\"\n");
+    }
+    s = s.write("    .section .text\n");
+    // __fern_hev_a(site, ptr, words) — stack args at 8/16/24(%rsp), pushed by
+    // __fern_alloc's wrapper. The site is passed EXPLICITLY here because the
+    // wrapper knows it (its own return address) while this helper's [rsp]
+    // would only name the wrapper.
+    //
+    // .globl on both entry points: the map_get_or shell free is emitted into
+    // ORDINARY generated code, which under -per-module-emit-all lands in a
+    // different unit from this block (the entry's).
+    s = s.write("    .globl __fern_hev_a\n");
+    s = s.write("__fern_hev_a:\n");
+    s = hev_save(s);
+    s = s.write("    movq 112(%rsp), %r14\n");   // site (explicit arg)
+    s = s.write("    movq 120(%rsp), %r12\n");   // ptr
+    s = s.write("    movq 128(%rsp), %r13\n");   // words
+    s = s.write("    shlq $3, %r13\n");          // bytes = words * 8
+    s = s.write("    movq $97, %rbx\n");         // 'a'
+    // A box shim's claim outranks __fern_alloc's own caller: it names the code
+    // that wanted the box rather than the shim that built it. Consume it, so
+    // the next allocation starts from no claim.
+    s = s.write("    movq __fern_hev_site(%rip), %rax\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    je .Lhev_a_nosite\n");
+    s = s.write("    movq %rax, %r14\n");
+    s = s.write("    movq $0, %rax\n");
+    s = s.write("    movq %rax, __fern_hev_site(%rip)\n");
+    s = s.write(".Lhev_a_nosite:\n");
+    if (leak_check_on()) {
+        s = s.write("    movq __fern_lc_alloc_count(%rip), %rax\n");
+        s = s.write("    addq $1, %rax\n");
+        s = s.write("    movq %rax, __fern_lc_alloc_count(%rip)\n");
+        s = s.write("    movq __fern_lc_alloc_bytes(%rip), %rax\n");
+        s = s.write("    addq %r13, %rax\n");
+        s = s.write("    movq %rax, __fern_lc_alloc_bytes(%rip)\n");
+    }
+    s = s.write("    jmp .Lhev_emit\n");
+    // __fern_hev_f(ptr, words) — stack args at 8/16(%rsp). The site is this
+    // helper's OWN return address, i.e. the instruction after the call inside
+    // the freeing helper. That is exactly as informative as the native f-site
+    // and costs the free sites nothing: every release funnels through a
+    // handful of shared drop helpers, so an `f` line names __fern_arr_dec
+    // rather than user code either way. The ALLOC site is what locates a leak.
+    s = s.write("    .globl __fern_hev_f\n");
+    s = s.write("__fern_hev_f:\n");
+    s = hev_save(s);
+    s = s.write("    movq 104(%rsp), %r14\n");   // site = return address
+    s = s.write("    movq 112(%rsp), %r12\n");   // ptr
+    s = s.write("    movq 120(%rsp), %r13\n");   // words
+    s = s.write("    shlq $3, %r13\n");
+    s = s.write("    movq $102, %rbx\n");        // 'f'
+    if (leak_check_on()) {
+        s = s.write("    movq __fern_lc_free_count(%rip), %rax\n");
+        s = s.write("    addq $1, %rax\n");
+        s = s.write("    movq %rax, __fern_lc_free_count(%rip)\n");
+        s = s.write("    movq __fern_lc_free_bytes(%rip), %rax\n");
+        s = s.write("    addq %r13, %rax\n");
+        s = s.write("    movq %rax, __fern_lc_free_bytes(%rip)\n");
+    }
+    s = s.write(".Lhev_emit:\n");
+    if (rc_trace_on()) {
+        s = s.write("    leaq .Lhev_pre(%rip), %rsi\n");
+        s = s.write("    movq $8, %rdx\n");
+        s = s.write("    call .Lhev_w\n");
+        // The kind is a value, not a literal, so it needs a byte of memory to
+        // point write(2) at: borrow 16 bytes of stack and write the low byte
+        // of the 8-byte store (little-endian).
+        s = s.write("    subq $16, %rsp\n");
+        s = s.write("    movq %rbx, (%rsp)\n");
+        s = s.write("    movq %rsp, %rsi\n");
+        s = s.write("    movq $1, %rdx\n");
+        s = s.write("    call .Lhev_w\n");
+        s = s.write("    addq $16, %rsp\n");
+        s = hev_field(s, "%r12");
+        s = hev_field(s, "%r13");
+        s = hev_field(s, "%r14");
+        s = s.write("    leaq .Lhev_nl(%rip), %rsi\n");
+        s = s.write("    movq $1, %rdx\n");
+        s = s.write("    call .Lhev_w\n");
+    }
+    s = hev_restore(s);
+    s = s.write("    ret\n");
+    // .Lhev_w(%rsi = buf, %rdx = len): one write(2) to stderr. Shared by the
+    // tracer and the leakcheck report, so it is emitted whenever either is on.
+    // `syscall` clobbers %rcx and %r11; both are saved by hev_save, which is
+    // why the three trace values live in %r12/%r13/%r14 rather than being
+    // re-read from argument registers between writes.
+    s = s.write(".Lhev_w:\n");
+    s = s.write("    movq $2, %rdi\n");
+    s = s.write("    movq $1, %rax\n");
+    s = s.write("    syscall\n");
+    s = s.write("    ret\n");
+    if (rc_trace_on()) {
+        // .Lhev_hex(%rdi = value): 16 hex digits, most-significant first, built
+        // backwards into a stack buffer then written in one write(2). Fixed
+        // width, so no leading-zero suppression and no length bookkeeping —
+        // the consumer is a pairing script, and a uniform record needs no
+        // field-splitting to match an `a` line to its `f` line by pointer.
+        s = s.write(".Lhev_hex:\n");
+        s = s.write("    subq $32, %rsp\n");
+        s = s.write("    movq %rsp, %rsi\n");
+        s = s.write("    addq $16, %rsi\n");     // one past the digit field
+        s = s.write("    movq %rdi, %rax\n");
+        s = s.write("    movq $16, %rcx\n");
+        s = s.write(".Lhev_hexloop:\n");
+        s = s.write("    movq %rax, %rdx\n");
+        s = s.write("    andq $15, %rdx\n");
+        s = s.write("    cmpq $10, %rdx\n");
+        s = s.write("    jb .Lhev_hexdig\n");
+        s = s.write("    addq $39, %rdx\n");     // 'a'-'0'-10: skip ':'..'`'
+        s = s.write(".Lhev_hexdig:\n");
+        s = s.write("    addq $48, %rdx\n");     // -> ASCII
+        s = s.write("    subq $1, %rsi\n");
+        s = s.write("    movb %dl, (%rsi)\n");
+        s = s.write("    shrq $4, %rax\n");
+        s = s.write("    subq $1, %rcx\n");
+        s = s.write("    testq %rcx, %rcx\n");
+        s = s.write("    jne .Lhev_hexloop\n");
+        s = s.write("    movq %rsp, %rsi\n");
+        s = s.write("    movq $16, %rdx\n");
+        s = s.write("    call .Lhev_w\n");
+        s = s.write("    addq $32, %rsp\n");
+        s = s.write("    ret\n");
+    }
+    if (leak_check_on()) {
+        // __fern_lc_report() — the exit-time summary, called from `_start`'s
+        // epilogue and from the `exit` builtin (which bypasses it). Both call
+        // sites protect their live exit code with a push/pop across the call,
+        // so this helper is free to clobber. .globl: the `exit` builtin is
+        // lowered in ANY module, this block only in the entry.
+        s = s.write("    .globl __fern_lc_report\n");
+        s = s.write("__fern_lc_report:\n");
+        s = s.write("    leaq .Llc_a(%rip), %rsi\n");
+        s = s.write("    movq $18, %rdx\n");
+        s = s.write("    call .Lhev_w\n");
+        s = s.write("    movq __fern_lc_alloc_count(%rip), %rdi\n");
+        s = s.write("    call .Llc_num\n");
+        s = s.write("    leaq .Llc_f(%rip), %rsi\n");
+        s = s.write("    movq $7, %rdx\n");
+        s = s.write("    call .Lhev_w\n");
+        s = s.write("    movq __fern_lc_free_count(%rip), %rdi\n");
+        s = s.write("    call .Llc_num\n");
+        s = s.write("    leaq .Llc_l(%rip), %rsi\n");
+        s = s.write("    movq $12, %rdx\n");
+        s = s.write("    call .Lhev_w\n");
+        // live_bytes is SIGNED: an over-free shows negative rather than
+        // wrapping to a number that reads like a colossal leak.
+        s = s.write("    movq __fern_lc_alloc_bytes(%rip), %rdi\n");
+        s = s.write("    movq __fern_lc_free_bytes(%rip), %rax\n");
+        s = s.write("    subq %rax, %rdi\n");
+        s = s.write("    call .Llc_num\n");
+        s = s.write("    leaq .Lhev_nl(%rip), %rsi\n");
+        s = s.write("    movq $1, %rdx\n");
+        s = s.write("    call .Lhev_w\n");
+        s = s.write("    ret\n");
+        // .Llc_num(%rdi = signed i64): decimal itoa, digits built backwards
+        // from the end of a stack buffer (an i64 is at most 19 digits + sign),
+        // then one write(2).
+        s = s.write(".Llc_num:\n");
+        s = s.write("    subq $48, %rsp\n");
+        s = s.write("    movq %rsp, %rcx\n");
+        s = s.write("    addq $32, %rcx\n");
+        s = s.write("    movq $0, %r9\n");       // sign flag
+        s = s.write("    movq %rdi, %rax\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jns .Llc_numloop\n");
+        s = s.write("    negq %rax\n");
+        s = s.write("    movq $1, %r9\n");
+        s = s.write(".Llc_numloop:\n");
+        s = s.write("    movq $0, %rdx\n");
+        s = s.write("    movq $10, %rsi\n");
+        s = s.write("    divq %rsi\n");
+        s = s.write("    addq $48, %rdx\n");     // remainder -> ASCII digit
+        s = s.write("    subq $1, %rcx\n");
+        s = s.write("    movb %dl, (%rcx)\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    jne .Llc_numloop\n");
+        s = s.write("    testq %r9, %r9\n");
+        s = s.write("    je .Llc_numemit\n");
+        s = s.write("    subq $1, %rcx\n");
+        s = s.write("    movq $45, %rdx\n");     // '-'
+        s = s.write("    movb %dl, (%rcx)\n");
+        s = s.write(".Llc_numemit:\n");
+        s = s.write("    movq %rsp, %rdx\n");
+        s = s.write("    addq $32, %rdx\n");
+        s = s.write("    subq %rcx, %rdx\n");    // len
+        s = s.write("    movq %rcx, %rsi\n");
+        s = s.write("    call .Lhev_w\n");
+        s = s.write("    addq $48, %rsp\n");
+        s = s.write("    ret\n");
+    }
+    return s;
+}
+
+// hev_shim_site emits a box shim's site prologue: record OUR caller as the
+// site the next allocation should be attributed to, unless an outer shim
+// already claimed it.
+//
+// Without this the tracer is much weaker on the self-host than on native.
+// The native backend's generated code calls __fern_alloc directly, so the
+// immediate caller IS the construction site; the self-host routes nearly all
+// boxing through __fern_arr_box / __fern_str_box, so every array and string in
+// the program reported the same two addresses and the trace could not
+// distinguish one construction site from another — the one thing it exists to
+// do. Measured on a three-array retain probe: every unpaired alloc attributed
+// to `__fern_arr_box + 18`.
+//
+// First writer wins, so a nested shim chain (struct_copy -> arr_box -> alloc)
+// reports the OUTERMOST caller, which is the one in user code.
+// __fern_hev_a consumes the slot and clears it, so a stale value cannot leak
+// into a later unrelated allocation: every shim here calls __fern_alloc
+// unconditionally, so a set is always followed by exactly one consume.
+// Single-threaded by construction, like the rest of the runtime.
+//
+// That unconditionality is why the claim is limited to these three. A helper
+// that allocates only SOMETIMES — __fern_arr_push, whose grow path allocates
+// and whose in-place path does not — cannot claim at its entry without
+// leaving a stale site behind on the fast path, to be consumed by the next
+// unrelated allocation and reported as a confident lie. Making that safe
+// needs a save/restore protocol around each call rather than a single slot,
+// which is more invariant than the case warrants: append-growth attribution
+// already has an answer that needs no flag at all (break on the counter bump
+// in __fern_arr_push_grow and read the return address — see
+// docs/TEST-GATES.md). So a block grown by an append reports
+// `__fern_arr_push`, and the construction sites — where a leak is actually
+// born — report user code.
+//
+// %rax is the scratch: it is dead at the entry of all three shims (each
+// RETURNS in %rax and reads nothing from it), and the prologue sits ahead of
+// every push so `(%rsp)` is still the return address.
+function hev_shim_site(s: asmcore.EmitState, tag: string): asmcore.EmitState {
+    if (!hev_on()) { return s; }
+    s = s.write("    movq __fern_hev_site(%rip), %rax\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jne .L" + tag + "_hs\n");
+    s = s.write("    movq (%rsp), %rax\n");
+    s = s.write("    movq %rax, __fern_hev_site(%rip)\n");
+    s = s.write(".L" + tag + "_hs:\n");
+    return s;
+}
+
+// hev_field emits one " <16 hex digits>" field of a trace line.
+function hev_field(s: asmcore.EmitState, reg: string): asmcore.EmitState {
+    s = s.write("    leaq .Lhev_sp(%rip), %rsi\n");
+    s = s.write("    movq $1, %rdx\n");
+    s = s.write("    call .Lhev_w\n");
+    s = s.write("    movq " + reg + ", %rdi\n");
+    s = s.write("    call .Lhev_hex\n");
+    return s;
+}
+
+// hev_save / hev_restore bracket an event helper's body. EVERY register the
+// helper can touch is saved, callee- and caller-saved alike: the hooks are
+// injected mid-flow into reclamation paths that have live values in whatever
+// the surrounding helper happened to be using, so the only safe contract is
+// "clobbers nothing". 13 pushes = 104 bytes, which is what fixes the stack
+// offsets the two entry points read their arguments at.
+function hev_save(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("    pushq %rax\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n");
+    s = s.write("    pushq %rdi\n    pushq %r8\n    pushq %r9\n    pushq %r10\n");
+    s = s.write("    pushq %r11\n    pushq %rbx\n    pushq %r12\n    pushq %r13\n");
+    s = s.write("    pushq %r14\n");
+    return s;
+}
+
+function hev_restore(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n");
+    s = s.write("    popq %r11\n    popq %r10\n    popq %r9\n    popq %r8\n");
+    s = s.write("    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n");
+    s = s.write("    popq %rax\n");
+    return s;
+}
+
 function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // .bss: heap bump pointer + arena end, the over-release detector, and the
     // size-classed freelist (65536 classes * 8 bytes). The heap arena itself is
@@ -1018,7 +1400,44 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .section .text\n");
     // __fern_alloc(%rdi = bytes) -> %rax = block. Size-classed freelist reuse
     // (class = bytes/8 < 65536) then bump; OOM traps with exit 137.
-    s = s.write("__fern_alloc:\n");
+    //
+    // Under a heap-event build the body becomes __fern_alloc_inner and this is
+    // a wrapper around it, so ONE hook covers all three allocation exits (the
+    // small-class freelist pop, the large-class pop, and the bump) instead of
+    // three hooks at three different live-register states. The wrapper is also
+    // where the reported site is naturally correct: [rsp] on entry is the
+    // caller's return address, i.e. the code that ASKED for the memory, not
+    // the exit path that happened to satisfy it.
+    //
+    // Callers see the same contract either way — %rax is the block, %rdi is
+    // clobbered, everything else preserved (%rsi is saved and restored around
+    // the hook; __fern_hev_a itself clobbers nothing).
+    //
+    // Note the site is the IMMEDIATE caller. Allocations routed through the
+    // box shims (__fern_arr_box / __fern_str_box) therefore report the shim,
+    // not the code that wanted the box — the same limitation the native hook
+    // has, and the reason an `a` line naming a shim needs one gdb frame walk
+    // to attribute.
+    if (hev_on()) {
+        s = s.write("__fern_alloc:\n");
+        s = s.write("    pushq %rdi\n");             // requested bytes
+        s = s.write("    call __fern_alloc_inner\n");
+        s = s.write("    popq %rdi\n");
+        s = s.write("    pushq %rsi\n");
+        s = s.write("    movq 8(%rsp), %rsi\n");     // site = our caller's return address
+        s = s.write("    addq $7, %rdi\n");          // the rounding __fern_alloc_inner applies
+        s = s.write("    shrq $3, %rdi\n");          // words
+        s = s.write("    pushq %rdi\n");
+        s = s.write("    pushq %rax\n");
+        s = s.write("    pushq %rsi\n");
+        s = s.write("    call __fern_hev_a\n");
+        s = s.write("    addq $24, %rsp\n");
+        s = s.write("    popq %rsi\n");
+        s = s.write("    ret\n");
+        s = s.write("__fern_alloc_inner:\n");
+    } else {
+        s = s.write("__fern_alloc:\n");
+    }
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    addq $7, %rdi\n");
@@ -1132,6 +1551,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // __fern_arr_box(%rdi = cap element count) -> %rax = data ptr (base+16).
     // base = [cap, rc=1, len=cap, e0..]; element i at data+(i+1)*8.
     s = s.write("__fern_arr_box:\n");
+    s = hev_shim_site(s, "arrbox");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    pushq %rdi\n");
@@ -1152,6 +1572,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // (field pointers shared, matching the inline base-copy path). The compact base
     // copy of `T { ...base, f: v }` (#4650): one call instead of nf struct_get/store.
     s = s.write("__fn___fern_struct_copy:\n");
+    s = hev_shim_site(s, "scopy");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    pushq %rdi\n");                 // save src            [-8(%rbp)]
@@ -1181,6 +1602,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // rc==1. The single choke point for every reclaimable string box (const_str +
     // raw_string), the asm sibling of the wasm $__fern_str_box.
     s = s.write("__fern_str_box:\n");
+    s = hev_shim_site(s, "strbox");
     s = s.write("    pushq %rsi\n");                 // save len
     s = s.write("    pushq %rdi\n");                 // save data (alloc consumes %rdi)
     s = s.write("    movq $24, %rdi\n");
@@ -1225,6 +1647,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_large_push:\n");
     s = s.write("    cmpq $0x40000000, %rsi\n");         // > 1 GiB: drop (leak, matches alloc)
     s = s.write("    ja .Llpush_ret\n");
+    // The large tier's single choke point, so one hook covers every >=512 KiB
+    // free — the small-tier sites above all `jae` here. Placed AFTER the >1 GiB
+    // test on purpose: that block is dropped rather than recycled, so it is a
+    // leak, not a free, and counting it would hide exactly the thing leakcheck
+    // exists to show. %rax is inside this helper's documented clobber set.
+    if (hev_on()) {
+        s = s.write("    movq %rsi, %rax\n");
+        s = s.write("    shrq $3, %rax\n");              // words
+        s = s.write("    pushq %rax\n");
+        s = s.write("    pushq %r8\n");
+        s = s.write("    call __fern_hev_f\n");
+        s = s.write("    addq $16, %rsp\n");
+    }
     s = s.write("    leaq 524287(%rsi), %rax\n");        // bytes + (512 KiB - 1)
     s = s.write("    andq $-524288, %rax\n");            // cap = round_up(bytes, 512 KiB)
     s = s.write("    shrq $19, %rax\n");                 // class = cap >> 19
@@ -1259,6 +1694,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $65536, %rcx\n");
     s = s.write("    jae .Larrdec_large\n");
     s = s.write("    leaq -16(%rax), %rdx\n");
+    s = hev_free(s, "%rdx", "%rcx");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");
     s = s.write("    movq %rdi, (%rdx)\n");
@@ -1327,6 +1763,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    shrq $3, %rdx\n");
     s = s.write("    cmpq $65536, %rdx\n");         // large tier -> recycle via __fern_large_push
     s = s.write("    jae .Lstrfree_large\n");
+    s = hev_free(s, "%rcx", "%rdx");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rdx,8), %rsi\n");   // old head of class `words`
     s = s.write("    movq %rsi, (%rcx)\n");         // *data = old head
@@ -1336,6 +1773,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // (defensive against a re-free reading a live rc), then push base onto freelist[3].
     s = s.write("    movl $0, -8(%rax)\n");         // rc = 0
     s = s.write("    leaq -8(%rax), %rdx\n");       // base = box-8
+    s = hev_free(s, "%rdx", "$3");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq 24(%r8), %rsi\n");        // freelist[3] (24-byte block = 3 words)
     s = s.write("    movq %rsi, (%rdx)\n");         // *base = old head
@@ -1410,6 +1848,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $65536, %rcx\n");
     s = s.write("    jae .Lsaf_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
+    s = hev_free(s, "%rdx", "%rcx");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");   // old head
     s = s.write("    movq %rdi, (%rdx)\n");         // *base = old head
@@ -1483,6 +1922,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $65536, %rcx\n");
     s = s.write("    jae .Laaf_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
+    s = hev_free(s, "%rdx", "%rcx");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");
     s = s.write("    movq %rdi, (%rdx)\n");
@@ -1548,6 +1988,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $65536, %rcx\n");
     s = s.write("    jae .Lssaf_large\n");          // large tier -> recycle via __fern_large_push
     s = s.write("    leaq -16(%rbx), %rdx\n");
+    s = hev_free(s, "%rdx", "%rcx");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");
     s = s.write("    movq %rdi, (%rdx)\n");
@@ -1637,6 +2078,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $65536, %rcx\n");
     s = s.write("    jae .Loaf_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
+    s = hev_free(s, "%rdx", "%rcx");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rcx,8), %rdi\n");
     s = s.write("    movq %rdi, (%rdx)\n");
@@ -1692,6 +2134,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    pushq %rax\n");
     s = s.write("    call __fn___fern_arr_dec\n");
     s = s.write("    addq $8, %rsp\n");
+    s = hev_free(s, "%rbx", "$2");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq 16(%r8), %rsi\n");         // freelist[2] (16-byte box = 2 words)
     s = s.write("    movq %rsi, (%rbx)\n");          // *box = old head
@@ -1725,6 +2168,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    pushq %rax\n");
     s = s.write("    call __fn___fern_str_arr_free\n"); // vals: DEEP string-element free
     s = s.write("    addq $8, %rsp\n");
+    s = hev_free(s, "%rbx", "$2");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq 16(%r8), %rsi\n");         // freelist[2] (16-byte box = 2 words)
     s = s.write("    movq %rsi, (%rbx)\n");          // *box = old head
@@ -1754,6 +2198,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    pushq %rax\n");
     s = s.write("    call __fn___fern_arr_dec\n");   // vals: shallow
     s = s.write("    addq $8, %rsp\n");
+    s = hev_free(s, "%rbx", "$2");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq 16(%r8), %rsi\n");
     s = s.write("    movq %rsi, (%rbx)\n");
@@ -1781,6 +2226,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    pushq %rax\n");
     s = s.write("    call __fn___fern_str_arr_free\n"); // vals: DEEP
     s = s.write("    addq $8, %rsp\n");
+    s = hev_free(s, "%rbx", "$2");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq 16(%r8), %rsi\n");
     s = s.write("    movq %rsi, (%rbx)\n");
@@ -1835,6 +2281,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    leaq -16(%rax), %rcx\n");       // block base
     s = s.write("    cmpq $65536, %rdx\n");
     s = s.write("    jae .Lsarelo_fresh\n");
+    s = hev_free(s, "%rcx", "%rdx");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rdx,8), %rsi\n");    // old head
     s = s.write("    movq %rsi, (%rcx)\n");          // *block = head
@@ -1875,6 +2322,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jae .Lsd_large\n");           // large tier -> recycle via __fern_large_push
     s = s.write("    movl $0, -8(%rcx)\n");        // mark freed
     s = s.write("    leaq -16(%rcx), %rdi\n");     // old box base
+    s = hev_free(s, "%rdi", "%rsi");
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8,%rsi,8), %r9\n");
     s = s.write("    movq %r9, (%rdi)\n");         // node.next = head
@@ -2776,6 +3224,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    jae .Lapo_large\n");         // large tier -> recycle via __fern_large_push
         s = s.write("    movl $0, -8(%r12)\n");       // mark freed
         s = s.write("    leaq -16(%r12), %rdx\n");    // old box base
+        s = hev_free(s, "%rdx", "%rcx");
         s = s.write("    leaq __fern_freelist(%rip), %r8\n");
         s = s.write("    movq (%r8,%rcx,8), %rdi\n");
         s = s.write("    movq %rdi, (%rdx)\n");       // node.next = head
@@ -4863,7 +5312,14 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
         } else if (o.kind_tag == 166) {  // exit
             // [n] -> sys_exit(n). Never returns; the pushed dummy keeps the
             // operand-stack shape for the statement-level drop.
-            s = s.write("    popq %rdi\n    movq $60, %rax\n    syscall\n    pushq $0\n");
+            // exit() bypasses _start's epilogue, so the leak summary reports
+            // here too (#6068) — the exit code rides the stack across the call.
+            if (leak_check_on()) {
+                s = s.write("    popq %rdi\n    pushq %rdi\n    call __fern_lc_report\n    popq %rdi\n");
+                s = s.write("    movq $60, %rax\n    syscall\n    pushq $0\n");
+            } else {
+                s = s.write("    popq %rdi\n    movq $60, %rax\n    syscall\n    pushq $0\n");
+            }
         } else if (o.kind_tag == 165) {  // putchar
             // [byte] -> write the low byte to stdout (write(1,&byte,1)). Push the
             // syscall return so the statement-level drop balances.
@@ -4945,6 +5401,10 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_get\n    popq %rdx\n");
             s = s.write("    movq (%rax), %rcx\n    movq 8(%rax), %rsi\n");
+            // The one free site emitted into ORDINARY generated code rather
+            // than a runtime helper — hence the .globl on __fern_hev_f, which
+            // is defined in the entry unit while this op can be lowered in any.
+            s = hev_free(s, "%rax", "$2");
             s = s.write("    leaq __fern_freelist(%rip), %r8\n    movq 16(%r8), %r9\n    movq %r9, (%rax)\n    movq %rax, 16(%r8)\n");
             s = s.write("    testq %rcx, %rcx\n    jnz " + golbl + "_d\n");
             s = s.write("    movq %rsi, %rax\n    jmp " + golbl + "_e\n");
@@ -6521,8 +6981,17 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         // main-less — depended on the AST emitter.
         if (asmcore.has_main(mod)) {
             s = s.write("    call __fn_main\n");
+            // Leak summary before the exit syscall (#6068). main's return value
+            // is the exit code and is still in %rax, so it rides the stack
+            // across the call rather than relying on a register contract.
+            if (leak_check_on()) {
+                s = s.write("    pushq %rax\n");
+                s = s.write("    call __fern_lc_report\n");
+                s = s.write("    popq %rax\n");
+            }
             s = s.write("    movq %rax, %rdi\n");
         } else {
+            if (leak_check_on()) { s = s.write("    call __fern_lc_report\n"); }
             s = s.write("    movq $0, %rdi\n");
         }
         s = s.write("    movq $60, %rax\n");
@@ -6623,6 +7092,15 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
     if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("u32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("read_all_stdin") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("env") || s.has_need("stat") || s.has_need("subprocess")) { s = emit_ir_runtime(s); }
+    // Heap-event diagnostics (#6068): the __fern_hev_* hooks the runtime above
+    // calls, plus the leakcheck counters and exit-time report. Deliberately NOT
+    // inside the heap gate — a heap-free program still lowers `exit`, which
+    // calls __fern_lc_report, and it must resolve. When neither flag is set
+    // this emits nothing at all.
+    if (hev_on()) {
+        s = s.write("    .text\n");
+        s = emit_hev_runtime(s);
+    }
     // FFI __c_call<n> shims (#4375): allocation-free register-marshal + `call
     // *fn`, so independent of the heap runtime above. Emitted in .text when the
     // module referenced any variant (emit_ir_runtime, when it ran, left .bss).
