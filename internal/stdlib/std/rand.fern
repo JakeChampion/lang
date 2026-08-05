@@ -1,7 +1,20 @@
 // std/rand — randomised array helpers over the CSPRNG-backed
 // `std/math.random_int` (kernel getrandom on natives, wasi_random on
-// wasm). All operations are value-semantic: they read their input and
-// return a fresh array, never mutating the argument.
+// wasm), plus a seeded PCG32 generator for callers that need throughput
+// or reproducibility instead. All operations are value-semantic: they
+// read their input and return a fresh array, never mutating the argument.
+//
+// WHICH ONE TO USE. `shuffle` / `choice` / `sample` draw from the OS
+// CSPRNG, one syscall per draw — the safe default, and what you want for
+// anything security-relevant (tokens, nonces, sampling an adversary must
+// not predict). They are also, for that reason, slow in bulk: shuffling an
+// n-element array costs n syscalls. The `*_seeded` siblings run entirely
+// in userspace from a seed (measured ~5x faster), which is the right
+// choice for simulations, test-data generation, fuzzing corpora, sampling
+// for telemetry, and anywhere a seed that REPRODUCES the run is a feature.
+//
+// The seeded generator is NOT cryptographically secure: two consecutive
+// outputs pin its state. Never use it where unpredictability matters.
 
 import "std/math" as math;
 
@@ -44,6 +57,158 @@ pub function sample[T](xs: T[], k: i32): T[] {
     var i: i32 = 0;
     while (i < k) {
         out = out.append(shuffled[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// === Seeded, non-cryptographic generation (PCG32) ===
+//
+// PCG32: a 64-bit LCG state whose output is a permuted, xor-folded and
+// variably-rotated 32-bit slice of it. The LCG supplies the period (2^64)
+// and the output permutation supplies the statistical quality the bare LCG
+// lacks — which is the whole reason not to ship a plain 1990s LCG here. An
+// LCG's low bits have notoriously short periods; PCG's rotate is driven by
+// the HIGH bits, so no output bit is cheap to predict from its neighbours.
+//
+// THE STATE IS THREADED EXPLICITLY — `rng_next(state)` returns `(state',
+// value)` — rather than hidden behind a mutable handle. That is not a
+// stylistic choice: `Cell`, the language's mutable box, does NOT lower on
+// the self-host compiler's IR path (a two-line `Cell[i64]` program bails,
+// and since the AST emitters were deleted a bail is a hard compile error).
+// std/sim is built on `Cell` and is currently uncompilable by the self-host
+// compiler for exactly this reason. Threading the state also happens to be
+// the honest shape for a value-semantic language: a generator that advances
+// is a function from state to state.
+//
+// For the common case where you just want a shuffle from a seed, the
+// `*_seeded` helpers below hide the threading entirely.
+//
+// NOT cryptographically secure: two consecutive outputs pin the state.
+// Use `shuffle` / `choice` / `sample` (CSPRNG-backed) when unpredictability
+// matters.
+
+// __pcg_mult / __pcg_inc — the standard PCG32 LCG constants. Written as
+// functions because the language has no const declarations.
+function __pcg_mult(): u64 { return 6364136223846793005 as u64; }
+function __pcg_inc(): u64 { return 1442695040888963407 as u64; }
+
+// `rng_seed(seed)` — the initial generator state for `seed`. Equal seeds
+// give identical sequences on every backend, so a seed reproduces a run
+// exactly. Follows PCG's seeding routine (step, add the seed, step again)
+// rather than using the seed as the state directly, so nearby seeds do not
+// produce correlated openings.
+pub function rng_seed(seed: i64): i64 {
+    var s: u64 = 0 as u64;
+    s = s * __pcg_mult() + __pcg_inc();
+    s = s + (seed as u64);
+    s = s * __pcg_mult() + __pcg_inc();
+    return s as i64;
+}
+
+// `__rotr32(v, r)` — rotate `v` right by `r` bits (r taken mod 32).
+//
+// BOTH shift amounts are masked to [0, 31]. Masking only the result would
+// not do: for `r == 0` the left half would be `v << 32`, a shift by the
+// full width, which is undefined rather than zero. `(32 - k) & 31` folds
+// that case to `v << 0`, so a zero rotation correctly returns `v`.
+function __rotr32(v: u32, r: u32): u32 {
+    var k: u32 = r & (31 as u32);
+    var back: u32 = ((32 as u32) - k) & (31 as u32);
+    return (v >> k) | (v << back);
+}
+
+// `rng_next(state)` — the next 32-bit output and the advanced state, as
+// `(state', value)`. Thread `state'` into the following call.
+pub function rng_next(state: i64): (i64, u32) {
+    var old: u64 = state as u64;
+    var advanced: u64 = old * __pcg_mult() + __pcg_inc();
+    var xorshifted: u32 = ((((old >> (18 as u64)) ^ old) >> (27 as u64)) as u32);
+    var rot: u32 = (old >> (59 as u64)) as u32;
+    return (advanced as i64, __rotr32(xorshifted, rot));
+}
+
+// `rng_below(state, n)` — a uniformly distributed i32 in [0, n) and the
+// advanced state; `(state, 0)` when `n <= 0`.
+//
+// UNBIASED: the same Lemire multiply-shift-and-reject as std/math's
+// `__random_below`, which see for why a bare `% n` is not good enough. The
+// two are deliberately separate bodies — std/math draws from the CSPRNG,
+// this one from the threaded state — rather than sharing a helper that
+// would have to abstract over the source.
+pub function rng_below(state: i64, n: i32): (i64, i32) {
+    if (n <= 0) { return (state, 0); }
+    var wide: u64 = n as u64;
+    var mask: u64 = ((1 as u64) << (32 as u64)) - (1 as u64);
+    var step = rng_next(state);
+    var st: i64 = step.0;
+    var product: u64 = (step.1 as u64) * wide;
+    var low: u64 = product & mask;
+    if (low < wide) {
+        var threshold: u64 = (((1 as u64) << (32 as u64)) - wide) % wide;
+        while (low < threshold) {
+            var again = rng_next(st);
+            st = again.0;
+            product = (again.1 as u64) * wide;
+            low = product & mask;
+        }
+    }
+    return (st, (product >> (32 as u64)) as i32);
+}
+
+// `rng_between(state, lo, hi)` — a uniformly distributed i32 in [lo, hi)
+// and the advanced state; `lo` when the range is empty. The seeded
+// counterpart of `math.random_int`.
+pub function rng_between(state: i64, lo: i32, hi: i32): (i64, i32) {
+    if (hi <= lo) { return (state, lo); }
+    var step = rng_below(state, hi - lo);
+    return (step.0, lo + step.1);
+}
+
+// `shuffle_seeded(seed, xs)` — `shuffle`'s seeded counterpart: a uniformly
+// random permutation of `xs` drawn from `seed`, with no syscall per element.
+// Measured ~4-5x faster: 20 shuffles of a 2000-element array took 30-35 ms
+// through the CSPRNG and 7 ms here. Equal seeds give equal permutations.
+// Same Fisher-Yates and the same value semantics — `xs` is untouched.
+pub function shuffle_seeded[T](seed: i64, xs: T[]): T[] {
+    var out: T[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        out = out.append(xs[i]);
+        i = i + 1;
+    }
+    var st: i64 = rng_seed(seed);
+    var j: i32 = out.len() - 1;
+    while (j > 0) {
+        var pick = rng_below(st, j + 1);
+        st = pick.0;
+        var k: i32 = pick.1;
+        var tmp: T = out[j];
+        out = out.with(j, out[k]);
+        out = out.with(k, tmp);
+        j = j - 1;
+    }
+    return out;
+}
+
+// `choice_seeded(seed, xs)` — `choice`'s seeded counterpart.
+pub function choice_seeded[T](seed: i64, xs: T[]): Option[T] {
+    if (xs.len() == 0) { return None; }
+    var pick = rng_below(rng_seed(seed), xs.len());
+    return Some(xs[pick.1]);
+}
+
+// `sample_seeded(seed, xs, k)` — `sample`'s seeded counterpart: `k`
+// elements of `xs` chosen uniformly WITHOUT replacement, in random order.
+pub function sample_seeded[T](seed: i64, xs: T[], k: i32): T[] {
+    var out: T[] = [];
+    if (k <= 0) { return out; }
+    var pool: T[] = shuffle_seeded(seed, xs);
+    var take: i32 = k;
+    if (take > pool.len()) { take = pool.len(); }
+    var i: i32 = 0;
+    while (i < take) {
+        out = out.append(pool[i]);
         i = i + 1;
     }
     return out;

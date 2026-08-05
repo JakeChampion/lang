@@ -198,18 +198,20 @@ elsewhere) gets it for free.
 
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
-| Default RNG | OS CSPRNG (`getrandom`) **per call** | PCG / xoshiro for non-crypto | **GAP** |
+| Default RNG | OS CSPRNG per call; **seeded PCG32 alongside** | PCG / xoshiro for non-crypto | **DONE (this pass)** |
 | Secure RNG | OS CSPRNG | Correct as-is | OK |
 | Bounded integers | **Lemire's debiased method** | Lemire's debiased bounded method | **DONE (this pass)** |
 | `std/sim` bounded draw | `x % n` on Park-Miller — **modulo bias** | Debiased mapping + a modern PRNG | GAP (contract-sensitive, see below) |
 | Parallel RNG | None | Philox / Threefry | N/A until threads |
 
-`math.random_int`'s modulo bias is fixed (see below). What remains is that it
-reaches for the OS CSPRNG on *every* call, so `rand.shuffle` costs one
-syscall-backed draw per element — the "don't use one RNG for everything" point
-in its most concrete form. A PCG or xoshiro generator behind a separate type
-would serve the non-crypto callers (`shuffle`, `sample`, `fuzz`) without
-touching the secure path.
+`math.random_int`'s modulo bias is fixed, and `std/rand` now carries a seeded
+PCG32 alongside the CSPRNG path (both below). The CSPRNG functions are
+unchanged and remain the default, so nothing silently became less secure; the
+`*_seeded` siblings are opt-in and ~4-5x faster in bulk.
+
+Still open here: `std/fuzz` draws through `math.random_int` and would benefit
+from the seeded generator, which would also make a fuzz run reproducible from
+its seed — currently it is not.
 
 **`std/sim` has the same bias, and it is deliberately harder to fix.** Its
 `__roll` maps a Park-Miller step with `x % n`, biased for the same reason. But
@@ -251,14 +253,14 @@ constraints above.
    longer urgent.
 2. **Eisel–Lemire `parse_float`.** The sibling of the Dragonbox work; needs a
    128-bit high-multiply.
-3. **A fast non-crypto PRNG** (PCG or xoshiro) behind a separate type, so
-   `shuffle` / `sample` / `fuzz` stop paying a syscall per draw. The
-   modulo-bias half of this item is done.
+3. **Move `std/fuzz` onto the seeded generator**, so a fuzz run is
+   reproducible from its seed and stops paying a syscall per draw. (The
+   generator itself, and the modulo-bias fix, are done.)
 4. **Small-map linear-scan path** for `core/map` — below ~8 entries the full
    probe machinery costs more than a scan. (The string hash half of this item
    is done.)
 5. ~~Adaptive sort~~, ~~`random_int` modulo bias~~, ~~SWAR bit counting~~,
-   ~~map string hash~~ — done, see below.
+   ~~map string hash~~, ~~seeded PCG32~~ — done, see below.
 
 **Tier 2 — unblocked, narrower**
 
@@ -411,6 +413,37 @@ comparison that the OLD hash fails, so removing the avalanche breaks the
 suite. The self-host compiler was also rebuilt against the new hash — it
 leans on maps for its symbol tables — and still compiles every verification
 program in this pass correctly.
+
+**`std/rand` gained a seeded PCG32 generator.** `shuffle` / `choice` /
+`sample` draw from the OS CSPRNG — one syscall per draw. That is the right
+default and is unchanged, but it costs: shuffling an n-element array makes n
+syscalls. The `*_seeded` siblings run in userspace and measured **~4-5x
+faster** (20 shuffles of a 2000-element array: 30-35 ms through the CSPRNG,
+7 ms seeded), and a seed reproduces a run exactly, which is what simulations,
+fuzz corpora and test-data generation actually want.
+
+PCG32 over xoshiro for its state: 64 bits in one word, seeded from a single
+i64 with no separate splitmix step, and no all-zero state to special-case.
+The generator is pinned to PCG32's real output — the first six u32s for seed
+42 are checked against values computed independently from the algorithm
+definition, which catches a wrong multiplier or a mis-ordered xorshift that a
+distribution test would wave through.
+
+**A language gap forced the API shape, and it is worth knowing about.** The
+natural design is a handle with interior mutability — `Rng { state: Cell[i64] }`
+— and that is what this was written as first. **`Cell` does not lower on the
+self-host compiler's IR path**: a two-line `Cell[i64]` program bails, and since
+the AST emitters were deleted a bail is a hard compile error, not a fallback.
+So the state is threaded explicitly instead (`rng_next(state) -> (state',
+value)`), with `*_seeded` wrappers hiding it for the common case. That is
+arguably the more honest shape for a value-semantic language anyway.
+
+The same gap means **`std/sim` is currently uncompilable by the self-host
+compiler** — it is built on `Cell`, and `sim____roll` bails. That is
+pre-existing and unrelated to this pass, but it is a real hole: a stdlib
+module that only works under the interpreter and the native backends. Either
+`Cell` should lower on the IR path or `std/sim` should thread its PRNG state
+the way `std/rand` now does.
 
 **A native/self-host divergence in `split("")` was found and fixed.**
 `std/string.split` char-splits an empty separator, but the self-host compiler
