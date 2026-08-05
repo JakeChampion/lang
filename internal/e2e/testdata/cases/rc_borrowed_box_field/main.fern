@@ -1,0 +1,60 @@
+// #6049, cause 1 (fixed by #6120, `enum_field_read_type`): an ENUM-typed struct
+// FIELD READ that escapes into a container.
+//
+// `first` owns its `node` and `__struct_drop`'s k_enum arm decs it, so
+// `[first.node]` / `branches.append(nxt.node)` need a Perceus dup — otherwise
+// the array holds a freed cell and the NEXT allocation reuses it. This is
+// std/regex's `__rx_alt` reduced to its skeleton: the parser returns each
+// sub-tree in an `RParse` struct, so an alternation of multi-byte branches
+// built a tree whose enclosing group had landed on its own grandchild's cell.
+// `__rx_match` then recursed Grp -> Alt -> Grp until the stack ran out.
+//
+// #6120 pins this on x86-64 (TestSelfHostEnumPayloadBorrowIRX86_64). The defect
+// is in irlower, which all three self-host backends share, so this fixture
+// carries the same shape onto the wasm and arm64 legs as well.
+//
+// The walk is depth-capped so the corrupt shape ANSWERS (90 for a cycle)
+// instead of segfaulting: a wrong exit code is a readable failure, a SIGSEGV
+// on one backend is not.
+
+struct GD { idx: i32, node: N }
+
+enum N { Chr(i32), Seq(N[]), Alt(N[]), Grp(GD) }
+
+struct P { node: N, pos: i32, g: i32 }
+
+function mkseq(a: i32, b: i32): P {
+    var items: N[] = [];
+    items = items.append(Chr(a));
+    items = items.append(Chr(b));
+    return P { node: Seq(items), pos: 0, g: 0 };
+}
+
+function mkalt(): P {
+    var first: P = mkseq(97, 98);
+    var branches: N[] = [first.node];
+    var nxt: P = mkseq(99, 100);
+    branches = branches.append(nxt.node);
+    return P { node: Alt(branches), pos: 0, g: 0 };
+}
+
+function mkgroup(): P {
+    var inner: P = mkalt();
+    return P { node: Grp(GD { idx: 1, node: inner.node }), pos: 0, g: 0 };
+}
+
+function walk(n: N, d: i32): i32 {
+    if (d > 5) { return 90; }
+    match (n) {
+        Chr(c) => { return 1; },
+        Seq(xs) => { var s: i32 = 10; var k: i32 = 0; while (k < xs.len()) { s = s + walk(xs[k], d + 1); k = k + 1; } return s; },
+        Alt(xs) => { var s2: i32 = 20; var k2: i32 = 0; while (k2 < xs.len()) { s2 = s2 + walk(xs[k2], d + 1); k2 = k2 + 1; } return s2; },
+        Grp(gd) => { return 60 + walk(gd.node, d + 1); }
+    }
+}
+
+function main(): i32 {
+    var r: P = mkgroup();
+    // Grp 60 + Alt 20 + two Seqs (10 + 1 + 1) each = 104.
+    return walk(r.node, 0);
+}
