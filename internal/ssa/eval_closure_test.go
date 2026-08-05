@@ -12,10 +12,11 @@ func makeEnvOp(f *Func, b *Block, caps ...Value) Value {
 	return f.AddOp(b, OpMakeEnv, caps...)
 }
 
-// OpMakeClosure builds a {fn_idx, env_ptr} cell over an env block of captures.
-// f(a,b) makes a closure over "inc" (index 1 in the table) capturing (a,b),
-// then reads back fn_idx, and both captures via the env pointer, combining them
-// so a divergence in any field shows up: fn_idx*1000 + cap0*10 + cap1.
+// OpMakeClosure builds a {fn_idx, env_ptr, drop_idx, env_ptr} cell over an env
+// block of captures. f(a,b) makes a closure over "inc" (function-value index 1 —
+// indices are 1-based, 0 being the null reference) capturing (a,b), then reads
+// back fn_idx, and both captures via the env pointer, combining them so a
+// divergence in any field shows up: fn_idx*1000 + cap0*10 + cap1.
 func TestEvalInTableMakeClosure(t *testing.T) {
 	f := NewFunc("f")
 	a := f.AddParam()
@@ -33,7 +34,7 @@ func TestEvalInTableMakeClosure(t *testing.T) {
 	f.SetRet(e, sum)
 
 	funcs := map[string]*Func{"f": f}
-	table := []string{"dummy", "inc"} // inc at index 1
+	table := []string{"inc"} // inc's function-value index is 1
 	got, err := EvalInTable(funcs, table, f, 5, 7)
 	if err != nil {
 		t.Fatalf("EvalInTable: %v", err)

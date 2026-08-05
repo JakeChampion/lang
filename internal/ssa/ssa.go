@@ -194,14 +194,16 @@ const (
 
 	// Closure construction.
 	//
-	// OpMakeClosure allocates an {fn_idx, env_ptr} pair plus
-	// an env block, populates the env block from Args, and
-	// returns the closure pointer. Str = the target function
-	// name; Args = the capture values in declaration order.
+	// OpMakeClosure allocates a
+	// {fn_idx, env_ptr, drop_idx, env_ptr} cell plus an env
+	// block, populates the env block from Args, and returns
+	// the closure pointer (docs/SSA-CLOSURE-DISPATCH.md). Str
+	// = the target function name; Args = the capture values
+	// in declaration order.
 	//
 	// OpMakeEnv is the defunctionalised form: allocates the
-	// env block only (no {fn_idx, env_ptr} pair), returns the
-	// env pointer directly. Args = the captures.
+	// env block only (no cell), returns the env pointer
+	// directly. Args = the captures.
 	//
 	// Both are impure — heap allocation has side effects.
 	OpMakeClosure

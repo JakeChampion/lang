@@ -1076,6 +1076,80 @@ func TestArmRunClosureCapture(t *testing.T) {
 	moduleMatchesEvalTable(t, funcs, []string{"addcap"}, "main") // 42
 }
 
+// A closure cell's DROP sub-pair is dispatchable on its own. The IR's generic
+// __drop_arr_closure frees an array element's captures without knowing which
+// closure it holds: it dispatches the cell at (element + 2*ptrW), which is why
+// OpMakeClosure lays the cell out as {fn_idx, env_ptr, drop_idx, env_ptr} — the
+// duplicated env makes the second half a well-formed cell of its own.
+//
+// A 2-slot cell made that walk read past the cell into the next heap block and
+// call the LAMBDA as the element's drop routine, with the env in the wrong
+// register — a SIGSEGV as soon as the lambda touched a capture (#6144). So
+// dispatch both halves here: addcap(x, env) = x + env[0] through the cell,
+// __closure_drop_addcap(env) = env[0] * 100 through the sub-pair. 42 + 700.
+func TestArmRunClosureDropSubPair(t *testing.T) {
+	add := ssa.NewFunc("addcap") // addcap(x, env): x + env[0]
+	ax := add.AddParam()
+	aenv := add.AddParam()
+	ae := add.NewBlock()
+	acap := add.AddOp(ae, ssa.OpLoad, aenv)
+	ae.Ops[len(ae.Ops)-1].Imm = 0
+	add.SetRet(ae, add.AddOp(ae, ssa.OpAdd, ax, acap))
+
+	drop := ssa.NewFunc("__closure_drop_addcap") // drop(env): env[0] * 100
+	denv := drop.AddParam()
+	de := drop.NewBlock()
+	dcap := drop.AddOp(de, ssa.OpLoad, denv)
+	de.Ops[len(de.Ops)-1].Imm = 0
+	drop.SetRet(de, drop.AddOp(de, ssa.OpMul, dcap, constOp(drop, de, 100)))
+
+	main := ssa.NewFunc("main")
+	me := main.NewBlock()
+	g := makeClosureOp(main, me, "addcap", constOp(main, me, 7)) // capture c=7
+	sub := main.AddOp(me, ssa.OpAdd, g, constOp(main, me, 16))   // the drop sub-pair
+	r0 := callIndirectOp(main, me, g, constOp(main, me, 35))     // 35 + 7
+	r1 := callIndirectOp(main, me, sub)                          // 7 * 100
+	main.SetRet(me, main.AddOp(me, ssa.OpAdd, r0, r1))
+
+	funcs := map[string]*ssa.Func{"addcap": add, "__closure_drop_addcap": drop, "main": main}
+	// 742 & 0xFF = 230; moduleMatchesEvalTable compares the exit byte, and the
+	// model resolves the same sub-pair through its own copy of the layout.
+	moduleMatchesEvalTable(t, funcs, []string{"addcap", "__closure_drop_addcap"}, "main")
+}
+
+// A zero-capture closure has no env block, so its cell must carry env_ptr = 0
+// AND drop_idx = 0: with a live drop index the generic array walk would dispatch
+// __closure_drop_<target> on a null env and fault reading its rc header. Read
+// both slots back: 0 + 0 + 9 = 9.
+func TestArmRunClosureZeroCaptureNullSlots(t *testing.T) {
+	build := func() (map[string]*ssa.Func, []string) {
+		bare := ssa.NewFunc("bare") // bare(x, env): x
+		bx := bare.AddParam()
+		bare.AddParam()
+		be := bare.NewBlock()
+		bare.SetRet(be, bx)
+
+		drop := ssa.NewFunc("__closure_drop_bare") // never dispatched
+		drop.AddParam()
+		de := drop.NewBlock()
+		drop.SetRet(de, constOp(drop, de, 1))
+
+		main := ssa.NewFunc("main")
+		me := main.NewBlock()
+		c := makeClosureOp(main, me, "bare")
+		env := main.AddOp(me, ssa.OpLoad, c)
+		me.Ops[len(me.Ops)-1].Imm = 8
+		dropIdx := main.AddOp(me, ssa.OpLoad, c)
+		me.Ops[len(me.Ops)-1].Imm = 16
+		sum := main.AddOp(me, ssa.OpAdd, env, dropIdx)
+		main.SetRet(me, main.AddOp(me, ssa.OpAdd, sum, callIndirectOp(main, me, c, constOp(main, me, 9))))
+		return map[string]*ssa.Func{"bare": bare, "__closure_drop_bare": drop, "main": main},
+			[]string{"bare", "__closure_drop_bare"}
+	}
+	funcs, table := build()
+	moduleMatchesEvalTable(t, funcs, table, "main") // 9
+}
+
 // enumSentinelOp adds an OpEnumSentinel for the given tag.
 func enumSentinelOp(f *ssa.Func, b *ssa.Block, tag int64) ssa.Value {
 	v := f.AddOp(b, ssa.OpEnumSentinel)

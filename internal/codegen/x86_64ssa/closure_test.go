@@ -16,10 +16,10 @@ func makeEnvOp(f *ssa.Func, b *ssa.Block, caps ...ssa.Value) ssa.Value {
 	return f.AddOp(b, ssa.OpMakeEnv, caps...)
 }
 
-// OpMakeClosure builds a {fn_idx, env_ptr} cell over a capture env block.
-// f(a,b) reads back fn_idx and both captures, combined so any field mismatch
-// shows: fn_idx*1000 + cap0*10 + cap1. Validated RunModuleTable == EvalInTable
-// (same heap layout) over spill-forcing register counts.
+// OpMakeClosure builds a {fn_idx, env_ptr, drop_idx, env_ptr} cell over a
+// capture env block. f(a,b) reads back fn_idx and both captures, combined so any
+// field mismatch shows: fn_idx*1000 + cap0*10 + cap1. Validated RunModuleTable
+// == EvalInTable (same heap layout) over spill-forcing register counts.
 func TestModuleMakeClosure(t *testing.T) {
 	f := ssa.NewFunc("f")
 	a := f.AddParam()
@@ -36,7 +36,7 @@ func TestModuleMakeClosure(t *testing.T) {
 	f.SetRet(e, sum)
 
 	funcs := map[string]*ssa.Func{"f": f}
-	table := []string{"dummy", "inc"} // inc at index 1
+	table := []string{"inc"} // inc's function-value index is 1
 	moduleMatchesEvalTable(t, funcs, table, "f", [][]int64{{5, 7}, {0, 0}, {9, 1}})
 }
 

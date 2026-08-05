@@ -53,18 +53,41 @@ a `{fn, env}` pair**, and `OpCallIndirect` uniformly dereferences it.
 
 Adopt the same shape at the SSA level:
 
-- **Cell layout** — `{ fn@+0, env_ptr@+8 }`, 16 bytes. `fn` is a
-  *backend-resolved function reference*: a table index for the model /
-  wasm, a code address for native real-asm.
+- **Cell layout** — `{ fn@+0, env_ptr@+8, drop@+16, env_ptr@+24 }`, 32
+  bytes. `fn` is a *backend-resolved function reference*: a table index
+  for the model / wasm, a code address for native real-asm.
 - **`env` is appended as the last argument** (matching the lifted lambda
   `lambda(user_args…, env)` and the native `(argc+1)`-th slot).
+
+The second half is a **callable sub-pair**: `drop` is the target's
+`__closure_drop_<name>` thunk, and `env_ptr` is duplicated so
+`{drop@+16, env_ptr@+24}` is itself a well-formed cell. That is what lets
+a *generic holder* free an element's captures without knowing which
+closure it holds — the IR's `__drop_arr_closure` walks an array of
+function values and dispatches each element at `element + 2*ptrW`
+(`genArrClosureDropFn` in `internal/ir/rc_insert.go`). The SSA cell was
+2 slots wide for its first two years, so that walk read past the cell
+into the next heap block and called the **lambda** as the drop routine,
+with the env in the wrong register: #6144, a SIGSEGV the moment the
+lambda touched a capture.
+
+`drop` is `0` when the module has no `__closure_drop_<name>` thunk for
+the target (`RcFree` off, a `OpConstFunc` function value, or a thunk
+dead-function elimination culled), and the drop walk guards on
+`drop != 0`. **Function-value indices are therefore 1-based on the
+index-resolving backends** — index `0` is the reserved null reference, so
+the dispatch table opens with a null slot. A **zero-capture** closure has
+no env block at all, so it carries `env_ptr = 0` *and* `drop = 0`:
+dispatching its thunk on a null env would fault reading the env's rc
+header. This matches the native backends' pair byte for byte.
 
 ### Per-op lowering
 
 | SSA op | value produced | dispatch |
 |---|---|---|
-| `OpConstFunc` (bare fn) | `{fn(target), env=0}` cell | via `OpCallIndirect` |
-| `OpMakeClosure` (captures) | `{fn(target), env(captures)}` cell | via `OpCallIndirect` |
+| `OpConstFunc` (bare fn) | `{fn(target), env=0, drop=0, 0}` cell | via `OpCallIndirect` |
+| `OpMakeClosure` (captures) | `{fn(target), env(captures), drop(target), env}` cell | via `OpCallIndirect` |
+| `OpMakeClosure` (no captures) | `{fn(target), 0, 0, 0}` cell | via `OpCallIndirect` |
 | `OpCallIndirect(ptr, args…)` | — | `fn = [ptr+0]`, `env = [ptr+8]`; call `fn(args…, env)` |
 
 The lift change is the crux: **`ir.OpConstFunc` must stop lifting to

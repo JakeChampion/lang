@@ -50,9 +50,10 @@ func TestAsmRunMakeEnv(t *testing.T) {
 	}
 }
 
-// OpMakeClosure builds a {fn_idx, env_ptr} cell over a capture env block.
-// f(a,b) reads back fn_idx and both captures: fn_idx*1000 + cap0*10 + cap1.
-// With funcs sorted as ["f","target"], target's fn_idx is 1.
+// OpMakeClosure builds a {fn_idx, env_ptr, drop_idx, env_ptr} cell over a
+// capture env block. f(a,b) reads back fn_idx and both captures:
+// fn_idx*1000 + cap0*10 + cap1. With funcs sorted as ["f","target"] and indices
+// 1-based (0 is the null reference), target's fn_idx is 2.
 func TestAsmRunMakeClosure(t *testing.T) {
 	target := ssa.NewFunc("target")
 	te := target.NewBlock()
@@ -72,13 +73,14 @@ func TestAsmRunMakeClosure(t *testing.T) {
 	f.SetRet(e, f.AddOp(e, ssa.OpAdd, f.AddOp(e, ssa.OpAdd, t1, t2), cap1))
 
 	funcs := map[string]*ssa.Func{"f": f, "target": target}
-	table := sortedNames(funcs) // ["f","target"] -> target idx 1
+	table := sortedNames(funcs) // ["f","target"] -> target idx 2
 	for _, n := range []int{1, 2, 8} {
-		runModuleTableMatchesEval(t, funcs, table, "f", n, []int64{5, 7}) // 1057
+		runModuleTableMatchesEval(t, funcs, table, "f", n, []int64{5, 7}) // 2057
 	}
 }
 
-// A zero-capture closure: just the {fn_idx, env_ptr} cell; read fn_idx back.
+// A zero-capture closure: the cell alone, with null env and drop slots; read
+// fn_idx back.
 func TestAsmRunMakeClosureNoCaptures(t *testing.T) {
 	target := ssa.NewFunc("cb")
 	te := target.NewBlock()
@@ -90,8 +92,8 @@ func TestAsmRunMakeClosureNoCaptures(t *testing.T) {
 	f.SetRet(e, loadMem(f, e, c, 0, ssa.OpLoad)) // fn_idx
 
 	funcs := map[string]*ssa.Func{"cb": target, "f": f}
-	table := sortedNames(funcs) // ["cb","f"] -> cb idx 0
+	table := sortedNames(funcs) // ["cb","f"] -> cb idx 1
 	for _, n := range []int{1, 2, 8} {
-		runModuleTableMatchesEval(t, funcs, table, "f", n, nil) // 0
+		runModuleTableMatchesEval(t, funcs, table, "f", n, nil) // 1
 	}
 }

@@ -102,10 +102,11 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	sentLabels, sentOrder := collectSentinels(progs, names)
 	// fn_idx for closures: a function's index in the module's (sorted) emission
 	// order — the value a closure cell carries, and the index into the function-
-	// address table (fnTableSym) that OpCallIndirect dereferences.
+	// address table (fnTableSym) that OpCallIndirect dereferences. Indices are
+	// 1-based: table slot 0 is the reserved null reference (see fnTableSym).
 	fnIndex := make(map[string]int, len(names))
 	for i, n := range names {
-		fnIndex[n] = i
+		fnIndex[n] = i + 1
 	}
 
 	w(".text")
@@ -213,13 +214,15 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		}
 	}
 	if usesCallIndirect(progs) {
-		// Function-address dispatch table: one .quad per function in module
-		// (sorted) order, so table[fn_idx] is the callee's absolute address. A
-		// closure cell carries fn_idx; OpCallIndirect indexes this table. The
-		// assembler resolves each `.quad fn_<name>` to the label's address.
+		// Function-address dispatch table: a reserved null slot, then one .quad
+		// per function in module (sorted) order, so table[fn_idx] is the callee's
+		// absolute address. A closure cell carries fn_idx; OpCallIndirect indexes
+		// this table. The assembler resolves each `.quad fn_<name>` to the label's
+		// address.
 		w(".section .rodata")
 		w(".align 8")
 		w("%s:", fnTableSym)
+		w("\t.quad 0")
 		for _, name := range names {
 			w("\t.quad %s", fnLabel(name))
 		}
@@ -4035,10 +4038,15 @@ func callSavedSet(in x86.Inst, numAlloc int) []int {
 	return saved
 }
 
-// fnTableSym labels the module's function-address dispatch table: one .quad per
-// function in the module's (sorted) emission order — indexed by the same fn_idx a
-// closure cell carries. OpCallIndirect resolves its callee by loading
-// table[fn_idx].
+// fnTableSym labels the module's function-address dispatch table: a reserved
+// null slot followed by one .quad per function in the module's (sorted) emission
+// order — indexed by the same fn_idx a closure cell carries. OpCallIndirect
+// resolves its callee by loading table[fn_idx].
+//
+// Function-value indices are therefore 1-based, so 0 is the null function
+// reference. The closure cell's drop slot needs one: a target with no
+// __closure_drop_ thunk stores 0 there and __drop_arr_closure's `drop != 0`
+// guard skips the dispatch (see closureLines).
 const fnTableSym = "__ssa_fn_table"
 
 // captureEnvLayout returns each capture's byte offset and slot size in the env
@@ -4063,16 +4071,32 @@ func captureEnvLayout(in x86.Inst) (offs, sizes []int64, total int64) {
 
 // closureLines renders OpMakeEnv / OpMakeClosure on the .bss bump heap. MakeEnv
 // allocates a packed env block and stores each capture; MakeClosure additionally
-// wraps it in a 16-byte {fn_idx, env_ptr} cell. Both blocks carry the rc header
-// (rc=1 at base+0, data at base+8) so they drop through the RC helpers. Bump
-// allocation forms the cursor address in a register (unlike x86's RIP-relative
-// mem-immediate), so each alloc draws two temporaries from the scratch pool
-// avoiding the destination and (for the cell) the env register that must survive.
+// wraps it in a 32-byte {fn_idx, env_ptr, drop_idx, env_ptr} cell. Both blocks
+// carry the rc header (rc=1 at base+0, data at base+8) so they drop through the
+// RC helpers. Bump allocation forms the cursor address in a register (unlike
+// x86's RIP-relative mem-immediate), so each alloc draws two temporaries from the
+// scratch pool avoiding the destination and (for the cell) the env register that
+// must survive.
+//
+// The 4-slot cell is the shape a generic holder expects — the IR's
+// __drop_arr_closure walks an array of closures and, for each element, dispatches
+// the sub-pair at {+2*ptrW, +3*ptrW} to free the captures. A 2-slot cell made
+// that walk read past the cell into the next heap block and call the LAMBDA as
+// though it were the element's drop routine (#6144). drop_idx is
+// __closure_drop_<target>'s function index, or 0 (the reserved null) when the
+// module has no such thunk; the duplicated env_ptr at +24 is what makes
+// {drop_idx, env_ptr} itself a dispatchable cell.
 func closureLines(in x86.Inst, numAlloc int, fnIndex map[string]int) ([]string, error) {
 	stage := numAlloc + 3 // s3 — capture value staging
 	envReg := numAlloc    // s0 — env block held across the cell alloc
 	var out []string
 	alloc := func(dst int, bytes int64, avoid int) {
+		// A zero-byte payload would return data == the bumped cursor, so the next
+		// block's rc header lands on this block's first byte. Give every block at
+		// least one 8-byte slot of its own.
+		if bytes == 0 {
+			bytes = 8
+		}
 		var t []int
 		for _, r := range []int{numAlloc + 3, numAlloc + 2, numAlloc + 1, numAlloc} {
 			if r == dst || r == avoid {
@@ -4121,19 +4145,39 @@ func closureLines(in x86.Inst, numAlloc int, fnIndex map[string]int) ([]string, 
 	if !ok {
 		return nil, fmt.Errorf("arm64ssa: MakeClosure target %q not in module", in.Callee)
 	}
+	if len(in.ArgLocs) == 0 {
+		// No captures: env_ptr = 0 and drop_idx = 0 — there is no env block to
+		// free, so nothing may dispatch the drop sub-pair. Matches the native
+		// backends' zero-capture pair.
+		alloc(in.Dst, 32, -1)
+		out = append(out, fmt.Sprintf("mov %s, #%d", xreg(stage), idx))
+		out = append(out, fmt.Sprintf("str %s, [%s, #0]", xreg(stage), xreg(in.Dst)))
+		for _, off := range []int{8, 16, 24} {
+			out = append(out, fmt.Sprintf("str xzr, [%s, #%d]", xreg(in.Dst), off))
+		}
+		return out, nil
+	}
+	// drop_idx = __closure_drop_<target>'s index, or 0 when the module has no
+	// such thunk (RcFree off, or a target dead-function elimination culled).
+	// Read structurally from the emitted function set, never from a flag, so it
+	// can never name a symbol this module does not define.
+	dropIdx := fnIndex["__closure_drop_"+in.Callee]
 	alloc(envReg, envBytes, -1) // env block -> s0
 	storeCaps(envReg)
-	alloc(in.Dst, 16, envReg) // {fn_idx, env_ptr} cell -> Dst, preserving env in s0
+	alloc(in.Dst, 32, envReg) // the 4-slot cell -> Dst, preserving env in s0
 	out = append(out,
 		fmt.Sprintf("mov %s, #%d", xreg(stage), idx),
 		fmt.Sprintf("str %s, [%s, #0]", xreg(stage), xreg(in.Dst)),
 		fmt.Sprintf("str %s, [%s, #8]", xreg(envReg), xreg(in.Dst)),
+		fmt.Sprintf("mov %s, #%d", xreg(stage), dropIdx),
+		fmt.Sprintf("str %s, [%s, #16]", xreg(stage), xreg(in.Dst)),
+		fmt.Sprintf("str %s, [%s, #24]", xreg(envReg), xreg(in.Dst)),
 	)
 	return out, nil
 }
 
-// callIndirectLines renders a closure dispatch. in.IdxLoc points at a
-// {fn_idx, env_ptr} cell: fn_idx (at +0) indexes the function-address table
+// callIndirectLines renders a closure dispatch. in.IdxLoc points at a closure
+// cell (or its drop sub-pair): fn_idx (at +0) indexes the function-address table
 // (fnTableSym), env_ptr (at +8) is appended as the callee's LAST argument
 // (docs/SSA-CLOSURE-DISPATCH.md). The scratch registers (s0..s3 = x12..x15) sit
 // above both the argument registers (x0..x7) and the allocatable homes
