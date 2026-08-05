@@ -425,6 +425,12 @@ pub struct LowerState {
     // observable shared-buffer hazard — and counting it would wrongly disable the
     // hot VM `stack/heap/locals = …​.with(…)` in-place stores.
     aliased_names: string[],
+    // borrowed_names: the ARRAY/MAP names this function does not OWN — a
+    // param that is neither `own` nor inferred-moved, or a local bound from a
+    // field read whose source is still live (#6158). ONLY the `.with`
+    // self-reassign consults it; see borrowed_names_of for why it is not
+    // folded into aliased_names.
+    borrowed_names: string[],
     // xblock_pending: cross-block reuse pairings available to a construction
     // NESTED in the statement currently being lowered — encoded "recip|donor"
     // (recipient local name | dead block-top donor local name). lower_block sets
@@ -565,6 +571,12 @@ pub function (s: LowerState) slot_of(name: string): i32 {
 // in-place-vs-clone choice for the `a = a.with(i, v)` self-reassign (#3599).
 pub function (s: LowerState) is_aliased_name(name: string): boolean {
     return util.index_of_str(s.aliased_names, name) >= 0;
+}
+
+// is_borrowed_name reports whether `name` names a buffer this function does not
+// own (#6158). Consulted ONLY by the `.with` self-reassign's in-place gate.
+pub function (s: LowerState) is_borrowed_name(name: string): boolean {
+    return util.index_of_str(s.borrowed_names, name) >= 0;
 }
 
 // is_self_assign_reuse_name reports whether `name` is a local whose every record
@@ -16159,7 +16171,7 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                             // into the sole-owned clone) and store it back —
                             // the aliased buffer is left untouched. Sole-owner
                             // (unaliased) slots keep the in-place arr_set below.
-                            if (s.is_aliased_name(a.target)) {
+                            if (s.is_aliased_name(a.target) || s.is_borrowed_name(a.target)) {
                                 var wcl: LowerState = lower_arr_with_value(wfa.obj, wc.args[0], wc.args[1], s);
                                 if (!wcl.ok) { return wcl; }
                                 return wcl.emit(ir.op_store_local(slot));
@@ -19525,7 +19537,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // outer `if` adds not-reassigned + non-escaping).
                 var is_map: boolean = false;
                 if (!is_lit && !is_opt && !is_rcopt && !is_enum && !is_rcenum && is_fresh_map_init(v.init)) {
-                    if (util.index_of_str(aliased_array_names_of(body, no_params_for_alias(), no_owned_for_alias()), v.name) < 0 && !map_has_explicit_iter(body, v.name)
+                    if (util.index_of_str(aliased_array_names_of(body), v.name) < 0 && !map_has_explicit_iter(body, v.name)
                         && !map_identity_escape(body, v.name)) { is_map = true; }
                 }
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
@@ -20937,26 +20949,22 @@ function borrowed_field_bindings(stmts: parser.Stmt[], acc: string[]): string[] 
     return a;
 }
 
-// no_params_for_alias is the empty param list for alias queries made from a
-// nested walk that has no signature in hand. Sound there because the only
-// caller asks about a FRESH map-literal local, which is never a param and
-// never a field-read binding — neither augmentation can apply.
-function no_params_for_alias(): parser.ParamDecl[] {
-    var none: parser.ParamDecl[] = [];
-    return none;
+function aliased_array_names_of(body: parser.Stmt[]): string[] {
+    return alias_names_in_stmts(body, []);
 }
 
-function no_owned_for_alias(): string[] {
-    var none: string[] = [];
-    return none;
-}
-
-function aliased_array_names_of(body: parser.Stmt[], params: parser.ParamDecl[], owned: string[]): string[] {
-    var a: string[] = alias_names_in_stmts(body, []);
-    var bp: string[] = borrowed_array_params(params, owned);
-    var i: i32 = 0;
-    while (i < bp.len()) { a = push_str_unique(a, bp[i]); i = i + 1; }
-    return borrowed_field_bindings(body, a);
+// borrowed_names_of is the OWNERSHIP set (#6158), deliberately SEPARATE from
+// the aliasing set above. Only the `.with` self-reassign consults it.
+//
+// Merging the two looked tempting and is wrong: `aliased_names` also drives the
+// `.append` self-reassign's arr_push-vs-arr_push_owned choice and the map
+// clone-insert, and widening it there changed how closure ENV BOXES appended to
+// an array are retained — mutable captures then read a stale by-value snapshot
+// (#5301), which is a wrong ANSWER, not a leak. Ownership and aliasing are
+// different questions; they get different sets.
+function borrowed_names_of(body: parser.Stmt[], params: parser.ParamDecl[], owned: string[]): string[] {
+    var b: string[] = borrowed_array_params(params, owned);
+    return borrowed_field_bindings(body, b);
 }
 
 // is_fresh_struct_init: an init producing a SOLE-OWNER (rc=1) struct value — a
@@ -24307,7 +24315,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // still exclude). The self-host twin of #5096's bound-intermediate
     // reclaim; #4357.
     maps = collect_mapf_call_names(body, tup_fresh_ret, maps);
-    var aliased_m: string[] = aliased_array_names_of(body, no_params_for_alias(), no_owned_for_alias());
+    var aliased_m: string[] = aliased_array_names_of(body);
     var mi: i32 = 0;
     while (mi < maps.len()) {
         // The reassigned gate admits the sanctioned COW self-reassign
@@ -33220,8 +33228,9 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // Array/map locals that acquire a lasting local alias — the in-place
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
     // when its target is here (#3599; see the aliased_names field doc).
+    var aliased: string[] = aliased_array_names_of(fn.body);
     var owned_ps: string[] = mv_own_params_for(fn, sg.move_arr_params);
-    var aliased: string[] = aliased_array_names_of(fn.body, fn.params, owned_ps);
+    var borrowed: string[] = borrowed_names_of(fn.body, fn.params, owned_ps);
     // #6134: seed the SELF-ASSIGN record-update reuse set as "SAREUSE:<name>" —
     // the locals whose every `p = T { ...p, … }` reuses p's own box in place
     // (self_assign_update_names). Prefix-tagged like the other per-function
@@ -33382,7 +33391,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], own_params: mv_own_params_for(fn, sg.move_arr_params), n_params: names.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], own_params: mv_own_params_for(fn, sg.move_arr_params), n_params: names.len(), ok: true };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -40138,7 +40147,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
