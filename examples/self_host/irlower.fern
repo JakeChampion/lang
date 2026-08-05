@@ -40744,8 +40744,41 @@ pub function eval_program(fns: LoweredFn[]): i32 {
     var noargs: i32[] = [];
     var heap0: i32[] = [];
     heap0 = heap0.append(0);
-    var out: EvalOut = eval_call(fns, "main", noargs, heap0, 0);
+    var out: EvalOut = eval_call(eval_expand_const_structs(fns), "main", noargs, heap0, 0);
     return out.value;
+}
+
+// eval_expand_const_structs rewrites every const_struct op (#6149) back into
+// the push-then-build sequence it replaced: one const_i32_text per field word,
+// then struct_make. The round-trip evaluator models a 4-byte box with no rc
+// word, so there is no sentinel for a shared constant to hide behind — and it
+// needs none, because expanding is EXACTLY what the lowering emitted before the
+// constant recognition existed. One rewrite here beats a fourth copy of the
+// alloc-and-fill arm, and it cannot drift from struct_make's semantics because
+// it IS struct_make.
+function eval_expand_const_structs(fns: LoweredFn[]): LoweredFn[] {
+    var out: LoweredFn[] = [];
+    var fi: i32 = 0;
+    while (fi < fns.len()) {
+        var f: LoweredFn = fns[fi];
+        var ops: ir.Op[] = [];
+        var oi: i32 = 0;
+        while (oi < f.ops.len()) {
+            var o: ir.Op = f.ops[oi];
+            if (o.kind_tag == 218) {
+                var words: string[] = ir.const_struct_values(o.str);
+                var wi: i32 = 0;
+                while (wi < words.len()) { ops = ops.append(ir.op_const_i32_text(words[wi])); wi = wi + 1; }
+                ops = ops.append(ir.op_struct_make(ir.const_struct_type(o.str), words.len()));
+            } else {
+                ops = ops.append(o);
+            }
+            oi = oi + 1;
+        }
+        out = out.append(LoweredFn { ...f, ops: ops });
+        fi = fi + 1;
+    }
+    return out;
 }
 
 // ---- stack-machine interpreter ----------------------------------------

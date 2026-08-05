@@ -71,8 +71,12 @@ var loopReuseIRCases = []struct {
 		0, 1},
 	// Same-block reuse now fires in an IF-ARM body too (not just loops): `b` reuses
 	// the dead `a`'s box inside the `if` — ONE allocation. Value: (10+20) + (3+4) = 37.
+	// `* cond` (cond == 1, values unchanged) keeps both literals off the
+	// STATIC-CONSTANT path (#6149) — an all-scalar-literal aggregate is placed in
+	// data and allocates nothing, which would make this case measure zero against
+	// zero instead of pinning that reuse fires.
 	{"if-arm-reuse",
-		`struct P { x: i32, y: i32 } function main(): i32 { var cond: i32 = 1; var r: i32 = 0; if (cond > 0) { var a: P = P { x: 10, y: 20 }; var s: i32 = a.x + a.y; var b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`,
+		`struct P { x: i32, y: i32 } function main(): i32 { var cond: i32 = 1; var r: i32 = 0; if (cond > 0) { var a: P = P { x: 10 * cond, y: 20 }; var s: i32 = a.x + a.y; var b: P = P { x: 3 * cond, y: 4 }; r = s + b.x + b.y; } return r; }`,
 		37, 1},
 	// An if-arm reuse NESTED in a loop churns per iteration: the recipient slot is
 	// loop-carried, so its prior box is released each turn (a double-free would
