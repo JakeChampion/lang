@@ -7,16 +7,18 @@
 // contract: the exact-stdout check below is the cross-backend formatting
 // oracle (f32 was deliberately excluded from the differential fuzz oracle's
 // runnable pool, so this is its only parity coverage), and the round-trip
-// assertions pin parse_float ∘ to_string recovery within the documented
-// tolerance on every backend.
+// assertions pin parse_float ∘ to_string recovery on every backend.
 //
 // `to_string` is shortest-round-trip, so EVERY finite value has one unambiguous
 // rendering and any value may be printed here. The `f64_from_bits` block covers
 // Dragonbox's shorter-interval branch — the powers of two, where the gap below
-// the value is half the gap above it — across all four backends. Values are
-// still exercised through the round-trip path as well, with a tolerance, since
-// parse_float is NOT correctly rounded — see docs/FLOAT-SEMANTICS.md
-// "Printing and round-trip".
+// the value is half the gap above it — across all four backends.
+//
+// The `roundtrips` assertions below carry a TOLERANCE for historical reasons
+// only: `parse_float` is correctly rounded and `to_string` is shortest-round-
+// trip, so the composition is the exact identity. The strict form is pinned by
+// TestFloatStringRoundTripIsExactIdentity; what these add here is that the
+// round-trip holds on every backend, which is this fixture's job.
 import "core/int";
 import "std/float";
 import "std/string";

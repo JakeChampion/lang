@@ -2981,13 +2981,179 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
     return f64_from_bits(bits);
 }
 
+// Eisel-Lemire: the fast path for decimal → binary64 (#6161 follow-on).
+//
+// `__decimal_to_f64` below is exact but slow: it seeds a float estimate and
+// then refines it against big-integer midpoint comparisons, scaling a bignum
+// by 10^k and 2^e on every iteration. Eisel-Lemire replaces that with a table
+// lookup and one 128-bit multiply, and — by the Mushtak-Lemire result — is
+// PROVABLY exact whenever the significand fits in 64 bits (at most 19 decimal
+// digits). Longer inputs are truncated to 19 digits and computed twice, once
+// with the truncated significand and once with it incremented; agreeing
+// answers are exact, and only a disagreement falls back to the slow path.
+// Measured over 9.5M inputs, 0.026% fall back.
+//
+// The helpers below (`_el_dig` / `_el_word` / `_el_mul64`) are deliberate
+// twins of `_db_dig` / `_db_word` / `_db_mul64` in std/float.fern. They are
+// duplicated rather than shared because std/float imports std/i32 which
+// imports std/string, so std/string importing std/float would be an import
+// cycle.
+
+// BEGIN GENERATED EISEL-LEMIRE TABLE (cmd/floattablegen) — do not edit by hand.
+// Eisel-Lemire 128-bit power-of-five table: q = -342..308 (651 entries),
+// 22 characters each — 11 for the high 64 bits, then 11 for the low.
+function _el_pow5(): string {
+    return ">leDnJB>nIJ14pZRT6XC]p9EH^6HKIFGi4[7cUVT9<D7;Z_iGoR?[ng5fj`?0=;OI9>UJVMo:dVnC?CH;2a@NG?L97HX2_ga@FD7T76j_:BoQY;I>c3JTLDKj9M8iX9]h_:4>?RNTA=SIRh?eK6c<85Y]U8j^S6ZaN7nc?iam?GU3R3h;88liELUYn?;gn;C=NDJTf=k;:gJd`4LS:e]N80fjQ>28]Foc0aEJbg4alcf0Q[mab:hL_NPmJbNC=n:`R@Z6lmn=UCk69;QMfi=LMKJeeXZm=8ODLCf`<kY[8IcI8b0jJfX:W9SHd;09D66P>pJnA7bS2=@lm>pna;Y808B`A]UI^lc8BUMYGoV7A^05;^S3hH4^G:G>f3^o?Y6846NXlef>5i^<n2RDYMdSGZ586C:c2QWFj869ULjkX>6c7=3lo`AU0VC:7[oe8IBAXO10DkoK5o@`i<YVoQ:OVg2V=@J9_1hMelg?e0_9M7PSS@8TP]9REEB:e9iPLfk<]F>25FeKUnMECFa<FXT3H`hKbR>]QROLeZX<M?LB^4>lfB^l:GYl7D1fB?T9Y[]:YEIC]^4Nc<mTQ9CI_<46W=CZ`XWi9VNa;^YKX@:?58A0XUKRbg<06L>Y3cRD=9K=:XIGI=`:3P41Y9ZGULX;c0MBO^?Q:m<H523L4nNdc>_PTW7XSIM[?N6BTC6<gP_9=4FiLbF7kS7ZdlV[li24M;PELVSn[Yj<5UPkPFkg2UT>HJda<n6TGO6oj98LYSS>n8p@aF86<6_[:GC^^Ajo>1F;?4mKZ7`8JF8n8Y8VHMbQ]>2g;RTYZkPm3<JdJ`oU=k78bbh=Vk2eTU9paa8^p7@]D:o>E10XSQ^`0O]m:jNj4hI=^bkA@c]J9:<WX;=WgWF5@8TW<JcO[aE_;ib70Pk8UdB:^apQO7V]K:6gnHaY8Z`@6=I=?IgjPGQn0T]_mdJfK488GaAX:Cm>^>2FlnF08bHkU:M]F2<ilBHQ:mZm[P:n`9>=57KRa7:6oZ1[f[gH=^:lQ8;<Y=_4NDG:53ISIp8T>f=:=pdQ9UUjLm>D?m@Nk^BRP<bOaIKopGe<1jClDVYHW;8?nh]Oco`=b?2GXk9aC_ank9oZddhh=PVb7NbTF6<E>V]<NEPaff0iaM=FMnKW`JR@G?Ukin3BA6mU4]5LcQ[A:eM9`]dV:3J]Eh4lSIpU32_ac<;X0O]TAGKE2:L@ONCdJLp?>R0WW^E^B:6^3DWEiaA4?9Q5@HaeETCF8<:4iU[N:ZY;jFTNn1JnH<2?<V6`6E^EC>h]=V]Ab]_?2cp`XJhl8ZX9BdXP;[73mj7`hfb@cmnJY;WPRX>Uiem7=[fd=Tp]<bC>QH[BB?G2;9=6d@0o?W?nX94hK3KIVIFo2<@20VjaQoQ;F5AeB?pp]^:`D2PaX<ZN:>;VVAFdppWj1K938mc?f5]8h@7kg@Opal:inYnUpIj;S;549jSeWp^:9W=4LpO@GNL=gE<GmbbpXM410ET?G4MF38Yn?_np7?bB4PX=NYVJcEc:eLSZ^Nj3^V=Xc@gD01Nl?=QS]UHgWDY092of3j01gZ28LoChGR8TjX5YhA:KX1::A:T=if=JZ_8274E5M2R1L]g==AG2PbEIZ30fJFeC:Qdi38@BgITNfH2A>QHN@[oU8K2:DGSpnVR_2g69_Uego>JQc<jMLpn0;ISS?]:?B4^c1:?83kJ7o877o>7dVISBmW@_I:4j0YnZ8jnc1aOpm7[b4k0<V7@eM4[8M>:<Wpl9V^F8P?`Y51TEfkTR4`bpjm0H[ZX9fb[8o^Y]Vf6nh?m=P?KBY<C>5l>I47aR<^E3l@iCB7C?H1WJ1pE9][7iZDk56H6Y89W10XA?U>3l2lJM4C;p49^<0b@cESNQTj?ZA4EGoof<8?0nTokmF9o87TfEJ^o_RO:9HVO7Df^g>f4`1EH]`=5SN;_a6j:39CcR9kbZ_hl0FmF>ZL8WLSlX`;4IN5JUjaL[L9:QUHYgMAMO0`kdHW]6Al9;M9o_eD4Ueg<ljP>bW7gIl>DLNJQI5`B48:hiBN0je0J8mbd0Th[USB=6cl;RaT8P@;;o?a_5VNm78HOYoKL^:XE=ond]jW06[96NWTN2CiMBJ8`FXD40H4:n>38_cbLKBCP:l<BI50N5=^5SkkOMdR6iH=YpFpF@UVQ8:mjY7E@JXVN8R?VGUkGP4^6g41]UB@YH3:ZdOnOHnH5i<SU27_Ved_3=EPGmh?<_7F?]NBYZ@R0YT8EL>o2QOmeV5dclZ2JE@Ip:JdB^S9hm1`?@`ZTS0kTPN=1P7HlmEl2;?4lU=[b9=XV88m4WUM^]jG7K5?@SF^aQH:;;5bNf987^5AgS4]<I<Y_<^nh=gRKJ9X:VD;fh?OOe9?jME1D;2@]2=?j>dE3GGb<9lkE8eVjJKQ<Alb@5:6Vg`<JikK1aWb2J3FJ^T6LX@TK?QW91c<b^C0<<1Hn83cD^R9^0MY7Gp4Ci7WPhV=2GLmM<8@U3I=ofHg9QI5OaBnD;T?:D_D?QNR`43j`Fh]G]Y>M9NLmmY]l5^J:L5VBd_djb2;g4<;e89h8b536phPZPi=C>dU?>b:<Dkn:Ci`fHf96@X9@?AQ>_G^4g8LKMjGQ=[kI;TC5jRInXF42SREG^IQ6ip>MGhGl0M2KU3<Jk^X`jHW?92FkVmiB9Q?3pae]QMlhHQ;BmY@]6F[jS0p^1hYfJf>Y>7[dTh7mFhl=?XBETBbRRD8edH?2Ln_Bn6Ab;MN[_nUL;20>Bd4=9h];g=NDgFZ]od=cPAhOf@LEW>dafk3mEH>P8WT;:[jBA^P?@FQ]BM^G94:bM=nFhVg8j34L:7G58]lE=MeQL]UPS[77fS<Y<gJi:;8JXejlhLFBm:jMpja20d6G:QC28JfCKh[=WfOi<2Pphm=9WcZQRXBfV=1chg?39?fl8>0hZTnY;bP497cjjInbj^:AQ5U>=3N^i5;I`XGaM>H8<fjFoQaDFIF6N@;RM]TQo;81[gG56<^pg02k7=RSgf>g:26dmgG`jOd83XY0l<eRRT<RXPm3n[hha64RdA:01[;=?[BY;4n6ff]7U[P5LP25o19d3Y_l6<AYS<`S<3Ie1C_a<?eT:Yh`F3m;lKp4@A1XZL?Cb^=DE[;Tl>kBofDEB2f49TG4@D^Rp?57DKhAD^CAb:;nLfDIil`2g=9Rf5YiX6=M>me2YPG:ZdT8KlRG4Fc7ae9F0QYm>NZa>=AM=NJ_?DgP;[PZ4KB6ELB8UePg1Id:49>VHeUR6WkdG2`AY3Qa?mU;97pPhMD8ma67^S1Z=69nh?;IpI5DY;;m81Xlc4aG]ME2>@O?FYdMol:23:_UmMWTZC8kCQV:8:`Do5Ao^7^cP_kL;8iIp]Z=K:=>VNHIY?8kY3=l6POWeabmb6@5oP3Rl9CD8]m4CaioO=o=k3`42=ene4:i;5H^7>71N9HTZf2bB=A5=V=g_iI1Xbg3_^fRCMVaUG8OiZ=C?Y1O9>E<YML:P>GF:WgeaX3SAgm5kOded=8An<=AeQmc4L6D[7I7ac00JFLO8C8f=pBbSml2W]gO@0@N1d:Gl2QO7Mmm9?AX4740DUR@<njd9gjEL;<76258f0I_ke86]7o:CfIVp<KbC=Q8@5Da:8G9n]ica0`;R^X0jJD6Ym<ZLmM86pL0l:KI217aj8DL?f4;TJ8`C1:92?BQI^7JIS9j:W>aEMSi_9YISTi4<XOo<GMA2LJemgk43`mN65?cWn?MDUC3QR<4X=4[lUWVS`Am9ZDhCk<nGRj8:lM?Pa6ES><4k58ia<^KW>=ZDSHm7km1?68VK6m?icQ=b4j]?;9j[19KfH0mEYlOU2V[43YNo<2j;cc_1;K4JGN7@Ef4Sg^`3W>`OIQNAfPnF14KBE]eI:eQ9=[Wmkl9LVE<Zb3MT0`_ae;Q6Qm9Yld`l3fMDDn0lZM2>IH:K<4Ja[k0ceYJ<A:U4B8ph6PpRa_KL4OajiGZ_W:[;?ei9?KLk2C5W^8FMUJ@nF>3c6;SBD8Ri31XJL4oaf<]8cGCh>3LUEd1j1@QS7>Q?l:on8f1TC_[?>GATYlj29Sk=_]K2AnHZF3=n5neJhB[mj8U;ajK>GJMc6_;_XacS[N3:_N^7c1nA5?0I_ZBmp<VET=J6HI_RLUFR<P:Dh]>p`kn8HCp@55QhF5;e6M2dYGfmg:NHp46FkE;W2b84CPS^dL4=5p>f7mXkNP?MJ5HH]Y@C58;`QA<njTS49ZHCG?Kjc;l:>[IUP=Gn[f<4oH=3Bi>_k<cF?oi@^n6d36=o@D7VBJX?oldoVDjLHO?hbMeI9Oh1B9pEHO7n3j`C?kgkX`^lkHd<O:_VjmDi;8?jTYBlYJip0?VnJ@XKJ6=l3hndWZSbW>a9aFHJIA8Ci^0JoX@cVG0Q><<KoPpUJHgi4Q_BDp?maYR??Ro9?Nap4V5Z9gk?3lmdk9Q^gfb[>WJh?RF:DIJMN0L;k9DS>62AAU?Jl]jOb4fPS>i[Y]1WRfUp7AZX7h^F2i]9CKB3Q0^bO`:S2Y4keEbdL;XB6TI@j=h[9;dCF9QK>@C>RFX=OU7QEV7Na8;[jc1eG95N98K`<]fP0[>57CL7A8_;Ff[JRZpi2i0g1VI8C95Jk><S6A;E`g3V13QppJGlFbY8hflk`5Ujc?<Z=?pXNn6?1;5dJjJgpH>d;eaSpRV]Gcc=h@AWbT`>BP:bm]pK@GM`N8ZR;0gonPlT6`=m7Y2>ZU[:f:^b4_]j:M8K1K9SBcE?6=RMI=EkH7M4>Qbblm7NkRh8MRGaE]O4Z;1577=MT[DUc:Tkn]K7Vfe^=FHj0eng9`?=>9^7QjPSAj4[p7A2=C];38@g4<^;mF3;<lOLRYHDCVk:E3U?iNlKSo<:GC[C_IHPX<kDNSgVZBLo7<n8V8Yp_Xc84Ld6J8:KR70P6=GfJ?f9O:5Spi0Z=2JX<X7a^cadcKh<Vmpg0eaC1B?c9]j?M0`2f?a]?dQ1mGbW;_]87SD@kdR9gKYi<Y=_h0=E;U4_4ZTa=<D2TF?dQ:Tb0ZNNEjUf=mA?I3=KdaIM=n4f65lGpBQKE9WZ0IHF?k@_51;d^6pSTj5<1TPO_Kdiej>ANaXH`LN7F?1nXWZ2ah285fgLcNlCUY<9I>QHcA_RIE3YZ1pSE4?Q`;`R9_og::pZ8T4ROL:ECJ;>[J]:_S]^`U2^5[7C<kX@_9;8[V^6CmU`3];RmT04Y:M;MkgPHGil`;0W>K[^05dM4>EIT8NMh:Zn<b22VX@7@DE8nGoUC2ZNZg9oYAX9:4R<^;<^o>WdE6ET4NCV2;LUZ`j=pjMcAa:Gkn5UiOR_C`5Kh8`lkWK66Nmg5O[C^]mEKIJ:lkjAAhX6]3>hV8Y8;Jc?b=ZjWUVER8G4>UOZdJ>ANd^8Re0`OnME>K17Kca8Hkl@D:[Q0lGmeZR1=IB`L:O9Z4I=FIA:=m1f:R4`WKC=6m4UO8Epc_H^Q9>U6naY40<ERhK:KO`IoijKR><^<dE0?JlUB=2G[@NW7cJc7iP0:@CAZNW89Nd2C8LhP`8lD06J<32S8:;gOchkT5Hl7:9080`3d;k<_e7`Uj=6`:4m[@:0ke`oj?kQ9[OGPHJm>;g4<Q9QloX9mT_3;V]?@g0hIcWe^n=O9<K^jSoPGC5395@?AbjLPgl?RYGmo8M7gD7FTC6>GdY4Z9^Ygo6fB<jm<V6[lioiAZk<94D^XRVa8K?`XFkh>VF5X?;EIj2[@L:R?[RLYU2?lW39O5H;Y[2AVU=d=Qjp9In@J;gg_>T5cg0?5@0kHNlaLTP>eTIc=7?SPC2T18oVZ]S^X9@ga7H<Q_<;?VP^W8:[gDQ;U4L9>?Z9`>?P8j0k=FdjY>NES;QdT];2;H;7A8a]Pi492nMp=8>lVj;76mR^NKeS2;C]fO0JBZPX1ii[[Hg2b[d>8X2gaPhE8c2G6gV?3SN6a8fI1c>DRU=O5NLB7jJ>:e>;2`B>bj[>Ph2g3FYhab^QA=dK6cNH6294?ST<DE]o8jU8X8m?Rp3bE[1_>W]^T6fSp:c;;CK_e^[5>9cAWin8Rmp=N^o8BZQj5h5]>g1h<J[]?8K<_f;ZU;[Z9SYAb:Oa[CY:QpkRNU>NVU3mSV=M7]g8T=:Oj;6>R6@>8l]OaeIX3Z^8>Sl_lj5Ck91UCdgPa12B]:B<kZZhFXi[5oXae8m1BhG<ga9EEU<C6g3NBn1;;1WU=82>5fEO?[mA>:lg8_oj0`@:2bWBZh3VlF5^ZdZk_W@l4<SN17ETePZ;?95PUYJA59f?]EQI:o1Xe_>lFi`3afFLB9d^Lh_gb1Pn5E6CMJFQF1[<@Xe5ZTMAj<:ZGiDam9[R6?Dd175=TVGO=DngIn;<6JX9Tpi]K@Nho[>E6Z0>>pT0Y;o?ghR4VUoF=kHDPAc`M0d>ndeUJUa?Mm9HoIXF?KDA09FXHhHWV9Z^=hW01=jY4ZX;]BO5>bO]5I5EPa1QH3EfB>WG6gRMhW6`:Zim1j_4;BV98VLB5RZaL=<ZdUQ<4cW3X;Ja3FVlELSA3fPNjO5p@eR>AL4<@Z:d]58ciVWghO51Z8kjRWZJFaCS7OdH8kB[K92;9WlAU0mLHL5Ga>;8hFAlC=m1k5oA;SNS6^]A^l5;gJ88^Q<C_k`>;62<S[4]l?J0E:ijOHZYK1^h:`]Ufi:3@PJ=W7h>fCbc9E9KW`CF<T4XQ8PLkQADG7Ef7j@fT5hgRjD:XT99UYLj;B=hU2n7Ee;WY=B^;Kp3e7N79ENC]I;A>QT8C]?9OJHTZe;fJmC``2b4o:HWBlh@o^fQ>cb[H[ZdMF><ob7Zf5>IBk6ON6>gUPD[c87>]cb;@pde83ZdjB7L<lG:92GpMN5?ab:4UPhVYC@:=<[BnpDfVS]o0U_j5PCX4<a?g7^O:30<X=8`:WFiHR5?m9jeeKNAi7j87MNXVC?ECAo<HB1REgF9hJ9DgB`i3:X6N?NFQklCl]EA3Z3hKg3nB859Zo5<f4MC^B<BBJYIcNCE3<5^VP2ETXXW7Fh1Ca?5i:D?79082knccb5<TbX]BhF<j9LMX51egW`_=?gp1K[cUi4;dU26BB4A[Z8Se_bcV`?F5>aNBWggUF6U2]bkN?@K3;V9>BlXkB7Ee73[p<RjR@jp@;QhZS8gY;A90Vop[Wkf8O3>JEU;l4CN5K4a_`VQjRJVe90MO?Lk]:dI0oM=a5;nPXA;@Th3D9G=P?5>4Q<6NmicE>4_4e9;^0iC2QUYO86]6ok8cmd0U`D8S;?TpQlM4;TGD:p[pa`;9:[o?N?JJDE>MM9=`Vp]knlMFo;EdA0jJR4eL8UaGe4g^:FG35X2XSiUC0b:`<Mb64HLlm?h23B]g_Wao=JpU=GUNT:m3ecT7H4JA^=8Hh`@F`K6Vf:HpVTW2aK4@:O5[4LKAi@S0p?P=adLQfD=6h5fSR6FD[=?3HA=0CZBY8<BKYN=Cnml6AJ7:a8<BKZ:?G2SfaXnL:3faXnL:?G2T<d<d<d<d<d<<d<d<d<d<d=8000000000000000000000:000000000000000000000<P00000000000000000000?X000000000000000000009b00000000000000000000<=@0000000000000000000?@T00000000000000000009RFP000000000000000000;km8000000000000000000>j[:0000000000000000009D2o@00000000000000000;Y3^e00000000000000000>SDYA00000000000000000964jcX0000000000000000;GV8?B0000000000000000>=OZC6P0000000000000008iKcKm4000000000000000;6R`2l5000000000000000=i;JdYg@000000000000008[78aB9k00000000000000:fikmF]HP0000000000000=SG9[LGNX00000000000008N6N39_[90000000000000:UX5Sm:El@000000000000=?26ml<lJ40000000000008AIDF5058BP00000000000:E`YKV@6JG800000000000<l;ScOe80mk0000000000084p>GSiU0V440000000000:6?1nLg_@`U50000000000<WccLe4IelN:@000000000?b`O415PB:F4e0000000009h5[JP[L;FM?0P00000000<Dh6A8gC><56aX00000000?J4hfK3i1`6<Lc000000009XC2jHkK15L3bp@0000000<2GdW`91bFd4_O40000000?2naQZlB=]P1k6f00000009IgVE2f3HSe1<DA8000000;aD?kCRD>]b1OIEJ000000>]ICiiJjBGn5h?ZaP000009;`eKS@ddNo5ZQc_D00000;N[bRL50aF^?5:?Ij00000>FF^l36@mLI6gLd@G@00008no<]jlkUb`>B202>R0000;=M`i8Jj?>;=gRP2c:P000>0f;g:QWS1_=D;83N^80008aQ?IgU0^j54DVn2;<=000:mYS@D>@jGF9Ia]B^p@@00=[dm4IAf7^<3a<hGIO4D008SHMR`d9<e?:F82VWlJ]P0:]>TlK`lP1C8lZ3@AkAGX0=GB>:B[kH1X7:TT4FHf^R08FSHgK[LO114NVgR^pQTM@:L<?42VCVbA9V@T;IOInTT=3?Bf3?iPMU?pe^>?h@Ln^8:1Sb:1lDBO;pim@jkRB6T:<Qm^LRJ9G7:ph;E8I:gX=<`ZKid[0[]j9`eo:JOMTB@?lU2h0UagX80;c=^17DnFe9n?9cHGVR9507GHT8]U6F@<LRm>oMP:[F49=>^:h_Glf?S[[B_4i=F;=;PRHMUYnkc9_CC3]d38Eh6?<EOBOR>]`<9i7eWpdkKE3cpJh77JcGl?<F9bbpaj2:8``ATijANnk9O^g77?gSYF9MfRp3SclF];hYCXj3e<S]3fBl_eL`Z<G>fSXS7Db?]W4cWZZQSlT`M9ANAEmTobdi8pXcZToM>nZ;Uff[K_>N@g;?RpE>>4R^4>OCC6BYc5f463K`:QbU[HF93T3llZ7CY:;c9ENU6pS7=;DM4kkTY8SM6_[Zg>H`Kj1>9TF9Y=dJ]D<JFUSbolBhA8fo^g1aX8[]?aN7NG?E3cR;3NICR<c:gX3]UYEn3:D`;=eEpXJ`o^TB4W`3[LCmjko8X^`b@^p<N[6ifJC9]N4<h:cj;^TjNpVF4W2ahm7UU@4=OWNXo7g`Ol=adM5l9NoT68Ka[9Vek=[n6VP:;]nlG6S:R]fm0R8b6m<@8<_X=J<i<=;H3K0ZZnH[?D:?kB@aa6@8?728iJZgGK7TVImKJNN3k:Bic[6QESnB5Ma0KRA65Ti<hVpEi9ZmmV>f<0RJfGVo682aGU[62g5i5A?PEPbFaFe:3LMO5hSSWF6USHJin]LLQ<TCTghELLQ<0>m>QW=7SSY?^HN4U:dSYO0B[B:10ILLS9eGBch>a>Al6;[3F@X?jbg<AM7OU2LAgJ3_Ue;ecCi>D?EeIGNC3FD0<Z?A>boigAj9UX`gZlk5mP7kIRb??CQl;;p2leEZiWKX9iplMS38JIo>odZbK5VbBR<G?kDldkQ0N9G@B_ilP>dU;_QmM5HLTXB;^4GJW:HBPO2Z:KTF_S^cG>XEMA@moG8V?D^2MLJ<Y>n99=JBcV6oMH5Tm9RIaGjbF;KPahO?X_4_6o;;l0<Mi=]>BHn5G3RjUk0^^oja?UFA78lOV;FJ=dp]4LT`D69`Ek];:GO_<0b@pW5S^l97];;IG=mnGY`0nU?Q2mYIlIW=o?^8_6Fc5HVOA];fji=80P_je:jWmNV_a767>dHF@J0XkXA=X1lV@JL8hY>P>KePPd9BE8Q1=?k@QURc3491HeDOndM:YAPSieYolN;f;A`1IWn@E=CUi]h1eNZF6cN6:ba1mTJ8D?[L2I8d:N0?Rdg`61=ga:ICVC2pJpn58CKPeJhQQDL<pXOhd`A`mF>HBI1QUIjYS87bCkiES5n_4p;OXmpH<1o:9^XjVJlhM9>>oGS<?>?2M<]93801ZfDL5c^nKpC1cd5?h;Ck025RYS7?ILcp7c?Og9kO4L@1CMYo2QWjphLhI[k<I6fSD1XE4M;:1iOfD5@6i?OHRm922JEU1mRFWcY6T8V9[WEfUYAPMO3=fN8hY]6UH<6Q;Bp3UiTh01Bf[5T78>_?89N7_eOF_4<1WS5gn8kBJ9M5kef@dV<c?Q0^lZF=TKP;eGIR2U0O`p;I@jJTlanRH>bM?kS>@W[p:?U7b>:^<ko9>kAmV0kHdO<I`<gag]@4h;RXgK`Q8p0G;P;04M4GD64>KC42[IK>aM:H=a5TEM97U913kQ[7j1>B8O8V3N^J=]`;ADj:5jhAQh2Vk`TFHab7l>5Z7LWHE5kD?@YKMKomnIk8dRDYiW=;]M1RIj:IOF6H<;0JjeFb0NWT5l0GLph;Wo?=aQXALM@VAM7IaMD?eoQnd8VE1:jcBGkk6X6BDYj75>X:`kAMX>gnjY0B7gjeGHgRB=Kiff2BT^H34FYeXAM?4:g8IKQY9KVmG20_:8j:kAJVc:OcJ3KcP[Lc8j][7MXfb@N=7`0TB`8gCp387fjE33=TV8<fHF[^MQmO7n4j[f9k0Ni:@2_LFXekKW5mF86cLHPVV<e3J3LC292Q3KKZ8O3NXa?80R8B9[jEYT<99BECJ;9N9:0ZZF]6h[3n?;KVkX@^lf]<PfDmG8UUen6oBPYBDjJd7?Y2Z;Lk_pB<<^h8dVk7bOj9bYZG:4^GSG?mZMP@DDgll<>44mmUi^L=?lf4iDIJ4Zk?AU6<;`FidA7kcF6IOaUfY9Rp;hWEVCP2>m`MdplgGYQ;l_ofQ:piH3:[lE@pkdnSk>kZ_RjM`gN49Fk:U?jPmmi9DZ^5dkUk2c=gDFWAlmV63;YfHG@j?HSO9CjLA6Jl`WT>TB_M57S>]G7XhdEH1Z[QM96[^2;<_1;_:bRi5G12[<k;HFXB^pjQNZ5MlV6]bCF09>>LBGIOhjgD>fJOXGnX;P;8j1[NWlkm9n1AHSb>oQ7<7;7B6FAkj[<L5U_]^R_9Hp8=j6WlgIX5pS6p:GilI[`>l8[]8nJ013`_2GNNlU83EQD:gW;<aP1D[Y:nF6ZNJ4:jZ=T@npmX1YgT1][XE60U=X48NZV`nj12:693lA=;aG@Q2:VE@KnGAB]X3Dk5PN]M4YC=?kTRm^5WGc4:8ViVGTEdX8AmVffm;PVh6VEHCGo_^XA:FKaSCK>HaU4?k_H=oJI2E<m2]]8B1om_9CjIoAN0pBl85Q[lU;A?En1eKi>kkaWSf:6k6kNN5S;L6ARgBYYLbLc<XXXY65VloC7flShD3dndo?cccdGW0Zni5dJLf94an@o9h``a6aHJg[3X8R1=ZoVBW<E[[]8LNQTF0R:ZQQ5_?h@?K6VW:SV9nK8Z^E9jG9df59Xm88NV?g>I3J]E>;gN8I;<3;::V?ddbp8AGJQ_e5ZOM?3nm^?daa_O6E^A::Q757E9JN^mAiFNM39nTB_FT]K<U;b6IKFFL64D8LnGIm=hQp_>^Gpc;m37UI:T<^@KAEJOZ9<FphGMQm`H0VWmBA2fHSc;OL`f=DkKl>0aAlFfCR_]`>GClcPZ92k18mFJ<RXKJGk8oTMGTJEYe@?U_0GfYA8Nm;>=T^MPl4AE3O9PMd3UJV]>1aniej9fEZ8FliU?eNb@G8b6V[Q3_9ER9>EKGAid>c>:nH@FIDY[Zl3Qkc=6G02Nc=]_DKpYe6UZ0JINaGma36N8SmmbOc8T7R4@Ol>>no1m3:]m;nh_Z^9J=DWk1c^MRK3=H;>nEZEHKb8YbiR?Hel1e8G71FERMGAF?J7;EIWQ4j9:Lib[kl4^5];@Xo:a1IF7K=46o6jYfiG7>4d=^L1`[YB8:TFeD29[>L>d00TIQ5dAd:==LQI2]6242Oa0^OjG@6@<aPdY`CG7RU37]0ihh^47e?mY0T;8<jK>7jW175fXE9b9njXFVn83j10m0H]KYQ=>6<MH2L@]J4hA5;0NhRSjPQX?T_33DhPV55:MaVUK<hiZ29_mbk52]Gd;8RVH7I02lJA<:[oHVCGM`o6[?o9?@3Z@f?=Fno`i=E;o0F3n[S44Tf39PFF`=l8E?N<=cNS=kRh1:;iKmK1IkJSF7A?6<1I;TbL>gRlQbaI1<<15Rh`1`NMnd9B5f=76?X`W8[McfI5[2_X;VWBPHhdRlQ6gE?R`G5dJB>PA78O5aKZI<SkSKK<h@@h94:]MCKVABP1gLV9902R:R;E=GTXBOfW82D3`[K@3:^;>:P^McG7d0k2j4[VB43nHM8gTLJWNLhiT5dZl?lBRNGB;4=SQAF45g^7@UZ3k7;5n7=f@mIU[U7DH=4`4TiXnhLI8YBU`pS?<T`8:nJh3IVZY`:dW?;pL2p^l6=]bTe@0ED;=PQ2opC3`YJ3b7no1D0JY>8LDYhGSkEbi6F]o_aeP@Yb:SIeE=Lil>F7mH>JM1XDe==<@AJPe7:1m1lNB14B2J1@8?Z:iTPTNA=9=:l@Z[AP@c:CT^V^X^UfP?PMZ4fF5iDp<iMj0I2ipBj3HU4V2[WFJ>83B[X?YdWSd<7G:hb[@V0I:47FRCT@QLa;9<nU_64`PO<U9<:iMDYdm=lP<p9WUlHW?_KO=VTYe@m1JH@>m1OJ>b9f1;PP6k8ZU8iO:9EPlXI><BANHX8XZf>?6Vm[Zj:ROR?Fffoc:cfRR:i@[gUWM;7K9VAY`?F`bMU:d:KJ7PZ>mY;pg4;3<K^ep1On2@YHec[d>pdU=dpRYB>=hmBed`1pFa9Gi?@XO^YdI4Zn[b0EI?V>;^gC4cWY4@?9f^6^@J`SOb>YChfpASEDC8C8HHTQKLG^99eJj`Ro5D]3;n??Fej9_e;LAQX;K^VYh3omS3<R7L:Q>CEk2>BY0DE0o[[dpZYC=:8m5]AHlYX<^2W;CHOcYe0>;;77E`:T2?i7@o8>W`DA0B=nij;:n=2dg95=ZBA[9E@F8_[S_og@9aJ1[@RKK2nfB>:kFLZ_Se<<P:64[2Ad^BVb=Xm3fJ<b??X<WUfcg@XW@N8QURIHGobQb7i`YWbkIHRB:Yokp_MoMk==glT1_Hp_Zh=DNY`Z5N5Hb5DZM29p?ZEU8Dd:5cCJdGN=DkR9F?QcMO:IpmW>iAP=F8Z9:[[dJ?4h=0Olb2VEi@]2e[MFVa@cg588CnFYWn[:K9al:F8>:Obd::Hm]D1n5n28=9mlZA^7_?<]p;hI2LGLC2@LL:Tg8IYd?i>of?C3MCG>eSS=>3ZP4@9l9GAASk:D6?@g>0@cBT2Z<Il^5Umi]j8;53bPDoh=3E?PJXFpL6i7J=gD^iJ>U0D:9]@Y>GYTC4X<Ymm[@I78<V<7DdQnSnGfc?eL;g4OHk?a?9:0JLmm^d?;bS>dUW?8d]9M_@@R65mX1=Fo1@?PQMPC;f9eDZWWKc24]^QTCHYeiH>cLAIfAQB_R=hijnH>eB6N9?QZi9Bmd^5<ZlT>G9@[D3;SJ5V;W]0XG3fZMAmlTg93>L@Vp_QW0cM0d54VL:N3[D91ZHGf50HOR2Ol:i1VRcC5;B4oMcF@NWJ;7jnV20;Nhg>6V>5>leVAA5jiLpRP>FUd8e7idAEHhkc=];B7^T8o7X;19h05Z`5jO97>6YXn;=YR=bLDa75JhGh7I1XD3<N13l8Vj]o4KHcVk:WY1<QpcaZM:aX8=UR>p@Y5ASAOZO`Lf4=Lc:@okc`4d:Um5hU7[D2E8IpFJWD`^K04W^SZ`<d4QM:PO<1A9lXba5bXmUJppfYe=8Vp1ULJRo<7>3;_b`pd4A8=HGHpIaUgh<PbpE?5phk[:@_M??@<`DU;XoO:RhOfjE<ek4S34?l9`2S>6n;UGdG[814BfjkYmo57V0eF??Fi6d:1EGSHIDL=V=OQ1Kd3<V8O<QZ^L>OYSA08hIAc`dp`ZW?Z5HdB7Sm5@;5?V?Kap[UA9cCGP3D_MSB6lA`jYFWd?C<>i=H49k4m70Z6;i3]Aa38?BV@_5<HV;8<eW_g4WF<3k9SWkLd?`Ggn80ifAciUhRL;mQj403[=e]>172V?V`EK3>lZGE04V1Ai1QHd?dPK:be9EBNU82had;0mhP1i<@o`8;ZW6>J3U]pn=<5H2F?E>Jk>U@hc0TO8?n4O6_2ld:R1Y97BRh@FdM9o4dL<bfGoUA1;I7;U4LPDLM>0C?oB^o>UB>?HoNESXISU5PH3nhIMc>V8jWW2nNA?o?5L?2NZWkWI8";
+}
+// END GENERATED EISEL-LEMIRE TABLE
+
+// _el_dig decodes one table character to its 6-bit value. The alphabet is 64
+// printable ASCII characters in two contiguous spans, '0'..'[' (48..91) and
+// ']'..'p' (93..112); it skips '\' so no character needs escaping.
+function _el_dig(c: i32): u64 {
+    if (c < 92) { return (c - 48) as u64; }
+    return (c - 49) as u64;
+}
+
+// _el_word decodes the 64-bit word starting at `at`: 11 characters, most
+// significant base-64 digit first.
+function _el_word(s: string, at: i32): u64 {
+    var v: u64 = 0 as u64;
+    var i: i32 = 0;
+    while (i < 11) {
+        v = v * (64 as u64) + _el_dig(s[at + i] as i32);
+        i = i + 1;
+    }
+    return v;
+}
+
+// _el_mul64 is the 64x64 -> 128 widening multiply, returned as (high, low),
+// assembled from four 32x32 -> 64 partial products.
+function _el_mul64(x: u64, y: u64): (u64, u64) {
+    var m: u64 = 4294967295 as u64;
+    var sh: u64 = 32 as u64;
+    var a: u64 = x >> sh; var b: u64 = x & m;
+    var c: u64 = y >> sh; var d: u64 = y & m;
+    var bd: u64 = b * d; var ad: u64 = a * d; var bc: u64 = b * c;
+    var mid: u64 = (bd >> sh) + (ad & m) + (bc & m);
+    var hi: u64 = a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
+    return (hi, ((mid & m) << sh) | (bd & m));
+}
+
+// _el_clz64 counts leading zero bits. `x` is never zero at the call site.
+function _el_clz64(x: u64): i32 {
+    var n: i32 = 0;
+    var v: u64 = x;
+    if (v >> (32 as u64) == (0 as u64)) { n = n + 32; v = v << (32 as u64); }
+    if (v >> (48 as u64) == (0 as u64)) { n = n + 16; v = v << (16 as u64); }
+    if (v >> (56 as u64) == (0 as u64)) { n = n + 8;  v = v << (8 as u64); }
+    if (v >> (60 as u64) == (0 as u64)) { n = n + 4;  v = v << (4 as u64); }
+    if (v >> (62 as u64) == (0 as u64)) { n = n + 2;  v = v << (2 as u64); }
+    if (v >> (63 as u64) == (0 as u64)) { n = n + 1; }
+    return n;
+}
+
+// floor(log2(10^q)) + 63, the magic-multiply approximation, exact over
+// q in [-342, 308].
+function _el_log2_pow10(q: i32): i32 { return ((217706 * q) >> 16) + 63; }
+
+// _el_mul_pow5 is the 128-bit product of the normalised significand with the
+// power of five for `q`, taking a second multiplication only when the leading
+// bits are too close to call (the low 9 bits all set).
+function _el_mul_pow5(q: i32, w: u64): (u64, u64) {
+    var tbl: string = _el_pow5();
+    var at: i32 = (q + 342) * 22;
+    var phi: u64 = _el_word(tbl, at);
+    var r: (u64, u64) = _el_mul64(w, phi);
+    var hi: u64 = r.0;
+    var lo: u64 = r.1;
+    if ((hi & (511 as u64)) == (511 as u64)) {
+        var r2: (u64, u64) = _el_mul64(w, _el_word(tbl, at + 11));
+        lo = lo + r2.0;
+        if (r2.0 > lo) { hi = hi + (1 as u64); }
+    }
+    return (hi, lo);
+}
+
+// _el_compute returns (mantissa, biased exponent) for w * 10^q as a binary64:
+// the 52-bit stored mantissa and the 11-bit exponent field, ready to pack.
+function _el_compute(w: u64, q: i32): (u64, i32) {
+    if (w == (0 as u64) || q < 0 - 342) { return (0 as u64, 0); }        // zero
+    if (q > 308) { return (0 as u64, 2047); }                            // +Inf
+
+    var lz: i32 = _el_clz64(w);
+    var p: (u64, u64) = _el_mul_pow5(q, w << (lz as u64));
+    var hi: u64 = p.0;
+    var lo: u64 = p.1;
+    var upperbit: i32 = (hi >> (63 as u64)) as i32;
+    var shift: i32 = upperbit + 9;                  // upperbit + 64 - 52 - 3
+    var mant: u64 = hi >> (shift as u64);
+    var pow2: i32 = _el_log2_pow10(q) + upperbit - lz + 1023;
+
+    if (pow2 <= 0) {
+        // Subnormal, or below the smallest one.
+        if (1 - pow2 >= 64) { return (0 as u64, 0); }
+        mant = mant >> ((1 - pow2) as u64);
+        mant = mant + (mant & (1 as u64));
+        mant = mant >> (1 as u64);
+        // Rounding up can lift the value back into the normal range, so the
+        // exponent field is decided only after rounding.
+        if (mant >= (4503599627370496 as u64)) { return (mant & (4503599627370495 as u64), 1); }
+        return (mant, 0);
+    }
+
+    // A tie can only occur where 5^q fits in one 64-bit word; there `lo <= 1`
+    // means the bits dropped by the shift were all zero, so the value sits
+    // exactly on a midpoint and round-half-to-even applies.
+    if (lo <= (1 as u64) && q >= 0 - 4 && q <= 23 && (mant & (3 as u64)) == (1 as u64)) {
+        if ((mant << (shift as u64)) == hi) { mant = mant - (mant & (1 as u64)); }
+    }
+    mant = mant + (mant & (1 as u64));
+    mant = mant >> (1 as u64);
+    if (mant >= (9007199254740992 as u64)) {        // carried out of 53 bits
+        mant = 4503599627370496 as u64;
+        pow2 = pow2 + 1;
+    }
+    mant = mant & (4503599627370495 as u64);        // drop the implicit bit
+    if (pow2 >= 2047) { return (0 as u64, 2047); }  // overflowed to +Inf
+    return (mant, pow2);
+}
+
+// _el_parse is the fast path for `dig * 10^k`, with `dig` already stripped of
+// leading and trailing zeros. Returns (bits, true) when the answer is proven
+// exact, or (0, false) when the caller must use __decimal_to_f64.
+function _el_parse(dig: string, k: i32): (i64, boolean) {
+    var nd: i32 = dig.len();
+    if (nd == 0) { return (0, true); }               // value is zero
+    var take: i32 = nd; if (take > 19) { take = 19; }
+    var w: u64 = 0 as u64;
+    var i: i32 = 0;
+    while (i < take) {
+        w = w * (10 as u64) + ((dig[i] as i32) - 48) as u64;
+        i = i + 1;
+    }
+    // Dropped digits only shift the exponent; they never change `w`.
+    var q: i32 = k + (nd - take);
+
+    var r: (u64, i32) = _el_compute(w, q);
+    if (nd > take) {
+        // Truncated: the true significand lies in (w, w+1). If both ends give
+        // the same double, every value between them does too.
+        var r2: (u64, i32) = _el_compute(w + (1 as u64), q);
+        if (r.0 != r2.0 || r.1 != r2.1) { return (0, false); }
+    }
+    return (((r.1 as i64) << 52) | (r.0 as i64), true);
+}
+
 // `s.parse_float()` — decimal f64 parser (f64 is the language's
 // primary float, #5363). Grammar:
 //   [-]<digits>[.<digits>][(e|E)[+-]?<digits>]
 // At least one of integer or fraction digits required; trailing
-// garbage rejected. The significant digits and base-10 exponent are
-// handed to __decimal_to_f64, which returns the correctly-rounded
-// (round-half-to-even) nearest f64 — bit-exact with strconv (#5566).
+// garbage rejected. The significant digits and base-10 exponent go to
+// Eisel-Lemire (`_el_parse`), falling back to the exact `__decimal_to_f64`
+// on the rare input it cannot decide. Either way the result is the
+// correctly-rounded (round-half-to-even) nearest f64 — bit-exact with
+// strconv (#5566).
 pub function (s: string) parse_float(): Option[f64] {
     var n: i32 = s.len();
     if (n == 0) { return None; }
@@ -3072,7 +3238,12 @@ pub function (s: string) parse_float(): Option[f64] {
         dig = string_from_bytes_unchecked(out);
     }
 
-    var v: f64 = __decimal_to_f64(dig, k);
+    // Eisel-Lemire decides almost every input with one 128-bit multiply;
+    // __decimal_to_f64 is the exact fallback for the rest.
+    var fast: (i64, boolean) = _el_parse(dig, k);
+    var v: f64 = 0.0;
+    if (fast.1) { v = f64_from_bits(fast.0); }
+    else { v = __decimal_to_f64(dig, k); }
     if (neg) { v = 0.0 - v; }
     return Some(v);
 }

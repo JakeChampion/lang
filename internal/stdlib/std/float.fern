@@ -79,9 +79,9 @@ function __float_int_part(n: f64): string {
 // "shortest, nearest-to-even" policy, which is the same contract Go's strconv
 // shortest formatting has. Names mirror the reference so the two can be read
 // side by side. The cache tables below are generated and checked against the
-// upstream table by cmd/dragonboxgen.
+// upstream table by cmd/floattablegen.
 
-// BEGIN GENERATED DRAGONBOX TABLES (cmd/dragonboxgen) — do not edit by hand.
+// BEGIN GENERATED DRAGONBOX TABLES (cmd/floattablegen) — do not edit by hand.
 // Dragonbox 128-bit power-of-ten cache for f64: k = -292..326 (619 entries),
 // 22 characters each — 11 for the high 64 bits, then 11 for the low.
 function _db_cache64(): string {
