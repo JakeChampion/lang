@@ -9316,6 +9316,27 @@ function type_to_irtag(t: Type): string {
     return "";
 }
 
+// type_to_arrtag names an ARRAY / slice type as irlower spells it — "f64[]",
+// "i64[]", "string[]" — or "" for anything else. It is deliberately SEPARATE
+// from type_to_irtag rather than a TypeArray arm added to it: type_to_irtag's
+// result is read by tag-FIRST consumers (expr_is_str / _f64 / _u32 / _u64 all
+// short-circuit their structural walk on any non-empty c.ty), so teaching it to
+// name arrays would change what those four see on every array-valued call. This
+// carrier needs the array spelling in exactly one place — ExprSlice.ty, read by
+// a walk-first leaf — so it gets its own namer and the shared vocabulary is
+// left alone.
+function type_to_arrtag(t: Type): string {
+    match (t) {
+        TypeArray(a) => {
+            var et: string = type_to_irtag(a.elem);
+            if (et == "") { return ""; }
+            return et + "[]";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // ModuleTables is the four name-resolution tables the checker builds per module.
 // build_module_tables mirrors the head of check_module (structs → union names →
 // enums → func sigs → methods); it is duplicated rather than shared so the
@@ -9385,7 +9406,7 @@ function annotate_expr(e: parser.Expr, s: Scope): parser.Expr {
             return parser.ExprIndex { array: annotate_expr(x.array, s), index: annotate_expr(x.index, s), unchecked: x.unchecked, ty: type_to_irtag(check_expr(e, s)) };
         },
         parser.ExprSlice(sl) => {
-            return parser.ExprSlice { array: annotate_expr(sl.array, s), start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s) };
+            return parser.ExprSlice { array: annotate_expr(sl.array, s), start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s), ty: type_to_arrtag(check_expr(sl.array, s)) };
         },
         parser.ExprArray(a) => {
             var na: parser.Expr[] = [];

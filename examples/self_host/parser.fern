@@ -85,7 +85,16 @@ pub struct ExprIndex { array: Expr, index: Expr, unchecked: boolean, ty: string 
 // kind as `a` (subarray for TypeArray, substring for
 // TypeString). `start` is inclusive, `end` is exclusive — same
 // shape as Python / Go / Rust slicing.
-pub struct ExprSlice { array: Expr, start: Expr, end: Expr }
+// `ty` is the typed-IR carrier naming the SOURCE array's type — "f64[]" /
+// "i64[]" / … — because the fact irlower's arr_slice needs is the source
+// element width, which is what its structural walk (expr_is_f64arr /
+// expr_is_i64arr on slc.array) also asks. Stamped by checker.annotate_module
+// via type_to_arrtag. Empty when unannotated (the
+// asm_ir_run harness and the native compiler never run annotate) or when the
+// checker could not name the element type, in which case irlower's structural
+// walk answers unchanged. NOTE it carries through the monomorphisation
+// rebuilds: dropping it there miscompiles clones (#6181).
+pub struct ExprSlice { array: Expr, start: Expr, end: Expr, ty: string }
 // Struct literal `Name { field: value, field: value }`. The
 // type_name is the struct's declared name; field_names and
 // field_values parallel-array the initializers in source
@@ -429,7 +438,7 @@ function e_tuple(elements: Expr[]): Expr { return ExprTuple { elements: elements
 function e_tuple_at(elements: Expr[], line: i32, col: i32): Expr { return ExprTuple { elements: elements, line: line, col: col }; }
 function e_index(array: Expr, index: Expr): Expr { return ExprIndex { array: array, index: index, unchecked: false, ty: "" }; }
 function e_slice(array: Expr, start: Expr, end: Expr): Expr {
-    return ExprSlice { array: array, start: start, end: end };
+    return ExprSlice { array: array, start: start, end: end, ty: "" };
 }
 function e_struct_lit(type_name: string, field_names: string[], field_values: Expr[], line: i32, col: i32): Expr {
     return ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values, has_base: false, base: e_unknown("no-base"), line: line, col: col };
@@ -6973,7 +6982,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
             var ar: RExpr = mono_expr(sl.array, env, funcs, ins);
             var st: RExpr = mono_expr(sl.start, env, funcs, ar.rins);
             var en: RExpr = mono_expr(sl.end, env, funcs, st.rins);
-            return RExpr { rexpr: ExprSlice { array: ar.rexpr, start: st.rexpr, end: en.rexpr }, rins: en.rins };
+            return RExpr { rexpr: ExprSlice { array: ar.rexpr, start: st.rexpr, end: en.rexpr, ty: sl.ty }, rins: en.rins };
         },
         ExprFieldAccess(fa) => {
             var o: RExpr = mono_expr(fa.obj, env, funcs, ins);
@@ -7323,7 +7332,7 @@ function retarget_self_lit_expr(e: Expr, base: string, mang: string): Expr {
         ExprBinary(b) => { return ExprBinary { op: b.op, left: retarget_self_lit_expr(b.left, base, mang), right: retarget_self_lit_expr(b.right, base, mang), line: b.line, col: b.col }; },
         ExprUnary(u) => { return ExprUnary { op: u.op, operand: retarget_self_lit_expr(u.operand, base, mang), line: u.line, col: u.col }; },
         ExprIndex(ix) => { return ExprIndex { array: retarget_self_lit_expr(ix.array, base, mang), index: retarget_self_lit_expr(ix.index, base, mang), unchecked: ix.unchecked, ty: ix.ty }; },
-        ExprSlice(sl2) => { return ExprSlice { array: retarget_self_lit_expr(sl2.array, base, mang), start: retarget_self_lit_expr(sl2.start, base, mang), end: retarget_self_lit_expr(sl2.end, base, mang) }; },
+        ExprSlice(sl2) => { return ExprSlice { array: retarget_self_lit_expr(sl2.array, base, mang), start: retarget_self_lit_expr(sl2.start, base, mang), end: retarget_self_lit_expr(sl2.end, base, mang), ty: sl2.ty }; },
         ExprFieldAccess(fa) => { return ExprFieldAccess { obj: retarget_self_lit_expr(fa.obj, base, mang), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
         _ => { return e; }
     }
@@ -8152,7 +8161,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
             var ar: RExpr = ms_expr(sl.array, env, gstructs, funcs, ins);
             var st: RExpr = ms_expr(sl.start, env, gstructs, funcs, ar.rins);
             var en: RExpr = ms_expr(sl.end, env, gstructs, funcs, st.rins);
-            return RExpr { rexpr: ExprSlice { array: ar.rexpr, start: st.rexpr, end: en.rexpr }, rins: en.rins };
+            return RExpr { rexpr: ExprSlice { array: ar.rexpr, start: st.rexpr, end: en.rexpr, ty: sl.ty }, rins: en.rins };
         },
         ExprFieldAccess(fa) => {
             var o: RExpr = ms_expr(fa.obj, env, gstructs, funcs, ins);
@@ -9025,7 +9034,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
             var ar: RExpr = me_expr(sl.array, "", env, enums, structs, funcs, ins);
             var st: RExpr = me_expr(sl.start, "", env, enums, structs, funcs, ar.rins);
             var en: RExpr = me_expr(sl.end, "", env, enums, structs, funcs, st.rins);
-            return RExpr { rexpr: ExprSlice { array: ar.rexpr, start: st.rexpr, end: en.rexpr }, rins: en.rins };
+            return RExpr { rexpr: ExprSlice { array: ar.rexpr, start: st.rexpr, end: en.rexpr, ty: sl.ty }, rins: en.rins };
         },
         ExprStructLit(s) => {
             var nvals: Expr[] = [];
@@ -11358,7 +11367,7 @@ function cf_rw_expr(e: Expr, f: string, target: string): Expr {
             return ExprTuple { elements: ne, line: t.line, col: t.col };
         },
         ExprIndex(ix) => { return ExprIndex { array: cf_rw_expr(ix.array, f, target), index: cf_rw_expr(ix.index, f, target), unchecked: ix.unchecked, ty: ix.ty }; },
-        ExprSlice(sl) => { return ExprSlice { array: cf_rw_expr(sl.array, f, target), start: cf_rw_expr(sl.start, f, target), end: cf_rw_expr(sl.end, f, target) }; },
+        ExprSlice(sl) => { return ExprSlice { array: cf_rw_expr(sl.array, f, target), start: cf_rw_expr(sl.start, f, target), end: cf_rw_expr(sl.end, f, target), ty: sl.ty }; },
         ExprStructLit(sl) => {
             var nv: Expr[] = [];
             var i: i32 = 0;
@@ -11756,7 +11765,7 @@ function elb_mark_expr(e: Expr, idx: string, arr: string): Expr {
             while (i < t.elements.len()) { ne = ne.append(elb_mark_expr(t.elements[i], idx, arr)); i = i + 1; }
             return ExprTuple { elements: ne, line: t.line, col: t.col };
         },
-        ExprSlice(sl) => { return ExprSlice { array: elb_mark_expr(sl.array, idx, arr), start: elb_mark_expr(sl.start, idx, arr), end: elb_mark_expr(sl.end, idx, arr) }; },
+        ExprSlice(sl) => { return ExprSlice { array: elb_mark_expr(sl.array, idx, arr), start: elb_mark_expr(sl.start, idx, arr), end: elb_mark_expr(sl.end, idx, arr), ty: sl.ty }; },
         ExprStructLit(sl) => {
             var nv: Expr[] = [];
             var i: i32 = 0;

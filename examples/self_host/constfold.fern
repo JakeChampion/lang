@@ -149,7 +149,8 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
             return parser.ExprSlice {
                 array: fold_expr(sl.array),
                 start: fold_expr(sl.start),
-                end: fold_expr(sl.end)
+                end: fold_expr(sl.end),
+                ty: sl.ty
             };
         },
         parser.ExprStructLit(sl) => {
