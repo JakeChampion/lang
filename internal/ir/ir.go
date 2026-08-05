@@ -8674,8 +8674,11 @@ func (b *builder) expr(e ast.Expr) error {
 		// is_unique gate additionally protects an aliased container (a callee
 		// returning its param, rc>=2 via the return-transfer inc — only
 		// dec'd, never freed). Idents / fields aren't fresh temps and lower
-		// in place. String / slice index paths are excluded (n.IsString /
-		// n.IsSlice).
+		// in place. The slice index path is excluded (n.IsSlice); the STRING
+		// path takes the string-shaped stash below instead — its element is
+		// always a u8, so the same "the loaded scalar can't alias the buffer"
+		// argument applies.
+		strIdxSlot := int32(-1)
 		idxContainerSlot := int32(-1)
 		if !n.IsString && !n.IsSlice && n.ElemType != nil && !ast.IsPointerType(n.ElemType) {
 			ct, ok := b.freshOwnedRcTempType(n.Array)
@@ -8695,7 +8698,12 @@ func (b *builder) expr(e ast.Expr) error {
 				}
 			}
 		}
-		if idxContainerSlot < 0 {
+		if n.IsString {
+			var err error
+			if strIdxSlot, err = b.stashOwnedStringOperand(n.Array); err != nil {
+				return err
+			}
+		} else if idxContainerSlot < 0 {
 			if err := b.expr(n.Array); err != nil {
 				return err
 			}
@@ -8802,6 +8810,7 @@ func (b *builder) expr(e ast.Expr) error {
 		if idxContainerSlot >= 0 {
 			b.emitOwnedSlotDrop(idxContainerSlot, b.scratchType[idxContainerSlot])
 		}
+		b.decStashedStringTemps(strIdxSlot)
 	case *ast.SliceExpr:
 		// String slicing: copy into a fresh length-prefixed
 		// string. Owns its bytes (matches the rest of the
@@ -8809,7 +8818,13 @@ func (b *builder) expr(e ast.Expr) error {
 		// for strings yet). Bounds-check happens inside the
 		// helper.
 		if n.IsString {
-			if err := b.expr(n.Source); err != nil {
+			// __str_slice copies bytes OUT of its source and leaves that
+			// buffer alone, so an owned-temp source (`f(x)[a:b]`) is
+			// reclaimed by nobody unless stashed — one leaked buffer per
+			// slice. The slot doubles as the default-`high` length read,
+			// which otherwise re-evaluates Source (calling `f` twice).
+			slSrc, err := b.stashOwnedStringOperand(n.Source)
+			if err != nil {
 				return err
 			}
 			if n.Low != nil {
@@ -8831,7 +8846,9 @@ func (b *builder) expr(e ast.Expr) error {
 				// stack as the second i32 of `(data, len)` — the
 				// legacy `[ptr - 4]` array-shape prefix-load no
 				// longer applies.
-				if err := b.expr(n.Source); err != nil {
+				if slSrc >= 0 {
+					b.emit(Op{Kind: OpLoadLocal, I32: slSrc})
+				} else if err := b.expr(n.Source); err != nil {
 					return err
 				}
 				b.emit(Op{Kind: OpStrLen})
@@ -8850,6 +8867,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// needs `(string, i32, i32)` to count the string
 			// arg as 2 operand-stack slots.
 			b.emit(Op{Kind: OpCallDirect, Str: "__str_slice", I32: 3, Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
+			b.decStashedStringTemps(slSrc)
 			break
 		}
 		// Lower `arr[low:high]` to:
@@ -10223,11 +10241,21 @@ func (b *builder) callReturnType(c *ast.Call) ast.Type {
 // isOwnedStringTemp reports whether `e` produces a FRESH owned heap
 // string — one that allocates a new rc=1 buffer the surrounding
 // expression must reclaim if it doesn't bind / store / return it. True
-// for a string concat (`a + b`, which always copies into a fresh buffer)
-// and a string slice (which copies its bytes out). Idents / field / index
-// reads (borrowed views) and literals (static .rodata) are NOT owned
-// temps — freeing them would corrupt a live value, so they read false.
-// Used by the concat lowering to dec a nested-concat intermediate.
+// for a string concat (`a + b`, which always copies into a fresh buffer),
+// a string slice (which copies its bytes out), and a call returning
+// string: a Fern return value is owned (+1) at the call site, which is
+// why the general drop machinery already reclaims a call result that is
+// discarded as a statement or consumed as an argument. Idents / field /
+// index reads (borrowed views) and literals (static .rodata) are NOT
+// owned temps — freeing them would corrupt a live value, so they read
+// false. Used by the concat lowering to dec its operand intermediates.
+//
+// The call case is what keeps `"n = " + n.to_string()` from leaking the
+// to_string buffer once per join: OpStrConcat borrows its operands and
+// copies out of them, so nothing else in the pipeline ever drops them.
+// It only bites above the 7-byte small-string threshold — shorter
+// results are inline-tagged and never allocated, which is why the leak
+// hid behind small numbers.
 func (b *builder) isOwnedStringTemp(e ast.Expr) bool {
 	switch x := e.(type) {
 	case *ast.Binary:
@@ -10235,8 +10263,56 @@ func (b *builder) isOwnedStringTemp(e ast.Expr) bool {
 	case *ast.SliceExpr:
 		_, isStr := b.exprType(x).(ast.StringType)
 		return isStr
+	case *ast.Call:
+		if x.IsVariantCall {
+			return false
+		}
+		_, isStr := b.exprType(x).(ast.StringType)
+		return isStr
 	}
 	return false
+}
+
+// stashOwnedStringOperand lowers `e` as an operand of a BORROWING string
+// op — one that reads its operand's bytes and leaves that buffer alone
+// (OpStrConcat, OpStrEq, __str_idx, __str_slice). When `e` is an owned
+// temp nothing else will ever reclaim it, so it is spilled to a scratch
+// slot and re-pushed; the returned slot lets the caller dec it once the op
+// has read it. Returns -1 when there is nothing to reclaim (a borrowed
+// operand, or reclaim off) — so free-off lowering stays byte-identical.
+func (b *builder) stashOwnedStringOperand(e ast.Expr) (int32, error) {
+	if err := b.expr(e); err != nil {
+		return -1, err
+	}
+	if !ast.RcFreeEnabled || !b.isOwnedStringTemp(e) {
+		return -1, nil
+	}
+	sl := b.allocSlot()
+	b.locals[fmt.Sprintf("__strtmp_%d", sl)] = sl
+	b.scratchType[sl] = ast.StringType{}
+	b.emit(Op{Kind: OpStoreLocal, I32: sl}) // pop (data,len) → slot
+	b.emit(Op{Kind: OpLoadLocal, I32: sl})  // re-push for the borrowing op
+	return sl, nil
+}
+
+// decStashedStringTemps releases the slots stashOwnedStringOperand handed
+// back, skipping the -1 "nothing stashed" entries. __fern_str_dec is the
+// right helper on EVERY ptrW: two-word ABIs (wasm + arm64-TwoWord) consume
+// the (data,len) pair, and native single-word (x86_64) frees the buffer at
+// rc==1 (else defers to __fern_rc_dec) — its inline-tag / SSO / literal
+// guards make it safe for short strings that never heap-allocated. Native
+// previously used the dec-only __fern_rc_dec here, which decremented but
+// never freed, so a nested/chained concat leaked one buffer per join
+// (docs/IR-SELFCOMPILE-OOM-FINDINGS.md).
+func (b *builder) decStashedStringTemps(slots ...int32) {
+	for _, sl := range slots {
+		if sl < 0 {
+			continue
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: sl})
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	}
 }
 
 func (b *builder) binary(n *ast.Binary) error {
@@ -10344,18 +10420,10 @@ func (b *builder) binary(n *ast.Binary) error {
 		consumeLeftTemp := ast.RcFreeEnabled && b.strAppendAvailable() &&
 			b.isOwnedStringTemp(n.Left) && ast.Expr(n) != b.selfStrAppendBin
 		stash := func(e ast.Expr, consumed bool) (int32, error) {
-			if err := b.expr(e); err != nil {
-				return -1, err
+			if consumed {
+				return -1, b.expr(e)
 			}
-			if consumed || !ast.RcFreeEnabled || !b.isOwnedStringTemp(e) {
-				return -1, nil
-			}
-			sl := b.allocSlot()
-			b.locals[fmt.Sprintf("__cattmp_%d", sl)] = sl
-			b.scratchType[sl] = ast.StringType{}
-			b.emit(Op{Kind: OpStoreLocal, I32: sl}) // pop (data,len) → slot
-			b.emit(Op{Kind: OpLoadLocal, I32: sl})  // re-push for the concat
-			return sl, nil
+			return b.stashOwnedStringOperand(e)
 		}
 		slL, err := stash(n.Left, consumeLeftTemp)
 		if err != nil {
@@ -10391,25 +10459,29 @@ func (b *builder) binary(n *ast.Binary) error {
 		} else {
 			b.emit(Op{Kind: OpStrConcat})
 		}
-		// Reclaim each stashed owned-temp operand via __fern_str_dec on EVERY
-		// ptrW: two-word ABIs (wasm + arm64-TwoWord) consume the (data,len)
-		// pair, and native single-word (x86_64) frees the buffer at rc==1 (else
-		// defers to __fern_rc_dec) — its inline-tag / SSO / literal guards make
-		// it safe for short concats that never heap-allocated. Native previously
-		// used the dec-only __fern_rc_dec here, which decremented but never
-		// freed, so a nested/chained concat leaked one buffer per join
-		// (docs/IR-SELFCOMPILE-OOM-FINDINGS.md); __fern_str_dec now reclaims it.
-		// The operand is a fresh sole-owner temp (isOwnedStringTemp), so freeing
-		// at rc==1 is balanced.
-		decHelper := "__fern_str_dec"
-		for _, sl := range []int32{slL, slR} {
-			if sl < 0 {
-				continue
-			}
-			b.emit(Op{Kind: OpLoadLocal, I32: sl})
-			b.emit(Op{Kind: OpCallDirect, Str: decHelper, I32: 1})
-			b.emit(Op{Kind: OpDrop})
+		// The operand is a fresh sole-owner temp (isOwnedStringTemp), so
+		// freeing at rc==1 is balanced.
+		b.decStashedStringTemps(slL, slR)
+		return nil
+	}
+	if n.IsStringCmp {
+		// Same shape as concat but for content equality — OpStrEq reads
+		// both operands' bytes and leaves their buffers alone, so an owned
+		// temp operand (`f(x) == "…"`) needs the same stash-and-dec or it
+		// leaks one buffer per comparison. `!=` is the negation of `==`.
+		slL, err := b.stashOwnedStringOperand(n.Left)
+		if err != nil {
+			return err
 		}
+		slR, err := b.stashOwnedStringOperand(n.Right)
+		if err != nil {
+			return err
+		}
+		b.emit(Op{Kind: OpStrEq})
+		if n.Op == "!=" {
+			b.emit(Op{Kind: OpNot})
+		}
+		b.decStashedStringTemps(slL, slR)
 		return nil
 	}
 	if err := b.expr(n.Left); err != nil {
@@ -10417,15 +10489,6 @@ func (b *builder) binary(n *ast.Binary) error {
 	}
 	if err := b.expr(n.Right); err != nil {
 		return err
-	}
-	if n.IsStringCmp {
-		// Same shape as concat but for content equality. `!=` is
-		// the negation of `==`.
-		b.emit(Op{Kind: OpStrEq})
-		if n.Op == "!=" {
-			b.emit(Op{Kind: OpNot})
-		}
-		return nil
 	}
 	if n.IsFloat {
 		op, ok := floatOp(n.Op)
