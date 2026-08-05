@@ -118,7 +118,7 @@ the same treatment; it was left alone here to keep the change reviewable.
 | String hash | **FNV-1a over 4-byte blocks + fmix32 avalanche** | wyhash / XXH3 | **DONE (this pass)** |
 | Scalar hash | Wang mix | Fine | OK |
 | Adversarial keys | None — no seeding | SipHash, randomised seed | GAP (matters if Fern serves untrusted input) |
-| Tiny map | Full probe machinery | Linear scan below ~8 entries | GAP, easy |
+| Tiny map | **Linear scan at or below 8 entries** | Linear scan below ~8 entries | **DONE (this pass)** |
 | Checksum | — | xxHash / CRC32 | GAP |
 
 A SwissTable's control-byte metadata and probe *structure* are worth adopting
@@ -253,9 +253,9 @@ constraints above.
 2. **Eisel–Lemire `parse_float`.** The sibling of the Dragonbox work; needs a
    128-bit high-multiply.
 3. ~~Move `std/fuzz` onto the seeded generator~~ — done, see below.
-4. **Small-map linear-scan path** for `core/map` — below ~8 entries the full
-   probe machinery costs more than a scan. (The string hash half of this item
-   is done.)
+4. ~~Small-map linear-scan path~~ — done, see below. What remains on
+   `core/map` is a **per-process hash seed** (the hash is unseeded and public,
+   so attacker-controlled keys can force collisions) and the SWAR group probe.
 5. ~~Adaptive sort~~, ~~`random_int` modulo bias~~, ~~SWAR bit counting~~,
    ~~map string hash~~, ~~seeded PCG32~~ — done, see below.
 
@@ -473,6 +473,28 @@ module at `test__assert_at_f32` — the f32/f64 emit gap that also makes
 `TestArrayStatsWasm` / `TestArrayMedianRangeWasm` skip. That matters more than
 it looks: `std/test` is the pure-Fern runner the project plans to migrate to
 once Go-side tests retire.
+
+**Small maps skip hashing and scan.** At or below 8 entries `core/map` now
+walks the entry array directly instead of hashing and probing. This is sound
+rather than a heuristic shortcut: delete is swap-with-last, so entries
+`[0, len)` are all live with no tombstones, and a scan returns the same entry
+index a probe would.
+
+Measured before implementing, because the direction was not obvious — a scan
+does up to 8 key comparisons where a probe does one hash and usually one. On a
+6-entry string-keyed map over 1.2M lookups the standalone comparison was 213 ms
+hash-and-probe versus 96 ms scanning, and wiring it into the map moved the same
+benchmark from 213 ms to 165 ms (~22%; the rest is call overhead and bounds
+checks the microbenchmark does not pay). The standalone figure uses query
+strings built separately from the stored keys, so it is not an artefact of a
+pointer-equality fast path in `eq_fn`.
+
+The threshold is deliberately modest. The scan is O(len) per lookup, so it must
+not extend to sizes where the probe's O(1) wins; eight caps it at eight
+comparisons, which is about where a table is still dominated by the fixed cost
+of hashing. Covered by sizes 0-12 straddling the threshold, each deleted back
+down to empty with survivors re-checked at every step — the case that would
+break if the no-tombstone assumption above were ever violated.
 
 **A native/self-host divergence in `split("")` was found and fixed.**
 `std/string.split` char-splits an empty separator, but the self-host compiler

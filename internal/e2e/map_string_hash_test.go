@@ -105,6 +105,43 @@ function main(): i32 {
     if (q.get_or("", 0) != 9) { return 12; }
     if (q.len() != 1) { return 13; }
 
+    // Sizes straddling the small-map linear-scan threshold (8). Lookups must
+    // agree on both sides of it, and a delete that drops a map back UNDER the
+    // threshold must keep working -- the scan walks entries [0, len), which is
+    // only equivalent to a probe because delete is swap-with-last and leaves
+    // no tombstones in that range.
+    var sz: i32 = 0;
+    while (sz <= 12) {
+        var t: Map[string, i32] = map_new(4);
+        var g: i32 = 0;
+        while (g < sz) {
+            t = t.insert("k" + g.to_string(), g * 7);
+            g = g + 1;
+        }
+        if (t.len() != sz) { return 14; }
+        var h: i32 = 0;
+        while (h < sz) {
+            if (t.get_or("k" + h.to_string(), 0 - 1) != h * 7) { return 15; }
+            if (!t.has("k" + h.to_string())) { return 16; }
+            h = h + 1;
+        }
+        if (t.has("k" + sz.to_string())) { return 17; }
+        // Delete down across the threshold, re-checking survivors each step.
+        var d2: i32 = sz - 1;
+        while (d2 >= 0) {
+            t = t.without("k" + d2.to_string()).0;
+            if (t.len() != d2) { return 18; }
+            var s2: i32 = 0;
+            while (s2 < d2) {
+                if (t.get_or("k" + s2.to_string(), 0 - 1) != s2 * 7) { return 19; }
+                s2 = s2 + 1;
+            }
+            if (t.has("k" + d2.to_string())) { return 20; }
+            d2 = d2 - 1;
+        }
+        sz = sz + 1;
+    }
+
     return 42;
 }
 `
