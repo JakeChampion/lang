@@ -140,6 +140,23 @@ _start:
 	checkWords(t, src, "fc1f8180 fc5f8180 fc1f0041 fc5e0083 fd000580 d65f03c0")
 }
 
+// TestAssembleDollarInSymbol covers '$' in a symbol name. GAS allows it
+// (verified: aarch64-linux-gnu-as assembles `foo$wrap0:` and a branch to it),
+// and the self-host emitter names every lifted-lambda wrapper that way —
+// `__fn_sort__sort_strings_asc_ci$wrap0`. isIdent rejected it, so this
+// assembler could not read ANY whole program the emitter produces, which is
+// what #6062's alignment needs. Found by trying exactly that.
+func TestAssembleDollarInSymbol(t *testing.T) {
+	const src = `.text
+_start:
+    b foo$wrap0
+    nop
+foo$wrap0:
+    ret
+`
+	checkWords(t, src, "14000002 d503201f d65f03c0")
+}
+
 // TestAssembleDotLocalLabel is a REGRESSION GUARD, not a new capability: #6075
 // listed dot-prefixed local labels as a third gap, and they already worked —
 // splitLabel peels labels before the `.`-prefix directive check, in both

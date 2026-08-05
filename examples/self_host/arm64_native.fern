@@ -892,11 +892,21 @@ function arm64_stur(buf: i32[], rt: i32, rn: i32, off: i32, w32: boolean): i32[]
     return arm64_le32(buf, w);
 }
 
-// arm64_cset encodes `cset Xd, <cond>` — `csinc Xd, XZR, XZR, invert(cond)`
+// arm64_cset encodes `cset Xd/Wd, <cond>` — `csinc Xd, XZR, XZR, invert(cond)`.
+// The destination width lives in the sf bit, like every other ALU form: 0x9a..
+// for X, 0x1a.. for W. It was hardcoded to the X form, so `cset w0, mi`
+// assembled as `cset x0, mi` — 73 times in one fixture, found by the
+// whole-program alignment #6062 asked for. Behaviourally invisible (cset writes
+// 0 or 1, so the top half is zero either way), which is why nothing caught it,
+// but it is the wrong instruction and the #6054 width class exactly.
+// Verified vs GNU as: cset w0,mi = 0x1a9f57e0, cset x0,ge = 0x9a9fb7e0,
+// cset w3,eq = 0x1a9f17e3.
 // (set Xd to 1 if cond holds, else 0). The condition is inverted (cond^1).
 //   0x9A800400 | (31<<16) | invcond<<12 | (31<<5) | Rd
-function arm64_cset(buf: i32[], rd: i32, cond: i32): i32[] {
-    var w: i64 = 0x9a800400 | (31 << 16) | ((((cond ^ 1) & 15) as i64) << 12) | (31 << 5) | ((rd & 31) as i64);
+function arm64_cset(buf: i32[], rd: i32, cond: i32, w32: boolean): i32[] {
+    var base: i64 = 0x9a800400;
+    if (w32) { base = 0x1a800400; }
+    var w: i64 = base | (31 << 16) | ((((cond ^ 1) & 15) as i64) << 12) | (31 << 5) | ((rd & 31) as i64);
     return arm64_le32(buf, w);
 }
 
@@ -2027,7 +2037,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         return a;
     }
     if (mnem == "cset") {
-        a = Arm64Asm { ...a, code: arm64_cset(a.code, arm64_gas_reg(ops[0]), arm64_gas_cond(ops[1])) };
+        a = Arm64Asm { ...a, code: arm64_cset(a.code, arm64_gas_reg(ops[0]), arm64_gas_cond(ops[1]), arm64_gas_is_w(ops[0])) };
         return a;
     }
     if (mnem == "lsl") {

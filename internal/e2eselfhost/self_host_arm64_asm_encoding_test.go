@@ -135,6 +135,16 @@ _start:
     cbz w0, Lend
     cbnz w1, Lend
     tbnz w2, #31, Lend
+    // cset carries its destination width in the sf bit like every other ALU
+    // form, and was hardcoded to the X form -- so cset w0, mi assembled as
+    // cset x0, mi, 73 times in one fixture. Behaviourally invisible (cset
+    // writes 0 or 1, so the top half is zero either way), which is why no
+    // execution test ever caught it; found by the whole-program alignment in
+    // #6062, which is the thing this snippet is a hand-written stand-in for.
+    cset w0, mi
+    cset w0, ge
+    cset w3, eq
+    cset x0, ge
     // #6060: four forms that encoded a DIFFERENT instruction than the source
     // says, plus movn, which had no dispatch branch at all and emitted nothing
     // while arm64_gas_known claimed it was handled.

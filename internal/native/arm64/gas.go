@@ -105,7 +105,12 @@ func isIdent(s string) bool {
 	}
 	for i, r := range s {
 		switch {
-		case r == '_' || r == '.':
+		// '$' is legal in a GAS symbol (verified: aarch64-linux-gnu-as accepts
+		// `foo$wrap0:` and a branch to it). The self-host emitter names every
+		// lifted-lambda wrapper that way — `__fn_sort__sort_strings_asc_ci$wrap0`
+		// — so rejecting it stopped this assembler from reading any whole
+		// program the emitter produces, which is what #6062's alignment needs.
+		case r == '_' || r == '.' || r == '$':
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
 		case r >= '0' && r <= '9' && i > 0:
 		default:
