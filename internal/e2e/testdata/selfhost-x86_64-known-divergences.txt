@@ -39,13 +39,6 @@
 # Option/Result) box owns the buffer. Recording a symptom without re-measuring it
 # is how a stack-exhaustion SEGV gets hunted as an infinite loop.
 
-# --- IR-ineligible, hard error since #3457 deleted the AST emitters ---------
-# The leg re-runs these under FERN_STRICT_IR=1 and logs the named bail site.
-# Two of the original three are FIXED: `pure_collection_aliases` (its bail named
-# `Map.cleared`, which had no lowering at all) and `map_struct_value_field` (an
-# `it.value().field` with no struct recovery) — see the wasm sibling's notes.
-generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
-
 # --- new, first seen on x86-64: ALL THREE NOW FIXED ------------------------
 # `int_wrap` (#6050) and `u64_max_to_f64_is_huge` (#6051): the i32 formatter now
 # carries its magnitude unsigned (so INT_MIN's self-negation still renders its

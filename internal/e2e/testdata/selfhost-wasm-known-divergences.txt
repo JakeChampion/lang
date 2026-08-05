@@ -63,7 +63,35 @@
 # recycled the cell there in time. irlower now brackets such a receiver so
 # arr_push takes its copy path.
 #
-# One of the original twelve remains. All were found by the leg's first run
+# `generic_method_typeparams` was here and is now FIXED (#6007) — the last row
+# on all three legs. A method may declare type params of its OWN, independent of
+# the receiver's (`function (b: Box[T]) map[U](f: (T) => U): Box[U]`), and that
+# is two instantiation axes. monomorphize_module skipped every receiver method
+# (a `receiver_name.len() == 0` gate), so only the struct axis ran, and
+# clone_struct_method substituted with the STRUCT's params — documenting the
+# assumption that "a parametric-impl method's own type params match the
+# struct's". `map[U]` is the first shape where they do not, so `U` reached the
+# mangler unbound and `Box[U]` became the struct name `Box__U`, which nothing
+# emitted; the bail named `Box__U.get`.
+#
+# The two axes are now split across the two passes that already exist rather
+# than fused into one: monomorphize_module clones on the method's OWN params
+# (mangling the NAME, keeping the `Box[T]` receiver), then monomorphize_structs
+# clones each result per receiver instantiation as it always has.
+#
+# The second defect was in binding `U` at all. infer_inst already recovers a
+# type param that surfaces only as a fn-param's RETURN, but via lambda_ret_of,
+# which answered only for a literal lambda — and the fixture passes NAMED
+# functions (`b.map(dbl)`). A bare ident naming a top-level function now yields
+# its declared return type, which also fixes the receiver-less `sort_key(xs,
+# key_fn)` shape that silently stayed a template before.
+#
+# The fixture is deliberately built to catch a half-fix: `b.map(dbl)` keeps
+# `U = T = i32` while `b.map(is_big)` moves to `Box[boolean]` off the SAME
+# receiver, so threading the method's params through without cloning per
+# type-arg tuple passes the first call and miscompiles the second.
+#
+# ALL twelve are now fixed; this leg lists nothing. All were found by the leg's first run
 # over the existing corpus, on fixtures that had been green for months because
 # all four of TestFernFixtures' backends are the native compiler. Each has been reproduced by hand with a
 # native self-host CLI (`make selfhost-cli`) before being written down; none is
@@ -71,11 +99,6 @@
 # artifacts — WASI caps exit status at 125, so nine regex fixtures whose expected
 # 255 is a feature bitmask looked like a broken regex engine — which is why every
 # entry here names a measured before/after rather than a symptom.
-
-# --- the self-host wasm path cannot lower these at all --------------------
-# Hard errors now the AST emitters are deleted (#3457), so these are real
-# IR-subset gaps, not fallbacks. "module is not IR-eligible" from the driver.
-generic_method_typeparams #6007 IR-ineligible on self-host wasm; native compiles it
 
 # --- UNMEASURABLE by this oracle ------------------------------------------
 # Not listed as divergences because the leg cannot prove them either way: an

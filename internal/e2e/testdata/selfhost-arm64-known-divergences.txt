@@ -93,7 +93,4 @@
 # writeback form it cannot encode (`<mnem>:writeback`) instead of silently
 # dropping it. Pinned by TestSelfHostArm64GasWriteback.
 
-# --- shared with the x86-64 leg (same bug, same measured value) ---
-generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
-
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---

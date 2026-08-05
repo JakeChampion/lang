@@ -5994,6 +5994,168 @@ function bg_index(funcs: FuncDecl[], name: string): i32 {
     return 0 - 1;
 }
 
+// ---- method-level type parameters (#6007) ---------------------------
+// A method may introduce type params of its OWN, independent of the
+// receiver struct's: `function (b: Box[T]) map[U](f: (T) => U): Box[U]`.
+// Two axes then need instantiating, and they are handled by the two
+// existing passes in sequence rather than by one combined axis:
+//
+//   monomorphize_module  clones on the METHOD's extra params, mangling
+//                        only the method NAME and keeping the `Box[T]`
+//                        receiver — so `map` becomes `map__boolean`
+//                        with `U` substituted throughout;
+//   monomorphize_structs then clones each of those per `Box`
+//                        instantiation exactly as it always has.
+//
+// Before this, monomorphize_module skipped every receiver method
+// (`receiver_name.len() == 0` gate) and clone_struct_method substituted
+// with the STRUCT's params only — documenting the assumption that "a
+// parametric-impl method's own type params match the struct's". `map[U]`
+// is the first shape where they do not, so `U` reached the mangler
+// unbound and `Box[U]` became the struct name `Box__U`, which nothing
+// emitted (the fixture's `big.get()` bailed on it).
+
+// receiver_ty_args returns the type arguments named in a receiver
+// spelling: `Box[T]` -> ["T"], `Pair[K, V]` -> ["K", "V"], `Box` -> [].
+// These are the struct's params as this method spells them, which is what
+// separates them from the method's own.
+// trim_sp strips leading / trailing ASCII spaces from a type-arg segment.
+function trim_sp(s: string): string {
+    var a: i32 = 0;
+    var b: i32 = s.len();
+    while (a < b && (s[a] as i32) == 32) { a = a + 1; }
+    while (b > a && (s[b - 1] as i32) == 32) { b = b - 1; }
+    return s[a : b] + "";
+}
+
+function receiver_ty_args(recv: string): string[] {
+    var out: string[] = [];
+    var lb: i32 = first_bracket(recv);
+    if (lb <= 0) { return out; }
+    if (recv[recv.len() - 1] != 93) { return out; }
+    var inner: string = recv[lb + 1 : recv.len() - 1] + "";
+    var seg: string = "";
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    while (i < inner.len()) {
+        var c: i32 = inner[i] as i32;
+        if (c == 91) { depth = depth + 1; }
+        if (c == 93) { depth = depth - 1; }
+        if (c == 44 && depth == 0) {
+            out = out.append(trim_sp(seg));
+            seg = "";
+        } else { seg = seg + inner[i : i + 1]; }
+        i = i + 1;
+    }
+    if (trim_sp(seg).len() > 0) { out = out.append(trim_sp(seg)); }
+    return out;
+}
+
+// method_extra_tparams returns the method's OWN type params — those not
+// already bound by the receiver spelling. Empty for every method that
+// existed before #6007 (a parametric-impl method's params match the
+// struct's), so this pass is inert on them and the fixpoint holds.
+function method_extra_tparams(fd: FuncDecl): string[] {
+    var out: string[] = [];
+    if (fd.receiver_name.len() == 0) { return out; }
+    if (fd.type_params.len() == 0) { return out; }
+    var rargs: string[] = receiver_ty_args(fd.receiver_type);
+    var i: i32 = 0;
+    while (i < fd.type_params.len()) {
+        if (util.index_of_str(rargs, fd.type_params[i]) < 0) { out = out.append(fd.type_params[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// bg_method_index returns the index of a method named `name` on receiver
+// base `base` that carries its own type params, or -1.
+function bg_method_index(funcs: FuncDecl[], base: string, name: string): i32 {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_name.len() > 0
+            && strip_struct_base(funcs[i].receiver_type) == base
+            && method_extra_tparams(funcs[i]).len() > 0) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// method_inst_key names a method instantiation in the shared Insts
+// worklist. '#' cannot occur in a type or function name, so these entries
+// are unambiguously distinguishable from the receiver-less ones the
+// worklist already carries.
+function method_inst_key(base: string, name: string): string {
+    return base + "#" + name;
+}
+
+// mi_base / mi_name split a method_inst_key back apart.
+function mi_base(k: string): string {
+    var i: i32 = 0;
+    while (i < k.len()) {
+        if (k[i] as i32 == 35) { return k[0 : i] + ""; }
+        i = i + 1;
+    }
+    return k;
+}
+function mi_name(k: string): string {
+    var i: i32 = 0;
+    while (i < k.len()) {
+        if (k[i] as i32 == 35) { return k[i + 1 : k.len()] + ""; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// infer_view returns `fd` with its type_params narrowed to the method's
+// OWN params, so infer_inst binds exactly those from the call's arguments
+// and does not fail trying to bind the receiver's (already fixed by the
+// receiver, and instantiated by the struct pass instead).
+function infer_view(fd: FuncDecl, extras: string[]): FuncDecl {
+    return FuncDecl {
+        name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type,
+        type_params: extras, params: fd.params, ret_type: fd.ret_type, body: fd.body,
+        line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit,
+        type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str
+    };
+}
+
+// clone_bg_method is clone_bg for a receiver method: it substitutes the
+// method's OWN params and mangles only the NAME, leaving receiver_name /
+// receiver_type intact so monomorphize_structs still clones the result per
+// receiver instantiation. The receiver spelling names the struct's params,
+// which are not in `extras`, so subst_ty leaves it untouched.
+function clone_bg_method(fd: FuncDecl, extras: string[], key: string): FuncDecl {
+    var cts: string[] = [key];
+    if (extras.len() != 1) { cts = split_inst_key(key); }
+    var nparams: ParamDecl[] = [];
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        nparams = nparams.append(ParamDecl { name: fd.params[i].name, type_name: subst_ty(fd.params[i].type_name, extras, cts), own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, ret_arr: fd.params[i].ret_arr, fn_ret: subst_ty(fd.params[i].fn_ret, extras, cts), fn_param_dyn: fd.params[i].fn_param_dyn });
+        i = i + 1;
+    }
+    // Keep any type params the receiver still binds (none for the shapes
+    // seen so far, but a `Box[T]` method declaring `[T, U]` would).
+    var keep: string[] = [];
+    var k: i32 = 0;
+    while (k < fd.type_params.len()) {
+        if (util.index_of_str(extras, fd.type_params[k]) < 0) { keep = keep.append(fd.type_params[k]); }
+        k = k + 1;
+    }
+    return FuncDecl {
+        name: fd.name + "__" + sanitize_key(key),
+        receiver_name: fd.receiver_name,
+        receiver_type: fd.receiver_type,
+        type_params: keep,
+        params: nparams,
+        ret_type: subst_ty(fd.ret_type, extras, cts),
+        body: subst_stmts(fd.body, extras, cts), line: fd.line, col: fd.col,
+        import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str
+    };
+}
+
 // tparam_arg_index returns the index of the first parameter whose
 // declared type is the (first) type variable — the argument whose
 // concrete type fixes the instantiation. -1 if none.
@@ -6327,6 +6489,24 @@ function lambda_ret_of(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
                     _ => {},
                 }
                 si = si + 1;
+            }
+            return "";
+        },
+        // A bare ident naming a top-level function is a fn VALUE, and its
+        // declared return type is the binding — `b.map(is_big)`, or the
+        // receiver-less `sort_key(xs, key_fn)`. Only a literal lambda could
+        // bind such a param before, so passing a NAMED function left the type
+        // param unbound and dropped the instantiation (#6007). A local of
+        // fn type shadows nothing useful here (its type is the coarse "fn",
+        // which carries no return), so an env binding means "cannot recover".
+        ExprIdent(fid) => {
+            if (env.elook(fid.name).len() > 0) { return ""; }
+            var fi: i32 = 0;
+            while (fi < funcs.len()) {
+                if (funcs[fi].name == fid.name && funcs[fi].receiver_name.len() == 0) {
+                    return funcs[fi].ret_type;
+                }
+                fi = fi + 1;
             }
             return "";
         },
@@ -6777,6 +6957,27 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                     }
                 },
                 ExprFieldAccess(fac) => {
+                    // Receiver method with its OWN type params (#6007):
+                    // `b.map(is_big)` where `map[U]` is declared on `Box[T]`.
+                    // Bind U from the arguments and rewrite to `b.map__boolean`,
+                    // registering the method instantiation for the worklist.
+                    // Checked before the module-qualified case because a
+                    // receiver here is a VALUE, not a module name, so the two
+                    // cannot both match — and mono_infer answers "" for a
+                    // module ident, which is what keeps them apart.
+                    var mrecv: string = mono_infer(fac.obj, env, funcs);
+                    if (mrecv.len() > 0) {
+                        var mbase: string = strip_struct_base(mrecv);
+                        var mmi: i32 = bg_method_index(funcs, mbase, fac.field);
+                        if (mmi >= 0) {
+                            var mextras: string[] = method_extra_tparams(funcs[mmi]);
+                            var mkey: string = infer_inst(infer_view(funcs[mmi], mextras), c.args, env, funcs);
+                            if (mkey.len() > 0) {
+                                cur = cur.iadd(method_inst_key(mbase, fac.field), mkey);
+                                return RExpr { rexpr: ExprCall { callee: ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + sanitize_key(mkey), line: fac.line, col: fac.col, ty: fac.ty }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
+                            }
+                        }
+                    }
                     // Module-qualified call `mod.f(args)`: the merged
                     // module names the function `mod.f`. Match the
                     // bounded-generic registry on that dotted name and
@@ -7568,6 +7769,9 @@ pub function monomorphize_module(mod: Module): Module {
     var bi: i32 = 0;
     while (bi < funcs.len()) {
         if (funcs[bi].receiver_name.len() == 0 && funcs[bi].type_params.len() > 0) { any_bg = true; }
+        // A method carrying its own type params is monomorphised here too
+        // (#6007) — on those params only; the struct pass handles the receiver.
+        if (method_extra_tparams(funcs[bi]).len() > 0) { any_bg = true; }
         bi = bi + 1;
     }
     if (!any_bg) { return mod; }
@@ -7582,6 +7786,11 @@ pub function monomorphize_module(mod: Module): Module {
         var fd: FuncDecl = funcs[i];
         if (fd.receiver_name.len() == 0 && fd.type_params.len() > 0) {
             // skip — will be cloned
+        } else if (method_extra_tparams(fd).len() > 0) {
+            // skip — the generic METHOD template is replaced by its clones
+            // (#6007). Keeping it would leave its own params unbound, and the
+            // struct pass would then mangle `Box[U]` to the struct name
+            // `Box__U`, which nothing emits.
         } else {
             var env: MEnv = env_from_params(fd.params);
             var rb: RStmts = mono_stmts(fd.body, env, funcs, ins, fd.ret_type);
@@ -7608,6 +7817,24 @@ pub function monomorphize_module(mod: Module): Module {
         var ct: string = ins.itypes[wi];
         if (done.ihas(nm, ct)) { wi = wi + 1; continue; }
         done = done.iadd(nm, ct);
+        // Method instantiation (#6007): `Box#map` + key `boolean` clones
+        // `map[U]` to `map__boolean` with U substituted, receiver intact.
+        if (mi_name(nm).len() > 0) {
+            var mmj: i32 = bg_method_index(funcs, mi_base(nm), mi_name(nm));
+            if (mmj >= 0) {
+                var mcl: FuncDecl = clone_bg_method(funcs[mmj], method_extra_tparams(funcs[mmj]), ct);
+                var mcenv: MEnv = env_from_params(mcl.params);
+                var mcrb: RStmts = mono_stmts(mcl.body, mcenv, funcs, ins, mcl.ret_type);
+                ins = mcrb.rins3;
+                rewritten = rewritten.append(FuncDecl {
+                    name: mcl.name, receiver_name: mcl.receiver_name, receiver_type: mcl.receiver_type,
+                    type_params: mcl.type_params, params: mcl.params, ret_type: mcl.ret_type, body: mcrb.rstmts, line: mcl.line, col: mcl.col,
+                    import_iface: mcl.import_iface, import_wit: mcl.import_wit, type_param_count: mcl.type_param_count, bound_traits: [], fip: mcl.fip, ret_str: mcl.ret_str
+                });
+            }
+            wi = wi + 1;
+            continue;
+        }
         var gi: i32 = bg_index(funcs, nm);
         if (gi >= 0) {
             var cl: FuncDecl = clone_bg(funcs[gi], ct);
