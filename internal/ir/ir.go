@@ -7231,7 +7231,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// included now that they free their env at last reference.
 			b.emitAliasInc(n.Value)
 		}
-		b.emitRcDecLocalsAtExit()
+		// `return f(…, p, …)` handing an `own` param straight on to another
+		// `own` parameter: the callee took the reference, so this return's
+		// sweep must not also release it. Per-site, so the OTHER returns keep
+		// sweeping p — which is what lets the transfer be claimed at all on a
+		// branchy function (computeReturnOwnMoves, #6125).
+		b.emitRcDecLocalsAtExitExcept(b.rc.returnOwnMove[n])
 		b.emit(Op{Kind: OpReturn})
 	case *ast.Defer:
 		// Find this Defer's index in the pre-collected list

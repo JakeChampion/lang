@@ -75,6 +75,14 @@ type rcPlan struct {
 	// transfer the exit sweep does NOT pay for, so it needs a compensating
 	// retain — see ownArgNeedsRetain.
 	ownCallMoveArgs map[ast.Node]bool
+	// returnOwnMove[ret] names the `own` param that THIS return statement
+	// transfers onward, so the sweep it emits skips that one param while
+	// every other return keeps its own. movedLocals cannot say this: it is
+	// whole-function, so the textually-last occurrence is the only one it
+	// can claim, and on a branchy function the transfers that are NOT last
+	// pay a compensating retain instead — one full buffer copy per call
+	// through the callee (#6125). Computed by computeReturnOwnMoves.
+	returnOwnMove map[ast.Node]string
 	// ctorAliasInced[name] records a local that received a CONSTRUCTION
 	// alias-inc — its reference was retained into a container literal
 	// (array / tuple / struct field / enum payload) while the local itself
@@ -240,6 +248,9 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.moveSites = map[ast.Node]bool{}
 	b.rc.ownCallMoveArgs = map[ast.Node]bool{}
 	b.rc.movedLocals = b.computeMovedLocals()
+	// Per-RETURN-SITE own-param transfers, which the whole-function
+	// movedLocals above cannot express (#6125).
+	b.rc.returnOwnMove = b.computeReturnOwnMoves()
 	b.rc.ctorAliasInced = b.computeCtorAliasInced()
 	b.rc.borrowedMapFieldResults = b.computeBorrowedMapFieldResults()
 	b.rc.arraySetInc = b.computeArraySetIncs()
@@ -4179,6 +4190,115 @@ func computeGrowParams(prog *ast.Program, info *checker.Info) map[string][]uint8
 		}
 	}
 	return grow
+}
+
+// computeReturnOwnMoves finds the `return f(…, p, …)` sites that hand THIS
+// function's `own` param p straight on to another `own` parameter, and claims
+// each as a transfer: the argument stops paying the compensating retain, and
+// the sweep emitted at that one return skips p.
+//
+// The whole-function movedLocals cannot express this. Move-on-call claims an
+// own param only at its textually-LAST occurrence, so on a function shaped
+//
+//	if (…) { return inner(p, k); }   // a transfer, but not the last occurrence
+//	…
+//	return p;                        // the last occurrence
+//
+// every early return pays `ownArgNeedsRetain`'s retain instead. The retain is
+// sound but expensive: the callee then sees the value at rc>1, so its first
+// append copies the whole buffer — one copy per call. That is 63 MB on a
+// single arm64 compile, all of it in the .data emitters
+// arm64_gas_data_ascii / _data_le, which are exactly this shape (#6125).
+//
+// The claim is sound WITHOUT a liveness analysis because the sweep is emitted
+// per return site (emitRcDecLocalsAtExitExcept): the function leaves through
+// this return, so excluding p here says nothing about the paths that leave
+// through a different one, and each of those still sweeps p normally. What the
+// site must guarantee is that p is transferred exactly ONCE along it, hence:
+//
+//   - exactly one occurrence of p anywhere in the return statement, so a
+//     `return f(p, g(p))` — two transfers, one sweep — cannot qualify;
+//   - the occurrence is a bare ident at an `own` position of a direct call;
+//   - the function has no defers and is not pair-form, because those returns
+//     lower through paths that emit their own sweep and would not consult
+//     this map while the retain had already been dropped.
+//
+// The retain it removes was only ever balancing the sweep dec that the
+// exclusion now removes too, so the net rc is unchanged — one release, at the
+// callee, exactly as for the last-occurrence case move-on-call already claims.
+func (b *builder) computeReturnOwnMoves() map[ast.Node]string {
+	out := map[ast.Node]string{}
+	if b.fn.Body == nil || b.thisIsPair || len(b.info.OwnFuncs) == 0 {
+		return out
+	}
+	var defers []*ast.Defer
+	collectDefers(b.fn.Body, &defers)
+	if len(defers) > 0 {
+		return out
+	}
+	ownParam := map[string]bool{}
+	for _, p := range b.fn.Params {
+		// Only a param the sweep actually decs can be excluded from it; for
+		// any other the retain is not emitted either (ownArgNeedsRetain), so
+		// dropping it would release a reference this frame does not own.
+		if p.Own && rcTrackedSlotType(p.Type) && b.rc.freeEligible[p.Name] {
+			ownParam[p.Name] = true
+		}
+	}
+	if len(ownParam) == 0 {
+		return out
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		ret, ok := n.(*ast.Return)
+		if !ok || ret.Value == nil {
+			return true
+		}
+		counts := map[string]int{}
+		ast.Walk(ret.Value, func(inner ast.Node) bool {
+			if id, isID := inner.(*ast.Ident); isID {
+				counts[id.Name]++
+			}
+			return true
+		})
+		ast.Walk(ret.Value, func(inner ast.Node) bool {
+			if _, claimed := out[ret]; claimed {
+				return false
+			}
+			call, isCall := inner.(*ast.Call)
+			if !isCall {
+				return true
+			}
+			callee, isID := call.Callee.(*ast.Ident)
+			if !isID {
+				return true
+			}
+			if _, isLocal := b.locals[callee.Name]; isLocal {
+				return true // shadowed by a local — not a direct call
+			}
+			flags, isOwn := b.info.OwnFuncs[callee.Name]
+			if !isOwn {
+				return true
+			}
+			for i := 0; i < len(call.Args) && i < len(flags); i++ {
+				if !flags[i] {
+					continue
+				}
+				arg, isArgID := call.Args[i].(*ast.Ident)
+				if !isArgID || !ownParam[arg.Name] || counts[arg.Name] != 1 {
+					continue
+				}
+				if b.rc.movedLocals[arg.Name] || b.rc.ownCallMoveArgs[arg] {
+					continue // move-on-call already claimed it whole-function
+				}
+				out[ret] = arg.Name
+				b.rc.ownCallMoveArgs[arg] = true
+				return false
+			}
+			return true
+		})
+		return true
+	})
+	return out
 }
 
 // computeCtorAliasInced collects every local that a container construction
