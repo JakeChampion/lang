@@ -81,8 +81,8 @@ current implementation is already the right answer.
 | f64 → shortest string | Dragonbox (#6161) | Dragonbox / Schubfach | **DONE** |
 | f64 → fixed/scientific | `to_string_prec` | Ryū Printf | GAP, low value |
 | string → f64 | **Eisel–Lemire + exact fallback** (#6167) | Eisel–Lemire + bigint fallback | **DONE** (landed on main independently) |
-| i32/i64 → string | Digit loop with `/ 10` | Lemire multiply-shift, 2-digit table | GAP, easy |
-| string → int | Byte-at-a-time accumulate | SWAR 8-digit chunks | GAP, easy |
+| i32/i64 → string | **2-digit table, exact-size buffer** | Lemire multiply-shift, 2-digit table | **DONE (this pass)** (magic-number division still open) |
+| string → int | Byte-at-a-time accumulate | SWAR 8-digit chunks | GAP — **blocked on the same raw-load question as wyhash (#6200)** |
 | Division by constant | Emitted as division | Magic-number reciprocal in the compiler | GAP, compiler-side |
 
 `parse_float` **is done** — Eisel-Lemire landed on main in #6167 (~2,400x)
@@ -148,7 +148,7 @@ collisions. That matters for the HTTP/JSON surface, less so for the compiler.
 | --- | --- | --- | --- |
 | Substring search | **Two-Way (Crochemore–Perrin)** | Two-Way; SIMD/`memchr` for short needles | **DONE (this pass)** |
 | Single-byte search | Scalar scan | SIMD `memchr`; SWAR viable | GAP |
-| Backward search (`last_index_of`, `rsplit_once`, `rpartition`) | Naive `O(n·m)` | Reverse Two-Way | GAP |
+| Backward search (`last_index_of`, `rsplit_once`, `rpartition`) | **Metered naive scan escalating to reverse Two-Way** | Reverse Two-Way | **DONE (this pass)** |
 | `split` / `replace` / `find_all` / `count` | Routed through the Two-Way core | — | **DONE (this pass)** |
 | Case-insensitive search | Naive | Case-folded Two-Way | GAP |
 | `memcpy` / `memcmp` | Runtime helpers | Vectorised, alignment-aware | BLOCKED (SIMD) / SWAR viable |
@@ -271,9 +271,9 @@ constraints above.
 
 **Tier 2 — unblocked, narrower**
 
-6. Reverse Two-Way for the backward-search family.
+6. ~~Reverse Two-Way for the backward-search family~~ — done, see below.
 7. SWAR group probing for `Map` (the SwissTable idea, minus the vectors).
-8. Lemire integer→string and SWAR string→int.
+8. ~~2-digit integer→string~~ — done, see below. SWAR string→int is blocked with #6200.
 9. Table-driven lexer classification.
 10. Magic-number constant division in the compiler.
 
@@ -295,9 +295,53 @@ position, one byte → a `memchr`-shaped scan, longer → Two-Way, which is
 `index_of`, `split`, `splitn`, `split_once`, `partition`, `find_all`, `count`,
 `count_matches`, `replace`, `replace_n`, and `replacen` all route through it,
 which also deleted thirteen hand-written copies of the same probe loop. The
-seven remaining `__substr_eq` call sites are the backward searches and the
-anchored prefix/suffix strip loops, which are a separate piece of work (see the
-backward-search row above).
+remaining `__substr_eq` call sites are the anchored prefix/suffix strip loops,
+which are correctly `O(m)` per iteration and want no search algorithm at all.
+
+**Integer→string takes two digits per division.** `core/int`'s `int_to_string`
+/ `__int_to_string_u64` were one divide AND one modulo per decimal digit,
+written backwards into an over-sized scratch buffer and then COPIED into a
+right-sized one — ten divisions, ten modulos, and two allocations for a
+ten-digit number. They now index a 200-byte digit-pair table two digits at a
+time, and compute the width up front (`__int_u32_digits`, a comparison ladder)
+so the result is written straight into an exactly-sized buffer with nothing to
+re-pack. Five divisions and one allocation for the same number. Measured on 4M
+i32 conversions, x86-64: **0.721s → 0.463s**.
+
+That is short of the SOTA entry, which is Lemire's multiply-shift: replace the
+division entirely with a fixed-point reciprocal multiply. The obstacle is not
+in the stdlib — none of the backends turn a division by a compile-time constant
+into the multiply-and-shift a C compiler emits, so writing the reciprocal by
+hand in Fern means writing a 64-bit multiply-high the backends would then lower
+badly. That is the magic-number-division row further down, and it is where the
+remaining factor lives.
+
+**`parse_int` is untouched, deliberately.** Its SOTA form is SWAR: load eight
+digit bytes as one 64-bit word and fold them with three multiplies. That needs
+an unaligned 8-byte load out of a string, which the language has no way to
+express — exactly the blocker on wyhash (#6200). Halving the loop to two digits
+at a time was possible, but on the 1-10 digit strings `parse_int` actually sees
+it trades a real increase in branching for a handful of iterations, so it was
+left alone rather than half-done.
+
+**Backward search is linear too, by escalation rather than replacement.**
+`last_index_of` / `rfind` / `rsplit_once` / `rpartition` shared a naive
+right-to-left probe loop, `O(n·m)` worst case. They now share
+`__str_rfind_from`, which dispatches like its forward sibling — the gap for an
+empty needle, a backward `memchr`-shaped scan for one byte — and for anything
+longer runs the naive scan under a LINEAR COMPARISON BUDGET, escalating to the
+reverse Two-Way (reverse both strings, run the forward algorithm, map the index
+back) once the budget is spent.
+
+The budget is the whole design, and it exists because reverse Two-Way is not a
+free upgrade the way the forward one was. Forward Two-Way is `O(1)` space;
+reverse Two-Way needs an `O(n)` copy of the haystack to run the forward
+algorithm over. Reversing a megabyte to find a two-byte separator the naive
+scan would have hit twenty bytes in is a pessimisation. Under the budget the
+common case (a short separator near the end, which is what `rsplit_once` is
+usually asked for) keeps its `O(1)` space and never allocates, while the
+quadratic case gets its linear bound. Measured on the adversarial shape — 40 KB
+of `a`, needle 2000×`a`+`b` — **2.655s → 0.014s**.
 
 The honest framing: on ordinary text where the first byte rarely matches, the
 naive scan was already about `n` comparisons and Two-Way is comparable. The win

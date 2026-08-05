@@ -43275,6 +43275,23 @@ function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.F
             return InlineCloRes { expr: marker, funcs: funcs.append(wf), counter: counter + 1 };
         },
         parser.ExprIdent(id) => {
+            // A PARAMETER of the enclosing function is not a module fn-name, even
+            // when a module function happens to share its name — the parameter
+            // shadows it. The value is already an env box in a slot, so decline
+            // and leave the ident alone; that is exactly the path taken when the
+            // names do not collide.
+            //
+            // Without this guard the trampoline below was built against the
+            // MODULE function, so `f(target)` where `target` is a fn-typed
+            // parameter emitted `call __fn_target` — a hardcoded call to an
+            // unrelated top-level function of the same name. No diagnostic, no
+            // crash: a running binary that invokes the wrong function (#6191).
+            // std/fuzz hit it because its parameter is literally named `target`
+            // and fuzz programs conventionally name their target function the
+            // same thing.
+            if (lift_ident_is_param(fd, id.name)) {
+                return InlineCloRes { expr: e, funcs: funcs, counter: counter };
+            }
             // Bare fn-name field (`Box { f: dbl }`): build a trampoline calling it.
             var wn2: string = fd.name + "$wrap" + util.i32_to_string(counter);
             var hr: HoistResult = make_wrap_named_func(id.name, wn2, mfuncs);
@@ -43300,6 +43317,33 @@ function lift_callee_param_is_fn(mfuncs: parser.FuncDecl[], callee: string, idx:
         i = i + 1;
     }
     return false;
+}
+
+// lift_ident_is_param reports whether `name` is bound LOCALLY in `fd` — as its
+// receiver, one of its parameters, or a `var` in its body. Any of those SHADOWS
+// a module function of the same name, so a lift-pass path that would otherwise
+// resolve a bare ident against the module function table has to check this
+// first (#6191, see try_fn_field_value).
+//
+// The body scan is not belt-and-braces: it is what covers CAPTURES. A lambda
+// lifted to a `$clo` function reads each captured value through a synthesized
+// `var <cap> = __env[1+i]` at the top of its body, so inside the lifted
+// function a capture is a local `var`, not a parameter. `std/fuzz`'s receiver
+// method — `r.it(name, () => fuzz_run(seeds, iterations, target))` — captures
+// `target` exactly that way, and it is the DOCUMENTED entry point, so a
+// param-only guard would have left the real API broken while making the
+// direct-call form look fixed.
+function lift_ident_is_param(fd: parser.FuncDecl, name: string): boolean {
+    if (fd.receiver_name == name && fd.receiver_name.len() > 0) { return true; }
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        if (fd.params[i].name == name) { return true; }
+        i = i + 1;
+    }
+    var bound: string[] = [];
+    var b: i32 = 0;
+    while (b < fd.body.len()) { bound = astwalk.collect_bound_stmt(fd.body[b], bound); b = b + 1; }
+    return util.index_of_str(bound, name) >= 0;
 }
 
 // lift_module_fn_arity returns the parameter count of receiver-less module

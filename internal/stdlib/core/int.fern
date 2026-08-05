@@ -13,57 +13,100 @@
 // ignoring case). Used by the `to_binary` / `to_oct` / `to_hex`
 // / `parse_hex_int` / etc. method-style sugar in std/i32.
 
+// __int_pair_table is "00", "01", … "99" concatenated: the two ASCII digits of
+// `d` (0..99) live at offsets `2*d` and `2*d + 1`. It is what lets the
+// conversion loops below consume TWO decimal digits per division.
+//
+// A string rather than a `u8[]` so it is a static constant on every backend —
+// indexing a string yields a byte, and no allocation or one-time init is
+// needed.
+function __int_pair_table(): string {
+    return "00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899";
+}
+
+// __int_u32_digits returns how many decimal digits `u` needs, by a comparison
+// ladder rather than by dividing.
+//
+// Knowing the width UP FRONT is what lets the conversion write straight into
+// an exactly-sized buffer. The old shape could not: it discovered the width by
+// dividing until zero, so it had to fill an over-sized scratch buffer from the
+// right and then COPY the right-aligned tail into a second buffer. That copy
+// is now gone — every conversion allocated and filled two buffers where one
+// would do.
+//
+// Ten comparisons worst case, and a small integer (the common case: loop
+// counters, indices, sizes) exits after one or two.
+function __int_u32_digits(u: u32): i32 {
+    if (u < (10 as u32)) { return 1; }
+    if (u < (100 as u32)) { return 2; }
+    if (u < (1000 as u32)) { return 3; }
+    if (u < (10000 as u32)) { return 4; }
+    if (u < (100000 as u32)) { return 5; }
+    if (u < (1000000 as u32)) { return 6; }
+    if (u < (10000000 as u32)) { return 7; }
+    if (u < (100000000 as u32)) { return 8; }
+    if (u < (1000000000 as u32)) { return 9; }
+    return 10;
+}
+
 // `int_to_string(n)` — signed-i32 → ASCII decimal. The
 // negation `n = 0 - n` is unsigned-safe for INT_MIN because
 // we then read the result as u32 for the divmod chain, and
 // -INT_MIN's unsigned value is exactly `2^31`.
 //
-// The digits are written backwards into `scratch[end..N]` then
-// packed into a right-sized buffer with slot-aware array ops
-// (`.with` / index), not a raw `__memcpy`: a byte copy assumes a
-// PACKED `u8[]`, which holds on native / wasm but not on the
-// self-hosted runtime (8-byte-slotted `u8[]`). The element-wise
-// copy is layout-agnostic, so it is correct on every backend and
-// lowers on the self-host IR path.
+// TWO DIGITS PER DIVISION, into an exactly-sized buffer. This was one divide
+// and one modulo per digit, into an over-sized scratch buffer, followed by a
+// full copy pass into a right-sized one — so a ten-digit number cost ten
+// divisions, ten modulos, and two allocations. It now costs five of each and
+// one allocation: `u % 100` indexes `__int_pair_table` for both digits at
+// once, and `__int_u32_digits` gives the width before the loop starts so
+// there is nothing to re-pack afterwards.
+//
+// Division is the expensive part — tens of cycles on every target here, and
+// none of the backends turn a division by a runtime-shaped constant into the
+// multiply-and-shift a C compiler would (see #6199 and the
+// magic-number-division row in docs/SOTA-STDLIB-BLUEPRINT.md). Halving the
+// count is the win available without that.
+//
+// Digits are written backwards into the buffer with slot-aware array ops
+// (`.with` / index), not a raw `__memcpy`: a byte copy assumes a PACKED
+// `u8[]`, which holds on native / wasm but not on the self-hosted runtime
+// (8-byte-slotted `u8[]`). The element-wise form is layout-agnostic, so it is
+// correct on every backend and lowers on the self-host IR path.
 pub function int_to_string(n: i32): string {
-    var scratch: u8[] = __alloc_u8(16);
-    var end: i32 = 16;
     var neg: boolean = false;
     if (n < 0) {
         neg = true;
         n = 0 - n;
     }
     var u: u32 = n as u32;
-    if (u == (0 as u32)) {
-        end = end - 1;
-        scratch = scratch.with(end, 48 as u8);
+    var ndig: i32 = __int_u32_digits(u);
+    var total: i32 = ndig;
+    if (neg) { total = total + 1; }
+    var buf: u8[] = __alloc_u8(total);
+    var tbl: string = __int_pair_table();
+    var w: i32 = total;
+    // Two digits at a time from the least significant end.
+    while (u >= (100 as u32)) {
+        var r: i32 = (u % (100 as u32)) as i32;
+        u = u / (100 as u32);
+        w = w - 2;
+        buf = buf.with(w, tbl[r * 2] as u8);
+        buf = buf.with(w + 1, tbl[r * 2 + 1] as u8);
+    }
+    // 1 or 2 digits left. Reading both from the table covers the two-digit
+    // remainder without a second division; the one-digit case takes the low
+    // half only, which is why the width was computed up front.
+    var last: i32 = u as i32;
+    if (u >= (10 as u32)) {
+        w = w - 2;
+        buf = buf.with(w, tbl[last * 2] as u8);
+        buf = buf.with(w + 1, tbl[last * 2 + 1] as u8);
     } else {
-        while (u != (0 as u32)) {
-            end = end - 1;
-            scratch = scratch.with(end, (((u % (10 as u32)) as i32) + 48) as u8);
-            u = u / (10 as u32);
-        }
+        w = w - 1;
+        buf = buf.with(w, (last + 48) as u8);
     }
-    if (neg) {
-        end = end - 1;
-        scratch = scratch.with(end, 45 as u8);
-    }
-    var n_bytes: i32 = 16 - end;
-    // Pack the right-aligned digits `scratch[end..16]` into a fresh
-    // `n_bytes`-long buffer using slot-aware array ops (`.with` / index)
-    // rather than a raw `__memcpy` over `scratch as usize`. A raw byte copy
-    // assumes a PACKED `u8[]` (one byte per element) — true on the native /
-    // wasm backends but NOT on the self-hosted runtime, whose `u8[]` stores
-    // each element in an 8-byte slot. The element-wise copy is correct on
-    // every backend because `.with` / indexing / `string_from_bytes_unchecked` are all
-    // layout-aware, so this is the portable shape (and lowers on the
-    // self-host IR path, which the `__memcpy` form did not).
-    var buf: u8[] = __alloc_u8(n_bytes);
-    var i: i32 = 0;
-    while (i < n_bytes) {
-        buf = buf.with(i, scratch[end + i]);
-        i = i + 1;
-    }
+    if (neg) { buf = buf.with(0, 45 as u8); }
     return string_from_bytes_unchecked(buf);
 }
 
@@ -76,33 +119,41 @@ pub function int_to_string(n: i32): string {
 // Same usize-not-i32 contract as int_to_string above — see
 // that comment for the native-arm64 high-mmap-address
 // rationale.
+// Same two-digits-per-division shape as int_to_string, at 64 bits. The width
+// is counted by repeated division by 100 rather than by a comparison ladder:
+// a u64 ladder would be twenty comparisons, and the count loop here runs at
+// most ten times because it consumes two digits per step.
 pub function __int_to_string_u64(mag: i64, neg: i32): string {
-    var scratch: u8[] = __alloc_u8(24);
-    var end: i32 = 24;
-    if (mag == (0 as i64)) {
-        end = end - 1;
-        scratch = scratch.with(end, 48 as u8);
+    var m: u64 = mag as u64;
+    var ndig: i32 = 1;
+    var probe: u64 = m;
+    while (probe >= (100 as u64)) {
+        ndig = ndig + 2;
+        probe = probe / (100 as u64);
+    }
+    if (probe >= (10 as u64)) { ndig = ndig + 1; }
+    var total: i32 = ndig;
+    if (neg != 0) { total = total + 1; }
+    var buf: u8[] = __alloc_u8(total);
+    var tbl: string = __int_pair_table();
+    var w: i32 = total;
+    while (m >= (100 as u64)) {
+        var r: i32 = (m % (100 as u64)) as i32;
+        m = m / (100 as u64);
+        w = w - 2;
+        buf = buf.with(w, tbl[r * 2] as u8);
+        buf = buf.with(w + 1, tbl[r * 2 + 1] as u8);
+    }
+    var last: i32 = m as i32;
+    if (m >= (10 as u64)) {
+        w = w - 2;
+        buf = buf.with(w, tbl[last * 2] as u8);
+        buf = buf.with(w + 1, tbl[last * 2 + 1] as u8);
     } else {
-        while (mag != (0 as i64)) {
-            end = end - 1;
-            scratch = scratch.with(end, ((((mag as u64) % (10 as u64)) as i32) + 48) as u8);
-            mag = ((mag as u64) / (10 as u64)) as i64;
-        }
+        w = w - 1;
+        buf = buf.with(w, (last + 48) as u8);
     }
-    if (neg != 0) {
-        end = end - 1;
-        scratch = scratch.with(end, 45 as u8);
-    }
-    var n_bytes: i32 = 24 - end;
-    // Slot-aware element copy of the right-aligned digits, not a raw
-    // `__memcpy` over `scratch as usize` — see int_to_string for why the
-    // byte-copy form miscompiles on the self-hosted runtime's slotted `u8[]`.
-    var buf: u8[] = __alloc_u8(n_bytes);
-    var i: i32 = 0;
-    while (i < n_bytes) {
-        buf = buf.with(i, scratch[end + i]);
-        i = i + 1;
-    }
+    if (neg != 0) { buf = buf.with(0, 45 as u8); }
     return string_from_bytes_unchecked(buf);
 }
 
