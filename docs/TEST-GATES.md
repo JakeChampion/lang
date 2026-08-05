@@ -47,6 +47,7 @@ what caught it.
 | Cliff corpus (`rc_arr_push_cliff_test.go`, `rc_call_result_materialise_test.go`, `rc_cliff_bytes_test.go`) | The NATIVE compiler emits no stray retain on the accumulator shapes it enumerates — i.e. they are not quadratic — and that the crossing COUNT and its byte WEIGHT stay in step | Over-*retains* on any other shape, and every self-host emitter |
 | Driver rc guard (`util.rc_underflow_guard`) | The compiler's OWN heap accounting stayed balanced while compiling | Leaks (an over-*retain* is silent), and anything outside the drivers |
 | `FERN_NATIVE_ASM=1` fixtures | The in-process assembler encodes what the backend emits | The gcc path, which the fallback silently hides behind |
+| `RUN_SECCOMP_CORPUS=1` (`TestSeccompFixtureCorpus`) | The seccomp filter is not too TIGHT: every runnable fixture behaves identically sandboxed and not | Whether the filter DENIES anything — that is `TestSeccompFilterDenies`. A permit-all filter passes this gate trivially |
 | Differential (`internal/e2e/diff_oracle_test.go`) | Two compilers agree on exit codes | Everything about memory — see below |
 | `scripts/selfhost-emit-hashes` (manual, before/after) | A refactor of the self-host compiler was PURE: the bytes it emits for the whole fixture corpus, on all three backends, are unchanged | Anything the corpus does not exercise. It says the output did not move, never that the output is right |
 

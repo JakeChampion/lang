@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,14 +25,16 @@ import (
 // --- Seccomp sandbox, runtime half (#6071) ------------------------
 //
 // internal/codegen/x86_64/seccomp_test.go decodes the emitted BPF and
-// pins its shape. These two tests cover what that cannot:
+// pins its shape. The tests here cover what inspecting the emitted form
+// cannot, each answering a different question a filter can fail:
 //
-//   - the filter actually LOADS (a seccomp(2) that quietly failed
-//     would leave every structural assertion passing and the process
-//     unprotected)
-//   - the filter is not too TIGHT, which is the real hazard — an
-//     over-tight filter is a crash, not a warning, and it would only
-//     show up on whichever runtime path nobody exercised.
+//   - does it LOAD? (a seccomp(2) that quietly failed would leave every
+//     structural assertion passing and the process unprotected)
+//   - does it DENY? (a filter permitting everything loads just fine)
+//   - is it too TIGHT — on four hand-written programs, and then across
+//     the whole fixture corpus? Over-tightness is the real hazard: it is
+//     a crash rather than a warning, and it surfaces on whichever
+//     runtime path nobody exercised.
 
 // buildSandboxed compiles src with the sandbox on or off and returns
 // the binary path. Native x86-64 only: seccomp is a Linux facility and
@@ -47,6 +50,20 @@ func buildSandboxed(t *testing.T, src string, sandbox bool) string {
 // for why that is the only way to test the deny path.
 func buildSandboxedPatched(t *testing.T, src string, sandbox bool, patch func(string) string) string {
 	t.Helper()
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	return buildSandboxedPath(t, srcPath, sandbox, patch)
+}
+
+// buildSandboxedPath is buildSandboxed over a source file already on disk,
+// so a fixture's imports resolve against its own directory rather than a
+// copy in a temp dir. The corpus gate below needs that; the inline-source
+// helpers above are a thin shim over it.
+func buildSandboxedPath(t *testing.T, srcPath string, sandbox bool, patch func(string) string) string {
+	t.Helper()
 	if runtime.GOARCH != "amd64" || runtime.GOOS != "linux" {
 		t.Skip("seccomp sandbox is x86-64 Linux only; qemu-user does not emulate it faithfully")
 	}
@@ -55,10 +72,6 @@ func buildSandboxedPatched(t *testing.T, src string, sandbox bool, patch func(st
 		t.Skip("emulated x86-64 runner: seccomp semantics are not faithful under qemu-user")
 	}
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
 	prog, _, err := modload.Load(srcPath)
 	if err != nil {
 		t.Fatalf("modload: %v", err)
@@ -316,4 +329,97 @@ func TestSeccompFilterDenies(t *testing.T) {
 	if code := ctl.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("control run exited %d, want 0 — execve(NULL) should merely return EFAULT", code)
 	}
+}
+
+// TestSeccompFixtureCorpus is #6071's over-tightness gate at corpus scale,
+// and the precondition for ever defaulting the sandbox on.
+//
+// TestSeccompDoesNotBreakWorkingPrograms covers four hand-written
+// programs. Four programs cannot establish that a filter derived from
+// one program's emitted syscalls is right for every program, and the
+// failure mode is not subtle: a syscall the filter forgot is a SIGSYS
+// kill, in someone's build, on whichever path nobody exercised. The
+// fixture corpus is the broadest body of real Fern programs there is, so
+// it is the honest evidence.
+//
+// Each fixture runs twice — sandboxed and not — and must behave
+// identically. Comparing against the unsandboxed run rather than against
+// the fixture's recorded expectation is deliberate: it isolates the
+// filter as the only variable, so a fixture that is already failing for
+// unrelated reasons cannot be mistaken for a sandbox regression.
+//
+// Env-gated because it builds and links ~330 binaries twice. CI runs it
+// on its own lane; locally, reach for it when changing the syscall
+// inventory or the filter.
+func TestSeccompFixtureCorpus(t *testing.T) {
+	if os.Getenv("RUN_SECCOMP_CORPUS") != "1" {
+		t.Skip("set RUN_SECCOMP_CORPUS=1 to run the sandbox over the whole fixture corpus (~330 fixtures, built twice)")
+	}
+	root := "testdata/cases"
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read %s: %v", root, err)
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		t.Fatalf("no fixtures under %s — the gate would pass vacuously", root)
+	}
+
+	ran := 0
+	for _, name := range names {
+		dir, err := filepath.Abs(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("abs %s: %v", name, err)
+		}
+		f := loadFixture(t, dir)
+		if f.compileError {
+			continue // never produces a binary
+		}
+		ran++
+		t.Run(name, func(t *testing.T) {
+			plainBin := buildSandboxedPath(t, f.mainPath, false, nil)
+			sandboxBin := buildSandboxedPath(t, f.mainPath, true, nil)
+
+			plainOut, plainCode := runSandboxCandidate(plainBin, f.stdin)
+			sandboxOut, sandboxCode := runSandboxCandidate(sandboxBin, f.stdin)
+
+			if plainCode != sandboxCode {
+				t.Errorf("exit code differs: plain %d, sandboxed %d — the filter is missing a syscall this program legitimately makes (a SIGSYS shows up as %d)",
+					plainCode, sandboxCode, 128+int(syscall.SIGSYS))
+			}
+			if plainOut != sandboxOut {
+				t.Errorf("stdout differs:\n plain     = %q\n sandboxed = %q", plainOut, sandboxOut)
+			}
+		})
+	}
+	if ran == 0 {
+		t.Fatal("every fixture was a compile-error case — nothing was actually run under the filter")
+	}
+	t.Logf("%d runnable fixtures exercised under the seccomp filter", ran)
+}
+
+// runSandboxCandidate runs bin with stdin and returns its stdout and an
+// exit code, rendering a signal death as 128+signo so a SIGSYS kill is
+// comparable against an ordinary exit rather than collapsing to -1.
+func runSandboxCandidate(bin, stdin string) (string, int) {
+	cmd := exec.Command(bin)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	out, _ := cmd.Output()
+	code := 0
+	if ps := cmd.ProcessState; ps != nil {
+		if ws, ok := ps.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			code = 128 + int(ws.Signal())
+		} else {
+			code = ps.ExitCode()
+		}
+	}
+	return string(out), code
 }

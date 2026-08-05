@@ -85,3 +85,24 @@ jobs:
         env:
           FERN_NATIVE_ASM: "1"
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestFernFixtures$' ./internal/e2e/
+
+  seccomp-corpus-x86_64:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
+    # #6071's over-tightness gate at corpus scale, and the precondition for
+    # ever defaulting the sandbox on. Four hand-written programs cannot show
+    # that a filter derived from one program's emitted syscalls is right for
+    # every program; a syscall the filter forgot is a SIGSYS kill on whichever
+    # path nobody exercised. Own lane because it builds every runnable fixture
+    # twice — sandboxed and not — and compares behaviour.
+    name: seccomp-corpus-x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+        with:
+          gotestsum: "true"
+      - name: go test (fixture corpus under the seccomp filter)
+        env:
+          RUN_SECCOMP_CORPUS: "1"
+        run: gotestsum --format pkgname-and-test-fails -- -run '^TestSeccompFixtureCorpus$' ./internal/e2e/ -timeout 30m
