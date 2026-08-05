@@ -142,11 +142,25 @@ decision and the type decision have to share the leaf, which is why
 `lower_expr`'s `gw` and `lower_i64`'s ExprIndex arm route through `ix_type_tag`
 too. Pinned by `TestSelfHostAnnotateIndexIR_X86_64`.
 
-Residual on this carrier: `mono_expr` / `ms_expr` / `me_expr` (parser.fern)
-rebuild an `ExprIndex` with `ty: ""`, so a monomorphised clone falls back to the
-structural walk. That matches what those three sites already do with `unchecked`
-and keeps clone behaviour byte-identical; propagating the tag through
-monomorphisation is a separate slice.
+**A carrier must survive every rebuild, and monomorphisation is a rebuild.**
+`mono_expr` / `ms_expr` / `me_expr` (parser.fern) rebuild every expression when
+cloning a generic function, and they originally rebuilt an `ExprIndex` with
+`ty: ""`. #6165 recorded that as a benign residual on the theory that a clone
+falling back to the structural walk merely loses precision. That was wrong: it
+is a **miscompile**, and one the path probe cannot see — the module still routes
+`ir`, the compiler still exits 0, and the clone reads an f64 element as a 4-byte
+i32. `pick[T]`'s `pick__i32` clone emitted wasm the validator rejects.
+
+These same three sites also drop `unchecked`, and that stays dropped. The
+asymmetry is the point: losing the bounds-elide mark is **conservative** (the
+clone keeps its bounds check), losing the type tag is **not**. "This rebuild
+already discards a field, so discarding one more is consistent" is exactly the
+reasoning that produced the bug.
+
+The tag stays valid across cloning because annotation runs on the ERASED form —
+a bare type parameter stamps `""`, so only concrete tags survive to be copied,
+which is the same reason `subst_expr` already carried it. Pinned by
+`TestSelfHostAnnotateIndexMonoIR_X86_64`.
 
 ### A carrier is only as good as the checker behind it
 
@@ -192,8 +206,10 @@ Three consequences:
 3. **Literal settling in the self-host checker is its own project**, not a slice
    of this one — it is an inference mechanism the checker lacks, and it would
    move the inferred type of every unsuffixed literal in every program, against
-   a byte-identical self-compile gate. It should be scoped and measured
-   separately, with the native settling pass as the reference.
+   a byte-identical self-compile gate. Scoped separately in
+   `docs/SELFHOST-LITERAL-SETTLING.md`, with the native settling pass
+   (`settleNumeric` / `settleInt` / `checkLiteralFits`, driven from 66 call
+   sites) as the reference.
 
 Two ordering facts constrain how a carrier is read, and both cost a debugging
 session to rediscover:
