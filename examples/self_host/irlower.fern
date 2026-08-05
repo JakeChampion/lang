@@ -20486,6 +20486,26 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     // its own loop), and block-level reuse donors are struct/tuple boxes
     // (never Option locals) — so each box is freed at most once.
     var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.structs);
+    // Consumed ALL-SCALAR enum free, per block (#6127). lower_func runs
+    // consumed_scalar_enum_frees over the fn's TOP-LEVEL statements only, so a
+    // scalar-payload enum declared inside a loop or an if — `while { var e =
+    // Box(k, 2); match (e) { … } }` — was reclaimed NOWHERE and leaked its box
+    // per iteration. This is the same top-level-only gap #4357 closed for
+    // rc-payload OPTIONS with the rcopt line above and for rc-payload ENUMS with
+    // collect_fresh_rcenum_names; the scalar-enum half was never mirrored.
+    // Measured 19200 bytes over 100 rounds where the byte-identical shape at fn
+    // top level is flat at 0.
+    //
+    // Same classifier and gates as the fn-level pass, applied to THIS block's
+    // statement list, and each box is freed at most once:
+    //   - lower_block runs for NESTED bodies only (the fn body has its own loop),
+    //     so a top-level candidate is never also claimed here;
+    //   - a candidate requires its `var` and its consuming `match` in ONE
+    //     statement list, so a var matched in a different block never qualifies;
+    //   - enum_donor_reuse_sites takes the fn-level EnumFrees and scans fn.body
+    //     flat, so a nested-block box can never have been donated to a reuse site
+    //     (which is what the fn-level emission's edon check guards against).
+    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.structs);
     var st: LowerState = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -20634,6 +20654,27 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
                 }
             }
             rk = rk + 1;
+        }
+        // Consumed scalar-enum free: if statement i is the consuming match of a
+        // block-local candidate, dec its box and zero the slot now — the
+        // block-level mirror of lower_func's enumfrees emission. Zeroing matters
+        // for a LOOP body: the slot is re-declared next iteration, and a stale
+        // pointer there would be dec'd twice. Emitted BEFORE retire_locals, while
+        // the name still resolves — after retirement the slot is unfindable, which
+        // is why the function-exit sweep cannot do this job.
+        var sef: i32 = 0;
+        while (sef < scenfrees.idxs.len()) {
+            if (scenfrees.idxs[sef] == i) {
+                var sslot: i32 = st.slot_of(scenfrees.names[sef]);
+                if (sslot >= st.n_params) {
+                    st = st.emit(ir.op_load_local(sslot));
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                    st = st.emit(ir.op_const_i32(0));
+                    st = st.emit(ir.op_store_local(sslot));
+                }
+            }
+            sef = sef + 1;
         }
         if (stmt_scopes_bindings(stmts[i])) { st = st.retire_locals(sbase); }
         i = i + 1;
