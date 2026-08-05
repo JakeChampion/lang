@@ -134,6 +134,19 @@ leaves every `ty` empty and gets the structural walk unchanged.
 | `ExprIndex.ty` | #6165 | `ix_type_tag` — the leaf behind the `ExprIndex` arms of `expr_is_f64` and `infer_expr_width` AND the two load sites (`lower_expr`'s `arr_get` width, `lower_i64`'s `arr_get_i64`), so the element width and the value's downstream type answer from one place |
 | `ExprSlice.ty` | this slice | the `ExprSlice` arm of `lower_expr` — both the `expr_is_arr_src` **gate** (a non-empty tag proves array-ness the walk cannot reach) and `slice_elem_is_wide` (the `arr_slice` element width). Names the SOURCE array's type, via the checker's `type_to_arrtag` |
 
+**Some holes need a consumer, not a carrier.** `mk()[i].N` — a tuple element
+behind an index of a call result — lowered the element as a 4-byte i32, failing
+the wasm validator on an f64. The cause was not a missing annotation:
+`expr_tuple_elem_tag`'s `ExprIndex` arm resolved the element tuple type from the
+slot's `arrarr_elem`, which only exists for a NAMED `(tuple)[]` local, and
+returned `""` for a call result. `ExprIndex.ty` had held the checker's answer for
+that node since #6165; the consumer simply never read it. Wiring it was three
+lines and needed no new field.
+
+Worth checking for before adding a carrier: the cheapest remaining wins in this
+migration are consumers that never learned to read an annotation already in
+place.
+
 **Not every carrier belongs in the shared tag vocabulary.** `ExprSlice.ty` needs
 an ARRAY spelling (`"f64[]"`), and `type_to_irtag` has no `TypeArray` arm — it
 returns `""` for every array-valued expression. Adding one there is the obvious

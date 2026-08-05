@@ -1008,6 +1008,15 @@ pub function expr_tuple_elem_tag(e: parser.Expr, n: i32, s: LowerState): string 
                 },
                 _ => {}
             }
+            // The slot walk above only reaches a NAMED (tuple)[] local. When the
+            // array is a call result or a nested chain — `mk()[i].N` — there is no
+            // slot to read, and returning "" here made the tuple-element read
+            // lower as a 4-byte i32: an f64 element then failed the wasm
+            // validator ("expected f64, found i32"). ExprIndex.ty (#6165) already
+            // carries the checker's type for this very node, and a tuple stamps
+            // its canonical "(f64, i32)" spelling, so the same tuple_type_elem_tag
+            // decoder reads element n out of it. Walk first, tag fills the hole.
+            if (ix.ty.len() >= 2 && ix.ty[0:1] == "(") { return tuple_type_elem_tag(ix.ty, n); }
             return "";
         },
         parser.ExprCall(tc) => {
