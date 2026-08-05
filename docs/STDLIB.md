@@ -240,7 +240,10 @@ Grouped by family:
   `between`, `truncate`, `ellipsis`, `first_line`
 - **Parse:** `parse_bool`, `parse_int`, `parse_hex_int`,
   `parse_bin_int`, `parse_int_radix(base)` (arbitrary base 2–36,
-  the general form behind the others), `parse_float`
+  the general form behind the others), `parse_float` — correctly
+  rounded (ties to even), bit-exact with Go's `strconv.ParseFloat`
+  for any number of digits, via Eisel-Lemire with an exact
+  big-integer fallback
 - **Build:** `repeat_char`
 
 ### `std/array`

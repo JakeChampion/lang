@@ -16,8 +16,15 @@ import (
 // lowers in place (a runtime value check alone can't distinguish reuse from a
 // fresh alloc). The self-host x86 struct box is allocated with `call
 // __fern_arr_box`, one per live construction.
-const crossTypeReuseDeadDonor = `struct Point { x: i32, y: i32 } struct Pair { a: i32, b: i32 } function main(): i32 { var p = Point { x: 3, y: 4 }; var s = p.x + p.y; var q = Pair { a: s, b: 9 }; return q.a + q.b; }`
-const crossTypeReuseLiveDonor = `struct Point { x: i32, y: i32 } struct Pair { a: i32, b: i32 } function main(): i32 { var p = Point { x: 3, y: 4 }; var q = Pair { a: 5, b: 9 }; return q.a + q.b + p.x + p.y; }`
+// `* k` (k == 1, so every value is unchanged) keeps these literals off the
+// STATIC-CONSTANT path (#6149): an all-scalar-literal aggregate is placed in
+// data, which allocates nothing and makes the reuse it would have fed moot —
+// correct, and strictly better, but it would leave this test measuring zero
+// against zero. A donor that genuinely allocates is what the reuse contract
+// below is about. (The constant/reuse interaction itself is pinned by
+// TestSelfHostConstAggregateIRX86_64's `reuse-shape-all-constant`.)
+const crossTypeReuseDeadDonor = `struct Point { x: i32, y: i32 } struct Pair { a: i32, b: i32 } function main(): i32 { var k = 1; var p = Point { x: 3 * k, y: 4 }; var s = p.x + p.y; var q = Pair { a: s, b: 9 }; return q.a + q.b; }`
+const crossTypeReuseLiveDonor = `struct Point { x: i32, y: i32 } struct Pair { a: i32, b: i32 } function main(): i32 { var k = 1; var p = Point { x: 3 * k, y: 4 }; var q = Pair { a: 5 * k, b: 9 }; return q.a + q.b + p.x + p.y; }`
 
 // Array-field cross-type pair: a dead Holder{id,items} reused for Bag{tag,data}
 // (identical [i32, i32[]] layout). Dead donor → the struct box is reused (3

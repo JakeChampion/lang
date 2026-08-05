@@ -82,8 +82,12 @@ var tupleReuseIRCases = []struct {
 	// (2), and the tuple box is REUSED (1, not 2) — so THREE boxes total, proving
 	// the tuple-box reuse fires while the struct elements construct normally. Value:
 	// a.1(5) → s=5; b.0=P{10,20}, b.1=9; 5 + 10 + 20 + 9 = 44.
+	// `* k` (k == 1, values unchanged) keeps the two struct ELEMENTS off the
+	// STATIC-CONSTANT path (#6149): placed in data they allocate nothing, and the
+	// case would count 1 box instead of 3 — no longer showing that the elements
+	// construct normally while the tuple box is reused.
 	{"reuse-struct-elem",
-		`struct P { x: i32, y: i32 } function main(): i32 { var a: (P, i32) = (P { x: 1, y: 2 }, 5); var s: i32 = a.1; var b: (P, i32) = (P { x: 10, y: 20 }, 9); return s + b.0.x + b.0.y + b.1; }`,
+		`struct P { x: i32, y: i32 } function main(): i32 { var k: i32 = 1; var a: (P, i32) = (P { x: 1 * k, y: 2 }, 5); var s: i32 = a.1; var b: (P, i32) = (P { x: 10 * k, y: 20 }, 9); return s + b.0.x + b.0.y + b.1; }`,
 		44, 3},
 	// Loop body: reuse now fires INSIDE the loop body too (irlower
 	// lower_loop_body) — `b` reuses the dead `a`'s box every iteration, so the loop

@@ -425,6 +425,12 @@ pub struct LowerState {
     // observable shared-buffer hazard — and counting it would wrongly disable the
     // hot VM `stack/heap/locals = …​.with(…)` in-place stores.
     aliased_names: string[],
+    // borrowed_names: the ARRAY/MAP names this function does not OWN — a
+    // param that is neither `own` nor inferred-moved, or a local bound from a
+    // field read whose source is still live (#6158). ONLY the `.with`
+    // self-reassign consults it; see borrowed_names_of for why it is not
+    // folded into aliased_names.
+    borrowed_names: string[],
     // xblock_pending: cross-block reuse pairings available to a construction
     // NESTED in the statement currently being lowered — encoded "recip|donor"
     // (recipient local name | dead block-top donor local name). lower_block sets
@@ -565,6 +571,12 @@ pub function (s: LowerState) slot_of(name: string): i32 {
 // in-place-vs-clone choice for the `a = a.with(i, v)` self-reassign (#3599).
 pub function (s: LowerState) is_aliased_name(name: string): boolean {
     return util.index_of_str(s.aliased_names, name) >= 0;
+}
+
+// is_borrowed_name reports whether `name` names a buffer this function does not
+// own (#6158). Consulted ONLY by the `.with` self-reassign's in-place gate.
+pub function (s: LowerState) is_borrowed_name(name: string): boolean {
+    return util.index_of_str(s.borrowed_names, name) >= 0;
 }
 
 // is_self_assign_reuse_name reports whether `name` is a local whose every record
@@ -1928,8 +1940,19 @@ pub function is_scalar_array_type(t: string): boolean {
 // the u64 tuple element slice — a separate increment). NOT used for enum
 // payloads (those need the element-width mark, not a plain mark_arr).
 pub function is_leaksafe_array_field(t: string): boolean {
-    return is_scalar_array_type(t) || t == "f64[]" || t == "i64[]" || t == "u32[]"
+    return is_scalar_array_type(t) || is_float_array_type_name(t) || t == "i64[]" || t == "u32[]"
         || is_subword_array_type(t);
+}
+
+// is_float_array_type_name reports whether the declared type name `t` is a
+// FLOAT array — one whose elements ride the 8-byte-stride f64 layout that
+// mark_f64arr tracks. Both `f64[]` and `f32[]` do: a scalar `f32` lowers to a
+// wasm f64, and the array-literal / Cell element paths already fold `f32` in
+// with `f64` (`celt == "f64" || celt == "f32"`). Spelling the pair once keeps
+// the declaration-driven sites from drifting apart, which is how `f32[]` came
+// to be classified as no array kind at all (#6175).
+pub function is_float_array_type_name(t: string): boolean {
+    return t == "f64[]" || t == "f32[]";
 }
 
 // is_subword_array_type reports whether `t` is a sub-32-bit integer-element
@@ -9675,6 +9698,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // evaluated once into a scratch local and re-loaded per copied field.
             if (!decl_is_struct(s.structs, slit.type_name)) { return s.fail(); }
             if (!decl_is_leaksafe(s.structs, slit.type_name)) { return s.fail(); }
+            // Every field a compile-time scalar literal (#6149): the whole box is
+            // a constant, so place it in static data instead of allocating and
+            // storing one per evaluation. Tested before any lowering below so the
+            // op replaces the entire struct_make sequence, field pushes included.
+            //
+            // REGISTER BACKENDS ONLY for now. wasm's static data is a linear-memory
+            // region whose base feeds the freelist and heap bases (fl_base_for /
+            // heap_base_for), so adding a second region there is a layout change,
+            // not an emit arm — slice 2. Until then wasm keeps struct_make, which
+            // is correct, just still allocating.
+            var cagg: ConstAgg = const_agg_of(slit, s.structs);
+            if (cagg.ok && !s.for_wasm()) {
+                return s.emit(ir.op_const_struct(slit.type_name, decl_field_count(s.structs, slit.type_name), cagg.values));
+            }
             if (slit.has_base) {
                 // The base may be an ident OR any struct-typed expression whose
                 // type resolves (a struct-returning call `mk()`, a struct field
@@ -13253,6 +13290,93 @@ function struct_lit_all_scalar(structs: parser.StructDecl[], name: string): bool
     return true;
 }
 
+// --- static aggregate constants (#6149) --------------------------------------
+//
+// `TypeI32 { is_char: false, width: 32, unsigned: false }` is a compile-time
+// constant, and the checker's nullary type constructors return one per call —
+// ~21% of every allocation the compiler makes, each box leaked (the run frees
+// 2,228 of 5,947). Recognised here and lowered to op_const_struct, which the
+// backends place in static data instead of allocating.
+//
+// Slice 1's admission is deliberately narrow: a NO-BASE literal of a declared
+// struct / variant whose every DECLARED field is an i32-width scalar and whose
+// value is a literal of that kind. Wider fields (i64 / f64), strings and nested
+// aggregates need more than the one word per field the backends emit for this
+// op, so they stay on struct_make.
+
+// const_agg_scalar_field reports whether a DECLARED field type is one this slice
+// can place statically: an i32-width scalar. `struct_field_width` returns 64 for
+// exactly the wide kinds, which is the same classifier struct_make's field
+// stores use, so admitting `width == 0` cannot disagree with the box layout.
+function const_agg_scalar_field(structs: parser.StructDecl[], name: string, idx: i32): boolean {
+    if (struct_field_width(structs, name, idx) != 0) { return false; }
+    var t: string = decl_field_type_at(structs, name, idx);
+    return t == "i32" || t == "u32" || t == "boolean" || t == "char" || t == "u8";
+}
+
+// const_agg_lit_value renders a scalar-literal expression as the word text the
+// backends splice into their data directive, or returns ok=false when the
+// expression is not one. The literal's SOURCE TEXT is carried, not a parsed
+// integer — the same contract op_const_i32_text keeps, so a hex literal reaches
+// the assembler intact instead of being zeroed by a decimal-only parse.
+// Booleans render as the 1/0 words struct_make would have stored; a unary minus
+// over a number literal is admitted so a negative field constant is not pushed
+// off the path.
+struct ConstAggWord { ok: boolean, text: string }
+
+function const_agg_lit_value(e: parser.Expr): ConstAggWord {
+    var bad: ConstAggWord = ConstAggWord { ok: false, text: "" };
+    match (e) {
+        parser.ExprNumber(n) => {
+            if (n.is_float || n.suffix.len() > 0) { return bad; }
+            return ConstAggWord { ok: true, text: n.text };
+        },
+        parser.ExprBool(b) => {
+            if (b.value) { return ConstAggWord { ok: true, text: "1" }; }
+            return ConstAggWord { ok: true, text: "0" };
+        },
+        parser.ExprUnary(u) => {
+            if (u.op != "-") { return bad; }
+            var inner: ConstAggWord = const_agg_lit_value(u.operand);
+            if (!inner.ok) { return bad; }
+            return ConstAggWord { ok: true, text: "-" + inner.text };
+        },
+        _ => { return bad; },
+    }
+    return bad;
+}
+
+// const_agg_of packs a struct literal's decl-ordered field words when every one
+// of them is a compile-time scalar literal. ok=false leaves the literal on the
+// ordinary struct_make path.
+struct ConstAgg { ok: boolean, values: string }
+
+function const_agg_of(slit: parser.ExprStructLit, structs: parser.StructDecl[]): ConstAgg {
+    var bad: ConstAgg = ConstAgg { ok: false, values: "" };
+    if (slit.has_base) { return bad; }
+    if (!decl_is_struct(structs, slit.type_name)) { return bad; }
+    var ndecl: i32 = decl_field_count(structs, slit.type_name);
+    var out: string = "";
+    var di: i32 = 0;
+    while (di < ndecl) {
+        if (!const_agg_scalar_field(structs, slit.type_name, di)) { return bad; }
+        var fname: string = decl_field_name_at(structs, slit.type_name, di);
+        var found: i32 = 0 - 1;
+        var fj: i32 = 0;
+        while (fj < slit.field_names.len()) {
+            if (slit.field_names[fj] == fname) { found = fj; }
+            fj = fj + 1;
+        }
+        if (found < 0) { return bad; }   // a no-base literal must set every field
+        var w: ConstAggWord = const_agg_lit_value(slit.field_values[found]);
+        if (!w.ok) { return bad; }
+        if (di > 0) { out = out + ","; }
+        out = out + w.text;
+        di = di + 1;
+    }
+    return ConstAgg { ok: true, values: out };
+}
+
 // lower_stmt lowers one top-level statement of the i32 subset.
 // lower_stmt wraps lower_stmt_inner with the #4873 grow-exempt window: the
 // statement's dying call args (grow_exempt_names_of_stmt) are visible to the
@@ -15641,7 +15765,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     var is_strarr: boolean = expr_is_strarr(v.init, se) || v.type_name == "string[]";
     // f64[] tracking (element WIDTH for a[i]); the annotation is
     // authoritative too. The array itself is already is_arr (RC-tracked).
-    var is_f64arr: boolean = expr_is_f64arr(v.init, se) || v.type_name == "f64[]";
+    var is_f64arr: boolean = expr_is_f64arr(v.init, se) || is_float_array_type_name(v.type_name);
     // i64[] tracking (element WIDTH + i64 value typing for a[i]). The
     // literal form is handled by a dedicated branch above; here this
     // catches aliasing (`var b = a`) and the `i64[]` annotation.
@@ -16188,7 +16312,7 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                             // into the sole-owned clone) and store it back —
                             // the aliased buffer is left untouched. Sole-owner
                             // (unaliased) slots keep the in-place arr_set below.
-                            if (s.is_aliased_name(a.target)) {
+                            if (s.is_aliased_name(a.target) || s.is_borrowed_name(a.target)) {
                                 var wcl: LowerState = lower_arr_with_value(wfa.obj, wc.args[0], wc.args[1], s);
                                 if (!wcl.ok) { return wcl; }
                                 return wcl.emit(ir.op_store_local(slot));
@@ -20373,6 +20497,26 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     // its own loop), and block-level reuse donors are struct/tuple boxes
     // (never Option locals) — so each box is freed at most once.
     var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.structs);
+    // Consumed ALL-SCALAR enum free, per block (#6127). lower_func runs
+    // consumed_scalar_enum_frees over the fn's TOP-LEVEL statements only, so a
+    // scalar-payload enum declared inside a loop or an if — `while { var e =
+    // Box(k, 2); match (e) { … } }` — was reclaimed NOWHERE and leaked its box
+    // per iteration. This is the same top-level-only gap #4357 closed for
+    // rc-payload OPTIONS with the rcopt line above and for rc-payload ENUMS with
+    // collect_fresh_rcenum_names; the scalar-enum half was never mirrored.
+    // Measured 19200 bytes over 100 rounds where the byte-identical shape at fn
+    // top level is flat at 0.
+    //
+    // Same classifier and gates as the fn-level pass, applied to THIS block's
+    // statement list, and each box is freed at most once:
+    //   - lower_block runs for NESTED bodies only (the fn body has its own loop),
+    //     so a top-level candidate is never also claimed here;
+    //   - a candidate requires its `var` and its consuming `match` in ONE
+    //     statement list, so a var matched in a different block never qualifies;
+    //   - enum_donor_reuse_sites takes the fn-level EnumFrees and scans fn.body
+    //     flat, so a nested-block box can never have been donated to a reuse site
+    //     (which is what the fn-level emission's edon check guards against).
+    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.structs);
     var st: LowerState = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -20521,6 +20665,27 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
                 }
             }
             rk = rk + 1;
+        }
+        // Consumed scalar-enum free: if statement i is the consuming match of a
+        // block-local candidate, dec its box and zero the slot now — the
+        // block-level mirror of lower_func's enumfrees emission. Zeroing matters
+        // for a LOOP body: the slot is re-declared next iteration, and a stale
+        // pointer there would be dec'd twice. Emitted BEFORE retire_locals, while
+        // the name still resolves — after retirement the slot is unfindable, which
+        // is why the function-exit sweep cannot do this job.
+        var sef: i32 = 0;
+        while (sef < scenfrees.idxs.len()) {
+            if (scenfrees.idxs[sef] == i) {
+                var sslot: i32 = st.slot_of(scenfrees.names[sef]);
+                if (sslot >= st.n_params) {
+                    st = st.emit(ir.op_load_local(sslot));
+                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                    st = st.emit(ir.op_drop());
+                    st = st.emit(ir.op_const_i32(0));
+                    st = st.emit(ir.op_store_local(sslot));
+                }
+            }
+            sef = sef + 1;
         }
         if (stmt_scopes_bindings(stmts[i])) { st = st.retire_locals(sbase); }
         i = i + 1;
@@ -20843,8 +21008,116 @@ function alias_names_in_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
     return a;
 }
 
+// --- borrowed-value guard (#6158) --------------------------------------------
+//
+// The alias scan above answers "does another LOCAL name reach this buffer",
+// which is only half of what the in-place self-reassign needs. The other half
+// is OWNERSHIP: `x = x.with(i, v)` overwrites in place on the assumption that
+// `x` is a sole owner, and a BORROWED value is not one no matter how few local
+// aliases it has. Three shapes reached the in-place path while the caller still
+// owned the buffer, so the write landed in the caller's array:
+//
+//   * a borrowed ARRAY PARAM self-reassigned directly
+//     (`function patch(buf: i32[], …) { buf = buf.with(at, v); }`);
+//   * a local bound from an array FIELD of a borrowed struct param
+//     (`var sn = st.seen; sn = sn.with(pc, g);` — std/regex's __rx_addthread);
+//   * the same off a LOCAL struct that is still read afterwards.
+//
+// The language already models the sound version, and the hot paths already use
+// it: `arm64_write_word(own buf: i32[], …)` consumes its buffer precisely so
+// the rc check sees a unique owner, and E051 makes that annotation trustworthy
+// at every call site. So the rule is ownership, not syntax — an `own` param
+// keeps the fast path, a borrowed one clones.
+//
+// The `own`-param + field-clear idiom (`var code = a.code; a = A { ...a, code:
+// [] };` — arm64_asm_resolve's three quadratic patch loops, #6011) stays
+// in-place: the source field is emptied before the mutation, so the local IS
+// the only reference. That exemption is why this keys on a positional scan
+// rather than flagging every field-read binding.
+
+// field_read_base returns the base object name of a `OBJ.field` init, or "" —
+// the source whose buffer such a binding borrows.
+function field_read_base(e: parser.Expr): string {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(id) => { return id.name; },
+                _ => { return ""; },
+            }
+        },
+        _ => { return ""; },
+    }
+    return "";
+}
+
+// stmt_assigns_name reports whether `st` is a direct `NAME = …` assignment.
+function stmt_assigns_name(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtAssign(a) => { return a.target == name; },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// borrowed_field_bindings walks a statement LIST and credits every
+// `var X = OBJ.field` binding whose source is not cleared before X is next
+// assigned — i.e. every binding that still shares OBJ's buffer at the point
+// the in-place write would happen. A binding whose OBJ is reassigned first
+// (the field-clear idiom) is exempt and keeps the fast path. Nested blocks are
+// scanned for their own bindings; a binding whose mutation happens in a nested
+// block is credited (conservative — it clones), since this positional scan
+// cannot see the clear across the block boundary.
+function borrowed_field_bindings(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                var base: string = field_read_base(v.init);
+                if (base.len() > 0) {
+                    var cleared: boolean = false;
+                    var j: i32 = i + 1;
+                    while (j < stmts.len()) {
+                        if (stmt_assigns_name(stmts[j], base)) { cleared = true; j = stmts.len(); }
+                        else if (stmt_assigns_name(stmts[j], v.name)) { j = stmts.len(); }
+                        else { j = j + 1; }
+                    }
+                    if (!cleared) { a = push_str_unique(a, v.name); }
+                }
+            },
+            parser.StmtIf(iff) => {
+                a = borrowed_field_bindings(iff.then_body, a);
+                a = borrowed_field_bindings(iff.else_body, a);
+            },
+            parser.StmtWhile(w) => { a = borrowed_field_bindings(w.body, a); },
+            parser.StmtFor(f) => { a = borrowed_field_bindings(f.body, a); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { a = borrowed_field_bindings(m.arms[k].body, a); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 function aliased_array_names_of(body: parser.Stmt[]): string[] {
     return alias_names_in_stmts(body, []);
+}
+
+// borrowed_names_of is the OWNERSHIP set (#6158), deliberately SEPARATE from
+// the aliasing set above. Only the `.with` self-reassign consults it.
+//
+// Merging the two looked tempting and is wrong: `aliased_names` also drives the
+// `.append` self-reassign's arr_push-vs-arr_push_owned choice and the map
+// clone-insert, and widening it there changed how closure ENV BOXES appended to
+// an array are retained — mutable captures then read a stale by-value snapshot
+// (#5301), which is a wrong ANSWER, not a leak. Ownership and aliasing are
+// different questions; they get different sets.
+function borrowed_names_of(body: parser.Stmt[]): string[] {
+    var none: string[] = [];
+    return borrowed_field_bindings(body, none);
 }
 
 // is_fresh_struct_init: an init producing a SOLE-OWNER (rc=1) struct value — a
@@ -28981,35 +29254,52 @@ function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
     if (struct_has_reclaim_array_field(s.structs, sty)) { return false; }
     if (util.index_of_str(s.reclaimable_names, "STRUCTARR:" + s.locals[i].slot_name) >= 0) { return true; }
     // APPEND-BUILT candidates (#6127) carry a SEPARATE credit and a STRICTER
-    // rule: the element struct's fields must be ALL SCALAR.
+    // rule: the element struct's fields must be scalar or `string`.
     //
     // struct_has_reclaim_array_field above deliberately lets string / map /
     // option / tuple fields through — they "leak with the struct, sound" — so
-    // the shallow box free this class performs is only EXACT for an all-scalar
-    // struct, which is what the class documents itself as. Literal-built
-    // arrays have relied on the looser rule for a long time and keep it (their
-    // behaviour is unchanged, byte for byte); the append path does not inherit
-    // it, because widening a looser rule across the ~112 append-built sites in
-    // the compiler's own sources is what broke self-compilation the first time
-    // this was attempted (#6129: gen0/gen1 diverged on unit 2_s83).
+    // the shallow box free this class performs releases everything an
+    // all-scalar element owns, and everything but the string box for a
+    // string-fielded one. Literal-built arrays have relied on the fully loose
+    // rule for a long time and keep it (their behaviour is unchanged, byte for
+    // byte); the append path does not inherit it, because widening it wholesale
+    // across the ~112 append-built sites in the compiler's own sources is what
+    // broke self-compilation the first time this was attempted (#6129:
+    // gen0/gen1 diverged on unit 2_s83).
+    //
+    // `string` specifically is safe to admit, which the map / option / tuple
+    // kinds are not: the element BOX is provably fresh — structarr_elem_store_ok
+    // admits only a no-base struct LITERAL, rejecting the bare-ident element
+    // that would alias a live local (965 such sites in the compiler's own
+    // sources, including every `s.ops.append(op)`) — so the shallow free
+    // releases a box this array solely owns. Its string field then leaks
+    // EXACTLY as it already does on the literal-built path for the same type,
+    // which is the sound direction and measurably the same code. Without this,
+    // an append-built `N[]` leaked its element boxes too: 28800 bytes over 100
+    // rounds against the literal-built form's 9600 (the strings alone).
     if (util.index_of_str(s.reclaimable_names, "STRUCTARRA:" + s.locals[i].slot_name) >= 0) {
-        return struct_all_scalar_fields(s.structs, sty);
+        return struct_all_scalar_or_string_fields(s.structs, sty);
     }
     return false;
 }
 
-// struct_all_scalar_fields: every field of `sty` is a plain scalar, so a
-// SHALLOW free of the struct's box releases everything the struct owns and
-// leaks nothing. Deliberately an allowlist rather than a denylist — a field
-// type this does not recognise reads as non-scalar and keeps the struct out,
-// which is the safe direction and stays safe as the type system grows.
-function struct_all_scalar_fields(structs: parser.StructDecl[], sty: string): boolean {
+// struct_all_scalar_or_string_fields: every field of `sty` is a plain scalar or
+// a `string`, so a SHALLOW free of the struct's box releases the box itself and
+// leaks at most its string boxes. The append-built struct-array class admits
+// this because its elements are provably fresh no-base literals
+// (structarr_elem_store_ok), making the box sole-owned; the string leak is the
+// same one the literal-built class has always accepted for the same type.
+// Deliberately an allowlist rather than a denylist — a field type this does not
+// recognise keeps the struct out, which is the safe direction and stays safe as
+// the type system grows.
+function struct_all_scalar_or_string_fields(structs: parser.StructDecl[], sty: string): boolean {
     if (sty.len() == 0) { return false; }
     var n: i32 = decl_field_count(structs, sty);
     if (n == 0) { return false; }
     var fi: i32 = 0;
     while (fi < n) {
-        if (!is_scalar_field_type(decl_field_type_at(structs, sty, fi))) { return false; }
+        var ft: string = decl_field_type_at(structs, sty, fi);
+        if (!is_scalar_field_type(ft) && ft != "string") { return false; }
         fi = fi + 1;
     }
     return true;
@@ -32923,7 +33213,19 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // An f64[] param is element-width-tracked (a[i] reads an 8-byte f64);
         // the array itself rides the same 8-byte-stride layout every f64 array
         // literal in this (whole-module-IR) program uses, so passing one is safe.
-        isf64arr = isf64arr.append(fn.params[i].type_name == "f64[]");
+        //
+        // `f32[]` rides the SAME 8-byte f64 layout — a scalar f32 param already
+        // lowers to a wasm f64 (see assert_at_f32's `(param f64)`), and the
+        // array-literal / cell paths already mark an f32 element type as
+        // f64arr. Without it here, a declared `f32[]` param was classified as
+        // nothing at all, so `a[i]` emitted the default 4-byte stride +
+        // i32.load into an f64-typed local: an invalid module where the value
+        // reaches a float op, a silent wrong answer where it does not. It only
+        // bit a param whose type had to be read off the DECLARATION — with no
+        // imports, call-site inference marked the slot and hid it, so any
+        // program with a single `import` reproduced and the same program
+        // without one did not (#6175).
+        isf64arr = isf64arr.append(is_float_array_type_name(fn.params[i].type_name));
         isi64arr = isi64arr.append(fn.params[i].type_name == "i64[]");
         isu32 = isu32.append(is_u32_type_name(fn.params[i].type_name));
         isu64 = isu64.append(is_u64_type_name(fn.params[i].type_name));
@@ -33109,6 +33411,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
     // when its target is here (#3599; see the aliased_names field doc).
     var aliased: string[] = aliased_array_names_of(fn.body);
+    var borrowed: string[] = borrowed_names_of(fn.body);
     // #6134: seed the SELF-ASSIGN record-update reuse set as "SAREUSE:<name>" —
     // the locals whose every `p = T { ...p, … }` reuses p's own box in place
     // (self_assign_update_names). Prefix-tagged like the other per-function
@@ -33269,7 +33572,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], own_params: mv_own_params_for(fn, sg.move_arr_params), n_params: names.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], own_params: mv_own_params_for(fn, sg.move_arr_params), n_params: names.len(), ok: true };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -36592,7 +36895,7 @@ pub function f64arr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
-        if (funcs[k].ret_type == "f64[]") {
+        if (is_float_array_type_name(funcs[k].ret_type)) {
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
             out = out.append(key);
@@ -40025,7 +40328,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -40743,8 +41046,41 @@ pub function eval_program(fns: LoweredFn[]): i32 {
     var noargs: i32[] = [];
     var heap0: i32[] = [];
     heap0 = heap0.append(0);
-    var out: EvalOut = eval_call(fns, "main", noargs, heap0, 0);
+    var out: EvalOut = eval_call(eval_expand_const_structs(fns), "main", noargs, heap0, 0);
     return out.value;
+}
+
+// eval_expand_const_structs rewrites every const_struct op (#6149) back into
+// the push-then-build sequence it replaced: one const_i32_text per field word,
+// then struct_make. The round-trip evaluator models a 4-byte box with no rc
+// word, so there is no sentinel for a shared constant to hide behind — and it
+// needs none, because expanding is EXACTLY what the lowering emitted before the
+// constant recognition existed. One rewrite here beats a fourth copy of the
+// alloc-and-fill arm, and it cannot drift from struct_make's semantics because
+// it IS struct_make.
+function eval_expand_const_structs(fns: LoweredFn[]): LoweredFn[] {
+    var out: LoweredFn[] = [];
+    var fi: i32 = 0;
+    while (fi < fns.len()) {
+        var f: LoweredFn = fns[fi];
+        var ops: ir.Op[] = [];
+        var oi: i32 = 0;
+        while (oi < f.ops.len()) {
+            var o: ir.Op = f.ops[oi];
+            if (o.kind_tag == 218) {
+                var words: string[] = ir.const_struct_values(o.str);
+                var wi: i32 = 0;
+                while (wi < words.len()) { ops = ops.append(ir.op_const_i32_text(words[wi])); wi = wi + 1; }
+                ops = ops.append(ir.op_struct_make(ir.const_struct_type(o.str), words.len()));
+            } else {
+                ops = ops.append(o);
+            }
+            oi = oi + 1;
+        }
+        out = out.append(LoweredFn { ...f, ops: ops });
+        fi = fi + 1;
+    }
+    return out;
 }
 
 // ---- stack-machine interpreter ----------------------------------------

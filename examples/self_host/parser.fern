@@ -6958,7 +6958,16 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
         ExprIndex(ix) => {
             var ar: RExpr = mono_expr(ix.array, env, funcs, ins);
             var idx: RExpr = mono_expr(ix.index, env, funcs, ar.rins);
-            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: idx.rexpr, unchecked: false, ty: "" }, rins: idx.rins };
+            // `ty` PROPAGATES where `unchecked` is dropped, and the asymmetry is
+            // deliberate: dropping the bounds-elide mark is conservative (the
+            // clone keeps its bounds check), but dropping the typed-IR tag is
+            // NOT — irlower's ix_type_tag then falls back to a structural walk
+            // that misses exactly the shapes the tag exists to cover, and the
+            // clone lowers an f64 element as a 4-byte i32 read. The tag stays
+            // valid across cloning because annotation runs on the ERASED form,
+            // so a bare type parameter stamps "" and only concrete tags survive
+            // to be copied — the same reason subst_expr already carries it.
+            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: idx.rexpr, unchecked: false, ty: ix.ty }, rins: idx.rins };
         },
         ExprSlice(sl) => {
             var ar: RExpr = mono_expr(sl.array, env, funcs, ins);
@@ -8128,7 +8137,16 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
         ExprIndex(ix) => {
             var ar: RExpr = ms_expr(ix.array, env, gstructs, funcs, ins);
             var idx: RExpr = ms_expr(ix.index, env, gstructs, funcs, ar.rins);
-            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: idx.rexpr, unchecked: false, ty: "" }, rins: idx.rins };
+            // `ty` PROPAGATES where `unchecked` is dropped, and the asymmetry is
+            // deliberate: dropping the bounds-elide mark is conservative (the
+            // clone keeps its bounds check), but dropping the typed-IR tag is
+            // NOT — irlower's ix_type_tag then falls back to a structural walk
+            // that misses exactly the shapes the tag exists to cover, and the
+            // clone lowers an f64 element as a 4-byte i32 read. The tag stays
+            // valid across cloning because annotation runs on the ERASED form,
+            // so a bare type parameter stamps "" and only concrete tags survive
+            // to be copied — the same reason subst_expr already carries it.
+            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: idx.rexpr, unchecked: false, ty: ix.ty }, rins: idx.rins };
         },
         ExprSlice(sl) => {
             var ar: RExpr = ms_expr(sl.array, env, gstructs, funcs, ins);
@@ -9000,7 +9018,8 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
         ExprIndex(ix) => {
             var ar: RExpr = me_expr(ix.array, "", env, enums, structs, funcs, ins);
             var ir: RExpr = me_expr(ix.index, "", env, enums, structs, funcs, ar.rins);
-            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: ir.rexpr, unchecked: false, ty: "" }, rins: ir.rins };
+            // Carries `ty` for the same reason as mono_expr's ExprIndex arm.
+            return RExpr { rexpr: ExprIndex { array: ar.rexpr, index: ir.rexpr, unchecked: false, ty: ix.ty }, rins: ir.rins };
         },
         ExprSlice(sl) => {
             var ar: RExpr = me_expr(sl.array, "", env, enums, structs, funcs, ins);

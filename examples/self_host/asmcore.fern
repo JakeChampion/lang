@@ -123,7 +123,12 @@ pub struct EmitState {
     // (a token constructed in lexer matches in parser). Empty / unused on the
     // whole-program (str_ns == "") path, which keeps interning shapes as ordinary
     // string literals (byte-identical).
-    shape_lits: string[]
+    shape_lits: string[],
+    // const_aggs: the unit's distinct STATIC AGGREGATE CONSTANTS (#6149), each
+    // `<shape label>|<w0>,<w1>,…`. Populated by the const_struct op arm and
+    // flushed as one data block per entry alongside the string pool. See
+    // add_const_agg.
+    const_aggs: string[]
 }
 
 pub function new_state(): EmitState {
@@ -163,7 +168,8 @@ pub function new_state(): EmitState {
         // (byte-identical to the pre-per-module emitter). Per-module unit emit
         // sets this to keep each module's `.rodata` pool collision-free.
         str_ns: "",
-        shape_lits: []
+        shape_lits: [],
+        const_aggs: []
     };
 }
 
@@ -2516,6 +2522,40 @@ pub function count_locals_in_stmt(stmt: parser.Stmt): i32 {
         _ => { return 0; }
     }
     return 0;
+}
+
+pub struct ConstAggOut { state: EmitState, idx: i32 }
+
+// add_const_agg interns one STATIC AGGREGATE CONSTANT (#6149) and returns its
+// index. `packed` is `<shape label>|<w0>,<w1>,…` — the shape's already-resolved
+// assembler label followed by the decl-ordered field words as source text. The
+// label is resolved by the caller (at op-emit time, through shape_ref) rather
+// than stored as a type name, because the data block is written at the END of
+// the unit, after shape interning has closed.
+//
+// Deduped by exact content, like add_string_lit: two `TypeI32 { is_char: false,
+// width: 32, unsigned: false }` sites share ONE block, which is the whole point
+// — a nullary constructor called 552 times gets one address, not 552 boxes.
+// Sharing is safe because the block's rc word is the immortal sentinel (every rc
+// helper skips a negative rc, and __fern_rc_is_unique answers 0, so a record
+// update or an FBIP reuse degrades to a fresh allocation) and E048 forbids field
+// assignment, so no observer can see a constant change.
+pub function add_const_agg(s: EmitState, packed: string): ConstAggOut {
+    var i: i32 = 0;
+    while (i < s.const_aggs.len()) {
+        if (s.const_aggs[i] == packed) { return ConstAggOut { state: s, idx: i }; }
+        i = i + 1;
+    }
+    var idx: i32 = s.const_aggs.len();
+    return ConstAggOut { state: EmitState { ...s, const_aggs: s.const_aggs.append(packed) }, idx: idx };
+}
+
+// const_agg_label names constant `idx`'s data block, namespaced by str_ns on the
+// per-module path exactly as str_lit_label is, so two separately-emitted units'
+// constant pools cannot collide at link.
+pub function const_agg_label(s: EmitState, idx: i32): string {
+    if (s.str_ns.len() == 0) { return ".K" + util.i32_to_string(idx); }
+    return ".K" + s.str_ns + "_" + util.i32_to_string(idx);
 }
 
 pub struct StringLitOut { state: EmitState, idx: i32 }

@@ -473,13 +473,18 @@ func checkSelfHostNativeRun(t *testing.T, f *fixtureSpec, r selfHostRun, failf f
 		return
 	}
 	if r.exit != f.wantExit {
-		// exit 137 from a running Fern binary is __fern_alloc's arena-exhaustion
-		// abort, not a SIGKILL/OOM — the misreading docs/RC-PERCEUS notes and
-		// CLAUDE.md both warn about, so say it here rather than leaving the next
-		// reader to rediscover it.
+		// __fern_alloc's arena-exhaustion abort is exit 125 (ExitArenaExhausted).
+		// This used to say 137 and to call 137 the arena abort; both halves are
+		// now wrong and in the more expensive direction — the two statuses were
+		// split precisely so 137 could mean the host OOM-killed us and nothing
+		// else, and a hint asserting the opposite sends the reader hunting a
+		// leak when they should be lowering a memory budget.
 		hint := ""
-		if r.exit == 137 {
-			hint = " — 137 is __fern_alloc's arena-exhaustion abort, not an OOM-kill"
+		switch r.exit {
+		case 125:
+			hint = " — 125 is __fern_alloc's arena-exhaustion abort, so this is a leak"
+		case 137:
+			hint = " — 137 is 128+SIGKILL, i.e. the HOST ran out of RAM, not the arena"
 		}
 		failf("exit = %d, want %d%s\nstdout: %q\nstderr: %s", r.exit, f.wantExit, hint, r.stdout, r.stderr)
 	}

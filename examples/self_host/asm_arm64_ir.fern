@@ -1053,6 +1053,38 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
                 em = em - 1;
             }
             s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 218) {  // const_struct
+            // The whole box is a compile-time constant (#6149): intern its data
+            // block and push the block's address. No allocation, no field stores
+            // — where struct_make emits an __fern_arr_box call plus nf pops, this
+            // is one adrp/add pair. The block itself is written by the SHARED
+            // asm_ir.emit_const_agg_data (identical layout and directives on both
+            // register backends).
+            //
+            // This needed a data relocation in the in-process arm64 assembler
+            // first: a block's first word is the shape POINTER, a
+            // `.quad <label>`, and arm64_gas_data_directive used to run every
+            // `.quad` operand through arm64_gas_atoi64 — so `.quad .S0`
+            // assembled to ZERO, nulling the shape word and making every `match`
+            // on the constant fall through (four union fixtures returned 0
+            // instead of their value). arm64_gas_numeric_tok now separates a
+            // number from a symbol, and arm64_gas_link resolves the queued slot.
+            var kshp: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, ir.const_struct_type(o.str));
+            s = kshp.state;
+            var kpack: string = kshp.label + "|";
+            var kvals: string[] = ir.const_struct_values(o.str);
+            var kv: i32 = 0;
+            while (kv < kvals.len()) {
+                if (kv > 0) { kpack = kpack + ","; }
+                kpack = kpack + kvals[kv];
+                kv = kv + 1;
+            }
+            var kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, kpack);
+            s = kout.state;
+            var klbl: string = asmcore.const_agg_label(s, kout.idx);
+            s = s.write("    adrp x0, " + klbl + "\n");
+            s = s.write("    add x0, x0, :lo12:" + klbl + "\n");
+            s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 139) {  // struct_get
             // pop struct box; field at (index+1)*8.
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #" + util.i32_to_string((o.i32_imm + 1) * 8) + "]\n    str x0, [sp, #-16]!\n");
@@ -1658,10 +1690,15 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl
         strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls),
     };
     var lit0: i32 = s.string_lits.len();
+    var agg0: i32 = s.const_aggs.len();
     var i: i32 = 0;
     while (i < fns.len()) {
         s = emit_function_via_ir(fns[i], s, sg);
         i = i + 1;
+    }
+    if (s.const_aggs.len() > agg0) {
+        s = asm_ir.emit_const_agg_data_from(s, agg0);
+        s = s.write("    .text\n");
     }
     if (s.string_lits.len() > lit0) {
         s = s.write("    .section .rodata\n");
@@ -2076,6 +2113,9 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState): asmcore.EmitState {
             li = li + 1;
         }
     }
+    // .data: one block per static aggregate constant (#6149), after the string
+    // pool because a block's first word is a shape POINTER into it.
+    s = asm_ir.emit_const_agg_data(s);
     if (s.shape_lits.len() > 0) {
         s = s.write("    .section .rodata\n");
         var shi: i32 = 0;

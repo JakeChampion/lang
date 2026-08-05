@@ -1,0 +1,55 @@
+# Seeds whose SELF-HOST x86-64 result disagrees with the interpreter's, for
+# TestDifferential_SelfHostX86_64 (internal/e2e/diff_oracle_selfhost_test.go).
+#
+# Format: <seed> <reason + issue>. Blank lines and # comments ignored.
+#
+# A row is a KNOWN COMPILER BUG being tolerated so the rest of the corpus keeps
+# running — not a seed that is allowed to be wrong. The leg fails on a NEW
+# divergence and equally on a LISTED seed that starts agreeing, so this list
+# prunes itself as the bugs are fixed rather than becoming somewhere they are
+# forgotten.
+#
+# For every row here the interpreter, native x86-64 and native arm64 agree with
+# each other; that agreement is what says the self-host compiler is wrong rather
+# than the generated program being invalid.
+#
+# Measured 2026-08-05 over seeds 0..511 (the leg's default corpus): 196 agree,
+# 22 diverge, 3 fail to link, 291 are compile gaps.
+
+# CRASHES — the self-host-compiled binary dies by SIGSEGV where the interpreter
+# returns a value. Most likely to be ONE bug, and the likeliest to be the
+# escaping-closure / closure-array cluster this leg was built to catch.
+59 SIGSEGV (self-host 139, interp 41) — https://github.com/JakeChampion/lang/issues/6178
+97 SIGSEGV (self-host 139, interp 230) — https://github.com/JakeChampion/lang/issues/6178
+144 SIGSEGV (self-host 139, interp 96) — https://github.com/JakeChampion/lang/issues/6178
+200 SIGSEGV (self-host 139, interp 0) — https://github.com/JakeChampion/lang/issues/6178
+228 SIGSEGV (self-host 139, interp 2) — https://github.com/JakeChampion/lang/issues/6178
+455 SIGSEGV (self-host 139, interp 4) — https://github.com/JakeChampion/lang/issues/6178
+
+# ARENA EXHAUSTION — exit 125 is __fern_alloc's ExitArenaExhausted, so this is a
+# leak in the lowered code rather than a wrong answer.
+117 exit 125 = arena exhausted (interp 255) — https://github.com/JakeChampion/lang/issues/6178
+
+# LINK FAILURES — the emitted asm calls __fern_map_has, which the maps runtime
+# need-gate never marks for a program whose only map op is `.has()`.
+121 undefined reference to __fern_map_has at link — https://github.com/JakeChampion/lang/issues/6177
+265 undefined reference to __fern_map_has at link — https://github.com/JakeChampion/lang/issues/6177
+365 undefined reference to __fern_map_has at link — https://github.com/JakeChampion/lang/issues/6177
+
+# WRONG VALUES — silent miscompiles. Twelve of the fifteen have interp=0, which
+# is worth checking as a group before reducing them one at a time.
+4 self-host 39, interp 0 — https://github.com/JakeChampion/lang/issues/6178
+20 self-host 238, interp 0 — https://github.com/JakeChampion/lang/issues/6178
+28 self-host 39, interp 0 — https://github.com/JakeChampion/lang/issues/6178
+29 self-host 112, interp 0 — https://github.com/JakeChampion/lang/issues/6178
+48 self-host 202, interp 0 — https://github.com/JakeChampion/lang/issues/6178
+52 self-host 52, interp 0 — https://github.com/JakeChampion/lang/issues/6178
+99 self-host 128, interp 0 — https://github.com/JakeChampion/lang/issues/6178
+123 self-host 70, interp 0 — https://github.com/JakeChampion/lang/issues/6178
+241 self-host 63, interp 0 — https://github.com/JakeChampion/lang/issues/6178
+324 self-host 0, interp 60 — https://github.com/JakeChampion/lang/issues/6178
+362 self-host 65, interp 0 — https://github.com/JakeChampion/lang/issues/6178
+364 self-host 253, interp 251 — https://github.com/JakeChampion/lang/issues/6178
+375 self-host 249, interp 0 — https://github.com/JakeChampion/lang/issues/6178
+482 self-host 152, interp 0 — https://github.com/JakeChampion/lang/issues/6178
+502 self-host 163, interp 0 — https://github.com/JakeChampion/lang/issues/6178

@@ -71,14 +71,13 @@ func printableSeeds(t *testing.T) uint64 {
 // A row is a known COMPILER bug being tolerated so the rest of the
 // corpus keeps running. The skip is loud and cites an open issue, so an
 // untracked row is visible as such.
-var printableKnownDivergences = map[uint64]map[string]string{
-	// The WAT-text wasm backend aborts (wasmtime exit 134) on these two
-	// seeds' closure shapes; x86-64 and arm64 agree with interp on both.
-	// Distinct backend from the wasmbin trap in #6142, same generator
-	// productions reached it.
-	545: {"wasm": "https://github.com/JakeChampion/lang/issues/6145"},
-	831: {"wasm": "https://github.com/JakeChampion/lang/issues/6145"},
-}
+//
+// Empty is the desired state: a row earns its place only while its issue
+// is open. Seeds 545 and 831 (#6145) left with #6142's fix — both carry
+// more closure cells than the static pool had room for below the
+// allocator's freelist heads table, which is the same collision, not a
+// second bug in a second backend.
+var printableKnownDivergences = map[uint64]map[string]string{}
 
 func TestDifferential_PrintableStdout(t *testing.T) {
 	shardIdx, shardCount := diffOracleShard(t)
