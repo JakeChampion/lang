@@ -423,6 +423,184 @@ pub function is_sorted[T: Ord](arr: T[]): boolean {
     return true;
 }
 
+// __cmp_insertion sorts `a[lo..hi)` in place by insertion. O(k^2) on k elements
+// but with a tiny constant, no allocation, and a branch-predictable inner loop
+// — which is why every serious sort dispatches to one below a size threshold
+// rather than recursing all the way down.
+//
+// `desc` flips the ordering by negating the three-way result, so ascending and
+// descending share one body. The shift loop stops on a NON-positive compare, so
+// equal elements never move past each other: insertion is stable.
+function __cmp_insertion[T: Ord](a: T[], lo: i32, hi: i32, desc: boolean): T[] {
+    var out: T[] = a;
+    var i: i32 = lo + 1;
+    while (i < hi) {
+        var v: T = out[i];
+        var j: i32 = i - 1;
+        var moving: boolean = j >= lo;
+        while (moving) {
+            var o: i32 = out[j].cmp(v);
+            if (desc) { o = 0 - o; }
+            if (o > 0) {
+                out = out.with(j + 1, out[j]);
+                j = j - 1;
+                moving = j >= lo;
+            } else {
+                moving = false;
+            }
+        }
+        out = out.with(j + 1, v);
+        i = i + 1;
+    }
+    return out;
+}
+
+// __cmp_sort_adaptive is the shared body behind `sort` and `sort_desc`: a
+// natural-run merge sort.
+//
+//   n < 2   -> the input, untouched
+//   n <= 32 -> one insertion sort, no merging and no extra allocation
+//   larger  -> detect natural runs, then merge adjacent runs in balanced rounds
+//
+// The adaptivity is the point. The previous revision was a fixed bottom-up
+// merge sort that materialised a FRESH FULL COPY of the array on every one of
+// its ceil(log2 n) passes, and did so regardless of the input: an
+// already-sorted array cost exactly as much as a random one. Here a sorted (or
+// reverse-sorted) input is a SINGLE run, so the merge loop never executes and
+// the whole call is O(n) with one copy. Partially ordered input — the common
+// case in practice — lands in between.
+//
+// Stability is preserved throughout: a descending run is detected with a
+// STRICT compare (so equal neighbours end the run rather than being swapped
+// past each other) before being reversed, and the merge takes from the right
+// run only when the left is strictly greater.
+//
+// Merging appends into a fresh array rather than writing through `.with`, so no
+// merge ever reads a slot it has already overwritten. That sidesteps the
+// aliasing hazard the old implementation guarded against with its
+// fresh-copy-per-pass rule (a rule written for the self-host AST emitter, which
+// has since been deleted in #3457/#5972) — append-only output cannot alias its
+// input at all, on any backend, with or without Perceus.
+//
+// TWO SELF-HOST CONSTRAINTS shape how this is written; do not "tidy" either one
+// away without re-running the self-host leg:
+//
+//  1. Every comparison is an INLINE `.cmp()` (a trait method) rather than a
+//     call to a shared `__cmp_after(x, y, desc)` helper. A call to a free
+//     GENERIC function from inside a loop bails the self-host IR path, and
+//     since the AST emitters were deleted a bail is a hard compile error, not a
+//     slow fallback. Trait-method calls in loops lower fine — which is why the
+//     previous revision's `src[j].cmp(src[i])` was never a problem. The
+//     `if (desc) { o = 0 - o; }` negation is what lets one body serve both
+//     directions without such a helper.
+//  2. For the same reason, runs are NOT extended to a minimum length with
+//     insertion sort (Timsort's MIN_RUN step), since that would mean calling
+//     __cmp_insertion from inside the run loop. Dropping it costs a few extra
+//     merge rounds on random input — the merge tree is deeper when runs are
+//     short — but changes neither the O(n log n) bound nor the O(n) sorted-input
+//     behaviour. See docs/SOTA-STDLIB-BLUEPRINT.md.
+function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
+    var n: i32 = arr.len();
+    if (n < 2) { return arr; }
+
+    // Own a copy: the descending-run reversal writes in place.
+    var a: T[] = [];
+    var c: i32 = 0;
+    while (c < n) { a = a.append(arr[c]); c = c + 1; }
+
+    if (n <= 32) { return __cmp_insertion(a, 0, n, desc); }
+
+    // Pass 1 — natural runs. `bounds` holds each run's start, terminated by n.
+    var bounds: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        bounds = bounds.append(i);
+        var e: i32 = i + 1;
+        if (e < n) {
+            var head: i32 = a[i].cmp(a[e]);
+            if (desc) { head = 0 - head; }
+            if (head > 0) {
+                // Strictly descending: extend, then reverse into order.
+                var falling: boolean = true;
+                while (falling) {
+                    e = e + 1;
+                    falling = false;
+                    if (e < n) {
+                        var od: i32 = a[e - 1].cmp(a[e]);
+                        if (desc) { od = 0 - od; }
+                        if (od > 0) { falling = true; }
+                    }
+                }
+                var lo: i32 = i;
+                var hi: i32 = e - 1;
+                while (lo < hi) {
+                    var t: T = a[lo];
+                    a = a.with(lo, a[hi]);
+                    a = a.with(hi, t);
+                    lo = lo + 1;
+                    hi = hi - 1;
+                }
+            } else {
+                var rising: boolean = true;
+                while (rising) {
+                    e = e + 1;
+                    rising = false;
+                    if (e < n) {
+                        var oa: i32 = a[e - 1].cmp(a[e]);
+                        if (desc) { oa = 0 - oa; }
+                        if (oa <= 0) { rising = true; }
+                    }
+                }
+            }
+        }
+        i = e;
+    }
+    bounds = bounds.append(n);
+
+    // Pass 2 — merge adjacent runs in rounds until one remains. Each round
+    // rebuilds the array by appending merged segments, so the output never
+    // aliases the input it is reading.
+    while (bounds.len() > 2) {
+        var out: T[] = [];
+        var next: i32[] = [];
+        var r: i32 = 0;
+        while (r + 1 < bounds.len()) {
+            var mlo: i32 = bounds[r];
+            next = next.append(mlo);
+            if (r + 2 < bounds.len()) {
+                var mmid: i32 = bounds[r + 1];
+                var mhi: i32 = bounds[r + 2];
+                var p: i32 = mlo;
+                var q: i32 = mmid;
+                while (p < mmid && q < mhi) {
+                    var om: i32 = a[p].cmp(a[q]);
+                    if (desc) { om = 0 - om; }
+                    if (om > 0) {
+                        out = out.append(a[q]);
+                        q = q + 1;
+                    } else {
+                        out = out.append(a[p]);
+                        p = p + 1;
+                    }
+                }
+                while (p < mmid) { out = out.append(a[p]); p = p + 1; }
+                while (q < mhi) { out = out.append(a[q]); q = q + 1; }
+                r = r + 2;
+            } else {
+                // Odd run out: carry it forward untouched.
+                var mend: i32 = bounds[r + 1];
+                var mk: i32 = mlo;
+                while (mk < mend) { out = out.append(a[mk]); mk = mk + 1; }
+                r = r + 1;
+            }
+        }
+        next = next.append(n);
+        a = out;
+        bounds = next;
+    }
+    return a;
+}
+
 // sort returns a new array with `arr`'s elements in non-decreasing `Ord` order.
 // Generic over any `T: Ord` (incl. `@derive(Ord)` types) — the type-erased,
 // any-`Ord`-element replacement for std/sort's retired per-width `sort_i32_asc`
@@ -433,104 +611,22 @@ pub function is_sorted[T: Ord](arr: T[]): boolean {
 // so a single body gives every width the direct scalar/dedicated compare the
 // zoo used to spell by hand.
 //
-// Stable bottom-up merge sort, O(n log n) (#4387 item 3): equal elements keep
-// their input order because the merge only takes from the right run when it
-// compares *strictly* less. Suits arbitrary / large inputs as well as the small
-// convenience cases the older insertion-sort revision was limited to.
-//
-// Each merge pass materializes `dst` as a FRESH copy of `src` (the `.append`
-// loop) rather than aliasing `var dst = src;`. This is REQUIRED for correctness
-// on the self-host AST emitter path (the fallback for a >512-function bundle):
-// that path has no Perceus, so `.with` writes through an alias in place — an
-// aliased merge would read this pass's own writes and corrupt. The fresh copy
-// keeps reads of `src` valid while `dst` is overwritten slot by slot. Verified
-// empirically (#5397): under a >512-function AST-forced bundle the aliased shape
-// mis-sorts while the fresh copy is correct. Under native RC the fresh buffer is
-// rc==1, so its `.with` writes stay in-place — same cost as the aliased copy
-// would have been. Do NOT "optimize" this back to `var dst = src;`.
+// STABLE: equal elements keep their input order. Adaptive natural-run merge
+// sort — O(n) on sorted or reverse-sorted input, O(n log n) worst case. See
+// __cmp_sort_adaptive for the shape and docs/SOTA-STDLIB-BLUEPRINT.md for where
+// it sits against the state of the art (pdqsort for an unstable sibling, and a
+// radix path for integer keys, are both still open).
 pub function sort[T: Ord](arr: T[]): T[] {
-    var n = arr.len();
-    if (n < 2) { return arr; }
-    var src = arr;
-    var width = 1;
-    while (width < n) {
-        var dst: T[] = [];
-        var c = 0;
-        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo = 0;
-        while (lo < n) {
-            var mid = lo + width;
-            if (mid > n) { mid = n; }
-            var hi = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i = lo;
-            var j = mid;
-            var k = lo;
-            while (i < mid && j < hi) {
-                if (src[j].cmp(src[i]) < 0) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
+    return __cmp_sort_adaptive(arr, false);
 }
 
 // sort_desc is `sort`'s descending mirror: a new array with `arr`'s elements in
 // non-increasing `Ord` order. The generic home for the retired per-width
 // descending sorts (`sort_i32_desc` / `sort_i64_desc` / `sort_f64_desc` /
-// `sort_strings_desc`, #5397) — there was no generic descending sort before, so
-// callers had to reach for a monomorphic helper or spell an inverted
-// comparator. Stable: on a tie the earlier element is emitted first (the merge
-// takes from the right run only on a STRICT `.cmp(...) > 0`), so equal keys keep
-// input order. Same fresh-copy-per-pass AST-safety contract as `sort` above —
-// see its comment; do NOT alias `dst` to `src`.
+// `sort_strings_desc`, #5397). Stable on ties, same adaptive shape as `sort` —
+// the two differ only in the sign of the three-way compare.
 pub function sort_desc[T: Ord](arr: T[]): T[] {
-    var n = arr.len();
-    if (n < 2) { return arr; }
-    var src = arr;
-    var width = 1;
-    while (width < n) {
-        var dst: T[] = [];
-        var c = 0;
-        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo = 0;
-        while (lo < n) {
-            var mid = lo + width;
-            if (mid > n) { mid = n; }
-            var hi = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i = lo;
-            var j = mid;
-            var k = lo;
-            while (i < mid && j < hi) {
-                if (src[j].cmp(src[i]) > 0) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
-                }
-                k = k + 1;
-            }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
-        }
-        src = dst;
-        width = width + width;
-    }
-    return src;
+    return __cmp_sort_adaptive(arr, true);
 }
 
 // ---- Eq-bounded sequence verbs ---------------------------------

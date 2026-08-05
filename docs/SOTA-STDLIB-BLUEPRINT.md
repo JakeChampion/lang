@@ -97,25 +97,18 @@ addition (or synthesisable from four 32-bit multiplies).
 
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
-| `cmp.sort` / `sort_desc` | Bottom-up merge sort, **full fresh scratch copy every pass** | pdqsort (unstable) / Timsort (stable) | **GAP — highest-value collection item** |
-| Small-N sort | None; merge sort all the way down | Insertion sort below ~24 | GAP, easy, large constant-factor win |
-| Presorted input | Not detected | Natural run detection (Timsort) | GAP, easy |
+| `cmp.sort` / `sort_desc` | **Adaptive natural-run merge sort** | pdqsort (unstable) / Timsort (stable) | **DONE (this pass)** |
+| Small-N sort | Insertion sort below 32 | Insertion sort below ~24 | **DONE (this pass)** |
+| Presorted input | Natural run detection, O(n) | Natural run detection (Timsort) | **DONE (this pass)** |
+| MIN_RUN extension | Not done — blocked, see below | Timsort's short-run extension | BLOCKED (self-host IR gap) |
+| Galloping merge | None | Timsort's galloping mode | GAP |
 | Integer sort | Comparison sort | Radix / American flag | GAP |
-| `sort_by` | Merge sort over a comparator | Same, plus the above | GAP |
+| `sort_by` | Merge sort over a comparator | Same adaptive treatment as `cmp.sort` | GAP |
+| Unstable sort | None — `sort` is the only option | pdqsort | GAP |
 | Tiny fixed-size sort | None | Sorting networks | BLOCKED (wants SIMD to pay off) |
 
-`cmp.sort` is the clearest single-function opportunity in the library. It
-allocates a whole new array **per merge pass** — `O(n log n)` element copies on
-top of the comparisons, and `log n` array allocations — and it has no
-insertion-sort base case and no run detection, so an already-sorted array costs
-exactly as much as a random one. A Timsort-shaped rewrite (insertion sort for
-short runs, natural run detection, one reusable scratch buffer) is pure
-stdlib-level work with no compiler dependency.
-
-Note the AST-safety contract in that function's comment (fresh buffer per pass,
-never `var dst = src;`). It was required by the self-host AST emitter, which has
-since been deleted (#3457/#5972) — so a rewrite is no longer bound by it, but
-it must be re-verified under Perceus rather than assumed.
+`sort_by` (in `std/sort`) still has the old fixed bottom-up shape and deserves
+the same treatment; it was left alone here to keep the change reviewable.
 
 ### Hash tables and hashing
 
@@ -237,14 +230,13 @@ constraints above.
 
 1. **Hardware bit intrinsics.** One IR op family, three one-line lowerings.
    Unlocks SWAR everywhere downstream.
-2. **Adaptive sort.** Insertion-sort base case, natural run detection, one
-   reusable scratch buffer. Pure stdlib.
-3. **Eisel–Lemire `parse_float`.** The sibling of the Dragonbox work; needs a
+2. **Eisel–Lemire `parse_float`.** The sibling of the Dragonbox work; needs a
    128-bit high-multiply.
-4. **Modulo-bias fix in `random_int`,** plus a fast non-crypto PRNG (PCG or
+3. **Modulo-bias fix in `random_int`,** plus a fast non-crypto PRNG (PCG or
    xoshiro) behind a separate type. The bias part is a correctness fix.
-5. **wyhash-style string hash** for `core/map`, plus a small-map linear-scan
+4. **wyhash-style string hash** for `core/map`, plus a small-map linear-scan
    path.
+5. ~~Adaptive sort~~ — done, see below.
 
 **Tier 2 — unblocked, narrower**
 
@@ -289,6 +281,46 @@ same program — 7,154 cases per backend, plus 51,396 cases for the search core
 over a wider enumeration, run on interp, x86-64, wasm, and through the
 self-host compiler on both wasm and x86-64. A binary alphabet is what actually
 exercises Two-Way's periodic branch; fixed example strings mostly miss it.
+
+**`cmp.sort` / `cmp.sort_desc` are now an adaptive natural-run merge sort.**
+The previous implementation materialised a fresh full copy of the array on
+every one of its `ceil(log2 n)` merge passes, with no insertion-sort base case
+and no run detection — so an already-sorted array cost exactly as much as a
+random one. Now: `n <= 32` is a single insertion sort; larger inputs have their
+natural runs detected (descending runs found with a strict compare and reversed
+in place, which keeps the sort stable) and then merged in balanced rounds.
+Sorted and reverse-sorted inputs are a single run, so they cost O(n) with one
+copy; the worst case stays O(n log n).
+
+Verified against a naive selection sort across every length from 0 to 80 —
+straddling the size-32 threshold and the merge rounds — with only 7 distinct
+values so ties are dense, plus the sorted / reverse / all-equal / sorted-then-
+descending shapes, on interp / x86-64 / wasm and through the self-host compiler
+on wasm and x86-64. Stability is checked separately with a key-only `Ord` impl
+and a tag witnessing input order, over 100 elements and 5 keys so equal-key
+groups span several runs and survive multiple merges. That stability test is
+**mutation-checked**: flipping the merge's tie-break to take from the right run
+makes it fail with a tag inversion, so it is known to have teeth.
+
+**A self-host IR-subset gap was found and worked around (not fixed).** Calling
+a free **generic** function from inside a loop body — or from a short-circuit
+operand of a loop condition — makes the self-host IR path bail on a
+monomorphised generic caller. Since the AST emitters were deleted, a bail is a
+hard compile error, so this is not a performance footnote: the first draft of
+this sort simply would not compile for the self-host backends. Bisected to a
+minimal shape: a generic function that calls a generic helper inside a `while`
+bails, while the same call outside the loop, a non-generic call in the same
+position, and a trait-method call (`x.cmp(y)`) inside the loop all lower fine.
+
+The workaround is to use inline `.cmp()` everywhere and negate the three-way
+result for descending order, so no free generic helper is called from a loop.
+The visible cost is Timsort's MIN_RUN step: extending short runs by insertion
+sort would mean calling the insertion helper from inside the run loop, so it is
+omitted, which leaves a deeper merge tree on random input. Both constraints are
+documented at the call site so a later tidy-up does not silently reintroduce
+the bail. **This gap is worth fixing at the compiler level** — it is a real
+constraint on how stdlib generics can be written, and it is invisible until
+something bails.
 
 **A native/self-host divergence in `split("")` was found and fixed.**
 `std/string.split` char-splits an empty separator, but the self-host compiler
