@@ -209,9 +209,8 @@ PCG32 alongside the CSPRNG path (both below). The CSPRNG functions are
 unchanged and remain the default, so nothing silently became less secure; the
 `*_seeded` siblings are opt-in and ~4-5x faster in bulk.
 
-Still open here: `std/fuzz` draws through `math.random_int` and would benefit
-from the seeded generator, which would also make a fuzz run reproducible from
-its seed — currently it is not.
+`std/fuzz` now draws from the seeded generator, so a fuzz run is reproducible
+from its seed (below).
 
 **`std/sim` has the same bias, and it is deliberately harder to fix.** Its
 `__roll` maps a Park-Miller step with `x % n`, biased for the same reason. But
@@ -253,9 +252,7 @@ constraints above.
    longer urgent.
 2. **Eisel–Lemire `parse_float`.** The sibling of the Dragonbox work; needs a
    128-bit high-multiply.
-3. **Move `std/fuzz` onto the seeded generator**, so a fuzz run is
-   reproducible from its seed and stops paying a syscall per draw. (The
-   generator itself, and the modulo-bias fix, are done.)
+3. ~~Move `std/fuzz` onto the seeded generator~~ — done, see below.
 4. **Small-map linear-scan path** for `core/map` — below ~8 entries the full
    probe machinery costs more than a scan. (The string hash half of this item
    is done.)
@@ -444,6 +441,38 @@ pre-existing and unrelated to this pass, but it is a real hole: a stdlib
 module that only works under the interpreter and the native backends. Either
 `Cell` should lower on the IR path or `std/sim` should thread its PRNG state
 the way `std/rand` now does.
+
+**`std/fuzz` mutations come from the seeded generator, and failures are now
+replayable.** Mutation drew from `math.random_int` at 14 sites — a syscall per
+draw, up to two per mutation, and no way to reproduce a run. It now threads a
+PCG32 state; `fuzz_run` draws ONE seed from the CSPRNG, names it in the failure
+diagnostic, and `fuzz_run_seeded(seeds, iterations, rng_seed, target)` replays
+that exact sequence. A fuzz failure you can re-run is worth considerably more
+than one you can only read about.
+
+**It also surfaced a self-host x86-64 miscompile, and the workaround is
+documented at the call site.** The obvious shape for `fuzz_run` is a one-line
+delegation to `fuzz_run_seeded` with a freshly drawn seed. That delegation
+makes the callee invoke a DIFFERENT function value than the one passed:
+`fuzz_run` with an always-passing target reported a failure raised by a target
+from an earlier call. Established by bisection — the pre-delegation shape and
+the inlined shape both behave, tail and non-tail delegation both misbehave.
+
+The trigger is narrower than "forwarding a function parameter", which is why
+`fuzz_run` is inlined rather than this being filed as a blanket hazard: a
+single-module forward of an i32-returning fn, of an enum-returning fn, and
+**std/array's own `(xs: T[]) any(pred) { return any(xs, pred); }` receiver
+delegations** all lower correctly — that last one checked specifically,
+because if it had failed the stdlib would be silently miscompiling today. It
+does not. Something about this particular shape does; isolating it further is
+compiler work, not stdlib work.
+
+**A third gap, found the same way: `std/test` cannot run on the self-host wasm
+path.** A bare `import "std/test"` program compiles but wasmtime rejects the
+module at `test__assert_at_f32` — the f32/f64 emit gap that also makes
+`TestArrayStatsWasm` / `TestArrayMedianRangeWasm` skip. That matters more than
+it looks: `std/test` is the pure-Fern runner the project plans to migrate to
+once Go-side tests retire.
 
 **A native/self-host divergence in `split("")` was found and fixed.**
 `std/string.split` char-splits an empty separator, but the self-host compiler

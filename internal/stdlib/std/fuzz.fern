@@ -45,6 +45,7 @@ import "std/i32";
 import "std/string";
 import "std/array";
 import "std/math";
+import "std/rand";
 // std/fuzz hangs fuzz()/fuzz_shrink() methods off std/test's
 // TestRunner; import it so the receiver type resolves under no-prelude.
 import "std/test";
@@ -86,50 +87,55 @@ function __fuzz_pick_seed(seeds: string[], iter: i32): string {
 // The "unchanged" path is important: every iteration should
 // have a chance of running the seed verbatim so a buggy
 // seed isn't masked by mutations.
-function __fuzz_mutate(seed: string, mode: i32): string {
+//
+// Draws come from a THREADED PCG32 state rather than the CSPRNG:
+// `state` in, `(state', mutated)` out. That is what makes a fuzz run
+// reproducible from its seed — and it drops the syscall count from one
+// per draw (up to two per mutation) to zero.
+function __fuzz_mutate(seed: string, mode: i32, state: i64): (i64, string) {
     var n: i32 = seed.len();
     // Insert is the only strategy that can grow an empty
     // seed; every other strategy needs at least one byte.
-    if (n == 0 && mode != 2) { return seed; }
+    if (n == 0 && mode != 2) { return (state, seed); }
     if (mode == 0) {
-        var i: i32 = math.random_int(0, n);
-        var b: i32 = math.random_int(0, 256);
-        return seed[0:i] + (b as u8).to_ascii_string() + seed[i + 1:n];
+        var pi = rand.rng_below(state, n);
+        var pb = rand.rng_below(pi.0, 256);
+        return (pb.0, seed[0:pi.1] + (pb.1 as u8).to_ascii_string() + seed[pi.1 + 1:n]);
     }
     if (mode == 1) {
-        var i: i32 = math.random_int(0, n);
-        return seed[0:i] + seed[i + 1:n];
+        var p1 = rand.rng_below(state, n);
+        return (p1.0, seed[0:p1.1] + seed[p1.1 + 1:n]);
     }
     if (mode == 2) {
-        var i: i32 = math.random_int(0, n + 1);
-        var b: i32 = math.random_int(0, 256);
-        return seed[0:i] + (b as u8).to_ascii_string() + seed[i:n];
+        var p2 = rand.rng_below(state, n + 1);
+        var b2 = rand.rng_below(p2.0, 256);
+        return (b2.0, seed[0:p2.1] + (b2.1 as u8).to_ascii_string() + seed[p2.1:n]);
     }
     if (mode == 3) {
         // bit flip — pick a byte, XOR with a single-bit mask.
-        var i: i32 = math.random_int(0, n);
-        var bit: i32 = math.random_int(0, 8);
-        var orig: i32 = seed[i] as i32;
-        var flipped: i32 = orig ^ (1 << bit);
-        return seed[0:i] + (flipped as u8).to_ascii_string() + seed[i + 1:n];
+        var p3 = rand.rng_below(state, n);
+        var bit = rand.rng_below(p3.0, 8);
+        var orig: i32 = seed[p3.1] as i32;
+        var flipped: i32 = orig ^ (1 << bit.1);
+        return (bit.0, seed[0:p3.1] + (flipped as u8).to_ascii_string() + seed[p3.1 + 1:n]);
     }
     if (mode == 4) {
         // byte duplicate
-        var i: i32 = math.random_int(0, n);
-        return seed[0:i] + seed[i:i + 1] + seed[i:n];
+        var p4 = rand.rng_below(state, n);
+        return (p4.0, seed[0:p4.1] + seed[p4.1:p4.1 + 1] + seed[p4.1:n]);
     }
     if (mode == 5) {
         // byte zero
-        var i: i32 = math.random_int(0, n);
-        return seed[0:i] + (0 as u8).to_ascii_string() + seed[i + 1:n];
+        var p5 = rand.rng_below(state, n);
+        return (p5.0, seed[0:p5.1] + (0 as u8).to_ascii_string() + seed[p5.1 + 1:n]);
     }
     if (mode == 6) {
         // byte max (0xFF)
-        var i: i32 = math.random_int(0, n);
-        return seed[0:i] + (255 as u8).to_ascii_string() + seed[i + 1:n];
+        var p6 = rand.rng_below(state, n);
+        return (p6.0, seed[0:p6.1] + (255 as u8).to_ascii_string() + seed[p6.1 + 1:n]);
     }
     // verbatim (mode 7 or higher)
-    return seed;
+    return (state, seed);
 }
 
 // __fuzz_mutator_count is the upper bound passed to
@@ -179,13 +185,83 @@ function __fuzz_escape(s: string): string {
 // `seeds` + mutations. Returns:
 //   Pass              — every input passed
 //   Fail(diagnostic)  — the first failing input, with the
-//                       target's message and the escaped
-//                       offending input embedded
+//                       target's message, the escaped
+//                       offending input, and the RNG SEED
+//                       embedded — pass that seed to
+//                       `fuzz_run_seeded` to replay the exact
+//                       sequence that found it
+//
+// The mutation sequence comes from a seeded PCG32 (std/rand), drawn once
+// from the CSPRNG per run rather than per mutation. So a run is still
+// different every time, but any failure it finds is reproducible.
 //
 // Use through `r.fuzz(...)` rather than calling directly;
 // the receiver-method form folds the result into the
 // runner's TAP stream.
+// The body is spelled out here rather than delegating to `fuzz_run_seeded`
+// with a freshly drawn seed, which is what it obviously wants to be. That
+// one-line delegation MISCOMPILES on the self-host x86-64 IR path: the
+// callee ends up invoking a DIFFERENT function value than the one passed, so
+// `fuzz_run(seeds, n, always_passing_target)` reported a failure raised by a
+// target from an earlier call. Verified by bisection — the pre-delegation
+// shape and this inlined shape both behave; tail and non-tail delegation both
+// misbehave.
+//
+// The trigger is narrower than "forwarding a function parameter", which is
+// why this is inlined rather than reported as a blanket hazard: a
+// single-module forward of an i32-returning fn, of an enum-returning fn, and
+// std/array's own `(xs: T[]) any(pred) { return any(xs, pred); }` receiver
+// delegations all lower correctly. Something about this particular shape does
+// not. Do NOT "simplify" this back into a delegation without re-running
+// internal/e2e's fuzz coverage through the self-host x86-64 backend.
 pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => test.TestOutcome): test.TestOutcome {
+    var rng_seed: i64 = (math.random_int(0 - 2000000000, 2000000000)) as i64;
+    if (iterations <= 0) {
+        return test.fail("fuzz_run: iterations must be > 0, got " + iterations.to_string());
+    }
+    if (seeds.len() == 0) {
+        return test.fail("fuzz_run: at least one seed required");
+    }
+    var i: i32 = 0;
+    while (i < seeds.len()) {
+        match (target(seeds[i])) {
+            Fail(msg) => {
+                return test.fail("seed[" + i.to_string() + "] = \"" +
+                            __fuzz_escape(seeds[i]) + "\": " + msg);
+            },
+            Pass => { },
+        }
+        i = i + 1;
+    }
+    var st: i64 = rand.rng_seed(rng_seed);
+    var iter: i32 = 0;
+    while (iter < iterations) {
+        var seed: string = __fuzz_pick_seed(seeds, iter);
+        var mpick = rand.rng_below(st, __fuzz_mutator_count());
+        st = mpick.0;
+        var mode: i32 = mpick.1;
+        var mutated = __fuzz_mutate(seed, mode, st);
+        st = mutated.0;
+        var input: string = mutated.1;
+        match (target(input)) {
+            Fail(msg) => {
+                return test.fail("iter " + iter.to_string() +
+                            " mode " + mode.to_string() +
+                            " rng_seed " + rng_seed.to_string() +
+                            " input \"" + __fuzz_escape(input) + "\": " + msg);
+            },
+            Pass => { },
+        }
+        iter = iter + 1;
+    }
+    return test.pass();
+}
+
+// fuzz_run_seeded(seeds, iterations, rng_seed, target) — `fuzz_run` with the
+// mutation sequence pinned to `rng_seed`. Equal seeds replay the identical
+// sequence of inputs, so a failure `fuzz_run` reports can be reproduced
+// exactly by calling this with the seed named in the diagnostic.
+pub function fuzz_run_seeded(seeds: string[], iterations: i32, rng_seed: i64, target: (string) => test.TestOutcome): test.TestOutcome {
     if (iterations <= 0) {
         return test.fail("fuzz_run: iterations must be > 0, got " + iterations.to_string());
     }
@@ -206,16 +282,24 @@ pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => test
         }
         i = i + 1;
     }
-    // Mutation pass.
+    // Mutation pass, over a threaded PCG32 state seeded from `rng_seed`.
+    var st: i64 = rand.rng_seed(rng_seed);
     var iter: i32 = 0;
     while (iter < iterations) {
         var seed: string = __fuzz_pick_seed(seeds, iter);
-        var mode: i32 = math.random_int(0, __fuzz_mutator_count());
-        var input: string = __fuzz_mutate(seed, mode);
+        var mpick = rand.rng_below(st, __fuzz_mutator_count());
+        st = mpick.0;
+        var mode: i32 = mpick.1;
+        var mutated = __fuzz_mutate(seed, mode, st);
+        st = mutated.0;
+        var input: string = mutated.1;
         match (target(input)) {
             Fail(msg) => {
+                // The rng seed is in the diagnostic on purpose: it is what
+                // makes the failure replayable via fuzz_run_seeded.
                 return test.fail("iter " + iter.to_string() +
                             " mode " + mode.to_string() +
+                            " rng_seed " + rng_seed.to_string() +
                             " input \"" + __fuzz_escape(input) + "\": " + msg);
             },
             Pass => { },
@@ -378,17 +462,26 @@ pub function fuzz_run_shrink(seeds: string[], iterations: i32, target: (string) 
         }
         i = i + 1;
     }
-    // Pass 2: mutated iterations.
+    // Pass 2: mutated iterations, over a threaded PCG32 state. The seed is
+    // drawn once from the CSPRNG rather than once per mutation, and it is
+    // named in the diagnostic so the run can be replayed.
+    var rng_seed: i64 = (math.random_int(0 - 2000000000, 2000000000)) as i64;
+    var st: i64 = rand.rng_seed(rng_seed);
     var iter: i32 = 0;
     while (iter < iterations) {
         var seed: string = __fuzz_pick_seed(seeds, iter);
-        var mode: i32 = math.random_int(0, __fuzz_mutator_count());
-        var input: string = __fuzz_mutate(seed, mode);
+        var mpick = rand.rng_below(st, __fuzz_mutator_count());
+        st = mpick.0;
+        var mode: i32 = mpick.1;
+        var mutated = __fuzz_mutate(seed, mode, st);
+        st = mutated.0;
+        var input: string = mutated.1;
         match (target(input)) {
             Fail(msg) => {
                 var min: string = __fuzz_shrink(input, target);
                 return test.fail(__fuzz_format_failure(
-                    "iter " + iter.to_string() + " mode " + mode.to_string(),
+                    "iter " + iter.to_string() + " mode " + mode.to_string()
+                        + " rng_seed " + rng_seed.to_string(),
                     input, min, msg));
             },
             Pass => { },
