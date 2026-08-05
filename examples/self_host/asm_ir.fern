@@ -4727,7 +4727,14 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
     var dop: i32 = 0;
     while (dop < r.ops.len()) {
         var dopop: ir.Op = r.ops[dop];
-        if (dopop.kind_tag == 124 || dopop.kind_tag == 125 || dopop.kind_tag == 126) { s = s.need("maps"); }  // map_new, map_set, map_len
+        // Every map op EXCEPT keys/values needs the maps runtime block: tags
+        // 124..130 are map_new, map_set, map_len, map_get, map_has, map_get_or,
+        // map_delete, and each emits a call into it. A range rather than the
+        // list this used to spell out — the list named 124/125/126 only, so a
+        // program whose only map op was `.has()` emitted `call __fern_map_has`
+        // and never defined it, and the link failed (#6177). Naming tags one at
+        // a time is what let four of them go missing; the range cannot.
+        if (dopop.kind_tag >= 124 && dopop.kind_tag <= 130) { s = s.need("maps"); }
         // map_keys / map_values with a SCALAR column (i32_imm 0, #4353) call
         // __fern_map_snapshot_col, which lives in the maps runtime block; a
         // pointer-column read (i32_imm 1) is a raw load and needs nothing.

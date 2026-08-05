@@ -13,8 +13,10 @@
 # each other; that agreement is what says the self-host compiler is wrong rather
 # than the generated program being invalid.
 #
-# Measured 2026-08-05 over seeds 0..511 (the leg's default corpus): 196 agree,
-# 22 diverge, 3 fail to link, 291 are compile gaps.
+# Measured 2026-08-05 over seeds 0..511 (the leg's default corpus): 199 agree,
+# 22 diverge, 291 are compile gaps. The three link failures the leg found first
+# (#6177) are fixed and their rows are gone — the maps runtime need-gate now
+# covers every map op, so seeds 121 / 265 / 365 link and agree.
 
 # CRASHES — the self-host-compiled binary dies by SIGSEGV where the interpreter
 # returns a value. Most likely to be ONE bug, and the likeliest to be the
@@ -29,12 +31,6 @@
 # ARENA EXHAUSTION — exit 125 is __fern_alloc's ExitArenaExhausted, so this is a
 # leak in the lowered code rather than a wrong answer.
 117 exit 125 = arena exhausted (interp 255) — https://github.com/JakeChampion/lang/issues/6178
-
-# LINK FAILURES — the emitted asm calls __fern_map_has, which the maps runtime
-# need-gate never marks for a program whose only map op is `.has()`.
-121 undefined reference to __fern_map_has at link — https://github.com/JakeChampion/lang/issues/6177
-265 undefined reference to __fern_map_has at link — https://github.com/JakeChampion/lang/issues/6177
-365 undefined reference to __fern_map_has at link — https://github.com/JakeChampion/lang/issues/6177
 
 # WRONG VALUES — silent miscompiles. Twelve of the fifteen have interp=0, which
 # is worth checking as a group before reducing them one at a time.
