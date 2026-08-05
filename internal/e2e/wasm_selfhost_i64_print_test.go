@@ -46,6 +46,13 @@ func TestWasmSelfHostI64Print(t *testing.T) {
 		// A module that prints BOTH widths: print_int (i32) + print_int64 (i64)
 		// must coexist (distinct helpers, non-overlapping scratch buffers).
 		{"mixed-widths", "function main(): i32 { var n: i64 = 8000000000; print_int(42); print_int(n); return 0; }", "428000000000"},
+		// Print, THEN allocate. $__fern_print_int64's 24-byte buffer used to run
+		// past the 16 bytes fl_base reserved for print_int, straight into the
+		// freelist head array — so the first small allocation after an i64 print
+		// popped a "free block" that was in fact the printed digits. This trapped
+		// with `memory fault at wasm address 0x3938373a` (ASCII "873:"). Every
+		// case above prints and stops, which is why none of them caught it.
+		{"print-then-allocate", "struct P { a: i32, b: i32 } function mk(v: i32): P { return P { a: v, b: v + 1 }; } function main(): i32 { var n: i64 = 1234567890123; print_int(n); var s: i32 = 0; var i: i32 = 0; while (i < 50) { var p: P = mk(i); s = (s + p.a + p.b) % 97; i = i + 1; } print_int(s); return 0; }", "123456789012375"},
 	}
 
 	for _, tc := range cases {

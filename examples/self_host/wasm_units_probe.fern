@@ -132,6 +132,8 @@ function main(): i32 {
 
     var strs_a: string[] = wasm_ir.str_values(cache_a);
     var strs_b: string[] = wasm_ir.str_values(cache_b);
+    var caggs_a: string[] = wasm_ir.const_agg_values(cache_a);
+    var caggs_b: string[] = wasm_ir.const_agg_values(cache_b);
     var fns_a: string[] = wasm_ir.fn_value_table(cache_a);
     var fns_b: string[] = wasm_ir.fn_value_table(cache_b);
 
@@ -151,16 +153,18 @@ function main(): i32 {
     var sdt: string[] = wasm_ir.union_strs(wasm_ir.struct_drop_types(cache_a, im.structs), wasm_ir.struct_drop_types(cache_b, im.structs));
     var aet: string[] = wasm_ir.union_strs(wasm_ir.struct_arr_elems_drop_types(cache_a, im.structs), wasm_ir.struct_arr_elems_drop_types(cache_b, im.structs));
 
-    // heap_base is a whole-LINK quantity (it sits past every unit's literals),
-    // so it is computed from the concatenated literal list, exactly as the link
-    // step computes it.
+    // heap_base is a whole-LINK quantity (it sits past every unit's literals
+    // and aggregate constants), so it is computed from the concatenated lists,
+    // exactly as the link step computes it.
     var all_strs: string[] = concat_strs(strs_a, strs_b);
-    var rc_bodies: string = wasm_ir.emit_ir_rc_bodies_from(im, frt, sdt, aet, wasm_ir.heap_base_for_strs(all_strs));
+    var all_caggs: string[] = concat_strs(caggs_a, caggs_b);
+    var rc_bodies: string = wasm_ir.emit_ir_rc_bodies_from(im, frt, sdt, aet, wasm_ir.heap_base_for_strs(all_strs, all_caggs));
 
     write(wasm_ir.emit_ir_module_units(
         ["", "$u1"],
         [unit_a, unit_b],
         all_strs, [strs_a.len(), strs_b.len()],
+        all_caggs, [caggs_a.len(), caggs_b.len()],
         concat_strs(fns_a, fns_b), [fns_a.len(), fns_b.len()],
         im, needs, arities, rc_bodies));
     return 0;

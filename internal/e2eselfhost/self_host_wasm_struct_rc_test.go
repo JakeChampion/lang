@@ -36,8 +36,12 @@ func TestSelfHostRcStructBoxWasm(t *testing.T) {
 		src  string
 		exit int
 	}{
-		// A fresh struct literal is rc-boxed at rc 1 => unique.
-		{"struct-fresh-unique", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 5, y: 7 }; return __fern_rc_is_unique(p); }", 1},
+		// A fresh struct literal is rc-boxed at rc 1 => unique. `5 * one` rather
+		// than `5`: an all-scalar-literal struct is a CONSTANT (#6149), placed in
+		// static data below heap_base, where the rc guard chain answers 0 — so
+		// written with bare literals this asserts 0 == 1 and measures the constant
+		// path instead of the fresh-box one it names.
+		{"struct-fresh-unique", "struct P { x: i32, y: i32 } function main(): i32 { var one = 1; var p = P { x: 5 * one, y: 7 }; return __fern_rc_is_unique(p); }", 1},
 		// Field values survive the rc header (s-relative access unchanged).
 		{"struct-values-intact", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 30, y: 12 }; return p.x + p.y; }", 42},
 		// A struct holding an array field: value intact, detector clean.

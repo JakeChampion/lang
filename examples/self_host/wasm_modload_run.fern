@@ -141,6 +141,7 @@ function build_unit(infmods: parser.Module[], all_funcs: parser.FuncDecl[], all_
     var cache: irlower.LowerResult[] = wasm_ir.lower_all_for_view(sub, all_funcs, all_structs);
     return wasm_objfile.UnitObj {
         strs: wasm_ir.str_values(cache),
+        caggs: wasm_ir.const_agg_values(cache),
         fns: wasm_ir.fn_value_table(cache),
         needs: wasm_ir.needs_of(cache),
         arities: wasm_ir.indirect_arities(cache),
@@ -194,6 +195,15 @@ function cache_lookup(dir: string, entry_path: string, parts: flatten.PerModule[
     if (cf.len() > 0) {
         match (read_file(cf)) {
             Ok(cached) => {
+                // An object written by an older compiler carries an older
+                // magic. The key hashes sources and signatures, not the object
+                // FORMAT, so nothing else here would tell the two apart — and
+                // decode reads its sections positionally, so a stale file would
+                // yield a wrong-but-plausible unit rather than an error.
+                if (!wasm_objfile.is_current(cached)) {
+                    eprint("cache-stale " + parts[idx].ns + "\n");
+                    return wasm_objfile.MaybeUnit { found: false, obj: wasm_objfile.empty_unit() };
+                }
                 eprint("cache-hit " + parts[idx].ns + "\n");
                 return wasm_objfile.MaybeUnit { found: true, obj: wasm_objfile.decode(cached) };
             },
@@ -260,6 +270,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         var texts: string[] = [];
         var all_strs: string[] = [];
         var str_counts: i32[] = [];
+        var all_caggs: string[] = [];
+        var cagg_counts: i32[] = [];
         var all_fns: string[] = [];
         var fn_counts: i32[] = [];
         var needs: string[] = [];
@@ -302,6 +314,9 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
             var si: i32 = 0;
             while (si < obj.strs.len()) { all_strs = all_strs.append(obj.strs[si]); si = si + 1; }
             str_counts = str_counts.append(obj.strs.len());
+            var ki: i32 = 0;
+            while (ki < obj.caggs.len()) { all_caggs = all_caggs.append(obj.caggs[ki]); ki = ki + 1; }
+            cagg_counts = cagg_counts.append(obj.caggs.len());
             var fi2: i32 = 0;
             while (fi2 < obj.fns.len()) { all_fns = all_fns.append(obj.fns[fi2]); fi2 = fi2 + 1; }
             fn_counts = fn_counts.append(obj.fns.len());
@@ -332,8 +347,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // quantity: it sits past every unit's literals.
         var merged: parser.Module = flatten.bundle(entry, loaded);
         merged = parser.infer_ret_types_module(wasm_ir.lift_lambdas(modloader.merge_builtins(dir, merged)));
-        var rc: string = wasm_ir.emit_ir_rc_bodies_from(merged, frt, sdt, aet, wasm_ir.heap_base_for_strs(all_strs));
-        write(wasm_ir.emit_ir_module_units(nss, texts, all_strs, str_counts, all_fns, fn_counts, merged, needs, arities, rc));
+        var rc: string = wasm_ir.emit_ir_rc_bodies_from(merged, frt, sdt, aet, wasm_ir.heap_base_for_strs(all_strs, all_caggs));
+        write(wasm_ir.emit_ir_module_units(nss, texts, all_strs, str_counts, all_caggs, cagg_counts, all_fns, fn_counts, merged, needs, arities, rc));
         return 0;
     }
 
