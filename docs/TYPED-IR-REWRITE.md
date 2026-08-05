@@ -131,7 +131,7 @@ leaves every `ty` empty and gets the structural walk unchanged.
 |---|---|---|
 | `ExprCall.ty` | #5531 | `expr_struct_type`, `expr_map_type_tag`, `expr_tuple_elem_tag`, `try_opt_type`, `expr_is_str` / `_f64` / `_u32` / `_u64`, `infer_expr_width` |
 | `ExprFieldAccess.ty` | #5986 | `fa_type_tag` — the single leaf behind `expr_struct_type`, `expr_map_type_tag`, `infer_expr_width` and `expr_is_f64` / `_f32` / `_u32` / `_u64`; plus `cap_type_expr` at lift time |
-| `ExprIndex.ty` | this slice | `ix_type_tag` — the leaf behind the `ExprIndex` arms of `expr_is_f64` and `infer_expr_width` AND the two load sites (`lower_expr`'s `arr_get` width, `lower_i64`'s `arr_get_i64`), so the element width and the value's downstream type answer from one place |
+| `ExprIndex.ty` | #6165 | `ix_type_tag` — the leaf behind the `ExprIndex` arms of `expr_is_f64` and `infer_expr_width` AND the two load sites (`lower_expr`'s `arr_get` width, `lower_i64`'s `arr_get_i64`), so the element width and the value's downstream type answer from one place |
 
 A third ordering fact, learned wiring `ExprIndex.ty`: **a carrier must reach the
 LOAD site, not just the value predicates.** Wiring `expr_is_f64` alone made
@@ -147,6 +147,53 @@ rebuild an `ExprIndex` with `ty: ""`, so a monomorphised clone falls back to the
 structural walk. That matches what those three sites already do with `unchecked`
 and keeps clone behaviour byte-identical; propagating the tag through
 monomorphisation is a separate slice.
+
+### A carrier is only as good as the checker behind it
+
+#6165 shipped with a known sibling gap: the f64 shape
+`var v: f64 = (if (c) { [1.5, 2.5] } else { … })[1]` lowers, but the **i64**
+shape `var v: i64 = (if (c) { [7000000000, 9000000000] } else { … })[1]` still
+bails the IR path — while the interpreter, the semantic oracle, evaluates it
+fine. Chasing that down produced the finding worth recording here, because it
+bounds what the whole annotate-and-consume migration can deliver.
+
+Instrumenting `ix_type_tag` shows the tag is not *missing* for the i64 shape.
+It is **wrong**: the checker stamps `i32`. The cause is one line —
+`check_expr`'s `ExprNumber` arm returns `t_i32()` for every non-float literal,
+with no magnitude test and no context sensitivity:
+
+```
+parser.ExprNumber(n) => {
+    if (n.is_float) { return t_float(); }
+    return t_i32();
+},
+```
+
+The native compiler does something categorically different: an unsuffixed
+integer literal parses **polymorphic** (`NumberLit.Width == 0`, see
+`internal/parser/parser.go`'s suffix switch) and a later settling pass fixes its
+width from context, so `var v: i64 = <literal>` settles the literal to 64. Only
+a typed suffix (`42i64`) pins the width at parse time. The self-host checker has
+no settling pass at all.
+
+Three consequences:
+
+1. **This is not an irlower gap and no carrier can paper over it.** A tag
+   carries whatever the checker concluded; when the conclusion is wrong, the tag
+   propagates the wrong answer faster. The migration's ceiling is the checker's
+   precision.
+2. **The structural walk is still load-bearing as a guard, not just a
+   fallback.** `ix_type_tag` consulting the walk FIRST is what makes the wrong
+   `i32` tag harmless here — it matches neither the f64 nor the i64 branch, so
+   the shape keeps its old (bailing) behaviour instead of silently lowering a
+   truncating 4-byte read. A tag-first leaf would have turned a bail into a
+   miscompile. This is a second, independent reason for the ordering rule above,
+   which was originally justified only by f32/f64 precision.
+3. **Literal settling in the self-host checker is its own project**, not a slice
+   of this one — it is an inference mechanism the checker lacks, and it would
+   move the inferred type of every unsuffixed literal in every program, against
+   a byte-identical self-compile gate. It should be scoped and measured
+   separately, with the native settling pass as the reference.
 
 Two ordering facts constrain how a carrier is read, and both cost a debugging
 session to rediscover:
