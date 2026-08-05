@@ -512,6 +512,14 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		for _, f := range x.Fields {
 			walkExpr(f.Value, byName, enqueue)
 		}
+		// Struct-update `Foo { ...base, field: v }`: the spread source is an
+		// ordinary expression, so a call appearing ONLY there (`Foo { ...mk(),
+		// … }`) is a real reference. Without this it looked unreachable and the
+		// callee was pruned, leaving the emitted call site with an undefined
+		// label at assembly time.
+		if x.Base != nil {
+			walkExpr(x.Base, byName, enqueue)
+		}
 	case *ast.MapLit:
 		// IR lowers `Map { ... }` to map_new + a chain of
 		// __method_Map_set calls — pull both alias names so
