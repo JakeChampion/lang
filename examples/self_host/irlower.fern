@@ -22367,50 +22367,32 @@ function collect_fresh_map_in_stmt(st: parser.Stmt, acc: string[]): string[] {
 // layer 0: i32/string K/V route grows through __fern_arr_push_owned); only
 // flag-1 alias columns (i64/f64/struct/generic) keep the LOAD-BEARING leak.
 
-// map_decl_value_type: the V of the `var name: Map[K, V] = …` declaration of the
-// map local `name`, found anywhere in `stmts`; "" if unannotated / not found.
-function map_decl_value_type(stmts: parser.Stmt[], name: string): string {
+// map_decl_type: the K or the V of the `var name: Map[K, V] = …` declaration of
+// the map local `name`, found anywhere in `stmts` (nested if / while / for /
+// match bodies included); "" if unannotated or not found. `want_key` picks the
+// side — this was two functions differing only in which of map_key_of /
+// map_value_of they called, recursion skeleton and all.
+function map_decl_type(stmts: parser.Stmt[], name: string, want_key: boolean): string {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { if (v.name == name) { return map_value_of(v.type_name); } },
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    if (want_key) { return map_key_of(v.type_name); }
+                    return map_value_of(v.type_name);
+                }
+            },
             parser.StmtIf(f) => {
-                var t1: string = map_decl_value_type(f.then_body, name);
+                var t1: string = map_decl_type(f.then_body, name, want_key);
                 if (t1 != "") { return t1; }
-                var t2: string = map_decl_value_type(f.else_body, name);
+                var t2: string = map_decl_type(f.else_body, name, want_key);
                 if (t2 != "") { return t2; }
             },
-            parser.StmtWhile(w) => { var t: string = map_decl_value_type(w.body, name); if (t != "") { return t; } },
-            parser.StmtFor(fo) => { var t: string = map_decl_value_type(fo.body, name); if (t != "") { return t; } },
+            parser.StmtWhile(w) => { var t: string = map_decl_type(w.body, name, want_key); if (t != "") { return t; } },
+            parser.StmtFor(fo) => { var t: string = map_decl_type(fo.body, name, want_key); if (t != "") { return t; } },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { var t: string = map_decl_value_type(m.arms[mi].body, name); if (t != "") { return t; } mi = mi + 1; }
-            },
-            _ => {}
-        }
-        i = i + 1;
-    }
-    return "";
-}
-
-// map_decl_key_type: the K of the `var name: Map[K, V] = …` declaration — the
-// key-side sibling of map_decl_value_type (uses map_key_of).
-function map_decl_key_type(stmts: parser.Stmt[], name: string): string {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            parser.StmtVar(v) => { if (v.name == name) { return map_key_of(v.type_name); } },
-            parser.StmtIf(f) => {
-                var t1: string = map_decl_key_type(f.then_body, name);
-                if (t1 != "") { return t1; }
-                var t2: string = map_decl_key_type(f.else_body, name);
-                if (t2 != "") { return t2; }
-            },
-            parser.StmtWhile(w) => { var t: string = map_decl_key_type(w.body, name); if (t != "") { return t; } },
-            parser.StmtFor(fo) => { var t: string = map_decl_key_type(fo.body, name); if (t != "") { return t; } },
-            parser.StmtMatch(m) => {
-                var mi: i32 = 0;
-                while (mi < m.arms.len()) { var t: string = map_decl_key_type(m.arms[mi].body, name); if (t != "") { return t; } mi = mi + 1; }
+                while (mi < m.arms.len()) { var t: string = map_decl_type(m.arms[mi].body, name, want_key); if (t != "") { return t; } mi = mi + 1; }
             },
             _ => {}
         }
@@ -22508,12 +22490,12 @@ function map_no_unfresh_set_arg(stmts: parser.Stmt[], name: string, argidx: i32)
 // — so the map is the sole rc=1 owner of every value (resp. key) box and that
 // column can be deep-freed. argidx 1 = value column, 0 = key column.
 function map_str_value_reclaimable(stmts: parser.Stmt[], name: string): boolean {
-    if (map_decl_value_type(stmts, name) != "string") { return false; }
+    if (map_decl_type(stmts, name, false) != "string") { return false; }
     if (!map_no_unfresh_set_arg(stmts, name, 1)) { return false; }
     return map_init_chain_arg_ok(stmts, name, 1);
 }
 function map_str_key_reclaimable(stmts: parser.Stmt[], name: string): boolean {
-    if (map_decl_key_type(stmts, name) != "string") { return false; }
+    if (map_decl_type(stmts, name, true) != "string") { return false; }
     if (!map_no_unfresh_set_arg(stmts, name, 0)) { return false; }
     return map_init_chain_arg_ok(stmts, name, 0);
 }
