@@ -23,11 +23,12 @@
 # leg only ever logged "exit value unmeasurable" for them.
 #
 # All 16 were measured on the first two runs (49e762e0, d67de908), 317 fixtures
-# run. Eight have since been FIXED — `eq_struct_enum` + `ord_struct_enum`
+# run. Nine have since been FIXED — `eq_struct_enum` + `ord_struct_enum`
 # (#6009), `tuple_match_expr` (#6010), `int_wrap` + `u64_max_to_f64_is_huge`
-# (#6050 / #6051), `multiline_stdin` (#6052), and `pure_collection_aliases` +
-# `map_struct_value_field` (the #6007 slices) — see the notes in the wasm
-# sibling. Eight remain, listed below.
+# (#6050 / #6051), `multiline_stdin` (#6052), `pure_collection_aliases` +
+# `map_struct_value_field` (the #6007 slices), and `derive_json` (#6009, two
+# separate bugs — see the notes in the wasm sibling). Seven remain, listed
+# below: six regex, and #6007's last fixture.
 
 # --- the six the wasm leg could never judge: they never terminate -----------
 # Killed at the leg's 20s cap with no output. Natively each returns in
@@ -41,13 +42,6 @@ regex_ops #6049 hangs (killed at 20s, no output); native returns 255 in ms
 regex_wordbound #6049 hangs (killed at 20s, no output); native returns 255 in ms
 regex_captures_assert #6049 hangs (killed at 20s, no output); native returns 255 in ms
 regex_groups #6049 hangs (killed at 20s, no output); native returns 127 in ms
-
-# --- shared with the wasm leg: same fixtures, same wrong values -------------
-# Byte-identical wrong answers on two backends with no shared instruction
-# selection, so these live in the shared frontend/irlower, NOT in wasm_ir.fern.
-# Commented onto #6007/#6009/#6010 with the cross-target evidence; those issues
-# are titled "self-host wasm:" and should be re-scoped.
-derive_json #6009 returns 8, native 42 — identical to the wasm + arm64 figure; was 4 (multi-payload variants, fixed); now `self.items.to_json()` on an i32[] FIELD renders the array POINTER
 
 # --- IR-ineligible, hard error since #3457 deleted the AST emitters ---------
 # The leg re-runs these under FERN_STRICT_IR=1 and logs the named bail site.

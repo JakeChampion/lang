@@ -40,18 +40,17 @@
 # recovery for the get_or receiver and none for the iterator's. Both read the
 # same V.
 #
-# `derive_json` is PARTLY fixed and stays listed. Its enum half was the
-# multi-payload synthesiser bug (every @derive over a variant bound a single
-# `__p0`, so `Rect(2, 3)` serialised, compared, ordered and hashed as `Rect(2)`
-# — derived `eq` answered TRUE for `Rect(2, 3) == Rect(2, 9)`). That is fixed
-# and pinned by `derive_multi_payload`. What remains is a DIFFERENT bug the
-# first one was hiding: `.to_json()` on an `i32[]` FIELD-ACCESS receiver
-# dispatches to i32's to_json on the array pointer, so `self.items.to_json()`
-# renders 268435472. The same array bound to a local first renders `[1,2,3]`,
-# and a `string[]` field renders correctly — so it is the i32-array
-# field-receiver dispatch specifically, not array to_json in general.
+# `derive_json` was here and is now FIXED, in two halves. (1) Every @derive over
+# an enum VARIANT bound a single `__p0`, so `Rect(2, 3)` serialised, compared,
+# ordered and hashed as `Rect(2)` — derived `eq` answered TRUE for
+# `Rect(2, 3) == Rect(2, 9)`; pinned by `derive_multi_payload`. (2) With that
+# gone, `.to_json()` on an `i32[]` FIELD receiver was seen to render the array
+# POINTER: the guard listing the array predicates relies on expr_is_arr_src for
+# scalar arrays, and that means array SOURCE (fresh/owned, an rc concept), not
+# "is an array", so a field READ fell through to the primitive path. Pinned by
+# `json_array_field`.
 #
-# Six of the original twelve remain. All were found by the leg's first run
+# Five of the original twelve remain. All were found by the leg's first run
 # over the existing corpus, on fixtures that had been green for months because
 # all four of TestFernFixtures' backends are the native compiler. Each has been reproduced by hand with a
 # native self-host CLI (`make selfhost-cli`) before being written down; none is
@@ -73,9 +72,6 @@ regex_captures #6008 traps (unreachable); native returns 255
 regex_captures_all #6008 traps (unreachable); native returns 255
 regex_named_groups #6008 traps (unreachable); native returns 255
 regex_replace_groups #6008 traps (unreachable); native returns 255
-
-# --- runs clean, wrong answer -------------------------------------------
-derive_json #6009 returns 8, native 42 — was 4 (multi-payload variants, fixed); now `self.items.to_json()` on an i32[] FIELD renders the array POINTER, e.g. {"items":268435472}
 
 # --- suspicious but UNMEASURABLE by this oracle --------------------------
 # Not listed as divergences because the leg cannot prove it: their expected exit
