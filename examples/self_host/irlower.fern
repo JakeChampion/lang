@@ -24220,10 +24220,25 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var sarrs2: string[] = collect_fresh_structarr_names(body, []);
     var sa2i: i32 = 0;
     while (sa2i < sarrs2.len()) {
-        if (!body_unsafe_for(body, sarrs2[sa2i], borrowable)
-            && util.index_of_str(reassigned, sarrs2[sa2i]) < 0
+        // NOT excluded on `reassigned` any more (#6127) — the self-append rebind
+        // IS a reassignment, and the blunt exclusion left every append-built
+        // struct array leaking one element box per append.
+        // structarr_unsafe_for validates each rebind individually and is
+        // otherwise body_unsafe_for, so it subsumes both former checks.
+        // "A|" rows are append-BUILT markers, not candidates.
+        if (!(sarrs2[sa2i].len() > 2 && sarrs2[sa2i][0] == 65 && sarrs2[sa2i][1] == 124)   // 65='A' 124='|'
+            && !structarr_unsafe_for(body, sarrs2[sa2i], borrowable)
             && !structarr_elem_escapes(body, sarrs2[sa2i], borrowable)) {
-            out = out.append("STRUCTARR:" + sarrs2[sa2i]);
+            // Append-built candidates take the SEPARATE STRUCTARRA: credit,
+            // which slot_is_reclaimable_structarr additionally gates on the
+            // element struct being all-scalar (#6127 / #6129). Literal-built
+            // ones keep the original credit and the original, looser rule, so
+            // their emitted code is unchanged.
+            if (util.index_of_str(sarrs2, "A|" + sarrs2[sa2i]) >= 0) {
+                out = out.append("STRUCTARRA:" + sarrs2[sa2i]);
+            } else {
+                out = out.append("STRUCTARR:" + sarrs2[sa2i]);
+            }
         }
         sa2i = sa2i + 1;
     }
@@ -26723,6 +26738,125 @@ function structarr_lit_is_fresh(e: parser.Expr): boolean {
     return false;
 }
 
+// structarr_elem_store_ok: `e` is an element safe to APPEND to a struct-array
+// candidate that will later have its element boxes freed — a fresh, no-base
+// struct LITERAL, the same per-element rule structarr_lit_is_fresh applies to an
+// initializer. An ident element would alias a live local whose box the reclaim
+// would dangle; a `...base` copy shares the base's field pointers.
+function structarr_elem_store_ok(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprStructLit(sl) => { return !sl.has_base; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// structarr_self_append_elem: `e` is the sanctioned self-append rebind of
+// `name` — `name.append(<fresh no-base struct literal>)`.
+function structarr_self_append_elem(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            var is_self_append: boolean = false;
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "append") {
+                        match (fa.obj) {
+                            parser.ExprIdent(rid) => { is_self_append = rid.name == name; },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+            if (!is_self_append) { return false; }
+            if (c.args.len() != 1) { return false; }
+            return structarr_elem_store_ok(c.args[0]);
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// structarr_name_is_appended: `name` takes at least one sanctioned self-append,
+// which is what admits an empty-literal init as an append-built candidate.
+function structarr_name_is_appended(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => { if (a.target == name && structarr_self_append_elem(a.value, name)) { return true; } },
+            parser.StmtIf(f) => {
+                if (structarr_name_is_appended(f.then_body, name)) { return true; }
+                if (structarr_name_is_appended(f.else_body, name)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (structarr_name_is_appended(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (structarr_name_is_appended(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { if (structarr_name_is_appended(m.arms[mi].body, name)) { return true; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// structarr_unsafe_for / stmt_structarr_unsafe_for: body_unsafe_for with exactly
+// one sanctioned reassignment — the self-append rebind (#6127). The same shape
+// arrarr_unsafe_for takes for the two-level class, and for the same reason: the
+// STRUCTARR credit refused any reassigned name, so an append-built struct array
+// never qualified and leaked an element box per append.
+//
+// Only the assign case differs from stmt_unsafe_for; everything else delegates,
+// which is sound because this class's own element hazard — a bound element box
+// — is checked separately by structarr_elem_escapes, applied alongside this gate.
+function structarr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_structarr_unsafe_for(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    return false;
+}
+function stmt_structarr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+    match (st) {
+        parser.StmtAssign(a) => {
+            if (a.target == name) {
+                if (structarr_self_append_elem(a.value, name)) { return false; }
+                return true;   // any other reassignment of the candidate
+            }
+            return expr_unsafe_for(a.value, name, borrowable);
+        },
+        parser.StmtIf(f) => {
+            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            return structarr_unsafe_for(f.then_body, name, borrowable) || structarr_unsafe_for(f.else_body, name, borrowable);
+        },
+        parser.StmtWhile(w) => {
+            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            return structarr_unsafe_for(w.body, name, borrowable);
+        },
+        parser.StmtFor(fo) => {
+            var iter_unsafe: boolean = true;
+            match (fo.iter) {
+                parser.ExprIdent(_) => { iter_unsafe = false; },   // `for x in name`: borrow iteration
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+            }
+            if (iter_unsafe) { return true; }
+            return structarr_unsafe_for(fo.body, name, borrowable);
+        },
+        parser.StmtMatch(m) => {
+            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (structarr_unsafe_for(m.arms[ai].body, name, borrowable)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return stmt_structarr_unsafe_for(d.action, name, borrowable); },
+        _ => { return stmt_unsafe_for(st, name, borrowable); }
+    }
+    return false;
+}
+
 // collect_fresh_structarr_names: `var g = [P { .. }, P { .. }]` bindings whose
 // init is a fresh struct-literal array (structarr_lit_is_fresh), recursing
 // nested blocks. Escape gates (body_unsafe_for + not-reassigned +
@@ -26737,6 +26871,20 @@ function collect_fresh_structarr_names(stmts: parser.Stmt[], acc: string[]): str
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (structarr_lit_is_fresh(v.init)) { a = push_str_unique(a, v.name); }
+                // APPEND-BUILT candidate (#6127): `var g: P[] = []` grown by
+                // `g = g.append(P { .. })`. structarr_lit_is_fresh rejects `[]`
+                // (no elements to prove fresh) — right for a literal-only
+                // credit, but it left every append-built struct array
+                // uncredited, leaking one element box per append. Measured on
+                // the leakcheck differential at 38400 bytes over 100 rounds,
+                // scaling linearly, where native leaks nothing.
+                else if (arrarr_lit_is_empty(v.init) && structarr_name_is_appended(stmts, v.name)) {
+                    a = push_str_unique(a, v.name);
+                    // "A|" marks it append-BUILT so the crediting loop can grant
+                    // the separate, stricter STRUCTARRA: credit — same marker
+                    // trick collect_fresh_arrarr_names uses for its "S|" rows.
+                    a = push_str_unique(a, "A|" + v.name);
+                }
             },
             parser.StmtIf(f) => { a = collect_fresh_structarr_names(f.then_body, a); a = collect_fresh_structarr_names(f.else_body, a); },
             parser.StmtWhile(w) => { a = collect_fresh_structarr_names(w.body, a); },
@@ -28659,7 +28807,54 @@ function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
     if (sty.len() == 0) { return false; }
     if (sty.len() > 4 && sty[0:4] == "dyn ") { return false; }
     if (struct_has_reclaim_array_field(s.structs, sty)) { return false; }
-    return util.index_of_str(s.reclaimable_names, "STRUCTARR:" + s.locals[i].slot_name) >= 0;
+    if (util.index_of_str(s.reclaimable_names, "STRUCTARR:" + s.locals[i].slot_name) >= 0) { return true; }
+    // APPEND-BUILT candidates (#6127) carry a SEPARATE credit and a STRICTER
+    // rule: the element struct's fields must be ALL SCALAR.
+    //
+    // struct_has_reclaim_array_field above deliberately lets string / map /
+    // option / tuple fields through — they "leak with the struct, sound" — so
+    // the shallow box free this class performs is only EXACT for an all-scalar
+    // struct, which is what the class documents itself as. Literal-built
+    // arrays have relied on the looser rule for a long time and keep it (their
+    // behaviour is unchanged, byte for byte); the append path does not inherit
+    // it, because widening a looser rule across the ~112 append-built sites in
+    // the compiler's own sources is what broke self-compilation the first time
+    // this was attempted (#6129: gen0/gen1 diverged on unit 2_s83).
+    if (util.index_of_str(s.reclaimable_names, "STRUCTARRA:" + s.locals[i].slot_name) >= 0) {
+        return struct_all_scalar_fields(s.structs, sty);
+    }
+    return false;
+}
+
+// struct_all_scalar_fields: every field of `sty` is a plain scalar, so a
+// SHALLOW free of the struct's box releases everything the struct owns and
+// leaks nothing. Deliberately an allowlist rather than a denylist — a field
+// type this does not recognise reads as non-scalar and keeps the struct out,
+// which is the safe direction and stays safe as the type system grows.
+function struct_all_scalar_fields(structs: parser.StructDecl[], sty: string): boolean {
+    if (sty.len() == 0) { return false; }
+    var n: i32 = decl_field_count(structs, sty);
+    if (n == 0) { return false; }
+    var fi: i32 = 0;
+    while (fi < n) {
+        if (!is_scalar_field_type(decl_field_type_at(structs, sty, fi))) { return false; }
+        fi = fi + 1;
+    }
+    return true;
+}
+
+// is_scalar_field_type: the field is a by-value primitive — no heap box, no rc.
+function is_scalar_field_type(ft: string): boolean {
+    if (ft == "i32") { return true; }
+    if (ft == "i64") { return true; }
+    if (ft == "u8") { return true; }
+    if (ft == "u32") { return true; }
+    if (ft == "u64") { return true; }
+    if (ft == "f32") { return true; }
+    if (ft == "f64") { return true; }
+    if (ft == "usize") { return true; }
+    if (ft == "boolean") { return true; }
+    return false;
 }
 
 // emit_structarr_reclaim_store: the struct-element twin of
