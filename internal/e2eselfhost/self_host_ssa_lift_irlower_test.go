@@ -154,6 +154,12 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		{"structfn", `struct P { x: i32, y: i32 } function sx(p: P): i32 { return p.x; } function main(): i32 { var p = P { x: 5, y: 9 }; return sx(p) + p.y; }`},
 		{"boolfield", `struct F { a: boolean, n: i32 } function main(): i32 { var f = F { a: true, n: 7 }; if (f.a) { return f.n; } return 0; }`},
 		{"structupd", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; p = P { ...p, x: 40 }; return p.x + p.y; }`},
+		// The same update in a LOOP. Both spread cases lower through the
+		// constructor-reuse sequence (#6134); the lift takes its FRESH arm —
+		// __fern_rc_is_unique is a const 0 on the leak-only SSA heap, so
+		// __fern_alloc_reuse is a plain runtime-sized alloc and the carried
+		// fields are copied across, which is the pre-reuse lowering.
+		{"structupdloop", `struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 0, y: 7 }; var i = 0; while (i < 4) { p = P { ...p, x: p.x + 1 }; i = i + 1; } return p.x + p.y; }`},
 		{"structnest", `struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 30 }, k: 12 }; return o.inner.v + o.k; }`},
 		// Tuples over real irlower output (slice 4): a pair + element reads, a
 		// tuple returned from a function, a nested tuple (a pointer element),
