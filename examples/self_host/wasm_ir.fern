@@ -111,10 +111,11 @@ pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[]
     var ofrf: string[] = irlower.opt_fresh_ret_fns_of(all_funcs, all_structs);
     var sfot: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
     var tfrf: string[] = irlower.tuple_fresh_ret_fns_of(all_funcs);
+    var mvp: string[] = irlower.move_arr_params_of(mod.funcs);
     var out: irlower.LowerResult[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        out = out.append(irlower.lower_func(mod.funcs[fi], arf, all_structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, bp, fnames, frsf, csp, rfrsf, sfrf, ofrf, sfot, tfrf, true));
+        out = out.append(irlower.lower_func(mod.funcs[fi], arf, all_structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, bp, fnames, frsf, csp, rfrsf, sfrf, ofrf, sfot, tfrf, mvp, true));
         fi = fi + 1;
     }
     return out;

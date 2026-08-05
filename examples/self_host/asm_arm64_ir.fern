@@ -282,8 +282,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // (str x0,[sp,#-16]! / ldr x0,[sp],#16), params copied from the caller rt-stack
 // at [x29, #16+i*16]. Structured control flow → per-function indexed labels
 // (.Lira_<fn>_<opidx>), the same OP-STREAM-INDEX scheme asm_ir uses.
-pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], closurearr_ret_fns: string[], const_fns: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[], opt_fresh_ret_fns: string[], strfld_ok_types: string[], tuple_fresh_ret_fns: string[]): asmcore.EmitState {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret_fns, strarr_ret_fns, arr_method_fns, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, map_ret_fns, f64_ret_fns, f64arr_ret_fns, i64arr_ret_fns, fn_param_sigs, closure_fns, closurearr_ret_fns, const_fns, borrowable_params, fn_names, fresh_struct_ret_fns, consume_safe_params, return_fresh_struct_ret_fns, str_fresh_ret_fns, opt_fresh_ret_fns, strfld_ok_types, tuple_fresh_ret_fns, false);
+pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], closurearr_ret_fns: string[], const_fns: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[], opt_fresh_ret_fns: string[], strfld_ok_types: string[], tuple_fresh_ret_fns: string[], move_arr_params: string[]): asmcore.EmitState {
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret_fns, strarr_ret_fns, arr_method_fns, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, map_ret_fns, f64_ret_fns, f64arr_ret_fns, i64arr_ret_fns, fn_param_sigs, closure_fns, closurearr_ret_fns, const_fns, borrowable_params, fn_names, fresh_struct_ret_fns, consume_safe_params, return_fresh_struct_ret_fns, str_fresh_ret_fns, opt_fresh_ret_fns, strfld_ok_types, tuple_fresh_ret_fns, move_arr_params, false);
 
     // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
     var label_name: string = fd.name;
@@ -1508,6 +1508,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitSt
     // that OOMs the arm64 self-compile); threaded into every emit_function_via_ir.
     var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
     var csparams: string[] = irlower.consume_safe_params_interproc(mod.funcs, bparams);
+    var mvparams: string[] = irlower.move_arr_params_of(mod.funcs);
     // The fourteen return-type / signature side-tables lower_func consults are
     // derived ONCE per module here (each scans all of mod.funcs), then threaded
     // into every emit_function_via_ir — recomputing them per function is O(n^2)
@@ -1537,7 +1538,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitSt
     var fnames: string[] = irlower.fn_names_of(mod.funcs);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf, mvparams);
         fi = fi + 1;
     }
     s = s.write("_start:\n");
@@ -1604,6 +1605,7 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl
     var fns: parser.FuncDecl[] = m.funcs;
     var bparams: string[] = irlower.borrowable_params_interproc(fns);
     var csparams: string[] = irlower.consume_safe_params_interproc(fns, bparams);
+    var mvparams: string[] = irlower.move_arr_params_of(fns);
     var arf: string[] = asm_ir.array_ret_fns_of(fns);
     var srf: string[] = irlower.str_ret_fns_of(fns);
     var sarf: string[] = irlower.strarr_ret_fns_of(fns);
@@ -1630,7 +1632,7 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl
     var lit0: i32 = s.string_lits.len();
     var i: i32 = 0;
     while (i < fns.len()) {
-        s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf, mvparams);
         i = i + 1;
     }
     if (s.string_lits.len() > lit0) {
@@ -7311,6 +7313,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     var arf: string[] = asm_ir.array_ret_fns_of(all_funcs);
     var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
     var csparams: string[] = irlower.consume_safe_params_interproc(all_funcs, bparams);
+    var mvparams: string[] = irlower.move_arr_params_of(all_funcs);
     var srf: string[] = irlower.str_ret_fns_of(all_funcs);
     var sarf: string[] = irlower.strarr_ret_fns_of(all_funcs);
     var amf: string[] = irlower.arr_method_fns_of(all_funcs);
@@ -7347,7 +7350,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
             if (mod.funcs[fi].receiver_type.len() > 0) { gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name; }
             s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
         }
-        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf, mvparams);
         fi = fi + 1;
     }
     // #4355: admit the replaced-STRING-field arm per type from the

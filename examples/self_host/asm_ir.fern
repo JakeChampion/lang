@@ -3975,6 +3975,7 @@ pub function eligible_core_known_view_impl(mod: parser.Module, known: string[], 
     var arf: string[] = array_ret_fns_of(all_funcs);
     var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
     var csparams: string[] = irlower.consume_safe_params_interproc(all_funcs, bparams);
+    var mvparams: string[] = irlower.move_arr_params_of(all_funcs);
     var srf: string[] = irlower.str_ret_fns_of(all_funcs);
     var sarf: string[] = irlower.strarr_ret_fns_of(all_funcs);
     var amf: string[] = irlower.arr_method_fns_of(all_funcs);
@@ -4040,7 +4041,7 @@ function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.St
     // PROGRAM struct union for a per-module unit (so a function touching an
     // imported struct's layout lowers in the gate exactly as it does in
     // emit_module_funcs, which already lowers against all_structs).
-    var r: irlower.LowerResult = irlower.lower_func(fd, arf, sview, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, bparams, fn_names, [], [], [], [], [], [], [], false);
+    var r: irlower.LowerResult = irlower.lower_func(fd, arf, sview, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, bparams, fn_names, [], [], [], [], [], [], [], [], false);
     if (!r.ok) { return false; }
     var i: i32 = 0;
     while (i < r.ops.len()) {
@@ -4679,8 +4680,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // emit_function_via_ir emits one IR-eligible function via the stack IR,
 // writing through the global strbuf (same as asm.fern's emitters).
 // arr_ret_fns drives move-on-return / move-from-call for array values.
-function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], closurearr_ret_fns: string[], const_fns: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[], opt_fresh_ret_fns: string[], strfld_ok_types: string[], tuple_fresh_ret_fns: string[]): asmcore.EmitState {
-    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret_fns, strarr_ret_fns, arr_method_fns, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, map_ret_fns, f64_ret_fns, f64arr_ret_fns, i64arr_ret_fns, fn_param_sigs, closure_fns, closurearr_ret_fns, const_fns, borrowable_params, fn_names, fresh_struct_ret_fns, consume_safe_params, return_fresh_struct_ret_fns, str_fresh_ret_fns, opt_fresh_ret_fns, strfld_ok_types, tuple_fresh_ret_fns, false);
+function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s: asmcore.EmitState, borrowable_params: string[], str_ret_fns: string[], strarr_ret_fns: string[], arr_method_fns: string[], opt_ret_fns: string[], i64_ret_fns: string[], tuple_ret_fns: string[], struct_ret_fns: string[], map_ret_fns: string[], f64_ret_fns: string[], f64arr_ret_fns: string[], i64arr_ret_fns: string[], fn_param_sigs: string[], closure_fns: string[], closurearr_ret_fns: string[], const_fns: string[], fn_names: string[], fresh_struct_ret_fns: string[], consume_safe_params: string[], return_fresh_struct_ret_fns: string[], str_fresh_ret_fns: string[], opt_fresh_ret_fns: string[], strfld_ok_types: string[], tuple_fresh_ret_fns: string[], move_arr_params: string[]): asmcore.EmitState {
+    var r: irlower.LowerResult = irlower.lower_func(fd, arr_ret_fns, s.struct_decls, str_ret_fns, strarr_ret_fns, arr_method_fns, opt_ret_fns, i64_ret_fns, tuple_ret_fns, struct_ret_fns, map_ret_fns, f64_ret_fns, f64arr_ret_fns, i64arr_ret_fns, fn_param_sigs, closure_fns, closurearr_ret_fns, const_fns, borrowable_params, fn_names, fresh_struct_ret_fns, consume_safe_params, return_fresh_struct_ret_fns, str_fresh_ret_fns, opt_fresh_ret_fns, strfld_ok_types, tuple_fresh_ret_fns, move_arr_params, false);
     return emit_function_via_ir_pre(r, fd, s);
 }
 
@@ -6433,6 +6434,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     var fns: parser.FuncDecl[] = m.funcs;
     var bparams: string[] = irlower.borrowable_params_interproc(fns);
     var csparams: string[] = irlower.consume_safe_params_interproc(fns, bparams);
+    var mvparams: string[] = irlower.move_arr_params_of(fns);
     var arf: string[] = array_ret_fns_of(fns);
     var srf: string[] = irlower.str_ret_fns_of(fns);
     var sarf: string[] = irlower.strarr_ret_fns_of(fns);
@@ -6465,7 +6467,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     var lit0: i32 = s.string_lits.len();
     var i: i32 = 0;
     while (i < fns.len()) {
-        s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+        s = emit_function_via_ir(fns[i], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf, mvparams);
         i = i + 1;
     }
     if (s.string_lits.len() > lit0) {
@@ -6518,6 +6520,9 @@ pub function compute_wp_bases(funcs: parser.FuncDecl[], structs: parser.StructDe
     t = t.append(irlower.strfld_reclaim_ok_types_of(funcs, structs));
     t = t.append(irlower.tuple_fresh_ret_fns_of(funcs));
     t = t.append(irlower.fnptr_arr_fields_of(funcs, structs));
+    // #6074: the inferred array-param MOVE registry. Computed over the WHOLE
+    // funcs like every other base — the admission rule needs every call site.
+    t = t.append(irlower.move_arr_params_of(funcs));
     return t;
 }
 
@@ -6530,7 +6535,7 @@ pub function compute_wp_bases(funcs: parser.FuncDecl[], structs: parser.StructDe
 // under the leak-mode ceiling. The side-table bases (b_*) are ALWAYS computed
 // over the WHOLE all_funcs (never windowed) so cross-window call tagging is
 // identical to the unsharded emit; only the emit loop is windowed.
-function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[], b_arf: string[], b_bparams: string[], b_csparams: string[], b_srf: string[], b_sarf: string[], b_amf: string[], b_orf: string[], b_irf: string[], b_trf: string[], b_srtf: string[], b_mrtf: string[], b_frf: string[], b_farf: string[], b_iarf: string[], b_fps: string[], b_cfs: string[], b_cnf: string[], b_frsf: string[], b_rfrsf: string[], b_sfrf: string[], b_ofrf: string[], b_sfot: string[], b_tfrf: string[]): asmcore.EmitState {
+function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[], b_arf: string[], b_bparams: string[], b_csparams: string[], b_srf: string[], b_sarf: string[], b_amf: string[], b_orf: string[], b_irf: string[], b_trf: string[], b_srtf: string[], b_mrtf: string[], b_frf: string[], b_farf: string[], b_iarf: string[], b_fps: string[], b_cfs: string[], b_cnf: string[], b_frsf: string[], b_rfrsf: string[], b_sfrf: string[], b_ofrf: string[], b_sfot: string[], b_tfrf: string[], b_mvp: string[]): asmcore.EmitState {
     // #4394 lever 3: when `cache` is non-empty the caller (emit_module_ir_gated)
     // has ALREADY lowered every function — into cache[i], indexed by mod.funcs
     // position — during its fused eligibility scan, so emit reuses that lowering
@@ -6546,6 +6551,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     var arf: string[] = b_arf;
     var bparams: string[] = b_bparams;
     var csparams: string[] = b_csparams;
+    var mvparams: string[] = b_mvp;
     var srf: string[] = irlower.append_dyn_str_ret_fns(b_srf, mod.trait_reqs);
     var sarf: string[] = irlower.append_dyn_arr_ret_fns(b_sarf, mod.trait_reqs, "string[]");
     var amf: string[] = b_amf;
@@ -6584,7 +6590,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
             s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
         }
         if (cache.len() == 0) {
-            s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf);
+            s = emit_function_via_ir(mod.funcs[fi], arf, s, bparams, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf, mvparams);
         } else {
             s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s);
         }
@@ -6613,7 +6619,7 @@ pub function module_runtime_needs(mod: parser.Module): string[] {
     // aggregated separately via module_runtime_needs over each module). Extract
     // the bases into locals here (once) and pass them as individual params.
     var mnb: string[][] = compute_wp_bases(mod.funcs, mod.structs);
-    s = emit_module_funcs(mod, mod.funcs, mod.structs, s, false, 0, 0 - 1, [], mnb[0], mnb[1], mnb[2], mnb[3], mnb[4], mnb[5], mnb[6], mnb[7], mnb[8], mnb[9], mnb[10], mnb[11], mnb[12], mnb[13], mnb[14], mnb[15], mnb[16], mnb[17], mnb[18], mnb[19], mnb[20], mnb[21], mnb[22]);
+    s = emit_module_funcs(mod, mod.funcs, mod.structs, s, false, 0, 0 - 1, [], mnb[0], mnb[1], mnb[2], mnb[3], mnb[4], mnb[5], mnb[6], mnb[7], mnb[8], mnb[9], mnb[10], mnb[11], mnb[12], mnb[13], mnb[14], mnb[15], mnb[16], mnb[17], mnb[18], mnb[19], mnb[20], mnb[21], mnb[22], mnb[24]);
     s = s.close_needs();
     strbuf_reset();
     return s.needed;
@@ -6806,13 +6812,14 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var tfrf: string[] = irlower.tuple_fresh_ret_fns_of(im.funcs);
     var fnames: string[] = irlower.fn_names_of(im.funcs);
     var clarf: string[] = irlower.closurearr_ret_fns_of(im.funcs, im.structs);
+    var mvparams: string[] = irlower.move_arr_params_of(im.funcs);
     // Lower every function once into `cache`, checking eligibility on each result.
     // Bail (AST fallback) on the first function whose body doesn't lower or whose
     // direct calls / function values reference an unknown symbol.
     var cache: irlower.LowerResult[] = [];
     var i: i32 = 0;
     while (i < im.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], arf, im.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, bparams, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf, false);
+        var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], arf, im.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, bparams, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf, mvparams, false);
         if (!r.ok) {
             if (strict_ir_on()) { strict_ir_refuse(im.funcs[i].name); }
             return "";
@@ -6923,7 +6930,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // emit_module_funcs. The strfldok / FNPTR need seeding below recomputes its
     // two columns directly (all_funcs is in scope) rather than re-reading a base
     // that was just passed as an arg.
-    s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15], b[16], b[17], b[18], b[19], b[20], b[21], b[22]);
+    s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15], b[16], b[17], b[18], b[19], b[20], b[21], b[22], b[24]);
     // #4355: admit the replaced-STRING-field arm per type, from the
     // WHOLE-PROGRAM read scan (all_funcs — a unit-local list would
     // under-count the reads and re-open the UAF the scan exists to prevent;
