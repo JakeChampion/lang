@@ -2303,7 +2303,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     }
                     // Method call on a struct receiver: resolve by
                     // method name alone (the coarse "struct" tag loses
-                    // the receiver's name). Mirrors asm.fern.
+                    // the receiver's name).
                     var mj: i32 = 0;
                     while (mj < s.funcs.len()) {
                         if (s.funcs[mj].name == fa.field && s.funcs[mj].receiver_type.len() > 0) {

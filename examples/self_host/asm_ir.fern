@@ -882,7 +882,7 @@ pub function emit_ir_proc_waitpid(s: asmcore.EmitState): asmcore.EmitState {
 // (__fn___fern_rc_inc / __fn___fern_arr_dec / …). asm.fern imports asm_ir
 // (not the reverse), so these bodies are duplicated here rather than shared;
 // the two emit paths are mutually exclusive per compile (emit_module vs
-// emit_module_ir), so there is no symbol clash. Keep in sync with asm.fern.
+// emit_module_ir), so there is no symbol clash.
 // emit_ccall_shim1 emits one `__fn___c_call<n>[suffix]` FFI shim (#4375). The
 // shim is entered like any stack-ABI callee — the generic call_direct emit
 // reversed the args so arg0 (fn) sits on top, i.e. param0 @ 16(%rbp), a_i @
@@ -3797,7 +3797,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
 
     // No static `.bss` heap reservation: the arena is mmap'd lazily on the
     // first __fern_alloc call (see the .bss block + __fern_alloc above), so
-    // the binary is linker-agnostic (issue #4081). Mirrors asm.fern's AST path.
+    // the binary is linker-agnostic (issue #4081). Mirrors what the retired x86 AST emitter did.
     return s;
 }
 
@@ -5860,7 +5860,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
         } else if (o.kind_tag == 66) {  // fpow
             // pow(x, y) = x^y = 2^(y·log2 x) on the x87 FPU (x > 0): fyl2x gives
             // t = y·log2(x), then the f2xm1 + fscale reconstruction of 2^t.
-            // Mirrors asm.fern's __pow_f64. fbin pops rhs (y) then lhs (x).
+            // Mirrors the retired x86 AST emitter's __pow_f64. fbin pops rhs (y) then lhs (x).
             s = s.write("    popq %rcx\n    popq %rax\n");        // y, x
             s = s.write("    subq $16, %rsp\n");
             s = s.write("    movq %rax, (%rsp)\n");               // x
@@ -5884,7 +5884,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // f64 transcendentals on the x87 FPU (the -nostdlib backend can't link
             // libm; x87 computes these directly). The operand bits ride a scratch
             // stack slot (x87 loads from memory, not xmm). exp(x) = 2^(x·log2 e)
-            // via f2xm1 + fscale; log(x) = ln2·log2(x) via fyl2x. Mirrors asm.fern.
+            // via f2xm1 + fscale; log(x) = ln2·log2(x) via fyl2x.
             s = s.write("    popq %rax\n    subq $8, %rsp\n    movq %rax, (%rsp)\n");
             if (o.kind_tag == 64) { s = s.write("    fldl (%rsp)\n    fsin\n    fstpl (%rsp)\n"); }  // fsin
             else if (o.kind_tag == 65) { s = s.write("    fldl (%rsp)\n    fcos\n    fstpl (%rsp)\n"); }  // fcos
@@ -5901,7 +5901,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
         } else if (o.kind_tag == 57 || o.kind_tag == 59 || o.kind_tag == 58 || o.kind_tag == 60) {  // fsqrt, ffloor, fceil, ftrunc
             // f64 unary math (op_funary): pop the operand bits into xmm0, apply the
             // single SSE instruction, push. roundsd needs SSE4.1 (universal on
-            // x86-64); $1/$2/$3 select floor / ceil / trunc. Mirrors asm.fern.
+            // x86-64); $1/$2/$3 select floor / ceil / trunc.
             s = s.write("    popq %rax\n    movq %rax, %xmm0\n");
             if (o.kind_tag == 57) { s = s.write("    sqrtsd %xmm0, %xmm0\n"); }  // fsqrt
             else if (o.kind_tag == 59) { s = s.write("    roundsd $1, %xmm0, %xmm0\n"); }  // ffloor
@@ -5910,7 +5910,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 56) {  // fabs
             // |x| clears the f64 sign bit — a plain mask on the bits in %rax, no
-            // xmm needed (mirrors asm.fern's __abs_f64).
+            // xmm needed (mirrors the retired x86 AST emitter's __abs_f64).
             s = s.write("    popq %rax\n    movabsq $0x7fffffffffffffff, %rcx\n    andq %rcx, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 55) {  // fneg
             // -x flips the f64 sign bit (XOR), preserving signed zero — unlike
@@ -5921,7 +5921,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // ties-to-even / floor / ceil / trunc, so emulate via
             // trunc(x + copysign(0.5, x)). Build copysign(0.5, x) by OR-ing x's
             // sign bit into the 0.5 bit pattern (0x3fe0000000000000), add, trunc
-            // ($3). Mirrors asm.fern's __round_f64.
+            // ($3). Mirrors the retired x86 AST emitter's __round_f64.
             s = s.write("    popq %rax\n    movq %rax, %rcx\n");
             s = s.write("    movabsq $0x8000000000000000, %rdx\n    andq %rdx, %rcx\n");
             s = s.write("    movabsq $0x3fe0000000000000, %rdx\n    orq %rdx, %rcx\n");
@@ -5929,7 +5929,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    addsd %xmm1, %xmm0\n    roundsd $3, %xmm0, %xmm0\n");
             s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 51 || o.kind_tag == 52 || o.kind_tag == 53 || o.kind_tag == 54 || o.kind_tag == 49 || o.kind_tag == 50) {  // flt, fle, fgt, fge, feq, fne
-            // f64 compare → i32 0/1, NaN-correct (mirrors asm.fern): ucomisd sets
+            // f64 compare → i32 0/1, NaN-correct: ucomisd sets
             // CF=ZF=PF=1 when unordered, so `<`/`<=`/`==` mask with setnp and
             // `!=` accepts unordered via setp; `>`/`>=` use seta/setae (CF=0).
             s = s.write("    popq %rax\n    movq %rax, %xmm1\n    popq %rax\n    movq %rax, %xmm0\n");
@@ -7008,7 +7008,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         s = s.write("    movq %rsp, %rbp\n");
         // A MAIN-LESS module (a library compiled standalone — util.fern et al.
         // under the bootstrap self-compile) has no __fn_main to call, so `_start`
-        // exits 0 directly. Mirrors asm.fern's own no-main branch, minus the
+        // exits 0 directly. Mirrors the retired x86 AST emitter's own no-main branch, minus the
         // top-level statements: a script-shaped source has already been rewritten
         // into `function main()` by asmcore.synth_script_main upstream, so
         // anything still main-less here is a library with functions only.
@@ -7038,8 +7038,8 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // Pre-intern "FileStat" so the __fern_stat runtime helper (emitted after this
     // literal pool, inside the heap/stat block) can reference its shape label. The
     // helper's own shape_ref dedups to this slot; without the early intern the label
-    // would be undefined (the runtime emits AFTER the pool). Mirrors asm.fern's +
-    // asm_arm64.fern's FileStat pre-intern. Gated on the stat need.
+    // would be undefined (the runtime emits AFTER the pool). Mirrors the
+    // retired AST emitters' FileStat pre-intern. Gated on the stat need.
     if (s.has_need("stat")) {
         var fsPre: ShapeRefOut = shape_ref(s, "FileStat");
         s = fsPre.state;

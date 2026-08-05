@@ -7348,7 +7348,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             }
             // A bare identifier that is not a local naming a ZERO-ARG,
             // receiver-less function (a `const`, desugared to such a function) is
-            // a CALL to it — its value. Mirrors asm.fern's ExprIdent rule
+            // a CALL to it — its value. Mirrors the retired x86 AST emitter's ExprIdent rule
             // (zero-arg receiver-less -> call).
             if (s.is_const_fn(id.name)) { return s.emit(ir.op_call_direct(id.name, 0)); }
             // A bare ident naming a module function WITH params is a function
@@ -7356,7 +7356,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // f(21)`, `return namedfn`). Emit const_func; const_funcs_only_known
             // bails the module if the name isn't a known function, so an
             // unknown / non-function ident (which the checker would already have
-            // rejected) never miscompiles. Mirrors asm.fern's ExprIdent rule
+            // rejected) never miscompiles. Mirrors the retired x86 AST emitter's ExprIdent rule
             // (zero-arg receiver-less -> call; >0-arg -> boxed fn-value). A call
             // through the resulting fn-value local rides the existing
             // call_indirect path (the same one a "fn"-typed param uses).
@@ -9290,8 +9290,8 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // intrinsics. A Reader is just its fd (an i32; see stdin()), so
                     // the receiver lowers as a plain i32 and the result is a fresh
                     // Option box: read_chunk → Option[string] (Some(chunk) / None at
-                    // EOF), close → Option[IoError]. Mirrors asm.fern's
-                    // emit_method_call, but gated to a non-struct / non-enum /
+                    // EOF), close → Option[IoError]. Mirrors the retired x86 AST
+                    // emitter's emit_method_call, but gated to a non-struct / non-enum /
                     // non-string / non-array receiver so a user `.close()` on a real
                     // struct still routes to struct-method dispatch below (the AST
                     // backend intercepts unconditionally; this is strictly safer). No

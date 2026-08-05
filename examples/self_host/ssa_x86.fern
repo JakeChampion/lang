@@ -14,7 +14,7 @@
 // predecessor edges (every phi block is entered only by an unconditional
 // `br` in our construction, so no critical-edge splitting is needed).
 //
-// The framing mirrors asm.fern: functions are labelled `__fn_<name>`, and
+// The framing mirrors the retired x86 AST emitter: functions are labelled `__fn_<name>`, and
 // `_start` calls `__fn_main` and exits with its return value (syscall 60).
 
 import "./ssa";
