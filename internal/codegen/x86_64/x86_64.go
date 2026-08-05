@@ -56,6 +56,137 @@ import (
 	"github.com/jakechampion/lang/internal/treeshake"
 )
 
+// Seccomp sandbox constants (#6071). See linux/seccomp.h,
+// linux/filter.h and linux/audit.h.
+const (
+	prSetNoNewPrivs       = 38         // PR_SET_NO_NEW_PRIVS
+	seccompSetModeFilter  = 1          // SECCOMP_SET_MODE_FILTER
+	auditArchX8664        = 0xC000003E // AUDIT_ARCH_X86_64
+	seccompRetKillProcess = 0x80000000 // SECCOMP_RET_KILL_PROCESS
+	seccompRetAllow       = 0x7FFF0000 // SECCOMP_RET_ALLOW
+
+	// BPF opcodes, pre-combined: BPF_LD|BPF_W|BPF_ABS, BPF_JMP|BPF_JEQ|BPF_K,
+	// BPF_RET|BPF_K.
+	bpfLdWAbs = 0x20
+	bpfJeqK   = 0x15
+	bpfRetK   = 0x06
+
+	// Offsets into `struct seccomp_data { int nr; __u32 arch; ... }`.
+	seccompDataNr   = 0
+	seccompDataArch = 4
+)
+
+// emitSeccompRuntime emits `__fern_seccomp_install` and the BPF program
+// it installs (#6071). Must be called AFTER every other emitter, since
+// the allowlist is g.syscalls and that is only complete once all code
+// has been emitted.
+//
+// The filter is the obvious shape: verify the audit arch (a 32-bit
+// process making the same-numbered syscall means something else
+// entirely, so a mismatch is fatal rather than merely unmatched), load
+// the syscall number, compare against each allowed value, and fall
+// through to kill. Kill rather than errno because it matches the
+// existing crash-only posture — a sandbox violation is a bug or an
+// attack, and neither is improved by letting the program continue with
+// an unexpected -EPERM it has no code path to handle.
+//
+// Jump arithmetic: ALLOW sits at index 4+n+1 and the fall-through KILL
+// at 4+n, so the comparison at index 4+i takes jt = n-i to reach ALLOW.
+// jt is a u8, which bounds this at 255 allowed syscalls; the whole
+// backend emits ~20, and emitSyscall is the only way that grows, so the
+// bound is checked rather than assumed.
+func (g *generator) emitSeccompRuntime() {
+	// Snapshot the allowlist BEFORE emitting this helper's own prctl /
+	// seccomp calls, so neither ends up permitted. That is deliberate,
+	// not incidental: both run before the filter takes effect (the
+	// filter applies from the seccomp(2) return onwards), so excluding
+	// them costs nothing and denies hijacked control flow the ability to
+	// install a filter of its own choosing.
+	//
+	// rt_sigreturn is likewise absent, which is a classic seccomp
+	// footgun — it is required whenever a signal handler returns. Fern
+	// installs no signal handlers, and an unhandled fatal signal kills
+	// the process without ever returning, so there is nothing to permit.
+	// Adding a handler would mean adding rt_sigreturn here.
+	allowed := make([]int, 0, len(g.syscalls))
+	for n := range g.syscalls {
+		allowed = append(allowed, n)
+	}
+	sort.Ints(allowed)
+	n := len(allowed)
+	if n > 255 {
+		// jt is a u8; past this the jump arithmetic silently wraps and
+		// the filter would permit the wrong things. Fail loudly instead.
+		panic(fmt.Sprintf("seccomp allowlist has %d syscalls; the u8 jump offset caps it at 255", n))
+	}
+
+	g.line("")
+	g.line(".globl __fern_seccomp_install")
+	g.line(".type __fern_seccomp_install, @function")
+	g.label("__fern_seccomp_install")
+	// prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) — required before
+	// seccomp(2) without CAP_SYS_ADMIN, and the thing that makes the
+	// filter survive execve without privilege escalation.
+	g.emit(fmt.Sprintf("mov edi, %d", prSetNoNewPrivs))
+	g.emit("mov esi, 1")
+	g.emit("xor edx, edx")
+	g.emit("xor r10d, r10d")
+	g.emit("xor r8d, r8d")
+	g.emitSyscall(sysPrctl)
+	// seccomp(SECCOMP_SET_MODE_FILTER, 0, &prog), with
+	// `struct sock_fprog { unsigned short len; struct sock_filter *filter; }`
+	// built on the stack — 16 bytes, len at +0 and the pointer at +8
+	// after padding. Built here rather than kept in .rodata because the
+	// pointer field would otherwise need a relocation, and under -pie
+	// the self-reloc prologue would have to write into a read-only
+	// section to apply it.
+	g.emit("sub rsp, 16")
+	g.emit(fmt.Sprintf("mov word ptr [rsp], %d", 4+n+2)) // total BPF insn count
+	g.emit("lea rax, [rip + .Lseccomp_filter]")
+	g.emit("mov [rsp + 8], rax")
+	g.emit(fmt.Sprintf("mov edi, %d", seccompSetModeFilter))
+	g.emit("xor esi, esi")
+	g.emit("mov rdx, rsp")
+	g.emitSyscall(sysSeccomp)
+	g.emit("add rsp, 16")
+	// A failure here is deliberately NOT fatal: a kernel without
+	// CONFIG_SECCOMP_FILTER, or a seccomp-blocking sandbox we are
+	// already inside, returns an error and the program runs unhardened
+	// rather than refusing to start. Hardening that turns a working
+	// deployment into a boot loop would not survive contact with users,
+	// and the compile-time capability system is still in force either
+	// way.
+	g.emit("ret")
+	g.line(".size __fern_seccomp_install, .-__fern_seccomp_install")
+
+	// The BPF program. Each sock_filter is { u16 code; u8 jt; u8 jf;
+	// u32 k } — 8 bytes, little-endian.
+	g.line(".section .rodata")
+	g.line(".align 8")
+	g.label(".Lseccomp_filter")
+	// No inline comments on these directives: GNU as reads `//` as
+	// division rather than a comment, so an annotated `.4byte` fails to
+	// assemble on the -cc path even though the in-process assembler
+	// accepts it. The program's shape is documented above and decoded
+	// by TestSeccompFilterShape.
+	bpf := func(code, jt, jf, k int) {
+		g.line(fmt.Sprintf("\t.2byte %d", code))
+		g.line(fmt.Sprintf("\t.byte %d", jt))
+		g.line(fmt.Sprintf("\t.byte %d", jf))
+		g.line(fmt.Sprintf("\t.4byte %d", uint32(k)))
+	}
+	bpf(bpfLdWAbs, 0, 0, seccompDataArch)     // A = arch
+	bpf(bpfJeqK, 1, 0, auditArchX8664)        // skip the kill when it matches
+	bpf(bpfRetK, 0, 0, seccompRetKillProcess) // wrong arch
+	bpf(bpfLdWAbs, 0, 0, seccompDataNr)       // A = syscall nr
+	for i, s := range allowed {
+		bpf(bpfJeqK, n-i, 0, s)
+	}
+	bpf(bpfRetK, 0, 0, seccompRetKillProcess) // unmatched: deny
+	bpf(bpfRetK, 0, 0, seccompRetAllow)
+	g.line(".text")
+}
+
 // emitSyscall emits `mov eax, n` + `syscall` and records n in the
 // generator's syscall set. Every syscall the backend emits goes
 // through here or emitSyscallPreloaded, which is what makes
@@ -99,6 +230,10 @@ const (
 	sysListen    = 50
 	sysExitGroup = 231
 	sysGetrandom = 318
+	// prctl(2) / seccomp(2): x86-64 syscalls 157 / 317. Used only by
+	// __fern_seccomp_install under ast.SandboxEnabled (#6071).
+	sysPrctl   = 157
+	sysSeccomp = 317
 	// clock_gettime(2): x86-64 syscall 228.
 	// Used by `__fern_now_unix_ms` / `__fern_monotonic_ns` for the
 	// clock-now surface (docs/STDLIB-DESIGN-RESEARCH.md Rec §4 Phase 2).
@@ -605,6 +740,11 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		// __fern_read_line_buf with the stdin-only read_line
 		// helper (4 KiB scratch).
 		g.emitReaderWriterRuntime()
+	}
+	if ast.SandboxEnabled {
+		// Last code emitter: the filter's allowlist is g.syscalls, which
+		// is only complete once every other emitter has run.
+		g.emitSeccompRuntime()
 	}
 	g.emitDataSections()
 	// ELF non-executable-stack marker. Without this the
@@ -1355,6 +1495,19 @@ func (g *generator) emitStartRuntime() {
 	g.label("_start")
 	if g.pie {
 		g.emitPieSelfReloc()
+	}
+	if ast.SandboxEnabled {
+		// Seccomp sandbox (#6071): install before anything else runs, so
+		// the filter covers the whole program including the arena mmap.
+		// The helper is emitted LATE (emitSeccompRuntime, after all other
+		// code) because its allowlist is g.syscalls, which is not complete
+		// until every emitter has run. Label resolution is
+		// order-independent, so calling it from here is fine.
+		//
+		// Deliberately before the argv/envp stash rather than after: those
+		// are plain loads, but keeping the filter first means any future
+		// startup step is covered by default instead of by remembering.
+		g.emit("call __fern_seccomp_install")
 	}
 	// argc is at [rsp+0]; argv starts at [rsp+8]; envp at
 	// [rsp + 8 + (argc+1)*8] (NULL-terminator after argv).
