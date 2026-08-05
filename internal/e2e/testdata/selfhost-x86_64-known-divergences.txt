@@ -27,8 +27,9 @@
 # (#6009), `tuple_match_expr` (#6010), `int_wrap` + `u64_max_to_f64_is_huge`
 # (#6050 / #6051), `multiline_stdin` (#6052), `pure_collection_aliases` +
 # `map_struct_value_field` (the #6007 slices), `derive_json` (#6009, two
-# separate bugs — see the notes in the wasm sibling), and the six regex
-# fixtures (#6049). ONE remains, listed below.
+# separate bugs — see the notes in the wasm sibling), the six regex fixtures
+# (#6049), and `generic_method_typeparams` (the last #6007 slice). NONE
+# remains: this leg now matches the native compiler on all 317 fixtures.
 #
 # The #6049 six were recorded as "hangs (killed at 20s, no output)", which by the
 # time they were diagnosed was stale: they SEGV'd in milliseconds on unbounded
@@ -41,10 +42,13 @@
 
 # --- IR-ineligible, hard error since #3457 deleted the AST emitters ---------
 # The leg re-runs these under FERN_STRICT_IR=1 and logs the named bail site.
-# Two of the original three are FIXED: `pure_collection_aliases` (its bail named
-# `Map.cleared`, which had no lowering at all) and `map_struct_value_field` (an
-# `it.value().field` with no struct recovery) — see the wasm sibling's notes.
-generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
+# All three of the original set are FIXED: `pure_collection_aliases` (its bail
+# named `Map.cleared`, which had no lowering at all), `map_struct_value_field`
+# (an `it.value().field` with no struct recovery) — see the wasm sibling's notes
+# — and `generic_method_typeparams`, which needed a second monomorphisation
+# axis: a method declaring its OWN type parameter was only ever cloned on the
+# STRUCT's, so `U` survived into the clone's return spelling and mg_ty minted a
+# `Box__U` from the parameter NAME.
 
 # --- new, first seen on x86-64: ALL THREE NOW FIXED ------------------------
 # `int_wrap` (#6050) and `u64_max_to_f64_is_huge` (#6051): the i32 formatter now

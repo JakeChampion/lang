@@ -7744,6 +7744,106 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
     return TyIns { ty: ty, mins: ins };
 }
 
+// ---- method-level type parameters (#6007) ---------------------------
+// A method may introduce its OWN type parameter, independent of the
+// receiver's: `function (b: Box[T]) map[U](f: (T) => U): Box[U]`.
+// clone_struct_method substitutes only the STRUCT's params (a synthesised
+// method like default() has none of its own), so `U` survives into the
+// clone's return spelling, mg_ty records an instantiation keyed on the
+// parameter NAME, and the resulting `Box__U` clone has an unbound field
+// type — the `call to unknown symbol Box__U.get` bail. Methods therefore
+// need a SECOND monomorphisation axis: one clone per (struct
+// instantiation × method type args), which the four helpers below plus
+// retype_method_inst and monomorphize_structs' phase 2 provide.
+
+// gclone_base returns the generic struct that `ty` is a monomorphised clone
+// of (`Box__i32` -> "Box"), or "" when it is not one. Matched against the
+// known generic bases rather than split on `__`, so a nested key
+// (`Box__Opt__i32`) is attributed to `Box`; the longest match wins.
+function gclone_base(ty: string, gstructs: StructDecl[]): string {
+    var best: string = "";
+    var i: i32 = 0;
+    while (i < gstructs.len()) {
+        var pfx: string = gstructs[i].name + "__";
+        if (ty.len() > pfx.len() && ty[0 : pfx.len()] == pfx) {
+            if (gstructs[i].name.len() > best.len()) { best = gstructs[i].name; }
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+// method_own_tparams returns the type parameters a generic-struct method
+// declares for ITSELF — those clone_struct_method's struct-only
+// substitution leaves unbound. Empty for the ordinary case where a
+// method's params match the struct's (a parametric `impl[T]`).
+function method_own_tparams(m: FuncDecl, gstructs: StructDecl[]): string[] {
+    var none: string[] = [];
+    if (m.type_params.len() == 0) { return none; }
+    var gsi: i32 = gstruct_index(gstructs, strip_struct_base(m.receiver_type));
+    if (gsi < 0) { return none; }
+    var sp: string[] = gstructs[gsi].type_params;
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < m.type_params.len()) {
+        if (tp_index(m.type_params[i], sp) < 0) { out = out.append(m.type_params[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// gm_method_index returns the index in `funcs` of the method named `field`
+// on generic struct base `base`, or -1.
+function gm_method_index(funcs: FuncDecl[], base: string, field: string): i32 {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].receiver_type.len() > 0 && funcs[i].name == field
+            && strip_struct_base(funcs[i].receiver_type) == base) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// bind_own_tparam_from_ret pins a method's single surviving own type
+// parameter from the binding's ALREADY-MANGLED annotation, by matching the
+// method's declared return spelling against it. Two shapes are recognised:
+// the return IS the parameter (`into[U](): U` bound to `var x: i32` -> U =
+// i32), or it is a single-arg application of a generic struct naming it
+// (`map[U](): Box[U]` against `Box__i32` -> U = i32). Returns "" when
+// neither matches, which leaves the call site untouched.
+//
+// The key recovered from the annotation is the SANITIZED one (mg_ty mangles
+// with sanitize_key), so it is only usable as a substitution when it
+// round-trips; a key that does not is declined rather than substituted
+// wrongly.
+function bind_own_tparam_from_ret(ret: string, own: string, concrete: string, gstructs: StructDecl[]): string {
+    if (ret == own) {
+        if (sanitize_key(concrete) != concrete) { return ""; }
+        return concrete;
+    }
+    var lb: i32 = first_bracket(ret);
+    if (lb <= 0) { return ""; }
+    if (ret[ret.len() - 1 : ret.len()] != "]") { return ""; }
+    if (ret[lb + 1 : ret.len() - 1] + "" != own) { return ""; }
+    var rbase: string = ret[0 : lb] + "";
+    if (rbase != gclone_base(concrete, gstructs)) { return ""; }
+    var gsi: i32 = gstruct_index(gstructs, rbase);
+    if (gsi < 0) { return ""; }
+    if (gstructs[gsi].type_params.len() != 1) { return ""; }
+    var key: string = concrete[rbase.len() + 2 : concrete.len()] + "";
+    if (sanitize_key(key) != key) { return ""; }
+    return key;
+}
+
+// minst_key names the phase-2 worklist entry for one method instantiation:
+// the receiver's CLONE name and the method, so phase 2 can look it up while
+// already holding the struct's (base, key). Distinct from a struct entry by
+// the "|" — gstruct_index never matches one, so the struct worklist skips
+// them untouched.
+function minst_key(recv_clone: string, method: string): string {
+    return recv_clone + "|" + method;
+}
+
 // to_concrete_struct_ty resolves a method's substituted type string to
 // the concrete clone name: a bare base (`Box`, from a @derive method's
 // `other: Box` param) becomes the mangled name directly; an arg form
@@ -7929,6 +8029,55 @@ function retype_assoc_ctor(init: Expr, concrete: string, gstructs: StructDecl[])
     return init;
 }
 
+// retype_method_inst rewrites a call to a method carrying its OWN type
+// parameter (`b.map(dbl)` where `map[U]` is declared on `Box[T]`) to that
+// method's per-instantiation clone (`b.map__i32(dbl)`), and records the
+// instantiation so phase 2 emits it. `U` is bound from the binding's
+// annotation, which mg_ty has already mangled — `var d: Box[i32] = b.map(dbl)`
+// gives `Box__i32`, so matching the declared return `Box[U]` against it pins
+// U = i32. The receiver-side sibling of retype_assoc_ctor / retype_struct_lit,
+// and the reason those two work from `concrete` as well.
+//
+// Everything not of this shape passes through: a method with no own type
+// params (the ordinary clone_struct_method path handles it), a non-ident
+// receiver, a receiver whose type is not a generic-struct clone, more than one
+// surviving param, or a binding whose annotation does not pin it. Declining
+// leaves today's behaviour exactly as it was. See #6007.
+function retype_method_inst(init: Expr, concrete: string, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts): RExpr {
+    var same: RExpr = RExpr { rexpr: init, rins: ins };
+    match (init) {
+        ExprCall(c) => {
+            match (c.callee) {
+                ExprFieldAccess(fa) => {
+                    match (fa.obj) {
+                        ExprIdent(oid) => {
+                            var rty: string = env.elook(oid.name);
+                            if (rty.len() == 0) { return same; }
+                            var base: string = gclone_base(rty, gstructs);
+                            if (base.len() == 0) { return same; }
+                            var mi: i32 = gm_method_index(funcs, base, fa.field);
+                            if (mi < 0) { return same; }
+                            var own: string[] = method_own_tparams(funcs[mi], gstructs);
+                            if (own.len() != 1) { return same; }
+                            var key: string = bind_own_tparam_from_ret(funcs[mi].ret_type, own[0], concrete, gstructs);
+                            if (key.len() == 0) { return same; }
+                            var nm: string = fa.field + "__" + sanitize_key(key);
+                            return RExpr {
+                                rexpr: ExprCall { callee: ExprFieldAccess { obj: fa.obj, field: nm, line: fa.line, col: fa.col, ty: fa.ty }, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty },
+                                rins: ins.iadd(minst_key(rty, fa.field), key)
+                            };
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return same;
+}
+
 // retype_struct_lit re-keys a still-generic struct literal from its binding's
 // annotation when the field values alone couldn't pin the instantiation. The
 // motivating case is a generic struct of a generic ENUM (`var b: Box[Opt[i32]]
@@ -7967,7 +8116,10 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
             // generic-struct annotation takes its instantiation from that
             // annotation: rewrite it to `Box__Inner.default()`.
             var ninit: Expr = retype_struct_lit(retype_assoc_ctor(iv.rexpr, ta.ty, gstructs), ta.ty, gstructs);
-            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, is_str: false }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
+            // A method carrying its own type parameter takes that parameter
+            // from the same annotation (`b.map(dbl)` -> `b.map__i32(dbl)`).
+            var mres: RExpr = retype_method_inst(ninit, ta.ty, env, gstructs, funcs, ta.mins);
+            return RStmtOne { rstmt: StmtVar { name: v.name, type_name: ta.ty, init: mres.rexpr, line: v.line, col: v.col, is_str: false }, renv: env.ebind(v.name, ta.ty), rins2: mres.rins };
         },
         StmtReturn(r) => {
             var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);
@@ -8120,6 +8272,70 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
     };
 }
 
+// clone_own_tparam_method clones a method that carries its own type parameter
+// for ONE (struct instantiation × method type arg) pair — the second
+// monomorphisation axis clone_struct_method does not have. Both axes are
+// substituted at once, and the clone takes the mangled name retype_method_inst
+// rewrote the call sites to.
+//
+// Unlike clone_struct_method it does NOT retarget bare `Self` literals to the
+// receiver's clone: `map[U](): Box[U]` returns `Box[U]`, which is the METHOD's
+// instantiation, not the receiver's, so retargeting would point the literal at
+// the wrong clone. The literal is left generic for ms_stmt's return-position
+// retype_struct_lit to key from the clone's concrete return type instead. See
+// #6007.
+function clone_own_tparam_method(m: FuncDecl, base: string, key: string, own: string, ownkey: string, gstructs: StructDecl[]): FuncDecl {
+    var tparams: string[] = [];
+    var cts: string[] = [];
+    var gsi: i32 = gstruct_index(gstructs, base);
+    if (gsi >= 0) {
+        var sp: string[] = gstructs[gsi].type_params;
+        var skeys: string[] = [key];
+        if (sp.len() != 1) { skeys = split_dunder(key); }
+        var si2: i32 = 0;
+        while (si2 < sp.len()) {
+            tparams = tparams.append(sp[si2]);
+            cts = cts.append(skeys[si2]);
+            si2 = si2 + 1;
+        }
+    }
+    tparams = tparams.append(own);
+    cts = cts.append(ownkey);
+    var mang: string = base + "__" + sanitize_key(key);
+    var bsegs: string[] = split_dunder(base);
+    var bare_base: string = bsegs[bsegs.len() - 1];
+    var nparams: ParamDecl[] = [];
+    var i: i32 = 0;
+    while (i < m.params.len()) {
+        var psrc: string = replace_struct_ident(m.params[i].type_name, bare_base, base);
+        var pt: string = to_concrete_struct_ty(subst_ty(psrc, tparams, cts), base, mang, gstructs);
+        nparams = nparams.append(ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: m.params[i].fn_ret, fn_param_dyn: m.params[i].fn_param_dyn });
+        i = i + 1;
+    }
+    var rsrc: string = replace_struct_ident(m.ret_type, bare_base, base);
+    var rt: string = to_concrete_struct_ty(subst_ty(rsrc, tparams, cts), base, mang, gstructs);
+    var notp: string[] = [];
+    return FuncDecl {
+        name: m.name + "__" + sanitize_key(ownkey), receiver_name: m.receiver_name, receiver_type: mang,
+        type_params: notp, params: nparams, ret_type: rt,
+        body: subst_stmts(m.body, tparams, cts), line: m.line, col: m.col,
+        import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count, bound_traits: [], fip: m.fip, ret_str: m.ret_str
+    };
+}
+
+// minsts_for collects the recorded method type args for `mang`'s `method`.
+// Snapshotted before emitting, because emitting a clone appends to `ins`.
+function minsts_for(ins: Insts, mang: string, method: string): string[] {
+    var out: string[] = [];
+    var k: string = minst_key(mang, method);
+    var i: i32 = 0;
+    while (i < ins.inames.len()) {
+        if (ins.inames[i] == k) { out = out.append(ins.itypes[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
 // monomorphize_structs clones every generic struct (and its methods) per
 // concrete instantiation, rewriting all references to the mangled name.
 // See the section comment above. Runs after function monomorphisation so
@@ -8207,14 +8423,38 @@ pub function monomorphize_structs(mod: Module): Module {
             while (mi < mod.funcs.len()) {
                 var mm: FuncDecl = mod.funcs[mi];
                 if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
-                    var clm: FuncDecl = clone_struct_method(mm, base, key, gstructs);
-                    var br2: RStmts = ms_stmts(clm.body, env_from_params(clm.params), gstructs, mod.funcs, ins, clm.ret_type);
-                    ins = br2.rins3;
-                    nfuncs = nfuncs.append(FuncDecl {
-                        name: clm.name, receiver_name: clm.receiver_name, receiver_type: clm.receiver_type,
-                        type_params: clm.type_params, params: clm.params, ret_type: clm.ret_type, body: br2.rstmts, line: clm.line, col: clm.col,
-                        import_iface: clm.import_iface, import_wit: clm.import_wit, type_param_count: clm.type_param_count, bound_traits: [], fip: clm.fip, ret_str: clm.ret_str
-                    });
+                    var mown: string[] = method_own_tparams(mm, gstructs);
+                    if (mown.len() > 0) {
+                        // Second axis (#6007): a method with its own type
+                        // parameter is emitted once per instantiation
+                        // retype_method_inst recorded, never generically — a
+                        // generic clone would carry the parameter NAME into its
+                        // return spelling and mint a `Box__U` from it. An
+                        // uninstantiated (or unsupported, multi-param) method
+                        // emits nothing; nothing references it.
+                        var okeys: string[] = minsts_for(ins, mang, mm.name);
+                        var qj: i32 = 0;
+                        while (qj < okeys.len()) {
+                            var oclm: FuncDecl = clone_own_tparam_method(mm, base, key, mown[0], okeys[qj], gstructs);
+                            var obr: RStmts = ms_stmts(oclm.body, env_from_params(oclm.params), gstructs, mod.funcs, ins, oclm.ret_type);
+                            ins = obr.rins3;
+                            nfuncs = nfuncs.append(FuncDecl {
+                                name: oclm.name, receiver_name: oclm.receiver_name, receiver_type: oclm.receiver_type,
+                                type_params: oclm.type_params, params: oclm.params, ret_type: oclm.ret_type, body: obr.rstmts, line: oclm.line, col: oclm.col,
+                                import_iface: oclm.import_iface, import_wit: oclm.import_wit, type_param_count: oclm.type_param_count, bound_traits: [], fip: oclm.fip, ret_str: oclm.ret_str
+                            });
+                            qj = qj + 1;
+                        }
+                    } else {
+                        var clm: FuncDecl = clone_struct_method(mm, base, key, gstructs);
+                        var br2: RStmts = ms_stmts(clm.body, env_from_params(clm.params), gstructs, mod.funcs, ins, clm.ret_type);
+                        ins = br2.rins3;
+                        nfuncs = nfuncs.append(FuncDecl {
+                            name: clm.name, receiver_name: clm.receiver_name, receiver_type: clm.receiver_type,
+                            type_params: clm.type_params, params: clm.params, ret_type: clm.ret_type, body: br2.rstmts, line: clm.line, col: clm.col,
+                            import_iface: clm.import_iface, import_wit: clm.import_wit, type_param_count: clm.type_param_count, bound_traits: [], fip: clm.fip, ret_str: clm.ret_str
+                        });
+                    }
                 }
                 mi = mi + 1;
             }

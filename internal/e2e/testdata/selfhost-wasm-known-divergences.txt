@@ -63,7 +63,7 @@
 # recycled the cell there in time. irlower now brackets such a receiver so
 # arr_push takes its copy path.
 #
-# One of the original twelve remains. All were found by the leg's first run
+# NONE of the original twelve remains. All were found by the leg's first run
 # over the existing corpus, on fixtures that had been green for months because
 # all four of TestFernFixtures' backends are the native compiler. Each has been reproduced by hand with a
 # native self-host CLI (`make selfhost-cli`) before being written down; none is
@@ -72,11 +72,14 @@
 # 255 is a feature bitmask looked like a broken regex engine — which is why every
 # entry here names a measured before/after rather than a symptom.
 
-# --- the self-host wasm path cannot lower these at all --------------------
-# Hard errors now the AST emitters are deleted (#3457), so these are real
-# IR-subset gaps, not fallbacks. "module is not IR-eligible" from the driver.
-generic_method_typeparams #6007 IR-ineligible on self-host wasm; native compiles it
-
+# `generic_method_typeparams` was the last one, and is now FIXED (the final
+# #6007 slice). It needed a second monomorphisation axis rather than new
+# lowering: a method declaring its OWN type parameter
+# (`function (b: Box[T]) map[U](f: (T) => U): Box[U]`) was only ever cloned on
+# the STRUCT's parameters, so `U` survived into the clone's return spelling and
+# mg_ty — which has no notion of which names are type parameters — minted a
+# `Box__U` keyed on the parameter NAME, whose `get` never resolved.
+#
 # --- UNMEASURABLE by this oracle ------------------------------------------
 # Not listed as divergences because the leg cannot prove them either way: an
 # expected exit >= 126 is refused by WASI, so wasmtime reports 1 and the real
