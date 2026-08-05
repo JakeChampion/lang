@@ -4198,9 +4198,37 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   element pointer, then the outer buffer) with NO new backend runtime — the
   whole slice lives in irlower.fern. ADMISSION (`collect_fresh_structarr_names`
   + "STRUCTARR:" credit): every element a fresh no-base struct LITERAL
-  (`structarr_lit_is_fresh` — each box rc=1, solely owned by the buffer); three
-  gates — `body_unsafe_for` (g doesn't escape), NOT reassigned, and
-  `structarr_elem_escapes`. DISJOINTNESS FROM ARRSTRUCT is enforced in the
+  (`structarr_lit_is_fresh` — each box rc=1, solely owned by the buffer); two
+  gates — `structarr_unsafe_for` and `structarr_elem_escapes`.
+  APPEND-BUILT (#6127): admission once also required the name to be NOT
+  reassigned, which excluded `var ps: P[] = []` grown by
+  `ps = ps.append(P { .. })` and leaked one element BOX per append —
+  measured on the leakcheck differential at 38400 bytes over 100 rounds,
+  scaling linearly, against native's 0. `structarr_unsafe_for` replaces the
+  blunt exclusion with the same per-rebind validation `arrarr_unsafe_for`
+  (#6092) and the string[] class use: only a self-append of a fresh no-base
+  struct literal passes (`structarr_elem_store_ok`), everything else is
+  still `body_unsafe_for`. `arrarr_lit_is_empty` +
+  `structarr_name_is_appended` admit the `[]` initializer.
+  An append-built candidate takes a SEPARATE credit, "STRUCTARRA:", which
+  `slot_is_reclaimable_structarr` additionally gates on
+  `struct_all_scalar_fields` — every field a by-value primitive, an
+  ALLOWLIST so an unrecognised field type reads as non-scalar and keeps the
+  struct out. Literal-built arrays keep the original "STRUCTARR:" credit and
+  the original looser rule, so their emitted code is unchanged byte for byte.
+  WHY the split (#6129): `struct_has_reclaim_array_field` deliberately lets
+  string / map / option / tuple fields through ("they leak with the struct,
+  sound"), so the shallow box free is only EXACT for an all-scalar struct —
+  which is what this class documents itself as and what the code did not
+  enforce. Widening the LOOSER rule across the ~112 append-built sites in the
+  compiler's own sources broke self-compilation: gen0 and gen1 diverged on
+  unit `2_s83` (1256103 vs 1251060 bytes), deterministically and
+  independent of batch size. With the all-scalar gate the fixpoint converges.
+  The cost is that an append-built struct array whose element has a STRING
+  field is no longer reclaimed at all — it leaks as it did before the append
+  work, rather than being unsoundly shallow-freed. Closing that needs the
+  deep ARRSTRUCT path to learn string fields, not a looser gate here.
+  DISJOINTNESS FROM ARRSTRUCT is enforced in the
   detector: `slot_is_reclaimable_structarr` bails when
   `struct_has_reclaim_array_field(sty)` — so a field-routing struct goes to the
   deep ARRSTRUCT path and a scalar struct to this shallow one; at most one class
