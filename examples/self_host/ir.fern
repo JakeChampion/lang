@@ -164,15 +164,15 @@ pub function op_funary(kind: string): Op {
 // as bits on the register backends; wasm's typed stack flips i32<->f64 here.
 pub function op_i32_to_f64(): Op { return op0("i32_to_f64"); }
 // int_to_f64 is op_i32_to_f64 carrying the operand's WIDTH and SIGNEDNESS, the
-// pair the register backends can ignore and wasm cannot. On x86-64 / arm64 the
-// value rides a 64-bit slot and one instruction (cvtsi2sd %rax / scvtf d0, x0)
-// covers i32 and i64 alike, with a u32 arriving zero-extended — which is
-// exactly why the missing information went unnoticed there. wasm's typed stack
-// has four distinct opcodes (f64.convert_i{32,64}_{s,u}) and no way to pick
-// between them without this, so an unsigned 32-bit value converted as signed
-// (#5992), and a 64-bit one hit `f64.convert_i32_s` on an i64 operand and did
-// not even validate. Mirrors op_f64_to_u32 / op_f64_to_u64, which have carried
-// `unsigned` since #4332.
+// pair EVERY backend needs. wasm's typed stack has four distinct opcodes
+// (f64.convert_i{32,64}_{s,u}) and no way to pick between them without this, so
+// an unsigned 32-bit value converted as signed (#5992), and a 64-bit one hit
+// `f64.convert_i32_s` on an i64 operand and did not even validate. The register
+// backends have only the SIGNED conversion of a 64-bit slot (cvtsi2sd %rax /
+// scvtf d0, x0), which covers i32 / u32 / i64 — the 32-bit cases ride the slot
+// correctly extended — but reads a u64 >= 2^63 as negative, so u64::MAX
+// converted to -1.0 (#6051). Mirrors op_f64_to_u32 / op_f64_to_u64, which have
+// carried `unsigned` since #4332.
 pub function op_int_to_f64(width: i32, unsigned: boolean): Op {
     return Op { kind_tag: kind_id("i32_to_f64"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: unsigned, str: "" };
 }

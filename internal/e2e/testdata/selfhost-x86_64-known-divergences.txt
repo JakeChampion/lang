@@ -24,7 +24,8 @@
 #
 # All 16 were measured on the first two runs (49e762e0, d67de908), 317 fixtures
 # run; `eq_struct_enum` and `ord_struct_enum` have since been FIXED (#6009 — see
-# the note in the wasm sibling), leaving 14.
+# the note in the wasm sibling), and `int_wrap` / `u64_max_to_f64_is_huge` with
+# #6050 / #6051, leaving 12.
 
 # --- the six the wasm leg could never judge: they never terminate -----------
 # Killed at the leg's 20s cap with no output. Natively each returns in
@@ -55,12 +56,14 @@ pure_collection_aliases #6007 IR-ineligible; bails at main (call to unknown symb
 map_struct_value_field #6007 IR-ineligible; bails at main (no symbol named)
 
 # --- new, first seen on x86-64 ---------------------------------------------
-# The first two the wasm leg checks and passes. The third it does NOT check:
-# the wasm leg sets skipStdin, so all four stdin-carrying fixtures are excluded
-# there — "the wasm leg passes it" was never true of multiline_stdin, it was
-# never asked. Hand-run through the self-host wasm path with stdin actually fed,
-# it returns the same 10, so #6052 is a SHARED-frontend bug like the rows above,
-# not an x86-64 one.
-int_wrap #6050 prints "-" for -2147483648 — sign emitted, every digit dropped
-u64_max_to_f64_is_huge #6051 returns 1, native 0 — u64::MAX as f64 converts signed
+# The wasm leg does NOT check this one: it sets skipStdin, so all four
+# stdin-carrying fixtures are excluded there — "the wasm leg passes it" was
+# never true of multiline_stdin, it was never asked. Hand-run through the
+# self-host wasm path with stdin actually fed, it returns the same 10, so #6052
+# is a SHARED-frontend bug like the rows above, not an x86-64 one.
+#
+# `int_wrap` (#6050) and `u64_max_to_f64_is_huge` (#6051) sat here too. Both are
+# fixed: the i32 formatter now carries its magnitude unsigned (so INT_MIN's
+# self-negation still renders its digits), and int→f64 is emitted per the op's
+# width + signedness (so a u64 >= 2^63 stops converting as -1.0).
 multiline_stdin #6052 returns 10, native 42 — only the first stdin line is consumed

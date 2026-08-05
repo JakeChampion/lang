@@ -169,8 +169,6 @@ _start:
     fcvt d5, s6
     fcvtzs x0, d0
     fcvtzs w5, d6
-    fcvtzu x0, d0
-    fcvtzu w5, d6
     frinta d0, d0
     frintm d0, d1
     frintp d2, d3
@@ -190,6 +188,17 @@ _start:
     fdiv d0, d1, d2
     fcmp d1, d0
     scvtf d0, x0
+    // #6051: ucvtf had no encoder or dispatch at all, so "u64 as f64" — which
+    // needs it, a signed convert reading a value >= 2^63 as negative — was
+    // refused outright by -target arm64. The w-source rows pin the sf bit:
+    // scvtf was hardcoded to the X form, the same width class as fcvtzs above.
+    // fcvtzu — the INVERSE conversion, which "f64 as u32" lowers to — was
+    // missing for the same reason and is fixed in the same pass.
+    scvtf d0, w0
+    ucvtf d0, x0
+    ucvtf d1, w2
+    fcvtzu x0, d1
+    fcvtzu w5, d6
 Lend:
     ret
 `

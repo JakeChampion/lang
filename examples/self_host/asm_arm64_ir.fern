@@ -1362,8 +1362,21 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             s = s.write("    .section .rodata\n" + flb.name + ": .long " + util.i32_to_string(flo) + ", " + util.i32_to_string(fhi) + "\n    .text\n");
             s = s.write("    adrp x0, " + flb.name + "\n    add x0, x0, :lo12:" + flb.name + "\n    ldr d0, [x0]\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 11) {  // i32_to_f64
-            // signed i32 -> f64 (scvtf); value rides the stack as bits.
-            s = s.write("    ldr x0, [sp], #16\n    scvtf d0, x0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+            // int -> f64, selected by the op's width + signedness. arm64 has both
+            // conversions, so each case is one instruction: scvtf for signed,
+            // ucvtf for unsigned, from a w-source at 32 bits and an x-source at
+            // 64. The old unconditional `scvtf d0, x0` was right for i32 / u32 /
+            // i64 (the 32-bit cases ride the slot correctly extended) but read a
+            // u64 >= 2^63 as negative — u64::MAX converted to -1.0 (#6051, the
+            // register sibling of the wasm fix in #5992).
+            if (o.width == 64) {
+                if (o.unsigned) { s = s.write("    ldr x0, [sp], #16\n    ucvtf d0, x0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n"); }
+                else { s = s.write("    ldr x0, [sp], #16\n    scvtf d0, x0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n"); }
+            } else if (o.unsigned) {
+                s = s.write("    ldr x0, [sp], #16\n    ucvtf d0, w0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+            } else {
+                s = s.write("    ldr x0, [sp], #16\n    scvtf d0, x0\n    fmov x0, d0\n    str x0, [sp, #-16]!\n");
+            }
         } else if (o.kind_tag == 12) {  // f64_to_i32
             // f64 -> signed i32, saturating (fcvtzs to a 32-bit dest: NaN -> 0,
             // out-of-range clamps to INT32_MIN/MAX), then sign-extend into the
