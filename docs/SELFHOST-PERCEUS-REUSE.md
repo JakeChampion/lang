@@ -120,6 +120,21 @@ self-compile already exercises it) and tested:
   functional-update self-overwrite `var c = T{ ...d, f: v }` reusing d's dead
   same-type box in place (the record-update idiom; native's
   `tryStructReuseOverwrite`).
+- `self_assign_update_names` — the **self-assign** record update
+  `p = T{ ...p, f: v }`, where the assignment target IS the spread base
+  (#6134; native's `structUpdateFieldInits` + `tryStructReuseOverwrite`
+  spread admission, #6124). This is how a Fern program mutates a struct at
+  all — E048 forbids field assignment — and the rebind family above cannot
+  see it: those sites match `StmtVar` with `v.name != base`. It reuses
+  `emit_self_overwrite_reuse` unchanged apart from the one-slot-plays-both-
+  roles bookkeeping, because that emitter already evaluates every override
+  value into a temp before touching the box; that ordering is what makes an
+  override reading the base (`n: p.n + 1`, the shape of every real record
+  update) order-safe. The admission set is computed over the WHOLE function
+  body — the update sits inside a loop while `p` is bound outside it, a
+  pairing the index-keyed site lists cannot express — and requires that `p`
+  never escapes, is bound by a gated fresh literal, is not shadowed, and
+  that EVERY assignment to it is such an update.
 - `cross_reuse_sites` / `emit_cross_struct_reuse` — the general cross-local
   reuse (a dead donor local's box reused for a later same-type construction;
   native's `computeReuseSources`).
@@ -166,8 +181,10 @@ port:
    (`__struct_drop_<FT>` when it has rc fields, then a box dec — native's
    `emitFieldDropOnStack`) before the fresh inner is written, and the new value is
    required to be a fresh (no-base) struct literal so the reused box solely owns it.
-   The self-overwrite path is sound because override values may not reference `d`
-   (existing gate), so there is no read-after-overwrite hazard, and a CARRIED
+   The self-overwrite REBIND path keeps its "override values may not reference `d`"
+   gate (a donor-liveness property — the self-ASSIGN family above drops it, since
+   the emitter's temps-first ordering is what actually rules out the
+   read-after-overwrite hazard), and a CARRIED
    (non-overridden) nested-struct field simply moves with the reused box (freed
    once at exit via `__struct_drop_<T>`). Covered by the `loop-nested-struct-field-*`
    and `loop-funcupdate-nested-struct-*` cases. REMAINING excluded kinds: enum /
