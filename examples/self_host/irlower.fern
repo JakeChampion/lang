@@ -20351,6 +20351,28 @@ function cross_recipient_fields_fresh(slit: parser.ExprStructLit, structs: parse
     return true;
 }
 
+// reuse_recipient_ok is the whole RECIPIENT admission the cross-statement
+// (cross_reuse_sites), cross-block (xblock_scan_body) and enum-donor
+// (enum_donor_reuse_sites) families share: a full no-base construction of a
+// reusable struct type whose field values are all fresh, and which is not
+// itself a compile-time constant.
+//
+// That last clause is what stops constructor reuse and static aggregate
+// placement (#6149) from cancelling each other. These scanners run per
+// STATEMENT in lower_block, BEFORE the literal reaches lower_expr where
+// const_agg_of recognises it — so claiming a constant recipient costs it its
+// static placement and buys nothing in return, since its __fern_alloc_reuse
+// degrades to a fresh box the moment the donor is itself a constant (immortal
+// rc, so is_unique answers 0). Leaving the literal alone places it in .data and
+// releases the donor to the freelist, which the next allocation of that size
+// class pops anyway.
+function reuse_recipient_ok(slit: parser.ExprStructLit, structs: parser.StructDecl[]): boolean {
+    if (slit.has_base) { return false; }
+    if (!struct_fields_reusable_cross(structs, slit.type_name)) { return false; }
+    if (!cross_recipient_fields_fresh(slit, structs)) { return false; }
+    return !const_agg_of(slit, structs).ok;
+}
+
 struct XbScan { pairs: string[], cons: string[] }
 
 // xblock_scan_body pairs every top-level reusable struct construction in `body`
@@ -20375,7 +20397,7 @@ function xblock_scan_body(body: parser.Stmt[], b_stmts: parser.Stmt[], k: i32, s
                         // cross_construction_donor carries the donor-side freshness
                         // gates), where this scan previously required the narrow
                         // scalar/array/nested-struct predicate.
-                        if (!slit.has_base && struct_fields_reusable_cross(structs, slit.type_name) && cross_recipient_fields_fresh(slit, structs)) {
+                        if (reuse_recipient_ok(slit, structs)) {
                             var donor: string = cross_construction_donor(b_stmts, structs, k, slit.type_name, rv.name, so_bases, cons, fresh_ret);
                             if (donor.len() > 0) {
                                 // "dname|dtype" — keep the pair 3-part, consume the bare name.
@@ -30809,19 +30831,14 @@ function cross_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[], fr
                 parser.StmtVar(v) => {
                     match (v.init) {
                         parser.ExprStructLit(slit) => {
-                            if (!slit.has_base && struct_fields_reusable_cross(structs, slit.type_name)) {
-                                // Recipient field-value freshness — shared with the
-                                // cross-block scan (cross_recipient_fields_fresh).
-                                var ok: boolean = cross_recipient_fields_fresh(slit, structs);
-                                if (ok) {
-                                    var donor: string = cross_construction_donor(body, structs, k, slit.type_name, v.name, so.bases, donors, fresh_ret);
-                                    if (donor.len() > 0) {
-                                        var dbar: i32 = 0;
-                                        while (dbar < donor.len() && donor[dbar] != 124) { dbar = dbar + 1; }
-                                        idxs = idxs.append(k);
-                                        donors = donors.append(donor[0 : dbar]);
-                                        dtypes = dtypes.append(donor[dbar + 1 : donor.len()]);
-                                    }
+                            if (reuse_recipient_ok(slit, structs)) {
+                                var donor: string = cross_construction_donor(body, structs, k, slit.type_name, v.name, so.bases, donors, fresh_ret);
+                                if (donor.len() > 0) {
+                                    var dbar: i32 = 0;
+                                    while (dbar < donor.len() && donor[dbar] != 124) { dbar = dbar + 1; }
+                                    idxs = idxs.append(k);
+                                    donors = donors.append(donor[0 : dbar]);
+                                    dtypes = dtypes.append(donor[dbar + 1 : donor.len()]);
                                 }
                             }
                         },
@@ -31466,8 +31483,7 @@ function enum_donor_reuse_sites(body: parser.Stmt[], structs: parser.StructDecl[
                             // per-kind arms as a normally-constructed box (k_enum /
                             // k_struct release; Map / tuple / Option leak-only,
                             // exactly like the fresh-alloc path).
-                            if (!slit.has_base && struct_fields_reusable_cross(structs, slit.type_name)
-                                    && cross_recipient_fields_fresh(slit, structs)) {
+                            if (reuse_recipient_ok(slit, structs)) {
                                 var want: i32 = decl_field_count(structs, slit.type_name);
                                 // find the nearest unconsumed enum donor whose
                                 // consuming match is before k and whose box size

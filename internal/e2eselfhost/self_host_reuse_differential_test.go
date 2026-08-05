@@ -35,6 +35,15 @@ var reuseDifferentialCases = []struct {
 	// its firing is pinned by asm inequality instead).
 	witness string
 }{
+	// A RECIPIENT whose every field is a compile-time scalar literal is not a
+	// reuse shape at all: `reuse_recipient_ok` excludes it so the static
+	// aggregate placement (#6149) can have it instead, which allocates nothing
+	// rather than recycling a box. That is why two fixtures below multiply a
+	// field by a 1-valued variable — written as plain literals they measure zero
+	// reuse against zero and stop testing reuse. Only the cross-statement and
+	// enum-donor families are affected; a self-overwrite recipient carries a base
+	// (`{ ...d, x: 10 }`) and can never be constant.
+	//
 	// Family 1 — functional-update self-overwrite (emit_self_overwrite_reuse).
 	{"self-overwrite", `struct Point { x: i32, y: i32 } function main(): i32 { var d = Point { x: 3, y: 4 }; var c = Point { ...d, x: 10 }; return c.x + c.y; }`, 14, "call __fn___fern_alloc_reuse"},
 	// Family 2 — cross-statement struct reuse in a loop (emit_cross_struct_reuse).
@@ -45,8 +54,8 @@ var reuseDifferentialCases = []struct {
 	// sole owner of box + fields), so donor_bind_type admits it exactly like
 	// a literal-bound donor. Previously only same-body literals could donate,
 	// so this shape fresh-allocated every time.
-	{"cross-struct-callret-donor", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { var d: P = mk(3); var u: i32 = d.x + d.y; var c: P = P { x: 10, y: 20 }; return c.x + c.y + u; }`, 37, "call __fn___fern_alloc_reuse"},
-	{"cross-struct-callret-donor-detector", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { var d: P = mk(3); var u: i32 = d.x + d.y; var c: P = P { x: 10, y: 20 }; var s: i32 = c.x + c.y + u; if (s != 37) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"cross-struct-callret-donor", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { var one: i32 = 1; var d: P = mk(3); var u: i32 = d.x + d.y; var c: P = P { x: 10 * one, y: 20 }; return c.x + c.y + u; }`, 37, "call __fn___fern_alloc_reuse"},
+	{"cross-struct-callret-donor-detector", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { var one: i32 = 1; var d: P = mk(3); var u: i32 = d.x + d.y; var c: P = P { x: 10 * one, y: 20 }; var s: i32 = c.x + c.y + u; if (s != 37) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Family 2h — OWN-PARAM struct donor (#4356 divergence 3): a construction in a
 	// function with an `own` struct param reuses that param's box (moved in, sole-
 	// owned, dead after its last read). Restricted to all-scalar donor+recipient
@@ -149,8 +158,8 @@ var reuseDifferentialCases = []struct {
 	// Family 3 — cross-statement tuple reuse (emit_cross_tuple_reuse).
 	{"cross-tuple-loop", `function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: (i32, i32) = (i, i + 1); var s: i32 = a.0 + a.1; var b: (i32, i32) = (i, 3); sum = sum + s + b.0 + b.1; i = i + 1; } return sum; }`, 34, "call __fn___fern_alloc_reuse"},
 	// Family 4 — consumed scalar-enum donor -> struct recipient (emit_enum_donor_reuse).
-	{"enum-donor", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, q: i32 } function main(): i32 { var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: 3, q: 4 }; return t + y.p + y.q; }`, 37, "call __fn___fern_alloc_reuse"},
-	{"enum-donor-detector", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, q: i32 } function main(): i32 { var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: 3, q: 4 }; var s = t + y.p + y.q; if (s != 37) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
+	{"enum-donor", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, q: i32 } function main(): i32 { var one: i32 = 1; var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: 3 * one, q: 4 }; return t + y.p + y.q; }`, 37, "call __fn___fern_alloc_reuse"},
+	{"enum-donor-detector", `enum E { A(i32, i32), B(i32, i32) } struct W { p: i32, q: i32 } function main(): i32 { var one: i32 = 1; var x = A(10, 20); var t = 0; match (x) { A(a, b) => { t = a + b; }, B(c, d) => { t = c - d; }, } var y = W { p: 3 * one, q: 4 }; var s = t + y.p + y.q; if (s != 37) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Enum-donor recipient WIDENED to the cross field-kind set (the reuse-audit
 	// follow-through): a recipient with an ENUM field (fresh variant-ctor value;
 	// released at exit via the k_enum drop arm) or a leak-only TUPLE field now

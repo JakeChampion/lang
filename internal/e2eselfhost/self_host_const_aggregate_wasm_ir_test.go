@@ -77,6 +77,16 @@ var constAggWasmCases = []struct {
 	{"hex-field-literal",
 		`struct N { v: i32, f: boolean } function hx(): N { return N { v: 0x1f, f: false }; } function main(): i32 { var a: N = hx(); var t: i32 = 0; if (a.f) { t = t + 100; } return t + a.v; }`,
 		31, 1, true},
+	// The constant/REUSE interaction: two same-block literals where the second
+	// would otherwise reuse the first's dead box. Both reach static placement,
+	// because `reuse_recipient_ok` excludes a recipient that is itself constant —
+	// the reuse scanners run per STATEMENT in lower_block, before the literal
+	// reaches lower_expr where the constant is recognised, so a claimed recipient
+	// silently loses its placement. Shared with the x86-64 suite, which reads the
+	// same shape through the allocation counter.
+	{"reuse-shape-all-constant",
+		`struct P { x: i32, y: i32 } function main(): i32 { var cond: i32 = 1; var r: i32 = 0; if (cond > 0) { var a: P = P { x: 10, y: 20 }; var s: i32 = a.x + a.y; var b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`,
+		37, 2, true},
 	// NOT admitted: `0 - 3` is a binary expression, not a unary minus, so the
 	// literal stays on struct_make and no constant is emitted at all.
 	{"non-literal-field-not-admitted",
