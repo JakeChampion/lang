@@ -1,0 +1,302 @@
+# SOTA standard-library blueprint
+
+A survey of where Fern's stdlib sits against the best known algorithm for each
+primitive, and what it would take to close each gap. This is a **research and
+prioritisation document**, not a plan of record: every row records what the
+code does *today* (verified by reading it, not assumed), what the literature's
+current best is, and a verdict.
+
+The organising philosophy — the one worth keeping even where the individual
+rows go stale:
+
+> A mathematically strong general algorithm, with specialised fast paths
+> around the common cases and an exact/robust fallback for the pathological
+> ones.
+
+Dragonbox and Eisel–Lemire are the canonical examples, and `parse_float`'s
+shape (Clinger fast path → refinement) is the same idea. The mistake this
+document exists to prevent is picking one clever algorithm and applying it
+everywhere, instead of dispatching on type, size, and data shape.
+
+## Three constraints that reorder the generic advice
+
+Most "SOTA stdlib" shortlists are written for C++ or Rust on x86-64. Three
+facts about Fern change the ranking substantially, and every verdict below is
+conditioned on them.
+
+**1. There is no SIMD — anywhere.** Not in `internal/ir`, not in any of the
+three backends, not as an intrinsic surface in the language. This is the
+single most important constraint, because it removes the top item from most
+published shortlists:
+
+| Technique | Status in Fern |
+| --- | --- |
+| simdjson-style stage 1/2 parsing | Not implementable |
+| simdutf-style block UTF-8 validation | Not implementable |
+| SwissTable SIMD group probing | Not implementable as designed |
+| SIMD `memchr` / `memcmp` | Not implementable |
+| Sorting networks over vector registers | Not implementable |
+
+These are not "not yet prioritised" — they are blocked on a vector-type
+surface in the IR plus per-backend lowering (SSE2/AVX2, NEON, wasm `v128`).
+That is a large, self-contained project, and it is the **prerequisite** for a
+whole tier of work rather than a row in it. Where a SIMD algorithm has a
+credible SWAR (SIMD-within-a-register, 64-bit-word) variant, the row says so —
+SWAR is available today and is often 4–8× over byte-at-a-time.
+
+**2. Memory is a bump arena plus reference counting, not a general malloc.**
+The mimalloc / jemalloc / snmalloc / tcmalloc branch of the usual shortlist
+mostly does not apply: Fern already has the "several allocation mechanisms"
+answer the advice is pushing toward (16 GiB `MAP_NORESERVE` bump arena, a
+large-tier freelist, Perceus RC with constructor reuse). The open questions
+here are about *reuse and over-retention*, not about allocator selection.
+
+**3. The compiler is the biggest workload.** The self-hosted compiler is a
+long-running, allocation-heavy Fern program, and it is the most demanding
+consumer of `std/string` and `core/map` in existence. A string or map
+improvement is not merely a library win — it compounds into compile times.
+This is why substring search ranked first in this pass.
+
+A fourth, smaller one: `.index_of` / `.contains` / `.split` / `.starts_with` /
+`.ends_with` on a `string` receiver are **compiler builtins** in the self-host
+compiler, lowered to emitted `__fern_str_*` runtime helpers. When a program
+imports `std/string`, method dispatch resolves to the stdlib function (verified
+by inspecting emitted wat: the Two-Way core is present, the builtin helper is
+not) — but `split` still lowers to its helper. Any change to a stdlib string
+primitive should check whether a sibling helper exists in
+`examples/self_host/asmcore.fern` (`rt_src_str_*`, used by the native backends)
+or `examples/self_host/wasm_ir.fern` (`*_helper`, hand-written WAT), or the two
+paths will silently diverge. They did, for `split("")`; see below.
+
+## Status table
+
+Verdicts: **DONE** shipped · **GAP** worth doing, unblocked · **BLOCKED** needs
+SIMD or another prerequisite · **N/A** doesn't apply to Fern's model · **OK**
+current implementation is already the right answer.
+
+### Numeric conversion
+
+| Primitive | Today | Best known | Verdict |
+| --- | --- | --- | --- |
+| f64 → shortest string | Dragonbox (#6161) | Dragonbox / Schubfach | **DONE** |
+| f64 → fixed/scientific | `to_string_prec` | Ryū Printf | GAP, low value |
+| string → f64 | Clinger fast path + neighbour refinement | Eisel–Lemire + bigint fallback | **GAP — highest-value numeric item** |
+| i32/i64 → string | Digit loop with `/ 10` | Lemire multiply-shift, 2-digit table | GAP, easy |
+| string → int | Byte-at-a-time accumulate | SWAR 8-digit chunks | GAP, easy |
+| Division by constant | Emitted as division | Magic-number reciprocal in the compiler | GAP, compiler-side |
+
+`parse_float` is the natural sibling of the Dragonbox work: same subsystem,
+same philosophy, and the current implementation's slow path is a bit-pattern
+refinement loop rather than a bounded computation. Eisel–Lemire resolves the
+overwhelming majority of real inputs with one 128-bit multiply against a
+power-of-ten table, falling back to the existing exact path only on genuine
+ties. It needs a `u64 × u64 → u128` high-multiply, which is a small IR
+addition (or synthesisable from four 32-bit multiplies).
+
+### Sorting
+
+| Primitive | Today | Best known | Verdict |
+| --- | --- | --- | --- |
+| `cmp.sort` / `sort_desc` | Bottom-up merge sort, **full fresh scratch copy every pass** | pdqsort (unstable) / Timsort (stable) | **GAP — highest-value collection item** |
+| Small-N sort | None; merge sort all the way down | Insertion sort below ~24 | GAP, easy, large constant-factor win |
+| Presorted input | Not detected | Natural run detection (Timsort) | GAP, easy |
+| Integer sort | Comparison sort | Radix / American flag | GAP |
+| `sort_by` | Merge sort over a comparator | Same, plus the above | GAP |
+| Tiny fixed-size sort | None | Sorting networks | BLOCKED (wants SIMD to pay off) |
+
+`cmp.sort` is the clearest single-function opportunity in the library. It
+allocates a whole new array **per merge pass** — `O(n log n)` element copies on
+top of the comparisons, and `log n` array allocations — and it has no
+insertion-sort base case and no run detection, so an already-sorted array costs
+exactly as much as a random one. A Timsort-shaped rewrite (insertion sort for
+short runs, natural run detection, one reusable scratch buffer) is pure
+stdlib-level work with no compiler dependency.
+
+Note the AST-safety contract in that function's comment (fresh buffer per pass,
+never `var dst = src;`). It was required by the self-host AST emitter, which has
+since been deleted (#3457/#5972) — so a rewrite is no longer bound by it, but
+it must be re-verified under Perceus rather than assumed.
+
+### Hash tables and hashing
+
+| Primitive | Today | Best known | Verdict |
+| --- | --- | --- | --- |
+| `Map` layout | Open addressing, separate key/value columns | SwissTable control bytes + group probe | BLOCKED on SIMD; **SWAR variant viable** |
+| String hash | FNV-1a 32-bit, byte at a time | wyhash / XXH3 | GAP, easy |
+| Scalar hash | Wang mix | Fine | OK |
+| Adversarial keys | None — no seeding | SipHash, randomised seed | GAP (matters if Fern serves untrusted input) |
+| Tiny map | Full probe machinery | Linear scan below ~8 entries | GAP, easy |
+| Checksum | — | xxHash / CRC32 | GAP |
+
+A SwissTable's control-byte metadata and probe *structure* are worth adopting
+even without SIMD: a SWAR group probe over a 64-bit word tests 8 slots per
+iteration with `(x - 0x0101..) & ~x & 0x8080..`-style tricks. That captures a
+good share of the cache-behaviour win, which is where most of SwissTable's
+advantage actually comes from.
+
+FNV-1a is a defensible default but is byte-at-a-time and has known weak
+avalanche in the low bits — which is exactly where a power-of-two mask reads.
+wyhash-style 64-bit block mixing is a contained, well-tested replacement.
+
+The seeding gap is a security consideration, not just a performance one: with
+an unseeded, publicly-known hash, an attacker who controls map keys can force
+collisions. That matters for the HTTP/JSON surface, less so for the compiler.
+
+### Strings and bytes
+
+| Primitive | Today | Best known | Verdict |
+| --- | --- | --- | --- |
+| Substring search | **Two-Way (Crochemore–Perrin)** | Two-Way; SIMD/`memchr` for short needles | **DONE (this pass)** |
+| Single-byte search | Scalar scan | SIMD `memchr`; SWAR viable | GAP |
+| Backward search (`last_index_of`, `rsplit_once`, `rpartition`) | Naive `O(n·m)` | Reverse Two-Way | GAP |
+| `split` / `replace` / `find_all` / `count` | Routed through the Two-Way core | — | **DONE (this pass)** |
+| Case-insensitive search | Naive | Case-folded Two-Way | GAP |
+| `memcpy` / `memcmp` | Runtime helpers | Vectorised, alignment-aware | BLOCKED (SIMD) / SWAR viable |
+
+### Unicode
+
+| Primitive | Today | Best known | Verdict |
+| --- | --- | --- | --- |
+| UTF-8 validation | Byte-at-a-time DFA | simdutf block validation | BLOCKED (SIMD); **DFA is already the right scalar answer** |
+| UTF-8 length / decode | Scalar | Scalar is fine below SIMD | OK |
+| UTF-8 ↔ UTF-16 | `std/utf8` | simdutf | BLOCKED |
+
+### Parsing
+
+| Primitive | Today | Best known | Verdict |
+| --- | --- | --- | --- |
+| JSON | `std/json`, scalar | simdjson stage 1/2 | BLOCKED (SIMD) |
+| Lexer character classes | Branch chains in places | 256-entry lookup tables | **GAP, easy, applies to the compiler's own lexer** |
+| CSV | Scalar | SIMD quote/delimiter scan | BLOCKED |
+| Number parsing in parsers | Shared with `parse_float` | Eisel–Lemire | GAP (see above) |
+
+Table-driven character classification is the part of the simdjson lesson that
+survives without SIMD, and the compiler's own lexer is the beneficiary.
+
+### Bit manipulation
+
+| Primitive | Today | Best known | Verdict |
+| --- | --- | --- | --- |
+| `count_ones` | **Software loop, O(width)** | `POPCNT` / NEON `CNT` / wasm `i32.popcnt` | **GAP — best effort-to-payoff ratio in this document** |
+| `leading_zeros` | Software loop | `LZCNT` / `CLZ` / `i32.clz` | **GAP** |
+| `trailing_zeros` | Software loop | `TZCNT` / `RBIT`+`CLZ` / `i32.ctz` | **GAP** |
+| `byte_swap` | Software | `BSWAP` / `REV` | GAP |
+| `rotate_left/right` | Software | `ROL`/`ROR` / wasm `rotl` | GAP |
+
+Every one of the three backends has a **single instruction** for these, and
+wasm has them as first-class opcodes. The stdlib currently spends 32 or 64 loop
+iterations per call, and the source comment states the reason plainly: "no
+intrinsics surface in lang". This is the highest ratio of payoff to difficulty
+in the whole document — it needs an IR op plus three one-line lowerings, and it
+speeds up anything built on top (hash mixing, bit-set iteration, the
+`bit_length` family, and a future SWAR layer, which is largely *built* out of
+these).
+
+### Random numbers
+
+| Primitive | Today | Best known | Verdict |
+| --- | --- | --- | --- |
+| Default RNG | OS CSPRNG (`getrandom`) **per call** | PCG / xoshiro for non-crypto | **GAP** |
+| Secure RNG | OS CSPRNG | Correct as-is | OK |
+| Bounded integers | `u % range` — **modulo bias** | Lemire's debiased bounded method | **GAP (correctness)** |
+| Parallel RNG | None | Philox / Threefry | N/A until threads |
+
+Two separate issues. First, `math.random_int` reaches for the OS CSPRNG on
+every call, so `rand.shuffle` costs one syscall-backed draw per element — the
+essay's "don't use one RNG for everything" point, in its most concrete form.
+Second, and more important, `random_int` computes `u % range`, which is biased
+toward small values unless `range` divides 2³² evenly. `rand.shuffle` is
+built on it, so shuffles are not uniform permutations. Lemire's method fixes
+the bias at roughly the cost of one multiply.
+
+### Big integers, math, and the rest
+
+| Primitive | Today | Best known | Verdict |
+| --- | --- | --- | --- |
+| Bigint multiply | No bigint type | Schoolbook → Karatsuba → Toom-Cook → NTT | N/A (no arbitrary-precision type) |
+| Transcendentals | libm on natives; polynomial approximations on wasm | RLIBM correctly-rounded | GAP, with an accuracy-contract decision attached |
+| Date/time | `std/time` | Howard Hinnant's civil-date algorithms | Worth an audit |
+| Compression | None | LZ4 / Zstd | N/A (not in the library) |
+| Crypto | `std/crypto` | BLAKE3, hardware AES/SHA | GAP (hardware acceleration needs an intrinsic surface) |
+| Parallel algorithms | None | Work stealing, parallel scan | N/A until a threading model exists |
+
+The transcendental row carries a design question, not just an implementation
+one: the wasm path uses polynomial approximations while the native paths call
+libm, so `sin(x)` can differ across backends **today**. Fern should decide
+whether it promises correctly-rounded results, a stated ULP bound, or merely
+"whatever the platform does" — and if it promises anything, the wasm path is
+where the promise breaks first. The `fast_sin` / `sin` API split the essay
+suggests is one way to make that explicit.
+
+## Recommended order
+
+Ranked by (value to real workloads) ÷ (implementation risk), given the
+constraints above.
+
+**Tier 1 — unblocked, high value**
+
+1. **Hardware bit intrinsics.** One IR op family, three one-line lowerings.
+   Unlocks SWAR everywhere downstream.
+2. **Adaptive sort.** Insertion-sort base case, natural run detection, one
+   reusable scratch buffer. Pure stdlib.
+3. **Eisel–Lemire `parse_float`.** The sibling of the Dragonbox work; needs a
+   128-bit high-multiply.
+4. **Modulo-bias fix in `random_int`,** plus a fast non-crypto PRNG (PCG or
+   xoshiro) behind a separate type. The bias part is a correctness fix.
+5. **wyhash-style string hash** for `core/map`, plus a small-map linear-scan
+   path.
+
+**Tier 2 — unblocked, narrower**
+
+6. Reverse Two-Way for the backward-search family.
+7. SWAR group probing for `Map` (the SwissTable idea, minus the vectors).
+8. Lemire integer→string and SWAR string→int.
+9. Table-driven lexer classification.
+10. Magic-number constant division in the compiler.
+
+**Tier 3 — blocked on a vector surface**
+
+A SIMD surface in the IR (vector types + SSE2/AVX2, NEON, wasm `v128`
+lowering) is the single prerequisite that unblocks simdjson-style parsing,
+simdutf validation, true SwissTable probing, vectorised `memchr`/`memcmp`, and
+sorting networks. It should be evaluated as one project with that whole tier as
+its payoff, not attempted piecemeal.
+
+## What landed in this pass
+
+**Substring search is now Two-Way (Crochemore–Perrin).** `std/string`'s search
+family was a naive `O(n·m)` scan that re-probed one byte at a time. It is now a
+single core, `__str_find_from`, dispatching on needle length: empty → the gap
+position, one byte → a `memchr`-shaped scan, longer → Two-Way, which is
+`O(n + m)` time and `O(1)` space with no skip table to allocate. `contains`,
+`index_of`, `split`, `splitn`, `split_once`, `partition`, `find_all`, `count`,
+`count_matches`, `replace`, `replace_n`, and `replacen` all route through it,
+which also deleted thirteen hand-written copies of the same probe loop. The
+seven remaining `__substr_eq` call sites are the backward searches and the
+anchored prefix/suffix strip loops, which are a separate piece of work (see the
+backward-search row above).
+
+The honest framing: on ordinary text where the first byte rarely matches, the
+naive scan was already about `n` comparisons and Two-Way is comparable. The win
+is the **guarantee** — repetitive input (the compiler's own source, JSON, log
+lines, DNA-like data) is where the old code degraded quadratically, and that
+degradation is now gone.
+
+Verified by differential testing rather than examples: a harness enumerates
+every haystack over `{a,b}` up to length 8 and every needle up to length 3,
+checking each of the twelve functions against a naive reference computed in the
+same program — 7,154 cases per backend, plus 51,396 cases for the search core
+over a wider enumeration, run on interp, x86-64, wasm, and through the
+self-host compiler on both wasm and x86-64. A binary alphabet is what actually
+exercises Two-Way's periodic branch; fixed example strings mostly miss it.
+
+**A native/self-host divergence in `split("")` was found and fixed.**
+`std/string.split` char-splits an empty separator, but the self-host compiler
+lowers `.split()` to its own runtime helper, and both copies of that helper —
+`rt_src_str_split` in `asmcore.fern` (native backends) and `str_split_helper`
+in `wasm_ir.fern` (hand-written WAT) — returned `[s]` instead. So
+`"abc".split("")` was `["a","b","c"]` natively and `["abc"]` self-host-compiled.
+The comment recorded it as deliberate: it matched the hand-written asm emitter,
+and no differential test covered empty separators. Both halves of that
+rationale had expired — the hand-asm emitters were deleted, and the differential
+test now exists on every backend.
