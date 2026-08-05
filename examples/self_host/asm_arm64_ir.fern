@@ -302,6 +302,20 @@ function movz_text_ok(text: string): boolean {
 // the wide cases into movz+movk would trade an 8-byte pool entry for a second
 // instruction — a wash on size — so the pool keeps them, and the per-function
 // `.ltorg` keeps it in reach.
+// map_eqfn_x5 loads the derived key-equality function pointer (`o.str`, the
+// bare receiver label "K.eq" irlower's map_key_eqfn produces) into x5 for the
+// four keyed map runtime entries — the arm64 twin of the x86-64 emitter's %r8.
+// A scalar/string key carries "" and gets x5 = 0, which is what the runtime
+// tests to pick the pointer/string compare instead. Without this the arm64
+// runtime had no way to reach a struct/enum key's @derive(Eq), so a
+// `Map[Name, V]` compared its keys by BOX POINTER and a freshly built,
+// value-equal key missed every time (#6081).
+function map_eqfn_x5(s: asmcore.EmitState, eqfn: string): asmcore.EmitState {
+    if (eqfn == "") { return s.write("    mov x5, #0\n"); }
+    var eql: string = "__fn_" + asmcore.sanitize_label(eqfn);
+    return s.write("    adrp x5, " + eql + "\n    add x5, x5, :lo12:" + eql + "\n");
+}
+
 function emit_const_i32_push(s: asmcore.EmitState, text: string, movz_ok: boolean): asmcore.EmitState {
     if (movz_ok) {
         return s.write("    mov x0, #" + text + "\n    str x0, [sp, #-16]!\n");
@@ -911,27 +925,35 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             if (o.width == 2 || o.width == 3 || o.width == 6 || o.width == 7) { x4bits = x4bits + 1; }
             if (o.width >= 4) { x4bits = x4bits + 2; }
             s = s.write("    mov x4, #" + util.i32_to_string(x4bits) + "\n");
+            s = map_eqfn_x5(s, o.str);   // x5 = derived K.eq for a struct/enum key, else 0
             s = s.write("    mov x3, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_set\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 126) {  // map_len
             // pop map; len = keys-array length ([[map]]).
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0]\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 127) {  // map_get
             s = s.need("maps");
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_get\n    str x0, [sp, #-16]!\n");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+            s = map_eqfn_x5(s, o.str);
+            s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_get\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 128) {  // map_has
             s = s.need("maps");
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_has\n    str x0, [sp, #-16]!\n");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+            s = map_eqfn_x5(s, o.str);
+            s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_has\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 130) {  // map_delete
             // [map, key] -> __fern_map_delete(x0=map, x1=key, x2=keykind) -> the
-            // [map, existed] tuple box (`m.without(k)`); runtime in asm_arm64.
+            // [map, existed] tuple box (`m.without(k)`); runtime below.
             s = s.need("maps");
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_delete\n    str x0, [sp, #-16]!\n");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+            s = map_eqfn_x5(s, o.str);
+            s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_delete\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 129) {  // map_get_or
             s = s.need("maps");
             var golbl: string = lp + "go" + util.i32_to_string(i);
             // [map, k, default] (default top) -> __fern_map_get, payload or default.
             s = s.write("    ldr x3, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");   // default(x3), k(x1), map(x0)
             s = s.write("    str x3, [sp, #-16]!\n");   // save default across the call (x3 is caller-saved)
+            s = map_eqfn_x5(s, o.str);
             s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_get\n");
             s = s.write("    ldr x3, [sp], #16\n");      // restore default
             // Free the Option box __fern_map_get allocated (raw 16-byte
@@ -6000,7 +6022,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    ret\n");
         s = s.write(".size __fern_map_snapshot_col_str, .-__fern_map_snapshot_col_str\n");
 
-        // __fern_map_set(x0 = mapbox, x1 = key, x2 = val) → mapbox.
+        // __fern_map_set(x0 = mapbox, x1 = key, x2 = val, x3 = keykind,
+        // x4 = flags, x5 = derived K.eq or 0) → mapbox.
         // Updates in place on a key hit, else appends.
         s = s.write(".globl __fern_map_set\n");
         s = s.write(".type __fern_map_set, %function\n");
@@ -6010,6 +6033,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
         s = s.write("    stp x21, x22, [sp, #-16]!\n");
         s = s.write("    stp x23, x24, [sp, #-16]!\n");
+        s = s.write("    stp x25, x26, [sp, #-16]!\n");
+        s = s.write("    mov x25, x5\n");           // derived K.eq for a struct/enum key, or 0
         s = s.write("    mov x19, x0\n");           // mapbox
         s = s.write("    mov x20, x1\n");           // key
         s = s.write("    mov x21, x2\n");           // val
@@ -6028,6 +6053,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    mov x24, x4\n");           // flag bits
         s = s.write("    ldr x22, [x19]\n");        // keys arr
         s = s.write("    mov x23, #0\n");           // i
+        s = s.write("    cbnz x25, .Lms_loop_struct\n"); // struct/enum key? (eq fn present)
         s = s.write("    cbnz x3, .Lms_loop_i32\n"); // keykind (1 = i32)
         s = s.write(".Lms_loop:\n");                 // string-key loop
         s = s.write("    ldr x9, [x22]\n");         // keys.len
@@ -6050,6 +6076,22 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    b.eq .Lms_found\n");
         s = s.write("    add x23, x23, #1\n");
         s = s.write("    b .Lms_loop_i32\n");
+        // struct/enum-key loop: the derived @derive(Eq) method compares the keys
+        // BY VALUE, so a freshly built key whose string field lives in another
+        // buffer still hits (#6081). Fern's calling convention is stack-args with
+        // arg0 on TOP, matching the __fn___fern_str_eq calls above; x25 is
+        // callee-saved so it survives the call.
+        s = s.write(".Lms_loop_struct:\n");
+        s = s.write("    ldr x9, [x22]\n");          // keys.len
+        s = s.write("    cmp x23, x9\n");
+        s = s.write("    b.ge .Lms_append\n");
+        s = s.write("    add x9, x23, #1\n");
+        s = s.write("    ldr x0, [x22, x9, lsl #3]\n");  // keys[i+1] = self
+        s = s.write("    mov x1, x20\n");                // other = the lookup key
+        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    blr x25\n    add sp, sp, #32\n");
+        s = s.write("    cbnz x0, .Lms_found\n");
+        s = s.write("    add x23, x23, #1\n");
+        s = s.write("    b .Lms_loop_struct\n");
         s = s.write(".Lms_found:\n");
         s = s.write("    ldr x9, [x19, #8]\n");      // values arr
         s = s.write("    add x10, x23, #1\n");
@@ -6097,6 +6139,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    str x0, [x19, #8]\n");
         s = s.write(".Lms_ret:\n");
         s = s.write("    mov x0, x19\n");
+        s = s.write("    ldp x25, x26, [sp], #16\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
@@ -6104,10 +6147,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    ret\n");
         s = s.write(".size __fern_map_set, .-__fern_map_set\n");
 
-        // __fern_map_delete(x0 = mapbox, x1 = key, x2 = keykind) →
+        // __fern_map_delete(x0 = mapbox, x1 = key, x2 = keykind,
+        // x5 = derived K.eq or 0) →
         // tuple box [mapbox, existed]. Order-preserving shift-remove of the
-        // parallel keys[]/values[]; x19-x24 survive __fern_str_eq and
-        // __fern_alloc (callee-saved). Mirror of asm.fern's x86-64 helper.
+        // parallel keys[]/values[]; x19-x26 survive __fern_str_eq, the derived
+        // eq call and __fern_alloc (callee-saved). Mirror of the x86-64 helper.
         s = s.write(".globl __fern_map_delete\n");
         s = s.write(".type __fern_map_delete, %function\n");
         s = s.write("__fern_map_delete:\n");
@@ -6116,11 +6160,14 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
         s = s.write("    stp x21, x22, [sp, #-16]!\n");
         s = s.write("    stp x23, x24, [sp, #-16]!\n");
+        s = s.write("    stp x25, x26, [sp, #-16]!\n");
+        s = s.write("    mov x25, x5\n");           // derived K.eq for a struct/enum key, or 0
         s = s.write("    mov x19, x0\n");           // mapbox
         s = s.write("    mov x20, x1\n");           // key
         s = s.write("    mov x21, x2\n");           // keykind (1 = i32)
         s = s.write("    ldr x22, [x19]\n");        // keys arr
         s = s.write("    mov x23, #0\n");           // i
+        s = s.write("    cbnz x25, .Lmd_loop_struct\n"); // struct/enum key? (eq fn present)
         s = s.write("    cbnz x21, .Lmd_loop_i32\n");
         s = s.write(".Lmd_loop:\n");                 // string-key search
         s = s.write("    ldr x9, [x22]\n");         // keys.len
@@ -6143,6 +6190,17 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    b.eq .Lmd_found\n");
         s = s.write("    add x23, x23, #1\n");
         s = s.write("    b .Lmd_loop_i32\n");
+        s = s.write(".Lmd_loop_struct:\n");          // struct/enum-key search via the derived eq
+        s = s.write("    ldr x9, [x22]\n");         // keys.len
+        s = s.write("    cmp x23, x9\n");
+        s = s.write("    b.ge .Lmd_notfound\n");
+        s = s.write("    add x9, x23, #1\n");
+        s = s.write("    ldr x0, [x22, x9, lsl #3]\n");  // keys[i+1] = self
+        s = s.write("    mov x1, x20\n");                // other = the lookup key
+        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    blr x25\n    add sp, sp, #32\n");
+        s = s.write("    cbnz x0, .Lmd_found\n");
+        s = s.write("    add x23, x23, #1\n");
+        s = s.write("    b .Lmd_loop_struct\n");
         s = s.write(".Lmd_found:\n");
         s = s.write("    ldr x22, [x19]\n");         // keys arr
         s = s.write("    ldr x21, [x22]\n");         // n (keykind no longer needed)
@@ -6184,6 +6242,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    bl __fern_alloc\n");          // 2-slot tuple box
         s = s.write("    str x19, [x0]\n");          // tuple[0] = mapbox
         s = s.write("    str x24, [x0, #8]\n");      // tuple[1] = existed
+        s = s.write("    ldp x25, x26, [sp], #16\n");
         s = s.write("    ldp x23, x24, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
@@ -6191,7 +6250,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    ret\n");
         s = s.write(".size __fern_map_delete, .-__fern_map_delete\n");
 
-        // __fern_map_get(x0 = mapbox, x1 = key) → Option[V]:
+        // __fern_map_get(x0 = mapbox, x1 = key, x2 = keykind,
+        // x5 = derived K.eq or 0) → Option[V]:
         // Some(values[i]) on hit, None otherwise.
         s = s.write(".globl __fern_map_get\n");
         s = s.write(".type __fern_map_get, %function\n");
@@ -6200,10 +6260,13 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
         s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    stp x25, x26, [sp, #-16]!\n");
+        s = s.write("    mov x25, x5\n");           // derived K.eq for a struct/enum key, or 0
         s = s.write("    mov x19, x0\n");           // mapbox
         s = s.write("    mov x20, x1\n");           // key
         s = s.write("    ldr x21, [x19]\n");        // keys arr
         s = s.write("    mov x22, #0\n");
+        s = s.write("    cbnz x25, .Lmg_loop_struct\n"); // struct/enum key? (eq fn present)
         s = s.write("    cbnz x2, .Lmg_loop_i32\n"); // keykind (1 = i32)
         s = s.write(".Lmg_loop:\n");                 // string-key loop
         s = s.write("    ldr x9, [x21]\n");
@@ -6226,6 +6289,17 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    b.eq .Lmg_found\n");
         s = s.write("    add x22, x22, #1\n");
         s = s.write("    b .Lmg_loop_i32\n");
+        s = s.write(".Lmg_loop_struct:\n");          // struct/enum-key lookup via the derived eq
+        s = s.write("    ldr x9, [x21]\n");
+        s = s.write("    cmp x22, x9\n");
+        s = s.write("    b.ge .Lmg_none\n");
+        s = s.write("    add x9, x22, #1\n");
+        s = s.write("    ldr x0, [x21, x9, lsl #3]\n");  // keys[i+1] = self
+        s = s.write("    mov x1, x20\n");                // other = the lookup key
+        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    blr x25\n    add sp, sp, #32\n");
+        s = s.write("    cbnz x0, .Lmg_found\n");
+        s = s.write("    add x22, x22, #1\n");
+        s = s.write("    b .Lmg_loop_struct\n");
         s = s.write(".Lmg_found:\n");
         s = s.write("    ldr x9, [x19, #8]\n");      // values arr
         s = s.write("    add x10, x22, #1\n");
@@ -6242,13 +6316,15 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    mov x9, #1\n");
         s = s.write("    str x9, [x0]\n");             // tag = None
         s = s.write(".Lmg_ret:\n");
+        s = s.write("    ldp x25, x26, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_map_get, .-__fern_map_get\n");
 
-        // __fern_map_has(x0 = mapbox, x1 = key) → 0/1.
+        // __fern_map_has(x0 = mapbox, x1 = key, x2 = keykind,
+        // x5 = derived K.eq or 0) → 0/1.
         s = s.write(".globl __fern_map_has\n");
         s = s.write(".type __fern_map_has, %function\n");
         s = s.write("__fern_map_has:\n");
@@ -6256,10 +6332,13 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    mov x29, sp\n");
         s = s.write("    stp x19, x20, [sp, #-16]!\n");
         s = s.write("    stp x21, x22, [sp, #-16]!\n");
+        s = s.write("    stp x25, x26, [sp, #-16]!\n");
+        s = s.write("    mov x25, x5\n");           // derived K.eq for a struct/enum key, or 0
         s = s.write("    mov x19, x0\n");
         s = s.write("    mov x20, x1\n");
         s = s.write("    ldr x21, [x19]\n");
         s = s.write("    mov x22, #0\n");
+        s = s.write("    cbnz x25, .Lmh_loop_struct\n"); // struct/enum key? (eq fn present)
         s = s.write("    cbnz x2, .Lmh_loop_i32\n"); // keykind (1 = i32)
         s = s.write(".Lmh_loop:\n");                 // string-key loop
         s = s.write("    ldr x9, [x21]\n");
@@ -6282,12 +6361,24 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    b.eq .Lmh_yes\n");
         s = s.write("    add x22, x22, #1\n");
         s = s.write("    b .Lmh_loop_i32\n");
+        s = s.write(".Lmh_loop_struct:\n");          // struct/enum-key probe via the derived eq
+        s = s.write("    ldr x9, [x21]\n");
+        s = s.write("    cmp x22, x9\n");
+        s = s.write("    b.ge .Lmh_no\n");
+        s = s.write("    add x9, x22, #1\n");
+        s = s.write("    ldr x0, [x21, x9, lsl #3]\n");  // keys[i+1] = self
+        s = s.write("    mov x1, x20\n");                // other = the lookup key
+        s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    blr x25\n    add sp, sp, #32\n");
+        s = s.write("    cbnz x0, .Lmh_yes\n");
+        s = s.write("    add x22, x22, #1\n");
+        s = s.write("    b .Lmh_loop_struct\n");
         s = s.write(".Lmh_yes:\n");
         s = s.write("    mov x0, #1\n");
         s = s.write("    b .Lmh_ret\n");
         s = s.write(".Lmh_no:\n");
         s = s.write("    mov x0, #0\n");
         s = s.write(".Lmh_ret:\n");
+        s = s.write("    ldp x25, x26, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
