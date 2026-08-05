@@ -28,11 +28,12 @@
 # 15 listed. Two of those 15 — `tuple_match_expr` (#6010) and `multiline_stdin`
 # (#6052) — were fixed within hours of this leg landing and were pruned in
 # #6099, `pure_collection_aliases` + `map_struct_value_field` with the #6007
-# slices, and `derive_json` with #6009, leaving 10. Every row was reproduced by hand with bin/fern-selfhost
+# slices, `derive_json` with #6009, and the six regex fixtures with #6049,
+# leaving 4. Every row was reproduced by hand with bin/fern-selfhost
 # and checked against BOTH `bin/fern -interp` and the self-host x86-64 path,
 # which is what splits the list into its two halves:
 #
-#   * 7 rows the x86-64 leg lists too, with the SAME measured value. Those are
+#   * 1 row the x86-64 leg lists too, with the SAME measured value. Those are
 #     shared frontend/irlower bugs that arm64 merely re-observes; fixing one
 #     flips two legs. Keep the issue numbers in sync with
 #     selfhost-x86_64-known-divergences.txt — this happened TWICE during review:
@@ -59,12 +60,6 @@
 # IR-eligibility bail the x86-64 leg carries verbatim.
 
 # --- shared with the x86-64 leg (same bug, same measured value) ---
-regex_basic #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
-regex_ci #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
-regex_ops #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
-regex_wordbound #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
-regex_captures_assert #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
-regex_groups #6049 SEGV; x86-64 hangs on the same fixture, native returns 127 in ms
 generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
 
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---

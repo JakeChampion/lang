@@ -28,6 +28,26 @@ function main(): i32 { if (regex.regex_match("a|b", "b")) { return 42; } return 
 	// Alternation negative: "a|b" does not match "c".
 	{"alt-nomatch", `import "std/regex";
 function main(): i32 { if (!regex.regex_match("a|b", "c")) { return 42; } return 0; }`},
+	// #6049: alternation whose branches are SEQUENCES — RAlt(RSeq[]) — the
+	// shape that separated the six failing regex fixtures from the passing
+	// ones. `__rx_alt` builds its branches array out of `RParse.node` field
+	// reads, so the un-duped RSeq box was freed by the enclosing `first`'s
+	// struct drop and the freelist handed the block back for the RGroup that
+	// wraps it: a tree pointing at itself, and `__rx_match` alternated between
+	// its RGroup and RAlt arms until the stack ran out. A bare `a|b` (RAlt of
+	// RChar) never allocated a branch box, which is why it always passed.
+	{"alt-of-seq", `import "std/regex";
+function main(): i32 { if (regex.regex_match("(ab|cd)", "xxcdyy")) { return 42; } return 0; }`},
+	// #6049 sibling: anchored multi-way alternation, and a SEARCH that re-enters
+	// __rx_match once per start position — the second entry is where the swept
+	// enum-payload array binding (`RSeq(xs)` / `RAlt(xs)`) had already taken the
+	// buffer's count to zero.
+	{"anchored-alt", `import "std/regex";
+function main(): i32 {
+    if (!regex.regex_match("^(cat|dog|bird)$", "dog")) { return 0; }
+    if (!regex.regex_match("(foo|barbaz)qux", "aaaa barbazqux")) { return 0; }
+    return 42;
+}`},
 	// Character class + repetition -> RClass / RStar. "[abc]+" matches "cab".
 	{"class-plus", `import "std/regex";
 function main(): i32 { if (regex.regex_match("[abc]+", "cab")) { return 42; } return 0; }`},

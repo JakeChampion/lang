@@ -92,19 +92,20 @@
 // The group carries a single-field-struct payload (`RGroupData`) rather
 // than a two-payload `RGroup(i32, RNode)` because the self-host compiler's
 // enum variants are single-payload by design (parser.fern's PatVariant:
-// a multi-binding pattern is an E015 arity error), and the legacy AST→asm
-// self-host backend only constructs/binds one payload. Boxing the two
-// fields in a struct keeps std/regex compilable on EVERY backend (native,
-// self-host IR, and the legacy AST path the treeshake gate exercises).
-// RGroupData is deliberately kept to exactly two fields (`idx`, `node`) —
-// the same shape it has had since captures landed. A `(?<name>…)` label is
-// NOT stored here; group names are recovered by a separate positional scan
-// of the pattern (`__rx_group_names`). This is not just tidiness: adding a
-// trailing `string` field to this struct made the self-host IR span matcher
-// (`__rx_match`'s `RGroup(gd) => __rx_match(gd.node, …)`) crash on a plain
-// `(ab)+c` match, while the capture VM path stayed fine — a struct-layout
-// codegen subtlety in the self-host backend. Keeping this struct byte-shape
-// stable side-steps it and keeps the hot matcher path unchanged.
+// a multi-binding pattern is an E015 arity error). Boxing the two fields in
+// a struct keeps std/regex compilable on every backend. A `(?<name>…)` label
+// is NOT stored here; group names are recovered by a separate positional
+// scan of the pattern (`__rx_group_names`).
+//
+// This comment used to add that a trailing `string` field made the self-host
+// IR span matcher crash on `(ab)+c` — "a struct-layout codegen subtlety" the
+// two-field shape side-stepped. That diagnosis was wrong, and the dodge never
+// worked: `(ab)+c` and every other grouped pattern crashed at the two-field
+// shape too, and the cause was #6049 — two irlower reference-counting bugs
+// (an enum struct field stored into a container with no Perceus dup, and a
+// match arm's enum-payload array binding swept at every exit) that freed the
+// parse tree while `__rx_match` still walked it. Both are fixed. The field
+// count here is a parser constraint, not a codegen workaround.
 struct RGroupData { idx: i32, node: RNode }
 
 pub enum RNode {
