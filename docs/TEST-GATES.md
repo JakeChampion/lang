@@ -65,11 +65,19 @@ Worth knowing so you do not assume coverage you do not have:
   noticed, which is the argument for the gate rather than against it. Treat
   unmeasured allocation figures in these docs as expired.
 
-  Quote figures the gate produced, not ones from a hand-run `fern` CLI: the two
-  compile through different pipelines and report different totals for identical
-  source (the same `.with` shape read 48 KB / 2 KB via the CLI). The gate is
-  sound either way — it compares the two COMPILERS under one consistent
-  pipeline — but the two sets of numbers are not interchangeable.
+  Quote figures the gate produced, not ones from a hand-run `fern` CLI — but
+  not for the reason this note used to give. It claimed the two "compile
+  through different pipelines"; they do not. Measured 2026-08-05 (#6034), the
+  harness path, the harness path plus `treeshake`, and the real CLI report the
+  SAME `__heap_bump_bytes()` for identical source, on both the `.append` and
+  `.with` shapes.
+
+  The numbers differ because they measure different QUANTITIES. The gate's
+  figure is a per-churn DELTA — `bumpSrc` runs the churn twice and subtracts,
+  so it reports only what the first churn failed to give back. A hand CLI run
+  of `__heap_bump_bytes()` reports the absolute high-water mark, which includes
+  startup and everything the first churn allocated fresh. Comparing the two is
+  a units error, not evidence of a pipeline difference.
 
   The gate compares the two probes both compilers now support and asserts what
   survives a layout difference: `__arr_push_shared_count()` agreeing on ZERO vs
