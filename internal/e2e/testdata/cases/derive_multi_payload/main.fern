@@ -1,0 +1,40 @@
+// Every @derive over an enum VARIANT must walk all payloads, not just the
+// first. The self-host synthesisers bound a single `__p0` / `__s0`, so a
+// two-payload variant compared, ordered, hashed and rendered as if it were
+// one — `Rect(2, 3) == Rect(2, 9)` was TRUE, and to_json/to_debug dropped
+// everything after the first field.
+import "std/json";
+import "core/cmp";
+
+@derive(json.Json, cmp.Debug, cmp.Eq, cmp.Ord, cmp.Hash)
+enum E { U, One(i32), Two(i32, string), Three(i32, string, i32) }
+
+function main(): i32 {
+    // Equality has to see the LATER payloads.
+    if (Two(2, "a") == Two(2, "b")) { return 1; }
+    if (!(Two(2, "a") == Two(2, "a"))) { return 2; }
+    if (Three(1, "a", 5) == Three(1, "a", 9)) { return 3; }
+
+    // Ordering is lexicographic, so a difference in a later payload decides.
+    if (!(Two(2, "a") < Two(2, "b"))) { return 4; }
+    if (!(Three(1, "a", 5) < Three(1, "a", 9))) { return 5; }
+    if (Two(2, "a") < Two(2, "a")) { return 6; }
+
+    // Distinct later payloads must not collide in the hash.
+    if (Two(2, "a").hash() == Two(2, "b").hash()) { return 7; }
+
+    // A multi-payload variant serialises as a JSON array under its tag;
+    // a single-payload one stays bare.
+    if (One(7).to_json() != "{\"One\":7}") { return 8; }
+    if (Two(2, "hi").to_json() != "{\"Two\":[2,\"hi\"]}") { return 9; }
+    if (Three(1, "a", 5).to_json() != "{\"Three\":[1,\"a\",5]}") { return 10; }
+    if (U.to_json() != "\"U\"") { return 11; }
+
+    // Debug renders every payload, comma-separated.
+    if (One(7).to_debug() != "One(7)") { return 12; }
+    if (Two(2, "hi").to_debug() != "Two(2, \"hi\")") { return 13; }
+    if (Three(1, "a", 5).to_debug() != "Three(1, \"a\", 5)") { return 14; }
+    if (U.to_debug() != "U") { return 15; }
+
+    return 42;
+}

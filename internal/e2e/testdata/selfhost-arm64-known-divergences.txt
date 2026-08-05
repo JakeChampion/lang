@@ -65,7 +65,7 @@ regex_ops #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
 regex_wordbound #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
 regex_captures_assert #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
 regex_groups #6049 SEGV; x86-64 hangs on the same fixture, native returns 127 in ms
-derive_json #6009 returns 4, native 42 — identical to the wasm + x86-64 figure
+derive_json #6009 returns 8, native 42 — identical to the wasm + x86-64 figure; was 4 (multi-payload variants, fixed); now `self.items.to_json()` on an i32[] FIELD renders the array POINTER
 generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
 
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---
