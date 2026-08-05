@@ -229,8 +229,8 @@ now live too**, after being held back through #6044/#6045/#6047. It is the
 highest-value of the three, because `-target arm64` is the only path where
 the self-host compiler produces the finished binary ITSELF (emit +
 assemble + link in-process, no gcc, no wasmtime), so it is the only gate
-on `arm64_native.fern`. Its first valid run measured 298/317 passing with
-19 listed rows, 16 of which are the x86-64 leg's own rows at the same
+on `arm64_native.fern`. Its first valid run measured 300/317 passing with
+17 listed rows, 14 of which are the x86-64 leg's own rows at the same
 measured values — i.e. shared frontend bugs, not arm64 ones. Reaching that
 took three assembler fixes, all of which had been mis-attributed to
 codegen: GAS **numeric local labels** (`b.lo 1f` … `1:`) were not

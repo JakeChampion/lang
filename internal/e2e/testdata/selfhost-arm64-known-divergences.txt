@@ -24,15 +24,18 @@
 # ("module is not IR-eligible") or the in-process assembler refusing an
 # instruction it does not implement (the message names the mnemonic).
 #
-# Measured 2026-08-04 on the run that closed #6045: 317 fixtures run, 298 pass,
-# the 19 below listed. Every row was reproduced by hand with bin/fern-selfhost
+# Measured 2026-08-04 on the run that closed #6045: 317 fixtures run, 300 pass,
+# the 17 below listed. Every row was reproduced by hand with bin/fern-selfhost
 # and checked against BOTH `bin/fern -interp` and the self-host x86-64 path,
 # which is what splits the list into its two halves:
 #
-#   * 16 rows the x86-64 leg lists too, with the SAME measured value. Those are
+#   * 14 rows the x86-64 leg lists too, with the SAME measured value. Those are
 #     shared frontend/irlower bugs that arm64 merely re-observes; fixing one
 #     flips two legs. Keep the issue numbers in sync with
-#     selfhost-x86_64-known-divergences.txt.
+#     selfhost-x86_64-known-divergences.txt — #6080 landed mid-review and fixed
+#     eq_struct_enum + ord_struct_enum on BOTH legs, and this leg reported them
+#     as "listed but PASSES now" before anyone thought to re-check, which is the
+#     contract earning its keep.
 #   * 3 rows that pass on x86-64 AND interp and fail only here (#6081/#6082/
 #     #6083). Those are the arm64-specific frontier.
 #
@@ -48,8 +51,6 @@ regex_wordbound #6049 SEGV; x86-64 hangs on the same fixture, native returns 255
 regex_captures_assert #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
 regex_groups #6049 SEGV; x86-64 hangs on the same fixture, native returns 127 in ms
 derive_json #6009 returns 4, native 42 — identical to the wasm + x86-64 figure
-eq_struct_enum #6009 returns 18, native 63 — identical to the wasm + x86-64 figure
-ord_struct_enum #6009 returns 87, native 31 — identical to the wasm + x86-64 figure
 tuple_match_expr #6010 returns 20, native 42 — identical to the wasm + x86-64 figure
 generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
 pure_collection_aliases #6007 IR-ineligible; bails at main (call to unknown symbol Map.cleared)
