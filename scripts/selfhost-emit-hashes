@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+#
+# selfhost-emit-hashes — byte-identity gate for pure refactors of the self-host
+# compiler.
+#
+# Emits every fixture in internal/e2e/testdata/cases through a self-host
+# compiler binary, on all three backends, and writes one sha256 per (fixture,
+# target). Run it before and after a refactor and diff the two files: if the
+# refactor was pure, they are identical.
+#
+# This exists because the compiler's own type system cannot catch the mistakes
+# a mechanical refactor makes. Whole families of values here share one type —
+# the FnSigs registries are all `string[]`, the IR ops are all `ir.Op` — so a
+# crossed wire or a dropped argument type-checks cleanly and shows up only as
+# a miscompile. And per docs/TEST-GATES.md the self-compile fixpoint is
+# SELF-REFERENTIAL: it proves the compiler reproduces itself, and is
+# structurally blind to a stable miscompile. Comparing emitted bytes over a
+# broad corpus is the check that actually bites.
+#
+#   usage: scripts/selfhost-emit-hashes <compiler-binary> <output-file>
+#
+#   make selfhost-cli
+#   cp bin/fern-selfhost /tmp/before          # on the base commit
+#   scripts/selfhost-emit-hashes /tmp/before /tmp/hashes-before.txt
+#   ...apply the refactor, make selfhost-cli again...
+#   scripts/selfhost-emit-hashes bin/fern-selfhost /tmp/hashes-after.txt
+#   diff /tmp/hashes-before.txt /tmp/hashes-after.txt && echo PURE
+#
+# Runs ~8 minutes for ~1000 (fixture, target) pairs. Fixtures the compiler
+# refuses are recorded as FAILED rather than skipped, so a refactor that
+# changes WHICH programs compile shows up as a diff too.
+
+set -u
+
+BIN="${1:-}"
+OUT="${2:-}"
+if [ -z "$BIN" ] || [ -z "$OUT" ]; then
+    echo "usage: $0 <compiler-binary> <output-file>" >&2
+    exit 2
+fi
+if [ ! -x "$BIN" ]; then
+    echo "$0: $BIN is not an executable" >&2
+    exit 2
+fi
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+STD="$ROOT/internal/stdlib"
+CASES="$ROOT/internal/e2e/testdata/cases"
+
+# The self-host compiler needs ABSOLUTE paths: a relative one is unopenable
+# from an arm64-darwin binary (AT_FDCWD is -2 on XNU, not -100).
+BIN="$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+: > "$OUT"
+
+for f in $(find "$CASES" -name '*.fern' | sort); do
+    for tgt in x86-64 arm64 wasm; do
+        o="$TMP/out"
+        if "$BIN" -target "$tgt" "$f" "$STD" -o "$o" >/dev/null 2>&1 && [ -s "$o" ]; then
+            printf '%s  %s  %s\n' "$(sha256sum < "$o" | cut -d' ' -f1)" "$tgt" "${f#"$CASES"/}" >> "$OUT"
+        else
+            printf 'FAILED%058d  %s  %s\n' 0 "$tgt" "${f#"$CASES"/}" >> "$OUT"
+        fi
+        rm -f "$o"
+    done
+done
+
+ok=$(grep -vc '^FAILED' "$OUT")
+bad=$(grep -c '^FAILED' "$OUT")
+echo "$(wc -l < "$OUT") rows written to $OUT ($ok emitted, $bad refused)"

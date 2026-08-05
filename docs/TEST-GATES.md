@@ -48,6 +48,15 @@ what caught it.
 | Driver rc guard (`util.rc_underflow_guard`) | The compiler's OWN heap accounting stayed balanced while compiling | Leaks (an over-*retain* is silent), and anything outside the drivers |
 | `FERN_NATIVE_ASM=1` fixtures | The in-process assembler encodes what the backend emits | The gcc path, which the fallback silently hides behind |
 | Differential (`internal/e2e/diff_oracle_test.go`) | Two compilers agree on exit codes | Everything about memory — see below |
+| `scripts/selfhost-emit-hashes` (manual, before/after) | A refactor of the self-host compiler was PURE: the bytes it emits for the whole fixture corpus, on all three backends, are unchanged | Anything the corpus does not exercise. It says the output did not move, never that the output is right |
+
+**Reach for `scripts/selfhost-emit-hashes` on any mechanical refactor of the
+self-host compiler.** It is the gate that fits the failure mode: whole families
+of values there share one type — the `FnSigs` registries are all `string[]`,
+the IR ops all `ir.Op` — so a crossed wire or a dropped argument type-checks
+cleanly and surfaces only as a miscompile. The fixpoint will not catch it
+(self-referential, see above) and the type checker cannot. Comparing emitted
+bytes over ~1000 (fixture, target) pairs will. ~8 minutes per side.
 
 ## What nothing gates
 

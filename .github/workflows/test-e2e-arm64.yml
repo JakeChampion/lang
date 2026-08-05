@@ -102,9 +102,9 @@ jobs:
         with:
           gotestsum: "true"
       - name: install aarch64 cross toolchain + qemu
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu qemu-user
+        uses: ./.github/actions/apt-cross-toolchain
+        with:
+          qemu-package: qemu-user
       # The x86-driver-emits-arm64 + qemu-aarch64 tests (both the stage-2 /
       # native-mmc heavyweights and the lighter IR-path element tests like
       # TupleFnIRArm64 / CloArrayFieldCallIRArm64) skip on both the x86

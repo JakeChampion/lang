@@ -45,21 +45,22 @@ function main(): i32 {
     return a + s.len();
 }`
 
-// hevRetainSrc keeps every array it builds alive in `keep` until exit, so the
-// blocks behind it are never freed. The unpaired allocs are the leak, and they
-// all come from one construction site.
-const hevRetainSrc = `function make_buf(n: i32): i32[] {
-    var xs: i32[] = [];
-    var i: i32 = 0;
-    while (i < n) { xs = xs.append(i); i = i + 1; }
-    return xs;
-}
-
-function main(): i32 {
+// hevExitLeakSrc leaves memory unreclaimed by calling exit() with live locals:
+// the process terminates without unwinding, so the scope sweep never runs and
+// the blocks are genuinely never freed.
+//
+// That structural quality is the point. This probe used to retain arrays in an
+// `i32[][]` and rely on the reclaim credit not covering them — which was true
+// when it was written and stopped being true in #6112, breaking this test. A
+// probe whose leak is a CONSERVATISM GAP has a shelf life measured in however
+// long it takes someone to close the gap; a probe whose leak is "the process
+// exited" does not. Anything asserting a leak exists needs the second kind.
+const hevExitLeakSrc = `function main(): i32 {
     var keep: i32[][] = [];
     var i: i32 = 0;
-    while (i < 3) { keep = keep.append(make_buf(4)); i = i + 1; }
-    return keep.len();
+    while (i < 3) { keep = keep.append([1, 2, 3, 4]); i = i + 1; }
+    exit(keep.len());
+    return 0;
 }`
 
 // hevEvent is one parsed `rctrace` line.
@@ -242,7 +243,7 @@ func TestSelfHostLeakCheckAgreesX86_64(t *testing.T) {
 		src  string
 	}{
 		{"balanced", hevBalancedSrc},
-		{"retaining", hevRetainSrc},
+		{"unreclaimed_at_exit", hevExitLeakSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_RC_TRACE=1", "FERN_LEAKCHECK=1"})
@@ -279,21 +280,27 @@ func TestSelfHostLeakCheckAgreesX86_64(t *testing.T) {
 }
 
 // TestSelfHostRcTraceLocatesLeakX86_64 — the property the whole feature exists
-// for. A program that retains everything it builds leaves unpaired allocs; they
-// must account for live_bytes exactly and attribute to a single site, which is
-// what turns "live_bytes=168" from a true statement nothing can act on into a
-// pointer at the construction site that leaked.
+// for. A program that leaves memory unreclaimed produces unpaired allocs, and
+// they must account for live_bytes exactly and each carry a resolvable site.
+// That is what turns "live_bytes=224" from a true statement nothing can act on
+// into a pointer at the code that asked for the memory.
+//
+// The site COUNT is deliberately not asserted: the blocks here come from two
+// sites (the row literals and the outer buffer's growth inside
+// __fern_arr_push), and pinning a number would make this test a hostage to
+// allocation shape rather than to attribution working. That sites are
+// per-call-site at all is covered by TestSelfHostRcTracePairsX86_64.
 func TestSelfHostRcTraceLocatesLeakX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
-	asm := hevCompile(t, runner, driverBin, hevRetainSrc, []string{"FERN_RC_TRACE=1", "FERN_LEAKCHECK=1"})
+	asm := hevCompile(t, runner, driverBin, hevExitLeakSrc, []string{"FERN_RC_TRACE=1", "FERN_LEAKCHECK=1"})
 	progBin := buildBin(t, gcc, dir, "hev_leak", asm)
 	stderr, exit := hevRun(t, runner, progBin)
 	if exit != 3 {
-		t.Fatalf("retaining program exited %d, want 3", exit)
+		t.Fatalf("probe exited %d, want 3", exit)
 	}
 
 	evs, summary := parseHev(t, stderr)
@@ -306,7 +313,8 @@ func TestSelfHostRcTraceLocatesLeakX86_64(t *testing.T) {
 		}
 	}
 	if len(live) == 0 {
-		t.Fatal("a program that retains every array it builds reported no unpaired allocs")
+		t.Fatal("a program that exits with live locals reported no unpaired allocs — " +
+			"exit() does not unwind, so those blocks are never freed")
 	}
 
 	var leaked int64
@@ -323,8 +331,11 @@ func TestSelfHostRcTraceLocatesLeakX86_64(t *testing.T) {
 		t.Errorf("unpaired allocs total %d bytes, leakcheck reported live_bytes=%d — "+
 			"pairing must account for the leak exactly, or it cannot localise it", leaked, wantLive)
 	}
-	if len(sites) != 1 {
-		t.Errorf("the retained arrays came from %d sites %v, want 1 — every one is the same construction", len(sites), sites)
+	for site, n := range sites {
+		if site == 0 {
+			t.Errorf("%d unpaired allocs carry a zero site — an unattributed leak is exactly "+
+				"the unactionable report this feature exists to replace", n)
+		}
 	}
 }
 
