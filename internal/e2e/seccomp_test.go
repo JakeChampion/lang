@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -35,6 +37,15 @@ import (
 // the binary path. Native x86-64 only: seccomp is a Linux facility and
 // qemu-user does not emulate it faithfully.
 func buildSandboxed(t *testing.T, src string, sandbox bool) string {
+	t.Helper()
+	return buildSandboxedPatched(t, src, sandbox, nil)
+}
+
+// buildSandboxedPatched is buildSandboxed with a hook to rewrite the
+// emitted assembly before it is assembled. Only TestSeccompFilterDenies
+// uses it, to splice in a syscall no Fern source can express — see there
+// for why that is the only way to test the deny path.
+func buildSandboxedPatched(t *testing.T, src string, sandbox bool, patch func(string) string) string {
 	t.Helper()
 	if runtime.GOARCH != "amd64" || runtime.GOOS != "linux" {
 		t.Skip("seccomp sandbox is x86-64 Linux only; qemu-user does not emulate it faithfully")
@@ -69,6 +80,13 @@ func buildSandboxed(t *testing.T, src string, sandbox bool) string {
 	ast.SandboxEnabled = prev
 	if emitErr != nil {
 		t.Fatalf("emit: %v", emitErr)
+	}
+	if patch != nil {
+		patched := patch(asm)
+		if patched == asm {
+			t.Fatal("asm patch matched nothing — the emitted shape changed and the test is no longer exercising what it claims")
+		}
+		asm = patched
 	}
 	asmPath := filepath.Join(dir, "prog.s")
 	binPath := filepath.Join(dir, "prog")
@@ -231,4 +249,71 @@ func exitCodeOf(err error) int {
 		return ee.ExitCode()
 	}
 	return -1
+}
+
+// injectExecve splices a raw execve(2) into the top of main, which the
+// filter never permits for a program that does not use `subprocess`.
+//
+// Patching assembly is deliberate and is the only way to reach this.
+// The allowlist is derived from the syscalls the backend actually emits,
+// so by construction no Fern source can make a syscall the filter denies
+// — the feature would be broken if it could. What the filter defends
+// against is control flow redirected somewhere the compiler never
+// emitted, which is precisely what splicing an instruction models.
+func injectExecve(asm string) string {
+	return strings.Replace(asm, "main:\n",
+		"main:\n\tmov eax, 59\n\txor edi, edi\n\txor esi, esi\n\txor edx, edx\n\tsyscall\n", 1)
+}
+
+// TestSeccompFilterDenies is the only test that observes the filter's
+// EFFECT on a real kernel. Every other test in the feature asserts
+// something about its emitted form: the structural tests decode the BPF
+// and pin its shape, FilterIsLoadedAtRuntime reads Seccomp: 2 out of
+// procfs, and DoesNotBreakWorkingPrograms shows nothing legitimate died.
+// None of those runs a denied syscall, so none can tell you the kernel
+// agrees with our reading of the seccomp ABI.
+//
+// That distinction is not theoretical. Mutating the filter's syscall-
+// number load to a wrong offset — which makes the kernel reject the
+// filter outright, leaving the process unhardened, because
+// __fern_seccomp_install deliberately ignores a seccomp(2) failure —
+// leaves DoesNotBreakWorkingPrograms GREEN. "Nothing broke" is not
+// evidence that anything is protected; only a denied syscall is.
+//
+// (The two mutations tried so far are also caught structurally, so this
+// is a second, independent line of defence rather than the sole one.
+// The structural tests guard the bytes; this one guards the behaviour.)
+//
+// The control run is what makes this a proof rather than a coincidence:
+// the same spliced execve, with the sandbox off, exits 0 because
+// execve(NULL, NULL, NULL) merely returns EFAULT. So a SIGSYS death in
+// the sandboxed run can only have come from the filter.
+func TestSeccompFilterDenies(t *testing.T) {
+	const src = `function main(): i32 { return 0; }`
+
+	sandboxed := buildSandboxedPatched(t, src, true, injectExecve)
+	cmd := exec.Command(sandboxed)
+	_ = cmd.Run()
+	ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok {
+		t.Fatalf("no wait status for the sandboxed run")
+	}
+	if !ws.Signaled() || ws.Signal() != syscall.SIGSYS {
+		t.Errorf("sandboxed run: signaled=%v signal=%v exit=%d — a denied syscall must kill with SIGSYS",
+			ws.Signaled(), ws.Signal(), cmd.ProcessState.ExitCode())
+	}
+
+	plain := buildSandboxedPatched(t, src, false, injectExecve)
+	ctl := exec.Command(plain)
+	_ = ctl.Run()
+	cws, ok := ctl.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok {
+		t.Fatalf("no wait status for the control run")
+	}
+	if cws.Signaled() {
+		t.Fatalf("control run died from signal %v — the spliced execve is fatal on its own, so the sandboxed SIGSYS proves nothing", cws.Signal())
+	}
+	if code := ctl.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("control run exited %d, want 0 — execve(NULL) should merely return EFAULT", code)
+	}
 }
