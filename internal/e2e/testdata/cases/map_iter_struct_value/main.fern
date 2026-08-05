@@ -4,8 +4,12 @@
 // annotated. `map_struct_value_field` covers this alongside get_or; this pins
 // the iterator half on its own, including the unannotated binding.
 import "core/map";
+import "core/cmp";
 
 struct Item { qty: i32, name: string }
+
+@derive(cmp.Eq, cmp.Hash)
+struct Sku { code: i32 }
 
 function main(): i32 {
     var m: Map[i32, Item] = map_new(8);
@@ -36,6 +40,22 @@ function main(): i32 {
 
     // The get_or sibling recovery still resolves the same V.
     if (m.get_or(1, Item { qty: 0, name: "" }).qty != 10) { return 4; }
+
+    // `it.key().field` is the KEY-side sibling, and needs a struct-keyed map
+    // to exercise. It was left out when value() landed on the mistaken
+    // grounds that no native-valid struct-keyed program existed to check it
+    // against — the probes that "proved" that named their structs `K` and
+    // `V`, which collides with core/map's own type parameters (#6118). With
+    // any other name it checks clean, so the recovery is gated normally.
+    var byKey: Map[Sku, Item] = map_new(8);
+    byKey = byKey.insert(Sku { code: 5 }, Item { qty: 7, name: "z" });
+    var it3 = byKey.iter();
+    var keyed: i32 = 0;
+    while (it3.has_next()) {
+        keyed = keyed + it3.key().code + it3.value().qty;
+        it3.advance();
+    }
+    if (keyed != 12) { return 5; }
 
     return 42;
 }

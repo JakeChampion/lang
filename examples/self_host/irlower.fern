@@ -2900,22 +2900,15 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                         var mvt: string = map_value_of(get_or_recv_map_type(fa.obj, s));
                         if (decl_is_struct(s.structs, mvt)) { return mvt; }
                     }
-                    // `it.value()` on a `MapIter[K, V]` evaluates to V, so
-                    // `it.value().field` resolves a struct value's fields — the
-                    // iterator sibling of the get_or recovery just above. Both read
-                    // a map's V, through different receivers, and only get_or had
-                    // it: an `it.value().n` over a Map[K, Struct] had no struct type
-                    // here and bailed the function, even with the MapIter ANNOTATED
-                    // (#6007).
-                    //
-                    // No `it.key()` sibling: a struct KEY needs @derive(Eq, Hash),
-                    // and every such map the native compiler will accept fails
-                    // earlier in core/map (a struct VALUE trips its `v == target`
-                    // on a value type with no Eq; a scalar value trips the generic
-                    // `merge`). With no native-valid program to check the answer
-                    // against there is nothing to gate a key-side recovery on, so
-                    // it is left out rather than written blind.
-                    if (fa.field == "value" && c.args.len() == 0) {
+                    // `it.value()` / `it.key()` on a `MapIter[K, V]` evaluates to V
+                    // / K, so `it.value().field` and `it.key().field` resolve a
+                    // struct's fields — the iterator siblings of the get_or
+                    // recovery just above. All three read a map's K or V through
+                    // different receivers, and only get_or had it: an
+                    // `it.value().n` over a Map[K, Struct] had no struct type here
+                    // and bailed the function, even with the MapIter ANNOTATED
+                    // (#6007, #6119).
+                    if ((fa.field == "value" || fa.field == "key") && c.args.len() == 0) {
                         match (fa.obj) {
                             parser.ExprIdent(mvid) => {
                                 var mvsl: i32 = s.slot_of(mvid.name);
@@ -2923,6 +2916,7 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                                     var mvit: string = s.map_type_of(mvsl);
                                     if (is_mapiter_type_name(mvit)) {
                                         var mvkv: string = mapiter_value_of(mvit);
+                                        if (fa.field == "key") { mvkv = mapiter_key_of(mvit); }
                                         if (decl_is_struct(s.structs, mvkv)) { return mvkv; }
                                     }
                                 }
@@ -40029,6 +40023,14 @@ pub function mapiter_value_of(t: string): string {
 pub function mapiter_key_kind_of(t: string): i32 {
     if (!is_mapiter_type_name(t)) { return 0; }
     return map_key_kind_of("Map[" + t[8 : t.len()]);
+}
+
+// mapiter_key_of recovers the KEY type NAME (not its kind) the same way, so
+// `it.key().field` over a struct-keyed map resolves — the key-side sibling of
+// mapiter_value_of.
+pub function mapiter_key_of(t: string): string {
+    if (!is_mapiter_type_name(t)) { return ""; }
+    return map_key_of("Map[" + t[8 : t.len()]);
 }
 
 // mapiter_type_of_iter_call recovers the "MapIter[K, V]" type of an UNANNOTATED
