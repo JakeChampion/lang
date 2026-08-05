@@ -6122,9 +6122,9 @@ pub function writer_write_func(): string {
 }
 // read_line_func emits $__fern_read_line (no args -> Option[string]): one line of
 // stdin INCLUDING its trailing '\n', Some(line) / None at EOF (#4369 — matches
-// native, replacing the old bare-string-stripped block). Reads up to 256 bytes
-// from fd 0 via fd_read (iovec {ptr,len} at addr 0, byte count at addr 8), scans
-// for '\n' (len includes it), boxes [len:i32][bytes], and wraps it in an Option
+// native, replacing the old bare-string-stripped block). Reads fd 0 ONE BYTE at
+// a time via fd_read (iovec {ptr,len} at addr 0, byte count at addr 8), stopping
+// at '\n' (len includes it), boxes [len:i32][bytes], and wraps it in an Option
 // box [tag@0, payload@4] via __fern_str_box — the same string + Option layout
 // reader_read_chunk_func builds. Heap-gated (op_allocates).
 pub function read_line_func(): string {
@@ -6132,23 +6132,30 @@ pub function read_line_func(): string {
     o = o + "  (func $__fern_read_line (result i32)\n";
     o = o + "    (local $buf i32) (local $nread i32) (local $len i32) (local $blk i32) (local $i i32) (local $opt i32)\n";
     o = o + "    (local.set $buf (call $__fern_alloc (i32.const 256)))\n";
-    o = o + "    (i32.store (i32.const 0) (local.get $buf))\n";
-    o = o + "    (i32.store (i32.const 4) (i32.const 256))\n";
-    o = o + "    (drop (call $fd_read (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
-    o = o + "    (local.set $nread (i32.load (i32.const 8)))\n";
-    o = o + "    (if (i32.eqz (local.get $nread)) (then\n";
+    o = o + "    (local.set $len (i32.const 0))\n";
+    // One fd_read per byte, stopping at '\n'. The old shape read up to 256 bytes
+    // in one call and boxed only as far as the first newline, DISCARDING the
+    // rest of the buffer — so a read-until-EOF loop got one line and then a real
+    // EOF (#6052). Reading a byte at a time never consumes input this call will
+    // not return, which is what native does and what makes the loop terminate on
+    // the right line.
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_u (local.get $len) (i32.const 256)))\n";
+    o = o + "      (i32.store (i32.const 0) (i32.add (local.get $buf) (local.get $len)))\n";
+    o = o + "      (i32.store (i32.const 4) (i32.const 1))\n";
+    o = o + "      (drop (call $fd_read (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+    o = o + "      (local.set $nread (i32.load (i32.const 8)))\n";
+    o = o + "      (br_if $d (i32.eqz (local.get $nread)))\n";
+    o = o + "      (local.set $len (i32.add (local.get $len) (i32.const 1)))\n";
+    o = o + "      (br_if $d (i32.eq (i32.load8_u (i32.add (local.get $buf) (i32.sub (local.get $len) (i32.const 1)))) (i32.const 10)))\n";
+    o = o + "      (br $c)))\n";
+    // EOF before any byte -> None. Any bytes at all (even without a trailing
+    // newline) -> Some, so a final unterminated line is still returned.
+    o = o + "    (if (i32.eqz (local.get $len)) (then\n";
     o = o + "      (local.set $opt (call $__fern_str_box (i32.const 8)))\n";
     o = o + "      (i32.store (local.get $opt) (i32.const 1))\n";
     o = o + "      (i32.store (i32.add (local.get $opt) (i32.const 4)) (i32.const 0))\n";
     o = o + "      (return (local.get $opt))))\n";
-    o = o + "    (local.set $len (i32.const 0))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_u (local.get $len) (local.get $nread)))\n";
-    o = o + "      (br_if $d (i32.eq (i32.load8_u (i32.add (local.get $buf) (local.get $len))) (i32.const 10)))\n";
-    o = o + "      (local.set $len (i32.add (local.get $len) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (if (i32.lt_u (local.get $len) (local.get $nread)) (then\n";
-    o = o + "      (local.set $len (i32.add (local.get $len) (i32.const 1)))))\n";
     o = o + "    (local.set $blk (call $__fern_alloc (i32.add (i32.const 4) (local.get $len))))\n";
     o = o + "    (i32.store (local.get $blk) (local.get $len))\n";
     o = o + "    (local.set $i (i32.const 0))\n";
