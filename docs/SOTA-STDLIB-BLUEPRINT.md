@@ -170,20 +170,26 @@ survives without SIMD, and the compiler's own lexer is the beneficiary.
 
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
-| `count_ones` | **Software loop, O(width)** | `POPCNT` / NEON `CNT` / wasm `i32.popcnt` | **GAP — best effort-to-payoff ratio in this document** |
-| `leading_zeros` | Software loop | `LZCNT` / `CLZ` / `i32.clz` | **GAP** |
-| `trailing_zeros` | Software loop | `TZCNT` / `RBIT`+`CLZ` / `i32.ctz` | **GAP** |
+| `count_ones` | **Branchless SWAR** | `POPCNT` / NEON `CNT` / wasm `i32.popcnt` | **DONE (this pass)**; intrinsic still open |
+| `leading_zeros` | **Branchless smear + popcount** | `LZCNT` / `CLZ` / `i32.clz` | **DONE (this pass)**; intrinsic still open |
+| `trailing_zeros` | **Branchless `x ^ (x-1)` + popcount** | `TZCNT` / `RBIT`+`CLZ` / `i32.ctz` | **DONE (this pass)**; intrinsic still open |
 | `byte_swap` | Software | `BSWAP` / `REV` | GAP |
 | `rotate_left/right` | Software | `ROL`/`ROR` / wasm `rotl` | GAP |
 
-Every one of the three backends has a **single instruction** for these, and
-wasm has them as first-class opcodes. The stdlib currently spends 32 or 64 loop
-iterations per call, and the source comment states the reason plainly: "no
-intrinsics surface in lang". This is the highest ratio of payoff to difficulty
-in the whole document — it needs an IR op plus three one-line lowerings, and it
-speeds up anything built on top (hash mixing, bit-set iteration, the
-`bit_length` family, and a future SWAR layer, which is largely *built* out of
-these).
+These were 32- and 64-iteration software loops in all four integer modules —
+the source comment gave the reason plainly: "no intrinsics surface in lang".
+They are now branchless SWAR, which needs no compiler work at all and is
+**measured 4.3x faster** on x86-64 (3M iterations of all three ops: 1250-1282 ms
+before, 278-299 ms after; the loop overhead is inside both figures, so the
+speedup on the bit ops alone is larger).
+
+The hardware intrinsics are still the endpoint and still worth doing — a single
+instruction beats eight or ten. But that needs a new IR op family plus lowerings
+in three native backends AND three self-host backends to avoid a parity gap, so
+it is a compiler project, not the one-line change this row used to imply. The
+SWAR versions capture most of the win in the meantime, and anything built on
+them (hash mixing, bit-set iteration, `bit_length`, a future SWAR layer
+elsewhere) gets it for free.
 
 ### Random numbers
 
@@ -236,8 +242,10 @@ constraints above.
 
 **Tier 1 — unblocked, high value**
 
-1. **Hardware bit intrinsics.** One IR op family, three one-line lowerings.
-   Unlocks SWAR everywhere downstream.
+1. **Hardware bit intrinsics.** An IR op family plus lowerings in three native
+   and three self-host backends — a compiler project, not a one-liner. The SWAR
+   implementations now in the stdlib capture most of the win, so this is no
+   longer urgent.
 2. **Eisel–Lemire `parse_float`.** The sibling of the Dragonbox work; needs a
    128-bit high-multiply.
 3. **A fast non-crypto PRNG** (PCG or xoshiro) behind a separate type, so
@@ -245,7 +253,7 @@ constraints above.
    modulo-bias half of this item is done.
 4. **wyhash-style string hash** for `core/map`, plus a small-map linear-scan
    path.
-5. ~~Adaptive sort~~, ~~`random_int` modulo bias~~ — done, see below.
+5. ~~Adaptive sort~~, ~~`random_int` modulo bias~~, ~~SWAR bit counting~~ — done, see below.
 
 **Tier 2 — unblocked, narrower**
 
@@ -354,6 +362,23 @@ the part most likely to differ between interp, x86-64, wasm and arm64. It
 additionally computes the OLD biased mapping and asserts it is measurably
 skewed (86/85/85 for range 3), so the suite cannot silently pass if the fix is
 reverted.
+
+**Bit counting is now branchless SWAR.** `count_ones`, `leading_zeros` and
+`trailing_zeros` were 32- and 64-iteration loops in each of std/i32, std/i64,
+std/u32 and std/u64. They now accumulate the count in-place in 2-, then 4-,
+then 8-bit fields of the word; leading zeros smears the top set bit downward
+and subtracts a popcount; trailing zeros uses the `x ^ (x - 1)` identity. All
+branchless, so the cost no longer depends on the value. Measured 4.3x faster on
+x86-64 over 3M iterations of all three.
+
+The per-byte totals are summed by folding the word onto itself rather than by
+the customary `* 0x01010101 >> 24` multiply, which sidesteps any question about
+how unsigned multiplication overflows in this language; and the 64-bit masks
+are built by doubling the 32-bit constants rather than written as literals.
+Verified against the loop implementations they replaced, recomputed inside the
+test program: every `1<<k` and its neighbours at both widths, 3000
+pseudo-random values including negatives, and the zero / all-ones boundaries
+where smear-and-count and the `x ^ (x-1)` identity are least obviously correct.
 
 **A native/self-host divergence in `split("")` was found and fixed.**
 `std/string.split` char-splits an empty separator, but the self-host compiler

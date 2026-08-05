@@ -135,17 +135,48 @@ pub function (n: i64) is_between(lo: i64, hi: i64): boolean {
 // `count_ones()` — the number of set bits in `n`'s 64-bit two's-complement
 // representation (so a negative `n` counts the sign-extended high bits, like
 // Rust's `i64::count_ones`). Software popcount, O(64) per call. Returns an i32.
-pub function (n: i64) count_ones(): i32 {
-    var u: u64 = n as u64;
-    var c: i32 = 0;
-    var i: i32 = 0;
-    while (i < 64) {
-        if ((u & (1 as u64)) != (0 as u64)) { c = c + 1; }
-        u = u >> (1 as u64);
-        i = i + 1;
-    }
-    return c;
+// __swar_popcount64 / __swar_clz64 / __swar_ctz64 — SWAR bit counting, the
+// 64-bit forms of the routines documented in std/u32. The count is
+// accumulated in-place in 2-, then 4-, then 8-bit fields of the word, so a
+// fixed handful of shifts/masks replaces the 64-iteration loops these used to
+// be. Masks are built by doubling the 32-bit constants, so no 64-bit literal
+// is needed. Branchless; each byte holds at most 8 and the total at most 64,
+// so the low 7 bits hold it.
+//
+// (A single POPCNT / CNT / i64.popcnt instruction exists on every backend and
+// would beat this, but the language has no intrinsic surface yet — see
+// docs/SOTA-STDLIB-BLUEPRINT.md.)
+function __swar_popcount64(n: u64): i32 {
+    var m1: u64 = ((1431655765 as u64) << (32 as u64)) | (1431655765 as u64);
+    var m2: u64 = ((858993459 as u64) << (32 as u64)) | (858993459 as u64);
+    var m4: u64 = ((252645135 as u64) << (32 as u64)) | (252645135 as u64);
+    var x: u64 = n;
+    x = x - ((x >> (1 as u64)) & m1);
+    x = (x & m2) + ((x >> (2 as u64)) & m2);
+    x = (x + (x >> (4 as u64))) & m4;
+    x = x + (x >> (8 as u64));
+    x = x + (x >> (16 as u64));
+    x = x + (x >> (32 as u64));
+    return (x & (127 as u64)) as i32;
 }
+
+function __swar_clz64(n: u64): i32 {
+    var x: u64 = n;
+    x = x | (x >> (1 as u64));
+    x = x | (x >> (2 as u64));
+    x = x | (x >> (4 as u64));
+    x = x | (x >> (8 as u64));
+    x = x | (x >> (16 as u64));
+    x = x | (x >> (32 as u64));
+    return 64 - __swar_popcount64(x);
+}
+
+function __swar_ctz64(n: u64): i32 {
+    if (n == (0 as u64)) { return 64; }
+    return __swar_popcount64(n ^ (n - (1 as u64))) - 1;
+}
+
+pub function (n: i64) count_ones(): i32 { return __swar_popcount64(n as u64); }
 
 // `count_zeros()` — the number of ZERO bits in the 64-bit two's-complement
 // representation; the complement of `count_ones` (the two always sum to 64).
@@ -157,31 +188,11 @@ pub function (n: i64) count_zeros(): i32 {
 // the 64-bit two's-complement representation. `0` has all 64 leading zeros;
 // a negative `n` has none (its sign bit is set). The i64 counterpart of
 // std/i32's `leading_zeros`.
-pub function (n: i64) leading_zeros(): i32 {
-    if (n == (0 as i64)) { return 64; }
-    var u: u64 = n as u64;
-    // Top-bit mask = 1 << 63, built by shifting (no 64-bit hex literal).
-    var top: u64 = (1 as u64) << (63 as u64);
-    var c: i32 = 0;
-    while ((u & top) == (0 as u64)) {
-        c = c + 1;
-        u = u << (1 as u64);
-    }
-    return c;
-}
+pub function (n: i64) leading_zeros(): i32 { return __swar_clz64(n as u64); }
 
 // `trailing_zeros()` — the number of zero bits below the lowest set bit.
 // `0` has all 64 trailing zeros. The i64 counterpart of std/i32's.
-pub function (n: i64) trailing_zeros(): i32 {
-    if (n == (0 as i64)) { return 64; }
-    var u: u64 = n as u64;
-    var c: i32 = 0;
-    while ((u & (1 as u64)) == (0 as u64)) {
-        c = c + 1;
-        u = u >> (1 as u64);
-    }
-    return c;
-}
+pub function (n: i64) trailing_zeros(): i32 { return __swar_ctz64(n as u64); }
 
 // `rotate_left(bits)` / `rotate_right(bits)` — cyclic bit rotation of the
 // 64-bit pattern: bits shifted off one end re-enter the other (unlike `<<` /
