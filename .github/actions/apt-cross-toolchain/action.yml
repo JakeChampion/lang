@@ -1,7 +1,8 @@
 name: Install the aarch64 cross toolchain
 description: >
-  Installs gcc-aarch64-linux-gnu and a qemu-aarch64 user-mode emulator,
-  the way every arm64-touching lane needs them.
+  Installs gcc-aarch64-linux-gnu and a qemu-aarch64 user-mode emulator
+  (or, with cross-gcc false, the emulator alone), the way every
+  arm64-touching lane needs them.
 
   It exists because this apt step is the single largest source of false
   red in this repository. Two distinct failures were observed on
@@ -17,9 +18,18 @@ description: >
       gcc-13-aarch64-linux-gnu still unfinished after nine minutes — and
       the job is cancelled at its wall having installed nothing.
 
-  So: drop the third-party sources we do not use, and retry the fetch
-  with a per-attempt timeout so a stalled mirror is abandoned and
-  retried rather than burning the job's entire budget on one attempt.
+  The retry loop below was the first answer to the second failure, and
+  it is not enough: a stall is a slow-but-progressing download, not an
+  error, so each attempt is abandoned mid-transfer and the NEXT one
+  restarts the same package from zero (#6038 — attempt 3 re-fetching the
+  same 21 MB, with the job cancelled before it finished). Retrying turns
+  one slow download into three inside a fixed budget.
+
+  So the .debs are CACHED. On a hit nothing is downloaded at all: the
+  packages are installed straight from the cache with dpkg, which is the
+  only fix that removes the mirror from the critical path rather than
+  hoping it behaves. The retry loop stays as the miss path, and the
+  cache is populated from that same fetch.
 
 inputs:
   qemu-package:
@@ -30,50 +40,125 @@ inputs:
       input rather than a guess.
     required: false
     default: qemu-user-static
+  cross-gcc:
+    description: >
+      Install gcc-aarch64-linux-gnu alongside qemu. A lane that only
+      EXECUTES arm64 output (rather than assembling it) sets this false
+      and gets the emulator on its own — the point being that it still
+      goes through this action's timeout / retry / cache rather than a
+      bare `apt-get install`, which is the shape that hangs a job to its
+      wall with nothing installed. Installing the compiler where it is
+      not wanted is not free either: Arm64Tooling keys off its presence,
+      so it would silently un-skip a different set of tests.
+    required: false
+    default: "true"
 
 runs:
   using: composite
   steps:
+    # Keyed on the runner image (ImageOS rolls every couple of weeks,
+    # which is the natural refresh signal — a cross toolchain pinned
+    # forever would drift from the image's libc) plus the package set.
+    - name: Restore cached cross-toolchain .debs
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/apt-cross-cache
+        key: apt-cross-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-gcc${{ inputs.cross-gcc }}-${{ inputs.qemu-package }}
+
     - name: aarch64 cross toolchain + ${{ inputs.qemu-package }}
       shell: bash
+      env:
+        CACHE_DIR: ${{ runner.temp }}/apt-cross-cache
+        WANT_GCC: ${{ inputs.cross-gcc }}
+        QEMU_PKG: ${{ inputs.qemu-package }}
       run: |
         set -uo pipefail
 
-        # Third-party repos pre-seeded on the runner image. None of them
-        # carries a cross toolchain, and packages.microsoft.com has been
-        # observed 403-ing, which fails `apt-get update` outright. Their
-        # absence cannot affect what we install.
-        sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
-                   /etc/apt/sources.list.d/azure-cli.list \
-                   /etc/apt/sources.list.d/google-chrome.list \
-                   /etc/apt/sources.list.d/*msprod* 2>/dev/null || true
+        PACKAGES="$QEMU_PKG"
+        if [ "$WANT_GCC" = "true" ]; then
+          PACKAGES="gcc-aarch64-linux-gnu $PACKAGES"
+        fi
 
-        # Retry with backoff and a per-attempt timeout. The timeout is
-        # the load-bearing half: without it a stalled mirror is not a
-        # failure that can be retried, it is a hang that ends the job.
-        attempt=1
-        max=4
-        while [ "$attempt" -le "$max" ]; do
-          echo "::group::apt attempt $attempt/$max"
-          if timeout 300 sudo apt-get update -qq &&
-             timeout 420 sudo apt-get install -y --no-install-recommends \
-               gcc-aarch64-linux-gnu "${{ inputs.qemu-package }}"; then
-            echo "::endgroup::"
-            break
+        toolchain_present() {
+          if [ "$WANT_GCC" = "true" ]; then
+            command -v aarch64-linux-gnu-gcc >/dev/null 2>&1 || return 1
           fi
+          command -v qemu-aarch64-static >/dev/null 2>&1 && return 0
+          command -v qemu-aarch64 >/dev/null 2>&1
+        }
+
+        # apt drops privileges to `_apt` to fetch. Without a partial/ it can
+        # reach, it warns and falls back to downloading unsandboxed as root —
+        # noise on every run, and not the path to leave it on. /var/cache/apt's
+        # own ownership is what is being mirrored here.
+        sudo mkdir -p "$CACHE_DIR/partial"
+        sudo chown _apt:root "$CACHE_DIR/partial" 2>/dev/null || true
+
+        # Cache hit: install straight from the .debs, no network at all.
+        # dpkg configures a whole set in dependency order when handed all
+        # of it at once, so no `apt-get -f install` (which would reach for
+        # the mirror) is needed. A partial or stale set just falls through
+        # to the fetch below, which reuses whatever .debs are still valid
+        # and repairs any half-configured state on its way through.
+        dpkg_ok=1
+        if ls "$CACHE_DIR"/*.deb >/dev/null 2>&1; then
+          echo "::group::dpkg install from $(ls "$CACHE_DIR"/*.deb | wc -l) cached .debs"
+          sudo dpkg -i "$CACHE_DIR"/*.deb || dpkg_ok=0
           echo "::endgroup::"
-          if [ "$attempt" -eq "$max" ]; then
-            echo "::error::apt failed ${max} times installing the aarch64 cross toolchain. This is an infrastructure failure, not a test failure — no test has run at this point. Check whether the Ubuntu mirror is stalling or a repo is returning 403."
-            exit 1
-          fi
-          sleep $((attempt * 15))
-          attempt=$((attempt + 1))
-        done
+        fi
+
+        # A failed dpkg takes the apt path even when the binaries look
+        # present: unpacked-but-unconfigured passes `command -v` while
+        # leaving a broken dpkg state behind for the job's next apt user.
+        if [ "$dpkg_ok" != "1" ] || ! toolchain_present; then
+          # Third-party repos pre-seeded on the runner image. None of them
+          # carries a cross toolchain, and packages.microsoft.com has been
+          # observed 403-ing, which fails `apt-get update` outright. Their
+          # absence cannot affect what we install.
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/azure-cli.list \
+                     /etc/apt/sources.list.d/google-chrome.list \
+                     /etc/apt/sources.list.d/*msprod* 2>/dev/null || true
+
+          # Retry with backoff and a per-attempt timeout. The timeout is
+          # the load-bearing half: without it a stalled mirror is not a
+          # failure that can be retried, it is a hang that ends the job.
+          # Downloads land in CACHE_DIR and are KEPT, so this fetch is what
+          # populates the cache for every later run.
+          attempt=1
+          max=4
+          while [ "$attempt" -le "$max" ]; do
+            echo "::group::apt attempt $attempt/$max"
+            if timeout 300 sudo apt-get update -qq &&
+               timeout 420 sudo apt-get install -y --no-install-recommends \
+                 -o "Dir::Cache::archives=$CACHE_DIR" \
+                 -o APT::Keep-Downloaded-Packages=true \
+                 $PACKAGES; then
+              echo "::endgroup::"
+              break
+            fi
+            echo "::endgroup::"
+            if [ "$attempt" -eq "$max" ]; then
+              echo "::error::apt failed ${max} times installing ${PACKAGES}. This is an infrastructure failure, not a test failure — no test has run at this point. Check whether the Ubuntu mirror is stalling or a repo is returning 403."
+              exit 1
+            fi
+            sleep $((attempt * 15))
+            attempt=$((attempt + 1))
+          done
+        fi
+
+        # Hand the cache dir back to the runner user so the post-job save
+        # can read it, and drop apt's partial-download scratch so a
+        # half-fetched .deb is never archived.
+        sudo rm -rf "$CACHE_DIR/partial" "$CACHE_DIR/lock"
+        sudo chown -R "$(id -u):$(id -g)" "$CACHE_DIR"
 
         # Verify rather than assume: a partial install that leaves the
         # binaries absent would otherwise surface much later as a pile
         # of confusing test skips or failures.
-        aarch64-linux-gnu-gcc --version | head -1
+        if [ "$WANT_GCC" = "true" ]; then
+          aarch64-linux-gnu-gcc --version | head -1
+        fi
         if command -v qemu-aarch64-static >/dev/null 2>&1; then
           qemu-aarch64-static --version | head -1
         else

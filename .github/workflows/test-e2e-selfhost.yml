@@ -349,12 +349,17 @@ jobs:
       # Installing qemu makes the test actually run; the encoding differential
       # (TestSelfHostArm64AsmEncodingMatchesNative) is the deterministic gate
       # that needs no emulator.
+      # Through the shared action, not a bare `apt-get`: this step had no
+      # timeout, no retry and no cache, so an azure.archive.ubuntu.com stall
+      # here hangs the job to its 15-minute wall having run nothing (#6038).
+      # cross-gcc stays OFF — Arm64Tooling keys off the cross compiler's
+      # presence, and installing it would silently un-skip a different set of
+      # tests in this job.
       - name: qemu-aarch64 (the arm64 driver tests execute their output)
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-user
-          qemu-aarch64 --version | head -1
+        uses: ./.github/actions/apt-cross-toolchain
+        with:
+          qemu-package: qemu-user
+          cross-gcc: "false"
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-x86_64

@@ -103,6 +103,16 @@ jobs:
           npm install
           npm run build
 
+      # The browser is a ~170 MB download; caching it keeps most runs off the
+      # network for that half. The apt half of `--with-deps` below is NOT
+      # cached and remains exposed to the mirror stalls in #6038 — it is the
+      # font packages there that were seen crawling at 35 KB/s.
+      - name: Cache the Playwright browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ hashFiles('site/test/playwright/package.json') }}
+
       - name: Install Playwright deps
         working-directory: site/test/playwright
         run: |
