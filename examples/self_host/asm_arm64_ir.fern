@@ -1053,6 +1053,33 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
                 em = em - 1;
             }
             s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 218) {  // const_struct
+            // MATERIALISED, not static — arm64 is slice 2 of #6149. The x86-64
+            // backend places the constant in `.data` and pushes its address; the
+            // block's first word is the shape POINTER, i.e. a `.quad <label>`,
+            // and the self-host's in-process arm64 assembler has no data
+            // relocation for a symbolic operand: arm64_gas_data_directive parses
+            // a `.quad` through arm64_gas_atoi64, so `.quad .S0` assembles to
+            // ZERO. A null shape word makes every `match` fall through — four
+            // union fixtures returned 0 instead of their value, which is what
+            // caught it. Teaching the assembler that relocation is its own
+            // change; until then arm64 builds the box the way struct_make does,
+            // with the field words as immediates rather than operand-stack pops.
+            s = s.mark_heap();
+            var kshp: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, ir.const_struct_type(o.str));
+            s = kshp.state;
+            var kvals: string[] = ir.const_struct_values(o.str);
+            s = s.write("    mov x0, #" + util.i32_to_string(kvals.len() + 1) + "\n    bl __fern_arr_box\n");
+            s = s.write("    adrp x1, " + kshp.label + "\n");
+            s = s.write("    add x1, x1, :lo12:" + kshp.label + "\n");
+            s = s.write("    str x1, [x0]\n");
+            var kv: i32 = 0;
+            while (kv < kvals.len()) {
+                s = s.write("    ldr x1, =" + kvals[kv] + "\n");
+                s = s.write("    str x1, [x0, #" + util.i32_to_string((kv + 1) * 8) + "]\n");
+                kv = kv + 1;
+            }
+            s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 139) {  // struct_get
             // pop struct box; field at (index+1)*8.
             s = s.write("    ldr x0, [sp], #16\n    ldr x0, [x0, #" + util.i32_to_string((o.i32_imm + 1) * 8) + "]\n    str x0, [sp, #-16]!\n");
