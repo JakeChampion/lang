@@ -11,27 +11,9 @@ import (
 	"time"
 )
 
-// Two legs run the fixture corpus through the SELF-HOST compiler:
-// TestFernFixturesSelfHostWasm and TestFernFixturesSelfHostX86_64. Nothing else
-// does.
-//
-// # The missing third leg
-//
-// An arm64 leg (`-target arm64`) was written alongside the x86-64 one and is NOT
-// here, deliberately. It ran once, and the `-target arm64` path — which
-// assembles + links in-process via arm64_native + elf.fern — failed 100+ of the
-// ~200 fixtures it reached, on three independent bugs: no `fcvt` encoding in the
-// in-process assembler (#6044, 64 fixtures rejected at compile), an illegal
-// encoding that SIGILLs on rc/reuse and closure shapes (#6045, 25 fixtures), and
-// a string copy whose source pointer never advances, so printed output has the
-// right length and the wrong bytes (#6047, 8 fixtures).
-//
-// Landing it now would mean either a 100-row known-divergences file — which the
-// file's own contract makes worse than useless, since fixing #6044 alone flips 64
-// rows at once — or a permanently red lane. So it waits for those three, on
-// branch `selfhost-fixture-leg-arm64-hold`. The three issues carry the findings;
-// this comment carries why the coverage gap is open on purpose. Do not close that
-// gap by weakening the assertions.
+// Three legs run the fixture corpus through the SELF-HOST compiler:
+// TestFernFixturesSelfHostWasm, TestFernFixturesSelfHostX86_64 and
+// TestFernFixturesSelfHostArm64. Nothing else does.
 //
 // # Why these exist
 //
@@ -97,7 +79,7 @@ import (
 // Building fern.fern is a heavy self-host driver build (~4.3 GB reserved by the
 // harness's memory limiter). It is paid ONCE per leg and amortised over the whole
 // corpus; each fixture is then a native-binary invocation plus a run. Still, that
-// is minutes rather than the 15s the native fixture run takes, so both are
+// is minutes rather than the 15s the native fixture run takes, so all three are
 // gated on FERN_SELFHOST_FIXTURES=1 and run as their own CI lanes rather than
 // slowing every local `go test ./internal/e2e`.
 //
@@ -245,6 +227,52 @@ func TestFernFixturesSelfHostX86_64(t *testing.T) {
 			// No runner prefix: runSelfHostFixtureLeg has already skipped the
 			// hosts that need one (they cannot exec the driver either).
 			checkSelfHostNativeRun(t, f, runSelfHostBin(exec.Command(binPath), f.stdin), failf)
+		},
+	})
+}
+
+// TestFernFixturesSelfHostArm64 runs the corpus through `fern -target arm64`:
+// the self-host arm64 emitter, assembled + linked IN-PROCESS by arm64_native +
+// elf.fern (no `.s`, no gcc — the production path since the ELF flip), executed
+// under qemu-aarch64.
+//
+// This is the only leg where the self-host compiler produces the finished binary
+// by itself, so it is the closest thing the corpus has to a test of the
+// self-hosted toolchain end to end. It also means an in-process-assembler gap
+// surfaces as a compile failure naming the instruction, not as a link error.
+func TestFernFixturesSelfHostArm64(t *testing.T) {
+	requireSelfHostFixtureLeg(t)
+	gcc, runner := x86_64Tooling(t)
+	// arm64Tooling is reused for its qemu discovery and its clean skip; the gcc
+	// it returns is deliberately unused, because `-target arm64` assembles and
+	// links in-process. On a native arm64 Linux host qemu comes back "" and
+	// runArm64Bin execs directly — though that host cannot run the x86-64
+	// driver binary anyway, which the runner check in runSelfHostFixtureLeg
+	// turns into a skip.
+	_, qemu := arm64Tooling(t)
+	runSelfHostFixtureLeg(t, selfHostLeg{
+		backend:   "arm64",
+		target:    "arm64",
+		gcc:       gcc,
+		runner:    runner,
+		knownFile: "selfhost-arm64-known-divergences.txt",
+		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
+			binPath := filepath.Join(t.TempDir(), "prog")
+			cmd := exec.Command(fernBin, "-target", "arm64", f.mainPath, stdlibRoot, "-o", binPath)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				// Includes the in-process assembler's own refusal ("hit an
+				// instruction it does not yet support: …"), which names the
+				// mnemonic — a different and more actionable failure than the
+				// x86 leg's link error.
+				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "arm64", f.mainPath, stdlibRoot, out))
+				return
+			}
+			// write_file does not set the exec bit (the Makefile chmods
+			// bin/fern-selfhost for the same reason).
+			if err := os.Chmod(binPath, 0o755); err != nil {
+				t.Fatalf("chmod: %v", err)
+			}
+			checkSelfHostNativeRun(t, f, runSelfHostBin(runArm64Bin(qemu, binPath), f.stdin), failf)
 		},
 	})
 }

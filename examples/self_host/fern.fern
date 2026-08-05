@@ -80,6 +80,17 @@ function arm64_elf_binary(asm: string): string {
     var tv: i64 = (elf.elf_text_vaddr_wx()) as i64;
     var dv: i64 = (elf.elf_data_vaddr_wx(pa.code.len())) as i64;
     p = arm64_native.arm64_gas_link(p, tv, dv);
+    // Symbol resolution happens IN the link, so its refusals land here rather
+    // than in the parse check above. Reporting them matters more than it
+    // sounds: an unresolvable symbol used to be patched as an offset anyway,
+    // which is how a function value became an address in the middle of .data
+    // and stayed a runtime SEGV rather than a compile error (#6045).
+    if (p.unknown.len() > 0) {
+        eprint("fern: -target arm64: in-process linker could not resolve: ");
+        eprint(p.unknown[0]);
+        eprint("\n");
+        return "";
+    }
     var pa2: arm64_native.Arm64Asm = p.asm;
     var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
     if (eoff < 0) { eoff = 0; }
@@ -108,6 +119,12 @@ function arm64_elf_binary_pie(asm: string): string {
     var tv: i64 = (elf.elf_text_vaddr_pie()) as i64;
     var dv: i64 = (elf.elf_data_vaddr_pie(pa.code.len())) as i64;
     p = arm64_native.arm64_gas_link(p, tv, dv);
+    if (p.unknown.len() > 0) {
+        eprint("fern: -target arm64-android: in-process linker could not resolve: ");
+        eprint(p.unknown[0]);
+        eprint("\n");
+        return "";
+    }
     var pa2: arm64_native.Arm64Asm = p.asm;
     var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
     if (eoff < 0) { eoff = 0; }
@@ -715,6 +732,12 @@ function run(): i32 {
         var tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), prog.data.len());
         var dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), prog.data.len());
         prog = arm64_native.arm64_gas_link(prog, tv, dv);
+        if (prog.unknown.len() > 0) {
+            eprint("fern: -target arm64-darwin: in-process linker could not resolve: ");
+            eprint(prog.unknown[0]);
+            eprint("\n");
+            return 2;
+        }
         var pa2: arm64_native.Arm64Asm = prog.asm;
         out_asm = string_from_bytes_unchecked(to_u8(arm64_native.macho_static_executable(pa2.code, prog.data, "fern")));
     } else if (target == "wasm") {
