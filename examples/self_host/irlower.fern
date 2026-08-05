@@ -1928,8 +1928,19 @@ pub function is_scalar_array_type(t: string): boolean {
 // the u64 tuple element slice — a separate increment). NOT used for enum
 // payloads (those need the element-width mark, not a plain mark_arr).
 pub function is_leaksafe_array_field(t: string): boolean {
-    return is_scalar_array_type(t) || t == "f64[]" || t == "i64[]" || t == "u32[]"
+    return is_scalar_array_type(t) || is_float_array_type_name(t) || t == "i64[]" || t == "u32[]"
         || is_subword_array_type(t);
+}
+
+// is_float_array_type_name reports whether the declared type name `t` is a
+// FLOAT array — one whose elements ride the 8-byte-stride f64 layout that
+// mark_f64arr tracks. Both `f64[]` and `f32[]` do: a scalar `f32` lowers to a
+// wasm f64, and the array-literal / Cell element paths already fold `f32` in
+// with `f64` (`celt == "f64" || celt == "f32"`). Spelling the pair once keeps
+// the declaration-driven sites from drifting apart, which is how `f32[]` came
+// to be classified as no array kind at all (#6175).
+pub function is_float_array_type_name(t: string): boolean {
+    return t == "f64[]" || t == "f32[]";
 }
 
 // is_subword_array_type reports whether `t` is a sub-32-bit integer-element
@@ -15742,7 +15753,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     var is_strarr: boolean = expr_is_strarr(v.init, se) || v.type_name == "string[]";
     // f64[] tracking (element WIDTH for a[i]); the annotation is
     // authoritative too. The array itself is already is_arr (RC-tracked).
-    var is_f64arr: boolean = expr_is_f64arr(v.init, se) || v.type_name == "f64[]";
+    var is_f64arr: boolean = expr_is_f64arr(v.init, se) || is_float_array_type_name(v.type_name);
     // i64[] tracking (element WIDTH + i64 value typing for a[i]). The
     // literal form is handled by a dedicated branch above; here this
     // catches aliasing (`var b = a`) and the `i64[]` annotation.
@@ -33041,7 +33052,19 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // An f64[] param is element-width-tracked (a[i] reads an 8-byte f64);
         // the array itself rides the same 8-byte-stride layout every f64 array
         // literal in this (whole-module-IR) program uses, so passing one is safe.
-        isf64arr = isf64arr.append(fn.params[i].type_name == "f64[]");
+        //
+        // `f32[]` rides the SAME 8-byte f64 layout — a scalar f32 param already
+        // lowers to a wasm f64 (see assert_at_f32's `(param f64)`), and the
+        // array-literal / cell paths already mark an f32 element type as
+        // f64arr. Without it here, a declared `f32[]` param was classified as
+        // nothing at all, so `a[i]` emitted the default 4-byte stride +
+        // i32.load into an f64-typed local: an invalid module where the value
+        // reaches a float op, a silent wrong answer where it does not. It only
+        // bit a param whose type had to be read off the DECLARATION — with no
+        // imports, call-site inference marked the slot and hid it, so any
+        // program with a single `import` reproduced and the same program
+        // without one did not (#6175).
+        isf64arr = isf64arr.append(is_float_array_type_name(fn.params[i].type_name));
         isi64arr = isi64arr.append(fn.params[i].type_name == "i64[]");
         isu32 = isu32.append(is_u32_type_name(fn.params[i].type_name));
         isu64 = isu64.append(is_u64_type_name(fn.params[i].type_name));
@@ -36710,7 +36733,7 @@ pub function f64arr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
     while (k < funcs.len()) {
-        if (funcs[k].ret_type == "f64[]") {
+        if (is_float_array_type_name(funcs[k].ret_type)) {
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
             out = out.append(key);

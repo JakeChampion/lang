@@ -1,0 +1,33 @@
+// An `f32[]` PARAMETER is classified from its DECLARATION, not from a call
+// site. Both spellings of a float array ride the same 8-byte-stride f64
+// element layout (a scalar `f32` already lowers to a wasm f64), but the
+// self-host lowering only recognised "f64[]" there, so an `f32[]` param was
+// classified as no array kind at all: `a[i]` emitted the default 4-byte
+// stride + i32 load into an f64-typed local. On wasm that is an invalid
+// module; elsewhere it is a silent wrong answer. #6175.
+//
+// The import matters. Without one, call-site inference marks the slot and
+// hides the bug — so this fixture keeps a real `import` and uses it.
+import "std/i32";
+
+function at(a: f32[], i: i32): f32 { return a[i]; }
+
+function is_nan(a: f32[], i: i32): boolean {
+    var v: f32 = a[i];
+    return v != v;
+}
+
+function width(a: f32[]): i32 { return a.len(); }
+
+function main(): i32 {
+    var xs: f32[] = [1.5, 2.5, 4.0];
+    if (is_nan(xs, 0)) { return 1; }
+    var a: f32 = at(xs, 2);
+    if (a < 3.9 || a > 4.1) { return 2; }
+    var b: f32 = at(xs, 1);
+    if (b < 2.4 || b > 2.6) { return 3; }
+    // The i32 import is load-bearing: it is what puts the param on the
+    // declaration-driven path.
+    if (width(xs).to_string() != "3") { return 4; }
+    return 7;
+}
