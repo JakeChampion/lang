@@ -29,6 +29,17 @@ Relationship to existing tracks — complementary, not competing:
 - The WASI-level attenuation noted as out-of-scope in #4907 guards
   the *process/component* boundary at runtime; this guards the
   *intra-binary package* boundary at compile time. Both can exist.
+- **Native runtime attenuation now exists too** (#6071): `FERN_SANDBOX=1`
+  installs a seccomp-bpf filter at `_start` permitting exactly the
+  syscalls the emitted binary can issue. It does **not** derive from
+  this brief's capability grants, and deliberately so — `caps.Analyze`
+  models user-callable builtins, not the runtime's own mmap /
+  exit_group / write / clock_gettime, so a grant-derived filter would
+  need a hand-maintained floor that rots silently. It derives from the
+  backend's recorded syscall set instead. The relationship is
+  complementary in kind: this brief's checker rule proves what code
+  *can call*; the filter constrains what the process can do once
+  control flow has been *hijacked*. Neither subsumes the other.
 - `PLATFORM-RESEARCH.md`'s `Platform` capability bag governs what the
   *host* offers the *application*; this governs what the
   *application* delegates to its *dependencies*. Its open question 3

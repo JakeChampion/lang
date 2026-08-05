@@ -1111,6 +1111,20 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{},
 	}
+	// __arr_push_shared_bytes(): i64 — the same cliff, weighted by the bytes
+	// each crossing copied. The count says whether anything crossed; only
+	// this says whether it mattered. A whole-module self-host compile crosses
+	// 188 times and copies 812 bytes total, while one threaded accumulator
+	// over 20k appends copies 2.3 GB — indistinguishable by count, three
+	// orders of magnitude apart by weight.
+	//
+	// i64 for the same reason as __heap_bump_bytes below: the quantity being
+	// summed is arena-scale, so an i32 would wrap on exactly the runs this
+	// exists to measure.
+	c.info.FuncSigs["__arr_push_shared_bytes"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
 	// __heap_bump_bytes(): i64 — Phase 6 measurement probe. Returns the
 	// bump allocator's high-water mark (cursor − region base) in bytes; 0
 	// before the first alloc. The cursor only advances on a fresh bump,

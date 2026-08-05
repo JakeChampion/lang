@@ -44,6 +44,32 @@ pub function i32_to_string(n: i32): string {
     return out;
 }
 
+// i64_to_string renders a signed 64-bit integer in base 10 — the i64 sibling
+// of i32_to_string above, for the readings that are arena-scale and would wrap
+// if narrowed (the cliff WEIGHT, the bump high-water mark). Same digit loop,
+// same INT64_MIN guard: the minimum has no i64 negation, so the generic sign
+// flip would skip the loop and render a bare "-".
+pub function i64_to_string(n: i64): string {
+    if (n == 0) { return "0"; }
+    if (n < 0 && 0 - n == n) { return "-9223372036854775808"; }
+    var neg: boolean = false;
+    if (n < 0) { neg = true; n = 0 - n; }
+    var out: string = "";
+    while (n > 0) {
+        var d: i64 = n % 10;
+        var c: string = "";
+        if (d == 0) { c = "0"; } else if (d == 1) { c = "1"; }
+        else if (d == 2) { c = "2"; } else if (d == 3) { c = "3"; }
+        else if (d == 4) { c = "4"; } else if (d == 5) { c = "5"; }
+        else if (d == 6) { c = "6"; } else if (d == 7) { c = "7"; }
+        else if (d == 8) { c = "8"; } else { c = "9"; }
+        out = c + out;
+        n = n / 10;
+    }
+    if (neg) { out = "-" + out; }
+    return out;
+}
+
 // hash_key maps a string to a content-addressed key string, used by the
 // per-module incremental-codegen cache (#3451 step 6 / #3458) to fingerprint
 // a module's compilation inputs (its own source, and the public signatures of
@@ -465,7 +491,9 @@ pub function rc_underflow_guard(who: string, code: i32): i32 {
 pub function arr_push_cliff_report(who: string, code: i32): i32 {
     match (env("FERN_CLIFF_REPORT")) {
         Some(_) => {
-            eprint(who + ": arr_push_shared_count=" + i32_to_string(__arr_push_shared_count()) + "\n");
+            var copied: i64 = __arr_push_shared_bytes();
+            eprint(who + ": arr_push_shared_count=" + i32_to_string(__arr_push_shared_count())
+                + " arr_push_shared_bytes=" + i64_to_string(copied) + "\n");
             return code;
         },
         None => { return code; }
