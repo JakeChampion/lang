@@ -4036,10 +4036,23 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   safe); a STRING-kind slot (type-aware arrarr_elem) additionally requires
   every inner element to be a fresh string ("ARRARRS:", strict — a live
   local stored as an element would dangle; pinned by the ident-element
-  exclusion test). Gates: body_unsafe_for, NOT reassigned, and
+  exclusion test). Gates: arrarr_unsafe_for and
   arrarr_row_escapes (a bare `var row = g[i]` single-index read or
   `for row in g` binds an inner pointer → rejected; transient g[i][j] /
-  g[i].len() borrows admissible — pinned by the row-alias test). WIRING:
+  g[i].len() borrows admissible — pinned by the row-alias test).
+  APPEND-BUILT (#6092): the admission above once also required the name to
+  be NOT reassigned, which excluded `var g: T[][] = []` grown by
+  `g = g.append(<row literal>)` — the shape leaked one row buffer per
+  append, unbounded in a loop (200 rounds x 3 rows = 33600 bytes, against
+  native's 0). arrarr_unsafe_for replaces that blunt exclusion with the
+  per-rebind validation the string[] class has had since #4355: only the
+  self-append of a fresh ROW LITERAL passes, everything else is still
+  body_unsafe_for. arrarr_lit_is_empty + arrarr_name_is_appended admit the
+  `[]` initializer (arrarr_lit_is_fresh rejects it — no rows to prove),
+  and the strict string credit additionally needs EVERY appended row
+  strings-fresh (arrarr_appends_strings_fresh). Rows sourced from a CALL
+  (`g = g.append(make_row())`) stay uncredited: there is no fresh-ROW-
+  producer registry, only the AAC one for whole arr-of-arr returns. WIRING:
   emit_arrarr_reclaim_store (the emit_str_reclaim_store sibling,
   cow-guarded) at the StmtVar loop-rebind; a new exit-sweep loop frees the
   final value via the kind-picked helper. VERIFIED:
