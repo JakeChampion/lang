@@ -54,7 +54,11 @@ func (a *Assembler) LinkMachO(textVAddr, dataVAddr uint64) (text, data []byte, e
 	for _, f := range a.litFixups {
 		insnAddr := textVAddr + uint64(f.at)*4
 		litAddr := textVAddr + uint64(f.poolIdx)*4
-		imm19 := uint32(int32(int64(litAddr)-int64(insnAddr)) / 4)
+		delta := (int64(litAddr) - int64(insnAddr)) / 4
+		if delta < -(1<<18) || delta >= 1<<18 {
+			return nil, nil, fmt.Errorf("arm64: ldr-literal at insn %d is %d bytes from its pool — outside the ±1 MB imm19 range (missing .ltorg?)", f.at, delta*4)
+		}
+		imm19 := uint32(int32(delta))
 		a.insns[f.at] |= (imm19 & 0x7ffff) << 5
 	}
 
