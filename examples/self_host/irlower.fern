@@ -5731,6 +5731,19 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
+// slice_elem_is_wide reports whether `a[i:j]` copies 8-byte elements — an f64[]
+// or i64[]/u64[] source, which arr_slice lowers at width 64 (the wasm
+// $__fern_arr_slice8 raw 8-byte move). Structural walk FIRST, for the same
+// reason as ix_type_tag / fa_type_tag: it reads the slot's recorded element
+// kind, which the checker's Type erases. The annotate-stamped `slc.ty` fills
+// its HOLES — a slice of a call result or of an if-expression, where the source
+// array is not structurally recoverable and both `expr_is_*arr` walks silently
+// answer false, so the slice copied 4-byte elements out of an 8-byte array.
+function slice_elem_is_wide(slc: parser.ExprSlice, s: LowerState): boolean {
+    if (expr_is_f64arr(slc.array, s) || expr_is_i64arr(slc.array, s)) { return true; }
+    return slc.ty == "f64[]" || slc.ty == "i64[]" || slc.ty == "u64[]";
+}
+
 // ix_type_tag returns the canonical scalar type string of an index read `a[i]`
 // — the ELEMENT type the read yields — or "" when neither the structural walk
 // nor the checker can name it. It is the shared leaf the ExprIndex arms of
@@ -10814,14 +10827,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // other arms bind `var sl: LowerState`, and the compiler's scope-blind
             // locals collapse same-named locals of different types.)
             var slc_is_str: boolean = expr_is_str(slc.array, s);
-            if (!slc_is_str && !expr_is_arr_src(slc.array, s)) { return s.fail(); }
+            // The typed-IR tag is proof of array-ness the walk cannot reach:
+            // slc.ty is non-empty exactly when the checker typed slc.array as an
+            // array, so a slice of an if-expression or of a call-result struct
+            // field lowers instead of bailing. expr_is_arr_src takes a bare Expr
+            // and so cannot see the tag itself — it is applied here, at the one
+            // site that holds the ExprSlice node.
+            if (!slc_is_str && !expr_is_arr_src(slc.array, s) && slc.ty == "") { return s.fail(); }
             // An f64[] or i64[] slice copies 8-byte elements (arr_slice width 64
             // → the wasm $__fern_arr_slice8 helper, a raw 8-byte move that serves
             // both); i32[] / string[] copy 4-byte elements. The result is a fresh
             // f64[]/i64[], marked at the var binding via expr_is_f64arr /
             // expr_is_i64arr's ExprSlice cases.
             var slc_w: i32 = 32;
-            if (expr_is_f64arr(slc.array, s) || expr_is_i64arr(slc.array, s)) { slc_w = 64; }
+            if (slice_elem_is_wide(slc, s)) { slc_w = 64; }
             var ssl: LowerState = lower_expr(slc.array, s);
             if (!ssl.ok) { return ssl; }
             ssl = lower_expr(slc.start, ssl);
@@ -42005,7 +42024,7 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
             var slar: LiftExpr = lift_expr_walk(sl.array, acc, gfns);
             var slsr: LiftExpr = lift_expr_walk(sl.start, slar.acc, gfns);
             var sler: LiftExpr = lift_expr_walk(sl.end, slsr.acc, gfns);
-            return LiftExpr { expr: parser.ExprSlice { array: slar.expr, start: slsr.expr, end: sler.expr }, acc: sler.acc };
+            return LiftExpr { expr: parser.ExprSlice { array: slar.expr, start: slsr.expr, end: sler.expr, ty: sl.ty }, acc: sler.acc };
         },
         parser.ExprFieldAccess(fa) => {
             var faor: LiftExpr = lift_expr_walk(fa.obj, acc, gfns);
@@ -44162,7 +44181,7 @@ function box_rewrite_expr(e: parser.Expr, boxed: string[], btypes: string[]): pa
             return parser.ExprTuple { elements: ne, line: t.line, col: t.col };
         },
         parser.ExprIndex(x) => { return parser.ExprIndex { array: box_rewrite_expr(x.array, boxed, btypes), index: box_rewrite_expr(x.index, boxed, btypes), unchecked: x.unchecked, ty: x.ty }; },
-        parser.ExprSlice(sl) => { return parser.ExprSlice { array: box_rewrite_expr(sl.array, boxed, btypes), start: box_rewrite_expr(sl.start, boxed, btypes), end: box_rewrite_expr(sl.end, boxed, btypes) }; },
+        parser.ExprSlice(sl) => { return parser.ExprSlice { array: box_rewrite_expr(sl.array, boxed, btypes), start: box_rewrite_expr(sl.start, boxed, btypes), end: box_rewrite_expr(sl.end, boxed, btypes), ty: sl.ty }; },
         parser.ExprStructLit(sl) => {
             var nv: parser.Expr[] = [];
             var i: i32 = 0;
@@ -44500,7 +44519,7 @@ function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs:
             var sa: WCapExpr = wcap_expr(sl.array, fd, gfns, structs, mfuncs, acc, atargets);
             var ss: WCapExpr = wcap_expr(sl.start, fd, gfns, structs, mfuncs, sa.caps, atargets);
             var se: WCapExpr = wcap_expr(sl.end, fd, gfns, structs, mfuncs, ss.caps, atargets);
-            return WCapExpr { expr: parser.ExprSlice { array: sa.expr, start: ss.expr, end: se.expr }, caps: se.caps };
+            return WCapExpr { expr: parser.ExprSlice { array: sa.expr, start: ss.expr, end: se.expr, ty: sl.ty }, caps: se.caps };
         },
         parser.ExprStructLit(sl) => {
             var a: WCaps = acc;

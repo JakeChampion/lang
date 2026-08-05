@@ -132,6 +132,18 @@ leaves every `ty` empty and gets the structural walk unchanged.
 | `ExprCall.ty` | #5531 | `expr_struct_type`, `expr_map_type_tag`, `expr_tuple_elem_tag`, `try_opt_type`, `expr_is_str` / `_f64` / `_u32` / `_u64`, `infer_expr_width` |
 | `ExprFieldAccess.ty` | #5986 | `fa_type_tag` — the single leaf behind `expr_struct_type`, `expr_map_type_tag`, `infer_expr_width` and `expr_is_f64` / `_f32` / `_u32` / `_u64`; plus `cap_type_expr` at lift time |
 | `ExprIndex.ty` | #6165 | `ix_type_tag` — the leaf behind the `ExprIndex` arms of `expr_is_f64` and `infer_expr_width` AND the two load sites (`lower_expr`'s `arr_get` width, `lower_i64`'s `arr_get_i64`), so the element width and the value's downstream type answer from one place |
+| `ExprSlice.ty` | this slice | the `ExprSlice` arm of `lower_expr` — both the `expr_is_arr_src` **gate** (a non-empty tag proves array-ness the walk cannot reach) and `slice_elem_is_wide` (the `arr_slice` element width). Names the SOURCE array's type, via the checker's `type_to_arrtag` |
+
+**Not every carrier belongs in the shared tag vocabulary.** `ExprSlice.ty` needs
+an ARRAY spelling (`"f64[]"`), and `type_to_irtag` has no `TypeArray` arm — it
+returns `""` for every array-valued expression. Adding one there is the obvious
+move and the wrong one: four consumers (`expr_is_str` / `_f64` / `_u32` /
+`_u64`) read `c.ty` **tag-first**, short-circuiting their structural walk on any
+non-empty value, so teaching the shared namer to name arrays silently changes
+what they see on every array-valued call. The carrier instead gets its own
+`type_to_arrtag`, used at exactly one stamp site and read by one walk-first
+leaf. Widening the shared vocabulary is a separate decision from adding a
+carrier, and should be made on its own evidence.
 
 A third ordering fact, learned wiring `ExprIndex.ty`: **a carrier must reach the
 LOAD site, not just the value predicates.** Wiring `expr_is_f64` alone made
