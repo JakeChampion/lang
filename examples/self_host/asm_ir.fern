@@ -6329,13 +6329,14 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var tfrf: string[] = irlower.tuple_fresh_ret_fns_of(im.funcs);
     var fnames: string[] = irlower.fn_names_of(im.funcs);
     var clarf: string[] = irlower.closurearr_ret_fns_of(im.funcs, im.structs);
+    var mvparams: string[] = irlower.move_arr_params_of(im.funcs);
     // Lower every function once into `cache`, checking eligibility on each result.
     // Bail (AST fallback) on the first function whose body doesn't lower or whose
     // direct calls / function values reference an unknown symbol.
     var cache: irlower.LowerResult[] = [];
     var i: i32 = 0;
     while (i < im.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], arf, im.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, bparams, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf, irlower.move_arr_params_of(im.funcs), false);
+        var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], arf, im.structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fps, cfs, clarf, cnf, bparams, fnames, frsf, csparams, rfrsf, sfrf, ofrf, sfot, tfrf, mvparams, false);
         if (!r.ok) {
             if (strict_ir_on()) { strict_ir_refuse(im.funcs[i].name); }
             return "";

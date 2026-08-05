@@ -39408,6 +39408,11 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var amf: string[] = arr_method_fns_of(funcs);
     var orf: string[] = opt_ret_fns_of(funcs);
     var sfot: string[] = strfld_reclaim_ok_types_of(funcs, structs);
+    // Hoisted like every sibling registry: a whole-program scan inside the
+    // per-function loop is O(n^2) analysis, which on the compiler's own
+    // sources cost +26% peak RSS and tipped the gen2 self-compile into the
+    // arena ceiling (#6074).
+    var mvp: string[] = move_arr_params_of(funcs);
     var irf: string[] = i64_ret_fns_of(funcs);
     var trf: string[] = tuple_ret_fns_of(funcs);
     var srtf: string[] = struct_ret_fns_of(funcs, structs);
@@ -39418,7 +39423,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
     var out: LoweredFn[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
-        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs, structs), closure_and_fnptr_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), sfot, tuple_fresh_ret_fns_of(funcs), move_arr_params_of(funcs), false);
+        var r: LowerResult = lower_func(funcs[i], arr_ret_fns, structs, srf, sarf, amf, orf, irf, trf, srtf, mrtf, frf, farf, iarf, fn_param_sigs_of(funcs, structs), closure_and_fnptr_fns_of(funcs, structs), closurearr_ret_fns_of(funcs, structs), const_fns_of(funcs), borrowable_params_of(funcs), fn_names_of(funcs), fresh_struct_ret_fns_of(funcs, structs), [], return_fresh_struct_ret_fns_of(funcs, structs), str_fresh_ret_fns_of(funcs), opt_fresh_ret_fns_of(funcs, structs), sfot, tuple_fresh_ret_fns_of(funcs), mvp, false);
         // A receiver method is registered under the receiver-qualified name
         // `<BaseType>.<method>` — the SAME label a method call lowers to
         // (op_call_direct(receiver_type + "." + field)) and the backends'
