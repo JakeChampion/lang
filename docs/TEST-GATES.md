@@ -85,8 +85,9 @@ Worth knowing so you do not assume coverage you do not have:
   explicit `as i32` only where the value has to become an exit code.
 - **Over-retains.** The rc detector counts over-*releases* only. A leak reads
   as a clean 0. `FERN_LEAKCHECK=1` sees that a leak happened and
-  `FERN_RC_TRACE=1` names the alloc site it came from (both below), but
-  neither runs as part of any gate — you have to go looking.
+  `FERN_RC_TRACE=1` names the alloc site it came from (both below, on the
+  native *and* the self-host x86-64 compilers), but neither runs as part of
+  any gate — you have to go looking.
 
 ## Practical rules
 
@@ -166,6 +167,30 @@ answer, these are the tools, in the order they are usually reached for:
   less informative than `a` sites** — every release funnels through the shared
   drop helpers, so a free line usually names `__fern_arr_dec` rather than your
   code. The alloc site is the one that locates a leak. x86-64 only.
+
+  **Both flags work on the SELF-HOST x86-64 compiler too**, with the same
+  spelling and the same output format (`asm_ir.fern`; the arm64 and wasm
+  self-host backends do not have them). That is what makes them useful for the
+  goal-2 (Perceus port) deltas: the remaining gap versus native is an
+  allocation-VOLUME difference, and volume is exactly what nothing else gates.
+  Compile one program with each compiler under `FERN_RC_TRACE=1`, pair both
+  traces, and an `a` line the self-host emits where native emits none is a
+  missed reuse, attributed to the construction site that missed it. Three
+  differences from the native side to expect when reading self-host output:
+  - Sizes come from an **8-byte-granular** heap (native rounds to 16), and
+    both hooks report the same rounded size for a block, so an alloc and its
+    free cancel exactly.
+  - Large-tier (>=512 KiB) blocks report their **logical** size, not the
+    512-KiB-rounded capacity the arena actually bumped, so `live_bytes`
+    measures demand rather than footprint.
+  - Allocations grown by an **append** report `__fern_arr_push`, not the
+    appending function — `__fern_arr_push` allocates only on its grow path, so
+    it cannot claim a site up front without leaving a stale one behind. Use the
+    `__fern_arr_push_grow` breakpoint recipe above for those; construction
+    sites (array/string/struct literals) do report user code.
+
+  The self-host driver has no `-g`, so resolve its sites against the linked
+  binary's symtab (`nm -n`) rather than addr2line.
 - **`-g`** — emits a `.symtab`, without which a gdb backtrace through a Fern
   binary is addresses only.
 
