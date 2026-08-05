@@ -96,7 +96,10 @@ func TestDifferential_Arm64SSAStdout(t *testing.T) {
 		sampled++
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()
-			src := fernsmith.GenPrintableMain(seed)
+			// Closure-free corpus: arm64-ssa segfaults on ordinary
+			// closure shapes (#6144), which would swamp this leg and hide
+			// every other regression. See Config.NoFnValues.
+			src := fernsmith.GenPrintableMainNoFnValues(seed)
 			want, ok := interpStdout(t, src)
 			if !ok {
 				return // interp coverage gap; already reported by the helper
@@ -152,7 +155,8 @@ func TestDifferential_Arm64SSAExitByte(t *testing.T) {
 		sampled++
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()
-			src := fernsmith.GenMain(seed)
+			// Closure-free corpus — see the stdout leg above and #6144.
+			src := fernsmith.GenMainNoFnValues(seed)
 			want := runInterpByte(t, src)
 
 			r := runArm64SSAOrSkip(t, bin, qemu, src)

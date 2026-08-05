@@ -48,6 +48,24 @@ type Config struct {
 	// needs N small so backends without optimisations don't
 	// blow up runtime.
 	MaxLoopIters int
+	// NoFnValues drops tFnI32I32 / tArrFnI32I32 from every type pool,
+	// so the generated program contains no lambdas, no fn-typed vars or
+	// params, and no closure arrays.
+	//
+	// It exists for backends that do not lower closures correctly YET.
+	// The experimental SSA backends crash on ordinary closure shapes —
+	// `[capturing, zero-capture]` in one array segfaults arm64-ssa while
+	// interp / arm64 / x86-64 all agree (#6144) — and their differential
+	// legs are the ones written to catch exactly that class of
+	// capture-layout bug (#5767). Feeding them a corpus that crashes on
+	// a third of its seeds tells them nothing they can act on and hides
+	// every OTHER regression behind the noise.
+	//
+	// This is a temporary narrowing of one corpus, not a retreat: the
+	// four backends that do lower closures are still swept with them by
+	// TestDifferential_LangsmithMain. Delete the flag, and its uses, when
+	// #6144 and #6142 close.
+	NoFnValues bool
 }
 
 // DefaultConfig is what Gen uses.
@@ -120,6 +138,26 @@ func GenPrintableMain(seed uint64) string {
 // fuzzer's mutations drive generation and corpus minimisation works.
 func GenPrintableMainBytes(data []byte) string {
 	return newByteGen(data, DefaultConfig()).MainPrintableProgram()
+}
+
+// noFnConfig is DefaultConfig with function values suppressed. See
+// Config.NoFnValues for why the experimental SSA legs need it.
+func noFnConfig() Config {
+	cfg := DefaultConfig()
+	cfg.NoFnValues = true
+	return cfg
+}
+
+// GenMainNoFnValues / GenPrintableMainNoFnValues are GenMain /
+// GenPrintableMain restricted to the closure-free subset. Same seeds,
+// same everything else — a backend that cannot lower closures still
+// gets the full sweep of every other shape.
+func GenMainNoFnValues(seed uint64) string {
+	return newRandGen(seed, noFnConfig()).MainProgram()
+}
+
+func GenPrintableMainNoFnValues(seed uint64) string {
+	return newRandGen(seed, noFnConfig()).MainPrintableProgram()
 }
 
 // New constructs a generator with default limits, drawing from rng.
@@ -2593,7 +2631,27 @@ func (g *Generator) pickType() gtype {
 func (g *Generator) pickMainVarType() gtype {
 	pool := append([]gtype{}, mainVarTypes...)
 	pool = append(pool, g.sortedDynamicTypes()...)
+	pool = g.dropFnValues(pool)
 	return pool[g.ch.intN(len(pool))]
+}
+
+// dropFnValues filters function-valued types out of a pool when
+// cfg.NoFnValues is set. Filtering at the two pool-builders is enough to
+// keep them out of the program entirely: nothing constructs a lambda
+// except literal(tFnI32I32), which is only reached through a type
+// drawn from a pool.
+func (g *Generator) dropFnValues(pool []gtype) []gtype {
+	if !g.cfg.NoFnValues {
+		return pool
+	}
+	out := pool[:0:0]
+	for _, t := range pool {
+		if t == tFnI32I32 || t == tArrFnI32I32 {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 // typePool returns the gtype universe pickType draws from,
@@ -2614,7 +2672,7 @@ func (g *Generator) typePool() []gtype {
 		pool = append(pool, allTypes[:]...)
 	}
 	pool = append(pool, g.sortedDynamicTypes()...)
-	return pool
+	return g.dropFnValues(pool)
 }
 
 // sortedDynamicTypes returns the dynamic struct + enum gtypes
