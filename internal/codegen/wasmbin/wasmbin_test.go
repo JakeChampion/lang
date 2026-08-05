@@ -1769,7 +1769,7 @@ func TestEmitAllocBumpsCursor(t *testing.T) {
 // TestEmitAllocSeedRespectsStringPool — when heap-form string
 // literals are present, the cursor must seed past them so allocs
 // don't clobber the data segment. Combines OpConstStr (which
-// reserves bytes in the data section starting at offset 1024)
+// reserves bytes in the data section starting at stringStart)
 // with OpAlloc and confirms the alloc returns a pointer >= the
 // end of the string pool, 8-aligned.
 func TestEmitAllocSeedRespectsStringPool(t *testing.T) {
@@ -1793,11 +1793,16 @@ func TestEmitAllocSeedRespectsStringPool(t *testing.T) {
 		t.Fatalf("Emit: %v", err)
 	}
 	got := runUnderWasmtime(t, bin, "ptr")
-	// stringStart=1024, 8-byte rc-sentinel header (1024..1031), data at
-	// 1032, len 13 → ends at 1045; round up to 1048 (next multiple of
-	// 8). The bump cursor starts there.
-	if got != "1048" {
-		t.Fatalf("alloc pointer = %q, want 1048 (string pool end rounded to 8)", got)
+	// 8-byte rc-sentinel header at stringStart, data right after it,
+	// len 13, then round the end up to the next multiple of 8. The bump
+	// cursor starts there. Derived from stringStart rather than spelled
+	// out, so relocating the static regions moves this with them.
+	end := stringStart + 8 + 13
+	if end%8 != 0 {
+		end += 8 - end%8
+	}
+	if want := strconv.Itoa(end); got != want {
+		t.Fatalf("alloc pointer = %q, want %s (string pool end rounded to 8)", got, want)
 	}
 }
 
@@ -2237,8 +2242,8 @@ func TestEmitConstFuncInterning(t *testing.T) {
 	if a != b {
 		t.Fatalf("ptr1 = %q, ptr2 = %q — expected same address (interning failed)", a, b)
 	}
-	if a != "96" {
-		t.Fatalf("ptr = %q, want 96 (closuresBase)", a)
+	if want := strconv.Itoa(closuresBase); a != want {
+		t.Fatalf("ptr = %q, want %s (closuresBase)", a, want)
 	}
 }
 
@@ -2277,6 +2282,59 @@ func TestEmitConstFuncTwoTargets(t *testing.T) {
 	}
 	if got := runUnderWasmtime(t, bin, "diff"); got != "-8" {
 		t.Fatalf("addr(b) - addr(a) = %q, want -8 (8 bytes apart)", got)
+	}
+}
+
+// TestEmitConstFuncPoolClearsFreelistHeads — the static closure-cell pool
+// must not alias the allocator's freelist heads table (#6142).
+//
+// The pool used to start at 96 with a (1024-96)/8 = 116-cell budget while
+// the heads table owned [256, 1024), so from cell 20 onwards the two wrote
+// over each other. The visible failure was a trap deep inside the
+// allocator: cell 20's data segment left a function index sitting in
+// head[0], the first 16-byte allocation popped it as a free block and
+// returned a pointer into reserved low memory, and the program wrote
+// through it over the bump cursor at 40.
+//
+// So allocate after interning past that boundary and check the pointer is
+// a real heap address. A pool that still overlapped would hand back the
+// small integer it found in the head slot.
+func TestEmitConstFuncPoolClearsFreelistHeads(t *testing.T) {
+	// One more cell than fits below the heads table, so the last few
+	// land exactly where the old layout collided.
+	const n = (freelistHeadsAddr-96)/8 + 4
+	funcs := make([]*ir.Func, 0, n+1)
+	alloc := &ir.Func{Name: "alloc16", ReturnType: i32()}
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("t%d", i)
+		funcs = append(funcs, &ir.Func{
+			Name:       name,
+			ReturnType: i32(),
+			Ops:        []ir.Op{{Kind: ir.OpConstI32, I32: int32(i)}},
+		})
+		alloc.Ops = append(alloc.Ops,
+			ir.Op{Kind: ir.OpConstFunc, Str: name},
+			ir.Op{Kind: ir.OpDrop})
+	}
+	alloc.Ops = append(alloc.Ops,
+		ir.Op{Kind: ir.OpConstI32, I32: 16},
+		ir.Op{Kind: ir.OpAlloc})
+	funcs = append(funcs, alloc)
+
+	bin, err := Emit(&ir.Program{Funcs: funcs})
+	if err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	got := runUnderWasmtime(t, bin, "alloc16")
+	ptr, err := strconv.Atoi(got)
+	if err != nil {
+		t.Fatalf("alloc16 returned %q, not an integer: %v", got, err)
+	}
+	if ptr < stringStart {
+		t.Errorf("alloc after %d closure cells returned %d, want >= %d (stringStart) — "+
+			"a low pointer means the allocator popped a poisoned freelist head, "+
+			"i.e. the closure pool is writing over the heads table at %d",
+			n, ptr, stringStart, freelistHeadsAddr)
 	}
 }
 

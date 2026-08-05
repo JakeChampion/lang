@@ -1800,8 +1800,7 @@ const randomBufAddr = 60
 //
 // stderrInitAddr / stderrHandleAddr cache wasi:cli/stderr's
 // handle the preview-2 eprint helper consumes. Same shape as
-// the stdout slots; lives at 88..95. closuresBase is at 96 to
-// leave room for both.
+// the stdout slots; lives at 88..95, the top of the named scratch.
 const (
 	stdoutInitAddr   = 80
 	stdoutHandleAddr = 84
@@ -1852,15 +1851,15 @@ const readByteScratchAddr = 44
 // hold base_len, and __str_idx returns scratch+i so the caller's
 // OpLoadByte reads the correct content byte. Heap-form strings
 // bypass the scratch entirely (returned address is base_data+i).
-// Lives at 64..71; closuresBase is set to 80 to leave this room.
+// Lives at 64..71.
 const strIdxScratchAddr = 64
 
 // networkHandleInitAddr / networkHandleAddr cache the
 // wasi:sockets/instance-network borrow consumed by tcp_listen's
 // start-bind step. The handle is an opaque i32 where 0 is a
 // valid value, so we need a separate init flag to detect "not
-// yet fetched". Lives at 72..79, the reserved-for-future window
-// between strIdxScratchAddr and closuresBase.
+// yet fetched". Lives at 72..79, in the reserved-for-future window
+// above strIdxScratchAddr.
 //
 // Mirrors the WAT path which keeps the same cache in memory[124]
 // + bit 4 of the init-flags byte at memory[112]; the wasmbin

@@ -22,17 +22,16 @@ import (
 )
 
 // freelistHeadsAddr is the base of the Phase 3 step-4 segregated
-// freelist: `freelistClasses` i32 heads occupying [256, 1024), which
-// fills the always-free reserved window [96, 1024) exactly — the named
-// low-memory scratch tops out at 92 (stderrHandleAddr) and the bump
-// cursor floor is the string-pool end, which never falls below
-// stringStart=1024. Linear memory is zero-initialised, so every class
-// starts empty. Only consulted when ast.RcFreeEnabled; the flag-off
-// allocator never touches it.
+// freelist: `freelistClasses` i32 heads starting here, above the named
+// low-memory scratch (which tops out at 92, stderrHandleAddr). Linear
+// memory is zero-initialised, so every class starts empty. Only consulted
+// when ast.RcFreeEnabled; the flag-off allocator never touches it.
 //
-// The window is now full, so a further class cannot just be appended:
-// growing the tier means relocating the table (or raising
-// stringStart). freelistTableFitsWindow pins that.
+// This comment used to claim the heads "fill the always-free reserved
+// window [96, 1024) exactly". They do not, and never did: the static
+// closure-cell pool starts at 96 and grew up into them (#6142). The window
+// above the table is now derived from the table's own end, so adding a
+// class simply pushes the pools above it up rather than overrunning them.
 const freelistHeadsAddr = 256
 
 // Freelist class geometry. The heads table holds `freelistClasses`
@@ -60,6 +59,52 @@ const (
 	// Largest size the small tier covers, and the granularity of its
 	// exact-fit classes.
 	freelistSmallMax = freelistSmallClasses * 16 // 2048
+)
+
+// freelistHeadsEnd is the first address past the heads table — and the
+// base of everything static that follows it.
+const freelistHeadsEnd = freelistHeadsAddr + freelistClasses*4 // 1024
+
+// The static data regions above the freelist table, each starting where
+// the previous one ends. Two regions once BOTH claimed [96, 1024) — the
+// closure-cell pool grew up from 96 with a (1024-96)/8 = 116-cell budget,
+// while the freelist heads owned [256, 1024) — so a program with more than
+// 20 unique OpConstFunc targets wrote cells straight over the heads table.
+// The allocator then popped a function index as a freelist head and handed
+// back a pointer into low memory, which the program wrote through, and the
+// clobbered bump cursor eventually produced a head that trapped on
+// dereference (#6142). The reverse write is just as real: a free stores a
+// heap pointer into a head slot that a `call_indirect` later reads as a
+// function index ("undefined element").
+//
+// So the regions are now derived rather than each hard-coded to a window
+// its neighbour also believed it owned, and the two `...Clears...` consts
+// below fail the build if they ever overlap again.
+const (
+	// closuresBase is the static OpConstFunc closure-pair pool:
+	// maxClosureCells 8-byte { fn_idx (i32 LE), env_ptr=0 (i32 LE) } cells,
+	// addressed as closuresBase + 8*tableIdx.
+	closuresBase    = freelistHeadsEnd
+	maxClosureCells = 116
+	closurePoolEnd  = closuresBase + 8*maxClosureCells
+
+	// stringStart is where heap-form string literals begin; the bump
+	// cursor is seeded past the end of that pool, so every heap
+	// allocation lands above all of the static regions.
+	stringStart = closurePoolEnd
+)
+
+// Build-time proof that the static regions do not overlap: a region that
+// started before its predecessor ended would make these negative, and a
+// negative constant does not convert to uint.
+//
+// These replace freelistTableFitsWindow, which asserted only that the heads
+// table stayed under a hard-coded 1024 — true throughout, and no help at
+// all, because the collision was a region ABOVE the table's base growing
+// down into it rather than the table growing up.
+const (
+	closurePoolClearsFreelist = uint(closuresBase - freelistHeadsEnd)
+	stringPoolClearsClosures  = uint(stringStart - closurePoolEnd)
 )
 
 // emitFreelistBin appends the size→(capacity, class) binning both
@@ -1944,12 +1989,13 @@ const allocCursorAddr = 40
 const allocMinStart = 64
 
 // rcLowAddrGuard is the address floor __fern_rc_inc uses to skip
-// static closure cells (which live in the reserved window
-// [closuresBase=96, 1024) and have no rc header at [ptr-8]) without
+// static closure cells (which have no rc header at [ptr-8]) without
 // skipping real heap objects. The bump cursor is seeded at
 // max(allocMinStart, end-of-string-pool) and the string pool starts
-// at stringStart=1024, so every heap allocation lands at >= 1024 —
-// the closures window is exactly [96, 1024).
+// at stringStart, so every heap allocation lands at or above it while
+// every static region — scratch, freelist heads, closure cells — lands
+// below. That makes stringStart the exact threshold, which is why this
+// tracks it rather than restating its value.
 //
 // Both sides previously used 0x10000 (64 KiB), carried over from a WASI
 // memory layout whose heap sat above 64 KiB. On the native preview-2
@@ -1959,17 +2005,15 @@ const allocMinStart = 64
 // and dec/free never reclaimed (so the freelist stayed empty and alloc
 // was a pure bump).
 //
-// The floor is now 1024 for both inc and the dec/free/reclamation
+// The floor is now stringStart for both inc and the dec/free/reclamation
 // helpers (__fern_rc_dec / __fern_arr_dec / __fern_drop_arr_ptr /
-// __fern_map_drop / __fern_box_free / __fern_rc_is_unique). 1024 is the
-// correct skip threshold on every layout: the static closure window is
-// [closuresBase=96, 1024) (cells with no rc header at [ptr-8]) and the
-// bump cursor is seeded at >= stringStart=1024, so 1024 skips null + the
-// closure window while catching every real heap object. The WASI/adapter
-// layout (heap above 64 KiB) is unaffected — its objects clear both
-// thresholds — so lowering the floor only changes the native path, where
-// it makes dec symmetric with inc and turns on Phase-3 freelist reuse.
-const rcLowAddrGuard = 1024
+// __fern_map_drop / __fern_box_free / __fern_rc_is_unique). It is the
+// correct skip threshold on every layout: it skips null + every static
+// region while catching every real heap object. The WASI/adapter layout
+// (heap above 64 KiB) is unaffected — its objects clear both thresholds —
+// so lowering the floor only changes the native path, where it makes dec
+// symmetric with inc and turns on Phase-3 freelist reuse.
+const rcLowAddrGuard = stringStart
 
 // rcUnderflowAddr is a 4-byte counter in the reserved low-memory
 // gap (mem[44..64], between the bump cursor at 40 and the first
@@ -5769,9 +5813,3 @@ func buildTruncF64Body(_ map[string]uint32) []byte {
 	body = numeric.InstF64Trunc(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
-
-// freelistTableFitsWindow fails the build if the heads table outgrows
-// the always-free low-memory window it lives in. The table is
-// zero-initialised linear memory rather than a data segment, so an
-// overflow would silently alias the string pool instead of erroring.
-const freelistTableFitsWindow = uint(1024 - (freelistHeadsAddr + freelistClasses*4))
