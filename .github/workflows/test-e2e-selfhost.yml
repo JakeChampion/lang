@@ -549,12 +549,7 @@ jobs:
           wasmtime: ${{ matrix.wasmtime }}
       - name: aarch64 cross toolchain + qemu (arm64 leg)
         if: matrix.qemu == 'true'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gcc-aarch64-linux-gnu qemu-user-static
-          qemu-aarch64-static --version | head -1
+        uses: ./.github/actions/apt-cross-toolchain
       - name: run the fixture corpus through the self-host compiler
         env:
           FERN_SELFHOST_FIXTURES: "1"
@@ -658,13 +653,7 @@ jobs:
       # x86-64 driver binary will not exec there at all.
       - name: aarch64 cross toolchain (x86 shards — arm64 cross-emit tests)
         if: matrix.host == 'x86_64'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gcc-aarch64-linux-gnu qemu-user-static
-          aarch64-linux-gnu-gcc --version | head -1
-          qemu-aarch64-static --version | head -1
+        uses: ./.github/actions/apt-cross-toolchain
       - uses: actions/download-artifact@v4
         with:
           name: e2e-test-${{ matrix.host }}

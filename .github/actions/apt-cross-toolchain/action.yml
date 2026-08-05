@@ -1,0 +1,81 @@
+name: Install the aarch64 cross toolchain
+description: >
+  Installs gcc-aarch64-linux-gnu and a qemu-aarch64 user-mode emulator,
+  the way every arm64-touching lane needs them.
+
+  It exists because this apt step is the single largest source of false
+  red in this repository. Two distinct failures were observed on
+  consecutive PRs, neither of which ran a test:
+
+    * `apt-get update` exits 100 because packages.microsoft.com returns
+      403 Forbidden on its azure-cli / prod repos ("repository is no
+      longer signed"). Those repos are pre-seeded on the GitHub runner
+      image and are irrelevant to a cross toolchain, but one 403 fails
+      the whole update and takes the job with it.
+
+    * the download from azure.archive.ubuntu.com crawls — 21 MB of
+      gcc-13-aarch64-linux-gnu still unfinished after nine minutes — and
+      the job is cancelled at its wall having installed nothing.
+
+  So: drop the third-party sources we do not use, and retry the fetch
+  with a per-attempt timeout so a stalled mirror is abandoned and
+  retried rather than burning the job's entire budget on one attempt.
+
+inputs:
+  qemu-package:
+    description: >
+      Which qemu user-mode package to install. `qemu-user-static`
+      provides qemu-aarch64-static (and binfmt registration);
+      `qemu-user` provides qemu-aarch64. Lanes differ, so it is an
+      input rather than a guess.
+    required: false
+    default: qemu-user-static
+
+runs:
+  using: composite
+  steps:
+    - name: aarch64 cross toolchain + ${{ inputs.qemu-package }}
+      shell: bash
+      run: |
+        set -uo pipefail
+
+        # Third-party repos pre-seeded on the runner image. None of them
+        # carries a cross toolchain, and packages.microsoft.com has been
+        # observed 403-ing, which fails `apt-get update` outright. Their
+        # absence cannot affect what we install.
+        sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                   /etc/apt/sources.list.d/azure-cli.list \
+                   /etc/apt/sources.list.d/google-chrome.list \
+                   /etc/apt/sources.list.d/*msprod* 2>/dev/null || true
+
+        # Retry with backoff and a per-attempt timeout. The timeout is
+        # the load-bearing half: without it a stalled mirror is not a
+        # failure that can be retried, it is a hang that ends the job.
+        attempt=1
+        max=4
+        while [ "$attempt" -le "$max" ]; do
+          echo "::group::apt attempt $attempt/$max"
+          if timeout 300 sudo apt-get update -qq &&
+             timeout 420 sudo apt-get install -y --no-install-recommends \
+               gcc-aarch64-linux-gnu "${{ inputs.qemu-package }}"; then
+            echo "::endgroup::"
+            break
+          fi
+          echo "::endgroup::"
+          if [ "$attempt" -eq "$max" ]; then
+            echo "::error::apt failed ${max} times installing the aarch64 cross toolchain. This is an infrastructure failure, not a test failure — no test has run at this point. Check whether the Ubuntu mirror is stalling or a repo is returning 403."
+            exit 1
+          fi
+          sleep $((attempt * 15))
+          attempt=$((attempt + 1))
+        done
+
+        # Verify rather than assume: a partial install that leaves the
+        # binaries absent would otherwise surface much later as a pile
+        # of confusing test skips or failures.
+        aarch64-linux-gnu-gcc --version | head -1
+        if command -v qemu-aarch64-static >/dev/null 2>&1; then
+          qemu-aarch64-static --version | head -1
+        else
+          qemu-aarch64 --version | head -1
+        fi
