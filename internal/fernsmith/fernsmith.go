@@ -2531,7 +2531,18 @@ func (g *Generator) lambdaLiteral(b *strings.Builder, sc *scope, depth int) {
 	inner := newScope(sc)
 	inner.declare(tI32, name)
 	fmt.Fprintf(b, "((%s: i32) => ", name)
+	// The body is a new function's body, so the try operator's legality
+	// is decided by the LAMBDA's return type, not the enclosing
+	// function's. Without this save/restore a lambda written inside an
+	// `Option[i32]`-returning function emits `expr?` and the checker
+	// rejects it — "`?` on Option requires the surrounding function to
+	// return Option[_], got void" — which breaks the always-type-checks
+	// invariant the whole fuzz oracle rests on. maybeEmitLocalFn has
+	// always done this; the lambda producer has to as well.
+	prevReturnType := g.currentReturnType
+	g.currentReturnType = tI32
 	g.expr(b, inner, tI32, depth+1)
+	g.currentReturnType = prevReturnType
 	b.WriteByte(')')
 }
 
