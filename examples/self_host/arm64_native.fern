@@ -392,7 +392,7 @@ function arm64_asm_new(): Arm64Asm {
 }
 
 // arm64_asm_label records `name` at the current code offset.
-function arm64_asm_label(a: Arm64Asm, name: string): Arm64Asm {
+function arm64_asm_label(own a: Arm64Asm, name: string): Arm64Asm {
     a = Arm64Asm { ...a, lab_names: a.lab_names.append(name) };
     a = Arm64Asm { ...a, lab_offs: a.lab_offs.append(a.code.len()) };
     return a;
@@ -2454,7 +2454,7 @@ function arm64_gas_strip_lo12(tok: string): string {
 }
 
 // arm64_gas_data_le appends `n` little-endian bytes of `v` to the data blob.
-function arm64_gas_data_le(p: Arm64GasProg, v: i64, n: i32): Arm64GasProg {
+function arm64_gas_data_le(own p: Arm64GasProg, v: i64, n: i32): Arm64GasProg {
     var i: i32 = 0;
     while (i < n) {
         p = Arm64GasProg { ...p, data: p.data.append(((v >> (i * 8)) & 255) as i32) };
@@ -2465,7 +2465,7 @@ function arm64_gas_data_le(p: Arm64GasProg, v: i64, n: i32): Arm64GasProg {
 
 // arm64_gas_data_asciz appends a `.asciz "…"` string + NUL to the data
 // blob, decoding the common \n \t \0 \\ escapes.
-function arm64_gas_data_asciz(p: Arm64GasProg, line: string): Arm64GasProg {
+function arm64_gas_data_asciz(own p: Arm64GasProg, line: string): Arm64GasProg {
     var q1: i32 = arm64_str_indexof(line, "\"");
     if (q1 < 0) {
         p = Arm64GasProg { ...p, data: p.data.append(0) };
@@ -2492,7 +2492,7 @@ function arm64_gas_data_asciz(p: Arm64GasProg, line: string): Arm64GasProg {
 // arm64_gas_data_ascii appends a `.ascii "…"` string (NO trailing NUL) to
 // the data blob, decoding the same escapes as .asciz. asm_arm64 emits string
 // literals as `.ascii` (the length is tracked separately, so no terminator).
-function arm64_gas_data_ascii(p: Arm64GasProg, line: string): Arm64GasProg {
+function arm64_gas_data_ascii(own p: Arm64GasProg, line: string): Arm64GasProg {
     var q1: i32 = arm64_str_indexof(line, "\"");
     if (q1 < 0) { return p; }
     var i: i32 = q1 + 1;
@@ -2720,7 +2720,7 @@ function arm64_parse_f64(s: string): f64 {
 }
 
 // arm64_gas_data_align pads the data blob to a 2^n byte boundary.
-function arm64_gas_data_align(p: Arm64GasProg, n: i32): Arm64GasProg {
+function arm64_gas_data_align(own p: Arm64GasProg, n: i32): Arm64GasProg {
     var a: i32 = 1;
     var k: i32 = 0;
     while (k < n) { a = a * 2; k = k + 1; }
@@ -2735,7 +2735,7 @@ function arm64_gas_data_align(p: Arm64GasProg, n: i32): Arm64GasProg {
 // `.skip`/`.zero`/`.space N`, `.quad`/`.word`/`.byte` (zero-init slots), and
 // `.align` are the forms asm_arm64 emits for the heap globals + the 1 GiB
 // `__fern_heap: .skip` reservation.
-function arm64_gas_bss_directive(p: Arm64GasProg, line: string): Arm64GasProg {
+function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasProg {
     if (arm64_str_starts_with(line, ".skip") || arm64_str_starts_with(line, ".zero") || arm64_str_starts_with(line, ".space")) {
         var sp: i32 = arm64_str_indexof(line, " ");
         if (sp >= 0) {
@@ -2774,7 +2774,7 @@ function arm64_gas_bss_off(p: Arm64GasProg, name: string): i32 {
 }
 
 // arm64_gas_data_directive handles a `.`-directive inside a data section.
-function arm64_gas_data_directive(p: Arm64GasProg, line: string): Arm64GasProg {
+function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasProg {
     if (arm64_str_starts_with(line, ".quad")) {
         return arm64_gas_data_le(p, arm64_gas_atoi64(arm64_gas_trim(line[5:line.len()])), 8);
     }
