@@ -1483,6 +1483,20 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
 
     // Fallback (subset functions always end in `return`).
     s = s.write("    mov x0, #0\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n");
+
+    // Flush the `ldr x0, =N` literal pool at the function boundary — after the
+    // final `ret`, so the pool is never executed. An LDR-literal reaches its
+    // pool through a 19-bit PC-relative offset, i.e. ±1 MiB; with no `.ltorg`
+    // the assembler holds every pending literal to the END of .text, so the
+    // reach is the whole PROGRAM rather than one function. The deleted AST
+    // emitter flushed per function (arm64_gas_ltorg's comment still records the
+    // contract); this selector never did, and the checker driver crossed 1 MiB
+    // of text at 264,380 instructions — `as` rejected the first ~700 lines with
+    // "pc-relative load offset out of range", and the in-process assemblers,
+    // which do not range-check imm19, would have silently loaded from the wrong
+    // address. Per function the reach is a single function's text, which no
+    // Fern function comes close to.
+    s = s.write(".ltorg\n");
     return s;
 }
 
