@@ -164,9 +164,9 @@ Guaranteed:
 - **Shortest.** No decimal with fewer significant digits parses back to
   the same float.
 - **Round-trip.** `parse` ∘ `to_string` is the identity for every finite
-  value — given a *correctly rounded* parser. Fern's own `parse_float` is
-  not one (see below), so the round-trip guarantee is against a correct
-  parser such as Go's `strconv.ParseFloat`, not against `parse_float`.
+  value. That holds for Fern's own `parse_float`, which is correctly
+  rounded (see below), as well as for any other correct parser such as
+  Go's `strconv.ParseFloat`.
 - **Correctly rounded**, including the asymmetric interval at a power of
   two, where the gap below the value is half the gap above it. That case
   is the one the previous exact-bignum formatter got wrong — it tested
@@ -207,27 +207,37 @@ subnormal-heavy mix. Allocation for 200 conversions, by
 `to_string_prec(prec)` is the fixed-width sibling: exactly `prec`
 fractional digits, no trailing-zero trim, rounded half-away-from-zero.
 
-### `parse_float` round-trips within a tolerance, not exactly
+### `parse_float` is correctly rounded
 
 `(string).parse_float(): Option[f64]` (`std/string.fern`) accepts an
 optional sign, integer and fractional digits, and returns `None` on empty
 / sign-only / no-digit / trailing-garbage input. It parses in the f64
 domain (flipped from f32 alongside the #5363 default-width decision;
 `std/json`'s number decoding now reuses it instead of carrying a private
-f64 mirror). Two properties matter for the contract:
+f64 mirror).
 
-- **Mantissa saturation.** Digits accumulate into an i64 capped at 1e15;
-  beyond that, extra integer digits bump the decimal exponent and extra
-  fractional digits are dropped. Very-high-precision inputs therefore
-  lose their low-order digits.
-- **Round-trip is within tolerance, not identity.** `parse_float ∘
-  to_string` recovers a value within a small relative tolerance (the
-  e2e checks use `≤ 0.001`), not the exact original — the fixed-digit
-  formatting and the `* 10^n` scaling in the parser accumulate rounding.
-  Code that needs a value to survive a string round-trip unchanged must
-  not assume float equality; compare with a tolerance.
-  Exactly-representable values (dyadic rationals like `0.5`, `-0.25`,
-  `2.5`) do round-trip exactly.
+It returns the **nearest f64 to the exact decimal value**, ties to even —
+bit-exact with `strconv.ParseFloat` for every input, however many digits
+it carries. `__decimal_to_f64` seeds a float estimate and then refines it
+against exact big-integer midpoint comparisons, so the result does not
+depend on the estimate being close: the digits that decide the rounding
+are compared exactly. Verified against `strconv` over a corpus that
+includes exact decimal midpoints between adjacent doubles (the inputs
+that force the round-half-to-even rule), the classic
+`2.2250738585072011e-308` strtod bug, subnormals, and 1100-digit exact
+midpoints.
+
+Because `to_string` is shortest-round-trip and `parse_float` is correctly
+rounded, **`parse_float ∘ to_string` is the exact identity** on every
+finite value — not a tolerance. Code may compare the result with `==`.
+
+> Historical note: this section previously documented a mantissa
+> saturating at 1e15 and a round-trip that held only "within a small
+> relative tolerance (`≤ 0.001`)". Both described an older parser and were
+> long stale; neither has been true since #5566 made `__decimal_to_f64`
+> exact. The tolerance-based assertions still in the
+> `float_to_string_parity` fixture are historical too — they pass, but
+> they are much weaker than what the parser now guarantees.
 
 ### Default float width
 
