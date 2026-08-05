@@ -2316,6 +2316,38 @@ pub function field_access_arr_field_type(e: parser.Expr, s: LowerState): string 
     return "";
 }
 
+// elem_is_borrowed_rcbox reports whether an ARRAY-ELEMENT value being stored
+// (an array literal element, an `.append` argument) is a SECOND reference to an
+// rc-headered box a DIFFERENT owner will release — so the container must retain
+// it. Today that is a bare field READ of an enum- or array-typed field: the read
+// lowers via struct_get to the source struct's own box pointer, and the source's
+// reclamation deep-drops that field (emit_struct_field_drops), so an un-retained
+// element dangles the moment the source struct dies.
+//
+// #6049: std/regex's parser threads its tree through `RParse { node, pos, g }`
+// and collects children with `items = items.append(q.node)` / `[first.node]`.
+// `q` is a fresh non-escaping struct local — a pure field read does not mark it
+// escaping (reclaimable_names_of treats `p.x` as copying a scalar OUT) — so its
+// exit deep-drop freed the RNode box the array had just taken, and the next
+// allocation recycled it: `(ab|cd)` parsed to a tree whose alternation branch
+// pointed back at its own enclosing RGroup, and __rx_match recursed until the
+// stack overflowed. The struct-literal side already retains this exact shape
+// (fav_alias_inc's ExprFieldAccess arm, and its conservative enum-field rule);
+// this is that convention at the array-element store. A source that turns out to
+// be borrowed simply leaks one count, never over-frees.
+pub function elem_is_borrowed_rcbox(e: parser.Expr, s: LowerState): boolean {
+    if (field_access_arr_field_type(e, s) != "") { return true; }
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return false; }
+            return decl_is_enum(s.structs, decl_field_type(s.structs, oty, fa.field));
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 pub function decl_is_leaksafe(structs: parser.StructDecl[], struct_name: string): boolean {
     var seen: string[] = [];
     return decl_is_leaksafe_d(structs, struct_name, 0, seen);
@@ -10583,6 +10615,13 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     },
                     _ => {}
                 }
+                // The same retain for a borrowed rc-BOX element — a bare enum- or
+                // array-field read (`[first.node]`) whose owner deep-drops the
+                // field on its own reclamation (#6049). rc_inc returns its
+                // argument, so the operand stack arr_make expects is unchanged.
+                if (elem_is_borrowed_rcbox(arr.elements[i], sa)) {
+                    sa = sa.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                }
                 i = i + 1;
             }
             return sa.emit(ir.op_arr_make(n, ewidth));
@@ -14406,7 +14445,6 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             if (dtag == "i64" || dtag == "u64") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, true)); }
             else if (dtag == "f64" || dtag == "f32" || dtag == "float") { dt = dt.emit(ir.op_tuple_get_w(dk, 64, false)); }
             else { dt = dt.emit(ir.op_tuple_get(dk)); }
-            dt = dt.emit(ir.op_store_local(dkslot));
             if (dtag == "string") { dt = dt.mark_str(dkslot, true); }
             // A closure-BOX element ("clo") binds a closure local so
             // `f(args)` on the binding dispatches env-first against the box.
@@ -14454,6 +14492,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // type (like an enum local/param) so `match (c)` / `c.method()`
             // on the bound slot dispatches to `<Enum>.<variant/method>`.
             else if (is_enum_like_name(dtag, dt.structs)) { dt = dt.mark_struct_type(dkslot, dtag); }
+            dt = emit_borrowed_bind_store(dt, dkslot);
             dk = dk + 1;
         }
         return dt;
@@ -16132,6 +16171,14 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                                 },
                                 _ => {}
                             }
+                            // Same retain for a borrowed rc-BOX element — a bare
+                            // enum- or array-field read (`items.append(q.node)`)
+                            // whose owning struct deep-drops the field when it dies
+                            // (#6049). The value is already on the stack and rc_inc
+                            // returns its argument, so no reload is needed.
+                            if (elem_is_borrowed_rcbox(wc.args[0], s)) {
+                                aps = aps.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                            }
                             // Sole-owner (unaliased) `a = a.append(v)`: the old
                             // buffer has no surviving reference, so on a grow-
                             // realloc reclaim it (arr_push_owned) instead of
@@ -17304,7 +17351,6 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         if (ptag == "i64" || ptag == "u64") { ms = ms.emit(ir.op_opt_payload_w(64, true)); }
                         else if (ptag == "f64") { ms = ms.emit(ir.op_opt_payload_w(64, false)); }
                         else { ms = ms.emit(ir.op_opt_payload()); }
-                        ms = ms.emit(ir.op_store_local(pbslot));
                         if (ptag == "string") { ms = ms.mark_str(pbslot, true); }
                         else if (ptag == "i64") { ms = ms.mark_i64(pbslot, true); }
                         // A u64 payload rode the 8-byte op_opt_payload_w(64)
@@ -17368,6 +17414,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // type so `e.method()` at the call site is recognised as
                         // a dyn receiver and routes through op_dyn_dispatch.
                         else if (ptag.len() > 4 && ptag[0:4] == "dyn ") { ms = ms.mark_struct_type(pbslot, ptag); }
+                        ms = emit_borrowed_bind_store(ms, pbslot);
                     }
                     if (arm.has_guard) {
                         ms = lower_expr(arm.guard, ms);
@@ -17488,7 +17535,6 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         ms = ms.emit(ir.op_load_local(scrut_slot));
                         if (ev_ty == "i64" || ev_ty == "u64") { ms = ms.emit(ir.op_struct_get_i64(bidx)); }
                         else { ms = ms.emit(ir.op_struct_get(bidx, struct_field_width(ms.structs, vname, bidx))); }
-                        ms = ms.emit(ir.op_store_local(bslot));
                         // Type the bound payload for downstream dispatch: a
                         // string payload (`Word(string)`) as a string; a
                         // struct payload (`Binary(BinExpr)`) with its struct
@@ -17568,6 +17614,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             ms = ms.mark_arr(bslot, true);
                             ms = ms.mark_struct_type(bslot, ev_ty[0 : ev_ty.len() - 2]);
                         }
+                        ms = emit_borrowed_bind_store(ms, bslot);
                     }
                     bidx = bidx + 1;
                 }
@@ -17773,6 +17820,12 @@ pub function lower_arr_append_value(obj: parser.Expr, val: parser.Expr, s: Lower
     }
     st = lower_expr(val, st);
     if (!st.ok) { return st; }
+    // A borrowed rc-BOX element (an enum- / array-field read) is a second
+    // reference the clone must count, exactly as in the reassign-form append
+    // (#6049) — the source struct deep-drops the field when it dies.
+    if (elem_is_borrowed_rcbox(val, st)) {
+        st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
+    }
     // The clone (a fresh slice, cap == len) is grown immediately, so this
     // arr_push ALWAYS reallocs — and the clone is sole-owned (just sliced, no
     // alias), so reclaim the pre-grow clone instead of leaking it. This is the
@@ -17780,6 +17833,32 @@ pub function lower_arr_append_value(obj: parser.Expr, val: parser.Expr, s: Lower
     // immutable-update (the EmitState/LowerState threading) flows through here
     // (#3452 / #3425).
     return st.emit(ir.op_arr_push_owned());
+}
+
+// emit_borrowed_bind_store stores a binding that BORROWS its value from a
+// container it does not own — a match-arm enum / Option / Result payload
+// (`RSeq(xs) =>`) or a tuple-destructure element (`var (xs, n) = t`) — into
+// `slot`. An ARRAY binding takes the full Perceus accounting of emit_arr_store
+// (retain the new buffer, cow-guarded release of the slot's prior one);
+// everything else is the plain store it always was.
+//
+// #6049: the exit sweep decs EVERY is_arr slot (emit_dec_sweep_except_list), so
+// an un-retained borrowed array bind released the container's buffer while the
+// container still pointed at it. One match was survivable — the construction-side
+// inc of #2649 paid for exactly one — but re-matching the SAME value released it
+// again: std/regex's `RSeq(RNode[])` arm ran once per __rx_match, so `(ab)+` over
+// "ababab" (four traversals of one subtree) read recycled memory on the third and
+// segfaulted. This is lower_var's #3457 alias_inc at the three remaining borrowed
+// binds, and it must be the inc/dec PAIR rather than a bare retain: a match inside
+// a loop rebinds the slot every iteration, and only the cow-guarded release of the
+// prior buffer keeps that balanced. A borrowed source leaks one count, never
+// over-frees.
+//
+// The caller emits this AFTER its mark chain (which is what decides is_arr); the
+// marks emit no ops, so a non-array bind stays byte-identical.
+function emit_borrowed_bind_store(s: LowerState, slot: i32): LowerState {
+    if (!s.is_arr_slot(slot)) { return s.emit(ir.op_store_local(slot)); }
+    return emit_arr_store(s, slot, true, true);
 }
 
 // emit_arr_store stores the new value (on top of the operand stack) into

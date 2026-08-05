@@ -19,28 +19,15 @@
 #
 # Unlike the wasm leg, this one has no exit-code blind spot: a native binary
 # carries main's return over the full 0..255, so every fixture's VALUE is
-# checked. Six rows below exist BECAUSE of that — they expect >= 126, so the wasm
-# leg only ever logged "exit value unmeasurable" for them.
+# checked — which is how several rows below were ever measured at all, since the
+# wasm leg can only log "exit value unmeasurable" for an expected value >= 126.
 #
 # All 16 were measured on the first two runs (49e762e0, d67de908), 317 fixtures
-# run. Eight have since been FIXED — `eq_struct_enum` + `ord_struct_enum`
+# run. Fourteen have since been FIXED — `eq_struct_enum` + `ord_struct_enum`
 # (#6009), `tuple_match_expr` (#6010), `int_wrap` + `u64_max_to_f64_is_huge`
-# (#6050 / #6051), `multiline_stdin` (#6052), and `pure_collection_aliases` +
-# `map_struct_value_field` (the #6007 slices) — see the notes in the wasm
-# sibling. Eight remain, listed below.
-
-# --- the six the wasm leg could never judge: they never terminate -----------
-# Killed at the leg's 20s cap with no output. Natively each returns in
-# milliseconds. Before the cap existed they ran ~83s and died on a signal,
-# consistent with an unbounded-allocation loop being OOM-reaped (the arena
-# bounds check exits 137 cleanly, so it is not that). Complementary to #6008:
-# the four capture-group fixtures that TRAP on wasm all PASS here.
-regex_basic #6049 hangs (killed at 20s, no output); native returns 255 in ms
-regex_ci #6049 hangs (killed at 20s, no output); native returns 255 in ms
-regex_ops #6049 hangs (killed at 20s, no output); native returns 255 in ms
-regex_wordbound #6049 hangs (killed at 20s, no output); native returns 255 in ms
-regex_captures_assert #6049 hangs (killed at 20s, no output); native returns 255 in ms
-regex_groups #6049 hangs (killed at 20s, no output); native returns 127 in ms
+# (#6050 / #6051), `multiline_stdin` (#6052), `pure_collection_aliases` +
+# `map_struct_value_field` (the #6007 slices), and the six regex fixtures
+# (#6049) — see the notes in the wasm sibling. Two remain, listed below.
 
 # --- shared with the wasm leg: same fixtures, same wrong values -------------
 # Byte-identical wrong answers on two backends with no shared instruction
@@ -56,7 +43,7 @@ derive_json #6009 returns 8, native 42 — identical to the wasm + arm64 figure;
 # `it.value().field` with no struct recovery) — see the wasm sibling's notes.
 generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
 
-# --- new, first seen on x86-64: ALL THREE NOW FIXED ------------------------
+# --- new, first seen on x86-64: ALL NOW FIXED ------------------------------
 # `int_wrap` (#6050) and `u64_max_to_f64_is_huge` (#6051): the i32 formatter now
 # carries its magnitude unsigned (so INT_MIN's self-negation still renders its
 # digits), and int→f64 is emitted per the op's width + signedness (so a u64
@@ -68,3 +55,14 @@ generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown sy
 # never x86-64-specific — all three self-host backends had the same single-read
 # shape, and the wasm leg only looked clean because it sets skipStdin and so
 # never asked. Keep that in mind before reading a lane's silence as coverage.
+#
+# The six regex fixtures (#6049): two self-host RC defects in irlower.fern, both
+# in the shared frontend and so equally an arm64 bug — the leg's title said
+# "hangs", but by the time they were diagnosed they SEGV'd in well under a
+# second, and only one of the two failure modes was ever a runaway loop. (1) A
+# borrowed array bind — a match-arm enum/Option/Result payload, a tuple
+# destructure — was swept at exit with no retain, so re-matching one value
+# released its payload buffer once per match. (2) An rc box read out of a struct
+# field and stored as an array ELEMENT was not retained while the source struct's
+# deep-drop released it, so std/regex's parse tree pointed back at its own
+# enclosing node and __rx_match recursed until the stack overflowed.
