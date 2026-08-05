@@ -48,6 +48,15 @@ what caught it.
 | Driver rc guard (`util.rc_underflow_guard`) | The compiler's OWN heap accounting stayed balanced while compiling | Leaks (an over-*retain* is silent), and anything outside the drivers |
 | `FERN_NATIVE_ASM=1` fixtures | The in-process assembler encodes what the backend emits | The gcc path, which the fallback silently hides behind |
 | Differential (`internal/e2e/diff_oracle_test.go`) | Two compilers agree on exit codes | Everything about memory — see below |
+| `scripts/selfhost-emit-hashes` (manual, before/after) | A refactor of the self-host compiler was PURE: the bytes it emits for the whole fixture corpus, on all three backends, are unchanged | Anything the corpus does not exercise. It says the output did not move, never that the output is right |
+
+**Reach for `scripts/selfhost-emit-hashes` on any mechanical refactor of the
+self-host compiler.** It is the gate that fits the failure mode: whole families
+of values there share one type — the `FnSigs` registries are all `string[]`,
+the IR ops all `ir.Op` — so a crossed wire or a dropped argument type-checks
+cleanly and surfaces only as a miscompile. The fixpoint will not catch it
+(self-referential, see above) and the type checker cannot. Comparing emitted
+bytes over ~1000 (fixture, target) pairs will. ~8 minutes per side.
 
 ## What nothing gates
 
@@ -65,11 +74,19 @@ Worth knowing so you do not assume coverage you do not have:
   noticed, which is the argument for the gate rather than against it. Treat
   unmeasured allocation figures in these docs as expired.
 
-  Quote figures the gate produced, not ones from a hand-run `fern` CLI: the two
-  compile through different pipelines and report different totals for identical
-  source (the same `.with` shape read 48 KB / 2 KB via the CLI). The gate is
-  sound either way — it compares the two COMPILERS under one consistent
-  pipeline — but the two sets of numbers are not interchangeable.
+  Quote figures the gate produced, not ones from a hand-run `fern` CLI — but
+  not for the reason this note used to give. It claimed the two "compile
+  through different pipelines"; they do not. Measured 2026-08-05 (#6034), the
+  harness path, the harness path plus `treeshake`, and the real CLI report the
+  SAME `__heap_bump_bytes()` for identical source, on both the `.append` and
+  `.with` shapes.
+
+  The numbers differ because they measure different QUANTITIES. The gate's
+  figure is a per-churn DELTA — `bumpSrc` runs the churn twice and subtracts,
+  so it reports only what the first churn failed to give back. A hand CLI run
+  of `__heap_bump_bytes()` reports the absolute high-water mark, which includes
+  startup and everything the first churn allocated fresh. Comparing the two is
+  a units error, not evidence of a pipeline difference.
 
   The gate compares the two probes both compilers now support and asserts what
   survives a layout difference: `__arr_push_shared_count()` agreeing on ZERO vs
