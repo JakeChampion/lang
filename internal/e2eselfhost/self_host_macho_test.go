@@ -123,12 +123,16 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 			binPath := filepath.Join(dir, name+".bin")
 			out, err := exec.Command(fernBin, "-target", "arm64-darwin", "-o", binPath, srcPath).CombinedOutput()
 			if err != nil {
-				if native {
-					// The self-host CLI is itself a fresh Mach-O the kernel
-					// may reject; treat a CLI launch/run failure as a skip
-					// (it's the runtime question this test is probing), not
-					// a regression.
-					t.Skipf("self-host CLI did not emit (err=%v):\n%s", err, out)
+				// The self-host CLI is itself a fresh Mach-O the kernel may
+				// reject, and that launch failure is environmental rather than
+				// a compiler regression — but ONLY when the CLI never ran. If
+				// it produced a diagnostic it ran and failed, and skipping
+				// there hides exactly the class of bug this test exists for:
+				// #6042's arena death printed "heap arena exhausted" and was
+				// read as a skip on every Apple Silicon run. Split on the
+				// output: silent launch failure skips, a talking CLI fails.
+				if native && len(bytes.TrimSpace(out)) == 0 {
+					t.Skipf("self-host CLI did not launch (err=%v, no output)", err)
 				}
 				t.Fatalf("self-host emit failed: %v\n%s", err, out)
 			}

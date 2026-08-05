@@ -2999,7 +2999,22 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x1, #1\n");
     s = s.write("    lsl x1, x1, #34\n");             // length = 0x400000000 (16 GiB)
     s = s.write("    mov x2, #3\n");                  // PROT_READ | PROT_WRITE
-    s = s.write("    mov x3, #0x4022\n");             // MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE (exempt from overcommit accounting; see native arm64 heapBytes comment)
+    // mmap FLAGS are per-OS, and unlike the syscall NUMBER nothing downstream
+    // translates them: darwin_sysno maps 222 -> 197 and darwinize rewrites
+    // `mov x8` -> `mov x16` / `svc #0` -> `svc #0x80`, but `#0x4022` is a plain
+    // immediate and passed through untouched. On XNU MAP_ANON is 0x1000 (not
+    // Linux's 0x20), so 0x4022 asked for a FILE mapping with fd = -1: mmap
+    // failed, `b.mi` took .Lalloc_oom, and every arm64-darwin binary died
+    // "heap arena exhausted" (exit 137) on its first allocation — a lie about
+    // the cause, since the arena was never mapped at all (#6042). Mirrors the
+    // native backend's split at internal/codegen/arm64/arm64.go.
+    if (darwin) {
+        // MAP_ANON (0x1000) | MAP_PRIVATE (0x2). No NORESERVE: macOS does not
+        // strictly account anonymous private reservations.
+        s = s.write("    mov x3, #0x1002\n");
+    } else {
+        s = s.write("    mov x3, #0x4022\n");         // MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE (exempt from overcommit accounting; see native arm64 heapBytes comment)
+    }
     s = s.write("    mov x4, #0\n");
     s = s.write("    sub x4, x4, #1\n");              // x4 = -1 (fd)
     s = s.write("    mov x5, #0\n");                  // offset
@@ -4391,6 +4406,27 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write("    strb w10, [x22, x21]\n");  // NUL terminator
     if (darwin) {
         s = s.write("    mov x0, #-2\n");        // AT_FDCWD (Darwin)
+        // The IR carries LINUX open flags — irlower's open_reader / open_writer
+        // / open_appender constants are target-agnostic, and the op emitter has
+        // no `darwin` to branch on — so translate them here, the same class of
+        // bug as the arena mmap flags above (#6042). XNU's O_CREAT is 0x200,
+        // O_TRUNC 0x400 and O_APPEND 0x8; none match Linux's 64 / 512 / 1024:
+        //   O_RDONLY                     0    ->    0
+        //   O_WRONLY|O_CREAT|O_TRUNC     577  -> 1537
+        //   O_WRONLY|O_CREAT|O_APPEND   1089  ->  521
+        // Untranslated, open_writer asked XNU for O_WRONLY|0x40|0x200 — a
+        // nonexistent flag plus O_CREAT-without-O_TRUNC, so an overwrite left
+        // the old file's trailing bytes (write_file already got this right at
+        // its own openat, which is why only the streaming path was affected).
+        s = s.write("    cmp x23, #577\n");
+        s = s.write("    b.ne .Lofd_flag1\n");
+        s = s.write("    mov x23, #1537\n");
+        s = s.write("    b .Lofd_flagdone\n");
+        s = s.write(".Lofd_flag1:\n");
+        s = s.write("    cmp x23, #1089\n");
+        s = s.write("    b.ne .Lofd_flagdone\n");
+        s = s.write("    mov x23, #521\n");
+        s = s.write(".Lofd_flagdone:\n");
     } else {
         s = s.write("    mov x0, #-100\n");      // AT_FDCWD (Linux)
     }
