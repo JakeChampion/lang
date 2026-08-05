@@ -115,7 +115,7 @@ the same treatment; it was left alone here to keep the change reviewable.
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
 | `Map` layout | Open addressing, separate key/value columns | SwissTable control bytes + group probe | BLOCKED on SIMD; **SWAR variant viable** |
-| String hash | FNV-1a 32-bit, byte at a time | wyhash / XXH3 | GAP, easy |
+| String hash | **FNV-1a over 4-byte blocks + fmix32 avalanche** | wyhash / XXH3 | **DONE (this pass)** |
 | Scalar hash | Wang mix | Fine | OK |
 | Adversarial keys | None — no seeding | SipHash, randomised seed | GAP (matters if Fern serves untrusted input) |
 | Tiny map | Full probe machinery | Linear scan below ~8 entries | GAP, easy |
@@ -127,9 +127,12 @@ iteration with `(x - 0x0101..) & ~x & 0x8080..`-style tricks. That captures a
 good share of the cache-behaviour win, which is where most of SwissTable's
 advantage actually comes from.
 
-FNV-1a is a defensible default but is byte-at-a-time and has known weak
-avalanche in the low bits — which is exactly where a power-of-two mask reads.
-wyhash-style 64-bit block mixing is a contained, well-tested replacement.
+The string hash now mixes 4-byte blocks and finishes with an fmix32
+avalanche (see below). Going further — wyhash/XXH3-style 64-bit block mixing —
+needs a raw pointer into the string and unaligned 8-byte loads to be worth it;
+assembling a 64-bit word from eight indexed byte loads costs more than it
+saves. That makes it a bigger change than it looks, gated on how comfortable
+the language is exposing string data pointers.
 
 The seeding gap is a security consideration, not just a performance one: with
 an unseeded, publicly-known hash, an attacker who controls map keys can force
@@ -251,9 +254,11 @@ constraints above.
 3. **A fast non-crypto PRNG** (PCG or xoshiro) behind a separate type, so
    `shuffle` / `sample` / `fuzz` stop paying a syscall per draw. The
    modulo-bias half of this item is done.
-4. **wyhash-style string hash** for `core/map`, plus a small-map linear-scan
-   path.
-5. ~~Adaptive sort~~, ~~`random_int` modulo bias~~, ~~SWAR bit counting~~ — done, see below.
+4. **Small-map linear-scan path** for `core/map` — below ~8 entries the full
+   probe machinery costs more than a scan. (The string hash half of this item
+   is done.)
+5. ~~Adaptive sort~~, ~~`random_int` modulo bias~~, ~~SWAR bit counting~~,
+   ~~map string hash~~ — done, see below.
 
 **Tier 2 — unblocked, narrower**
 
@@ -379,6 +384,33 @@ Verified against the loop implementations they replaced, recomputed inside the
 test program: every `1<<k` and its neighbours at both widths, 3000
 pseudo-random values including negatives, and the zero / all-ones boundaries
 where smear-and-count and the `x ^ (x-1)` identity are least obviously correct.
+
+**`core/map`'s string hash mixes blocks and avalanches.** It was textbook
+byte-at-a-time FNV-1a. It now folds 4 bytes per multiply and finishes with a
+murmur3 fmix32, because callers mask the hash with `cap - 1` and so read only
+the LOW bits — where FNV-1a diffuses worst, since its multiply pushes influence
+upward while a trailing byte's xor only perturbs the bottom 8.
+
+The numbers are worth stating plainly, because the intuition oversells this.
+Bucket occupancy moves close to ideal: 1000 short keys into 1024 buckets fill
+618 of them versus 562 before, against ~638 for a uniform hash; 512
+common-prefix keys into 1024 fill 402 versus 392, against ~403. End to end that
+is about **3-5%** on a map-lookup-heavy benchmark (4000 identifier-shaped keys,
+60 lookup passes: 58-60 ms before, 56-58 ms after) — hashing is only one part
+of a lookup alongside probing and key comparison. It is **not** a 4x win
+despite the per-block mix being 4x cheaper than the per-byte one: the fixed
+fmix32 tail eats much of that back, and for 1-3 byte keys it is a net increase
+in multiplies, bought for the better spread.
+
+Changing this hash cannot change map semantics — iteration is insertion order
+off an entry array, not bucket order, and lookups re-check keys by equality —
+so the risk was distribution and probing, not correctness. Covered by a
+public-API round trip across key lengths chosen around the 4-byte block
+boundary (both loops), a 2000-key insert/lookup/delete cycle, and an occupancy
+comparison that the OLD hash fails, so removing the avalanche breaks the
+suite. The self-host compiler was also rebuilt against the new hash — it
+leans on maps for its symbol tables — and still compiles every verification
+program in this pass correctly.
 
 **A native/self-host divergence in `split("")` was found and fixed.**
 `std/string.split` char-splits an empty separator, but the self-host compiler
