@@ -2089,7 +2089,9 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
-pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+// emit_rt_clock_and_print emits the FFI call shims, print_int, and the clock / sleep helpers
+// (now_unix_ms, monotonic_ns, now_ns, sleep_ms), which every module gets.
+function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // FFI __c_call<n> shims (#4375): allocation-free arg-marshal + `blr fn`.
     s = emit_ccall_shims_arm64(s);
     // __fern_print_int helper: converts the i64 in x0 to
@@ -2307,6 +2309,12 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
     // __fern_alloc, requests POLLIN on each, calls ppoll(2) (#73 — arm64 has no
     // bare `poll`), and scans revents. timeout_ms < 0 → NULL timespec (block).
     // On Darwin the readiness path (kqueue) is not ported, so it returns -1.
+    return s;
+}
+
+// emit_rt_readiness emits the readiness primitives — poll, timer_fd, and the wasm
+// pollable shims (timer_pollable, pollable_drop, block, poll).
+function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     if (s.has_need("poll")) {
         s = s.write(".globl __fern_poll\n");
         s = s.write(".type __fern_poll, %function\n");
@@ -2482,6 +2490,13 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
     // __fern_read_int helper: reads up to 16 bytes from stdin
     // into a stack buffer, parses an optional leading `-`
     // followed by decimal digits, returns the value in x0.
+    return s;
+}
+
+// emit_rt_io_and_string emits stdin/stdout helpers and the string runtime — read_int,
+// str_print, putchar, concat / eq / cmp / search, the int-to-string family,
+// chr, case folding, repeat, eprint.
+function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("read_int")) {
         s = s.write("__fern_read_int:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
@@ -2815,6 +2830,13 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
     // slot; without the early intern the label would be undefined for
     // programs that never mention stat() themselves. Same for the
     // __fern_subprocess helper's "ProcessResult" shape name.
+    return s;
+}
+
+// emit_rt_heap emits the heap: the lazily-mmap'd arena, the allocator, and the
+// whole reference-counting runtime (retain / release / the per-shape drop and
+// free helpers). By far the largest phase.
+function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     if (s.has_need("heap")) {
         var fsPre: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "FileStat");
         s = fsPre.state;
@@ -5896,6 +5918,13 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
     // values: T[] @8]; linear scan + str_eq; set/get grow via
     // __fern_arr_push. Gated on (arr_push && str_eq), both marked at
     // every map op.
+    return s;
+}
+
+// emit_rt_collections_and_proc emits the array runtime (push / slice / concat / reverse / join /
+// the fold helpers), the map helpers, the integer-math helpers, the remaining
+// string builtins, argv, random, and the subprocess primitives.
+function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     if (s.has_need("arr_push") && s.has_need("str_eq")) {
         // __fern_map_new(x0 = capacity hint, ignored) → empty map box.
         s = s.write(".globl __fern_map_new\n");
@@ -7290,6 +7319,15 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
     if (s.has_need("arr_i32_min_max_opt")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_min_max_opt(), s.struct_decls, s);
     }
+    return s;
+}
+
+pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+    s = emit_rt_clock_and_print(s, darwin);
+    s = emit_rt_readiness(s, darwin);
+    s = emit_rt_io_and_string(s);
+    s = emit_rt_heap(s, darwin);
+    s = emit_rt_collections_and_proc(s, darwin);
     return s;
 }
 
