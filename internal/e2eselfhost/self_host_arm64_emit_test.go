@@ -2043,10 +2043,14 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"",
 		},
 		{
+			// An empty separator CHAR-SPLITS, matching std/string.split and the
+			// interp. This used to expect 1 (the whole string in one piece);
+			// see the sibling case in self_host_asm_run_test.go for why that
+			// divergence existed and why it no longer does.
 			"str-split-empty-sep",
-			"function main(): i32 { var a = str_split(\"hello\", \"\"); return a.len(); }",
-			1,
-			"",
+			"function main(): i32 { var a = str_split(\"hello\", \"\"); for s in a { write(s); write(\"|\"); } return a.len(); }",
+			5,
+			"h|e|l|l|o|",
 		},
 		{
 			"str-split-leading-sep",

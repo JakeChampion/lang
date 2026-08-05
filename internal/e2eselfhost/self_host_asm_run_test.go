@@ -2681,10 +2681,18 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
+			// An empty separator CHAR-SPLITS, matching std/string.split and the
+			// interp. This used to expect 1 (the whole string in one piece):
+			// rt_src_str_split returned [s], a deliberate divergence that
+			// matched the hand-written asm emitter and was never covered by a
+			// differential test. Both halves of that rationale expired — the
+			// hand-asm emitters were deleted (#3457/#5972), and
+			// internal/e2e/string_split_empty_sep_test.go now covers it on
+			// every backend.
 			"str-split-empty-sep",
-			"function main(): i32 { var a = str_split(\"hello\", \"\"); return a.len(); }",
-			1,
-			"",
+			"function main(): i32 { var a = str_split(\"hello\", \"\"); for s in a { write(s); write(\"|\"); } return a.len(); }",
+			5,
+			"h|e|l|l|o|",
 			"",
 		},
 		{
