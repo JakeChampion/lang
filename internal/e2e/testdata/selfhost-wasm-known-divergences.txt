@@ -34,7 +34,13 @@
 # [keys, values] with no capacity field, so a fresh empty box of the same key
 # kind IS a cleared map.
 #
-# Seven of the original twelve remain. All were found by the leg's first run
+# `map_struct_value_field` was here and is now FIXED (the #6007 slice): its own
+# header blames `get_or(..).field` on a Map[K, Struct], but that half always
+# lowered — the bail was `it.value().field`, where expr_struct_type had a struct
+# recovery for the get_or receiver and none for the iterator's. Both read the
+# same V.
+#
+# Six of the original twelve remain. All were found by the leg's first run
 # over the existing corpus, on fixtures that had been green for months because
 # all four of TestFernFixtures' backends are the native compiler. Each has been reproduced by hand with a
 # native self-host CLI (`make selfhost-cli`) before being written down; none is
@@ -47,7 +53,6 @@
 # Hard errors now the AST emitters are deleted (#3457), so these are real
 # IR-subset gaps, not fallbacks. "module is not IR-eligible" from the driver.
 generic_method_typeparams #6007 IR-ineligible on self-host wasm; native compiles it
-map_struct_value_field #6007 IR-ineligible; bails on `it.value().field` over a Map[K, Struct] — NOT the `get_or(..).field` its header blames, which lowers fine
 
 # --- traps at runtime ----------------------------------------------------
 # `wasm trap: unreachable instruction executed`. Detected regardless of the
