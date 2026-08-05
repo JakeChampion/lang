@@ -47,7 +47,7 @@
 # Hard errors now the AST emitters are deleted (#3457), so these are real
 # IR-subset gaps, not fallbacks. "module is not IR-eligible" from the driver.
 generic_method_typeparams #6007 IR-ineligible on self-host wasm; native compiles it
-map_struct_value_field #6007 IR-ineligible on self-host wasm; native compiles it
+map_struct_value_field #6007 IR-ineligible; bails on `it.value().field` over a Map[K, Struct] — NOT the `get_or(..).field` its header blames, which lowers fine
 
 # --- traps at runtime ----------------------------------------------------
 # `wasm trap: unreachable instruction executed`. Detected regardless of the
