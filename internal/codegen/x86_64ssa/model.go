@@ -126,12 +126,12 @@ func runProg(m map[string]*Program, table []string, p *Program, h *modelHeap, ar
 				if err != nil {
 					return 0, 0, err
 				}
-				if idx < 0 || idx >= int64(len(table)) {
-					return 0, 0, fmt.Errorf("Run: CallIndirect fn index %d out of range (table has %d entries)", idx, len(table))
+				if idx < 1 || idx > int64(len(table)) {
+					return 0, 0, fmt.Errorf("Run: CallIndirect fn index %d out of range (table has %d entries, index 0 is the null reference)", idx, len(table))
 				}
-				callee, ok := m[table[idx]]
+				callee, ok := m[table[idx-1]]
 				if !ok {
-					return 0, 0, fmt.Errorf("Run: CallIndirect target %q (index %d) not in module", table[idx], idx)
+					return 0, 0, fmt.Errorf("Run: CallIndirect target %q (index %d) not in module", table[idx-1], idx)
 				}
 				argvals := make([]int64, 0, len(in.ArgLocs)+1)
 				for _, l := range in.ArgLocs {
@@ -172,16 +172,23 @@ func runProg(m map[string]*Program, table []string, p *Program, h *modelHeap, ar
 				if !ok {
 					return 0, 0, fmt.Errorf("Run: MakeClosure target %q not in table (use RunModuleTable)", in.Callee)
 				}
-				env, err := storeCaptures(h, in.ArgLocs, readLoc)
-				if err != nil {
-					return 0, 0, err
+				// The 32-byte {fn_idx, env_ptr, drop_idx, env_ptr} cell the real
+				// asm builds. A zero-capture closure has no env block, so nothing
+				// may dispatch its drop sub-pair: both slots stay null.
+				var env, dropIdx int64
+				if len(in.ArgLocs) > 0 {
+					dropIdx, _ = funcIndexOf(table, "__closure_drop_"+in.Callee)
+					e, err := storeCaptures(h, in.ArgLocs, readLoc)
+					if err != nil {
+						return 0, 0, err
+					}
+					env = e
 				}
-				cell := h.alloc(16)
-				if err := h.store(cell, idx, 8); err != nil {
-					return 0, 0, err
-				}
-				if err := h.store(cell+8, env, 8); err != nil {
-					return 0, 0, err
+				cell := h.alloc(32)
+				for i, v := range []int64{idx, env, dropIdx, env} {
+					if err := h.store(cell+int64(i)*8, v, 8); err != nil {
+						return 0, 0, err
+					}
 				}
 				regs[in.Dst] = cell
 			case MemAlloc:
@@ -243,12 +250,14 @@ func runProg(m map[string]*Program, table []string, p *Program, h *modelHeap, ar
 	}
 }
 
-// funcIndexOf returns the position of name in the ordered function table (the
-// fn_idx a closure dispatches on), or false if absent.
+// funcIndexOf returns name's function-value index — its position in the ordered
+// function table, biased by one so that 0 is the NULL function reference (the
+// value a closure cell's drop slot carries when its target has no
+// __closure_drop_ thunk). Returns false if absent.
 func funcIndexOf(table []string, name string) (int64, bool) {
 	for i, n := range table {
 		if n == name {
-			return int64(i), true
+			return int64(i) + 1, true
 		}
 	}
 	return 0, false

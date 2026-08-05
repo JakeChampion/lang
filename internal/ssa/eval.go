@@ -296,12 +296,15 @@ func b2i(b bool) int64 {
 	return 0
 }
 
-// funcIndex returns the position of name in the ordered function table (the
-// fn_idx an OpCallIndirect dispatches on), or false if absent.
+// funcIndex returns name's function-value index — its position in the ordered
+// function table, biased by one so that 0 is the NULL function reference (the
+// value a closure cell's drop slot carries when its target has no
+// __closure_drop_ thunk; see docs/SSA-CLOSURE-DISPATCH.md). Returns false if
+// absent.
 func funcIndex(table []string, name string) (int64, bool) {
 	for i, n := range table {
 		if n == name {
-			return int64(i), true
+			return int64(i) + 1, true
 		}
 	}
 	return 0, false
@@ -488,8 +491,8 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 		return set(r0)
 
 	case OpCallIndirect:
-		// Args[0] is the callee: a function value, i.e. a pointer to a
-		// {fn, env} cell (fn = table index at +0, env_ptr at +8) — the shape
+		// Args[0] is the callee: a function value, i.e. a pointer to a closure
+		// cell (fn = table index at +0, env_ptr at +8) — the shape
 		// OpMakeClosure / OpConstFunc build. Args[1..] are the call arguments.
 		// Dispatch derefs the cell and calls fn with env appended as the last
 		// argument (see docs/SSA-CLOSURE-DISPATCH.md).
@@ -511,12 +514,12 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 		if err != nil {
 			return err
 		}
-		if idx < 0 || idx >= int64(len(table)) {
-			return fmt.Errorf("Eval: OpCallIndirect fn index %d out of range (table has %d entries)", idx, len(table))
+		if idx < 1 || idx > int64(len(table)) {
+			return fmt.Errorf("Eval: OpCallIndirect fn index %d out of range (table has %d entries, index 0 is the null reference)", idx, len(table))
 		}
-		callee, ok := funcs[table[idx]]
+		callee, ok := funcs[table[idx-1]]
 		if !ok {
-			return fmt.Errorf("Eval: OpCallIndirect target %q (index %d) not in function table", table[idx], idx)
+			return fmt.Errorf("Eval: OpCallIndirect target %q (index %d) not in function table", table[idx-1], idx)
 		}
 		argvals := make([]int64, 0, len(op.Args))
 		for i := 1; i < len(op.Args); i++ {
@@ -543,24 +546,34 @@ func evalOp(funcs map[string]*Func, table []string, h *heap, strLen map[int32]in
 		return set(env)
 
 	case OpMakeClosure:
-		// Allocate the env block (as OpMakeEnv) plus a {fn_idx, env_ptr} cell,
-		// and return the cell pointer. fn_idx is the target's index in the
-		// module's ordered function table — the value an OpCallIndirect on this
-		// closure would dispatch on.
+		// Allocate the env block (as OpMakeEnv) plus the 32-byte
+		// {fn_idx, env_ptr, drop_idx, env_ptr} cell, and return the cell pointer.
+		// fn_idx is the target's function-value index — the value an
+		// OpCallIndirect on this closure dispatches on. drop_idx names the
+		// target's __closure_drop_ thunk (0 = none), and the env_ptr duplicate at
+		// +24 makes {drop_idx, env_ptr} itself a dispatchable cell, which is how a
+		// generic holder like __drop_arr_closure frees an element's captures
+		// without knowing its closure's identity (docs/SSA-CLOSURE-DISPATCH.md).
 		idx, ok := funcIndex(table, op.Str)
 		if !ok {
 			return fmt.Errorf("Eval: OpMakeClosure target %q not in function table (use EvalInTable)", op.Str)
 		}
-		env, err := storeCaptures(h, op, arg)
-		if err != nil {
-			return err
+		// A zero-capture closure has no env block, so nothing may dispatch its
+		// drop sub-pair: both slots stay null.
+		var env, dropIdx int64
+		if len(op.Args) > 0 {
+			dropIdx, _ = funcIndex(table, "__closure_drop_"+op.Str)
+			e, err := storeCaptures(h, op, arg)
+			if err != nil {
+				return err
+			}
+			env = e
 		}
-		cell := h.alloc(16)
-		if err := h.store(cell, idx, 8); err != nil {
-			return err
-		}
-		if err := h.store(cell+8, env, 8); err != nil {
-			return err
+		cell := h.alloc(32)
+		for i, v := range []int64{idx, env, dropIdx, env} {
+			if err := h.store(cell+int64(i)*8, v, 8); err != nil {
+				return err
+			}
 		}
 		return set(cell)
 

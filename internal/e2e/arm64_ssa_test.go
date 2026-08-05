@@ -288,7 +288,7 @@ function main(): i32 {
 			// that reads its pointer captures at env-block offsets, but this
 			// path skipped ir.ElideClosurePair (which arm64, x86-64 and wasmbin
 			// all run), so OpMakeClosure survived and the thunk was handed the
-			// 16-byte {fn_idx, env_ptr} cell instead of the env. With the
+			// closure cell instead of the env. With the
 			// pointer capture at env offset 4 the thunk loaded 8 bytes across
 			// both cell fields — 0x410028 became 0x0041002800000000 — and
 			// rc.dec'd that. `f` is never called: building the closure is
@@ -349,6 +349,36 @@ function main(): i32 {
   return apply(g, 100);
 }`,
 			want: 115,
+		},
+		{
+			// A closure ARRAY mixing a capturing and a zero-capture lambda — the
+			// shape the fernsmith differential oracle found segfaulting (#6144).
+			// Neither closure is called, so this is construction + drop only: at
+			// scope exit the IR's generic __drop_arr_closure walks the array and
+			// dispatches each element's drop sub-pair at (element + 2*ptrW). The
+			// SSA cell was 2 slots wide, so that read past the cell into the next
+			// heap block and called the LAMBDA as the drop routine, with the env
+			// in the wrong register — SIGSEGV the moment it touched a capture.
+			name: "closure_array_construct_and_drop",
+			src: `function main(): i32 {
+  var v0: i32 = 1;
+  var v2: ((i32) => i32)[] = [((a: i32) => (v0 & a)), ((b: i32) => b)];
+  return 0;
+}`,
+			want: 0,
+		},
+		{
+			// The same array, but dispatched before it drops: element 0 reads its
+			// capture through the cell's env slot, element 1 has no env at all. So
+			// this fails on a wrong cell layout in either direction — a bad call
+			// slot corrupts the result, a bad drop slot faults at scope exit.
+			name: "closure_array_dispatch_and_drop",
+			src: `function main(): i32 {
+  var base: i32 = 40;
+  var fs: ((i32) => i32)[] = [((a: i32) => a + base), ((b: i32) => b)];
+  return fs[0](1) + fs[1](1);
+}`,
+			want: 42,
 		},
 		{
 			// A bare (payloadless) enum matched by variant — OpEnumSentinel: the

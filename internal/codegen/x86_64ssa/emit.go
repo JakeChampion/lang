@@ -748,7 +748,7 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 
 	case ssa.OpMakeEnv, ssa.OpMakeClosure:
 		// Closure construction. The capture homes are captured here; the model
-		// allocates the env block (and, for OpMakeClosure, the {fn_idx, env_ptr}
+		// allocates the env block (and, for OpMakeClosure, the closure
 		// cell), stores the captures, and delivers the pointer into s2. fn_idx is
 		// resolved from the callee name (Str) against the run-time table.
 		argLocs := make([]Loc, 0, len(op.Args))
