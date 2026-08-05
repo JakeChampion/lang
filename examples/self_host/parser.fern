@@ -6777,10 +6777,22 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
         // STRING index (`s[i]`) yields a char, not a "strin", and an unknown
         // object type must stay unknown so the call is left generic rather than
         // bound to a wrong instantiation.
+        //
+        // The element type is also rejected when it is itself a bare type
+        // variable — indexing a `T[]` inside a generic yields `T`, which is not
+        // a usable concrete type. Reporting it would key a clone named after the
+        // variable (`assert_eq__T`), whose body then calls `T.eq`: an unknown
+        // symbol, so the eligibility gate rejects the caller and the module
+        // fails to compile. Same reasoning as the `looks_type_var(crt)` guard on
+        // an inferred call return above.
         ExprIndex(ix) => {
             var at: string = mono_infer(ix.array, env, funcs);
             var n: i32 = at.len();
-            if (n > 2 && at[n - 2:n] == "[]") { return at[0:n - 2] + ""; }
+            if (n > 2 && at[n - 2:n] == "[]") {
+                var el: string = at[0:n - 2] + "";
+                if (looks_type_var(el)) { return ""; }
+                return el;
+            }
             return "";
         },
         _ => { return ""; }

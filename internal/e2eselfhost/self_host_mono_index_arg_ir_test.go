@@ -65,6 +65,27 @@ function main(): i32 {
     if (bigger(xs[0], xs[1])) { return 7; }
     return 3;
 }`},
+
+	// Indexing a value whose type is still an UNSUBSTITUTED `T[]` -- here the
+	// return of an unbounded generic (`array.reverse`), whose type params are
+	// erased, so its return type comes back as the literal "T[]".
+	//
+	// The element type is then the bare type variable "T", which is not a
+	// usable concrete type. Reporting it keyed a clone named after the
+	// variable (`bigger__T`), whose body calls `T.cmp` -- an unknown symbol, so
+	// the gate rejected the caller and the module failed to compile. The first
+	// version of the ExprIndex arm had no such guard and broke
+	// examples/tests/array_structural_verbs_test.fern
+	// (`test.assert_eq(array.reverse(xs)[0], 42)` -> `test__assert_eq__T` ->
+	// `T.eq`) on every backend.
+	{"typevar-elem-stays-generic", `import "std/array";
+import "core/cmp";
+function bigger[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    if (bigger(array.reverse(xs)[0], 1)) { return 7; }
+    return 3;
+}`},
 }
 
 func TestSelfHostMonoIndexArgIR(t *testing.T) {
