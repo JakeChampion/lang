@@ -65,8 +65,12 @@ function main(): i32 {
     match (got[1]) { Some(v) => { if (v != "early") { return 2; } }, None => { return 3; } }
     if (d.now_ns() != 25000000) { return 4; }
     if (tie_winner(1) != tie_winner(1)) { return 5; }
-    if (tie_winner(1) != 1) { return 6; }
-    if (tie_winner(2) != 0) { return 7; }
+    // Two seeds picking opposite sides of a tie -- the pair is what proves the
+    // tie-break is a real draw and not a fixed order. Re-recorded when sim's
+    // generator moved to std/rand's PCG32 + Lemire rejection (#6193): the two
+    // seeds swapped sides. Same-seed reproducibility (check 5) is unchanged.
+    if (tie_winner(1) != 0) { return 6; }
+    if (tie_winner(2) != 1) { return 7; }
     var g: sim.Sim = sim.new(1);
     var gf: async.Future[i32][] = [
         sim.future_at(g, 30000000, 10),
