@@ -13840,6 +13840,624 @@ function split_commas(csv: string): string[] {
 // tripped the exit-137 alloc trap on its own; oversized functions also
 // miscompile — cf. #2720). Body moved verbatim; the trailing s.fail()
 // preserves lower_stmt's own post-match fallback for any fall-through.
+// VarTypes is what lower_stmt_var's classification half concludes about a
+// `var`'s initialiser: the slot type-facts the new local will carry. It
+// exists so the binding half can be its own function — the two otherwise
+// shared eleven separate locals across a 2,000-line body.
+pub struct VarTypes {
+    is_arr: boolean,
+    alias_inc: boolean,
+    is_str: boolean,
+    is_strarr: boolean,
+    is_f64arr: boolean,
+    is_i64arr: boolean,
+    is_closurearr: boolean,
+    is_arrarr: boolean,
+    arrarr_e: string,
+    struct_ty: string,
+    opt_ty: string,
+}
+
+// bind_var_slot is lower_stmt_var's second half: allocate the local's slot,
+// stamp the classified type facts onto it, and emit the initialising store.
+// `s` is the state on entry to the statement, `se` the state after the
+// initialiser was lowered — both are needed, and they differ.
+function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: VarTypes): LowerState {
+    var opt_ty: string = vt.opt_ty;
+    var sb: LowerState = se.add_local(v.name);
+    var slot: i32 = sb.slot_of(v.name);
+    sb = sb.mark_arr(slot, vt.is_arr);
+    sb = sb.mark_str(slot, vt.is_str);
+    // #4297 CS4: record the ownership class this BINDING acquires on the
+    // slot (li.str_own), so a later reader (str_expr_ownership -- the CS3 /
+    // reuse consumers) gets the fact off the slot instead of re-deriving it
+    // syntactically. Classified against `se` (the pre-binding state) so an
+    // ident init resolves the SOURCE slot. IIFE temps and container-element
+    // binders stay at the Borrowed default (a representative-branch expr
+    // can't classify all branches; an element read aliases a container-owned
+    // box) -- both are the conservative never-free class. No consumer yet;
+    // behaviour-identical.
+    if (vt.is_str) { sb = sb.mark_str_own(slot, str_binding_ownership(v.init, se)); }
+    sb = sb.mark_strarr(slot, vt.is_strarr);
+    sb = sb.mark_f64arr(slot, vt.is_f64arr);
+    sb = sb.mark_i64arr(slot, vt.is_i64arr);
+    sb = sb.mark_closurearr(slot, vt.is_closurearr);
+    // A `(() => T)[]`-typed slot that is NOT a closure array is a plain
+    // fn-pointer array — flag it is_fnarr so a later `.append(f)` of a
+    // bare named fn emits const_func (the pointer) rather than const-
+    // calling f. The empty-literal decl `var fns: (() => T)[] = []` is the
+    // common shape; a closure-element literal stays is_closurearr (its
+    // appends ride the closure path), so the two flags don't overlap. The
+    // all-named-fn literal `[f, g]` is handled by the early-return above
+    // (which also marks is_fnarr). (#3574)
+    sb = sb.mark_fnarr(slot, v.type_name == "fn[]" && !vt.is_closurearr);
+    sb = sb.mark_arrarr(slot, vt.is_arrarr);
+    sb = sb.mark_arrarr_elem(slot, vt.arrarr_e);
+    sb = sb.mark_struct_type(slot, vt.struct_ty);
+    // #4365: an explicit `Option[<tuple-with-array>]` annotation is authoritative
+    // over the inferred opt_ty (some_opt_type collapses a tuple payload's element
+    // type), so the slot carries the full tuple type the OPTTUP deep-drop needs at
+    // the loop-rebind and exit sweep. Only overrides an opttup-shaped annotation;
+    // every other option binding keeps the inferred opt_ty.
+    if (opttup_ann_is(v.type_name, se.structs)) { opt_ty = v.type_name; }
+    sb = sb.mark_opt_type(slot, opt_ty);
+    // An array-of-maps binding (`var ms = [Map { … }, …]`, an annotated
+    // `Map[K,V][]`, or an alias `var qs = ms`): record the ELEMENT map type
+    // on the (is_arr) slot — the map sibling of the element-struct-type
+    // overload — so `ms[i].get_or(…)` dispatches as a map op. The slot
+    // stays is_arr (dropped as an array box; its element maps leak, like
+    // struct-array elements). #3317.
+    if (vt.is_arr) {
+        var map_elem_ty: string = "";
+        if (is_array_type_name(v.type_name) && is_map_type_name(v.type_name[0 : v.type_name.len() - 2])) {
+            map_elem_ty = v.type_name[0 : v.type_name.len() - 2] + "";
+        } else {
+            match (v.init) {
+                parser.ExprArray(marr) => {
+                    if (marr.elements.len() > 0) { map_elem_ty = expr_map_type_tag(iife_leaf_value(marr.elements[0]), se); }
+                },
+                parser.ExprIdent(amid) => {
+                    var amsl: i32 = se.slot_of(amid.name);
+                    if (amsl >= 0 && se.is_arr_slot(amsl) && is_map_type_name(se.map_type_of(amsl))) { map_elem_ty = se.map_type_of(amsl); }
+                },
+                _ => {}
+            }
+        }
+        if (is_map_type_name(map_elem_ty)) { sb = sb.mark_map_type(slot, map_elem_ty); }
+    }
+    // A `var m: Map[K, V] = <expr>` annotation records the slot's full
+    // Map type so a later `m.get/insert/has/...` dispatches as a map op.
+    // The `= map_new(n)` form is handled by the early-return path above;
+    // this catches the other map-typed inits, e.g. binding a map struct
+    // field (`var m: Map[K, V] = c.m`). An ARRAY-of-maps type
+    // (`Map[K,V][]`) also prefix-matches is_map_type_name but is handled
+    // by the element-type overload above — exclude it here.
+    // A `var it: MapIter[K, V] = m.iter()` annotation records the slot's
+    // MapIter type (in the same local_map_type column as Map[K,V], but
+    // prefix-disjoint) so a later it.has_next()/key()/value()/advance()
+    // dispatches as a mapiter op instead of bailing on a Map.<method> call.
+    if (is_mapiter_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
+    else if (is_map_type_name(v.type_name) && !is_array_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
+    // UNANNOTATED `var it = m.iter()` — recover MapIter[K, V] from the
+    // RECEIVER's map type so the slot is typed exactly as the annotated form
+    // types it. The annotation was load-bearing before this: without it the
+    // slot stayed untyped and the first it.has_next() bailed the module, at
+    // any value type (a Map[i32, i32] included).
+    else if (v.type_name.len() == 0 && mapiter_type_of_iter_call(v.init, sb).len() > 0) {
+        sb = sb.mark_map_type(slot, mapiter_type_of_iter_call(v.init, sb));
+    }
+    else if (v.type_name.len() > 5 && v.type_name[0:5] == "Cell[") {
+        // Cell[T] is a 1-element array of T. mark_cell records is_cell (+is_arr);
+        // ALSO mark the element-KIND array flag so c[0] (the get desugar) reads
+        // the right type — without is_strarr a Cell[string] element loads as an
+        // i32, breaking `c.get()[0]` / `.len()`.
+        var celt: string = v.type_name[5 : v.type_name.len() - 1] + "";
+        sb = sb.mark_cell(slot, celt);
+        if (celt == "string") { sb = sb.mark_strarr(slot, true); }
+        else if (celt == "i64" || celt == "u64") { sb = sb.mark_i64arr(slot, true); }
+        else if (celt == "f64" || celt == "f32" || celt == "float") { sb = sb.mark_f64arr(slot, true); }
+    }
+    else {
+        // UNANNOTATED map binding — `var m = Map { k: v, … }` (no
+        // `: Map[K,V]`). The literal desugars to a
+        // `map_new[_i32](n).insert(…)` chain whose key kind expr_map_kind
+        // recovers (1 = i32, 0 = string). Without this, local_map_type
+        // stays "" and a later `m.insert / .get_or / .has` emits key-kind
+        // 0 (string) for an i32-key map — the i32 key is then dereferenced
+        // as a string pointer and segfaults. Store the FULL `Map[K, V]`
+        // form map_key_kind_of expects (it keys on the `Map[i32,` prefix);
+        // form map_key_kind_of / map_value_of expect (the `Map[i32,`
+        // prefix drives the key dispatch, the `, V]` suffix the value).
+        var umk: i32 = expr_map_kind(v.init, sb);
+        if (umk >= 0) {
+            var uktag: string = "string";
+            if (umk == 1) { uktag = "i32"; }
+            // Value tag from the outermost `.insert`'s value arg (the
+            // literal's last entry; the map is homogeneous). A string
+            // value records `Map[K, string]` so `m.get_or(k, d)` /
+            // `.values()` track the result as a string; else default i32.
+            // An empty literal (`Map {}`, no insert) keeps i32.
+            var uvtag: string = "i32";
+            match (v.init) {
+                parser.ExprCall(uvc) => {
+                    match (uvc.callee) {
+                        parser.ExprFieldAccess(uvfa) => {
+                            if (uvfa.field == "insert" && uvc.args.len() == 2) {
+                                if (expr_is_str(uvc.args[1], sb)) { uvtag = "string"; }
+                                // A 64-bit value (u64/i64 cast, wide literal,
+                                // 64-bit local) records a 64-bit value tag, so
+                                // the get_or read side width/sign-tracks it —
+                                // the binding-site twin of expr_map_type_tag's
+                                // value inference (#5253 follow-up).
+                                else if (expr_is_u64(uvc.args[1], sb)) { uvtag = "u64"; }
+                                else if (expr_is_f64(uvc.args[1], sb)) { uvtag = "f64"; }
+                                else if (infer_expr_width(uvc.args[1], sb) == 64) { uvtag = "i64"; }
+                                // A STRUCT value records `Map[K, P]`, so the get_or
+                                // read side recovers P and `p.field` resolves without
+                                // an annotation. Pointer-shaped like the string case
+                                // above (widekind 0), so no op selection changes.
+                                else if (decl_is_struct(sb.structs, expr_struct_type(uvc.args[1], sb))) { uvtag = expr_struct_type(uvc.args[1], sb); }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            sb = sb.mark_map_type(slot, "Map[" + uktag + ", " + uvtag + "]");
+        }
+    }
+    // UNANNOTATED cell binding — `var c = cell_new(0)` (no `: Cell[i32]`).
+    // The annotated form above records is_cell from the type spelling, but
+    // without it the slot stayed plain and `c.get()` dispatched as a method on
+    // the ELEMENT type ("call to unknown symbol i32.get") — the whole module
+    // bailed. Recover the cell-ness (and the element kind) from the
+    // `cell_new(x)` initialiser instead. #3457 slice 5.
+    if (!sb.is_cell_slot(slot)) {
+        var ucelt: string = cell_new_elem_tag(v.init, sb);
+        if (ucelt.len() > 0) {
+            sb = sb.mark_cell(slot, ucelt);
+            if (ucelt == "string") { sb = sb.mark_strarr(slot, true); }
+            else if (ucelt == "i64" || ucelt == "u64") { sb = sb.mark_i64arr(slot, true); }
+            else if (ucelt == "f64") { sb = sb.mark_f64arr(slot, true); }
+        }
+    }
+    // UNANNOTATED binding from a map-RETURNING call (`var m = build()`,
+    // `var m = c.make()`): recover the slot's map type from the callee's
+    // registered return type (map_ret_fns), so `m.get_or(...)` dispatches
+    // without a `: Map[K,V]` annotation. #3317.
+    if (!is_map_type_name(v.type_name) && sb.map_type_of(slot) == "") {
+        match (v.init) {
+            parser.ExprCall(mrc) => {
+                match (mrc.callee) {
+                    parser.ExprIdent(mrcid) => {
+                        var mrt0: string = sb.map_ret_type(mrcid.name);
+                        if (mrt0 != "") { sb = sb.mark_map_type(slot, mrt0); }
+                    },
+                    parser.ExprFieldAccess(mrcfa) => {
+                        var mroty: string = expr_struct_type(mrcfa.obj, sb);
+                        if (mroty != "") {
+                            var mrt1: string = sb.map_ret_type(mroty + "." + mrcfa.field);
+                            if (mrt1 != "") { sb = sb.mark_map_type(slot, mrt1); }
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            // UNANNOTATED binding from a map TUPLE element (`var m = t.0`):
+            // recover the slot's map type from the element's recorded tuple
+            // tag, so `m.get_or(...)` dispatches — the map sibling of the
+            // struct-from-tuple-element binding. #3317.
+            parser.ExprFieldAccess(mtfa) => {
+                if (util.is_all_digits(mtfa.field)) {
+                    var mtet: string = expr_tuple_elem_tag(mtfa.obj, util.digits_to_i32(mtfa.field), sb);
+                    if (is_map_type_name(mtet)) { sb = sb.mark_map_type(slot, mtet); }
+                }
+            },
+            // UNANNOTATED binding from a map ARRAY element (`var m = ms[i]`):
+            // recover the slot's map type from the array slot's element map
+            // type — the map sibling of the struct-from-array-element
+            // binding. #3317.
+            parser.ExprIndex(maix) => {
+                match (maix.array) {
+                    parser.ExprIdent(maeid) => {
+                        var maesl: i32 = sb.slot_of(maeid.name);
+                        if (maesl >= 0 && sb.is_arr_slot(maesl) && is_map_type_name(sb.map_type_of(maesl))) { sb = sb.mark_map_type(slot, sb.map_type_of(maesl)); }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+    }
+    // Binding from a closure-BOX tuple element (`var f = t.0`, element tagged
+    // "clo"): mark f a closure LOCAL so `f(args)` dispatches env-first against
+    // the box — the closure sibling of the map-from-tuple-element bind above.
+    // A NESTED-tuple element (`var inner = t.0` where t.0's tag is itself a
+    // "(…)" tuple spelling) transfers the inner element tags onto the binding
+    // (mark_tuple_elems) so `inner.N` reads — and an `inner.N(args)` closure
+    // element call — resolve instead of bailing the module to the AST path.
+    match (v.init) {
+        parser.ExprFieldAccess(ctfa) => {
+            if (util.is_all_digits(ctfa.field)) {
+                var ctet: string = expr_tuple_elem_tag(ctfa.obj, util.digits_to_i32(ctfa.field), sb);
+                if (ctet == "clo") { sb = sb.mark_closure_local(v.name); }
+                else if (ctet.len() >= 2 && ctet[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctet)); }
+            } else {
+                // `var t = s.p` where struct field `p` is a TUPLE type: transfer the
+                // field's tuple element tags onto t (the struct-field sibling of the
+                // digit-field and array-element binds above), so `t.N` reads and a
+                // `t.N(args)` closure-element call resolve. Without it t was untyped
+                // and `t.1()` on an fn (`clo`) element bailed the module on `call`.
+                var sfoty: string = expr_struct_type(ctfa.obj, sb);
+                if (sfoty != "") {
+                    var sfft: string = decl_field_type(sb.structs, sfoty, ctfa.field);
+                    if (sfft.len() >= 2 && sfft[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(sfft)); }
+                }
+            }
+        },
+        // A tuple ELEMENT of an array-of-tuples (`var t = a[0]` where a's
+        // arrarr_elem carries the "(…)" element tuple tag): transfer the
+        // element tags onto the binding, the Index sibling of the nested-
+        // tuple transfer above — so `t.N` reads and a `t.N(args)` closure
+        // element call resolve (before, the module bailed and the legacy AST
+        // path miscompiled the call into a nonexistent `i32.0` method).
+        parser.ExprIndex(ctix) => {
+            match (ctix.array) {
+                parser.ExprIdent(ctaid) => {
+                    var ctasl: i32 = sb.slot_of(ctaid.name);
+                    if (ctasl >= 0 && sb.is_arr_slot(ctasl)) {
+                        var ctaet: string = sb.arrarr_elem_of_slot(ctasl);
+                        if (ctaet.len() >= 2 && ctaet[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctaet)); }
+                    }
+                },
+                // `var p = r.pairs[0]` — indexing a tuple-ARRAY struct FIELD
+                // (`pairs: (i32, string)[]`). The field access has no slot to read
+                // arrarr_elem from, so resolve the element tuple type from the
+                // field's declared type and transfer its tags onto p, so `p.N`
+                // reads (the struct-field sibling of the ExprIdent arm above).
+                parser.ExprFieldAccess(ctafa) => {
+                    if (!util.is_all_digits(ctafa.field)) {
+                        var ctaoty: string = expr_struct_type(ctafa.obj, sb);
+                        if (ctaoty != "") {
+                            var ctaft: string = decl_field_type(sb.structs, ctaoty, ctafa.field);
+                            if (ctaft.len() >= 4 && ctaft[ctaft.len() - 2 : ctaft.len()] == "[]") {
+                                var ctael: str = ctaft[0 : ctaft.len() - 2];
+                                if (ctael.len() >= 2 && ctael[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctael)); }
+                            }
+                        }
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    // Record tuple element type tags for `var t = (e0, e1, ...)` so a
+    // later `t.N` recovers each element's type.
+    match (v.init) {
+        parser.ExprCall(mc) => {
+            match (mc.callee) {
+                parser.ExprIdent(mcid) => {
+                    if ((mcid.name == "map_new" || mcid.name == "map_new_i32") && v.type_name.len() >= 5 && v.type_name[0:4] == "Map[") {
+                        var inner: str = v.type_name[4 : v.type_name.len()];
+                        if (inner.len() >= 4 && inner[0:4] == "i32,") { sb = sb.mark_map_type(slot, "i32"); }
+                        else if (inner.len() >= 7 && inner[0:7] == "string,") { sb = sb.mark_map_type(slot, "string"); }
+                    }
+                    // `var t = f()` where f returns a tuple: record its
+                    // element tags so a later `t.N` recovers each type. An
+                    // erased-generic callee's "$arg<i>" segments resolve to
+                    // the actual arguments' inferred tags here.
+                    var mctt: string = sb.tuple_ret_type(mcid.name);
+                    if (mctt.len() > 0) { sb = sb.mark_tuple_elems(slot, resolve_argref_tuple_tags(mctt, mc.args, sb)); }
+                },
+                parser.ExprFieldAccess(mfa) => {
+                    // `var t = obj.f()` where the method returns a tuple:
+                    // key by "<Type>.<method>".
+                    var mrty: string = expr_struct_type(mfa.obj, sb);
+                    if (mrty != "") {
+                        var mmtt: string = sb.tuple_ret_type(mrty + "." + mfa.field);
+                        if (mmtt.len() > 0) { sb = sb.mark_tuple_elems(slot, resolve_argref_tuple_tags(mmtt, mc.args, sb)); }
+                    }
+                },
+                // `var t = match (e) { V(p) => p, .. }` where the result is a
+                // TUPLE payload returned whole (an IIFE: ExprCall{callee:
+                // ExprLambda}). The leaf is a bare bound payload not in scope at
+                // this site, so recover the element tags from the match's
+                // composite result type. Prefer a tuple TYPE annotation
+                // (`var t: (i32, string) = …`) when present — it names a
+                // Result[T,E] element's E that a bare construction can't.
+                parser.ExprLambda(mlam) => {
+                    if (v.type_name.len() >= 2 && v.type_name[0:1] == "(") {
+                        sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
+                    } else {
+                        var mltt: string = iife_lambda_composite_tuple_tags(mlam, sb);
+                        if (mltt != "") { sb = sb.mark_tuple_elems(slot, mltt); }
+                    }
+                },
+                _ => {}
+            }
+        },
+        parser.ExprTuple(tlit) => {
+            var enc: string = "";
+            // A tuple TYPE annotation carries each element's full type — in
+            // particular a Result[T, E] element's E, which a bare `Ok(x)`
+            // construction cannot name. Prefer it so `match (t.N)` recovers
+            // each element's payload; fall back to the construction's
+            // inferred tags for an un-annotated binding. (For scalar /
+            // struct / Option / nested-tuple elements the two agree, so
+            // this is strictly more accurate.)
+            if (v.type_name.len() >= 2 && v.type_name[0:1] == "(") {
+                var tti: i32 = 0;
+                while (tti < tlit.elements.len()) {
+                    if (tti > 0) { enc = enc + ","; }
+                    enc = enc + tuple_type_elem_tag(v.type_name, tti);
+                    tti = tti + 1;
+                }
+            } else {
+                var ti: i32 = 0;
+                while (ti < tlit.elements.len()) {
+                    if (ti > 0) { enc = enc + ","; }
+                    enc = enc + elem_type_tag(tlit.elements[ti], se);
+                    ti = ti + 1;
+                }
+            }
+            sb = sb.mark_tuple_elems(slot, enc);
+        },
+        // `var t: (i32, string) = f()?` — a try-operator init (parsed as a
+        // `try_` unary). lower_try now admits a tuple success payload (read
+        // as the pointer-width box, like a struct), but the leaf is the
+        // unwrapped value not in scope here, so type the slot from the
+        // tuple TYPE annotation (authoritative — it names each element,
+        // including a Result[T,E] element's E) so a later `t.N` resolves.
+        parser.ExprUnary(tuv) => {
+            if (v.type_name.len() >= 2 && v.type_name[0:1] == "(") {
+                sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
+            } else if (tuv.op == "try_") {
+                // UNANNOTATED `var t = f()?` whose success payload is a tuple
+                // (`f(): Option[(T, i32)]` / `Result[(T, i32), E]`): recover the
+                // payload via try_opt_type (which resolves the erased-generic
+                // "$arg<i>" refs from the call args) and tag the slot's element
+                // types, so `t.0` / `t.1` read the right width / kind. Without
+                // it an unannotated try-of-tuple left t untyped and a string
+                // element's `.len()` read 0.
+                var tuot: string = try_opt_type(tuv.operand, sb);
+                var tupay: string = "";
+                if (tuot.len() >= 8 && tuot[0:7] == "Option[") { tupay = opt_payload_type(tuot, "Some"); }
+                else if (tuot.len() >= 8 && tuot[0:7] == "Result[") { tupay = opt_payload_type(tuot, "Ok"); }
+                if (tupay.len() >= 2 && tupay[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(tupay)); }
+                // A STRUCT (or nominal ENUM) success payload: `var u = f()?` where
+                // f returns `Result[User, E]` / `Option[User]`. Without the type
+                // annotation the slot was left untyped, so `u.field` / `u.method()`
+                // / `match (u)` in the body failed to lower and the module dropped
+                // to AST. Carry the payload's struct/enum name (mark_struct_type) —
+                // exactly what an explicit `var u: User = f()?` annotation does.
+                else if (decl_is_struct(sb.structs, tupay) || is_enum_like_name(tupay, sb.structs)) { sb = sb.mark_struct_type(slot, tupay); }
+                // An Option/Result success payload: `var o = f()?` where f returns
+                // `Result[Option[i32], E]` / `Option[Option[i32]]`. The bracketed
+                // spelling is neither struct nor enum-like, so carry it as the
+                // slot's OPTION type — what an explicit `var o: Option[i32] = f()?`
+                // annotation records at the mark_opt_type above. Without it the
+                // slot is untyped and the following `match (o)` bails the module
+                // to AST (never a miscompile, but off the IR path).
+                else if (tupay.len() >= 8 && (tupay[0:7] == "Option[" || tupay[0:7] == "Result[")) { sb = sb.mark_opt_type(slot, tupay); }
+            }
+        },
+        _ => {}
+    }
+    // TUPLE ANNOTATION as the last resort. Each initialiser arm above recovers
+    // the element tags from the INITIALISER, and each covers only the shapes it
+    // knows: the method arm keys `tuple_ret_type("<Struct>.<m>")`, so a method on
+    // an Option/Result receiver (`var sa: (Option[i32], Option[string]) =
+    // some.unzip()`) recorded nothing and `sa.0.unwrap_or(0)` dispatched as
+    // `i32.unwrap_or` — an unknown symbol, bailing the module. The annotation
+    // names every element authoritatively, so use it whenever nothing else did.
+    //
+    // Placed AFTER the match, and gated on the slot still being untagged, so
+    // every binding that types itself today keeps its exact tags: this only
+    // fills a hole, never overrides an inference.
+    if (v.type_name.len() >= 2 && v.type_name[0:1] == "(" && sb.tuple_elem_tag(slot, 0).len() == 0) {
+        sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
+    }
+    // A u32 / u32[] binding marks the slot u32 so its arithmetic wraps at
+    // 2^32 and its `>>` is logical (expr_is_u32 / the binary-op masking).
+    // An un-annotated binding has an empty type_name, so also infer the
+    // u32 / u64-ness from the INITIALIZER (`var a = X as u32`) — otherwise
+    // a later `a > b` emits a SIGNED compare, wrong once bit 31/63 is set
+    // (visible on wasm's true-32-bit `i32.gt_s`; #3537).
+    if (is_u32_type_name(v.type_name) || (v.type_name == "" && expr_is_u32(v.init, s))) { sb = sb.mark_u32(slot, true); }
+    if (is_u64_type_name(v.type_name) || (v.type_name == "" && expr_is_u64(v.init, s))) { sb = sb.mark_u64(slot, true); }
+    // A u8 (or array thereof) binding records the sub-word
+    // kind so the slot's arithmetic wraps back to width (mark_subword /
+    // expr_subword_kind / the binary-op masking) — the sub-32-bit
+    // sibling of the u32 wrap above.
+    if (subword_kind_of_name(v.type_name) != "") { sb = sb.mark_subword(slot, subword_kind_of_name(v.type_name)); }
+    // Retain (alias) + cow-guarded dec-on-overwrite of the slot's prior
+    // value (the loop-rebind reclamation; null on the first binding, so
+    // a no-op there). An owned array slot drives the release; a fresh,
+    // non-escaping struct local (slot_is_reclaimable_struct) OR tuple local
+    // (slot_is_reclaimable_tuple) drives the same release so a loop-allocated
+    // struct / tuple temporary is freed each iteration instead of leaking
+    // (native reclaims it; the self-host must too). The dec is SHALLOW
+    // (__fern_rc_dec → box release), so a tuple's pointer elements stay
+    // leak-mode — only the box is reclaimed, matching the exit sweep. No
+    // alias_inc for structs / tuples — an aliased one is never reclaimable
+    // (its name escapes via the RHS), so it is left to leak.
+    // A fresh, non-escaping heap-STRING local (slot_is_reclaimable_str)
+    // takes the string-specific reclaim store instead: its box is header-
+    // less on the asm backends, so it must free through __fern_str_free
+    // (box + data buffer), never the rc-word __fern_rc_dec emit_arr_store
+    // would emit. Loop-body re-binds free the prior iteration's box; the
+    // final value is freed by the exit string sweep.
+    if (slot_is_reclaimable_str(sb, slot)) { return emit_str_reclaim_store(sb, slot); }
+    // A reclaimable rc-TUPLE loop-local (`while { var t = (i, [i, i+1]); }`): the
+    // loop-rebind must DEEP-drop the prior tuple's fresh array element(s) before the
+    // box, else the array leaks each iteration (the shallow emit_arr_store dec below
+    // frees only the box; #4357). emit_tuple_deep_reinit_store frees only the
+    // ExprArray element positions (a bare-ident pointer element aliases a live local
+    // → left leak-safe), so it is gated on the init being a tuple literal.
+    // A reclaimable rc-payload ENUM loop-local (`while { var b = Full([i, i+1]);
+    // match (b) { Full(xs) => xs[0], … } }`): the loop-rebind must DEEP-drop the
+    // prior enum's payload + box (emit_enum_deep_reinit_store → emit_enum_variant_
+    // drops), else the payload leaks each iteration — the consuming-match reclaim is
+    // top-level-only, so it never covers a loop-local (#4357).
+    if (slot_is_reclaimable_rcenum(sb, slot)) {
+        return emit_enum_deep_reinit_store(sb, slot, sb.struct_type_of_slot(slot));
+    }
+    match (v.init) {
+        parser.ExprTuple(dtl) => {
+            if (slot_is_reclaimable_rctuple(sb, slot)) {
+                return emit_tuple_deep_reinit_store(sb, slot, dtl);
+            }
+        },
+        _ => {}
+    }
+    // A reclaimable Option[<tuple-with-array>] LOOP-LOCAL (#4365): the loop-rebind
+    // must deep-drop the prior iteration's Some payload tuple (array buffers +
+    // nested boxes) + the option box before the store, else all levels leak per
+    // iteration. emit_opttup_reclaim_store inlines the tag-check + type-driven
+    // tuple deep-drop.
+    if (slot_is_reclaimable_opttup(sb, slot)) {
+        return emit_opttup_reclaim_store(sb, slot, opttup_inner_type(sb.locals[slot].opt_type));
+    }
+    // A reclaimable Option[<struct-with-array>] LOOP-LOCAL (#4365): the struct sibling —
+    // deep-drop the prior iteration's Some payload struct (rc fields via __struct_drop_<P>)
+    // + the option box before the store.
+    if (slot_is_reclaimable_optstruct(sb, slot)) {
+        return emit_optstruct_reclaim_store(sb, slot, opttup_inner_type(sb.locals[slot].opt_type));
+    }
+    // A reclaimable Option[<scalar-arr-of-arr>] LOOP-LOCAL (#4365): the arr-of-arr sibling —
+    // deep-drop the prior iteration's Some payload (inner buffers + outer via
+    // __fern_arrarr_free) + the option box before the store.
+    if (slot_is_reclaimable_optarrarr(sb, slot)) {
+        return emit_optarrarr_reclaim_store(sb, slot);
+    }
+    // A reclaimable struct LOOP-LOCAL whose init is a FRESH no-base literal with a
+    // `string` field set from a FRESH string (`while { var t = S { x: i, name: pre
+    // + "x" }; }`): the loop-rebind must DEEP-drop the prior box's STRING too, else
+    // the string box leaks every iteration (the array-only __field_reclaim path
+    // below skips strings; #4357). Route through __struct_drop + box dec
+    // (emit_struct_deep_reinit_store), which frees the k_str field. Gated on
+    // struct_lit_all_string_fields_fresh so old's string is provably sole-owned
+    // (rc=1) — an ALIASED string field would over-release (strdrop-two-alias), so
+    // it falls through to the array-only path (string leak-safe). The exit sweep is
+    // NOT widened (it can't see the construction site), so a non-fresh string still
+    // rides its existing balanced path; only this per-iteration reclaim is added.
+    match (v.init) {
+        parser.ExprStructLit(dsl) => {
+            if (!dsl.has_base && slot_is_reclaimable_struct(sb, slot) && !slot_nodeep(sb, slot)
+                && struct_has_string_field(sb.structs, vt.struct_ty)
+                && struct_lit_all_string_fields_fresh(sb.structs, dsl, sb)) {
+                return emit_struct_deep_reinit_store(sb, slot, vt.struct_ty);
+            }
+        },
+        _ => {}
+    }
+    // A reclaimable struct LOOP-LOCAL carrying a DIRECT enum field
+    // (`while { var t = Tagged { e: Poly([i, i+1]), n: i }; }`): the loop-rebind
+    // must DEEP-drop the prior box's enum-field VARIANT PAYLOAD, else it leaks every
+    // iteration — the array-only __field_reclaim path below skips enum fields
+    // entirely, and the exit sweep's k_enum arm is a shallow box-only dec (#4357,
+    // #4297 A2 follow-up). Route through emit_struct_enum_deep_reinit_store, which
+    // runs emit_enum_variant_drops on each enum field's box (runtime variant dispatch
+    // → drop the payload, free the enum box) then frees the struct box. Gated on
+    // struct_enum_deep_reinit_eligible (scalar + droppable-enum fields only) AND
+    // struct_lit_all_enum_fields_fresh (every enum field a FRESH variant ctor, so
+    // old's payload is provably sole-owned — an ALIASED enum field would over-release,
+    // so it falls through to the leak-safe array/shallow path). The exit sweep is NOT
+    // widened (it can't see the construction site); only this per-iteration reclaim
+    // is added, so the once-off final-box payload leak stays bounded.
+    match (v.init) {
+        parser.ExprStructLit(desl) => {
+            if (!desl.has_base && slot_is_reclaimable_struct(sb, slot) && !slot_nodeep(sb, slot)
+                && struct_enum_deep_reinit_eligible(sb.structs, vt.struct_ty)
+                && struct_lit_all_enum_fields_fresh(sb.structs, desl)) {
+                return emit_struct_enum_deep_reinit_store(sb, slot, vt.struct_ty);
+            }
+        },
+        _ => {}
+    }
+    // A reclaimable struct LOOP-LOCAL with rc-array fields (`while { var t = f(i)
+    // / P { .., xs: [..] }; … }`): the loop-rebind must DEEP-drop the prior
+    // iteration's box — free its rc-array field buffers before freeing the box —
+    // else those buffers leak every iteration (the shallow emit_arr_store dec
+    // below frees only the box; #4357). Route through the same per-type
+    // __field_reclaim_<T> the StmtAssign consume-rebind uses (emit_field_reclaim_
+    // store, snap=-1): the helper null-guards the first-iteration null `old` and
+    // cow-guards a self-store, so it is safe both here and on the initial bind
+    // (which is a plain store of `new` — no prior box to free). A once-bound
+    // (non-loop) local is unaffected: old is null, so only the store happens, and
+    // the exit sweep still frees the final value.
+    if (slot_is_reclaimable_struct(sb, slot) && !slot_nodeep(sb, slot) && sb.struct_routes_field_reclaim(vt.struct_ty)) {
+        return emit_field_reclaim_store(sb, slot, vt.struct_ty, 0 - 1);
+    }
+    // Reclaimable arr-of-arr LOOP-LOCAL (#4355 slice 9): the re-declaration
+    // must free the prior iteration's whole two-level structure before the
+    // store — the shallow emit_arr_store dec (were is_arr even set) would
+    // free only the outer buffer and leak every inner per iteration.
+    if (slot_is_reclaimable_arrarr(sb, slot)) {
+        return emit_arrarr_reclaim_store(sb, slot);
+    }
+    // Reclaimable Option[<arr>][] LOOP-LOCAL (#4365): same shape as the
+    // arr-of-arr rebind above — free the prior iteration's payload buffers +
+    // option boxes + outer buffer before the store, else all three levels
+    // leak per iteration (the shallow emit_arr_store dec frees only the
+    // outer buffer).
+    if (slot_is_reclaimable_optaarr(sb, slot)) {
+        return emit_optaarr_reclaim_store(sb, slot);
+    }
+    // Reclaimable (<tuple-with-array>)[] LOOP-LOCAL (#4365): free the prior
+    // iteration's whole structure — each element tuple's array fields + tuple box,
+    // then the outer buffer — before the store, else all levels leak per iteration
+    // (the shallow emit_arr_store dec frees only the outer buffer).
+    if (slot_is_reclaimable_arrtup(sb, slot)) {
+        return emit_arrtup_reclaim_store(sb, slot, sb.locals[slot].arrarr_elem);
+    }
+    // Reclaimable (<struct-with-array>)[] LOOP-LOCAL (#4365): free the prior iteration's
+    // whole structure — each element struct's rc fields + struct box, then the outer
+    // buffer — before the store (the shallow emit_arr_store dec frees only the buffer).
+    if (slot_is_reclaimable_arrstruct(sb, slot)) {
+        return emit_arrstruct_reclaim_store(sb, slot, sb.struct_type_of_slot(slot));
+    }
+    // Reclaimable SCALAR-FIELD struct-array LOOP-LOCAL (#4355): a struct[] whose
+    // element struct has no rc field — the deep arrstruct path above skips it, so
+    // free the prior iteration's element boxes + outer buffer here (shallow box dec
+    // per element via __fern_arrarr_free), else every element struct box leaks per
+    // iteration. Disjoint from arrstruct (slot_is_reclaimable_structarr excludes
+    // field-routing structs), so at most one of these two branches fires per slot.
+    if (slot_is_reclaimable_structarr(sb, slot)) {
+        return emit_structarr_reclaim_store(sb, slot);
+    }
+    // A reclaimable string[] LOOP-LOCAL (`while { var xs: string[] = [pre + "x",
+    // pre + "y"]; … }`, #4353 item 4 / #4355 loop-rebind follow-up): the
+    // re-declaration must free the prior iteration's ELEMENT strings AND buffer
+    // via __fern_str_arr_free before the store, else every element box leaks per
+    // iteration — the shallow emit_arr_store dec below frees only the buffer. The
+    // exit sweep already frees the FINAL value with the same helper (16565); this
+    // is the missing per-iteration sibling (str reinit at 12958 covers a scalar
+    // string, structarr above covers struct elements — string elements had no
+    // reinit branch). Cow-guarded + null-guarded like every store above.
+    if (slot_is_reclaimable_strarr(sb, slot)) {
+        return emit_strarr_reclaim_store(sb, slot);
+    }
+    // A reclaimable MAP loop-local (`while { var m = map_new(8); m =
+    // m.insert(..); … }`, #4357): free the prior iteration's keys/values
+    // buffers + mapbox BEFORE the store, else one box leaks per iteration —
+    // precise_drop_names is top-level-only so a loop-declared map never gets
+    // an early drop, and the exit sweep only sees the final iteration's box.
+    // emit_map_buffers_free is stack-neutral (the reinit RHS underneath is
+    // untouched), null-guards the first binding (slots are zero-initialized
+    // at entry), zeroes the slot (the store below then overwrites it), and
+    // internally selects the MAPVS/MAPKS deep-column variants — the same
+    // coexistence contract the precise drop and exit sweep already use. The
+    // store itself is the unchanged shared tail.
+    if (slot_is_reclaimable_map(sb, slot)) {
+        sb = emit_map_buffers_free(sb, slot);
+    }
+    return emit_arr_store(sb, slot, vt.alias_inc, vt.is_arr || slot_is_reclaimable_struct(sb, slot) || slot_is_reclaimable_tuple(sb, slot));
+    return s.fail();
+}
+
 function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // Type ascription `var x = E as T` (#2669): the `as` is a zero-cost
     // annotation, so this is `var x: T = E`. ascription_rebind returns
@@ -15337,598 +15955,20 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             _ => {}
         }
     }
-    var sb: LowerState = se.add_local(v.name);
-    var slot: i32 = sb.slot_of(v.name);
-    sb = sb.mark_arr(slot, is_arr);
-    sb = sb.mark_str(slot, is_str);
-    // #4297 CS4: record the ownership class this BINDING acquires on the
-    // slot (li.str_own), so a later reader (str_expr_ownership -- the CS3 /
-    // reuse consumers) gets the fact off the slot instead of re-deriving it
-    // syntactically. Classified against `se` (the pre-binding state) so an
-    // ident init resolves the SOURCE slot. IIFE temps and container-element
-    // binders stay at the Borrowed default (a representative-branch expr
-    // can't classify all branches; an element read aliases a container-owned
-    // box) -- both are the conservative never-free class. No consumer yet;
-    // behaviour-identical.
-    if (is_str) { sb = sb.mark_str_own(slot, str_binding_ownership(v.init, se)); }
-    sb = sb.mark_strarr(slot, is_strarr);
-    sb = sb.mark_f64arr(slot, is_f64arr);
-    sb = sb.mark_i64arr(slot, is_i64arr);
-    sb = sb.mark_closurearr(slot, is_closurearr);
-    // A `(() => T)[]`-typed slot that is NOT a closure array is a plain
-    // fn-pointer array — flag it is_fnarr so a later `.append(f)` of a
-    // bare named fn emits const_func (the pointer) rather than const-
-    // calling f. The empty-literal decl `var fns: (() => T)[] = []` is the
-    // common shape; a closure-element literal stays is_closurearr (its
-    // appends ride the closure path), so the two flags don't overlap. The
-    // all-named-fn literal `[f, g]` is handled by the early-return above
-    // (which also marks is_fnarr). (#3574)
-    sb = sb.mark_fnarr(slot, v.type_name == "fn[]" && !is_closurearr);
-    sb = sb.mark_arrarr(slot, is_arrarr);
-    sb = sb.mark_arrarr_elem(slot, arrarr_e);
-    sb = sb.mark_struct_type(slot, struct_ty);
-    // #4365: an explicit `Option[<tuple-with-array>]` annotation is authoritative
-    // over the inferred opt_ty (some_opt_type collapses a tuple payload's element
-    // type), so the slot carries the full tuple type the OPTTUP deep-drop needs at
-    // the loop-rebind and exit sweep. Only overrides an opttup-shaped annotation;
-    // every other option binding keeps the inferred opt_ty.
-    if (opttup_ann_is(v.type_name, se.structs)) { opt_ty = v.type_name; }
-    sb = sb.mark_opt_type(slot, opt_ty);
-    // An array-of-maps binding (`var ms = [Map { … }, …]`, an annotated
-    // `Map[K,V][]`, or an alias `var qs = ms`): record the ELEMENT map type
-    // on the (is_arr) slot — the map sibling of the element-struct-type
-    // overload — so `ms[i].get_or(…)` dispatches as a map op. The slot
-    // stays is_arr (dropped as an array box; its element maps leak, like
-    // struct-array elements). #3317.
-    if (is_arr) {
-        var map_elem_ty: string = "";
-        if (is_array_type_name(v.type_name) && is_map_type_name(v.type_name[0 : v.type_name.len() - 2])) {
-            map_elem_ty = v.type_name[0 : v.type_name.len() - 2] + "";
-        } else {
-            match (v.init) {
-                parser.ExprArray(marr) => {
-                    if (marr.elements.len() > 0) { map_elem_ty = expr_map_type_tag(iife_leaf_value(marr.elements[0]), se); }
-                },
-                parser.ExprIdent(amid) => {
-                    var amsl: i32 = se.slot_of(amid.name);
-                    if (amsl >= 0 && se.is_arr_slot(amsl) && is_map_type_name(se.map_type_of(amsl))) { map_elem_ty = se.map_type_of(amsl); }
-                },
-                _ => {}
-            }
-        }
-        if (is_map_type_name(map_elem_ty)) { sb = sb.mark_map_type(slot, map_elem_ty); }
-    }
-    // A `var m: Map[K, V] = <expr>` annotation records the slot's full
-    // Map type so a later `m.get/insert/has/...` dispatches as a map op.
-    // The `= map_new(n)` form is handled by the early-return path above;
-    // this catches the other map-typed inits, e.g. binding a map struct
-    // field (`var m: Map[K, V] = c.m`). An ARRAY-of-maps type
-    // (`Map[K,V][]`) also prefix-matches is_map_type_name but is handled
-    // by the element-type overload above — exclude it here.
-    // A `var it: MapIter[K, V] = m.iter()` annotation records the slot's
-    // MapIter type (in the same local_map_type column as Map[K,V], but
-    // prefix-disjoint) so a later it.has_next()/key()/value()/advance()
-    // dispatches as a mapiter op instead of bailing on a Map.<method> call.
-    if (is_mapiter_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
-    else if (is_map_type_name(v.type_name) && !is_array_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
-    // UNANNOTATED `var it = m.iter()` — recover MapIter[K, V] from the
-    // RECEIVER's map type so the slot is typed exactly as the annotated form
-    // types it. The annotation was load-bearing before this: without it the
-    // slot stayed untyped and the first it.has_next() bailed the module, at
-    // any value type (a Map[i32, i32] included).
-    else if (v.type_name.len() == 0 && mapiter_type_of_iter_call(v.init, sb).len() > 0) {
-        sb = sb.mark_map_type(slot, mapiter_type_of_iter_call(v.init, sb));
-    }
-    else if (v.type_name.len() > 5 && v.type_name[0:5] == "Cell[") {
-        // Cell[T] is a 1-element array of T. mark_cell records is_cell (+is_arr);
-        // ALSO mark the element-KIND array flag so c[0] (the get desugar) reads
-        // the right type — without is_strarr a Cell[string] element loads as an
-        // i32, breaking `c.get()[0]` / `.len()`.
-        var celt: string = v.type_name[5 : v.type_name.len() - 1] + "";
-        sb = sb.mark_cell(slot, celt);
-        if (celt == "string") { sb = sb.mark_strarr(slot, true); }
-        else if (celt == "i64" || celt == "u64") { sb = sb.mark_i64arr(slot, true); }
-        else if (celt == "f64" || celt == "f32" || celt == "float") { sb = sb.mark_f64arr(slot, true); }
-    }
-    else {
-        // UNANNOTATED map binding — `var m = Map { k: v, … }` (no
-        // `: Map[K,V]`). The literal desugars to a
-        // `map_new[_i32](n).insert(…)` chain whose key kind expr_map_kind
-        // recovers (1 = i32, 0 = string). Without this, local_map_type
-        // stays "" and a later `m.insert / .get_or / .has` emits key-kind
-        // 0 (string) for an i32-key map — the i32 key is then dereferenced
-        // as a string pointer and segfaults. Store the FULL `Map[K, V]`
-        // form map_key_kind_of expects (it keys on the `Map[i32,` prefix);
-        // form map_key_kind_of / map_value_of expect (the `Map[i32,`
-        // prefix drives the key dispatch, the `, V]` suffix the value).
-        var umk: i32 = expr_map_kind(v.init, sb);
-        if (umk >= 0) {
-            var uktag: string = "string";
-            if (umk == 1) { uktag = "i32"; }
-            // Value tag from the outermost `.insert`'s value arg (the
-            // literal's last entry; the map is homogeneous). A string
-            // value records `Map[K, string]` so `m.get_or(k, d)` /
-            // `.values()` track the result as a string; else default i32.
-            // An empty literal (`Map {}`, no insert) keeps i32.
-            var uvtag: string = "i32";
-            match (v.init) {
-                parser.ExprCall(uvc) => {
-                    match (uvc.callee) {
-                        parser.ExprFieldAccess(uvfa) => {
-                            if (uvfa.field == "insert" && uvc.args.len() == 2) {
-                                if (expr_is_str(uvc.args[1], sb)) { uvtag = "string"; }
-                                // A 64-bit value (u64/i64 cast, wide literal,
-                                // 64-bit local) records a 64-bit value tag, so
-                                // the get_or read side width/sign-tracks it —
-                                // the binding-site twin of expr_map_type_tag's
-                                // value inference (#5253 follow-up).
-                                else if (expr_is_u64(uvc.args[1], sb)) { uvtag = "u64"; }
-                                else if (expr_is_f64(uvc.args[1], sb)) { uvtag = "f64"; }
-                                else if (infer_expr_width(uvc.args[1], sb) == 64) { uvtag = "i64"; }
-                                // A STRUCT value records `Map[K, P]`, so the get_or
-                                // read side recovers P and `p.field` resolves without
-                                // an annotation. Pointer-shaped like the string case
-                                // above (widekind 0), so no op selection changes.
-                                else if (decl_is_struct(sb.structs, expr_struct_type(uvc.args[1], sb))) { uvtag = expr_struct_type(uvc.args[1], sb); }
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-            sb = sb.mark_map_type(slot, "Map[" + uktag + ", " + uvtag + "]");
-        }
-    }
-    // UNANNOTATED cell binding — `var c = cell_new(0)` (no `: Cell[i32]`).
-    // The annotated form above records is_cell from the type spelling, but
-    // without it the slot stayed plain and `c.get()` dispatched as a method on
-    // the ELEMENT type ("call to unknown symbol i32.get") — the whole module
-    // bailed. Recover the cell-ness (and the element kind) from the
-    // `cell_new(x)` initialiser instead. #3457 slice 5.
-    if (!sb.is_cell_slot(slot)) {
-        var ucelt: string = cell_new_elem_tag(v.init, sb);
-        if (ucelt.len() > 0) {
-            sb = sb.mark_cell(slot, ucelt);
-            if (ucelt == "string") { sb = sb.mark_strarr(slot, true); }
-            else if (ucelt == "i64" || ucelt == "u64") { sb = sb.mark_i64arr(slot, true); }
-            else if (ucelt == "f64") { sb = sb.mark_f64arr(slot, true); }
-        }
-    }
-    // UNANNOTATED binding from a map-RETURNING call (`var m = build()`,
-    // `var m = c.make()`): recover the slot's map type from the callee's
-    // registered return type (map_ret_fns), so `m.get_or(...)` dispatches
-    // without a `: Map[K,V]` annotation. #3317.
-    if (!is_map_type_name(v.type_name) && sb.map_type_of(slot) == "") {
-        match (v.init) {
-            parser.ExprCall(mrc) => {
-                match (mrc.callee) {
-                    parser.ExprIdent(mrcid) => {
-                        var mrt0: string = sb.map_ret_type(mrcid.name);
-                        if (mrt0 != "") { sb = sb.mark_map_type(slot, mrt0); }
-                    },
-                    parser.ExprFieldAccess(mrcfa) => {
-                        var mroty: string = expr_struct_type(mrcfa.obj, sb);
-                        if (mroty != "") {
-                            var mrt1: string = sb.map_ret_type(mroty + "." + mrcfa.field);
-                            if (mrt1 != "") { sb = sb.mark_map_type(slot, mrt1); }
-                        }
-                    },
-                    _ => {}
-                }
-            },
-            // UNANNOTATED binding from a map TUPLE element (`var m = t.0`):
-            // recover the slot's map type from the element's recorded tuple
-            // tag, so `m.get_or(...)` dispatches — the map sibling of the
-            // struct-from-tuple-element binding. #3317.
-            parser.ExprFieldAccess(mtfa) => {
-                if (util.is_all_digits(mtfa.field)) {
-                    var mtet: string = expr_tuple_elem_tag(mtfa.obj, util.digits_to_i32(mtfa.field), sb);
-                    if (is_map_type_name(mtet)) { sb = sb.mark_map_type(slot, mtet); }
-                }
-            },
-            // UNANNOTATED binding from a map ARRAY element (`var m = ms[i]`):
-            // recover the slot's map type from the array slot's element map
-            // type — the map sibling of the struct-from-array-element
-            // binding. #3317.
-            parser.ExprIndex(maix) => {
-                match (maix.array) {
-                    parser.ExprIdent(maeid) => {
-                        var maesl: i32 = sb.slot_of(maeid.name);
-                        if (maesl >= 0 && sb.is_arr_slot(maesl) && is_map_type_name(sb.map_type_of(maesl))) { sb = sb.mark_map_type(slot, sb.map_type_of(maesl)); }
-                    },
-                    _ => {}
-                }
-            },
-            _ => {}
-        }
-    }
-    // Binding from a closure-BOX tuple element (`var f = t.0`, element tagged
-    // "clo"): mark f a closure LOCAL so `f(args)` dispatches env-first against
-    // the box — the closure sibling of the map-from-tuple-element bind above.
-    // A NESTED-tuple element (`var inner = t.0` where t.0's tag is itself a
-    // "(…)" tuple spelling) transfers the inner element tags onto the binding
-    // (mark_tuple_elems) so `inner.N` reads — and an `inner.N(args)` closure
-    // element call — resolve instead of bailing the module to the AST path.
-    match (v.init) {
-        parser.ExprFieldAccess(ctfa) => {
-            if (util.is_all_digits(ctfa.field)) {
-                var ctet: string = expr_tuple_elem_tag(ctfa.obj, util.digits_to_i32(ctfa.field), sb);
-                if (ctet == "clo") { sb = sb.mark_closure_local(v.name); }
-                else if (ctet.len() >= 2 && ctet[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctet)); }
-            } else {
-                // `var t = s.p` where struct field `p` is a TUPLE type: transfer the
-                // field's tuple element tags onto t (the struct-field sibling of the
-                // digit-field and array-element binds above), so `t.N` reads and a
-                // `t.N(args)` closure-element call resolve. Without it t was untyped
-                // and `t.1()` on an fn (`clo`) element bailed the module on `call`.
-                var sfoty: string = expr_struct_type(ctfa.obj, sb);
-                if (sfoty != "") {
-                    var sfft: string = decl_field_type(sb.structs, sfoty, ctfa.field);
-                    if (sfft.len() >= 2 && sfft[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(sfft)); }
-                }
-            }
-        },
-        // A tuple ELEMENT of an array-of-tuples (`var t = a[0]` where a's
-        // arrarr_elem carries the "(…)" element tuple tag): transfer the
-        // element tags onto the binding, the Index sibling of the nested-
-        // tuple transfer above — so `t.N` reads and a `t.N(args)` closure
-        // element call resolve (before, the module bailed and the legacy AST
-        // path miscompiled the call into a nonexistent `i32.0` method).
-        parser.ExprIndex(ctix) => {
-            match (ctix.array) {
-                parser.ExprIdent(ctaid) => {
-                    var ctasl: i32 = sb.slot_of(ctaid.name);
-                    if (ctasl >= 0 && sb.is_arr_slot(ctasl)) {
-                        var ctaet: string = sb.arrarr_elem_of_slot(ctasl);
-                        if (ctaet.len() >= 2 && ctaet[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctaet)); }
-                    }
-                },
-                // `var p = r.pairs[0]` — indexing a tuple-ARRAY struct FIELD
-                // (`pairs: (i32, string)[]`). The field access has no slot to read
-                // arrarr_elem from, so resolve the element tuple type from the
-                // field's declared type and transfer its tags onto p, so `p.N`
-                // reads (the struct-field sibling of the ExprIdent arm above).
-                parser.ExprFieldAccess(ctafa) => {
-                    if (!util.is_all_digits(ctafa.field)) {
-                        var ctaoty: string = expr_struct_type(ctafa.obj, sb);
-                        if (ctaoty != "") {
-                            var ctaft: string = decl_field_type(sb.structs, ctaoty, ctafa.field);
-                            if (ctaft.len() >= 4 && ctaft[ctaft.len() - 2 : ctaft.len()] == "[]") {
-                                var ctael: str = ctaft[0 : ctaft.len() - 2];
-                                if (ctael.len() >= 2 && ctael[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctael)); }
-                            }
-                        }
-                    }
-                },
-                _ => {}
-            }
-        },
-        _ => {}
-    }
-    // Record tuple element type tags for `var t = (e0, e1, ...)` so a
-    // later `t.N` recovers each element's type.
-    match (v.init) {
-        parser.ExprCall(mc) => {
-            match (mc.callee) {
-                parser.ExprIdent(mcid) => {
-                    if ((mcid.name == "map_new" || mcid.name == "map_new_i32") && v.type_name.len() >= 5 && v.type_name[0:4] == "Map[") {
-                        var inner: str = v.type_name[4 : v.type_name.len()];
-                        if (inner.len() >= 4 && inner[0:4] == "i32,") { sb = sb.mark_map_type(slot, "i32"); }
-                        else if (inner.len() >= 7 && inner[0:7] == "string,") { sb = sb.mark_map_type(slot, "string"); }
-                    }
-                    // `var t = f()` where f returns a tuple: record its
-                    // element tags so a later `t.N` recovers each type. An
-                    // erased-generic callee's "$arg<i>" segments resolve to
-                    // the actual arguments' inferred tags here.
-                    var mctt: string = sb.tuple_ret_type(mcid.name);
-                    if (mctt.len() > 0) { sb = sb.mark_tuple_elems(slot, resolve_argref_tuple_tags(mctt, mc.args, sb)); }
-                },
-                parser.ExprFieldAccess(mfa) => {
-                    // `var t = obj.f()` where the method returns a tuple:
-                    // key by "<Type>.<method>".
-                    var mrty: string = expr_struct_type(mfa.obj, sb);
-                    if (mrty != "") {
-                        var mmtt: string = sb.tuple_ret_type(mrty + "." + mfa.field);
-                        if (mmtt.len() > 0) { sb = sb.mark_tuple_elems(slot, resolve_argref_tuple_tags(mmtt, mc.args, sb)); }
-                    }
-                },
-                // `var t = match (e) { V(p) => p, .. }` where the result is a
-                // TUPLE payload returned whole (an IIFE: ExprCall{callee:
-                // ExprLambda}). The leaf is a bare bound payload not in scope at
-                // this site, so recover the element tags from the match's
-                // composite result type. Prefer a tuple TYPE annotation
-                // (`var t: (i32, string) = …`) when present — it names a
-                // Result[T,E] element's E that a bare construction can't.
-                parser.ExprLambda(mlam) => {
-                    if (v.type_name.len() >= 2 && v.type_name[0:1] == "(") {
-                        sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
-                    } else {
-                        var mltt: string = iife_lambda_composite_tuple_tags(mlam, sb);
-                        if (mltt != "") { sb = sb.mark_tuple_elems(slot, mltt); }
-                    }
-                },
-                _ => {}
-            }
-        },
-        parser.ExprTuple(tlit) => {
-            var enc: string = "";
-            // A tuple TYPE annotation carries each element's full type — in
-            // particular a Result[T, E] element's E, which a bare `Ok(x)`
-            // construction cannot name. Prefer it so `match (t.N)` recovers
-            // each element's payload; fall back to the construction's
-            // inferred tags for an un-annotated binding. (For scalar /
-            // struct / Option / nested-tuple elements the two agree, so
-            // this is strictly more accurate.)
-            if (v.type_name.len() >= 2 && v.type_name[0:1] == "(") {
-                var tti: i32 = 0;
-                while (tti < tlit.elements.len()) {
-                    if (tti > 0) { enc = enc + ","; }
-                    enc = enc + tuple_type_elem_tag(v.type_name, tti);
-                    tti = tti + 1;
-                }
-            } else {
-                var ti: i32 = 0;
-                while (ti < tlit.elements.len()) {
-                    if (ti > 0) { enc = enc + ","; }
-                    enc = enc + elem_type_tag(tlit.elements[ti], se);
-                    ti = ti + 1;
-                }
-            }
-            sb = sb.mark_tuple_elems(slot, enc);
-        },
-        // `var t: (i32, string) = f()?` — a try-operator init (parsed as a
-        // `try_` unary). lower_try now admits a tuple success payload (read
-        // as the pointer-width box, like a struct), but the leaf is the
-        // unwrapped value not in scope here, so type the slot from the
-        // tuple TYPE annotation (authoritative — it names each element,
-        // including a Result[T,E] element's E) so a later `t.N` resolves.
-        parser.ExprUnary(tuv) => {
-            if (v.type_name.len() >= 2 && v.type_name[0:1] == "(") {
-                sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
-            } else if (tuv.op == "try_") {
-                // UNANNOTATED `var t = f()?` whose success payload is a tuple
-                // (`f(): Option[(T, i32)]` / `Result[(T, i32), E]`): recover the
-                // payload via try_opt_type (which resolves the erased-generic
-                // "$arg<i>" refs from the call args) and tag the slot's element
-                // types, so `t.0` / `t.1` read the right width / kind. Without
-                // it an unannotated try-of-tuple left t untyped and a string
-                // element's `.len()` read 0.
-                var tuot: string = try_opt_type(tuv.operand, sb);
-                var tupay: string = "";
-                if (tuot.len() >= 8 && tuot[0:7] == "Option[") { tupay = opt_payload_type(tuot, "Some"); }
-                else if (tuot.len() >= 8 && tuot[0:7] == "Result[") { tupay = opt_payload_type(tuot, "Ok"); }
-                if (tupay.len() >= 2 && tupay[0:1] == "(") { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(tupay)); }
-                // A STRUCT (or nominal ENUM) success payload: `var u = f()?` where
-                // f returns `Result[User, E]` / `Option[User]`. Without the type
-                // annotation the slot was left untyped, so `u.field` / `u.method()`
-                // / `match (u)` in the body failed to lower and the module dropped
-                // to AST. Carry the payload's struct/enum name (mark_struct_type) —
-                // exactly what an explicit `var u: User = f()?` annotation does.
-                else if (decl_is_struct(sb.structs, tupay) || is_enum_like_name(tupay, sb.structs)) { sb = sb.mark_struct_type(slot, tupay); }
-                // An Option/Result success payload: `var o = f()?` where f returns
-                // `Result[Option[i32], E]` / `Option[Option[i32]]`. The bracketed
-                // spelling is neither struct nor enum-like, so carry it as the
-                // slot's OPTION type — what an explicit `var o: Option[i32] = f()?`
-                // annotation records at the mark_opt_type above. Without it the
-                // slot is untyped and the following `match (o)` bails the module
-                // to AST (never a miscompile, but off the IR path).
-                else if (tupay.len() >= 8 && (tupay[0:7] == "Option[" || tupay[0:7] == "Result[")) { sb = sb.mark_opt_type(slot, tupay); }
-            }
-        },
-        _ => {}
-    }
-    // TUPLE ANNOTATION as the last resort. Each initialiser arm above recovers
-    // the element tags from the INITIALISER, and each covers only the shapes it
-    // knows: the method arm keys `tuple_ret_type("<Struct>.<m>")`, so a method on
-    // an Option/Result receiver (`var sa: (Option[i32], Option[string]) =
-    // some.unzip()`) recorded nothing and `sa.0.unwrap_or(0)` dispatched as
-    // `i32.unwrap_or` — an unknown symbol, bailing the module. The annotation
-    // names every element authoritatively, so use it whenever nothing else did.
-    //
-    // Placed AFTER the match, and gated on the slot still being untagged, so
-    // every binding that types itself today keeps its exact tags: this only
-    // fills a hole, never overrides an inference.
-    if (v.type_name.len() >= 2 && v.type_name[0:1] == "(" && sb.tuple_elem_tag(slot, 0).len() == 0) {
-        sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
-    }
-    // A u32 / u32[] binding marks the slot u32 so its arithmetic wraps at
-    // 2^32 and its `>>` is logical (expr_is_u32 / the binary-op masking).
-    // An un-annotated binding has an empty type_name, so also infer the
-    // u32 / u64-ness from the INITIALIZER (`var a = X as u32`) — otherwise
-    // a later `a > b` emits a SIGNED compare, wrong once bit 31/63 is set
-    // (visible on wasm's true-32-bit `i32.gt_s`; #3537).
-    if (is_u32_type_name(v.type_name) || (v.type_name == "" && expr_is_u32(v.init, s))) { sb = sb.mark_u32(slot, true); }
-    if (is_u64_type_name(v.type_name) || (v.type_name == "" && expr_is_u64(v.init, s))) { sb = sb.mark_u64(slot, true); }
-    // A u8 (or array thereof) binding records the sub-word
-    // kind so the slot's arithmetic wraps back to width (mark_subword /
-    // expr_subword_kind / the binary-op masking) — the sub-32-bit
-    // sibling of the u32 wrap above.
-    if (subword_kind_of_name(v.type_name) != "") { sb = sb.mark_subword(slot, subword_kind_of_name(v.type_name)); }
-    // Retain (alias) + cow-guarded dec-on-overwrite of the slot's prior
-    // value (the loop-rebind reclamation; null on the first binding, so
-    // a no-op there). An owned array slot drives the release; a fresh,
-    // non-escaping struct local (slot_is_reclaimable_struct) OR tuple local
-    // (slot_is_reclaimable_tuple) drives the same release so a loop-allocated
-    // struct / tuple temporary is freed each iteration instead of leaking
-    // (native reclaims it; the self-host must too). The dec is SHALLOW
-    // (__fern_rc_dec → box release), so a tuple's pointer elements stay
-    // leak-mode — only the box is reclaimed, matching the exit sweep. No
-    // alias_inc for structs / tuples — an aliased one is never reclaimable
-    // (its name escapes via the RHS), so it is left to leak.
-    // A fresh, non-escaping heap-STRING local (slot_is_reclaimable_str)
-    // takes the string-specific reclaim store instead: its box is header-
-    // less on the asm backends, so it must free through __fern_str_free
-    // (box + data buffer), never the rc-word __fern_rc_dec emit_arr_store
-    // would emit. Loop-body re-binds free the prior iteration's box; the
-    // final value is freed by the exit string sweep.
-    if (slot_is_reclaimable_str(sb, slot)) { return emit_str_reclaim_store(sb, slot); }
-    // A reclaimable rc-TUPLE loop-local (`while { var t = (i, [i, i+1]); }`): the
-    // loop-rebind must DEEP-drop the prior tuple's fresh array element(s) before the
-    // box, else the array leaks each iteration (the shallow emit_arr_store dec below
-    // frees only the box; #4357). emit_tuple_deep_reinit_store frees only the
-    // ExprArray element positions (a bare-ident pointer element aliases a live local
-    // → left leak-safe), so it is gated on the init being a tuple literal.
-    // A reclaimable rc-payload ENUM loop-local (`while { var b = Full([i, i+1]);
-    // match (b) { Full(xs) => xs[0], … } }`): the loop-rebind must DEEP-drop the
-    // prior enum's payload + box (emit_enum_deep_reinit_store → emit_enum_variant_
-    // drops), else the payload leaks each iteration — the consuming-match reclaim is
-    // top-level-only, so it never covers a loop-local (#4357).
-    if (slot_is_reclaimable_rcenum(sb, slot)) {
-        return emit_enum_deep_reinit_store(sb, slot, sb.struct_type_of_slot(slot));
-    }
-    match (v.init) {
-        parser.ExprTuple(dtl) => {
-            if (slot_is_reclaimable_rctuple(sb, slot)) {
-                return emit_tuple_deep_reinit_store(sb, slot, dtl);
-            }
-        },
-        _ => {}
-    }
-    // A reclaimable Option[<tuple-with-array>] LOOP-LOCAL (#4365): the loop-rebind
-    // must deep-drop the prior iteration's Some payload tuple (array buffers +
-    // nested boxes) + the option box before the store, else all levels leak per
-    // iteration. emit_opttup_reclaim_store inlines the tag-check + type-driven
-    // tuple deep-drop.
-    if (slot_is_reclaimable_opttup(sb, slot)) {
-        return emit_opttup_reclaim_store(sb, slot, opttup_inner_type(sb.locals[slot].opt_type));
-    }
-    // A reclaimable Option[<struct-with-array>] LOOP-LOCAL (#4365): the struct sibling —
-    // deep-drop the prior iteration's Some payload struct (rc fields via __struct_drop_<P>)
-    // + the option box before the store.
-    if (slot_is_reclaimable_optstruct(sb, slot)) {
-        return emit_optstruct_reclaim_store(sb, slot, opttup_inner_type(sb.locals[slot].opt_type));
-    }
-    // A reclaimable Option[<scalar-arr-of-arr>] LOOP-LOCAL (#4365): the arr-of-arr sibling —
-    // deep-drop the prior iteration's Some payload (inner buffers + outer via
-    // __fern_arrarr_free) + the option box before the store.
-    if (slot_is_reclaimable_optarrarr(sb, slot)) {
-        return emit_optarrarr_reclaim_store(sb, slot);
-    }
-    // A reclaimable struct LOOP-LOCAL whose init is a FRESH no-base literal with a
-    // `string` field set from a FRESH string (`while { var t = S { x: i, name: pre
-    // + "x" }; }`): the loop-rebind must DEEP-drop the prior box's STRING too, else
-    // the string box leaks every iteration (the array-only __field_reclaim path
-    // below skips strings; #4357). Route through __struct_drop + box dec
-    // (emit_struct_deep_reinit_store), which frees the k_str field. Gated on
-    // struct_lit_all_string_fields_fresh so old's string is provably sole-owned
-    // (rc=1) — an ALIASED string field would over-release (strdrop-two-alias), so
-    // it falls through to the array-only path (string leak-safe). The exit sweep is
-    // NOT widened (it can't see the construction site), so a non-fresh string still
-    // rides its existing balanced path; only this per-iteration reclaim is added.
-    match (v.init) {
-        parser.ExprStructLit(dsl) => {
-            if (!dsl.has_base && slot_is_reclaimable_struct(sb, slot) && !slot_nodeep(sb, slot)
-                && struct_has_string_field(sb.structs, struct_ty)
-                && struct_lit_all_string_fields_fresh(sb.structs, dsl, sb)) {
-                return emit_struct_deep_reinit_store(sb, slot, struct_ty);
-            }
-        },
-        _ => {}
-    }
-    // A reclaimable struct LOOP-LOCAL carrying a DIRECT enum field
-    // (`while { var t = Tagged { e: Poly([i, i+1]), n: i }; }`): the loop-rebind
-    // must DEEP-drop the prior box's enum-field VARIANT PAYLOAD, else it leaks every
-    // iteration — the array-only __field_reclaim path below skips enum fields
-    // entirely, and the exit sweep's k_enum arm is a shallow box-only dec (#4357,
-    // #4297 A2 follow-up). Route through emit_struct_enum_deep_reinit_store, which
-    // runs emit_enum_variant_drops on each enum field's box (runtime variant dispatch
-    // → drop the payload, free the enum box) then frees the struct box. Gated on
-    // struct_enum_deep_reinit_eligible (scalar + droppable-enum fields only) AND
-    // struct_lit_all_enum_fields_fresh (every enum field a FRESH variant ctor, so
-    // old's payload is provably sole-owned — an ALIASED enum field would over-release,
-    // so it falls through to the leak-safe array/shallow path). The exit sweep is NOT
-    // widened (it can't see the construction site); only this per-iteration reclaim
-    // is added, so the once-off final-box payload leak stays bounded.
-    match (v.init) {
-        parser.ExprStructLit(desl) => {
-            if (!desl.has_base && slot_is_reclaimable_struct(sb, slot) && !slot_nodeep(sb, slot)
-                && struct_enum_deep_reinit_eligible(sb.structs, struct_ty)
-                && struct_lit_all_enum_fields_fresh(sb.structs, desl)) {
-                return emit_struct_enum_deep_reinit_store(sb, slot, struct_ty);
-            }
-        },
-        _ => {}
-    }
-    // A reclaimable struct LOOP-LOCAL with rc-array fields (`while { var t = f(i)
-    // / P { .., xs: [..] }; … }`): the loop-rebind must DEEP-drop the prior
-    // iteration's box — free its rc-array field buffers before freeing the box —
-    // else those buffers leak every iteration (the shallow emit_arr_store dec
-    // below frees only the box; #4357). Route through the same per-type
-    // __field_reclaim_<T> the StmtAssign consume-rebind uses (emit_field_reclaim_
-    // store, snap=-1): the helper null-guards the first-iteration null `old` and
-    // cow-guards a self-store, so it is safe both here and on the initial bind
-    // (which is a plain store of `new` — no prior box to free). A once-bound
-    // (non-loop) local is unaffected: old is null, so only the store happens, and
-    // the exit sweep still frees the final value.
-    if (slot_is_reclaimable_struct(sb, slot) && !slot_nodeep(sb, slot) && sb.struct_routes_field_reclaim(struct_ty)) {
-        return emit_field_reclaim_store(sb, slot, struct_ty, 0 - 1);
-    }
-    // Reclaimable arr-of-arr LOOP-LOCAL (#4355 slice 9): the re-declaration
-    // must free the prior iteration's whole two-level structure before the
-    // store — the shallow emit_arr_store dec (were is_arr even set) would
-    // free only the outer buffer and leak every inner per iteration.
-    if (slot_is_reclaimable_arrarr(sb, slot)) {
-        return emit_arrarr_reclaim_store(sb, slot);
-    }
-    // Reclaimable Option[<arr>][] LOOP-LOCAL (#4365): same shape as the
-    // arr-of-arr rebind above — free the prior iteration's payload buffers +
-    // option boxes + outer buffer before the store, else all three levels
-    // leak per iteration (the shallow emit_arr_store dec frees only the
-    // outer buffer).
-    if (slot_is_reclaimable_optaarr(sb, slot)) {
-        return emit_optaarr_reclaim_store(sb, slot);
-    }
-    // Reclaimable (<tuple-with-array>)[] LOOP-LOCAL (#4365): free the prior
-    // iteration's whole structure — each element tuple's array fields + tuple box,
-    // then the outer buffer — before the store, else all levels leak per iteration
-    // (the shallow emit_arr_store dec frees only the outer buffer).
-    if (slot_is_reclaimable_arrtup(sb, slot)) {
-        return emit_arrtup_reclaim_store(sb, slot, sb.locals[slot].arrarr_elem);
-    }
-    // Reclaimable (<struct-with-array>)[] LOOP-LOCAL (#4365): free the prior iteration's
-    // whole structure — each element struct's rc fields + struct box, then the outer
-    // buffer — before the store (the shallow emit_arr_store dec frees only the buffer).
-    if (slot_is_reclaimable_arrstruct(sb, slot)) {
-        return emit_arrstruct_reclaim_store(sb, slot, sb.struct_type_of_slot(slot));
-    }
-    // Reclaimable SCALAR-FIELD struct-array LOOP-LOCAL (#4355): a struct[] whose
-    // element struct has no rc field — the deep arrstruct path above skips it, so
-    // free the prior iteration's element boxes + outer buffer here (shallow box dec
-    // per element via __fern_arrarr_free), else every element struct box leaks per
-    // iteration. Disjoint from arrstruct (slot_is_reclaimable_structarr excludes
-    // field-routing structs), so at most one of these two branches fires per slot.
-    if (slot_is_reclaimable_structarr(sb, slot)) {
-        return emit_structarr_reclaim_store(sb, slot);
-    }
-    // A reclaimable string[] LOOP-LOCAL (`while { var xs: string[] = [pre + "x",
-    // pre + "y"]; … }`, #4353 item 4 / #4355 loop-rebind follow-up): the
-    // re-declaration must free the prior iteration's ELEMENT strings AND buffer
-    // via __fern_str_arr_free before the store, else every element box leaks per
-    // iteration — the shallow emit_arr_store dec below frees only the buffer. The
-    // exit sweep already frees the FINAL value with the same helper (16565); this
-    // is the missing per-iteration sibling (str reinit at 12958 covers a scalar
-    // string, structarr above covers struct elements — string elements had no
-    // reinit branch). Cow-guarded + null-guarded like every store above.
-    if (slot_is_reclaimable_strarr(sb, slot)) {
-        return emit_strarr_reclaim_store(sb, slot);
-    }
-    // A reclaimable MAP loop-local (`while { var m = map_new(8); m =
-    // m.insert(..); … }`, #4357): free the prior iteration's keys/values
-    // buffers + mapbox BEFORE the store, else one box leaks per iteration —
-    // precise_drop_names is top-level-only so a loop-declared map never gets
-    // an early drop, and the exit sweep only sees the final iteration's box.
-    // emit_map_buffers_free is stack-neutral (the reinit RHS underneath is
-    // untouched), null-guards the first binding (slots are zero-initialized
-    // at entry), zeroes the slot (the store below then overwrites it), and
-    // internally selects the MAPVS/MAPKS deep-column variants — the same
-    // coexistence contract the precise drop and exit sweep already use. The
-    // store itself is the unchanged shared tail.
-    if (slot_is_reclaimable_map(sb, slot)) {
-        sb = emit_map_buffers_free(sb, slot);
-    }
-    return emit_arr_store(sb, slot, alias_inc, is_arr || slot_is_reclaimable_struct(sb, slot) || slot_is_reclaimable_tuple(sb, slot));
-    return s.fail();
+    var vt: VarTypes = VarTypes {
+        is_arr: is_arr,
+        alias_inc: alias_inc,
+        is_str: is_str,
+        is_strarr: is_strarr,
+        is_f64arr: is_f64arr,
+        is_i64arr: is_i64arr,
+        is_closurearr: is_closurearr,
+        is_arrarr: is_arrarr,
+        arrarr_e: arrarr_e,
+        struct_ty: struct_ty,
+        opt_ty: opt_ty,
+    };
+    return bind_var_slot(v, s, se, vt);
 }
 
 // refine_map_struct_val upgrades a map slot's VALUE tag from the default "i32" to
