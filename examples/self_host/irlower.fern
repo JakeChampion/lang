@@ -3702,6 +3702,7 @@ function arr_elem_index_expr(recv: parser.Expr): parser.Expr {
         array: recv,
         index: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 },
         unchecked: false,
+        ty: "",
     };
 }
 
@@ -5305,7 +5306,7 @@ function to_json_bytecopy_stmt(on: string, sn: string, kn: string): parser.Stmt 
     var one: parser.Expr = parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 };
     var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var cond: parser.Expr = parser.ExprBinary { op: "<", left: kref, right: lenc, line: 0, col: 0 };
-    var elem: parser.Expr = parser.ExprIndex { array: sref, index: kref, unchecked: false };
+    var elem: parser.Expr = parser.ExprIndex { array: sref, index: kref, unchecked: false, ty: "" };
     var app: parser.Stmt = to_json_append_stmt(on, elem);
     var inc: parser.Stmt = parser.StmtAssign { target: kn, value: parser.ExprBinary { op: "+", left: kref, right: one, line: 0, col: 0 }, line: 0, col: 0, target_line: 0, target_col: 0 };
     return parser.StmtWhile { cond: cond, body: [app, inc], label: "" };
@@ -5333,7 +5334,7 @@ function to_json_loop_stmt(on: string, inm: string, sn: string, kn: string, aref
     var noelse: parser.Stmt[] = [];
     var ifc: parser.Stmt = parser.StmtIf { cond: igt, then_body: [to_json_append_stmt(on, comma)], else_body: noelse };
     // var $s = aref[$i].to_json();
-    var elem: parser.Expr = parser.ExprIndex { array: aref, index: iref, unchecked: false };
+    var elem: parser.Expr = parser.ExprIndex { array: aref, index: iref, unchecked: false, ty: "" };
     var elemj: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: elem, field: "to_json", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var dvs: parser.Stmt = parser.StmtVar { name: sn, type_name: "", init: elemj, line: 0, col: 0, is_str: false };
     // var $k = 0;
@@ -5409,7 +5410,7 @@ function lower_string_foreach(var_name: string, iter: parser.Expr, body: parser.
     var lenc: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: sref, field: "len", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var rargs: parser.Expr[] = [zero, lenc];
     var range_iter: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__range", line: 0, col: 0 }, args: rargs, line: 0, col: 0, type_argc: 0, ty: "" };
-    var bind: parser.Stmt = parser.StmtVar { name: var_name, type_name: "", init: parser.ExprIndex { array: sref, index: iref, unchecked: false }, line: 0, col: 0, is_str: false };
+    var bind: parser.Stmt = parser.StmtVar { name: var_name, type_name: "", init: parser.ExprIndex { array: sref, index: iref, unchecked: false, ty: "" }, line: 0, col: 0, is_str: false };
     var nbody: parser.Stmt[] = [bind];
     var bi: i32 = 0;
     while (bi < body.len()) { nbody = nbody.append(body[bi]); bi = bi + 1; }
@@ -5707,6 +5708,25 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
+// ix_type_tag returns the canonical scalar type string of an index read `a[i]`
+// — the ELEMENT type the read yields — or "" when neither the structural walk
+// nor the checker can name it. It is the shared leaf the ExprIndex arms of
+// expr_is_f64 and infer_expr_width test, so an element's width is resolved ONE
+// way across them (the index sibling of fa_type_tag, #5986).
+//
+// Same ordering rule as fa_type_tag, for the same reason: the structural walk
+// runs first and wins where it resolves, because it reads the slot's recorded
+// element KIND (`is_f64arr_slot` and friends), which distinguishes widths the
+// checker's Type erases. The annotate-stamped `ix.ty` (#5531's third carrier)
+// fills the walk's HOLES — an index of a call result, a map read, or a generic
+// chain, where the array expression is not structurally recoverable and the
+// walk silently returns false for an element the checker typed all along.
+function ix_type_tag(ix: parser.ExprIndex, s: LowerState): string {
+    if (arr_index_is_f64(ix.array, s)) { return "f64"; }
+    if (arr_index_is_i64(ix.array, s)) { return "i64"; }
+    return ix.ty;
+}
+
 // fa_type_tag returns the canonical scalar type string of a struct-field or
 // tuple-element access `obj.field` — the tuple element's annotated tag (`t.N`,
 // N all-digits) or the struct field's declared type (`p.x`) — or "" when neither
@@ -5855,7 +5875,7 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
             var ft: string = fa_type_tag(fa, s);
             return ft == "f64" || ft == "f32" || ft == "float";
         },
-        parser.ExprIndex(ix) => { return arr_index_is_f64(ix.array, s); },
+        parser.ExprIndex(ix) => { return ix_type_tag(ix, s) == "f64"; },
         _ => { return false; }
     }
     return false;
@@ -6330,8 +6350,12 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
             return 32;
         },
         parser.ExprIndex(ix) => {
-            // a[i] on an i64[] is an i64 value (so it routes through lower_i64).
-            if (arr_index_is_i64(ix.array, s)) { return 64; }
+            // a[i] on an i64[] / u64[] is an i64 value (so it routes through
+            // lower_i64). f64 is deliberately NOT width-64 here: expr_scalar_type
+            // asks expr_is_f64 first, and widening it at this leaf would route a
+            // float element through the integer path.
+            var ixt: string = ix_type_tag(ix, s);
+            if (ixt == "i64" || ixt == "u64") { return 64; }
             return 32;
         },
         parser.ExprFieldAccess(fa) => {
@@ -6388,7 +6412,7 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                 match (i64cc.callee) {
                     parser.ExprFieldAccess(i64cfa) => {
                         var i64cz: parser.Expr = parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 };
-                        return lower_i64(parser.ExprIndex { array: i64cfa.obj, index: i64cz, unchecked: true }, s);
+                        return lower_i64(parser.ExprIndex { array: i64cfa.obj, index: i64cz, unchecked: true, ty: "" }, s);
                     },
                     _ => {}
                 }
@@ -6639,9 +6663,12 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
             return s.fail();
         },
         parser.ExprIndex(ix) => {
-            // a[i] on an i64[] is an 8-byte i64 element: lower base + index (i32
-            // values) then arr_get_i64 (i64.load on wasm).
-            if (arr_index_is_i64(ix.array, s)) {
+            // a[i] on an i64[] / u64[] is an 8-byte i64 element: lower base +
+            // index (i32 values) then arr_get_i64 (i64.load on wasm). Shares
+            // ix_type_tag with infer_expr_width's ExprIndex arm, so the read
+            // width and the inferred width answer from one place.
+            var ixt64: string = ix_type_tag(ix, s);
+            if (ixt64 == "i64" || ixt64 == "u64") {
                 var bs: LowerState = lower_expr(ix.array, s);
                 if (!bs.ok) { return bs; }
                 bs = lower_expr(ix.index, bs);
@@ -9554,7 +9581,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     if (expr_is_cell(fa.obj, s)) {
         var czero: parser.Expr = parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 };
         if (fa.field == "get" && c.args.len() == 0) {
-            return lower_expr(parser.ExprIndex { array: fa.obj, index: czero, unchecked: true }, s);
+            return lower_expr(parser.ExprIndex { array: fa.obj, index: czero, unchecked: true, ty: "" }, s);
         }
         if (fa.field == "set" && c.args.len() == 1) {
             // c.set(x): store x into c[0] and leave the cell on the
@@ -10736,12 +10763,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             sidx = lower_expr(ix.index, sidx);
             if (!sidx.ok) { return sidx; }
             if (expr_is_str(ix.array, s)) { return sidx.emit(ir.op_str_index()); }
-            // Element width from the array's slot: an f64[] reads an 8-byte f64
+            // Element width from ix_type_tag: an f64[] reads an 8-byte f64
             // (arr_get width 64 → f64.load on wasm); i32[] / string[] the 4-byte
-            // i32 path. expr_is_f64's ExprIndex case mirrors this so the result
-            // types as f64 downstream.
+            // i32 path. This is the SAME leaf expr_is_f64's ExprIndex case reads,
+            // which is what keeps the load width and the result's downstream type
+            // from disagreeing — a mismatch the wasm validator rejects outright
+            // ("expected f64, found i32") rather than miscompiling silently.
             var gw: i32 = 32;
-            if (arr_index_is_f64(ix.array, s)) { gw = 64; }
+            if (ix_type_tag(ix, s) == "f64") { gw = 64; }
             // #4380 lever 3: a read the elide pass proved in-bounds (an enclosing
             // `while (i < arr.len())` guard) drops the per-iteration bounds check.
             if (ix.unchecked) { return sidx.emit(ir.op_arr_get_nc(gw)); }
@@ -17874,7 +17903,7 @@ function lower_map_clone_insert(target: string, recv: parser.Expr, key: parser.E
     var mcref: parser.Expr = parser.ExprIdent { name: mc, line: 0, col: 0 };
     var lencall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mckref, field: "len", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
     var range: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__range", line: 0, col: 0 }, args: [zero, lencall], line: 0, col: 0, type_argc: 0, ty: "" };
-    var insargs: parser.Expr[] = [parser.ExprIndex { array: mckref, index: mciref, unchecked: false }, parser.ExprIndex { array: mcvref, index: mciref, unchecked: false }];
+    var insargs: parser.Expr[] = [parser.ExprIndex { array: mckref, index: mciref, unchecked: false, ty: "" }, parser.ExprIndex { array: mcvref, index: mciref, unchecked: false, ty: "" }];
     var insexpr: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: insargs, line: 0, col: 0, type_argc: 0, ty: "" };
     var loopbody: parser.Stmt[] = [parser.StmtAssign { target: mc, value: insexpr, line: 0, col: 0, target_line: 0, target_col: 0 }];
     st = lower_stmt(parser.StmtFor { var_name: mci, iter: range, body: loopbody, label: "" }, st);
@@ -41638,7 +41667,7 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
         parser.ExprIndex(ix) => {
             var ixar: LiftExpr = lift_expr_walk(ix.array, acc, gfns);
             var ixir: LiftExpr = lift_expr_walk(ix.index, ixar.acc, gfns);
-            return LiftExpr { expr: parser.ExprIndex { array: ixar.expr, index: ixir.expr, unchecked: ix.unchecked }, acc: ixir.acc };
+            return LiftExpr { expr: parser.ExprIndex { array: ixar.expr, index: ixir.expr, unchecked: ix.unchecked, ty: ix.ty }, acc: ixir.acc };
         },
         // Slice bounds + the field-access object can also hold a nested lambda CALL
         // (`a[(iife)(0) : 3]`, `arr[(iife)(0)].v`); recurse so it is hoisted too.
@@ -42390,7 +42419,7 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
             return parser.ExprUnary { op: u.op, operand: subst_fcall_expr(u.operand, fname, lname, capargs), line: u.line, col: u.col };
         },
         parser.ExprIndex(ix) => {
-            return parser.ExprIndex { array: subst_fcall_expr(ix.array, fname, lname, capargs), index: subst_fcall_expr(ix.index, fname, lname, capargs), unchecked: ix.unchecked };
+            return parser.ExprIndex { array: subst_fcall_expr(ix.array, fname, lname, capargs), index: subst_fcall_expr(ix.index, fname, lname, capargs), unchecked: ix.unchecked, ty: ix.ty };
         },
         parser.ExprFieldAccess(fa) => {
             return parser.ExprFieldAccess { obj: subst_fcall_expr(fa.obj, fname, lname, capargs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
@@ -42675,7 +42704,7 @@ function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncD
     var bd: parser.Stmt[] = [];
     var cj: i32 = 0;
     while (cj < caps.len()) {
-        var idx: parser.Expr = parser.ExprIndex { array: parser.ExprIdent { name: "__env", line: 0, col: 0 }, index: parser.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", is_float: false, line: 0, col: 0 }, unchecked: false };
+        var idx: parser.Expr = parser.ExprIndex { array: parser.ExprIdent { name: "__env", line: 0, col: 0 }, index: parser.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "" };
         bd = bd.append(parser.StmtVar { name: caps[cj], type_name: cap_type(caps[cj], fd, structs, mfuncs), init: idx, line: 0, col: 0, is_str: false });
         cj = cj + 1;
     }
@@ -43237,7 +43266,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
         parser.ExprIndex(ix) => {
             var ar: InlineCloRes = lift_inline_closures_expr(ix.array, fd, funcs, counter, gfns, structs, mfuncs);
             var ir2: InlineCloRes = lift_inline_closures_expr(ix.index, fd, ar.funcs, ar.counter, gfns, structs, mfuncs);
-            return InlineCloRes { expr: parser.ExprIndex { array: ar.expr, index: ir2.expr, unchecked: ix.unchecked }, funcs: ir2.funcs, counter: ir2.counter };
+            return InlineCloRes { expr: parser.ExprIndex { array: ar.expr, index: ir2.expr, unchecked: ix.unchecked, ty: ix.ty }, funcs: ir2.funcs, counter: ir2.counter };
         },
         _ => { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
     }
@@ -43778,7 +43807,7 @@ function box_rewrite_expr(e: parser.Expr, boxed: string[], btypes: string[]): pa
     match (e) {
         parser.ExprIdent(id) => {
             if (util.index_of_str(boxed, id.name) >= 0) {
-                return parser.ExprIndex { array: parser.ExprIdent { name: id.name, line: id.line, col: id.col }, index: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: id.line, col: id.col }, unchecked: false };
+                return parser.ExprIndex { array: parser.ExprIdent { name: id.name, line: id.line, col: id.col }, index: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: id.line, col: id.col }, unchecked: false, ty: "" };
             }
             return e;
         },
@@ -43802,7 +43831,7 @@ function box_rewrite_expr(e: parser.Expr, boxed: string[], btypes: string[]): pa
             while (i < t.elements.len()) { ne = ne.append(box_rewrite_expr(t.elements[i], boxed, btypes)); i = i + 1; }
             return parser.ExprTuple { elements: ne, line: t.line, col: t.col };
         },
-        parser.ExprIndex(x) => { return parser.ExprIndex { array: box_rewrite_expr(x.array, boxed, btypes), index: box_rewrite_expr(x.index, boxed, btypes), unchecked: x.unchecked }; },
+        parser.ExprIndex(x) => { return parser.ExprIndex { array: box_rewrite_expr(x.array, boxed, btypes), index: box_rewrite_expr(x.index, boxed, btypes), unchecked: x.unchecked, ty: x.ty }; },
         parser.ExprSlice(sl) => { return parser.ExprSlice { array: box_rewrite_expr(sl.array, boxed, btypes), start: box_rewrite_expr(sl.start, boxed, btypes), end: box_rewrite_expr(sl.end, boxed, btypes) }; },
         parser.ExprStructLit(sl) => {
             var nv: parser.Expr[] = [];
@@ -44052,7 +44081,7 @@ function wcap_cell_decl(c: string, ty: string): parser.Stmt {
 // wcap_cell_read builds `var c: T = $wc$c[0];` — the lambda-body re-bind.
 function wcap_cell_read(c: string, ty: string): parser.Stmt {
     var cell: parser.Expr = parser.ExprIdent { name: wcap_cell_name(c), line: 0, col: 0 };
-    var idx: parser.Expr = parser.ExprIndex { array: cell, index: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 }, unchecked: false };
+    var idx: parser.Expr = parser.ExprIndex { array: cell, index: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "" };
     return parser.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, is_str: false };
 }
 
@@ -44135,7 +44164,7 @@ function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs:
         parser.ExprIndex(x) => {
             var ax: WCapExpr = wcap_expr(x.array, fd, gfns, structs, mfuncs, acc, atargets);
             var ix: WCapExpr = wcap_expr(x.index, fd, gfns, structs, mfuncs, ax.caps, atargets);
-            return WCapExpr { expr: parser.ExprIndex { array: ax.expr, index: ix.expr, unchecked: x.unchecked }, caps: ix.caps };
+            return WCapExpr { expr: parser.ExprIndex { array: ax.expr, index: ix.expr, unchecked: x.unchecked, ty: x.ty }, caps: ix.caps };
         },
         parser.ExprSlice(sl) => {
             var sa: WCapExpr = wcap_expr(sl.array, fd, gfns, structs, mfuncs, acc, atargets);

@@ -143,7 +143,7 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
             return parser.ExprArray { elements: elems };
         },
         parser.ExprIndex(x) => {
-            return parser.ExprIndex { array: fold_expr(x.array), index: fold_expr(x.index), unchecked: x.unchecked };
+            return parser.ExprIndex { array: fold_expr(x.array), index: fold_expr(x.index), unchecked: x.unchecked, ty: x.ty };
         },
         parser.ExprSlice(sl) => {
             return parser.ExprSlice {

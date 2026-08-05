@@ -131,6 +131,22 @@ leaves every `ty` empty and gets the structural walk unchanged.
 |---|---|---|
 | `ExprCall.ty` | #5531 | `expr_struct_type`, `expr_map_type_tag`, `expr_tuple_elem_tag`, `try_opt_type`, `expr_is_str` / `_f64` / `_u32` / `_u64`, `infer_expr_width` |
 | `ExprFieldAccess.ty` | #5986 | `fa_type_tag` — the single leaf behind `expr_struct_type`, `expr_map_type_tag`, `infer_expr_width` and `expr_is_f64` / `_f32` / `_u32` / `_u64`; plus `cap_type_expr` at lift time |
+| `ExprIndex.ty` | this slice | `ix_type_tag` — the leaf behind the `ExprIndex` arms of `expr_is_f64` and `infer_expr_width` AND the two load sites (`lower_expr`'s `arr_get` width, `lower_i64`'s `arr_get_i64`), so the element width and the value's downstream type answer from one place |
+
+A third ordering fact, learned wiring `ExprIndex.ty`: **a carrier must reach the
+LOAD site, not just the value predicates.** Wiring `expr_is_f64` alone made
+`var v: f64 = (if (c) { [1.5] } else { [2.5] })[0]` type as f64 downstream while
+still emitting a 4-byte `arr_get` — the two halves disagreed and the wasm
+validator rejected the module outright ("expected f64, found i32"). The width
+decision and the type decision have to share the leaf, which is why
+`lower_expr`'s `gw` and `lower_i64`'s ExprIndex arm route through `ix_type_tag`
+too. Pinned by `TestSelfHostAnnotateIndexIR_X86_64`.
+
+Residual on this carrier: `mono_expr` / `ms_expr` / `me_expr` (parser.fern)
+rebuild an `ExprIndex` with `ty: ""`, so a monomorphised clone falls back to the
+structural walk. That matches what those three sites already do with `unchecked`
+and keeps clone behaviour byte-identical; propagating the tag through
+monomorphisation is a separate slice.
 
 Two ordering facts constrain how a carrier is read, and both cost a debugging
 session to rediscover:
