@@ -9581,6 +9581,46 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             if (!mdel.ok) { return mdel; }
                             return mdel.emit(ir.op_map_delete(mkk2, meqfn));
                         }
+                        if (fa.field == "cleared" && c.args.len() == 0) {
+                            // Functional clear: `m.cleared()` -> a fresh empty map
+                            // of the same key kind. Construction, not a clear op:
+                            // this runtime's map box IS [keys, values] with no
+                            // capacity field, and __fern_map_new's argument is a
+                            // HINT every backend discards (x86 pops it into %rdi
+                            // unused, the arm64 emitter says "capacity (ignored)",
+                            // wasm calls it a hint) — so an empty box of the right
+                            // key kind is exactly what clearing produces here.
+                            // Native cow-then-clears because its map keeps capacity
+                            // AND identity; ours keeps neither, so a value-returning
+                            // `cleared` needs no IR op, no runtime helper and no
+                            // backend work. The key kind is rebuilt the way the
+                            // map_new site does it (kind 2 + "K.hash|K.eq" for a
+                            // struct/enum key), not from mkk2, which only
+                            // distinguishes i32 from string.
+                            //
+                            // Only a plain map LOCAL is admitted. The receiver is
+                            // deliberately not lowered — there is nothing to read
+                            // from it — so a receiver that had to be evaluated for
+                            // its side effects (`f().cleared()`) would lose them;
+                            // that shape bails instead. Its buffers are released by
+                            // whatever binding owned the old value, as for any
+                            // superseded map.
+                            var clr_local: boolean = false;
+                            match (fa.obj) {
+                                parser.ExprIdent(clrid) => { if (s.slot_of(clrid.name) >= 0) { clr_local = true; } },
+                                _ => {}
+                            }
+                            if (!clr_local) { return s.fail(); }
+                            var clr_kk: i32 = map_key_kind_of(mtype);
+                            var clr_fns: string = "";
+                            if (meqfn != "") {
+                                var clr_kt: string = map_key_of(mtype);
+                                clr_kk = 2;
+                                clr_fns = clr_kt + ".hash|" + clr_kt + ".eq";
+                            }
+                            var clrs: LowerState = s.emit(ir.op_const_i32(8));
+                            return clrs.emit(ir.op_map_new(clr_kk, clr_fns));
+                        }
                         if (fa.field == "keys" && c.args.len() == 0) {
                             // Element-kind flag (#4353): 0 = scalar i32 column →
                             // the register backends snapshot-copy (the `var ks =

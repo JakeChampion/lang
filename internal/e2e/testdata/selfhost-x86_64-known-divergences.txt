@@ -48,10 +48,10 @@ regex_groups #6049 hangs (killed at 20s, no output); native returns 127 in ms
 derive_json #6009 returns 4, native 42 — identical to the wasm leg's figure
 
 # --- IR-ineligible, hard error since #3457 deleted the AST emitters ---------
-# The leg re-runs these under FERN_STRICT_IR=1 and logs the named bail site; two
-# of the three are unresolved METHOD SYMBOLS rather than missing lowering.
+# The leg re-runs these under FERN_STRICT_IR=1 and logs the named bail site.
+# `pure_collection_aliases` was the third of these and is FIXED — its bail named
+# `Map.cleared`, which had no lowering at all; see the wasm sibling's note.
 generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
-pure_collection_aliases #6007 IR-ineligible; bails at main (call to unknown symbol Map.cleared)
 map_struct_value_field #6007 IR-ineligible; bails at main (no symbol named)
 
 # --- new, first seen on x86-64: ALL THREE NOW FIXED ------------------------

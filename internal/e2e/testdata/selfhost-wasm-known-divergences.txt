@@ -27,7 +27,14 @@
 # so the arm returned from the ENCLOSING function and everything after the match
 # was dead code. The arms now assign to a value local instead.
 #
-# Eight of the original twelve remain. All were found by the leg's first run
+# `pure_collection_aliases` was here and is now FIXED (the #6007 slice): the
+# self-host had no `Map.cleared` lowering at all — the name was known to the
+# checker but nothing lowered it, so the module bailed on an unknown
+# `Map.cleared` symbol. It is now construction: this runtime's map box is
+# [keys, values] with no capacity field, so a fresh empty box of the same key
+# kind IS a cleared map.
+#
+# Seven of the original twelve remain. All were found by the leg's first run
 # over the existing corpus, on fixtures that had been green for months because
 # all four of TestFernFixtures' backends are the native compiler. Each has been reproduced by hand with a
 # native self-host CLI (`make selfhost-cli`) before being written down; none is
@@ -41,7 +48,6 @@
 # IR-subset gaps, not fallbacks. "module is not IR-eligible" from the driver.
 generic_method_typeparams #6007 IR-ineligible on self-host wasm; native compiles it
 map_struct_value_field #6007 IR-ineligible on self-host wasm; native compiles it
-pure_collection_aliases #6007 IR-ineligible on self-host wasm; native compiles it
 
 # --- traps at runtime ----------------------------------------------------
 # `wasm trap: unreachable instruction executed`. Detected regardless of the

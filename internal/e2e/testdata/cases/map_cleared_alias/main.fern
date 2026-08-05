@@ -1,0 +1,36 @@
+// `Map.cleared` — the value-returning spelling of clear
+// (docs/PURE-COLLECTION-API-PLAN.md §3a). Returns an empty map and, like
+// every pure collection mutator, leaves an existing ALIAS holding the
+// entries: native cow-then-clears, and the self-host builds a fresh box.
+// `pure_collection_aliases` covers the value; this covers the aliasing,
+// which is the half a "return an empty map" lowering could get wrong.
+import "core/map";
+
+function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.insert("x", 10);
+    m = m.insert("y", 20);
+    if (m.len() != 2) { return 1; }
+
+    var alias = m;              // alias must survive the clear intact
+    m = m.cleared();
+    if (m.len() != 0) { return 2; }
+    if (m.has("x")) { return 3; }
+    if (alias.len() != 2) { return 4; }
+    if (alias.get_or("x", 0) != 10) { return 5; }
+
+    // A cleared map is a usable map, not an inert one.
+    m = m.insert("z", 99);
+    if (m.len() != 1) { return 6; }
+    if (m.get_or("z", 0) != 99) { return 7; }
+
+    // Same on an i32-keyed map: the key kind has to survive the rebuild.
+    var n: Map[i32, i32] = map_new(4);
+    n = n.insert(7, 3);
+    n = n.cleared();
+    if (n.len() != 0) { return 8; }
+    n = n.insert(7, 5);
+    if (n.get_or(7, 0) != 5) { return 9; }
+
+    return 42;
+}
