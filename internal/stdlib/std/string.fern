@@ -304,24 +304,98 @@ pub function (s: string) index_of(needle: string): i32 {
     return __str_find_from(s, s.len(), needle, nLen, 0);
 }
 
+// __str_rfind_budget bounds the naive backward scan below before it escalates
+// to the reverse Two-Way. Expressed as a multiple of the haystack length:
+// a scan that has compared more than this many bytes is on a quadratic path,
+// and the O(n) copy the escalation costs is cheaper than finishing it.
+//
+// 4 is chosen so that ordinary inputs never escalate. The naive scan compares
+// roughly one byte per position plus the length of each partial match; real
+// text with a real separator is well under 2n, so the copy is paid only by the
+// adversarial shapes it exists for.
+function __str_rfind_budget(): i32 { return 4; }
+
+// __str_rfind_from finds the RIGHTMOST occurrence of `needle` in `s`, or -1.
+//
+// Three tiers, because no single strategy is right for all of them:
+//
+//   nLen == 0  the gap at the end -- sLen, matching Python rfind / Go
+//              LastIndex ("an empty needle matches at every gap")
+//   nLen == 1  a backward memchr-shaped byte scan: O(n), no allocation. This
+//              is the overwhelmingly common case ("/", ".", ":") and must not
+//              pay for anything fancier.
+//   else       a naive backward scan under a linear COMPARISON BUDGET; if the
+//              budget is exhausted, restart with the reverse Two-Way, which is
+//              O(n + m) worst case.
+//
+// The third tier is the point. `last_index_of` and friends were a bare
+// backward probe loop, O(n*m) worst case, while the forward `index_of` has
+// been Two-Way and linear since #6179 -- a needle like "aaaa...ab" against
+// "aaaa...a" walked the whole needle at every position (#6196).
+//
+// The reverse Two-Way is obtained by reversing both strings and running the
+// FORWARD algorithm: the leftmost match in the reversed haystack is the
+// rightmost in the original, at index `sLen - r - nLen`. That is the standard
+// construction, and it reuses the tested `__str_two_way` rather than growing a
+// second, subtly different factorization.
+//
+// Its cost is one O(n) copy of the haystack, where the naive scan needs no
+// allocation at all. That is exactly why the budget exists rather than
+// escalating unconditionally: reversing a megabyte to find a two-byte
+// separator that the naive scan would have hit in twenty bytes is a
+// pessimisation, not an optimisation. Under the budget the common case keeps
+// its O(1) space, and the quadratic case gets its linear bound.
+function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 {
+    if (nLen == 0) { return sLen; }
+    if (nLen > sLen) { return 0 - 1; }
+    if (nLen == 1) {
+        var c: i32 = needle[0] as i32;
+        var b: i32 = sLen - 1;
+        while (b >= 0) {
+            if ((s[b] as i32) == c) { return b; }
+            b = b - 1;
+        }
+        return 0 - 1;
+    }
+
+    // Tier 3a — naive backward scan, metered.
+    var spent: i32 = 0;
+    var limit: i32 = sLen * __str_rfind_budget() + 16;
+    var i: i32 = sLen - nLen;
+    while (i >= 0 && spent <= limit) {
+        var k: i32 = 0;
+        var same: boolean = true;
+        while (k < nLen) {
+            spent = spent + 1;
+            if (s[i + k] != needle[k]) {
+                same = false;
+                k = nLen;
+            } else {
+                k = k + 1;
+            }
+        }
+        if (same) { return i; }
+        i = i - 1;
+    }
+    if (i < 0) { return 0 - 1; }
+
+    // Tier 3b — budget blown, so the input is one of the adversarial shapes.
+    // Restart from scratch under the linear algorithm; a partial result cannot
+    // be carried over, because the scan above ran right-to-left and Two-Way
+    // runs left-to-right over the reversal.
+    var rs: string = s.reverse_bytes();
+    var rn: string = needle.reverse_bytes();
+    var r: i32 = __str_two_way(rs, sLen, rn, nLen, 0);
+    if (r < 0) { return 0 - 1; }
+    return sLen - r - nLen;
+}
+
 // `s.last_index_of(needle)` — rightmost occurrence; -1 if
 // absent. Empty needle returns len(s) to match Python rfind /
 // Go LastIndex conventions (the "match at every gap" trick).
-// Walks bytes from the right, O(n*m) worst case — unlike the
-// forward `index_of`, which is Two-Way and linear. Applying
-// Two-Way in reverse (factorizing the reversed needle) is the
-// obvious follow-up; see docs/SOTA-STDLIB-BLUEPRINT.md.
+// Linear: see __str_rfind_from for the three tiers.
 pub function (s: string) last_index_of(needle: string): i32 {
-    var nLen: i32 = needle.len();
-    var sLen: i32 = s.len();
-    if (nLen == 0) { return sLen; }
-    if (nLen > sLen) { return 0 - 1; }
-    var i: i32 = sLen - nLen;
-    while (i >= 0) {
-        if (__substr_eq(s, i, needle, nLen)) { return i; }
-        i = i - 1;
-    }
-    return 0 - 1;
+    return __str_rfind_from(s, s.len(), needle, needle.len());
 }
 
 // `s.find(needle)` / `s.rfind(needle)` — the Option-returning
@@ -2162,14 +2236,9 @@ pub function (s: string) rpartition(sep: string): (string, string, string) {
     if (sep.len() == 0) { return ("", "", s.to_owned()); }
     var n: i32 = s.len();
     var sLen: i32 = sep.len();
-    var i: i32 = n - sLen;
-    while (i >= 0) {
-        if (__substr_eq(s, i, sep, sLen)) {
-            return (s[0:i].to_owned(), sep.to_owned(), s[i + sLen:n].to_owned());
-        }
-        i = i - 1;
-    }
-    return ("", "", s.to_owned());
+    var i: i32 = __str_rfind_from(s, n, sep, sLen);
+    if (i < 0) { return ("", "", s.to_owned()); }
+    return (s[0:i].to_owned(), sep.to_owned(), s[i + sLen:n].to_owned());
 }
 
 // `s.rsplit_once(sep)` — the LAST-occurrence mirror of `split_once`: splits
@@ -2182,15 +2251,9 @@ pub function (s: string) rsplit_once(sep: string): Option[(string, string)] {
     if (sep.len() == 0) { return None; }
     var n: i32 = s.len();
     var sLen: i32 = sep.len();
-    // Scan from the last possible start position backwards.
-    var i: i32 = n - sLen;
-    while (i >= 0) {
-        if (__substr_eq(s, i, sep, sLen)) {
-            return Some((s[0:i].to_owned(), s[i + sLen:n].to_owned()));
-        }
-        i = i - 1;
-    }
-    return None;
+    var i: i32 = __str_rfind_from(s, n, sep, sLen);
+    if (i < 0) { return None; }
+    return Some((s[0:i].to_owned(), s[i + sLen:n].to_owned()));
 }
 
 // `s.trim_start_matches(sub)` / `s.trim_end_matches(sub)` —
