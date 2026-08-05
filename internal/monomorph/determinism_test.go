@@ -11,13 +11,19 @@ package monomorph_test
 // clones to p.Funcs" loop would normally pick up Go's randomised
 // map order.
 //
-// The implementation already sortKeys the per-call instKeys before
-// cloning (see the `// 1.` and `// 3.` blocks in monomorph.go), so
-// today the run is deterministic. This guard locks that behaviour
-// in: a future refactor that removes the sort or introduces another
-// map-driven decision (e.g. struct-then-fn ordering, alias dedup,
-// nested-generic resolution) would fail loudly here instead of as
-// a flaky downstream determinism test.
+// The implementation sortKeys the per-call instKeys before cloning
+// (the `// 1.` and `// 3.` blocks in monomorph.go), and — since
+// #6077 — also sorts the instantiations discovered DURING cloning
+// before appending them to the worklist. This guard locks that in:
+// a refactor that removes either sort, or introduces another
+// map-driven decision (struct-then-fn ordering, alias dedup,
+// nested-generic resolution), fails loudly here instead of as a
+// flaky downstream determinism test.
+//
+// The second sort was missing until #6077 and this file did not
+// catch it: every case here instantiated only from call sites in
+// `main`, so the initial sort covered them all. `transitive_worklist`
+// is the case that reaches the other range — see its note below.
 //
 // printer.Print serialises the post-monomorph Program (including
 // every cloned __<name>_<typeargs> function), so comparing across
@@ -86,6 +92,41 @@ function main(): i32 {
 	var p2: Pair[string, i32] = Pair { a: "y", b: 20 };
 	var pl: Plain = Plain { v: 30 };
 	return fst[i32, string](p1) + fst[string, i32](p2).len() + pl.v;
+}`,
+
+	// transitive_worklist: instantiations discovered while CLONING, not at the
+	// original call sites. `outer[T]`'s body calls five other generics, so
+	// `ga[i32]`..`ge[i32]` only become known once `outer[i32]` has been cloned.
+	// They land on the worklist through a SECOND map range (monomorph.go's
+	// "append any newly-seen keys"), which the `// 1.` sort ahead of the loop
+	// does not cover — it sorts the initial keys only.
+	//
+	// FIVE callees, not one, and that is the point: a clone step that discovers a
+	// single fresh key ranges a one-element map, which has no order to get wrong.
+	// A three-deep chain (outer -> mid -> inner) therefore passes even with the
+	// sort removed. The bug needs several keys entering the worklist together.
+	//
+	// Every case above instantiates solely from call sites in `main`, so all of
+	// them were already sorted before cloning began and none witnessed that
+	// second range. #6077: an unsorted append there reordered emitted functions
+	// run to run, which reached the binary (two hashes over 12 compiles of
+	// examples/tests/set_test.fern) and silently defeats every byte-identity gate.
+	// Several type args per level, so a stable order has something to be stable
+	// about.
+	"transitive_worklist": `
+function ga[T](x: T): T { return x; }
+function gb[T](x: T): T { return x; }
+function gc[T](x: T): T { return x; }
+function gd[T](x: T): T { return x; }
+function ge[T](x: T): T { return x; }
+function outer[T](x: T): T { return ga(gb(gc(gd(ge(x))))); }
+function main(): i32 {
+	var a: i32 = outer[i32](1);
+	var b: string = outer[string]("s");
+	var c: boolean = outer[boolean](true);
+	var n: i32 = 0;
+	if (c) { n = 1; }
+	return a + b.len() + n;
 }`,
 }
 

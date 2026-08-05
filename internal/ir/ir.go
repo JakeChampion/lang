@@ -2807,7 +2807,17 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				}
 			}
 		}
-		for name, caps := range closureCaps {
+		// Sorted: these thunks are appended to out.Funcs, so ranging the
+		// map directly put them in Go's map iteration order and the emitted
+		// function order changed run to run (#6077). The SET is unaffected —
+		// only the order in which equally-eligible thunks are appended.
+		closureDropNames := make([]string, 0, len(closureCaps))
+		for name := range closureCaps {
+			closureDropNames = append(closureDropNames, name)
+		}
+		sort.Strings(closureDropNames)
+		for _, name := range closureDropNames {
+			caps := closureCaps[name]
 			if !hasRcCapture(caps, ptrW, lo.dynRcSupported) && !makeClosureTargets[name] {
 				continue
 			}
