@@ -196,7 +196,16 @@ pub function (s: EmitState) write(text: string): EmitState {
     // tail calls strbuf_take to materialise the final string.
     // Mirrors the x86-64 backend (asm.fern).
     strbuf_append(text);
-    return EmitState { ...s };
+    // Return the receiver, not a copy of it. `EmitState { ...s }` overrides no
+    // field, so the copy was observationally identical to `s` — and it
+    // allocated a fresh 30-field box on every write. Attributed with
+    // FERN_RC_TRACE, that made this the single largest allocator of BYTES in
+    // the compiler (658 allocs / 84 KB on a small compile, 28% of the run).
+    // Sound because every one of the 7,355 `.write(…)` call sites in the
+    // self-host sources is a same-name self-rebind (`s = s.write(…)`) — there
+    // is no site that binds the result to a second name, so handing the
+    // receiver back creates no alias that did not already exist.
+    return s;
 }
 
 pub function (s: EmitState) bind_local(name: string): EmitState {
