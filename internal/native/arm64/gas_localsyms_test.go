@@ -7,19 +7,25 @@ import (
 	"testing"
 )
 
-// The forms in this file were all rejected by AssembleProgram until #6075,
-// while the SELF-HOST arm64 assembler already supported them. That asymmetry
-// mattered because internal/native/arm64 is the oracle
+// Three of the four forms in this file were rejected by AssembleProgram until
+// #6075, while the SELF-HOST arm64 assembler already supported them. That
+// asymmetry mattered because internal/native/arm64 is the oracle
 // TestSelfHostArm64AsmEncodingMatchesNative checks the self-host assembler
 // against: a form the oracle cannot assemble cannot be covered by the
-// differential, so the three rows below had to be commented out of its snippet
-// — leaving the self-host assembler's most recently added encoders (#6060's
-// movn and FP stur/ldur) as exactly the code with no differential coverage.
+// differential, so those rows had to be commented out of its snippet — leaving
+// the self-host assembler's most recently added encoders (#6060's movn and FP
+// stur/ldur) as exactly the code with no differential coverage. Restoring them
+// caught a live bug on the first run: `stur d1, [x2, #-16]` was assembling as
+// the INTEGER stur of x1.
 //
-// Numeric local labels are the fourth and the one that unlocks the most: they
-// appear in ordinary emitter output (every bounds check is `b.lo 1f … 1:`), so
-// until AssembleProgram accepted them the differential could only ever run on
-// a hand-written snippet, never on a whole compiled program (#6062).
+// Numeric local labels unlock the most: they appear in ordinary emitter output
+// (every bounds check is `b.lo 1f … 1:`), so until AssembleProgram accepted
+// them the differential could only ever run on a hand-written snippet, never on
+// a whole compiled program (#6062).
+//
+// The FOURTH — dot-prefixed local labels — is here as a regression guard rather
+// than a new capability: #6075 listed it as a gap and it was not one. See
+// TestAssembleDotLocalLabel.
 //
 // Every expectation here is GNU as's own output for the same source
 // (aarch64-linux-gnu-as + objdump), not a hand-derived encoding.
