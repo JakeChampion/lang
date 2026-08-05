@@ -16171,7 +16171,13 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                             // into the sole-owned clone) and store it back —
                             // the aliased buffer is left untouched. Sole-owner
                             // (unaliased) slots keep the in-place arr_set below.
-                            if (s.is_aliased_name(a.target) || s.is_borrowed_name(a.target)) {
+                            // A boxed capture CELL (#5510/#5301) is exempt from the
+                            // borrowed test: the cell is SHARED with the closure by
+                            // design and its in-place write is the capture semantics,
+                            // so cloning it strands the closure on a stale snapshot.
+                            // The aliasing test still applies to it, unchanged.
+                            if (s.is_aliased_name(a.target)
+                                || (s.is_borrowed_name(a.target) && !s.is_cell_slot(slot))) {
                                 var wcl: LowerState = lower_arr_with_value(wfa.obj, wc.args[0], wc.args[1], s);
                                 if (!wcl.ok) { return wcl; }
                                 return wcl.emit(ir.op_store_local(slot));
