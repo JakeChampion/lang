@@ -276,6 +276,39 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_cmp\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n"); return s;
 }
 
+// movz_text_ok reports whether an integer literal's SOURCE TEXT can go
+// straight into MOVZ's 16-bit immediate instead of the literal pool.
+//
+// The round-trip through i32_to_string is the safety gate, not a tidiness
+// check: util.digits_to_i32 accumulates in i32, so it both WRAPS on overflow
+// (`4294967295` parses to -1) and stops silently at the first non-digit. Only
+// re-rendering the parsed value proves the parse was exact. It also rejects,
+// for free, every form this fast path must not claim — a leading `-` (MOVZ
+// zero-fills, where the pool sign-extends), `0x`/`0b` (a different base), and
+// leading zeros — because none of those re-render to themselves. So a text
+// that passes IS the canonical decimal of a value in [0, 65535], which is
+// exactly when `mov x0, #text` loads what `ldr x0, =text` would.
+function movz_text_ok(text: string): boolean {
+    var v: i32 = util.digits_to_i32(text);
+    if (v < 0 || v > 65535) { return false; }
+    return util.i32_to_string(v) == text;
+}
+
+// emit_const_i32_push materialises a 32-bit constant in x0 and pushes it. A
+// constant that fits MOVZ costs one instruction and no pool entry; anything
+// else keeps the `ldr x0, =text` literal pool, which is the only encoder here
+// that handles the full u32 range, other bases, and negatives (whose 64-bit
+// sign extension would need all four movk to rebuild in-register). Splitting
+// the wide cases into movz+movk would trade an 8-byte pool entry for a second
+// instruction — a wash on size — so the pool keeps them, and the per-function
+// `.ltorg` keeps it in reach.
+function emit_const_i32_push(s: asmcore.EmitState, text: string, movz_ok: boolean): asmcore.EmitState {
+    if (movz_ok) {
+        return s.write("    mov x0, #" + text + "\n    str x0, [sp, #-16]!\n");
+    }
+    return s.write("    ldr x0, =" + text + "\n    str x0, [sp, #-16]!\n");
+}
+
 // emit_function_via_ir emits one IR-eligible function as arm64. The frame +
 // operand discipline mirrors asm_arm64's emit_function: x29 frame pointer,
 // local slot i at [x29, #-8*(i+1)], the operand stack on sp in 16-byte slots
@@ -336,16 +369,17 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
         if (o.kind_tag == 1) {  // const_i32
-            // ldr x0, =N uses a literal pool — any 64-bit value, like asm_arm64.
-            s = s.write("    ldr x0, =" + util.i32_to_string(o.i32_imm) + "\n    str x0, [sp, #-16]!\n");
+            var ctext: string = util.i32_to_string(o.i32_imm);
+            s = emit_const_i32_push(s, ctext, o.i32_imm >= 0 && o.i32_imm <= 65535);
         } else if (o.kind_tag == 2) {  // const_i32_text
-            // Integer literal source text via the literal pool — the assembler
-            // parses the base / range (hex `0x..`, full u32), like asm_arm64.
-            s = s.write("    ldr x0, =" + o.str + "\n    str x0, [sp, #-16]!\n");
+            // Source text (hex `0x..`, full u32) — movz_text_ok decides whether
+            // it can skip the pool, and leaves anything it cannot prove exact.
+            s = emit_const_i32_push(s, o.str, movz_text_ok(o.str));
         } else if (o.kind_tag == 3) {  // const_i64
-            // 64-bit immediate (source text) via the literal pool — same form as
-            // const_i32. i64 add/sub/mul/cmp/bitwise reuse the 64-bit x-register
-            // bin ops unchanged.
+            // 64-bit immediate, also source text, also the pool: a value this
+            // wide needs up to four movk to build in-register. i64
+            // add/sub/mul/cmp/bitwise reuse the 64-bit x-register bin ops
+            // unchanged.
             s = s.write("    ldr x0, =" + o.str + "\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 7 || o.kind_tag == 8) {  // int_extend, int_wrap
             // i32<->i64: signed -> sxtw (sign-extend low word); unsigned -> mov
