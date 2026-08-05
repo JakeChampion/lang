@@ -320,20 +320,18 @@ type divergence struct {
 // knownDivergences are the (seed, backend) pairs this oracle skips,
 // each against the issue tracking the bug. The self-host fixture legs
 // carry the same idea as `testdata/selfhost-<target>-known-divergences.txt`;
-// an in-code table is used here because there is one entry and the skip
-// message can then name the issue directly.
+// an in-code table is used here because the skip message can then name
+// the issue directly.
 //
 // A row here is a KNOWN COMPILER BUG being tolerated so the rest of the
 // corpus keeps running — not a fixture that is allowed to be wrong. The
 // skip is loud (never a silent pass) and every row must cite an open
 // issue, so an untracked row is visible as such.
-var knownDivergences = map[divergence]string{
-	// wasmbin traps inside the allocator's freelist pop, following a
-	// corrupt head pointer. interp / arm64 / x86-64 all agree, and the
-	// reduced repro is in the issue. Pre-existing; the fernsmith
-	// closure productions (#6073) reached it first.
-	{17, "wasmbin"}: "https://github.com/JakeChampion/lang/issues/6142",
-}
+//
+// Empty is the desired state: a row earns its place only while its issue
+// is open, and #6142 (seed 17, wasmbin — the static closure-cell pool
+// overlapping the allocator's freelist heads table) left with the fix.
+var knownDivergences = map[divergence]string{}
 
 func TestDifferential_LangsmithMain(t *testing.T) {
 	shardIdx, shardCount := diffOracleShard(t)

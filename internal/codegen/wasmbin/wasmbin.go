@@ -336,25 +336,25 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// pointing at the cell; OpCallIndirect on that pointer
 	// would dereference to recover (fn_idx, env_ptr).
 	//
-	// Cells live in the reserved low-memory window 64..1024
-	// (before stringStart). Programs with up to 120 unique
-	// OpConstFunc targets fit without growing into the string
-	// pool.
-	// Low-memory layout (0..closuresBase):
+	// Cells live in their own static region above the freelist heads
+	// table and below the string pool — closuresBase / maxClosureCells /
+	// stringStart are derived together in runtime.go so no two regions
+	// can claim the same window again (#6142).
 	//
-	//	0..47   args / env / read_byte cache (see wasi.go)
-	//	48..55  print iovec
-	//	56..59  print ret
-	//	60..63  random buf
-	//	64..71  __str_idx scratch (data, len) for inline-form strings
-	//	72..79  rc==1 append-cliff bytes copied (i64 accumulator)
-	//	80..83  preview-2 stdout-handle init flag
-	//	84..87  preview-2 stdout-handle cache
-	//	88..91  preview-2 stderr-handle init flag
-	//	92..95  preview-2 stderr-handle cache
-	//	96..    closure pair cells (8 bytes each)
-	const closuresBase = 96
-	const maxClosureCells = (1024 - closuresBase) / 8
+	//	0..47     args / env / read_byte cache (see wasi.go)
+	//	48..55    print iovec
+	//	56..59    print ret
+	//	60..63    random buf
+	//	64..71    __str_idx scratch (data, len) for inline-form strings
+	//	72..79    rc==1 append-cliff bytes copied (i64 accumulator)
+	//	80..83    preview-2 stdout-handle init flag
+	//	84..87    preview-2 stdout-handle cache
+	//	88..91    preview-2 stderr-handle init flag
+	//	92..95    preview-2 stderr-handle cache
+	//	96..255   reserved
+	//	256..1023 freelist heads (freelistHeadsAddr)
+	//	1024..    closure pair cells (8 bytes each, closuresBase)
+	//	          then the string pool (stringStart), then the heap
 	closureTableIdx := map[string]int{}
 	// progFuncTableIdx maps a user-function name to its position
 	// in prog.Funcs. The element segment places prog.Funcs[i] at
@@ -396,12 +396,9 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// data section. Heap-form strings get a unique offset; the
 	// data section's bytes are accumulated here in declaration
 	// order, with the per-entry offset stored alongside the bytes.
-	// stringStart matches the WAT path's choice of 1024 so the
-	// data segment doesn't collide with the low-memory pair-cells
-	// the closures slice will later allocate (the WAT path uses
-	// the same convention).
+	// stringStart (runtime.go) sits above the closure-cell pool, so
+	// the data segment can't collide with the pair cells.
 	stringPool := map[string]int{}
-	const stringStart = 1024
 	stringNextOff := stringStart
 	var dataBytes []byte
 	internString := func(s string) int {
@@ -415,8 +412,8 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		// aliased / container-stored literal reaches __fern_str_inc /
 		// __fern_str_dec, which read [data-8]). The high bit makes both
 		// short-circuit, exactly like the enum-sentinel header and the
-		// runtime's __fern_alloc_box boxes. Literals sit at 1024+, ABOVE
-		// the low-address guard (1024), so without this header the dec
+		// runtime's __fern_alloc_box boxes. Literals sit at stringStart+,
+		// at or above the low-address guard, so without this header the dec
 		// would misread mid-data-segment bytes as an rc. The returned
 		// offset still points at the first content byte, so every reader
 		// (__fern_str_len / __fern_str_byte / concat / slice) is
@@ -781,10 +778,9 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		}
 	}
 
-	// OpConstFunc closure-pair cells → data segment at the
-	// reserved low-memory window (closuresBase=64). When present,
-	// also force the memory section so the data segment has a
-	// target.
+	// OpConstFunc closure-pair cells → data segment at closuresBase.
+	// When present, also force the memory section so the data segment
+	// has a target.
 	if len(closureBytes) > 0 {
 		if !m.MemoryPresent {
 			m.MemoryPresent = true
@@ -800,9 +796,9 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 
 	// Heap-form strings → data segment. Even if no other op used
 	// memory, the data segment requires a memory; force one in
-	// that case. The single segment lives at stringStart (1024)
-	// matching the WAT path so subsequent heap allocations land
-	// after the literals.
+	// that case. The single segment lives at stringStart, above the
+	// closure-cell pool, so subsequent heap allocations land after
+	// the literals.
 	if len(dataBytes) > 0 {
 		if !m.MemoryPresent {
 			m.MemoryPresent = true
