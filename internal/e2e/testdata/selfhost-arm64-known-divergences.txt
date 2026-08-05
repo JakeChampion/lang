@@ -25,11 +25,13 @@
 # instruction it does not implement (the message names the mnemonic).
 #
 # Measured 2026-08-04 on the run that closed #6045: 317 fixtures run, 302 pass,
-# the 15 below listed. Every row was reproduced by hand with bin/fern-selfhost
+# 15 listed. Two of those 15 — `tuple_match_expr` (#6010) and `multiline_stdin`
+# (#6052) — were fixed within hours of this leg landing and are now pruned,
+# leaving 13. Every row was reproduced by hand with bin/fern-selfhost
 # and checked against BOTH `bin/fern -interp` and the self-host x86-64 path,
 # which is what splits the list into its two halves:
 #
-#   * 12 rows the x86-64 leg lists too, with the SAME measured value. Those are
+#   * 10 rows the x86-64 leg lists too, with the SAME measured value. Those are
 #     shared frontend/irlower bugs that arm64 merely re-observes; fixing one
 #     flips two legs. Keep the issue numbers in sync with
 #     selfhost-x86_64-known-divergences.txt — this happened TWICE during review:
@@ -38,6 +40,16 @@
 #     reported "listed but PASSES now" before anyone thought to re-check, which
 #     is the contract earning its keep — four rows that would otherwise have
 #     sat here as permanent expected failures.
+#
+#     It has now happened FOUR times, and the last two were not caught by
+#     review at all: #6088 (tuple_match_expr / #6010) and #6094 (multiline_stdin
+#     / #6052) both branched BEFORE this leg existed, so their authors pruned
+#     the wasm and x86-64 files — the only two that existed when they started —
+#     and never saw this one. The stale rows only surface on the NEXT pull
+#     request, since the workflow is `pull_request`-only and nothing runs the
+#     leg on a push to main. So: when a shared-frontend fix prunes a row, prune
+#     it from ALL THREE files, and re-read this file rather than the one your
+#     branch was cut against.
 #   * 3 rows that pass on x86-64 AND interp and fail only here (#6081/#6082/
 #     #6083). Those are the arm64-specific frontier.
 #
@@ -53,11 +65,9 @@ regex_wordbound #6049 SEGV; x86-64 hangs on the same fixture, native returns 255
 regex_captures_assert #6049 SEGV; x86-64 hangs on the same fixture, native returns 255 in ms
 regex_groups #6049 SEGV; x86-64 hangs on the same fixture, native returns 127 in ms
 derive_json #6009 returns 4, native 42 — identical to the wasm + x86-64 figure
-tuple_match_expr #6010 returns 20, native 42 — identical to the wasm + x86-64 figure
 generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
 pure_collection_aliases #6007 IR-ineligible; bails at main (call to unknown symbol Map.cleared)
 map_struct_value_field #6007 IR-ineligible; bails at main (no symbol named)
-multiline_stdin #6052 returns 10, native 42 — only the first stdin line is consumed
 
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---
 map_struct_enum_keys #6081 returns 1, native 0 — a struct key with a string field misses on a value-equal probe key, so the keyKind-3 runtime is not hashing structurally
