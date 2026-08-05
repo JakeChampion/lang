@@ -24,18 +24,20 @@
 # ("module is not IR-eligible") or the in-process assembler refusing an
 # instruction it does not implement (the message names the mnemonic).
 #
-# Measured 2026-08-04 on the run that closed #6045: 317 fixtures run, 300 pass,
-# the 17 below listed. Every row was reproduced by hand with bin/fern-selfhost
+# Measured 2026-08-04 on the run that closed #6045: 317 fixtures run, 302 pass,
+# the 15 below listed. Every row was reproduced by hand with bin/fern-selfhost
 # and checked against BOTH `bin/fern -interp` and the self-host x86-64 path,
 # which is what splits the list into its two halves:
 #
-#   * 14 rows the x86-64 leg lists too, with the SAME measured value. Those are
+#   * 12 rows the x86-64 leg lists too, with the SAME measured value. Those are
 #     shared frontend/irlower bugs that arm64 merely re-observes; fixing one
 #     flips two legs. Keep the issue numbers in sync with
-#     selfhost-x86_64-known-divergences.txt — #6080 landed mid-review and fixed
-#     eq_struct_enum + ord_struct_enum on BOTH legs, and this leg reported them
-#     as "listed but PASSES now" before anyone thought to re-check, which is the
-#     contract earning its keep.
+#     selfhost-x86_64-known-divergences.txt — this happened TWICE during review:
+#     #6080 fixed eq_struct_enum + ord_struct_enum, and #6085 fixed int_wrap
+#     (#6050) + u64_max_to_f64_is_huge (#6051), on both legs. Each time the leg
+#     reported "listed but PASSES now" before anyone thought to re-check, which
+#     is the contract earning its keep — four rows that would otherwise have
+#     sat here as permanent expected failures.
 #   * 3 rows that pass on x86-64 AND interp and fail only here (#6081/#6082/
 #     #6083). Those are the arm64-specific frontier.
 #
@@ -55,8 +57,6 @@ tuple_match_expr #6010 returns 20, native 42 — identical to the wasm + x86-64 
 generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
 pure_collection_aliases #6007 IR-ineligible; bails at main (call to unknown symbol Map.cleared)
 map_struct_value_field #6007 IR-ineligible; bails at main (no symbol named)
-int_wrap #6050 prints "-" for -2147483648 — sign emitted, every digit dropped
-u64_max_to_f64_is_huge #6051 returns 1, native 0 — u64::MAX as f64 converts signed
 multiline_stdin #6052 returns 10, native 42 — only the first stdin line is consumed
 
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---
