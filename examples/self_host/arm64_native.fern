@@ -2234,6 +2234,14 @@ pub struct Arm64GasProg {
     pf_kinds: i32[],    // 0 = adrp@PAGE, 1 = ldr@PAGEOFF, 2 = add@PAGEOFF
     lit_sites: i32[],   // byte offset of a pending `ldr Xd, =N` (LDR-literal) to patch
     lit_vals: i64[],    // the value each pending literal loads
+    // Data-word relocations: a `.quad <symbol>` inside a data section, i.e. a
+    // data word holding another symbol's ABSOLUTE address. dref_offs[i] is the
+    // byte offset of the 8-byte slot within `data`, dref_syms[i] the target.
+    // Without these a symbolic `.quad` operand ran through arm64_gas_atoi64 and
+    // assembled to ZERO (#6149) — silently, so a static struct constant's shape
+    // pointer came out null and every `match` on it fell through.
+    dref_offs: i32[],
+    dref_syms: string[],
     bss_size: i32,      // total zero-init .bss bytes (ELF memsz beyond filesz; e.g. the heap)
     bss_names: string[],// .bss symbol names
     bss_offs: i32[],    // each .bss symbol's offset within the bss region
@@ -2246,6 +2254,7 @@ function arm64_gas_prog_new(): Arm64GasProg {
         dlab_names: [], dlab_offs: [],
         pf_sites: [], pf_syms: [], pf_kinds: [],
         lit_sites: [], lit_vals: [],
+        dref_offs: [], dref_syms: [],
         bss_size: 0, bss_names: [], bss_offs: [],
         unknown: [],
     };
@@ -2290,6 +2299,20 @@ function arm64_gas_known(mnem: string): boolean {
 // their u32/i32 siblings in the same fixture passed: the emitter routes
 // anything wider than a mov-wide immediate through the literal pool, so the
 // truncation tracked the CONSTANT's width, not the operation's.
+// arm64_gas_numeric_tok reports whether a data-directive operand is a NUMBER
+// rather than a symbol reference. Decimal, signed decimal and hex all begin
+// with a digit or a sign; every symbol this assembler sees begins with `.`
+// (a local label like `.S0` / `.K0`) or with a letter / underscore (a global
+// like `__fern_shp_Foo`). Needed because arm64_gas_atoi64 answers 0 for both a
+// real zero and an unparseable symbol, so the value alone cannot tell them
+// apart — which is exactly how `.quad .S0` came out null.
+function arm64_gas_numeric_tok(tok: string): boolean {
+    if (tok.len() == 0) { return false; }
+    var c: i32 = tok[0] as i32;
+    if (c == 45 || c == 43) { return true; }        // '-' / '+'
+    return c >= 48 && c <= 57;                       // '0'..'9'
+}
+
 function arm64_gas_atoi64(tok: string): i64 {
     var s: string = tok;
     var neg: boolean = false;
@@ -2842,7 +2865,19 @@ function arm64_gas_bss_off(p: Arm64GasProg, name: string): i32 {
 // arm64_gas_data_directive handles a `.`-directive inside a data section.
 function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasProg {
     if (arm64_str_starts_with(line, ".quad")) {
-        return arm64_gas_data_le(p, arm64_gas_atoi64(arm64_gas_trim(line[5:line.len()])), 8);
+        var qtok: string = arm64_gas_trim(line[5:line.len()]);
+        // A SYMBOLIC operand (`.quad .S0`) is another symbol's absolute address,
+        // not a number: reserve the 8-byte slot and queue a relocation for
+        // arm64_gas_link, which is the only point the segment addresses exist.
+        // arm64_gas_atoi64 would have returned 0 here, indistinguishable from a
+        // real `.quad 0`.
+        if (!arm64_gas_numeric_tok(qtok)) {
+            p = Arm64GasProg { ...p,
+                dref_offs: p.dref_offs.append(p.data.len()),
+                dref_syms: p.dref_syms.append(qtok) };
+            return arm64_gas_data_le(p, 0, 8);
+        }
+        return arm64_gas_data_le(p, arm64_gas_atoi64(qtok), 8);
     }
     if (arm64_str_starts_with(line, ".4byte") || arm64_str_starts_with(line, ".word")) {
         var off: i32 = 6;
@@ -3230,6 +3265,34 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
     return Arm64GasProg { ...p, asm: a };
 }
 
+// Arm64SymAddr / arm64_gas_sym_addr resolve a symbol to its final address at
+// link time. A symbol lives in one of THREE places: the rodata/data blob
+// (dlab), the zero-init .bss region laid out immediately after the data in
+// memory (data_vaddr + data.len() + bss_off), or — for a function VALUE, which
+// the emitter takes as `adrp x0, fn` + `add x0, x0, :lo12:fn` — .text.
+//
+// ONE lookup, shared by the instruction fixups and the data-word relocations,
+// because getting it wrong is expensive and silent: the .text arm was once
+// missing and the .bss arm did not check it had found anything, so every
+// function value resolved to a data address one byte inside the wrong segment
+// and calling one was a SEGV on `blr` (the second half of #6045). `found` is
+// returned rather than inferred from the address so a caller cannot repeat that
+// mistake by testing a sentinel.
+struct Arm64SymAddr { found: boolean, addr: i64 }
+
+// `data_len` is passed rather than read off `p`: the data-word loop lifts the
+// blob out of the struct to patch it in place, so `p.data.len()` is 0 there and
+// the .bss base would silently come out wrong.
+function arm64_gas_sym_addr(p: Arm64GasProg, aw: Arm64Asm, name: string, text_vaddr: i64, data_vaddr: i64, data_len: i32): Arm64SymAddr {
+    var doff: i32 = arm64_gas_dlabel_off(p, name);
+    if (doff >= 0) { return Arm64SymAddr { found: true, addr: data_vaddr + (doff as i64) }; }
+    var boff: i32 = arm64_gas_bss_off(p, name);
+    if (boff >= 0) { return Arm64SymAddr { found: true, addr: data_vaddr + (data_len as i64) + (boff as i64) }; }
+    var toff: i32 = arm64_asm_label_off(aw, name);
+    if (toff >= 0) { return Arm64SymAddr { found: true, addr: text_vaddr + (toff as i64) }; }
+    return Arm64SymAddr { found: false, addr: 0 };
+}
+
 // arm64_gas_link resolves the queued @PAGE/@PAGEOFF fixups now that the
 // final __TEXT / __DATA segment addresses are known (the caller supplies
 // them from macho.fern's macho_text_vaddr / macho_data_vaddr). After this,
@@ -3258,23 +3321,9 @@ pub function arm64_gas_link(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: i6
         // segment, and calling one was a SEGV on `blr`. That is the second half
         // of #6045 — invisible until the numeric-local-label fix above stopped
         // the program dying on SIGILL before it ever reached an indirect call.
-        var doff: i32 = arm64_gas_dlabel_off(p, p.pf_syms[i]);
-        var target: i64 = 0;
-        if (doff >= 0) {
-            target = data_vaddr + (doff as i64);
-        } else {
-            var boff: i32 = arm64_gas_bss_off(p, p.pf_syms[i]);
-            if (boff >= 0) {
-                target = data_vaddr + (p.data.len() as i64) + (boff as i64);
-            } else {
-                var toff: i32 = arm64_asm_label_off(aw, p.pf_syms[i]);
-                if (toff >= 0) {
-                    target = text_vaddr + (toff as i64);
-                } else {
-                    p = Arm64GasProg { ...p, unknown: p.unknown.append("symbol:" + p.pf_syms[i]) };
-                }
-            }
-        }
+        var res: Arm64SymAddr = arm64_gas_sym_addr(p, aw, p.pf_syms[i], text_vaddr, data_vaddr, p.data.len());
+        if (!res.found) { p = Arm64GasProg { ...p, unknown: p.unknown.append("symbol:" + p.pf_syms[i]) }; }
+        var target: i64 = res.addr;
         var kind: i32 = p.pf_kinds[i];
         if (kind == 0) {
             var adrp_addr: i64 = text_vaddr + (site as i64);
@@ -3286,10 +3335,36 @@ pub function arm64_gas_link(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: i6
         }
         i = i + 1;
     }
+    // Data-word relocations (#6149): write each queued symbol's absolute address
+    // into its reserved 8-byte slot, little-endian. Same three-place lookup as
+    // the instruction fixups above — a static struct constant's shape word
+    // points at a rodata label, but nothing stops a data word naming a .text or
+    // .bss symbol, and getting that lookup wrong is exactly what #6045 was.
+    var data_len: i32 = p.data.len();
+    var dat: i32[] = p.data;
+    p = Arm64GasProg { ...p, data: [] };
+    var di: i32 = 0;
+    while (di < p.dref_offs.len()) {
+        var dres: Arm64SymAddr = arm64_gas_sym_addr(p, aw, p.dref_syms[di], text_vaddr, data_vaddr, data_len);
+        if (!dres.found) {
+            p = Arm64GasProg { ...p, unknown: p.unknown.append("symbol:" + p.dref_syms[di]) };
+        } else {
+            var off: i32 = p.dref_offs[di];
+            var v: i64 = dres.addr;
+            var b: i32 = 0;
+            while (b < 8) {
+                dat = dat.with(off + b, ((v >> (b * 8)) & 255) as i32);
+                b = b + 1;
+            }
+        }
+        di = di + 1;
+    }
+    p = Arm64GasProg { ...p, data: dat };
     aw = Arm64Asm { ...aw, code: code };
     p = Arm64GasProg { ...p, asm: aw };
     return p;
 }
+
 
 // arm64_gas_assemble parses a text-only program (no data section / symbol
 // relocation) and returns the resolved .text — the back-compat entry the
