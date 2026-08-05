@@ -1,0 +1,11 @@
+import "std/i64";
+// INT64_MIN is the one i64 whose negation overflows back to itself, so a
+// formatter that negates to a magnitude and loops `while (m > 0)` renders it
+// as a bare "-". The magnitude must be carried unsigned (#6050, the i64
+// sibling of the i32 case in int_wrap).
+function main(): i32 {
+    var n: i64 = 0 - 9223372036854775807 - 1;
+    var s: string = n.to_string();
+    if (s == "-9223372036854775808") { return 0; }
+    return 1;
+}
