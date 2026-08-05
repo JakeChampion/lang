@@ -1,6 +1,9 @@
 package arm64
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 // Assembler collects a stream of instructions plus named labels and
 // PC-relative branches to them, then resolves the branch offsets in a
@@ -43,6 +46,83 @@ type Assembler struct {
 	veneerReach  int
 	veneerPasses int
 	veneerErr    error
+
+	// GAS numeric local labels: how many times each number has been DEFINED
+	// so far. `1:` may appear any number of times, and `1f` / `1b` name the
+	// next / previous definition rather than a unique symbol, so a plain
+	// name→offset map cannot hold them. Definitions are mangled to `<n>#<k>`
+	// with k counting from this map, and a reference resolves against the
+	// same counter at the point it is emitted — which is exactly GAS's rule,
+	// since both are walked in source order. `#` opens an immediate in GAS,
+	// so a mangled name can never collide with a real symbol.
+	numDefs map[int]int
+}
+
+// numericLabelRef reports whether tok is a numeric local label REFERENCE
+// (`1f` forward / `1b` backward) and returns its number and direction.
+func numericLabelRef(tok string) (n int, forward, ok bool) {
+	if len(tok) < 2 {
+		return 0, false, false
+	}
+	last := tok[len(tok)-1]
+	if last != 'f' && last != 'b' {
+		return 0, false, false
+	}
+	v, err := strconv.Atoi(tok[:len(tok)-1])
+	if err != nil || v < 0 {
+		return 0, false, false
+	}
+	return v, last == 'f', true
+}
+
+// isNumericLabelDef reports whether name is a numeric local label DEFINITION
+// (`1`, from a `1:` line).
+func isNumericLabelDef(name string) (int, bool) {
+	if name == "" {
+		return 0, false
+	}
+	v, err := strconv.Atoi(name)
+	if err != nil || v < 0 {
+		return 0, false
+	}
+	return v, true
+}
+
+func numericLabelName(n, k int) string {
+	return strconv.Itoa(n) + "#" + strconv.Itoa(k)
+}
+
+// defineNumericLabel returns the mangled name for the next definition of `n`
+// and advances its counter.
+func (a *Assembler) defineNumericLabel(n int) string {
+	if a.numDefs == nil {
+		a.numDefs = make(map[int]int)
+	}
+	k := a.numDefs[n]
+	a.numDefs[n] = k + 1
+	return numericLabelName(n, k)
+}
+
+// resolveLabelRef maps a branch target through the numeric-local rules,
+// leaving an ordinary symbol untouched. `<n>f` is the NEXT definition (not yet
+// placed — the fixup pass resolves it), `<n>b` the most recent one.
+//
+// A `<n>b` with no preceding `<n>:` maps to a name that cannot be defined, so
+// Bytes() reports an undefined label rather than silently aiming the branch at
+// a definition further down the file.
+func (a *Assembler) resolveLabelRef(label string) string {
+	n, forward, ok := numericLabelRef(label)
+	if !ok {
+		return label
+	}
+	k := a.numDefs[n]
+	if !forward {
+		k--
+		if k < 0 {
+			return numericLabelName(n, -1)
+		}
+	}
+	return numericLabelName(n, k)
 }
 
 // LineRow is one DWARF .debug_line row: the source line active at a .text
@@ -115,6 +195,13 @@ func NewAssembler() *Assembler {
 // TextLabel marks a .text symbol at the current instruction position
 // (also usable as a branch target).
 func (a *Assembler) TextLabel(name string) {
+	if n, ok := isNumericLabelDef(name); ok {
+		// A numeric local is not a symbol — it is scoped to the branches
+		// around it, and registering it in a.syms would let `1` be picked up
+		// as a global name.
+		a.labels[a.defineNumericLabel(n)] = len(a.insns)
+		return
+	}
 	a.labels[name] = len(a.insns)
 	a.syms[name] = symbol{inText: true, val: len(a.insns)}
 }
@@ -197,6 +284,10 @@ func (a *Assembler) Emit(insn uint32) {
 // target. A label may be defined after the branches that reference it
 // (forward branch) or before (backward branch).
 func (a *Assembler) Label(name string) {
+	if n, ok := isNumericLabelDef(name); ok {
+		a.labels[a.defineNumericLabel(n)] = len(a.insns)
+		return
+	}
 	a.labels[name] = len(a.insns)
 }
 
@@ -258,7 +349,9 @@ func (a *Assembler) testBranch(base, rt, bit uint32, label string) {
 }
 
 func (a *Assembler) branch(base uint32, label string, kind branchKind) {
-	a.fixups = append(a.fixups, fixup{at: len(a.insns), label: label, kind: kind})
+	// Every branch target goes through the numeric-local mapping here rather
+	// than at each call site, so B/BL/Bcond/CBZ/CBNZ/TBZ/TBNZ all get it.
+	a.fixups = append(a.fixups, fixup{at: len(a.insns), label: a.resolveLabelRef(label), kind: kind})
 	a.insns = append(a.insns, base)
 }
 
