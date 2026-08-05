@@ -343,7 +343,7 @@ pub function op_store_ptr(): Op { return op0("store_ptr"); }
 // `int_cast` masks / extends a 32-bit integer to a narrower int type's range:
 // `as u8` (and 255), `as i32` (sign-extend low 32 — movslq), `as u32`
 // (zero-extend low 32 — movl).
-// The target type name rides `str`. Mirrors asm.fern's `as_<ty>` int→int masking.
+// The target type name rides `str`. Mirrors the retired x86 AST emitter's `as_<ty>` int→int masking.
 pub function op_int_cast(ty: string): Op { return Op { kind_tag: 9, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: ty }; }
 // `u32_wrap` reduces a value on the operand stack to its u32 range (zero-extend
 // low 32 bits). Emitted after a u32 arithmetic op (add/sub/mul/shl) on the

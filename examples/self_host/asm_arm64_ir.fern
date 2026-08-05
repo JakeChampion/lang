@@ -1423,7 +1423,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             // FP instruction, push. frintm/frintp/frintz are round toward -inf /
             // +inf / zero; frinta is round-to-nearest ties-AWAY (= Go's math.Round,
             // so __round_f64 is one instruction here — no emulation needed, unlike
-            // x86/wasm). Mirrors asm_arm64.fern.
+            // x86/wasm).
             s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n");
             if (o.kind_tag == 57) { s = s.write("    fsqrt d0, d0\n"); }  // fsqrt
             else if (o.kind_tag == 59) { s = s.write("    frintm d0, d0\n"); }  // ffloor
@@ -1447,14 +1447,14 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, arr_ret_fns: string[], s:
             s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 66) {  // fpow
             // pow(x, y) = exp(y·log x) via the __fern_pow_f64 helper — d0 = x (lhs),
-            // d1 = y (rhs). fbin pops rhs (y) then lhs (x). Mirrors asm_arm64.fern.
+            // d1 = y (rhs). fbin pops rhs (y) then lhs (x).
             s = s.write("    ldr x9, [sp], #16\n    ldr x0, [sp], #16\n");
             s = s.write("    fmov d0, x0\n    fmov d1, x9\n");
             s = s.write("    bl __fern_pow_f64\n");
             s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 51 || o.kind_tag == 52 || o.kind_tag == 53 || o.kind_tag == 54 || o.kind_tag == 49 || o.kind_tag == 50) {  // flt, fle, fgt, fge, feq, fne
             // f64 compare → i32 0/1. fcmp's condition codes are NaN-aware (mi/ls
-            // are false when unordered); mirrors asm_arm64.fern.
+            // are false when unordered);
             s = s.write("    ldr x0, [sp], #16\n    ldr x1, [sp], #16\n    fmov d0, x0\n    fmov d1, x1\n    fcmp d1, d0\n");
             if (o.kind_tag == 51) { s = s.write("    cset w0, mi\n"); }  // flt
             else if (o.kind_tag == 52) { s = s.write("    cset w0, ls\n"); }  // fle
@@ -3114,7 +3114,7 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         // accumulator (strbuf_reset / strbuf_append / strbuf_take).
         // Emitted alongside the heap (strbuf_take allocates via
         // __fern_alloc). A string is a 16-byte box {data@0, len@8}.
-        // Mirrors asm.fern's x86 emitStrBufRuntime; required so a
+        // Mirrors the retired x86 AST emitter's emitStrBufRuntime; required so a
         // program that uses strbuf — including asm_arm64.fern itself —
         // self-compiles and links.
         s = s.write("    .bss\n");
