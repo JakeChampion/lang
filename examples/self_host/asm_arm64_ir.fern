@@ -1483,6 +1483,17 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
 
     // Fallback (subset functions always end in `return`).
     s = s.write("    mov x0, #0\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n");
+
+    // Flush the literal pool at the function boundary. Every `const_i32` /
+    // `const_i64` above emits `ldr x0, =N`, whose pool entry the assembler
+    // reaches with an LDR-literal — a signed 19-bit word offset, so +/-1 MB.
+    // Without a flush the whole module shares one pool at the end of .text,
+    // and the first function's loads sit that far away: the checker driver's
+    // .text measured 1,043,608 bytes, 5,080 bytes under the limit, so any
+    // change adding ~1,270 instructions broke the link with ~40 "pc-relative
+    // load offset out of range" errors. A pool here is off the execution path
+    // (the `ret` above is unconditional), which is what makes it safe.
+    s = s.write("    .ltorg\n");
     return s;
 }
 
