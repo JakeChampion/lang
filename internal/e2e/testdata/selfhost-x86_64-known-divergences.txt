@@ -47,7 +47,7 @@ regex_groups #6049 hangs (killed at 20s, no output); native returns 127 in ms
 # selection, so these live in the shared frontend/irlower, NOT in wasm_ir.fern.
 # Commented onto #6007/#6009/#6010 with the cross-target evidence; those issues
 # are titled "self-host wasm:" and should be re-scoped.
-derive_json #6009 returns 4, native 42 — identical to the wasm leg's figure
+derive_json #6009 returns 8, native 42 — identical to the wasm + arm64 figure; was 4 (multi-payload variants, fixed); now `self.items.to_json()` on an i32[] FIELD renders the array POINTER
 
 # --- IR-ineligible, hard error since #3457 deleted the AST emitters ---------
 # The leg re-runs these under FERN_STRICT_IR=1 and logs the named bail site.

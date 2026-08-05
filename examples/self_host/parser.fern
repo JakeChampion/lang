@@ -744,6 +744,19 @@ function p_variant(type_name: string, binding: string): Pattern {
     var no_nested: Pattern[] = [];
     return PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested, at_binding: "" };
 }
+// p_variant_n builds a variant pattern binding N payloads as `<prefix>0` …
+// `<prefix>N-1`. p_variant's single `binding` covers only the first, which is
+// why every @derive synthesiser over enum variants silently ignored payloads
+// past it — a `Rect(2, 3)` compared, hashed and rendered as if it were
+// `Rect(2)`. n <= 0 binds nothing (a unit variant).
+function p_variant_n(type_name: string, prefix: string, n: i32): Pattern {
+    if (n <= 0) { return p_variant(type_name, ""); }
+    var extra: string[] = [];
+    var i: i32 = 1;
+    while (i < n) { extra = extra.append(prefix + dl_itoa(i)); i = i + 1; }
+    var no_nested: Pattern[] = [];
+    return PatVariant { type_name: type_name, binding: prefix + "0", extra_bindings: extra, nested: no_nested, at_binding: "" };
+}
 function p_wildcard(): Pattern { return PatWildcard { tag: 0 }; }
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
 function s_defer(action: Stmt): Stmt { return StmtDefer { action: action, on_error: 0 }; }
@@ -12149,10 +12162,17 @@ function synth_enum_debug(ename: string, variants: StructDecl[]): FuncDecl {
     while (i < variants.len()) {
         var v: StructDecl = variants[i];
         if (v.fields.len() > 0) {
+            // Every payload, comma-separated (`Rect(2, 3)`), matching the Go
+            // synthEnumDebug.
             var e: Expr = e_string(v.name + "(");
-            e = e_binary("+", e, dv_debug_render(e_ident("__p0"), v.fields[0].type_name));
+            var dj: i32 = 0;
+            while (dj < v.fields.len()) {
+                if (dj > 0) { e = e_binary("+", e, e_string(", ")); }
+                e = e_binary("+", e, dv_debug_render(e_ident("__p" + dl_itoa(dj)), v.fields[dj].type_name));
+                dj = dj + 1;
+            }
             e = e_binary("+", e, e_string(")"));
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant_n(v.name, "__p", v.fields.len()), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
         } else {
             arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
         }
@@ -12174,10 +12194,17 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
         var v: StructDecl = variants[i];
         var inner: MatchArm[] = [];
         if (v.fields.len() > 0) {
+            // EVERY payload must match, not just the first — `Rect(2, 3) ==
+            // Rect(2, 9)` was true before this.
             var eqx: Expr = dv_eq_expr(v.fields[0].type_name, e_ident("__s0"), e_ident("__o0"));
-            inner = inner.append(MatchArm { pattern: p_variant(v.name, "__o0"), body: [s_return(eqx)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            var qj: i32 = 1;
+            while (qj < v.fields.len()) {
+                eqx = e_binary("&&", eqx, dv_eq_expr(v.fields[qj].type_name, e_ident("__s" + dl_itoa(qj)), e_ident("__o" + dl_itoa(qj))));
+                qj = qj + 1;
+            }
+            inner = inner.append(MatchArm { pattern: p_variant_n(v.name, "__o", v.fields.len()), body: [s_return(eqx)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
             inner = inner.append(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__s0"), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant_n(v.name, "__s", v.fields.len()), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
         } else {
             inner = inner.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_bool(true))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
             inner = inner.append(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
@@ -12193,7 +12220,8 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
 
 // synth_enum_ord: variant-wise `cmp` — a variant declared earlier sorts
 // before one declared later (by index); within the same variant the
-// single payload is compared. Mirrors the Go synthEnumOrd.
+// payloads are compared lexicographically, first non-zero winning.
+// Mirrors the Go synthEnumOrd.
 function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
     var arms: MatchArm[] = [];
     var i: i32 = 0;
@@ -12203,8 +12231,7 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
         var j: i32 = 0;
         while (j < variants.len()) {
             var vj: StructDecl = variants[j];
-            var ob: string = "";
-            if (vj.fields.len() > 0) { ob = "__o0"; }
+            var obn: i32 = vj.fields.len();
             var ibody: Stmt[] = [];
             if (j < i) {
                 ibody = [s_return(e_number("1", "", false))];
@@ -12213,9 +12240,20 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
                     ibody = [s_return(e_binary("-", e_number("0", "", false), e_number("1", "", false)))];
                 } else {
                     if (vi.fields.len() > 0) {
-                        var cstmts: Stmt[] = dv_cmp_stmts("__c0", vi.fields[0].type_name, e_ident("__s0"), e_ident("__o0"));
+                        // Lexicographic over ALL payloads: the first non-zero
+                        // comparison wins. Only the first was compared before,
+                        // so `Rect(2, 3) < Rect(2, 9)` was false.
+                        var cstmts: Stmt[] = [];
                         var emptyb: Stmt[] = [];
-                        cstmts = cstmts.append(s_if(e_binary("!=", e_ident("__c0"), e_number("0", "", false)), [s_return(e_ident("__c0"))], emptyb));
+                        var cj: i32 = 0;
+                        while (cj < vi.fields.len()) {
+                            var cn: string = "__c" + dl_itoa(cj);
+                            var cs1: Stmt[] = dv_cmp_stmts(cn, vi.fields[cj].type_name, e_ident("__s" + dl_itoa(cj)), e_ident("__o" + dl_itoa(cj)));
+                            var ck: i32 = 0;
+                            while (ck < cs1.len()) { cstmts = cstmts.append(cs1[ck]); ck = ck + 1; }
+                            cstmts = cstmts.append(s_if(e_binary("!=", e_ident(cn), e_number("0", "", false)), [s_return(e_ident(cn))], emptyb));
+                            cj = cj + 1;
+                        }
                         cstmts = cstmts.append(s_return(e_number("0", "", false)));
                         ibody = cstmts;
                     } else {
@@ -12223,12 +12261,10 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
                     }
                 }
             }
-            inner = inner.append(MatchArm { pattern: p_variant(vj.name, ob), body: ibody, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            inner = inner.append(MatchArm { pattern: p_variant_n(vj.name, "__o", obn), body: ibody, line: 0, col: 0, guard: e_bool(true), has_guard: false });
             j = j + 1;
         }
-        var sb: string = "";
-        if (vi.fields.len() > 0) { sb = "__s0"; }
-        arms = arms.append(MatchArm { pattern: p_variant(vi.name, sb), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        arms = arms.append(MatchArm { pattern: p_variant_n(vi.name, "__s", vi.fields.len()), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
         i = i + 1;
     }
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
@@ -12239,24 +12275,25 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
 
 // synth_enum_hash: variant-wise `hash` — seed the accumulator with the
 // variant's tag (17 + declaration index) so distinct variants hash
-// apart, then fold the single payload (`__p0`) through `h = h * 31 +
-// __p0.hash()`. Mirrors the Go synthEnumHash (self-host enum variants
-// carry at most one payload).
+// apart, then fold EVERY payload (`__p0`, `__p1`, …) through `h = h * 31 +
+// <payload>.hash()`. Mirrors the Go synthEnumHash.
 function synth_enum_hash(ename: string, variants: StructDecl[]): FuncDecl {
     var arms: MatchArm[] = [];
     var i: i32 = 0;
     while (i < variants.len()) {
         var v: StructDecl = variants[i];
         var stmts: Stmt[] = [s_var("__h", "i32", e_number(dl_itoa(17 + i), "", false))];
-        var pat: string = "";
-        if (v.fields.len() > 0) {
-            pat = "__p0";
-            var fs: Stmt[] = dv_hash_stmts("__h", v.fields[0].type_name, e_ident("__p0"), dl_itoa(i));
+        // Fold EVERY payload, so two variants differing only past the first
+        // no longer collide (`Rect(2, 3)` and `Rect(2, 9)` hashed equal before).
+        var hj: i32 = 0;
+        while (hj < v.fields.len()) {
+            var fs: Stmt[] = dv_hash_stmts("__h", v.fields[hj].type_name, e_ident("__p" + dl_itoa(hj)), dl_itoa(i) + "_" + dl_itoa(hj));
             var k: i32 = 0;
             while (k < fs.len()) { stmts = stmts.append(fs[k]); k = k + 1; }
+            hj = hj + 1;
         }
         stmts = stmts.append(s_return(e_ident("__h")));
-        arms = arms.append(MatchArm { pattern: p_variant(v.name, pat), body: stmts, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        arms = arms.append(MatchArm { pattern: p_variant_n(v.name, "__p", v.fields.len()), body: stmts, line: 0, col: 0, guard: e_bool(true), has_guard: false });
         i = i + 1;
     }
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
@@ -12267,18 +12304,28 @@ function synth_enum_hash(ename: string, variants: StructDecl[]): FuncDecl {
 
 // synth_enum_json: variant-wise `to_json` — a unit variant renders as
 // its name as a JSON string (`"Empty"`); a payload variant as a single-
-// key object (`{"Circle":<__p0.to_json()>}`). Externally-tagged, matching
-// the Go synthEnumJson (self-host enum variants carry at most one payload).
+// key object (`{"Circle":<__p0.to_json()>}`), and a MULTI-payload variant as
+// a JSON array under that key (`{"Rect":[2,3]}`). Externally-tagged, matching
+// the Go synthEnumJson.
 function synth_enum_json(ename: string, variants: StructDecl[]): FuncDecl {
     var arms: MatchArm[] = [];
     var i: i32 = 0;
     while (i < variants.len()) {
         var v: StructDecl = variants[i];
         if (v.fields.len() > 0) {
+            // One payload renders bare (`{"Circle":5}`); two or more render as a
+            // JSON ARRAY (`{"Rect":[2,3]}`), matching the Go synthEnumJson.
             var e: Expr = e_string("{\"" + v.name + "\":");
-            e = e_binary("+", e, dv_call0(e_ident("__p0"), "to_json"));
+            if (v.fields.len() > 1) { e = e_binary("+", e, e_string("[")); }
+            var pj: i32 = 0;
+            while (pj < v.fields.len()) {
+                if (pj > 0) { e = e_binary("+", e, e_string(",")); }
+                e = e_binary("+", e, dv_call0(e_ident("__p" + dl_itoa(pj)), "to_json"));
+                pj = pj + 1;
+            }
+            if (v.fields.len() > 1) { e = e_binary("+", e, e_string("]")); }
             e = e_binary("+", e, e_string("}"));
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant_n(v.name, "__p", v.fields.len()), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
         } else {
             arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string("\"" + v.name + "\""))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
         }
