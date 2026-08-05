@@ -285,22 +285,31 @@ function main(): i32 { var a: i32[] = [1, 2]; return h(a); }`,
 			// (same type, same block) — both pairing algorithms agree here.
 			// reuseSources/reuseConsumed agree exactly (lit position + donor).
 			// The donor's precise drop is suppressed on both sides (the dump
-			// mirrors lower_func's donor suppression); the RECIPIENT's
-			// last-use-at-return drop is the KNOWN self-host-only placement
-			// class pinned on escape-and-call-returned.
+			// mirrors lower_func's donor suppression), and so is the
+			// recipient's — this case pins full convergence on every table.
+			// It used to carry a preciseDrops divergence for the recipient's
+			// last-use-at-return placement; that self-host-only class stays
+			// pinned by escape-and-call-returned and arrayset-inc-live-receiver.
+			//
+			// The recipient multiplies a field by a PARAM so it is not itself a
+			// compile-time constant: the self-host excludes a constant recipient
+			// from reuse (reuse_recipient_ok) so #6149 can place it statically
+			// instead, and native has no such placement — an all-literal
+			// recipient here would pin that difference rather than the pairing
+			// this case is for. The literal's column is unchanged, so the
+			// reuseSources anchor still reads 5:13. A param rather than `s`
+			// because `a` is itself a constant now, which makes `3 * s`
+			// foldable in a way `3 * one` is not.
 			name: "reuse-sources-struct",
 			src: `struct P { x: i32, y: i32 }
-function r(): i32 {
+function r(one: i32): i32 {
 	var a: P = P { x: 1, y: 2 };
 	var s: i32 = a.x;
-	var b: P = P { x: 3, y: 4 };
+	var b: P = P { x: 3 * one, y: 4 };
 	return s + b.x;
 }
-function main(): i32 { return r(); }`,
+function main(): i32 { return r(1); }`,
 			anchor: map[string]map[string]string{"r": {"reuseSources": "5:13<-a", "reuseConsumed": "a"}},
-			diverge: map[string]map[string]divergence{
-				"r": {"preciseDrops": {native: "", selfhost: "3=b"}},
-			},
 		},
 		{
 			// REUSE PAIRING, tuple: same shape over tuple literals (the
@@ -364,6 +373,9 @@ function main(): i32 { return loopr(); }`,
 		},
 		{
 			// NESTED (if-arm) reuse: donor + recipient inside an if-then block.
+			// The recipient multiplies a field by the param (1 at the call site)
+			// for the same reason reuse-sources-struct does — a constant
+			// recipient is not a reuse shape on the self-host.
 			name: "nested-if-reuse",
 			src: `struct P { x: i32, y: i32 }
 function ifr(f: i32): i32 {
@@ -371,7 +383,7 @@ function ifr(f: i32): i32 {
 	if (f > 0) {
 		var a: P = P { x: 10, y: 20 };
 		var s: i32 = a.x + a.y;
-		var b: P = P { x: 3, y: 4 };
+		var b: P = P { x: 3 * f, y: 4 };
 		r = s + b.x + b.y;
 	}
 	return r;
