@@ -4377,6 +4377,50 @@ pub function str_lit_label(s: asmcore.EmitState, idx: i32): string {
     return ".S" + s.str_ns + "_" + util.i32_to_string(idx);
 }
 
+// emit_const_agg_data flushes the unit's static aggregate constants (#6149) as
+// GAS `.data` blocks — shared verbatim by the x86-64 and arm64 emitters, which
+// have identical box layouts (`[shape_ptr@0, f0@8, …]`, cap at data-16, rc at
+// data-8) and identical directives here.
+//
+// Each block reproduces exactly what `__fern_arr_box(nf+1)` plus the field
+// stores would have produced, with ONE difference: the rc word is -1, the
+// immortal sentinel every rc entry point already skips. `__fern_rc_inc` and
+// `__fern_arr_dec` return early on a negative rc, `__fern_str_free` likewise,
+// and `__fern_rc_is_unique` answers 0 — so a shared constant is never freed,
+// never refcounted, and never reused in place. The cap word is still written so
+// nothing that reads a block's size off data-16 sees garbage, even though the
+// sentinel means no free path can reach it.
+pub function emit_const_agg_data(s: asmcore.EmitState): asmcore.EmitState {
+    return emit_const_agg_data_from(s, 0);
+}
+
+// emit_const_agg_data_from writes only the blocks from `first` on — the
+// incremental form the runtime-helper emit needs, whose constants are interned
+// after the main pool has already been written.
+pub function emit_const_agg_data_from(s: asmcore.EmitState, first: i32): asmcore.EmitState {
+    if (s.const_aggs.len() <= first) { return s; }
+    var st: asmcore.EmitState = s.write("    .section .data\n    .align 8\n");
+    var i: i32 = first;
+    while (i < st.const_aggs.len()) {
+        var e: string = st.const_aggs[i];
+        var bar: i32 = 0;
+        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+        var shp: string = e[0 : bar] + "";
+        var vals: string[] = ir.const_struct_values(e);
+        st = st.write("    .quad " + util.i32_to_string(vals.len() + 1) + "\n");   // cap @ data-16
+        st = st.write("    .quad -1\n");                                            // rc  @ data-8 (immortal)
+        st = st.write(asmcore.const_agg_label(st, i) + ":\n");
+        st = st.write("    .quad " + shp + "\n");
+        var vi: i32 = 0;
+        while (vi < vals.len()) {
+            st = st.write("    .quad " + vals[vi] + "\n");
+            vi = vi + 1;
+        }
+        i = i + 1;
+    }
+    return st;
+}
+
 // ShapeRefOut carries the updated state + the label a shape pointer leaqs.
 pub struct ShapeRefOut { state: asmcore.EmitState, label: string }
 
@@ -5145,6 +5189,26 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
                 em = em - 1;
             }
             s = s.write("    pushq %rax\n");
+        } else if (o.kind_tag == 218) {  // const_struct
+            // The whole box is a compile-time constant (#6149): intern its data
+            // block and push the block's address. No allocation, no field stores
+            // — where struct_make emits an __fern_arr_box call plus nf pops, this
+            // is one leaq. The block is laid out by emit_const_agg_data below to
+            // be byte-identical to what __fern_arr_box + the stores would have
+            // produced, except for the rc word, which is the immortal sentinel.
+            var kshp: ShapeRefOut = shape_ref(s, ir.const_struct_type(o.str));
+            s = kshp.state;
+            var kpack: string = kshp.label + "|";
+            var kvals: string[] = ir.const_struct_values(o.str);
+            var kv: i32 = 0;
+            while (kv < kvals.len()) {
+                if (kv > 0) { kpack = kpack + ","; }
+                kpack = kpack + kvals[kv];
+                kv = kv + 1;
+            }
+            var kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, kpack);
+            s = kout.state;
+            s = s.write("    leaq " + asmcore.const_agg_label(s, kout.idx) + "(%rip), %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 120) {  // opt_make
             // Option/Result box [tag@0, payload@8], 2 words. rc-HEADERED via
             // __fern_arr_box(cap=2) — exactly like struct_make/tuple_make — so a
@@ -6414,6 +6478,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     // str_search / str_eq / str_cmp / str_to_i32 / str_trim bodies) adds none, so
     // this is a no-op for them. Mirrors the AST emit_runtime_fern_fn flush.
     var lit0: i32 = s.string_lits.len();
+    var agg0: i32 = s.const_aggs.len();
     var i: i32 = 0;
     while (i < fns.len()) {
         s = emit_function_via_ir(fns[i], s, sg);
@@ -6426,6 +6491,15 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
             s = s.write(str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
         }
+        s = s.write("    .text\n");
+    }
+    // Same story for a static aggregate constant the helper body interns: the
+    // main .data pool was written before this runs, so flush the new blocks here
+    // and return to .text. No helper currently builds one, so this is a no-op
+    // today — present so a future Fern-written helper that does is not silently
+    // left with a dangling .K label.
+    if (s.const_aggs.len() > agg0) {
+        s = emit_const_agg_data_from(s, agg0);
         s = s.write("    .text\n");
     }
     return s;
@@ -6942,6 +7016,9 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
             li = li + 1;
         }
     }
+    // .data: one block per static aggregate constant (#6149). After the string
+    // pool, because a block's first word is a shape POINTER into it.
+    s = emit_const_agg_data(s);
     // Per-module shape pointers: emit each distinct shape name once as a `.weak`
     // global symbol (shape_sym) carrying its name bytes. Every unit referencing the
     // same shape emits the same weak symbol, so the linker merges them to ONE

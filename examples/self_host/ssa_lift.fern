@@ -175,6 +175,28 @@ function has_prefix(s: string, p: string): boolean {
     return true;
 }
 
+// LitWord / decimal_word parse an irlower literal's SOURCE TEXT into the i32 the
+// SSA `const_int` holds. irlower carries integer literals as text so the AST
+// backends can splice hex / full-u32 values straight into an immediate; the lift
+// needs a number, and util.digits_to_i32 handles plain DECIMAL only — so a
+// non-decimal literal reports ok=false and the caller bails rather than emitting
+// a wrong constant. Shared by const_i32_text and const_struct's field words.
+struct LitWord { ok: boolean, value: i32 }
+
+function decimal_word(t: string): LitWord {
+    var dec: boolean = t.len() > 0;
+    var ci: i32 = 0;
+    while (ci < t.len()) {
+        var c: i32 = t[ci] as i32;
+        if (ci == 0 && c == 45) {
+            if (t.len() == 1) { dec = false; }
+        } else if (c < 48 || c > 57) { dec = false; }
+        ci = ci + 1;
+    }
+    if (!dec) { return LitWord { ok: false, value: 0 }; }
+    return LitWord { ok: true, value: util.digits_to_i32(t) };
+}
+
 function is_rc_noop(name: string): boolean {
     if (name == "__fern_rc_inc") { return true; }
     if (name == "__fern_rc_dec") { return true; }
@@ -320,20 +342,11 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
             // text — but only plain DECIMAL (optionally signed); a hex / non-
             // decimal literal (which util.digits_to_i32 can't parse) bails so a
             // caller falls back rather than emitting a wrong constant.
-            var t: string = op.str;
-            var dec: boolean = t.len() > 0;
-            var ci: i32 = 0;
-            while (ci < t.len()) {
-                var c: i32 = t[ci] as i32;
-                if (ci == 0 && c == 45) {
-                    if (t.len() == 1) { dec = false; }
-                } else if (c < 48 || c > 57) { dec = false; }
-                ci = ci + 1;
-            }
-            if (!dec) { ok = false; }
+            var lw: LitWord = decimal_word(op.str);
+            if (!lw.ok) { ok = false; }
             else {
                 var ctv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: ctv, args: [], imm: util.digits_to_i32(t), str: "" });
+                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: ctv, args: [], imm: lw.value, str: "" });
                 stack = stack.append(ctv);
             }
         } else if (k == "const_f64") {
@@ -873,6 +886,38 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 }
                 stack = stack.append(sh);
             }
+        } else if (k == "const_struct") {
+            // A struct literal every field of which is a compile-time scalar
+            // literal (#6149). The register backends place it in static data;
+            // the lift MATERIALISES it — same box, same layout as struct_make,
+            // just with constant field words instead of operand-stack values.
+            // That is what struct_make produced before the constant recognition
+            // existed, and on the leak-only SSA heap a per-evaluation box is
+            // exactly right: there is no rc word for a sentinel to live in.
+            var ksvals: string[] = ir.const_struct_values(op.str);
+            var ksh: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: ksh, args: [], imm: ksvals.len() + 1, str: "" });
+            var kstagi: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: kstagi, args: [], imm: 0, str: "" });
+            var kstagv: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: kstagv, args: [], imm: struct_id_of(structs, ir.const_struct_type(op.str)), str: "" });
+            var kstsv: i32 = nvals; nvals = nvals + 1;
+            cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: kstsv, args: [ksh, kstagi, kstagv], imm: 0, str: "" });
+            var kfi: i32 = 0;
+            while (kfi < ksvals.len() && ok) {
+                var kw: LitWord = decimal_word(ksvals[kfi]);
+                if (!kw.ok) { ok = false; }
+                else {
+                    var kofi: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: kofi, args: [], imm: kfi + 1, str: "" });
+                    var kvi: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: kvi, args: [], imm: kw.value, str: "" });
+                    var ksti: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: ksti, args: [ksh, kofi, kvi], imm: 0, str: "" });
+                }
+                kfi = kfi + 1;
+            }
+            if (ok) { stack = stack.append(ksh); }
         } else if (k == "struct_get") {
             // p.field on a scalar struct: field f is at slot f+1 (slot 0 is the
             // tag), mirroring build_func's ExprFieldAccess. Width-64 (f64 / i64)

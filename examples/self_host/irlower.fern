@@ -9651,6 +9651,20 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // evaluated once into a scratch local and re-loaded per copied field.
             if (!decl_is_struct(s.structs, slit.type_name)) { return s.fail(); }
             if (!decl_is_leaksafe(s.structs, slit.type_name)) { return s.fail(); }
+            // Every field a compile-time scalar literal (#6149): the whole box is
+            // a constant, so place it in static data instead of allocating and
+            // storing one per evaluation. Tested before any lowering below so the
+            // op replaces the entire struct_make sequence, field pushes included.
+            //
+            // REGISTER BACKENDS ONLY for now. wasm's static data is a linear-memory
+            // region whose base feeds the freelist and heap bases (fl_base_for /
+            // heap_base_for), so adding a second region there is a layout change,
+            // not an emit arm — slice 2. Until then wasm keeps struct_make, which
+            // is correct, just still allocating.
+            var cagg: ConstAgg = const_agg_of(slit, s.structs);
+            if (cagg.ok && !s.for_wasm()) {
+                return s.emit(ir.op_const_struct(slit.type_name, decl_field_count(s.structs, slit.type_name), cagg.values));
+            }
             if (slit.has_base) {
                 // The base may be an ident OR any struct-typed expression whose
                 // type resolves (a struct-returning call `mk()`, a struct field
@@ -13223,6 +13237,93 @@ function struct_lit_all_scalar(structs: parser.StructDecl[], name: string): bool
         fi = fi + 1;
     }
     return true;
+}
+
+// --- static aggregate constants (#6149) --------------------------------------
+//
+// `TypeI32 { is_char: false, width: 32, unsigned: false }` is a compile-time
+// constant, and the checker's nullary type constructors return one per call —
+// ~21% of every allocation the compiler makes, each box leaked (the run frees
+// 2,228 of 5,947). Recognised here and lowered to op_const_struct, which the
+// backends place in static data instead of allocating.
+//
+// Slice 1's admission is deliberately narrow: a NO-BASE literal of a declared
+// struct / variant whose every DECLARED field is an i32-width scalar and whose
+// value is a literal of that kind. Wider fields (i64 / f64), strings and nested
+// aggregates need more than the one word per field the backends emit for this
+// op, so they stay on struct_make.
+
+// const_agg_scalar_field reports whether a DECLARED field type is one this slice
+// can place statically: an i32-width scalar. `struct_field_width` returns 64 for
+// exactly the wide kinds, which is the same classifier struct_make's field
+// stores use, so admitting `width == 0` cannot disagree with the box layout.
+function const_agg_scalar_field(structs: parser.StructDecl[], name: string, idx: i32): boolean {
+    if (struct_field_width(structs, name, idx) != 0) { return false; }
+    var t: string = decl_field_type_at(structs, name, idx);
+    return t == "i32" || t == "u32" || t == "boolean" || t == "char" || t == "u8";
+}
+
+// const_agg_lit_value renders a scalar-literal expression as the word text the
+// backends splice into their data directive, or returns ok=false when the
+// expression is not one. The literal's SOURCE TEXT is carried, not a parsed
+// integer — the same contract op_const_i32_text keeps, so a hex literal reaches
+// the assembler intact instead of being zeroed by a decimal-only parse.
+// Booleans render as the 1/0 words struct_make would have stored; a unary minus
+// over a number literal is admitted so a negative field constant is not pushed
+// off the path.
+struct ConstAggWord { ok: boolean, text: string }
+
+function const_agg_lit_value(e: parser.Expr): ConstAggWord {
+    var bad: ConstAggWord = ConstAggWord { ok: false, text: "" };
+    match (e) {
+        parser.ExprNumber(n) => {
+            if (n.is_float || n.suffix.len() > 0) { return bad; }
+            return ConstAggWord { ok: true, text: n.text };
+        },
+        parser.ExprBool(b) => {
+            if (b.value) { return ConstAggWord { ok: true, text: "1" }; }
+            return ConstAggWord { ok: true, text: "0" };
+        },
+        parser.ExprUnary(u) => {
+            if (u.op != "-") { return bad; }
+            var inner: ConstAggWord = const_agg_lit_value(u.operand);
+            if (!inner.ok) { return bad; }
+            return ConstAggWord { ok: true, text: "-" + inner.text };
+        },
+        _ => { return bad; },
+    }
+    return bad;
+}
+
+// const_agg_of packs a struct literal's decl-ordered field words when every one
+// of them is a compile-time scalar literal. ok=false leaves the literal on the
+// ordinary struct_make path.
+struct ConstAgg { ok: boolean, values: string }
+
+function const_agg_of(slit: parser.ExprStructLit, structs: parser.StructDecl[]): ConstAgg {
+    var bad: ConstAgg = ConstAgg { ok: false, values: "" };
+    if (slit.has_base) { return bad; }
+    if (!decl_is_struct(structs, slit.type_name)) { return bad; }
+    var ndecl: i32 = decl_field_count(structs, slit.type_name);
+    var out: string = "";
+    var di: i32 = 0;
+    while (di < ndecl) {
+        if (!const_agg_scalar_field(structs, slit.type_name, di)) { return bad; }
+        var fname: string = decl_field_name_at(structs, slit.type_name, di);
+        var found: i32 = 0 - 1;
+        var fj: i32 = 0;
+        while (fj < slit.field_names.len()) {
+            if (slit.field_names[fj] == fname) { found = fj; }
+            fj = fj + 1;
+        }
+        if (found < 0) { return bad; }   // a no-base literal must set every field
+        var w: ConstAggWord = const_agg_lit_value(slit.field_values[found]);
+        if (!w.ok) { return bad; }
+        if (di > 0) { out = out + ","; }
+        out = out + w.text;
+        di = di + 1;
+    }
+    return ConstAgg { ok: true, values: out };
 }
 
 // lower_stmt lowers one top-level statement of the i32 subset.

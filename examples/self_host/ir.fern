@@ -950,6 +950,57 @@ pub function op_mapiter_advance(): Op { return op0("mapiter_advance"); }
 pub function op_struct_make(type_name: string, nfields: i32): Op {
     return Op { kind_tag: 138, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
+// const_struct is struct_make's compile-time twin: an aggregate literal whose
+// every field is a scalar LITERAL (`TypeI32 { is_char: false, width: 32,
+// unsigned: false }`) is a compile-time constant, so the backends place it in
+// STATIC DATA and push its address instead of allocating and storing a box per
+// evaluation (#6149 — the checker's nullary type constructors were ~21% of the
+// compiler's own allocations, one leaked box per call). Nothing is on the
+// operand stack: the values ride in `str` as
+// `<type_name>|<v0>,<v1>,…` (i32-width field values in decl order, the same
+// pipe-then-comma packing the reuse-site registries use), and `i32_imm` is the
+// field count so a reader that only needs the arity never parses.
+//
+// The static box carries a NEGATIVE rc word, which every rc entry point already
+// reads as the immortal sentinel and skips — `__fern_rc_inc` / `__fern_arr_dec`
+// / `__fern_str_free` return early, and `__fern_rc_is_unique` returns 0, so a
+// record update or an FBIP reuse targeting a shared constant degrades to a fresh
+// allocation rather than writing through it. With E048 forbidding field
+// assignment, a shared constant box cannot be observed to change.
+pub function op_const_struct(type_name: string, nfields: i32, values: string): Op {
+    return Op { kind_tag: 218, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name + "|" + values };
+}
+
+// const_struct_type / const_struct_values split an op_const_struct's packed
+// `str` back into its two halves. One splitter, so the three backends cannot
+// disagree about the encoding.
+//
+// The values come back as SOURCE TEXT, not integers — the same contract
+// op_const_i32_text carries, for the same reason: the assembler / WAT parser
+// handles the base and the unsigned range, where a Fern-side decimal parse
+// would zero every hex literal.
+pub function const_struct_type(packed: string): string {
+    var i: i32 = 0;
+    while (i < packed.len() && packed[i] != 124) { i = i + 1; }   // 124 = '|'
+    return packed[0 : i] + "";
+}
+
+pub function const_struct_values(packed: string): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < packed.len() && packed[i] != 124) { i = i + 1; }
+    i = i + 1;
+    var start: i32 = i;
+    while (i < packed.len()) {
+        if (packed[i] == 44) {                                    // 44 = ','
+            out = out.append(packed[start : i] + "");
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    if (start < packed.len()) { out = out.append(packed[start : packed.len()] + ""); }
+    return out;
+}
 // struct_copy pops [src box] and pushes a FRESH box that is a shallow, word-for-
 // word copy of src (the same shape ptr @0 + all `nfields` field slots). It is the
 // compact lowering of a functional struct-update's base copy: `T { ...base, f: v }`
@@ -1397,6 +1448,9 @@ function kind_id_4(name: string): i32 {
     if (name == "arr_concat") { return 215; }
     if (name == "arr_push_shared_count") { return 216; }
     if (name == "arr_push_shared_bytes") { return 217; }
+    // Static aggregate constant (#6149) — struct_make with every field a
+    // compile-time scalar literal, placed in data rather than allocated.
+    if (name == "const_struct") { return 218; }
     return 0;
 }
 
@@ -1643,6 +1697,7 @@ function kind_name_4(id: i32): string {
     if (id == 215) { return "arr_concat"; }
     if (id == 216) { return "arr_push_shared_count"; }
     if (id == 217) { return "arr_push_shared_bytes"; }
+    if (id == 218) { return "const_struct"; }
     return "invalid";
 }
 
@@ -1778,11 +1833,26 @@ pub function render_op(o: Op): string {
 // members below are a subset of that, so listing them here does not change its
 // result.)
 pub function op_allocates(tag: i32): boolean {
+    // const_struct (#6149) allocates NOTHING — its box is static data — but the
+    // value still flows through the rc runtime: a dec at scope exit, an
+    // is_unique + alloc_reuse on a record update whose base is the constant. It
+    // is admitted here for the same reason heap_bump_bytes and the cliff
+    // counters are: this gate is "needs the heap + RC runtime", not "calls the
+    // allocator". Without it, a module whose every aggregate is constant loses
+    // its only claimant and the link breaks on an undefined
+    // __fn___fern_arr_dec / __fn___fern_rc_is_unique / __fn___fern_alloc_reuse.
+    if (tag == 218) { return true; }
     // Low-level + literal allocations.
     if (tag == 76 || tag == 77 || tag == 87 || tag == 92 || tag == 94 || tag == 95) { return true; }
     if (tag == 5 || tag == 98 || tag == 102 || tag == 103) { return true; }
-    // Composite boxes.
-    if (tag == 138 || tag == 142) { return true; }
+    // Composite boxes. struct_copy (198) allocates the fresh box a functional
+    // update copies its base into (`__fn___fern_struct_copy`), so it needs the
+    // heap runtime exactly as struct_make does. It was absent here and got away
+    // with it only because a module containing an update always ALSO contained a
+    // struct_make that claimed the need; #6149's static aggregate constants took
+    // that struct_make away and the link broke on an undefined
+    // __fn___fern_struct_copy / __fn___fern_arr_dec.
+    if (tag == 138 || tag == 142 || tag == 198) { return true; }
     if (tag == 120 || tag == 121) { return true; }
     if (tag == 124 || tag == 125) { return true; }
     // map_iter allocates the 16-byte iterator box via __fern_alloc; the other
