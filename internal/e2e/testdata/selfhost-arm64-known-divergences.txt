@@ -28,8 +28,9 @@
 # 15 listed. Two of those 15 — `tuple_match_expr` (#6010) and `multiline_stdin`
 # (#6052) — were fixed within hours of this leg landing and were pruned in
 # #6099, `pure_collection_aliases` + `map_struct_value_field` with the #6007
-# slices, `derive_json` with #6009, and the six regex fixtures with #6049,
-# leaving 4. Every row was reproduced by hand with bin/fern-selfhost
+# slices, `derive_json` with #6009, the six regex fixtures with #6049, and
+# `map_struct_enum_keys` with #6081,
+# leaving 3. Every row was reproduced by hand with bin/fern-selfhost
 # and checked against BOTH `bin/fern -interp` and the self-host x86-64 path,
 # which is what splits the list into its two halves:
 #
@@ -52,17 +53,27 @@
 #     leg on a push to main. So: when a shared-frontend fix prunes a row, prune
 #     it from ALL THREE files, and re-read this file rather than the one your
 #     branch was cut against.
-#   * 3 rows that pass on x86-64 AND interp and fail only here (#6081/#6082/
-#     #6083). Those are the arm64-specific frontier.
+#   * 2 rows that pass on x86-64 AND interp and fail only here (#6082/#6083).
+#     Those are the arm64-specific frontier.
 #
 # No assembler-refusal row survives: every "hit an instruction it does not yet
 # support" failure is gone, and the one compile row below is the shared #6007
 # IR-eligibility bail the x86-64 leg carries verbatim.
+#
+# #6081 (`map_struct_enum_keys`) was one of those arm64-only rows and is now
+# fixed: the arm64 map runtime had no keyed-compare path at all, so a struct /
+# enum key fell through to the STRING loop and `__fern_str_eq` read the key box
+# ({shape-ptr, field0, …}) as a `{data, len}` string box — comparing field 0 as
+# a LENGTH and then walking the shared shape pointer. Two keys therefore matched
+# iff their first field was bit-identical. A `Name { first: string, … }` key
+# missed (two distinct string-box pointers), which is what the fixture saw; a
+# scalar-only struct key would instead have OVER-matched on any key with the
+# same field 0. That second half is pinned by TestSelfHostMapKeyedArm64IR, since
+# no fixture probed it.
 
 # --- shared with the x86-64 leg (same bug, same measured value) ---
 generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
 
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---
-map_struct_enum_keys #6081 returns 1, native 0 — a struct key with a string field misses on a value-equal probe key, so the keyKind-3 runtime is not hashing structurally
 url_codec #6082 stdout mismatch on one line — url_parse takes the None arm and the printed line splices bytes from neighbouring string constants; the exit code still matches, so only the stdout oracle sees it
 audit_io_builtins #6083 SEGV after 4ms, having printed "Hi!" and "to-stderr" — faults in a later IO builtin; native and self-host x86-64 both reach "done" and exit 0
