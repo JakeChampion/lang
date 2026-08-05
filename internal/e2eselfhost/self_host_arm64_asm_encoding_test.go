@@ -51,11 +51,17 @@ import (
 // whenever the emitter learns a new instruction form; both assemblers then have
 // to agree about it.
 //
-// Three oracle limitations shape the snippet, all worth knowing before editing
-// it: internal/native/arm64 treats any line starting with '.' as a directive (so
-// the branch target is a bare Lend:, not a .L local label), has no movn
-// mnemonic, and has no stur/ldur FP form. None is a self-host limitation --
-// #6064 tracks closing them so the snippet can cover those forms too.
+// The oracle used to lag the assembler it checks, which forced movn and the
+// negative-FP-offset forms out of this snippet -- leaving the self-host's most
+// recently added encoders as precisely the code with no differential coverage.
+// #6075 closed that: movn, FP stur/ldur and numeric local labels all assemble
+// in internal/native/arm64 now, each pinned against GNU as in
+// internal/native/arm64/gas_localsyms_test.go, and the rows are restored below.
+//
+// One of the three gaps #6075 listed turned out not to exist: dot-prefixed
+// local labels (.Ldone:) always worked, because splitLabel peels labels before
+// the '.'-prefix directive check. The claim was in the issue and in this
+// comment; TestAssembleDotLocalLabel now guards the behaviour.
 func TestSelfHostArm64AsmEncodingMatchesNative(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
@@ -135,23 +141,27 @@ _start:
     movz x5, #0x400, lsl #16
     movz x2, #1, lsl #16
     movk x2, #0xffff, lsl #32
-    // No explicit movn row: the NATIVE assembler used as this test's oracle does
-    // not implement that mnemonic ("unsupported instruction movn"), so a row for
-    // it fails at the oracle rather than testing anything. The self-host side
-    // does implement it (#6060 -- it used to emit nothing at all), and the
-    // mov x0, #-100 line below reaches the same encoder through the path the
-    // emitter actually takes.
+    // movn, explicitly. #6060 gave the self-host assembler a dispatch for it
+    // (it used to emit nothing at all) but the oracle had none, so this row had
+    // to be dropped and the encoder was covered only indirectly via mov #-100.
+    // #6075 taught the oracle movn, so the direct rows are back.
+    movn x0, #99
+    movn x3, #1, lsl #16
+    movn w5, #7
     mov x0, #-100
     mov w0, #-100
     mov x1, #-1
     str d8, [sp, #-16]!
     ldr d8, [sp], #16
     ldr d0, [x12, #8]
-    // No plain-negative FP offset row (str d0, [x12, #-8]): the oracle rejects it
-    // outright ("str FP offset must be a non-negative multiple of 8") because
-    // internal/native/arm64 has no stur/ldur FP form. The self-host now does
-    // (#6060 -- without it the offset wrapped to +8184 and the writeback was
-    // dropped), so that is a gap in the oracle, not in the assembler under test.
+    // Negative FP offsets, which lower to the unscaled STUR/LDUR form. Without
+    // them the offset wrapped to +8184 and the writeback was dropped (#6060).
+    // The oracle rejected any negative FP displacement until #6075, so these
+    // rows were commented out here; both assemblers now agree with GNU as.
+    str d0, [x12, #-8]
+    ldr d0, [x12, #-8]
+    stur d1, [x2, #-16]
+    ldur d3, [x4, #-32]
     add x0, sp, x0
     add x3, sp, x4
     sub x0, sp, x1
@@ -343,13 +353,12 @@ func TestSelfHostArm64AsmUnresolvedBranchRefused(t *testing.T) {
 // a word inside the ELF header, which is zero, which is UDF #0. 129 of 317
 // corpus fixtures died on SIGILL before printing a byte (#6045).
 //
-// The oracle cannot assemble numeric locals (internal/native/arm64 has no
-// notion of them — #6075), so this compares two spellings of the SAME control
-// flow instead: one using numeric locals, one using ordinary named labels. The
-// named version goes through the oracle, which anchors the expected encodings;
-// the numeric version must then produce byte-identical words. That tests the
-// semantics — which definition each reference selects, in both directions —
-// rather than re-asserting the branch encoder the snippet above already covers.
+// This compared two SPELLINGS of the same control flow — numeric against named
+// — until #6075, because the oracle could not assemble numeric locals at all.
+// It can now, so the comparison is direct: the numeric spelling is checked
+// against internal/native/arm64 like every other form, and the workaround is
+// gone. Address-bearing instructions are safe to compare here, unlike in the
+// snippet above, because every branch target is inside the same fragment.
 func TestSelfHostArm64AsmNumericLocalLabels(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
@@ -378,66 +387,28 @@ _start:
 Labort:
     ret
 `
-	const named = `.text
-.globl _start
-_start:
-    cmp x1, x2
-    b.lo Lone
-    b Labort
-Lone:
-    add x1, x1, #1
-    cmp x1, x2
-    b.lo Ltwo
-    b Labort
-Ltwo:
-    add x1, x1, #2
-Lloop:
-    sub x1, x1, #1
-    cbnz x1, Lloop
-    b Ltwo
-Labort:
-    ret
-`
 
-	bin := buildAsmBenchDriver(t, gcc)
-	gotNumeric := assembleSelfHost(t, bin, runner, numeric)
-	gotNamed := assembleSelfHost(t, bin, runner, named)
+	got := assembleSelfHost(t, buildAsmBenchDriver(t, gcc), runner, numeric)
 
-	// Anchor: the named spelling must match the oracle, so a bug shared by both
-	// spellings cannot pass by cancelling out.
-	text, _, err := nativearm64.AssembleProgram(named, nativeelf.TextVAddr)
+	text, _, err := nativearm64.AssembleProgram(numeric, nativeelf.TextVAddr)
 	if err != nil {
-		t.Fatalf("native assembler rejected the named snippet (the oracle must accept it): %v", err)
+		t.Fatalf("native assembler rejected the numeric-local snippet (the oracle must accept it since #6075): %v", err)
 	}
 	var want []uint32
 	for i := 0; i+4 <= len(text); i += 4 {
 		want = append(want, binary.LittleEndian.Uint32(text[i:]))
 	}
-	lines := snippetInsns(named)
-	if len(gotNamed) != len(want) {
-		t.Fatalf("named snippet word count differs: self-host %d, native %d", len(gotNamed), len(want))
+	lines := snippetInsns(numeric)
+	if len(got) != len(want) {
+		t.Fatalf("word count differs: self-host %d, native %d", len(got), len(want))
 	}
 	for i := range want {
-		if gotNamed[i] != want[i] {
+		if got[i] != want[i] {
 			src := "?"
 			if i < len(lines) {
 				src = lines[i]
 			}
-			t.Errorf("named word %d (%s): self-host %08x, native %08x", i, src, gotNamed[i], want[i])
-		}
-	}
-
-	if len(gotNumeric) != len(gotNamed) {
-		t.Fatalf("numeric-local snippet assembled to %d words, the named equivalent to %d", len(gotNumeric), len(gotNamed))
-	}
-	nlines := snippetInsns(numeric)
-	for i := range gotNamed {
-		if gotNumeric[i] != gotNamed[i] {
-			src := "?"
-			if i < len(nlines) {
-				src = nlines[i]
-			}
-			t.Errorf("word %d (%s): numeric-local %08x, named equivalent %08x", i, src, gotNumeric[i], gotNamed[i])
+			t.Errorf("word %d (%s): self-host %08x, native %08x", i, src, got[i], want[i])
 		}
 	}
 }

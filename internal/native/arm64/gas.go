@@ -88,7 +88,12 @@ func splitLabel(line string) (label, rest string, ok bool) {
 		return "", "", false
 	}
 	name := strings.TrimSpace(line[:i])
-	if !isIdent(name) {
+	// A GAS numeric local label (`1:`) is a label, not an identifier — isIdent
+	// rejects a leading digit — so it has to be admitted separately. Without
+	// this the line fell through to the instruction dispatch and came back as
+	// `unsupported instruction "1:"`, which is what kept the encoding
+	// differential to a hand-written snippet instead of whole programs (#6075).
+	if _, isNum := isNumericLabelDef(name); !isNum && !isIdent(name) {
 		return "", "", false
 	}
 	return name, line[i+1:], true
@@ -141,7 +146,7 @@ func assembleInsn(a *Assembler, line string) error {
 	switch mnem {
 	case "mov":
 		return asmMov(a, ops)
-	case "movz", "movk":
+	case "movz", "movk", "movn":
 		return asmMoveWide(a, mnem, ops)
 	case "add", "sub", "adds", "subs":
 		return asmAddSub(a, mnem, ops)
@@ -379,9 +384,18 @@ func asmMoveWide(a *Assembler, mnem string, ops []string) error {
 		return err
 	}
 	w := is32(ops[0])
-	if mnem == "movz" {
+	switch mnem {
+	case "movz":
 		a.Emit(clearSF(MOVZ(rd, uint16(imm), shift), w))
-	} else {
+	case "movn":
+		// move-wide-NOT: the complement of (imm16 << shift). The encoder has
+		// been here all along; only the mnemonic was missing, so `movn` came
+		// back as "unsupported instruction" and the self-host assembler's own
+		// movn support had no oracle to check against (#6075).
+		// Verified against GNU as: movn x0,#99 = 0x92800c60,
+		// movn x3,#1,lsl #16 = 0x92a00023, movn w5,#7 = 0x128000e5.
+		a.Emit(clearSF(MOVN(rd, uint16(imm), shift), w))
+	default:
 		a.Emit(clearSF(MOVK(rd, uint16(imm), shift), w))
 	}
 	return nil
@@ -1047,7 +1061,20 @@ func asmLoadStoreFP(a *Assembler, mnem string, rt uint32, single bool, ops []str
 		return nil
 	}
 	if m.off < 0 || m.off%8 != 0 {
-		return fmt.Errorf("%s FP offset must be a non-negative multiple of 8, got %d", mnem, m.off)
+		// Unscaled (LDUR/STUR) territory: a negative or non-8-aligned
+		// displacement, which the scaled unsigned form cannot encode. GNU as
+		// rewrites `str d0, [x12, #-8]` to `stur` silently, so accepting the
+		// `str`/`ldr` spelling here is matching the reference assembler rather
+		// than being lenient.
+		if m.off < -256 || m.off > 255 {
+			return fmt.Errorf("%s FP offset %d is neither a non-negative multiple of 8 nor in the unscaled range [-256,255]", mnem, m.off)
+		}
+		if load {
+			a.Emit(LdurFP64(rt, m.base, int32(m.off)))
+		} else {
+			a.Emit(SturFP64(rt, m.base, int32(m.off)))
+		}
+		return nil
 	}
 	imm12 := uint32(m.off) / 8
 	if load {
@@ -1097,6 +1124,31 @@ func asmLoadSigned(a *Assembler, mnem string, ops []string) error {
 func asmUnscaled(a *Assembler, mnem string, ops []string) error {
 	if len(ops) != 2 {
 		return fmt.Errorf("%s expects a register and a memory operand", mnem)
+	}
+	// FP register form: `ldur/stur Dt, [Xn, #imm9]`. SIMD&FP load/store has
+	// its own opcode space, exactly as in asmLoadStore above.
+	if mnem == "ldur" || mnem == "stur" {
+		if vt, single, verr := parseVReg(ops[0]); verr == nil {
+			if single {
+				return fmt.Errorf("%s of a single-precision register not supported yet", mnem)
+			}
+			m, merr := parseMem(ops[1])
+			if merr != nil {
+				return merr
+			}
+			if m.pre || m.hasIndex {
+				return fmt.Errorf("%s takes a plain [Xn, #imm9] operand", mnem)
+			}
+			if m.off < -256 || m.off > 255 {
+				return fmt.Errorf("%s offset %d out of signed 9-bit range", mnem, m.off)
+			}
+			if mnem == "ldur" {
+				a.Emit(LdurFP64(vt, m.base, int32(m.off)))
+			} else {
+				a.Emit(SturFP64(vt, m.base, int32(m.off)))
+			}
+			return nil
+		}
 	}
 	rt, err := parseReg(ops[0])
 	if err != nil {

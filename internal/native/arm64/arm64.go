@@ -653,6 +653,24 @@ func StrFP64PreIdx(rt, rn uint32, imm9 int32) uint32 {
 	return 0xFC000C00 | ((uint32(imm9) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
 }
 
+// LdurFP64 / SturFP64 are the fourth addressing mode: an UNSCALED signed
+// 9-bit offset with no writeback (bits 11:10 = 00, where post-index is 01 and
+// pre-index is 11). They reach the negative and non-8-aligned displacements
+// the scaled unsigned form cannot express, which is why `str d0, [x12, #-8]`
+// needs them — GNU as silently rewrites that spelling to `stur`.
+//
+// Without these the assembler rejected any negative FP offset outright, which
+// made it unusable as the oracle for the self-host assembler's own stur/ldur
+// support (#6075). Verified against GNU as: stur d0,[x12,#-8] = 0xfc1f8180,
+// ldur d0,[x12,#-8] = 0xfc5f8180, stur d1,[x2,#-16] = 0xfc1f0041,
+// ldur d3,[x4,#-32] = 0xfc5e0083.
+func LdurFP64(rt, rn uint32, imm9 int32) uint32 {
+	return 0xFC400000 | ((uint32(imm9) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func SturFP64(rt, rn uint32, imm9 int32) uint32 {
+	return 0xFC000000 | ((uint32(imm9) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
 func FABS(rd, rn uint32) uint32   { return 0x1E60C000 | ((rn & regMask) << 5) | (rd & regMask) }
 func FSQRT(rd, rn uint32) uint32  { return 0x1E61C000 | ((rn & regMask) << 5) | (rd & regMask) }
 func FRINTM(rd, rn uint32) uint32 { return 0x1E654000 | ((rn & regMask) << 5) | (rd & regMask) }

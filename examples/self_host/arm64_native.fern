@@ -2003,11 +2003,26 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     }
     if (mnem == "ldur") {
         var um: Arm64Mem = arm64_gas_mem(ops[1]);
+        // A d-register destination is SIMD&FP, a different opcode space (V=1).
+        // The explicit ldur/stur spelling used to fall straight through to the
+        // GP encoder, so `stur d1, [x2, #-16]` assembled as the integer STUR of
+        // x1 — the right shape, the wrong register file, silently. The
+        // ldr/str spelling above already routed d-registers correctly; only
+        // this pair did not, which is why the differential caught it the moment
+        // #6075 taught the oracle these forms.
+        if (arm64_gas_is_d(ops[0])) {
+            a = Arm64Asm { ...a, code: arm64_ldur_fp(a.code, arm64_gas_reg(ops[0]), um.base, um.off) };
+            return a;
+        }
         a = Arm64Asm { ...a, code: arm64_ldur(a.code, arm64_gas_reg(ops[0]), um.base, um.off, arm64_gas_is_w(ops[0])) };
         return a;
     }
     if (mnem == "stur") {
         var sm2: Arm64Mem = arm64_gas_mem(ops[1]);
+        if (arm64_gas_is_d(ops[0])) {
+            a = Arm64Asm { ...a, code: arm64_stur_fp(a.code, arm64_gas_reg(ops[0]), sm2.base, sm2.off) };
+            return a;
+        }
         a = Arm64Asm { ...a, code: arm64_stur(a.code, arm64_gas_reg(ops[0]), sm2.base, sm2.off, arm64_gas_is_w(ops[0])) };
         return a;
     }
