@@ -256,9 +256,16 @@ pub function (s: EmitState) mark_i32_to_string(): EmitState {
 // via the raw-memory intrinsic floor (docs/RUNTIME-INTRINSICS.md). Count digits,
 // alloc exactly nd(+1 for '-') bytes, fill from the end (units last), prepend '-'
 // for negatives. Tier-2 (digit buffer); heap is its sole dep. n==0 → "0".
-// (INT_MIN's 0-n overflow matches the hand-asm's negq — no behaviour change.)
+//
+// The magnitude is carried UNSIGNED (u32), which is what makes INT_MIN exact:
+// `0 - n` wraps back to INT_MIN, whose u32 reading is 2^31 — the true
+// magnitude. Formatted as a SIGNED i32 the wrapped value stays negative, so
+// `while (v > 0)` never runs and the whole number renders as a bare "-"
+// (#6050). Same trick rt_src_i64_to_string uses for INT64_MIN; the wasm
+// emitter's WAT sibling has always used div_u/rem_u here, which is why only
+// the register backends printed "-".
 pub function rt_src_i32_to_string(): string {
-    return "function __fern_i32_to_string(n: i32): string { if (n == 0) { var z: i32 = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var neg: i32 = 0; var v: i32 = n; if (v < 0) { neg = 1; v = 0 - v; } var nd: i32 = 0; var t: i32 = v; while (t > 0) { nd = nd + 1; t = t / 10; } var total: i32 = nd + neg; var p: i32 = __raw_alloc(total); if (neg == 1) { __raw_store8(p, 0, 45); } var i: i32 = total - 1; while (v > 0) { __raw_store8(p, i, 48 + (v % 10)); v = v / 10; i = i - 1; } return __raw_string(p, total); }";
+    return "function __fern_i32_to_string(n: i32): string { var neg: i32 = 0; var m: i32 = n; if (n < 0) { neg = 1; m = 0 - n; } var v: u32 = m as u32; if (v == (0 as u32)) { var z: i32 = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var nd: i32 = 0; var t: u32 = v; while (t != (0 as u32)) { nd = nd + 1; t = t / (10 as u32); } var total: i32 = nd + neg; var p: i32 = __raw_alloc(total); if (neg == 1) { __raw_store8(p, 0, 45); } var i: i32 = total - 1; while (v != (0 as u32)) { __raw_store8(p, i, 48 + ((v % (10 as u32)) as i32)); v = v / (10 as u32); i = i - 1; } return __raw_string(p, total); }";
 }
 
 pub function (s: EmitState) mark_u32_to_string(): EmitState {
