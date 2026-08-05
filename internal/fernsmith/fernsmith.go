@@ -1473,7 +1473,12 @@ func (g *Generator) expr(b *strings.Builder, sc *scope, t gtype, depth int) {
 // participate in the differential test even without a separate
 // stdout channel.
 func (g *Generator) stringExpr(b *strings.Builder, sc *scope, depth int) {
-	if g.flip(0.5) {
+	// `!flip` so `true` is the SHORTENING branch per byteChooser.flip's
+	// exhaustion convention: concat recurses TWICE at depth+1, where the
+	// f-string below collapses to a single interpolant once the corpus is
+	// spent. Spelled the other way round, running out of bytes chose the
+	// doubly-recursive branch and the program grew as the corpus shrank.
+	if !g.flip(0.5) {
 		// Concat: `(s1 + s2)`. The checker stamps IsStringConcat
 		// for backends that need the runtime helper.
 		b.WriteByte('(')
@@ -2097,7 +2102,12 @@ func (g *Generator) maybeSaturating(op string, t gtype) string {
 // The printable oracle has the stronger channel: each type's own
 // `.to_string()`.
 func (g *Generator) emitUnsignedAsI32(b *strings.Builder, sc *scope, depth int) {
-	if g.flip(0.5) {
+	// `!flip` so `true` is the SHORTENING branch per byteChooser.flip's
+	// exhaustion convention: the u64 form adds a shift on top of the cast
+	// (`(((x u64) >> 32u64) as i32)` vs `((x u32) as i32)`), so an
+	// exhausted corpus taking it made the program grow as the corpus
+	// shrank. Caught by TestGenBytesShrinkIsMonotonicAndValid.
+	if !g.flip(0.5) {
 		b.WriteString("(((")
 		g.expr(b, sc, tU64, depth+1)
 		b.WriteString(") >> 32u64) as i32)")
