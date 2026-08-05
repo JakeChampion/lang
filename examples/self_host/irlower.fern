@@ -17435,6 +17435,13 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // type so `e.method()` at the call site is recognised as
                         // a dyn receiver and routes through op_dyn_dispatch.
                         else if (ptag.len() > 4 && ptag[0:4] == "dyn ") { ms = ms.mark_struct_type(pbslot, ptag); }
+                        // The array-payload branches above call the binding
+                        // BORROWED and "leak-only", but is_arr alone put it in the
+                        // exit dec-sweep, which released the Option/Result box's
+                        // own buffer once per entry — the box is never swept, so
+                        // nothing ever balanced that. Same defect as the user-enum
+                        // arm binding, same opt-out (#6049; LocalInfo.borrowed_arr).
+                        if (ms.is_arr_slot(pbslot)) { ms = ms.mark_borrowed_arr(pbslot, true); }
                     }
                     if (arm.has_guard) {
                         ms = lower_expr(arm.guard, ms);

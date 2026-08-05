@@ -16,10 +16,12 @@ import (
 //     arm decs that field when the struct is reclaimed — so the container's
 //     element was freed under it. enum_field_read_type now drives the alias-inc
 //     at both the array-literal and the append sites.
-//  2. A match arm's ENUM-PAYLOAD ARRAY binding (`Seq(xs) => …`) was marked
-//     is_arr and therefore swept at every function exit, decing a buffer the
-//     enum box owns — once per call, so the payload died on the second entry.
-//     LocalInfo.borrowed_arr keeps the sweep off a borrowed binding.
+//  2. A match arm's PAYLOAD ARRAY binding (`Seq(xs) => …`, and the same for an
+//     Option/Result payload) was marked is_arr and therefore swept at every
+//     function exit, decing a buffer the box owns — once per call, so the
+//     payload died on the second entry. Both lowerings already described the
+//     binding as borrowed and leak-only; is_arr alone put it in the sweep
+//     anyway. LocalInfo.borrowed_arr keeps the sweep off a borrowed binding.
 //
 // In std/regex both fire in the same parse tree: `__rx_alt` builds its branches
 // array out of `RParse.node` field reads and `__rx_match` re-binds `RSeq(xs)` /
@@ -155,4 +157,33 @@ function main(): i32 {
     if (__rc_underflow() != 0) { return 99; }
     return 0;
 }`, "enum-strarr-payload-arm-borrow", 0)
+
+	// (2) the Option/Result arm binding had the identical defect — its own
+	// lowering already calls the array payload "BORROWED … leak-only", but
+	// is_arr alone put it in the sweep, so the box's buffer was released once
+	// per entry with nothing balancing it. Same opt-out.
+	run(t, `function width(d: Option[i32[]]): i32 {
+    match (d) {
+        Some(xs) => {
+            var w: i32 = 0;
+            var i: i32 = 0;
+            while (i < xs.len()) { w = w + xs[i]; i = i + 1; }
+            return w;
+        },
+        None => { return 0; }
+    }
+}
+function main(): i32 {
+    var base: i32[] = [1, 2, 4];
+    var d: Option[i32[]] = Some(base);
+    var k: i32 = 0;
+    while (k < 8) {
+        if (width(d) != 7) { return 97; }
+        var churn: i32[] = [k + 9, k + 8, k + 7];
+        if (churn[0] != k + 9) { return 97; }
+        k = k + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, "option-array-payload-arm-borrow", 0)
 }
