@@ -1,0 +1,30 @@
+// `.to_json()` on a scalar-array FIELD receiver. The array serialiser is
+// picked by a guard listing the array predicates, and expr_is_arr_src — the
+// one that would cover an i32[] — means array SOURCE (a fresh/owned array),
+// not "is an array", so a FIELD read fell past it to the primitive-receiver
+// path and serialised the array POINTER: {"items":268435472}. The string[]
+// field was always fine, because expr_is_strarr does cover a field read.
+import "std/json";
+
+@derive(json.Json)
+struct Bag { ints: i32[], strs: string[], floats: f64[], bigs: i64[] }
+
+function main(): i32 {
+    var b: Bag = Bag { ints: [1, 2, 3], strs: ["a", "b"], floats: [1.5], bigs: [7] };
+
+    // Through the derive, which is where this surfaced.
+    if (b.to_json() != "{\"ints\":[1,2,3],\"strs\":[\"a\",\"b\"],\"floats\":[1.5],\"bigs\":[7]}") { return 1; }
+
+    // Directly on the field, and — the contrast that localises it — the same
+    // array bound to a local first, which always worked.
+    if (b.ints.to_json() != "[1,2,3]") { return 2; }
+    var xs = b.ints;
+    if (xs.to_json() != "[1,2,3]") { return 3; }
+    if (b.strs.to_json() != "[\"a\",\"b\"]") { return 4; }
+
+    // An empty scalar-array field still renders as an empty JSON array.
+    var e: Bag = Bag { ints: [], strs: [], floats: [], bigs: [] };
+    if (e.ints.to_json() != "[]") { return 5; }
+
+    return 42;
+}
