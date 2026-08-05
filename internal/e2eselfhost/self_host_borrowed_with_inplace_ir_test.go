@@ -14,14 +14,19 @@ import (
 //
 // The gate it consulted (`aliased_names`, #3599) models local ALIASING — a name
 // bound to a second local, or stored into a container literal — and knows
-// nothing about ownership. A borrowed array parameter has no local alias at
-// all, so it sailed through.
+// nothing about ownership. A local bound from a struct field read has no local
+// alias at all, so it sailed through.
 //
-// The language already models the sound version and the hot paths already use
-// it: `arm64_write_word(own buf: i32[], …)` consumes its buffer precisely so
-// the rc check sees a unique owner, with E051 making that annotation
-// trustworthy at every call site. The fix keys on ownership rather than on the
-// syntax of the binding, so those stay in place.
+// SCOPE: this covers the FIELD-READ shapes only. The sibling shape — a bare
+// borrowed array PARAM self-reassigned (`function f(buf: i32[]) { buf =
+// buf.with(…); }`) — is deliberately NOT fixed here and is tracked separately.
+// Treating a borrowed array param as unsafe to write in place collides with
+// mutable captures: irlower threads a captured cell to the lifted closure body
+// as a call ARGUMENT (#5301), so that body legitimately receives the cell as a
+// borrowed param and MUST write through it. Forbidding that strands the
+// closure on a stale by-value snapshot — measured, five CI shards' worth.
+// Separating the two needs a way to tell "the caller's array" from "a captured
+// cell", which is a design question, not a gate tweak.
 //
 // Every expected value came from `bin/fern -interp`, and each failing case was
 // confirmed to diverge on the pre-fix compiler at the value named in its
@@ -56,19 +61,6 @@ func TestSelfHostBorrowedWithInPlaceIRX86_64(t *testing.T) {
 			t.Errorf("%s exited %d, want %d", name, code, want)
 		}
 	}
-
-	// The smallest shape of the bug: no struct, no field read. A BORROWED array
-	// param overwritten in place, so the caller's array changed under it.
-	// Pre-fix: 77 (b[1] became 7).
-	run(t, `function patch(buf: i32[], at: i32, v: i32): i32[] {
-    buf = buf.with(at, v);
-    return buf;
-}
-function main(): i32 {
-    var b: i32[] = [0, 0, 0, 0];
-    var p: i32[] = patch(b, 1, 7);
-    return b[1] * 10 + p[1];
-}`, "borrowed-array-param", 7)
 
 	// The shape #6158 was filed as: an array field read off a BORROWED struct
 	// param. std/regex's __rx_addthread is written this way, which is how the

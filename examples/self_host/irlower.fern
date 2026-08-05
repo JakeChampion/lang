@@ -16171,13 +16171,7 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                             // into the sole-owned clone) and store it back —
                             // the aliased buffer is left untouched. Sole-owner
                             // (unaliased) slots keep the in-place arr_set below.
-                            // A boxed capture CELL (#5510/#5301) is exempt from the
-                            // borrowed test: the cell is SHARED with the closure by
-                            // design and its in-place write is the capture semantics,
-                            // so cloning it strands the closure on a stale snapshot.
-                            // The aliasing test still applies to it, unchanged.
-                            if (s.is_aliased_name(a.target)
-                                || (s.is_borrowed_name(a.target) && !s.is_cell_slot(slot))) {
+                            if (s.is_aliased_name(a.target) || s.is_borrowed_name(a.target)) {
                                 var wcl: LowerState = lower_arr_with_value(wfa.obj, wc.args[0], wc.args[1], s);
                                 if (!wcl.ok) { return wcl; }
                                 return wcl.emit(ir.op_store_local(slot));
@@ -20859,35 +20853,6 @@ function alias_names_in_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
 // the only reference. That exemption is why this keys on a positional scan
 // rather than flagging every field-read binding.
 
-// borrowed_array_params returns the names of array/map-typed params this
-// function does not OWN — borrowed buffers it may read but must never
-// overwrite.
-//
-// `owned` is mv_own_params_for's answer: the DECLARED `own` params plus the
-// ones move_arr_params_of INFERRED as moved. That inference is what keeps the
-// `x = f(x)` threading idiom on the fast path — a param that is reassigned and
-// returned bare, whose every call site consumes its argument
-// (`b = fill(b, n)`), is a sole owner in practice even without the annotation,
-// so overwriting it in place is sound. Keying on the raw `own` FLAG instead
-// would clone there: measured 0 KB -> 51 KB on the `with-through-borrowed-param`
-// case of TestSelfHostAllocDifferentialX86_64, whose program is exactly that
-// idiom.
-function borrowed_array_params(params: parser.ParamDecl[], owned: string[]): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < params.len()) {
-        var p: parser.ParamDecl = params[i];
-        if (util.index_of_str(owned, p.name) < 0) {
-            var tn: string = p.type_name;
-            if ((tn.len() >= 2 && tn[tn.len() - 2 : tn.len()] == "[]") || (tn.len() >= 4 && tn[0:4] == "Map[")) {
-                out = push_str_unique(out, p.name);
-            }
-        }
-        i = i + 1;
-    }
-    return out;
-}
-
 // field_read_base returns the base object name of a `OBJ.field` init, or "" —
 // the source whose buffer such a binding borrows.
 function field_read_base(e: parser.Expr): string {
@@ -20968,9 +20933,9 @@ function aliased_array_names_of(body: parser.Stmt[]): string[] {
 // an array are retained — mutable captures then read a stale by-value snapshot
 // (#5301), which is a wrong ANSWER, not a leak. Ownership and aliasing are
 // different questions; they get different sets.
-function borrowed_names_of(body: parser.Stmt[], params: parser.ParamDecl[], owned: string[]): string[] {
-    var b: string[] = borrowed_array_params(params, owned);
-    return borrowed_field_bindings(body, b);
+function borrowed_names_of(body: parser.Stmt[]): string[] {
+    var none: string[] = [];
+    return borrowed_field_bindings(body, none);
 }
 
 // is_fresh_struct_init: an init producing a SOLE-OWNER (rc=1) struct value — a
@@ -33235,8 +33200,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
     // when its target is here (#3599; see the aliased_names field doc).
     var aliased: string[] = aliased_array_names_of(fn.body);
-    var owned_ps: string[] = mv_own_params_for(fn, sg.move_arr_params);
-    var borrowed: string[] = borrowed_names_of(fn.body, fn.params, owned_ps);
+    var borrowed: string[] = borrowed_names_of(fn.body);
     // #6134: seed the SELF-ASSIGN record-update reuse set as "SAREUSE:<name>" —
     // the locals whose every `p = T { ...p, … }` reuses p's own box in place
     // (self_assign_update_names). Prefix-tagged like the other per-function
