@@ -19525,7 +19525,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // outer `if` adds not-reassigned + non-escaping).
                 var is_map: boolean = false;
                 if (!is_lit && !is_opt && !is_rcopt && !is_enum && !is_rcenum && is_fresh_map_init(v.init)) {
-                    if (util.index_of_str(aliased_array_names_of(body, no_params_for_alias()), v.name) < 0 && !map_has_explicit_iter(body, v.name)
+                    if (util.index_of_str(aliased_array_names_of(body, no_params_for_alias(), no_owned_for_alias()), v.name) < 0 && !map_has_explicit_iter(body, v.name)
                         && !map_identity_escape(body, v.name)) { is_map = true; }
                 }
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
@@ -20841,14 +20841,25 @@ function alias_names_in_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
 // the only reference. That exemption is why this keys on a positional scan
 // rather than flagging every field-read binding.
 
-// borrowed_array_params returns the names of array/map-typed params that are
-// NOT `own` — borrowed buffers the callee may read but must never overwrite.
-function borrowed_array_params(params: parser.ParamDecl[]): string[] {
+// borrowed_array_params returns the names of array/map-typed params this
+// function does not OWN — borrowed buffers it may read but must never
+// overwrite.
+//
+// `owned` is mv_own_params_for's answer: the DECLARED `own` params plus the
+// ones move_arr_params_of INFERRED as moved. That inference is what keeps the
+// `x = f(x)` threading idiom on the fast path — a param that is reassigned and
+// returned bare, whose every call site consumes its argument
+// (`b = fill(b, n)`), is a sole owner in practice even without the annotation,
+// so overwriting it in place is sound. Keying on the raw `own` FLAG instead
+// would clone there: measured 0 KB -> 51 KB on the `with-through-borrowed-param`
+// case of TestSelfHostAllocDifferentialX86_64, whose program is exactly that
+// idiom.
+function borrowed_array_params(params: parser.ParamDecl[], owned: string[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < params.len()) {
         var p: parser.ParamDecl = params[i];
-        if (!p.own) {
+        if (util.index_of_str(owned, p.name) < 0) {
             var tn: string = p.type_name;
             if ((tn.len() >= 2 && tn[tn.len() - 2 : tn.len()] == "[]") || (tn.len() >= 4 && tn[0:4] == "Map[")) {
                 out = push_str_unique(out, p.name);
@@ -20935,9 +20946,14 @@ function no_params_for_alias(): parser.ParamDecl[] {
     return none;
 }
 
-function aliased_array_names_of(body: parser.Stmt[], params: parser.ParamDecl[]): string[] {
+function no_owned_for_alias(): string[] {
+    var none: string[] = [];
+    return none;
+}
+
+function aliased_array_names_of(body: parser.Stmt[], params: parser.ParamDecl[], owned: string[]): string[] {
     var a: string[] = alias_names_in_stmts(body, []);
-    var bp: string[] = borrowed_array_params(params);
+    var bp: string[] = borrowed_array_params(params, owned);
     var i: i32 = 0;
     while (i < bp.len()) { a = push_str_unique(a, bp[i]); i = i + 1; }
     return borrowed_field_bindings(body, a);
@@ -24291,7 +24307,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // still exclude). The self-host twin of #5096's bound-intermediate
     // reclaim; #4357.
     maps = collect_mapf_call_names(body, tup_fresh_ret, maps);
-    var aliased_m: string[] = aliased_array_names_of(body, no_params_for_alias());
+    var aliased_m: string[] = aliased_array_names_of(body, no_params_for_alias(), no_owned_for_alias());
     var mi: i32 = 0;
     while (mi < maps.len()) {
         // The reassigned gate admits the sanctioned COW self-reassign
@@ -33204,7 +33220,8 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // Array/map locals that acquire a lasting local alias — the in-place
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
     // when its target is here (#3599; see the aliased_names field doc).
-    var aliased: string[] = aliased_array_names_of(fn.body, fn.params);
+    var owned_ps: string[] = mv_own_params_for(fn, sg.move_arr_params);
+    var aliased: string[] = aliased_array_names_of(fn.body, fn.params, owned_ps);
     // #6134: seed the SELF-ASSIGN record-update reuse set as "SAREUSE:<name>" —
     // the locals whose every `p = T { ...p, … }` reuses p's own box in place
     // (self_assign_update_names). Prefix-tagged like the other per-function
