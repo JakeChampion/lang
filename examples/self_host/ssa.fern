@@ -1640,7 +1640,7 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
         var bind_elem: parser.Stmt = parser.StmtVar { name: fr.var_name, type_name: "",
             init: parser.ExprIndex {
                 array: parser.ExprIdent { name: arr_name, line: 0, col: 0 },
-                index: parser.ExprIdent { name: i_name, line: 0, col: 0 }, unchecked: false }, line: 0, col: 0, is_str: false };
+                index: parser.ExprIdent { name: i_name, line: 0, col: 0 }, unchecked: false, ty: "" }, line: 0, col: 0, is_str: false };
         wbody = wbody.append(bind_elem);
     }
     var bi: i32 = 0;

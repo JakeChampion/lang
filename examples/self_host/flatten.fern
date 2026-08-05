@@ -381,7 +381,8 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
             return parser.ExprIndex {
                 array: rewrite_expr(x.array, ctx),
                 index: rewrite_expr(x.index, ctx),
-                unchecked: x.unchecked
+                unchecked: x.unchecked,
+                ty: x.ty
             };
         },
         parser.ExprSlice(sl) => {
