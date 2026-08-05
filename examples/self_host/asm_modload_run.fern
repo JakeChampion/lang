@@ -28,6 +28,7 @@ import "./parser";
 import "./flatten";
 import "./asm_arm64_ir";
 import "./asm_ir";
+import "./irlower";
 import "./modloader";
 import "./treeshake";
 
@@ -295,7 +296,7 @@ function module_ir_eligible(infmods: parser.Module[], parts: flatten.PerModule[]
 // emit_unit_to_file emits ONE flat unit and writes it to <out_dir>/unit_*.s.
 // Containers are passed with an index rather than as indexed element VALUES so
 // the callee reads them in place.
-function emit_unit_to_file(out_dir: string, unit_spec: string, infmods: parser.Module[], parts: flatten.PerModule[], midx: i32, needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], wpb: string[][], target: string): boolean {
+function emit_unit_to_file(out_dir: string, unit_spec: string, infmods: parser.Module[], parts: flatten.PerModule[], midx: i32, needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], wpb: irlower.FnSigs, target: string): boolean {
     var wlo: i32 = nth_field_i32(unit_spec, 1);
     var whi: i32 = nth_field_i32(unit_spec, 2);
     var is_entry: boolean = parts[midx].is_entry;
@@ -355,7 +356,7 @@ function spawn_batch(self_exe: string, entry_path: string, tmp: string, lo: i32,
 // accumulates past the 16 GiB bump arena and trips __fern_alloc's bounds check
 // (exit 137, which reads like an OOM-kill without being one). A child per batch
 // releases the accumulation at exit while still amortising the shared base
-// derivation (compute_wp_bases) across its batch.
+// derivation (wp_fn_sigs) across its batch.
 //
 // A process boundary is also the only release mechanism that TOLERATES the emit
 // path's pre-existing over-releases: __rc_underflow_count() reports ~2443 of
@@ -592,13 +593,10 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     all_structs = builtin_view(dir, all_structs);
     if (pm_mode == "emit-all") {
         // Multi-unit-per-process whole-compiler per-module emit (#3457 slice 2).
-        // The whole-program side-table bases are derived ONCE per process
-        // (compute_wp_bases) and shared across every unit it emits — collapsing
-        // the O(units × all_funcs) re-derivation that dominated the per-process
-        // serial emit (~20 s/unit even for a 3-function module). The bases are
-        // extracted into individual string[] LOCALS here and passed to every unit
-        // as individual params (never a string[][] across a boundary — the #3457
-        // slice-2 RC blocker fixed in the flat refactor). Units are the flat
+        // The whole-program signature registry is derived ONCE per process
+        // (wp_fn_sigs) and shared across every unit it emits — collapsing the
+        // O(units × all_funcs) re-derivation that dominated the per-process
+        // serial emit (~20 s/unit even for a 3-function module). Units are the flat
         // (module × window) list, each module sharded into the SAME [lo,hi)
         // windows the per-process fixpoint uses (emit_window_size), and every unit
         // is written to <out_dir>/unit_<modIdx>[_s<lo>].s.
@@ -611,7 +609,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // its batch. The entry gets the full runtime-need roots as its extra_needs.
         // x86 shares the bases; -target arm64 uses the arm64 emitter unchanged.
         var needs: string[] = asm_ir.all_runtime_need_roots();
-        var wpb: string[][] = asm_ir.compute_wp_bases(all_funcs, all_structs);
+        var wpb: irlower.FnSigs = asm_ir.wp_fn_sigs(all_funcs, all_structs);
         var units: string[] = flat_unit_list(dir, parts, infmods, func_budget);
         // Module index whose eligibility has been checked. Units are emitted in
         // module order, so a scalar suffices to check once per MODULE rather than

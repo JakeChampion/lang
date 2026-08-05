@@ -157,3 +157,18 @@ function main(): i32 {
 		t.Errorf("helper should survive (referenced inside lambda body): %v", names)
 	}
 }
+
+// TestShakeKeepsStructUpdateBaseCall — a call reachable ONLY through the spread
+// source of a struct-update literal (`S { ...mk(), … }`) is a real reference.
+// The walk used to descend into the field values but not the base, so `mk` was
+// pruned while the emitted literal still called it — the native assembler then
+// failed with an undefined label.
+func TestShakeKeepsStructUpdateBaseCall(t *testing.T) {
+	src := `struct S { a: i32, b: i32 }
+function mk(): S { return S { a: 1, b: 2 }; }
+function main(): i32 { var s: S = S { ...mk(), b: 40 }; return s.a + s.b; }`
+	names := runShake(t, src)
+	if !hasName(names, "mk") {
+		t.Errorf("mk is referenced by the struct-update base and must survive: %v", names)
+	}
+}
