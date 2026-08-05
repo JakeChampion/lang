@@ -4739,7 +4739,28 @@ func (g *generator) emitRctRuntime() {
 }
 
 func (g *generator) emitAllocRuntime() {
-	const heapBytes = 17179869184 // 0x400000000 (16 GiB) per region — sized so a cmd/fern-built self-host compiler can bootstrap-compile the WHOLE self-host source in one process. Raised from 8 GiB (0x200000000) when the stage-2 x86 self-compile crossed the 8 GiB exit-137 alloc trap — the same wall arm64 hit and cleared: the compiler's live set grows with every compiler-source addition and reached ~8 GiB (0.6% headroom under the old ceiling), so an IR-widening addition tipped it. The mmap is MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE (0x22|0x4000), so the wider reservation is exempt from Linux overcommit accounting and costs nothing until touched — the ~8 GiB actually touched is unchanged, only the exit-137 ceiling moves. The length loads via `movabs rsi` (64-bit imm). The arm64 backend is already at 16 GiB (internal/codegen/arm64's heapBytes) — this brings x86 up to match. Matches the self-host emitters' own `heap_size` (asm.fern / asm_ir.fern = 17179869184) — keeping the native (stage-0 mmc) and self-host x86 heaps in lockstep. This native heap is an mmap region addressed via REGISTER (not a static `.bss` block), so it has no RIP-relative / imm32 displacement ceiling — heap_base + heap_size may exceed 2 GiB. The heap-END is built `movabs rcx, heapBytes` + `add rcx, rax` rather than a signed-disp32 `lea [base + heapBytes]` (which caps at 0x7FFFFFFF). The self-host emitters reach their `.bss` heap via 64-bit-absolute `movabs $__fern_heap` with __fern_heap emitted LAST in .bss so its > 2 GiB base never truncates a PC32 relocation.
+	// heapBytes is the per-region bump arena: 16 GiB, sized so a cmd/fern-built
+	// self-host compiler can bootstrap-compile the WHOLE self-host source in one
+	// process. Raised from 8 GiB when the stage-2 x86 self-compile crossed that
+	// ceiling — the compiler's live set grows with every compiler-source
+	// addition, and at ~0.6% headroom an IR-widening change tipped it. Kept in
+	// lockstep with the arm64 backend and with the self-host emitters' own
+	// heap_size (asm_ir.fern / asm_arm64_ir.fern).
+	//
+	// The mmap is MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE (0x22|0x4000), so the
+	// wider reservation is exempt from Linux overcommit accounting and costs
+	// nothing until touched: only the arena-exhaustion ceiling moves, not the
+	// resident footprint. Exhaustion exits 125 (ExitArenaExhausted), which is
+	// clear of the 128+signal range so a host OOM-kill (137) stays
+	// distinguishable.
+	//
+	// Addressing: this arena is an mmap region held in a REGISTER, not a static
+	// .bss block, so it has no RIP-relative / imm32 displacement ceiling and
+	// base+size may exceed 2 GiB. The length loads via `movabs rsi` (64-bit
+	// imm), and the heap END is built `movabs rcx, heapBytes` + `add rcx, rax`
+	// rather than a signed-disp32 `lea [base + heapBytes]`, which caps at
+	// 0x7FFFFFFF.
+	const heapBytes = 17179869184 // 0x400000000, 16 GiB
 	g.line("")
 	g.line(".globl __fern_alloc")
 	g.line(".type __fern_alloc, @function")
