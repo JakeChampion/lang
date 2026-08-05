@@ -269,9 +269,9 @@ pub function ir_helper_symbol(name: string): string {
     if (name == "__fern_rc_inc") { return "__fn___fern_rc_inc"; }
     if (name == "__fern_rc_dec") { return "__fn___fern_arr_dec"; }
     // #4873 grow-bracket share helpers: same runtime symbols as the plain rc
-    // pair on the register backends (zero new runtime); the distinct NAMES
-    // exist so wasm_ir can intercept them as no-ops (wasm arrays carry no rc
-    // header).
+    // pair on the register backends (zero new runtime); the distinct NAMES let
+    // each backend pick its own pair (wasm_ir maps them to $__fern_rc_inc /
+    // $__fern_arr_dec on its rc-headered arrays).
     if (name == "__fern_arr_share_inc") { return "__fn___fern_rc_inc"; }
     if (name == "__fern_arr_share_dec") { return "__fn___fern_arr_dec"; }
     if (name == "__fern_rc_is_unique") { return "__fn___fern_rc_is_unique"; }
