@@ -5,15 +5,23 @@
 // the pipeline never sees a ConstDecl). For each const it
 // evaluates the initialiser as a constant expression — literals,
 // references to earlier consts, and arithmetic / comparison /
-// logical / unary operations on those. Anything outside that grammar
-// (function calls, array indexing, struct literals, runtime
-// expressions) is rejected with a diagnostic.
+// logical / unary operations on those, plus the __fern_asset builtin
+// below. Anything outside that grammar (ordinary function calls, array
+// indexing, struct literals, runtime expressions) is rejected with a
+// diagnostic.
 //
 // Once every const is resolved the pass walks the rest of the AST
 // and replaces each Ident reference whose name matches a const with
 // a literal node carrying the resolved value. Const decls are
 // stripped from the program afterwards, so the checker / IR /
 // codegen layers stay unaware of the feature.
+//
+// The same traversal resolves `__fern_asset("name")` against the
+// compile-time asset set (see internal/embed), replacing the call with a
+// string literal holding the file's bytes. Assets ride the const machinery
+// rather than a pass of their own for two reasons: an asset IS a
+// compile-time constant, and a `const PAGE: string = __fern_asset(...)`
+// has to resolve during const evaluation, not after it.
 package constfold
 
 import (
@@ -21,14 +29,24 @@ import (
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/embed"
 )
+
+// assetBuiltin is the compile-time asset accessor. It is not a function —
+// no declaration exists anywhere — so every occurrence must be substituted
+// here or reported; anything left behind reaches the checker as an
+// undefined identifier.
+const assetBuiltin = "__fern_asset"
 
 // Fold evaluates every top-level const declaration in prog, then
 // substitutes references with the resolved literal and clears
 // prog.Consts. Errors aggregate; the first diagnostic surfaced
 // names the offending const and explains why it isn't a valid
 // constant expression.
-func Fold(prog *ast.Program) error {
+//
+// assets carries the `-embed` bundle and may be nil, in which case any use
+// of __fern_asset is itself the error.
+func Fold(prog *ast.Program, assets *embed.Set) error {
 	values := map[string]ast.Expr{}
 	types := map[string]ast.Type{}
 	var errs []error
@@ -38,7 +56,7 @@ func Fold(prog *ast.Program) error {
 			errs = append(errs, fmt.Errorf("%s: const %q redeclared", cd.P, cd.Name))
 			continue
 		}
-		val, err := evalConst(cd.Value, values, types)
+		val, err := evalConst(cd.Value, values, types, assets)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: const %s: %w", cd.P, cd.Name, err))
 			continue
@@ -64,21 +82,31 @@ func Fold(prog *ast.Program) error {
 	// Substitute every Ident reference matching a const name with
 	// the resolved literal. Const decls are then dropped — the rest
 	// of the pipeline runs against a const-free program.
-	sub := substituter{values: values}
+	sub := substituter{values: values, assets: assets}
 	for _, fn := range prog.Funcs {
 		sub.walkBlock(fn.Body)
 	}
 	prog.Consts = nil
+	if len(sub.errs) > 0 {
+		return joinErrs(sub.errs)
+	}
 	return nil
 }
 
 // evalConst tries to reduce e to a literal AST node using only
 // constant-expression rules. Returned values are always one of
 // *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit.
-func evalConst(e ast.Expr, values map[string]ast.Expr, types map[string]ast.Type) (ast.Expr, error) {
+func evalConst(e ast.Expr, values map[string]ast.Expr, types map[string]ast.Type, assets *embed.Set) (ast.Expr, error) {
 	switch n := e.(type) {
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit:
 		return n, nil
+	case *ast.Call:
+		// An asset is a compile-time constant, so it is legal in a const
+		// initialiser. Any other call is not.
+		if !isAssetCall(n) {
+			return nil, fmt.Errorf("expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)")
+		}
+		return resolveAsset(n, assets)
 	case *ast.Ident:
 		v, ok := values[n.Name]
 		if !ok {
@@ -86,17 +114,17 @@ func evalConst(e ast.Expr, values map[string]ast.Expr, types map[string]ast.Type
 		}
 		return v, nil
 	case *ast.Unary:
-		operand, err := evalConst(n.Operand, values, types)
+		operand, err := evalConst(n.Operand, values, types, assets)
 		if err != nil {
 			return nil, err
 		}
 		return foldUnary(n, operand)
 	case *ast.Binary:
-		left, err := evalConst(n.Left, values, types)
+		left, err := evalConst(n.Left, values, types, assets)
 		if err != nil {
 			return nil, err
 		}
-		right, err := evalConst(n.Right, values, types)
+		right, err := evalConst(n.Right, values, types, assets)
 		if err != nil {
 			return nil, err
 		}
@@ -376,6 +404,45 @@ func litType(e ast.Expr) ast.Type {
 // each substitution position independent.
 type substituter struct {
 	values map[string]ast.Expr
+	assets *embed.Set
+	errs   []error
+}
+
+// isAssetCall reports whether c is a call of the __fern_asset builtin. It
+// matches on the callee name alone so that a malformed use (wrong arity, a
+// computed name) is still recognised and reported as such, rather than
+// falling through to the checker as a call to an undefined function.
+func isAssetCall(c *ast.Call) bool {
+	id, ok := c.Callee.(*ast.Ident)
+	return ok && id.Name == assetBuiltin
+}
+
+// resolveAsset turns one __fern_asset("name") call into the string literal
+// holding that asset's bytes.
+//
+// The name must be a literal: the substitution happens at compile time, so
+// there is no later point at which a computed name could be resolved. Saying
+// that plainly beats letting it reach the checker as an undefined function.
+func resolveAsset(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
+	if len(c.Args) != 1 {
+		return nil, fmt.Errorf("%s: %s takes exactly one argument, got %d", c.P, assetBuiltin, len(c.Args))
+	}
+	lit, ok := c.Args[0].(*ast.StringLit)
+	if !ok {
+		return nil, fmt.Errorf("%s: %s needs a string literal — assets are resolved at compile time, so the name cannot be computed", c.P, assetBuiltin)
+	}
+	if assets == nil {
+		return nil, fmt.Errorf("%s: %s(%q) but no assets were embedded — pass -embed DIR to the compiler", c.P, assetBuiltin, lit.Value)
+	}
+	data, ok := assets.Lookup(lit.Value)
+	if !ok {
+		msg := fmt.Sprintf("%s: no embedded asset %q under %s", c.P, lit.Value, assets.Root())
+		if did := assets.Suggest(lit.Value); did != "" {
+			return nil, fmt.Errorf("%s; did you mean %q?", msg, did)
+		}
+		return nil, fmt.Errorf("%s (%s)", msg, assets.FormatAvailable())
+	}
+	return &ast.StringLit{P: c.P, Value: data}, nil
 }
 
 func (s *substituter) walkBlock(b *ast.Block) {
@@ -439,6 +506,15 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 			*slot = cloneLit(v, x.P)
 		}
 	case *ast.Call:
+		if isAssetCall(x) {
+			lit, err := resolveAsset(x, s.assets)
+			if err != nil {
+				s.errs = append(s.errs, err)
+				return
+			}
+			*slot = lit
+			return
+		}
 		s.walkExpr(&x.Callee)
 		for i := range x.Args {
 			s.walkExpr(&x.Args[i])

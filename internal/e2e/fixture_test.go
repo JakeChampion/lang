@@ -327,7 +327,7 @@ func runFixtureCompileError(mainPath string) (string, bool) {
 	if err != nil {
 		return err.Error(), true
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		return err.Error(), true
 	}
 	if _, err := checker.Check(prog); err != nil {

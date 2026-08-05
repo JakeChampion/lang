@@ -59,7 +59,7 @@ func TestStdlibModulesImportStandalone(t *testing.T) {
 			if err != nil {
 				t.Fatalf("import %q does not load standalone: %v", mod, err)
 			}
-			if err := constfold.Fold(prog); err != nil {
+			if err := constfold.Fold(prog, nil); err != nil {
 				t.Fatalf("import %q: constfold: %v", mod, err)
 			}
 			if _, err := checker.Check(prog); err != nil {

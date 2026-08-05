@@ -384,7 +384,7 @@ func emitDriverAsm(dir, fernName string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("modload %s: %w", fernName, err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		return "", fmt.Errorf("constfold %s: %w", fernName, err)
 	}
 	info, err := checker.Check(prog)

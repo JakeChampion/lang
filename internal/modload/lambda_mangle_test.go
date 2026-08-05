@@ -91,7 +91,7 @@ func TestLambdaBodyManglingChecks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	if _, err := checker.Check(prog); err != nil {

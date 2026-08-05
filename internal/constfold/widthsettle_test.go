@@ -38,7 +38,7 @@ func TestConstDeclaredWidthAccepted(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
-			if err := Fold(prog); err != nil {
+			if err := Fold(prog, nil); err != nil {
 				t.Fatalf("Fold rejected a valid const: %v", err)
 			}
 		})

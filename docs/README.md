@@ -153,6 +153,7 @@ freeze tracker is [#4451](https://github.com/JakeChampion/lang/issues/4451).
 
 | Doc | Status | What it is |
 | --- | --- | --- |
+| `EMBED.md` | [reference] | Compile-time asset embedding (`-embed`, `__fern_asset`). |
 | `LITERATE.md` | [reference] | Literate programming (`.fern.md`, tangle/weave). |
 | `LSP-INTEGRATION-PLAN.md` | [record] | LSP MVP — shipped (`cmd/fern-lsp`); post-MVP ideas in IDE-COMPILATION-RESEARCH. |
 | `CI-SIGNOFF.md` | [reference] | Local CI sign-off (`scripts/signoff`). |

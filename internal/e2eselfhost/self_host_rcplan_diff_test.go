@@ -673,7 +673,7 @@ func nativeRcPlanDumps(t *testing.T, src string) map[string]string {
 	if err != nil {
 		t.Fatalf("native parse: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("native constfold: %v", err)
 	}
 	info, err := checker.Check(prog)

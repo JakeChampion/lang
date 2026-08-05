@@ -59,7 +59,7 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("modload arm64: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold arm64: %v", err)
 	}
 	info, err := checker.Check(prog)
@@ -77,7 +77,7 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("modload x86: %v", err)
 	}
-	if err := constfold.Fold(prog2); err != nil {
+	if err := constfold.Fold(prog2, nil); err != nil {
 		t.Fatalf("constfold x86: %v", err)
 	}
 	info2, err := checker.Check(prog2)

@@ -66,7 +66,7 @@ func runEnforce(t *testing.T, entry string) (error, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := constfold.Fold(e.prog); err != nil {
+	if err := constfold.Fold(e.prog, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := checker.Check(e.prog); err != nil {

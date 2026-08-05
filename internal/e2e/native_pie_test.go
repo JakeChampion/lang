@@ -262,7 +262,7 @@ func compileToX86AsmPIE(t *testing.T, src string) string {
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
@@ -300,7 +300,7 @@ func compileToArm64AsmPIE(t *testing.T, src string) string {
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
-	if err := constfold.Fold(prog); err != nil {
+	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)
