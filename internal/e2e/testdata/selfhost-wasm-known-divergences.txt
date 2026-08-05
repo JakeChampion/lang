@@ -50,7 +50,20 @@
 # "is an array", so a field READ fell through to the primitive path. Pinned by
 # `json_array_field`.
 #
-# Five of the original twelve remain. All were found by the leg's first run
+# `regex_captures`, `regex_captures_all`, `regex_named_groups` and
+# `regex_replace_groups` were here and are now FIXED (#6008). All four trapped
+# on `?` over a CAPTURING group, and the fault was neither in the capture
+# machinery nor in the wasm backend: irlower bound `var pg = prog.append(v)` —
+# std/regex's __rx_emit — straight to the buffer arr_push had appended into IN
+# PLACE, so a frame and its caller each held one buffer under two names and each
+# released it. The freed cell was recycled by the next `caps.with(slot, ti)`, so
+# the Pike VM read an ISplit's targets out of a capture-slot array and branched
+# to prog[-1]. The same double free was latent on x86-64 and arm64 — visible
+# under a poison-on-free arr_dec, invisible without one, because nothing
+# recycled the cell there in time. irlower now brackets such a receiver so
+# arr_push takes its copy path.
+#
+# One of the original twelve remains. All were found by the leg's first run
 # over the existing corpus, on fixtures that had been green for months because
 # all four of TestFernFixtures' backends are the native compiler. Each has been reproduced by hand with a
 # native self-host CLI (`make selfhost-cli`) before being written down; none is
@@ -64,20 +77,10 @@
 # IR-subset gaps, not fallbacks. "module is not IR-eligible" from the driver.
 generic_method_typeparams #6007 IR-ineligible on self-host wasm; native compiles it
 
-# --- traps at runtime ----------------------------------------------------
-# `wasm trap: unreachable instruction executed`. Detected regardless of the
-# expected exit value, which is why these survived the exit>=126 cut. All four
-# are regex capture-group shapes, so plausibly one root cause.
-regex_captures #6008 traps (unreachable); native returns 255
-regex_captures_all #6008 traps (unreachable); native returns 255
-regex_named_groups #6008 traps (unreachable); native returns 255
-regex_replace_groups #6008 traps (unreachable); native returns 255
-
-# --- suspicious but UNMEASURABLE by this oracle --------------------------
-# Not listed as divergences because the leg cannot prove it: their expected exit
-# is >= 126, so WASI reports 1 and the real answer is invisible. They neither
-# trap nor get rejected, which is all that can honestly be asserted. Both
-# returned a clean value that looks wrong (regex_captures_assert 47, regex_groups
-# 111) and both deserve a look through a stdout-based oracle:
-#   regex_captures_assert  (expected 255)  — see #6008
-#   regex_groups           (expected 127)  — see #6008
+# --- UNMEASURABLE by this oracle ------------------------------------------
+# Not listed as divergences because the leg cannot prove them either way: an
+# expected exit >= 126 is refused by WASI, so wasmtime reports 1 and the real
+# answer is invisible. `regex_captures_assert` (expected 255) and `regex_groups`
+# (expected 127) read 47 and 111 under #6008 and now read 255 and 127 — measured
+# on the self-host x86-64 leg, which has no exit cap, since this one still
+# cannot see them.

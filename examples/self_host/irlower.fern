@@ -8042,13 +8042,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     // copy path and this function's binding keeps interpreter
     // (copy-on-shared) semantics. grow_exempt (the statement's
     // dying self-reassign / return-position args) skips the
-    // bracket, keeping accumulator chains O(n). The bracket
-    // goes through the dedicated __fern_arr_share_inc/dec
-    // names (NOT the plain rc pair): the register backends
-    // alias them to __fern_rc_inc / __fern_arr_dec, while
-    // wasm_ir intercepts them as no-ops — wasm arrays carry
-    // no rc header, so an rc touch at base-4 would corrupt
-    // the neighbouring allocation.
+    // bracket, keeping accumulator chains O(n).
     var gbr_slots: i32[] = [];
     var gba: i32 = 0;
     while (gba < c.args.len()) {
@@ -8067,9 +8061,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     }
     var gbi: i32 = 0;
     while (gbi < gbr_slots.len()) {
-        sc = sc.emit(ir.op_load_local(gbr_slots[gbi]));
-        sc = sc.emit(ir.op_call_direct("__fern_arr_share_inc", 1));
-        sc = sc.emit(ir.op_drop());
+        sc = emit_arr_share(sc, gbr_slots[gbi], "__fern_arr_share_inc");
         gbi = gbi + 1;
     }
     var scr: LowerState = sc.emit(ir.op_call_direct(cid.name, c.args.len()));
@@ -8078,9 +8070,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     // preceded it).
     var gbj: i32 = 0;
     while (gbj < gbr_slots.len()) {
-        scr = scr.emit(ir.op_load_local(gbr_slots[gbj]));
-        scr = scr.emit(ir.op_call_direct("__fern_arr_share_dec", 1));
-        scr = scr.emit(ir.op_drop());
+        scr = emit_arr_share(scr, gbr_slots[gbj], "__fern_arr_share_dec");
         gbj = gbj + 1;
     }
     // Free the stashed literal-arg boxes. Net-zero on the operand
@@ -15314,8 +15304,14 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             _ => {}
         }
     }
-    var se: LowerState = lower_expr(v.init, s);
+    // `var x = xs.append(v)`: bracket the receiver so arr_push cannot hand this
+    // binding the receiver's own buffer (append_alias_recv_slot, #6008).
+    var vaal: i32 = append_alias_recv_slot(v.init, s);
+    var vas: LowerState = s;
+    if (vaal >= 0) { vas = emit_arr_share(vas, vaal, "__fern_arr_share_inc"); }
+    var se: LowerState = lower_expr(v.init, vas);
     if (!se.ok) { return se; }
+    if (vaal >= 0) { se = emit_arr_share(se, vaal, "__fern_arr_share_dec"); }
     // Perceus alias-inc + array tracking: a fresh array literal is
     // owned at rc=1 (no inc); binding a new name to an EXISTING array
     // local creates a second reference, which must retain (inc) the
@@ -16489,8 +16485,14 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
         }
     }
     var target_is_arr: boolean = s.is_arr_slot(slot) && slot >= s.n_params;
-    var se: LowerState = lower_expr(a.value, s);
+    // `x = xs.append(v)` with x != xs (the self form returned above): same
+    // receiver bracket as the `var` binding — see append_alias_recv_slot (#6008).
+    var aaal: i32 = append_alias_recv_slot(a.value, s);
+    var aas: LowerState = s;
+    if (aaal >= 0 && aaal != slot) { aas = emit_arr_share(aas, aaal, "__fern_arr_share_inc"); }
+    var se: LowerState = lower_expr(a.value, aas);
     if (!se.ok) { return se; }
+    if (aaal >= 0 && aaal != slot) { se = emit_arr_share(se, aaal, "__fern_arr_share_dec"); }
     // A reclaimable REASSIGNED array-payload ENUM local (`b = V([..])`, credited
     // "ENUMRE:<E>"): DEEP-DROP the superseded box (payload arrays + box) before
     // storing the fresh one — closes the register-backend per-reassign payload leak
@@ -17934,6 +17936,66 @@ pub function lower_arr_append_value(obj: parser.Expr, val: parser.Expr, s: Lower
     // immutable-update (the EmitState/LowerState threading) flows through here
     // (#3452 / #3425).
     return st.emit(ir.op_arr_push_owned());
+}
+
+// emit_arr_share emits one side of an array share bracket: load `slot`, call
+// the share helper, drop. Net-zero on the operand stack, so it composes either
+// side of a value-producing sequence without disturbing what sits beneath. The
+// bracket goes through the dedicated __fern_arr_share_inc/dec names rather than
+// the plain rc pair so each backend can pick its own symbols; all three map them
+// to a real retain / release (asm_ir.ir_helper_symbol for the register pair,
+// wasm_ir's own arm for $__fern_rc_inc / $__fern_arr_dec).
+pub function emit_arr_share(se: LowerState, slot: i32, helper: string): LowerState {
+    var st: LowerState = se.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct(helper, 1));
+    return st.emit(ir.op_drop());
+}
+
+// append_alias_recv_slot returns the receiver's slot when `init` is the value
+// form `xs.append(v)` on a bare array IDENT — the shape whose result may ALIAS
+// the receiver's buffer — and -1 otherwise.
+//
+// arr_push CONSUMES its receiver: on the in-place fast path (sole owner, spare
+// capacity) it appends into the receiver and returns that same pointer. Binding
+// a NEW name to the result is then two names for one buffer, each carrying its
+// own release obligation — the reassign-dec and the exit sweep — so the second
+// release frees a buffer the first name still holds, and the next allocation
+// recycles the cell out from under it. A struct-FIELD receiver already dodges
+// this by routing to the clone form (lower_arr_append_value); a bare ident had
+// no such gate, so the caller brackets the receiver instead, which raises its rc
+// and sends arr_push down its copy path — one geometric-growth copy rather than
+// the clone form's two.
+//
+// Found via #6008: `var pg: RInst[] = prog.append(ISave(…))` in std/regex's
+// __rx_emit bound the caller frame's own buffer, and the two frames' cow-guarded
+// reassign-decs each freed it. The freed cell was handed to the next
+// `caps.with(slot, ti)`, so the Pike VM read an ISplit's targets out of a
+// capture-slot array and branched to prog[-1] — a wasm `unreachable`, and the
+// same double free (latent) on x86-64 and arm64.
+function append_alias_recv_slot(init: parser.Expr, s: LowerState): i32 {
+    match (init) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 1) { return 0 - 1; }
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field != "append") { return 0 - 1; }
+                    match (fa.obj) {
+                        parser.ExprIdent(id) => {
+                            var sl: i32 = s.slot_of(id.name);
+                            if (sl < 0) { return 0 - 1; }
+                            if (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s)
+                                || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s)) { return sl; }
+                            return 0 - 1;
+                        },
+                        _ => { return 0 - 1; }
+                    }
+                },
+                _ => { return 0 - 1; }
+            }
+        },
+        _ => {}
+    }
+    return 0 - 1;
 }
 
 // emit_arr_store stores the new value (on top of the operand stack) into
