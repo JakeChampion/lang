@@ -632,7 +632,29 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 while (d >= 0) { cargs = cargs.append(stack[stack.len() - 1 - d]); d = d - 1; }
                 var e: i32 = 0;
                 while (e < argc) { stack = drop_last(stack); e = e + 1; }
-                if (is_rc_noop(op.str) && argc >= 1) {
+                if (op.str == "__fern_rc_is_unique" && argc == 1) {
+                    // The constructor-reuse guard (#6134 routes the record
+                    // update `p = T { ...p, … }` through it). There is no rc
+                    // header on the leak-only SSA heap, so nothing is ever
+                    // uniquely owned here: the guard is a const 0 and the
+                    // emitter's FRESH arm — allocate, copy the carried fields
+                    // across, drop the old box on the floor — is the arm that
+                    // runs. That arm IS the pre-reuse lowering, so the lifted
+                    // code matches what the lift consumed before the reuse
+                    // layer learned this shape.
+                    var uz: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: uz, args: [], imm: 0, str: "" });
+                    stack = stack.append(uz);
+                } else if (op.str == "__fern_alloc_reuse" && argc == 2) {
+                    // __fern_alloc_reuse(token, slots): hand back the token's
+                    // block when it fits, else a fresh one. The token is always
+                    // 0 above, so this is a plain allocation of `slots` words —
+                    // the RUNTIME-sized alloc form (size in args[0], imm 0),
+                    // the same one __new_array builds on.
+                    var arh: i32 = nvals; nvals = nvals + 1;
+                    cur_insts = cur_insts.append(ssa.SInst { kind_tag: 14, result: arh, args: [cargs[1]], imm: 0, str: "" });
+                    stack = stack.append(arh);
+                } else if (is_rc_noop(op.str) && argc >= 1) {
                     // SSA lowers onto a leak-only bump heap (no free), so the RC
                     // runtime helpers irlower threads through are inert here —
                     // build_func emits no RC at all, and the lift strips the same
@@ -879,6 +901,33 @@ pub function lift_from_ir(name: string, nparams: i32, nslots: i32, ops: ir.Op[],
                 cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: soff3, args: [], imm: op.i32_imm + 1, str: "" });
                 var ssv3: i32 = nvals; nvals = nvals + 1;
                 cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: ssv3, args: [sp3, soff3, sv3], imm: 0, str: "" });
+            }
+        } else if (k == "raw_load_ptr") {
+            // Raw word read at [ptr + off] — the reuse emitters' shape-word
+            // copy (#6134). Word-indexed like the SSA load_elem, and the
+            // offset is already physical (no +1 tag skip, unlike struct_get).
+            if (stack.len() < 2) { ok = false; }
+            else {
+                var rlo: i32 = stack[stack.len() - 1];
+                var rlp: i32 = stack[stack.len() - 2];
+                stack = drop_last2(stack);
+                var rlv: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 15, result: rlv, args: [rlp, rlo], imm: 0, str: "" });
+                stack = stack.append(rlv);
+            }
+        } else if (k == "raw_store_ptr") {
+            // Raw word write at [ptr + off], yielding the stored value (the IR
+            // contract — irlower drops it). The store sibling of raw_load_ptr.
+            if (stack.len() < 3) { ok = false; }
+            else {
+                var rsv: i32 = stack[stack.len() - 1];
+                var rso: i32 = stack[stack.len() - 2];
+                var rsp: i32 = stack[stack.len() - 3];
+                stack = drop_last2(stack);
+                stack = drop_last(stack);
+                var rss: i32 = nvals; nvals = nvals + 1;
+                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 16, result: rss, args: [rsp, rso, rsv], imm: 0, str: "" });
+                stack = stack.append(rsv);
             }
         } else if (k == "struct_copy") {
             // A functional update's compact base copy (#4650): pop the src box

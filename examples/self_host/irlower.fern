@@ -567,6 +567,13 @@ pub function (s: LowerState) is_aliased_name(name: string): boolean {
     return util.index_of_str(s.aliased_names, name) >= 0;
 }
 
+// is_self_assign_reuse_name reports whether `name` is a local whose every record
+// update `name = T { ...name, … }` may reuse its own box in place (#6134).
+// Seeded once per function by lower_func as "SAREUSE:<name>".
+pub function (s: LowerState) is_self_assign_reuse_name(name: string): boolean {
+    return util.index_of_str(s.reclaimable_names, "SAREUSE:" + name) >= 0;
+}
+
 // is_own_param reports whether `name` is an `own` (consuming) parameter of the
 // function being lowered.
 pub function (s: LowerState) is_own_param(name: string): boolean {
@@ -20391,7 +20398,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
                 var pairings: string[] = xblock_pairings_for(stmts, st.structs, i, so.bases, xbcons, st.sigs.return_fresh_struct_ret_fns);
                 var prev: string[] = st.xblock_pending;
                 st = st.with_xblock_pending(pairings);
-                st = lower_stmt(stmts[i], st);
+                st = lower_stmt_or_self_assign_reuse(stmts[i], st);
                 st = st.with_xblock_pending(prev);
             }
         }
@@ -29528,66 +29535,11 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
                                             fj = fj + 1;
                                         }
                                     }
-                                    // Every override targeting a leak-safe array field
-                                    // must be a FRESH array literal: the reused box then
-                                    // owns the new array (like the normal has-base path).
-                                    // An aliased array override bails to the alloc path.
-                                    // Likewise a nested-struct override value must be a
-                                    // FRESH (no-base) struct literal, so the reused box
-                                    // solely owns the new inner box (rc=1, no alias-inc)
-                                    // once emit_self_overwrite_reuse full-freeing-drops
-                                    // the old inner. (A CARRIED nested-struct field — not
-                                    // in the override list — simply moves with the box.)
-                                    if (ok) {
-                                        var fk: i32 = 0;
-                                        while (fk < slit.field_names.len()) {
-                                            var fkt: string = decl_field_type(structs, slit.type_name, slit.field_names[fk]);
-                                            if (is_leaksafe_array_field(fkt)) {
-                                                match (slit.field_values[fk]) {
-                                                    parser.ExprArray(_) => {},
-                                                    _ => { ok = false; }
-                                                }
-                                            } else if (decl_is_struct(structs, fkt)) {
-                                                match (slit.field_values[fk]) {
-                                                    parser.ExprStructLit(isl) => { if (isl.has_base) { ok = false; } },
-                                                    _ => { ok = false; }
-                                                }
-                                            } else if (fkt == "fn") {
-                                                // An fn override must be a fresh lambda /
-                                                // __mkclo$ box (tested BEFORE the enum arm:
-                                                // "fn" reads as enum-like), so the reused
-                                                // box solely owns the new env box.
-                                                if (!fn_field_value_is_fresh(slit.field_values[fk])) { ok = false; }
-                                            } else if (is_enum_like_name(fkt, structs)) {
-                                                // An ENUM override value must be a fresh
-                                                // variant ctor of that enum (#4356), so the
-                                                // reused box solely owns the new payload box.
-                                                if (variant_ctor_enum_owner(slit.field_values[fk], structs) != fkt) { ok = false; }
-                                            } else if (fkt == "string") {
-                                                // A STRING override must be a literal or a
-                                                // fresh producer (#4355's rule).
-                                                var sof: boolean = false;
-                                                match (slit.field_values[fk]) {
-                                                    parser.ExprString(_) => { sof = true; },
-                                                    _ => { sof = str_local_binding_is_fresh(slit.field_values[fk]); }
-                                                }
-                                                if (!sof) { ok = false; }
-                                            } else if (fkt == "string[]") {
-                                                // A STRING[] override must be an element-fresh
-                                                // array literal, so the reused box solely owns
-                                                // the new elements + buffer.
-                                                if (!strarr_lit_all_elems_fresh(slit.field_values[fk])) { ok = false; }
-                                            } else if (is_struct_array_field_type(structs, fkt)) {
-                                                // A struct[]/enum[] override must be an
-                                                // element-fresh array literal (fresh no-base
-                                                // element literals / variant ctors).
-                                                if (!boxarr_lit_all_elems_fresh(slit.field_values[fk], structs, fkt[0 : fkt.len() - 2], false)) { ok = false; }
-                                            } else if (is_enum_array_field_type(structs, fkt)) {
-                                                if (!boxarr_lit_all_elems_fresh(slit.field_values[fk], structs, fkt[0 : fkt.len() - 2], true)) { ok = false; }
-                                            }
-                                            fk = fk + 1;
-                                        }
-                                    }
+                                    // Per-kind override-value freshness — the same gate the
+                                    // cross families apply to their recipient, so the reused
+                                    // box solely owns every replaced pointer field once
+                                    // emit_self_overwrite_reuse releases the old one.
+                                    if (ok && !cross_recipient_fields_fresh(slit, structs)) { ok = false; }
                                     // d must be dead after this statement: no use
                                     // in any later top-level statement.
                                     if (ok) {
@@ -29617,6 +29569,271 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
     return ReuseSites { idxs: idxs, bases: bases };
 }
 
+// --- struct in-place reuse (FBIP): the SELF-ASSIGN record update ------------
+//
+// `p = T { ...p, f: v }` — Fern's record-update idiom (E048 forbids field
+// assignment, so every mutation is written this way). The rebind families above
+// cannot see it: they match StmtVar with `v.name != base`, and here the
+// assignment TARGET is the base. #6134, the self-host port of native's
+// tryStructReuseOverwrite spread admission (#6124).
+//
+// The EMITTER needed no port. emit_self_overwrite_reuse already evaluates every
+// override value into a temp before any box surgery (its step 1), which is what
+// makes an override that reads the base (`n: p.n + 1`) order-safe; the rebind
+// family's extra "no override value may reference d" gate is a property of how
+// its DONOR is proved dead, not of the emitter. What this family adds is the
+// admission set — computed over the WHOLE function body, because the update sits
+// inside a loop while p is bound outside it, a pairing the index-keyed site
+// lists cannot express.
+
+// sa_is_self_update reports whether `e` is exactly `T { ...name, … }` — a struct
+// literal of type `tyname` spreading `name` itself.
+function sa_is_self_update(e: parser.Expr, name: string, tyname: string): boolean {
+    match (e) {
+        parser.ExprStructLit(slit) => {
+            if (!slit.has_base || slit.type_name != tyname) { return false; }
+            match (slit.base) {
+                parser.ExprIdent(bid) => { return bid.name == name; },
+                _ => { return false; },
+            }
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// sa_assigns_ok counts the admitted self-updates of `name` in `stmts` (nested
+// blocks included), returning -1 as soon as an assignment to `name` is anything
+// else — a plain rebind, a different type, or a self-update whose override
+// values are not all fresh (cross_recipient_fields_fresh, so no override can
+// alias the field value the reuse arm releases). Every assignment has to
+// qualify: one that does not would leave p's box holding a value the next
+// update's release arm cannot reason about.
+function sa_assigns_ok(stmts: parser.Stmt[], name: string, tyname: string, structs: parser.StructDecl[], acc: i32): i32 {
+    var n: i32 = acc;
+    var i: i32 = 0;
+    while (i < stmts.len() && n >= 0) {
+        n = sa_assigns_ok_stmt(stmts[i], name, tyname, structs, n);
+        i = i + 1;
+    }
+    return n;
+}
+
+function sa_assigns_ok_stmt(st: parser.Stmt, name: string, tyname: string, structs: parser.StructDecl[], acc: i32): i32 {
+    match (st) {
+        parser.StmtAssign(a) => {
+            if (a.target != name) { return acc; }
+            if (!sa_is_self_update(a.value, name, tyname)) { return 0 - 1; }
+            match (a.value) {
+                parser.ExprStructLit(slit) => {
+                    if (!cross_recipient_fields_fresh(slit, structs)) { return 0 - 1; }
+                    return acc + 1;
+                },
+                _ => { return 0 - 1; },
+            }
+        },
+        parser.StmtIf(f) => { return sa_assigns_ok(f.else_body, name, tyname, structs, sa_assigns_ok(f.then_body, name, tyname, structs, acc)); },
+        parser.StmtWhile(w) => { return sa_assigns_ok(w.body, name, tyname, structs, acc); },
+        parser.StmtFor(fr) => { return sa_assigns_ok(fr.body, name, tyname, structs, acc); },
+        parser.StmtMatch(m) => {
+            var n: i32 = acc;
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) { n = sa_assigns_ok(m.arms[ai].body, name, tyname, structs, n); ai = ai + 1; }
+            return n;
+        },
+        parser.StmtDefer(d) => { return sa_assigns_ok_stmt(d.action, name, tyname, structs, acc); },
+        _ => { return acc; },
+    }
+}
+
+// sa_escape_names is walk_stmts_escapes with ONE carve-out: the spread base of a
+// self-update of `name` is the consuming use the reuse takes over, not a real
+// escape. (name_escapes_outside_stmt makes the same carve-out by statement
+// index; here the updates are nested inside loops, so it has to be structural.)
+// A bare `name` anywhere else — a call argument, a container element, another
+// literal's base, a `return`, a lambda capture — still escapes and disqualifies
+// p, which is what proves p is the box's sole owner.
+function sa_escape_names(stmts: parser.Stmt[], name: string, tyname: string, acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        a = sa_escape_stmt(stmts[i], name, tyname, a);
+        i = i + 1;
+    }
+    return a;
+}
+
+function sa_escape_stmt(st: parser.Stmt, name: string, tyname: string, acc: string[]): string[] {
+    match (st) {
+        parser.StmtAssign(asn) => {
+            if (asn.target == name && sa_is_self_update(asn.value, name, tyname)) {
+                match (asn.value) {
+                    parser.ExprStructLit(slit) => {
+                        var a: string[] = acc;
+                        var fi: i32 = 0;
+                        while (fi < slit.field_values.len()) { a = walk_expr_escapes(slit.field_values[fi], a); fi = fi + 1; }
+                        return a;
+                    },
+                    _ => {}
+                }
+            }
+            return walk_expr_escapes(asn.value, acc);
+        },
+        parser.StmtIf(iff) => {
+            var a: string[] = walk_expr_escapes(iff.cond, acc);
+            a = sa_escape_names(iff.then_body, name, tyname, a);
+            return sa_escape_names(iff.else_body, name, tyname, a);
+        },
+        parser.StmtWhile(w) => { return sa_escape_names(w.body, name, tyname, walk_expr_escapes(w.cond, acc)); },
+        parser.StmtFor(f) => { return sa_escape_names(f.body, name, tyname, walk_expr_escapes(f.iter, acc)); },
+        parser.StmtMatch(m) => {
+            var a: string[] = walk_expr_escapes(m.scrutinee, acc);
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (m.arms[i].has_guard) { a = walk_expr_escapes(m.arms[i].guard, a); }
+                a = sa_escape_names(m.arms[i].body, name, tyname, a);
+                i = i + 1;
+            }
+            return a;
+        },
+        parser.StmtDefer(d) => { return sa_escape_stmt(d.action, name, tyname, acc); },
+        _ => { return walk_stmt_escapes(st, acc); },
+    }
+}
+
+// sa_rebound_below reports whether `name` is bound a SECOND time anywhere under
+// `stmts` — a nested `var name`, a `for name in …` element binding, or a
+// match-arm pattern binder. A shadowing binding is not covered by the top-level
+// donor gates, so its box may hold aliased pointer fields (`for p in ps` binds
+// an element of ps outright) that the reuse arm would then free out from under
+// the container. slot_of resolves to the shadowing slot, so admitting the name
+// at all would fire the reuse there; the whole name is refused instead.
+function sa_rebound_below(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (sa_rebound_stmt(stmts[i], name)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function sa_rebound_stmt(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return v.name == name; },
+        parser.StmtIf(f) => { return sa_rebound_below(f.then_body, name) || sa_rebound_below(f.else_body, name); },
+        parser.StmtWhile(w) => { return sa_rebound_below(w.body, name); },
+        parser.StmtFor(fr) => { return fr.var_name == name || sa_rebound_below(fr.body, name); },
+        parser.StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (sa_pat_binds(m.arms[i].pattern, name) || sa_rebound_below(m.arms[i].body, name)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return sa_rebound_stmt(d.action, name); },
+        _ => { return false; },
+    }
+}
+
+function sa_pat_binds(p: parser.Pattern, name: string): boolean {
+    match (p) {
+        parser.PatVariant(pv) => {
+            if (pv.binding == name || pv.at_binding == name) { return true; }
+            var i: i32 = 0;
+            while (i < pv.extra_bindings.len()) {
+                if (pv.extra_bindings[i] == name) { return true; }
+                i = i + 1;
+            }
+            var n: i32 = 0;
+            while (n < pv.nested.len()) {
+                if (sa_pat_binds(pv.nested[n], name)) { return true; }
+                n = n + 1;
+            }
+            return false;
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// self_assign_update_names returns the local names whose every record update
+// `p = T { ...p, … }` may reuse p's own box in place. `p` qualifies when:
+//   - it is bound at fn-body top level by `var p = T { … }`, a fresh no-base
+//     literal of a reuse-eligible struct type whose own pointer-kinded field
+//     values are all fresh (donor_bind_type + donor_enum_fields_fresh — the
+//     donor-side gates the rebind families apply, here proving the FIRST
+//     update's release arm is alias-free),
+//   - nothing else in the body binds its name — no parameter, and no shadowing
+//     `var` / `for` / match binder (sa_rebound_stmt); slot_of resolves to the
+//     nearest binding, and only the top-level one carries the donor gates,
+//   - it is assigned at least once and every assignment qualifies
+//     (sa_assigns_ok),
+//   - it never escapes (sa_escape_names). p is then provably the box's sole
+//     owner, so the __fern_rc_is_unique guard always takes the reuse arm and
+//     emit_self_overwrite_reuse's fresh arm is the degradation path only.
+function self_assign_update_names(body: parser.Stmt[], params: parser.ParamDecl[], structs: parser.StructDecl[], fresh_ret: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                var shadowed: boolean = false;
+                var si: i32 = 0;
+                while (si < body.len()) {
+                    if (si != i && sa_rebound_stmt(body[si], v.name)) { shadowed = true; }
+                    si = si + 1;
+                }
+                if (!shadowed && util.index_of_str(out, v.name) < 0 && !sa_param_named(params, v.name)) {
+                    var ty: string = donor_bind_type(body, v.name, structs, fresh_ret);
+                    if (ty.len() > 0 && struct_fields_reusable_cross(structs, ty)
+                        && donor_enum_fields_fresh(body, v.name, structs)
+                        && sa_assigns_ok(body, v.name, ty, structs, 0) > 0) {
+                        var esc: string[] = [];
+                        if (util.index_of_str(sa_escape_names(body, v.name, ty, esc), v.name) < 0) {
+                            out = out.append(v.name);
+                        }
+                    }
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function sa_param_named(params: parser.ParamDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < params.len()) {
+        if (params[i].name == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// lower_stmt_or_self_assign_reuse routes an admitted self-assign record update
+// (self_assign_update_names, seeded as "SAREUSE:<name>") to the in-place reuse
+// emitter; everything else lowers normally.
+function lower_stmt_or_self_assign_reuse(st: parser.Stmt, s: LowerState): LowerState {
+    match (st) {
+        parser.StmtAssign(a) => {
+            if (s.is_self_assign_reuse_name(a.target)) {
+                match (a.value) {
+                    parser.ExprStructLit(slit) => {
+                        if (sa_is_self_update(a.value, a.target, slit.type_name)) {
+                            return emit_self_overwrite_reuse(a.target, a.value, a.target, false, s);
+                        }
+                    },
+                    _ => {}
+                }
+            }
+        },
+        _ => {}
+    }
+    return lower_stmt(st, s);
+}
+
 // emit_self_overwrite_reuse lowers `var c = T { ...d, f: v, ... }` as a
 // RUNTIME-GUARDED in-place reuse of d's box (#4350, native's token shape;
 // the reuse site found by self_overwrite_reuse_sites). `c_name` is the new
@@ -29641,6 +29858,12 @@ function self_overwrite_reuse_sites(body: parser.Stmt[], structs: parser.StructD
 // The `slit` is passed as the wrapped parser.Expr (not the unwrapped variant
 // struct) and re-matched here — passing a large unwrapped AST struct by
 // value is avoided.
+//
+// `c_name == base_name` is the SELF-ASSIGN record update `p = T { ...p, … }`
+// (#6134, the site found by self_assign_update_names): one slot plays both
+// roles, so c binds no new local and step 5's donor zeroing is skipped. Step 1
+// is what makes it work at all — an override that reads p (`n: p.n + 1`) has
+// already been evaluated into its temp before the box is touched.
 function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name: string, release_prior: boolean, s: LowerState): LowerState {
     var dslot: i32 = s.slot_of(base_name);
     if (dslot < 0) { return s.fail(); }
@@ -29672,7 +29895,11 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
                 fj = fj + 1;
             }
             // Bind c's slot up front — both branches store the result box there.
-            st = st.add_local(c_name);
+            // A SELF-ASSIGN update (`p = T { ...p, … }`, #6134) names the same
+            // local on both sides: c IS d, so it already has a slot and the
+            // step-7 donor zeroing must not run (it would null p).
+            var self_assign: boolean = c_name == base_name;
+            if (!self_assign) { st = st.add_local(c_name); }
             var cslot: i32 = st.slot_of(c_name);
             st = st.mark_struct_type(cslot, slit.type_name);
             // Loop body: free the recipient's prior (previous-iteration) box first —
@@ -29838,11 +30065,14 @@ function emit_self_overwrite_reuse(c_name: string, init: parser.Expr, base_name:
             //    the fresh arm d's reference was released above and the aliases
             //    own the old box. (c stays an alias binding outside the
             //    reclaimable set — the same shallow-leak policy as the pre-guard
-            //    path and the plain fresh construction.)
+            //    path and the plain fresh construction.) A self-assign update has
+            //    no separate d to zero — the single slot now holds the result box.
             st = st.emit(ir.op_load_local(bslot));
             st = st.emit(ir.op_store_local(cslot));
-            st = st.emit(ir.op_const_i32(0));
-            st = st.emit(ir.op_store_local(dslot));
+            if (!self_assign) {
+                st = st.emit(ir.op_const_i32(0));
+                st = st.emit(ir.op_store_local(dslot));
+            }
             return st;
         },
         _ => { return s.fail(); },
@@ -32797,6 +33027,15 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
     // when its target is here (#3599; see the aliased_names field doc).
     var aliased: string[] = aliased_array_names_of(fn.body);
+    // #6134: seed the SELF-ASSIGN record-update reuse set as "SAREUSE:<name>" —
+    // the locals whose every `p = T { ...p, … }` reuses p's own box in place
+    // (self_assign_update_names). Prefix-tagged like the other per-function
+    // registries above; inert for every other reclaimable_names consumer.
+    if (!reuse_layer_disabled()) {
+        var sar: string[] = self_assign_update_names(fn.body, fn.params, structs, sg.return_fresh_struct_ret_fns);
+        var sari: i32 = 0;
+        while (sari < sar.len()) { reclaim = reclaim.append("SAREUSE:" + sar[sari]); sari = sari + 1; }
+    }
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
@@ -33238,7 +33477,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else {
-            s = lower_stmt(fn.body[j], s);
+            s = lower_stmt_or_self_assign_reuse(fn.body[j], s);
         }
         s = s.with_optret_pending(optret_prev);
         if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params, erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots }; }
