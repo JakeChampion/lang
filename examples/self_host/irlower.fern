@@ -20506,6 +20506,22 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     //     flat, so a nested-block box can never have been donated to a reuse site
     //     (which is what the fn-level emission's edon check guards against).
     var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.structs);
+    // Consumed RC-PAYLOAD enum free, per block (#6127) — the last member of this
+    // family to get a block-level sibling. lower_func runs
+    // consumed_rcpayload_enum_frees over fn.body only, so `while { var t =
+    // Text("a" + "b"); match (t) { … } }` freed its box on every iteration except
+    // the LAST, whose value no analysis reclaimed: measured 7200 bytes over 100
+    // rounds where the byte-identical shape at fn top level is flat at 0. Unlike
+    // the scalar sibling this one already emitted SOME releases (the loop-rebind
+    // reclaim via the RCENUM credit), which is why it leaked partially rather
+    // than completely.
+    //
+    // Freed at most once, by the same three facts as the scalar sibling above,
+    // plus a fourth specific to this class: ecross (enum_cross_reuse_sites) is
+    // computed over fn.body FLAT, exactly like edon, so a nested-block box can
+    // never have been donated to a cross-reuse recipient — which is what the
+    // fn-level emission's ecross.donors suppression guards against.
+    var rcenfrees: RcEnumFrees = consumed_rcpayload_enum_frees(stmts, s.structs);
     var st: LowerState = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -20675,6 +20691,26 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
                 }
             }
             sef = sef + 1;
+        }
+        // Consumed rc-payload enum free: same placement and the same reason as the
+        // scalar loop above, but the release is emit_enum_variant_drops_moved —
+        // a runtime variant_is dispatch that decs the live variant's rc payload and
+        // then frees the box, skipping any field whose arm binding escaped
+        // (match_moved_rc_payloads, #4400). Zeroing the slot afterwards is what
+        // keeps this disjoint from the RCENUM loop-rebind reclaim: on the next
+        // iteration emit_enum_deep_reinit_store would otherwise deep-drop the box
+        // this just freed.
+        var ref2: i32 = 0;
+        while (ref2 < rcenfrees.idxs.len()) {
+            if (rcenfrees.idxs[ref2] == i) {
+                var rslot2: i32 = st.slot_of(rcenfrees.names[ref2]);
+                if (rslot2 >= st.n_params) {
+                    st = emit_enum_variant_drops_moved(st, rslot2, rcenfrees.enums[ref2], match_moved_rc_payloads(stmts[i], st.structs));
+                    st = st.emit(ir.op_const_i32(0));
+                    st = st.emit(ir.op_store_local(rslot2));
+                }
+            }
+            ref2 = ref2 + 1;
         }
         if (stmt_scopes_bindings(stmts[i])) { st = st.retire_locals(sbase); }
         i = i + 1;

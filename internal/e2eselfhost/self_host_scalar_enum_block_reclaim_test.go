@@ -152,6 +152,105 @@ function main(): i32 {
 			t.Errorf("live_bytes=%d, want 0", live)
 		}
 	})
+
+	// --- rc-PAYLOAD half (#6127) --------------------------------------------
+	//
+	// consumed_rcpayload_enum_frees was the last member of this family without a
+	// block-level sibling (rc-payload options got one in #4357, scalar enums in
+	// the commit above). Its failure mode differed from the scalar one and is
+	// worth keeping distinct in the tests: the RCENUM loop-rebind credit was
+	// already firing, so the nested shape freed its box on every iteration EXCEPT
+	// the last and leaked partially — 7200 bytes over 100 rounds, one arr_dec and
+	// one str_free short of the byte-identical top-level shape.
+
+	t.Run("rc_payload_loop_local", func(t *testing.T) {
+		src := `enum T { Text(string), Nil }
+function round(i: i32): i32 {
+    var acc: i32 = 0;
+    var k: i32 = 0;
+    while (k < 4) {
+        var t: T = Text("aa" + "bb");
+        match (t) { Text(s) => { acc = acc + s.len(); }, Nil => {} }
+        k = k + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    return x / 100;
+}`
+		allocs, frees, live := counts(t, "rc_enum_loop", src, 16)
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0 — the LAST iteration's box and its string "+
+				"payload were the leak here; the loop-rebind reclaim covered the rest, "+
+				"which is why this shape leaked partially rather than completely", live)
+		}
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d — must balance exactly", allocs, frees)
+		}
+	})
+
+	t.Run("rc_payload_if_block_local", func(t *testing.T) {
+		// Single bind, no rebind — the loop-rebind credit cannot help at all here,
+		// so only the consuming-match free reclaims it.
+		src := `enum T { Text(string), Nil }
+function round(i: i32): i32 {
+    var acc: i32 = 0;
+    if (i > 0) {
+        var t: T = Text("pq" + "rs");
+        match (t) { Text(s) => { acc = s.len(); }, Nil => {} }
+    }
+    return acc;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 60) { x = x + round(r); r = r + 1; }
+    return x % 89;
+}`
+		_, _, live := counts(t, "rc_enum_ifblock", src, 58)
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0", live)
+		}
+	})
+
+	t.Run("rc_payload_top_level_and_nested_balance", func(t *testing.T) {
+		// The double-free guard for this half: lower_func's rcenumfrees owns the
+		// top-level candidate, lower_block's owns the nested one. Zeroing the slot
+		// after the block free is what also keeps it disjoint from the RCENUM
+		// loop-rebind reclaim — without it the next iteration's
+		// emit_enum_deep_reinit_store would deep-drop the box just released.
+		src := `enum T { Text(string), Nil }
+function round(i: i32): i32 {
+    var acc: i32 = 0;
+    var top: T = Text("xy" + "z");
+    match (top) { Text(s) => { acc = s.len(); }, Nil => {} }
+    var k: i32 = 0;
+    while (k < 3) {
+        var inner: T = Text("aa" + "bb");
+        match (inner) { Text(u) => { acc = acc + u.len(); }, Nil => {} }
+        k = k + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 60) { x = x + round(r); r = r + 1; }
+    return x % 101;
+}`
+		allocs, frees, live := counts(t, "rc_enum_mixed", src, 92)
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d — frees > allocs means both analyses claimed "+
+				"one box, or the block free and the loop-rebind reclaim both ran on it; "+
+				"frees < allocs means one went unclaimed", allocs, frees)
+		}
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0", live)
+		}
+	})
 }
 
 // TestSelfHostScalarEnumBlockHazardsX86_64 — the block-local shapes the free must
@@ -239,6 +338,55 @@ function main(): i32 {
     return acc % 91;
 }`,
 			want: 10,
+		},
+
+		{
+			// rc-PAYLOAD, reassigned: the classifier excludes reassigned names,
+			// so this stays refused. It must still be behaviourally correct — the
+			// value read after the loop is the last one assigned.
+			name: "rc_payload_reassigned",
+			src: `enum T { Text(string), Nil }
+function round(i: i32): i32 {
+    var acc: i32 = 0;
+    var t: T = Text("aa" + "bb");
+    var k: i32 = 0;
+    while (k < 3) { t = Text("cc" + "dd"); k = k + 1; }
+    match (t) { Text(s) => { acc = s.len(); }, Nil => {} }
+    return acc;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 60) { x = x + round(r); r = r + 1; }
+    return x % 79;
+}`,
+			want: 3,
+		},
+		{
+			// rc-PAYLOAD escaping into a call — the callee may retain the box, so
+			// the free must not fire. This is the shape the #6127 sweep's
+			// enum_str_payload probe actually has, which is why that row stays
+			// non-zero and is a conservatism bound rather than a compiler gap.
+			name: "rc_payload_call_escape",
+			src: `enum T { Text(string), Nil }
+function len_of(t: T): i32 { match (t) { Text(s) => { return s.len(); }, Nil => { return 0; } } return 0; }
+function round(i: i32): i32 {
+    var acc: i32 = 0;
+    var k: i32 = 0;
+    while (k < 3) {
+        var t: T = Text("aa" + "bb");
+        acc = acc + len_of(t);
+        k = k + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 60) { x = x + round(r); r = r + 1; }
+    return x % 73;
+}`,
+			want: 63,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
