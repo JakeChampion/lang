@@ -6765,6 +6765,24 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
             }
             return "";
         },
+        // `a[i]` where `a: T[]` — the element type is the array type minus its
+        // `[]` suffix. Without this arm mono_infer fell through to "" for an
+        // array-element read, so a call like `f(a[i], a[j])` could not bind `f`'s
+        // type parameter at all: the call stayed generic, the un-monomorphised
+        // symbol survived to the IR eligibility gate, and the gate rejected the
+        // CALLER as ineligible — a hard compile error since the AST emitters
+        // were deleted (#6189).
+        //
+        // Guarded on the `[]` suffix rather than blindly trimming two chars: a
+        // STRING index (`s[i]`) yields a char, not a "strin", and an unknown
+        // object type must stay unknown so the call is left generic rather than
+        // bound to a wrong instantiation.
+        ExprIndex(ix) => {
+            var at: string = mono_infer(ix.array, env, funcs);
+            var n: i32 = at.len();
+            if (n > 2 && at[n - 2:n] == "[]") { return at[0:n - 2] + ""; }
+            return "";
+        },
         _ => { return ""; }
     }
     return "";
