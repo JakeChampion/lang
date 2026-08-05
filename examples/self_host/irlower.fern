@@ -4096,8 +4096,10 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
 //     an empty `old` / no match — an alias of the receiver)
 //   - `.to_string()` / `.to_debug()`     (the string-identity case returns the
 //     receiver box)
-//   - a string literal (.rodata static), a bare ident / field-read / slice
-//     (each aliases a live box the IR path never sweeps)
+//   - a bare ident / field-read / slice (each aliases a live box the IR path
+//     never sweeps). A string LITERAL is NOT in this list: its box is freshly
+//     allocated per evaluation (#2649 Option A), so it aliases nothing — see the
+//     Static note in str_producer_ownership.
 // Every excluded form stays inc'd at construction → the field-drop only decs the
 // dup (sound, leaks, never an over-release).
 // str_producer_ownership classifies the OWNERSHIP a value-producing string
@@ -4112,7 +4114,12 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
 //     methods — is OWNED: a fresh rc=1 box the field-drop reclaims;
 //   - a slice `s[a:b]` / `.trim()` is a VIEW: a zero-copy immortal box (rc=-1,
 //     #4294) sharing the source buffer, never freed;
-//   - a string LITERAL is STATIC (its data is interned .rodata);
+//   - a string LITERAL is STATIC — its DATA is interned .rodata, but since #2649
+//     Option A the BOX around it is freshly __fern_str_box'd at rc=1 on every
+//     evaluation, so a Static value is as sole-owned as an Owned one. Callers
+//     deciding whether to FREE must treat the two alike (__fern_str_free's
+//     heap-range guard on the data pointer frees the box and leaves the static
+//     bytes); only callers reasoning about the BUFFER may separate them;
 //   - everything else — a bare ident / field-read / general call — is BORROWED:
 //     it aliases a live box a live owner still holds.
 // The View / Static / Borrowed distinctions are consumed by later slices (CS2)
@@ -9968,35 +9975,37 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                     // `string_from_bytes_unchecked` — each allocating a fresh buffer + rc=1 box
                     // used only for this field. Owned by the struct with no inc, so the
                     // field-drop reclaims it — the actual heap-leak win.
+                    // A string LITERAL (Static) is reclaimed the same way, and is the
+                    // one non-Owned class handed over with no inc: since #2649 Option A
+                    // const_str builds a FRESH rc=1 box per evaluation (__fern_str_box
+                    // over the interned .rodata bytes), so the struct sole-owns it, and
+                    // __fern_str_free's heap-range guard on the DATA pointer frees only
+                    // that box, never the static bytes. Retaining it pinned the box at
+                    // rc=2 for the program's life — 24 leaked bytes per bind, on a plain
+                    // single bind, not just a loop rebind (#6127).
                     // EVERY other value is inc'd so the field-drop only decs the dup:
-                    //   - a string LITERAL is static (.rodata, not heap rc=1) — it
-                    //     must NOT be freed; the inc/dec round-trips its rc word
-                    //     soundly (an rc_dec WITHOUT a matching inc over-releases it);
                     //   - a string local / param / field read may alias a live string
                     //     the IR path never sweeps;
                     //   - `.trim()` is a zero-copy VIEW into its receiver's buffer and
                     //     `.replace()` / `.to_string()` have receiver-identity fast-paths,
                     //     so each may alias a live box — retained conservatively.
                     // Each non-fresh case leaks (sound), never over-releases.
-                    // String fields are NOT rc-tracked in the IR path: const_str
-                    // allocates a header-less 16-byte box [data@0,len@8] (every IR
-                    // backend leaks strings — "not RC'd"), so __fern_rc_inc on a
-                    // string box would write [box-8] = the PREVIOUS heap block's word,
-                    // corrupting it. (Found via the resolve_labels_module FuncDecl
-                    // rebuild: a non-fresh `receiver_name` field-copy's rc_inc clobbered
-                    // the adjacent funcs array's length, so parse_module returned the
-                    // wrong function count / crashed.) Strings leak instead (sound);
-                    // matched by the string skip in emit_struct_field_drops.
                     // #4297 A2: retain (rc_inc) a NON-fresh string field of a
                     // reclaimable struct so the k_str field-drop's rc-aware dec is
-                    // balanced; a fresh (Owned) field is handed over with no inc and
-                    // reclaimed by the drop. Ownership comes from the per-lit precompute
-                    // (slit_own[found]) — a scalar read, so it does NOT re-taint
-                    // lower_expr. (Owned=0; Borrowed/View/Static != 0 → retain: a real
-                    // aliased box's dec is balanced, an immortal view/literal's inc is
-                    // an rc-sentinel no-op.)
+                    // balanced; an Owned (fresh producer) or Static (literal) field is
+                    // handed over with no inc and reclaimed by the drop. Ownership comes
+                    // from the per-lit precompute (slit_own[found]) — a scalar read, so
+                    // it does NOT re-taint lower_expr. (Owned=0; Static=3; Borrowed=1 /
+                    // View=2 → retain: a real aliased box's dec is balanced, an immortal
+                    // view's inc is an rc-sentinel no-op.)
+                    // Soundness rests on the SAME whole-program read scan that already
+                    // gates the k_str dec: slit_reclaim is only true for a
+                    // STRFLDOK-admitted type, i.e. one whose string-field reads are all
+                    // provable transient borrows. A literal therefore joins the Owned
+                    // class the drop has always freed, rather than opening a new one.
                     if (!fav_alias_inc && cfft == "string" && slit_reclaim
-                            && found < slit_own.len() && slit_own[found] != 0) {
+                            && found < slit_own.len() && slit_own[found] != 0
+                            && slit_own[found] != 3) {
                         fav_alias_inc = true;
                     }
                     // COMPACT: load the copied result box UNDER the value so struct_set
