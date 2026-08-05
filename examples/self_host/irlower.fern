@@ -24057,7 +24057,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // and is otherwise body_unsafe_for, so it subsumes both former checks.
         // The string[] class has worked this way since #4355.
         if (!(aan.len() > 2 && aan[0] == 83 && aan[1] == 124)   // 83='S' 124='|'
-            && !arrarr_unsafe_for(body, aan, borrowable)
+            && !arrarr_unsafe_for(body, aan, borrowable, opt_fresh_ret)
             && !arrarr_row_escapes(body, aan)) {
             out = out.append("ARRARR:" + aan);
             // STRICT string-kind credit only when every inner element proved
@@ -26739,7 +26739,7 @@ function collect_fresh_arrarr_names(stmts: parser.Stmt[], ofr: string[], acc: st
                     // strings-fresh marker: lets the crediting loop grant the
                     // STRICT "ARRARRS:" credit a string-kind slot requires.
                     if (arrarr_lit_strings_fresh(v.init)) { a = push_str_unique(a, "S|" + v.name); }
-                } else if (arrarr_lit_is_empty(v.init) && arrarr_name_is_appended(stmts, v.name)) {
+                } else if (arrarr_lit_is_empty(v.init) && arrarr_name_is_appended(stmts, v.name, ofr)) {
                     // APPEND-BUILT candidate (#6092): `var g: T[][] = []` grown by
                     // `g = g.append(<row literal>)`. arrarr_lit_is_fresh rejects
                     // `[]` (no rows to prove fresh), which is right for a
@@ -26749,7 +26749,7 @@ function collect_fresh_arrarr_names(stmts: parser.Stmt[], ofr: string[], acc: st
                     // gate at the crediting site; the strict string marker needs
                     // EVERY appended row strings-fresh.
                     a = push_str_unique(a, v.name);
-                    if (arrarr_appends_strings_fresh(stmts, v.name)) { a = push_str_unique(a, "S|" + v.name); }
+                    if (arrarr_appends_strings_fresh(stmts, v.name, ofr)) { a = push_str_unique(a, "S|" + v.name); }
                 } else {
                     // Call init `var g: T[][] = mk(..)` of an AAC-registered
                     // producer: same credits the literal it returns would earn.
@@ -26898,27 +26898,27 @@ function arrarr_row_store_strings_fresh(e: parser.Expr): boolean {
 // checked separately by arrarr_row_escapes, which the credit applies alongside
 // this gate. The sanctioned form never descends into its own receiver, so
 // `g` appearing as the append receiver is not read as an escape.
-function arrarr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+function arrarr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], ofr: string[]): boolean {
     var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_arrarr_unsafe_for(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    while (i < stmts.len()) { if (stmt_arrarr_unsafe_for(stmts[i], name, borrowable, ofr)) { return true; } i = i + 1; }
     return false;
 }
-function stmt_arrarr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+function stmt_arrarr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], ofr: string[]): boolean {
     match (st) {
         parser.StmtAssign(a) => {
             if (a.target == name) {
-                if (arrarr_self_append_row(a.value, name) >= 0) { return false; }
+                if (arrarr_self_append_row(a.value, name, ofr) >= 0) { return false; }
                 return true;   // any other reassignment of the candidate
             }
             return expr_unsafe_for(a.value, name, borrowable);
         },
         parser.StmtIf(f) => {
             if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
-            return arrarr_unsafe_for(f.then_body, name, borrowable) || arrarr_unsafe_for(f.else_body, name, borrowable);
+            return arrarr_unsafe_for(f.then_body, name, borrowable, ofr) || arrarr_unsafe_for(f.else_body, name, borrowable, ofr);
         },
         parser.StmtWhile(w) => {
             if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
-            return arrarr_unsafe_for(w.body, name, borrowable);
+            return arrarr_unsafe_for(w.body, name, borrowable, ofr);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -26927,19 +26927,19 @@ function stmt_arrarr_unsafe_for(st: parser.Stmt, name: string, borrowable: strin
                 _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
             }
             if (iter_unsafe) { return true; }
-            return arrarr_unsafe_for(fo.body, name, borrowable);
+            return arrarr_unsafe_for(fo.body, name, borrowable, ofr);
         },
         parser.StmtMatch(m) => {
             if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
-                if (arrarr_unsafe_for(m.arms[ai].body, name, borrowable)) { return true; }
+                if (arrarr_unsafe_for(m.arms[ai].body, name, borrowable, ofr)) { return true; }
                 ai = ai + 1;
             }
             return false;
         },
-        parser.StmtDefer(d) => { return stmt_arrarr_unsafe_for(d.action, name, borrowable); },
+        parser.StmtDefer(d) => { return stmt_arrarr_unsafe_for(d.action, name, borrowable, ofr); },
         _ => { return stmt_unsafe_for(st, name, borrowable); }
     }
     return false;
@@ -26950,7 +26950,7 @@ function stmt_arrarr_unsafe_for(st: parser.Stmt, name: string, borrowable: strin
 // are NOT all proven strings-fresh (lax — enough for a scalar-kind slot), 1 =
 // also strings-fresh (the strict credit a string-kind slot needs). Splitting the
 // two here keeps the caller from re-walking the row.
-function arrarr_self_append_row(e: parser.Expr, name: string): i32 {
+function arrarr_self_append_row(e: parser.Expr, name: string, ofr: string[]): i32 {
     match (e) {
         parser.ExprCall(c) => {
             var is_self_append: boolean = false;
@@ -26967,9 +26967,42 @@ function arrarr_self_append_row(e: parser.Expr, name: string): i32 {
             }
             if (!is_self_append) { return -1; }
             if (c.args.len() != 1) { return -1; }
-            if (!arrarr_row_store_ok(c.args[0])) { return -1; }
-            if (arrarr_row_store_strings_fresh(c.args[0])) { return 1; }
-            return 0;
+            if (arrarr_row_store_ok(c.args[0])) {
+                if (arrarr_row_store_strings_fresh(c.args[0])) { return 1; }
+                return 0;
+            }
+            // A CALL to a registered fresh-ROW producer (#6102): the callee's
+            // every return hands back a freshly-allocated, solely-owned buffer,
+            // so the appended row is as safe to deep-free as a literal. Without
+            // this the row leaked one buffer per append — the residue #6092
+            // left behind, and the shape its own repro used.
+            return arrarr_row_call_kind(c.args[0], ofr);
+        },
+        _ => { return -1; }
+    }
+    return -1;
+}
+
+// arrarr_row_call_kind: `e` is a direct call to a function carrying an "ARC:"
+// entry — 1 when the entry is strict ("s": every element of every returned row
+// is a fresh string, which a string-kind consumer needs before it frees element
+// pointers), 0 when lax ("p": the buffer is fresh, enough for a scalar-kind
+// consumer), -1 when the callee is not registered.
+//
+// Only a BARE call qualifies. A method call, or a call wrapped in any other
+// expression, is not a proof of freshness and stays out.
+function arrarr_row_call_kind(e: parser.Expr, ofr: string[]): i32 {
+    match (e) {
+        parser.ExprCall(rc) => {
+            match (rc.callee) {
+                parser.ExprIdent(rid) => {
+                    if (util.index_of_str(ofr, "ARC:" + rid.name + "|s") >= 0) { return 1; }
+                    if (util.index_of_str(ofr, "ARC:" + rid.name + "|p") >= 0) { return 0; }
+                    return -1;
+                },
+                _ => { return -1; }
+            }
+            return -1;
         },
         _ => { return -1; }
     }
@@ -26980,23 +27013,23 @@ function arrarr_self_append_row(e: parser.Expr, name: string): i32 {
 // carried a strings-fresh row. Consulted only for the STRICT "ARRARRS:" credit;
 // a body with no rebinds at all trivially passes (the initializer's own strict
 // marker still governs).
-function arrarr_appends_strings_fresh(stmts: parser.Stmt[], name: string): boolean {
+function arrarr_appends_strings_fresh(stmts: parser.Stmt[], name: string, ofr: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtAssign(a) => {
-                if (a.target == name && arrarr_self_append_row(a.value, name) == 0) { return false; }
+                if (a.target == name && arrarr_self_append_row(a.value, name, ofr) == 0) { return false; }
             },
             parser.StmtIf(f) => {
-                if (!arrarr_appends_strings_fresh(f.then_body, name)) { return false; }
-                if (!arrarr_appends_strings_fresh(f.else_body, name)) { return false; }
+                if (!arrarr_appends_strings_fresh(f.then_body, name, ofr)) { return false; }
+                if (!arrarr_appends_strings_fresh(f.else_body, name, ofr)) { return false; }
             },
-            parser.StmtWhile(w) => { if (!arrarr_appends_strings_fresh(w.body, name)) { return false; } },
-            parser.StmtFor(fo) => { if (!arrarr_appends_strings_fresh(fo.body, name)) { return false; } },
+            parser.StmtWhile(w) => { if (!arrarr_appends_strings_fresh(w.body, name, ofr)) { return false; } },
+            parser.StmtFor(fo) => { if (!arrarr_appends_strings_fresh(fo.body, name, ofr)) { return false; } },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
                 while (mi < m.arms.len()) {
-                    if (!arrarr_appends_strings_fresh(m.arms[mi].body, name)) { return false; }
+                    if (!arrarr_appends_strings_fresh(m.arms[mi].body, name, ofr)) { return false; }
                     mi = mi + 1;
                 }
             },
@@ -27011,20 +27044,20 @@ function arrarr_appends_strings_fresh(stmts: parser.Stmt[], name: string): boole
 // admit an EMPTY-literal init (`var g: i32[][] = []`) as an append-BUILT
 // candidate — arrarr_lit_is_fresh rejects `[]` outright (len == 0), which is
 // correct for a literal-only credit but excludes the shape this fix is about.
-function arrarr_name_is_appended(stmts: parser.Stmt[], name: string): boolean {
+function arrarr_name_is_appended(stmts: parser.Stmt[], name: string, ofr: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtAssign(a) => { if (a.target == name && arrarr_self_append_row(a.value, name) >= 0) { return true; } },
+            parser.StmtAssign(a) => { if (a.target == name && arrarr_self_append_row(a.value, name, ofr) >= 0) { return true; } },
             parser.StmtIf(f) => {
-                if (arrarr_name_is_appended(f.then_body, name)) { return true; }
-                if (arrarr_name_is_appended(f.else_body, name)) { return true; }
+                if (arrarr_name_is_appended(f.then_body, name, ofr)) { return true; }
+                if (arrarr_name_is_appended(f.else_body, name, ofr)) { return true; }
             },
-            parser.StmtWhile(w) => { if (arrarr_name_is_appended(w.body, name)) { return true; } },
-            parser.StmtFor(fo) => { if (arrarr_name_is_appended(fo.body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (arrarr_name_is_appended(w.body, name, ofr)) { return true; } },
+            parser.StmtFor(fo) => { if (arrarr_name_is_appended(fo.body, name, ofr)) { return true; } },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { if (arrarr_name_is_appended(m.arms[mi].body, name)) { return true; } mi = mi + 1; }
+                while (mi < m.arms.len()) { if (arrarr_name_is_appended(m.arms[mi].body, name, ofr)) { return true; } mi = mi + 1; }
             },
             _ => {}
         }
@@ -33933,9 +33966,255 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Stru
             if (!body_has_nonstrfresh_arrarr_return(funcs[k].body)) { aflag = "s"; }
             out = out.append("AAC:" + funcs[k].name + "|" + aflag);
         }
+        // #6102: fresh ROW producers, "ARC:<name>|<flag>" — the single-level
+        // sibling of AAC above, consumed by arrarr_self_append_row so an
+        // append-built arr-of-arr can take `g = g.append(make_row())`. Return
+        // type is one level of `[]` and NOT `[][]` (the AAC arm owns that
+        // shape, and this branch is an `else if` behind it anyway).
+        else if (funcs[k].receiver_type.len() == 0
+                && rt.len() >= 2 && rt[rt.len() - 2 : rt.len()] == "[]"
+                && row_producer_kind(funcs[k].body) >= 0) {
+            var rflag: string = "p";
+            if (row_producer_kind(funcs[k].body) == 1) { rflag = "s"; }
+            out = out.append("ARC:" + funcs[k].name + "|" + rflag);
+        }
         k = k + 1;
     }
     return out;
+}
+
+// --- fresh ROW producers, "ARC:" (#6102) -------------------------------------
+//
+// The AAC registry above proves a callee returns a whole fresh arr-of-arr. This
+// one is its single-level sibling: a free function whose every return hands the
+// caller a freshly-allocated, solely-owned ROW. It exists so the append-built
+// arr-of-arr credit (#6092) can accept `g = g.append(make_row())` and not just
+// `g = g.append([..])` — without it, a row that came from a call stayed
+// uncredited and leaked one buffer per append.
+//
+// Two tiers, the same split AAC uses. "p" (lax): the returned BUFFER is fresh,
+// which is all a scalar-kind consumer needs — it frees each row with one
+// arr_dec and the row's own elements were value-copied. "s" (strict): every
+// element ever placed in the row is a fresh string too, which a string-kind
+// consumer needs because it frees element POINTERS.
+//
+// A qualifying return is either a direct array LITERAL, or an ident naming a
+// local built the append way (`var xs: T[] = []` / a literal, every rebind a
+// self-append) that does not escape by any route other than the return itself.
+// That last proof is body_unsafe_for_allow_ret, which exists for precisely this
+// shape: a bare `return name` MOVES the value out rather than retaining it.
+// borrowable is empty here — at module-registry time there is no call context,
+// so any call-argument use of the local disqualifies it, which is the
+// conservative direction.
+function row_producer_kind(body: parser.Stmt[]): i32 {
+    if (!body_has_return(body)) { return -1; }
+    return body_row_return_kind(body, body);
+}
+
+// body_row_return_kind: the WEAKEST kind over every return in the body — -1 if
+// any return fails to be a fresh row, else 0 (lax) / 1 (strict). `fnbody` stays
+// the whole function body so an ident return can find its local's declaration
+// and rebinds no matter how deeply the return is nested.
+function body_row_return_kind(stmts: parser.Stmt[], fnbody: parser.Stmt[]): i32 {
+    var worst: i32 = 1;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                var k: i32 = row_return_value_kind(r.value, fnbody);
+                if (k < 0) { return -1; }
+                if (k < worst) { worst = k; }
+            },
+            parser.StmtIf(f) => {
+                var kt: i32 = body_row_return_kind(f.then_body, fnbody);
+                if (kt < 0) { return -1; }
+                if (kt < worst) { worst = kt; }
+                var ke: i32 = body_row_return_kind(f.else_body, fnbody);
+                if (ke < 0) { return -1; }
+                if (ke < worst) { worst = ke; }
+            },
+            parser.StmtWhile(w) => {
+                var kw: i32 = body_row_return_kind(w.body, fnbody);
+                if (kw < 0) { return -1; }
+                if (kw < worst) { worst = kw; }
+            },
+            parser.StmtFor(fo) => {
+                var kf: i32 = body_row_return_kind(fo.body, fnbody);
+                if (kf < 0) { return -1; }
+                if (kf < worst) { worst = kf; }
+            },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) {
+                    var km: i32 = body_row_return_kind(m.arms[a].body, fnbody);
+                    if (km < 0) { return -1; }
+                    if (km < worst) { worst = km; }
+                    a = a + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return worst;
+}
+
+// row_return_value_kind classifies one returned expression: -1 not a fresh row,
+// 0 fresh buffer only, 1 also every element a fresh string.
+function row_return_value_kind(e: parser.Expr, fnbody: parser.Stmt[]): i32 {
+    match (e) {
+        parser.ExprArray(lit) => {
+            var j: i32 = 0;
+            while (j < lit.elements.len()) {
+                if (!strarr_elem_store_ok(lit.elements[j])) { return 0; }
+                j = j + 1;
+            }
+            return 1;
+        },
+        parser.ExprIdent(id) => { return append_built_row_local_kind(fnbody, id.name); },
+        _ => { return -1; }
+    }
+    return -1;
+}
+
+// append_built_row_local_kind: `name` is a local of this function declared with
+// an array-literal init (`[]` included — that is the shape an append-built row
+// starts from) whose every reassignment is the self-append rebind, and which
+// escapes by no route other than the return. Returns -1 / 0 / 1 as above.
+//
+// Requiring the declaration to be IN this body is what makes the soleness proof
+// local: a param, or a name declared in an enclosing scope, would already be
+// owned by someone else.
+function append_built_row_local_kind(fnbody: parser.Stmt[], name: string): i32 {
+    var init_kind: i32 = row_local_init_kind(fnbody, name);
+    if (init_kind < 0) { return -1; }
+    var rebind_kind: i32 = row_local_rebind_kind(fnbody, name);
+    if (rebind_kind < 0) { return -1; }
+    if (body_unsafe_for_allow_ret(fnbody, name, [])) { return -1; }
+    if (rebind_kind < init_kind) { return rebind_kind; }
+    return init_kind;
+}
+
+// row_local_init_kind: the declaration of `name` in this body inits it with an
+// array literal. -1 = not declared here, or not an array-literal init.
+function row_local_init_kind(stmts: parser.Stmt[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) {
+                        parser.ExprArray(lit) => {
+                            var j: i32 = 0;
+                            while (j < lit.elements.len()) {
+                                if (!strarr_elem_store_ok(lit.elements[j])) { return 0; }
+                                j = j + 1;
+                            }
+                            return 1;
+                        },
+                        _ => { return -1; }
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                var kt: i32 = row_local_init_kind(f.then_body, name);
+                if (kt >= 0) { return kt; }
+                var ke: i32 = row_local_init_kind(f.else_body, name);
+                if (ke >= 0) { return ke; }
+            },
+            parser.StmtWhile(w) => { var kw: i32 = row_local_init_kind(w.body, name); if (kw >= 0) { return kw; } },
+            parser.StmtFor(fo) => { var kf: i32 = row_local_init_kind(fo.body, name); if (kf >= 0) { return kf; } },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) {
+                    var km: i32 = row_local_init_kind(m.arms[a].body, name);
+                    if (km >= 0) { return km; }
+                    a = a + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// row_local_rebind_kind: every reassignment of `name` is `name = name.append(v)`.
+// -1 the moment one is not; otherwise the weakest element kind appended (1 when
+// there are no rebinds at all — the init alone then governs).
+function row_local_rebind_kind(stmts: parser.Stmt[], name: string): i32 {
+    var worst: i32 = 1;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => {
+                if (a.target == name) {
+                    var k: i32 = row_self_append_elem_kind(a.value, name);
+                    if (k < 0) { return -1; }
+                    if (k < worst) { worst = k; }
+                }
+            },
+            parser.StmtIf(f) => {
+                var kt: i32 = row_local_rebind_kind(f.then_body, name);
+                if (kt < 0) { return -1; }
+                if (kt < worst) { worst = kt; }
+                var ke: i32 = row_local_rebind_kind(f.else_body, name);
+                if (ke < 0) { return -1; }
+                if (ke < worst) { worst = ke; }
+            },
+            parser.StmtWhile(w) => {
+                var kw: i32 = row_local_rebind_kind(w.body, name);
+                if (kw < 0) { return -1; }
+                if (kw < worst) { worst = kw; }
+            },
+            parser.StmtFor(fo) => {
+                var kf: i32 = row_local_rebind_kind(fo.body, name);
+                if (kf < 0) { return -1; }
+                if (kf < worst) { worst = kf; }
+            },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    var km: i32 = row_local_rebind_kind(m.arms[mi].body, name);
+                    if (km < 0) { return -1; }
+                    if (km < worst) { worst = km; }
+                    mi = mi + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return worst;
+}
+
+// row_self_append_elem_kind: `e` is `name.append(v)` — -1 if not, else 1 when
+// `v` is a fresh string (or a scalar, which is value-copied and imposes no
+// constraint) and 0 when it is a string-typed expression that could alias a
+// live local.
+function row_self_append_elem_kind(e: parser.Expr, name: string): i32 {
+    match (e) {
+        parser.ExprCall(c) => {
+            var is_self_append: boolean = false;
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "append") {
+                        match (fa.obj) {
+                            parser.ExprIdent(rid) => { is_self_append = rid.name == name; },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+            if (!is_self_append) { return -1; }
+            if (c.args.len() != 1) { return -1; }
+            if (strarr_elem_store_ok(c.args[0])) { return 1; }
+            return 0;
+        },
+        _ => { return -1; }
+    }
+    return -1;
 }
 
 // body_has_nonfresh_arrarr_return: any return whose value is NOT a fresh

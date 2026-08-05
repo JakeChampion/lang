@@ -57,6 +57,32 @@ function main(): i32 {
     return t / 200;
 }`
 
+// arrarrCallRowChurnSrc appends rows produced by a CALL rather than written as
+// literals (#6102). make_buf is itself append-built, which is the shape the
+// "ARC:" fresh-row-producer registry has to see through: its returned buffer is
+// solely owned, so the consuming arr-of-arr may deep-free it. This was the
+// residue #6092 left behind — and the shape that issue's own repro used.
+const arrarrCallRowChurnSrc = `function make_buf(n: i32): i32[] {
+    var xs: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { xs = xs.append(i); i = i + 1; }
+    return xs;
+}
+
+function round(): i32 {
+    var keep: i32[][] = [];
+    var i: i32 = 0;
+    while (i < 3) { keep = keep.append(make_buf(4)); i = i + 1; }
+    return keep.len();
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 200) { t = t + round(); r = r + 1; }
+    return t / 200;
+}`
+
 // TestSelfHostArrArrAppendReclaimX86_64 — an append-built arr-of-arr reclaims
 // its rows, and leaves live_bytes where native leaves it.
 func TestSelfHostArrArrAppendReclaimX86_64(t *testing.T) {
@@ -71,6 +97,7 @@ func TestSelfHostArrArrAppendReclaimX86_64(t *testing.T) {
 	}{
 		{"scalar_rows", arrarrAppendChurnSrc},
 		{"string_rows", arrarrStrAppendChurnSrc},
+		{"call_rows", arrarrCallRowChurnSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"})
@@ -171,6 +198,39 @@ function main(): i32 { var q: i32[][] = build(); return q[2][1] + q.len(); }`,
     return g[0][0] + h.len();
 }`,
 			want: 10,
+		},
+		{
+			// A producer that RETURNS ITS PARAM hands back a row the caller
+			// already owns. Registering it would let the arr-of-arr deep-free
+			// `shared` out from under the caller (#6102).
+			name: "producer_returns_param",
+			src: `function passthru(src: i32[]): i32[] { return src; }
+function main(): i32 {
+    var shared: i32[] = [3, 4];
+    var g: i32[][] = [];
+    var i: i32 = 0;
+    while (i < 3) { g = g.append(passthru(shared)); i = i + 1; }
+    return g[0][1] + shared[0];
+}`,
+			want: 7,
+		},
+		{
+			// The returned local is an ALIAS of another local, so its buffer is
+			// not solely owned by the return. Its init is an ident rather than
+			// an array literal, which is what disqualifies it.
+			name: "producer_returns_alias",
+			src: `function alias_row(): i32[] {
+    var a: i32[] = [1, 2];
+    var b: i32[] = a;
+    return b;
+}
+function main(): i32 {
+    var g: i32[][] = [];
+    var i: i32 = 0;
+    while (i < 2) { g = g.append(alias_row()); i = i + 1; }
+    return g[1][1] + g.len();
+}`,
+			want: 4,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -4050,9 +4050,21 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   body_unsafe_for. arrarr_lit_is_empty + arrarr_name_is_appended admit the
   `[]` initializer (arrarr_lit_is_fresh rejects it — no rows to prove),
   and the strict string credit additionally needs EVERY appended row
-  strings-fresh (arrarr_appends_strings_fresh). Rows sourced from a CALL
-  (`g = g.append(make_row())`) stay uncredited: there is no fresh-ROW-
-  producer registry, only the AAC one for whole arr-of-arr returns. WIRING:
+  strings-fresh (arrarr_appends_strings_fresh). CALL-SOURCED rows
+  (`g = g.append(make_row())`, #6102) are credited off a new "ARC:" registry
+  — the single-level sibling of AAC, built in the same opt_fresh_ret pass.
+  A free fn returning one level of `[]` qualifies when EVERY return is a
+  fresh row: a direct array literal, or an ident naming a local declared in
+  that body with an array-literal init (`[]` included), every rebind a
+  self-append, and no escape but the return itself
+  (body_unsafe_for_allow_ret with an EMPTY borrowable — at module-registry
+  time there is no call context, so any call-arg use disqualifies).
+  Two tiers like AAC: "s" when every element ever placed in the row is a
+  fresh string (what a string-kind consumer needs before it frees element
+  POINTERS), else "p" (buffer-fresh only — enough for a scalar-kind
+  consumer, whose row elements value-copy). A producer returning a PARAM or
+  an alias of another local registers under neither, so the caller's row
+  can never be freed out from under it. WIRING:
   emit_arrarr_reclaim_store (the emit_str_reclaim_store sibling,
   cow-guarded) at the StmtVar loop-rebind; a new exit-sweep loop frees the
   final value via the kind-picked helper. VERIFIED:
