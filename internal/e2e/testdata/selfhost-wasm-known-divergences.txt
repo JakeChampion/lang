@@ -63,7 +63,12 @@
 # recycled the cell there in time. irlower now brackets such a receiver so
 # arr_push takes its copy path.
 #
-# One of the original twelve remains. All were found by the leg's first run
+# NONE of the original twelve remains — #6008 took the last four and #6007
+# the row below it, so this leg's list is empty too, like its x86-64 and
+# arm64 siblings. Keep the contract in force rather than deleting the file:
+# an empty allowlist is what makes the NEXT divergence fail the leg.
+#
+# All twelve were found by the leg's first run
 # over the existing corpus, on fixtures that had been green for months because
 # all four of TestFernFixtures' backends are the native compiler. Each has been reproduced by hand with a
 # native self-host CLI (`make selfhost-cli`) before being written down; none is
@@ -72,10 +77,15 @@
 # 255 is a feature bitmask looked like a broken regex engine — which is why every
 # entry here names a measured before/after rather than a symptom.
 
-# --- the self-host wasm path cannot lower these at all --------------------
-# Hard errors now the AST emitters are deleted (#3457), so these are real
-# IR-subset gaps, not fallbacks. "module is not IR-eligible" from the driver.
-generic_method_typeparams #6007 IR-ineligible on self-host wasm; native compiles it
+# `generic_method_typeparams` was here and is now FIXED (#6007): a method on a
+# generic struct that declares type params of its OWN (`(b: Box[T]) map[U]`)
+# was cloned per RECEIVER instantiation with its own params dropped, so `U`
+# survived free into the clone and the return `Box[U]` mangled to a `Box__U`
+# no pass ever generated. Such a method now folds into a free generic
+# `__smm_<Base>_<name>[<receiver vars>, <own vars>]` and rides the same
+# worklist the array (`__arrm_`) and map (`__mapm_`) folds do — so its clone
+# carries a CONCRETE `Box[i32]` / `Box[boolean]` return for the struct pass.
+# The last IR-ineligible row on this leg went with it.
 
 # --- UNMEASURABLE by this oracle ------------------------------------------
 # Not listed as divergences because the leg cannot prove them either way: an

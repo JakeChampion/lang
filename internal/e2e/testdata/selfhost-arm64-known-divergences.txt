@@ -29,12 +29,13 @@
 # (#6052) — were fixed within hours of this leg landing and were pruned in
 # #6099, `pure_collection_aliases` + `map_struct_value_field` with the #6007
 # slices, `derive_json` with #6009, the six regex fixtures with #6049, and
-# `map_struct_enum_keys` with #6081, `url_codec` with #6082 and
-# `audit_io_builtins` with #6083, leaving 1. Every row was reproduced by hand
+# `map_struct_enum_keys` with #6081, `url_codec` with #6082,
+# `audit_io_builtins` with #6083 and `generic_method_typeparams` with #6007,
+# leaving NONE. Every row was reproduced by hand
 # with bin/fern-selfhost and checked against BOTH `bin/fern -interp` and the
 # self-host x86-64 path, which is what split the list into its two halves:
 #
-#   * 1 row the x86-64 leg lists too, with the SAME measured value. Those are
+#   * Rows the x86-64 leg lists too, with the SAME measured value. Those are
 #     shared frontend/irlower bugs that arm64 merely re-observes; fixing one
 #     flips two legs. Keep the issue numbers in sync with
 #     selfhost-x86_64-known-divergences.txt — this happened TWICE during review:
@@ -54,12 +55,13 @@
 #     it from ALL THREE files, and re-read this file rather than the one your
 #     branch was cut against.
 #   * NO rows left that pass on x86-64 AND interp and fail only here. The
-#     arm64-specific frontier (#6081 / #6082 / #6083) is closed; what remains
-#     is the one shared row below.
+#     arm64-specific frontier (#6081 / #6082 / #6083) is closed.
 #
-# No assembler-refusal row survives: every "hit an instruction it does not yet
-# support" failure is gone, and the one compile row below is the shared #6007
-# IR-eligibility bail the x86-64 leg carries verbatim.
+# The list is now EMPTY: no assembler-refusal row survives (every "hit an
+# instruction it does not yet support" failure is gone), and the last compile
+# row — the shared #6007 IR-eligibility bail — went with the generic-struct
+# method-type-param fold. Keep the contract in force rather than deleting the
+# file: an empty allowlist is what makes the NEXT divergence fail the leg.
 #
 # #6081 (`map_struct_enum_keys`) was one of those arm64-only rows and is now
 # fixed: the arm64 map runtime had no keyed-compare path at all, so a struct /
@@ -94,6 +96,5 @@
 # dropping it. Pinned by TestSelfHostArm64GasWriteback.
 
 # --- shared with the x86-64 leg (same bug, same measured value) ---
-generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
 
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---

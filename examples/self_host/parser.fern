@@ -6300,7 +6300,7 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
     return binds;
 }
 
-// lambda_ret_of returns the concrete return type of a lambda ARGUMENT —
+// lambda_ret_of returns the concrete return type of a fn-valued ARGUMENT —
 // what lets a type parameter that appears ONLY in a fn-param's return
 // position (`key: (T) => K`) be bound from the closure passed for it.
 // The coarse "fn" tag on the param carries no args, so bind_unify over
@@ -6329,6 +6329,18 @@ function lambda_ret_of(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
                 si = si + 1;
             }
             return "";
+        },
+        // A bare function NAME passed for a fn param (`b.map(dbl)`): its
+        // declared return type binds the var the closure's return position
+        // carries, exactly as a lambda's does. Without this a method type
+        // param reachable only through `f: (T) => U` stays unbound and the
+        // call keeps the un-instantiated template. A name the env already
+        // binds is a LOCAL holding a closure, not a reference to the
+        // like-named top-level function — its declared return type says
+        // nothing about the value, so leave it unknown as before.
+        ExprIdent(fid) => {
+            if (env.elook(fid.name).len() > 0) { return ""; }
+            return func_ret_of(funcs, fid.name);
         },
         _ => { return ""; }
     }
@@ -6711,6 +6723,24 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
                             return subst_ty(funcs[amgi].ret_type, funcs[amgi].type_params, [el]);
                         }
                     }
+                    // Generic-struct method with its own type params — folded to
+                    // `__smm_<Base>_m` by register_struct_method_generics. Infer
+                    // its result by instantiating the fold from the receiver +
+                    // arguments, so a CHAINED or unannotated call still types.
+                    var srt: string = "";
+                    if (smm_any_for_field(funcs, cfa.field)) { srt = mono_infer(cfa.obj, env, funcs); }
+                    if (first_bracket(srt) > 0 && srt[srt.len() - 1 : srt.len()] == "]") {
+                        var sgi: i32 = bg_index(funcs, smm_name(strip_struct_base(srt), cfa.field));
+                        if (sgi >= 0) {
+                            var sargs: Expr[] = [cfa.obj];
+                            var sk: i32 = 0;
+                            while (sk < c.args.len()) { sargs = sargs.append(c.args[sk]); sk = sk + 1; }
+                            var skey: string = infer_inst(funcs[sgi], sargs, env, funcs);
+                            if (skey.len() > 0) {
+                                return subst_ty(funcs[sgi].ret_type, funcs[sgi].type_params, split_inst_key(skey));
+                            }
+                        }
+                    }
                     // Associated call `Type.method()` (e.g. `Inner.default()`):
                     // the object is a bare type name, so infer the method's
                     // return type — lets a generic constructor body infer its
@@ -6858,6 +6888,34 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                                 while (mfk < nargs.len()) { mfolded = mfolded.append(nargs[mfk]); mfk = mfk + 1; }
                                 cur = cur.iadd(mmn, mct);
                                 return RExpr { rexpr: ExprCall { callee: ExprIdent { name: mmn + "__" + sanitize_key(mct), line: fac.line, col: fac.col }, args: mfolded, line: c.line, col: c.col, type_argc: 0, ty: "" }, rins: cur };
+                            }
+                        }
+                    }
+                    // Generic-STRUCT method with its own type params `recv.m(args)`
+                    // — folded to `__smm_<Base>_m[<recv vars>, <own vars>]` by
+                    // register_struct_method_generics. The receiver pins the
+                    // struct's vars and the arguments pin the method's own, so
+                    // folding the receiver into arg0 gives the worklist a fully
+                    // concrete key. Struct mono runs AFTER this pass, so the
+                    // receiver still reads as the generic `Box[i32]` spelling here.
+                    var srty: string = "";
+                    if (smm_any_for_field(funcs, fac.field)) { srty = mono_infer(fac.obj, env, funcs); }
+                    if (first_bracket(srty) > 0 && srty[srty.len() - 1 : srty.len()] == "]") {
+                        var smn: string = smm_name(strip_struct_base(srty), fac.field);
+                        var smg: i32 = bg_index(funcs, smn);
+                        if (smg >= 0) {
+                            var sraw: Expr[] = [fac.obj];
+                            var srk: i32 = 0;
+                            while (srk < c.args.len()) { sraw = sraw.append(c.args[srk]); srk = srk + 1; }
+                            var sct: string = infer_inst(funcs[smg], sraw, env, funcs);
+                            if (sct.len() > 0) {
+                                var sro: RExpr = mono_expr(fac.obj, env, funcs, cur);
+                                cur = sro.rins;
+                                var sfolded: Expr[] = [sro.rexpr];
+                                var sfk: i32 = 0;
+                                while (sfk < nargs.len()) { sfolded = sfolded.append(nargs[sfk]); sfk = sfk + 1; }
+                                cur = cur.iadd(smn, sct);
+                                return RExpr { rexpr: ExprCall { callee: ExprIdent { name: smn + "__" + sanitize_key(sct), line: fac.line, col: fac.col }, args: sfolded, line: c.line, col: c.col, type_argc: 0, ty: "" }, rins: cur };
                             }
                         }
                     }
@@ -7537,6 +7595,228 @@ pub function register_map_method_generics(mod: Module): Module {
                 ret_type: fd.ret_type,
                 body: fd.body, line: fd.line, col: fd.col,
                 import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: tps.len(), bound_traits: [], fip: false, ret_str: false
+            });
+        } else {
+            out = out.append(fd);
+        }
+        i = i + 1;
+    }
+    return Module {
+        funcs: out,
+        structs: mod.structs,
+        aliases: mod.aliases,
+        imports: mod.imports,
+        top_stmts: mod.top_stmts,
+        enums: mod.enums,
+        resources: mod.resources,
+        exports: mod.exports,
+        impls: mod.impls,
+        trait_reqs: mod.trait_reqs
+    };
+}
+
+// ---- generic-struct method type parameters (the third sibling of the
+// array + map folds above) -----------------------------------------------
+// A method on a generic struct may introduce type parameters of its OWN,
+// independent of the receiver's: `(b: Box[T]) map[U](f: (T) => U): Box[U]`.
+// monomorphize_structs clones the method once per RECEIVER instantiation and
+// drops its own type params, so `U` survives into the clone as a free var —
+// and `to_concrete_struct_ty` then mangles the return `Box[U]` to `Box__U`
+// against a throwaway accumulator, so nothing ever generates that struct or
+// its methods. The module bailed on `call to unknown symbol Box__U.get`
+// (#6007).
+//
+// The fix is the fold the array and map paths already use: hoist such a
+// method into a free generic `__smm_<Base>_<name>[<recv vars>, <own vars>]`
+// with the receiver as arg0, drop the method, and let the proven free-generic
+// worklist clone it per (receiver, own) instantiation. The receiver var binds
+// from the receiver argument's type, the own var from the argument bound to
+// it — so the clone's return is the CONCRETE `Box[i32]` / `Box[boolean]`,
+// which monomorphize_structs (running after) mangles like any other.
+//
+// The method's own vars are UNBOUNDED, so they are erased from
+// `fd.type_params` and cannot be read back off the decl; they are recovered
+// from the signature instead — every type var in the params + return that the
+// receiver does not fix is one of them.
+
+// collect_tvars appends every generic type variable in a type spelling to
+// `acc` (first-appearance order, deduped), recursing through array / tuple /
+// bracketed-generic structure the same way subst_ty substitutes it. A
+// fn-typed param is coarsened to the bare tag "fn" by the parser, so a var
+// that appears only in a closure's RETURN is collected from `fn_ret` by the
+// caller, not from here.
+function collect_tvars(name: string, acc: string[]): string[] {
+    if (looks_type_var(name)) {
+        if (str_in(acc, name)) { return acc; }
+        return acc.append(name);
+    }
+    if (type_ends_arr(name)) { return collect_tvars(name[0 : name.len() - 2], acc); }
+    if (name.len() >= 2 && name[0 : 1] == "(" && name[name.len() - 1 : name.len()] == ")") {
+        var tparts: string[] = split_top_commas(name[1 : name.len() - 1]);
+        var tcur: string[] = acc;
+        var tj: i32 = 0;
+        while (tj < tparts.len()) {
+            tcur = collect_tvars(tparts[tj], tcur);
+            tj = tj + 1;
+        }
+        return tcur;
+    }
+    var lb: i32 = first_bracket(name);
+    if (lb > 0 && name[name.len() - 1 : name.len()] == "]") {
+        var parts: string[] = split_top_commas(name[lb + 1 : name.len() - 1]);
+        var cur: string[] = acc;
+        var j: i32 = 0;
+        while (j < parts.len()) {
+            cur = collect_tvars(parts[j], cur);
+            j = j + 1;
+        }
+        return cur;
+    }
+    return acc;
+}
+
+// struct_receiver_typevars returns the type-variable arguments of a
+// `Base[T, …]` receiver whose args are ALL type vars, or []. The struct
+// sibling of map_receiver_typevars — a partially concrete `Box[i32]` receiver
+// is not a generic the worklist can key on.
+function struct_receiver_typevars(recv: string): string[] {
+    var none: string[] = [];
+    var lb: i32 = first_bracket(recv);
+    if (lb <= 0) { return none; }
+    if (recv[recv.len() - 1 : recv.len()] != "]") { return none; }
+    var parts: string[] = split_top_commas(recv[lb + 1 : recv.len() - 1]);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < parts.len()) {
+        if (!looks_type_var(parts[i])) { return none; }
+        out = out.append(parts[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// smm_own_typevars returns the method's OWN type vars: every var in its
+// params (type_name + the fn_ret of a closure param) and return type that is
+// not one of the receiver's.
+function smm_own_typevars(fd: FuncDecl, recv_vars: string[]): string[] {
+    var all: string[] = [];
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        all = collect_tvars(fd.params[i].type_name, all);
+        all = collect_tvars(fd.params[i].fn_ret, all);
+        i = i + 1;
+    }
+    all = collect_tvars(fd.ret_type, all);
+    var own: string[] = [];
+    var j: i32 = 0;
+    while (j < all.len()) {
+        if (!str_in(recv_vars, all[j])) { own = own.append(all[j]); }
+        j = j + 1;
+    }
+    return own;
+}
+
+// is_struct_method_own_tps gates the fold: a method whose receiver is
+// `Base[<vars>]` for a GENERIC STRUCT declared in this module, which
+// introduces at least one type var of its own.
+//
+// Unlike the array fold, a type param the RECEIVER does not fix is allowed:
+// the fold binds it from the call's arguments, and the clone substitutes it
+// with a concrete type, so a trait bound on it is discharged by ordinary
+// concrete dispatch — the same argument the array path makes for a bounded
+// receiver var. Every param must still be a var the SIGNATURE mentions;
+// anything else (a phantom bound on a var that appears nowhere) has no
+// argument to bind it and would leave the dropped method dangling.
+function is_struct_method_own_tps(fd: FuncDecl, structs: StructDecl[]): boolean {
+    if (fd.receiver_name.len() == 0) { return false; }
+    var recv_vars: string[] = struct_receiver_typevars(fd.receiver_type);
+    if (recv_vars.len() == 0) { return false; }
+    var base: string = strip_struct_base(fd.receiver_type);
+    var si: i32 = 0;
+    var found: boolean = false;
+    while (si < structs.len()) {
+        if (structs[si].name == base && structs[si].type_params.len() == recv_vars.len()) { found = true; }
+        si = si + 1;
+    }
+    if (!found) { return false; }
+    var own: string[] = smm_own_typevars(fd, recv_vars);
+    var k: i32 = 0;
+    while (k < fd.type_params.len()) {
+        var tp: string = fd.type_params[k];
+        if (!str_in(recv_vars, tp) && !str_in(own, tp)) { return false; }
+        k = k + 1;
+    }
+    return own.len() > 0;
+}
+
+// smm_name is the folded free generic's name: `__smm_<Base>_<method>`. The
+// base is part of the name because two generic structs may both declare a
+// `map` — unlike the array / map folds, whose receiver is a single built-in.
+function smm_name(base: string, method: string): string {
+    return "__smm_" + base + "_" + method;
+}
+
+// smm_any_for_field reports whether ANY fold for the method name `field`
+// exists. The call-site arms consult this before inferring the receiver's
+// type, so a program with no such fold — every program the compiler and the
+// stdlib contain — pays one name scan and no inference, the same order of
+// work the array and map arms already do with their bg_index probe.
+function smm_any_for_field(funcs: FuncDecl[], field: string): boolean {
+    var sfx: string = "_" + field;
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var n: string = funcs[i].name;
+        if (n.len() > 6 + sfx.len() && n[0 : 6] == "__smm_" && n[n.len() - sfx.len() : n.len()] == sfx) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// register_struct_method_generics folds each generic-struct method that has
+// its own type params into a free generic (receiver as arg0, receiver vars +
+// own vars as the type params) and drops the original. A no-op when none is
+// present — the stdlib's only generic structs are `Set[T]` and
+// `iter.ArrayIter[T]`, neither of which declares a method var the receiver
+// does not fix, so the byte-identical bootstrap fixpoint is preserved. Runs
+// before monomorphize_module so the folded body's own generic calls rewrite
+// too, and before monomorphize_structs so the clones it leaves behind carry
+// concrete `Box[i32]` annotations for that pass to mangle.
+pub function register_struct_method_generics(mod: Module): Module {
+    var any_sm: boolean = false;
+    var ci: i32 = 0;
+    while (ci < mod.funcs.len()) {
+        if (is_struct_method_own_tps(mod.funcs[ci], mod.structs)) { any_sm = true; }
+        ci = ci + 1;
+    }
+    if (!any_sm) { return mod; }
+
+    var out: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: FuncDecl = mod.funcs[i];
+        if (is_struct_method_own_tps(fd, mod.structs)) {
+            var recv_vars: string[] = struct_receiver_typevars(fd.receiver_type);
+            var tps: string[] = recv_vars;
+            var bnames: string[] = [];
+            var bi2: i32 = 0;
+            while (bi2 < recv_vars.len()) { bnames = bnames.append(""); bi2 = bi2 + 1; }
+            var own: string[] = smm_own_typevars(fd, recv_vars);
+            var oi: i32 = 0;
+            while (oi < own.len()) { tps = tps.append(own[oi]); bnames = bnames.append(""); oi = oi + 1; }
+            var nparams: ParamDecl[] = [ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
+            var j: i32 = 0;
+            while (j < fd.params.len()) {
+                nparams = nparams.append(fd.params[j]);
+                j = j + 1;
+            }
+            out = out.append(FuncDecl {
+                name: smm_name(strip_struct_base(fd.receiver_type), fd.name),
+                receiver_name: "", receiver_type: "",
+                type_params: tps,
+                params: nparams,
+                ret_type: fd.ret_type,
+                body: fd.body, line: fd.line, col: fd.col,
+                import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: tps.len(), bound_traits: bnames, fip: false, ret_str: fd.ret_str
             });
         } else {
             out = out.append(fd);
@@ -11823,7 +12103,7 @@ pub function module_with_builtins(mod: Module): Module {
     // must exist before the defer expansion runs) + lower_defers — into
     // lower_defers_prepass_module (#5460). One module rebuild each instead
     // of three + three (byte-identical — see their doc comments).
-    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(hoist_local_funcs_module(desugar_prepass_module(mod)))))))));
+    var mono: Module = inline_callonly_fn_values(monomorphize_enums(monomorphize_structs(monomorphize_module(register_struct_method_generics(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(hoist_local_funcs_module(desugar_prepass_module(mod))))))))));
     return Module {
         funcs: mono.funcs,
         structs: inject_builtin_enums(mono.structs),

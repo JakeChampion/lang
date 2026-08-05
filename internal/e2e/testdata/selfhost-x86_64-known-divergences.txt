@@ -27,8 +27,8 @@
 # (#6009), `tuple_match_expr` (#6010), `int_wrap` + `u64_max_to_f64_is_huge`
 # (#6050 / #6051), `multiline_stdin` (#6052), `pure_collection_aliases` +
 # `map_struct_value_field` (the #6007 slices), `derive_json` (#6009, two
-# separate bugs — see the notes in the wasm sibling), and the six regex
-# fixtures (#6049). ONE remains, listed below.
+# separate bugs — see the notes in the wasm sibling), the six regex
+# fixtures (#6049) and `generic_method_typeparams` (#6007). NONE remains.
 #
 # The #6049 six were recorded as "hangs (killed at 20s, no output)", which by the
 # time they were diagnosed was stale: they SEGV'd in milliseconds on unbounded
@@ -41,10 +41,16 @@
 
 # --- IR-ineligible, hard error since #3457 deleted the AST emitters ---------
 # The leg re-runs these under FERN_STRICT_IR=1 and logs the named bail site.
-# Two of the original three are FIXED: `pure_collection_aliases` (its bail named
-# `Map.cleared`, which had no lowering at all) and `map_struct_value_field` (an
-# `it.value().field` with no struct recovery) — see the wasm sibling's notes.
-generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
+# All three of the original are FIXED: `pure_collection_aliases` (its bail named
+# `Map.cleared`, which had no lowering at all), `map_struct_value_field` (an
+# `it.value().field` with no struct recovery) — see the wasm sibling's notes —
+# and `generic_method_typeparams`, whose `Box[T].map[U]` left the method's own
+# type param free in the receiver clone, so the return mangled to a `Box__U`
+# nothing generated. Generic-struct methods with their own type params now ride
+# the free-generic fold (`__smm_<Base>_<name>`), like the array + map methods.
+#
+# The list is EMPTY. Keep the contract in force rather than deleting the file:
+# an empty allowlist is what makes the NEXT divergence fail the leg.
 
 # --- new, first seen on x86-64: ALL THREE NOW FIXED ------------------------
 # `int_wrap` (#6050) and `u64_max_to_f64_is_huge` (#6051): the i32 formatter now
