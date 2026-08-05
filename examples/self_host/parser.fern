@@ -1692,9 +1692,17 @@ function parse_primary(p: Par): (Expr, Par) {
                 var mc: IfChain = parse_match_expr(p);
                 var mno_params: ParamDecl[] = [];
                 var mlam_body: Stmt[] = [mc.stmt];
-                // struct / tuple desugars have no terminal return — append one so
-                // the IIFE lambda always returns (see IfChain.needs_default_return).
-                if (mc.needs_default_return) { mlam_body = mlam_body.append(s_return(zero_expr_for(mc.rt))); }
+                // The tuple / struct desugars carry their value in a LOCAL (their
+                // arm bodies assign to it, see IfChain.value_local) — declare it
+                // ahead of the chain and return it after, so the IIFE has exactly
+                // one terminal return and lower_value_block treats it as the
+                // block's value instead of letting an arm's `return` escape.
+                if (mc.value_local.len() > 0) {
+                    mlam_body = [s_var(mc.value_local, "", zero_expr_for(mc.rt)), mc.stmt, s_return(e_ident(mc.value_local))];
+                }
+                // A desugar with no terminal return at all gets a synthetic one so
+                // the IIFE lambda always returns.
+                else if (mc.needs_default_return) { mlam_body = mlam_body.append(s_return(zero_expr_for(mc.rt))); }
                 var mno_args: Expr[] = [];
                 var miife: Expr = e_call(e_lambda(mno_params, mc.rt, mlam_body), mno_args);
                 return parse_postfix(mc.par, miife);
@@ -1968,7 +1976,38 @@ function parse_expr(p: Par): (Expr, Par) {
 // the arms are exhaustive so it is unreachable, present only to satisfy the
 // return checker. Kept false for enum / literal / if-expr so their emit is
 // unchanged.
-pub struct IfChain { par: Par, stmt: Stmt, rt: string, needs_default_return: boolean }
+// value_local names the IIFE-body local a desugar STORES its value into
+// instead of returning it. The tuple- / struct-pattern desugars splice their
+// arm bodies into a `done`-flag if-chain, so an arm's `return E` ends up as a
+// plain statement in the IIFE body — and a multi-statement IIFE body lowers
+// INLINE (lower_value_block), which means that `return` returned from the
+// ENCLOSING function and the match-expression never produced a value at all.
+// With value_local set, parse_primary builds the body as
+// `[var v = <zero>; <chain>; return v;]`: the chain's arm tails assign, and the
+// single terminal return is the block's value. Empty for every other desugar
+// (the StmtIf / StmtMatch forms, whose arm returns ARE the value because their
+// bodies are single-statement and lower through lower_iife's own rewrites).
+pub struct IfChain { par: Par, stmt: Stmt, rt: string, needs_default_return: boolean, value_local: string }
+
+// value_arm_body rewrites a match-EXPRESSION arm body so its value-producing
+// terminal `return E` becomes `val = E`. Leading statements are untouched, so
+// a user `return` among them still returns from the enclosing function — the
+// same rule iife_rewrite_arm_body applies to the StmtMatch form. A body whose
+// last statement is not a return (a divergent arm) is left alone; the value
+// local keeps its zero.
+function value_arm_body(body: Stmt[], val: string): Stmt[] {
+    if (body.len() == 0) { return body; }
+    match (body[body.len() - 1]) {
+        StmtReturn(r) => {
+            var out: Stmt[] = [];
+            var i: i32 = 0;
+            while (i < body.len() - 1) { out = out.append(body[i]); i = i + 1; }
+            return out.append(s_assign(val, r.value));
+        },
+        _ => { return body; }
+    }
+    return body;
+}
 
 // zero_expr_for builds a throwaway value of scalar return-type `rt` for the
 // synthetic terminal return above. if_expr_rt only ever yields these four tags,
@@ -2592,7 +2631,7 @@ function parse_if_chain(p: Par): IfChain {
         p = elseb_p;
         else_body = elseb_body;
     }
-    return IfChain { par: p, stmt: s_if(condr_expr, then_body, else_body), rt: rt, needs_default_return: false };
+    return IfChain { par: p, stmt: s_if(condr_expr, then_body, else_body), rt: rt, needs_default_return: false, value_local: "" };
 }
 
 // parse_match_expr parses `match (e) { Pat => E, Pat when C => E, … }` in value
@@ -2637,7 +2676,7 @@ function parse_match_expr(p: Par): IfChain {
                 var (etpr_elem_kinds, etpr_binds, etpr_lits, etpr_p) = parse_tuple_arm_pattern(p);
                 p = etpr_p;
                 if (etpr_elem_kinds.len() == 0) {
-                    return IfChain { par: p, stmt: s_unknown("bad tuple pattern"), rt: rt, needs_default_return: false };
+                    return IfChain { par: p, stmt: s_unknown("bad tuple pattern"), rt: rt, needs_default_return: false, value_local: "" };
                 }
                 etpats = etpats.append(TupArm { is_wild: false, elem_kinds: etpr_elem_kinds, binds: etpr_binds, lits: etpr_lits, at_binding: "", guard: e_bool(true), has_guard: false, body: et_empty_body, line: etline, col: etcol });
                 // Tuple or-patterns: one TupArm per `|` alternative sharing
@@ -2648,7 +2687,7 @@ function parse_match_expr(p: Par): IfChain {
                     var (etor_kinds, etor_binds, etor_lits, etor_p) = parse_tuple_arm_pattern(p);
                     p = etor_p;
                     if (etor_kinds.len() == 0) {
-                        return IfChain { par: p, stmt: s_unknown("bad tuple pattern"), rt: rt, needs_default_return: false };
+                        return IfChain { par: p, stmt: s_unknown("bad tuple pattern"), rt: rt, needs_default_return: false, value_local: "" };
                     }
                     etpats = etpats.append(TupArm { is_wild: false, elem_kinds: etor_kinds, binds: etor_binds, lits: etor_lits, at_binding: "", guard: e_bool(true), has_guard: false, body: et_empty_body, line: etline, col: etcol });
                 }
@@ -2698,7 +2737,19 @@ function parse_match_expr(p: Par): IfChain {
             break;
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
-        return IfChain { par: p, stmt: build_tuple_match(sr_expr, etarms, mkline, mkcol), rt: rt, needs_default_return: true };
+        // Route the arm values through a value LOCAL rather than through
+        // `return`: build_tuple_match splices each arm body into the done-flag
+        // if-chain, where a `return` would leave the enclosing function instead
+        // of yielding the expression's value (see IfChain.value_local).
+        var etval: string = "__tm" + dl_itoa(mkline) + "_" + dl_itoa(mkcol) + "_r";
+        var etvarms: TupArm[] = [];
+        var etvi: i32 = 0;
+        while (etvi < etarms.len()) {
+            var etva: TupArm = etarms[etvi];
+            etvarms = etvarms.append(TupArm { is_wild: etva.is_wild, elem_kinds: etva.elem_kinds, binds: etva.binds, lits: etva.lits, at_binding: etva.at_binding, guard: etva.guard, has_guard: etva.has_guard, body: value_arm_body(etva.body, etval), line: etva.line, col: etva.col });
+            etvi = etvi + 1;
+        }
+        return IfChain { par: p, stmt: build_tuple_match(sr_expr, etvarms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: etval };
     }
     // An `Ident {` at the FIRST arm marks a STRUCT-pattern match (the
     // self-host has no named-field enum patterns, so it's unambiguous):
@@ -2706,7 +2757,20 @@ function parse_match_expr(p: Par): IfChain {
     if ((p.peek_ident().len() > 0 && p.peek2_punct() == "{") || (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{")) {
         var (smarms, smrt, smp) = parse_struct_match_arms(p, true);
         p = smp;
-        return IfChain { par: p, stmt: build_struct_match(sr_expr, smarms, mkline, mkcol), rt: smrt, needs_default_return: true };
+        // Same value-local routing as the tuple desugar above: build_struct_match
+        // splices arm bodies into the same done-flag if-chain shape.
+        // `_r`, not `_v`: build_struct_match already uses `<base>_v` for its
+        // cached scrutinee, and reusing it made the arm store overwrite the
+        // scrutinee instead of the result.
+        var smval: string = "__sm" + dl_itoa(mkline) + "_" + dl_itoa(mkcol) + "_r";
+        var smvarms: StructArm[] = [];
+        var smvi: i32 = 0;
+        while (smvi < smarms.len()) {
+            var smva: StructArm = smarms[smvi];
+            smvarms = smvarms.append(StructArm { is_wild: smva.is_wild, binds: smva.binds, fields: smva.fields, at_binding: smva.at_binding, guard: smva.guard, has_guard: smva.has_guard, body: value_arm_body(smva.body, smval), line: smva.line, col: smva.col });
+            smvi = smvi + 1;
+        }
+        return IfChain { par: p, stmt: build_struct_match(sr_expr, smvarms, mkline, mkcol), rt: smrt, needs_default_return: false, value_local: smval };
     }
     // A literal at the FIRST arm's pattern position marks a match on a
     // non-enum (i32 / string) scrutinee: parse every arm as a literal /
@@ -2777,7 +2841,7 @@ function parse_match_expr(p: Par): IfChain {
             break;
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
-        return IfChain { par: p, stmt: build_literal_match(sr_expr, lit_arms, mkline, mkcol), rt: rt, needs_default_return: false };
+        return IfChain { par: p, stmt: build_literal_match(sr_expr, lit_arms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: "" };
     }
     var arms: MatchArm[] = [];
     var first: boolean = true;
@@ -2833,7 +2897,7 @@ function parse_match_expr(p: Par): IfChain {
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
     arms = desugar_nested_arms(arms, 0);
-    return IfChain { par: p, stmt: s_match_at(sr_expr, arms, mkline, mkcol), rt: rt, needs_default_return: false };
+    return IfChain { par: p, stmt: s_match_at(sr_expr, arms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: "" };
 }
 
 // pipe_prepend builds [head] ++ tail — the argument list for a piped

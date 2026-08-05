@@ -21,7 +21,13 @@
 # position only — 260 as u8 stayed 260 and the fixture's u8-wrap check returned 13.
 # `cast_narrow_binding` now pins that shape directly.
 #
-# Nine of the original twelve remain. All were found by the leg's first run
+# `tuple_match_expr` was here and is now FIXED (#6010): a tuple- or
+# struct-pattern match in EXPRESSION position desugars into a done-flag if-chain
+# whose arm bodies still ended in `return`, and a capturing IIFE lowers INLINE —
+# so the arm returned from the ENCLOSING function and everything after the match
+# was dead code. The arms now assign to a value local instead.
+#
+# Eight of the original twelve remain. All were found by the leg's first run
 # over the existing corpus, on fixtures that had been green for months because
 # all four of TestFernFixtures' backends are the native compiler. Each has been reproduced by hand with a
 # native self-host CLI (`make selfhost-cli`) before being written down; none is
@@ -48,7 +54,6 @@ regex_replace_groups #6008 traps (unreachable); native returns 255
 
 # --- runs clean, wrong answer -------------------------------------------
 derive_json #6009 returns 4, native 42
-tuple_match_expr #6010 returns 20, native 42
 
 # --- suspicious but UNMEASURABLE by this oracle --------------------------
 # Not listed as divergences because the leg cannot prove it: their expected exit

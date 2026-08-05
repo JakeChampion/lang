@@ -23,9 +23,9 @@
 # leg only ever logged "exit value unmeasurable" for them.
 #
 # All 16 were measured on the first two runs (49e762e0, d67de908), 317 fixtures
-# run; `eq_struct_enum` and `ord_struct_enum` have since been FIXED (#6009 — see
-# the note in the wasm sibling), and `int_wrap` / `u64_max_to_f64_is_huge` with
-# #6050 / #6051, leaving 12.
+# run; `eq_struct_enum` and `ord_struct_enum` have since been FIXED (#6009) and
+# `tuple_match_expr` with #6010 — see the notes in the wasm sibling — plus
+# `int_wrap` / `u64_max_to_f64_is_huge` with #6050 / #6051, leaving 11.
 
 # --- the six the wasm leg could never judge: they never terminate -----------
 # Killed at the leg's 20s cap with no output. Natively each returns in
@@ -46,7 +46,6 @@ regex_groups #6049 hangs (killed at 20s, no output); native returns 127 in ms
 # Commented onto #6007/#6009/#6010 with the cross-target evidence; those issues
 # are titled "self-host wasm:" and should be re-scoped.
 derive_json #6009 returns 4, native 42 — identical to the wasm leg's figure
-tuple_match_expr #6010 returns 20, native 42 — identical to the wasm leg's figure
 
 # --- IR-ineligible, hard error since #3457 deleted the AST emitters ---------
 # The leg re-runs these under FERN_STRICT_IR=1 and logs the named bail site; two
