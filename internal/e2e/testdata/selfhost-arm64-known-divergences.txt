@@ -29,10 +29,10 @@
 # (#6052) — were fixed within hours of this leg landing and were pruned in
 # #6099, `pure_collection_aliases` + `map_struct_value_field` with the #6007
 # slices, `derive_json` with #6009, the six regex fixtures with #6049, and
-# `map_struct_enum_keys` with #6081 and `url_codec` with #6082,
-# leaving 2. Every row was reproduced by hand with bin/fern-selfhost
-# and checked against BOTH `bin/fern -interp` and the self-host x86-64 path,
-# which is what splits the list into its two halves:
+# `map_struct_enum_keys` with #6081, `url_codec` with #6082 and
+# `audit_io_builtins` with #6083, leaving 1. Every row was reproduced by hand
+# with bin/fern-selfhost and checked against BOTH `bin/fern -interp` and the
+# self-host x86-64 path, which is what split the list into its two halves:
 #
 #   * 1 row the x86-64 leg lists too, with the SAME measured value. Those are
 #     shared frontend/irlower bugs that arm64 merely re-observes; fixing one
@@ -53,8 +53,9 @@
 #     leg on a push to main. So: when a shared-frontend fix prunes a row, prune
 #     it from ALL THREE files, and re-read this file rather than the one your
 #     branch was cut against.
-#   * 1 row that passes on x86-64 AND interp and fails only here (#6083).
-#     That is the arm64-specific frontier.
+#   * NO rows left that pass on x86-64 AND interp and fail only here. The
+#     arm64-specific frontier (#6081 / #6082 / #6083) is closed; what remains
+#     is the one shared row below.
 #
 # No assembler-refusal row survives: every "hit an instruction it does not yet
 # support" failure is gone, and the one compile row below is the shared #6007
@@ -80,9 +81,19 @@
 # shifting every constant after it in .rodata. Any arm64 program with `//`
 # INSIDE a string literal was affected; url_codec was simply the first fixture
 # to contain one. Pinned by TestSelfHostArm64GasStringComment.
+#
+# #6083 (`audit_io_builtins`) was the last, and like #6082 it was an assembler
+# hole rather than a codegen one. `__fern_eprint_str` claimed its newline
+# scratch with `strb w1, [sp, #-16]!`, a pre-index WRITEBACK the assembler has
+# no byte-store encoder for: it dropped the `!`, left sp unchanged, and the
+# paired `add sp, sp, #16` then RAISED sp by 16. eprint's own output was
+# correct, so the frame corruption only surfaced at the next call — which is
+# why the fixture printed "Hi!"/"to-stderr" and died afterwards. The helper now
+# uses __fern_putchar's explicit `sub sp` shape, and the assembler REFUSES a
+# writeback form it cannot encode (`<mnem>:writeback`) instead of silently
+# dropping it. Pinned by TestSelfHostArm64GasWriteback.
 
 # --- shared with the x86-64 leg (same bug, same measured value) ---
 generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
 
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---
-audit_io_builtins #6083 SEGV after 4ms, having printed "Hi!" and "to-stderr" — faults in a later IO builtin; native and self-host x86-64 both reach "done" and exit 0

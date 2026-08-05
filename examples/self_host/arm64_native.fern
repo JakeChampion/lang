@@ -1755,6 +1755,27 @@ function arm64_gas_has_bang(op: string): boolean {
     return arm64_str_indexof(op, "!") >= 0;
 }
 
+// arm64_gas_writeback_unsupported reports whether `rest` asks for a `!`
+// pre-index WRITEBACK on a mnemonic whose only encoder here is the plain
+// unsigned-offset form. `ldr` / `str` / `ldp` / `stp` implement it (that is the
+// operand stack's whole idiom); the byte / half-word / sign-extending forms do
+// not, and arm64_gas_mem drops the `!` silently — so the base register was left
+// UNCHANGED while the emitted code went on to undo a decrement that never
+// happened. #6083: `__fern_eprint_str` claimed its newline scratch with
+// `strb w1, [sp, #-16]!` and released it with `add sp, sp, #16`, so every
+// eprint raised sp by 16 and the next call ran on a corrupted frame — a SEGV
+// arbitrarily later, with eprint's own output looking perfectly fine.
+function arm64_gas_writeback_unsupported(mnem: string, rest: string): boolean {
+    if (mnem != "ldrb" && mnem != "strb" && mnem != "ldrh" && mnem != "strh" && mnem != "ldrsw" && mnem != "ldur" && mnem != "stur") { return false; }
+    var ops: string[] = arm64_gas_operands(rest);
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (arm64_str_indexof(ops[i], "[") >= 0 && arm64_gas_has_bang(ops[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // arm64_gas_lsl_amount parses a `lsl #N` shift operand (the `lsl #16` of a
 // movk); returns 0 if it is not recognised.
 function arm64_gas_lsl_amount(tok: string): i32 {
@@ -3045,6 +3066,13 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // now encode the register form properly.
         if (arm64_gas_regoff_unsupported(mnem, rest)) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":regoff") };
+        }
+        // Same discipline for a `!` pre-index writeback on a form that has only
+        // the unsigned-offset encoder: dropping the writeback leaves the base
+        // register un-updated, and any paired release then moves it the wrong
+        // way (#6083). Refuse the line.
+        if (arm64_gas_writeback_unsupported(mnem, rest)) {
+            p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":writeback") };
         }
         // A mov-wide immediate that does not fit imm16 (or whose complement does
         // not, for the MOVN path) would be silently TRUNCATED into a different

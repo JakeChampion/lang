@@ -2774,7 +2774,13 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
     // __fern_eprint_str: x0 = string box. write(2, data, len), then a trailing
     // newline (eprint is the stderr line-printer — mirrors `print` and the
     // Go-backend / interp / wasm `eprint`, which all append "\n"). The newline
-    // byte is written from a stack scratch slot.
+    // byte is written from a stack scratch slot claimed with an explicit
+    // `sub sp` — the same shape __fern_putchar uses. It previously claimed the
+    // slot with `strb w1, [sp, #-16]!`, a pre-index writeback the in-process
+    // assembler has no byte-store encoder for: it dropped the `!`, left sp
+    // UNCHANGED, and the paired `add sp, sp, #16` then raised sp by 16. eprint's
+    // own output was correct, so the corruption only surfaced at the next call
+    // (#6083).
     if (s.has_need("eprint")) {
         s = s.write("__fern_eprint_str:\n");
         s = s.write("    ldr x1, [x0]\n");
@@ -2782,8 +2788,9 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    mov x0, #2\n");
         s = s.write("    mov x8, #64\n");
         s = s.write("    svc #0\n");
+        s = s.write("    sub sp, sp, #16\n");    // 16-byte scratch (sp alignment)
         s = s.write("    mov w1, #10\n");
-        s = s.write("    strb w1, [sp, #-16]!\n");
+        s = s.write("    strb w1, [sp]\n");
         s = s.write("    mov x0, #2\n");
         s = s.write("    mov x1, sp\n");
         s = s.write("    mov x2, #1\n");
