@@ -23997,9 +23997,14 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (aai < aarrs.len()) {
         var aan: string = aarrs[aai];
         // "S|<name>" entries are strings-fresh MARKERS, not candidates.
+        // NOT excluded on `reassigned` any more (#6092) — the self-append rebind
+        // IS a reassignment, and refusing the credit for it left every
+        // append-BUILT arr-of-arr leaking its rows. arrarr_unsafe_for validates
+        // each rebind individually (only `g = g.append(<row literal>)` passes)
+        // and is otherwise body_unsafe_for, so it subsumes both former checks.
+        // The string[] class has worked this way since #4355.
         if (!(aan.len() > 2 && aan[0] == 83 && aan[1] == 124)   // 83='S' 124='|'
-            && !body_unsafe_for(body, aan, borrowable)
-            && util.index_of_str(reassigned, aan) < 0
+            && !arrarr_unsafe_for(body, aan, borrowable)
             && !arrarr_row_escapes(body, aan)) {
             out = out.append("ARRARR:" + aan);
             // STRICT string-kind credit only when every inner element proved
@@ -26681,6 +26686,17 @@ function collect_fresh_arrarr_names(stmts: parser.Stmt[], ofr: string[], acc: st
                     // strings-fresh marker: lets the crediting loop grant the
                     // STRICT "ARRARRS:" credit a string-kind slot requires.
                     if (arrarr_lit_strings_fresh(v.init)) { a = push_str_unique(a, "S|" + v.name); }
+                } else if (arrarr_lit_is_empty(v.init) && arrarr_name_is_appended(stmts, v.name)) {
+                    // APPEND-BUILT candidate (#6092): `var g: T[][] = []` grown by
+                    // `g = g.append(<row literal>)`. arrarr_lit_is_fresh rejects
+                    // `[]` (no rows to prove fresh), which is right for a
+                    // literal-only credit but left the append shape uncredited and
+                    // leaking its rows. Every rebind's row is validated by
+                    // arrarr_self_append_row here and again by the arrarr_unsafe_for
+                    // gate at the crediting site; the strict string marker needs
+                    // EVERY appended row strings-fresh.
+                    a = push_str_unique(a, v.name);
+                    if (arrarr_appends_strings_fresh(stmts, v.name)) { a = push_str_unique(a, "S|" + v.name); }
                 } else {
                     // Call init `var g: T[][] = mk(..)` of an AAC-registered
                     // producer: same credits the literal it returns would earn.
@@ -26774,6 +26790,201 @@ function arrarr_lit_strings_fresh(e: parser.Expr): boolean {
             }
             return true;
         },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// arrarr_row_store_ok: `e` is a row safe to APPEND to an arr-of-arr candidate
+// that will later be deep-freed — a fresh array LITERAL, the same per-row rule
+// arrarr_lit_is_fresh applies to an initializer's elements. An ident row would
+// alias a live local whose buffer the reclaim would dangle.
+function arrarr_row_store_ok(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprArray(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// arrarr_row_store_strings_fresh: the STRICT sibling for string-kind inners —
+// every element of the appended row is a string literal or a fresh producer,
+// mirroring arrarr_lit_strings_fresh's inner-element rule. A string-kind slot
+// frees element POINTERS, so an ident element would dangle a live local.
+function arrarr_row_store_strings_fresh(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprArray(row) => {
+            var j: i32 = 0;
+            while (j < row.elements.len()) {
+                var ok: boolean = false;
+                match (row.elements[j]) {
+                    parser.ExprString(_) => { ok = true; },
+                    _ => { ok = str_local_binding_is_fresh(row.elements[j]); }
+                }
+                if (!ok) { return false; }
+                j = j + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// arrarr_unsafe_for / stmt_arrarr_unsafe_for: body_unsafe_for with exactly one
+// sanctioned reassignment — the self-append rebind `g = g.append(<row literal>)`
+// (#6092). The string[] class has had this since #4355 ("the self-append rebind
+// IS a reassignment; the gate validates each one individually"); the arr-of-arr
+// class took the blunt `reassigned` exclusion instead, so an append-BUILT
+// `T[][]` fell out of the credit and its rows leaked — sound, but unbounded in
+// a loop: 200 rounds x 3 rows leaked 33600 bytes where native freed everything.
+//
+// Only the assign case differs from stmt_unsafe_for, so every other hazard
+// still routes through expr_unsafe_for / body_unsafe_for. That is sound here
+// because the arr-of-arr class's own element hazard — a bound ROW pointer — is
+// checked separately by arrarr_row_escapes, which the credit applies alongside
+// this gate. The sanctioned form never descends into its own receiver, so
+// `g` appearing as the append receiver is not read as an escape.
+function arrarr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_arrarr_unsafe_for(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    return false;
+}
+function stmt_arrarr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+    match (st) {
+        parser.StmtAssign(a) => {
+            if (a.target == name) {
+                if (arrarr_self_append_row(a.value, name) >= 0) { return false; }
+                return true;   // any other reassignment of the candidate
+            }
+            return expr_unsafe_for(a.value, name, borrowable);
+        },
+        parser.StmtIf(f) => {
+            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            return arrarr_unsafe_for(f.then_body, name, borrowable) || arrarr_unsafe_for(f.else_body, name, borrowable);
+        },
+        parser.StmtWhile(w) => {
+            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            return arrarr_unsafe_for(w.body, name, borrowable);
+        },
+        parser.StmtFor(fo) => {
+            var iter_unsafe: boolean = true;
+            match (fo.iter) {
+                parser.ExprIdent(_) => { iter_unsafe = false; },   // `for x in name`: borrow iteration
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+            }
+            if (iter_unsafe) { return true; }
+            return arrarr_unsafe_for(fo.body, name, borrowable);
+        },
+        parser.StmtMatch(m) => {
+            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (arrarr_unsafe_for(m.arms[ai].body, name, borrowable)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return stmt_arrarr_unsafe_for(d.action, name, borrowable); },
+        _ => { return stmt_unsafe_for(st, name, borrowable); }
+    }
+    return false;
+}
+
+// arrarr_self_append_row classifies `e` as the sanctioned self-append rebind of
+// `name`: -1 = not the form (or an unsafe row), 0 = a fresh row whose elements
+// are NOT all proven strings-fresh (lax — enough for a scalar-kind slot), 1 =
+// also strings-fresh (the strict credit a string-kind slot needs). Splitting the
+// two here keeps the caller from re-walking the row.
+function arrarr_self_append_row(e: parser.Expr, name: string): i32 {
+    match (e) {
+        parser.ExprCall(c) => {
+            var is_self_append: boolean = false;
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "append") {
+                        match (fa.obj) {
+                            parser.ExprIdent(rid) => { is_self_append = rid.name == name; },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+            if (!is_self_append) { return -1; }
+            if (c.args.len() != 1) { return -1; }
+            if (!arrarr_row_store_ok(c.args[0])) { return -1; }
+            if (arrarr_row_store_strings_fresh(c.args[0])) { return 1; }
+            return 0;
+        },
+        _ => { return -1; }
+    }
+    return -1;
+}
+
+// arrarr_appends_strings_fresh: every self-append rebind of `name` in the body
+// carried a strings-fresh row. Consulted only for the STRICT "ARRARRS:" credit;
+// a body with no rebinds at all trivially passes (the initializer's own strict
+// marker still governs).
+function arrarr_appends_strings_fresh(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => {
+                if (a.target == name && arrarr_self_append_row(a.value, name) == 0) { return false; }
+            },
+            parser.StmtIf(f) => {
+                if (!arrarr_appends_strings_fresh(f.then_body, name)) { return false; }
+                if (!arrarr_appends_strings_fresh(f.else_body, name)) { return false; }
+            },
+            parser.StmtWhile(w) => { if (!arrarr_appends_strings_fresh(w.body, name)) { return false; } },
+            parser.StmtFor(fo) => { if (!arrarr_appends_strings_fresh(fo.body, name)) { return false; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    if (!arrarr_appends_strings_fresh(m.arms[mi].body, name)) { return false; }
+                    mi = mi + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// arrarr_name_is_appended: `name` takes at least one self-append rebind. Used to
+// admit an EMPTY-literal init (`var g: i32[][] = []`) as an append-BUILT
+// candidate — arrarr_lit_is_fresh rejects `[]` outright (len == 0), which is
+// correct for a literal-only credit but excludes the shape this fix is about.
+function arrarr_name_is_appended(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => { if (a.target == name && arrarr_self_append_row(a.value, name) >= 0) { return true; } },
+            parser.StmtIf(f) => {
+                if (arrarr_name_is_appended(f.then_body, name)) { return true; }
+                if (arrarr_name_is_appended(f.else_body, name)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (arrarr_name_is_appended(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (arrarr_name_is_appended(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { if (arrarr_name_is_appended(m.arms[mi].body, name)) { return true; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// arrarr_lit_is_empty: `e` is the empty array literal `[]` — the initializer of
+// an append-built candidate.
+function arrarr_lit_is_empty(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprArray(outer) => { return outer.elements.len() == 0; },
         _ => { return false; }
     }
     return false;
