@@ -19380,96 +19380,60 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                     },
                     _ => {}
                 }
-                // A fresh SCALAR Option/Result local (`var o = Some(5)` / `None`) is a
-                // precise-drop candidate too — but ONLY when it has NO top-level
-                // consuming match. That top-level-match case is owned by
-                // consumed_scalar_enum_frees (which also feeds the donor/reuse paths);
-                // admitting it here too would free the box twice. With no top-level
-                // match its last use is a nested block (an if-body match, a `.is_some()`
-                // borrow), so the rc-headered box (opt_make/opt_none) is shallow-freed
-                // after that whole statement — the option sibling of the scalar
-                // struct/tuple precise-if drops. The emission-site slot guard
-                // (opt_type_of_slot + type_is_scalar_option) re-checks before freeing.
+                // Four more precise-drop candidate kinds follow, one per fresh
+                // Option/enum shape. All four share the no-top-level-match
+                // disjointness rule that body_has_top_level_match documents; the
+                // comment on each records only what is particular to it.
+                //
+                // A fresh SCALAR Option/Result (`var o = Some(5)` / `None`): the
+                // rc-headered box (opt_make / opt_none) is shallow-freed after the
+                // statement holding its last use. The emission re-checks the slot
+                // (opt_type_of_slot + type_is_scalar_option) before freeing.
                 var is_opt: boolean = false;
                 if (!is_lit && fresh_scalar_option_init(v)) {
-                    var has_tlm: boolean = false;
-                    var mk: i32 = 0;
-                    while (mk < body.len()) {
-                        if (match_scrutinee_is(body[mk], v.name)) { has_tlm = true; }
-                        mk = mk + 1;
-                    }
-                    is_opt = !has_tlm;
+                    is_opt = !body_has_top_level_match(body, v.name);
                 }
-                // A fresh rc-PAYLOAD OPTION/RESULT (`var o = Some([..])` / `Ok(P{..})`),
-                // last-used in a nested block, is a precise-drop candidate too — the
-                // rc-payload sibling of the scalar-option case above. Same no-top-level-
-                // match disjointness (owned by consumed_rcpayload_option_frees there),
-                // AND the nested consuming match must borrow (not escape) the CONSTRUCTED
-                // variant's payload binding (opt_body_binding_escapes) — body_unsafe_for
-                // only proves the OPTION itself doesn't escape, not its bound payload.
-                // Result is admitted too: emit_opt_payload_drop reads offset-8, which is
-                // the constructed variant's pointer payload regardless of Ok/Err, and the
-                // carried "opt-rcpayload" kind tells the emission it is a pointer (the
-                // slot type Result[T,E] alone can't distinguish an Ok-array box from an
-                // Err-scalar box).
+                // A fresh rc-PAYLOAD Option/Result (`var o = Some([..])` / `Ok(P{..})`).
+                // Additionally the nested consuming match must BORROW, not escape, the
+                // constructed variant's payload binding (opt_body_binding_escapes):
+                // body_unsafe_for proves only that the OPTION does not escape, not its
+                // bound payload. Result is admitted alongside Option because
+                // emit_opt_payload_drop reads offset-8 — the constructed variant's
+                // pointer payload either way — and the "opt-rcpayload" kind tells the
+                // emission it is a pointer, which the slot type Result[T, E] alone
+                // cannot (an Ok-array box and an Err-scalar box spell the same).
                 var is_rcopt: boolean = false;
                 var rcopt_str: boolean = false;
                 if (!is_lit && !is_opt) {
                     var rcc: OptRcCand = rcpayload_option_cand(v, structs);
                     if (rcc.variant != "") {
-                        var has_tlm2: boolean = false;
-                        var mk2: i32 = 0;
-                        while (mk2 < body.len()) {
-                            if (match_scrutinee_is(body[mk2], v.name)) { has_tlm2 = true; }
-                            mk2 = mk2 + 1;
-                        }
-                        if (!has_tlm2 && !opt_body_binding_escapes(body, v.name, rcc.variant)) {
+                        if (!body_has_top_level_match(body, v.name) && !opt_body_binding_escapes(body, v.name, rcc.variant)) {
                             is_rcopt = true;
                             rcopt_str = rcc.ptype == "string";
                         }
                     }
                 }
-                // A fresh SCALAR user-enum local (`var x = Circle(7)` of an all-scalar-
-                // variant enum), last-used in a nested block, is a precise-drop candidate
-                // too — the enum sibling of the scalar-option case. Same no-top-level-
-                // match disjointness (a top-level match is owned by
-                // consumed_scalar_enum_frees, which also feeds the donor/reuse paths, so
-                // a no-top-level-match enum is NEVER a reuse donor — no donor guard
-                // needed). Its box (struct_make → __fern_arr_box, rc-headered) is shallow-
-                // freed after the enclosing statement (kind "box-shallow"). The emission
-                // needs no struct_type for the slot — the kind IS the "shallow box dec"
-                // witness — so an UN-annotated `var x = Circle(7)` (whose slot carries no
-                // struct_type) is reclaimed too.
+                // A fresh SCALAR user-enum (`var x = Circle(7)` of an all-scalar-variant
+                // enum). Because the top-level-match case belongs to
+                // consumed_scalar_enum_frees, which also feeds the donor/reuse paths, a
+                // candidate admitted here is NEVER a reuse donor — so no donor guard is
+                // needed. Its box is shallow-freed under kind "box-shallow", and that
+                // kind IS the witness, so the slot needs no struct_type: an unannotated
+                // `var x = Circle(7)` is reclaimed too.
                 var is_enum: boolean = false;
                 if (!is_lit && !is_opt && !is_rcopt && fresh_scalar_enum_init(v.init, structs) != "") {
-                    var has_tlm3: boolean = false;
-                    var mk3: i32 = 0;
-                    while (mk3 < body.len()) {
-                        if (match_scrutinee_is(body[mk3], v.name)) { has_tlm3 = true; }
-                        mk3 = mk3 + 1;
-                    }
-                    is_enum = !has_tlm3;
+                    is_enum = !body_has_top_level_match(body, v.name);
                 }
-                // A fresh rc-PAYLOAD user-enum local (`var x = Poly([..])` — a variant
-                // carrying a leak-safe array / deep-drop-ok struct payload), last-used in
-                // a nested block, is a precise-drop candidate too — the rc-payload-enum
-                // sibling of the rc-payload OPTION case. Same no-top-level-match
-                // disjointness (owned by consumed_rcpayload_enum_frees), AND no arm may
-                // bind an rc payload that escapes (enum_body_binds_rc_payload, the
-                // nested-match lift of match_arm_binds_rc_payload). The enum NAME is
-                // carried in the kind ("enum-rcpayload:<Enum>") so the emission's
-                // emit_enum_variant_drops can dispatch the runtime variant deep-drop.
+                // A fresh rc-PAYLOAD user-enum (`var x = Poly([..])` — a variant carrying
+                // a leak-safe array or deep-drop-ok struct payload). Additionally no arm
+                // may bind an rc payload that escapes (enum_body_binds_rc_payload). The
+                // enum NAME rides in the kind ("enum-rcpayload:<Enum>") so
+                // emit_enum_variant_drops can dispatch the right variant deep-drop.
                 var rcenum_owner: string = "";
                 if (!is_lit && !is_opt && !is_rcopt && !is_enum) {
                     var eo: string = fresh_rcpayload_enum_init(v.init, structs);
                     if (eo != "") {
-                        var has_tlm4: boolean = false;
-                        var mk4: i32 = 0;
-                        while (mk4 < body.len()) {
-                            if (match_scrutinee_is(body[mk4], v.name)) { has_tlm4 = true; }
-                            mk4 = mk4 + 1;
-                        }
-                        if (!has_tlm4 && !enum_body_binds_rc_payload(body, v.name, structs)) { rcenum_owner = eo; }
+                        if (!body_has_top_level_match(body, v.name) && !enum_body_binds_rc_payload(body, v.name, structs)) { rcenum_owner = eo; }
                     }
                 }
                 var is_rcenum: boolean = rcenum_owner != "";
@@ -21338,14 +21302,8 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
                 var rceo: string = fresh_rcpayload_enum_init(v.init, structs);
                 if (rceo == "") { rceo = rcenum_call_init_owner(v.init, opt_fresh_ret); }
                 if (rceo != "" && util.index_of_str(reassigned, v.name) < 0) {
-                    var match_idx: i32 = 0 - 1;
-                    var n_match: i32 = 0;
-                    var mj: i32 = 0;
-                    while (mj < stmts.len()) {
-                        if (match_scrutinee_is(stmts[mj], v.name)) { match_idx = mj; n_match = n_match + 1; }
-                        mj = mj + 1;
-                    }
-                    if (n_match == 1 && match_idx > vi
+                    var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
+                    if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
                         && !match_arm_binds_rc_payload(stmts[match_idx], structs)
                         && !name_used_after(stmts, v.name, match_idx)
@@ -24958,6 +24916,38 @@ function match_scrutinee_is(st: parser.Stmt, name: string): boolean {
     }
 }
 
+// body_has_top_level_match reports whether any TOP-LEVEL statement of `stmts`
+// is a match whose scrutinee is the bare ident `name`.
+//
+// A `var` whose body has one is NOT a precise-drop candidate: the consuming
+// match owns its reclamation (consumed_scalar_option_frees and its rc-payload /
+// enum siblings), so admitting it here too would free the box twice. Every
+// precise-drop candidate kind below asks this same question, which is why it is
+// one function rather than the four copies it used to be.
+function body_has_top_level_match(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (match_scrutinee_is(stmts[i], name)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// sole_top_level_match_idx returns the index of the ONLY top-level match on
+// `name`, or -1 when there is none or more than one. The consuming-match
+// reclamation paths need the unique site, not merely its existence.
+function sole_top_level_match_idx(stmts: parser.Stmt[], name: string): i32 {
+    var idx: i32 = 0 - 1;
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (match_scrutinee_is(stmts[i], name)) { idx = i; n = n + 1; }
+        i = i + 1;
+    }
+    if (n == 1) { return idx; }
+    return 0 - 1;
+}
+
 // arm_bodies_use_name: does `name` appear (read) in any arm body OR guard of the
 // match statement `st`? (The scrutinee itself is excluded — the caller handles it.)
 // A use inside a body is a real use, so x is NOT dead-after / single-mention.
@@ -25016,14 +25006,8 @@ function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructD
                 if ((owner != "" || is_opt) && util.index_of_str(reassigned, v.name) < 0) {
                     // Find the single consuming match: exactly one top-level
                     // statement whose scrutinee is the bare ident `v.name`.
-                    var match_idx: i32 = 0 - 1;
-                    var n_match: i32 = 0;
-                    var mj: i32 = 0;
-                    while (mj < body.len()) {
-                        if (match_scrutinee_is(body[mj], v.name)) { match_idx = mj; n_match = n_match + 1; }
-                        mj = mj + 1;
-                    }
-                    if (n_match == 1 && match_idx > vi) {
+                    var match_idx: i32 = sole_top_level_match_idx(body, v.name);
+                    if (match_idx > vi) {
                         // x must not be used in the match's arm bodies/guards (those
                         // uses would be a real escape/re-reference), must not be dead
                         // after the match (no later use), and must not escape anywhere
@@ -25464,14 +25448,8 @@ function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.Stru
             parser.StmtVar(v) => {
                 var owner: string = fresh_rcpayload_enum_init(v.init, structs);
                 if (owner != "" && util.index_of_str(reassigned, v.name) < 0) {
-                    var match_idx: i32 = 0 - 1;
-                    var n_match: i32 = 0;
-                    var mj: i32 = 0;
-                    while (mj < body.len()) {
-                        if (match_scrutinee_is(body[mj], v.name)) { match_idx = mj; n_match = n_match + 1; }
-                        mj = mj + 1;
-                    }
-                    if (n_match == 1 && match_idx > vi) {
+                    var match_idx: i32 = sole_top_level_match_idx(body, v.name);
+                    if (match_idx > vi) {
                         var arms_use: boolean = match_arms_use_name(body[match_idx], v.name);
                         var dead_after: boolean = !name_used_after(body, v.name, match_idx);
                         var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
@@ -26181,14 +26159,8 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
             parser.StmtVar(v) => {
                 var cand: OptRcCand = rcpayload_option_cand(v, structs);
                 if (cand.variant != "" && util.index_of_str(reassigned, v.name) < 0) {
-                    var match_idx: i32 = 0 - 1;
-                    var n_match: i32 = 0;
-                    var mj: i32 = 0;
-                    while (mj < body.len()) {
-                        if (match_scrutinee_is(body[mj], v.name)) { match_idx = mj; n_match = n_match + 1; }
-                        mj = mj + 1;
-                    }
-                    if (n_match == 1 && match_idx > vi) {
+                    var match_idx: i32 = sole_top_level_match_idx(body, v.name);
+                    if (match_idx > vi) {
                         var arms_use: boolean = match_arms_use_name(body[match_idx], v.name);
                         var dead_after: boolean = !name_used_after(body, v.name, match_idx);
                         var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
@@ -26766,14 +26738,8 @@ function collect_fresh_opttup_names(stmts: parser.Stmt[], structs: parser.Struct
                 if (opttup_ann_is(v.type_name, structs)
                     && opttup_init_is_fresh(opttup_inner_type(v.type_name), v.init, structs)
                     && util.index_of_str(reassigned, v.name) < 0) {
-                    var match_idx: i32 = 0 - 1;
-                    var n_match: i32 = 0;
-                    var mj: i32 = 0;
-                    while (mj < stmts.len()) {
-                        if (match_scrutinee_is(stmts[mj], v.name)) { match_idx = mj; n_match = n_match + 1; }
-                        mj = mj + 1;
-                    }
-                    if (n_match == 1 && match_idx > vi
+                    var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
+                    if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
                         && !opttup_payload_escapes(stmts, v.name, opttup_inner_type(v.type_name), structs)
                         && !name_used_after(stmts, v.name, match_idx)
@@ -27659,14 +27625,8 @@ function collect_fresh_optstruct_names(stmts: parser.Stmt[], structs: parser.Str
                 if (optstruct_ann_is(v.type_name, structs)
                     && optstruct_init_is_fresh(v.init, structs)
                     && util.index_of_str(reassigned, v.name) < 0) {
-                    var match_idx: i32 = 0 - 1;
-                    var n_match: i32 = 0;
-                    var mj: i32 = 0;
-                    while (mj < stmts.len()) {
-                        if (match_scrutinee_is(stmts[mj], v.name)) { match_idx = mj; n_match = n_match + 1; }
-                        mj = mj + 1;
-                    }
-                    if (n_match == 1 && match_idx > vi
+                    var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
+                    if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
                         && !optstruct_payload_escapes(stmts, v.name, opttup_inner_type(v.type_name), structs)
                         && !name_used_after(stmts, v.name, match_idx)
@@ -27954,14 +27914,8 @@ function collect_fresh_optarrarr_names(stmts: parser.Stmt[], acc: string[]): str
                 if (optarrarr_ann_is(v.type_name)
                     && optarrarr_init_is_fresh(v.init)
                     && util.index_of_str(reassigned, v.name) < 0) {
-                    var match_idx: i32 = 0 - 1;
-                    var n_match: i32 = 0;
-                    var mj: i32 = 0;
-                    while (mj < stmts.len()) {
-                        if (match_scrutinee_is(stmts[mj], v.name)) { match_idx = mj; n_match = n_match + 1; }
-                        mj = mj + 1;
-                    }
-                    if (n_match == 1 && match_idx > vi
+                    var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
+                    if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
                         && !optarrarr_payload_escapes(stmts, v.name)
                         && !name_used_after(stmts, v.name, match_idx)
