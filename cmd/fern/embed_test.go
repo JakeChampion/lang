@@ -127,3 +127,70 @@ func TestEmbedUnknownAssetSuggests(t *testing.T) {
 		t.Fatalf("error %q should suggest the near miss", err)
 	}
 }
+
+// __fern_assets() enumerates the whole bundle in sorted-name order, and
+// the contents reach the running binary intact. The exit code is the sum
+// of the content lengths, so a truncated or mis-paired asset changes it.
+func TestEmbedEnumerationReachesTheBinary(t *testing.T) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skipf("needs native linux/amd64 execution, host is %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	writeAssets(t, map[string]string{
+		"sub/b.txt": "BB",
+		"a.txt":     "AAA",
+		"c.bin":     string([]byte{0x00, 0xff}), // 2 bytes, interior NUL
+	})
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	prog := `function main(): i32 {
+    var total: i32 = 0;
+    for a in __fern_assets() {
+        print(a.0);
+        total = total + (a.1).len() as i32;
+    }
+    return total;
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "prog")
+	code, err := run(src, bin, "x86-64", "", false, false, "qemu-aarch64",
+		false, false, false, nil, false, "", false, nil)
+	if err != nil || code != 0 {
+		t.Fatalf("build: code=%d err=%v", code, err)
+	}
+	cmd := exec.Command(bin)
+	out, _ := cmd.CombinedOutput()
+	wantOut := "a.txt\nc.bin\nsub/b.txt\n"
+	if string(out) != wantOut {
+		t.Errorf("stdout = %q, want %q (sorted order)", out, wantOut)
+	}
+	if got := cmd.ProcessState.ExitCode(); got != 7 { // 3 + 2 + 2
+		t.Errorf("summed length = %d, want 7", got)
+	}
+}
+
+// An embed directory holding no files is legitimate: the loop body just
+// never runs. Without a stamped element type this fails to compile with
+// "E020: empty array literal needs a type annotation" pointing at the
+// `for`, which the user cannot act on.
+func TestEmbedEnumerationEmptyBundleCompiles(t *testing.T) {
+	writeAssets(t, map[string]string{})
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	prog := `function main(): i32 {
+    var n: i32 = 0;
+    for a in __fern_assets() {
+        n = n + 1;
+    }
+    return n;
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCheck(src); err != nil {
+		t.Fatalf("an empty embed bundle must still type-check: %v", err)
+	}
+}
