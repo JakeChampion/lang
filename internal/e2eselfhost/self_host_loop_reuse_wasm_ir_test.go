@@ -51,7 +51,11 @@ func TestSelfHostLoopReuseWasmIR(t *testing.T) {
 		{"loop-funcupdate-reuse", `struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var d: P = P { x: i, y: 0 }; var c: P = P { ...d, y: 3 }; sum = sum + c.x + c.y; i = i + 1; } return sum; }`, 18},
 		// Same-block reuse fires in an if-arm body too (irlower lowers every nested
 		// block with reuse). `b` reuses dead `a`'s box inside the `if`. (10+20)+(3+4)=37.
-		{"if-arm-reuse", `struct P { x: i32, y: i32 } function main(): i32 { var cond: i32 = 1; var r: i32 = 0; if (cond > 0) { var a: P = P { x: 10, y: 20 }; var s: i32 = a.x + a.y; var b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`, 37},
+		// Each x is multiplied by a 1-valued variable so both literals stay OFF the
+		// static-constant path (#6149) — written with bare literals the donor is
+		// placed in data and there is no box left to reuse, so the case would still
+		// return 37 while measuring nothing.
+		{"if-arm-reuse", `struct P { x: i32, y: i32 } function main(): i32 { var cond: i32 = 1; var r: i32 = 0; if (cond > 0) { var a: P = P { x: 10 * cond, y: 20 }; var s: i32 = a.x + a.y; var b: P = P { x: 3 * cond, y: 4 }; r = s + b.x + b.y; } return r; }`, 37},
 		// CROSS-BLOCK reuse: loop-body donor `a` reused by if-nested recipient `b`. 31.
 		{"cross-block-reuse", `struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: P = P { x: i, y: i + 1 }; var s: i32 = a.x + a.y; if (i > 0) { var b: P = P { x: i, y: 3 }; sum = sum + b.x + b.y; } sum = sum + s; i = i + 1; } return sum; }`, 31},
 		// Cross-block with recipients in BOTH arms and a single donor — one arm reuses
