@@ -132,39 +132,185 @@ function __substr_eq(s: string, offset: i32, needle: string, nLen: i32): boolean
     return true;
 }
 
+// __str_maxsuf computes the maximal suffix of `x[0..m]` under byte order
+// (`invert == false`) or under the reversed order (`invert == true`), as the
+// pair `(ms, p)`: the maximal suffix starts at `ms + 1` (so `ms` runs from -1
+// for "the whole string"), and `p` is that suffix's period. Half of the
+// critical factorization below; see __str_critical_factorization.
+//
+// This is Crochemore-Perrin's maximal-suffix scan: `j` is the start of the
+// current candidate, `k` the offset being compared within the current period,
+// and `p` the period established so far. Each byte is examined O(1) amortized
+// times, so the whole thing is O(m) with no allocation.
+function __str_maxsuf(x: string, m: i32, invert: boolean): (i32, i32) {
+    var ms: i32 = 0 - 1;
+    var j: i32 = 0;
+    var k: i32 = 1;
+    var p: i32 = 1;
+    while (j + k < m) {
+        var a: i32 = x[j + k] as i32;
+        var b: i32 = x[ms + k] as i32;
+        if (invert) {
+            var t: i32 = a;
+            a = b;
+            b = t;
+        }
+        if (a < b) {
+            j = j + k;
+            k = 1;
+            p = j - ms;
+        } else if (a == b) {
+            if (k == p) {
+                j = j + p;
+                k = 1;
+            } else {
+                k = k + 1;
+            }
+        } else {
+            ms = j;
+            j = j + 1;
+            k = 1;
+            p = 1;
+        }
+    }
+    return (ms, p);
+}
+
+// __str_critical_factorization returns `(crit, period)` — the critical
+// position of `needle[0..m]` and the period of the corresponding maximal
+// suffix. Crochemore-Perrin's theorem says the longer of the two maximal
+// suffixes (under `<` and under `>`) yields a critical factorization, i.e. a
+// split point where the local period equals the global period. That is what
+// lets Two-Way match left and right halves independently and shift by a full
+// period on failure, instead of the naive scan's one byte.
+//
+// The returned `crit + period <= m` (the maximal-suffix loop keeps
+// `j <= m - 1`, and `crit + period` is `j + 1`), so the periodicity probe in
+// __str_two_way reads in bounds.
+function __str_critical_factorization(needle: string, m: i32): (i32, i32) {
+    if (m < 3) { return (m - 1, 1); }
+    var fwd: (i32, i32) = __str_maxsuf(needle, m, false);
+    var rev: (i32, i32) = __str_maxsuf(needle, m, true);
+    if (rev.0 < fwd.0) { return (fwd.0 + 1, fwd.1); }
+    return (rev.0 + 1, rev.1);
+}
+
+// __str_two_way is the Crochemore-Perrin Two-Way substring search: the
+// leftmost index >= `start` at which `needle[0..m]` occurs in `s[0..sLen]`,
+// or -1. O(sLen + m) time and O(1) space — no allocation, no 256-entry skip
+// table, and no O(n*m) worst case (the naive scan this replaced degraded to
+// exactly that on repetitive text, which is precisely what a compiler's own
+// source, JSON, and log lines look like).
+//
+// Two phases per alignment: match the right half forward from the critical
+// position, then, only if that succeeded, the left half backward. A mismatch
+// in the right half shifts past it; a mismatch in the left half shifts by the
+// needle's period. Callers must pass `m >= 2` and `start >= 0` — the
+// zero-length and single-byte needles are handled by __str_find_from's fast
+// paths, which are both cheaper than setting up a factorization.
+function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32): i32 {
+    var cf: (i32, i32) = __str_critical_factorization(needle, m);
+    var crit: i32 = cf.0;
+    var period: i32 = cf.1;
+    var last: i32 = sLen - m;
+    var j: i32 = start;
+
+    if (__substr_eq(needle, period, needle, crit)) {
+        // Periodic needle ("abcabcabd"): the left half is a suffix of the
+        // stretch one period further in, so after a failed left-half match we
+        // may shift by exactly `period` and remember (`memory`) the prefix
+        // length already known to match, never re-comparing it.
+        var memory: i32 = 0;
+        while (j <= last) {
+            var i: i32 = crit;
+            if (memory > i) { i = memory; }
+            while (i < m && (needle[i] as i32) == (s[i + j] as i32)) { i = i + 1; }
+            if (i >= m) {
+                i = crit - 1;
+                while (i >= memory && (needle[i] as i32) == (s[i + j] as i32)) { i = i - 1; }
+                if (i < memory) { return j; }
+                j = j + period;
+                memory = m - period;
+            } else {
+                j = j + (i - crit) + 1;
+                memory = 0;
+            }
+        }
+        return 0 - 1;
+    }
+
+    // Aperiodic needle: no prefix carries over between alignments, so a
+    // left-half mismatch shifts by more than half the needle.
+    var shift: i32 = crit;
+    if (m - crit > shift) { shift = m - crit; }
+    shift = shift + 1;
+    while (j <= last) {
+        var i: i32 = crit;
+        while (i < m && (needle[i] as i32) == (s[i + j] as i32)) { i = i + 1; }
+        if (i >= m) {
+            i = crit - 1;
+            while (i >= 0 && (needle[i] as i32) == (s[i + j] as i32)) { i = i - 1; }
+            if (i < 0) { return j; }
+            j = j + shift;
+        } else {
+            j = j + (i - crit) + 1;
+        }
+    }
+    return 0 - 1;
+}
+
+// __str_find_from is THE forward substring-search core: the leftmost index
+// >= `start` of `needle` in `s`, or -1. Every forward scan in this module
+// routes through it, so they all inherit the same linear-time guarantee
+// instead of each spelling its own `i + 1` probe loop.
+//
+// Adaptive dispatch, cheapest applicable path first:
+//   m == 0  -> `start` (the empty needle matches at every gap)
+//   m == 1  -> a single-byte scan, the memchr shape
+//   m >= 2  -> Two-Way
+//
+// The single-byte case matters more than it looks: `split(",")`,
+// `split("\n")`, and the `replace_byte` family are the overwhelmingly common
+// callers, and for them a factorization would be pure overhead.
+function __str_find_from(s: string, sLen: i32, needle: string, nLen: i32, start: i32): i32 {
+    var from: i32 = start;
+    if (from < 0) { from = 0; }
+    if (nLen == 0) {
+        if (from > sLen) { return sLen; }
+        return from;
+    }
+    if (nLen > sLen - from) { return 0 - 1; }
+    if (nLen == 1) {
+        var c: i32 = needle[0] as i32;
+        var i: i32 = from;
+        while (i < sLen) {
+            if ((s[i] as i32) == c) { return i; }
+            i = i + 1;
+        }
+        return 0 - 1;
+    }
+    return __str_two_way(s, sLen, needle, nLen, from);
+}
+
 pub function (s: string) contains(needle: string): boolean {
     var nLen: i32 = needle.len();
     if (nLen == 0) { return true; }
-    var sLen: i32 = s.len();
-    if (nLen > sLen) { return false; }
-    var last: i32 = sLen - nLen;
-    var i: i32 = 0;
-    while (i <= last) {
-        if (__substr_eq(s, i, needle, nLen)) { return true; }
-        i = i + 1;
-    }
-    return false;
+    return __str_find_from(s, s.len(), needle, nLen, 0) >= 0;
 }
 
 pub function (s: string) index_of(needle: string): i32 {
     var nLen: i32 = needle.len();
     if (nLen == 0) { return 0; }
-    var sLen: i32 = s.len();
-    if (nLen > sLen) { return 0 - 1; }
-    var last: i32 = sLen - nLen;
-    var i: i32 = 0;
-    while (i <= last) {
-        if (__substr_eq(s, i, needle, nLen)) { return i; }
-        i = i + 1;
-    }
-    return 0 - 1;
+    return __str_find_from(s, s.len(), needle, nLen, 0);
 }
 
 // `s.last_index_of(needle)` — rightmost occurrence; -1 if
 // absent. Empty needle returns len(s) to match Python rfind /
 // Go LastIndex conventions (the "match at every gap" trick).
-// Walks bytes from the right; O(n*m) worst case like
-// index_of.
+// Walks bytes from the right, O(n*m) worst case — unlike the
+// forward `index_of`, which is Two-Way and linear. Applying
+// Two-Way in reverse (factorizing the reversed needle) is the
+// obvious follow-up; see docs/SOTA-STDLIB-BLUEPRINT.md.
 pub function (s: string) last_index_of(needle: string): i32 {
     var nLen: i32 = needle.len();
     var sLen: i32 = s.len();
@@ -1594,10 +1740,10 @@ pub function (s: string) split(sep: string): string[] {
     var n: i32 = s.len();
     var sepLen: i32 = sep.len();
     var out: string[] = [];
-    // Single shared `i` across the empty-sep / non-empty-sep
-    // branches — the wasm emitter names locals by their lang
-    // identifier, so two `var i: i32 = 0;` in sibling scopes
-    // would collide as duplicate locals.
+    // `i` is the empty-sep branch's cursor only; the separator scan below
+    // tracks its position in `start` / `hit`. Keep the two branches on
+    // DIFFERENT names — the wasm emitter names locals by their lang
+    // identifier, so re-declaring `i` in a sibling scope would collide.
     var i: i32 = 0;
     if (sepLen == 0) {
         while (i < n) {
@@ -1607,14 +1753,11 @@ pub function (s: string) split(sep: string): string[] {
         return out;
     }
     var start: i32 = 0;
-    while (i + sepLen <= n) {
-        if (__substr_eq(s, i, sep, sepLen)) {
-            out = out.append(s[start:i]);
-            i = i + sepLen;
-            start = i;
-        } else {
-            i = i + 1;
-        }
+    var hit: i32 = __str_find_from(s, n, sep, sepLen, start);
+    while (hit >= 0) {
+        out = out.append(s[start:hit]);
+        start = hit + sepLen;
+        hit = __str_find_from(s, n, sep, sepLen, start);
     }
     return out.append(s[start:n]);
 }
@@ -1646,7 +1789,8 @@ pub function (s: string) splitn(sep: string, n: i32): string[] {
     if (n == 1) { return out.append(s); }
     var sepLen: i32 = sep.len();
     // Hoist sLen / i / start to function scope — wasm rejects
-    // sibling-scope duplicate locals.
+    // sibling-scope duplicate locals. `i` belongs to the empty-sep
+    // branch, `start` to the separator scan.
     var sLen: i32 = s.len();
     var i: i32 = 0;
     var start: i32 = 0;
@@ -1658,14 +1802,11 @@ pub function (s: string) splitn(sep: string, n: i32): string[] {
         }
         return out.append(s[i:sLen]);
     }
-    while (i + sepLen <= sLen && out.len() < n - 1) {
-        if (__substr_eq(s, i, sep, sepLen)) {
-            out = out.append(s[start:i]);
-            i = i + sepLen;
-            start = i;
-        } else {
-            i = i + 1;
-        }
+    var hit: i32 = __str_find_from(s, sLen, sep, sepLen, start);
+    while (hit >= 0 && out.len() < n - 1) {
+        out = out.append(s[start:hit]);
+        start = hit + sepLen;
+        hit = __str_find_from(s, sLen, sep, sepLen, start);
     }
     return out.append(s[start:sLen]);
 }
@@ -1992,14 +2133,9 @@ pub function (s: string) split_once(sep: string): Option[(string, string)] {
     if (sep.len() == 0) { return None; }
     var n: i32 = s.len();
     var sLen: i32 = sep.len();
-    var i: i32 = 0;
-    while (i + sLen <= n) {
-        if (__substr_eq(s, i, sep, sLen)) {
-            return Some((s[0:i].to_owned(), s[i + sLen:n].to_owned()));
-        }
-        i = i + 1;
-    }
-    return None;
+    var hit: i32 = __str_find_from(s, n, sep, sLen, 0);
+    if (hit < 0) { return None; }
+    return Some((s[0:hit].to_owned(), s[hit + sLen:n].to_owned()));
 }
 
 // `s.partition(sep)` — split at the FIRST occurrence of `sep` into the
@@ -2012,14 +2148,9 @@ pub function (s: string) partition(sep: string): (string, string, string) {
     if (sep.len() == 0) { return (s.to_owned(), "", ""); }
     var n: i32 = s.len();
     var sLen: i32 = sep.len();
-    var i: i32 = 0;
-    while (i + sLen <= n) {
-        if (__substr_eq(s, i, sep, sLen)) {
-            return (s[0:i].to_owned(), sep.to_owned(), s[i + sLen:n].to_owned());
-        }
-        i = i + 1;
-    }
-    return (s.to_owned(), "", "");
+    var hit: i32 = __str_find_from(s, n, sep, sLen, 0);
+    if (hit < 0) { return (s.to_owned(), "", ""); }
+    return (s[0:hit].to_owned(), sep.to_owned(), s[hit + sLen:n].to_owned());
 }
 
 // `s.rpartition(sep)` — the LAST-occurrence mirror of `partition`: split at the
@@ -2474,14 +2605,10 @@ pub function (s: string) count(sub: string): i32 {
     var n: i32 = s.len();
     var subLen: i32 = sub.len();
     var c: i32 = 0;
-    var i: i32 = 0;
-    while (i + subLen <= n) {
-        if (__substr_eq(s, i, sub, subLen)) {
-            c = c + 1;
-            i = i + subLen;
-        } else {
-            i = i + 1;
-        }
+    var hit: i32 = __str_find_from(s, n, sub, subLen, 0);
+    while (hit >= 0) {
+        c = c + 1;
+        hit = __str_find_from(s, n, sub, subLen, hit + subLen);
     }
     return c;
 }
@@ -2497,14 +2624,10 @@ pub function (s: string) find_all(sub: string): i32[] {
     if (sub.len() == 0) { return out; }
     var n: i32 = s.len();
     var subLen: i32 = sub.len();
-    var i: i32 = 0;
-    while (i + subLen <= n) {
-        if (__substr_eq(s, i, sub, subLen)) {
-            out = out.append(i);
-            i = i + subLen;
-        } else {
-            i = i + 1;
-        }
+    var hit: i32 = __str_find_from(s, n, sub, subLen, 0);
+    while (hit >= 0) {
+        out = out.append(hit);
+        hit = __str_find_from(s, n, sub, subLen, hit + subLen);
     }
     return out;
 }
@@ -2519,14 +2642,10 @@ pub function (s: string) count_matches(sub: string): i32 {
     if (subLen == 0) { return 0; }
     var n: i32 = s.len();
     var count: i32 = 0;
-    var i: i32 = 0;
-    while (i + subLen <= n) {
-        if (__substr_eq(s, i, sub, subLen)) {
-            count = count + 1;
-            i = i + subLen;
-        } else {
-            i = i + 1;
-        }
+    var hit: i32 = __str_find_from(s, n, sub, subLen, 0);
+    while (hit >= 0) {
+        count = count + 1;
+        hit = __str_find_from(s, n, sub, subLen, hit + subLen);
     }
     return count;
 }
@@ -2555,17 +2674,13 @@ pub function (s: string) replace_n(old: string, new: string, n: i32): string {
     if (oLen == 0 || n <= 0) { return s; }
     var out: string = "";
     var start: i32 = 0;
-    var i: i32 = 0;
     var done: i32 = 0;
-    while (i + oLen <= sLen && done < n) {
-        if (__substr_eq(s, i, old, oLen)) {
-            out = out + s[start:i] + new;
-            i = i + oLen;
-            start = i;
-            done = done + 1;
-        } else {
-            i = i + 1;
-        }
+    var hit: i32 = __str_find_from(s, sLen, old, oLen, 0);
+    while (hit >= 0 && done < n) {
+        out = out + s[start:hit] + new;
+        start = hit + oLen;
+        done = done + 1;
+        hit = __str_find_from(s, sLen, old, oLen, start);
     }
     return out + s[start:sLen];
 }
@@ -2685,14 +2800,10 @@ pub function (s: string) replace(old: string, new: string): string {
     var oLen: i32 = old.len();
     if (oLen == 0) { return s; }
     var matches: i32 = 0;
-    var i: i32 = 0;
-    while (i + oLen <= n) {
-        if (__substr_eq(s, i, old, oLen)) {
-            matches = matches + 1;
-            i = i + oLen;
-        } else {
-            i = i + 1;
-        }
+    var hit: i32 = __str_find_from(s, n, old, oLen, 0);
+    while (hit >= 0) {
+        matches = matches + 1;
+        hit = __str_find_from(s, n, old, oLen, hit + oLen);
     }
     if (matches == 0) { return s; }
     var nLen: i32 = new.len();
@@ -2700,23 +2811,24 @@ pub function (s: string) replace(old: string, new: string): string {
     if (out_len == 0) { return ""; }
     var buf: u8[] = __alloc_u8(out_len);
     var pos: i32 = 0;
-    i = 0;
-    while (i + oLen <= n) {
-        if (__substr_eq(s, i, old, oLen)) {
-            var k: i32 = 0;
-            while (k < nLen) {
-                buf = buf.with(pos, new[k] as u8);
-                pos = pos + 1;
-                k = k + 1;
-            }
-            i = i + oLen;
-        } else {
+    var i: i32 = 0;
+    hit = __str_find_from(s, n, old, oLen, 0);
+    while (hit >= 0) {
+        while (i < hit) {
             buf = buf.with(pos, s[i] as u8);
             pos = pos + 1;
             i = i + 1;
         }
+        var k: i32 = 0;
+        while (k < nLen) {
+            buf = buf.with(pos, new[k] as u8);
+            pos = pos + 1;
+            k = k + 1;
+        }
+        i = hit + oLen;
+        hit = __str_find_from(s, n, old, oLen, i);
     }
-    // Tail after the last position a match could start.
+    // Tail after the last match.
     while (i < n) {
         buf = buf.with(pos, s[i] as u8);
         pos = pos + 1;
@@ -2736,18 +2848,14 @@ pub function (s: string) replacen(old: string, new: string, n: i32): string {
     if (n <= 0 || oLen == 0) { return s; }
     var slen: i32 = s.len();
     var out: string = "";
-    var i: i32 = 0;
     var done: i32 = 0;
     var run_start: i32 = 0;
-    while (i + oLen <= slen && done < n) {
-        if (__substr_eq(s, i, old, oLen)) {
-            out = out + s[run_start:i] + new;
-            i = i + oLen;
-            run_start = i;
-            done = done + 1;
-        } else {
-            i = i + 1;
-        }
+    var hit: i32 = __str_find_from(s, slen, old, oLen, 0);
+    while (hit >= 0 && done < n) {
+        out = out + s[run_start:hit] + new;
+        run_start = hit + oLen;
+        done = done + 1;
+        hit = __str_find_from(s, slen, old, oLen, run_start);
     }
     return out + s[run_start:slen];
 }

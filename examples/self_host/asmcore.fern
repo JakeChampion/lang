@@ -860,14 +860,17 @@ pub function rt_src_str_chars(): string {
 // of the substrings between each non-overlapping occurrence of `sep`. Composite /
 // Tier-1: scans for `sep` (inline byte-compare, like str_replace) and appends each
 // segment slice s[start:i] (.append() → __fern_arr_push, like str_chars) — no new
-// primitive. Semantics match the interp for non-empty `sep` (verified: trailing
-// "a,b," → ["a","b",""], leading ",a" → ["","a"], no-match → [s], "" → [""],
-// multi-char sep). Empty `sep` returns [s] — preserving the current self-host
-// hand-asm's behaviour (the interp diverges to a char-split, but no differential
-// test exercises empty-sep; the full-length slice s[0:lenS] keeps the element an
-// owned slice, consistent with the matched-segment branch).
+// primitive. Semantics match the interp: trailing "a,b," → ["a","b",""], leading
+// ",a" → ["","a"], no-match → [s], "" → [""], multi-char sep.
+//
+// Empty `sep` char-splits ("abc" → ["a","b","c"]), matching std/string's `split`
+// and the interp. It used to return [s] instead, preserving the hand-written
+// self-host asm emitter's behaviour on the grounds that no differential test
+// exercised empty-sep. Both halves of that rationale are gone: the hand-asm
+// emitters were deleted (#3457/#5972), and the empty-sep case is now covered on
+// every backend by internal/e2e/string_split_empty_sep_test.go.
 pub function rt_src_str_split(): string {
-    return "function __fern_str_split(s: string, sep: string): string[] { var lenS: i32 = s.len(); var lenSep: i32 = sep.len(); var out: string[] = []; if (lenSep == 0) { out = out.append(s[0:lenS]); return out; } var start: i32 = 0; var i: i32 = 0; while (i + lenSep <= lenS) { var j: i32 = 0; var m: i32 = 1; while (j < lenSep) { if (s[i + j] != sep[j]) { m = 0; j = lenSep; } else { j = j + 1; } } if (m == 1) { out = out.append(s[start:i]); i = i + lenSep; start = i; } else { i = i + 1; } } out = out.append(s[start:lenS]); return out; }";
+    return "function __fern_str_split(s: string, sep: string): string[] { var lenS: i32 = s.len(); var lenSep: i32 = sep.len(); var out: string[] = []; if (lenSep == 0) { var k: i32 = 0; while (k < lenS) { out = out.append(s[k:k + 1]); k = k + 1; } return out; } var start: i32 = 0; var i: i32 = 0; while (i + lenSep <= lenS) { var j: i32 = 0; var m: i32 = 1; while (j < lenSep) { if (s[i + j] != sep[j]) { m = 0; j = lenSep; } else { j = j + 1; } } if (m == 1) { out = out.append(s[start:i]); i = i + lenSep; start = i; } else { i = i + 1; } } out = out.append(s[start:lenS]); return out; }";
 }
 
 // rt_src_str_bytes backs `s.bytes()` / `s.as_bytes()` (#2649). Returns an i32[]

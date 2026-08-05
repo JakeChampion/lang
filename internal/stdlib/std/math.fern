@@ -23,10 +23,14 @@
 // is fixed — full 32-bit `u % range` is differential-verified
 // across interp / x86-64 / wasm — so the draw is widened here.)
 //
-// The residual modulo bias (values in `[0, 2^32 mod range)`
-// are marginally more likely) is unchanged from before and
-// negligible for `range << 2^32`; rejection sampling to
-// eliminate it entirely is a separate follow-up.
+// The result is UNBIASED: every value in [lo, hi) is equally
+// likely. The previous revision mapped the draw with a bare
+// `u % range`, which is biased whenever `range` does not divide
+// 2^32 — the first `2^32 mod range` values come up one extra
+// time out of every 2^32 draws. That is invisible in a spot
+// check but it is a real defect, and it made `rand.shuffle`
+// (which is Fisher-Yates over this function) a NON-UNIFORM
+// permutation. `__random_below` below removes it by rejection.
 //
 // The `range` local intentionally shares its name with the
 // module-level `range()` function below — a deliberate regression
@@ -37,13 +41,56 @@
 // the shadow correctly, so the natural name is restored.
 pub function random_int(lo: i32, hi: i32): i32 {
     if (hi <= lo) { return lo; }
-    var b: string = random_bytes(4);
-    var u: u32 = ((b[0] as u32) << (24 as u32)) |
-                 ((b[1] as u32) << (16 as u32)) |
-                 ((b[2] as u32) << (8 as u32)) |
-                 (b[3] as u32);
     var range: u32 = (hi - lo) as u32;
-    return lo + ((u % range) as i32);
+    return lo + (__random_below(range) as i32);
+}
+
+// __random_u32 draws a full 32-bit value from the platform CSPRNG
+// (kernel getrandom on natives, wasi_random on wasm).
+function __random_u32(): u32 {
+    var b: string = random_bytes(4);
+    return ((b[0] as u32) << (24 as u32)) |
+           ((b[1] as u32) << (16 as u32)) |
+           ((b[2] as u32) << (8 as u32)) |
+           (b[3] as u32);
+}
+
+// __random_below(range) — a uniformly distributed u32 in [0, range),
+// by Lemire's nearly-divisionless bounded method. `range >= 1`.
+//
+// The idea: multiplying a uniform 32-bit draw by `range` gives a
+// 64-bit product whose HIGH half is already in [0, range) — that is
+// the multiply-shift map, and it needs no division at all. It is
+// slightly biased on its own, because 2^32 values cannot split evenly
+// into `range` buckets: `2^32 mod range` of the buckets get one extra
+// value. Lemire's insight is that the LOW half of the same product
+// identifies exactly which draws fall in that surplus, so rejecting
+// `low < (2^32 mod range)` leaves a perfectly uniform result.
+//
+// The cost is a single comparison in the common case: the expensive
+// modulo that computes the rejection threshold is only evaluated when
+// `low < range`, which happens with probability `range / 2^32`. For
+// the range sizes real callers use (array lengths, byte values) that
+// branch is essentially never taken, so this is cheaper in practice
+// than the biased `%` it replaces, not merely more correct.
+//
+// Termination: each retry independently accepts with probability
+// `1 - (2^32 mod range)/2^32 > 1/2`, so the loop ends with
+// probability 1 and takes under two iterations on average.
+function __random_below(range: u32): u32 {
+    var wide: u64 = range as u64;
+    var mask: u64 = ((1 as u64) << (32 as u64)) - (1 as u64);
+    var product: u64 = (__random_u32() as u64) * wide;
+    var low: u64 = product & mask;
+    if (low < wide) {
+        // 2^32 mod range — the size of the surplus zone to reject.
+        var threshold: u64 = (((1 as u64) << (32 as u64)) - wide) % wide;
+        while (low < threshold) {
+            product = (__random_u32() as u64) * wide;
+            low = product & mask;
+        }
+    }
+    return (product >> (32 as u64)) as u32;
 }
 
 // `range(start, end)` — i32[] of [start, end). Empty if

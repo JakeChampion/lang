@@ -839,17 +839,56 @@ pub function (n: i32) divmod(d: i32): (i32, i32) {
 // per call, fine for the use cases (hash mixing, bit-packed
 // flag inspection, endian conversion).
 
-pub function (n: i32) count_ones(): i32 {
-    var u: u32 = n as u32;
-    var c: i32 = 0;
-    var i: i32 = 0;
-    while (i < 32) {
-        if ((u & (1 as u32)) != (0 as u32)) { c = c + 1; }
-        u = u >> (1 as u32);
-        i = i + 1;
-    }
-    return c;
+// __swar_popcount32 counts set bits with SWAR (SIMD-within-a-register): the
+// count is accumulated in-place in 2-, then 4-, then 8-bit fields of the word
+// itself, so a fixed handful of shifts/masks replaces the 32-iteration loop
+// this used to be. Branchless — the cost is the same for 0 as for -1.
+//
+// The last stage sums the per-byte counts by folding the word onto itself
+// rather than by the usual `* 0x01010101 >> 24` multiply, which keeps this
+// clear of any question about how u32 multiplication overflows. Each byte
+// holds at most 8, so the running sums never carry across a byte boundary;
+// the total is at most 32, so the low 6 bits hold it.
+//
+// (A single POPCNT / CNT / i32.popcnt instruction exists on every backend and
+// would beat this, but the language has no intrinsic surface yet — see
+// docs/SOTA-STDLIB-BLUEPRINT.md.)
+function __swar_popcount32(n: u32): i32 {
+    var m1: u32 = 1431655765 as u32;    // 0x55555555, pairs
+    var m2: u32 = 858993459 as u32;     // 0x33333333, nibbles
+    var m4: u32 = 252645135 as u32;     // 0x0F0F0F0F, bytes
+    var x: u32 = n;
+    x = x - ((x >> (1 as u32)) & m1);
+    x = (x & m2) + ((x >> (2 as u32)) & m2);
+    x = (x + (x >> (4 as u32))) & m4;
+    x = x + (x >> (8 as u32));
+    x = x + (x >> (16 as u32));
+    return (x & (63 as u32)) as i32;
 }
+
+// __swar_clz32 counts leading zeros by smearing the highest set bit down over
+// every lower position, then counting what is left: `32 - popcount`.
+// Branchless and correct for 0 (nothing to smear, popcount 0, so 32).
+function __swar_clz32(n: u32): i32 {
+    var x: u32 = n;
+    x = x | (x >> (1 as u32));
+    x = x | (x >> (2 as u32));
+    x = x | (x >> (4 as u32));
+    x = x | (x >> (8 as u32));
+    x = x | (x >> (16 as u32));
+    return 32 - __swar_popcount32(x);
+}
+
+// __swar_ctz32 counts trailing zeros: for a non-zero `x`, `x ^ (x - 1)` sets
+// exactly the bits from position 0 up to and including the lowest set bit, so
+// its popcount is one more than the answer. Uses only XOR and a subtract that
+// cannot underflow (x >= 1 on this path).
+function __swar_ctz32(n: u32): i32 {
+    if (n == (0 as u32)) { return 32; }
+    return __swar_popcount32(n ^ (n - (1 as u32))) - 1;
+}
+
+pub function (n: i32) count_ones(): i32 { return __swar_popcount32(n as u32); }
 
 // `count_zeros` — the number of ZERO bits in the 32-bit two's-complement
 // representation; the complement of `count_ones` (the two always sum to 32).
@@ -857,31 +896,9 @@ pub function (n: i32) count_zeros(): i32 {
     return 32 - n.count_ones();
 }
 
-pub function (n: i32) leading_zeros(): i32 {
-    if (n == 0) { return 32; }
-    var u: u32 = n as u32;
-    // Top-bit mask = 1 << 31. Lang doesn't lex hex literals
-    // big enough to spell 0x80000000 directly, so construct
-    // via a left shift.
-    var top: u32 = (1 as u32) << (31 as u32);
-    var c: i32 = 0;
-    while ((u & top) == (0 as u32)) {
-        c = c + 1;
-        u = u << (1 as u32);
-    }
-    return c;
-}
+pub function (n: i32) leading_zeros(): i32 { return __swar_clz32(n as u32); }
 
-pub function (n: i32) trailing_zeros(): i32 {
-    if (n == 0) { return 32; }
-    var u: u32 = n as u32;
-    var c: i32 = 0;
-    while ((u & (1 as u32)) == (0 as u32)) {
-        c = c + 1;
-        u = u >> (1 as u32);
-    }
-    return c;
-}
+pub function (n: i32) trailing_zeros(): i32 { return __swar_ctz32(n as u32); }
 
 // `(n: i32) bit_length()` — the number of bits needed to represent the
 // MAGNITUDE `|n|`: the position of the highest set bit, plus one. `0` needs 0
