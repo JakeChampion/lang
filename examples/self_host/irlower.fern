@@ -28890,35 +28890,52 @@ function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
     if (struct_has_reclaim_array_field(s.structs, sty)) { return false; }
     if (util.index_of_str(s.reclaimable_names, "STRUCTARR:" + s.locals[i].slot_name) >= 0) { return true; }
     // APPEND-BUILT candidates (#6127) carry a SEPARATE credit and a STRICTER
-    // rule: the element struct's fields must be ALL SCALAR.
+    // rule: the element struct's fields must be scalar or `string`.
     //
     // struct_has_reclaim_array_field above deliberately lets string / map /
     // option / tuple fields through — they "leak with the struct, sound" — so
-    // the shallow box free this class performs is only EXACT for an all-scalar
-    // struct, which is what the class documents itself as. Literal-built
-    // arrays have relied on the looser rule for a long time and keep it (their
-    // behaviour is unchanged, byte for byte); the append path does not inherit
-    // it, because widening a looser rule across the ~112 append-built sites in
-    // the compiler's own sources is what broke self-compilation the first time
-    // this was attempted (#6129: gen0/gen1 diverged on unit 2_s83).
+    // the shallow box free this class performs releases everything an
+    // all-scalar element owns, and everything but the string box for a
+    // string-fielded one. Literal-built arrays have relied on the fully loose
+    // rule for a long time and keep it (their behaviour is unchanged, byte for
+    // byte); the append path does not inherit it, because widening it wholesale
+    // across the ~112 append-built sites in the compiler's own sources is what
+    // broke self-compilation the first time this was attempted (#6129:
+    // gen0/gen1 diverged on unit 2_s83).
+    //
+    // `string` specifically is safe to admit, which the map / option / tuple
+    // kinds are not: the element BOX is provably fresh — structarr_elem_store_ok
+    // admits only a no-base struct LITERAL, rejecting the bare-ident element
+    // that would alias a live local (965 such sites in the compiler's own
+    // sources, including every `s.ops.append(op)`) — so the shallow free
+    // releases a box this array solely owns. Its string field then leaks
+    // EXACTLY as it already does on the literal-built path for the same type,
+    // which is the sound direction and measurably the same code. Without this,
+    // an append-built `N[]` leaked its element boxes too: 28800 bytes over 100
+    // rounds against the literal-built form's 9600 (the strings alone).
     if (util.index_of_str(s.reclaimable_names, "STRUCTARRA:" + s.locals[i].slot_name) >= 0) {
-        return struct_all_scalar_fields(s.structs, sty);
+        return struct_all_scalar_or_string_fields(s.structs, sty);
     }
     return false;
 }
 
-// struct_all_scalar_fields: every field of `sty` is a plain scalar, so a
-// SHALLOW free of the struct's box releases everything the struct owns and
-// leaks nothing. Deliberately an allowlist rather than a denylist — a field
-// type this does not recognise reads as non-scalar and keeps the struct out,
-// which is the safe direction and stays safe as the type system grows.
-function struct_all_scalar_fields(structs: parser.StructDecl[], sty: string): boolean {
+// struct_all_scalar_or_string_fields: every field of `sty` is a plain scalar or
+// a `string`, so a SHALLOW free of the struct's box releases the box itself and
+// leaks at most its string boxes. The append-built struct-array class admits
+// this because its elements are provably fresh no-base literals
+// (structarr_elem_store_ok), making the box sole-owned; the string leak is the
+// same one the literal-built class has always accepted for the same type.
+// Deliberately an allowlist rather than a denylist — a field type this does not
+// recognise keeps the struct out, which is the safe direction and stays safe as
+// the type system grows.
+function struct_all_scalar_or_string_fields(structs: parser.StructDecl[], sty: string): boolean {
     if (sty.len() == 0) { return false; }
     var n: i32 = decl_field_count(structs, sty);
     if (n == 0) { return false; }
     var fi: i32 = 0;
     while (fi < n) {
-        if (!is_scalar_field_type(decl_field_type_at(structs, sty, fi))) { return false; }
+        var ft: string = decl_field_type_at(structs, sty, fi);
+        if (!is_scalar_field_type(ft) && ft != "string") { return false; }
         fi = fi + 1;
     }
     return true;
