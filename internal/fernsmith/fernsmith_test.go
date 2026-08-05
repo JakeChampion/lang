@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/fernsmith"
@@ -759,4 +760,116 @@ func TestGenBytesExhaustionShrinksProgram(t *testing.T) {
 	if len(empty) > len(short) {
 		t.Errorf("empty corpus produced longer program: %d > %d", len(empty), len(short))
 	}
+}
+
+// TestGenBytesShrinkIsMonotonicAndValid is the minimisation contract
+// stated as a property rather than sampled at three points, and it is the
+// gate on growing this generator (#6073).
+//
+// The contract (fernsmith.go's doc, and what makes the fuzzer's shrinker
+// work) is that chopping bytes off a corpus collapses the program
+// smoothly. TestGenBytesExhaustionShrinksProgram checks that at 256, 8
+// and 0 bytes on a single seed, and checks only source LENGTH. Two things
+// it cannot see:
+//
+//   - a non-monotonic step anywhere between those points, which would let
+//     the shrinker walk uphill instead of converging
+//   - a truncation that yields an INVALID program, which would make the
+//     shrinker hand back a repro that does not compile, and would break
+//     the always-type-checks invariant that lets the fuzz oracle treat
+//     any checker error as a real bug
+//
+// Both are exactly what closures, `match` and nested control flow
+// threaten: truncating mid-construct is where "different but still valid"
+// and "smaller corpus, bigger program" become easy to hit. So this needs
+// to be in place BEFORE the generator grows — a contract that silently
+// lapses leaves every future finding arriving as an unreduced program
+// with no shrinker to attack it.
+//
+// # Why AST nodes and not source length
+//
+// Source length is the wrong measure, and measuring it produces a false
+// failure. On seed 0, truncating 116 -> 115 bytes swaps a parameter's
+// type from `u8` to `i32` — the exhaustion fallback correctly takes the
+// 0th option, which simply has a wider NAME. The program is structurally
+// simpler and one character longer:
+//
+//	116: function gen_f2(p0: i64[], p1: u8,  p2: i32): i32 { return p2; }
+//	115: function gen_f2(p0: i64[], p1: i32, p2: i32): i32 { return p1; }
+//
+// The generator never promised byte-monotone text, and contorting it to
+// order type names by width would be satisfying the metric rather than
+// the contract. What the shrinker needs is that the PROGRAM collapses —
+// fewer declarations, shallower nesting, less recursion — so the property
+// counts AST nodes. That is insensitive to leaf-name width and is what
+// "smoothly collapses" actually means.
+func TestGenBytesShrinkIsMonotonicAndValid(t *testing.T) {
+	// NOT YET GREEN, and deliberately not skipped silently. The contract
+	// this asserts is violated on main today: after fixing the three
+	// numericExpr sites below, seed 0 still grows by 2 AST nodes when
+	// truncated to 67 bytes. Some of the 31 g.flip call sites still spell
+	// `true` as the expanding branch; finding them needs a bisect per site.
+	//
+	// It is committed rather than withheld because it is #6073's stated
+	// gate on every generator-growth slice, and because the finding it
+	// produced changes that issue's shape: growing the generator into
+	// closures and `match` on top of an already-broken contract would
+	// compound a defect rather than introduce one. Gated so CI stays
+	// honest — a red gate is not a green light, and a t.Skip would read
+	// as "nothing to see here".
+	if os.Getenv("RUN_SHRINK_PROPERTY") != "1" {
+		t.Skip("known-failing gate (#6073): set RUN_SHRINK_PROPERTY=1 — see the comment above for what remains")
+	}
+	seeds := sweepN(t, 24)
+	for seed := uint64(0); seed < seeds; seed++ {
+		r := rand.New(rand.NewPCG(seed, 0x5eed))
+		corpus := randBytes(r, 192)
+
+		// prev is the program from the NEXT-larger corpus, so each step
+		// asserts against its immediate neighbour rather than a distant
+		// sample — a single uphill step is enough to break convergence.
+		prevSrc := fernsmith.GenBytes(corpus)
+		prevNodes, err := astNodeCount(t, prevSrc)
+		if err != nil {
+			t.Fatalf("seed=%d: full corpus does not type-check:\n%s\nerr: %v", seed, prevSrc, err)
+		}
+		for n := len(corpus) - 1; n >= 0; n-- {
+			src := fernsmith.GenBytes(corpus[:n])
+			nodes, err := astNodeCount(t, src)
+			if err != nil {
+				t.Fatalf("seed=%d: truncating to %d bytes produced a program that does not type-check — the shrinker would hand back a non-compiling repro\nsrc:\n%s\nerr: %v",
+					seed, n, src, err)
+			}
+			if nodes > prevNodes {
+				t.Fatalf("seed=%d: truncating to %d bytes GREW the program (%d AST nodes > %d) — the shrinker can walk uphill from here\nsmaller corpus produced:\n%s\nlarger corpus produced:\n%s",
+					seed, n, nodes, prevNodes, src, prevSrc)
+			}
+			prevSrc, prevNodes = src, nodes
+		}
+	}
+}
+
+// astNodeCount type-checks src and returns the size of its AST. It is the
+// structural size measure the shrink property is stated in; an error means
+// the generated program is not valid, which is itself a contract breach.
+func astNodeCount(t *testing.T, src string) (int, error) {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	prog, _, err := modload.Load(p)
+	if err != nil {
+		return 0, err
+	}
+	if err := constfold.Fold(prog, nil); err != nil {
+		return 0, err
+	}
+	if _, err := checker.Check(prog); err != nil {
+		return 0, err
+	}
+	n := 0
+	ast.WalkProgram(prog, func(ast.Node) bool { n++; return true })
+	return n, nil
 }

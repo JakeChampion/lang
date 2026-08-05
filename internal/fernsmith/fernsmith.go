@@ -1959,15 +1959,23 @@ func (g *Generator) leaf(b *strings.Builder, sc *scope, t gtype, depth int) {
 // For i32 it sometimes produces the HIGH half of an i64 instead —
 // see emitI64HighHalf — or a reinterpreted unsigned, see emitUnsignedAsI32.
 func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth int) {
-	if t == tI32 && g.flip(0.15) {
+	// Spelled `!flip(0.85)` rather than `flip(0.15)` so that `true` is the
+	// SHORTENING branch, per byteChooser.flip's exhaustion convention. The
+	// probability is identical; what changes is which way an exhausted
+	// corpus falls. Written the other way round, running out of bytes chose
+	// these compound expansions — `(((2147483648i64) >> 32i64) as i32)`
+	// where a plain literal would do — so truncating a corpus could GROW
+	// the program and the shrinker could walk uphill. Caught by
+	// TestGenBytesShrinkIsMonotonicAndValid.
+	if t == tI32 && !g.flip(0.85) {
 		g.emitI64HighHalf(b, sc, depth)
 		return
 	}
-	if t == tI32 && g.flip(0.15) {
+	if t == tI32 && !g.flip(0.85) {
 		g.emitUnsignedAsI32(b, sc, depth)
 		return
 	}
-	if t != tF32 && t != tF64 && depth < 2 && g.flip(0.15) {
+	if t != tF32 && t != tF64 && depth < 2 && !g.flip(0.85) {
 		g.emitCheckedFold(b, sc, t, depth)
 		return
 	}
