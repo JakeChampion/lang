@@ -56,14 +56,32 @@ inputs:
 runs:
   using: composite
   steps:
-    # Keyed on the runner image (ImageOS rolls every couple of weeks,
-    # which is the natural refresh signal — a cross toolchain pinned
-    # forever would drift from the image's libc) plus the package set.
+    # The runner image's identity, read at RUNTIME. `${{ env.ImageOS }}`
+    # interpolated straight into the cache key below resolves to the empty
+    # string inside a composite action — measured, the saved key came back as
+    # `apt-cross-v1-Linux-X64--gcctrue-…` — which would have pinned the cache
+    # forever and silently dropped the refresh this is here to provide. A
+    # shell step reading the environment does resolve it.
+    - name: Identify the runner image (cache key input)
+      id: image
+      shell: bash
+      run: |
+        set -uo pipefail
+        id="${ImageOS:-}${ImageVersion:+-$ImageVersion}"
+        if [ -z "$id" ]; then
+          id="$(. /etc/os-release && echo "${ID}${VERSION_ID}")"
+        fi
+        echo "id=$id" >> "$GITHUB_OUTPUT"
+        echo "runner image: $id"
+
+    # Keyed on the runner image plus the package set. The image rolls every
+    # couple of weeks, which is the refresh signal — a cross toolchain pinned
+    # forever would drift from the image's libc.
     - name: Restore cached cross-toolchain .debs
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/apt-cross-cache
-        key: apt-cross-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-gcc${{ inputs.cross-gcc }}-${{ inputs.qemu-package }}
+        key: apt-cross-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.id }}-gcc${{ inputs.cross-gcc }}-${{ inputs.qemu-package }}
 
     - name: aarch64 cross toolchain + ${{ inputs.qemu-package }}
       shell: bash

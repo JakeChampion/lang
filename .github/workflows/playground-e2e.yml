@@ -80,7 +80,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ hashFiles('web/test/playwright/package.json') }}
+          key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('web/test/playwright/package.json') }}
 
       - name: Install Playwright deps
         run: |
