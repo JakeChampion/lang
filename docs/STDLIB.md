@@ -115,8 +115,10 @@ Receiver methods on i32 / byte values.
 ### `std/float`
 
 - **String:** `(n: f32) to_string()`, `(n: f64) to_string()` —
-  up to 7 / 15 fractional digits, trailing zeros trimmed, NaN
-  / ±Inf handled. `(n) to_string_prec(prec)` — fixed `prec`
+  shortest round-trip decimal (Dragonbox): the fewest digits
+  that parse back to exactly the same float, correctly rounded,
+  matching Go's `strconv` shortest digit for digit. NaN / ±Inf
+  handled. `(n) to_string_prec(prec)` — fixed `prec`
   fractional digits (no trimming), rounded half away from zero.
 - **Math primitives** (on both f32 and f64; f32 wrappers
   promote to f64, apply, demote): `abs`, `floor`, `ceil`,

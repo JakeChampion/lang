@@ -134,37 +134,75 @@ The sections above cover float *arithmetic and conversion*. Float
 *formatting* (`to_string`) and *parsing* (`parse_float`) have their own
 contract, pinned here.
 
-### `to_string` is deterministic and cross-backend-identical, but not bit-exact
+### `to_string` is shortest-round-trip, correctly rounded, and cross-backend-identical
 
 `(f32).to_string()` and `(f64).to_string()` route through one shared
-Fern implementation — `__float_to_string` in `std/float.fern` — which is
-compiled per target from the same source. It immediately widens an f32 to
-f64 (`n as f64`) and does all of its work in the f64 domain, sidestepping
-the trapping/non-portable `f64 → i64` cast for large magnitudes by
-formatting the integer digits in the float domain above 2^63. As a result
-its output is **byte-for-byte identical across interp / x86_64 / arm64 /
-wasm** for every value. This is the contract, and it is enforced by the
+Fern implementation — `__float_shortest` / `__float_shortest_f32` in
+`std/float.fern` — which is compiled per target from the same source. It
+does all of its work in integer arithmetic over the IEEE-754 fields
+(`f64_bits` / `f32_bits`), never in the float domain, so its output is
+**byte-for-byte identical across interp / x86_64 / arm64 / wasm** for
+every value. This is the contract, and it is enforced by the
 `float_to_string_parity` fixture (`internal/e2e/testdata/cases/`), which
 runs one program on all four backends under exact-stdout comparison —
 f32's only cross-backend formatting coverage, since it is excluded from
 the differential oracle (below).
 
-What the formatter deliberately does **not** guarantee:
+The algorithm is **Dragonbox** (Junekey Jeon's refinement of Schubfach).
+For every finite non-zero float it produces the **unique shortest decimal
+that parses back to exactly that float**, correctly rounded
+(round-to-nearest-even), with no fallback path. That is the same contract
+Go's `strconv` shortest formatting has, and the two agree digit for digit:
+`(3.14f32).to_string()` is `"3.14"`, `(0.1 + 0.2).to_string()` is
+`"0.30000000000000004"`.
 
-- **Not shortest-round-trip (not Ryu/Grisu).** It renders a fixed number
-  of fractional digits — **7 for f32, 15 for f64** — then trims trailing
-  zeros. So an f32 whose nearest value has a long decimal tail shows that
-  tail rather than the shortest string that round-trips: `3.14f32`
-  formats as `"3.1400001"`, not `"3.14"`. This is intentional
-  ("close-enough-for-handler output", matching this doc's overall
-  under-specify posture); a bit-exact minimal-digits formatter is
-  explicitly out of scope, the same way the NaN/`-0.0` edges are.
+Notation follows Go's `%v` / `strconv` `'g'`: scientific when the decimal
+exponent of the leading digit is `< -4` or `>= 21`, fixed-point otherwise.
+
+Guaranteed:
+
+- **Shortest.** No decimal with fewer significant digits parses back to
+  the same float.
+- **Round-trip.** `parse` ∘ `to_string` is the identity for every finite
+  value — given a *correctly rounded* parser. Fern's own `parse_float` is
+  not one (see below), so the round-trip guarantee is against a correct
+  parser such as Go's `strconv.ParseFloat`, not against `parse_float`.
+- **Correctly rounded**, including the asymmetric interval at a power of
+  two, where the gap below the value is half the gap above it. That case
+  is the one the previous exact-bignum formatter got wrong — it tested
+  candidates against the symmetric interval everywhere, so `2^-1019`
+  formatted as `1.780059086805761e-307`, one ULP below the value it was
+  formatting. Pinned by `TestFloatShortestPowersOfTwoF64` / `...F32`
+  (`internal/e2e/float_dragonbox_test.go`).
+
+Still deliberately unspecified:
+
 - **`Inf` / `NaN` spelling** is `"Inf"` / `"-Inf"` / `"NaN"`. Inf is
   detected via `n * 2.0 == n` (no `inf` literal), after sign extraction
   and a NaN pre-check.
 - **`-0.0` prints as `"0"`** — the sign of zero is one of the
   deliberately non-portable edges, so it is not preserved through
   formatting.
+
+#### Cost
+
+Dragonbox is a table lookup plus one wide multiply per call, so it is
+constant-work and allocates nothing beyond the result string. The tables
+are the cost: 619 128-bit entries for f64 and 78 64-bit entries for f32,
+~14 KB of static rodata, generated and verified against the upstream
+dragonbox table by `cmd/dragonboxgen` (`go run ./cmd/dragonboxgen
+internal/stdlib/std/float.fern` regenerates them). They ship as Fern
+*string* literals rather than array literals, because a string literal is
+rodata while a Fern array literal is executable code that would rebuild
+the table on every call — the same encoding `std/unicode.fern` uses.
+
+That replaced an exact-bignum digit generator which multiplied a growing
+bignum once per binary exponent — 1074 limb passes for a subnormal — and
+then ran up to 34 bignum comparisons to choose the digit count, allocating
+an array at every step. Measured on x86-64, per conversion: **~215 µs →
+~1.05 µs** on ordinary magnitudes (~205x), and ~14.5 ms → ~1.1 µs on a
+subnormal-heavy mix. Allocation for 200 conversions, by
+`__heap_bump_bytes()`: **66,704 → 9,840 bytes**.
 
 `to_string_prec(prec)` is the fixed-width sibling: exactly `prec`
 fractional digits, no trailing-zero trim, rounded half-away-from-zero.

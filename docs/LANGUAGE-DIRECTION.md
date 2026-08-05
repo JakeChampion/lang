@@ -1182,16 +1182,19 @@ tests.
     where the buffer's `len` slot doubles as the prefix.
     `json_parse` is the inverse direction (see below).
   - **`f32.to_string()` / `f64.to_string()` shipped.** Decimal
-    text formatting on the float types. Up to 7 fractional
-    digits for f32 / 15 for f64 (matching IEEE 754 single /
-    double precision); trailing zeros are trimmed and the
-    decimal point is dropped if the fraction is zero.
-    Special values get canonical names: `NaN`, `Inf`, `-Inf`.
-    NOT bit-exact Steele/White / Ryu — close-enough-for-handler
-    output, same trade-off as `parse_float`. Round-trip
-    `parse_float(x.to_string())` recovers `x` to within a small
-    tolerance for typical values; pathological cases lose
-    trailing precision.
+    text formatting on the float types. Trailing zeros are
+    trimmed and the decimal point is dropped if the fraction is
+    zero. Special values get canonical names: `NaN`, `Inf`,
+    `-Inf`. Originally a fixed-digit renderer (7 fractional
+    digits for f32 / 15 for f64), explicitly NOT bit-exact
+    Steele/White / Ryu; it is now **shortest round-trip via
+    Dragonbox** — the fewest digits that parse back to exactly
+    the same float, correctly rounded, agreeing with Go's
+    `strconv` digit for digit. `parse_float` is the side that
+    still recovers only to within a tolerance (it is not
+    correctly rounded), so a `parse_float(x.to_string())`
+    round-trip still loses trailing precision on pathological
+    inputs — see docs/FLOAT-SEMANTICS.md.
   - **`json_parse(s)` shipped.** RFC 8259 grammar
     recognizer; returns `Option[JsonValue]` (None on any
     malformed input). Recursive-descent built around a
