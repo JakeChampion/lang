@@ -3697,14 +3697,14 @@ pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
         // is `f64[]`, so `t.N` is an f64[] (drives a `var xs = t.N` rebind). #3353.
         parser.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) {
-                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "f64[]";
+                return is_float_array_type_name(expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s));
             }
             // A NAMED struct field declared f64[] — the f64 twin of the i64[]
             // case in expr_is_i64arr, and broken the same way for the same
             // reason: only the tuple form was handled. #6093.
             var foty: string = expr_struct_type(fa.obj, s);
             if (foty == "") { return false; }
-            return decl_field_type(s.structs, foty, fa.field) == "f64[]";
+            return is_float_array_type_name(decl_field_type(s.structs, foty, fa.field));
         },
         _ => { return false; }
     }
@@ -5527,11 +5527,11 @@ pub function arr_index_is_f64(arr: parser.Expr, s: LowerState): boolean {
         // (f64) width — the tuple-element sibling of the struct-field case. #3353.
         parser.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) {
-                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "f64[]";
+                return is_float_array_type_name(expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s));
             }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
-            return decl_field_type(s.structs, oty, fa.field) == "f64[]";
+            return is_float_array_type_name(decl_field_type(s.structs, oty, fa.field));
         },
         // Direct index of a slice expression `a[lo:hi][i]`: an f64[] slice is
         // itself an f64[], so recurse into the sliced array — mirroring
@@ -9910,7 +9910,7 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                                     // skips this gate entirely). Bails (fav_ok stays
                                     // false) for any call the predicates don't recognise.
                                     if (!fav_ok) {
-                                        if (cfft == "f64[]") {
+                                        if (is_float_array_type_name(cfft)) {
                                             if (expr_is_f64arr(fav, s)) { fav_ok = true; }
                                         } else if (cfft == "i64[]") {
                                             if (expr_is_i64arr(fav, s)) { fav_ok = true; }
@@ -14736,7 +14736,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         var vfb: LowerState = vfs.add_local(v.name);
         var vfslot: i32 = vfb.slot_of(v.name);
         vfb = vfb.mark_arr(vfslot, true);
-        if (vfft == "f64[]") { vfb = vfb.mark_f64arr(vfslot, true); }
+        if (is_float_array_type_name(vfft)) { vfb = vfb.mark_f64arr(vfslot, true); }
         else if (vfft == "i64[]") { vfb = vfb.mark_i64arr(vfslot, true); }
         return vfb.emit(ir.op_store_local(vfslot));
     }
@@ -15285,7 +15285,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // later `arr[i]` rides the width-marked arr_get(64) / arr_get_i64
             // (f64/i64) or the string read (string[]) — the read-side twin
             // of the f64[]/i64[]/string[] admission in tuple_elems_lowerable.
-            else if (dtag == "f64[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_f64arr(dkslot, true); }
+            else if (is_float_array_type_name(dtag)) { dt = dt.mark_arr(dkslot, true); dt = dt.mark_f64arr(dkslot, true); }
             else if (dtag == "i64[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_i64arr(dkslot, true); }
             else if (dtag == "string[]") { dt = dt.mark_arr(dkslot, true); dt = dt.mark_strarr(dkslot, true); }
             // A struct-array (X[]) or enum-array (E[]) element binds the slot
@@ -17551,7 +17551,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // (clone) / `xs.len()` resolve. The 8-byte-element and
                         // string/struct/enum-element arrays all ride one slot.
                         var ptag_is_array: boolean = ptag == "i32[]" || ptag == "boolean[]" || ptag == "u32[]" || is_subword_array_type(ptag)
-                            || ptag == "f64[]" || ptag == "i64[]" || ptag == "string[]"
+                            || is_float_array_type_name(ptag) || ptag == "i64[]" || ptag == "string[]"
                             || is_struct_array_field_type(ms.structs, ptag) || is_enum_array_field_type(ms.structs, ptag);
                         // A `dyn Trait` error payload (`Err(e)` where e: dyn Error):
                         // stored by pointer at offset 8 (same as a struct), read via
@@ -17648,7 +17648,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             ms = ms.mark_arr(pbslot, true);
                             if (ptag == "u32[]") { ms = ms.mark_u32(pbslot, true); }
                         }
-                        else if (ptag == "f64[]") { ms = ms.mark_arr(pbslot, true); ms = ms.mark_f64arr(pbslot, true); }
+                        else if (is_float_array_type_name(ptag)) { ms = ms.mark_arr(pbslot, true); ms = ms.mark_f64arr(pbslot, true); }
                         else if (ptag == "i64[]") { ms = ms.mark_arr(pbslot, true); ms = ms.mark_i64arr(pbslot, true); }
                         else if (ptag == "string[]") { ms = ms.mark_arr(pbslot, true); ms = ms.mark_strarr(pbslot, true); }
                         else if (is_struct_array_field_type(ms.structs, ptag) || is_enum_array_field_type(ms.structs, ptag)) {
@@ -36572,7 +36572,7 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
             // `t.N[i]` rides the width-marked arr_get(64) / arr_get_i64 / str read.
             // (u64[] stays deferred: it needs the "u64[]" field-tag plumbing, like
             // the u64 tuple scalar, a separate increment.)
-            if (!ok_elem && (t == "f64[]" || t == "i64[]" || t == "string[]")) { ok_elem = true; }
+            if (!ok_elem && (is_float_array_type_name(t) || t == "i64[]" || t == "string[]")) { ok_elem = true; }
             // A struct-array (X[]) or enum-array (E[]) element is a heap pointer in
             // one tuple slot, like any other array element — leak mode: the buffer
             // AND its struct/enum-box elements leak with the (leak-only) tuple, so
