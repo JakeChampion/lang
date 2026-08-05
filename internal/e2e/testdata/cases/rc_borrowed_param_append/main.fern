@@ -1,0 +1,52 @@
+// #6008: `var p = xs.append(v)` on a BORROWED array PARAM used the consuming
+// arr_push, which grows the receiver IN PLACE and hands the SAME pointer back
+// when the buffer is uniquely referenced. `p` then aliased the CALLER's buffer
+// while being marked a fresh rc=1 move, so both frames released it — a double
+// free that pushes a LIVE block onto the freelist for the next allocation of
+// that size class to hand out on top of live data.
+//
+// std/regex's `__rx_emit` is this shape recursing: `var po = prog.append(...)`
+// per node aliased one RInst[] across three frames, the third dec put the live
+// block on the freelist, and `__rx_fill`'s `seen` array landed on an ISplit's
+// RSplit payload — so the Pike VM read a garbage jump target and trapped
+// (`prog[-1]`). Four capture fixtures trapped on the self-host wasm leg;
+// regex_captures_assert returned 47 instead of 255.
+//
+// irlower now rewrites this BIND to `p = xs[0 : xs.len()].append(v)`, so the
+// bound slot really is the fresh rc=1 array it was already marked as. Only the
+// bind moves: `return xs.append(v)` and `f(xs.append(v))` keep the in-place
+// grow, because there the caller reassigns the slot it lent out. That fast path
+// is #4873's and is not optional — cloning in return position took a 20k-append
+// accumulator chain from 3 ms to 11.7 s.
+//
+// The value alone does NOT catch this: on x86-64 the freed block is not
+// recycled destructively, so the answer stays right while the refcount is
+// wrong. __rc_underflow_count() is the detector that fires on every backend —
+// it counts decs that saw rc <= 0, which is exactly the third release here.
+// `interp` has no such counter, hence the backends file.
+
+function inner(xs: i32[]): i32[] {
+    var p: i32[] = xs.append(3);
+    p = p.append(4);
+    p = p.append(5);
+    return p;
+}
+
+function outer(xs: i32[]): i32[] {
+    var q: i32[] = xs.append(2);
+    q = inner(q);
+    return q;
+}
+
+function main(): i32 {
+    var a: i32[] = [];
+    a = a.append(1);
+    var r: i32[] = outer(a);
+    // Churn so a released block is actually recycled rather than merely dangling.
+    var junk: i32[] = [];
+    var i: i32 = 0;
+    while (i < 16) { junk = junk.append(i); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    // `a` must be untouched (len 1): the in-place grow would have bumped it.
+    return r.len() * 10 + a.len();
+}

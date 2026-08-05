@@ -50,7 +50,41 @@
 # "is an array", so a field READ fell through to the primitive path. Pinned by
 # `json_array_field`.
 #
-# Five of the original twelve remain. All were found by the leg's first run
+# The four `regex_*` capture rows were here and are now FIXED (#6008). Their
+# header called them "plausibly one root cause" in "how std/regex's capture
+# handling lowers"; that guess was half right. It WAS one cause, but nothing
+# in it was about captures — the trigger was `var p = xs.append(v)` on a
+# BORROWED array PARAM.
+#
+# `__fern_arr_push` grows the receiver IN PLACE and hands the SAME pointer back
+# when the buffer is uniquely referenced with spare capacity. On a borrowed
+# param that buffer belongs to the CALLER, so the binding aliased it while
+# irlower marked the slot a fresh rc=1 move — and both frames released it on
+# supersede. `__rx_emit` recurses, so one `RInst[]` was aliased across three
+# frames; the third release pushed a LIVE block onto the freelist, and
+# `__rx_fill`'s `seen` array was handed that block on top of an `ISplit`'s
+# `RSplit` payload. The Pike VM then read a garbage jump target and branched to
+# `prog[-1]`, which is the `unreachable` these four hit. A capturing group was
+# required only because `ISave`'s `caps.with(slot, ti)` is the sole allocator in
+# the epsilon closure — i.e. the only thing that RECYCLED the freed block. That
+# is why `(?:b)?` and `b?` looked fine: same double free, nothing to make it
+# visible.
+#
+# irlower now rewrites that BIND to `p = xs[0 : xs.len()].append(v)` so the
+# bound slot is the fresh rc=1 array it was already marked as. Only the bind
+# changed: `return xs.append(v)` still grows in place, because there the caller
+# reassigns the slot it lent out. That distinction is load-bearing, not
+# tidiness — routing return position to the clone form as well took a 20k-append
+# accumulator chain from 3 ms to 11.7 s, which is the #4873 fast path.
+#
+# The x86-64 leg had reported these same fixtures CLEAN, which is why the bug
+# read as wasm-specific for so long. It was not: the double free happens on
+# every backend, and `__rc_underflow_count()` shows it there too. x86-64 simply
+# does not recycle the freed block onto anything that matters. The fixture
+# `rc_borrowed_param_append` pins the refcount directly rather than the symptom,
+# so it fails on x86-64 and arm64 as well.
+#
+# One of the original twelve remains. All were found by the leg's first run
 # over the existing corpus, on fixtures that had been green for months because
 # all four of TestFernFixtures' backends are the native compiler. Each has been reproduced by hand with a
 # native self-host CLI (`make selfhost-cli`) before being written down; none is
@@ -65,19 +99,23 @@
 generic_method_typeparams #6007 IR-ineligible on self-host wasm; native compiles it
 
 # --- traps at runtime ----------------------------------------------------
-# `wasm trap: unreachable instruction executed`. Detected regardless of the
-# expected exit value, which is why these survived the exit>=126 cut. All four
-# are regex capture-group shapes, so plausibly one root cause.
-regex_captures #6008 traps (unreachable); native returns 255
-regex_captures_all #6008 traps (unreachable); native returns 255
-regex_named_groups #6008 traps (unreachable); native returns 255
-regex_replace_groups #6008 traps (unreachable); native returns 255
+# None. The four #6008 rows that lived here are fixed; see the note above.
 
-# --- suspicious but UNMEASURABLE by this oracle --------------------------
-# Not listed as divergences because the leg cannot prove it: their expected exit
-# is >= 126, so WASI reports 1 and the real answer is invisible. They neither
-# trap nor get rejected, which is all that can honestly be asserted. Both
-# returned a clean value that looks wrong (regex_captures_assert 47, regex_groups
-# 111) and both deserve a look through a stdout-based oracle:
-#   regex_captures_assert  (expected 255)  — see #6008
-#   regex_groups           (expected 127)  — see #6008
+# --- the exit>=126 blind spot, and how to see through it -----------------
+# WASI refuses any status outside [0..126), so a fixture whose expected exit is
+# >= 126 reports 1 here no matter what it computed. `regex_captures_assert`
+# (expected 255) and `regex_groups` (expected 127) sat in this file's tail as
+# "suspicious but unmeasurable", with a note asking for a stdout-based oracle.
+# One was not needed: the SELF-HOST X86-64 leg runs the same irlower over the
+# same corpus and carries main's return over the full 0..255. Reading a
+# suspicious wasm fixture there costs nothing and answers the question outright.
+#
+# Doing that settled both. `regex_captures_assert` really was broken — it
+# returned 47 for 255 — and it was the same #6008 double free, not a separate
+# defect; it now returns 255 on x86-64 and stops short of the ceiling on wasm.
+# `regex_groups` measured 127 on x86-64 both before and after the fix, so its
+# recorded "111" was never a divergence in the first place. Neither is listed.
+#
+# So: when this leg cannot see a value, ask the x86-64 leg before writing down a
+# symptom. Six regex fixtures were carried here on measurements the sibling leg
+# could have priced exactly.

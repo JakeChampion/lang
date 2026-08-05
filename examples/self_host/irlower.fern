@@ -8964,7 +8964,14 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     // the receiver's element kind, mirroring the reassign path.
     // RC: arr_push consumes the receiver array and yields the grown
     // one; StmtReturn excludes a moved receiver ident from its exit
-    // dec-sweep so the consumed buffer isn't also freed.
+    // dec-sweep so the consumed buffer isn't also freed. In RETURN and
+    // ARGUMENT position that is sound even for a borrowed param — the
+    // caller's `a = grow(a, x)` reassigns the slot it lent out, so the
+    // in-place grow lands exactly where the caller expects it, and this
+    // is the fast path #4873 deliberately preserved to keep accumulator
+    // chains O(n) (cloning here costs 3 ms -> 11.7 s over 20k appends).
+    // It is NOT sound when the result is BOUND to a new slot: see
+    // lower_stmt_var's borrowed-param rewrite (#6008).
     // `s.xs.append(v)` on a scalar-element array struct FIELD read:
     // the field is a borrowed, possibly-shared array (it does NOT
     // match expr_is_arr_src — a bare field access isn't an array
@@ -14545,6 +14552,13 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // alias-inc and broke `__rc`. Kept out of line so this huge arm
     // doesn't grow (oversized functions miscompile — cf. #2720).
     if (ascription_target(v.init) != "") { return lower_stmt(ascription_rebind(v), s); }
+    // `var p = <borrowed-param>.append(v)` — binding the consume-form append to
+    // a NEW slot aliases the caller's buffer into a slot this frame will
+    // release. Rewrite the receiver to a full slice so the bound array is
+    // genuinely fresh (#6008); see binds_borrowed_param_append.
+    if (binds_borrowed_param_append(v.init, s)) {
+        return lower_stmt_var(parser.StmtVar { ...v, init: borrowed_param_append_rebind(v.init) }, s);
+    }
     // Record an Option/Result return for an ANNOTATED fn-typed local bound to a
     // named opt-returning fn (`var f: () => Option[i32] = g`), so a later
     // `match (f())` names its scrutinee type instead of bailing to the AST
@@ -17872,6 +17886,90 @@ function lower_map_clone_insert(target: string, recv: parser.Expr, key: parser.E
     // unaliased so its in-place insert is sound, and the fresh clone binds to m).
     var finalins: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: [key, val], line: 0, col: 0, type_argc: 0, ty: "" };
     return lower_stmt(parser.StmtAssign { target: target, value: finalins, line: 0, col: 0, target_line: 0, target_col: 0 }, st);
+}
+
+// binds_borrowed_param_append reports whether `init` is `<p>.append(v)` for a
+// bare ident `p` bound to a BORROWED array PARAMETER — one the caller still
+// owns (slots 0..n_params-1, minus the `own` consuming ones). This is the one
+// position where the consume-form append is unsound, and lower_stmt_var
+// rewrites it (see borrowed_param_append_rebind).
+//
+// `__fern_arr_push` grows the receiver IN PLACE and hands the SAME pointer back
+// when the buffer is uniquely referenced (rc == 1) with spare capacity. On a
+// borrowed param that pointer is the CALLER's buffer. Returning it is fine —
+// the caller's `a = grow(a, x)` reassigns the very slot it lent out. BINDING it
+// to a fresh slot is not: irlower marks that slot a fresh rc=1 move, so two
+// frames believe they own one buffer and both release it on supersede. The
+// second release pushes a LIVE block onto the freelist, and the next allocation
+// in that size class is handed it on top of live data.
+//
+// #6008 is that double free: `std/regex`'s `__rx_emit` does `var po =
+// prog.append(...)` per node and recurses, so one `RInst[]` was aliased across
+// three frames; the freed block came back as `__rx_fill`'s `seen` array sitting
+// on an `ISplit`'s `RSplit` payload, and the Pike VM branched to `prog[-1]`.
+// It also breaks value semantics outright — the in-place grow bumps the
+// caller's length behind its back (#4873's `before * 10 + after` shape).
+//
+// An `own` param is genuinely transferred, so it keeps the cheap in-place move.
+function binds_borrowed_param_append(init: parser.Expr, s: LowerState): boolean {
+    match (init) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 1) { return false; }
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field != "append") { return false; }
+                    match (fa.obj) {
+                        parser.ExprIdent(id) => {
+                            var sl: i32 = s.slot_of(id.name);
+                            if (sl < 0 || sl >= s.n_params) { return false; }
+                            if (s.is_own_param(id.name)) { return false; }
+                            return s.is_arr_slot(sl);
+                        },
+                        _ => { return false; }
+                    }
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
+// borrowed_param_append_rebind rewrites `p.append(v)` to `p[0 : p.len()]
+// .append(v)` — the receiver becomes an explicit FULL SLICE, which every
+// backend lowers as a fresh `__fern_arr_box` copy with rc=1. The append then
+// grows that sole-owned clone in place, so the bound slot really is the fresh
+// rc=1 array irlower already marks it as, and the caller's buffer is untouched.
+//
+// Expressed as an AST rewrite rather than a new lowering so the slot-marking
+// path is reached unchanged: `expr_is_arr_src` recurses through ExprSlice, so
+// the `var b = a.append(v)` classifier arm still sees an array source and marks
+// the element flags exactly as before. The receiver is a bare ident, so
+// duplicating it is side-effect-free — and the rewritten receiver is no longer
+// an ident, so this cannot re-fire on itself.
+function borrowed_param_append_rebind(init: parser.Expr): parser.Expr {
+    match (init) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    var whole: parser.Expr = parser.ExprSlice {
+                        array: fa.obj,
+                        start: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: fa.line, col: fa.col },
+                        end: parser.ExprCall {
+                            callee: parser.ExprFieldAccess { obj: fa.obj, field: "len", line: fa.line, col: fa.col, ty: "" },
+                            args: [], line: fa.line, col: fa.col, type_argc: 0, ty: "",
+                        },
+                    };
+                    return parser.ExprCall {
+                        callee: parser.ExprFieldAccess { obj: whole, field: "append", line: fa.line, col: fa.col, ty: fa.ty },
+                        args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty,
+                    };
+                },
+                _ => { return init; }
+            }
+        },
+        _ => { return init; }
+    }
 }
 
 // lower_arr_append_value lowers `obj.append(val)` as a VALUE-PRODUCING
