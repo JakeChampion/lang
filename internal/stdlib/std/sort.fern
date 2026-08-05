@@ -172,51 +172,156 @@ pub fip function sort_i32_inplace_desc(own arr: i32[]): i32[] {
 // ANY element type via the comparator, without an `Ord` bound: sort by a
 // projected key, reverse order, or any custom relation.
 //
-// Stable bottom-up (iterative) merge sort, O(n log n) comparisons. Stability:
-// on a tie the left run's element is emitted first (the merge only takes
-// from the right run when it compares *strictly* less), so equal keys keep
-// their input order. Each merge pass materializes `dst` as a FRESH copy of
-// `src` (the `.append` loop) — REQUIRED for correctness on the self-host AST
-// emitter path (see the file-header AST-safety contract; do NOT alias `dst`
-// to `src`). The input is not mutated. (The i32 pass arithmetic assumes
-// n <= 2^30 — beyond that `lo + width + width` would wrap. Unreachable today:
-// no target's heap arena can hold such an array plus its merge scratch.)
+// STABLE and ADAPTIVE: a natural-run merge sort, the comparator-closure
+// sibling of `core/cmp`'s `sort`. O(n) on already-sorted or reverse-sorted
+// input, O(n log n) worst case.
+//
+//   n < 2   -> the input, untouched
+//   n <= 32 -> one insertion sort, no merging and no per-pass copy
+//   larger  -> detect natural runs, then merge adjacent runs in balanced rounds
+//
+// The adaptivity is what changed. This was a FIXED bottom-up merge sort that
+// materialised a fresh full copy of the array on every one of its ceil(log2 n)
+// passes, and did so regardless of the input — an already-sorted array cost
+// exactly as much as a random one, which is the common case in practice for a
+// `sort_by` over rows that arrive mostly ordered. Now a sorted (or
+// reverse-sorted) input is a SINGLE run: the merge loop never executes and the
+// call is O(n) with one copy.
+//
+// Stability is preserved throughout: a descending run is detected with a
+// STRICT compare (equal neighbours end the run rather than being swapped past
+// each other) before being reversed, and a merge takes from the right run only
+// when the left compares strictly greater.
+//
+// Merging appends into a fresh array rather than writing through `.with`, so no
+// merge ever reads a slot it has already overwritten. That retires the
+// fresh-copy-per-pass rule the old body carried: it was written for the
+// self-host AST emitter, which has since been deleted (#3457/#5972), and
+// append-only output cannot alias its input on any backend regardless.
 pub function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] {
     var n: i32 = arr.len();
     if (n < 2) { return arr; }
-    var src: T[] = arr;
-    var width: i32 = 1;
-    while (width < n) {
-        var dst: T[] = [];
-        var c: i32 = 0;
-        while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
-        while (lo < n) {
-            var mid: i32 = lo + width;
-            if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
-            if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
-            while (i < mid && j < hi) {
-                if (cmp(src[j], src[i]) < 0) {
-                    dst = dst.with(k, src[j]);
-                    j = j + 1;
-                } else {
-                    dst = dst.with(k, src[i]);
-                    i = i + 1;
+
+    // Own a copy: the descending-run reversal writes in place.
+    var a: T[] = [];
+    var c: i32 = 0;
+    while (c < n) { a = a.append(arr[c]); c = c + 1; }
+
+    if (n <= 32) { return __sort_insertion_by(a, 0, n, cmp); }
+
+    // Pass 1 — natural runs. `bounds` holds each run's start, terminated by n.
+    var bounds: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        bounds = bounds.append(i);
+        var e: i32 = i + 1;
+        if (e < n) {
+            if (cmp(a[i], a[e]) > 0) {
+                // Strictly descending: extend, then reverse into order.
+                var falling: boolean = true;
+                while (falling) {
+                    e = e + 1;
+                    falling = false;
+                    if (e < n) {
+                        if (cmp(a[e - 1], a[e]) > 0) { falling = true; }
+                    }
                 }
-                k = k + 1;
+                var lo: i32 = i;
+                var hi: i32 = e - 1;
+                while (lo < hi) {
+                    var t: T = a[lo];
+                    a = a.with(lo, a[hi]);
+                    a = a.with(hi, t);
+                    lo = lo + 1;
+                    hi = hi - 1;
+                }
+            } else {
+                var rising: boolean = true;
+                while (rising) {
+                    e = e + 1;
+                    rising = false;
+                    if (e < n) {
+                        if (cmp(a[e - 1], a[e]) <= 0) { rising = true; }
+                    }
+                }
             }
-            while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; }
-            while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; }
-            lo = lo + width + width;
         }
-        src = dst;
-        width = width + width;
+        i = e;
     }
-    return src;
+    bounds = bounds.append(n);
+
+    // Pass 2 — merge adjacent runs in rounds until one remains. Each round
+    // rebuilds the array by appending merged segments, so the output never
+    // aliases the input it is reading.
+    while (bounds.len() > 2) {
+        var out: T[] = [];
+        var next: i32[] = [];
+        var r: i32 = 0;
+        while (r + 1 < bounds.len()) {
+            var mlo: i32 = bounds[r];
+            next = next.append(mlo);
+            if (r + 2 < bounds.len()) {
+                var mmid: i32 = bounds[r + 1];
+                var mhi: i32 = bounds[r + 2];
+                var p: i32 = mlo;
+                var q: i32 = mmid;
+                while (p < mmid && q < mhi) {
+                    if (cmp(a[p], a[q]) > 0) {
+                        out = out.append(a[q]);
+                        q = q + 1;
+                    } else {
+                        out = out.append(a[p]);
+                        p = p + 1;
+                    }
+                }
+                while (p < mmid) { out = out.append(a[p]); p = p + 1; }
+                while (q < mhi) { out = out.append(a[q]); q = q + 1; }
+                r = r + 2;
+            } else {
+                // Odd run out: carry it forward untouched.
+                var mend: i32 = bounds[r + 1];
+                var mk: i32 = mlo;
+                while (mk < mend) { out = out.append(a[mk]); mk = mk + 1; }
+                r = r + 1;
+            }
+        }
+        next = next.append(n);
+        a = out;
+        bounds = next;
+    }
+    return a;
+}
+
+// `__sort_insertion_by[T](a, lo, hi, cmp)` — insertion-sort `a[lo:hi]` in
+// place under the comparator, returning the array.
+//
+// The base case for `sort_by`. Insertion sort wins decisively on short spans:
+// no allocation, sequential access, and a nearly-sorted span costs close to a
+// single pass — which is why every serious merge sort dispatches to one below a
+// size threshold rather than merging all the way down.
+//
+// The shift loop stops on a NON-positive compare, so equal elements never move
+// past each other: insertion is stable, and therefore so is `sort_by`.
+function __sort_insertion_by[T](a: T[], lo: i32, hi: i32, cmp: (T, T) => i32): T[] {
+    var out: T[] = a;
+    var i: i32 = lo + 1;
+    while (i < hi) {
+        var v: T = out[i];
+        var j: i32 = i - 1;
+        var moving: boolean = j >= lo;
+        while (moving) {
+            if (cmp(out[j], v) > 0) {
+                out = out.with(j + 1, out[j]);
+                j = j - 1;
+                moving = j >= lo;
+            } else {
+                moving = false;
+            }
+        }
+        out = out.with(j + 1, v);
+        i = i + 1;
+    }
+    return out;
 }
 
 // `is_sorted_by[T](arr, cmp)` — true iff `arr` is in non-decreasing order

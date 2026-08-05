@@ -161,12 +161,19 @@ function main(): i32 {
     if (toks.len() != 2) { return 12; }
     if (toks[0] != 5 || toks[1] != 10) { return 13; }
 
-    if (flaky_pattern(1) != "SSSFFSSFSF") { return 14; }
+    // Golden sequences, re-recorded when sim's generator moved from
+    // Park-Miller + biased modulo to std/rand's PCG32 + Lemire rejection
+    // (#6193). Equal seeds still replay bit-identically -- that contract is
+    // unchanged and is what checks 15/16 guard -- but WHICH sequence a given
+    // seed produces is different, by design. Re-record, don't relax: a golden
+    // string is how a silent change to the draw order gets caught.
+    if (flaky_pattern(1) != "FFFFFSFFFS") { return 14; }
     if (flaky_pattern(9) != flaky_pattern(9)) { return 15; }
     if (flaky_pattern(1) == flaky_pattern(2)) { return 16; }
 
     if (sim.sweep_seeds(20, gather_shape_ok) != 0) { return 17; }
-    if (sim.sweep_seeds(20, flaky_first_call_ok) != 2) { return 18; }
+    // Also re-recorded: seed 1 now takes the Ready branch on its first draw.
+    if (sim.sweep_seeds(20, flaky_first_call_ok) != 1) { return 18; }
     return 42;
 }
 `

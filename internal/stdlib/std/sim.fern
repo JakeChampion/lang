@@ -16,28 +16,42 @@
 // Time advances ONLY inside `poll_ready` — a busy loop that never
 // waits is a hang in simulation exactly as in production.
 import "std/async";
+import "std/rand";
 
 // Sim — the simulation driver: virtual clock (ns, starts at 0) +
 // explicit PRNG state. Construct with `sim.new(seed)`.
 pub struct Sim { clock_ns: Cell[i64], rng: Cell[i64] }
 
 // new(seed) — a fresh simulation at virtual time 0. Equal seeds give
-// bit-identical runs; a zero seed is remapped (the PRNG state must be
-// in [1, 2^31-2]).
+// bit-identical runs.
+//
+// SEED COMPATIBILITY: the generator changed (see `__roll`). A seed
+// recorded before that change replays a DIFFERENT sequence — same seed,
+// same determinism, different draws. Anything pinned to a pre-change
+// seed (a saved DST replay, a regression a test names by seed) has to be
+// re-recorded. Nothing else about the contract moved.
 pub function new(seed: i64): Sim {
-    var s: i64 = seed % 2147483646;
-    if (s < 0) { s = s + 2147483646; }
-    if (s == 0) { s = 48271; }
-    return Sim { clock_ns: cell_new(0 as i64), rng: cell_new(s) };
+    return Sim { clock_ns: cell_new(0 as i64), rng: cell_new(rand.rng_seed(seed)) };
 }
 
-// __roll(drv, n) — deterministic pick in [0, n): one Park-Miller
-// step (x' = 48271*x mod 2^31-1; no i64 overflow) on the explicit
-// PRNG state. NOT std/math.random_int — determinism is the point.
+// __roll(drv, n) — deterministic pick in [0, n).
+//
+// One PCG32 step from std/rand, mapped with Lemire's multiply-shift and
+// rejection. NOT std/math.random_int — determinism is the point; the state
+// lives in the Sim and advances only through draws.
+//
+// This replaced a Park-Miller step (x' = 48271*x mod 2^31-1) mapped with a
+// bare `x % n`, which had two defects at once. The modulo was BIASED toward
+// small values whenever `n` did not divide 2^31-1 — the same defect
+// std/math.random_int shed — and Park-Miller is a 1990s LCG whose low bits
+// cycle with short periods, so the very bits a small-`n` modulo reads were
+// its worst. Debiasing the mapping alone would have spent the seed-
+// compatibility break without buying the quality, so both moved together
+// (#6193).
 function __roll(drv: Sim, n: i32): i32 {
-    var x: i64 = (drv.rng.get() * 48271) % 2147483647;
-    drv.rng.set(x);
-    return (x % (n as i64)) as i32;
+    var step = rand.rng_below(drv.rng.get(), n);
+    drv.rng.set(step.0);
+    return step.1;
 }
 
 // rng_state() — the current PRNG state. Two sims constructed from the

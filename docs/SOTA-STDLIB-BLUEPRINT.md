@@ -205,7 +205,7 @@ elsewhere) gets it for free.
 | Default RNG | OS CSPRNG per call; **seeded PCG32 alongside** | PCG / xoshiro for non-crypto | **DONE (this pass)** |
 | Secure RNG | OS CSPRNG | Correct as-is | OK |
 | Bounded integers | **Lemire's debiased method** | Lemire's debiased bounded method | **DONE (this pass)** |
-| `std/sim` bounded draw | `x % n` on Park-Miller — **modulo bias** | Debiased mapping + a modern PRNG | GAP (contract-sensitive, see below) |
+| `std/sim` bounded draw | **Lemire on PCG32**, via `std/rand` | Debiased mapping + a modern PRNG | **DONE (this pass)** |
 | Parallel RNG | None | Philox / Threefry | N/A until threads |
 
 `math.random_int`'s modulo bias is fixed, and `std/rand` now carries a seeded
@@ -216,13 +216,19 @@ unchanged and remain the default, so nothing silently became less secure; the
 `std/fuzz` now draws from the seeded generator, so a fuzz run is reproducible
 from its seed (below).
 
-**`std/sim` has the same bias, and it is deliberately harder to fix.** Its
-`__roll` maps a Park-Miller step with `x % n`, biased for the same reason. But
-`sim`'s documented contract is that equal seeds give *bit-identical* runs, so
-changing the mapping changes every existing simulation's sequence — a
-reproducibility break, not a transparent fix. It also deserves a better
-generator than a 1990s LCG. Both are worth doing together, deliberately, with
-a note about seed compatibility; neither should be a drive-by.
+**`std/sim` had the same bias, and fixing it cost a compatibility break.** Its
+`__roll` mapped a Park-Miller step with `x % n`. Debiasing the mapping alone
+would have spent the break without buying the quality — Park-Miller is a 1990s
+LCG whose low bits cycle with short periods, and a small-`n` modulo reads
+exactly those bits — so both moved at once: `__roll` now takes one PCG32 step
+from `std/rand` and maps it with Lemire rejection (#6193).
+
+The cost is stated plainly rather than hidden: **a seed recorded before the
+change replays a different sequence.** Equal seeds still give bit-identical
+runs — that contract is untouched, and it is what `sim` exists to provide —
+but *which* run a given seed produces moved. Anything pinned to an old seed
+(a saved DST replay, a regression named by seed) has to be re-recorded; the
+in-tree golden tests were, rather than relaxed.
 
 ### Big integers, math, and the rest
 

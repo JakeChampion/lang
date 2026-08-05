@@ -5102,7 +5102,19 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 			b.emitRcDecLocalsAtExit()
 			b.emit(Op{Kind: OpReturnPair})
 		case isFloat(fn.ReturnType):
-			b.emit(Op{Kind: OpConstF32, F32: 0})
+			// By the DECLARED float width, not F32 unconditionally.
+			// wasm's stack is typed, so an f64-returning function whose
+			// body falls off the end (a `match` the checker proves
+			// exhaustive still has no fall-through arm here) was handed
+			// an `f32.const 0` against an f64 result and the whole
+			// module was rejected at instantiation — "expected f64,
+			// found f32". That took out every program returning
+			// Option[f64] through a match, including std/test (#6192).
+			if ft, ok := fn.ReturnType.(ast.FloatType); ok && ft.Width == 64 {
+				b.emit(Op{Kind: OpConstF64, F64: 0})
+			} else {
+				b.emit(Op{Kind: OpConstF32, F32: 0})
+			}
 			b.emitRcDecLocalsAtExit()
 			b.emit(Op{Kind: OpReturn})
 		default:

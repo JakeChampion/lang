@@ -431,6 +431,18 @@ pub function is_sorted[T: Ord](arr: T[]): boolean {
 // `desc` flips the ordering by negating the three-way result, so ascending and
 // descending share one body. The shift loop stops on a NON-positive compare, so
 // equal elements never move past each other: insertion is stable.
+// __cmp_min_run is the length below which a natural run is padded out and
+// insertion-sorted rather than merged as-is. 32 matches the small-array
+// threshold in __cmp_sort_adaptive, so a span reaching insertion sort costs the
+// same whichever way it got there.
+//
+// Timsort derives a per-call minrun in [32, 64] from n, chosen so that n/minrun
+// is at or just under a power of two and the merge tree stays balanced. A fixed
+// 32 gives up that balancing; it keeps the win that matters here (collapsing
+// the first several near-empty merge rounds on random input) without a
+// divide-and-round per call.
+function __cmp_min_run(): i32 { return 32; }
+
 function __cmp_insertion[T: Ord](a: T[], lo: i32, hi: i32, desc: boolean): T[] {
     var out: T[] = a;
     var i: i32 = lo + 1;
@@ -482,23 +494,27 @@ function __cmp_insertion[T: Ord](a: T[], lo: i32, hi: i32, desc: boolean): T[] {
 // has since been deleted in #3457/#5972) — append-only output cannot alias its
 // input at all, on any backend, with or without Perceus.
 //
-// TWO SELF-HOST CONSTRAINTS shape how this is written; do not "tidy" either one
-// away without re-running the self-host leg:
+// Runs shorter than __cmp_min_run() are EXTENDED to that length and insertion-
+// sorted (Timsort's MIN_RUN step). Random input produces natural runs averaging
+// ~2 elements, which without this leaves the merge tree needlessly deep — the
+// first several rounds do little but merge pairs into quadruples, at full
+// per-round allocation cost. Extending to 32 collapses those rounds into one
+// linear insertion pass over each span.
 //
-//  1. Every comparison is an INLINE `.cmp()` (a trait method) rather than a
-//     call to a shared `__cmp_after(x, y, desc)` helper. A call to a free
-//     GENERIC function from inside a loop bails the self-host IR path, and
-//     since the AST emitters were deleted a bail is a hard compile error, not a
-//     slow fallback. Trait-method calls in loops lower fine — which is why the
-//     previous revision's `src[j].cmp(src[i])` was never a problem. The
-//     `if (desc) { o = 0 - o; }` negation is what lets one body serve both
-//     directions without such a helper.
-//  2. For the same reason, runs are NOT extended to a minimum length with
-//     insertion sort (Timsort's MIN_RUN step), since that would mean calling
-//     __cmp_insertion from inside the run loop. Dropping it costs a few extra
-//     merge rounds on random input — the merge tree is deeper when runs are
-//     short — but changes neither the O(n log n) bound nor the O(n) sorted-input
-//     behaviour. See docs/SOTA-STDLIB-BLUEPRINT.md.
+// ONE SELF-HOST CONSTRAINT shapes how this is written; do not "tidy" it away
+// without re-running the self-host leg. Every comparison is an INLINE `.cmp()`
+// (a trait method) rather than a call to a shared `__cmp_after(x, y, desc)`
+// helper: a free-function call whose type parameter is inferable only from bare
+// `T` arguments bails the self-host IR path, and since the AST emitters were
+// deleted a bail is a hard compile error, not a slow fallback. The
+// `if (desc) { o = 0 - o; }` negation is what lets one body serve both
+// directions without such a helper.
+//
+// The MIN_RUN extension was itself omitted for a while under a WRONG version of
+// that constraint — "a call to a free generic function from inside a LOOP
+// bails". The loop was never the trigger; the argument shape was (#6189, since
+// fixed). `__cmp_insertion(a, i, e, desc)` passes the array, so `T` binds from
+// `T[]` and the call monomorphises normally, inside a loop or not.
 function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
     var n: i32 = arr.len();
     if (n < 2) { return arr; }
@@ -551,6 +567,17 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
                         if (oa <= 0) { rising = true; }
                     }
                 }
+            }
+        }
+        // MIN_RUN: a short natural run is padded out to __cmp_min_run() and
+        // insertion-sorted. On sorted input the run already spans the array, so
+        // this never fires and the O(n) path is untouched.
+        if (e - i < __cmp_min_run()) {
+            var ext: i32 = i + __cmp_min_run();
+            if (ext > n) { ext = n; }
+            if (ext > e) {
+                a = __cmp_insertion(a, i, ext, desc);
+                e = ext;
             }
         }
         i = e;

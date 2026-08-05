@@ -140,7 +140,7 @@ function __flaky_pattern(seed: i64): string {
 // flaky(50) over 10 calls with seed 1 gives this exact golden pattern
 // on every backend — the determinism proof.
 function test_flaky_golden(): test.TestOutcome {
-    return test.assert_eq(__flaky_pattern(1), "SSSFFSSFSF");
+    return test.assert_eq(__flaky_pattern(1), "FFFFFSFFFS");
 }
 
 // Same seed => same outcomes and the PRNG states stay in lockstep;
@@ -200,7 +200,7 @@ function test_seed_sweep(): test.TestOutcome {
     if (sim.sweep_seeds(20, __gather_shape_ok) != (0 as i64)) {
         return test.fail("gather-shape invariant failed for some seed in 1..20");
     }
-    return test.assert_eq(sim.sweep_seeds(20, __flaky_first_call_ok), 2 as i64);
+    return test.assert_eq(sim.sweep_seeds(20, __flaky_first_call_ok), 1 as i64);
 }
 
 function main(): i32 {

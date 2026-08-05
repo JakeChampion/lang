@@ -61,10 +61,15 @@ function __tie_winner(seed: i64): i32 {
 
 // A race tie is broken deterministically: same seed, same winner, every
 // run — and different seeds do exercise both orders (pinned picks).
+//
+// The pinned picks were re-recorded when sim's generator moved from
+// Park-Miller + a biased modulo to std/rand's PCG32 + Lemire rejection
+// (#6193): the two seeds swapped sides. Same-seed reproducibility — the
+// first check, and the contract sim exists to provide — is unchanged.
 function test_race_tie_seeded(): test.TestOutcome {
     if (__tie_winner(1) != __tie_winner(1)) { return test.fail("same seed raced to different winners"); }
-    if (__tie_winner(1) != 1) { return test.fail("seed 1 pick drifted"); }
-    if (__tie_winner(2) != 0) { return test.fail("seed 2 pick drifted"); }
+    if (__tie_winner(1) != 0) { return test.fail("seed 1 pick drifted"); }
+    if (__tie_winner(2) != 1) { return test.fail("seed 2 pick drifted"); }
     return test.pass();
 }
 
