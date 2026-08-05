@@ -1,15 +1,16 @@
 // Package fernsmith generates syntactically- and type-correct Lang
 // programs from a seeded random source.
 //
-// The shape is deliberately small for this first slice — five
-// scalar types (i32, i64, boolean, f32, string), top-level
-// functions only, no statement-level control flow beyond a body's
-// sequence of `var` declarations and a final `return`. Every
-// expression production picks operands whose types match the
-// surrounding context, so the emitted source is guaranteed to
-// parse AND type-check. That property is the load-bearing invariant
-// the fuzz oracle relies on: any parser or checker error means a
-// real bug.
+// The type universe is the `gtype` const block: scalars signed and
+// unsigned at both widths, strings, arrays, tuples, maps, structs
+// and enums both fixed and program-declared, Option / Result, and
+// function values. Bodies carry bounded `while` loops, `for..in`
+// over arrays and maps, nested function declarations, and match
+// expressions. Every expression production picks operands whose
+// types match the surrounding context, so the emitted source is
+// guaranteed to parse AND type-check. That property is the
+// load-bearing invariant the fuzz oracle relies on: any parser or
+// checker error means a real bug.
 //
 // Inspired by wasm-smith: a structured generator that walks the
 // grammar top-down, in contrast to the byte-mutation fuzzers in
@@ -47,6 +48,24 @@ type Config struct {
 	// needs N small so backends without optimisations don't
 	// blow up runtime.
 	MaxLoopIters int
+	// NoFnValues drops tFnI32I32 / tArrFnI32I32 from every type pool,
+	// so the generated program contains no lambdas, no fn-typed vars or
+	// params, and no closure arrays.
+	//
+	// It exists for backends that do not lower closures correctly YET.
+	// The experimental SSA backends crash on ordinary closure shapes —
+	// `[capturing, zero-capture]` in one array segfaults arm64-ssa while
+	// interp / arm64 / x86-64 all agree (#6144) — and their differential
+	// legs are the ones written to catch exactly that class of
+	// capture-layout bug (#5767). Feeding them a corpus that crashes on
+	// a third of its seeds tells them nothing they can act on and hides
+	// every OTHER regression behind the noise.
+	//
+	// This is a temporary narrowing of one corpus, not a retreat: the
+	// four backends that do lower closures are still swept with them by
+	// TestDifferential_LangsmithMain. Delete the flag, and its uses, when
+	// #6144 and #6142 close.
+	NoFnValues bool
 }
 
 // DefaultConfig is what Gen uses.
@@ -119,6 +138,26 @@ func GenPrintableMain(seed uint64) string {
 // fuzzer's mutations drive generation and corpus minimisation works.
 func GenPrintableMainBytes(data []byte) string {
 	return newByteGen(data, DefaultConfig()).MainPrintableProgram()
+}
+
+// noFnConfig is DefaultConfig with function values suppressed. See
+// Config.NoFnValues for why the experimental SSA legs need it.
+func noFnConfig() Config {
+	cfg := DefaultConfig()
+	cfg.NoFnValues = true
+	return cfg
+}
+
+// GenMainNoFnValues / GenPrintableMainNoFnValues are GenMain /
+// GenPrintableMain restricted to the closure-free subset. Same seeds,
+// same everything else — a backend that cannot lower closures still
+// gets the full sweep of every other shape.
+func GenMainNoFnValues(seed uint64) string {
+	return newRandGen(seed, noFnConfig()).MainProgram()
+}
+
+func GenPrintableMainNoFnValues(seed uint64) string {
+	return newRandGen(seed, noFnConfig()).MainPrintableProgram()
 }
 
 // New constructs a generator with default limits, drawing from rng.
@@ -358,6 +397,12 @@ type Generator struct {
 	// (`__local_fn0`, ...). Generator-private prefix keeps
 	// these out of the user-style namespace.
 	localFnCounter int
+	// lambdaCounter names lambda parameters (`__lam_x0`, ...).
+	// Numbered across the whole program rather than per-lambda so a
+	// lambda emitted inside another lambda's body gets a distinct
+	// parameter name — see lambdaLiteral on why shadowing is not
+	// something this generator should be producing.
+	lambdaCounter int
 	// Dynamic nominal types. Each entry in structShapes /
 	// enumShapes lives at a gtype value beyond `numTypes`
 	// (allocated by nextNominal). Multiple struct / enum
@@ -507,6 +552,38 @@ const (
 	// not at 8 — `250u8 >> 9` is 0, not `250 >> (9 & 7)` — and all four
 	// backends agree on that, which is the point of generating it.
 	tU8
+	// tFnI32I32 = `(i32) => i32`, the first FUNCTION-typed value in
+	// the corpus. A closure is not just another box: it is a pair of
+	// (code pointer, captured environment) with its own rc drop
+	// helper per lambda (`__closure_drop___closure_lambda_N`), and
+	// calling one goes through an indirect `blr` / `call r11` rather
+	// than a direct symbol reference.
+	//
+	// The shapes are the ones from the closure-dispatch cluster
+	// CLAUDE.md names — #5001 / #5007 / #5009 / #5026, escaping and
+	// array-held closures that lowered fine and then SIGSEGV'd or
+	// silently miscompiled. Every one was found by a HAND-WRITTEN
+	// probe, because the generator could not produce a function
+	// value at all.
+	//
+	// What this buys, precisely: the differential oracle drives the
+	// NATIVE compiler (interp vs arm64 / x86-64 / wasmbin), so these
+	// shapes are now generated against those four. That cluster
+	// itself lived on the SELF-HOST IR path, which no fernsmith
+	// harness routes through today — generating the shape is the
+	// half that was missing, but reaching that particular cluster
+	// mechanically also needs the corpus fed to the self-host
+	// compiler. Do not read a green differential run as coverage of
+	// self-host closure lowering.
+	tFnI32I32
+	// tArrFnI32I32 = `((i32) => i32)[]`. The closure ARRAY is a
+	// distinct shape from a closure variable, and it is the one that
+	// broke: the element drop helper has to walk each closure's own
+	// drop pointer (see `__drop_arr_closure`), an 8-byte stride on a
+	// pointer element, and `fs[0](x)` is an indexed load feeding an
+	// indirect call. Nothing else in the corpus produces a pointer-
+	// element array whose elements own a nested resource.
+	tArrFnI32I32
 	numTypes
 )
 
@@ -514,6 +591,7 @@ var allTypes = [numTypes]gtype{
 	tI32, tI64, tBool, tF32, tString,
 	tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32, tMapI32I32,
 	tXyz, tStatus, tResI32I32, tTupI32I64, tU32, tU64, tF64, tU8,
+	tFnI32I32, tArrFnI32I32,
 }
 
 // gtypeNames is the source-level name for each builtin gtype, in
@@ -544,6 +622,10 @@ var gtypeNames = [numTypes]string{
 	tU64:       "u64",
 	tF64:       "f64",
 	tU8:        "u8",
+	// Parenthesised in the array form because `(i32) => i32[]` would
+	// parse the `[]` onto the RETURN type, not the function type.
+	tFnI32I32:    "(i32) => i32",
+	tArrFnI32I32: "((i32) => i32)[]",
 }
 
 // String reports the source-level name for a builtin gtype.
@@ -592,6 +674,8 @@ func arrayTypeFor(t gtype) (gtype, bool) {
 		return tArrI64, true
 	case tBool:
 		return tArrBool, true
+	case tFnI32I32:
+		return tArrFnI32I32, true
 	}
 	return 0, false
 }
@@ -606,6 +690,8 @@ func arrayElemOf(t gtype) (gtype, bool) {
 		return tI64, true
 	case tArrBool:
 		return tBool, true
+	case tArrFnI32I32:
+		return tFnI32I32, true
 	}
 	return 0, false
 }
@@ -928,6 +1014,12 @@ var mainVarTypes = []gtype{
 	tArrI32, tArrI64, tArrBool,
 	tPair, tColor, tOptI32,
 	tXyz, tStatus, tResI32I32, tTupI32I64,
+	// Function values and closure arrays. Observable through the
+	// byte oracle without a channel of their own: an in-scope
+	// closure is called for its i32 result by tryCompositeProduction,
+	// which is the only way its code pointer and captured
+	// environment are ever touched.
+	tFnI32I32, tArrFnI32I32,
 	// tMapI32I32 is now included since the interp grew a Map
 	// runtime — `map_new`, `__method_Map_*`, and `*ast.MapLit`
 	// evaluation all live in internal/interp/interp.go now,
@@ -1295,7 +1387,7 @@ func (g *Generator) maybeEmitForEach(b *strings.Builder, sc *scope) bool {
 	// available, skip.
 	var arrayVar string
 	var elemType gtype
-	for _, at := range []gtype{tArrI32, tArrI64, tArrBool} {
+	for _, at := range []gtype{tArrI32, tArrI64, tArrBool, tArrFnI32I32} {
 		vars := sc.inScope(at)
 		if len(vars) > 0 {
 			arrayVar = vars[g.ch.intN(len(vars))]
@@ -1319,7 +1411,15 @@ func (g *Generator) maybeEmitForEach(b *strings.Builder, sc *scope) bool {
 
 	inner := newScope(sc)
 	switch {
-	case arrayVar != "" && (len(mapVars) == 0 || g.flip(0.5)):
+	// `!flip` so `true` — the exhausted choice — is the MAP form.
+	// The array reading looks smaller in source (one binding, not
+	// two), and is 2 AST nodes LARGER after checking: `for x in arr`
+	// desugars through an index-and-bounds shape that map iteration
+	// does not need. Measured, not reasoned about; the earlier
+	// spelling here assumed the source-shaped answer and the shrink
+	// property caught it the moment a fourth array type made this
+	// branch reachable at an exhaustion boundary.
+	case arrayVar != "" && (len(mapVars) == 0 || !g.flip(0.5)):
 		// for x in <arr> { ... }
 		bind := fmt.Sprintf("__fe_x%d", idx)
 		fmt.Fprintf(b, "for %s in %s { ", bind, arrayVar)
@@ -1572,6 +1672,27 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 				// `pair.sum()` — method dispatch path.
 				fmt.Fprintf(b, "%s.sum()", name)
 			}
+			return true
+		}
+	}
+	// Indirect call through an in-scope function value: `f(<i32>)`.
+	// This is the READ side of tFnI32I32, and without it a closure
+	// could be built, stored and dropped without ever being invoked
+	// — which is exactly the half the oracle cannot see, since an
+	// uncalled closure's code pointer is never dereferenced and its
+	// captured environment never read.
+	//
+	// The array-index production above already supplies the
+	// `fs[0i32]` shape for t == tFnI32I32, so a closure-array
+	// element reaches this call site as an ordinary in-scope value
+	// once it has been bound.
+	if t == tI32 {
+		fns := sc.inScope(tFnI32I32)
+		if len(fns) > 0 {
+			name := fns[g.ch.intN(len(fns))]
+			fmt.Fprintf(b, "%s(", name)
+			g.expr(b, sc, tI32, depth+1)
+			b.WriteByte(')')
 			return true
 		}
 	}
@@ -2301,9 +2422,11 @@ func (g *Generator) literal(b *strings.Builder, sc *scope, t gtype, depth int) {
 		fmt.Fprintf(b, "%.2ff32", float64(g.ch.intN(10000))/100.0)
 	case tString:
 		b.WriteString(g.stringLiteral())
-	case tArrI32, tArrI64, tArrBool:
+	case tArrI32, tArrI64, tArrBool, tArrFnI32I32:
 		elem, _ := arrayElemOf(t)
 		g.arrayLiteral(b, sc, elem, depth)
+	case tFnI32I32:
+		g.lambdaLiteral(b, sc, depth)
 	case tPair:
 		g.pairLiteral(b, sc, depth)
 	case tColor:
@@ -2419,6 +2542,48 @@ func (g *Generator) arrayLiteral(b *strings.Builder, sc *scope, elem gtype, dept
 	b.WriteByte(']')
 }
 
+// lambdaLiteral emits `((<param>: i32) => <i32-expr>)`, the only
+// producer of a function VALUE.
+//
+// Whether it closes over anything is not decided here and cannot be:
+// the body is an ordinary i32 expression over a scope holding both
+// the lambda's own parameter and every outer var, so the capture set
+// is whatever the body happened to reference. That is the point — a
+// generator that always captured, or never did, would emit one shape
+// where the interesting axis is the boundary between them. The
+// checker's capture analysis stamps `FuncDecl.Captures` from the same
+// evidence.
+//
+// The parameter is generator-private (`__lam_x<N>`) and globally
+// numbered, so a lambda nested inside another lambda's body cannot
+// shadow the outer parameter — shadowing would make the emitted
+// program's meaning depend on the checker's resolution order rather
+// than on the generator's scope model, and the two disagreeing is a
+// silent oracle failure rather than a caught one.
+//
+// Outer parens keep the `=>` body from swallowing a trailing `,` or
+// `)` in an argument / array-element slot.
+func (g *Generator) lambdaLiteral(b *strings.Builder, sc *scope, depth int) {
+	name := fmt.Sprintf("__lam_x%d", g.lambdaCounter)
+	g.lambdaCounter++
+	inner := newScope(sc)
+	inner.declare(tI32, name)
+	fmt.Fprintf(b, "((%s: i32) => ", name)
+	// The body is a new function's body, so the try operator's legality
+	// is decided by the LAMBDA's return type, not the enclosing
+	// function's. Without this save/restore a lambda written inside an
+	// `Option[i32]`-returning function emits `expr?` and the checker
+	// rejects it — "`?` on Option requires the surrounding function to
+	// return Option[_], got void" — which breaks the always-type-checks
+	// invariant the whole fuzz oracle rests on. maybeEmitLocalFn has
+	// always done this; the lambda producer has to as well.
+	prevReturnType := g.currentReturnType
+	g.currentReturnType = tI32
+	g.expr(b, inner, tI32, depth+1)
+	g.currentReturnType = prevReturnType
+	b.WriteByte(')')
+}
+
 // pairLiteral emits `(Pair { fst: <i32-expr>, snd: <i32-expr> })`.
 // Outer parens disambiguate the brace-balanced struct literal in
 // contexts where bare `Pair { ... }` would clash with the
@@ -2466,7 +2631,27 @@ func (g *Generator) pickType() gtype {
 func (g *Generator) pickMainVarType() gtype {
 	pool := append([]gtype{}, mainVarTypes...)
 	pool = append(pool, g.sortedDynamicTypes()...)
+	pool = g.dropFnValues(pool)
 	return pool[g.ch.intN(len(pool))]
+}
+
+// dropFnValues filters function-valued types out of a pool when
+// cfg.NoFnValues is set. Filtering at the two pool-builders is enough to
+// keep them out of the program entirely: nothing constructs a lambda
+// except literal(tFnI32I32), which is only reached through a type
+// drawn from a pool.
+func (g *Generator) dropFnValues(pool []gtype) []gtype {
+	if !g.cfg.NoFnValues {
+		return pool
+	}
+	out := pool[:0:0]
+	for _, t := range pool {
+		if t == tFnI32I32 || t == tArrFnI32I32 {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 // typePool returns the gtype universe pickType draws from,
@@ -2481,12 +2666,13 @@ func (g *Generator) typePool() []gtype {
 			tI32, tI64, tU32, tU64, tU8, tBool, tString,
 			tArrI32, tArrI64, tArrBool, tPair, tColor, tOptI32,
 			tXyz, tStatus, tMapI32I32, tResI32I32, tTupI32I64,
+			tFnI32I32, tArrFnI32I32,
 		}
 	} else {
 		pool = append(pool, allTypes[:]...)
 	}
 	pool = append(pool, g.sortedDynamicTypes()...)
-	return pool
+	return g.dropFnValues(pool)
 }
 
 // sortedDynamicTypes returns the dynamic struct + enum gtypes

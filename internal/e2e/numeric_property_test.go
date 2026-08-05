@@ -257,23 +257,51 @@ func trimOut(s string) string { return strings.TrimRight(strings.TrimSpace(s), "
 // available backend and asserts they match the interp's output.
 func assertNumProgramAgrees(t *testing.T, src string) {
 	t.Helper()
+	assertNumProgramAgreesSkipping(t, src, nil)
+}
+
+// assertNumProgramAgreesSkipping is assertNumProgramAgrees with a set of
+// backends to skip, each mapped to the issue tracking why. A skipped
+// backend reports the issue rather than passing silently, and the other
+// backends still run — which is the point: that they agree is the
+// evidence the skipped one has a bug rather than the program being
+// invalid.
+func assertNumProgramAgreesSkipping(t *testing.T, src string, skip map[string]string) {
+	t.Helper()
 	want, ok := interpStdout(t, src)
 	if !ok {
 		return
 	}
+	known := func(t *testing.T, backend string) bool {
+		if issue, ok := skip[backend]; ok {
+			t.Skipf("known divergence, see %s — remove this entry when it is fixed", issue)
+			return true
+		}
+		return false
+	}
+
 	t.Run("x86_64", func(t *testing.T) {
+		if known(t, "x86_64") {
+			return
+		}
 		out, _ := compileAndRunX86_64(t, src)
 		if got := trimOut(out); got != want {
 			t.Errorf("x86_64 = %q, interp = %q\nsrc:\n%s", got, want, src)
 		}
 	})
 	t.Run("arm64", func(t *testing.T) {
+		if known(t, "arm64") {
+			return
+		}
 		out, _ := compileAndRunArm64(t, src)
 		if got := trimOut(out); got != want {
 			t.Errorf("arm64 = %q, interp = %q\nsrc:\n%s", got, want, src)
 		}
 	})
 	t.Run("wasm", func(t *testing.T) {
+		if known(t, "wasm") {
+			return
+		}
 		comp := buildNumComponent(t, src)
 		out, stderr, ec := runComponent(t, comp, runOpts{})
 		if ec != 0 {

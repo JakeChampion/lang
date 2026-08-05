@@ -124,6 +124,15 @@ func TestGenEmitsAtLeastOneFunction(t *testing.T) {
 // the field name `id` shadowed the `id[T]` generic, and the
 // monomorph re-check rejected the cloned program after the
 // initial checker said OK).
+//
+// 256 seeds, not the differential oracle's 2048, and the gap is
+// deliberate: this walk costs ~29s here and ~3m50s at 2048, which does
+// not earn its place in the unit lane when the differential lane
+// already type-checks all 2048 as a precondition to running them. A
+// generator bug rare enough to need more than 256 seeds surfaces
+// there, not here — the lambda-body `?` bug did exactly that, on seeds
+// 680 / 1117 / 1759 with this test green. Widen it only if the
+// differential lane stops being the broader net.
 func TestGenMainProducesRunnablePrograms(t *testing.T) {
 	n := sweepN(t, 256)
 	for seed := uint64(0); seed < n; seed++ {
@@ -341,6 +350,12 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"u8 literal at or above 200":   false,
 		"u8 arithmetic":                false,
 		"u8 saturating or checked":     false,
+		"lambda literal":               false,
+		"fn-typed var":                 false,
+		"closure array literal":        false,
+		"closure escapes via return":   false,
+		"fn-typed parameter":           false,
+		"indirect call via fn value":   false,
 	}
 	for seed := uint64(0); seed < 1024; seed++ {
 		src := fernsmith.GenMain(seed)
@@ -524,6 +539,35 @@ func TestGenFeatureCoverage(t *testing.T) {
 		// Nested function: `function __local_fn<N>(...)`.
 		if strings.Contains(src, "function __local_fn") {
 			want["nested function (closure)"] = true
+		}
+		// Function VALUES. Each of these is a distinct lowering, and
+		// the escaping / array / indirect-call trio is the #5001 /
+		// #5007 / #5009 / #5026 bug cluster that until now only
+		// hand-written probes could reach.
+		if strings.Contains(src, "((__lam_x") {
+			want["lambda literal"] = true
+		}
+		if strings.Contains(src, ": (i32) => i32 =") {
+			want["fn-typed var"] = true
+		}
+		if strings.Contains(src, "((i32) => i32)[] = [") {
+			want["closure array literal"] = true
+		}
+		// An escaping closure: a generated helper whose RETURN type is
+		// a function, so the value outlives the frame that built it.
+		if strings.Contains(src, "): (i32) => i32 {") {
+			want["closure escapes via return"] = true
+		}
+		// A closure crossing a call boundary as an argument.
+		if strings.Contains(src, "p0: (i32) => i32") || strings.Contains(src, ", p1: (i32) => i32") {
+			want["fn-typed parameter"] = true
+		}
+		// Indirect call through a function value. `__lam_x` params and
+		// `__fe_x` bindings are the two names a fn value can carry
+		// besides `v<N>` / `p<N>` / `w<N>`; a call through any of them
+		// is a `blr` / `call r11`, never a direct symbol.
+		if fnCallRE.MatchString(src) {
+			want["indirect call via fn value"] = true
 		}
 		// Result literals.
 		if strings.Contains(src, "(Ok(") {
@@ -741,6 +785,13 @@ func TestGenPrintableFloatCoverage(t *testing.T) {
 var (
 	f64LiteralRE = regexp.MustCompile(`\b(\d+\.\d+)f64\b`)
 	f64CastRE    = regexp.MustCompile(`f64[^()]*\) as i32\)`)
+	// A call whose callee is a VARIABLE rather than a declared
+	// function name. Every generated declaration is `gen_f<N>` /
+	// `__local_fn<N>` / `id` / `pick`, so a `(` directly after any
+	// value-carrying name can only be an indirect call through a
+	// function value. Indexing is `v0[...]` and field access is
+	// `v0.fst`, neither of which this matches.
+	fnCallRE = regexp.MustCompile(`(?:^|[^A-Za-z0-9_])(?:v\d+|p\d+|lp\d+|w\d+_\d+|__fe_x\d+|__lam_x\d+)\(`)
 )
 
 // TestGenBytesShrinkIsMonotonicAndValid is the minimisation contract
