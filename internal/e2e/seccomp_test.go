@@ -1,14 +1,15 @@
 package e2e
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
@@ -112,38 +113,56 @@ func TestSeccompFilterIsLoadedAtRuntime(t *testing.T) {
 				t.Fatalf("start: %v", err)
 			}
 			defer func() { _ = cmd.Wait() }()
-			status, err := readStatusWhenRunning(cmd.Process.Pid)
+			got, err := pollSeccompStatus(cmd.Process.Pid, tc.want)
+			if errors.Is(err, errNoSeccompField) {
+				t.Skip("kernel does not report a Seccomp field in /proc/<pid>/status")
+			}
 			if err != nil {
 				t.Fatalf("read /proc/%d/status: %v", cmd.Process.Pid, err)
 			}
-			m := seccompStatusRe.FindStringSubmatch(status)
-			if m == nil {
-				t.Skip("kernel does not report a Seccomp field in /proc/<pid>/status")
-			}
-			if m[1] != tc.want {
-				t.Errorf("Seccomp = %s, want %s (0 = disabled, 2 = SECCOMP_MODE_FILTER)", m[1], tc.want)
+			if got != tc.want {
+				t.Errorf("Seccomp = %s, want %s (0 = disabled, 2 = SECCOMP_MODE_FILTER)", got, tc.want)
 			}
 		})
 	}
 }
 
-// readStatusWhenRunning reads /proc/<pid>/status, retrying briefly so
-// the read lands while the child is still alive.
-func readStatusWhenRunning(pid int) (string, error) {
-	var last error
-	for i := 0; i < 50; i++ {
+var errNoSeccompField = errors.New("no Seccomp field in /proc/<pid>/status")
+
+// pollSeccompStatus samples the Seccomp field of /proc/<pid>/status
+// until it reaches want or the window expires, returning the last value
+// seen.
+//
+// Sampling until it settles, rather than reading once, is the whole
+// contract: exec.Cmd.Start returns as soon as the child is forked —
+// /proc/<pid>/status already exists and already reports Seccomp: 0,
+// microseconds before the child reaches _start and installs the filter.
+// A single early read therefore reports an unsandboxed process for a
+// filter that does install. The window is shorter than the child's
+// sleep, so the process is still alive throughout it, and the
+// unsandboxed case polls it out in full — a returned 0 there means the
+// field never became anything else.
+func pollSeccompStatus(pid int, want string) (string, error) {
+	deadline := time.Now().Add(1200 * time.Millisecond)
+	last := ""
+	for {
 		b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/status")
-		if err == nil && strings.Contains(string(b), "Seccomp") {
-			return string(b), nil
-		}
 		if err != nil {
-			last = err
+			if last != "" {
+				return last, nil
+			}
+			return "", err
 		}
+		m := seccompStatusRe.FindStringSubmatch(string(b))
+		if m == nil {
+			return "", errNoSeccompField
+		}
+		last = m[1]
+		if last == want || !time.Now().Before(deadline) {
+			return last, nil
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
-	if last != nil {
-		return "", last
-	}
-	return "", os.ErrNotExist
 }
 
 // TestSeccompDoesNotBreakWorkingPrograms is the over-tightness gate,
