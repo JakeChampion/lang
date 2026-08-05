@@ -1,0 +1,41 @@
+// `it.value().field` over a `Map[K, Struct]`. expr_struct_type had a struct
+// recovery for the `get_or` receiver and none for the iterator's, so the field
+// read had no struct type and bailed the function — even with the MapIter
+// annotated. `map_struct_value_field` covers this alongside get_or; this pins
+// the iterator half on its own, including the unannotated binding.
+import "core/map";
+
+struct Item { qty: i32, name: string }
+
+function main(): i32 {
+    var m: Map[i32, Item] = map_new(8);
+    m = m.insert(1, Item { qty: 10, name: "a" });
+    m = m.insert(2, Item { qty: 20, name: "bb" });
+
+    // Unannotated iterator + a struct field read off value().
+    var it = m.iter();
+    var qty: i32 = 0;
+    var chars: i32 = 0;
+    while (it.has_next()) {
+        qty = qty + it.value().qty;
+        chars = chars + it.value().name.len();
+        it.advance();
+    }
+    if (qty != 30) { return 1; }
+    if (chars != 3) { return 2; }
+
+    // Annotated form of the same thing, and binding the struct out first.
+    var it2: MapIter[i32, Item] = m.iter();
+    var viaBind: i32 = 0;
+    while (it2.has_next()) {
+        var v = it2.value();
+        viaBind = viaBind + v.qty;
+        it2.advance();
+    }
+    if (viaBind != 30) { return 3; }
+
+    // The get_or sibling recovery still resolves the same V.
+    if (m.get_or(1, Item { qty: 0, name: "" }).qty != 10) { return 4; }
+
+    return 42;
+}
