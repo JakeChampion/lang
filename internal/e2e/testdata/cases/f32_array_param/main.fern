@@ -19,6 +19,13 @@ function is_nan(a: f32[], i: i32): boolean {
 
 function width(a: f32[]): i32 { return a.len(); }
 
+// An `f32[]` STRUCT FIELD exercises a second classifier: the drop glue asks
+// whether the field's ELEMENT is an rc-boxed pointer. `f32` was missing from
+// is_primitive_type_name, so is_enum_type_name fell through to the mr_types
+// scan — where a primitive carrying a method does appear — and the field was
+// deep-released through $__fern_arr_dec_ptr, dereferencing 1.5 as a pointer.
+struct Box { xs: f32[] }
+
 function main(): i32 {
     var xs: f32[] = [1.5, 2.5, 4.0];
     if (is_nan(xs, 0)) { return 1; }
@@ -29,5 +36,8 @@ function main(): i32 {
     // The i32 import is load-bearing: it is what puts the param on the
     // declaration-driven path.
     if (width(xs).to_string() != "3") { return 4; }
+    var bx: Box = Box { xs: [1.5, 2.5] };
+    if (bx.xs[0] < 1.4 || bx.xs[0] > 1.6) { return 5; }
+    if (bx.xs.len() != 2) { return 6; }
     return 7;
 }

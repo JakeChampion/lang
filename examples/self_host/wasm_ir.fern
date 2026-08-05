@@ -8170,8 +8170,20 @@ pub function is_enum_type_name(structs: parser.StructDecl[], mr_types: string[],
 
 // is_primitive_type_name reports whether `name` spells a built-in scalar type
 // (never rc-tracked, never a struct/enum). Scalars are released as no-ops.
+//
+// The list must be COMPLETE, not merely representative: its only caller is
+// is_enum_type_name's guard, and a scalar that falls through lands in the
+// `mr_types` scan — where any primitive carrying a method (`impl Eq for i32`,
+// `function (n: u64) …`) DOES appear. It then classifies as an rc-boxed "S",
+// so a `T[]` struct field of that element type is deep-released through
+// $__fern_arr_dec_ptr, walking raw scalars as pointers. `f32` and `u64` were
+// both missing: an `f32[]` field trapped (memory fault dereferencing 1.5) and
+// a `u64[]` field returned a silently wrong answer. It only bit a program with
+// an `import`, since mr_types is empty without one.
 pub function is_primitive_type_name(name: string): boolean {
-    return name == "i32" || name == "i64" || name == "f64" || name == "boolean";
+    return name == "i32" || name == "i64" || name == "f64" || name == "boolean"
+        || name == "f32" || name == "float" || name == "u32" || name == "u64"
+        || name == "u8" || name == "usize";
 }
 
 // is_struct_type is true when `t` names a declared struct.
