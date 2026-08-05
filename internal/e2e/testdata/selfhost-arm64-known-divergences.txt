@@ -26,12 +26,13 @@
 #
 # Measured 2026-08-04 on the run that closed #6045: 317 fixtures run, 302 pass,
 # 15 listed. Two of those 15 — `tuple_match_expr` (#6010) and `multiline_stdin`
-# (#6052) — were fixed within hours of this leg landing and are now pruned,
-# leaving 13. Every row was reproduced by hand with bin/fern-selfhost
+# (#6052) — were fixed within hours of this leg landing and were pruned in
+# #6099, and `pure_collection_aliases` with the #6007 Map.cleared slice,
+# leaving 12. Every row was reproduced by hand with bin/fern-selfhost
 # and checked against BOTH `bin/fern -interp` and the self-host x86-64 path,
 # which is what splits the list into its two halves:
 #
-#   * 10 rows the x86-64 leg lists too, with the SAME measured value. Those are
+#   * 9 rows the x86-64 leg lists too, with the SAME measured value. Those are
 #     shared frontend/irlower bugs that arm64 merely re-observes; fixing one
 #     flips two legs. Keep the issue numbers in sync with
 #     selfhost-x86_64-known-divergences.txt — this happened TWICE during review:
@@ -54,7 +55,7 @@
 #     #6083). Those are the arm64-specific frontier.
 #
 # No assembler-refusal row survives: every "hit an instruction it does not yet
-# support" failure is gone, and the three compile rows below are the shared
+# support" failure is gone, and the two compile rows below are the shared
 # #6007 IR-eligibility bails the x86-64 leg carries verbatim.
 
 # --- shared with the x86-64 leg (same bug, same measured value) ---
@@ -66,7 +67,6 @@ regex_captures_assert #6049 SEGV; x86-64 hangs on the same fixture, native retur
 regex_groups #6049 SEGV; x86-64 hangs on the same fixture, native returns 127 in ms
 derive_json #6009 returns 4, native 42 — identical to the wasm + x86-64 figure
 generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
-pure_collection_aliases #6007 IR-ineligible; bails at main (call to unknown symbol Map.cleared)
 map_struct_value_field #6007 IR-ineligible; bails at main (no symbol named)
 
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---
