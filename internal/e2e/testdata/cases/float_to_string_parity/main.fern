@@ -1,20 +1,22 @@
 // Cross-backend f32/f64 printing + round-trip parity (#4410 part 2).
 //
-// The `to_string` formatter (std/float `__float_to_string`) is a single
-// shared Fern implementation compiled per target, and it widens f32 → f64
-// before doing any arithmetic, so its output MUST be byte-identical across
-// interp / x86_64 / arm64 / wasm. This fixture pins that contract: the
-// exact-stdout check below is the cross-backend formatting oracle (f32 was
-// deliberately excluded from the differential fuzz oracle's runnable pool,
-// so this is its only parity coverage), and the round-trip assertions pin
-// parse_float ∘ to_string recovery within the documented tolerance on every
-// backend.
+// The `to_string` formatter (std/float `__float_shortest` / Dragonbox) is a
+// single shared Fern implementation compiled per target, doing all of its work
+// in integer arithmetic over the IEEE-754 fields, so its output MUST be
+// byte-identical across interp / x86_64 / arm64 / wasm. This fixture pins that
+// contract: the exact-stdout check below is the cross-backend formatting
+// oracle (f32 was deliberately excluded from the differential fuzz oracle's
+// runnable pool, so this is its only parity coverage), and the round-trip
+// assertions pin parse_float ∘ to_string recovery within the documented
+// tolerance on every backend.
 //
-// The printed table uses only values that are EXACTLY representable in f32
-// (dyadic rationals) so their 7-fractional-digit rendering is unambiguous
-// and every backend agrees bit-for-bit. Values that are NOT exactly
-// representable (0.1, 3.14) are exercised through the round-trip path with a
-// tolerance instead — see docs/FLOAT-SEMANTICS.md "Printing and round-trip".
+// `to_string` is shortest-round-trip, so EVERY finite value has one unambiguous
+// rendering and any value may be printed here. The `f64_from_bits` block covers
+// Dragonbox's shorter-interval branch — the powers of two, where the gap below
+// the value is half the gap above it — across all four backends. Values are
+// still exercised through the round-trip path as well, with a tolerance, since
+// parse_float is NOT correctly rounded — see docs/FLOAT-SEMANTICS.md
+// "Printing and round-trip".
 import "core/int";
 import "std/float";
 import "std/string";
@@ -35,11 +37,18 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < a.len()) { print(a[i].to_string()); i = i + 1; }
 
-    // f64 keeps 15 fractional digits; these are deterministic across backends
-    // (f64 literal bits are exact and all arithmetic stays in f64).
-    var g: f64[] = [0.5, 1.5, -2.25, 3.141592653589793, 0.1, 100.0];
+    var g: f64[] = [0.5, 1.5, -2.25, 3.141592653589793, 0.1, 100.0, 0.1 + 0.2, 1.0e21];
     var j: i32 = 0;
     while (j < g.len()) { print(g[j].to_string()); j = j + 1; }
+
+    // Powers of two (significand field zero) take Dragonbox's shorter-interval
+    // branch. Given by bit pattern so the extreme exponents are exact without
+    // relying on literal parsing: 2^-1019, 2^-1018, 2^-1005, 2^-1074 (the
+    // smallest subnormal, which is NOT shorter-interval — exponent field zero),
+    // and 2^1023.
+    var p: i64[] = [18014398509481984, 22517998136852480, 72057594037927936, 1, 9214364837600034816];
+    var q: i32 = 0;
+    while (q < p.len()) { print(f64_from_bits(p[q]).to_string()); q = q + 1; }
 
     // Round-trip: exactly-representable values recover exactly (tol 0).
     if (!roundtrips(0.5, 0.0)) { return 10; }

@@ -6727,7 +6727,7 @@ function main(): i32 {
 		var e: f32 = -0.25;
 		if (e.to_string() != "-0.25") { return 11; }
 
-		// f64 keeps more precision (15 fractional digits).
+		// f64 renders shortest-round-trip, same as f32.
 		var f: f64 = 0.5;
 		if (f.to_string() != "0.5") { return 20; }
 		var g: f64 = 1.5;

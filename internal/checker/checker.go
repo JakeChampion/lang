@@ -1219,9 +1219,9 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// + wasm backends route f64 / i64 through their own
 	// reinterpret instructions and don't need a builtin helper.
 	// Exposing the signature lets pure-Lang float-formatting
-	// code (std/float's `__float_to_string`, future hex-float
-	// emitters) extract the IEEE-754 fields without a runtime
-	// trip.
+	// code (std/float's Dragonbox `__float_shortest`, future
+	// hex-float emitters) extract the IEEE-754 fields without a
+	// runtime trip.
 	c.info.FuncSigs["f64_bits"] = &ast.FuncType{
 		Params: []ast.Type{ast.FloatType{Width: 64}},
 		Result: ast.NumberType{Width: 64, Signed: true},
