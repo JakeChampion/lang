@@ -6472,7 +6472,12 @@ function ru_expr(e: parser.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         parser.ExprStructLit(s) => {
             var m: MovedEntry[] = moved;
             var d: Diag[] = [];
-            if (s.has_base) { var rb: OwnWalk = ru_expr(s.base, m, ctx); m = rb.moved; d = append_diags(d, rb.diags); }
+            // `S { ...base, f: v }`: the spread READS base's fields (the new
+            // struct co-owns its pointer fields via the construction
+            // alias-inc) — a borrow, not a transfer, so the record-update
+            // idiom `a = A { ...a, f: a.f.append(v) }` on an `own a` is not a
+            // use-after-move. The named field VALUES below are still consumes.
+            if (s.has_base) { var rb: OwnWalk = ru_borrow(s.base, m, ctx); m = rb.moved; d = append_diags(d, rb.diags); }
             var i: i32 = 0;
             while (i < s.field_values.len()) { var r: OwnWalk = ru_expr(s.field_values[i], m, ctx); m = r.moved; d = append_diags(d, r.diags); i = i + 1; }
             return OwnWalk { moved: m, diags: d };

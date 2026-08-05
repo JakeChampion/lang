@@ -12835,6 +12835,37 @@ func (b *builder) fieldCarriedFrom(val ast.Expr, targetName, fieldName string) b
 	return ok && id.Name == targetName && fa.Field == fieldName
 }
 
+// structUpdateFieldInits normalises a self-overwrite struct literal into one
+// FieldInit per declared field, in declaration order. A plain literal already
+// names every field and is returned untouched (so its lowering is unchanged).
+// A self-spread `p = T{ ...p, f: v }` names only the CHANGED fields; each
+// un-listed field is filled in with the `p.<name>` the spread means, which
+// fieldCarriedFrom then recognises as carried — elided on the reuse branch,
+// stored + retained on the fresh-alloc one.
+func structUpdateFieldInits(sl *ast.StructLit, sd *ast.StructDecl, t *ast.Ident) []ast.FieldInit {
+	if sl.Base == nil {
+		return sl.Fields
+	}
+	out := make([]ast.FieldInit, 0, len(sd.Fields))
+	for _, fd := range sd.Fields {
+		listed := false
+		for _, f := range sl.Fields {
+			if f.Name == fd.Name {
+				out = append(out, f)
+				listed = true
+				break
+			}
+		}
+		if !listed {
+			out = append(out, ast.FieldInit{
+				Name:  fd.Name,
+				Value: &ast.FieldAccess{P: sl.P, Target: t, Field: fd.Name},
+			})
+		}
+	}
+	return out
+}
+
 func structReuseEligible(sd *ast.StructDecl) bool {
 	for _, f := range sd.Fields {
 		// Scalars of EVERY width are admitted (#4356 divergence 1): wide
@@ -13051,15 +13082,19 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	if !ok {
 		return false, nil
 	}
-	// Struct-update spread `p = T{ ...base, field: v }`: this fast path only
-	// knows how to place the *explicitly listed* fields (sl.Fields) — the
-	// un-overridden fields live in sl.Base and are never copied here. On the
-	// reuse (rc==1) branch the kept box happens to still hold them, but on the
-	// fresh-alloc (rc>1) branch the new box's un-listed fields are left
-	// uninitialised (read back as 0). Defer the whole spread form to the
-	// general StructLit lowering, which copies the base's fields correctly.
+	// Struct-update spread `p = T{ ...p, field: v }`: admitted only when the
+	// spread base is the assignment target itself, which makes every
+	// un-listed field exactly `p.<name>` — i.e. carried, the case step 6b
+	// already knows how to place on the fresh-alloc branch. Those synthetic
+	// carried FieldInits are materialised below. A spread of any OTHER base
+	// (`p = T{ ...q, f: v }`) still defers to the general StructLit lowering:
+	// its un-listed fields come from a different box, so the fresh-alloc
+	// branch would leave them uninitialised (read back as 0).
 	if sl.Base != nil {
-		return false, nil
+		bid, ok := sl.Base.(*ast.Ident)
+		if !ok || bid.Name != t.Name {
+			return false, nil
+		}
 	}
 	st, ok := b.exprStaticType(t).(ast.StructType)
 	if !ok || st.Name != sl.TypeName {
@@ -13089,7 +13124,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	temps := make([]fieldTemp, 0, len(sl.Fields))
 	hasPtr := false
 	hasCarried := false
-	for _, f := range sl.Fields {
+	for _, f := range structUpdateFieldInits(sl, sd, t) {
 		isPtr := arrElemIsRcTracked(fieldType(sd.Fields, f.Name))
 		// Field-store elision (Perceus reuse specialization): a field whose
 		// value is literally `p.<sameName>` is carried over UNCHANGED. On the
