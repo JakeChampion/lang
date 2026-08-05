@@ -139,11 +139,29 @@ pub struct LocalInfo {
     // consumers are CS3/#4355 and the reuse-analysis slice). Meaningless
     // (inert 1) on a non-string slot.
     str_own: i32,
+    // borrowed_arr: an is_arr slot that holds a BORROWED buffer whose owner is
+    // some other live value, so the exit dec-sweep must not release it. Set at
+    // the only binding form that reads a buffer straight out of a live box
+    // without a Perceus dup: a match arm's ENUM-PAYLOAD array binding
+    // (`RSeq(xs) => …`, `Items(ps) => …`). The enum box owns that buffer and is
+    // itself never swept (the IR leak-mode invariant), so the binding is a pure
+    // borrow: sweeping it decs a live buffer once per call, and the box's own
+    // payload pointer dangles as soon as the count reaches 0. #6049: std/regex's
+    // `__rx_match` binds `RSeq(xs)` / `RAlt(xs)` and is re-entered once per scan
+    // position, so the second call freed the parse tree's child array and the
+    // freelist handed the block straight back to the next allocation.
+    // A CONSUMING match still reclaims the payload — it reads it back out of the
+    // box's own slot (emit_enum_variant_drops_moved), never through this binding.
+    borrowed_arr: boolean,
 }
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", str_own: 1 };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", str_own: 1, borrowed_arr: false };
+}
+
+pub function li_set_borrowed_arr(li: LocalInfo, v: boolean): LocalInfo {
+    return LocalInfo { ...li, borrowed_arr: v };
 }
 
 pub function li_set_names(li: LocalInfo, v: string): LocalInfo {
@@ -606,6 +624,18 @@ pub function (s: LowerState) set_local_name(i: i32, name: string): LowerState {
 
 pub function (s: LowerState) mark_arr(i: i32, v: boolean): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_is_arr(s.locals[i], v)) };
+}
+
+// is_borrowed_arr_slot / mark_borrowed_arr query and set the borrowed-buffer flag
+// of slot i (LocalInfo.borrowed_arr) — the exit dec-sweep's opt-out for an array
+// binding that only borrows a live owner's buffer.
+pub function (s: LowerState) is_borrowed_arr_slot(i: i32): boolean {
+    if (i < 0 || i >= s.locals.len()) { return false; }
+    return s.locals[i].borrowed_arr;
+}
+
+pub function (s: LowerState) mark_borrowed_arr(i: i32, v: boolean): LowerState {
+    return LowerState { ...s, locals: s.locals.with(i, li_set_borrowed_arr(s.locals[i], v)) };
 }
 
 // is_u32_slot / mark_u32 query and set the u32-ness of slot i (a u32 scalar or
@@ -2249,6 +2279,37 @@ pub function enum_arr_field_read_type(e: parser.Expr, s: LowerState): string {
             if (oty == "") { return ""; }
             var ft: string = decl_field_type(s.structs, oty, fa.field);
             if (is_enum_array_field_type(s.structs, ft)) { return ft; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// enum_field_read_type is the DIRECT-enum twin of enum_arr_field_read_type: it
+// returns the field type of a plain ENUM struct field read (`p.node` where
+// `node: RNode` and RNode is an enum), else "". Storing such a read into a
+// CONTAINER makes the container a second owner of the field's enum box while the
+// source struct still holds the first, so it needs the same Perceus dup
+// (__fern_rc_inc) the struct-literal path already applies to a direct enum field
+// value: __struct_drop_<T>'s k_enum arm decs the field when the struct is
+// reclaimed, and without the dup that dec frees a box the container still points
+// at. Balance: field rc 1 →dup 2 →__struct_drop_<T> 1 →container's own release 0.
+// A borrowed source whose struct is never dropped simply leaks (sound).
+//
+// #6049: std/regex's `__rx_alt` is exactly this shape — `[first.node]` and
+// `branches.append(nxt.node)` over an `RParse.node`. The RSeq box the branches
+// array pointed at was freed by `first`'s __struct_drop_RParse, and the freelist
+// handed the same block back for the enclosing RGroup — a self-referential parse
+// tree that made `__rx_match` alternate between its RGroup and RAlt arms until
+// the stack ran out (six regex fixtures, on both the x86-64 and arm64 legs).
+pub function enum_field_read_type(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            var ft: string = decl_field_type(s.structs, oty, fa.field);
+            if (decl_is_enum(s.structs, ft)) { return ft; }
             return "";
         },
         _ => { return ""; }
@@ -7831,7 +7892,14 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
                             sa = sa.emit(ir.op_call_direct("__fern_rc_inc", 1));
                         }
                     },
-                    _ => {}
+                    // A DIRECT ENUM field read (`[first.node]`) aliases the source
+                    // struct's enum box, which __struct_drop_<T>'s k_enum arm decs on
+                    // reclamation — retain it so that dec only releases the dup (#6049).
+                    _ => {
+                        if (enum_field_read_type(arr.elements[i], sa) != "") {
+                            sa = sa.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                        }
+                    }
                 }
                 i = i + 1;
             }
@@ -16120,7 +16188,16 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                                         aps = aps.emit(ir.op_drop());
                                     }
                                 },
-                                _ => {}
+                                // A DIRECT ENUM field read (`branches.append(nxt.node)`)
+                                // escapes the same way, against the k_enum dec of the
+                                // source struct's __struct_drop_<T> (#6049). The inc is
+                                // emitted INLINE on the value already on the operand
+                                // stack (__fern_rc_inc returns its arg), so no reload.
+                                _ => {
+                                    if (enum_field_read_type(wc.args[0], aps) != "") {
+                                        aps = aps.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                                    }
+                                }
                             }
                             // Sole-owner (unaliased) `a = a.append(v)`: the old
                             // buffer has no surviving reference, so on a grow-
@@ -17558,6 +17635,11 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                             ms = ms.mark_arr(bslot, true);
                             ms = ms.mark_struct_type(bslot, ev_ty[0 : ev_ty.len() - 2]);
                         }
+                        // The binding BORROWS the enum box's buffer — the box owns
+                        // it and is never swept — so keep the exit dec-sweep off it
+                        // (#6049; see LocalInfo.borrowed_arr). Applied after the
+                        // branch chain so every array-payload spelling is covered.
+                        if (ms.is_arr_slot(bslot)) { ms = ms.mark_borrowed_arr(bslot, true); }
                     }
                     bidx = bidx + 1;
                 }
@@ -17763,6 +17845,12 @@ pub function lower_arr_append_value(obj: parser.Expr, val: parser.Expr, s: Lower
     }
     st = lower_expr(val, st);
     if (!st.ok) { return st; }
+    // A DIRECT ENUM field read appended here aliases the source struct's enum box,
+    // which __struct_drop_<T>'s k_enum arm decs on reclamation — retain it so that
+    // dec only releases the dup, exactly as the in-place append path does (#6049).
+    if (enum_field_read_type(val, st) != "") {
+        st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
+    }
     // The clone (a fresh slice, cap == len) is grown immediately, so this
     // arr_push ALWAYS reallocs — and the clone is sole-owned (just sliced, no
     // alias), so reclaim the pre-grow clone instead of leaking it. This is the
@@ -19434,7 +19522,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     }
     var i: i32 = st.n_params;
     while (i < st.locals.len()) {
-        if (!slot_list_has(keeps, i) && st.is_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && util.index_of_str(st.reclaimable_names, "ENVCAP:" + st.locals[i].slot_name) < 0) {
+        if (!slot_list_has(keeps, i) && st.is_arr_slot(i) && !st.is_borrowed_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && util.index_of_str(st.reclaimable_names, "ENVCAP:" + st.locals[i].slot_name) < 0) {
             // #4354 closure-env capture release: a registered closure local
             // (bound once from a literal lambda, non-escaping, kinds recorded
             // at the build site) releases its classifiable captures BEFORE the
@@ -32470,7 +32558,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1 });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1, borrowed_arr: false });
         lzi = lzi + 1;
     }
     // #4354: approve closure locals for capture RC. The approvals and the
