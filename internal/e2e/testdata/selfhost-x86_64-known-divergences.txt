@@ -52,7 +52,7 @@ derive_json #6009 returns 4, native 42 — identical to the wasm leg's figure
 # `pure_collection_aliases` was the third of these and is FIXED — its bail named
 # `Map.cleared`, which had no lowering at all; see the wasm sibling's note.
 generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown symbol Box__U.get)
-map_struct_value_field #6007 IR-ineligible; bails at main (no symbol named)
+map_struct_value_field #6007 IR-ineligible; bails at main on `it.value().field` over a Map[K, Struct] — NOT the `get_or(..).field` its header blames, which lowers fine
 
 # --- new, first seen on x86-64: ALL THREE NOW FIXED ------------------------
 # `int_wrap` (#6050) and `u64_max_to_f64_is_huge` (#6051): the i32 formatter now

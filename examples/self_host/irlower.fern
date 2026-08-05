@@ -15383,6 +15383,14 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // dispatches as a mapiter op instead of bailing on a Map.<method> call.
     if (is_mapiter_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
     else if (is_map_type_name(v.type_name) && !is_array_type_name(v.type_name)) { sb = sb.mark_map_type(slot, v.type_name); }
+    // UNANNOTATED `var it = m.iter()` — recover MapIter[K, V] from the
+    // RECEIVER's map type so the slot is typed exactly as the annotated form
+    // types it. The annotation was load-bearing before this: without it the
+    // slot stayed untyped and the first it.has_next() bailed the module, at
+    // any value type (a Map[i32, i32] included).
+    else if (v.type_name.len() == 0 && mapiter_type_of_iter_call(v.init, sb).len() > 0) {
+        sb = sb.mark_map_type(slot, mapiter_type_of_iter_call(v.init, sb));
+    }
     else if (v.type_name.len() > 5 && v.type_name[0:5] == "Cell[") {
         // Cell[T] is a 1-element array of T. mark_cell records is_cell (+is_arr);
         // ALSO mark the element-KIND array flag so c[0] (the get desugar) reads
@@ -39636,6 +39644,32 @@ pub function mapiter_value_of(t: string): string {
 pub function mapiter_key_kind_of(t: string): i32 {
     if (!is_mapiter_type_name(t)) { return 0; }
     return map_key_kind_of("Map[" + t[8 : t.len()]);
+}
+
+// mapiter_type_of_iter_call recovers the "MapIter[K, V]" type of an UNANNOTATED
+// `var it = m.iter()` from the RECEIVER's map type, so the binding types the
+// slot exactly as a `var it: MapIter[K, V] = …` annotation does. Without it the
+// slot stayed untyped and every later it.has_next()/key()/value()/advance()
+// missed the mapiter dispatch and bailed the module — for ANY value type, an
+// `m.iter()` over a Map[i32, i32] included. Returns "" for anything that is not
+// a zero-arg `.iter()` on an expression whose map type resolves.
+pub function mapiter_type_of_iter_call(e: parser.Expr, s: LowerState): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 0) { return ""; }
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field != "iter") { return ""; }
+                    var mt: string = expr_map_type_tag(fa.obj, s);
+                    if (!is_map_type_name(mt) || is_array_type_name(mt)) { return ""; }
+                    return "MapIter[" + mt[4 : mt.len()];
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
 }
 
 // trim_spaces drops leading/trailing ASCII spaces.
