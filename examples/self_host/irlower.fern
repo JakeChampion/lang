@@ -3614,7 +3614,12 @@ pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
             if (util.is_all_digits(fa.field)) {
                 return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "f64[]";
             }
-            return false;
+            // A NAMED struct field declared f64[] — the f64 twin of the i64[]
+            // case in expr_is_i64arr, and broken the same way for the same
+            // reason: only the tuple form was handled. #6093.
+            var foty: string = expr_struct_type(fa.obj, s);
+            if (foty == "") { return false; }
+            return decl_field_type(s.structs, foty, fa.field) == "f64[]";
         },
         _ => { return false; }
     }
@@ -5586,7 +5591,15 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
             if (util.is_all_digits(fa.field)) {
                 return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "i64[]";
             }
-            return false;
+            // A NAMED struct field declared i64[] / u64[]. Only the tuple case
+            // above was handled, so `p.vals.append(v)` on an `i64[]` field
+            // picked the 4-byte arr_push while lowering an i64 value — invalid
+            // wasm ("expected i32, found i64"), and a silent width error
+            // elsewhere. #6093.
+            var foty: string = expr_struct_type(fa.obj, s);
+            if (foty == "") { return false; }
+            var fft: string = decl_field_type(s.structs, foty, fa.field);
+            return fft == "i64[]" || fft == "u64[]";
         },
         parser.ExprCall(c) => {
             // A call to an i64[]-returning free function OR method (i64arr_ret_fns,

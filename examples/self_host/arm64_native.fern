@@ -2993,21 +2993,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             var nval: i64 = arm64_gas_atoi64(arm64_gas_trim(litok[1:litok.len()]));
             a = Arm64Asm { ...a, code: arm64_ldr_lit(a.code, arm64_gas_reg(rops[0]), 0) };
             p = Arm64GasProg { ...p, lit_sites: p.lit_sites.append(a.code.len() - 4) };
-            // Lift the array out, append, fold it back — the idiom already used
-            // for `code` above, and here it is load-bearing rather than a
-            // performance choice. `p = Arm64GasProg { ...p, lit_vals:
-            // p.lit_vals.append(nval) }` — the obvious spelling, and what
-            // lit_sites uses one line up — emits INVALID wasm once the field is
-            // i64[] rather than i32[]: the self-host wasm emitter types the
-            // appended element i32 and wasmtime refuses the module with
-            // "expected i32, found i64". That is a real self-host bug (#6093),
-            // but this module is compiled to wasm by the arm64 self-tests, so it
-            // has to stay inside the subset that lowers. Do not "simplify" this
-            // back to the one-liner without re-running TestSelfHostArm64Branches.
-            var lvals: i64[] = p.lit_vals;
-            p = Arm64GasProg { ...p, lit_vals: [] };
-            lvals = lvals.append(nval);
-            p = Arm64GasProg { ...p, lit_vals: lvals };
+            p = Arm64GasProg { ...p, lit_vals: p.lit_vals.append(nval) };
             continue;
         }
         // @PAGE / @PAGEOFF symbol references queue a fixup; everything else

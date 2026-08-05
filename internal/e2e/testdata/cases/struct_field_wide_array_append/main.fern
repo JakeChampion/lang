@@ -1,0 +1,29 @@
+// Appending to an 8-byte-element array held in a STRUCT FIELD, through a
+// struct-spread update. The element width is resolved from the receiver, and
+// only the TUPLE form of a field access was handled — a named field fell
+// through to the 4-byte arr_push while the value was lowered as i64/f64, so
+// the self-host wasm emitter produced a module wasmtime refused outright
+// ("expected i32, found i64"). #6093.
+//
+// Both widths, because they are separate code paths (expr_is_i64arr /
+// expr_is_f64arr) that were broken identically. Returns 0 iff every check
+// holds, else the failing check's index.
+struct Pool { sites: i32[], vals: i64[], weights: f64[] }
+
+function main(): i32 {
+    var p: Pool = Pool { sites: [], vals: [], weights: [] };
+    p = Pool { ...p, sites: p.sites.append(4) };
+    p = Pool { ...p, vals: p.vals.append(1234567890123) };
+    p = Pool { ...p, weights: p.weights.append(2.5) };
+    if (p.sites[0] != 4) { return 1; }
+    if (p.vals[0] != 1234567890123) { return 2; }
+    if (p.weights[0] < 2.4 || p.weights[0] > 2.6) { return 3; }
+    // A second append grows past the initial capacity, so the element stride
+    // is exercised on the realloc path too, not just the first slot.
+    p = Pool { ...p, vals: p.vals.append(0 - 987654321098) };
+    p = Pool { ...p, weights: p.weights.append(0.5) };
+    if (p.vals.len() != 2 || p.vals[1] != (0 - 987654321098)) { return 4; }
+    if (p.weights.len() != 2 || p.weights[1] > 0.6) { return 5; }
+    if (p.vals[0] != 1234567890123) { return 6; }
+    return 0;
+}
