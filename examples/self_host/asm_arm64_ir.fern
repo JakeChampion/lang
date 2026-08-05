@@ -2550,14 +2550,19 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
     if (s.has_need("str_cmp")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_cmp(), s.struct_decls, s);
     }
-    // __fern_read_line: no args. Reads up to 256 bytes from
-    // stdin, scans for '\n', returns a 16-byte box ptr. Linux
-    // syscall sys_read (#63 on aarch64).
+    // __fern_read_line: no args. Reads ONE line from stdin a byte
+    // at a time, returns a 16-byte box ptr. Linux syscall sys_read
+    // (#63 on aarch64).
     if (s.has_need("str_read_line")) {
         // __fern_read_line: no args -> Option[string] (#4369): Some(line incl. '\n')
         // / None at EOF, reads stdin (fd 0). The Option box is rc-headered
         // (__fern_arr_box cap=2, like op_opt_make) so the match-consume drop is
         // valid. Shared by the AST and IR paths (str_read_line).
+        //
+        // One byte per syscall, stopping at '\n' — the arm64 half of #6052. The
+        // previous single read(0, buf, 256) DISCARDED everything after the first
+        // newline, so a read-until-EOF loop saw one line and then a real EOF.
+        // See the x86-64 sibling in asm_ir.fern for the full diagnosis.
         s = s.write("__fern_read_line:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
@@ -2565,32 +2570,29 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
         s = s.write("    stp x21, x22, [sp, #-16]!\n");   // x21=len/strbox
         s = s.write("    mov x0, #256\n");
         s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x19, x0\n");      // buf ptr
+        s = s.write("    mov x19, x0\n");      // buffer base
+        s = s.write("    mov x20, x19\n");     // write cursor = base
+        s = s.write(".Lrl_loop:\n");
+        s = s.write("    sub x1, x20, x19\n");
+        s = s.write("    cmp x1, #256\n");
+        s = s.write("    b.ge .Lrl_box\n");    // buffer full -> return what we have
         s = s.write("    mov x0, #0\n");       // fd 0
-        s = s.write("    mov x1, x19\n");
-        s = s.write("    mov x2, #256\n");
+        s = s.write("    mov x1, x20\n");
+        s = s.write("    mov x2, #1\n");       // ONE byte
         s = s.write("    mov x8, #63\n");      // sys_read
         s = s.write("    svc #0\n");
-        s = s.write("    mov x20, x0\n");      // bytes_read
-        s = s.write("    cmp x20, #0\n");
-        s = s.write("    b.le .Lrl_none\n");   // EOF / error -> None
-        s = s.write("    mov x1, x19\n");
-        s = s.write("    add x2, x19, x20\n"); // end ptr
-        s = s.write(".Lrl_scan:\n");
-        s = s.write("    cmp x1, x2\n");
-        s = s.write("    b.eq .Lrl_no_nl\n");
-        s = s.write("    ldrb w0, [x1]\n");
+        s = s.write("    cmp x0, #1\n");
+        s = s.write("    b.lt .Lrl_eof\n");    // EOF (0) / error (<0)
+        s = s.write("    ldrb w0, [x20]\n");
+        s = s.write("    add x20, x20, #1\n");
         s = s.write("    cmp w0, #10\n");
-        s = s.write("    b.eq .Lrl_found\n");
-        s = s.write("    add x1, x1, #1\n");
-        s = s.write("    b .Lrl_scan\n");
-        s = s.write(".Lrl_no_nl:\n");
-        s = s.write("    mov x21, x20\n");     // len = whole read
-        s = s.write("    b .Lrl_box\n");
-        s = s.write(".Lrl_found:\n");
-        s = s.write("    sub x21, x1, x19\n"); // index of '\n'
-        s = s.write("    add x21, x21, #1\n"); // include the '\n'
+        s = s.write("    b.eq .Lrl_box\n");    // '\n' -> line ends, newline kept
+        s = s.write("    b .Lrl_loop\n");
+        s = s.write(".Lrl_eof:\n");
+        s = s.write("    cmp x20, x19\n");
+        s = s.write("    b.eq .Lrl_none\n");   // EOF before any byte -> None
         s = s.write(".Lrl_box:\n");
+        s = s.write("    sub x21, x20, x19\n");// len = cursor - base
         s = s.write("    mov x0, #16\n");
         s = s.write("    bl __fern_alloc\n");  // strbox
         s = s.write("    str x19, [x0]\n");

@@ -55,15 +55,15 @@ generic_method_typeparams #6007 IR-ineligible; bails at main (call to unknown sy
 pure_collection_aliases #6007 IR-ineligible; bails at main (call to unknown symbol Map.cleared)
 map_struct_value_field #6007 IR-ineligible; bails at main (no symbol named)
 
-# --- new, first seen on x86-64 ---------------------------------------------
-# The wasm leg does NOT check this one: it sets skipStdin, so all four
-# stdin-carrying fixtures are excluded there — "the wasm leg passes it" was
-# never true of multiline_stdin, it was never asked. Hand-run through the
-# self-host wasm path with stdin actually fed, it returns the same 10, so #6052
-# is a SHARED-frontend bug like the rows above, not an x86-64 one.
+# --- new, first seen on x86-64: ALL THREE NOW FIXED ------------------------
+# `int_wrap` (#6050) and `u64_max_to_f64_is_huge` (#6051): the i32 formatter now
+# carries its magnitude unsigned (so INT_MIN's self-negation still renders its
+# digits), and int→f64 is emitted per the op's width + signedness (so a u64
+# >= 2^63 stops converting as -1.0).
 #
-# `int_wrap` (#6050) and `u64_max_to_f64_is_huge` (#6051) sat here too. Both are
-# fixed: the i32 formatter now carries its magnitude unsigned (so INT_MIN's
-# self-negation still renders its digits), and int→f64 is emitted per the op's
-# width + signedness (so a u64 >= 2^63 stops converting as -1.0).
-multiline_stdin #6052 returns 10, native 42 — only the first stdin line is consumed
+# `multiline_stdin` (#6052): read_line issued one read(0, buf, 256) and threw
+# away every byte after the first newline, so a read-until-EOF loop got one line
+# and then a genuine EOF. It reads a byte at a time now, like native. This was
+# never x86-64-specific — all three self-host backends had the same single-read
+# shape, and the wasm leg only looked clean because it sets skipStdin and so
+# never asked. Keep that in mind before reading a lane's silence as coverage.

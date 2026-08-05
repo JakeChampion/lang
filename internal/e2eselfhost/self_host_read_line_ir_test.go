@@ -15,6 +15,17 @@ import (
 // payload's len (newline now retained, so 5 not 4) or a code from the None arm and
 // check the exit code. This pins all three fixed divergences (type shape, newline
 // retention, EOF signaling) end-to-end.
+//
+// The MULTI-CALL cases at the bottom exist because every case above calls
+// read_line exactly ONCE, and #6052 only appeared on the second call: the
+// runtime issued a single read(0, buf, 256), boxed as far as the first '\n', and
+// discarded the rest of the buffer, so the next read returned a genuine EOF.
+// Five single-call cases across three backends all passed while
+// `10\n15\n17\n` summed to 10 instead of 42. A one-shot case cannot see this
+// class of bug no matter how many backends run it — the second call is the
+// whole test. Note also that these must receive all their input at once (the
+// harness hands cmd.Stdin a reader over the full string, which is what a shell
+// pipe does): dribbled line-by-line, even the broken runtime passes.
 var readLineIRCases = []struct {
 	name, src, stdin, wantOut string
 	wantExit                  int // used when wantOut == ""
@@ -24,6 +35,16 @@ var readLineIRCases = []struct {
 	{"empty-line", `function main(): i32 { match (read_line()) { Some(s) => { return s.len(); }, None => { return 9; }, } }`, "\nx", "", 1},
 	{"eof-none", `function main(): i32 { match (read_line()) { Some(s) => { return 1; }, None => { return 7; }, } }`, "", "", 7},
 	{"method", `function main(): i32 { var r: Reader = stdin(); match (r.read_line()) { Some(s) => { return s.len(); }, None => { return 0; }, } }`, "xy\n", "", 3},
+	// Two consecutive calls: the minimal reproduction. Under the single-read
+	// runtime the second call returned None and this exited 0.
+	{"two-calls", `function main(): i32 { var a: i32 = 0; match (read_line()) { Some(s) => { a = s.len(); }, None => { a = 0; }, } match (read_line()) { Some(s) => { return a + s.len(); }, None => { return 0; }, } }`, "ab\ncd\n", "", 6},
+	// Read-until-EOF, the multiline_stdin fixture's shape without the stdlib
+	// (these programs compile with no stdlib root, so no trim/parse_int).
+	// Counted 1 instead of 5 before the fix.
+	{"count-until-eof", `function main(): i32 { var n: i32 = 0; var done: boolean = false; while (!done) { match (read_line()) { Some(s) => { n = n + 1; }, None => { done = true; }, } } return n; }`, "a\nb\nc\nd\ne\n", "", 5},
+	// The same loop where the final line has NO trailing newline: it must still
+	// come back as Some, so three lines in, three out.
+	{"count-unterminated-tail", `function main(): i32 { var n: i32 = 0; var done: boolean = false; while (!done) { match (read_line()) { Some(s) => { n = n + 1; }, None => { done = true; }, } } return n; }`, "a\nb\nc", "", 3},
 }
 
 func TestSelfHostReadLineIRX86_64(t *testing.T) {

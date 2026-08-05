@@ -2456,48 +2456,56 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __fern_read_line: no args -> Option[string] (#4369): reads up to 256 bytes
-    // (one line) from stdin (fd 0); EOF/error (read<=0) -> None; else box the line
-    // INCLUDING the '\n' (strbox {data@0,len@8}) wrapped in Some. The OPTION box is
+    // __fern_read_line: no args -> Option[string] (#4369): reads ONE line from
+    // stdin (fd 0); EOF before any byte -> None; else box the line INCLUDING the
+    // '\n' (strbox {data@0,len@8}) wrapped in Some. The OPTION box is
     // rc-headered via __fern_arr_box(cap=2) — exactly like op_opt_make — so the
     // match-consume drop's __fern_rc_dec finds a valid header (a plain __fern_alloc
     // box is headerless and segfaults the drop). Gated on str_read_line.
+    //
+    // Reads ONE BYTE PER SYSCALL, stopping at '\n', mirroring native
+    // emitReadLineRuntime. The previous shape issued a single read(0, buf, 256)
+    // and scanned the result for '\n' — which silently DISCARDED every byte
+    // after that newline, because only the line was boxed and the buffer was
+    // dropped. A read-until-EOF loop therefore saw the first line and then a
+    // genuine EOF: `10\n15\n17\n` summed to 10, not 42 (#6052). Reading a byte
+    // at a time is correct by construction — the syscall never consumes a byte
+    // this call will not return — and it leaves the rest of stdin in the OS for
+    // the next call (or for a child process). Slower per line, and deliberately
+    // so: matching native's observable semantics is the point.
     if (s.has_need("str_read_line")) {
         s = s.write("__fern_read_line:\n");
         s = s.write("    pushq %rbp\n");
         s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %r12\n");                 // buffer
-        s = s.write("    pushq %r13\n");                 // bytes / strbox
+        s = s.write("    pushq %r12\n");                 // buffer base
+        s = s.write("    pushq %r13\n");                 // write cursor / strbox
         s = s.write("    movq $256, %rdi\n");
         s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r12\n");            // buffer
+        s = s.write("    movq %rax, %r12\n");            // buffer base
+        s = s.write("    movq %r12, %r13\n");            // cursor = base
+        s = s.write(".Lrl_loop:\n");
+        s = s.write("    movq %r13, %rax\n");
+        s = s.write("    subq %r12, %rax\n");
+        s = s.write("    cmpq $256, %rax\n");
+        s = s.write("    jge .Lrl_box\n");               // buffer full -> return what we have
         s = s.write("    movq $0, %rax\n");
         s = s.write("    movq $0, %rdi\n");              // fd 0
-        s = s.write("    movq %r12, %rsi\n");
-        s = s.write("    movq $256, %rdx\n");
+        s = s.write("    movq %r13, %rsi\n");
+        s = s.write("    movq $1, %rdx\n");              // ONE byte
         s = s.write("    syscall\n");
-        s = s.write("    movq %rax, %r13\n");            // bytes read
-        s = s.write("    cmpq $0, %r13\n");
-        s = s.write("    jle .Lrl_none\n");              // EOF / error -> None
-        s = s.write("    movq %r12, %rcx\n");
-        s = s.write("    movq %r12, %r8\n");
-        s = s.write("    addq %r13, %r8\n");
-        s = s.write(".Lrl_scan:\n");
-        s = s.write("    cmpq %rcx, %r8\n");
-        s = s.write("    je .Lrl_no_nl\n");
-        s = s.write("    movzbq (%rcx), %rax\n");
+        s = s.write("    cmpq $1, %rax\n");
+        s = s.write("    jl .Lrl_eof\n");                // EOF (0) / error (<0)
+        s = s.write("    movzbq (%r13), %rax\n");
+        s = s.write("    incq %r13\n");
         s = s.write("    cmpq $10, %rax\n");
-        s = s.write("    je .Lrl_found\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lrl_scan\n");
-        s = s.write(".Lrl_no_nl:\n");
-        s = s.write("    movq %r13, %rdx\n");            // len = whole read
-        s = s.write("    jmp .Lrl_box\n");
-        s = s.write(".Lrl_found:\n");
-        s = s.write("    movq %rcx, %rdx\n");
-        s = s.write("    subq %r12, %rdx\n");            // index of '\n'
-        s = s.write("    incq %rdx\n");                  // include the '\n'
+        s = s.write("    je .Lrl_box\n");                // '\n' -> line ends, newline kept
+        s = s.write("    jmp .Lrl_loop\n");
+        s = s.write(".Lrl_eof:\n");
+        s = s.write("    cmpq %r12, %r13\n");
+        s = s.write("    je .Lrl_none\n");               // EOF before any byte -> None
         s = s.write(".Lrl_box:\n");
+        s = s.write("    movq %r13, %rdx\n");
+        s = s.write("    subq %r12, %rdx\n");            // len = cursor - base
         s = s.write("    pushq %rdx\n");
         s = s.write("    movq $16, %rdi\n");
         s = s.write("    call __fern_alloc\n");          // strbox (string box)
