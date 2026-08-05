@@ -187,3 +187,63 @@ func TestFloatStringRoundTripIsExactIdentity(t *testing.T) {
 		t.Errorf("parse_float ∘ to_string is not the identity over %d values:\n%s", len(vals), out)
 	}
 }
+
+// eiselLemireFallbackInputs are decimals whose first 19 significant digits do
+// not determine the result: Eisel-Lemire's truncated significand `w` and `w+1`
+// round to DIFFERENT doubles, so the fast path must decline and hand off to the
+// exact `__decimal_to_f64`. Found by running the reference implementation over
+// random long digit strings — roughly 1 input in 4000 of that shape lands here,
+// so a random corpus alone would exercise the fallback only by luck.
+//
+// Without these, a bug that made the fast path claim these inputs (or that
+// broke the fallback it hands to) would pass every other float test.
+var eiselLemireFallbackInputs = []string{
+	"4.4503711836601074411763531681463e-296",
+	"3.36302169273979401078e-166",
+	"1.47285417837035957993593e-286",
+	"9.565069466618366712741110144771814372e221",
+	"1.141268837741204946519519578962597028451340e64",
+	"3.874187492813244237443348798714779e244",
+	"5.10138240580919706169586572034706818814e205",
+	"4.8869072634591218364450729e-12",
+	"4.36774107033378682824525868889962571015865e-170",
+	"1.3521474617058375324272254e50",
+	"8.3262956204380971506040e-201",
+	"1.2953469714866854880915224074720591739e76",
+}
+
+// TestParseFloatEiselLemireFallback pins the slow-path handoff: these inputs
+// must still parse bit-exactly, which they can only do by going through the
+// exact big-integer path.
+func TestParseFloatEiselLemireFallback(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("import \"std/string\";\nimport \"std/i64\";\nfunction main(): i32 {\n")
+	for _, s := range eiselLemireFallbackInputs {
+		fmt.Fprintf(&b, "    match ((%q).parse_float()) { Some(x) => { write(f64_bits(x).to_string()); }, None => { write(\"NONE\"); } } write(\"\\n\");\n", s)
+	}
+	b.WriteString("    return 0;\n}\n")
+
+	out, code := compileAndRunX86_64(t, b.String())
+	if code != 0 {
+		t.Fatalf("exit = %d\noutput:\n%s", code, out)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != len(eiselLemireFallbackInputs) {
+		t.Fatalf("got %d lines, want %d\n%s", len(lines), len(eiselLemireFallbackInputs), out)
+	}
+	for i, s := range eiselLemireFallbackInputs {
+		want, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			t.Fatalf("test corpus bug: strconv rejects %q: %v", s, err)
+		}
+		gotBits, err := strconv.ParseInt(lines[i], 10, 64)
+		if err != nil {
+			t.Errorf("%q: parse_float printed %q", s, lines[i])
+			continue
+		}
+		if uint64(gotBits) != math.Float64bits(want) {
+			t.Errorf("%q: parse_float = %#016x (%v), strconv = %#016x (%v)",
+				s, uint64(gotBits), math.Float64frombits(uint64(gotBits)), math.Float64bits(want), want)
+		}
+	}
+}

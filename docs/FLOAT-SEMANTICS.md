@@ -190,7 +190,7 @@ Dragonbox is a table lookup plus one wide multiply per call, so it is
 constant-work and allocates nothing beyond the result string. The tables
 are the cost: 619 128-bit entries for f64 and 78 64-bit entries for f32,
 ~14 KB of static rodata, generated and verified against the upstream
-dragonbox table by `cmd/dragonboxgen` (`go run ./cmd/dragonboxgen
+dragonbox table by `cmd/floattablegen` (`go run ./cmd/floattablegen
 internal/stdlib/std/float.fern` regenerates them). They ship as Fern
 *string* literals rather than array literals, because a string literal is
 rodata while a Fern array literal is executable code that would rebuild
@@ -218,14 +218,32 @@ f64 mirror).
 
 It returns the **nearest f64 to the exact decimal value**, ties to even —
 bit-exact with `strconv.ParseFloat` for every input, however many digits
-it carries. `__decimal_to_f64` seeds a float estimate and then refines it
-against exact big-integer midpoint comparisons, so the result does not
-depend on the estimate being close: the digits that decide the rounding
-are compared exactly. Verified against `strconv` over a corpus that
-includes exact decimal midpoints between adjacent doubles (the inputs
-that force the round-half-to-even rule), the classic
-`2.2250738585072011e-308` strtod bug, subnormals, and 1100-digit exact
-midpoints.
+it carries. Verified against `strconv` over a corpus that includes exact
+decimal midpoints between adjacent doubles (the inputs that force the
+round-half-to-even rule), the classic `2.2250738585072011e-308` strtod
+bug, subnormals, and 1100-digit exact midpoints.
+
+Two paths produce that result:
+
+- **Eisel-Lemire** (`_el_parse`) is the fast path: a 128-bit power-of-five
+  lookup and one wide multiply. By the Mushtak-Lemire result it is
+  *provably* exact whenever the significand fits in 64 bits — at most 19
+  decimal digits — so it needs no verification step for those inputs.
+  Longer inputs are truncated to 19 digits and computed twice, once with
+  the truncated significand and once with it incremented; when both ends
+  round to the same double, every value between them does too, and the
+  answer is exact.
+- **`__decimal_to_f64`** is the exact fallback, taken only when those two
+  ends disagree. It seeds a float estimate and refines it against exact
+  big-integer midpoint comparisons, so its result never depends on the
+  estimate being close. Measured over 9.5M inputs, **0.026%** reach it —
+  and it is what the fast path's correctness *doesn't* have to cover.
+
+Cost: the fast path is ~1.3 µs per parse against ~3.2 ms for the refinement
+loop alone (~2,400x), measured on x86-64 over shortest-repr inputs. The
+power-of-five table is 651 128-bit entries, ~14 KB of rodata, generated and
+checked against the upstream fast_float table by `cmd/floattablegen`. It is
+dead-code eliminated in programs that never call `parse_float`.
 
 Because `to_string` is shortest-round-trip and `parse_float` is correctly
 rounded, **`parse_float ∘ to_string` is the exact identity** on every
