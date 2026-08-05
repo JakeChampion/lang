@@ -76,11 +76,16 @@ func Gen(seed uint64) string {
 // data. Each generator decision (which production to pick, which
 // in-scope variable to reference, how many statements to emit)
 // consumes one byte; once the stream is exhausted, every
-// subsequent decision returns 0, so the generator naturally winds
-// down — recursion stops at the leaf production, statement
-// counters pick zero. That property is the wasm-smith-style
-// minimisation contract: chopping bytes off the end of a corpus
-// produces a shorter program, not a different one.
+// subsequent decision takes its smallest branch, so the generator
+// naturally winds down — recursion stops at the leaf production,
+// statement counters pick zero. That property is the wasm-smith-
+// style minimisation contract: chopping bytes off the end of a
+// corpus yields a program that still type-checks and has no more
+// AST nodes than before, so a shrinker converges rather than
+// walking uphill. Stated as a property by
+// TestGenBytesShrinkIsMonotonicAndValid; the source TEXT is not
+// promised to shrink with it, because a smaller program can spell
+// a leaf with a wider name.
 //
 // Wire this into `testing.F.Fuzz(func(t *testing.T, data []byte))`
 // so the mutator's byte-level edits drive the generator's
@@ -164,6 +169,16 @@ type chooser interface {
 	// — see the "exhaustion convention" note on the chooser
 	// interface.
 	flip(p float64) bool
+	// exhausted reports whether the input is spent, without
+	// consuming a decision. Spelling `true` as the shortening
+	// branch of every flip is not on its own enough to keep
+	// truncation monotonic: a function whose FALL-THROUGH (every
+	// flip skipped) is larger than one of the branches it skipped
+	// grows when the corpus runs out mid-sequence. Such a
+	// fall-through asks this predicate first and takes the minimal
+	// production instead. randChooser reports false always, so
+	// random generation is untouched.
+	exhausted() bool
 }
 
 // randChooser is a PCG-driven chooser. Honours the math/rand/v2
@@ -172,13 +187,14 @@ type randChooser struct{ rng *rand.Rand }
 
 func (c *randChooser) intN(n int) int      { return c.rng.IntN(n) }
 func (c *randChooser) flip(p float64) bool { return c.rng.Float64() < p }
+func (c *randChooser) exhausted() bool     { return false }
 
 // byteChooser yields decisions from a fixed byte slice. Each
 // `intN` and `flip` call consumes exactly one byte. Once the
 // slice is exhausted every subsequent decision returns the "0th
-// option" / `false` — the smallest, most-terminating choice —
-// so chopping bytes off the end of a corpus produces a
-// shorter program, not a different one.
+// option" / `true` — the smallest, most-terminating choice —
+// so chopping bytes off the end of a corpus collapses the
+// program rather than rewriting it.
 //
 // This is the load-bearing minimisation contract for the fuzz
 // oracle: the testing.F mutator can shrink failing inputs by
@@ -187,6 +203,8 @@ type byteChooser struct {
 	data []byte
 	pos  int
 }
+
+func (c *byteChooser) exhausted() bool { return c.pos >= len(c.data) }
 
 func (c *byteChooser) next() (byte, bool) {
 	if c.pos >= len(c.data) {
@@ -1982,6 +2000,16 @@ func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth in
 	}
 	if t != tF32 && t != tF64 && depth < 2 && !g.flip(0.85) {
 		g.emitCheckedFold(b, sc, t, depth)
+		return
+	}
+	// The binary form below is the LARGEST shape this function emits: two
+	// operands where every specialised production above has one. Spelling
+	// the flips so `true` skips them is therefore not sufficient — a
+	// corpus that runs out partway down the sequence skips the small
+	// productions and lands here, growing the program. Once the input is
+	// spent the only legal move is the minimal one.
+	if g.ch.exhausted() {
+		g.leaf(b, sc, t, depth)
 		return
 	}
 	ops := []string{"+", "-", "*", "/"}

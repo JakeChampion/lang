@@ -743,34 +743,16 @@ var (
 	f64CastRE    = regexp.MustCompile(`f64[^()]*\) as i32\)`)
 )
 
-// TestGenBytesExhaustionShrinksProgram — chopping bytes off the
-// end of a corpus shouldn't make the emitted program *longer*.
-// This is the load-bearing minimisation property: the fuzzer's
-// shrinker truncates and shuffles bytes, and a working
-// generator turns shorter input into shorter (or equal) source.
-func TestGenBytesExhaustionShrinksProgram(t *testing.T) {
-	r := rand.New(rand.NewPCG(1, 2))
-	full := randBytes(r, 256)
-	long := fernsmith.GenBytes(full)
-	short := fernsmith.GenBytes(full[:8]) // one decision's worth
-	empty := fernsmith.GenBytes(nil)
-	if len(short) > len(long) {
-		t.Errorf("short corpus produced longer program: %d > %d", len(short), len(long))
-	}
-	if len(empty) > len(short) {
-		t.Errorf("empty corpus produced longer program: %d > %d", len(empty), len(short))
-	}
-}
-
 // TestGenBytesShrinkIsMonotonicAndValid is the minimisation contract
 // stated as a property rather than sampled at three points, and it is the
 // gate on growing this generator (#6073).
 //
 // The contract (fernsmith.go's doc, and what makes the fuzzer's shrinker
 // work) is that chopping bytes off a corpus collapses the program
-// smoothly. TestGenBytesExhaustionShrinksProgram checks that at 256, 8
-// and 0 bytes on a single seed, and checks only source LENGTH. Two things
-// it cannot see:
+// smoothly. This replaces TestGenBytesExhaustionShrinksProgram, which
+// sampled 256 / 8 / 0 bytes on one seed and compared source LENGTH — a
+// quantity the generator does not promise, see below. Two things that
+// sampling could not see:
 //
 //   - a non-monotonic step anywhere between those points, which would let
 //     the shrinker walk uphill instead of converging
@@ -804,23 +786,17 @@ func TestGenBytesExhaustionShrinksProgram(t *testing.T) {
 // counts AST nodes. That is insensitive to leaf-name width and is what
 // "smoothly collapses" actually means.
 func TestGenBytesShrinkIsMonotonicAndValid(t *testing.T) {
-	// NOT YET GREEN, and deliberately not skipped silently. The contract
-	// this asserts is violated on main today: after fixing the three
-	// numericExpr sites below, seed 0 still grows by 2 AST nodes when
-	// truncated to 67 bytes. Some of the 31 g.flip call sites still spell
-	// `true` as the expanding branch; finding them needs a bisect per site.
-	//
-	// It is committed rather than withheld because it is #6073's stated
-	// gate on every generator-growth slice, and because the finding it
-	// produced changes that issue's shape: growing the generator into
-	// closures and `match` on top of an already-broken contract would
-	// compound a defect rather than introduce one. Gated so CI stays
-	// honest — a red gate is not a green light, and a t.Skip would read
-	// as "nothing to see here".
-	if os.Getenv("RUN_SHRINK_PROPERTY") != "1" {
-		t.Skip("known-failing gate (#6073): set RUN_SHRINK_PROPERTY=1 — see the comment above for what remains")
+	// One type-check per truncation point per seed: the full sweep is
+	// ~4,600 of them, about six minutes, which does not belong in a
+	// default `go test ./internal/fernsmith`. Three seeds always run,
+	// because a contract nothing checks is a contract that lapses —
+	// three is not a token sample, since seed 0 alone found every
+	// flip-site defect this property was written for. The dedicated
+	// test-fernsmith workflow sets RUN_SHRINK_PROPERTY=1 for the rest.
+	seeds := uint64(3)
+	if os.Getenv("RUN_SHRINK_PROPERTY") == "1" {
+		seeds = sweepN(t, 24)
 	}
-	seeds := sweepN(t, 24)
 	for seed := uint64(0); seed < seeds; seed++ {
 		r := rand.New(rand.NewPCG(seed, 0x5eed))
 		corpus := randBytes(r, 192)

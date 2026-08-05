@@ -1,9 +1,10 @@
 name: Test fernsmith
 
 # `internal/fernsmith` carries the wasm-smith-style generator + its
-# scratch tests. Locally it's a ~56s run — long enough that
-# folding it into test-units would dominate that workflow's wall
-# clock. Its own workflow keeps the fan-out balanced.
+# scratch tests. Locally it's a ~56s run, plus ~6 minutes for the
+# full shrink-monotonicity sweep this lane opts into — long enough
+# that folding it into test-units would dominate that workflow's
+# wall clock. Its own workflow keeps the fan-out balanced.
 #
 # Matrix per arch because the generator emits programs that the
 # diff oracle (the related fuzz workflow) runs through every
@@ -56,4 +57,11 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
+      # RUN_SHRINK_PROPERTY widens TestGenBytesShrinkIsMonotonicAndValid
+      # from its 3-seed default to the full 24-seed sweep: one type-check
+      # per truncation point per seed, ~6 minutes. It belongs here rather
+      # than in test-units because this lane already owns the generator
+      # and runs its two hosts in parallel.
       - run: gotestsum --format pkgname-and-test-fails -- ./internal/fernsmith/...
+        env:
+          RUN_SHRINK_PROPERTY: "1"
