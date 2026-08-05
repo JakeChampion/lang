@@ -424,25 +424,107 @@ function offset_of_value(vals: string[], v: string): i32 {
     return 0 - 1;
 }
 
-// fl_base_for / heap_base_for recompute the freelist + heap bases including the
-// literal blocks (heap_extra = 0 in the IR subset — no i64 / print buffers).
-// The *_for_strs variants take the literal list directly rather than deriving it
-// from a cache (#5331 step 4b). A linked multi-unit module lays every unit's
-// literals out contiguously in one flat list, so there is no single cache to
-// derive them from — but the arithmetic is identical, since a flat list's own
-// str_offset already yields each literal's absolute address.
-pub function fl_base_for_strs(sv: string[]): i32 {
-    return (str_offset(sv, sv.len()) + 16 + 7) / 8 * 8;
+// print_scratch_bytes is the scratch reserved immediately above the string
+// literal region, for the two decimal-formatting buffers: 16 bytes for
+// $__fern_print_int at [end, end+16) and 24 for $__fern_print_int64 at
+// [end+16, end+40) (an i64's widest decimal is 20 chars plus a sign).
+//
+// It used to be 16 — print_int's alone — so $__fern_print_int64's buffer ran
+// 24 bytes INTO the freelist head array that starts at fl_base. A module that
+// printed an i64 and then allocated a small block popped a "free block pointer"
+// that was in fact the printed digits: `print_int(1234567890123)` followed by 50
+// two-field struct allocations trapped with `memory fault at wasm address
+// 0x3938373a` — ASCII "873:", the tail of the number. The i64-print suite never
+// caught it because none of its cases allocate after printing.
+pub function print_scratch_bytes(): i32 { return 40; }
+
+// ---- static aggregate constants (#6149) -------------------------------------
+// An aggregate literal whose every field is a compile-time scalar literal
+// (irlower's const_struct) is placed in the data section instead of allocated.
+// The wasm placement mirrors the string region: a REGION whose base the link
+// step assigns to a per-unit global, with the unit's own code emitting relative
+// offsets, so a unit stays cacheable independently of its siblings.
+//
+// Immortality is free here. The register backends need the negative-rc sentinel
+// because their heap is mmap'd high and a data-section address is otherwise
+// indistinguishable from a heap one; wasm's rc guard chain already returns early
+// for any pointer below heap_base, and the whole const region sits below it. So
+// $__fern_rc_inc / $__fern_arr_dec no-op on a constant and $__fern_rc_is_unique
+// answers 0 — an FBIP reuse or record update targeting one degrades to a fresh
+// box rather than writing through the shared block. The sentinel is written into
+// the rc word anyway so a reader that skips the address guard still sees it.
+pub function const_agg_values(cache: irlower.LowerResult[]): string[] {
+    var vals: string[] = [];
+    var fi: i32 = 0;
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind_tag == 218) {  // const_struct
+                if (util.index_of_str(vals, r.ops[i].str) < 0) { vals = vals.append(r.ops[i].str); }
+            }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return vals;
 }
-pub function heap_base_for_strs(sv: string[]): i32 {
-    return fl_base_for_strs(sv) + fl_cells() * 4;
+
+// const_agg_block_bytes is one constant's whole block: the 8-byte rc+bsz header
+// $__fern_str_box would have prepended, plus the payload struct_make writes
+// ([type_id@0, f_i@8+i*8]). Always 8-aligned, so laying the blocks end to end
+// keeps every one of them aligned and leaves fl_base aligned too.
+pub function const_agg_block_bytes(packed: string): i32 {
+    return 16 + ir.const_struct_values(packed).len() * 8;
+}
+
+// const_agg_rel is the UNIT-relative offset of constant `idx`'s block — what a
+// unit's emitted code adds to $__cagg_base<ns>, the wasm analogue of the
+// register backends' `.K<n>` label.
+pub function const_agg_rel(cv: string[], idx: i32): i32 {
+    var off: i32 = 0;
+    var i: i32 = 0;
+    while (i < idx) {
+        off = off + const_agg_block_bytes(cv[i]);
+        i = i + 1;
+    }
+    return off;
+}
+
+// const_agg_region_base is where the constants start: above the string region
+// and its print scratch, 8-aligned. const_agg_offset is the absolute address of
+// block `idx` in a flat (whole-program or linked) list.
+pub function const_agg_region_base(sv: string[]): i32 {
+    return (str_offset(sv, sv.len()) + print_scratch_bytes() + 7) / 8 * 8;
+}
+pub function const_agg_offset(sv: string[], cv: string[], idx: i32): i32 {
+    return const_agg_region_base(sv) + const_agg_rel(cv, idx);
+}
+
+// fl_base_for / heap_base_for recompute the freelist + heap bases from the
+// static data below them: the string literals, the print scratch, and the
+// aggregate constants. The *_for_strs variants take those lists directly rather
+// than deriving them from a cache (#5331 step 4b). A linked multi-unit module
+// lays every unit's literals and constants out contiguously in one flat list, so
+// there is no single cache to derive them from — but the arithmetic is
+// identical, since a flat list's own str_offset / const_agg_offset already
+// yield each block's absolute address.
+pub function fl_base_for_strs(sv: string[], cv: string[]): i32 {
+    return const_agg_offset(sv, cv, cv.len());
+}
+pub function heap_base_for_strs(sv: string[], cv: string[]): i32 {
+    return fl_base_for_strs(sv, cv) + fl_cells() * 4;
 }
 pub function fl_base_for(cache: irlower.LowerResult[]): i32 {
-    return fl_base_for_strs(str_values(cache));
+    return fl_base_for_strs(str_values(cache), const_agg_values(cache));
 }
 pub function heap_base_for(cache: irlower.LowerResult[]): i32 {
     return fl_base_for(cache) + fl_cells() * 4;
 }
+
+// cagg_base_global names a UNIT's constant-region base, the sibling of
+// str_base_global. Whole-program emit passes ns = "" and gets $__cagg_base.
+pub function cagg_base_global(ns: string): string { return "$__cagg_base" + ns; }
 
 // module_uses_strings reports whether any function uses a string op (literal,
 // len, concat, eq) — gates the data section + strcat/streq helper emission.
@@ -2095,9 +2177,10 @@ pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[])
 // byte-identity invariant for #5331 step 4b is untouched.
 pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResult[], mode: i32): string {
     var sv: string[] = str_values(ir_cache);
+    var cv: string[] = const_agg_values(ir_cache);
     var ft: string[] = fn_value_table(ir_cache);
     var unit: string = emit_functions_ns("", mod, ir_cache);
-    return emit_ir_module_units_mode([""], [unit], sv, [sv.len()], ft, [ft.len()], mod,
+    return emit_ir_module_units_mode([""], [unit], sv, [sv.len()], cv, [cv.len()], ft, [ft.len()], mod,
         needs_of(ir_cache), indirect_arities(ir_cache), emit_ir_rc_bodies(mod, ir_cache), mode);
 }
 
@@ -2887,7 +2970,7 @@ function wasm_arr_bounds_check(base_local: i32, idx_local: i32): string {
 // the RC-consistency bug (#5509). Consuming the cached `r` makes it one lowering
 // by construction. `fd` supplies the func wrapper (name / receiver / ret); the
 // ~13 ret-fn / borrow side-tables that only fed lower_func are gone.
-function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDecl, str_vals: string[], structs: parser.StructDecl[], fn_table: string[], funcs: parser.FuncDecl[]): string {
+function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: parser.StructDecl[], fn_table: string[], funcs: parser.FuncDecl[]): string {
     var arrtmp: i32 = r.n_locals;
     var eltmp: i32 = r.n_locals + 1;
     // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
@@ -3202,13 +3285,14 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // before the first allocation — matching the register backends and
             // native's __fern_heap_bump_bytes. heap_base is recomputed from the
             // data-section layout (identical to heap_base_for(mod), since
-            // str_vals == str_values(mod)).
+            // str_vals / cagg_vals are this unit's and whole-program emit is one
+            // unit).
             //
             // The op's declared result is i64 (asmcore types the builtin i64 so
             // a >2 GiB mark cannot read back negative), so zero-extend the i32
             // address difference. Zero-, not sign-extend: the cursor never sits
             // below heap_base, so the difference is a non-negative byte count.
-            out = out + "    global.get $heap\n    i32.const " + util.i32_to_string((str_offset(str_vals, str_vals.len()) + 16 + 7) / 8 * 8 + fl_cells() * 4) + "\n    i32.sub\n    i64.extend_i32_u\n";
+            out = out + "    global.get $heap\n    i32.const " + util.i32_to_string(heap_base_for_strs(str_vals, cagg_vals)) + "\n    i32.sub\n    i64.extend_i32_u\n";
         } else if (o.kind_tag == 217) {  // arr_push_shared_bytes
             // The cliff WEIGHT — an i64 load from the fixed low-memory slot
             // $__fern_arr_push accumulates on its un-share path. i64, not i32:
@@ -3797,6 +3881,19 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
                 em = em - 1;
             }
             out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n";
+        } else if (o.kind_tag == 218) {  // const_struct
+            // The whole box is a compile-time constant (#6149): its block lives
+            // in the data section, so this pushes an address where struct_make
+            // emits a $__fern_str_box call plus nf field stores. Relative to
+            // $__cagg_base like const_str is to $__str_base, and +8 because the
+            // region holds whole BLOCKS while the value is the data pointer.
+            var kidx: i32 = util.index_of_str(cagg_vals, o.str);
+            if (kidx < 0) {
+                eprint("wasm-ir: aggregate constant not interned: " + o.str);
+                exit(1);
+            }
+            out = out + "    global.get " + cagg_base_global(ns) + "\n    i32.const "
+                + util.i32_to_string(const_agg_rel(cagg_vals, kidx) + 8) + "\n    i32.add\n";
         } else if (o.kind_tag == 139) {  // struct_get
             // stack: struct ptr -> load(ptr + 8 + index*8). An 8-byte field
             // (width 64) reads via i64.load for an i64 field (unsigned) or
@@ -4112,6 +4209,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
     // metadata by construction. The dozen ret-fn / borrow side-tables that only
     // fed the old per-function re-lowering are gone with it.
     var str_vals: string[] = str_values(cache);
+    var cagg_vals: string[] = const_agg_values(cache);
     var ft: string[] = fn_value_table(cache);
     var out: string = "";
     var fi: i32 = 0;
@@ -4127,7 +4225,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
         // Skipping it is the other half of bringing the extern bridge onto the IR
         // path: the bridge supplies the definition, so the lowering must not.
         if (mod.funcs[fi].import_iface.len() == 0) {
-            out = out + emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, all_structs, ft, all_funcs);
+            out = out + emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs);
         }
         fi = fi + 1;
     }
@@ -7233,17 +7331,51 @@ pub function wat_escape(s: string): string {
     }
     return out;
 }
-// le32_escape renders a non-negative i32 as four little-endian bytes in
-// WAT `\HH` escape form — the length prefix of a string block.
+// le32_escape renders an i32 as four little-endian bytes in WAT `\HH` escape
+// form — the length prefix of a string block, and every word of an aggregate
+// constant's block. Shifting and masking rather than dividing: a string length
+// is never negative, but an rc sentinel and a negative field constant are, and
+// `-1 / 256 % 256` does not name a byte.
 pub function le32_escape(n: i32): string {
-    var b0: i32 = n % 256;
-    var b1: i32 = (n / 256) % 256;
-    var b2: i32 = (n / 65536) % 256;
-    var b3: i32 = (n / 16777216) % 256;
-    return "\\" + hex_digit(b0 / 16) + hex_digit(b0 % 16)
-        + "\\" + hex_digit(b1 / 16) + hex_digit(b1 % 16)
-        + "\\" + hex_digit(b2 / 16) + hex_digit(b2 % 16)
-        + "\\" + hex_digit(b3 / 16) + hex_digit(b3 % 16);
+    var out: string = "";
+    var b: i32 = 0;
+    while (b < 4) {
+        var v: i32 = (n >> (b * 8)) & 255;
+        out = out + "\\" + hex_digit(v / 16) + hex_digit(v % 16);
+        b = b + 1;
+    }
+    return out;
+}
+
+// const_agg_data lays out the aggregate constants (#6149) as data segments, one
+// whole BLOCK each: the [rc][bsz] header $__fern_str_box would have written,
+// then the [type_id@0, f_i@8+i*8] payload struct_make would have stored — so a
+// constant is byte-identical to the box it replaces, except that its rc word is
+// the immortal sentinel rather than 1.
+//
+// Fields are written as full 8-byte slots (sign-extended) even though the
+// admission is i32-width and struct_get reads only the low four: the slot IS
+// eight bytes, and leaving the high half unwritten would be the one difference
+// between a constant and an allocated box that a future wide-field read could
+// see.
+function const_agg_data(sv: string[], cv: string[], structs: parser.StructDecl[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < cv.len()) {
+        var vals: string[] = ir.const_struct_values(cv[i]);
+        var body: string = le32_escape(0 - 1) + le32_escape(const_agg_block_bytes(cv[i]))
+            + le32_escape(struct_type_id(structs, ir.const_struct_type(cv[i]))) + le32_escape(0);
+        var vi: i32 = 0;
+        while (vi < vals.len()) {
+            var w: i32 = util.lit_to_i32(vals[vi]);
+            body = body + le32_escape(w);
+            if (w < 0) { body = body + le32_escape(0 - 1); } else { body = body + le32_escape(0); }
+            vi = vi + 1;
+        }
+        out = out + "  (data (i32.const " + util.i32_to_string(const_agg_offset(sv, cv, i)) + ") \"" + body + "\")\n";
+        i = i + 1;
+    }
+    return out;
 }
 // arr_push_wide emits a geometric-growth push for an 8-byte-slot array.
 // `vty` is the wasm value type of the appended element (i64 / f64);
@@ -7443,8 +7575,8 @@ function preview1_imports(needs: string[]): string {
 // `unknown func: failed to find name $__fern_env` (#4801). Every caller now
 // shares this one body — including the component modes, via the _mode sibling
 // below — so the drift cannot recur.
-pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, needs: string[], arities: i32[], rc_bodies: string): string {
-    return emit_ir_module_units_mode(nss, unit_texts, all_strs, str_counts, all_fns, fn_counts, mod, needs, arities, rc_bodies, 0);
+pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_caggs: string[], cagg_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, needs: string[], arities: i32[], rc_bodies: string): string {
+    return emit_ir_module_units_mode(nss, unit_texts, all_strs, str_counts, all_caggs, cagg_counts, all_fns, fn_counts, mod, needs, arities, rc_bodies, 0);
 }
 
 // emit_ir_module_units_mode is emit_ir_module_units parameterised by the wasm
@@ -7463,7 +7595,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
 // mode-independent, which is why the component leg is a fork at two points
 // rather than a second emitter (wasm.fern's AST component path is a full
 // parallel copy; this is not).
-pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, needs: string[], arities: i32[], rc_bodies: string, mode: i32): string {
+pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_caggs: string[], cagg_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, needs: string[], arities: i32[], rc_bodies: string, mode: i32): string {
     var out: string = "(module\n";
     if (mode == 0) { out = out + preview1_imports(needs); }
     if (mode == 2) { out = out + component_io_imports(needs); }
@@ -7519,6 +7651,21 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
             + le32_escape(sv[di].len()) + wat_escape(sv[di]) + "\")\n";
         di = di + 1;
     }
+    // Static aggregate constants (#6149), the region above the string literals.
+    // $__cagg_base<ns> is the sibling of $__str_base<ns>: one base per unit at
+    // that unit's first block, with the unit's code emitting relative offsets.
+    var cv: string[] = all_caggs;
+    if (cv.len() > 0) {
+        var kbi: i32 = 0;
+        var kbstart: i32 = 0;
+        while (kbi < nss.len()) {
+            out = out + "  (global " + cagg_base_global(nss[kbi]) + " i32 (i32.const "
+                + util.i32_to_string(const_agg_offset(sv, cv, kbstart)) + "))\n";
+            kbstart = kbstart + cagg_counts[kbi];
+            kbi = kbi + 1;
+        }
+    }
+    out = out + const_agg_data(sv, cv, mod.structs);
     // mode 2 folds into the heap gate: the $fd_write shim allocates its
     // canonical-ABI return area through $__fern_alloc, so a component-io core
     // needs the heap even when the program itself never allocates.
@@ -7529,8 +7676,8 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
     if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "remove_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
-        out = out + heap_alloc_helpers(heap_base_for_strs(sv), fl_base_for_strs(sv), fl_cells());
-        out = out + rc_runtime_helpers(heap_base_for_strs(sv));
+        out = out + heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells());
+        out = out + rc_runtime_helpers(heap_base_for_strs(sv, cv));
     }
     // The preview2 shims stand in for the preview1 imports mode 0 supplies, so
     // every $fd_write / $proc_exit call site the IR emits links unchanged.
@@ -7539,8 +7686,8 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // $__fern_arr_dec_ptr2 (string[][] deep reclaim, #4355 slice 9): only
     // when the module lowers a __fern_strarrarr_free call — see
     // arr_dec_ptr2_func for why it must not ride along unconditionally.
-    if (need(needs, "@calls_strarrarr_free")) { out = out + arr_dec_ptr2_func(heap_base_for_strs(sv)); }
-    if (need(needs, "@calls_optarrarr_free")) { out = out + optarrarr_free_func(heap_base_for_strs(sv)); }
+    if (need(needs, "@calls_strarrarr_free")) { out = out + arr_dec_ptr2_func(heap_base_for_strs(sv, cv)); }
+    if (need(needs, "@calls_optarrarr_free")) { out = out + optarrarr_free_func(heap_base_for_strs(sv, cv)); }
     // $__fern_strbuf_* (global string-builder): a growable bump-heap buffer +
     // reset/append/take. Heap-backed (str_box / alloc), emitted above.
     if (need(needs, "@uses_strbuf")) { out = out + strbuf_helpers(); }
@@ -7765,7 +7912,7 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     var needs_arr_push: boolean = need(needs, "arr_push") || need(needs, "arr_push_owned") || need(needs, "read_dir") || need(needs, "remove_dir_all");
     var split_emits_push: boolean = need(needs, "str_split") || need(needs, "@uses_str_lines");
     if (needs_arr_push && !split_emits_push) { out = out + arr_push_helper(); }
-    if (need(needs, "arr_push_owned")) { out = out + arr_push_owned_helper(heap_base_for_strs(sv)); }
+    if (need(needs, "arr_push_owned")) { out = out + arr_push_owned_helper(heap_base_for_strs(sv, cv)); }
     if (need(needs, "arr_push_i64")) { out = out + arr_push_i64_helper(); }
     if (need(needs, "arr_push_f64")) { out = out + arr_push_f64_helper(); }
     if (need(needs, "@uses_maps")) { out = out + map_helpers(); }
@@ -7786,12 +7933,10 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // the function names.
     if (mode != 2 && need(needs, "random_bytes")) { out = out + random_bytes_ir_func(); }
     if (mode != 2 && need(needs, "random_i32")) { out = out + random_i32_func(); }
-    // print_int's $__fern_print_int: digit buffer in the 16-byte scratch past
-    // the string blocks (the `+16` in fl_base_for); iovec in the low-24 scratch.
+    // The two decimal buffers, in the print_scratch_bytes() reservation right
+    // above the string blocks: print_int's 16 bytes first, print_int64's 24
+    // after them, so a module printing both widths never clobbers either.
     if (need(needs, "print_int")) { out = out + print_int_helper(str_offset(sv, sv.len())); }
-    // $__fern_print_int64 for print_int(i64): a 24-byte scratch buffer 16 bytes
-    // past print_int's (matching the AST path's tab.next + 16 offset) so the two
-    // never clobber when a module prints both widths.
     if (need(needs, "print_i64")) { out = out + print_int64_helper(str_offset(sv, sv.len()) + 16); }
     if (need(needs, "print_str")) { out = out + print_str_helper(); }
     if (need(needs, "eprint_str")) { out = out + eprint_str_helper(); }

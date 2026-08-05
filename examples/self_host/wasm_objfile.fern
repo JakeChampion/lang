@@ -11,8 +11,9 @@
 // string item is LENGTH-PREFIXED (`<len>\n<raw bytes>`) rather than delimited or
 // escaped:
 //
-//     FERNWU1\n
+//     FERNWU2\n
 //     S<n>\n  <len>\n<bytes> ...   string literals
+//     K<n>\n  <len>\n<bytes> ...   aggregate constants (ir.op_const_struct payloads)
 //     F<n>\n  <len>\n<bytes> ...   address-taken function names
 //     N<n>\n  <len>\n<bytes> ...   runtime needs (wasm_ir.needs_of)
 //     A<n>\n  <int>\n ...          call_indirect arities
@@ -30,6 +31,7 @@ import "./util";
 
 pub struct UnitObj {
     strs: string[],
+    caggs: string[],
     fns: string[],
     needs: string[],
     arities: i32[],
@@ -48,7 +50,7 @@ pub struct MaybeUnit { found: boolean, obj: UnitObj }
 // empty_unit is the placeholder a MaybeUnit carries on a miss; never read when
 // found is false.
 pub function empty_unit(): UnitObj {
-    return UnitObj { strs: [], fns: [], needs: [], arities: [], frt: [], sdt: [], aet: [], text: "" };
+    return UnitObj { strs: [], caggs: [], fns: [], needs: [], arities: [], frt: [], sdt: [], aet: [], text: "" };
 }
 
 pub struct StrsAt { items: string[], pos: i32 }
@@ -74,9 +76,23 @@ function enc_ints(tag: string, xs: i32[]): string {
     return out;
 }
 
+// magic is the format's version tag. It is BUMPED on any layout change, and
+// cache_lookup checks it before decoding: the cache key is a hash of the
+// module's sources and signatures, so nothing in the filename would otherwise
+// distinguish an object written by an older compiler — decode reads sections
+// positionally and a stale file would yield a wrong-but-plausible unit.
+pub function magic(): string { return "FERNWU2\n"; }
+
+// is_current reports whether `s` was written by this format version.
+pub function is_current(s: string): boolean {
+    if (s.len() < magic().len()) { return false; }
+    return s[0:magic().len()] + "" == magic();
+}
+
 pub function encode(u: UnitObj): string {
-    return "FERNWU1\n"
+    return magic()
         + enc_strs("S", u.strs)
+        + enc_strs("K", u.caggs)
         + enc_strs("F", u.fns)
         + enc_strs("N", u.needs)
         + enc_ints("A", u.arities)
@@ -137,9 +153,10 @@ function dec_ints(s: string, pos: i32): IntsAt {
 // or truncated file therefore yields wrong spans rather than a wrong-but-
 // plausible unit, which the round-trip test catches.
 pub function decode(s: string): UnitObj {
-    var p: i32 = 8;                              // past "FERNWU1\n"
+    var p: i32 = magic().len();                  // past the magic
     var st: StrsAt = dec_strs(s, p + 1);
-    var fn: StrsAt = dec_strs(s, st.pos + 1);
+    var kg: StrsAt = dec_strs(s, st.pos + 1);
+    var fn: StrsAt = dec_strs(s, kg.pos + 1);
     var nd: StrsAt = dec_strs(s, fn.pos + 1);
     var ar: IntsAt = dec_ints(s, nd.pos + 1);
     var r: StrsAt = dec_strs(s, ar.pos + 1);
@@ -148,6 +165,7 @@ pub function decode(s: string): UnitObj {
     var tl: IntsAt = scan_int(s, e.pos + 1);
     return UnitObj {
         strs: st.items,
+        caggs: kg.items,
         fns: fn.items,
         needs: nd.items,
         arities: ar.items,

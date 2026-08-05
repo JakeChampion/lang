@@ -9691,14 +9691,8 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // a constant, so place it in static data instead of allocating and
             // storing one per evaluation. Tested before any lowering below so the
             // op replaces the entire struct_make sequence, field pushes included.
-            //
-            // REGISTER BACKENDS ONLY for now. wasm's static data is a linear-memory
-            // region whose base feeds the freelist and heap bases (fl_base_for /
-            // heap_base_for), so adding a second region there is a layout change,
-            // not an emit arm — slice 2. Until then wasm keeps struct_make, which
-            // is correct, just still allocating.
             var cagg: ConstAgg = const_agg_of(slit, s.structs);
-            if (cagg.ok && !s.for_wasm()) {
+            if (cagg.ok) {
                 return s.emit(ir.op_const_struct(slit.type_name, decl_field_count(s.structs, slit.type_name), cagg.values));
             }
             if (slit.has_base) {
