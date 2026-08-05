@@ -10828,6 +10828,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return ast.ArrayType{Elem: dt}
 		}
 		if len(n.Elems) == 0 {
+			// A producer that already knows the element type stamps
+			// ElemType, and that is authoritative — there is nothing to
+			// infer and nothing for the context to settle. constfold's
+			// `__fern_assets()` does this: an embed directory holding no
+			// files is legitimate, and without this the empty array it
+			// expands to would demand an annotation the user has no way
+			// to write, at a position pointing into the expansion.
+			if n.ElemType != nil {
+				return ast.ArrayType{Elem: n.ElemType}
+			}
 			// Polymorphic-empty marker, resolved by the
 			// surrounding context (Var annotation, function
 			// arg, return type) via settleEmptyArray below.

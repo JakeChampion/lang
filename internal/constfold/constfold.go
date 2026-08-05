@@ -38,6 +38,12 @@ import (
 // undefined identifier.
 const assetBuiltin = "__fern_asset"
 
+// assetsBuiltin enumerates the whole bundle: `__fern_assets()` becomes an
+// array of `(name, contents)` tuples in sorted-name order. Same
+// substitution trick as assetBuiltin one level up, so the backends stay
+// unaware of it too.
+const assetsBuiltin = "__fern_assets"
+
 // Fold evaluates every top-level const declaration in prog, then
 // substitutes references with the resolved literal and clears
 // prog.Consts. Errors aggregate; the first diagnostic surfaced
@@ -101,8 +107,14 @@ func evalConst(e ast.Expr, values map[string]ast.Expr, types map[string]ast.Type
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit:
 		return n, nil
 	case *ast.Call:
-		// An asset is a compile-time constant, so it is legal in a const
-		// initialiser. Any other call is not.
+		// A single asset is a string, so it is legal in a const
+		// initialiser. The enumeration is not: evalConst's contract is to
+		// return a scalar literal, and an array of tuples is neither —
+		// settleConstLit and every fold rule below would have to grow a
+		// composite case for a value no const can usefully hold.
+		if isAssetsCall(n) {
+			return nil, fmt.Errorf("%s() builds an array, which is not a constant expression — assign it to a `var` instead", assetsBuiltin)
+		}
 		if !isAssetCall(n) {
 			return nil, fmt.Errorf("expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)")
 		}
@@ -445,6 +457,50 @@ func resolveAsset(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
 	return &ast.StringLit{P: c.P, Value: data}, nil
 }
 
+// isAssetsCall reports whether c is a call of the __fern_assets builtin.
+func isAssetsCall(c *ast.Call) bool {
+	id, ok := c.Callee.(*ast.Ident)
+	return ok && id.Name == assetsBuiltin
+}
+
+// resolveAssets turns `__fern_assets()` into an array literal of
+// `(name, contents)` tuples, one per embedded asset.
+//
+// Order is embed.Set.Names(), which is sorted, so the emitted program is
+// byte-identical across hosts — a filesystem-order walk would not be.
+//
+// Every asset lands in the binary whether or not any __fern_asset call
+// names it. That is inherent to enumeration rather than an oversight: the
+// point is to reach assets whose names the program does not know.
+func resolveAssets(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
+	if len(c.Args) != 0 {
+		return nil, fmt.Errorf("%s: %s takes no arguments, got %d", c.P, assetsBuiltin, len(c.Args))
+	}
+	if assets == nil {
+		return nil, fmt.Errorf("%s: %s() but no assets were embedded — pass -embed DIR to the compiler", c.P, assetsBuiltin)
+	}
+	names := assets.Names()
+	elems := make([]ast.Expr, 0, len(names))
+	for _, n := range names {
+		data, _ := assets.Lookup(n)
+		elems = append(elems, &ast.TupleLit{P: c.P, Elems: []ast.Expr{
+			&ast.StringLit{P: c.P, Value: n},
+			&ast.StringLit{P: c.P, Value: data},
+		}})
+	}
+	// ElemType is stamped rather than left for the checker to infer,
+	// because an empty bundle produces an empty ArrayLit and the checker
+	// rejects that with "E020: empty array literal needs a type
+	// annotation" — pointing at whatever consumes the call, not at the
+	// call. Embedding a directory that happens to hold no files is
+	// legitimate; the loop should just not execute.
+	return &ast.ArrayLit{
+		P:        c.P,
+		Elems:    elems,
+		ElemType: ast.TupleType{Elems: []ast.Type{ast.StringType{}, ast.StringType{}}},
+	}, nil
+}
+
 func (s *substituter) walkBlock(b *ast.Block) {
 	if b == nil {
 		return
@@ -513,6 +569,15 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 				return
 			}
 			*slot = lit
+			return
+		}
+		if isAssetsCall(x) {
+			arr, err := resolveAssets(x, s.assets)
+			if err != nil {
+				s.errs = append(s.errs, err)
+				return
+			}
+			*slot = arr
 			return
 		}
 		s.walkExpr(&x.Callee)
