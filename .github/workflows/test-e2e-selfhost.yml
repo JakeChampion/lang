@@ -560,6 +560,39 @@ jobs:
           FERN_SELFHOST_FIXTURES: "1"
         run: go test ./internal/e2e/ -run '^${{ matrix.test }}$' -v -timeout ${{ matrix.go-timeout }}
 
+  # The fernsmith differential corpus through the self-host compiler (#6138).
+  #
+  # Distinct from the `differential` workflow, which drives the NATIVE compiler
+  # only: nothing there reaches self-host lowering, which is where the
+  # closure-dispatch cluster (#5001 / #5007 / #5009 / #5026) lived. See the
+  # header of internal/e2e/diff_oracle_selfhost_test.go.
+  #
+  # Its own lane for the same reason fixtures-selfhost is: the fern.fern driver
+  # build is heavy (~4.3 GB reserved by the harness limiter) and is paid once,
+  # then ~2s per seed for compile + link + run. Sharded 4 ways over the leg's
+  # 512-seed corpus (its own knob — a seed costs ~20x what it does on the native
+  # oracle, so this leg does not sweep that one's 2048).
+  #
+  # Needs a NATIVE x86_64 host: the driver is emitted as x86-64 asm and takes
+  # host paths as argv, so it cannot run under a qemu prefix.
+  diff-selfhost:
+    needs: build
+    name: diff-selfhost-shard${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+      - name: run the fernsmith corpus through the self-host compiler
+        env:
+          FERN_SELFHOST_DIFF: "1"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/4"
+        run: go test ./internal/e2e/ -run '^TestDifferential_SelfHostX86_64$' -v -timeout 43m
+
   test:
     needs: [build, warm]
     strategy:
