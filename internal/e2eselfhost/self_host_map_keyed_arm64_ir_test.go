@@ -32,6 +32,7 @@ import (
 //     reason, but `P { a: 1, b: 4 }` ALSO matched `P { a: 1, b: 2 }`: equal
 //     first field, and `b` was never read at all. Hence the scalar case below,
 //     with a negative probe that differs only in the second field.
+//
 // The issue read the miss as "does not hash structurally"; it was narrower and
 // worse than that — the runtime was comparing the wrong bytes entirely.
 //
