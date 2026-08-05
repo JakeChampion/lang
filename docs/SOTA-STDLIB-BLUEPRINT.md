@@ -191,16 +191,24 @@ these).
 | --- | --- | --- | --- |
 | Default RNG | OS CSPRNG (`getrandom`) **per call** | PCG / xoshiro for non-crypto | **GAP** |
 | Secure RNG | OS CSPRNG | Correct as-is | OK |
-| Bounded integers | `u % range` — **modulo bias** | Lemire's debiased bounded method | **GAP (correctness)** |
+| Bounded integers | **Lemire's debiased method** | Lemire's debiased bounded method | **DONE (this pass)** |
+| `std/sim` bounded draw | `x % n` on Park-Miller — **modulo bias** | Debiased mapping + a modern PRNG | GAP (contract-sensitive, see below) |
 | Parallel RNG | None | Philox / Threefry | N/A until threads |
 
-Two separate issues. First, `math.random_int` reaches for the OS CSPRNG on
-every call, so `rand.shuffle` costs one syscall-backed draw per element — the
-essay's "don't use one RNG for everything" point, in its most concrete form.
-Second, and more important, `random_int` computes `u % range`, which is biased
-toward small values unless `range` divides 2³² evenly. `rand.shuffle` is
-built on it, so shuffles are not uniform permutations. Lemire's method fixes
-the bias at roughly the cost of one multiply.
+`math.random_int`'s modulo bias is fixed (see below). What remains is that it
+reaches for the OS CSPRNG on *every* call, so `rand.shuffle` costs one
+syscall-backed draw per element — the "don't use one RNG for everything" point
+in its most concrete form. A PCG or xoshiro generator behind a separate type
+would serve the non-crypto callers (`shuffle`, `sample`, `fuzz`) without
+touching the secure path.
+
+**`std/sim` has the same bias, and it is deliberately harder to fix.** Its
+`__roll` maps a Park-Miller step with `x % n`, biased for the same reason. But
+`sim`'s documented contract is that equal seeds give *bit-identical* runs, so
+changing the mapping changes every existing simulation's sequence — a
+reproducibility break, not a transparent fix. It also deserves a better
+generator than a 1990s LCG. Both are worth doing together, deliberately, with
+a note about seed compatibility; neither should be a drive-by.
 
 ### Big integers, math, and the rest
 
@@ -232,11 +240,12 @@ constraints above.
    Unlocks SWAR everywhere downstream.
 2. **Eisel–Lemire `parse_float`.** The sibling of the Dragonbox work; needs a
    128-bit high-multiply.
-3. **Modulo-bias fix in `random_int`,** plus a fast non-crypto PRNG (PCG or
-   xoshiro) behind a separate type. The bias part is a correctness fix.
+3. **A fast non-crypto PRNG** (PCG or xoshiro) behind a separate type, so
+   `shuffle` / `sample` / `fuzz` stop paying a syscall per draw. The
+   modulo-bias half of this item is done.
 4. **wyhash-style string hash** for `core/map`, plus a small-map linear-scan
    path.
-5. ~~Adaptive sort~~ — done, see below.
+5. ~~Adaptive sort~~, ~~`random_int` modulo bias~~ — done, see below.
 
 **Tier 2 — unblocked, narrower**
 
@@ -321,6 +330,30 @@ documented at the call site so a later tidy-up does not silently reintroduce
 the bail. **This gap is worth fixing at the compiler level** — it is a real
 constraint on how stdlib generics can be written, and it is invisible until
 something bails.
+
+**`random_int` is now unbiased.** It mapped a 32-bit draw with a bare
+`u % range`, which is biased whenever `range` does not divide 2^32: the first
+`2^32 mod range` values come up one extra time per 2^32 draws. `rand.shuffle`
+is Fisher-Yates over `random_int`, so shuffles were not uniform permutations.
+It now uses Lemire's nearly-divisionless method — multiply-shift for the
+mapping, rejecting the surplus zone the product's low half identifies. In the
+common case that costs one comparison and no division at all, so it is cheaper
+than the `%` it replaces as well as correct. The old code's comment already
+listed this as a known follow-up.
+
+Testing this honestly needs two programs, because neither half is sufficient
+alone. The behavioural one exercises the real `random_int` — containment across
+range widths, every bucket reachable, degenerate and boundary ranges, and
+termination on the widest possible range — but it **cannot observe the bias**:
+the residual is ~2^-32 and no feasible sample size would reveal it. So a second
+program runs the identical multiply-shift-and-reject formula at an 8-bit word
+size, enumerates all 256 draws exhaustively, and asserts perfect uniformity
+with exactly `W mod range` rejections. It uses the same u64 multiply / shift /
+mask as the implementation, so it also pins that arithmetic on each backend —
+the part most likely to differ between interp, x86-64, wasm and arm64. It
+additionally computes the OLD biased mapping and asserts it is measurably
+skewed (86/85/85 for range 3), so the suite cannot silently pass if the fix is
+reverted.
 
 **A native/self-host divergence in `split("")` was found and fixed.**
 `std/string.split` char-splits an empty separator, but the self-host compiler
