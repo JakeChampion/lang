@@ -23,27 +23,21 @@
 # >= 126, so the wasm leg only ever logged "exit value unmeasurable" for them.
 #
 # All 16 were measured on the first two runs (49e762e0, d67de908), 317 fixtures
-# run. Fourteen have since been FIXED — `eq_struct_enum` + `ord_struct_enum`
+# run. Fifteen have since been FIXED — `eq_struct_enum` + `ord_struct_enum`
 # (#6009), `tuple_match_expr` (#6010), `int_wrap` + `u64_max_to_f64_is_huge`
 # (#6050 / #6051), `multiline_stdin` (#6052), `pure_collection_aliases` +
-# `map_struct_value_field` (the #6007 slices), and the six regex fixtures
-# (#6049) — see the notes in the wasm sibling. Two remain, listed below.
+# `map_struct_value_field` (the #6007 slices), `derive_json` (#6009, two
+# separate bugs — see the notes in the wasm sibling), and the six regex
+# fixtures (#6049). ONE remains, listed below.
 #
 # The #6049 six were recorded as "hangs (killed at 20s, no output)", which by the
 # time they were diagnosed was stale: they SEGV'd in milliseconds on unbounded
 # recursion through a parse tree that had become self-referential. Two rc bugs,
 # both in irlower: a direct ENUM struct field read stored into a container took
-# no Perceus dup against __struct_drop_<T>'s k_enum dec, and a match arm's
-# enum-payload ARRAY binding was swept at every exit though the enum box owns the
-# buffer. Recording a symptom without re-measuring it is how a stack-exhaustion
-# SEGV gets hunted as an infinite loop.
-
-# --- shared with the wasm leg: same fixtures, same wrong values -------------
-# Byte-identical wrong answers on two backends with no shared instruction
-# selection, so these live in the shared frontend/irlower, NOT in wasm_ir.fern.
-# Commented onto #6007/#6009/#6010 with the cross-target evidence; those issues
-# are titled "self-host wasm:" and should be re-scoped.
-derive_json #6009 returns 8, native 42 — identical to the wasm + arm64 figure; was 4 (multi-payload variants, fixed); now `self.items.to_json()` on an i32[] FIELD renders the array POINTER
+# no Perceus dup against the per-type __struct_drop helper's k_enum dec, and a
+# match arm's payload ARRAY binding was swept at every exit though the enum (or
+# Option/Result) box owns the buffer. Recording a symptom without re-measuring it
+# is how a stack-exhaustion SEGV gets hunted as an infinite loop.
 
 # --- IR-ineligible, hard error since #3457 deleted the AST emitters ---------
 # The leg re-runs these under FERN_STRICT_IR=1 and logs the named bail site.

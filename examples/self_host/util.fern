@@ -106,7 +106,10 @@ pub function hash_key(s: string): string {
 // full-u32-range literal (`0xffffffff`) wraps to the matching signed i32 bit
 // pattern (-1) — the same low-32-bit value the AST path's assembler produces.
 // Used where a numeric VALUE is needed (the IR interpreter); the AOT backends
-// splice the text directly (op_const_i32_text) and never call this.
+// splice op_const_i32_text's source text into an assembler literal and never
+// call this. (asm_arm64_ir's movz_text_ok reaches for digits_to_i32 directly,
+// precisely because it must detect the wrap and the early stop rather than
+// inherit them — see its round-trip guard.)
 pub function lit_to_i32(s: string): i32 {
     if (s.len() == 0) { return 0; }
     var neg: boolean = false;

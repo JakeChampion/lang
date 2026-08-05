@@ -2835,10 +2835,35 @@ function arm64_lit_le64(buf: i32[], v: i64): i32[] {
     return buf;
 }
 
+// arm64_lit_reach is the LDR-literal forward reach in bytes: imm19 is a
+// signed word count, so +262143 words.
+function arm64_lit_reach(): i32 { return 1048572; }
+
+// arm64_lit_pool_far returns the byte distance of the FARTHEST pending
+// `ldr Xd, =N` site from a pool about to be placed at `code_len`, or 0 when
+// nothing is pending. The pool always follows its sites, so only the forward
+// distance matters. arm64_patch_ldr_lit masks imm19 to 19 bits, so a distance
+// past arm64_lit_reach() would wrap into a load from the wrong address instead
+// of failing — a silent miscompile, which is what let a self-host `-target
+// arm64` build of the checker driver produce a "successful" binary that then
+// exhausted the arena on its first input. Callers record an over-range flush
+// on p.unknown so the driver refuses the output, matching the REFUSE-rather-
+// than-mis-encode contract of the register and immediate decoders.
+function arm64_lit_pool_far(p: Arm64GasProg, code_len: i32): i32 {
+    var worst: i32 = 0;
+    var i: i32 = 0;
+    while (i < p.lit_sites.len()) {
+        var d: i32 = code_len - p.lit_sites[i];
+        if (d > worst) { worst = d; }
+        i = i + 1;
+    }
+    return worst;
+}
+
 // arm64_gas_ltorg flushes the pending `ldr Xd, =N` literal pool into .text
 // at the current offset: 8-align, then for each pending load patch its
 // LDR-literal imm19 to the (PC-relative) pool slot and append the value's 8
-// bytes. asm_arm64 emits a `.ltorg` after every function so the pool stays
+// bytes. asm_arm64_ir emits a `.ltorg` after every function so the pool stays
 // within the ±1 MiB LDR-literal reach; the pool sits after the function's
 // `ret`, so it is never executed.
 // It takes the assembler state as an argument and hands it back rather than
@@ -2930,6 +2955,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // directives
         if (line[0] == 46) { // '.'
             if (line == ".ltorg") {
+                if (arm64_lit_pool_far(p, a.code.len()) > arm64_lit_reach()) {
+                    p = Arm64GasProg { ...p, unknown: p.unknown.append("ltorg:range") };
+                }
                 a = arm64_gas_ltorg(p, a);
                 p = Arm64GasProg { ...p, lit_sites: [], lit_vals: [] };
             } else if (line == ".text") {
@@ -3112,6 +3140,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
             continue;
         }
         a = arm64_gas_emit(a, mnem, rest);
+    }
+    if (arm64_lit_pool_far(p, a.code.len()) > arm64_lit_reach()) {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append("ltorg:range") };
     }
     a = arm64_gas_ltorg(p, a); // flush any literals after the final `.ltorg`
     p = Arm64GasProg { ...p, lit_sites: [], lit_vals: [] };
