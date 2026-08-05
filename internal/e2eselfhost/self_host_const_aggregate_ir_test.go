@@ -68,24 +68,25 @@ var constAggCases = []struct {
 		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 5, b: 9 }; } function main(): i32 { var ps: P[] = []; var i: i32 = 0; while (i < 4) { ps = ps.append(mk()); i = i + 1; } var s: i32 = 0; var j: i32 = 0; while (j < ps.len()) { s = s + ps[j].a + ps[j].b; j = j + 1; } return s % 200; }`,
 		56, 2, 1},
 	// The constant/REUSE interaction, in the shape the reuse suites test: two
-	// same-block literals where the second reuses the first's dead box. ONE block
-	// and ONE allocation, not two and zero — because the same-block reuse pass
-	// dispatches per STATEMENT in lower_block, before the literal ever reaches
-	// lower_expr where the constant is recognised. So the donor `a` is placed
-	// statically, while the recipient `b` stays on the reuse emitter and
-	// allocates: its `__fern_alloc_reuse` sees the donor's negative rc, gets 0
-	// from `is_unique`, and degrades to a fresh box rather than writing through
-	// the shared constant.
+	// same-block literals where the second would otherwise reuse the first's dead
+	// box. TWO blocks and ZERO allocations — the reuse scanners run per STATEMENT
+	// in lower_block, before the literal ever reaches lower_expr where the
+	// constant is recognised, so `reuse_recipient_ok` excludes a recipient that is
+	// itself constant and both literals reach static placement.
 	//
-	// That degradation is the safety property; the missed placement of `b` is a
-	// missed optimisation, worth a follow-up (teach the reuse sites to skip a
-	// recipient that is itself constant) and not a correctness issue. Pinned here
-	// so the follow-up has a number to move, and because this is why the reuse
-	// suites' fixtures multiply their fields by a 1-valued variable — as written
-	// they would measure zero against zero and stop pinning reuse at all.
+	// It read 1 block / 1 allocation before that exclusion: the donor `a` was
+	// placed statically while the recipient `b` stayed on the reuse emitter, whose
+	// `__fern_alloc_reuse` saw the donor's immortal rc, got 0 from `is_unique`,
+	// and degraded to a fresh box. Safe — that degradation is what stops a write
+	// through the shared constant — but it cost `b` its placement and bought
+	// nothing.
+	//
+	// This is also why the reuse suites' fixtures multiply their fields by a
+	// 1-valued variable: written as plain literals they would now measure zero
+	// reuse against zero and stop pinning reuse at all.
 	{"reuse-shape-all-constant",
 		`struct P { x: i32, y: i32 } function main(): i32 { var cond: i32 = 1; var r: i32 = 0; if (cond > 0) { var a: P = P { x: 10, y: 20 }; var s: i32 = a.x + a.y; var b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`,
-		37, 1, 1},
+		37, 0, 2},
 	// NOT admitted: a field value that is not a literal keeps the whole literal
 	// on struct_make. `0 - 3` is a binary expression, not a unary minus, so this
 	// is also the control that the admission is syntactic and narrow.
