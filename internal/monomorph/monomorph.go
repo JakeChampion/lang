@@ -198,11 +198,22 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		before := len(instantiations)
 		collectCalls(c.Body)
 		if len(instantiations) != before {
+			// Sort before appending, for the same reason the initial
+			// `keys` above is sorted: this ranges a map, so the order
+			// fresh instantiations enter the worklist — and therefore
+			// the order they are cloned and emitted — would otherwise
+			// be Go's map iteration order. The instantiation SET is
+			// unaffected (the worklist drains to a fixpoint and `done`
+			// dedupes), so this is purely about reproducible output
+			// (#6077).
+			fresh := make([]instKey, 0, len(instantiations)-before)
 			for nk := range instantiations {
 				if !done[nk] {
-					keys = append(keys, nk)
+					fresh = append(fresh, nk)
 				}
 			}
+			sortKeys(fresh)
+			keys = append(keys, fresh...)
 		}
 		// Walk the substituted body's StructLits a second time
 		// to mangle any whose TypeArgs got substituted to concrete

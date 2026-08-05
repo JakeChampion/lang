@@ -69,6 +69,36 @@ function main(): i32 {
 	return f(1) + g(2);
 }`,
 
+	// closure_drop_thunks: FIVE distinct closures that each capture an
+	// rc-tracked value, so five __closure_drop_<name> thunks are synthesised
+	// and appended to out.Funcs from a range over the closureCaps map.
+	//
+	// The `closures` case above does not reach this: both of its closure
+	// values come from the SAME lambda, so closureCaps has one entry and a
+	// one-element range has no order to get wrong. #6077 needed several
+	// eligible thunks at once — the emitted function order then flipped run
+	// to run and reached the binary (examples/tests/result_assertions_test
+	// produced six distinct hashes over fifteen compiles).
+	//
+	// Not caught by TestLowerDeterministicOverFixtureCorpus either: that
+	// globs internal/e2e/testdata/cases, and the programs that exhibited
+	// this were examples/tests/* — std/test users, which build many
+	// capturing closures. A corpus guard is only as wide as its corpus.
+	"closure_drop_thunks": `
+function mk_a(s: string): () => i32 { return function (): i32 { return s.len(); }; }
+function mk_b(s: string): () => i32 { return function (): i32 { return s.len() + 1; }; }
+function mk_c(s: string): () => i32 { return function (): i32 { return s.len() + 2; }; }
+function mk_d(s: string): () => i32 { return function (): i32 { return s.len() + 3; }; }
+function mk_e(s: string): () => i32 { return function (): i32 { return s.len() + 4; }; }
+function main(): i32 {
+	var a: () => i32 = mk_a("v");
+	var b: () => i32 = mk_b("w");
+	var c: () => i32 = mk_c("x");
+	var d: () => i32 = mk_d("y");
+	var e: () => i32 = mk_e("z");
+	return a() + b() + c() + d() + e();
+}`,
+
 	"map_ops": `
 function main(): i32 {
 	var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
