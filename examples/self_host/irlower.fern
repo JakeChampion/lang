@@ -19525,7 +19525,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // outer `if` adds not-reassigned + non-escaping).
                 var is_map: boolean = false;
                 if (!is_lit && !is_opt && !is_rcopt && !is_enum && !is_rcenum && is_fresh_map_init(v.init)) {
-                    if (util.index_of_str(aliased_array_names_of(body), v.name) < 0 && !map_has_explicit_iter(body, v.name)
+                    if (util.index_of_str(aliased_array_names_of(body, no_params_for_alias()), v.name) < 0 && !map_has_explicit_iter(body, v.name)
                         && !map_identity_escape(body, v.name)) { is_map = true; }
                 }
                 var shadowed: boolean = util.index_of_str(seen, v.name) >= 0;
@@ -20814,8 +20814,133 @@ function alias_names_in_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
     return a;
 }
 
-function aliased_array_names_of(body: parser.Stmt[]): string[] {
-    return alias_names_in_stmts(body, []);
+// --- borrowed-value guard (#6158) --------------------------------------------
+//
+// The alias scan above answers "does another LOCAL name reach this buffer",
+// which is only half of what the in-place self-reassign needs. The other half
+// is OWNERSHIP: `x = x.with(i, v)` overwrites in place on the assumption that
+// `x` is a sole owner, and a BORROWED value is not one no matter how few local
+// aliases it has. Three shapes reached the in-place path while the caller still
+// owned the buffer, so the write landed in the caller's array:
+//
+//   * a borrowed ARRAY PARAM self-reassigned directly
+//     (`function patch(buf: i32[], …) { buf = buf.with(at, v); }`);
+//   * a local bound from an array FIELD of a borrowed struct param
+//     (`var sn = st.seen; sn = sn.with(pc, g);` — std/regex's __rx_addthread);
+//   * the same off a LOCAL struct that is still read afterwards.
+//
+// The language already models the sound version, and the hot paths already use
+// it: `arm64_write_word(own buf: i32[], …)` consumes its buffer precisely so
+// the rc check sees a unique owner, and E051 makes that annotation trustworthy
+// at every call site. So the rule is ownership, not syntax — an `own` param
+// keeps the fast path, a borrowed one clones.
+//
+// The `own`-param + field-clear idiom (`var code = a.code; a = A { ...a, code:
+// [] };` — arm64_asm_resolve's three quadratic patch loops, #6011) stays
+// in-place: the source field is emptied before the mutation, so the local IS
+// the only reference. That exemption is why this keys on a positional scan
+// rather than flagging every field-read binding.
+
+// borrowed_array_params returns the names of array/map-typed params that are
+// NOT `own` — borrowed buffers the callee may read but must never overwrite.
+function borrowed_array_params(params: parser.ParamDecl[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < params.len()) {
+        var p: parser.ParamDecl = params[i];
+        if (!p.own) {
+            var tn: string = p.type_name;
+            if ((tn.len() >= 2 && tn[tn.len() - 2 : tn.len()] == "[]") || (tn.len() >= 4 && tn[0:4] == "Map[")) {
+                out = push_str_unique(out, p.name);
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// field_read_base returns the base object name of a `OBJ.field` init, or "" —
+// the source whose buffer such a binding borrows.
+function field_read_base(e: parser.Expr): string {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(id) => { return id.name; },
+                _ => { return ""; },
+            }
+        },
+        _ => { return ""; },
+    }
+    return "";
+}
+
+// stmt_assigns_name reports whether `st` is a direct `NAME = …` assignment.
+function stmt_assigns_name(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtAssign(a) => { return a.target == name; },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// borrowed_field_bindings walks a statement LIST and credits every
+// `var X = OBJ.field` binding whose source is not cleared before X is next
+// assigned — i.e. every binding that still shares OBJ's buffer at the point
+// the in-place write would happen. A binding whose OBJ is reassigned first
+// (the field-clear idiom) is exempt and keeps the fast path. Nested blocks are
+// scanned for their own bindings; a binding whose mutation happens in a nested
+// block is credited (conservative — it clones), since this positional scan
+// cannot see the clear across the block boundary.
+function borrowed_field_bindings(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                var base: string = field_read_base(v.init);
+                if (base.len() > 0) {
+                    var cleared: boolean = false;
+                    var j: i32 = i + 1;
+                    while (j < stmts.len()) {
+                        if (stmt_assigns_name(stmts[j], base)) { cleared = true; j = stmts.len(); }
+                        else if (stmt_assigns_name(stmts[j], v.name)) { j = stmts.len(); }
+                        else { j = j + 1; }
+                    }
+                    if (!cleared) { a = push_str_unique(a, v.name); }
+                }
+            },
+            parser.StmtIf(iff) => {
+                a = borrowed_field_bindings(iff.then_body, a);
+                a = borrowed_field_bindings(iff.else_body, a);
+            },
+            parser.StmtWhile(w) => { a = borrowed_field_bindings(w.body, a); },
+            parser.StmtFor(f) => { a = borrowed_field_bindings(f.body, a); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { a = borrowed_field_bindings(m.arms[k].body, a); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// no_params_for_alias is the empty param list for alias queries made from a
+// nested walk that has no signature in hand. Sound there because the only
+// caller asks about a FRESH map-literal local, which is never a param and
+// never a field-read binding — neither augmentation can apply.
+function no_params_for_alias(): parser.ParamDecl[] {
+    var none: parser.ParamDecl[] = [];
+    return none;
+}
+
+function aliased_array_names_of(body: parser.Stmt[], params: parser.ParamDecl[]): string[] {
+    var a: string[] = alias_names_in_stmts(body, []);
+    var bp: string[] = borrowed_array_params(params);
+    var i: i32 = 0;
+    while (i < bp.len()) { a = push_str_unique(a, bp[i]); i = i + 1; }
+    return borrowed_field_bindings(body, a);
 }
 
 // is_fresh_struct_init: an init producing a SOLE-OWNER (rc=1) struct value — a
@@ -24166,7 +24291,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // still exclude). The self-host twin of #5096's bound-intermediate
     // reclaim; #4357.
     maps = collect_mapf_call_names(body, tup_fresh_ret, maps);
-    var aliased_m: string[] = aliased_array_names_of(body);
+    var aliased_m: string[] = aliased_array_names_of(body, no_params_for_alias());
     var mi: i32 = 0;
     while (mi < maps.len()) {
         // The reassigned gate admits the sanctioned COW self-reassign
@@ -33079,7 +33204,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // Array/map locals that acquire a lasting local alias — the in-place
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
     // when its target is here (#3599; see the aliased_names field doc).
-    var aliased: string[] = aliased_array_names_of(fn.body);
+    var aliased: string[] = aliased_array_names_of(fn.body, fn.params);
     // #6134: seed the SELF-ASSIGN record-update reuse set as "SAREUSE:<name>" —
     // the locals whose every `p = T { ...p, … }` reuses p's own box in place
     // (self_assign_update_names). Prefix-tagged like the other per-function
