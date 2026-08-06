@@ -10510,7 +10510,7 @@ pub function lower_defers_prepass_module(mod: Module): Module {
         while (pi < funcs.len()) {
             var pfd: FuncDecl = funcs[pi];
             if (pfd.ret_type == "" && pfd.body.len() > 0 && pfd.receiver_type.len() == 0 && pfd.type_param_count == 0) {
-                var inferred: string = irt_infer_func(pfd, funcs);
+                var inferred: string = irt_infer_func(pfd, funcs, mod.structs);
                 if (inferred != "") { funcs = irt_set_ret(funcs, pi, inferred); }
             }
             pi = pi + 1;
@@ -11116,6 +11116,32 @@ function irt_func_ret(funcs: FuncDecl[], name: string): string {
     return "";
 }
 
+// irt_method_ret returns the declared return type of `<recv_type>.<name>`, or ""
+// when no such method is declared. The sibling of irt_func_ret, which filters to
+// receiver-LESS functions and so can never answer a method call.
+function irt_method_ret(funcs: FuncDecl[], recv_type: string, name: string): string {
+    var base: string = recv_type;
+    var b: i32 = 0;
+    while (b < base.len()) {
+        if (base[b] == 91) { base = base[0 : b] + ""; b = base.len(); }
+        b = b + 1;
+    }
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_type.len() > 0) {
+            var rb: string = funcs[i].receiver_type;
+            var r2: i32 = 0;
+            while (r2 < rb.len()) {
+                if (rb[r2] == 91) { rb = rb[0 : r2] + ""; r2 = rb.len(); }
+                r2 = r2 + 1;
+            }
+            if (rb == base) { return funcs[i].ret_type; }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 function irt_is_cmp(op: string): boolean {
     return op == "<" || op == "<=" || op == ">" || op == ">="
         || op == "==" || op == "!=" || op == "&&" || op == "||";
@@ -11127,7 +11153,7 @@ function irt_is_option(s: string): boolean {
 
 // irt_guess returns the inferred type-name string for a return expression,
 // or "" if it can't be determined.
-function irt_guess(e: Expr, params: ParamDecl[], funcs: FuncDecl[]): string {
+function irt_guess(e: Expr, params: ParamDecl[], funcs: FuncDecl[], structs: StructDecl[]): string {
     match (e) {
         ExprNumber(n) => { if (n.is_float) { return "f64"; } return "i32"; },
         ExprString(_) => { return "string"; },
@@ -11135,7 +11161,7 @@ function irt_guess(e: Expr, params: ParamDecl[], funcs: FuncDecl[]): string {
         ExprIdent(id) => { return irt_param_type(params, id.name); },
         ExprBinary(b) => {
             if (irt_is_cmp(b.op)) { return "boolean"; }
-            return irt_guess(b.left, params, funcs);
+            return irt_guess(b.left, params, funcs, structs);
         },
         ExprStructLit(s) => { return s.type_name; },
         // A non-empty array literal infers `T[]` from its first element
@@ -11146,7 +11172,7 @@ function irt_guess(e: Expr, params: ParamDecl[], funcs: FuncDecl[]): string {
         // elements on the self-host IR path.
         ExprArray(al) => {
             if (al.elements.len() == 0) { return ""; }
-            var el: string = irt_guess(al.elements[0], params, funcs);
+            var el: string = irt_guess(al.elements[0], params, funcs, structs);
             if (el == "") { return ""; }
             return el + "[]";
         },
@@ -11159,8 +11185,21 @@ function irt_guess(e: Expr, params: ParamDecl[], funcs: FuncDecl[]): string {
         // lifted function, so irt_param_type names it, and a call source is
         // named by irt_func_ret — the two sources irt_guess already has.
         ExprIndex(ix) => {
-            var at: string = irt_guess(ix.array, params, funcs);
+            var at: string = irt_guess(ix.array, params, funcs, structs);
             if (at.len() >= 3 && at[at.len() - 2 : at.len()] == "[]") { return at[0 : at.len() - 2] + ""; }
+            // A SLICE source spells `[T]`, not `T[]` — indexing one still
+            // yields T. Both spellings reach here because a slice can be
+            // indexed directly (`a[0:2][1]`).
+            if (at.len() >= 3 && at[0] == 91 && at[at.len() - 1] == 93) { return at[1 : at.len() - 1] + ""; }
+            return "";
+        },
+        // `a[i:j]` over a `T[]` yields the slice type `[T]` (the spelling the
+        // checker uses — `var xs: [f64] = a[0:2];`). A slice of a slice keeps
+        // that spelling.
+        ExprSlice(sl) => {
+            var st2: string = irt_guess(sl.array, params, funcs, structs);
+            if (st2.len() >= 3 && st2[st2.len() - 2 : st2.len()] == "[]") { return "[" + st2[0 : st2.len() - 2] + "]"; }
+            if (st2.len() >= 3 && st2[0] == 91 && st2[st2.len() - 1] == 93) { return st2; }
             return "";
         },
         // `t.N` on a tuple — the same lifted-lambda story (`() => t.0` over a
@@ -11169,16 +11208,36 @@ function irt_guess(e: Expr, params: ParamDecl[], funcs: FuncDecl[]): string {
         // non-numeric field is a struct field, which needs a struct table this
         // pass does not have, so it stays "" and the inference bails as before.
         ExprFieldAccess(fa) => {
-            var ot: string = irt_guess(fa.obj, params, funcs);
+            var ot: string = irt_guess(fa.obj, params, funcs, structs);
             if (ot.len() == 0) { return ""; }
-            return me_tuple_elem_type(ot, fa.field);
+            var tel: string = me_tuple_elem_type(ot, fa.field);
+            if (tel.len() > 0) { return tel; }
+            // Not a tuple index — a STRUCT field. me_field_type_of already
+            // resolves a declared field's type; reuse it rather than add a
+            // second lookup. "" for an unknown struct/field keeps the bail.
+            return me_field_type_of(structs, ot, fa.field);
+        },
+        // `-x` / `+x` keep the operand's type; `!x` is boolean; an `as T` cast
+        // names T directly. Without this a lifted `() => -a[1]` inferred "" and
+        // the lambda defaulted to returning i32.
+        ExprUnary(u) => {
+            if (u.op == "!") { return "boolean"; }
+            if (u.op == "-" || u.op == "+") { return irt_guess(u.operand, params, funcs, structs); }
+            if (u.op == "as_f64" || u.op == "as_float") { return "f64"; }
+            if (u.op == "as_f32") { return "f32"; }
+            if (u.op == "as_i32") { return "i32"; }
+            if (u.op == "as_i64") { return "i64"; }
+            if (u.op == "as_u8") { return "u8"; }
+            if (u.op == "as_u32") { return "u32"; }
+            if (u.op == "as_u64") { return "u64"; }
+            return "";
         },
         ExprCall(c) => {
             match (c.callee) {
                 ExprIdent(cid) => {
                     if (cid.name == "Some") {
                         if (c.args.len() == 1) {
-                            var inner: string = irt_guess(c.args[0], params, funcs);
+                            var inner: string = irt_guess(c.args[0], params, funcs, structs);
                             if (inner != "") { return "Option[" + inner + "]"; }
                         }
                         return "Option";
@@ -11188,6 +11247,15 @@ function irt_guess(e: Expr, params: ParamDecl[], funcs: FuncDecl[]): string {
                     // return can't supply; leave it to an annotation.
                     if (cid.name == "Ok" || cid.name == "Err") { return ""; }
                     return irt_func_ret(funcs, cid.name);
+                },
+                // A METHOD call `recv.m()` — resolve the receiver's type, then
+                // the declared method return. irt_func_ret only sees
+                // receiver-less functions, so without this a lifted
+                // `() => p.scaled()` inferred "" and defaulted to i32.
+                ExprFieldAccess(mfa) => {
+                    var rt2: string = irt_guess(mfa.obj, params, funcs, structs);
+                    if (rt2.len() == 0) { return ""; }
+                    return irt_method_ret(funcs, rt2, mfa.field);
                 },
                 _ => { return ""; }
             }
@@ -11235,14 +11303,14 @@ function irt_collect_stmt(st: Stmt, acc: Expr[]): Expr[] {
 // irt_infer_func unifies the inferred types of every return in fd, or "" if
 // any return can't be determined or they conflict (a bare `return;` value is
 // ExprUnknown -> "" -> bail, so void / mixed functions keep their void type).
-function irt_infer_func(fd: FuncDecl, funcs: FuncDecl[]): string {
+function irt_infer_func(fd: FuncDecl, funcs: FuncDecl[], structs: StructDecl[]): string {
     var empty: Expr[] = [];
     var rets: Expr[] = irt_collect_returns(fd.body, empty);
     if (rets.len() == 0) { return ""; }
     var unified: string = "";
     var i: i32 = 0;
     while (i < rets.len()) {
-        var g: string = irt_guess(rets[i], fd.params, funcs);
+        var g: string = irt_guess(rets[i], fd.params, funcs, structs);
         if (g == "") { return ""; }
         if (unified == "") { unified = g; }
         else {
@@ -11280,7 +11348,7 @@ pub function infer_ret_types_module(mod: Module): Module {
         while (i < funcs.len()) {
             var fd: FuncDecl = funcs[i];
             if (fd.ret_type == "" && fd.body.len() > 0 && fd.receiver_type.len() == 0 && fd.type_param_count == 0) {
-                var inferred: string = irt_infer_func(fd, funcs);
+                var inferred: string = irt_infer_func(fd, funcs, mod.structs);
                 if (inferred != "") { funcs = irt_set_ret(funcs, i, inferred); }
             }
             i = i + 1;

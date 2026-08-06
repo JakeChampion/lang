@@ -75,6 +75,42 @@ function main(): i32 {
     var f: () => string = () => a[1];
     return f().len() + 38;
 }`}, // 42
+	// Struct FIELD body — needs the struct table threaded into the inference
+	// (me_field_type_of), which it previously did not receive at all.
+	{"lambda_struct_field", `struct P { x: f64 }
+function main(): i32 {
+    var p: P = P { x: 4.5 };
+    var f: () => f64 = () => p.x;
+    return (f() * 10.0) as i32;
+}`}, // 45
+	// Unary body — `-x` keeps the operand's type.
+	{"lambda_unary_neg", `function main(): i32 {
+    var a: f64[] = [1.5, 4.5];
+    var f: () => f64 = () => -a[1];
+    return (f() * -10.0) as i32;
+}`}, // 45
+	// METHOD-call body — irt_func_ret only sees receiver-less functions, so this
+	// needed a receiver-keyed sibling (irt_method_ret).
+	{"lambda_method_call", `struct P { x: f64 }
+function (p: P) scaled(): f64 { return p.x * 2.0; }
+function main(): i32 {
+    var p: P = P { x: 2.25 };
+    var f: () => f64 = () => p.scaled();
+    return (f() * 10.0) as i32;
+}`}, // 45
+	// Slice-then-index body — pins the `[T]` slice spelling round-tripping
+	// through both the slice arm and the index arm.
+	{"lambda_slice_index", `function main(): i32 {
+    var a: f64[] = [1.5, 2.5, 4.5];
+    var f: () => f64 = () => a[0:2][1];
+    return (f() * 10.0) as i32;
+}`}, // 25
+	// Regression guard: a binary body already delegated to its left operand.
+	{"lambda_binary_index", `function main(): i32 {
+    var a: f64[] = [1.5, 2.25];
+    var f: () => f64 = () => a[1] * 2.0;
+    return (f() * 10.0) as i32;
+}`}, // 45
 }
 
 // TestSelfHostLambdaRetInferIR_X86_64 pins irt_guess's ExprIndex /
