@@ -6806,8 +6806,14 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 		{".Lfc_ln2hi", "6.93147180369123816490e-01"},
 		{".Lfc_ln2lo", "1.90821492927058770002e-10"},
 		{".Lfc_2opi", "6.36619772367581382433e-01"},
+		// pi/2 as THREE 33-bit chunks (~99 bits). Two chunks leave sin(pi)
+		// 285k ulp out: near a zero of sin the reduced argument IS the
+		// answer, so the reduction's absolute error becomes the result's
+		// relative error. A fourth chunk makes it worse, not better — it
+		// perturbs the cancellation the third one sets up.
 		{".Lfc_pio2h", "1.57079632673412561417e+00"},
-		{".Lfc_pio2t", "6.07710050650619224932e-11"},
+		{".Lfc_pio2m", "6.07710050630396597660e-11"},
+		{".Lfc_pio2l", "2.02226624879595063154e-21"},
 		// sin kernel, |r| <= pi/4
 		{".Lfc_s1", "-1.66666666666666324348e-01"},
 		{".Lfc_s2", "8.33333333332248946124e-03"},
@@ -6836,11 +6842,54 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 		{".Lfc_lg5", "1.818357216161805012e-01"},
 		{".Lfc_lg6", "1.531383769920937332e-01"},
 		{".Lfc_lg7", "1.479819860511658591e-01"},
+		// exp's finite range. Above the first, e^x is not representable;
+		// below the second it rounds to zero. Both are needed BEFORE the
+		// 2^k reconstruction, which builds the exponent field as
+		// (k+1023)<<52 and silently overflows into the SIGN bit otherwise
+		// — exp(1000) came out as -6.1e-183 rather than +Inf.
+		{".Lfc_expovf", "709.782712893383973096"},
+		{".Lfc_expunf", "-745.133219101941108420"},
 	} {
 		g.label(c.lbl)
 		g.line("\t.double " + c.val)
 	}
 	g.line(".text")
+
+	// retNaN / retInf / retZero leave the named value in xmm0 and return.
+	// Built from bit patterns rather than .rodata: an assembler `.double`
+	// has no spelling for infinity.
+	retBits := func(bits string) {
+		g.emit("movabs rax, " + bits)
+		g.emit("movq xmm0, rax")
+		g.emit("ret")
+	}
+	// nanGuard emits "if x is NaN, return it unchanged". NaN is the one
+	// value where a compare is UNORDERED, which x86 reports in the parity
+	// flag — ZF alone cannot distinguish it from equality.
+	nanGuard := func(lbl string) {
+		g.emit("ucomisd xmm0, xmm0")
+		g.emit("jp " + lbl)
+	}
+	// trigGuard: NaN returns itself; ±Inf becomes NaN, matching the
+	// reference. There is no meaningful reduction of an infinite argument —
+	// x*2/pi is Inf, and the quadrant falls out as garbage.
+	trigGuard := func() {
+		ret, nan := g.freshLabel("trigRet"), g.freshLabel("trigNaN")
+		nanGuard(ret)
+		g.emit("movq rax, xmm0")
+		g.emit("movabs rcx, 0x7fffffffffffffff")
+		g.emit("and rax, rcx")
+		g.emit("movabs rcx, 0x7ff0000000000000")
+		g.emit("cmp rax, rcx")
+		g.emit("jae " + nan) // exponent all ones, mantissa 0 → ±Inf
+		done := g.freshLabel("trigOk")
+		g.emit("jmp " + done)
+		g.label(ret)
+		g.emit("ret")
+		g.label(nan)
+		retBits("0x7ff8000000000000")
+		g.label(done)
+	}
 
 	// __fern_ksin(xmm0=r, |r| <= pi/4) → sin r. Internal, not exported:
 	// sin and cos both reach it after reduction, so the kernel exists
@@ -6900,7 +6949,10 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 		g.emit("movsd xmm2, xmm1")
 		g.emit("mulsd xmm2, [rip+.Lfc_pio2h]")
 		g.emit("subsd xmm0, xmm2") // exact
-		g.emit("mulsd xmm1, [rip+.Lfc_pio2t]")
+		g.emit("movsd xmm2, xmm1")
+		g.emit("mulsd xmm2, [rip+.Lfc_pio2m]")
+		g.emit("subsd xmm0, xmm2")
+		g.emit("mulsd xmm1, [rip+.Lfc_pio2l]")
 		g.emit("subsd xmm0, xmm1") // r
 		g.emit("and rax, 3")
 	}
@@ -6910,6 +6962,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	// so exactly one kernel runs, where the old code evaluated both and
 	// selected.
 	fn("__fern_sin_f64")
+	trigGuard()
 	pio2Reduce()
 	sinCos, sinNeg := g.freshLabel("sinUseCos"), g.freshLabel("sinNeg")
 	g.emit("test rax, 1")
@@ -6930,6 +6983,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	// __fern_cos_f64: quadrant 0..3 → cos r, −sin r, −cos r, sin r.
 	// Even quadrant picks the cos kernel; quadrants 1 and 2 flip sign.
 	fn("__fern_cos_f64")
+	trigGuard()
 	pio2Reduce()
 	cosSin, cosChk := g.freshLabel("cosUseSin"), g.freshLabel("cosChk")
 	g.emit("test rax, 1")
@@ -6954,6 +7008,16 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	//   c = r - t*(P1+t*(P2+…)), t = r*r
 	//   e^r = 1 - ((lo - (r*c)/(2-c)) - hi);  e^x = e^r * 2^k
 	fn("__fern_exp_f64")
+	expRet, expInf, expZero := g.freshLabel("expRet"), g.freshLabel("expInf"), g.freshLabel("expZero")
+	// Domain guards. Without them exp(1000) overflowed the exponent field
+	// into the sign bit and returned -6.1e-183, and exp(±Inf) fell through
+	// the polynomial as NaN. +Inf trips the overflow branch and -Inf the
+	// underflow one, so only NaN needs testing separately.
+	nanGuard(expRet)
+	g.emit("ucomisd xmm0, [rip+.Lfc_expovf]")
+	g.emit("ja " + expInf)
+	g.emit("ucomisd xmm0, [rip+.Lfc_expunf]")
+	g.emit("jb " + expZero)
 	ldc("xmm1", ".Lfc_invln2")
 	g.emit("mulsd xmm1, xmm0")
 	g.emit("roundsd xmm1, xmm1, 0")
@@ -6990,6 +7054,12 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("shl rax, 52")
 	g.emit("movq xmm1, rax")
 	g.emit("mulsd xmm0, xmm1")
+	g.label(expRet)
+	g.emit("ret")
+	g.label(expInf)
+	retBits("0x7ff0000000000000")
+	g.label(expZero)
+	g.emit("xorpd xmm0, xmm0")
 	g.emit("ret")
 	g.line(".size __fern_exp_f64, .-__fern_exp_f64")
 
@@ -6999,6 +7069,21 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	//   issue in parallel instead of one 7-deep Horner.
 	//   ln x = k·ln2_hi - ((hfsq - (s·(hfsq+R) + k·ln2_lo)) - f)
 	fn("__fern_log_f64")
+	logRet, logNaN, logNegInf := g.freshLabel("logRet"), g.freshLabel("logNaN"), g.freshLabel("logNegInf")
+	// Domain guards. The bit-twiddling below happily extracts an exponent
+	// from 0 or +Inf and carries on, so log(0) returned -709.09 and
+	// log(+Inf) returned 709.78 — finite garbage, not the -Inf / +Inf the
+	// values call for. log(-0) == log(0) == -Inf, which the equality
+	// branch already covers.
+	nanGuard(logRet)
+	g.emit("xorpd xmm1, xmm1")
+	g.emit("ucomisd xmm0, xmm1")
+	g.emit("jb " + logNaN)    // x < 0
+	g.emit("je " + logNegInf) // x == ±0
+	g.emit("movabs rax, 0x7ff0000000000000")
+	g.emit("movq xmm1, rax")
+	g.emit("ucomisd xmm0, xmm1")
+	g.emit("je " + logRet) // x == +Inf → itself
 	g.emit("movq rax, xmm0")
 	g.emit("mov rcx, rax")
 	g.emit("shr rcx, 52")
@@ -7048,7 +7133,12 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("subsd xmm2, xmm1") // - f
 	g.emit("mulsd xmm0, [rip+.Lfc_ln2hi]")
 	g.emit("subsd xmm0, xmm2")
+	g.label(logRet)
 	g.emit("ret")
+	g.label(logNaN)
+	retBits("0x7ff8000000000000")
+	g.label(logNegInf)
+	retBits("0xfff0000000000000")
 	g.line(".size __fern_log_f64, .-__fern_log_f64")
 
 	// __fern_pow_f64(xmm0=x, xmm1=y) → x^y = exp(y·ln x), x>0. The only
