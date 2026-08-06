@@ -1,0 +1,42 @@
+// An array literal whose elements carry an explicit `i64` / `u64` SUFFIX must
+// build an 8-byte-stride array. infer_expr_width classified a number literal by
+// MAGNITUDE alone, so a small suffixed literal (`7i64`) read as 32 bits and the
+// literal missed the arr_make_i64 path: built at 4-byte stride with i32 stores
+// while every read used stride 8 + an i64 load. #6188.
+//
+// Index 0 is NOT a sufficient check — it returns the low half of the packed
+// pair, which is accidentally the right answer. Index 1 reads past the
+// allocation and is where the bug shows. Every case below reads index 1.
+//
+// A `var` binding hid this: its own `: i64[]` annotation drives the width. Only
+// positions with nothing else to go on — a struct-literal field value, a tuple
+// element — were wrong, so those are what this covers. The import matters for
+// the same reason it does in f32_array_param.
+import "std/i32";
+
+struct Holder { v: i64[] }
+struct UHolder { v: u64[] }
+
+function main(): i32 {
+    var h: Holder = Holder { v: [7i64, 9i64] };
+    if ((h.v[1] as i32) != 9) { return 1; }
+    if ((h.v[0] as i32) != 7) { return 2; }
+    if (h.v.len() != 2) { return 3; }
+
+    var u: UHolder = UHolder { v: [7u64, 9u64] };
+    if ((u.v[1] as i32) != 9) { return 4; }
+
+    // The full 64-bit compare is what the original report tripped on: with the
+    // 4-byte layout the upper half held the NEXT element, so `== 1u64` failed.
+    var one: UHolder = UHolder { v: [1u64, 2u64] };
+    if (one.v[0] != 1u64) { return 5; }
+
+    var t: (i64[], i32) = ([7i64, 9i64], 1);
+    if ((t.0[1] as i32) != 9) { return 6; }
+
+    // Magnitude-classified literals kept working throughout; pin that too.
+    var big: i64[] = [5000000000, 9i64];
+    if ((big[1] as i32) != 9) { return 7; }
+
+    return 11;
+}
