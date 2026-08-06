@@ -209,12 +209,23 @@ fixpoint is self-referential and blind to a stable leak; and the alloc
 differential compares per-churn growth the freelist can mask.
 
 Most are now closed (#6218 / #6225 / #6232 / #6240 / #6251 / #6252 / #6255 /
-#6263). Measured on `f58ab5d`, ~108 KB remains over four shapes. **#6127 is the
-live list — re-measure before quoting any figure, from here or from the issue.**
-Three of that issue's own attributions were wrong because a sub-shape went
-unprobed; isolating **single bind / declared-in-loop / rebound** as three
-separate probes before attributing a cause costs one build and has been decisive
-every time.
+#6263 / #6285 / #6291 / #6308). What remains is the nested-struct family (#6274)
+and the bare-name struct credit block-scoped, which needs a narrower gate rather
+than a flip — flipping it segfaults the gen1 self-compile. **#6127 is the live
+list — re-measure before quoting any figure, from here or from the issue.**
+
+Four of that issue's own attributions were wrong, and the two failure modes are
+worth separating because they call for different probes:
+
+- **Three named the wrong sub-shape.** Isolating **single bind /
+  declared-in-loop / rebound** as three separate probes before attributing a
+  cause costs one build and has been decisive every time.
+- **One named the wrong object.** `optstruct_single` was recorded as a leaked
+  payload struct box and was the array FIELD buffer — the same 40 bytes at the
+  probe's shape, so the size could not distinguish them, and the two readings
+  point at different fixes (a missing box dec vs a missing `__struct_drop_<P>`).
+  Grow one dimension at a time — array length, then field count — and see which
+  moves the leak.
 
 ---
 
