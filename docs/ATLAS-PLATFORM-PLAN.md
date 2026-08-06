@@ -367,7 +367,7 @@ platform assumption a context-free list cannot know is false here.
 | Row | Why it has no referent |
 | --- | --- |
 | **Windows / IOCP** (Phase 8) | Fern has no Windows target. `fern -targets`: arm64 Linux, arm64-android, arm64-darwin, x86-64 Linux, wasm, wasi-http. |
-| **macOS / kqueue** (Phase 8) | `arm64-darwin` is a *compile* target for native Apple Silicon binaries; there is no macOS server story, and the async model is a single-threaded poll loop. |
+| ~~**macOS / kqueue** (Phase 8)~~ | **This row was wrong — see §2c.** It read "there is no macOS server story"; that was a statement about intent, not about the code, and the intent was mine rather than the project's. kqueue is a *deferred port with live TODOs*, not an unreferenced idea. |
 | **`Vec64<u8>`** (Phase 0) | 512-bit vectors. AVX-512 is far outside the declared Haswell baseline; nothing Fern targets guarantees it. |
 | **Gather / Scatter** in the portable SIMD API (Phase 0) | NEON has no gather and wasm `v128` has no gather. An abstraction containing them is not portable to two of three targets — it is an x86 API with fallbacks. |
 | **Rope / PieceTable** as compiler infrastructure (Phase 12) | Zero occurrences in the codebase. These are *editor buffer* structures, not compiler ones; the list has them under the wrong heading. |
@@ -384,6 +384,56 @@ architecture. Fern has none of those. This is the failure mode to expect from
 any context-free "SOTA checklist" — not that the items are wrong in general,
 but that the assumptions they are conditioned on go unstated, so the reader
 cannot tell which ones transfer.
+
+## 2c. macOS as a server target — decided in, and what it costs
+
+**Decision (2026-08-06): Fern wants a macOS server story.** This section
+replaces the §2b row that dismissed one, and the correction is worth keeping
+visible because of *how* that row was wrong. It asserted "there is no macOS
+server story" from the observation that `arm64-darwin` exists to produce Mac
+binaries — a claim about intent dressed up as a claim about the code. The code
+says something different and more useful.
+
+**What already works on `arm64-darwin`.** More than the row implied. The
+platform descriptor advertises `tcp` (`fern -targets`), and the socket
+syscalls are genuinely ported — `socket` / `bind` / `listen` / `accept` all
+carry Darwin numbers alongside their Linux ones in the arm64 backend's dual
+syscall table. A blocking HTTP/1.1 accept loop — plain `tcp_serve` — is
+therefore already a working macOS server.
+
+**What does not work, exactly.** One thing: the readiness multiplexer.
+`__fern_poll` is `ppoll(2)` on Linux and a **`-1` stub on Darwin**, with the
+deferral recorded at three sites in `internal/codegen/arm64/arm64.go` (the
+`linuxOnlySysno` note, `emitPollRuntime`, and the `usesPoll` field comment).
+A `-1` return means "nothing is ready", so everything layered on readiness
+degrades rather than erroring:
+
+| Surface | On `arm64-darwin` today |
+| --- | --- |
+| `tcp_serve` (blocking accept loop) | works |
+| `tcp_serve_deadline` | broken — the wait returns immediately, so the deadline fires at once |
+| `std/async` `gather` / `race` / `with_deadline` | broken — all route through the `poll` builtin |
+
+So the gap is not "macOS is not a server platform"; it is **one runtime helper
+away from being one**. Porting `__fern_poll` to `kevent(2)` mirrors the
+existing ppoll implementation: build the event set from the length-prefixed
+`i32[]` of fds, request read-readiness on each, translate the millisecond
+timeout into a `timespec` (negative meaning block), and return the index of
+the first ready fd or -1. The signature, the caller contract, and the tests
+are all already fixed by the Linux side.
+
+Two things make this cheaper than it looks, and one makes it harder. Cheaper:
+the whole async surface is *already* written against the `poll` builtin rather
+than against `ppoll` directly, so nothing above the helper changes; and
+`arm64-darwin` is already verified end-to-end on a `macos-latest` CI runner,
+so there is a place to run it. Harder: kqueue is not a poll clone — it is
+stateful (a kqueue fd holding registrations) where `ppoll` is stateless
+(a fd set per call), so a faithful port either re-registers every call (simple,
+correct, and the right first version) or keeps a persistent kqueue and grows a
+lifetime the current helper has no place to store.
+
+Sequenced as item 3 in §4. It is independent of the SIMD tier and of the
+multicore decision — it is a per-target runtime port, not a language change.
 
 ## 3. The fused-intrinsic SIMD ABI
 
@@ -480,20 +530,43 @@ Per rule 5, each kernel ships with:
    Remaining: extending the corpus to the compiler's own hot shapes, and a
    throughput gate.*
 2. **`__memchr` as the first fused kernel**, by the §3.4 ordering. (§3.3)
-3. **`__memcmp` / UTF-8 validation** as the second and third kernels, proving
+3. **`__fern_poll` on kqueue for `arm64-darwin`** (§2c) — the one item here
+   that turns a target from half-working into whole. Independent of everything
+   else on this list: a per-target runtime port, not a language change, and
+   the caller contract is already pinned by the Linux side.
+4. **`__memcmp` / UTF-8 validation** as the second and third kernels, proving
    the contract generalises past a single shape.
-4. **`byteswap` / `rotate` intrinsics** — small, independent, unblocked. (§2.3)
-5. **SwissTable SWAR group probe** for `core/map` — the one Tier-3 item with a
+5. **`byteswap` / `rotate` intrinsics** — small, independent, unblocked. (§2.3)
+6. **SwissTable SWAR group probe** for `core/map` — the one Tier-3 item with a
    credible non-vector variant, so it can proceed in parallel.
-6. Re-evaluate the first-class vector type only after 2–3 have landed, with
+7. Re-evaluate the first-class vector type only after 2 and 4 have landed, with
    real kernels to point at. If the fused set stays under a dozen leaf kernels,
    the register-class project may never be worth it.
 
-Not sequenced here, because each needs a decision rather than an
-implementation: cycle collection (§1.3), the multicore shape (§1.4), whether
-Fern wants a bigint type (§2.6), and the transcendental accuracy contract
-(`SOTA-STDLIB-BLUEPRINT` — wasm polynomial approximations and native libm
-disagree today).
+Two of the open questions this document opened are now **closed**, both by the
+same route — someone decided, and the decision turned a "needs a decision" row
+into an ordinary build item:
+
+- **Does Fern want a bigint type?** Yes (2026-08-06). `core/bigint` shipped:
+  sign-magnitude, base 2^32 limbs in u64 slots, schoolbook multiply only, with
+  its trait impls in `core/cmp` to keep the module import-free. The Karatsuba /
+  Toom-Cook / NTT ladder stays unbuilt until there is a workload to measure.
+- **Is macOS a server target?** Yes (2026-08-06) — §2c, sequenced as item 3.
+
+Still open, and still decisions rather than implementations:
+
+- **Cycle collection** (§1.3). RC cannot collect cycles, and the per-request
+  arena reset that used to make request-scoped cycles safe is gone. Trial
+  deletion or backup tracing; `docs/CYCLE-COLLECTION-ANALYSIS.md` §4.
+- **The multicore shape** (§1.4). #5366's share-nothing workers with
+  per-worker heaps is the candidate, forced by non-atomic Perceus refcounts.
+  Until it is settled, new stdlib surface should stop accreting against an
+  implicit single-thread assumption.
+- **The transcendental accuracy contract.** wasm polynomial approximations and
+  native libm disagree *today*, so `sin(x)` is already backend-dependent. Fern
+  should decide whether it promises correct rounding, a stated ULP bound, or
+  "whatever the platform does" — and if it promises anything, the wasm path is
+  where the promise breaks first (`SOTA-STDLIB-BLUEPRINT`).
 
 ---
 
