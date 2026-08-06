@@ -1,0 +1,446 @@
+# Atlas, reconciled against Fern
+
+**Status:** decision record + sequenced plan (2026-08-06). Supersedes nothing;
+it is the platform-layer companion to `docs/SOTA-STDLIB-BLUEPRINT.md`, which
+surveys the *algorithms*. This document is about the *substrate* they need.
+
+The input was an external blueprint ("Project Atlas") for a state-of-the-art
+systems language: twelve phases, from a portable SIMD layer and CPU dispatcher
+through allocators, strings, collections, concurrency, io_uring, compression,
+and crypto. Its organising thesis:
+
+> The compiler, runtime and standard library are one optimization unit.
+
+That thesis is right, and it is already Fern's operating assumption — the
+self-hosted compiler is the standard library's most demanding consumer, so a
+`std/string` or `core/map` win compounds into compile times rather than
+showing up only in a benchmark. Nothing below argues with the philosophy.
+
+What this document does is take the blueprint's *ordering* seriously enough to
+check it against the code, because a phase order written for a C++/Rust-shaped
+language inverts in five places for Fern. Each inversion below is stated with
+the evidence that produced it. The short version:
+
+| Atlas phase | Verdict for Fern |
+| --- | --- |
+| 0 — CPU feature detection + dispatcher | **Not needed at the 128-bit tier.** Deferred to the 256-bit tier. |
+| 0 — portable SIMD *type* (`Vec32<u8>`) | **Wrong first shape.** Fused intrinsics deliver the payoff at a fraction of the cost. |
+| 1 — allocator family (arena/bump/pool/general) | **Done, and partly rejected on purpose.** Fern is not in the malloc world. |
+| 2 — primitive intrinsics | **Mostly done.** `byteswap` / `rotate` are the remaining rows. |
+| 7 / 8 — concurrency primitives, io_uring | **Blocked on a memory-model decision, not on implementation.** |
+| 12 — compiler reuses the stdlib | **Already true, and more aggressively than Atlas proposes.** |
+| Testing — perf regressions fail CI | **Genuinely missing. The highest-value item Atlas contributes.** |
+
+---
+
+## 1. The five inversions
+
+### 1.1 The CPU dispatcher is unnecessary — because the baselines already promise SIMD
+
+Atlas makes feature detection and runtime dispatch the foundation everything
+else sits on:
+
+```
+fn memcpy(...) { switch(cpu) { AVX512 / AVX2 / NEON / Scalar } }
+```
+
+That is the right design for a library shipping one binary to unknown
+hardware. Fern is not in that position. Per `CLAUDE.md ▸ Targets`, the
+baselines are *declared*, and binaries are static with no runtime dispatch —
+"a selected instruction is a hard requirement, not a fast path":
+
+| Target | Declared baseline | 128-bit SIMD | 256-bit SIMD |
+| --- | --- | --- | --- |
+| x86-64 | Haswell-class, **SSE4.2 + BMI1** assumable | **guaranteed** (SSE2/SSE4.2) | *not* assumable — AVX2 is outside the declared set |
+| arm64 | plain ARMv8-A, **Advanced SIMD included** | **guaranteed** (NEON) | n/a (SVE is a separate tier) |
+| wasm | wasmtime v46.0.1 pinned | **guaranteed** (`v128`, standardised, on by default) | n/a |
+
+So the entire 128-bit tier — which is where `memchr`, `memcmp`, UTF-8
+validation, ASCII case conversion, SwissTable probing, and JSON structural
+classification all live — needs **no detection and no dispatch at all**. It is
+statically available on every target Fern supports. Building a dispatcher
+first would be paying the cost of a mechanism whose only consumer does not
+exist yet.
+
+Dispatch becomes necessary exactly at the point Fern wants AVX2/AVX-512 on
+x86-64 or SVE/RVV elsewhere, because those *are* outside the declared
+baselines. That is a real future tier with a real prerequisite — and note it
+is a **project decision, not a codegen one** (`docs/BACKEND-PARITY.md`): the
+alternative to a dispatcher is raising the declared baseline, which is
+cheaper and may well be the right answer. Either way it is sequenced *after*
+the 128-bit tier, not before it.
+
+One sharp edge worth recording, since it is the failure mode a dispatcher
+exists to prevent: on x86-64 `LZCNT`/`TZCNT` **fail silently** below the
+baseline — same opcodes as `bsr`/`bsf` plus an `F3` prefix the older CPU
+ignores — where `POPCNT` faults loudly. A baseline violation is therefore not
+uniformly detectable at runtime, which is an argument for keeping the declared
+baseline honest rather than for adding dispatch.
+
+### 1.2 The portable vector *type* is the expensive design, and the payoff doesn't need it
+
+Atlas puts a first-class portable vector type at the very bottom of the stack —
+`Vec32<u8>`, `Mask`, load/store/gather/scatter/shuffle/blend/compress/expand —
+and forbids algorithms from touching AVX2 directly. The *discipline* is
+correct. The *shape* is the expensive one for Fern, and the reason is
+structural rather than a matter of effort.
+
+Both native backends are **stack-machine code generators over 8-byte operand
+slots**. Values are pushed and popped through GPRs; the vector register file
+is entered and left inside a single op:
+
+- `internal/codegen/x86_64/x86_64.go:1989` — f64 operands "move into xmm0 /
+  xmm1 via `movd` (32) or `movq` (64)", compute, and move straight back
+  (`movq rax, xmm1`).
+- `internal/codegen/arm64/arm64.go:10095` — the bit patterns "are stored as
+  i32 on the operand stack to keep the push/pop discipline uniform across i32
+  / f32 / i64 / f64; **the V-register file gets involved only at op time**."
+- `internal/codegen/x86_64/x86_64.go:2290` — "Slot i sits at `[rbp -
+  (i+1)*8]`… Always 8-byte."
+
+This is not merely how the comments read; it is what the backend emits. For
+`var c: f64 = a * b + a`, `fern -target x86-64` produces:
+
+```
+    movabs $0x400c000000000000,%rax   ; f64 bit pattern in a GPR
+    sub    $0x10,%rsp
+    mov    %rax,(%rsp)                ; ... spilled to an 8-byte operand slot
+    ...
+    movq   %rcx,%xmm0                 ; enter the vector file
+    movq   %rax,%xmm1
+    mulsd  %xmm0,%xmm1                ; one op
+    movq   %xmm1,%rax                 ; leave it immediately
+    ...
+    movq   %rcx,%xmm0                 ; re-enter for the next op
+    movq   %rax,%xmm1
+    addsd  %xmm0,%xmm1
+    movq   %xmm1,%rax
+```
+
+No xmm value survives across an op boundary — each op re-enters and re-exits
+the vector register file. That is exactly the fused shape this section
+proposes for SIMD, already load-bearing in production codegen.
+
+A 128-bit value does not fit an 8-byte slot. Making `Vec16<u8>` a first-class
+IR value therefore means, in every one of **six** backends (three native, three
+self-host): a second register class, vector-aware allocation and spilling, a
+wider operand slot or a parallel vector stack, ABI rules for passing and
+returning vectors, and a new type in the checker, the interpreter, and the
+monomorphiser. That is the project the blueprint survey already sized
+correctly when it said the vector surface "should be evaluated as one project
+with that whole tier as its payoff, not attempted piecemeal"
+(`docs/SOTA-STDLIB-BLUEPRINT.md` ▸ Tier 3).
+
+But the payoff list does not actually require vectors to be *values*. Every
+item on it is a **whole-loop kernel with scalar inputs and a scalar result**:
+
+| Kernel | Signature |
+| --- | --- |
+| `memchr` | `(ptr, len, byte) -> index` |
+| `memcmp` / `str_eq` | `(a, b, len) -> ordering` |
+| UTF-8 validate | `(ptr, len) -> bool` |
+| ASCII case / classify | `(ptr, len, out) -> ()` |
+| SwissTable group probe | `(ctrl_ptr, h2) -> match_mask` |
+| JSON structural classify | `(ptr, len, out_index) -> count` |
+
+In each, the vector never crosses an IR value boundary. It is born from a
+load, consumed by a compare, and reduced to a scalar before the op returns.
+That is *precisely* the shape the existing f64 lowering already has — and it
+means the whole tier is reachable with **no new register class, no regalloc
+change, no type-system change, and no ABI change**.
+
+Call this the **fused-intrinsic** design. It is specified in §3.
+
+The honest cost of choosing it: portability discipline moves from the type
+system to code review. Atlas's rule — "no algorithm in the standard library is
+allowed to directly use AVX2" — is enforced by construction when there is a
+`simd::Vec32<u8>` to write instead. With fused intrinsics, each kernel is
+hand-written once per backend, so the SSE and NEON and wasm versions of
+`memchr` are three separate pieces of code that must agree. §3 addresses that
+with a mandatory scalar reference and differential testing rather than by
+pretending the cost is not there. This is a real trade, taken deliberately:
+six backends × a register-class project is a larger and riskier duplication
+than six backends × a dozen leaf kernels, and the fused design leaves the
+first-class vector type available later as a *widening*, not a rewrite.
+
+### 1.3 Phase 1's allocator family is already answered — and one part of it was deliberately removed
+
+Atlas Phase 1 is Arena + BumpAllocator + PoolAllocator + GeneralAllocator, with
+"Compiler / Parser / JSON / Regex all use arenas." Fern's memory model is not
+the malloc-plus-arenas world this assumes:
+
+- a **16 GiB `MAP_NORESERVE` bump arena** (single cursor, both native backends),
+- a **large-tier freelist** on top of it,
+- **Perceus reference counting** with constructor reuse, in both the native and
+  self-hosted compilers.
+
+More pointedly: Fern **had** the user-facing arena Atlas is asking for — an
+`arena { … }` block, `arena_save` / `arena_restore` builtins, per-request
+bracketing in `tcp_serve` and the wasm `__http_entry` — and **removed all of
+it** on 2026-06-01 (`docs/ARENA-DECISION.md`). Not because it was unfinished,
+but because RC subsumed it: the two-cursor allocator underneath was
+subsequently collapsed to one cursor because nothing selected the second
+region any more.
+
+The removal was eyes-open and carries a stated regression — RC cannot collect
+cycles, so a long-running server now leaks request-local cycles the arena reset
+used to reclaim (`docs/CYCLE-COLLECTION-ANALYSIS.md` §4). That is the live
+memory question. Re-introducing a general allocator tier would not answer it,
+and Atlas's Phase 1 does not address ownership at all, which is where Fern's
+actual memory bugs are: the seven unbounded self-host-vs-native reclaim leaks
+measured under `FERN_LEAKCHECK=1` in **#6127** (~108 KB over four shapes
+remaining as of `f58ab5d`).
+
+**Verdict:** Phase 1 is closed as written. The successor items are (a) cycle
+collection — trial-deletion or backup tracing — and (b) closing #6127. Both are
+about *reclaim*, not about *allocation*.
+
+The one Phase 1 idea that does survive intact is **small-object optimisation**
+("every collection has inline storage"). Fern has it for strings
+(`docs/SSO-PLAN.md`, `SSO-TWOWORD-FLIP-STATUS.md`) and has the analogous
+`Map` win already (linear scan at or below 8 entries). Inline storage for small
+arrays is a genuine open row.
+
+### 1.4 Phases 7 and 8 are blocked on a memory-model decision, not on implementation
+
+Atlas Phase 7 asks for Mutex, RwLock, Semaphore, Barrier, Channel, SPSC/MPSC/
+MPMC queues, and a work-stealing executor; Phase 8 for io_uring / IOCP /
+kqueue.
+
+Fern has **no parallelism at all**, and the reason is not that nobody has
+written a mutex. It is a hard constraint from the memory model, stated in
+`docs/MULTICORE-RESEARCH.md`: **Perceus refcounts are non-atomic and must never
+be touched from two threads.** Every primitive on Atlas's Phase 7 list
+presupposes a shared mutable object graph, which is exactly what non-atomic RC
+forbids. Shipping `Mutex<T>` into that model would not be a fast path with a
+correct fallback; it would be a data race with a nice API.
+
+The repo has already picked the compatible shape — share-nothing workers with
+per-worker heaps (#5366) — and it makes most of Phase 7 moot: with no shared
+graph there is nothing for an RwLock to guard, and the queue tier reduces to a
+message channel between heaps. Concurrency proper (overlapping I/O on one
+thread) is *done*: colorless `Future[T]` with `gather` / `race` /
+`with_deadline` (`docs/ASYNC.md`, `std/async`).
+
+Phase 8 inherits the same gating. io_uring's value is submitting many
+operations without a syscall per operation, which is a throughput story for a
+server saturating cores; on the single-threaded poll loop Fern runs today the
+win over the existing readiness path is small, and the completion model would
+have to be rebuilt when the parallelism shape lands. Sequenced after #5366,
+not before.
+
+**Verdict:** neither phase is a build item until the multicore shape is
+decided. Until then the guardrail from `MULTICORE-RESEARCH.md` applies —
+platform decisions should stop accreting against an *implicit* single-thread
+assumption, which is a constraint on how new stdlib surface is written, not a
+licence to build locks.
+
+### 1.5 Phase 12 is already true, and it is why the string/map work ranks so high
+
+Atlas Phase 12 — "the compiler should reuse the standard library: Arena,
+BitSet, SparseSet, Interner, SmallVec, HashMap, Rope, PieceTable; nothing
+compiler-specific unless absolutely necessary" — is Fern's existing position,
+arrived at from the other direction. The self-hosted compiler is written in
+Fern and is the heaviest consumer of `std/string` and `core/map` that exists.
+There is no separate compiler-internal collection layer to unify.
+
+The consequence Atlas draws is worth keeping, though, because it explains a
+ranking that otherwise looks odd: substring search ranked *first* in the last
+stdlib pass ahead of several algorithmically flashier rows, because it is on
+the compiler's own hot path. That is the "one optimization unit" thesis paying
+out, and it is the correct tiebreaker for future ranking too.
+
+---
+
+## 2. What Atlas contributes that Fern is genuinely missing
+
+Stripping out what is done, blocked, or inverted leaves a short list — and it
+is worth being clear that this is the document's actual output. In descending
+order of value:
+
+1. **Performance regressions must fail CI.** Fern tests correctness
+   exhaustively (differential testing against the `-interp` oracle, small-
+   alphabet enumeration — 51,396 cases for the search core) but **nothing gates
+   performance or allocation volume**, which `docs/TEST-GATES.md` names
+   explicitly as a hole. Every optimisation in the last stdlib pass is
+   currently protected only by the fact that someone measured it once.
+
+   Fern has the right instrument already and it is not the obvious one. Peak
+   RSS is *not* comparable across hosts here: the arena is a 16 GiB
+   `MAP_NORESERVE` mapping, so a first touch maps a 2 MB huge page under
+   `THP=always` and a 4 KB page under `madvise` — the same binary on the same
+   input measured **43 MB locally and 552 MB on CI**, a 12× spread with
+   identical allocation. `__heap_bump_bytes()` (i64, exact, host-independent,
+   meaningful under qemu) is the gate that works, joined by
+   `__arr_push_shared_bytes()` for the rc==1 append cliff — and note that the
+   *weighted* form is the one that ranks correctly: a whole-module compile
+   crosses the cliff 188 times copying 812 bytes (noise) while one threaded
+   accumulator copies 2.3 GB. Two rounds of past optimisation work were scoped
+   against the unweighted count and aimed at sites that could not have paid.
+
+   This is buildable now, on existing instruments, and it protects everything
+   else on this list. **It should go first.**
+
+2. **The 128-bit SIMD tier** (§3), which unblocks the whole of
+   `SOTA-STDLIB-BLUEPRINT` Tier 3.
+
+3. **`byteswap` / `rotate` intrinsics** — the two remaining Phase 2 rows, the
+   same `bitCountBuiltin` shape as the landed `clz`/`ctz`/`popcount`
+   (`internal/ir/ir.go:18190`).
+
+4. **Streaming compression** (Phase 9) — Fern has none, and Atlas's framing
+   ("streaming only; never require loading an entire file") is the right
+   constraint to adopt up front rather than retrofit.
+
+5. **Crypto coverage** (Phase 10) — `std/crypto` has SHA-256, HMAC, PBKDF2,
+   HKDF, HOTP/TOTP, and a constant-time compare. It has no AEAD (AES-GCM,
+   ChaCha20-Poly1305), no signatures (Ed25519, X25519), no BLAKE3, no SHA-3.
+   The AEAD gap is the one that blocks real protocol work. Atlas's "automatic
+   hardware dispatch" for AES-NI runs into §1.1 — AES-NI is outside the
+   declared x86-64 baseline — so ChaCha20-Poly1305 (fast in software, no
+   hardware dependency, constant-time by construction) is the better first
+   AEAD for Fern specifically.
+
+6. **Big integers** (Phase 11) — no arbitrary-precision type exists. Atlas's
+   threshold ladder (schoolbook → Karatsuba → Toom-Cook → NTT) is the correct
+   design *when* the type exists; the prior question is whether Fern wants one.
+
+Deliberately **not** on this list, having been checked: adaptive dispatch by
+size/type/shape (already the blueprint's organising principle and implemented
+in `cmp.sort`, `core/map`, `__str_find_from`, `parse_float`), Dragonbox,
+Eisel–Lemire, Two-Way search, SwissTable-style small-map linear scan, seeded
+hashing, and the bit-count intrinsics — all landed.
+
+---
+
+## 3. The fused-intrinsic SIMD ABI
+
+This is the concrete form of §1.2 and the first buildable slice of the SIMD
+tier. It is deliberately specified as a *contract* rather than a set of
+functions, so that adding the second kernel is mechanical.
+
+### 3.1 The contract
+
+A **SIMD kernel** is a single IR op that:
+
+1. takes only scalar operands from the 8-byte operand stack (pointers as
+   `WidthPtr`, lengths and bytes as i32/i64);
+2. produces a single scalar result pushed back onto the operand stack;
+3. contains its entire vector lifetime **within its own emitted instruction
+   sequence** — no vector value is live across an op boundary, a call, a
+   branch out of the kernel, or a spill;
+4. uses only instructions inside the target's **declared baseline** (§1.1);
+5. is byte-for-byte equivalent to a mandatory scalar reference implementation.
+
+Rules 1–3 are what buy the "no register class" property, and they are what a
+reviewer checks. Rule 4 is what makes dispatch unnecessary. Rule 5 is what
+replaces the type system's portability guarantee.
+
+### 3.2 Surface
+
+Kernels enter the language the same way the bit-count intrinsics do — as
+`__`-prefixed compiler builtins that a readable stdlib function wraps, never as
+surface syntax users are asked to write (`internal/ir/ir.go:18190`, and the
+`std/i32.count_ones()` wrapper pattern). The threading is: a name in the
+builtin table → an `OpKind` → a lowering in each backend → an interpreter
+implementation → a stdlib wrapper → tests.
+
+### 3.3 First kernel: `__memchr(ptr, len, byte) -> i32`
+
+Chosen first because it has the largest blast radius for the least code.
+`std/string`'s search core `__str_find_from` already dispatches single-byte
+needles to "the memchr shape" (`internal/stdlib/std/string.fern:269`), and
+`contains` / `index_of` / `split` / `splitn` / `split_once` / `partition` /
+`find_all` / `count` / `count_matches` / `replace` / `replace_n` / `replacen`
+all route through that core — so one kernel lifts the entire forward-search
+family plus the compiler's own lexing. Its backward
+sibling `__str_rfind_from` gets the same treatment second.
+
+Lowering sketch, all inside the declared baselines:
+
+| Backend | Sequence (16 bytes/iteration) |
+| --- | --- |
+| x86-64 | `movd`+`pshufd` splat → `movdqu` / `pcmpeqb` / `pmovmskb` / `bsf` |
+| arm64 | `dup` splat → `ld1` / `cmeq` / `shrn` (`.8b`, #4) / `fmov` / `rbit`+`clz` |
+| wasm | `i8x16.splat` → `v128.load` / `i8x16.eq` / `i8x16.bitmask` / `i32.ctz` |
+
+Tail bytes below one vector width run the scalar reference; correctness for
+unaligned heads is handled by scalar-stepping to alignment rather than by
+masked loads, which keeps all three sequences within baseline.
+
+### 3.4 Ordering across six backends
+
+The kernel must exist in all six backends before `std/string` may call it,
+because the self-hosted compiler compiles the stdlib and a missing lowering is
+a hard compile error, not a fallback — the AST emitters are gone and every
+backend routes IR-or-error (`docs/SELFHOST-AST-RETIREMENT.md`). The sequence
+is therefore:
+
+1. IR op + interpreter reference + scalar-only lowering in all six backends
+   (correct, not yet fast) + differential tests.
+2. `std/string` adoption behind the now-total intrinsic.
+3. Vectorise the lowerings one backend at a time, each with a measurement.
+
+Step 1 is what makes steps 2 and 3 safe: the intrinsic becomes total *before*
+anything depends on it being fast, so no step in the sequence can leave the
+tree unbuildable.
+
+### 3.5 Testing
+
+Per rule 5, each kernel ships with:
+
+- an exhaustive differential test against its scalar reference over a small
+  alphabet — the shape that found the Two-Way bugs example-based tests missed,
+  covering every length across the vector-width boundary (0..2W+2) and every
+  alignment offset;
+- runs on interp, x86-64, arm64, and wasm, plus through the self-host compiler
+  on wasm and x86-64;
+- a `__heap_bump_bytes()` assertion that the kernel allocates nothing;
+- once item 1 of §2 exists, a throughput gate.
+
+---
+
+## 4. Sequenced plan
+
+1. **Performance-regression CI** on `__heap_bump_bytes()` /
+   `__arr_push_shared_bytes()` — protects everything downstream. (§2.1)
+2. **`__memchr` as the first fused kernel**, by the §3.4 ordering. (§3.3)
+3. **`__memcmp` / UTF-8 validation** as the second and third kernels, proving
+   the contract generalises past a single shape.
+4. **`byteswap` / `rotate` intrinsics** — small, independent, unblocked. (§2.3)
+5. **SwissTable SWAR group probe** for `core/map` — the one Tier-3 item with a
+   credible non-vector variant, so it can proceed in parallel.
+6. Re-evaluate the first-class vector type only after 2–3 have landed, with
+   real kernels to point at. If the fused set stays under a dozen leaf kernels,
+   the register-class project may never be worth it.
+
+Not sequenced here, because each needs a decision rather than an
+implementation: cycle collection (§1.3), the multicore shape (§1.4), whether
+Fern wants a bigint type (§2.6), and the transcendental accuracy contract
+(`SOTA-STDLIB-BLUEPRINT` — wasm polynomial approximations and native libm
+disagree today).
+
+---
+
+## 5. On the Atlas Principles
+
+The ten principles hold up essentially unchanged, and are worth adopting as
+written with two amendments:
+
+- **"SIMD by default"** should read *"vectorise where the baseline guarantees
+  it"*. The unqualified form invites the dispatcher §1.1 argues against, and
+  invites reaching for AVX2 outside the declared baseline where it fails
+  silently.
+- **"Allocation is explicit — prefer stack, inline storage, arenas, then the
+  general heap"** does not describe Fern and should read *"prefer inline
+  storage, then reuse, then fresh allocation"*. Fern has no general heap tier
+  to fall back to and deliberately removed its user-facing arena (§1.3); the
+  ladder that matters here is Perceus constructor reuse, and the measurable
+  form of the principle is `__heap_bump_bytes()`.
+
+The most valuable of the ten for this codebase is **"measure before
+optimizing"**, for a reason specific to Fern: three attributions in #6127 were
+wrong because a sub-shape went unprobed, two rounds of `own`-conversion work
+were scoped against an unweighted counter that could not have ranked the
+sites, and a 100 MB RSS ceiling failed a change that had just made the code 50×
+leaner. The instrument matters as much as the discipline.
