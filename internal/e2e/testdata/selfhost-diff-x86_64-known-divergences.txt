@@ -18,11 +18,18 @@
 # since any divergence at all fails the leg — and keep the record below of what
 # left, because it is what the next round of probing should be measured against.
 #
-# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus): 204 agree,
-# 0 diverge, 308 compile gaps. Count the gaps, not just the agreements, when
-# reading a run: the leg only proves what it could compile, and a fix that
-# turns a wrong answer into an IR bail (as #6228 did for seed 502) RAISES the
-# gap count while looking like a win in the divergence column.
+# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus), after #6237:
+# 252 agree, 0 diverge, 260 compile gaps. Count the gaps, not just the
+# agreements, when reading a run: the leg only proves what it could COMPILE, so
+# a fix that turns a wrong answer into an IR bail raises the gap count while
+# looking like a win in the divergence column.
+#
+# That caution cuts both ways, and this run is the other direction: the previous
+# measurement here was 204 agree / 308 gaps, so #6237 moved FORTY-EIGHT seeds off
+# the gap pile. One bail can cost far more than the seed that exposes it — an
+# if-expression whose branches are 64-bit took the whole MODULE off the IR path,
+# and fernsmith emits if-expressions everywhere, so a single missing branch in
+# one classifier was suppressing a tenth of the corpus.
 
 # CRASHES — the self-host-compiled binary died by SIGSEGV where the interpreter
 # returned a value. These were ONE bug: #6207, a `Map { … }` literal whose keys
@@ -44,15 +51,21 @@
 # reducing them one at a time" — was right; 117's "arena exhausted" was a
 # symptom of the same mis-widening, not a separate leak.
 #
-# Seed 502 also left, but NOT because it was fixed: it now BAILS the IR path
-# (`FERN_STRICT_IR: __lam_22`) instead of returning a wrong value, so the leg
-# can no longer verify a row for it. A lifted if-EXPRESSION whose branches are
-# 64-bit has no return-type inference — irt_guess has no ExprIf arm — so the
-# synthesised __lam_ declares i32 against a 64-bit body. That hole PREDATES the
-# width fix: a big-magnitude branch (`if (c) { 5000000000 } else { … }`) already
-# bailed the same way on the commit before it. The fix moved 502 from a silent
-# wrong answer to a loud compile error, which is the safe direction; closing it
-# is the irt_guess work in #6216 / #6222 / #6223.
+# Seed 502 left in two steps. #6228 first moved it from a silent wrong answer to
+# an IR bail (`FERN_STRICT_IR: __lam_22`) — the safe direction, but a gap rather
+# than a fix — and #6237 then closed the bail, so it now compiles and agrees.
+#
+# The cause was NOT irt_guess, which this note used to name and which cost an
+# hour to rule out. A lifted if-EXPRESSION gets its return type from
+# `if_expr_rt` at PARSE time, and because that writes a non-EMPTY "i32",
+# infer_ret_types_module never revisits it — so irt_guess never runs on these
+# lambdas at all. Teaching irt_guess the suffix AND the magnitude changes
+# nothing; measured, twice. `if_expr_rt` was the fourth literal classifier in
+# parser.fern and the last one that read neither.
+#
+# The hole PREDATED the width work either way: a big-magnitude branch
+# (`if (c) { 5000000000 } else { … }`) bailed identically before #6228, with no
+# suffix involved.
 
 # Also gone earlier, with their own fixes: 121 / 265 / 365 (#6177, the maps
 # runtime need-gate).
