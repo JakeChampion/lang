@@ -175,10 +175,11 @@ answer, these are the tools, in the order they are usually reached for:
   for when you do not yet know which one will fire. A clean run prints no
   `fern-sanitizer:` line at all and leaves exit code and stdout untouched, so
   it drops into an existing harness; a finding is a named message plus a
-  backtrace, and the two fatal checks exit 124. Native x86-64 has all three,
-  arm64 has the census and the over-release report. Full contract, costs, and
-  what it does *not* catch: `docs/SANITIZER.md`. The individual flags below
-  remain the right tool once you know what you are chasing.
+  backtrace, and the two fatal checks exit 124. Both natives carry all three,
+  with identical message text and status, so a finding does not depend on which
+  backend built it. Full contract, costs, and what it does *not* catch:
+  `docs/SANITIZER.md`. The individual flags below remain the right tool once
+  you know what you are chasing.
 - **`__rc_underflow_count()`** — the counter. Exact yes/no signal for "did this
   compile over-release anything", readable from Fern. The self-host drivers
   call it themselves on every run (`util.rc_underflow_guard`).

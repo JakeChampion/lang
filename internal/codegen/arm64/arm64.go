@@ -1107,9 +1107,9 @@ func (g *generator) emitDataSections() {
 // deterministic emission.
 //
 // `when`, if non-nil, gates the message on a debug build mode — see the
-// x86-64 table. The sanitizer's use-after-free diagnostic has no entry here
-// because arm64 has no RcFreeDebug quarantine to report: this backend's half
-// of the sanitizer (#5545) is the leak census plus the rc over-release below.
+// x86-64 table. The two sanitizer diagnostics (#5545) exist only where their
+// detector does, so a release build's read-only section is byte-for-byte what
+// it was before the mode existed.
 var abortMessages = []struct {
 	label, text string
 	code        int
@@ -1121,11 +1121,15 @@ var abortMessages = []struct {
 	{"__fern_msg_slice_range", "fern: slice range out of bounds\n", 134, nil},
 	{"__fern_msg_str_slice", "fern: string index out of range\n", 134, nil},
 	{sanDoubleFreeMsg, "fern-sanitizer: rc over-release (double free)\n", ExitSanitizer, func() bool { return ast.RcUnderflowTrap }},
+	{sanUseAfterFreeMsg, "fern-sanitizer: use-after-free (touched a quarantined block)\n", ExitSanitizer, func() bool { return ast.RcFreeDebug }},
 }
 
-// sanDoubleFreeMsg is the rc-over-release diagnostic's .rodata label. The
-// text must match the x86-64 backend's entry, like every other message here.
-const sanDoubleFreeMsg = "__fern_msg_san_double_free"
+// The two sanitizer diagnostics' read-only labels. The texts must match the
+// x86-64 backend's entries, like every other message here.
+const (
+	sanDoubleFreeMsg   = "__fern_msg_san_double_free"
+	sanUseAfterFreeMsg = "__fern_msg_san_uaf"
+)
 
 // ExitSanitizer mirrors the x86-64 backend's constant — see the comment there
 // for why a sanitizer abort has a status distinct from 125.
@@ -1488,7 +1492,7 @@ func (g *generator) emitFreeRuntime() {
 		g.emit("add x11, x11, x9")
 		g.emit("str x11, [x10]")
 	}
-	if ast.RcFreeEnabled {
+	if ast.RcFreeEnabled && !ast.RcFreeDebug {
 		g.emit("add x1, x1, #15")
 		g.emit("and x1, x1, #-16")
 		g.emit("cmp x1, #16")
@@ -1608,6 +1612,7 @@ func (g *generator) emitArrDecRuntime() {
 	g.emit("cmp w2, #1")
 	g.emit("b.ne .Larrdec_dec")
 	// rc == 1 → free the buffer.
+	g.quarantine("x0", "w6")
 	g.emit("mov x3, #16")
 	g.emit("cmp x1, #16")
 	g.emit("csel x3, x1, x3, hi") // headerBytes = max(16, stride)
@@ -1660,6 +1665,7 @@ func (g *generator) emitMapDropRuntime() {
 	g.emit("cmp w1, #1")
 	g.emit("b.ne .Lmapdrop_dec")
 	// rc == 1 → free buf then the handle cell.
+	g.quarantine("x19", "w5")
 	g.emit("ldr x4, [x19]") // buf
 	g.emit("cbz x4, .Lmapdrop_freehandle")
 	g.emit("cmp x4, #0x10000")
@@ -1709,6 +1715,7 @@ func (g *generator) emitBoxFreeRuntime() {
 	g.emit("cbz x19, .Lboxfree_ret")
 	g.emit("cmp x19, #0x10000")
 	g.emit("b.lo .Lboxfree_ret")
+	g.quarantine("x19", "w2")
 	g.emit("add x1, x1, #8")  // size + 8 rc header (arg1)
 	g.emit("sub x0, x19, #8") // base = data - 8 (arg0)
 	g.emit("bl __fern_free")
@@ -1774,6 +1781,7 @@ func (g *generator) emitStrIncRuntime() {
 	g.emit("cbz x0, .Lstrinc_ret")
 	g.emit("tbnz x0, #0, .Lstrinc_ret")
 	g.emit("ldur w2, [x0, #-8]")
+	g.rcPoisonCheck("w2", "w3", ".Lstrinc_live")
 	g.emit("tbnz w2, #31, .Lstrinc_ret")
 	g.emit("add w2, w2, #1")
 	g.emit("stur w2, [x0, #-8]")
@@ -1939,6 +1947,7 @@ func (g *generator) emitRcIncRuntime() {
 	g.emit("cmp x0, x1")
 	g.emit("b.lo .Lrcinc_ret")
 	g.emit("ldur w1, [x0, #-8]")
+	g.rcPoisonCheck("w1", "w2", ".Lrcinc_live")
 	g.emit("tbnz w1, #31, .Lrcinc_ret")
 	g.emit("add w1, w1, #1")
 	g.emit("stur w1, [x0, #-8]")
@@ -1986,6 +1995,7 @@ func (g *generator) emitRcDecRuntime() {
 	g.emit("cmp x0, x1")
 	g.emit("b.lo .Lrcdec_ret")
 	g.emit("ldur w1, [x0, #-8]")
+	g.rcPoisonCheck("w1", "w2", ".Lrcdec_live")
 	g.emit("tbnz w1, #31, .Lrcdec_ret")
 	// Phase 3 underflow detector: a healthy dec operates on rc >= 1.
 	// If rc <= 0 here (past the null / low-address / sentinel
@@ -1999,6 +2009,45 @@ func (g *generator) emitRcDecRuntime() {
 	g.label(".Lrcdec_ret")
 	g.emit("ret")
 	g.sizeDirective("__fern_rc_dec")
+}
+
+// quarantine emits the ast.RcFreeDebug poison store: the rc word of the block
+// whose DATA pointer is in dataReg is overwritten with ast.RcPoison, so
+// __fern_rc_inc / __fern_rc_dec fault the moment a stale reference touches it
+// and the backtrace names the holder whose count was wrong.
+//
+// Control falls THROUGH to the site's ordinary reclamation path, which
+// computes the block's size and calls __fern_free — that accounts the release
+// for the leak census and (in this mode) declines the freelist push, so the
+// block is both never recycled and never mistaken for a leak. Nothing between
+// here and the call writes [data-8], so the poison survives.
+//
+// scratch must be a w-register the site is free to clobber. RcPoison needs two
+// halves to materialise, hence loadImm32 rather than a bare `mov`.
+//
+// The x86-64 twin is the reference; this is its arm64 mirror (#5545).
+func (g *generator) quarantine(dataReg, scratch string) {
+	if !ast.RcFreeDebug {
+		return
+	}
+	g.loadImm32(scratch, uint32(ast.RcPoison))
+	g.emit("stur %s, [%s, #-8]", scratch, dataReg)
+}
+
+// rcPoisonCheck emits the ast.RcFreeDebug use-after-free guard: rcReg holds the
+// rc word just loaded from [data-8], and a value equal to ast.RcPoison means
+// the block was freed (quarantined) — touching it now is a use-after-free, so
+// report and die. scratch is a clobberable w-register; liveLabel is the site's
+// "not poisoned, carry on" continuation.
+func (g *generator) rcPoisonCheck(rcReg, scratch, liveLabel string) {
+	if !ast.RcFreeDebug {
+		return
+	}
+	g.loadImm32(scratch, uint32(ast.RcPoison))
+	g.emit("cmp %s, %s", rcReg, scratch)
+	g.emit("b.ne %s", liveLabel)
+	g.emitAbort(sanUseAfterFreeMsg) // names the stale holder in the backtrace
+	g.label(liveLabel)
 }
 
 // rcUnderflowBump emits the __fern_rc_underflow increment every
@@ -2844,6 +2893,7 @@ func (g *generator) emitDropArrPtrRuntime() {
 		g.emit("ldur w2, [x19, #-8]") // rc
 		g.emit("cmp w2, #1")
 		g.emit("b.ne .Ldrop_plaindec")
+		g.quarantine("x19", "w5")
 		g.emit("mov x3, #16")
 		g.emit("cmp x20, #16")
 		g.emit("csel x3, x20, x3, hi") // headerBytes = max(16, stride)
@@ -2927,6 +2977,7 @@ func (g *generator) emitDropArrStrRuntime() {
 		g.emit("ldur w2, [x19, #-8]")
 		g.emit("cmp w2, #1")
 		g.emit("b.ne .Ldrop_arr_str_plaindec")
+		g.quarantine("x19", "w5")
 		g.emit("mov x3, #16")
 		g.emit("cmp x20, #16")
 		g.emit("csel x3, x20, x3, hi")
