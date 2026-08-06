@@ -770,12 +770,42 @@ function slot_name_retired(n: string): boolean {
 // automatically — arr_slots_of consumes the same predicates, so an untaken
 // branch's slot routes a guarded null rather than stack garbage.
 //
-// Only the four classes with a MEASURED block-scoped leak use this so far —
-// "TUP:", "OPTTUP:", "OPTSTRUCT:", "OPTARRARR:". The rest still key on
-// slot_name, so their block-scoped locals stay unclaimed at exit (a leak, the
-// safe direction). That is deliberate: switching a class on turns on an
-// exit-sweep release that has never run for these slots, so each one wants its
-// own probe rather than a blanket flip.
+// Each class is admitted on its own probe rather than by a blanket flip —
+// switching one on turns on an exit-sweep release that has never run for these
+// slots. The first four were "TUP:" / "OPTTUP:" / "OPTSTRUCT:" / "OPTARRARR:";
+// these measured the same n-1-of-n signature and followed, each verified to go
+// to 0 with allocs == frees:
+//
+//   ARRARR / ARRARRS   7200      OPTAARR   12000      TUPRC / TUPRCS   8000
+//   SARR               4800      STRUCTARR(A)   9600
+//
+// TUPRC needs BOTH its credits switched: "TUPRC:" drives the rebind and
+// "TUPRCS:" (#6251) the exit sweep, and flipping only the first left the shape
+// measuring exactly its unfixed 8000.
+//
+// Three classes are deliberately NOT here, each for a different measured reason.
+//
+// "RCENUM:" and "OPTARR:" are already flat at 0 — their consuming-match analyses
+// are per-block (#4357) and free the value before the block ends. Switching them
+// on would be a second claim on a released box.
+//
+// The BARE-name struct credit (slot_is_reclaimable_struct) leaks 8800 here and
+// stays leaking, because switching it on **segfaults the gen1 self-compile**.
+// That credit is the most heavily used one in the compiler's own sources — the
+// threaded LowerState / EmitState builders — and it feeds the deep field drop,
+// the precise drop and the reuse-donor paths, not just the exit sweep. So the
+// releases it turns on for block-scoped slots are not all sole-owner. This is
+// the concrete case behind the warning above: the leak is the safe direction,
+// and the per-module fixpoint is what distinguishes it from the five that are
+// fine. Do not re-flip it without a narrower gate.
+//
+// "ARRSTRUCT:" (35200) and "ARRTUP:" (32000) are absent because switching them
+// changed NOTHING — measured identical before and after, so their block-scoped
+// leak has a different cause and this is not it. Both collectors and their
+// elem-type-of-decl walkers do recurse into nested blocks, so the credit is not
+// refused for lack of a declaration; the next thing to check is whether the
+// slot's `struct_type` / `arrarr_elem` column is set at a nested binding at all,
+// since both predicates bail on an empty one before ever reaching the lookup.
 function reclaim_slot_name(s: LowerState, i: i32): string {
     var n: string = s.locals[i].slot_name;
     // `+ ""` materialises the slice as an owned `string` — a bare slice types as
@@ -27610,7 +27640,7 @@ function slot_is_reclaimable_rctuple(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "TUPRC:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "TUPRC:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // slot_is_reclaimable_rctuple_sweep: a "TUPRC:" slot whose FINAL value the scope-exit
@@ -27622,7 +27652,7 @@ function slot_is_reclaimable_rctuple_sweep(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "TUPRCS:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "TUPRCS:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // emit_rctuple_deep_free frees a sweepable rc-tuple slot's fresh rc children
@@ -28821,9 +28851,9 @@ function slot_is_reclaimable_arrarr(s: LowerState, i: i32): boolean {
     // can't dangle a live local. Scalar-kind inners value-copy their
     // elements, so the lax rows-are-literals credit suffices.
     if (s.arrarr_elem_of_slot(i) == "string") {
-        return util.index_of_str(s.reclaimable_names, "ARRARRS:" + s.locals[i].slot_name) >= 0;
+        return util.index_of_str(s.reclaimable_names, "ARRARRS:" + reclaim_slot_name(s, i)) >= 0;
     }
-    return util.index_of_str(s.reclaimable_names, "ARRARR:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "ARRARR:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // arrarr_free_helper_of picks the release helper from the slot's INNER element
@@ -28846,7 +28876,7 @@ function slot_is_reclaimable_optaarr(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_arr) { return false; }
     if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return false; }
-    return util.index_of_str(s.reclaimable_names, "OPTAARR:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "OPTAARR:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // emit_optaarr_reclaim_store: the option-element twin of
@@ -30169,7 +30199,7 @@ function slot_is_reclaimable_arrtup(s: LowerState, i: i32): boolean {
     if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return false; }
     var et: string = s.locals[i].arrarr_elem;
     if (et.len() < 2 || et[0:1] != "(") { return false; }
-    return util.index_of_str(s.reclaimable_names, "ARRTUP:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "ARRTUP:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // emit_arrtup_deep_free frees the array-of-tuples buffer in `slot`: null-guarded, a
@@ -30502,7 +30532,7 @@ function slot_is_reclaimable_arrstruct(s: LowerState, i: i32): boolean {
     var sty: string = s.struct_type_of_slot(i);
     if (sty.len() == 0) { return false; }
     if (!struct_has_reclaim_array_field(s.structs, sty)) { return false; }
-    return util.index_of_str(s.reclaimable_names, "ARRSTRUCT:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "ARRSTRUCT:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // emit_arrstruct_deep_free frees the array-of-structs buffer in `slot`: null-guarded, a
@@ -30590,7 +30620,7 @@ function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
     if (sty.len() == 0) { return false; }
     if (sty.len() > 4 && sty[0:4] == "dyn ") { return false; }
     if (struct_has_reclaim_array_field(s.structs, sty)) { return false; }
-    if (util.index_of_str(s.reclaimable_names, "STRUCTARR:" + s.locals[i].slot_name) >= 0) { return true; }
+    if (util.index_of_str(s.reclaimable_names, "STRUCTARR:" + reclaim_slot_name(s, i)) >= 0) { return true; }
     // APPEND-BUILT candidates (#6127) carry a SEPARATE credit and a STRICTER
     // rule: the element struct's fields must be scalar or `string`.
     //
@@ -30615,7 +30645,7 @@ function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
     // which is the sound direction and measurably the same code. Without this,
     // an append-built `N[]` leaked its element boxes too: 28800 bytes over 100
     // rounds against the literal-built form's 9600 (the strings alone).
-    if (util.index_of_str(s.reclaimable_names, "STRUCTARRA:" + s.locals[i].slot_name) >= 0) {
+    if (util.index_of_str(s.reclaimable_names, "STRUCTARRA:" + reclaim_slot_name(s, i)) >= 0) {
         return struct_all_scalar_or_string_fields(s.structs, sty);
     }
     return false;
@@ -30682,7 +30712,7 @@ function slot_is_reclaimable_strarr(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_strarr) { return false; }
-    return util.index_of_str(s.reclaimable_names, "SARR:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "SARR:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // dyn_reclaim_concrete_of (#4351): the payload tag registered for dyn local
