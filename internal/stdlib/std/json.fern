@@ -293,6 +293,13 @@ struct __JsonParser {
     s: string,
     pos: i32,
     error: i32,
+    // Offset of the FIRST failure, or -1 while the parse is healthy.
+    // The cursor already threaded `pos`, so the position of a syntax
+    // error was known at the point of failure and thrown away by
+    // json_parse returning None — a malformed document reported that it
+    // was malformed and nothing else. Recording it here is what lets
+    // json_parse_result say where.
+    errpos: i32,
     // Current container-nesting depth, threaded through every
     // cursor so the recursive descent can bound how deep it
     // will go. A hostile `[[[[…` / `{"a":{"a":{…` body would
@@ -348,33 +355,46 @@ function __json_p_number(p0: __JsonParser): (JsonValue, __JsonParser) {
     if (__json_p_byte(p) == 45) { p = __JsonParser { ...p, pos: p.pos + 1 }; }
     // At least one digit.
     b = __json_p_byte(p);
-    if (b < 48 || b > 57) { return (JNull, __JsonParser { ...p, error: 1 }); }
-    // Integer digits.
+    if (b < 48 || b > 57) { return (JNull, __json_fail(p)); }
+    // Integer digits. RFC 8259's `int` is `zero / digit1-9 *DIGIT`, so a
+    // leading zero may not be followed by another digit: `01` is not a
+    // number, it is two tokens. Accepting it made Fern disagree with every
+    // other JSON implementation on the same bytes.
+    var intStart: i32 = p.pos;
     while (p.pos < n) {
         b = p.s[p.pos] as i32;
         if (b < 48 || b > 57) { break; }
         p = __JsonParser { ...p, pos: p.pos + 1 };
     }
-    // Optional '.<digits>'.
+    if (p.s[intStart] as i32 == 48 && p.pos - intStart > 1) {
+        return (JNull, __json_fail(__JsonParser { ...p, pos: intStart + 1 }));
+    }
+    // Optional '.<digits>' — `frac` is `"." 1*DIGIT`, so at least one.
     if (__json_p_byte(p) == 46) {
         p = __JsonParser { ...p, pos: p.pos + 1 };
+        var fracDigits: i32 = 0;
         while (p.pos < n) {
             b = p.s[p.pos] as i32;
             if (b < 48 || b > 57) { break; }
             p = __JsonParser { ...p, pos: p.pos + 1 };
+            fracDigits = fracDigits + 1;
         }
+        if (fracDigits == 0) { return (JNull, __json_fail(p)); }
     }
-    // Optional [eE][+-]?<digits>.
+    // Optional [eE][+-]?<digits> — `exp` is likewise 1*DIGIT.
     b = __json_p_byte(p);
     if (b == 101 || b == 69) {
         p = __JsonParser { ...p, pos: p.pos + 1 };
         b = __json_p_byte(p);
         if (b == 43 || b == 45) { p = __JsonParser { ...p, pos: p.pos + 1 }; }
+        var expDigits: i32 = 0;
         while (p.pos < n) {
             b = p.s[p.pos] as i32;
             if (b < 48 || b > 57) { break; }
             p = __JsonParser { ...p, pos: p.pos + 1 };
+            expDigits = expDigits + 1;
         }
+        if (expDigits == 0) { return (JNull, __json_fail(p)); }
     }
     return (JNumber(p.s[start:p.pos] + ""), p);
 }
@@ -421,12 +441,12 @@ function __json_p_uhex(p0: __JsonParser): (i32, __JsonParser) {
     // See __json_p_number: thread a local copy of the param, not the
     // param itself, to avoid the struct-update RC over-release.
     var p: __JsonParser = p0;
-    if (p.pos + 4 > p.s.len()) { return (0, __JsonParser { ...p, error: 1 }); }
+    if (p.pos + 4 > p.s.len()) { return (0, __json_fail(p)); }
     var u: i32 = 0;
     var i: i32 = 0;
     while (i < 4) {
         var hv: i32 = __json_hex_value((p.s[p.pos] as i32));
-        if (hv < 0) { return (0, __JsonParser { ...p, error: 1 }); }
+        if (hv < 0) { return (0, __json_fail(p)); }
         u = (u << 4) | hv;
         p = __JsonParser { ...p, pos: p.pos + 1 };
         i = i + 1;
@@ -441,7 +461,7 @@ function __json_p_uhex(p0: __JsonParser): (i32, __JsonParser) {
 function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
     // See __json_p_number: thread a local copy of the param.
     var p: __JsonParser = p0;
-    if (__json_p_byte(p) != 34) { return ("", __JsonParser { ...p, error: 1 }); }
+    if (__json_p_byte(p) != 34) { return ("", __json_fail(p)); }
     p = __JsonParser { ...p, pos: p.pos + 1 };
     // Accumulate the decoded value in a LOCAL growable u8[] (#4379): the old
     // `out = out + p.s[p.pos:p.pos+1]` appended one byte at a time onto an
@@ -457,12 +477,12 @@ function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
     var ci: i32 = 0;
     while (true) {
         b = __json_p_byte(p);
-        if (b == 0) { return ("", __JsonParser { ...p, error: 1 }); }
+        if (b == 0) { return ("", __json_fail(p)); }
         if (b == 34) { return (string_from_bytes_unchecked(out), __JsonParser { ...p, pos: p.pos + 1 }); }
         if (b == 92) {                                  // '\\'
             p = __JsonParser { ...p, pos: p.pos + 1 };
             var esc: i32 = __json_p_byte(p);
-            if (esc == 0) { return ("", __JsonParser { ...p, error: 1 }); }
+            if (esc == 0) { return ("", __json_fail(p)); }
             if (esc == 117) {                           // 'u' — \uXXXX
                 p = __JsonParser { ...p, pos: p.pos + 1 };
                 var (u, pu) = __json_p_uhex(p);
@@ -518,7 +538,7 @@ function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
                 else if (esc == 116) { ch = 9; }
                 else if (esc == 98)  { ch = 8; }
                 else if (esc == 102) { ch = 12; }
-                else { return ("", __JsonParser { ...p, error: 1 }); }
+                else { return ("", __json_fail(p)); }
                 out = out.append(ch as u8);
                 p = __JsonParser { ...p, pos: p.pos + 1 };
             }
@@ -561,7 +581,7 @@ function __json_p_array(p0: __JsonParser): (JsonValue, __JsonParser) {
             p = __JsonParser { ...p, pos: p.pos + 1 };
             return (JArray(arr), p);
         }
-        return (JNull, __JsonParser { ...p, error: 1 });
+        return (JNull, __json_fail(p));
     }
     return (JNull, p);   // unreachable
 }
@@ -587,7 +607,7 @@ function __json_p_object(p0: __JsonParser): (JsonValue, __JsonParser) {
         if (p.error != 0) { return (JNull, p); }
         p = __json_p_skip_ws(p);
         if (__json_p_byte(p) != 58) {                   // ':'
-            return (JNull, __JsonParser { ...p, error: 1 });
+            return (JNull, __json_fail(p));
         }
         p = __JsonParser { ...p, pos: p.pos + 1 };
         var (val, pv) = __json_p_value(p);
@@ -605,7 +625,7 @@ function __json_p_object(p0: __JsonParser): (JsonValue, __JsonParser) {
             p = __JsonParser { ...p, pos: p.pos + 1 };
             return (JObject(m), p);
         }
-        return (JNull, __JsonParser { ...p, error: 1 });
+        return (JNull, __json_fail(p));
     }
     return (JNull, p);   // unreachable
 }
@@ -620,26 +640,26 @@ function __json_p_value(p0: __JsonParser): (JsonValue, __JsonParser) {
     var p: __JsonParser = p0;
     p = __json_p_skip_ws(p);
     var b: i32 = __json_p_byte(p);
-    if (b == 0) { return (JNull, __JsonParser { ...p, error: 1 }); }
+    if (b == 0) { return (JNull, __json_fail(p)); }
     if (b == 110) {                                     // 'n' — null
-        if (p.pos + 4 > p.s.len()) { return (JNull, __JsonParser { ...p, error: 1 }); }
+        if (p.pos + 4 > p.s.len()) { return (JNull, __json_fail(p)); }
         if (p.s[p.pos+1] != 117 || p.s[p.pos+2] != 108 || p.s[p.pos+3] != 108) {
-            return (JNull, __JsonParser { ...p, error: 1 });
+            return (JNull, __json_fail(p));
         }
         return (JNull, __JsonParser { ...p, pos: p.pos + 4 });
     }
     if (b == 116) {                                     // 't' — true
-        if (p.pos + 4 > p.s.len()) { return (JNull, __JsonParser { ...p, error: 1 }); }
+        if (p.pos + 4 > p.s.len()) { return (JNull, __json_fail(p)); }
         if (p.s[p.pos+1] != 114 || p.s[p.pos+2] != 117 || p.s[p.pos+3] != 101) {
-            return (JNull, __JsonParser { ...p, error: 1 });
+            return (JNull, __json_fail(p));
         }
         return (JBool(true), __JsonParser { ...p, pos: p.pos + 4 });
     }
     if (b == 102) {                                     // 'f' — false
-        if (p.pos + 5 > p.s.len()) { return (JNull, __JsonParser { ...p, error: 1 }); }
+        if (p.pos + 5 > p.s.len()) { return (JNull, __json_fail(p)); }
         if (p.s[p.pos+1] != 97 || p.s[p.pos+2] != 108 ||
             p.s[p.pos+3] != 115 || p.s[p.pos+4] != 101) {
-            return (JNull, __JsonParser { ...p, error: 1 });
+            return (JNull, __json_fail(p));
         }
         return (JBool(false), __JsonParser { ...p, pos: p.pos + 5 });
     }
@@ -654,7 +674,7 @@ function __json_p_value(p0: __JsonParser): (JsonValue, __JsonParser) {
         // (serde_json's default limit) is rejected before descending
         // another level, so a hostile deeply-nested body can't
         // overflow the stack.
-        if (p.depth >= 128) { return (JNull, __JsonParser { ...p, error: 1 }); }
+        if (p.depth >= 128) { return (JNull, __json_fail(p)); }
         var savedA: i32 = p.depth;
         p = __JsonParser { ...p, depth: p.depth + 1 };
         var (av, pa) = __json_p_array(p);
@@ -663,7 +683,7 @@ function __json_p_value(p0: __JsonParser): (JsonValue, __JsonParser) {
         return (av, __JsonParser { ...pa, depth: savedA });
     }
     if (b == 123) {                                     // '{'
-        if (p.depth >= 128) { return (JNull, __JsonParser { ...p, error: 1 }); }
+        if (p.depth >= 128) { return (JNull, __json_fail(p)); }
         var savedO: i32 = p.depth;
         p = __JsonParser { ...p, depth: p.depth + 1 };
         var (ov, po) = __json_p_object(p);
@@ -672,16 +692,100 @@ function __json_p_value(p0: __JsonParser): (JsonValue, __JsonParser) {
     if (b == 45 || (b >= 48 && b <= 57)) {              // '-' or digit
         return __json_p_number(p);
     }
-    return (JNull, __JsonParser { ...p, error: 1 });
+    return (JNull, __json_fail(p));
 }
 
-pub function json_parse(s: string): Option[JsonValue] {
-    var p: __JsonParser = __JsonParser { s: s, pos: 0, error: 0, depth: 0 };
+// __json_fail marks the cursor failed, remembering the offset of the FIRST
+// failure. Later sites must not overwrite it: recursive descent unwinds
+// through every enclosing container, and the innermost position is the one
+// that describes the document.
+function __json_fail(p: __JsonParser): __JsonParser {
+    if (p.error != 0) { return p; }
+    return __JsonParser { ...p, error: 1, errpos: p.pos };
+}
+
+// __json_line_col converts a byte offset into 1-based (line, column),
+// counting a column in BYTES rather than code points — the same unit the
+// offset is in, so the two always agree.
+function __json_line_col(s: string, off: i32): (i32, i32) {
+    var line: i32 = 1;
+    var col: i32 = 1;
+    var i: i32 = 0;
+    var stop: i32 = off;
+    if (stop > s.len()) { stop = s.len(); }
+    while (i < stop) {
+        if (s[i] as i32 == 10) {
+            line = line + 1;
+            col = 1;
+        } else {
+            col = col + 1;
+        }
+        i = i + 1;
+    }
+    return (line, col);
+}
+
+// A syntax error, located. `offset` is the byte index; `line` and `col` are
+// 1-based and derived from it.
+pub struct JsonError {
+    message: string,
+    offset: i32,
+    line: i32,
+    col: i32,
+}
+
+pub function (e: JsonError) to_string(): string {
+    return e.line.to_string() + ":" + e.col.to_string() + ": " + e.message;
+}
+
+// __json_message describes the failure at `off` from the input alone, so
+// the 20 failure sites stay a single shared helper rather than each
+// carrying its own wording.
+function __json_message(s: string, off: i32): string {
+    if (off >= s.len()) { return "unexpected end of input"; }
+    var b: i32 = s[off] as i32;
+    if (b < 32) {
+        return "unexpected control byte in input";
+    }
+    return "unexpected byte '" + s[off:off + 1] + "'";
+}
+
+// json_parse_result is json_parse plus the position of the failure.
+// Prefer it wherever the input can be malformed and a human will read the
+// result: a config file, a request body, anything hand-edited.
+pub function json_parse_result(s: string): Result[JsonValue, JsonError] {
+    var p: __JsonParser = __JsonParser { s: s, pos: 0, error: 0, depth: 0, errpos: -1 };
     var (v, pv) = __json_p_value(p);
     p = pv;
     p = __json_p_skip_ws(p);
-    if (p.error != 0 || p.pos < p.s.len()) { return None; }
-    return Some(v);
+    if (p.error != 0) {
+        var off: i32 = p.errpos;
+        if (off < 0) { off = p.pos; }
+        var (ln, cl) = __json_line_col(s, off);
+        return Err(JsonError {
+            message: __json_message(s, off),
+            offset: off,
+            line: ln,
+            col: cl,
+        });
+    }
+    if (p.pos < s.len()) {
+        var (ln2, cl2) = __json_line_col(s, p.pos);
+        return Err(JsonError {
+            message: "trailing content after the top-level value",
+            offset: p.pos,
+            line: ln2,
+            col: cl2,
+        });
+    }
+    return Ok(v);
+}
+
+pub function json_parse(s: string): Option[JsonValue] {
+    match (json_parse_result(s)) {
+        Ok(v) => { return Some(v); },
+        Err(_) => { return None; },
+    }
 }
 
 // ============================================================
