@@ -1,12 +1,14 @@
 AARCH64_GCC ?= aarch64-linux-gnu-gcc
 QEMU        ?= qemu-aarch64
 
+ACTIONLINT_VERSION ?= v1.7.10
+
 EXAMPLES := $(basename $(notdir $(wildcard examples/*.fern)))
 ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 LANG_SRCS := $(wildcard examples/*.fern)
 
-.PHONY: all build test vet deadcode freeze selfhost-cli clean examples run-% fmt fmt-check gofmt gofmt-check
+.PHONY: all build test vet deadcode actionlint freeze selfhost-cli clean examples run-% fmt fmt-check gofmt gofmt-check
 
 all: build test
 
@@ -26,6 +28,17 @@ vet:
 # tools/deadcode_gate.sh and tools/deadcode-allowlist.txt.
 deadcode:
 	./tools/deadcode_gate.sh
+
+# Lint every .github/workflows/*.yml + composite action. Nothing checked
+# these files before, so a typo'd `runs-on`, an expression referencing a
+# context that doesn't exist in that trigger, or a missing `permissions:`
+# scope only surfaced as a red — or silently wrong — run. Version-pinned
+# via `go run` like the deadcode gate, so local and CI lint identically.
+# Picks up shellcheck for `run:` blocks when it's on PATH (it is on the
+# GitHub ubuntu runners), which is why the checked-in workflows quote
+# their shell expansions.
+actionlint:
+	go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
 
 # Report the live state of the native-convergence freeze preconditions,
 # derived from the tree rather than read off #4451. Fails only on a
