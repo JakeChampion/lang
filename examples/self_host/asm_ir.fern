@@ -3097,89 +3097,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leave\n");
         s = s.write("    ret\n");
     }
-    // __fern_arr_reverse: %rdi = src arr -> a fresh array with the elements in
-    // opposite order. __fern_arr_concat: %rdi = A, %rsi = B -> a fresh array of
-    // A's elements then B's. Both back the builtin `.reverse()` / `.concat(ys)`
-    // (op_arr_reverse / op_arr_concat), and both are raw 8-byte slot copies, so
-    // they work for any pointer- or i32-payload array. Ported VERBATIM from the
-    // AST emitter's emit_runtime, which is where they lived alone — the IR path
-    // never lowered these two, so it never needed them; slice 5 deletes that
-    // copy. Self-contained apart from __fern_arr_box, like arr_slice above.
-    if (s.has_need("arr_reverse")) {
-        s = s.write("__fern_arr_reverse:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    movq %rdi, %r12\n");      // src
-        s = s.write("    movq (%r12), %r13\n");    // len
-        s = s.write("    movq %r13, %rdi\n");      // cap = len
-        s = s.write("    call __fern_arr_box\n");
-        s = s.write("    movq $0, %rcx\n");        // i
-        s = s.write(".Larr_rev_loop:\n");
-        s = s.write("    cmpq %r13, %rcx\n");
-        s = s.write("    jge .Larr_rev_done\n");
-        s = s.write("    movq %r13, %rdx\n");
-        s = s.write("    subq %rcx, %rdx\n");      // src idx = len - i
-        s = s.write("    movq (%r12,%rdx,8), %r8\n");
-        s = s.write("    movq %rcx, %r9\n");
-        s = s.write("    incq %r9\n");
-        s = s.write("    movq %r8, (%rax,%r9,8)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Larr_rev_loop\n");
-        s = s.write(".Larr_rev_done:\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    leave\n");
-        s = s.write("    ret\n");
-    }
-    if (s.has_need("arr_concat")) {
-        s = s.write("__fern_arr_concat:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        s = s.write("    movq %rdi, %r12\n");      // arr A
-        s = s.write("    movq %rsi, %r13\n");      // arr B
-        s = s.write("    movq (%r12), %r14\n");    // a_len
-        s = s.write("    movq (%r13), %r15\n");    // b_len
-        s = s.write("    movq %r14, %rdi\n");      // cap = a_len + b_len
-        s = s.write("    addq %r15, %rdi\n");
-        s = s.write("    call __fern_arr_box\n");
-        s = s.write("    movq $0, %rcx\n");
-        s = s.write(".Larr_concat_a:\n");
-        s = s.write("    cmpq %r14, %rcx\n");
-        s = s.write("    jge .Larr_concat_b_init\n");
-        s = s.write("    movq %rcx, %rdx\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    movq (%r12,%rdx,8), %rsi\n");
-        s = s.write("    movq %rsi, (%rax,%rdx,8)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Larr_concat_a\n");
-        s = s.write(".Larr_concat_b_init:\n");
-        s = s.write("    movq $0, %rcx\n");
-        s = s.write(".Larr_concat_b:\n");
-        s = s.write("    cmpq %r15, %rcx\n");
-        s = s.write("    jge .Larr_concat_done\n");
-        s = s.write("    movq %rcx, %rdx\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    movq (%r13,%rdx,8), %rsi\n");
-        s = s.write("    movq %r14, %r8\n");
-        s = s.write("    addq %rcx, %r8\n");
-        s = s.write("    incq %r8\n");
-        s = s.write("    movq %rsi, (%rax,%r8,8)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Larr_concat_b\n");
-        s = s.write(".Larr_concat_done:\n");
-        s = s.write("    popq %r15\n");
-        s = s.write("    popq %r14\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    leave\n");
-        s = s.write("    ret\n");
-    }
+    // __fern_arr_reverse and __fern_arr_concat are Fern runtime functions now
+    // (#2649): asmcore.rt_src_arr_reverse / rt_src_arr_concat, emitted need-gated
+    // in the migrated-helpers section over the __raw_arr_box + __raw_array pair.
+    // One arch-independent source replaces the two hand-asm copies (this one and
+    // asm_arm64_ir's) — they were raw slot copies with nothing target-specific in
+    // them, which is what made them the first array helpers worth moving.
     // __fern_random_bytes is now a Fern runtime function (#2649): emitted via
     // emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block (need-gated on
     // random_bytes) — it allocs n bytes, fills them from getrandom via the
@@ -4649,7 +4572,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_arr_slice",
         // xs.reverse() / xs.concat(ys) (#3457): a LIBRARY module's call resolves
         // against the entry module's single definition, exactly like arr_slice.
-        "__fern_arr_reverse", "__fern_arr_concat",
+        "__fn___fern_arr_reverse", "__fn___fern_arr_concat",
         "__fn___fern_str_concat", "__fn___fern_str_eq",
         "__fn___fern_string_from_bytes", "__fn___fern_str_bytes", "__fn___fern_str_chars",
         "__fn___fern_str_lines", "__fn___fern_str_split", "__fn___fern_str_repeat",
@@ -5185,6 +5108,13 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // [n] → the fixed static scratch buffer's address (#2649). n is a
             // hint; discard it and push &__fern_scratch (reused, never freed).
             s = s.write("    popq %rax\n    leaq __fern_scratch(%rip), %rax\n    pushq %rax\n");
+        } else if (o.kind_tag == 224) {  // raw_arr_box
+            // [n] → a fresh n-element array box's data pointer (#2649): the
+            // array sibling of raw_alloc. __fern_arr_box writes the rc header,
+            // length and capacity; element i then lives at [ptr + (i+1)*8],
+            // which is what raw_store_ptr addresses.
+            s = s.write("    popq %rdi\n    call __fern_arr_box\n    pushq %rax\n");
+            s = s.mark_heap();
         } else if (o.kind_tag == 223) {  // raw_addr
             // pop off (top), ptr; push ptr+off at full width (#2649). The
             // load/store intrinsics fold their offset into the addressing mode;
@@ -5208,12 +5138,15 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // to keep this dispatch under the oversized-function threshold (#2720).
             s = emit_str_op(o, s);
         } else if (o.kind_tag == 214) {  // arr_reverse
-            // operand stack [arr]; __fern_arr_reverse(%rdi=arr) -> fresh array.
-            s = s.write("    popq %rdi\n    call __fern_arr_reverse\n    pushq %rax\n");
+            // [arr] IS param[0]; call the Fern-compiled __fn___fern_arr_reverse
+            // (asmcore.rt_src_arr_reverse, #2649) via the stack ABI.
+            s = s.write("    call __fn___fern_arr_reverse\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.mark_arr_reverse();
         } else if (o.kind_tag == 215) {  // arr_concat
-            // operand stack [A, B] (B on top); __fern_arr_concat(%rdi=A, %rsi=B).
-            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_arr_concat\n    pushq %rax\n");
+            // operand stack [A, B] (B on top); the stack ABI wants param[0]=A on
+            // top, so re-push the two popped operands in reverse — the same
+            // shuffle the two-arg string helpers do.
+            s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_arr_concat\n    addq $16, %rsp\n    pushq %rax\n");
             s = s.mark_arr_concat();
         } else if (o.kind_tag == 96) {  // arr_slice
             // operand stack [arr, start, end]; __fern_arr_slice(%rdi=arr,
@@ -7405,6 +7338,18 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("random_bytes")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes("x86_64"), all_structs, s);
+    }
+    // xs.reverse() / xs.concat(ys) — Fern runtime functions (#2649) over the
+    // __raw_arr_box + __raw_array pair: allocate the fresh box, copy the 8-byte
+    // slots, hand it back. Heap-dependent (present above), and arch-independent,
+    // so asm_arm64_ir emits the identical source.
+    if (s.has_need("arr_reverse")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_reverse(), all_structs, s);
+    }
+    if (s.has_need("arr_concat")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_concat(), all_structs, s);
     }
     // str_split — now a Fern runtime function (#2649), lowered through the IR
     // pipeline: scan for `sep`, append each segment slice (.append() ->
