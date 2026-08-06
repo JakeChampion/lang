@@ -11,7 +11,7 @@ package ir_test
 // drop order a coin flip. Five FIXTURES had that shape and had been compiling
 // to two different binaries at random for as long as the bug existed.
 //
-// So this runs the same comparison over the whole e2e fixture corpus, which is
+// So this runs the same comparison over the whole conformance corpus, which is
 // the closest thing the project has to "real programs" and grows on its own as
 // features land. New nondeterminism gets caught by whoever introduces it
 // rather than by whoever next attempts a byte-identity comparison — which is
@@ -73,7 +73,12 @@ func TestLowerDeterministicOverFixtureCorpus(t *testing.T) {
 	if testing.Short() {
 		t.Skip("corpus determinism sweep is not a -short test")
 	}
-	cases, err := filepath.Glob(filepath.Join("..", "e2e", "testdata", "cases", "*", "main.fern"))
+	// The corpus root, spelled out rather than imported: e2eharness.ConformanceCases
+	// is the same literal, but importing the e2e harness into a unit-test package
+	// to read one constant drags the whole build-and-run machinery in with it.
+	// internal/ir sits one level below internal/, like internal/e2e, so the
+	// relative path is identical.
+	cases, err := filepath.Glob(filepath.Join("..", "..", "conformance", "cases", "*", "main.fern"))
 	if err != nil {
 		t.Fatalf("glob fixtures: %v", err)
 	}

@@ -7,6 +7,34 @@ This document is about *which* lanes carry signal for *which* kind of
 change, and — more usefully — which ones look authoritative and are not.
 Every lane now runs on every push; there is no way to skip one.
 
+## The lane that runs when Actions does not
+
+All of the below live in GitHub Actions, so a GitHub incident takes the whole
+set out at once, and pushes keep landing while nothing reports. The Netlify
+deploy is the one lane on a different host: it already builds the docs site on
+every push, so `netlify.toml` runs `scripts/netlify-smoke-test` after the site
+and a failing stage turns the deploy red.
+
+It is a *smoke* lane and it is sized like one — one small container, single
+digit minutes shared with the docs build, against the sharded tens of minutes
+the real workflows get. It runs four stages, cheapest-and-broadest first:
+`go build` + `go vet`; every unit-test package (`scripts/unit-test-packages`,
+which `test-units` also runs, so the two cannot cover different sets); the
+whole conformance corpus on interp / x86-64 / wasm; and the self-host x86-64 IR
+path via one `asm_ir_run` driver build. What it cannot reach: arm64 anything
+(no qemu, no cross-gcc, and an unprivileged build cannot apt-get them), the
+fixpoints, the differentials, and every suite in the table below that it does
+not name.
+
+Two things about reading it. Its summary block is the whole report — it prints
+per-stage PASS / FAIL / SKIP with reasons, and per-backend fixture counts for
+the conformance stage, precisely so a container that quietly lost a toolchain
+cannot look like a full pass. And it will SKIP late stages when the deploy
+budget runs out; a skip is reported, never silently dropped, but it does mean
+**a green Netlify deploy is not a claim that every stage ran** — read the
+summary, not the colour. `FERN_SMOKE=off` turns the lane off once Actions is
+healthy; `FERN_SMOKE=advisory` keeps it reporting without blocking a deploy.
+
 ## The one that surprises people: the fixpoint is self-referential
 
 The per-module / whole-compiler **fixpoint** tests compile the self-host
@@ -51,6 +79,7 @@ what caught it.
 | Differential (`internal/e2e/diff_oracle_test.go`) | The NATIVE compiler's backends agree with interp on exit codes, over 2048 fernsmith-generated programs — 43% of which now carry a lambda and 6% an escaping closure | Everything about memory — see below. Anything the generator cannot emit — a shape absent from `gtype` is untested no matter how many seeds run. And whatever sits in its `knownDivergences` table |
 | Self-host differential (`internal/e2e/diff_oracle_selfhost_test.go`, `FERN_SELFHOST_DIFF=1`) | The SELF-HOST compiler agrees with interp on exit codes, over its own 512-seed corpus, compiled through the real CLI and linked with gcc. This is the path the closure-dispatch cluster (#5001/#5007/#5009/#5026) lived on, and the only sweep that reaches it | The 57% of seeds the self-host compiler declines as not IR-eligible — a documented endpoint, but it means this leg tests less than half the corpus it samples (there is a floor on the ratio so it cannot quietly hollow out). The other two self-host targets: this leg is x86-64 only, and `-target arm64` is the path where the compiler emits, assembles AND links by itself. And whatever sits in its known-divergences file |
 | `scripts/selfhost-emit-hashes` (manual, before/after) | A refactor of the self-host compiler was PURE: the bytes it emits for the whole fixture corpus, on all three backends, are unchanged | Anything the corpus does not exercise. It says the output did not move, never that the output is right |
+| Netlify smoke lane (`scripts/netlify-smoke-test`) | The tree compiles, the unit packages pass, the corpus runs on interp/x86-64/wasm and one self-host driver builds and compiles a program — on a host that is up when GitHub Actions is not | Everything arm64, every fixpoint and differential, and any stage it SKIPPED for budget. Its summary block says which; the deploy's colour does not |
 
 **Reach for `scripts/selfhost-emit-hashes` on any mechanical refactor of the
 self-host compiler.** It is the gate that fits the failure mode: whole families

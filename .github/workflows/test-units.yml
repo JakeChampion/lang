@@ -42,60 +42,30 @@ jobs:
         with:
           gotestsum: "true"
       - name: go test (units)
-        # Explicitly list packages instead of `./...` minus excludes —
-        # `go test` has no built-in negation and a comm-style filter
-        # makes the command harder to read than the enumerated set.
-        # Add new packages here when they appear.
+        # The package set is DERIVED, not enumerated — see
+        # scripts/unit-test-packages, which is also what the Netlify smoke
+        # lane's `units` stage runs, so the two cannot cover different sets.
         #
-        # NOTE the claimed forcing function ("the test-units check
-        # failing on an unlisted new package") does NOT exist: an
-        # unlisted package is simply never run, silently. If you add a
-        # package, add it here; nothing will remind you.
-        #
-        # Two rounds of drift have already been paid for:
-        #   - internal/{caps,literate,manifest,mvs,pkgcache,sourcelint}
-        #     had accumulated off this list, and internal/caps was RED on
-        #     main for it (a builtin added to the checker + interp with no
-        #     capability classification) while CI stayed green.
-        #   - ./cmd/... was never listed AT ALL — 42 tests across
-        #     cmd/fern + cmd/ferndoc, one of which (the -async-provider
-        #     params bundling test) had gone red under the wasmtime v46
-        #     component-model-async port and nobody could see it (#5490).
+        # This step used to carry a hand-written list of ./internal/<pkg>/...
+        # patterns, along with a comment conceding that "an unlisted package
+        # is simply never run, silently. If you add a package, add it here;
+        # nothing will remind you." Nothing did. Three rounds of drift were
+        # already recorded there:
+        #   - internal/{caps,literate,manifest,mvs,pkgcache,sourcelint} had
+        #     accumulated off the list, and internal/caps was RED on main for
+        #     it (a builtin added to the checker + interp with no capability
+        #     classification) while CI stayed green.
+        #   - ./cmd/... was never listed AT ALL — 42 tests across cmd/fern +
+        #     cmd/ferndoc, one of which (the -async-provider params bundling
+        #     test) had gone red under the wasmtime v46 component-model-async
+        #     port and nobody could see it (#5490).
         #   - ./internal/native/... likewise: the pure-Go assembler and
-        #     ELF/Mach-O linkers that every self-host driver build goes
-        #     through (arm64, elf, macho, x86_64). Green, but ungated.
+        #     ELF/Mach-O linkers every self-host driver build goes through.
+        # A fourth was live when the list was replaced: internal/embed had a
+        # test file and no lane ran it.
         #
-        # The list is now ./internal/... plus ./cmd/..., i.e. every Go
-        # package in the repo that has tests. Keep it that way: prefer
-        # adding a package here over discovering it red months later.
+        # `go list` cannot go stale, so the fifth round does not happen.
         run: |
+          # shellcheck disable=SC2046 # the package list is deliberately word-split
           gotestsum --format pkgname-and-test-fails -- \
-            ./internal/ast/... \
-            ./internal/caps/... \
-            ./internal/checker/... \
-            ./internal/closureconv/... \
-            ./internal/codegen/... \
-            ./internal/constfold/... \
-            ./internal/diag/... \
-            ./internal/interp/... \
-            ./internal/ir/... \
-            ./internal/fernstring/... \
-            ./internal/lexer/... \
-            ./internal/literate/... \
-            ./internal/lsp/... \
-            ./internal/manifest/... \
-            ./internal/modload/... \
-            ./internal/monomorph/... \
-            ./internal/native/... \
-            ./internal/mvs/... \
-            ./internal/parser/... \
-            ./internal/pkgcache/... \
-            ./internal/platforms/... \
-            ./internal/printer/... \
-            ./internal/shadowrename/... \
-            ./internal/sourcelint/... \
-            ./internal/ssa/... \
-            ./internal/stdlib/... \
-            ./internal/treeshake/... \
-            ./internal/wasm/... \
-            ./cmd/...
+            $(scripts/unit-test-packages)
