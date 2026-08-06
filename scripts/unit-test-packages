@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+#
+# scripts/unit-test-packages — print the Go packages the unit-test lane runs,
+# one import path per line.
+#
+# "Unit tests" here means every Go package in the repo EXCEPT the four that
+# have workflows of their own because they are slow:
+#
+#   internal/e2e          split into test-e2e-{arm64,x86_64,wasm,other}
+#   internal/e2eselfhost  test-e2e-selfhost (sharded; >90 min unsharded)
+#   internal/e2eharness   the shared harness — no tests of its own worth
+#                         a lane, and it is compiled by the two above
+#   internal/fernsmith    test-fernsmith (fuzz corpus + generator, ~60s)
+#
+# DERIVED, NOT ENUMERATED — that is the whole point of this file.
+# .github/workflows/test-units.yml used to carry a hand-written list of
+# ./internal/<pkg>/... patterns, with a comment admitting that "an unlisted
+# package is simply never run, silently" and recording three rounds of drift
+# already paid for (internal/{caps,literate,manifest,mvs,pkgcache,sourcelint},
+# then ./cmd/..., then ./internal/native/...). A fourth was live when this
+# script was written: internal/embed had a test file and no lane ran it.
+#
+# `go list` cannot go stale, so a new package is covered the moment it exists.
+# The exclusions are spelled as a path prefix so a future internal/e2e/foo
+# subpackage stays excluded too.
+#
+# Consumers: .github/workflows/test-units.yml and the `units` stage of
+# scripts/netlify-smoke-test. Both run the same set by construction.
+
+set -euo pipefail
+
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
+
+go list ./internal/... ./cmd/... |
+  grep -vE '/internal/(e2e|e2eselfhost|e2eharness|fernsmith)(/|$)'

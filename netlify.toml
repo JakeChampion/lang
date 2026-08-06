@@ -7,9 +7,24 @@
 # The canonical build recipe lives in .github/workflows/pages.yml, for
 # GitHub Pages; scripts/netlify-build mirrors its four steps so the two
 # hosts publish the same bundle from the same inputs.
+#
+# The deploy also doubles as a SMOKE CI LANE. Every push builds here, and
+# unlike GitHub Actions this host is reachable when Actions is not — so the
+# build runs scripts/netlify-smoke-test after the site, and a failing stage
+# turns the deploy red. That is a deliberately small slice of the real
+# suites (compile, unit tests, the conformance corpus on interp/x86-64/wasm,
+# one self-host driver); see the script's header and docs/TEST-GATES.md for
+# what it does and does not gate.
+#
+# ORDER: the site first, the tests second. Both halves share one 15-minute
+# wall, and if it is hit the whole deploy is discarded — so the half that IS
+# the deploy's product goes first, and the smoke lane runs against whatever
+# budget remains, skipping stages it cannot finish rather than starving the
+# site build. (A red smoke lane blocks publishing either way; the ordering
+# only decides which half is guaranteed to have run.)
 
 [build]
-  command = "scripts/netlify-build"
+  command = "scripts/netlify-build && scripts/netlify-smoke-test"
   publish = "site/dist"
 
 [build.environment]
@@ -19,6 +34,13 @@
   # image resolves this through gimme, which wants an exact version.
   NODE_VERSION = "22"
   GO_VERSION = "1.24.0"
+  # The smoke lane's knobs (FERN_SMOKE, FERN_SMOKE_BUDGET_S,
+  # FERN_SMOKE_STAGES, FERN_SMOKE_CACHE) are documented in
+  # scripts/netlify-smoke-test and deliberately NOT restated here — a value
+  # in two places is a value that drifts. Set one in the Netlify UI to
+  # override for a single site or deploy context; the common case is
+  # FERN_SMOKE=advisory to land a docs fix past a known-red tree, or
+  # FERN_SMOKE=off to turn the lane back off once Actions is healthy again.
 
 # site/astro.config.mjs sets `base: "/lang"`, because GitHub Pages serves
 # this project from the repo's subpath (jakechampion.github.io/lang/), and
