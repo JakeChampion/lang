@@ -1504,7 +1504,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		// The wasi:http/proxy world `wasmtime serve` runs grants clocks +
 		// random but NOT wasi:cli/environment or filesystem, so a handler
 		// that reads env / args / files / stdin can't run there.
-		if req.Args || req.Env || req.Stdin || req.FileRead || req.FileWrite || req.FileAppend || req.FileReadWrite {
+		if req.Args || req.Env || req.Stdin || req.File.Any() {
 			return 1, fmt.Errorf("-target wasi-http: a handler can't use env / args / files / stdin — the http proxy world doesn't grant them")
 		}
 		comp := component.Compose(core, req, "wasi:http/incoming-handler@0.2.0#handle")
@@ -2417,7 +2417,7 @@ func buildPreview2Component(prog *ast.Program, info *checker.Info, bin []byte, e
 	// is present.
 	req.ExportName = exportName
 	b := bin
-	if req.Stdin || req.FileRead || req.FileWrite || req.FileAppend || req.FileReadWrite || req.Args || req.Env || req.Poll {
+	if req.Stdin || req.File.Any() || req.Args || req.Env || req.Poll {
 		rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 			ForceMemorySection: true,
 			Preview2WASI:       true,

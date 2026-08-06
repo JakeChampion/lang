@@ -250,43 +250,20 @@ func (g *gComposer) ensureCliStdin() {
 	g.inst["wasi:cli/stdin@0.2.0"] = g.c.importInstance("wasi:cli/stdin@0.2.0", g.c.typeRaw(WasiCliStdinInstanceTypeBody(g.surfaced["input-stream"])))
 }
 
-// gFsMode selects the single-direction filesystem open-chain: read over the
-// input-stream (static file server), write/append over the output-stream
-// (access logs / uploads).
-type gFsMode int
-
-const (
-	gFsRead gFsMode = iota
-	gFsWrite
-	gFsAppend
-	gFsReadWrite       // read AND write of files in one program (combined descriptor)
-	gFsReadWriteAppend // read, write AND append in one program (all three via-stream methods)
-)
-
-// ensureFilesystem imports wasi:filesystem/types (one descriptor direction)
-// + wasi:filesystem/preopens and surfaces descriptor.
-func (g *gComposer) ensureFilesystem(mode gFsMode) {
+// ensureFilesystem imports wasi:filesystem/types with exactly the method
+// set `f` asks for, plus wasi:filesystem/preopens, and surfaces
+// descriptor. It pulls in only the io/streams directions the selected
+// via-stream methods use — a program that only makes and removes
+// directories pulls in neither.
+func (g *gComposer) ensureFilesystem(f FsFeatures) {
 	if _, ok := g.inst["wasi:filesystem/types@0.2.0"]; ok {
 		return
 	}
-	var body []byte
-	switch mode {
-	case gFsReadWrite:
-		g.ensureIoStreams(true, true)
-		body = WasiFilesystemTypesReadWritePathInstanceTypeBody(g.surfaced["input-stream"], g.surfaced["output-stream"])
-	case gFsReadWriteAppend:
-		g.ensureIoStreams(true, true)
-		body = WasiFilesystemTypesReadWriteAppendPathInstanceTypeBody(g.surfaced["input-stream"], g.surfaced["output-stream"])
-	case gFsAppend:
-		g.ensureIoStreams(false, true)
-		body = WasiFilesystemTypesAppendPathInstanceTypeBody(g.surfaced["output-stream"])
-	case gFsWrite:
-		g.ensureIoStreams(false, true)
-		body = WasiFilesystemTypesWritePathInstanceTypeBody(g.surfaced["output-stream"])
-	default:
-		g.ensureIoStreams(true, false)
-		body = WasiFilesystemTypesReadPathInstanceTypeBody(g.surfaced["input-stream"])
+	needIn, needOut := f.Read, f.Write || f.Append
+	if needIn || needOut {
+		g.ensureIoStreams(needIn, needOut)
 	}
+	body := WasiFilesystemTypesPathInstanceTypeBody(g.surfaced["input-stream"], g.surfaced["output-stream"], f)
 	inst := g.c.importInstance("wasi:filesystem/types@0.2.0", g.c.typeRaw(body))
 	g.inst["wasi:filesystem/types@0.2.0"] = inst
 	tDesc := g.c.aliasType(inst, "descriptor")

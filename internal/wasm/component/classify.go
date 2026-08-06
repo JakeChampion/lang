@@ -61,7 +61,7 @@ var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 	var req ComposeRequest
 	var unsupported []string
-	var getDirs, openAt, readVia, writeVia, appendVia bool
+	var getDirs, openAt bool
 	for _, p := range coreModuleImportPairs(bin) {
 		m, n := p.module, p.name
 		switch {
@@ -84,11 +84,15 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.open-at":
 			openAt = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.read-via-stream":
-			readVia = true
+			req.File.Read = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.write-via-stream":
-			writeVia = true
+			req.File.Write = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.append-via-stream":
-			appendVia = true
+			req.File.Append = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.unlink-file-at":
+			req.File.Unlink = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.create-directory-at":
+			req.File.Mkdir = true
 		case m == "wasi:clocks/wall-clock@0.2.0" && n == "now":
 			req.WallNow = true
 		case m == "wasi:cli/environment@0.2.0" && n == "get-arguments":
@@ -141,27 +145,16 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			}
 		}
 	}
-	// Resolve the filesystem open-chain into the descriptor mode that
-	// covers the via-stream methods the core imports: a single direction
-	// (read / write / append), combined read+write, or read+write+append
-	// for a program that mixes all three (e.g. open_writer + open_appender
-	// + read_file). An incomplete chain (e.g. open-at without any
-	// via-stream) or a combination with no matching instance type
-	// (write+append without read) is unsupported.
-	if getDirs || openAt || readVia || writeVia || appendVia {
-		switch {
-		case getDirs && openAt && readVia && !writeVia && !appendVia:
-			req.FileRead = true
-		case getDirs && openAt && writeVia && !readVia && !appendVia:
-			req.FileWrite = true
-		case getDirs && openAt && appendVia && !readVia && !writeVia:
-			req.FileAppend = true
-		case getDirs && openAt && readVia && writeVia && !appendVia:
-			req.FileReadWrite = true
-		case getDirs && openAt && readVia && writeVia && appendVia:
-			req.FileReadWriteAppend = true
-		default:
-			unsupported = append(unsupported, "wasi:filesystem (incomplete or unsupported open-chain combination)")
+	// Every filesystem method is reached by resolving a preopen and
+	// opening a path under it, so get-directories + open-at are the
+	// entry to all of them and a method without them is an incomplete
+	// chain. Which METHODS follow is a free choice — req.File already
+	// carries exactly the set the core imports, and the instance type is
+	// built from it — so unlike the old five-way mode there is no
+	// combination left to reject.
+	if getDirs || openAt || req.File.Any() {
+		if !getDirs || !openAt || !req.File.Any() {
+			unsupported = append(unsupported, "wasi:filesystem (incomplete open-chain: needs get-directories + open-at + at least one descriptor method)")
 		}
 	}
 	return req, unsupported
@@ -173,7 +166,7 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 func RequestEmpty(req ComposeRequest) bool {
 	return !req.Stdout && !req.Stderr && !req.Stdin &&
 		!req.BlockWrite && !req.BlockRead && !req.DropInput && !req.DropOutput &&
-		!req.FileRead && !req.FileWrite && !req.FileAppend && !req.FileReadWrite &&
+		!req.File.Any() &&
 		!req.Tcp && !req.Udp && !req.Http && !req.Timer && !req.Poll && !req.PollableDrop && !req.TcpConnect &&
 		!req.WallNow && !req.Args && !req.Env && len(req.Structured) == 0
 }

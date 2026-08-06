@@ -18,6 +18,11 @@ var (
 	composeReadViaParams    = []byte{0x7f, 0x7e, 0x7f} // (self, offset, ret_ptr)
 	composeAppendViaParams  = []byte{0x7f, 0x7f}       // (self, ret_ptr) — append, no offset
 	composeOneI32Params     = []byte{0x7f}             // (ret_ptr) — wall-clock/args/env
+
+	// The path mutators all lower identically: the string param flattens
+	// to (ptr, len) and the `result<_, error-code>` return goes through a
+	// return area, so (self, path_ptr, path_len, ret_ptr) -> ().
+	composePathMutatorParams = []byte{0x7f, 0x7f, 0x7f, 0x7f}
 )
 
 const (
@@ -28,6 +33,8 @@ const (
 	composeReadViaName    = "[method]descriptor.read-via-stream"
 	composeWriteViaName   = "[method]descriptor.write-via-stream"
 	composeAppendViaName  = "[method]descriptor.append-via-stream"
+	composeUnlinkAtName   = "[method]descriptor.unlink-file-at"
+	composeMkdirAtName    = "[method]descriptor.create-directory-at"
 )
 
 type p2composer struct {
