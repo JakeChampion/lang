@@ -1229,12 +1229,42 @@ function parse_arrow_lambda(p: Par): (Expr, Par) {
 // (docs/CURSOR-IDIOM.md). Avoids a stateful `var p: Par` shared across
 // helpers.
 
+// map_key_kind_of_expr classifies a map-literal KEY as 1 (integer-keyed),
+// 0 (string-keyed) or -1 (undecidable) by walking down to its leftmost
+// literal leaf. A key is rarely a bare literal — `(1 + 1)`, `(560 | (x <<|
+// 6))` and `-3` all reach a decisive leaf one or two nodes down — and the
+// leftmost operand is the one that fixes the type of an arithmetic or
+// concatenation chain.
+//
+// Only a leaf can decide. An identifier or a call is genuinely
+// unclassifiable here: the parser has no types, which is the root of why
+// this decision is awkward in the first place (the native compiler keeps a
+// typed `ast.MapLit` and lets the checker answer). Those return -1 and the
+// caller falls back.
+function map_key_kind_of_expr(e: Expr): i32 {
+    match (e) {
+        ExprNumber(_) => { return 1; },
+        ExprString(_) => { return 0; },
+        ExprBinary(b) => { return map_key_kind_of_expr(b.left); },
+        ExprUnary(u) => { return map_key_kind_of_expr(u.operand); },
+        _ => { return 0 - 1; }
+    }
+    return 0 - 1;
+}
+
 // parse_map_lit parses a map literal `Map { k0: v0, k1: v1, … }` (the
 // cursor is on the opening `{`) and desugars it to a chained
 // `map_new[_i32](n).insert(k0,v0).insert(k1,v1)…` — insert returns the map, so
-// the whole thing is one expression. map_new_i32 when the first key is
-// a number literal (integer keys), else map_new (string keys), so the
-// chained .set dispatch picks the right key compare.
+// the whole thing is one expression. The constructor carries the KEY KIND,
+// which the chained .set dispatch reads back to pick the right key compare.
+//
+// This used to match the FIRST key against `ExprNumber` and nothing else, so
+// every non-literal key — including `(1 + 1)` — fell through to map_new, the
+// STRING constructor. An i32-keyed map then built itself as string-keyed and
+// __fern_map_set compared its integer keys through __fern_str_eq, dereferencing
+// them as pointers: a SIGSEGV at construction, with no read of the map
+// anywhere (#6207). One computed key merely mistyped the map silently; two
+// reached the compare.
 function parse_map_lit(p: Par): (Expr, Par) {
     p = p.advance();   // consume `{`
     var mlk: Expr[] = [];
@@ -1253,16 +1283,18 @@ function parse_map_lit(p: Par): (Expr, Par) {
         }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    // map_new_i32 when the first key is a number literal (integer keys),
-    // else map_new (string keys). Written as an if/match EXPRESSION rather
-    // than the old "declare temp, statement-match to assign it" workaround
-    // (issue #4405 — block/if/match expressions now lower on every backend).
-    var ctor: string = if (mlk.len() > 0) {
-        match (mlk[0]) {
-            ExprNumber(_) => "map_new_i32",
-            _ => "map_new"
-        }
-    } else { "map_new" };
+    // The first key that CAN be classified decides, rather than the first key
+    // full stop: keys are homogeneous, so a later decisive one describes the
+    // map just as well as the first, and consulting it costs nothing. Only an
+    // all-undecidable key set (identifiers, calls) still falls back to
+    // map_new — the case the parser cannot answer without types.
+    var kk: i32 = 0 - 1;
+    var kki: i32 = 0;
+    while (kki < mlk.len()) {
+        if (kk < 0) { kk = map_key_kind_of_expr(mlk[kki]); }
+        kki = kki + 1;
+    }
+    var ctor: string = if (kk == 1) { "map_new_i32" } else { "map_new" };
     var cargs: Expr[] = [];
     cargs = cargs.append(e_number("8", "", false));
     var mbase: Expr = e_call(e_ident(ctor), cargs);

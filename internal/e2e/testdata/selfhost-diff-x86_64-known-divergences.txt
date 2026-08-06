@@ -13,20 +13,19 @@
 # each other; that agreement is what says the self-host compiler is wrong rather
 # than the generated program being invalid.
 #
-# Measured 2026-08-05 over seeds 0..511 (the leg's default corpus): 199 agree,
-# 22 diverge, 291 are compile gaps. The three link failures the leg found first
-# (#6177) are fixed and their rows are gone — the maps runtime need-gate now
-# covers every map op, so seeds 121 / 265 / 365 link and agree.
+# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus): 201 agree,
+# 20 diverge, 291 are compile gaps. Rows that have already left with their fix:
+# 121 / 265 / 365 (#6177, the maps runtime need-gate) and 228 / 455 (#6207, a
+# map literal with computed keys building itself string-keyed).
 
 # CRASHES — the self-host-compiled binary dies by SIGSEGV where the interpreter
-# returns a value. Most likely to be ONE bug, and the likeliest to be the
-# escaping-closure / closure-array cluster this leg was built to catch.
+# returns a value. NOT one bug: seeds 228 and 455 were the map-literal key-kind
+# mistyping (#6207) and left with its fix; these four survive it, so they are a
+# different cause (or causes) and want their own reduction.
 59 SIGSEGV (self-host 139, interp 41) — https://github.com/JakeChampion/lang/issues/6178
 97 SIGSEGV (self-host 139, interp 230) — https://github.com/JakeChampion/lang/issues/6178
 144 SIGSEGV (self-host 139, interp 96) — https://github.com/JakeChampion/lang/issues/6178
 200 SIGSEGV (self-host 139, interp 0) — https://github.com/JakeChampion/lang/issues/6178
-228 SIGSEGV (self-host 139, interp 2) — https://github.com/JakeChampion/lang/issues/6178
-455 SIGSEGV (self-host 139, interp 4) — https://github.com/JakeChampion/lang/issues/6178
 
 # ARENA EXHAUSTION — exit 125 is __fern_alloc's ExitArenaExhausted, so this is a
 # leak in the lowered code rather than a wrong answer.
