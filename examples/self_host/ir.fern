@@ -1187,6 +1187,18 @@ pub function op_dyn_downcast(target: string): Op {
 pub function op_call_indirect(argc: i32): Op {
     return Op { kind_tag: 150, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
+// op_call_indirect_sig is op_call_indirect carrying the funcref SIGNATURE the
+// call dispatches through ("wl_w" — one width char per parameter, then '_',
+// then the result char). wasm needs it because a funcref type is structural:
+// the arity alone cannot distinguish `(i64) => boolean` from `(i32) => i32`,
+// and dispatching the first through the second is a module that will not load
+// (#6282). The register backends read only `i32_imm`, so the tag rides the
+// otherwise-unused `str` and costs them nothing. An empty `sig` is exactly
+// op_call_indirect — every all-i32 and every erased-generic call site keeps
+// its previous op, byte for byte.
+pub function op_call_indirect_sig(argc: i32, sig: string): Op {
+    return Op { kind_tag: 150, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: sig };
+}
 pub function op_call_closure(argc: i32): Op {
     return Op { kind_tag: 151, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }

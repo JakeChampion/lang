@@ -555,7 +555,8 @@ function rewrite_params(params: parser.ParamDecl[], ctx: RewriteCtx): parser.Par
             default_value: params[i].default_value,
             ret_arr: params[i].ret_arr,
             fn_ret: params[i].fn_ret,
-            fn_param_dyn: params[i].fn_param_dyn
+            fn_param_dyn: params[i].fn_param_dyn,
+            fn_param_types: params[i].fn_param_types
         });
         i = i + 1;
     }

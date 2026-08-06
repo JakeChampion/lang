@@ -144,7 +144,7 @@ function build_unit(infmods: parser.Module[], all_funcs: parser.FuncDecl[], all_
         caggs: wasm_ir.const_agg_values(cache),
         fns: wasm_ir.fn_value_table(cache),
         needs: wasm_ir.needs_of(cache),
-        arities: wasm_ir.indirect_arities(cache),
+        fn_sigs: wasm_ir.indirect_fn_sigs(cache),
         frt: wasm_ir.field_reclaim_types(cache),
         sdt: wasm_ir.struct_drop_types(cache, all_structs),
         aet: wasm_ir.struct_arr_elems_drop_types(cache, all_structs),
@@ -265,7 +265,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // from the cache when its key still matches, so an incremental rebuild
         // lowers ONLY the modules that actually changed — the payoff the rest of
         // #5331 was building toward. Link itself consults no ir_cache at all: the
-        // needs, arities and RC type lists all come from the objects.
+        // needs, fn_sigs and RC type lists all come from the objects.
         var nss: string[] = [];
         var texts: string[] = [];
         var all_strs: string[] = [];
@@ -275,7 +275,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         var all_fns: string[] = [];
         var fn_counts: i32[] = [];
         var needs: string[] = [];
-        var arities: i32[] = [];
+        var fn_sigs: string[] = [];
         var frt: string[] = [];
         var sdt: string[] = [];
         var aet: string[] = [];
@@ -324,17 +324,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
             frt = wasm_ir.union_strs(frt, obj.frt);
             sdt = wasm_ir.union_strs(sdt, obj.sdt);
             aet = wasm_ir.union_strs(aet, obj.aet);
-            var ai2: i32 = 0;
-            while (ai2 < obj.arities.len()) {
-                var seen: boolean = false;
-                var aj: i32 = 0;
-                while (aj < arities.len()) {
-                    if (arities[aj] == obj.arities[ai2]) { seen = true; }
-                    aj = aj + 1;
-                }
-                if (!seen) { arities = arities.append(obj.arities[ai2]); }
-                ai2 = ai2 + 1;
-            }
+            fn_sigs = wasm_ir.union_strs(fn_sigs, obj.fn_sigs);
             li = li + 1;
         }
         if (missing.len() > 0) {
@@ -348,7 +338,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         var merged: parser.Module = flatten.bundle(entry, loaded);
         merged = parser.infer_ret_types_module(wasm_ir.lift_lambdas(modloader.merge_builtins(dir, merged)));
         var rc: string = wasm_ir.emit_ir_rc_bodies_from(merged, frt, sdt, aet, wasm_ir.heap_base_for_strs(all_strs, all_caggs));
-        write(wasm_ir.emit_ir_module_units(nss, texts, all_strs, str_counts, all_caggs, cagg_counts, all_fns, fn_counts, merged, needs, arities, rc));
+        write(wasm_ir.emit_ir_module_units(nss, texts, all_strs, str_counts, all_caggs, cagg_counts, all_fns, fn_counts, merged, needs, fn_sigs, rc));
         return 0;
     }
 

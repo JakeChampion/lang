@@ -936,6 +936,112 @@ pub function (s: LowerState) closure_opt_ret(name: string): string {
     }
     return "";
 }
+
+// split_type_list splits a comma-separated list of type spellings at DEPTH-ZERO
+// commas only, so a tuple or generic argument list keeps its own — `(i32,i32),T`
+// is two types, not three. split_commas next door is the flat version and would
+// count a tuple parameter twice, which for a funcref signature means emitting
+// one type char too many and dispatching through a type of the wrong arity.
+function split_type_list(csv: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    while (i <= csv.len()) {
+        if (i == csv.len() || (csv[i] == 44 && depth == 0)) {   // 44 = ','
+            out = out.append(csv[start : i]);
+            start = i + 1;
+        } else if (csv[i] == 40 || csv[i] == 91) {              // '(' '['
+            depth = depth + 1;
+        } else if (csv[i] == 41 || csv[i] == 93) {              // ')' ']'
+            depth = depth - 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// wasm_width_char maps a type SPELLING to the wasm value type a value of that
+// type occupies: 'l' for the 8-byte integers, 'd' / 'f' for the floats, 'w' for
+// everything else — every pointer-shaped type (string, array, struct, enum,
+// tuple, Option, fn) is an i32 on wasm32. "" when the spelling is a bare type
+// VARIABLE of the enclosing function, which has no width until it is
+// instantiated; a type var NESTED in a container (`T[]`, `Option[T]`) is still a
+// pointer and so still 'w'.
+pub function wasm_width_char(ty: string, tps: string[]): string {
+    if (ty.len() == 0) { return ""; }
+    if (util.index_of_str(tps, ty) >= 0) { return ""; }
+    if (ty == "i64" || ty == "u64") { return "l"; }
+    if (ty == "f64") { return "d"; }
+    if (ty == "f32") { return "f"; }
+    return "w";
+}
+
+// fn_sig_of builds the funcref signature tag for a fn-typed param: one width
+// char per declared parameter, then "_", then the result char — `(i64) =>
+// boolean` is "l_w", `(i32) => i64` is "w_l". "" when ANY position is a bare
+// type variable, because an erased generic's width is not known until the
+// instantiation, and "" for an all-i32 signature, which is what the arity-keyed
+// `$fn<N>` type already describes. Both cases fall back to today's emission, so
+// only the shapes that were actually wrong move.
+pub function fn_sig_of(p: parser.ParamDecl, tps: string[]): string {
+    var rc: string = wasm_width_char(p.fn_ret, tps);
+    if (rc.len() == 0) { return ""; }
+    var params: string = "";
+    var wide: boolean = rc != "w";
+    if (p.fn_param_types.len() > 0) {
+        var parts: string[] = split_type_list(p.fn_param_types);
+        var i: i32 = 0;
+        while (i < parts.len()) {
+            var pc: string = wasm_width_char(parts[i], tps);
+            if (pc.len() == 0) { return ""; }
+            if (pc != "w") { wide = true; }
+            params = params + pc;
+            i = i + 1;
+        }
+    }
+    if (!wide) { return ""; }
+    return params + "_" + rc;
+}
+
+// fn_value_sig returns the funcref signature tag seeded for the fn-value named
+// `name` ("l_w", "w_l", …), or "" when the value has no usable declared
+// signature — an erased generic, an all-i32 one, or a fn value that did not come
+// in as a parameter. `with_env` prepends the 'w' for the env box that a closure
+// dispatch passes as the hidden first argument, so the tag always describes the
+// signature the funcref ACTUALLY has, which is what wasm validates against.
+pub function (s: LowerState) fn_value_sig(name: string, with_env: boolean): string {
+    var pfx: string = "FNSIG:" + name + "|";
+    var i: i32 = 0;
+    while (i < s.reclaimable_names.len()) {
+        var e: string = s.reclaimable_names[i];
+        if (e.len() > pfx.len() && e[0 : pfx.len()] + "" == pfx) {
+            var tag: str = e[pfx.len() : e.len()];
+            if (with_env) { return "w" + tag; }
+            return tag + "";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// fn_value_ret returns the DECLARED return-type spelling of the fn-value named
+// `name`, or "" when it has none recorded. The width half of the same seed
+// fn_value_sig reads: lower_i64 needs it to tell an indirect call that genuinely
+// yields an i64 from one whose i32 result it must sign-extend.
+pub function (s: LowerState) fn_value_ret(name: string): string {
+    var pfx: string = "FNRET:" + name + "|";
+    var i: i32 = 0;
+    while (i < s.reclaimable_names.len()) {
+        var e: string = s.reclaimable_names[i];
+        if (e.len() > pfx.len() && e[0 : pfx.len()] + "" == pfx) {
+            return e[pfx.len() : e.len()] + "";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 // fn_arg_is_dyn reports whether argument index `ai` of an indirect call through
 // the fn-value named `name` targets a `dyn Trait` parameter — so the arg must be
 // lowered via lower_dyn_arg (dyn-boxed), not plain lower_expr. Reads the
@@ -6693,6 +6799,13 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
             }
             match (c.callee) {
                 parser.ExprIdent(cid) => {
+                    // An indirect call through a fn value declared to return
+                    // i64/u64 is a 64-bit value — the mirror of the arm lower_i64
+                    // grew for the same seed (#6282). Without it `var v = g(5)`
+                    // through a `(i32) => i64` param width-tracks i32 and the
+                    // binding truncates.
+                    var fvrw: string = s.fn_value_ret(cid.name);
+                    if (fvrw == "i64" || fvrw == "u64") { return 64; }
                     // The clock builtins return an i64 timespec reading, so a
                     // binding `var a = monotonic_ns()` width-tracks i64.
                     if (cid.name == "monotonic_ns" || cid.name == "now_unix_ms" || cid.name == "now_ns") { return 64; }
@@ -6987,6 +7100,14 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                     // f64_bits returns an i64 bit pattern: lower via the normal
                     // call path (lower_expr emits op_f64_bits + pushes the result).
                     if (cid.name == "f64_bits") { return lower_expr(e, s); }
+                    // An INDIRECT call through a fn value declared to return
+                    // i64/u64 already pushes a full-width result, so it is an i64
+                    // value and the sign-extend below would be a widen of an
+                    // already-wide operand — `i64.extend_i32_s` applied to an i64,
+                    // which wasm rejects inside the caller ("expected i32, found
+                    // i64") even once the funcref type itself is right. #6282.
+                    var fvr: string = s.fn_value_ret(cid.name);
+                    if (fvr == "i64" || fvr == "u64") { return lower_expr(e, s); }
                     // Module-function registries only — a local slot of the same
                     // name shadows them. See the matching guard in
                     // infer_expr_width; #6283.
@@ -7356,7 +7477,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         cls = cls.emit(ir.op_load_local(clslot));
         cls = cls.emit(ir.op_const_i32(0));
         cls = cls.emit(ir.op_arr_get(32));
-        return cls.emit(ir.op_call_indirect(c.args.len() + 1));
+        return cls.emit(ir.op_call_indirect_sig(c.args.len() + 1, s.fn_value_sig(cid.name, true)));
     }
     var icslot: i32 = s.slot_of(cid.name);
     if (icslot >= 0) {
@@ -7372,7 +7493,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
             ica = ica + 1;
         }
         ics = ics.emit(ir.op_load_local(icslot));
-        return ics.emit(ir.op_call_indirect(c.args.len()));
+        return ics.emit(ir.op_call_indirect_sig(c.args.len(), s.fn_value_sig(cid.name, false)));
     }
     // A user-defined free function shadows any same-named
     // builtin: native + interp resolve `name(args)` to the user
@@ -35466,6 +35587,22 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         if (fn.params[fpdi].type_name == "fn" && fn.params[fpdi].fn_param_dyn.len() > 0) {
             reclaim = reclaim.append("FNDYN:" + fn.params[fpdi].name + "|" + fn.params[fpdi].fn_param_dyn);
         }
+        // #6282: the same seeding for the fn-value's WIDTHS. A funcref type in
+        // wasm is structural, so a `(i64) => boolean` dispatched through the
+        // all-i32 `$fn<argc>` type is a module that will not load and an
+        // `(i32) => i64` one traps at the indirect call. FNSIG carries the
+        // signature tag the funcref actually has; FNRET carries the declared
+        // return spelling, which lower_i64 needs to tell a call that genuinely
+        // yields an i64 from one whose i32 result it has to sign-extend. Both
+        // are empty for an erased generic or an all-i32 signature, so only the
+        // shapes that were wrong move.
+        if (fn.params[fpdi].type_name == "fn") {
+            var fsg: string = fn_sig_of(fn.params[fpdi], fn.type_params);
+            if (fsg.len() > 0) {
+                reclaim = reclaim.append("FNSIG:" + fn.params[fpdi].name + "|" + fsg);
+                reclaim = reclaim.append("FNRET:" + fn.params[fpdi].name + "|" + fn.params[fpdi].fn_ret);
+            }
+        }
         fpdi = fpdi + 1;
     }
     // #4355: seed the opt-fresh producer NAMES as "OPTFRESH:<name>" so
@@ -45391,7 +45528,7 @@ function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: par
     var pj: i32 = 0;
     while (pj < lam.params.len()) { lparams = lparams.append(lam.params[pj]); pj = pj + 1; }
     var cj: i32 = 0;
-    while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }); cj = cj + 1; }
+    while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }); cj = cj + 1; }
     var lname: string = "__lam_" + util.i32_to_string(acc.counter);
     var notp: string[] = [];
     var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
@@ -45547,7 +45684,7 @@ function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncD
         ci = ci + 1;
     }
     // params = __env first, then the lambda's declared params.
-    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
+    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     // body = capture reads (var cap: <T> = __env[1+i]) then the lambda body. The
@@ -45651,7 +45788,7 @@ function try_inline_closure(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: 
 // (the lambda body inlined verbatim; __env is unused). Always succeeds — a
 // no-capture lambda needs no env reads.
 function make_wrap_lambda_func(lam: parser.ExprLambda, wrapname: string): parser.FuncDecl {
-    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
+    var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     var notp: string[] = [];
@@ -45669,7 +45806,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.F
     while (fi < mfuncs.len()) {
         if (mfuncs[fi].name == fnname && mfuncs[fi].receiver_type.len() == 0) {
             var tgt: parser.FuncDecl = mfuncs[fi];
-            var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" }];
+            var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
             var args: parser.Expr[] = [];
             var pj: i32 = 0;
             while (pj < tgt.params.len()) {
@@ -45978,7 +46115,7 @@ function hoist_capturing_iife(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs
         // fn-typed-arm shapes are tracked separately rather than traded for a
         // silent miscompile.
         if (cty.len() == 0 || cty == "fn") { return InlineCloRes { expr: parser.ExprLambda { params: lam.params, ret_type: lam.ret_type, body: lam.body, use_infer: lam.use_infer }, funcs: funcs, counter: counter }; }
-        ps = ps.append(parser.ParamDecl { name: caps[ci], type_name: cty, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" });
+        ps = ps.append(parser.ParamDecl { name: caps[ci], type_name: cty, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
         args = args.append(parser.ExprIdent { name: caps[ci], line: 0, col: 0 });
         ci = ci + 1;
     }
