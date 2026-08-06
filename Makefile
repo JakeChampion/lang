@@ -68,7 +68,7 @@ freeze:
 #
 # Use ABSOLUTE paths. A relative one was unopenable from an arm64-darwin binary
 # until #6002 (AT_FDCWD is -2 on XNU, not -100), and absolute is what every
-# harness uses anyway. Note the exit code cannot carry a value >= 125: WASI
+# harness uses anyway. Note the exit code cannot carry a value >= 126: WASI
 # refuses anything outside [0..126), so wasmtime reports 1.
 SELFHOST_TARGET ?= $(shell uname -s | grep -qi darwin && echo arm64-darwin || echo x86-64)
 selfhost-cli: bin/fern
