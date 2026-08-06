@@ -13,38 +13,39 @@
 # each other; that agreement is what says the self-host compiler is wrong rather
 # than the generated program being invalid.
 #
-# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus): 201 agree,
-# 20 diverge, 291 are compile gaps. Rows that have already left with their fix:
-# 121 / 265 / 365 (#6177, the maps runtime need-gate) and 228 / 455 (#6207, a
-# map literal with computed keys building itself string-keyed).
+# Rows that have already left with their fix:
+#   121 / 265 / 365    #6177, the maps runtime need-gate
+#   228 / 455          #6207, a map literal with computed keys building itself
+#                      string-keyed
+#   4 / 20 / 28 / 29 / 48 / 52 / 99 / 117 / 123 / 241 / 324 / 362 / 364 /
+#   375 / 482 / 502    #6188, an i64/u64 literal SUFFIX deciding the width
+#
+# That last batch was every "wrong values" row this file carried plus the
+# arena-exhaustion one, and they shared a single cause: `infer_expr_width`
+# classified a numeric literal by MAGNITUDE alone, so `979i64` read as 32-bit.
+# fernsmith emits suffixed literals constantly, which is why one width rule
+# accounted for most of the corpus's divergence — and why the note that used to
+# sit here, "twelve of the fifteen have interp=0, worth checking as a group
+# before reducing them one at a time", was pointing at the right thing.
+#
+# Seed 502 left differently, and the distinction is worth keeping: it no longer
+# COMPILES. Its small-magnitude i64 literals flow through the generic `pick` /
+# `id` helpers, so classifying them correctly as wide now reaches the
+# erased-wide path and its `__lam_22` bails ("module is not IR-eligible"). That
+# is a coverage loss — but it replaced a SILENT WRONG ANSWER (163 where the
+# interpreter said 0) with a refusal. The gap was always there; the 32-bit
+# misreading is what hid it. Re-measured after the prune, the compile ratio
+# stayed above the leg's 0.30 floor, so this cost one seed rather than a class.
+#
+# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus), after #6188.
 
 # CRASHES — the self-host-compiled binary dies by SIGSEGV where the interpreter
 # returns a value. NOT one bug: seeds 228 and 455 were the map-literal key-kind
-# mistyping (#6207) and left with its fix; these four survive it, so they are a
-# different cause (or causes) and want their own reduction.
+# mistyping (#6207) and left with its fix; these four survive that AND the width
+# fix that took every wrong-value row, so they are a different cause (or causes)
+# and want their own reduction. They are now the entire list, which makes them
+# the obvious next target on #6178.
 59 SIGSEGV (self-host 139, interp 41) — https://github.com/JakeChampion/lang/issues/6178
 97 SIGSEGV (self-host 139, interp 230) — https://github.com/JakeChampion/lang/issues/6178
 144 SIGSEGV (self-host 139, interp 96) — https://github.com/JakeChampion/lang/issues/6178
 200 SIGSEGV (self-host 139, interp 0) — https://github.com/JakeChampion/lang/issues/6178
-
-# ARENA EXHAUSTION — exit 125 is __fern_alloc's ExitArenaExhausted, so this is a
-# leak in the lowered code rather than a wrong answer.
-117 exit 125 = arena exhausted (interp 255) — https://github.com/JakeChampion/lang/issues/6178
-
-# WRONG VALUES — silent miscompiles. Twelve of the fifteen have interp=0, which
-# is worth checking as a group before reducing them one at a time.
-4 self-host 39, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-20 self-host 238, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-28 self-host 39, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-29 self-host 112, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-48 self-host 202, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-52 self-host 52, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-99 self-host 128, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-123 self-host 70, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-241 self-host 63, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-324 self-host 0, interp 60 — https://github.com/JakeChampion/lang/issues/6178
-362 self-host 65, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-364 self-host 253, interp 251 — https://github.com/JakeChampion/lang/issues/6178
-375 self-host 249, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-482 self-host 152, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-502 self-host 163, interp 0 — https://github.com/JakeChampion/lang/issues/6178
