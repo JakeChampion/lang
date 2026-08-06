@@ -574,50 +574,70 @@ func usesTranscendentals(helpers []string) bool {
 	return false
 }
 
-// emitTranscendentalRodata emits the shared .rodata coefficient table read by the
-// exp/log/pow helpers (via adrp/:lo12: + ldr), then switches back to .text. arm64
-// has no hardware transcendental instruction, so each helper is a range reduction
-// followed by a minimax/Taylor polynomial (a few ulp — the test contract is
-// tolerance-based). The coefficients are the exact table from the native arm64
-// backend (emitFloatTranscendentalsRuntime), itself ported from asm_arm64.fern.
+// emitTranscendentalRodata writes the shared coefficient table for the f64
+// transcendental helpers. These are fdlibm's kernels, kept in lockstep with
+// internal/codegen/arm64 (and the two self-host emitters) — same constants, in
+// the same order. They replace polynomials that measured 3.2e10 ulp for sin,
+// 4.5e7 for exp and 9844 for log.
+//
+// pi/2 is carried as THREE 33-bit chunks (~99 bits): two is not enough near a
+// zero of sine, where the reduced argument IS the answer, so the reduction's
+// absolute error becomes the result's relative error. expovf/expunf bound exp
+// BEFORE the 2^k reconstruction, which builds the exponent field as
+// (k+1023)<<52 and otherwise overflows into the SIGN bit — exp(1000) returned
+// -6.1e-183 rather than +Inf.
 func emitTranscendentalRodata(w func(string, ...any)) {
 	w("")
 	w(".section .rodata")
 	w(".align 3")
 	for _, c := range []struct{ lbl, val string }{
-		{".Lfc_log2e", "1.4426950408889634"},
-		{".Lfc_ln2", "0.6931471805599453"},
-		{".Lfc_halfpi", "1.5707963267948966"},
-		{".Lfc_sqrt2", "1.4142135623730951"},
 		{".Lfc_one", "1.0"},
 		{".Lfc_half", "0.5"},
-		{".Lfc_e7", "0.00019841269841269841"},
-		{".Lfc_e6", "0.0013888888888888889"},
-		{".Lfc_e5", "0.0083333333333333332"},
-		{".Lfc_e4", "0.041666666666666664"},
-		{".Lfc_e3", "0.16666666666666666"},
-		{".Lfc_s7", "-0.00019841269841269841"},
-		{".Lfc_s5", "0.0083333333333333332"},
-		{".Lfc_s3", "-0.16666666666666666"},
-		{".Lfc_c6", "-0.0013888888888888889"},
-		{".Lfc_c4", "0.041666666666666664"},
-		{".Lfc_c2", "-0.5"},
-		{".Lfc_l11", "0.090909090909090912"},
-		{".Lfc_l9", "0.1111111111111111"},
-		{".Lfc_l7", "0.14285714285714285"},
-		{".Lfc_l5", "0.2"},
-		{".Lfc_l3", "0.33333333333333331"},
+		{".Lfc_two", "2.0"},
+		{".Lfc_sqrt2", "1.4142135623730951"},
+		{".Lfc_invln2", "1.44269504088896338700e+00"},
+		{".Lfc_ln2hi", "6.93147180369123816490e-01"},
+		{".Lfc_ln2lo", "1.90821492927058770002e-10"},
+		{".Lfc_twoopi", "6.36619772367581382433e-01"},
+		{".Lfc_pio2h", "1.57079632673412561417e+00"},
+		{".Lfc_pio2m", "6.07710050630396597660e-11"},
+		{".Lfc_pio2l", "2.02226624879595063154e-21"},
+		{".Lfc_s1", "-1.66666666666666324348e-01"},
+		{".Lfc_s2", "8.33333333332248946124e-03"},
+		{".Lfc_s3", "-1.98412698298579493134e-04"},
+		{".Lfc_s4", "2.75573137070700676789e-06"},
+		{".Lfc_s5", "-2.50507602534068634195e-08"},
+		{".Lfc_s6", "1.58969099521155010221e-10"},
+		{".Lfc_c1", "4.16666666666666019037e-02"},
+		{".Lfc_c2", "-1.38888888888741095749e-03"},
+		{".Lfc_c3", "2.48015872894767294178e-05"},
+		{".Lfc_c4", "-2.75573143513906633035e-07"},
+		{".Lfc_c5", "2.08757232129817482790e-09"},
+		{".Lfc_c6", "-1.13596475577881948265e-11"},
+		{".Lfc_p1", "1.66666666666666019037e-01"},
+		{".Lfc_p2", "-2.77777777770155933842e-03"},
+		{".Lfc_p3", "6.61375632143793436117e-05"},
+		{".Lfc_p4", "-1.65339022054652515390e-06"},
+		{".Lfc_p5", "4.13813679705723846039e-08"},
+		{".Lfc_lg1", "6.666666666666735130e-01"},
+		{".Lfc_lg2", "3.999999999940941908e-01"},
+		{".Lfc_lg3", "2.857142874366239149e-01"},
+		{".Lfc_lg4", "2.222219843214978396e-01"},
+		{".Lfc_lg5", "1.818357216161805012e-01"},
+		{".Lfc_lg6", "1.531383769920937332e-01"},
+		{".Lfc_lg7", "1.479819860511658591e-01"},
+		{".Lfc_expovf", "709.782712893383973096"},
+		{".Lfc_expunf", "-745.133219101941108420"},
 	} {
-		w("%s:", c.lbl)
-		w("\t.double %s", c.val)
+		w("%s: .double %s", c.lbl, c.val)
 	}
 	w(".text")
 }
 
-// emitExpF64Helper writes __exp_f64(x) → e^x. x arrives as f64 bits in x0 (the SSA
-// GP convention); the body computes e^x = 2^k·poly(r) with k = round(x·log2 e) and
-// r = x − k·ln2 ∈ [−ln2/2, ln2/2] (degree-7 Taylor of e^r), and returns the result
-// bits in x0. Leaf; reads the shared .rodata table.
+// emitExpF64Helper writes __exp_f64(x) -> e^x. x arrives as f64 bits in x0 (the
+// SSA GP convention) and the result leaves the same way. Domain-guarded: NaN
+// passes through, +Inf trips the overflow arm and -Inf the underflow one, so
+// only NaN needs a separate test. Leaf; reads the shared .rodata table.
 func emitExpF64Helper(w func(string, ...any)) {
 	ldc := func(reg, lbl string) {
 		w("\tadrp x12, %s", lbl)
@@ -627,45 +647,71 @@ func emitExpF64Helper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__exp_f64"))
 	w("\tfmov d0, x0")
-	ldc("d1", ".Lfc_log2e")
-	w("\tfmul d2, d0, d1")
-	w("\tfrinta d3, d2")
-	w("\tfcvtzs x10, d3")
-	ldc("d4", ".Lfc_ln2")
-	w("\tfmul d5, d3, d4")
-	w("\tfsub d0, d0, d5")
-	ldc("d6", ".Lfc_e7")
-	ldc("d7", ".Lfc_e6")
-	w("\tfmul d6, d6, d0")
-	w("\tfadd d6, d6, d7")
-	ldc("d7", ".Lfc_e5")
-	w("\tfmul d6, d6, d0")
-	w("\tfadd d6, d6, d7")
-	ldc("d7", ".Lfc_e4")
-	w("\tfmul d6, d6, d0")
-	w("\tfadd d6, d6, d7")
-	ldc("d7", ".Lfc_e3")
-	w("\tfmul d6, d6, d0")
-	w("\tfadd d6, d6, d7")
-	ldc("d7", ".Lfc_half")
-	w("\tfmul d6, d6, d0")
-	w("\tfadd d6, d6, d7")
-	ldc("d7", ".Lfc_one")
-	w("\tfmul d6, d6, d0")
-	w("\tfadd d6, d6, d7")
-	w("\tfmul d6, d6, d0")
-	w("\tfadd d6, d6, d7")
+	w("\tfcmp d0, d0")
+	w("\tb.vs .Lssa_exp_ret")
+	ldc("d1", ".Lfc_expovf")
+	w("\tfcmp d0, d1")
+	w("\tb.gt .Lssa_exp_inf")
+	ldc("d1", ".Lfc_expunf")
+	w("\tfcmp d0, d1")
+	w("\tb.lt .Lssa_exp_zero")
+	ldc("d1", ".Lfc_invln2")
+	w("\tfmul d1, d1, d0")
+	w("\tfrintn d1, d1")
+	w("\tfcvtzs x10, d1")
+	ldc("d2", ".Lfc_ln2hi")
+	w("\tfmul d2, d1, d2")
+	w("\tfsub d3, d0, d2")
+	ldc("d2", ".Lfc_ln2lo")
+	w("\tfmul d1, d1, d2")
+	w("\tfsub d0, d3, d1")
+	w("\tfmul d4, d0, d0")
+	ldc("d5", ".Lfc_p5")
+	ldc("d20", ".Lfc_p4")
+	w("\tfmul d5, d5, d4")
+	w("\tfadd d5, d5, d20")
+	ldc("d20", ".Lfc_p3")
+	w("\tfmul d5, d5, d4")
+	w("\tfadd d5, d5, d20")
+	ldc("d20", ".Lfc_p2")
+	w("\tfmul d5, d5, d4")
+	w("\tfadd d5, d5, d20")
+	ldc("d20", ".Lfc_p1")
+	w("\tfmul d5, d5, d4")
+	w("\tfadd d5, d5, d20")
+	w("\tfmul d5, d5, d4")
+	w("\tfsub d6, d0, d5")
+	w("\tfmul d7, d0, d6")
+	ldc("d2", ".Lfc_two")
+	w("\tfsub d2, d2, d6")
+	w("\tfdiv d7, d7, d2")
+	w("\tfsub d2, d1, d7")
+	w("\tfsub d2, d2, d3")
+	ldc("d0", ".Lfc_one")
+	w("\tfsub d0, d0, d2")
 	w("\tadd x10, x10, #1023")
 	w("\tlsl x10, x10, #52")
 	w("\tfmov d1, x10")
-	w("\tfmul d0, d6, d1")
+	w("\tfmul d0, d0, d1")
+	w(".Lssa_exp_ret:")
+	w("\tfmov x0, d0")
+	w("\tret")
+	w(".Lssa_exp_inf:")
+	w("\tmovz x14, #32752, lsl #48")
+	w("\tfmov d0, x14")
+	w("\tfmov x0, d0")
+	w("\tret")
+	w(".Lssa_exp_zero:")
+	w("\tfmov d0, xzr")
 	w("\tfmov x0, d0")
 	w("\tret")
 }
 
-// emitLogF64Helper writes __log_f64(x) → ln x (x>0). x = m·2^e with m normalised to
-// [√2/2, √2); f = (m−1)/(m+1); ln(m) = 2·(f + f³/3 + … + f¹¹/11); ln(x) = e·ln2 +
-// ln(m). x0 in/out (f64 bits). Leaf; reads the shared .rodata table.
+// emitLogF64Helper writes __log_f64(x) -> ln x. x = m*2^e with m normalised to
+// [sqrt2/2, sqrt2); f = m-1; s = f/(2+f). R is two INDEPENDENT chains in w = z^2
+// so they issue in parallel rather than as one 7-deep Horner. Domain-guarded:
+// without it log(0) returned -709.09 and log(-1) returned 0, because the bit
+// twiddling below happily extracts an exponent from 0 or +Inf.
 func emitLogF64Helper(w func(string, ...any)) {
 	ldc := func(reg, lbl string) {
 		w("\tadrp x12, %s", lbl)
@@ -675,115 +721,229 @@ func emitLogF64Helper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__log_f64"))
 	w("\tfmov d0, x0")
+	w("\tfcmp d0, d0")
+	w("\tb.vs .Lssa_log_ret")
+	w("\tfmov d1, xzr")
+	w("\tfcmp d0, d1")
+	w("\tb.lt .Lssa_log_nan")
+	w("\tb.eq .Lssa_log_ninf")
+	w("\tmovz x14, #32752, lsl #48")
+	w("\tfmov d1, x14")
+	w("\tfcmp d0, d1")
+	w("\tb.eq .Lssa_log_ret")
 	w("\tfmov x10, d0")
 	w("\tlsr x11, x10, #52")
 	w("\tand x11, x11, #0x7ff")
-	w("\tsub x11, x11, #1023") // e
+	w("\tsub x11, x11, #1023")
 	w("\tmov x13, #1")
 	w("\tlsl x13, x13, #52")
-	w("\tsub x13, x13, #1")  // (1<<52)-1
-	w("\tand x10, x10, x13") // mantissa
+	w("\tsub x13, x13, #1")
+	w("\tand x10, x10, x13")
 	w("\tmov x14, #1023")
 	w("\tlsl x14, x14, #52")
 	w("\torr x10, x10, x14")
-	w("\tfmov d1, x10") // m in [1,2)
+	w("\tfmov d1, x10")
 	ldc("d2", ".Lfc_sqrt2")
 	w("\tfcmp d1, d2")
-	w("\tb.le .Lssa_log_nohalf")
+	w("\tb.lt .Lssa_log_noadj")
 	ldc("d3", ".Lfc_half")
 	w("\tfmul d1, d1, d3")
 	w("\tadd x11, x11, #1")
-	w(".Lssa_log_nohalf:")
+	w(".Lssa_log_noadj:")
 	ldc("d4", ".Lfc_one")
-	w("\tfsub d5, d1, d4") // m-1
-	w("\tfadd d6, d1, d4") // m+1
-	w("\tfdiv d0, d5, d6") // f
-	w("\tfmul d7, d0, d0") // f2
-	ldc("d2", ".Lfc_l11")
-	ldc("d3", ".Lfc_l9")
-	w("\tfmul d2, d2, d7")
-	w("\tfadd d2, d2, d3")
-	ldc("d3", ".Lfc_l7")
-	w("\tfmul d2, d2, d7")
-	w("\tfadd d2, d2, d3")
-	ldc("d3", ".Lfc_l5")
-	w("\tfmul d2, d2, d7")
-	w("\tfadd d2, d2, d3")
-	ldc("d3", ".Lfc_l3")
-	w("\tfmul d2, d2, d7")
-	w("\tfadd d2, d2, d3")
-	w("\tfmul d2, d2, d7")
-	w("\tfadd d2, d2, d4") // poly + 1
-	w("\tfmul d2, d2, d0") // f*poly
-	w("\tfadd d2, d2, d2") // 2*f*poly = ln(m)
-	w("\tscvtf d3, x11")   // e
-	ldc("d4", ".Lfc_ln2")
-	w("\tfmul d3, d3, d4") // e*ln2
-	w("\tfadd d0, d3, d2")
+	w("\tfsub d1, d1, d4")
+	ldc("d2", ".Lfc_two")
+	w("\tfadd d2, d2, d1")
+	w("\tfdiv d3, d1, d2")
+	w("\tfmul d4, d3, d3")
+	w("\tfmul d5, d4, d4")
+	ldc("d6", ".Lfc_lg6")
+	ldc("d20", ".Lfc_lg4")
+	w("\tfmul d6, d6, d5")
+	w("\tfadd d6, d6, d20")
+	ldc("d20", ".Lfc_lg2")
+	w("\tfmul d6, d6, d5")
+	w("\tfadd d6, d6, d20")
+	w("\tfmul d6, d6, d5")
+	ldc("d7", ".Lfc_lg7")
+	ldc("d20", ".Lfc_lg5")
+	w("\tfmul d7, d7, d5")
+	w("\tfadd d7, d7, d20")
+	ldc("d20", ".Lfc_lg3")
+	w("\tfmul d7, d7, d5")
+	w("\tfadd d7, d7, d20")
+	ldc("d20", ".Lfc_lg1")
+	w("\tfmul d7, d7, d5")
+	w("\tfadd d7, d7, d20")
+	w("\tfmul d7, d7, d4")
+	w("\tfadd d6, d6, d7")
+	w("\tfmul d2, d1, d1")
+	ldc("d16", ".Lfc_half")
+	w("\tfmul d2, d2, d16")
+	w("\tscvtf d0, x11")
+	ldc("d16", ".Lfc_ln2lo")
+	w("\tfmul d5, d0, d16")
+	w("\tfadd d6, d6, d2")
+	w("\tfmul d6, d6, d3")
+	w("\tfadd d6, d6, d5")
+	w("\tfsub d2, d2, d6")
+	w("\tfsub d2, d2, d1")
+	ldc("d16", ".Lfc_ln2hi")
+	w("\tfmul d0, d0, d16")
+	w("\tfsub d0, d0, d2")
+	w(".Lssa_log_ret:")
+	w("\tfmov x0, d0")
+	w("\tret")
+	w(".Lssa_log_nan:")
+	w("\tmovz x14, #32760, lsl #48")
+	w("\tfmov d0, x14")
+	w("\tfmov x0, d0")
+	w("\tret")
+	w(".Lssa_log_ninf:")
+	w("\tmovz x14, #65520, lsl #48")
+	w("\tfmov d0, x14")
 	w("\tfmov x0, d0")
 	w("\tret")
 }
 
-// emitPowF64Helper writes __pow_f64(x, y) → x^y = exp(y·ln x), x>0. x arrives as
-// f64 bits in x0 and y in x1. It calls __log_f64 / __exp_f64 through their x0-bits
-// ABI, stashing y in callee-saved x19 across the log call. Non-leaf.
+// emitPowF64Helper writes __pow_f64(x, y) -> x^y. x arrives as f64 bits in x0
+// and y in x1. The integer-exponent fast path is not an optimisation:
+// exp(y*ln x) CANNOT return exactly 9 for pow(3,2), because a 1-ulp error in
+// ln 3 amplified by the exponential lands just under and `as i32` truncated it
+// to 8. Repeated squaring is exact wherever the result is representable, and it
+// is a LEAF, so it returns before the frame the general path sets up.
+// Integrality is an i64 round-trip, so a NaN or out-of-range y falls out as a
+// huge |n| the range check rejects.
 func emitPowF64Helper(w func(string, ...any)) {
+	ldc := func(reg, lbl string) {
+		w("\tadrp x12, %s", lbl)
+		w("\tadd x12, x12, #:lo12:%s", lbl)
+		w("\tldr %s, [x12]", reg)
+	}
 	w("")
 	w("%s:", fnLabel("__pow_f64"))
+	w("\tfmov d0, x0")
+	w("\tfmov d1, x1")
+	w("\tfcvtzs x10, d1")
+	w("\tscvtf d2, x10")
+	w("\tfcmp d2, d1")
+	w("\tb.ne .Lssa_pow_gen")
+	w("\tmov x11, x10")
+	w("\tcmp x11, #0")
+	w("\tb.ge .Lssa_pow_abs")
+	w("\tneg x11, x11")
+	w(".Lssa_pow_abs:")
+	w("\tcmp x11, #64")
+	w("\tb.gt .Lssa_pow_gen")
+	ldc("d3", ".Lfc_one")
+	w("\tfmov d4, d0")
+	w(".Lssa_pow_loop:")
+	w("\tand x13, x11, #1")
+	w("\tcmp x13, #0")
+	w("\tb.eq .Lssa_pow_skip")
+	w("\tfmul d3, d3, d4")
+	w(".Lssa_pow_skip:")
+	w("\tfmul d4, d4, d4")
+	w("\tlsr x11, x11, #1")
+	w("\tcmp x11, #0")
+	w("\tb.ne .Lssa_pow_loop")
+	w("\tcmp x10, #0")
+	w("\tb.ge .Lssa_pow_done")
+	ldc("d5", ".Lfc_one")
+	w("\tfdiv d3, d5, d3")
+	w(".Lssa_pow_done:")
+	w("\tfmov x0, d3")
+	w("\tret")
+	w(".Lssa_pow_gen:")
 	w("\tstp x29, x30, [sp, #-32]!")
 	w("\tmov x29, sp")
 	w("\tstr x19, [sp, #16]")
-	w("\tmov x19, x1")                 // y bits (x0 already = x bits)
-	w("\tbl %s", fnLabel("__log_f64")) // x0 = ln(x) bits
+	w("\tmov x19, x1")
+	w("\tbl %s", fnLabel("__log_f64"))
 	w("\tfmov d0, x0")
-	w("\tfmov d1, x19") // y
+	w("\tfmov d1, x19")
 	w("\tfmul d0, d1, d0")
 	w("\tfmov x0, d0")
-	w("\tbl %s", fnLabel("__exp_f64")) // x0 = exp(y·ln x) bits
+	w("\tbl %s", fnLabel("__exp_f64"))
 	w("\tldr x19, [sp, #16]")
 	w("\tldp x29, x30, [sp], #32")
 	w("\tret")
 }
 
-// emitSinCosReduction emits the shared argument-reduction + sin(r)/cos(r)
-// polynomial prologue for __sin_f64 / __cos_f64. It assumes the argument is in d0
-// and, on exit: x10 = quadrant (k&3), d6 = sin(r), d16 = cos(r), r ∈ [−π/4, π/4].
-// The arm64 sibling of the native emitSinCosReduction.
+// emitSinCosReduction emits the shared reduction and the sin(r)/cos(r) kernels
+// for __sin_f64 / __cos_f64. Argument in d0; on exit x10 = quadrant (k&3),
+// d6 = sin(r), d16 = cos(r), r in [-pi/4, pi/4]. Both kernels are evaluated and
+// the caller selects, which keeps this backend's on-demand helper emission
+// simple — there is no shared kernel subroutine to pull in.
+//
+// frintn, not frinta: ties-to-EVEN, matching x86's `roundsd …, 0` and wasm's
+// `f64.nearest`, so every backend picks the same k.
 func emitSinCosReduction(w func(string, ...any)) {
 	ldc := func(reg, lbl string) {
 		w("\tadrp x12, %s", lbl)
 		w("\tadd x12, x12, #:lo12:%s", lbl)
 		w("\tldr %s, [x12]", reg)
 	}
-	ldc("d1", ".Lfc_halfpi")
-	w("\tfdiv d2, d0, d1")
-	w("\tfrinta d3, d2")
-	w("\tfcvtzs x10, d3")
-	w("\tfmul d4, d3, d1")
-	w("\tfsub d0, d0, d4")  // r
-	w("\tand x10, x10, #3") // quadrant
-	w("\tfmul d5, d0, d0")  // r2
-	ldc("d6", ".Lfc_s7")
-	ldc("d7", ".Lfc_s5")
+	ldc("d1", ".Lfc_twoopi")
+	w("\tfmul d1, d1, d0")
+	w("\tfrintn d1, d1")
+	w("\tfcvtzs x10, d1")
+	ldc("d2", ".Lfc_pio2h")
+	w("\tfmul d2, d1, d2")
+	w("\tfsub d0, d0, d2")
+	ldc("d2", ".Lfc_pio2m")
+	w("\tfmul d2, d1, d2")
+	w("\tfsub d0, d0, d2")
+	ldc("d2", ".Lfc_pio2l")
+	w("\tfmul d1, d1, d2")
+	w("\tfsub d0, d0, d1")
+	w("\tand x10, x10, #3")
+	w("\tfmul d5, d0, d0")
+	w("\tfmul d17, d5, d0")
+	ldc("d6", ".Lfc_s6")
+	ldc("d20", ".Lfc_s5")
 	w("\tfmul d6, d6, d5")
-	w("\tfadd d6, d6, d7")
-	ldc("d7", ".Lfc_s3")
+	w("\tfadd d6, d6, d20")
+	ldc("d20", ".Lfc_s4")
 	w("\tfmul d6, d6, d5")
-	w("\tfadd d6, d6, d7")
-	ldc("d7", ".Lfc_one")
+	w("\tfadd d6, d6, d20")
+	ldc("d20", ".Lfc_s3")
 	w("\tfmul d6, d6, d5")
-	w("\tfadd d6, d6, d7")
-	w("\tfmul d6, d6, d0") // sin(r)
+	w("\tfadd d6, d6, d20")
+	ldc("d20", ".Lfc_s2")
+	w("\tfmul d6, d6, d5")
+	w("\tfadd d6, d6, d20")
+	ldc("d20", ".Lfc_s1")
+	w("\tfmul d6, d6, d5")
+	w("\tfadd d6, d6, d20")
+	w("\tfmul d6, d6, d17")
+	w("\tfadd d6, d0, d6")
 	ldc("d16", ".Lfc_c6")
-	ldc("d17", ".Lfc_c4")
+	ldc("d20", ".Lfc_c5")
 	w("\tfmul d16, d16, d5")
-	w("\tfadd d16, d16, d17")
-	ldc("d17", ".Lfc_c2")
+	w("\tfadd d16, d16, d20")
+	ldc("d20", ".Lfc_c4")
 	w("\tfmul d16, d16, d5")
-	w("\tfadd d16, d16, d17")
-	ldc("d17", ".Lfc_one")
+	w("\tfadd d16, d16, d20")
+	ldc("d20", ".Lfc_c3")
 	w("\tfmul d16, d16, d5")
-	w("\tfadd d16, d16, d17") // cos(r)
+	w("\tfadd d16, d16, d20")
+	ldc("d20", ".Lfc_c2")
+	w("\tfmul d16, d16, d5")
+	w("\tfadd d16, d16, d20")
+	ldc("d20", ".Lfc_c1")
+	w("\tfmul d16, d16, d5")
+	w("\tfadd d16, d16, d20")
+	w("\tfmul d16, d16, d5")
+	w("\tfmul d16, d16, d5")
+	ldc("d18", ".Lfc_half")
+	w("\tfmul d18, d5, d18")
+	ldc("d19", ".Lfc_one")
+	w("\tfsub d21, d19, d18")
+	w("\tfsub d22, d19, d21")
+	w("\tfsub d22, d22, d18")
+	w("\tfadd d22, d22, d16")
+	w("\tfadd d16, d21, d22")
 }
 
 // emitSinF64Helper writes __sin_f64(x) → sin x via the shared reduction: k =
