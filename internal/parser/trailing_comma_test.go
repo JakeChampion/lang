@@ -55,6 +55,15 @@ function main(): i32 { match (A(1)) { A(n) => { return n; }, B => { return 0; },
 		{"match arms", `enum E { A(i32), B }
 function main(): i32 { match (A(1)) { A(n) => { return n; }, B => { return 0; }, } }`},
 		{"tuple literal", `function main(): i32 { var t: (i32, i32) = (1, 2,); return t.0; }`},
+		{"map foreach binder", `import "core/map";
+function main(): i32 {
+    var m: Map[string, i32] = Map { "a": 1 };
+    var n: i32 = 0;
+    for (k, v,) in m { n = n + v; }
+    return n;
+}`},
+		{"tuple parameter", `function f((a, b,): (i32, i32)): i32 { return a + b; }
+function main(): i32 { return f((1, 2)); }`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,6 +71,22 @@ function main(): i32 { match (A(1)) { A(n) => { return n; }, B => { return 0; },
 				t.Fatalf("trailing comma rejected in %s: %v", tc.name, err)
 			}
 		})
+	}
+}
+
+// The map-foreach binder shares its `(` with the C-style `for`, and the
+// trailing comma is what tells them apart one token later. Widening that
+// lookahead must not let a C-style head be read as a binder.
+func TestCStyleForStillParses(t *testing.T) {
+	cases := []string{
+		`function main(): i32 { var t: i32 = 0; for (var i: i32 = 0; i < 3; i = i + 1) { t = t + i; } return t; }`,
+		`function main(): i32 { var i: i32 = 0; var t: i32 = 0; for (; i < 3; i = i + 1) { t = t + i; } return t; }`,
+		`function main(): i32 { var i: i32 = 0; for (var j: i32 = 0; i < 3; ) { i = i + 1; } return i; }`,
+	}
+	for _, src := range cases {
+		if _, err := Parse(src); err != nil {
+			t.Fatalf("C-style for rejected: %v\nsrc: %s", err, src)
+		}
 	}
 }
 

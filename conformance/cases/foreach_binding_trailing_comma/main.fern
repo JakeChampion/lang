@@ -1,0 +1,24 @@
+// The map-foreach binder is a comma-separated list like any other, so it
+// takes a trailing comma: `for (k, v,) in m`.
+//
+// It was the one list position that did not. The binder is recognised by a
+// fixed `( IDENT , IDENT ) in` token lookahead, and a trailing comma shifts
+// the `)` and the `in` one token right — so the whole form fell through to
+// the C-style `for` and reported `expected ";", got ","`, which names
+// neither the construct nor the comma.
+
+import "core/map";
+
+function main(): i32 {
+    var m: Map[string, i32] = Map { "a": 1, "b": 2, "c": 3 };
+
+    var with_trailing: i32 = 0;
+    for (k, v,) in m { with_trailing = with_trailing + v + k.len(); }
+
+    var without: i32 = 0;
+    for (k, v) in m { without = without + v + k.len(); }
+
+    // The comma is punctuation, so both loops must agree: 6 + 3 = 9 each.
+    if (with_trailing != without) { return 1; }
+    return with_trailing;
+}

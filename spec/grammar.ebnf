@@ -56,7 +56,7 @@ Param       = TupleParam | NamedParam ;
 NamedParam  = 'own' IDENT [ ':' Type ] [ '=' Expr ]
             | IDENT [ ':' Type ] [ '=' Expr ]
             ;
-TupleParam  = '(' IDENT { ',' IDENT } ')' ':' Type ;
+TupleParam  = '(' IDENT { ',' IDENT } [ ',' ] ')' ':' Type ;
 
 StructDecl  = 'struct' IDENT [ TypeParams ] '{' { FieldDecl } '}' [ ';' ] ;
 FieldDecl   = [ Visibility ] IDENT ':' Type [ ',' | ';' ] ;
@@ -149,12 +149,11 @@ IfStmt      = 'if' 'let' Pattern '=' Expr Block [ 'else' ( IfStmt | Block ) ]
 WhileStmt   = 'while' '(' Expr ')' Block ;
 LoopStmt    = 'loop' Block ;
 
-ForStmt     = 'for' '(' [ ForInit ] ';' [ Expr ] ';' [ Expr ] ')' Block
+ForStmt     = 'for' '(' [ ForInit ] ';' Expr ';' [ Expr ] ')' Block
             | 'for' ForBinding 'in' NoStructExpr Block
-            | 'for' '(' ForBinding 'in' Expr ')' Block
             ;
 ForInit     = VarNoSemi | Expr ;
-ForBinding  = '(' IDENT { ',' IDENT } ')' | IDENT ;
+ForBinding  = '(' IDENT { ',' IDENT } [ ',' ] ')' | IDENT ;
 
 MatchStmt   = 'match' NoStructExpr '{' { MatchArm } '}' [ ';' ] ;
 MatchArm    = ArmPatterns [ 'when' Expr ] '=>' ArmBody [ ',' ] ;

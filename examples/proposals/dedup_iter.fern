@@ -1,0 +1,217 @@
+// examples/proposals/dedup_iter.fern — proposal turn, drawn line 187:
+// "A deduplicating iterator that remembers only what it must."
+//
+// Two dedup strategies over the same input, distinguished by how much
+// state each has to keep:
+//
+//   dedup_adjacent — collapses RUNS. Remembers exactly one element (the
+//                    previous one), so it is O(1) in space whatever the
+//                    input length.
+//   dedup_all      — removes every repeat, wherever it appears. Has to
+//                    remember every distinct element seen, so it is O(k)
+//                    in the number of distinct values.
+//
+// The point of writing both is that "remembers only what it must" is a
+// testable claim: on sorted input the two must agree, and on unsorted
+// input they must not.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from
+// std/test, so the file is its own test suite.
+
+import "std/test";
+import "std/i32";
+
+// Collapse runs of equal neighbours. Carries one element of state.
+function dedup_adjacent(xs: i32[]): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i == 0 || xs[i] != xs[i - 1]) { out = out.append(xs[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Keep the FIRST occurrence of every distinct value. Carries the whole
+// seen-set, which is the cost of not requiring sorted input.
+function dedup_all(xs: i32[]): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        var seen: boolean = false;
+        var j: i32 = 0;
+        while (j < out.len()) {
+            if (out[j] == xs[i]) { seen = true; }
+            j = j + 1;
+        }
+        if (!seen) { out = out.append(xs[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+function is_sorted(xs: i32[]): boolean {
+    var i: i32 = 1;
+    while (i < xs.len()) {
+        if (xs[i] < xs[i - 1]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function eq(a: i32[], b: i32[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i] != b[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function has_repeat(xs: i32[]): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        var j: i32 = i + 1;
+        while (j < xs.len()) {
+            if (xs[i] == xs[j]) { return true; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------- tests
+
+// The defining property of the cheap variant: it removes adjacent repeats
+// and nothing else, so a value that recurs non-adjacently survives.
+function test_adjacent_collapses_runs_only(): test.TestOutcome {
+    var got: i32[] = dedup_adjacent([1, 1, 2, 2, 2, 3, 1, 1]);
+    if (!eq(got, [1, 2, 3, 1])) {
+        return test.fail("wanted [1,2,3,1], got len " + got.len().to_string());
+    }
+    return test.pass();
+}
+
+function test_all_removes_every_repeat(): test.TestOutcome {
+    var got: i32[] = dedup_all([1, 1, 2, 2, 2, 3, 1, 1]);
+    if (!eq(got, [1, 2, 3])) {
+        return test.fail("wanted [1,2,3], got len " + got.len().to_string());
+    }
+    if (has_repeat(got)) { return test.fail("output still contains a repeat"); }
+    return test.pass();
+}
+
+// The claim that the cheap variant is enough WHEN THE INPUT IS SORTED:
+// on sorted input the two strategies must agree exactly.
+function test_the_two_agree_on_sorted_input(): test.TestOutcome {
+    var inputs: i32[][] = [
+        [],
+        [7],
+        [1, 1, 1],
+        [1, 2, 3],
+        [1, 1, 2, 3, 3, 3, 9],
+    ];
+    var i: i32 = 0;
+    while (i < inputs.len()) {
+        if (!is_sorted(inputs[i])) {
+            return test.fail("fixture " + i.to_string() + " is not sorted");
+        }
+        if (!eq(dedup_adjacent(inputs[i]), dedup_all(inputs[i]))) {
+            return test.fail("strategies disagree on sorted fixture "
+                + i.to_string());
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// ...and the converse, which is what makes the extra state necessary
+// rather than merely defensible.
+function test_the_two_differ_on_unsorted_input(): test.TestOutcome {
+    var xs: i32[] = [1, 2, 1, 2];
+    if (eq(dedup_adjacent(xs), dedup_all(xs))) {
+        return test.fail("strategies agreed on unsorted input, so the "
+            + "seen-set would be unnecessary");
+    }
+    if (dedup_adjacent(xs).len() != 4) {
+        return test.fail("adjacent dedup should not have collapsed anything");
+    }
+    if (dedup_all(xs).len() != 2) {
+        return test.fail("full dedup should have collapsed to 2");
+    }
+    return test.pass();
+}
+
+// Both are idempotent, and both preserve first-seen order.
+function test_idempotent_and_order_preserving(): test.TestOutcome {
+    var xs: i32[] = [3, 3, 1, 2, 1, 3];
+    var once: i32[] = dedup_all(xs);
+    if (!eq(dedup_all(once), once)) {
+        return test.fail("dedup_all is not idempotent");
+    }
+    if (!eq(once, [3, 1, 2])) {
+        return test.fail("dedup_all did not preserve first-seen order");
+    }
+    var a1: i32[] = dedup_adjacent(xs);
+    if (!eq(dedup_adjacent(a1), a1)) {
+        return test.fail("dedup_adjacent is not idempotent");
+    }
+    return test.pass();
+}
+
+// Neither may invent or lose a value: every output element occurs in the
+// input, and every input element occurs in the output of dedup_all.
+function test_neither_invents_nor_loses_values(): test.TestOutcome {
+    var xs: i32[] = [5, 9, 5, 2, 9, 9, 7];
+    var all: i32[] = dedup_all(xs);
+    var i: i32 = 0;
+    while (i < all.len()) {
+        var found: boolean = false;
+        var j: i32 = 0;
+        while (j < xs.len()) {
+            if (xs[j] == all[i]) { found = true; }
+            j = j + 1;
+        }
+        if (!found) {
+            return test.fail("dedup_all invented " + all[i].to_string());
+        }
+        i = i + 1;
+    }
+    var k: i32 = 0;
+    while (k < xs.len()) {
+        var kept: boolean = false;
+        var m: i32 = 0;
+        while (m < all.len()) {
+            if (all[m] == xs[k]) { kept = true; }
+            m = m + 1;
+        }
+        if (!kept) {
+            return test.fail("dedup_all lost " + xs[k].to_string());
+        }
+        k = k + 1;
+    }
+    return test.pass();
+}
+
+// ----------------------------------------------------------------- app
+
+function main(): i32 {
+    eprint("dedup_iter — two dedup strategies, distinguished by state kept");
+    var sample: i32[] = [1, 1, 2, 2, 2, 3, 1, 1];
+    eprint("input      len=" + sample.len().to_string());
+    eprint("adjacent   len=" + dedup_adjacent(sample).len().to_string()
+        + "  (remembers 1 element)");
+    eprint("all        len=" + dedup_all(sample).len().to_string()
+        + "  (remembers every distinct value)");
+
+    var r: test.TestRunner = test.test_new("dedup_iter");
+    r = r.it("adjacent collapses runs only", test_adjacent_collapses_runs_only);
+    r = r.it("all removes every repeat", test_all_removes_every_repeat);
+    r = r.it("the two agree on sorted input", test_the_two_agree_on_sorted_input);
+    r = r.it("the two differ on unsorted input", test_the_two_differ_on_unsorted_input);
+    r = r.it("idempotent and order preserving", test_idempotent_and_order_preserving);
+    r = r.it("neither invents nor loses values", test_neither_invents_nor_loses_values);
+    return r.finish();
+}

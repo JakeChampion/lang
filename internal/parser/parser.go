@@ -2971,12 +2971,22 @@ func (p *parser) parseFor(label string) (ast.Stmt, error) {
 	// `;`, or an arbitrary expression — none of them match this
 	// pattern, so the lookahead is unambiguous.
 	if p.match(lexer.Punct, "(") && p.i+5 < len(p.tokens) {
-		t1, t2, t3, t4, t5 := p.tokens[p.i+1], p.tokens[p.i+2], p.tokens[p.i+3], p.tokens[p.i+4], p.tokens[p.i+5]
-		if t1.Kind == lexer.Ident &&
+		t1, t2, t3 := p.tokens[p.i+1], p.tokens[p.i+2], p.tokens[p.i+3]
+		// The binder is a comma-separated list like any other, so it may
+		// carry a trailing comma — `for (k, v,) in m`. That shifts the
+		// `)` and the `in` one token right; without accounting for it the
+		// lookahead fails and the whole form falls through to the C-style
+		// `for`, which reports `expected ";", got ","`.
+		closeAt := p.i + 4
+		if p.tokens[closeAt].Kind == lexer.Punct && p.tokens[closeAt].Text == "," {
+			closeAt++
+		}
+		if closeAt+1 < len(p.tokens) &&
+			t1.Kind == lexer.Ident &&
 			t2.Kind == lexer.Punct && t2.Text == "," &&
 			t3.Kind == lexer.Ident &&
-			t4.Kind == lexer.Punct && t4.Text == ")" &&
-			t5.Kind == lexer.Ident && t5.Text == "in" {
+			p.tokens[closeAt].Kind == lexer.Punct && p.tokens[closeAt].Text == ")" &&
+			p.tokens[closeAt+1].Kind == lexer.Ident && p.tokens[closeAt+1].Text == "in" {
 			return p.parseForEachMapTuple(kw, label)
 		}
 	}
@@ -3310,8 +3320,9 @@ func (p *parser) parseForEachMapTuple(kw lexer.Token, label string) (ast.Stmt, e
 	keyTok := p.advance()
 	p.advance() // `,`
 	valTok := p.advance()
-	p.advance() // `)`
-	p.advance() // `in`
+	p.accept(lexer.Punct, ",") // optional trailing comma
+	p.advance()                // `)`
+	p.advance()                // `in`
 
 	// Same reason as parseForEach: don't let the loop-body `{` get
 	// glued onto the source expression as a struct literal.
