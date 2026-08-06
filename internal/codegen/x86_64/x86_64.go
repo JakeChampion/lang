@@ -4328,6 +4328,19 @@ func (g *generator) emitDataSections() {
 			g.line(`	.asciz " live_bytes="`)
 			g.label(".Llc_str_nl")
 			g.line(`	.asciz "\n"`)
+			if ast.SanitizeEnabled {
+				// The sanitizer's leak VERDICT (#5545), printed after
+				// the summary above when live_bytes > 0. The summary is
+				// three numbers a reader has to compare; this says
+				// whether the run was clean, which is the question a
+				// sanitizer exists to answer.
+				g.label(".Lsan_str_leak")
+				g.line(fmt.Sprintf("	.asciz %q", sanLeakPrefix))
+				g.label(".Lsan_str_bytesin")
+				g.line(fmt.Sprintf("	.asciz %q", sanLeakMiddle))
+				g.label(".Lsan_str_blocks")
+				g.line(fmt.Sprintf("	.asciz %q", sanLeakSuffix))
+			}
 		}
 	}
 	// SSO inline strings ride in a 64-bit register and don't
@@ -4486,16 +4499,62 @@ func (g *generator) emitDataSections() {
 // written to stderr before the process exits, so a bounds / arena / slice
 // abort names its cause instead of exiting with a bare code. Ordered (not a
 // map) so emission stays deterministic (byte-identical output).
+//
+// `when`, if non-nil, gates the message on a debug build mode: the sanitizer
+// diagnostics (#5545) exist only where their detector does, so a release
+// build's .rodata is byte-for-byte what it was before the mode existed.
 var abortMessages = []struct {
 	label, text string
 	code        int
+	when        func() bool
 }{
-	{"__fern_msg_arr_oob", "fern: array index out of range\n", 134},
-	{"__fern_msg_slice_oob", "fern: slice index out of range\n", 134},
-	{"__fern_msg_oom", "fern: out of memory (heap arena exhausted)\n", ExitArenaExhausted},
-	{"__fern_msg_slice_range", "fern: slice range out of bounds\n", 134},
-	{"__fern_msg_str_slice", "fern: string index out of range\n", 134},
+	{"__fern_msg_arr_oob", "fern: array index out of range\n", 134, nil},
+	{"__fern_msg_slice_oob", "fern: slice index out of range\n", 134, nil},
+	{"__fern_msg_oom", "fern: out of memory (heap arena exhausted)\n", ExitArenaExhausted, nil},
+	{"__fern_msg_slice_range", "fern: slice range out of bounds\n", 134, nil},
+	{"__fern_msg_str_slice", "fern: string index out of range\n", 134, nil},
+	{sanDoubleFreeMsg, "fern-sanitizer: rc over-release (double free)\n", ExitSanitizer, func() bool { return ast.RcUnderflowTrap }},
+	{sanUseAfterFreeMsg, "fern-sanitizer: use-after-free (touched a quarantined block)\n", ExitSanitizer, func() bool { return ast.RcFreeDebug }},
 }
+
+// The two sanitizer diagnostics (#5545). Named constants because each is
+// written at one emission site and read at several trap sites, and a typo in
+// the label would be a link error in a build mode nothing routinely compiles.
+const (
+	sanDoubleFreeMsg   = "__fern_msg_san_double_free"
+	sanUseAfterFreeMsg = "__fern_msg_san_uaf"
+)
+
+// ExitSanitizer is the status a sanitizer build exits with when a heap
+// memory-safety check fires (#5545).
+//
+// Picked on ExitArenaExhausted's reasoning: clear of the whole 128+signal
+// range, so no signal death can forge it, and distinct from 125 so a
+// sanitizer abort and an arena trap are told apart by status alone — they
+// have different causes and different fixes. The `fern-sanitizer:` line on
+// stderr and the backtrace under it remain the primary diagnostic; this only
+// makes the status sufficient for a harness that captures neither.
+const ExitSanitizer = 124
+
+// The sanitizer's exit-time leak verdict (#5545) — three fixed segments
+// around two decimal numbers, appended to the leakcheck summary when the
+// run ends with live bytes outstanding:
+//
+//	fern-sanitizer: leak <live_bytes> bytes in <allocs-frees> blocks
+//
+// A clean run prints nothing extra, so "no fern-sanitizer: line on stderr"
+// is the whole pass condition — the summary's three numbers are still there
+// for anyone who wants them, but reading them is no longer required to know
+// whether the program leaked. Emitted only under ast.SanitizeEnabled: plain
+// FERN_LEAKCHECK=1 keeps its exactly-one-line stderr contract.
+//
+// The arm64 backend carries the identical segments; a program's sanitizer
+// output must not depend on which native it was built for.
+const (
+	sanLeakPrefix = "fern-sanitizer: leak "
+	sanLeakMiddle = " bytes in "
+	sanLeakSuffix = " blocks"
+)
 
 // ExitArenaExhausted is the status a Fern binary exits with when __fern_alloc's
 // bounds check trips — the fixed bump arena is full.
@@ -4623,6 +4682,9 @@ func (g *generator) emitAbortRuntime() {
 
 	g.line(".section .rodata")
 	for _, m := range abortMessages {
+		if m.when != nil && !m.when() {
+			continue
+		}
 		g.label(m.label)
 		g.emit(fmt.Sprintf(".asciz %q", m.text))
 	}
@@ -4945,6 +5007,16 @@ func (g *generator) emitAllocRuntime() {
 // When the freelist is disabled the helper is a no-op so a stray
 // `__free` call in a non-freeing build is harmless.
 //
+// Under ast.RcFreeDebug the push is omitted entirely: NOTHING is ever
+// recycled, so a quarantined block can't be handed back to a fresh
+// allocation that would overwrite its RcPoison and turn a detectable
+// use-after-free back into silent corruption. The leak accounting above
+// still runs, which is what lets the leak census and the UAF detector
+// be on at the same time — a quarantine is a release, and counting it
+// where the release happens rather than where the memory is recycled
+// keeps a correctly-freed array off the leak report. The cost is that
+// the heap only ever grows; that is the price of the mode.
+//
 // System V: rdi = base, rsi = size. Leaf; no frame.
 func (g *generator) emitFreeRuntime() {
 	g.line("")
@@ -4972,7 +5044,7 @@ func (g *generator) emitFreeRuntime() {
 		g.emit("add qword ptr [rip + __fern_lc_free_count], 1")
 		g.emit("add qword ptr [rip + __fern_lc_free_bytes], rax")
 	}
-	if ast.RcFreeEnabled {
+	if ast.RcFreeEnabled && !ast.RcFreeDebug {
 		g.emit("add rsi, 15")
 		g.emit("and rsi, -16") // round size to the class granularity
 		g.emit("cmp rsi, 16")
@@ -5105,12 +5177,7 @@ func (g *generator) emitArrDecRuntime() {
 	g.emit("cmp ecx, 1")
 	g.emit("jne .Larrdec_dec")
 	// rc == 1 → free the buffer.
-	if ast.RcFreeDebug {
-		// Quarantine: poison the rc word and DON'T recycle, so any
-		// stale reference's later rc op traps. rdi is still data.
-		g.emit(fmt.Sprintf("mov dword ptr [rdi - 8], %d", ast.RcPoison))
-		g.emit("jmp .Larrdec_ret")
-	}
+	g.quarantine("rdi")
 	g.emit("mov r8, rsi") // stride
 	g.emit("cmp r8, 16")
 	g.emit("jae .Larrdec_hdr")
@@ -5176,12 +5243,7 @@ func (g *generator) emitMapDropRuntime() {
 	g.emit("cmp ecx, 1")
 	g.emit("jne .Lmapdrop_dec")
 	// rc == 1 → free buf, then the handle cell.
-	if ast.RcFreeDebug {
-		// Quarantine: poison the handle rc and DON'T recycle, so any
-		// stale reference's later rc op traps.
-		g.emit(fmt.Sprintf("mov dword ptr [rbx - 8], %d", ast.RcPoison))
-		g.emit("jmp .Lmapdrop_ret")
-	}
+	g.quarantine("rbx")
 	g.emit("mov rdx, [rbx]") // buf = load_ptr(m)
 	g.emit("test rdx, rdx")
 	g.emit("jz .Lmapdrop_freehandle")
@@ -5235,11 +5297,7 @@ func (g *generator) emitBoxFreeRuntime() {
 	g.emit("jz .Lboxfree_ret")
 	g.emit("cmp rdi, 0x10000")
 	g.emit("jb .Lboxfree_ret")
-	if ast.RcFreeDebug {
-		// Quarantine: poison the rc word, don't recycle (UAF detector).
-		g.emit(fmt.Sprintf("mov dword ptr [rdi - 8], %d", ast.RcPoison))
-		g.emit("jmp .Lboxfree_ret")
-	}
+	g.quarantine("rdi")
 	g.emit("mov rbx, rdi") // preserve data across __fern_free
 	g.emit("sub rdi, 8")   // base = data - 8 rc header (arg1)
 	g.emit("add rsi, 8")   // size + 8 rc header (arg2)
@@ -5513,7 +5571,7 @@ func (g *generator) emitRcIncRuntime() {
 		// freed (quarantined) — touching it now is a use-after-free.
 		g.emit(fmt.Sprintf("cmp ecx, %d", ast.RcPoison))
 		g.emit("jne .Lrcinc_live")
-		g.emit("ud2") // trap → gdb backtrace shows the stale holder
+		g.emitAbort(sanUseAfterFreeMsg) // names the stale holder in the backtrace
 		g.label(".Lrcinc_live")
 	}
 	g.emit("test ecx, ecx")
@@ -5563,7 +5621,7 @@ func (g *generator) emitRcDecRuntime() {
 	if ast.RcFreeDebug {
 		g.emit(fmt.Sprintf("cmp ecx, %d", ast.RcPoison))
 		g.emit("jne .Lrcdec_live")
-		g.emit("ud2") // UAF: dec of a freed (quarantined) block
+		g.emitAbort(sanUseAfterFreeMsg) // UAF: dec of a freed (quarantined) block
 		g.label(".Lrcdec_live")
 	}
 	g.emit("test ecx, ecx")
@@ -5582,15 +5640,47 @@ func (g *generator) emitRcDecRuntime() {
 	g.line(".size __fern_rc_dec, .-__fern_rc_dec")
 }
 
-// rcUnderflowTrap emits the `ud2` that follows every
+// quarantine emits the ast.RcFreeDebug poison store: the rc word of the
+// block whose DATA pointer is in dataReg is overwritten with
+// ast.RcPoison, so __fern_rc_inc / __fern_rc_dec fault the moment a
+// stale reference touches it and the backtrace names the holder whose
+// count was wrong.
+//
+// Control falls THROUGH to the site's ordinary reclamation path. That
+// path computes the block's size and calls __fern_free, which accounts
+// the release for the leak census and (in this mode) declines to push
+// the block onto a freelist — so the block is both never recycled and
+// never mistaken for a leak. Nothing between here and the call writes
+// [data-8], so the poison survives to the next toucher.
+//
+// No-op when the detector is off, which is what keeps the release build
+// byte-identical.
+func (g *generator) quarantine(dataReg string) {
+	if ast.RcFreeDebug {
+		g.emit(fmt.Sprintf("mov dword ptr [%s - 8], %d", dataReg, ast.RcPoison))
+	}
+}
+
+// rcUnderflowTrap emits the fatal report that follows every
 // __fern_rc_underflow bump under ast.RcUnderflowTrap
-// (FERN_RC_UNDERFLOW_TRAP=1), so an over-release dies with SIGILL at the
-// offending dec instead of only incrementing a counter nobody reads.
-// No-op otherwise — the emitted asm is byte-identical to a build without
-// the feature.
+// (FERN_RC_UNDERFLOW_TRAP=1, or FERN_SANITIZE=1), so an over-release
+// dies AT the offending dec instead of only incrementing a counter
+// nobody reads.
+//
+// It routes through __fern_report (#5538) rather than dying on a bare
+// `ud2`: the process now names its cause on stderr and prints the
+// frame-pointer backtrace under it, so an over-release is diagnosable
+// from a plain run. These helpers are leaves that never push rbp, so
+// the walk starts at the caller's frame and the first address named is
+// the function whose dec was wrong — the same answer the old
+// SIGILL-plus-gdb recipe gave, without the gdb. (`break __fern_report`
+// still stops there if you want the live registers.)
+//
+// No-op when the flag is off — the emitted asm is byte-identical to a
+// build without the feature.
 func (g *generator) rcUnderflowTrap() {
 	if ast.RcUnderflowTrap {
-		g.emit("ud2")
+		g.emitAbort(sanDoubleFreeMsg)
 	}
 }
 
@@ -6369,11 +6459,7 @@ func (g *generator) emitDropArrPtrRuntime() {
 		g.emit("mov ecx, dword ptr [rbx - 8]")
 		g.emit("cmp ecx, 1")
 		g.emit("jne .Ldrop_plaindec")
-		if ast.RcFreeDebug {
-			// Quarantine + poison the rc word (rbx is data); no recycle.
-			g.emit(fmt.Sprintf("mov dword ptr [rbx - 8], %d", ast.RcPoison))
-			g.emit("jmp .Ldrop_done")
-		}
+		g.quarantine("rbx")
 		g.emit("mov r8, r14") // stride
 		g.emit("cmp r8, 16")
 		g.emit("jae .Ldrop_hdr")
@@ -6457,10 +6543,7 @@ func (g *generator) emitDropArrStrRuntime() {
 		g.emit("mov ecx, dword ptr [rbx - 8]")
 		g.emit("cmp ecx, 1")
 		g.emit("jne .Ldrops_plaindec")
-		if ast.RcFreeDebug {
-			g.emit(fmt.Sprintf("mov dword ptr [rbx - 8], %d", ast.RcPoison))
-			g.emit("jmp .Ldrops_done")
-		}
+		g.quarantine("rbx")
 		g.emit("mov r8, r14")
 		g.emit("cmp r8, 16")
 		g.emit("jae .Ldrops_hdr")
@@ -7516,6 +7599,35 @@ func (g *generator) emitLcReportRuntime() {
 	g.emit("lea rsi, [rip + .Llc_str_nl]")
 	g.emit("mov edx, 1")
 	g.emit("call .Llc_write")
+	if ast.SanitizeEnabled {
+		// Sanitizer leak verdict (#5545). Only a POSITIVE balance is a
+		// leak: zero is clean and a negative one is an over-free, which
+		// the rc over-release detector reports at the offending dec —
+		// naming it a leak here would be wrong twice over.
+		g.emit("mov rax, [rip + __fern_lc_alloc_bytes]")
+		g.emit("sub rax, [rip + __fern_lc_free_bytes]")
+		g.emit("test rax, rax")
+		g.emit("jle .Lsan_leak_done")
+		g.emit("lea rsi, [rip + .Lsan_str_leak]")
+		g.emit(fmt.Sprintf("mov edx, %d", len(sanLeakPrefix)))
+		g.emit("call .Llc_write")
+		g.emit("mov rdi, [rip + __fern_lc_alloc_bytes]")
+		g.emit("sub rdi, [rip + __fern_lc_free_bytes]")
+		g.emit("call .Llc_wrnum")
+		g.emit("lea rsi, [rip + .Lsan_str_bytesin]")
+		g.emit(fmt.Sprintf("mov edx, %d", len(sanLeakMiddle)))
+		g.emit("call .Llc_write")
+		g.emit("mov rdi, [rip + __fern_lc_alloc_count]")
+		g.emit("sub rdi, [rip + __fern_lc_free_count]")
+		g.emit("call .Llc_wrnum")
+		g.emit("lea rsi, [rip + .Lsan_str_blocks]")
+		g.emit(fmt.Sprintf("mov edx, %d", len(sanLeakSuffix)))
+		g.emit("call .Llc_write")
+		g.emit("lea rsi, [rip + .Llc_str_nl]")
+		g.emit("mov edx, 1")
+		g.emit("call .Llc_write")
+		g.label(".Lsan_leak_done")
+	}
 	g.emit("ret")
 	// .Llc_write(rsi = buf, edx = len): one write(2) to stderr.
 	g.label(".Llc_write")
