@@ -2140,39 +2140,29 @@ function if_expr_rt(e: Expr): string {
         ExprBool(_) => { return "bool"; },
         ExprNumber(n) => {
             if (n.is_float) { return "f64"; }
-            // Width matters here, unlike the field-lookup use above: this tag
-            // becomes the lifted IIFE lambda's DECLARED return type, so calling
-            // every integer literal i32 declares i32 against a 64-bit body and
-            // the module bails off the IR path (`FERN_STRICT_IR: __lam_0`) —
-            // fernsmith seed 502, and `((if (c) { 764i64 } else { 151i64 }) >>
-            // 32i64) as i32`, which the interpreter runs and the self-host
-            // compiler refuses. Same rule as mono_infer: the suffix says it
-            // outright, otherwise magnitude does (a literal past i32-max has no
-            // valid i32 reading).
-            if (n.suffix == "i64" || n.suffix == "u64") { return n.suffix + ""; }
-            // A suffix DECIDES, and it decides against widening too: `2147484197u32`
-            // is above i32-max but is 32 bits wide, so the magnitude rule below must
-            // not see it. mono_infer takes any suffix at face value for the same
-            // reason; the tags here are coarser (a u32/u8 branch is still an i32-wide
-            // slot), so a non-64 suffix maps to i32 rather than being returned as-is.
-            if (n.suffix.len() > 0) { return "i32"; }
+            // A WIDE literal — explicit `i64` / `u64` suffix, or a magnitude past
+            // i32-max — names i64. Defaulting it to i32 gave the desugared IIFE a
+            // return type its body contradicted, and since that type is non-empty
+            // infer_ret_types_module never revisited it: `var w: i64 = (if (c) {
+            // 5000000000 } else { … })` bailed the whole module off the IR path.
+            //
+            // The other branch kinds were already classified, which is why only
+            // wide integers were affected — string / bool / f64 branches, i64 branches
+            // through an IDENT (the slot carries the width), and an i64 if-expr
+            // in `return` position inside an i64 function (the enclosing return
+            // type supplies it) all lowered fine. A bare wide literal is the one
+            // shape with nothing but this classifier to go on.
+            // ANY suffix names the type outright, and must be read BEFORE the
+            // magnitude rule below: `2147484197u32` is a u32 that happens to
+            // exceed i32-max, so classifying it by magnitude calls it i64 and the
+            // IIFE returns the wrong type. `mono_infer` in this file already does
+            // exactly this; the two are sibling literal classifiers.
+            if (n.suffix.len() > 0) { return n.suffix; }
             if (literal_is_i64(n.text)) { return "i64"; }
             return "i32";
         },
         _ => { return "i32"; }
     }
-}
-
-// wider_rt combines two branch tags for an if-expression's IIFE. The branches
-// yield one value, so one tag has to describe both, and a 64-bit branch is the
-// one that cannot be narrowed: declaring i32 over it truncates. Anything else
-// keeps the then-branch's tag, which is what this used to do unconditionally —
-// the else branch's tag was computed and dropped on the floor.
-function wider_rt(a: string, b: string): string {
-    if (a == b) { return a; }
-    if (a == "i64" || a == "u64") { return a; }
-    if (b == "i64" || b == "u64") { return b; }
-    return a;
 }
 
 // LitArm is one arm of a match on a non-enum (i32 / string) scrutinee:
@@ -2769,7 +2759,6 @@ function parse_if_chain(p: Par): IfChain {
         var (elseb_body, elseb_rt, elseb_p) = parse_branch_body(p);
         p = elseb_p;
         else_body = elseb_body;
-        rt = wider_rt(rt, elseb_rt);
     }
     return IfChain { par: p, stmt: s_if(condr_expr, then_body, else_body), rt: rt, needs_default_return: false, value_local: "" };
 }
