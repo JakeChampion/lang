@@ -25,6 +25,12 @@ import (
 // Neither half alone is broken (`count_of[T](xs: T[]): i32` and the #5586
 // pass-through `id_of[T](x: T): T` were both always correct), so the two
 // controls are what pin the fault to the combination.
+//
+// The tuple-return rows are the same defect in a different return spelling —
+// `(T, T)` and `(T, i32)`. They are here rather than in a file of their own
+// because a fix that only handles the spellings it was shown is how this bug
+// got fixed twice already; the promotion now triggers on any mention of the
+// var in the return, and these are what hold it to that.
 var erasedElemReturnCases = []struct {
 	name string
 	src  string
@@ -55,6 +61,24 @@ function main(): i32 {
     var xs: P[] = [P { a: 4 }, P { a: 1 }];
     return first_of(xs).a * 10 + 5;
 }`}, // 45; used to be refused on both self-host backends
+	{"pair_of_f64", `function pair_of[T](xs: T[]): (T, T) { return (xs[0], xs[1]); }
+function main(): i32 {
+    var xs: f64[] = [4.5, 1.5];
+    var (a, b) = pair_of(xs);
+    return ((a + b) * 10.0) as i32;
+}`}, // 60; was 0 — a bare TUPLE of the typevar is the same defect in another return spelling
+	{"pair_of_string", `function pair_of[T](xs: T[]): (T, T) { return (xs[0], xs[1]); }
+function main(): i32 {
+    var xs: string[] = ["ab", "cde"];
+    var (a, b) = pair_of(xs);
+    return a.len() + b.len() + 40;
+}`}, // 45; was 42
+	{"mixed_tuple_return", `function head_and_one[T](xs: T[]): (T, i32) { return (xs[0], 1); }
+function main(): i32 {
+    var xs: f64[] = [4.4];
+    var (a, b) = head_and_one(xs);
+    return (a * 10.0) as i32 + b;
+}`}, // 45; was 0
 	{"count_of_control", `function count_of[T](xs: T[]): i32 { return xs.len(); }
 function main(): i32 {
     var xs: f64[] = [4.5, 1.5];
@@ -112,7 +136,9 @@ func TestSelfHostErasedElemReturnX86_64(t *testing.T) {
 
 // TestSelfHostErasedElemReturnWasm is the wasm leg. Before the promotion the
 // wide-element cases were REFUSED here by the erased-wide gate; now they lower
-// and must produce the oracle's value.
+// and must produce the oracle's value. `count_of_control` was refused for a
+// separate reason (the gate did not ask whether the element was ever read) and
+// is covered from that angle by TestSelfHostErasedWideArrayGateBlindWasm.
 func TestSelfHostErasedElemReturnWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping erased-element-return wasm cases")
@@ -128,12 +154,6 @@ func TestSelfHostErasedElemReturnWasm(t *testing.T) {
 	}
 
 	for _, tc := range erasedElemReturnCases {
-		if tc.name == "count_of_control" {
-			// Still refused on wasm: an erased `T[]` param whose element is never
-			// read is safe, but the gate does not ask. Tracked separately — see
-			// docs/SELFHOST-ERASED-ELEMENT-RETURN.md.
-			continue
-		}
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
 			proj := t.TempDir()
