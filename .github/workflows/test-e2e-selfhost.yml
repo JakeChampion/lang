@@ -228,12 +228,20 @@ jobs:
   # link that, for the bigger drivers, runs another ~minute. With the closure-
   # keyed cache (hashSelfHostSources keys on a driver's import closure, not its
   # dir contents) a given stock driver hashes to ONE key across every test, so it
-  # can be compiled+linked once here and restored by the shards. ONE driver (or a
-  # couple of small related ones) per warm job: warming several big drivers in a
-  # single job ran the job's disk low and the (silent) per-driver .bin disk-cache
-  # write was dropped, so the shards re-linked them (~min each) — the residual
-  # preemption after the first cut. A dedicated runner per driver has ample disk
-  # to persist both the .s and the .bin. Keyed by (driver, SHA): SHA so warm +
+  # can be compiled+linked once here and restored by the shards. THREE jobs, one
+  # per driver family: an earlier revision ran one job per driver on the grounds
+  # that several big drivers in one job ran its disk low and the (silent)
+  # per-driver .bin disk-cache write got dropped, so the shards re-linked them.
+  # That does not reproduce at today's footprints — measured on the 2026-08-06
+  # run, the whole cache is 126 MB after the LARGEST single driver (asm_load_run)
+  # and 67 MB after the three-driver ssa job, against ~21 GB free on the runner.
+  # What one-per-driver did cost was real: each job pays ~28s of fixed setup
+  # (checkout + setup-fern + download-artifact) to do ~22s of warming, and
+  # `needs: warm` gates all 28 shards on the SLOWEST of them — where "slowest"
+  # under a saturated runner pool is decided by queue wait, not by work. On that
+  # same run the twelve jobs did 9.4 min of warming spread across a 14.6-min
+  # barrier, each waiting separately for a runner. Three jobs draw three queue
+  # slots instead of twelve. Keyed by (driver, SHA): SHA so warm +
   # shards share one intra-run hand-off (a source change is a new SHA → fresh
   # warm, no staleness); per-driver so each restores into its own dir. The
   # aarch64 lane skips the x86 driver tests, so warming is x86-only
@@ -249,25 +257,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Grouped so each job does a comparable amount of work — the numbers in
+        # brackets are the measured per-driver warm times from the 2026-08-06
+        # run, on top of ~28s of fixed per-job setup.
         include:
-          - { key: elig,      drivers: "asm_ir_elig_run.fern" }
-          - { key: asm,       drivers: "asm_run.fern" }
-          - { key: pathprobe, drivers: "asm_pathprobe_run.fern" }
-          - { key: asmir,     drivers: "asm_ir_run.fern" }
-          - { key: asmload,   drivers: "asm_load_run.fern" }
-          - { key: modload,   drivers: "asm_modload_run.fern" }
-          - { key: checker,   drivers: "checker_modload_run.fern" }
-          - { key: ssa,       drivers: "ssa_run.fern,ssa_emit_run.fern,ssa_lift_scan_run.fern" }
-          # One warm job PER wasm driver: warming all three in one job made
-          # that job the slowest in the matrix (~234s measured) and `needs:
-          # warm` gates every shard on the slowest warm job — exactly the
-          # coupling the standalone `cli` job exists to avoid. (The ssa trio
-          # above stays fused because those drivers are small enough that the
-          # fused job still finishes under the ~110s matrix barrier.)
-          - { key: wasmrun,   drivers: "wasm_run.fern" }
-          - { key: wasmir,    drivers: "wasm_ir_run.fern" }
-          - { key: wasmio,    drivers: "wasm_runio_run.fern" }
-          - { key: irx86,     drivers: "irlower_run.fern" }
+          # asm_run 20s, pathprobe 19s, irlower 21s, asm_ir 15s, elig 16s
+          - { key: asm,  drivers: "asm_run.fern,asm_pathprobe_run.fern,irlower_run.fern,asm_ir_run.fern,asm_ir_elig_run.fern" }
+          # asm_load 29s, modload 24s, checker 9s, ssa trio 21s combined
+          - { key: load, drivers: "asm_load_run.fern,asm_modload_run.fern,checker_modload_run.fern,ssa_run.fern,ssa_emit_run.fern,ssa_lift_scan_run.fern" }
+          # wasm_run 22s, wasm_ir 16s, wasm_runio 16s
+          - { key: wasm, drivers: "wasm_run.fern,wasm_ir_run.fern,wasm_runio_run.fern" }
     name: warm-selfhost-x86_64-${{ matrix.key }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
