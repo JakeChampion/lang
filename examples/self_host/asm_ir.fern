@@ -4657,9 +4657,9 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fn___fern_str_to_lower", "__fn___fern_str_to_upper", "__fn___fern_str_starts_with",
         "__fn___fern_str_ends_with", "__fn___fern_str_index_of", "__fern_print_str",
         "__fern_print_int", "__fern_eprint_str", "__fern_putchar",
-        "__fern_read_int", "__fern_read_line", "__fern_read_file", "__fn___fern_read_file",
-        "__fern_reader_read_chunk", "__fern_reader_close", "__fern_write_file", "__fn___fern_write_file",
-        "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fern_temp_dir", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir", "__fern_remove_file", "__fn___fern_remove_file",
+        "__fern_read_int", "__fern_read_line", "__fn___fern_read_file",
+        "__fern_reader_read_chunk", "__fern_reader_close", "__fn___fern_write_file",
+        "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fern_temp_dir", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir", "__fn___fern_remove_file",
         "__fern_env", "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_arg_at_rc", "__fern_strbuf_append",
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's
@@ -7401,10 +7401,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // random_bytes — now a Fern runtime function (#2649), lowered through the IR
     // pipeline: alloc n bytes, fill from getrandom via the __syscall3 sub-floor,
     // box with __raw_string. Heap-dependent (present above). The source is shared
-    // with arm64 (asm_arm64_ir passes its own number); 318 is x86-64 getrandom.
+    // with arm64 (asm_arm64_ir passes its own target); asmcore.sysno picks 318.
     if (s.has_need("random_bytes")) {
         s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes("318"), all_structs, s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes("x86_64"), all_structs, s);
     }
     // str_split — now a Fern runtime function (#2649), lowered through the IR
     // pipeline: scan for `sep`, append each segment slice (.append() ->
@@ -7578,9 +7578,9 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         s = s.write("    .text\n");
         var fs_src: string = asmcore.rt_src_io_error();
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(); }
-        if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_read_file(); }
-        if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file(); }
-        if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file(); }
+        if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_read_file("x86_64"); }
+        if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file("x86_64"); }
+        if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file("x86_64"); }
         if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir(); }
         if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir(); }
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all(); }

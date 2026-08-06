@@ -1875,6 +1875,12 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// chunk address is __raw_addr(p, off), so a truncated heap pointer (what
 		// plain `p + off` produces on arm64, where i32 arithmetic sign-extends
 		// back to 32 bits) EFAULTs and leaves the tail zeroed -> 2.
+		// write -> read -> remove -> confirm-gone, through the Fern fs leaves
+		// (#2649). An absolute /tmp path works under qemu-user too, since the
+		// syscalls pass through to the host. The read and write are LOOPS over
+		// __raw_addr now, so a wrong chunk address shows up as a length or
+		// content mismatch rather than a silent partial file.
+		{"fs-roundtrip", `function main(): i32 { var p: string = "/tmp/fern_fsrt_x86.txt"; match (write_file(p, "hello world")) { Ok(_) => {}, Err(_) => { return 1; } } match (read_file(p)) { Ok(c) => { if (c != "hello world") { return 2; } }, Err(_) => { return 3; } } match (remove_file(p)) { Ok(_) => {}, Err(_) => { return 4; } } match (read_file(p)) { Ok(_) => { return 5; }, Err(_) => {} } return 41; }`, 41},
 		{"random-bytes-chunked", `function main(): i32 { var b: string = random_bytes(600); if (b.len() != 600) { return 1; } var v: i32 = 0; var i: i32 = 256; while (i < 600) { v = v | (b[i] as i32); i = i + 1; } if (v == 0) { return 2; } var w: i32 = 0; var j: i32 = 0; while (j < 256) { w = w | (b[j] as i32); j = j + 1; } if (w == 0) { return 3; } return 42; }`, 42},
 		// uuid_v4: 36 chars, '4' at index 14, '-' at 8, distinct draws.
 		{"uuid-v4", uuidV4Program, 0},

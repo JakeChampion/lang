@@ -583,6 +583,13 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // the Darwin BSD number when `darwin` is set. That instruction
             // appears nowhere else in this emitter, so the match is unambiguous.
             s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x8, [sp], #16\n    svc #0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 206) {  // syscall4
+            // 4-arg sibling of syscall3 (#2649): [nr, a1, a2, a3, a4] with a4 on
+            // top. arm64 passes syscall args in x0..x5, so a4 is simply x3 — no
+            // x86-64-style %r10 shuffle. Same `ldr x8` number-load marker, so
+            // darwinize reskins this sequence for Mach-O exactly as it does
+            // syscall3's.
+            s = s.write("    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x8, [sp], #16\n    svc #0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 223) {  // raw_addr
             // pop off (top), ptr; push ptr+off at full width (#2649). Unlike the
             // `add` op this is NOT followed by the i32 `sxtw` narrow, which is
@@ -852,17 +859,17 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap"); s = s.need("str_read_line");
             s = s.write("    bl __fern_read_line\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 169) {  // read_file
-            // [pathbox] -> read the whole named file, push a fresh Result[string,
-            // IoError] box (asm_arm64.emit_runtime's __fern_read_file, emitted in
-            // its heap block). Pop the path box into x0, push the result box.
+            // [pathbox] IS param[0]; call the Fern-compiled __fn___fern_read_file
+            // (asmcore.rt_src_read_file, #2649) via the stack ABI, as asm_ir does.
             s = s.need("heap"); s = s.need("read_file");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_read_file\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_read_file\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 170) {  // write_file
-            // [pathbox][contentbox] -> write content to the named file, push a fresh
-            // Result[(), IoError] box (asm_arm64.emit_runtime's __fern_write_file, in its
-            // heap block). Pop content into x1, path into x0; push the result box.
+            // [pathbox][contentbox] ARE param[0..1]; call the Fern-compiled
+            // __fn___fern_write_file (asmcore.rt_src_write_file, #2649). The stack
+            // ABI wants param[0] on top, so re-push the two popped operands in
+            // reverse — the same shuffle the two-arg string helpers do.
             s = s.need("heap"); s = s.need("write_file");
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_write_file\n    str x0, [sp, #-16]!\n");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_write_file\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 172) {  // remove_dir_all
             // [pathbox] -> recursively rm -rf the named dir tree, push a fresh
             // Result[(), IoError] box (asm_arm64.emit_runtime's __fern_remove_dir_all,
@@ -871,11 +878,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_remove_dir_all\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 173) {  // remove_file
-            // [pathbox] -> unlink the named file, push a fresh Result[(), IoError] box
-            // (asm_arm64.emit_runtime's __fern_remove_file, in its heap block). Pop
-            // the path box into x0, push the result box.
-            s = s.need("heap");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_remove_file\n    str x0, [sp, #-16]!\n");
+            // [pathbox] IS param[0]; call the Fern-compiled __fn___fern_remove_file
+            // (asmcore.rt_src_remove_file, #2649) via the stack ABI.
+            s = s.need("heap"); s = s.need("remove_file");
+            s = s.write("    bl __fn___fern_remove_file\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 174) {  // temp_dir
             // [prefixbox] -> make a uniquely-named /tmp dir, push a fresh
             // Result[string, IoError] box (asm_arm64.emit_runtime's __fern_temp_dir,
@@ -4317,204 +4323,13 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // whole-compiler test).
     s = s.write(".globl __fern_io_error\n.type __fern_io_error, %function\n__fern_io_error:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n    mov x19, x0\n    mov x20, x1\n    cmp x19, #2\n    b.eq .Laioe_nf\n    cmp x19, #13\n    b.eq .Laioe_pd\n    cmp x19, #17\n    b.eq .Laioe_ae\n    cmp x19, #4\n    b.eq .Laioe_intr\n    mov x0, #16\n    bl __fern_alloc\n    adrp x9, .Laioe_empty\n    add x9, x9, :lo12:.Laioe_empty\n    str x9, [x0]\n    str xzr, [x0, #8]\n    mov x19, x0\n    mov x0, #24\n    bl __fern_alloc\n    adrp x9, " + ashOt.label + "\n    add x9, x9, :lo12:" + ashOt.label + "\n    str x9, [x0]\n    str x20, [x0, #8]\n    str x19, [x0, #16]\n    b .Laioe_done\n.Laioe_nf:\n    adrp x19, " + ashNf.label + "\n    add x19, x19, :lo12:" + ashNf.label + "\n    b .Laioe_withpath\n.Laioe_pd:\n    adrp x19, " + ashPd.label + "\n    add x19, x19, :lo12:" + ashPd.label + "\n    b .Laioe_withpath\n.Laioe_ae:\n    adrp x19, " + ashAe.label + "\n    add x19, x19, :lo12:" + ashAe.label + "\n    b .Laioe_withpath\n.Laioe_intr:\n    mov x0, #8\n    bl __fern_alloc\n    adrp x9, " + ashIn.label + "\n    add x9, x9, :lo12:" + ashIn.label + "\n    str x9, [x0]\n    b .Laioe_done\n.Laioe_withpath:\n    mov x0, #16\n    bl __fern_alloc\n    str x19, [x0]\n    str x20, [x0, #8]\n.Laioe_done:\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n.size __fern_io_error, .-__fern_io_error\n    .section .rodata\n.Laioe_empty:\n    .byte 0\n    .text\n");
 
-    // __fern_read_file(x0 = path string box) → Result[string,
-    // IoError]: [tag@0, payload@8] with tag=0 Ok(contents) on
-    // success, tag=1 Err(_) on any I/O error (payload 0). Copies
-    // the path to a NUL-terminated buffer, openat(AT_FDCWD, path,
-    // O_RDONLY), reads to EOF into a 64 MiB buffer, closes.
-    // Linux aarch64 syscalls: openat=56, read=63, close=57.
-    s = s.write(".globl __fern_read_file\n");
-    s = s.write(".type __fern_read_file, %function\n");
-    s = s.write("__fern_read_file:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    stp x21, x22, [sp, #-16]!\n");
-    s = s.write("    stp x23, x24, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");           // path box
-    s = s.write("    ldr x20, [x19]\n");        // path data ptr
-    s = s.write("    ldr x21, [x19, #8]\n");    // path len
-    s = s.write("    add x0, x21, #1\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x22, x0\n");           // pathz
-    s = s.write("    mov x9, #0\n");
-    s = s.write(".Lrdf_copy:\n");
-    s = s.write("    cmp x9, x21\n");
-    s = s.write("    b.ge .Lrdf_copydone\n");
-    s = s.write("    ldrb w10, [x20, x9]\n");
-    s = s.write("    strb w10, [x22, x9]\n");
-    s = s.write("    add x9, x9, #1\n");
-    s = s.write("    b .Lrdf_copy\n");
-    s = s.write(".Lrdf_copydone:\n");
-    s = s.write("    mov w10, #0\n");
-    s = s.write("    strb w10, [x22, x21]\n");  // NUL terminator
-    // openat(AT_FDCWD, pathz, O_RDONLY=0, 0). AT_FDCWD is -100 on
-    // Linux, -2 on Darwin — only matters for relative paths (an
-    // absolute path ignores dirfd), but emit the right one so
-    // relative reads work too. O_RDONLY=0 is universal.
-    if (darwin) {
-        s = s.write("    mov x0, #-2\n");
-    } else {
-        s = s.write("    mov x0, #-100\n");
-    }
-    s = s.write("    mov x1, x22\n");
-    s = s.write("    mov x2, #0\n");
-    s = s.write("    mov x3, #0\n");
-    s = s.write("    mov x8, #56\n");           // sys_openat
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.lt .Lrdf_err\n");
-    s = s.write("    mov x23, x0\n");           // fd
-    // Size the file via lseek so we allocate exactly what's needed
-    // (a fixed buffer would exhaust the heap when a driver
-    // read_file's several modules). lseek=62, SEEK_END=2, SEEK_SET=0.
-    s = s.write("    mov x0, x23\n");
-    s = s.write("    mov x1, #0\n");
-    s = s.write("    mov x2, #2\n");
-    s = s.write("    mov x8, #62\n");
-    s = s.write("    svc #0\n");
-    s = s.write("    mov x24, x0\n");           // file size (temp)
-    s = s.write("    mov x0, x23\n");           // rewind to start
-    s = s.write("    mov x1, #0\n");
-    s = s.write("    mov x2, #0\n");
-    s = s.write("    mov x8, #62\n");
-    s = s.write("    svc #0\n");
-    s = s.write("    mov x0, x24\n");           // alloc exactly size bytes
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x24, x0\n");           // buf base
-    s = s.write("    mov x20, x0\n");           // write ptr
-    s = s.write("    mov x21, #0\n");           // total
-    s = s.write(".Lrdf_rdloop:\n");
-    s = s.write("    mov x0, x23\n");
-    s = s.write("    mov x1, x20\n");
-    s = s.write("    ldr x2, =1048576\n");      // up to 1 MiB per read
-    s = s.write("    mov x8, #63\n");           // sys_read
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.le .Lrdf_rddone\n");
-    s = s.write("    add x21, x21, x0\n");
-    s = s.write("    add x20, x20, x0\n");
-    s = s.write("    b .Lrdf_rdloop\n");
-    s = s.write(".Lrdf_rddone:\n");
-    s = s.write("    mov x0, x23\n");           // close(fd)
-    s = s.write("    mov x8, #57\n");
-    s = s.write("    svc #0\n");
-    s = s.write("    mov x0, #16\n");           // string box
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    str x24, [x0]\n");         // data@0
-    s = s.write("    str x21, [x0, #8]\n");     // len@8
-    s = s.write("    mov x24, x0\n");           // strbox
-    s = s.write("    mov x0, #16\n");           // Result Ok box
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x1, #0\n");
-    s = s.write("    str x1, [x0]\n");          // tag = Ok
-    s = s.write("    str x24, [x0, #8]\n");     // payload = string
-    s = s.write("    b .Lrdf_ret\n");
-    s = s.write(".Lrdf_err:\n");
-    // x0 = -errno from openat; x19 = the ORIGINAL path box (callee-saved,
-    // untouched). Map errno → a real IoError variant box — the payload
-    // used to be NULL, so matching the error value segfaulted (#4624,
-    // arm64 leg of #4370).
-    s = s.write("    neg x0, x0\n    mov x1, x19\n    bl __fern_io_error\n    mov x24, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #1\n    str x1, [x0]\n    str x24, [x0, #8]\n");
-    s = s.write(".Lrdf_ret:\n");
-    s = s.write("    ldp x23, x24, [sp], #16\n");
-    s = s.write("    ldp x21, x22, [sp], #16\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_read_file, .-__fern_read_file\n");
+    // __fern_read_file and __fern_write_file used to live here; both are Fern
+    // runtime functions now (#2649), emitted need-gated in the fs bundle below
+    // from asmcore.rt_src_read_file / rt_src_write_file over the __syscall3 /
+    // __syscall4 sub-floor. Their syscall numbers, AT_FDCWD and open flag-set
+    // come from asmcore.sysno / at_fdcwd / oflag keyed by the target, so the
+    // Linux and Darwin bodies are one source instead of a `darwin` fork.
 
-    // __fern_write_file(x0 = path box, x1 = content box) →
-    // Result[(), IoError]: tag=0 Ok(()) on success, tag=1 Err(_) on any
-    // I/O error (payload 0, like __fern_read_file's Err). NUL-
-    // terminates the path, openat(AT_FDCWD, O_WRONLY|O_CREAT|
-    // O_TRUNC=577, 0644), writes the content bytes, closes. Linux
-    // arm64: openat=56, write=64, close=57.
-    s = s.write(".globl __fern_write_file\n");
-    s = s.write(".type __fern_write_file, %function\n");
-    s = s.write("__fern_write_file:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    stp x21, x22, [sp, #-16]!\n");
-    s = s.write("    stp x23, x24, [sp, #-16]!\n");
-    s = s.write("    ldr x19, [x1]\n");          // content data ptr
-    s = s.write("    ldr x20, [x1, #8]\n");       // content len
-    s = s.write("    ldr x21, [x0]\n");          // path data ptr
-    s = s.write("    ldr x22, [x0, #8]\n");       // path len
-    s = s.write("    add x0, x22, #1\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x23, x0\n");            // pathz
-    s = s.write("    mov x9, #0\n");
-    s = s.write(".Lwf_copy:\n");
-    s = s.write("    cmp x9, x22\n");
-    s = s.write("    b.ge .Lwf_copydone\n");
-    s = s.write("    ldrb w10, [x21, x9]\n");
-    s = s.write("    strb w10, [x23, x9]\n");
-    s = s.write("    add x9, x9, #1\n");
-    s = s.write("    b .Lwf_copy\n");
-    s = s.write(".Lwf_copydone:\n");
-    s = s.write("    mov w10, #0\n");
-    s = s.write("    strb w10, [x23, x22]\n");   // NUL terminator
-    // openat(AT_FDCWD, pathz, O_WRONLY|O_CREAT|O_TRUNC, 0644=420).
-    // Both the dirfd and the open flags are platform constants:
-    //   AT_FDCWD              Linux -100        Darwin -2
-    //   O_WRONLY|O_CREAT|O_TRUNC  Linux 577 (1|0100|01000)
-    //                             Darwin 1537 (1|0x200|0x400)
-    // Without Darwin's O_TRUNC, overwriting a longer file would
-    // leave trailing bytes. mode 0644 = 420 is the same on both.
-    if (darwin) {
-        s = s.write("    mov x0, #-2\n");
-        s = s.write("    mov x1, x23\n");
-        s = s.write("    mov x2, #1537\n");
-    } else {
-        s = s.write("    mov x0, #-100\n");
-        s = s.write("    mov x1, x23\n");
-        s = s.write("    mov x2, #577\n");
-    }
-    s = s.write("    mov x3, #420\n");
-    s = s.write("    mov x8, #56\n");
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.lt .Lwf_err\n");
-    s = s.write("    mov x23, x0\n");            // fd (pathz no longer needed)
-    s = s.write("    mov x24, #0\n");            // bytes written
-    s = s.write(".Lwf_loop:\n");
-    s = s.write("    cmp x24, x20\n");
-    s = s.write("    b.ge .Lwf_done\n");
-    s = s.write("    mov x0, x23\n");            // fd
-    s = s.write("    add x1, x19, x24\n");       // content data + written
-    s = s.write("    sub x2, x20, x24\n");       // remaining
-    s = s.write("    mov x8, #64\n");            // write
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.lt .Lwf_err_close\n");
-    s = s.write("    add x24, x24, x0\n");
-    s = s.write("    b .Lwf_loop\n");
-    s = s.write(".Lwf_done:\n");
-    s = s.write("    mov x0, x23\n");
-    s = s.write("    mov x8, #57\n");            // close
-    s = s.write("    svc #0\n");
-    s = s.write("    mov x0, #16\n");            // Ok(()) box
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    str xzr, [x0]\n");          // tag = 0 (Ok)
-    s = s.write("    str xzr, [x0, #8]\n");      // unit payload
-    s = s.write("    b .Lwf_ret\n");
-    s = s.write(".Lwf_err_close:\n");
-    // Write failed: preserve -errno (the close would clobber x0), then
-    // build the real IoError payload (#4624). x24 (bytes-written) is dead
-    // on the error path.
-    s = s.write("    neg x0, x0\n    mov x24, x0\n    mov x0, x23\n    mov x8, #57\n    svc #0\n    b .Lwf_mkerr\n.Lwf_err:\n    neg x0, x0\n    mov x24, x0\n.Lwf_mkerr:\n");
-    // x21/x22 = the caller's path data + length (untouched since entry):
-    // box the path and map errno → variant.
-    s = s.write("    mov x0, #16\n    bl __fern_alloc\n    str x21, [x0]\n    str x22, [x0, #8]\n    mov x1, x0\n    mov x0, x24\n    bl __fern_io_error\n    mov x24, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #1\n    str x1, [x0]\n    str x24, [x0, #8]\n");
-    s = s.write(".Lwf_ret:\n");
-    s = s.write("    ldp x23, x24, [sp], #16\n");
-    s = s.write("    ldp x21, x22, [sp], #16\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_write_file, .-__fern_write_file\n");
 
     // __fern_open_fd(x0 = path string box, x1 = openat flags, x2 = mode) →
     // i32 fd (or -errno): the file half of the streaming Reader/Writer
@@ -5271,64 +5086,8 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write(".size __fern_remove_dir_all, .-__fern_remove_dir_all\n");
 
-    // __fern_remove_file(x0 = path box) → Result[(), IoError]. arm64
-    // mirror of asm.fern: NUL-terminate the path, unlinkat(AT_FDCWD,
-    // pathz, 0). Returns Ok(()) on success, Err(_) on error.
-    s = s.write(".globl __fern_remove_file\n");
-    s = s.write(".type __fern_remove_file, %function\n");
-    s = s.write("__fern_remove_file:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    stp x21, x22, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");           // path box
-    s = s.write("    ldr x20, [x19]\n");         // path data
-    s = s.write("    ldr x21, [x19, #8]\n");     // path len
-    s = s.write("    add x0, x21, #1\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x22, x0\n");            // pathz
-    s = s.write("    mov x9, #0\n");
-    s = s.write(".Lrf_copy:\n");
-    s = s.write("    cmp x9, x21\n");
-    s = s.write("    b.ge .Lrf_cpd\n");
-    s = s.write("    ldrb w10, [x20, x9]\n");
-    s = s.write("    strb w10, [x22, x9]\n");
-    s = s.write("    add x9, x9, #1\n");
-    s = s.write("    b .Lrf_copy\n");
-    s = s.write(".Lrf_cpd:\n");
-    s = s.write("    mov w10, #0\n");
-    s = s.write("    strb w10, [x22, x21]\n");
-    // unlinkat(AT_FDCWD, pathz, 0). AT_FDCWD is -100 on Linux, -2 on
-    // Darwin; flags 0 (no AT_REMOVEDIR) is the same. The syscall
-    // number (35 -> Darwin unlinkat 472) + errno are remapped by
-    // darwinize.
-    if (darwin) {
-        s = s.write("    mov x0, #-2\n");
-    } else {
-        s = s.write("    mov x0, #-100\n");
-    }
-    s = s.write("    mov x1, x22\n");
-    s = s.write("    mov x2, #0\n");
-    s = s.write("    mov x8, #35\n");            // unlinkat
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.lt .Lrf_err\n");
-    s = s.write("    mov x0, #16\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    str xzr, [x0]\n");          // tag = 0 (Ok)
-    s = s.write("    str xzr, [x0, #8]\n");      // unit payload
-    s = s.write("    b .Lrf_ret\n");
-    s = s.write(".Lrf_err:\n");
-    // x0 = -errno from unlinkat; x19 = the ORIGINAL path box
-    // (callee-saved, untouched). Real IoError payload instead of NULL
-    // (#4624).
-    s = s.write("    neg x0, x0\n    mov x1, x19\n    bl __fern_io_error\n    mov x21, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #1\n    str x1, [x0]\n    str x21, [x0, #8]\n");
-    s = s.write(".Lrf_ret:\n");
-    s = s.write("    ldp x21, x22, [sp], #16\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_remove_file, .-__fern_remove_file\n");
+    // __fern_remove_file is a Fern runtime function now (#2649) too — see the
+    // note above __fern_read_file; emitted in the fs bundle, not here.
 
     return s;
 }
@@ -7407,16 +7166,34 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("str_split")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_split(), s.struct_decls, s);
     }
-    // __fern_random_bytes — Fern runtime function (#2649), the first syscall leaf
-    // to reach arm64: the body fills the buffer through the __syscall3 sub-floor
-    // and boxes it with __raw_string. The source is shared with x86-64; only the
-    // entropy syscall number differs — arm64-linux getrandom 278, arm64-darwin
-    // getentropy BSD 500 (darwinize cannot remap a number the emitter only has at
-    // runtime, so the Darwin number is baked in here instead). heap dep.
+    // The syscall leaves that are Fern on arm64 (#2649). Everything they need to
+    // differ on between arm64-linux and arm64-darwin — syscall numbers, AT_FDCWD,
+    // the open flag-set — comes from asmcore.sysno / at_fdcwd / oflag keyed by
+    // `tgt`, so each is ONE source rather than a `darwin`-forked pair of hand-asm
+    // bodies. darwinize cannot remap a number the emitter only has at runtime
+    // (its rule needs a literal `mov x8, #N`), which is why the target's number
+    // is baked into the source here instead.
+    var tgt: string = "arm64";
+    if (darwin) { tgt = "arm64-darwin"; }
+    // random_bytes: fill the buffer through __syscall3, box it with __raw_string.
     if (s.has_need("random_bytes")) {
-        var rb_sysno: string = "278";
-        if (darwin) { rb_sysno = "500"; }
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes(rb_sysno), s.struct_decls, s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes(tgt), s.struct_decls, s);
+    }
+    // The file-content fs leaves — read_file / write_file / remove_file — share
+    // ONE errno→IoError classifier and are emitted as a single bundle module so
+    // the inter-procedural RC analysis threads each helper's call to io_error as
+    // an ordinary call-graph edge (io_error consumes its fresh path arg; the
+    // helpers hand it a fresh copy, never their borrowed `path`). This mirrors
+    // asm_ir's bundle exactly. The register-ABI hand-asm __fern_io_error stays:
+    // stat / read_dir / remove_dir_all / temp_dir / open_fd still call it, and
+    // those leaves are NOT migratable by constant-substitution alone — Darwin's
+    // stat layout and its getdirentries64 out-param diverge in shape, not number.
+    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("remove_file")) {
+        var fs_src: string = asmcore.rt_src_io_error();
+        if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_read_file(tgt); }
+        if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file(tgt); }
+        if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file(tgt); }
+        s = emit_ir_runtime_fern_fn(fs_src, s.struct_decls, s);
     }
     // __fern_str_bytes is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_bytes, emitted (need-gated) in the migrated-helpers
@@ -8019,12 +7796,21 @@ pub function darwinize(asm: string): string {
     var n: i32 = asm.len();
     var start: i32 = 0;
     var i: i32 = 0;
-    // prev_sys_num holds the Darwin number of a remapped syscall whose
-    // `mov x16, #M` we just emitted, so the following `svc` knows whether
+    // pend_sys holds the Darwin number of a remapped syscall whose number
+    // register we just rewrote, so the `svc` that consumes it knows whether
     // (and how) to flip the trap + normalise the errno. -1 = none. The
     // generic-syscall marker below parks 0 there — not a real Darwin number,
     // just "fallible, normalise" (0 is unused as a BSD syscall number).
-    var prev_sys_num: i32 = 0 - 1;
+    //
+    // It is STICKY: only a number-register line or the `svc` itself changes it.
+    // It used to be reset by every line, which quietly required the `svc` to
+    // come IMMEDIATELY after — and the two abort paths (`.Lalloc_oom` and
+    // __fern_oob_abort) load their status between the two, so exit(125) /
+    // exit(134) kept a Linux `svc #0` in the Mach-O output and died by trap
+    // instead of exiting with the status. An unmappable `mov x8, #N` still
+    // CLEARS it, so a syscall with no Darwin form can never inherit the
+    // previous one's mapping.
+    var pend_sys: i32 = 0 - 1;
     var norm_n: i32 = 0;   // fresh-label counter for errno normalisation
     while (i <= n) {
         if (i == n || asm[i] == 10) {
@@ -8033,7 +7819,6 @@ pub function darwinize(asm: string): string {
             var body: string = darwin_lstrip(line);
             var keep: boolean = true;
             var out_line: string = line + "";
-            var this_sys_num: i32 = 0 - 1;
 
             if (darwin_starts_with(body, ".type ") || darwin_starts_with(body, ".size ")) {
                 keep = false;
@@ -8062,7 +7847,7 @@ pub function darwinize(asm: string): string {
                 // so only the number REGISTER and the trap need rewriting; 0
                 // marks it fallible so the `svc` arm normalises the errno.
                 out_line = "    ldr x16, [sp], #16";
-                this_sys_num = 0;
+                pend_sys = 0;
             } else if (darwin_starts_with(body, "mov x8, #")) {
                 // Match the LSTRIPPED body, not a literal "    mov x8, #".
                 // The emitter's indentation is not uniform — the subprocess
@@ -8071,16 +7856,16 @@ pub function darwinize(asm: string): string {
                 // their Linux number and a Linux `svc #0` in a Mach-O binary.
                 var num: i32 = util.digits_to_i32(body[9:body.len()]);
                 var m: i32 = darwin_sysno(num);
+                pend_sys = m;
                 if (m >= 0) {
                     out_line = "    mov x16, #" + util.i32_to_string(m);
-                    this_sys_num = m;
                 }
             } else if (body == "svc #0") {
-                if (prev_sys_num == 1) {
+                if (pend_sys == 1) {
                     // exit / exit_group: never returns, so no errno
                     // normalisation — just flip the trap.
                     out_line = "    svc #0x80";
-                } else if (prev_sys_num >= 0) {
+                } else if (pend_sys >= 0) {
                     // Fallible syscall. Darwin returns +errno with the
                     // carry flag SET on error; Linux returns -errno. The
                     // self-host's callers test `x0 < 0`, so negate x0 when
@@ -8090,6 +7875,7 @@ pub function darwinize(asm: string): string {
                     norm_n = norm_n + 1;
                     out_line = "    svc #0x80\n    b.cc " + lbl + "\n    neg x0, x0\n" + lbl + ":";
                 }
+                pend_sys = 0 - 1;
             }
 
             if (keep) {
@@ -8098,7 +7884,6 @@ pub function darwinize(asm: string): string {
                     strbuf_append("\n");
                 }
             }
-            prev_sys_num = this_sys_num;
             start = i + 1;
         }
         i = i + 1;
