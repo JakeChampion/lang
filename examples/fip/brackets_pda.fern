@@ -1,0 +1,404 @@
+// examples/fip/brackets_pda.fern — FIP turn, drawn line 246:
+// "A pushdown automaton that checks balanced multi-kind brackets."
+//
+// A genuine PDA: one left-to-right pass, a stack of open frames, and a
+// three-state lexer so brackets inside string literals and line comments
+// count as text rather than as tokens.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from
+// std/test, so the file is its own test suite.
+
+import "std/test";
+import "std/array";
+import "std/i32";
+
+enum Kind { Round, Square, Curly, Angle }
+
+struct Frame { kind: Kind, pos: i32 }
+
+enum Verdict {
+    Balanced,
+    Unexpected(i32),        // closer at pos, nothing open
+    Mismatched(i32, i32),   // closer at pos, against opener at pos
+    Unclosed(i32),          // opener at pos never closed
+    Unterminated(i32),      // string literal opened at pos, never closed
+}
+
+struct Report { verdict: Verdict, max_depth: i32, opens: i32 }
+
+// Lexer states.
+function st_text(): i32 { return 0; }
+function st_string(): i32 { return 1; }
+function st_comment(): i32 { return 2; }
+
+function kind_code(k: Kind): i32 {
+    match (k) {
+        Round => { return 0; },
+        Square => { return 1; },
+        Curly => { return 2; },
+        Angle => { return 3; },
+    }
+}
+
+function kind_name(k: Kind): string {
+    match (k) {
+        Round => { return "()"; },
+        Square => { return "[]"; },
+        Curly => { return "{}"; },
+        Angle => { return "<>"; },
+    }
+}
+
+function opener_of(b: i32): Option[Kind] {
+    if (b == 40) { return Some(Round); }
+    if (b == 91) { return Some(Square); }
+    if (b == 123) { return Some(Curly); }
+    if (b == 60) { return Some(Angle); }
+    return None;
+}
+
+function closer_of(b: i32): Option[Kind] {
+    if (b == 41) { return Some(Round); }
+    if (b == 93) { return Some(Square); }
+    if (b == 125) { return Some(Curly); }
+    if (b == 62) { return Some(Angle); }
+    return None;
+}
+
+function verdict_code(v: Verdict): i32 {
+    match (v) {
+        Balanced => { return 0; },
+        Unexpected(_) => { return 1; },
+        Mismatched(_, _) => { return 2; },
+        Unclosed(_) => { return 3; },
+        Unterminated(_) => { return 4; },
+    }
+}
+
+// The byte offset the verdict points at, or -1 for Balanced.
+function verdict_pos(v: Verdict): i32 {
+    match (v) {
+        Balanced => { return -1; },
+        Unexpected(p) => { return p; },
+        Mismatched(p, _) => { return p; },
+        Unclosed(p) => { return p; },
+        Unterminated(p) => { return p; },
+    }
+}
+
+function verdict_text(v: Verdict): string {
+    match (v) {
+        Balanced => { return "balanced"; },
+        Unexpected(p) => {
+            return "unexpected closer at " + p.to_string();
+        },
+        Mismatched(p, o) => {
+            return "closer at " + p.to_string() + " does not match opener at "
+                + o.to_string();
+        },
+        Unclosed(p) => {
+            return "unclosed opener at " + p.to_string();
+        },
+        Unterminated(p) => {
+            return "unterminated string literal opened at " + p.to_string();
+        },
+    }
+}
+
+// The automaton. Pushes a Frame per opener, pops on a matching closer,
+// and refuses on the first transition it has no rule for.
+function analyze(src: string): Report {
+    var stack: Frame[] = [];
+    var mode: i32 = st_text();
+    var str_start: i32 = 0;
+    var max_depth: i32 = 0;
+    var opens: i32 = 0;
+    var i: i32 = 0;
+    var n: i32 = src.len();
+
+    while (i < n) {
+        var b: i32 = src[i] as i32;
+
+        if (mode == st_comment()) {
+            if (b == 10) { mode = st_text(); }
+            i = i + 1;
+            continue;
+        }
+
+        if (mode == st_string()) {
+            if (b == 92) { i = i + 2; continue; }   // backslash escape
+            if (b == 34) { mode = st_text(); }
+            i = i + 1;
+            continue;
+        }
+
+        if (b == 34) {
+            mode = st_string();
+            str_start = i;
+            i = i + 1;
+            continue;
+        }
+
+        if (b == 47 && i + 1 < n && src[i + 1] as i32 == 47) {
+            mode = st_comment();
+            i = i + 2;
+            continue;
+        }
+
+        match (opener_of(b)) {
+            Some(k) => {
+                stack = stack.append(Frame { kind: k, pos: i });
+                opens = opens + 1;
+                if (stack.len() > max_depth) { max_depth = stack.len(); }
+            },
+            None => {
+                match (closer_of(b)) {
+                    Some(k) => {
+                        match (array.last(stack)) {
+                            None => {
+                                return Report {
+                                    verdict: Unexpected(i),
+                                    max_depth: max_depth,
+                                    opens: opens,
+                                };
+                            },
+                            Some(top) => {
+                                if (kind_code(top.kind) != kind_code(k)) {
+                                    return Report {
+                                        verdict: Mismatched(i, top.pos),
+                                        max_depth: max_depth,
+                                        opens: opens,
+                                    };
+                                }
+                                stack = array.drop_last(stack, 1);
+                            },
+                        }
+                    },
+                    None => {},
+                }
+            },
+        }
+        i = i + 1;
+    }
+
+    if (mode == st_string()) {
+        return Report {
+            verdict: Unterminated(str_start),
+            max_depth: max_depth,
+            opens: opens,
+        };
+    }
+    if (stack.len() > 0) {
+        return Report {
+            verdict: Unclosed(stack[0].pos),
+            max_depth: max_depth,
+            opens: opens,
+        };
+    }
+    return Report { verdict: Balanced, max_depth: max_depth, opens: opens };
+}
+
+function check(src: string): Verdict {
+    return analyze(src).verdict;
+}
+
+function is_balanced(src: string): boolean {
+    return verdict_code(check(src)) == 0;
+}
+
+// ---------------------------------------------------------------- tests
+
+function balanced_corpus(): string[] {
+    return [
+        "",
+        "()",
+        "[]",
+        "{}",
+        "<>",
+        "()[]{}<>",
+        "([{<>}])",
+        "{ a: [1, 2], b: (3) }",
+        "if (x[i] != n) { go(); }",
+        "\")(\"",
+        "// ) ] } >\n()",
+    ];
+}
+
+function broken_corpus(): string[] {
+    return [
+        ")",
+        "(]",
+        "(",
+        "([)]",
+        "{ \"unterminated",
+    ];
+}
+
+// Every input the corpus calls balanced must read as balanced, and must
+// leave no residue: a balanced string closes exactly as many frames as
+// it opens.
+function test_corpus_is_balanced(): test.TestOutcome {
+    var xs: string[] = balanced_corpus();
+    for i in 0..xs.len() {
+        var r: Report = analyze(xs[i]);
+        if (verdict_code(r.verdict) != 0) {
+            return test.fail("expected balanced for input " + i.to_string()
+                + ": " + verdict_text(r.verdict));
+        }
+    }
+    return test.pass();
+}
+
+// Concatenation closure: balanced + balanced is balanced. This is the
+// property that makes the stack discipline a monoid, and it fails loudly
+// if a pop leaks state across the join.
+function test_concatenation_is_closed(): test.TestOutcome {
+    var xs: string[] = balanced_corpus();
+    for i in 0..xs.len() {
+        for j in 0..xs.len() {
+            // Comment-carrying members only compose when the comment is
+            // terminated, which it is — every member ends outside a comment.
+            var joined: string = xs[i] + "\n" + xs[j];
+            if (!is_balanced(joined)) {
+                return test.fail("concat of " + i.to_string() + " and "
+                    + j.to_string() + " is not balanced: "
+                    + verdict_text(check(joined)));
+            }
+        }
+    }
+    return test.pass();
+}
+
+// Wrapping a balanced string in any one kind stays balanced and lifts the
+// maximum depth by exactly one.
+function test_wrapping_lifts_depth(): test.TestOutcome {
+    var xs: string[] = balanced_corpus();
+    var opens: string[] = ["(", "[", "{", "<"];
+    var closes: string[] = [")", "]", "}", ">"];
+    for i in 0..xs.len() {
+        // A member ending inside a line comment would swallow the closer,
+        // so wrap on its own line.
+        var inner: Report = analyze(xs[i]);
+        for k in 0..opens.len() {
+            var wrapped: string = opens[k] + "\n" + xs[i] + "\n" + closes[k];
+            var outer: Report = analyze(wrapped);
+            if (verdict_code(outer.verdict) != 0) {
+                return test.fail("wrapping input " + i.to_string() + " in "
+                    + opens[k] + " broke it: " + verdict_text(outer.verdict));
+            }
+            if (outer.max_depth != inner.max_depth + 1) {
+                return test.fail("wrapping input " + i.to_string()
+                    + " should lift depth to "
+                    + (inner.max_depth + 1).to_string() + ", got "
+                    + outer.max_depth.to_string());
+            }
+        }
+    }
+    return test.pass();
+}
+
+// Each broken input must be refused, at the byte the PDA actually stopped on.
+function test_broken_inputs_are_refused(): test.TestOutcome {
+    var xs: string[] = broken_corpus();
+    var want_code: i32[] = [1, 2, 3, 2, 4];
+    var want_pos: i32[] = [0, 1, 0, 2, 2];
+    for i in 0..xs.len() {
+        var v: Verdict = check(xs[i]);
+        if (verdict_code(v) != want_code[i]) {
+            return test.fail("input " + i.to_string() + ": wanted code "
+                + want_code[i].to_string() + ", got "
+                + verdict_code(v).to_string() + " (" + verdict_text(v) + ")");
+        }
+        if (verdict_pos(v) != want_pos[i]) {
+            return test.fail("input " + i.to_string() + ": wanted pos "
+                + want_pos[i].to_string() + ", got "
+                + verdict_pos(v).to_string());
+        }
+    }
+    return test.pass();
+}
+
+// Brackets inside a string literal or a line comment are text. Deleting the
+// quoting must change the verdict — otherwise the lexer state is dead code.
+function test_quoting_suppresses_brackets(): test.TestOutcome {
+    if (!is_balanced("\"([{\"")) {
+        return test.fail("brackets inside a string literal should be inert");
+    }
+    if (is_balanced("([{")) {
+        return test.fail("the same brackets unquoted must be refused");
+    }
+    if (!is_balanced("// ([{\n")) {
+        return test.fail("brackets inside a line comment should be inert");
+    }
+    if (!is_balanced("\"\\\"([\"")) {
+        return test.fail("an escaped quote must not end the literal");
+    }
+    return test.pass();
+}
+
+// The stack has to be a real stack: n nested openers reach depth n.
+function test_deep_nesting_reaches_depth(): test.TestOutcome {
+    var depth: i32 = 200;
+    var s: string = "";
+    for i in 0..depth { s = s + "("; }
+    for i in 0..depth { s = s + ")"; }
+    var r: Report = analyze(s);
+    if (verdict_code(r.verdict) != 0) {
+        return test.fail("deep nest not balanced: " + verdict_text(r.verdict));
+    }
+    if (r.max_depth != depth) {
+        return test.fail("wanted depth " + depth.to_string() + ", got "
+            + r.max_depth.to_string());
+    }
+    if (r.opens != depth) {
+        return test.fail("wanted " + depth.to_string() + " opens, got "
+            + r.opens.to_string());
+    }
+    return test.pass();
+}
+
+// Interleaving is what separates a PDA from a counter: "([)]" has equal
+// counts of every kind and is still not a valid nesting.
+function test_counting_is_not_enough(): test.TestOutcome {
+    if (is_balanced("([)]")) {
+        return test.fail("interleaved brackets must be refused");
+    }
+    if (is_balanced("{<}>")) {
+        return test.fail("interleaved brackets must be refused");
+    }
+    if (!is_balanced("([])")) {
+        return test.fail("properly nested brackets must be accepted");
+    }
+    // <> is a bracket kind here, so a bare comparison is NOT balanced
+    // input. That is the documented cost of treating angles as brackets.
+    if (is_balanced("a < b")) {
+        return test.fail("a bare < must count as an unclosed opener");
+    }
+    return test.pass();
+}
+
+// ----------------------------------------------------------------- app
+
+function report_line(src: string, label: string): string {
+    var r: Report = analyze(src);
+    return label + ": " + verdict_text(r.verdict) + " (depth "
+        + r.max_depth.to_string() + ", " + r.opens.to_string() + " opens)";
+}
+
+function main(): i32 {
+    eprint("brackets_pda — a pushdown automaton over ()[]{}<>");
+    eprint(report_line("fn f(xs: [i32]) { return xs[0]; }", "source line"));
+    eprint(report_line("([)]", "interleaved"));
+    eprint(report_line("{ \"a ) b\" }", "quoted closer"));
+    eprint(report_line("(((", "run of openers"));
+
+    var r: test.TestRunner = test.test_new("brackets_pda");
+    r = r.it("corpus is balanced", test_corpus_is_balanced);
+    r = r.it("concatenation is closed", test_concatenation_is_closed);
+    r = r.it("wrapping lifts depth", test_wrapping_lifts_depth);
+    r = r.it("broken inputs are refused", test_broken_inputs_are_refused);
+    r = r.it("quoting suppresses brackets", test_quoting_suppresses_brackets);
+    r = r.it("deep nesting reaches depth", test_deep_nesting_reaches_depth);
+    r = r.it("counting is not enough", test_counting_is_not_enough);
+    return r.finish();
+}

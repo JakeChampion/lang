@@ -1,0 +1,58 @@
+// A trailing comma is legal in every comma-separated element list. This
+// fixture exercises one of each position, so it runs through the native
+// compiler on all backends AND through the self-host compiler — the two
+// used to disagree here (`function f(a: i32,)` parsed self-hosted and was
+// rejected natively), which is a divergence a parser-only test cannot see.
+//
+// A trailing comma is a parse-level nicety: the AST is identical to the
+// same source without it, so the exit code below is the real assertion
+// that nothing downstream shifted.
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+enum Shape {
+    Dot,
+    Seg(i32, i32),
+}
+
+function add3(a: i32, b: i32, c: i32,): i32 {
+    return a + b + c;
+}
+
+function pick[T,](xs: T[], i: i32): T {
+    return xs[i];
+}
+
+function span(s: Shape): i32 {
+    match (s) {
+        Dot => { return 0; },
+        Seg(a, b) => { return b - a; },
+    }
+}
+
+function main(): i32 {
+    // array literal, nested array literal
+    var xs: i32[] = [1, 2, 3,];
+    var grid: i32[][] = [[1, 2,], [3, 4,],];
+
+    // struct literal
+    var p: Point = Point { x: 10, y: 4, };
+
+    // tuple literal
+    var t: (i32, i32) = (5, 6,);
+
+    // call arguments, type parameters, generic type arguments
+    var sum: i32 = add3(xs[0], xs[1], xs[2],);
+    var first: i32 = pick[i32,](xs, 0,);
+    var seg: Shape = Seg(2, 9,);
+
+    // lambda parameters
+    var twice: (i32) => i32 = (n: i32,) => n * 2;
+
+    // 6 + 4 + 6 + 1 + 5 + 6 + 7 + 4 = 39
+    return sum + grid[1][1] + (p.x - p.y) + first + t.0 + t.1
+        + span(seg) + twice(2);
+}
