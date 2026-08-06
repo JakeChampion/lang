@@ -1,0 +1,50 @@
+// An if / match-EXPRESSION lowers inline when it is the ONLY statement of the
+// value-position lambda the desugar builds. Put anything in front of it and the
+// same expression bailed the enclosing function off the IR path: the
+// multi-statement route (lower_value_block) understood only a `return` tail, so
+// a tail that was itself an `if` or `match` hit its catch-all and failed.
+//
+// Nothing about the tail is block-specific — what put a statement in front of it
+// is the lift, which prepends a capture rebinding. The shapes below are the ones
+// that triggered that: an if / match expression capturing a wide param, inside a
+// function whose own return type is composite. #6268.
+//
+// A 64-BIT tail is deliberately absent: it still bails, because wasm miscompiles
+// it through this route (#6267). Every case here is a 32-bit, f64 or string
+// value, which is what the route now admits.
+import "std/array";
+import "std/i32";
+import "core/map";
+
+enum Status { Active, Inactive, Pending }
+
+// Array-returning: the if-expression captures the i64 param, so the lift
+// prepends `var p: i64 = <capture>` and the tail becomes the `if`.
+function via_array(p: i64): i32[] {
+    var v: i32 = if (p > 4i64) { 1i32 } else { (p as i32) };
+    return [v];
+}
+
+// The match-EXPRESSION form of the same thing, and a Map return rather than an
+// array, since both composites reached the bail the same way.
+function via_map(p: i64): Map[i32, i32] {
+    var v: i32 = match (Active) { Active => 1i32, Inactive => 29i32, Pending => ((p >> 32i64) as i32) };
+    var m: Map[i32, i32] = Map {};
+    m = m.insert(0i32, v);
+    return m;
+}
+
+function main(): i32 {
+    if (via_array(9i64)[0] != 1i32) { return 1; }
+    if (via_array(2i64)[0] != 2i32) { return 2; }
+    if (via_map(9i64).get_or(0i32, 0i32) != 1i32) { return 3; }
+    if (via_map(2i64).get_or(0i32, 0i32) != 1i32) { return 4; }
+    if (via_array(4i64)[0] != 4i32) { return 5; }
+
+    // Control: the single-statement route, which always worked and must keep
+    // working — the fix routes both through one function now.
+    var direct: i32 = if (true) { 6i32 } else { 7i32 };
+    if (direct != 6i32) { return 6; }
+
+    return 11;
+}
