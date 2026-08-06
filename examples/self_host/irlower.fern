@@ -19854,6 +19854,69 @@ function stmt_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): b
     return false;
 }
 
+// body_unsafe_for_match_borrow / stmt_unsafe_for_match_borrow: body_unsafe_for,
+// except the SCRUTINEE of a `match (name)` is a BORROW rather than an escape
+// (#6127). expr_unsafe_for flags any bare ident, so the consuming match of an
+// Option is itself read as an escape — which is right for a value that could be
+// retained, and wrong for a match, which reads the tag and the payload and
+// retains neither.
+//
+// consumed_rcpayload_option_frees has always made that argument, via
+// name_escapes_outside_stmt skipping the consuming match by INDEX. That works
+// only while the match is a top-level statement. precise_drop_names covers the
+// case where it is not — the match sits in an `if` or a `while` body — and it
+// gates on the coarse body_unsafe_for, so the nested form was refused outright
+// and the whole box leaked. Measured over 100 rounds with the nesting as the only
+// variable: top-level 0, inside an `if` 8000, inside a `while` 8000.
+//
+// Only an EXACT bare-ident scrutinee is exempted. `match (f(o))` and a scrutinee
+// that merely mentions the name stay escapes, and arm guards and arm bodies are
+// still walked in full — as is every other use of the name anywhere in the
+// function, so an alias, a return or a call argument still refuses the candidate.
+function body_unsafe_for_match_borrow(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_unsafe_for_match_borrow(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    return false;
+}
+function stmt_unsafe_for_match_borrow(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+    match (st) {
+        parser.StmtIf(f) => {
+            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            return body_unsafe_for_match_borrow(f.then_body, name, borrowable)
+                || body_unsafe_for_match_borrow(f.else_body, name, borrowable);
+        },
+        parser.StmtWhile(w) => {
+            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            return body_unsafe_for_match_borrow(w.body, name, borrowable);
+        },
+        parser.StmtFor(fo) => {
+            var iter_unsafe: boolean = true;
+            match (fo.iter) {
+                parser.ExprIdent(_) => { iter_unsafe = false; },
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+            }
+            if (iter_unsafe) { return true; }
+            return body_unsafe_for_match_borrow(fo.body, name, borrowable);
+        },
+        parser.StmtMatch(m) => {
+            var scrut_borrow: boolean = false;
+            match (m.scrutinee) {
+                parser.ExprIdent(sid) => { if (sid.name == name) { scrut_borrow = true; } },
+                _ => {}
+            }
+            if (!scrut_borrow && expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (body_unsafe_for_match_borrow(m.arms[ai].body, name, borrowable)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        _ => { return stmt_unsafe_for(st, name, borrowable); }
+    }
+}
+
 // body_unsafe_for_allow_ret / stmt_unsafe_for_allow_ret: the borrow check for the
 // SNAPSHOT-param reclaim (#3456 slice 2) — identical to body_unsafe_for except a
 // bare `return name` is SAFE (the builder param's final value is MOVED OUT to the
@@ -20298,7 +20361,12 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // candidate kind keeps the blanket not-reassigned gate.
                 var reassign_ok: boolean = util.index_of_str(reassigned, v.name) < 0;
                 if (!reassign_ok && is_map && !map_nonself_reassigned(body, v.name)) { reassign_ok = true; }
-                if ((is_lit || is_opt || is_rcopt || is_enum || is_rcenum || is_map) && !shadowed && reassign_ok && !body_unsafe_for(body, v.name, borrowable)) {
+                // An rc-payload Option/Result gets the match-scrutinee-is-a-borrow
+                // reading (#6127); every other candidate kind keeps the coarse walker,
+                // so this widens exactly one class at a time.
+                var borrow_ok: boolean = !body_unsafe_for(body, v.name, borrowable);
+                if (!borrow_ok && is_rcopt) { borrow_ok = !body_unsafe_for_match_borrow(body, v.name, borrowable); }
+                if ((is_lit || is_opt || is_rcopt || is_enum || is_rcenum || is_map) && !shadowed && reassign_ok && borrow_ok) {
                     var last: i32 = 0 - 1;
                     var k: i32 = i + 1;
                     var none: string[] = [];
