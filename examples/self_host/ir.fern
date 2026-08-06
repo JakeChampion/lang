@@ -531,6 +531,19 @@ pub function op_open_file(flags: i32): Op {
 // arena and records the end); wasm reads `$heap − heap_base` and zero-extends
 // it to the declared i64. Mirrors native's __fern_heap_bump_bytes.
 pub function op_heap_bump_bytes(): Op { return op0("heap_bump_bytes"); }
+// Bit counting (#6197): one integer operand of `width` (32 or 64) → an i32
+// count. clz/ctz of ZERO are defined as the width, matching wasm's semantics
+// and the SWAR sequences these replace — that definition is why the x86-64
+// lowering cannot use a bare bsr/bsf, whose result is undefined at zero.
+pub function op_clz(width: i32): Op {
+    return Op { kind_tag: kind_id("clz"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+pub function op_ctz(width: i32): Op {
+    return Op { kind_tag: kind_id("ctz"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+pub function op_popcount(width: i32): Op {
+    return Op { kind_tag: kind_id("popcount"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
 // `__arr_push_shared_count` takes no operands → an i32: the number of appends
 // that copied a buffer which still had SPARE CAPACITY, i.e. the copy was bought
 // by an extra reference rather than by a full buffer. `__fern_arr_push` mutates
@@ -1451,6 +1464,11 @@ function kind_id_4(name: string): i32 {
     // Static aggregate constant (#6149) — struct_make with every field a
     // compile-time scalar literal, placed in data rather than allocated.
     if (name == "const_struct") { return 218; }
+    // Bit-counting intrinsics (#6197). One op each, `width` (32/64) picking
+    // the operand width; every one produces an i32 count.
+    if (name == "clz") { return 219; }
+    if (name == "ctz") { return 220; }
+    if (name == "popcount") { return 221; }
     return 0;
 }
 
@@ -1698,6 +1716,9 @@ function kind_name_4(id: i32): string {
     if (id == 216) { return "arr_push_shared_count"; }
     if (id == 217) { return "arr_push_shared_bytes"; }
     if (id == 218) { return "const_struct"; }
+    if (id == 219) { return "clz"; }
+    if (id == 220) { return "ctz"; }
+    if (id == 221) { return "popcount"; }
     return "invalid";
 }
 

@@ -224,7 +224,8 @@ func opStackEffect(op Op, sigs map[string]funcSig) (pops int, pushes int, ok boo
 		OpFConvertI32, OpFConvertI64, OpITruncF32, OpITruncF64,
 		OpReinterpretI32F32, OpReinterpretF32I32,
 		OpReinterpretI64F64, OpReinterpretF64I64,
-		OpNot, OpFNeg:
+		OpNot, OpFNeg,
+		OpClz, OpCtz, OpPopcount:
 		return 1, 1, true
 	// Locals.
 	case OpLoadLocal:

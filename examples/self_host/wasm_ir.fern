@@ -3279,6 +3279,17 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
         } else if (o.kind_tag == 103) {  // str_from_bytes
             // stack: arr -> $__fern_string_from_bytes(arr) -> string block.
             out = out + "    call $__fern_string_from_bytes\n";
+        } else if (o.kind_tag == 219) {  // clz
+            // wasm has all six as single opcodes with exactly these zero
+            // semantics. The i64 forms produce an i64 count, so wrap to i32.
+            if (o.width == 64) { out = out + "    i64.clz\n    i32.wrap_i64\n"; }
+            else { out = out + "    i32.clz\n"; }
+        } else if (o.kind_tag == 220) {  // ctz
+            if (o.width == 64) { out = out + "    i64.ctz\n    i32.wrap_i64\n"; }
+            else { out = out + "    i32.ctz\n"; }
+        } else if (o.kind_tag == 221) {  // popcount
+            if (o.width == 64) { out = out + "    i64.popcnt\n    i32.wrap_i64\n"; }
+            else { out = out + "    i32.popcnt\n"; }
         } else if (o.kind_tag == 80) {  // heap_bump_bytes
             // bump high-water mark = $heap − heap_base. The $heap global is
             // initialised to heap_base (heap_alloc_helpers), so this reads 0

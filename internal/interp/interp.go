@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/bits"
 	"net"
 	"os"
 	"os/exec"
@@ -536,6 +537,49 @@ func New() *Interp {
 	// under -interp without erroring (the metric is only meaningful in
 	// codegen).
 	i.Builtins["__heap_bump_bytes"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	// Bit-counting intrinsics. The interpreter is the ORACLE these are
+	// differentialled against, so it uses math/bits rather than replicating
+	// the SWAR sequence — an independent implementation is the point, since a
+	// shared one would agree with a shared bug.
+	//
+	// Values arrive as float64-backed Numbers, so each masks to its declared
+	// width before counting; without that a 32-bit clz would see the sign
+	// extension of a negative value in the upper half and report 0.
+	registerBitCount := func(name string, width int, count func(uint64, int) int) {
+		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+			if len(args) != 1 {
+				return nil, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
+			}
+			n, ok := args[0].(Number)
+			if !ok {
+				return nil, fmt.Errorf("%s: expected an integer, got %T", name, args[0])
+			}
+			v := uint64(int64(n))
+			if width == 32 {
+				v &= 0xFFFFFFFF
+			}
+			return Number(count(v, width)), nil
+		}}
+	}
+	clzOf := func(v uint64, width int) int {
+		if v == 0 {
+			return width
+		}
+		return bits.LeadingZeros64(v) - (64 - width)
+	}
+	ctzOf := func(v uint64, width int) int {
+		if v == 0 {
+			return width
+		}
+		return bits.TrailingZeros64(v)
+	}
+	popOf := func(v uint64, _ int) int { return bits.OnesCount64(v) }
+	registerBitCount("__clz32", 32, clzOf)
+	registerBitCount("__clz64", 64, clzOf)
+	registerBitCount("__ctz32", 32, ctzOf)
+	registerBitCount("__ctz64", 64, ctzOf)
+	registerBitCount("__popcount32", 32, popOf)
+	registerBitCount("__popcount64", 64, popOf)
 	// __arr_push_shared_count(): the rc==1 cliff counter on the compiled
 	// backends — appends that copied a buffer which still had room, so the
 	// copy was bought by an extra reference. The interpreter has no refcounts

@@ -1193,8 +1193,18 @@ function arm64_rev16(buf: i32[], rd: i32, rn: i32, w: boolean): i32[] {
 }
 // clz Xd, Xn -> 0xDAC01000 | Rn<<5 | Rd (same DP-1-source family as rev16;
 // the Go arm64 backend emits it for the freelist size-class log2).
-function arm64_clz(buf: i32[], rd: i32, rn: i32): i32[] {
-    return arm64_le32(buf, 0xdac01000 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+//
+// The `w` flag clears the sf bit for the 32-bit form, exactly as rev16 above
+// does. It used to be absent, so `clz w0, w0` silently encoded the X-form and
+// counted over 64 bits -- `__clz32(1)` returned 63 instead of 31, and the
+// clz-derived ctz returned a NEGATIVE number (31 - 60), which surfaced as exit
+// code 227 (-29 truncated to a byte) rather than as anything resembling a
+// bit count. Every caller before #6197 happened to want the 64-bit form, which
+// is why the missing flag went unnoticed.
+function arm64_clz(buf: i32[], rd: i32, rn: i32, w: boolean): i32[] {
+    var word: i64 = 0xdac01000 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (w) { word = word & 0x7fffffff; }
+    return arm64_le32(buf, word);
 }
 
 // ---- byte/halfword/sign-extending load/store (unsigned scaled imm) ----
@@ -2137,7 +2147,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         return a;
     }
     if (mnem == "clz") {
-        a = Arm64Asm { ...a, code: arm64_clz(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+        a = Arm64Asm { ...a, code: arm64_clz(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
         return a;
     }
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") {

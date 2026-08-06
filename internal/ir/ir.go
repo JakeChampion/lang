@@ -104,6 +104,21 @@ const (
 	OpShrS
 	OpNot // logical ! (i32.eqz)
 
+	// Bit-counting intrinsics. Each consumes one integer of `Width`
+	// (32 or 64) and produces an i32 count. Every target has these
+	// as instructions — wasm as single opcodes (i32.clz / i32.ctz /
+	// i32.popcnt), arm64 as clz / rbit+clz / cnt+addv — where the
+	// portable SWAR sequences they replace are 12-15 ALU ops.
+	//
+	// Zero is defined: OpClz and OpCtz of 0 return the operand width
+	// (32 or 64), matching wasm's semantics and what the SWAR code
+	// they replace produced. That definition is the whole reason
+	// x86-64 cannot use a bare bsr/bsf, whose result is undefined
+	// for a zero input — see the guard in its lowering.
+	OpClz      // (i32|i64) → i32, count of leading zero bits
+	OpCtz      // (i32|i64) → i32, count of trailing zero bits
+	OpPopcount // (i32|i64) → i32, count of set bits
+
 	OpEq
 	OpNe
 	OpLtS
@@ -428,6 +443,12 @@ func (k OpKind) String() string {
 		return "shr_s"
 	case OpNot:
 		return "not"
+	case OpClz:
+		return "clz"
+	case OpCtz:
+		return "ctz"
+	case OpPopcount:
+		return "popcnt"
 	case OpEq:
 		return "eq"
 	case OpNe:
@@ -12034,6 +12055,24 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// Bit-counting intrinsics. Unlike the probes above these are NOT
+	// runtime-helper calls — they lower to a single IR op, which is the
+	// entire point: the SWAR sequences they replace cost ~19.5 ns per
+	// call measured against ~0.7 ns for a hardware instruction, and a
+	// call would put most of that back.
+	//
+	// The 32- and 64-bit forms are separate builtins rather than one
+	// overload because the operand width has to reach the backend on
+	// Op.Width, and the caller's static type is what fixes it.
+	if bitOp, width, ok := bitCountBuiltin(id.Name); ok && len(n.Args) == 1 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			if err := b.expr(n.Args[0]); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: bitOp, Width: width})
+			return nil
+		}
+	}
 	// __heap_mark() / __heap_release_to(mark) — the one-level arena
 	// checkpoint pair. Same runtime-helper shape as __heap_bump_bytes so each
 	// backend rewinds its own cursor and snapshots its own freelist heads.
@@ -17969,4 +18008,29 @@ func extCaptureSlots(slots []int32) *OpExt {
 		return nil
 	}
 	return &OpExt{CaptureSlots: slots}
+}
+
+// bitCountBuiltin maps a bit-counting builtin name to its IR op and operand
+// width. Returns ok=false for anything else.
+//
+// The names are deliberately `__`-prefixed and width-suffixed: they are the
+// compiler-intrinsic layer that std/{i32,i64,u32,u64} wrap in the readable
+// `count_ones()` / `leading_zeros()` / `trailing_zeros()` methods, not surface
+// the language asks users to write.
+func bitCountBuiltin(name string) (OpKind, int, bool) {
+	switch name {
+	case "__clz32":
+		return OpClz, 32, true
+	case "__clz64":
+		return OpClz, 64, true
+	case "__ctz32":
+		return OpCtz, 32, true
+	case "__ctz64":
+		return OpCtz, 64, true
+	case "__popcount32":
+		return OpPopcount, 32, true
+	case "__popcount64":
+		return OpPopcount, 64, true
+	}
+	return 0, 0, false
 }

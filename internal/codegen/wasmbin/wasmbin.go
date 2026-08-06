@@ -2022,6 +2022,26 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 		// logical not — i32.eqz; only meaningful on i32.
 		return numeric.InstI32Eqz(body), nil
 
+	// Bit counting. wasm has all six as single opcodes, and its
+	// zero semantics (clz/ctz of 0 → the operand width) are exactly
+	// the ones the IR ops define, so these need no fixup. The i64
+	// forms produce an i64 count, which the IR types as i32, so wrap.
+	case ir.OpClz:
+		if op.Width == 64 {
+			return convert.InstI32WrapI64(numeric.InstI64Clz(body)), nil
+		}
+		return numeric.InstI32Clz(body), nil
+	case ir.OpCtz:
+		if op.Width == 64 {
+			return convert.InstI32WrapI64(numeric.InstI64Ctz(body)), nil
+		}
+		return numeric.InstI32Ctz(body), nil
+	case ir.OpPopcount:
+		if op.Width == 64 {
+			return convert.InstI32WrapI64(numeric.InstI64Popcnt(body)), nil
+		}
+		return numeric.InstI32Popcnt(body), nil
+
 	case ir.OpEq:
 		if op.Width == 64 {
 			return numeric.InstI64Eq(body), nil
