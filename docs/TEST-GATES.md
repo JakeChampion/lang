@@ -65,7 +65,36 @@ bytes over ~1000 (fixture, target) pairs will. ~8 minutes per side.
 
 Worth knowing so you do not assume coverage you do not have:
 
-- **Allocation volume — now gated, by
+- **Allocation ASYMPTOTICS — now gated, by `TestAllocScalingX86_64`**
+  (`internal/e2e/alloc_scaling_test.go`). The differential below compares the
+  two compilers against *each other*, so a regression that lands in the shared
+  frontend, or in a stdlib function both compile the same way, moves both sides
+  equally and stays green. This gate asks the other question: does a shape
+  still allocate in the complexity class it is supposed to?
+
+  It measures `__heap_bump_bytes()` for one churn at `n` and at `2n` in
+  separate cold processes and bounds the RATIO, not the bytes. A recorded
+  byte budget rots — every legitimate change to a header size, a growth
+  schedule or the SSO threshold moves every number at once, so budgets get
+  re-recorded in bulk without being read and a real regression rides in with
+  the batch. Constant factors cancel out of a ratio entirely. Measured on the
+  current corpus: linear shapes sit at **2.00–2.06x** per doubling and the
+  quadratic calibration case at **3.78x**, so the 2.20x bound has no tuning
+  problem.
+
+  The corpus carries a deliberate `wantQuadratic` **calibration case** (naive
+  `s = s + x` left-fold) asserted to stay ABOVE the bound. If it ever drops
+  below, either `+` grew a builder representation or the gate stopped
+  discriminating — and in the second case every other row would be passing
+  vacuously, which is the failure mode a green suite cannot otherwise report.
+  Both failure directions are mutation-checked.
+
+  This is the gate for the asymptotic class of bug that leaves answers
+  correct: the naive substring search that went quadratic on repetitive input
+  (2.655s → 0.014s) and the merge sort that copied the whole array every pass
+  were both invisible to every correctness suite. ~1 s for the whole corpus.
+
+- **Allocation volume between the two compilers — gated by
   `TestSelfHostAllocDifferentialX86_64`.** Nothing used to compare how much the
   two compilers allocate, which is how they developed *opposite* cliffs
   undetected: this entry recorded `.with` through a borrowed param at 4688 MB
