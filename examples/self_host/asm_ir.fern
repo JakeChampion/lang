@@ -6231,7 +6231,18 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
         // admission (fresh-lambda-only values — the box is solely the
         // field's). Takes the generic arr_dec branch below.
         var fr_clo: boolean = fdt == "fn" && s.has_need("strfldok:clo:" + sty);
-        if (fr_str || fr_str_arr || fr_clo || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+        // A replaced DIRECT nested-struct / nested-enum field (#6127): the
+        // superseded field box is shallow-freed by the generic arr_dec branch
+        // below, under the same cow + snap guards — one level, exactly what
+        // __struct_drop's k_struct / k_enum arms already do at scope exit. That
+        // asymmetry was the bug: a single bind reclaimed the field and only the
+        // REBINDS leaked it. Gated on the whole-program read scan
+        // ("structfldok:<T>"), without which this is #6148's use-after-free: a
+        // struct-literal field value is sole-owned at rc=1, so a container store
+        // of it is an uncounted alias the free would dangle.
+        var fr_struct: boolean = irlower.decl_is_struct(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
+        var fr_enum: boolean = irlower.decl_is_enum(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
+        if (fr_str || fr_str_arr || fr_clo || fr_struct || fr_enum || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
             s = s.write("    movq " + off + "(%r10), %rsi\n");      // old.field_k
@@ -7000,6 +7011,15 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     while (sfoi < sfok.len()) {
         s = s.need("strfldok:" + sfok[sfoi]);
         sfoi = sfoi + 1;
+    }
+    // #6127: the DIRECT nested-struct / nested-enum field arm, from the same
+    // WHOLE-PROGRAM scan discipline — a unit-local func list would under-count
+    // the reads and re-open the use-after-free #6148 was reverted for.
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(all_funcs, all_structs);
+    var nfoi: i32 = 0;
+    while (nfoi < nfok.len()) {
+        s = s.need("structfldok:" + nfok[nfoi]);
+        nfoi = nfoi + 1;
     }
     // #5235: seed the plain-fn-pointer-array field registry as needs
     // ("FNPTR:<sty>.<field>") so emit_ir_struct_drop_one leaks-the-walk (buffer-

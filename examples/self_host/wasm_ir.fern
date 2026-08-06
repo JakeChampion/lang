@@ -8127,9 +8127,11 @@ pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: stri
     // single-module whole-program, so mod.funcs is the full read scope
     // (see irlower.strfld_reclaim_ok_types_of).
     var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
+    // #6127: the DIRECT nested-struct / nested-enum field arm (see the x86 twin).
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs);
     var frti: i32 = 0;
     while (frti < frt.len()) {
-        out = out + emit_wasm_field_reclaim_body(frt[frti], mod.structs, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0);
+        out = out + emit_wasm_field_reclaim_body(frt[frti], mod.structs, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0);
         frti = frti + 1;
     }
     // #5235: plain-fn-pointer-array field markers ("FNPTR:<sty>.<field>") — a
@@ -8302,7 +8304,7 @@ pub function emit_wasm_struct_drop_body(t: string, structs: parser.StructDecl[],
 // emit_wasm_struct_drop_body. `old` null / below heap_base skips the field loop
 // (snapshot_dec null-guards the box free). Returns `new`. `hb` is the module's
 // heap base (the low-address guard threshold).
-pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[], mr_types: string[], hb: i32, str_ok: boolean, clo_ok: boolean): string {
+pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[], mr_types: string[], hb: i32, str_ok: boolean, clo_ok: boolean, nest_ok: boolean): string {
     var o: string = "  (func $__field_reclaim_" + t + " (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
     o = o + "    (if (i32.ge_u (local.get $old) (i32.const " + util.i32_to_string(hb) + ")) (then\n";
     var si: i32 = 0;
@@ -8323,7 +8325,13 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[
                 // $__fern_arr_dec: the superseded `__mkclo$` env box is one
                 // rc-headered block, shallow-freed (captures leak). Gated on
                 // the clofld admission (clo_ok) — the wasm fr_clo sibling.
-                if (frk == "a" || (frk == "s" && str_ok) || (ft == "fn" && clo_ok)) {
+                // A replaced DIRECT nested-struct / nested-enum field (#6127):
+                // same guarded $__fern_arr_dec, one level — the wasm sibling of
+                // the x86 fr_struct / fr_enum arms. Gated on the whole-program
+                // read scan (nest_ok); #6148 is what happens without it.
+                var frk_nest: boolean = nest_ok
+                    && (irlower.decl_is_struct(structs, ft) || irlower.decl_is_enum(structs, ft));
+                if (frk == "a" || (frk == "s" && str_ok) || (ft == "fn" && clo_ok) || frk_nest) {
                     var off: string = util.i32_to_string(8 + k * 8);
                     var oldf: string = "(i32.load offset=" + off + " (local.get $old))";
                     var newf: string = "(i32.load offset=" + off + " (local.get $new))";
