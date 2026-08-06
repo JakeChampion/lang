@@ -193,7 +193,9 @@ function main(): i32 {
     while (r < 100) { t = t + round(r); r = r + 1; }
     return t % 97;
 }`
-		allocs, frees, live := counts(t, "scalar_enum_condrebind", src, 44)
+		// 9: confirmed against BOTH oracles (bin/fern -interp and native
+		// -target x86-64) rather than read off the self-host run.
+		allocs, frees, live := counts(t, "scalar_enum_condrebind", src, 9)
 		if allocs != frees {
 			t.Errorf("allocs=%d frees=%d", allocs, frees)
 		}
