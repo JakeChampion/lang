@@ -150,8 +150,7 @@ func cliRunComponent(prog *ast.Program, info *checker.Info) ([]byte, error) {
 	b := bin
 	if req.Tcp || req.Udp ||
 		req.Stdin || req.Args || req.Env ||
-		req.FileRead || req.FileWrite || req.FileAppend ||
-		req.FileReadWrite || req.FileReadWriteAppend {
+		req.File.Any() {
 		rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 			ForceMemorySection: true,
 			Preview2WASI:       true,
@@ -185,7 +184,7 @@ func httpHandlerComponent(prog *ast.Program, info *checker.Info) ([]byte, error)
 		return nil, fmt.Errorf("can't compose a handler that imports %s yet — remove the source that pulls them in", strings.Join(unsupported, ", "))
 	}
 	if req.Args || req.Env || req.Stdin ||
-		req.FileRead || req.FileWrite || req.FileAppend || req.FileReadWrite {
+		req.File.Any() {
 		return nil, fmt.Errorf("a handler can't use env / args / files / stdin — the http proxy world doesn't grant them")
 	}
 	return component.Compose(core, req, "wasi:http/incoming-handler@0.2.0#handle"), nil

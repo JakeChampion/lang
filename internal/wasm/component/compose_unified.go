@@ -24,10 +24,10 @@ type ComposeRequest struct {
 	BlockWrite, BlockRead bool
 	DropInput, DropOutput bool
 
-	// Filesystem open-chain (mutually exclusive single descriptor mode,
-	// the combined read+write, or read+write+append for a program that
-	// mixes all three open modes in one run).
-	FileRead, FileWrite, FileAppend, FileReadWrite, FileReadWriteAppend bool
+	// wasi:filesystem/types methods the core imports — the open-chain's
+	// via-stream directions and the path mutators, as an independent set
+	// rather than a mutually exclusive mode.
+	File FsFeatures
 
 	// Socket / HTTP method surfaces.
 	Tcp  bool // TCP server (listen/accept/close)
@@ -75,9 +75,9 @@ type ComposeRequest struct {
 // halves of wasi:io/streams surfaced.
 func (r ComposeRequest) streamDirections() (needIn, needOut bool) {
 	needIn = r.Stdin || r.BlockRead || r.DropInput ||
-		r.FileRead || r.FileReadWrite || r.FileReadWriteAppend || r.Tcp || r.Http
+		r.File.Read || r.Tcp || r.Http
 	needOut = r.Stdout || r.Stderr || r.BlockWrite || r.DropOutput ||
-		r.FileWrite || r.FileAppend || r.FileReadWrite || r.FileReadWriteAppend || r.Tcp || r.Http
+		r.File.Write || r.File.Append || r.Tcp || r.Http
 	return needIn, needOut
 }
 
@@ -137,23 +137,11 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		g.ensureIoPoll()
 	}
 
-	// Filesystem open-chain.
-	viaName, viaParams := composeReadViaName, composeReadViaParams
-	switch {
-	case req.FileAppend:
-		viaName, viaParams = composeAppendViaName, composeAppendViaParams
-		g.ensureFilesystem(gFsAppend)
-	case req.FileWrite:
-		viaName = composeWriteViaName
-		g.ensureFilesystem(gFsWrite)
-	case req.FileReadWrite:
-		g.ensureFilesystem(gFsReadWrite)
-	case req.FileReadWriteAppend:
-		g.ensureFilesystem(gFsReadWriteAppend)
-	case req.FileRead:
-		g.ensureFilesystem(gFsRead)
+	// Filesystem.
+	hasFile := req.File.Any()
+	if hasFile {
+		g.ensureFilesystem(req.File)
 	}
-	hasFile := req.FileRead || req.FileWrite || req.FileAppend || req.FileReadWrite || req.FileReadWriteAppend
 
 	// CLI stdio + standalone capabilities.
 	if req.Stdout {
@@ -280,18 +268,28 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		g.add(gImport{iface: "wasi:io/poll@0.2.0", name: "[resource-drop]pollable", kind: gDrop, resourceT: g.surfaced["pollable"]})
 	}
 
-	// Filesystem open-chain lowerings.
+	// Filesystem lowerings — one per method the core imports, in the
+	// same order ensureFilesystem declared them.
 	if hasFile {
+		const fsTypes = "wasi:filesystem/types@0.2.0"
 		g.add(
 			gImport{iface: "wasi:filesystem/preopens@0.2.0", name: composeGetDirsName, kind: gMemRealloc, params: composeGetDirsParams},
-			gImport{iface: "wasi:filesystem/types@0.2.0", name: composeOpenAtName, kind: gMem, params: composeOpenAtParams},
-			gImport{iface: "wasi:filesystem/types@0.2.0", name: viaName, kind: gMem, params: viaParams},
+			gImport{iface: fsTypes, name: composeOpenAtName, kind: gMem, params: composeOpenAtParams},
 		)
-		if req.FileReadWrite || req.FileReadWriteAppend {
-			g.add(gImport{iface: "wasi:filesystem/types@0.2.0", name: composeWriteViaName, kind: gMem, params: composeReadViaParams})
+		if req.File.Read {
+			g.add(gImport{iface: fsTypes, name: composeReadViaName, kind: gMem, params: composeReadViaParams})
 		}
-		if req.FileReadWriteAppend {
-			g.add(gImport{iface: "wasi:filesystem/types@0.2.0", name: composeAppendViaName, kind: gMem, params: composeAppendViaParams})
+		if req.File.Write {
+			g.add(gImport{iface: fsTypes, name: composeWriteViaName, kind: gMem, params: composeReadViaParams})
+		}
+		if req.File.Append {
+			g.add(gImport{iface: fsTypes, name: composeAppendViaName, kind: gMem, params: composeAppendViaParams})
+		}
+		if req.File.Unlink {
+			g.add(gImport{iface: fsTypes, name: composeUnlinkAtName, kind: gMem, params: composePathMutatorParams})
+		}
+		if req.File.Mkdir {
+			g.add(gImport{iface: fsTypes, name: composeMkdirAtName, kind: gMem, params: composePathMutatorParams})
 		}
 	}
 

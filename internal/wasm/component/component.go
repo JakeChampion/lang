@@ -1824,62 +1824,63 @@ func WasiFilesystemTypesOpenAtInstanceTypeBody() []byte {
 	return body
 }
 
-// WasiFilesystemTypesReadPathInstanceTypeBody is the wasi:filesystem/types
-// instance type the file-READ wrap imports: descriptor + error-code + the
-// three flag types + open-at + read-via-stream, with input-stream
-// outer-aliased from wasi:io/streams.
-func WasiFilesystemTypesReadPathInstanceTypeBody(outerInputStreamTypeidx uint32) []byte {
-	b := &instTypeBuilder{}
-	v := fsPrelude(b, fsStreams{in: outerInputStreamTypeidx, needIn: true})
-	fsOpenAt(b, v)
-	fsViaStream(b, v, "read-via-stream", v.rIn)
-	return b.body()
+// FsFeatures is the set of wasi:filesystem/types methods a core module
+// imports. It replaces the five-way mode enum this used to be: the
+// stream directions and the path mutators are INDEPENDENT — a program
+// can read files and make directories without writing either — so a
+// program's needs are a subset of a set, not one of a fixed list.
+//
+// The enum was already at its limit with three via-stream methods and
+// five hand-picked bodies; part 2's three path mutators would have made
+// it forty.
+type FsFeatures struct {
+	Read   bool // read-via-stream
+	Write  bool // write-via-stream
+	Append bool // append-via-stream
+	Unlink bool // unlink-file-at
+	Mkdir  bool // create-directory-at
 }
 
-// WasiFilesystemTypesReadWritePathInstanceTypeBody is the combined
-// read+write instance type — descriptor + open-at + read-via-stream AND
-// write-via-stream — for a program that reads one file and writes another.
-func WasiFilesystemTypesReadWritePathInstanceTypeBody(inT, outT uint32) []byte {
-	b := &instTypeBuilder{}
-	v := fsPrelude(b, fsStreams{in: inT, out: outT, needIn: true, needOut: true})
-	fsOpenAt(b, v)
-	fsViaStream(b, v, "read-via-stream", v.rIn)
-	fsViaStream(b, v, "write-via-stream", v.rOut)
-	return b.body()
+// Any reports whether the request touches the filesystem at all.
+func (f FsFeatures) Any() bool {
+	return f.Read || f.Write || f.Append || f.Unlink || f.Mkdir
 }
 
-// WasiFilesystemTypesReadWriteAppendPathInstanceTypeBody adds
-// append-via-stream to the read+write shape — the widest of the
-// stream-based filesystem instance types.
-func WasiFilesystemTypesReadWriteAppendPathInstanceTypeBody(inT, outT uint32) []byte {
+// WasiFilesystemTypesPathInstanceTypeBody is the wasi:filesystem/types
+// instance type for a given method set: descriptor + error-code + the
+// three flag types + open-at, then whichever methods `f` selects, with
+// input-stream / output-stream outer-aliased from wasi:io/streams as
+// the selected via-stream methods require. inT / outT are ignored when
+// the corresponding direction is unused.
+//
+// Emission order is fixed (via-streams read/write/append, then the path
+// mutators unlink/mkdir/rmdir) rather than following the order the core
+// module happened to import them, so a method set maps to exactly one
+// byte sequence.
+func WasiFilesystemTypesPathInstanceTypeBody(inT, outT uint32, f FsFeatures) []byte {
 	b := &instTypeBuilder{}
-	v := fsPrelude(b, fsStreams{in: inT, out: outT, needIn: true, needOut: true})
+	v := fsPrelude(b, fsNeeds{
+		in: inT, out: outT,
+		needIn:   f.Read,
+		needOut:  f.Write || f.Append,
+		needUnit: f.Unlink || f.Mkdir,
+	})
 	fsOpenAt(b, v)
-	fsViaStream(b, v, "read-via-stream", v.rIn)
-	fsViaStream(b, v, "write-via-stream", v.rOut)
-	fsViaStream(b, v, "append-via-stream", v.rOut)
-	return b.body()
-}
-
-// WasiFilesystemTypesWritePathInstanceTypeBody is the write-side
-// counterpart of WasiFilesystemTypesReadPathInstanceTypeBody: descriptor +
-// open-at + write-via-stream over an outer-aliased output-stream.
-func WasiFilesystemTypesWritePathInstanceTypeBody(outerOutputStreamTypeidx uint32) []byte {
-	b := &instTypeBuilder{}
-	v := fsPrelude(b, fsStreams{out: outerOutputStreamTypeidx, needOut: true})
-	fsOpenAt(b, v)
-	fsViaStream(b, v, "write-via-stream", v.rOut)
-	return b.body()
-}
-
-// WasiFilesystemTypesAppendPathInstanceTypeBody is the append-side
-// sibling: descriptor + open-at + append-via-stream, which unlike the
-// read / write pair takes no offset.
-func WasiFilesystemTypesAppendPathInstanceTypeBody(outerOutputStreamTypeidx uint32) []byte {
-	b := &instTypeBuilder{}
-	v := fsPrelude(b, fsStreams{out: outerOutputStreamTypeidx, needOut: true})
-	fsOpenAt(b, v)
-	fsViaStream(b, v, "append-via-stream", v.rOut)
+	if f.Read {
+		fsViaStream(b, v, "read-via-stream", v.rIn)
+	}
+	if f.Write {
+		fsViaStream(b, v, "write-via-stream", v.rOut)
+	}
+	if f.Append {
+		fsViaStream(b, v, "append-via-stream", v.rOut)
+	}
+	if f.Unlink {
+		fsPathMutator(b, v, "unlink-file-at")
+	}
+	if f.Mkdir {
+		fsPathMutator(b, v, "create-directory-at")
+	}
 	return b.body()
 }
 

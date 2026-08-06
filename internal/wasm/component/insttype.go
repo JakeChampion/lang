@@ -111,14 +111,17 @@ func (b *instTypeBuilder) body() []byte {
 // TestWasiFilesystemTypesInstanceTypeBodies_Golden, because these types
 // are what a composed component's imports are matched against.
 
-// fsStreams says which io/streams handles a filesystem instance type
-// needs to alias in. A body only declares the directions it uses — a
-// read-only wrap must not mention output-stream, or the composed
-// component imports a stream direction the core module never touches.
-type fsStreams struct {
-	in, out uint32 // outer typeidx; 0 means "not needed"
-	needIn  bool
-	needOut bool
+// fsNeeds says what a filesystem instance type's prelude must declare.
+// The stream directions are aliased in from io/streams; a body only
+// declares the ones it uses, because a read-only wrap that mentioned
+// output-stream would make the composed component import a stream
+// direction the core module never touches. unit is the same idea for
+// `result<_, error-code>`: only the path-mutating methods return it.
+type fsNeeds struct {
+	in, out  uint32 // outer typeidx; 0 means "not needed"
+	needIn   bool
+	needOut  bool
+	needUnit bool
 }
 
 // fsVocab is the set of typeidxs a filesystem method signature can name.
@@ -132,13 +135,19 @@ type fsVocab struct {
 	bDesc     uint32 // borrow<descriptor>
 	rDesc     uint32 // result<own<descriptor>, error-code>
 	rIn, rOut uint32 // result<own<stream>, error-code>
+	rUnit     uint32 // result<_, error-code>
 }
 
 // fsPrelude emits the descriptor resource, the requested stream aliases,
 // error-code, the three flag types, and the own/borrow/result types the
 // method signatures reference — in the exact order the hand-written
 // bodies used.
-func fsPrelude(b *instTypeBuilder, s fsStreams) fsVocab {
+//
+// Everything optional is emitted LAST within its group, so a body that
+// asks for less produces a byte-identical prefix of one that asks for
+// more. That is what lets the method set grow without renumbering the
+// bodies that were pinned before it grew.
+func fsPrelude(b *instTypeBuilder, s fsNeeds) fsVocab {
 	var v fsVocab
 	v.desc = b.sub("descriptor")
 	if s.needIn {
@@ -171,6 +180,9 @@ func fsPrelude(b *instTypeBuilder, s fsStreams) fsVocab {
 	if s.needOut {
 		v.rOut = b.def(InnerTypeResultOkErr(ownOut, v.errC))
 	}
+	if s.needUnit {
+		v.rUnit = b.def(InnerTypeResultErr(v.errC))
+	}
 	return v
 }
 
@@ -194,5 +206,17 @@ func fsViaStream(b *instTypeBuilder, v fsVocab, method string, result uint32) {
 	}
 	b.funcExport(tcpMethodFuncDecl(method,
 		[]string{"self", "offset"}, []byte{byte(v.bDesc), CValtypeU64}, byte(result)),
+		"[method]descriptor."+method)
+}
+
+// fsPathMutator emits one of the path-mutating methods —
+// `unlink-file-at`, `create-directory-at`, `remove-directory-at`. They
+// share a signature exactly: (borrow<descriptor>, string) ->
+// result<_, error-code>. Note the absent path-flags parameter, which
+// open-at and stat-at both take; these three do not follow symlinks and
+// the WIT gives them no flags argument.
+func fsPathMutator(b *instTypeBuilder, v fsVocab, method string) {
+	b.funcExport(tcpMethodFuncDecl(method,
+		[]string{"self", "path"}, []byte{byte(v.bDesc), CValtypeString}, byte(v.rUnit)),
 		"[method]descriptor."+method)
 }

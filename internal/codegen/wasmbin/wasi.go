@@ -259,6 +259,23 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 	},
+	// The path mutators share a lowering exactly:
+	//   (self: i32, path_ptr: i32, path_len: i32, retptr: i32) -> ().
+	// retptr holds `result<_, error-code>`, whose ok arm is empty — so
+	// unlike open-at there is no payload at +4, only the discriminant
+	// byte at +0 and, on the error arm, the error-code at +4.
+	"wasi_descriptor_unlink_file_at_p2": {
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[method]descriptor.unlink-file-at",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_descriptor_create_directory_at_p2": {
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[method]descriptor.create-directory-at",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_get_arguments_p2": {
 		// Preview-2: wasi:cli/environment@0.2.0::get-arguments() ->
 		// list<string>. Canonical-ABI lowered to `(retptr: i32) ->
@@ -1646,11 +1663,17 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_close")
 		}
 	}
-	// Directory + metadata helpers (#6208). Preview-1 only so far —
-	// the preview-2 halves need seven wasi:filesystem imports plus
-	// composer wiring, and are the follow-up.
+	// Directory + metadata helpers (#6208). remove_file and temp_dir
+	// have preview-2 halves; stat / read_dir / remove_dir_all still
+	// need read-directory + stat-at, so under Preview2WASI they emit
+	// preview-1 imports the composer rejects by name.
 	if helpers.set["__fern_remove_file"] {
-		in.add("wasi_path_unlink_file")
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_unlink_file_at_p2")
+		} else {
+			in.add("wasi_path_unlink_file")
+		}
 	}
 	if helpers.set["__fern_stat"] {
 		in.add("wasi_path_filestat_get")
@@ -1670,7 +1693,12 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_fd_close")
 	}
 	if helpers.set["__fern_temp_dir"] {
-		in.add("wasi_path_create_directory")
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_create_directory_at_p2")
+		} else {
+			in.add("wasi_path_create_directory")
+		}
 	}
 	if helpers.set["__fern_open_reader"] {
 		if opts.Preview2WASI {
@@ -2088,6 +2116,8 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_writer_close":        buildWriterCloseBodyP2,
 	"__fern_stdout":              buildStdoutBodyP2,
 	"__fern_stderr":              buildStderrBodyP2,
+	"__fern_remove_file":         buildRemoveFileBodyP2,
+	"__fern_temp_dir":            buildTempDirBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.

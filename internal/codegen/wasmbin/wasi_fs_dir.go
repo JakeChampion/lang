@@ -11,14 +11,19 @@
 // "remove_dir_all"` (its `TestRunner.finish` scrubs `cleanup_paths`
 // unconditionally, whether or not the suite touched the disk).
 //
-// PREVIEW-1 ONLY, so far. Every file-I/O helper in wasmbin carries a
-// preview-1 body and a preview-2 sibling (`…BodyP2`), because
-// `wasmbin.Build` emits a preview-1 core module — what the e2e
-// harness runs under `wasmtime --invoke main` — while `bin/fern
-// -target wasm` builds with Preview2WASI and composes a component.
-// The preview-2 halves of these five are the follow-up; they need
-// seven new `wasi:filesystem` imports plus composer wiring, and they
-// reuse the Result / FileStat construction pinned here.
+// Every file-I/O helper in wasmbin carries a preview-1 body and a
+// preview-2 sibling (`…BodyP2`), because `wasmbin.Build` emits a
+// preview-1 core module — what the e2e harness runs under `wasmtime
+// --invoke main` — while `bin/fern -target wasm` builds with
+// Preview2WASI and composes a component.
+//
+// Two of these five have both halves: `remove_file` (unlink-file-at)
+// and `temp_dir` (create-directory-at). `stat`, `read_dir` and
+// `remove_dir_all` are still preview-1 only — they need `stat-at` and
+// the `read-directory` / `directory-entry-stream` pair, which is a
+// second resource in an instance type that has only ever exported one.
+// Under Preview2WASI those three emit preview-1 imports, which the
+// composer rejects by name rather than mis-composing.
 //
 // Shared shapes, all matching the checker's declarations:
 //
@@ -86,6 +91,99 @@ const (
 // has to be materialised into one array regardless, and a cookie
 // walk would re-enter the directory between calls.
 const readdirBufBytes = 4096
+
+// errorCodeExistDisc is the `exist` case of the wasi:filesystem
+// error-code enum — the preview-2 EEXIST, and the one code temp_dir
+// treats as "try another name" rather than a failure. Its index is
+// WasiFilesystemErrorCodeNames order, the same numbering
+// appendErrnoFromErrorCode maps from.
+const errorCodeExistDisc int32 = 7
+
+// emitCopyBytes appends a byte-at-a-time copy of `lenLocal` bytes from
+// srcLocal to dstLocal, clobbering iLocal as the induction variable.
+func emitCopyBytes(body []byte, dstLocal, srcLocal, lenLocal, iLocal uint32) []byte {
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, iLocal)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, iLocal)
+		body = inst.InstLocalGet(body, lenLocal)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+		body = inst.InstLocalGet(body, dstLocal)
+		body = inst.InstLocalGet(body, iLocal)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, srcLocal)
+		body = inst.InstLocalGet(body, iLocal)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = memory.InstI32Store8(body, 0, 0)
+		body = inst.InstLocalGet(body, iLocal)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, iLocal)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+	return body
+}
+
+// emitHexSuffix appends "draw one random word and write its eight hex
+// digits at bufLocal + offLocal + 1" — temp_dir's per-attempt name
+// suffix, on both the preview-1 and preview-2 paths. iLocal, rndLocal
+// and nibbleLocal are scratch.
+func emitHexSuffix(body []byte, random, bufLocal, offLocal, iLocal, rndLocal, nibbleLocal uint32) []byte {
+	body = inst.InstCall(body, random)
+	body = inst.InstLocalSet(body, rndLocal)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, iLocal)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, iLocal)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+		body = inst.InstLocalGet(body, bufLocal)
+		body = inst.InstLocalGet(body, offLocal)
+		body = numeric.InstI32Add(body)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, iLocal)
+		body = numeric.InstI32Add(body)
+		// nibble = (rnd >> (i*4)) & 15, then hex-encode it branch-free:
+		// '0'+n, plus 39 more once n >= 10, which is exactly the
+		// '0'..'9' → 'a'..'f' gap.
+		body = inst.InstLocalGet(body, rndLocal)
+		body = inst.InstLocalGet(body, iLocal)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32ShrU(body)
+		body = inst.InstI32Const(body, 15)
+		body = numeric.InstI32And(body)
+		body = inst.InstLocalSet(body, nibbleLocal)
+		body = inst.InstLocalGet(body, nibbleLocal)
+		body = inst.InstI32Const(body, '0')
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, nibbleLocal)
+		body = inst.InstI32Const(body, 10)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstI32Const(body, 'a'-'0'-10)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Store8(body, 0, 0)
+		body = inst.InstLocalGet(body, iLocal)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, iLocal)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+	return body
+}
 
 // emitResultErr appends "build IoError(errno) from the path in
 // params 0/1, wrap it in Err, return". The Err box is the same shape
@@ -934,31 +1032,7 @@ func buildTempDirBody(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 5)
 	// Copy the prefix in once; only the 8 hex digits change per try.
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstLocalSet(body, 4)
-	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
-	{
-		body = inst.InstLocalGet(body, 4)
-		body = inst.InstLocalGet(body, 3)
-		body = numeric.InstI32GeU(body)
-		body = inst.InstBrIf(body, 1)
-		body = inst.InstLocalGet(body, 5)
-		body = inst.InstLocalGet(body, 4)
-		body = numeric.InstI32Add(body)
-		body = inst.InstLocalGet(body, 2)
-		body = inst.InstLocalGet(body, 4)
-		body = numeric.InstI32Add(body)
-		body = memory.InstI32Load8U(body, 0, 0)
-		body = memory.InstI32Store8(body, 0, 0)
-		body = inst.InstLocalGet(body, 4)
-		body = inst.InstI32Const(body, 1)
-		body = numeric.InstI32Add(body)
-		body = inst.InstLocalSet(body, 4)
-		body = inst.InstBr(body, 0)
-	}
-	body = inst.InstEnd(body)
-	body = inst.InstEnd(body)
+	body = emitCopyBytes(body, 5, 2, 3, 4)
 	// separator
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstLocalGet(body, 3)
@@ -977,54 +1051,7 @@ func buildTempDirBody(idxs map[string]uint32) []byte {
 		body = numeric.InstI32GeU(body)
 		body = inst.InstBrIf(body, 1)
 
-		// Eight hex digits from one random word.
-		body = inst.InstCall(body, random)
-		body = inst.InstLocalSet(body, 7)
-		body = inst.InstI32Const(body, 0)
-		body = inst.InstLocalSet(body, 4)
-		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
-		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
-		{
-			body = inst.InstLocalGet(body, 4)
-			body = inst.InstI32Const(body, 8)
-			body = numeric.InstI32GeU(body)
-			body = inst.InstBrIf(body, 1)
-			body = inst.InstLocalGet(body, 5)
-			body = inst.InstLocalGet(body, 3)
-			body = numeric.InstI32Add(body)
-			body = inst.InstI32Const(body, 1)
-			body = numeric.InstI32Add(body)
-			body = inst.InstLocalGet(body, 4)
-			body = numeric.InstI32Add(body)
-			// nibble = (rnd >> (i*4)) & 15, then hex-encode it
-			// branch-free: '0'+n, plus 39 more once n >= 10, which
-			// is exactly the '0'..'9' → 'a'..'f' gap.
-			body = inst.InstLocalGet(body, 7)
-			body = inst.InstLocalGet(body, 4)
-			body = inst.InstI32Const(body, 4)
-			body = numeric.InstI32Mul(body)
-			body = numeric.InstI32ShrU(body)
-			body = inst.InstI32Const(body, 15)
-			body = numeric.InstI32And(body)
-			body = inst.InstLocalSet(body, 9)
-			body = inst.InstLocalGet(body, 9)
-			body = inst.InstI32Const(body, '0')
-			body = numeric.InstI32Add(body)
-			body = inst.InstLocalGet(body, 9)
-			body = inst.InstI32Const(body, 10)
-			body = numeric.InstI32GeU(body)
-			body = inst.InstI32Const(body, 'a'-'0'-10)
-			body = numeric.InstI32Mul(body)
-			body = numeric.InstI32Add(body)
-			body = memory.InstI32Store8(body, 0, 0)
-			body = inst.InstLocalGet(body, 4)
-			body = inst.InstI32Const(body, 1)
-			body = numeric.InstI32Add(body)
-			body = inst.InstLocalSet(body, 4)
-			body = inst.InstBr(body, 0)
-		}
-		body = inst.InstEnd(body)
-		body = inst.InstEnd(body)
+		body = emitHexSuffix(body, random, 5, 3, 4, 7, 9)
 
 		// errno = path_create_directory(preopen, buf, len)
 		body = inst.InstI32Const(body, preopenDirfd)
@@ -1086,5 +1113,213 @@ func buildTempDirBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 11)
 
 	locals := inst.PutLocalsOneGroup(nil, 12, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// ---- preview-2 ------------------------------------------------------
+//
+// The preview-2 halves of the path-MUTATING helpers (#6208 part 2 step
+// 1). `bin/fern -target wasm` builds with Preview2WASI and composes a
+// component, so these are what a real `fern` build runs; the preview-1
+// bodies above are what the e2e harness runs under `wasmtime --invoke
+// main`.
+//
+// Two structural differences from preview-1, and they account for all
+// of the code below:
+//
+//   - There is no fd 3. Every path is resolved against a descriptor
+//     handle obtained from `get-directories`, so each helper opens
+//     with the same three-instruction preamble.
+//   - There is no errno. A method returns `result<_, error-code>`
+//     through a return area: the discriminant byte at +0 (0 = ok) and,
+//     on the error arm, the error-code at +4. appendErrnoFromErrorCode
+//     maps that back to the errno `__build_io_error` speaks, so the
+//     IoError a program sees is identical on both paths.
+
+// emitPreopenP2 appends "rb = alloc(16); get-directories(rb); preopen =
+// mem[mem[rb+0]]" — the descriptor every path method needs as its self
+// argument. rb doubles as the return area for the method call that
+// follows, which is safe because get-directories' list header is dead
+// once the handle is loaded.
+func emitPreopenP2(body []byte, alloc, getDirs, rbLocal, preopenLocal uint32) []byte {
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, rbLocal)
+	body = inst.InstLocalGet(body, rbLocal)
+	body = inst.InstCall(body, getDirs)
+	body = inst.InstLocalGet(body, rbLocal)
+	body = memory.InstI32Load(body, 2, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, preopenLocal)
+	return body
+}
+
+// buildRemoveFileBodyP2 is the preview-2 buildRemoveFileBody:
+// get-directories → unlink-file-at, then Ok(()) or Err(IoError).
+// Removing what is not there is an error on both paths.
+//
+// Locals after the two params:
+//
+//	2: $rb        3: $path_buf  4: $path_byte_len  5: $preopen
+//	6: $errno     7: $err_ptr   8: $box            9: $i
+func buildRemoveFileBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
+	buildIoErr := idxs["__build_io_error"]
+	getDirs := idxs["wasi_get_directories_p2"]
+	unlink := idxs["wasi_descriptor_unlink_file_at_p2"]
+
+	var body []byte
+	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 9)
+	body = emitPreopenP2(body, alloc, getDirs, 2, 5)
+
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, unlink)
+
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = appendErrnoFromErrorCode(body, 2, 6)
+		body = emitResultErr(body, buildIoErr, allocBox, 6, 7, 8)
+	}
+	body = inst.InstEnd(body)
+
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 7)
+	body = emitResultOkPtr(body, allocBox, 7, 8)
+
+	locals := inst.PutLocalsOneGroup(nil, 8, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildTempDirBodyP2 is the preview-2 buildTempDirBody. The uniqueness
+// scheme is unchanged — preview-2 has no mkdtemp either, so it is the
+// same "draw eight hex digits from the CSPRNG and retry while the name
+// is taken" loop — and the path stays preopen-relative for the same
+// reason: a component's filesystem is reached only through its
+// preopened descriptors, so an absolute /tmp path would be unusable by
+// the read_file / write_file the caller goes on to make.
+//
+// Only the create call and its error test differ from the preview-1
+// body: create-directory-at against the preopen descriptor, and the
+// "name already taken" test reads the error-code `exist` discriminant
+// rather than EEXIST.
+//
+// Locals after the two params:
+//
+//	2: $pfx_buf  3: $pfx_len   4: $i        5: $buf
+//	6: $len      7: $rnd       8: $attempt  9: $errno
+//	10: $err_ptr 11: $box      12: $data    13: $slen
+//	14: $rb      15: $preopen  16: $failed
+func buildTempDirBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
+	buildIoErr := idxs["__build_io_error"]
+	getDirs := idxs["wasi_get_directories_p2"]
+	mkdir := idxs["wasi_descriptor_create_directory_at_p2"]
+	random := idxs["__fern_random_i32"]
+	strCopy := idxs["__fern_str_copy"]
+
+	var body []byte
+	body = emitStrNormalize(body, idxs, 0, 1, 2, 3, 4)
+	body = emitPreopenP2(body, alloc, getDirs, 14, 15)
+
+	// buf = alloc(pfx_len + 1 + 8); len = pfx_len + 9.
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 9)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalTee(body, 6)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 5)
+	body = emitCopyBytes(body, 5, 2, 3, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 3)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, '-')
+	body = memory.InstI32Store8(body, 0, 0)
+
+	// Retry loop: 64 attempts, then give up with the last failure.
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 8)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 16)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstI32Const(body, 64)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+
+		body = emitHexSuffix(body, random, 5, 3, 4, 7, 9)
+
+		// create-directory-at(preopen, buf, len, rb).
+		body = inst.InstLocalGet(body, 15)
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstLocalGet(body, 14)
+		body = inst.InstCall(body, mkdir)
+		body = inst.InstLocalGet(body, 14)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstLocalTee(body, 16)
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstBrIf(body, 1) // created → done
+
+		// Only "already exists" is worth another name.
+		body = inst.InstLocalGet(body, 14)
+		body = memory.InstI32Load8U(body, 0, 4)
+		body = inst.InstI32Const(body, errorCodeExistDisc)
+		body = numeric.InstI32Ne(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = appendErrnoFromErrorCode(body, 14, 9)
+			body = emitResultErr(body, buildIoErr, allocBox, 9, 10, 11)
+		}
+		body = inst.InstEnd(body)
+
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 8)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // end loop
+	body = inst.InstEnd(body) // end block
+
+	// Exhausted the attempts without creating anything.
+	body = inst.InstLocalGet(body, 16)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = appendErrnoFromErrorCode(body, 14, 9)
+		body = emitResultErr(body, buildIoErr, allocBox, 9, 10, 11)
+	}
+	body = inst.InstEnd(body)
+
+	// Ok(path) — an owned copy, since `buf` is this helper's scratch.
+	// A 16-byte box (tag@0, data@+8, len@+12), the two-word string
+	// shape, NOT the 8-byte single-word one.
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstCall(body, strCopy)
+	body = inst.InstLocalSet(body, 13)
+	body = inst.InstLocalSet(body, 12)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, allocBox)
+	body = inst.InstLocalTee(body, 11)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 11)
+	body = inst.InstLocalGet(body, 12)
+	body = memory.InstI32Store(body, 2, 8)
+	body = inst.InstLocalGet(body, 11)
+	body = inst.InstLocalGet(body, 13)
+	body = memory.InstI32Store(body, 2, 12)
+	body = inst.InstLocalGet(body, 11)
+
+	locals := inst.PutLocalsOneGroup(nil, 15, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
