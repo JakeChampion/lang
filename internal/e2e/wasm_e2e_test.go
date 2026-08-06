@@ -9384,27 +9384,23 @@ function main(): i32 {
 // gives a clear error (instead of silently producing an invalid
 // component) when the source's wasmbin output has WASI imports the
 // driver doesn't know how to route into a preview-2 component yet.
-// `args()` pulls in `wasi_args_sizes_get` + `wasi_args_get`,
-// which the preview-2 migration hasn't covered, so the program
-// hits the "unrecognised imports" branch.
 //
-// (Earlier this test used `print()`, but `print()`'s underlying
-// imports moved into the preview-2 migrated set when
-// `__fern_print` was ported in #1245; the test source switched to
-// a still-unmigrated builtin.)
+// The source has had to move twice, both times because the builtin it
+// named became supported: `print()` when `__fern_print` was ported
+// (#1245), then read+append when the five-way filesystem mode was
+// replaced by a feature set. Whatever it names is a live to-do list
+// entry, not a permanent limitation — today that is `stat`.
 func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "needs_adapter.fern")
-	// read + append in one program isn't composable: read needs
-	// read-via-stream and append needs append-via-stream, but the
-	// combined filesystem/types body is read+write (read-via +
-	// write-via), not read+append — so neither a single-direction body
-	// nor the combined one matches, and -component-wrap must reject it.
-	// (read-only, write-only, append-only, and read+write each compose;
-	// this picks a combination that still falls through.)
+	// `stat` has no preview-2 half yet (#6208 part 2 needs stat-at),
+	// so under Preview2WASI it still emits the preview-1
+	// path_filestat_get import, which the composer does not recognise.
+	// (This used to be read + append, which the five-way filesystem
+	// mode had no body for; the mode is gone and read+append composes,
+	// so the example had to move to a real remaining gap.)
 	src := []byte(`function main(): i32 {
-    match (read_file("a")) { Ok(c) => {}, Err(e) => {} }
-    match (open_appender("b")) { Ok(w) => { w.close(); }, Err(e) => {} }
+    match (stat("a")) { Ok(fs) => {}, Err(e) => {} }
     return 0;
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
@@ -11473,21 +11469,20 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 }
 
 // TestCmdLangTargetWasmRejectsUnsupported confirms `-target wasm`
-// surfaces a clear error when the program pulls in a combination the
-// Go-side composer can't place yet (here read + append files — the
-// combined filesystem/types body is read+write, not read+append).
+// surfaces a clear error when the program pulls in a builtin the
+// Go-side composer can't place yet (here `stat`, whose preview-2 half
+// is the remaining half of #6208).
 func TestCmdLangTargetWasmRejectsUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "unsupported.fern")
-	// read + append in one program isn't composable: the combined
-	// filesystem/types body is read+write, not read+append, so neither
-	// path claims it and the driver must reject.
+	// `stat` still emits the preview-1 path_filestat_get import under
+	// Preview2WASI, so the driver must reject rather than compose.
 	// (Earlier still-unsupported combos — args, tcp_recv, tcp+print,
-	// tcp+clock, tcp+file-read, read+write files — each became supported
-	// as the composer grew; read+append is the current gap.)
+	// tcp+clock, tcp+file-read, read+write files, read+append — each
+	// became supported as the composer grew; stat is the current gap,
+	// and it closes when #6208 part 2 lands stat-at.)
 	src := []byte(`function main(): i32 {
-    match (read_file("a")) { Ok(c) => {}, Err(e) => {} }
-    match (open_appender("b")) { Ok(w) => { w.close(); }, Err(e) => {} }
+    match (stat("a")) { Ok(fs) => {}, Err(e) => {} }
     return 0;
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {

@@ -117,3 +117,58 @@ func TestCmdLangComponentTempDirRemoveFile(t *testing.T) {
 		t.Errorf("no probe-* directory under the preopen — create-directory-at did not run")
 	}
 }
+
+// TestCmdLangComponentReadAppend covers the combination the five-way
+// filesystem mode could not express: a program that both READS a file
+// and APPENDS to one.
+//
+// There were bodies for read, write, append and read+write, but not
+// read+append — so this program matched nothing and the driver
+// rejected it. Two tests asserted that rejection as the expected
+// behaviour (`TestCmdLangComponentWrapRejectsImports` and
+// `TestCmdLangTargetWasmRejectsUnsupported`, which both named this
+// exact source). Under FsFeatures there is no combination left to miss,
+// so those two moved to a real remaining gap and this took over as the
+// positive case.
+//
+// The appended content is the assertion: reading back "one\ntwo\n"
+// proves append-via-stream positioned at EOF rather than truncating,
+// while read-via-stream still worked in the same component.
+func TestCmdLangComponentReadAppend(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "ra.fern")
+	src := []byte(`function main(): i32 {
+    match (write_file("ra.txt", "one\n")) { Err(e) => { return 1; }, Ok(_) => {} }
+    match (open_appender("ra.txt")) {
+        Err(e) => { return 1; },
+        Ok(w) => { w.write("two\n"); w.close(); }
+    }
+    match (read_file("ra.txt")) {
+        Err(e) => { return 1; },
+        Ok(s) => { if (s != "one\ntwo\n") { return 1; } }
+    }
+    return 0;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "ra.wasm")
+	build := exec.Command("go", "run", "./cmd/fern", "-target", "wasm", "-o", compPath, srcPath)
+	build.Dir = projectRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm (read + append) failed: %v\n%s", err, out)
+	}
+	if err := exec.Command("wasmtime", "run", "--dir", dir, compPath).Run(); err != nil {
+		t.Errorf("read + append: wasmtime run failed (want exit 0): %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "ra.txt"))
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != "one\ntwo\n" {
+		t.Errorf("file content = %q, want %q — append-via-stream did not position at EOF", got, "one\ntwo\n")
+	}
+}
