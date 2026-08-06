@@ -1,0 +1,67 @@
+// A `Cell[i64]` / `Cell[u64]` held in a STRUCT FIELD must lower on the IR path.
+// `c.get()` desugars to `c[0]`, so the read reaches arr_index_is_i64 as an index
+// over a field whose declared type is `Cell[…]` — and that classifier's field
+// arm matched only `"i64[]"`, so the 8-byte stride went unnamed and the whole
+// MODULE bailed off the IR path. #6190.
+//
+// The issue framed this as "a Cell in a struct field does not lower". It is
+// narrower, and the controls below are what say so: `Cell[i32]` fields lower
+// completely, `.set` lowers at any width (it reads the element type from
+// cell_elem_type directly rather than through the index classifier), and a bare
+// wide Cell LOCAL was always fine. Only the wide field READ needed the stride.
+//
+// std/sim is the motivating case — `struct Sim { clock_ns: Cell[i64], rng:
+// Cell[i64] }` — which is why the whole module was uncompilable by the
+// self-host compiler.
+
+struct Holder { r: Cell[i64] }
+struct UHolder { r: Cell[u64] }
+struct Two { clock: Cell[i64], rng: Cell[i64] }
+struct Narrow { r: Cell[i32] }
+
+function bump(h: Holder, n: i32): i32 {
+    var v: i64 = h.r.get();
+    h.r.set(v + 1);
+    return (v as i32) + n;
+}
+
+// The std/sim shape: two wide Cell fields on one struct, read and written
+// through a borrowed param.
+function roll(s: Two): i64 {
+    var x: i64 = s.rng.get();
+    s.rng.set(x + 1);
+    return s.rng.get();
+}
+
+function main(): i32 {
+    var h: Holder = Holder { r: cell_new(1 as i64) };
+    if (bump(h, 40) != 41) { return 1; }
+    // The set above must have landed, so the second read sees 2.
+    if (h.r.get() != (2 as i64)) { return 2; }
+
+    var u: UHolder = UHolder { r: cell_new(41 as u64) };
+    if ((u.r.get() as i32) != 41) { return 3; }
+
+    var t: Two = Two { clock: cell_new(0 as i64), rng: cell_new(40 as i64) };
+    if ((roll(t) as i32) != 41) { return 4; }
+    // The other Cell field must be untouched — two wide fields on one struct
+    // have to address separately.
+    if (t.clock.get() != (0 as i64)) { return 5; }
+
+    // A value past 2^32, so a 4-byte stride would truncate rather than merely
+    // bail: this is the case that would read wrong if the stride regressed
+    // without the module bailing.
+    var w: Holder = Holder { r: cell_new(1 as i64) };
+    w.r.set(5000000000 as i64);
+    if (w.r.get() != (5000000000 as i64)) { return 6; }
+
+    // CONTROLS — all of these lowered before the fix and must keep doing so.
+    var nn: Narrow = Narrow { r: cell_new(1) };
+    nn.r.set(nn.r.get() + 40);
+    if (nn.r.get() != 41) { return 7; }
+
+    var bare: Cell[i64] = cell_new(1 as i64);
+    if (((bare.get() as i32) + 40) != 41) { return 8; }
+
+    return 11;
+}
