@@ -1231,13 +1231,29 @@ function parse_arrow_lambda(p: Par): (Expr, Par) {
                 apd_synths = apd_synths.append(atpr_param.name);
                 apd_lines = apd_lines.append(atpr_line);
                 apd_cols = apd_cols.append(atpr_col);
-                if (p.peek_punct() == ",") { p = p.advance(); continue; }
+                if (p.peek_punct() == ",") {
+                    p = p.advance();
+                    if (p.peek_punct() == ")") { break; }
+                    continue;
+                }
                 break;
             }
             var (pr_param, pr_p) = parse_param(p);
             p = pr_p;
             params = params.append(pr_param);
-            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            // A trailing comma before `)` must not start another parameter —
+            // parse_param returns its empty sentinel for `)`, and appending that
+            // gives the function one phantom nameless param. Harmless-looking on a
+            // register backend, fatal on wasm, where a function's arity is
+            // DECLARED: `(n: i32,) => n * 2` hoisted `$__lam_0` with two params and
+            // the one-argument call site underflowed the stack (#6354). Mirrors the
+            // struct-field and struct-literal parsers, which have guarded this
+            // since they were written.
+            if (p.peek_punct() == ",") {
+                p = p.advance();
+                if (p.peek_punct() == ")") { break; }
+                continue;
+            }
             break;
         }
     }
@@ -1795,13 +1811,23 @@ function parse_primary(p: Par): (Expr, Par) {
                             lpd_synths = lpd_synths.append(ltpr_param.name);
                             lpd_lines = lpd_lines.append(ltpr_line);
                             lpd_cols = lpd_cols.append(ltpr_col);
-                            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+                            if (p.peek_punct() == ",") {
+                                p = p.advance();
+                                if (p.peek_punct() == ")") { break; }
+                                continue;
+                            }
                             break;
                         }
                         var (pr_param, pr_p) = parse_param(p);
                         p = pr_p;
                         params = params.append(pr_param);
-                        if (p.peek_punct() == ",") { p = p.advance(); continue; }
+                        // Trailing comma before `)` — see the note in the arrow-lambda
+                        // parameter loop (#6354).
+                        if (p.peek_punct() == ",") {
+                            p = p.advance();
+                            if (p.peek_punct() == ")") { break; }
+                            continue;
+                        }
                         break;
                     }
                 }
@@ -5429,13 +5455,23 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
                 pd_synths = pd_synths.append(tpr_param.name);
                 pd_lines = pd_lines.append(tpr_line);
                 pd_cols = pd_cols.append(tpr_col);
-                if (p.peek_punct() == ",") { p = p.advance(); continue; }
+                if (p.peek_punct() == ",") {
+                    p = p.advance();
+                    if (p.peek_punct() == ")") { break; }
+                    continue;
+                }
                 break;
             }
             var (pr_param, pr_p) = parse_param(p);
             p = pr_p;
             params = params.append(pr_param);
-            if (p.peek_punct() == ",") { p = p.advance(); continue; }
+            // Trailing comma before `)` — see the note in the arrow-lambda
+            // parameter loop (#6354).
+            if (p.peek_punct() == ",") {
+                p = p.advance();
+                if (p.peek_punct() == ")") { break; }
+                continue;
+            }
             break;
         }
     }
