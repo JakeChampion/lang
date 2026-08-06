@@ -144,6 +144,7 @@ freeze tracker is [#4451](https://github.com/JakeChampion/lang/issues/4451).
 | `STDLIB-ROADMAP.md` | [tracker] | Seven-language survey → prioritised additions; residue tracked in #4416/#4385. |
 | `STDLIB-DESIGN-RESEARCH.md` | [research] | Depth research: HTTP, JSON, date/time, I/O. |
 | `SOTA-STDLIB-BLUEPRINT.md` | [research] | Per-primitive survey against the best known algorithm; verdicts + recommended order. |
+| `SOTA-STDLIB-MATRIX-2026.md` | [tracker] | Execution matrix over that audit — verdict, prerequisite, phase and gate per row; phases 0–6. |
 | `ATLAS-PLATFORM-PLAN.md` | [plan] | Platform companion to the blueprint: SIMD/dispatch/allocator/concurrency ordering, and the fused-intrinsic SIMD ABI. |
 | `STRINGS-SOTA.md` | [research] | String/byte-primitive depth survey. |
 | `ARRAY-BUILDER-PLAN.md` | [plan] | Array-builder design. |
@@ -159,5 +160,4 @@ freeze tracker is [#4451](https://github.com/JakeChampion/lang/issues/4451).
 | `EMBED.md` | [reference] | Compile-time asset embedding (`-embed`, `__fern_asset`). |
 | `LITERATE.md` | [reference] | Literate programming (`.fern.md`, tangle/weave). |
 | `LSP-INTEGRATION-PLAN.md` | [record] | LSP MVP — shipped (`cmd/fern-lsp`); post-MVP ideas in IDE-COMPILATION-RESEARCH. |
-| `CI-SIGNOFF.md` | [reference] | Local CI sign-off (`scripts/signoff`). |
 | `TEST-RUNNER-MIGRATION.md` | [record] | Go-test → pure-Fern runner migration audit. |

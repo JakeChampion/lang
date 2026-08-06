@@ -36,29 +36,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Local-CI sign-off gate. `gh signoff e2e-arm64` on this commit skips the
-  # lane below (see docs/CI-SIGNOFF.md). NOTE: the arm64 suite is the one CI
-  # lane the project guidance says NOT to gate on locally (qemu/native arm64 is
-  # slow to run on a dev box), so signing this off is discouraged unless you
-  # genuinely ran it on arm64 hardware. Fork PRs can't sign off; gate fails open.
-  gate:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      statuses: read
-    outputs:
-      skip: ${{ steps.s.outputs.skip }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: s
-        uses: ./.github/actions/signoff-gate
-        with:
-          step: e2e-arm64
-          sha: ${{ github.event.pull_request.head.sha || github.sha }}
-
   test:
-    needs: gate
-    if: needs.gate.outputs.skip != 'true'
     name: test-e2e-arm64
     runs-on: ubuntu-24.04-arm
     steps:
@@ -88,11 +66,7 @@ jobs:
   # the native-mmc equivalence gate (the Go arm64 backend's full driver
   # emit + in-process assemble, run under qemu against the x86 cross
   # driver), so this lane gets a generous timeout rather than sharding.
-  # It shares the e2e-arm64 signoff gate; per docs/CI-SIGNOFF.md that
-  # signoff is discouraged unless the arm64 suites genuinely ran.
   cross-host:
-    needs: gate
-    if: needs.gate.outputs.skip != 'true'
     name: test-e2e-arm64-cross-host
     runs-on: ubuntu-latest
     timeout-minutes: 55
