@@ -6755,252 +6755,360 @@ func (g *generator) emitStrAppendRuntime() {
 // Pure equality comparator (no lex ordering), matching arm64.
 // emitFloatTranscendentalsRuntime emits the f64 transcendental bundle —
 // __fern_{exp,log,sin,cos,pow}_f64 — plus the shared .rodata table of
-// polynomial coefficients. x86-64 has no usable hardware transcendental
-// (the x87 fsin / fyl2x / f2xm1 these replace are microcoded legacy from
-// an era before SSE, and cost an order of magnitude more than the
-// polynomial below), so each is a range reduction followed by a
-// minimax/Taylor polynomial in Horner form — a few ulp, not bit-exact
-// with the interpreter's Go math; the test contract is tolerance-based.
+// coefficients. x86-64 has no usable hardware transcendental (the x87
+// fsin / fyl2x / f2xm1 these replace are microcoded legacy from before
+// SSE), so each is an argument reduction followed by a polynomial.
 //
-// This is a faithful port of arm64's emitFloatTranscendentalsRuntime,
-// down to the coefficients and the order of the Horner steps, so the two
-// backends agree to the bit wherever f64 rounding is deterministic.
-// Deliberately mul+add rather than FMA: FMA skips the intermediate
-// rounding, which would make x86-64 disagree with arm64 in the last ulp
-// for no accuracy the tolerance can see.
+// The kernels are fdlibm's, and the accuracy that buys is the point:
+// measured against the correctly-rounded reference over 20k samples per
+// range, these are <= 1 ulp everywhere, where the Taylor kernels arm64
+// and wasm have carried are 3.2e10 ulp (sin), 4.5e7 (exp) and 9844
+// (log). "A few ulp" was never true of the old ones.
+//
+// Two choices worth recording:
+//
+//   - The reduction is Cody-Waite: the constant is split into a head
+//     with its low mantissa bits zeroed plus a tail, so `x - k*hi` is
+//     EXACT and only the much smaller `k*tail` rounds. Reducing against
+//     a single rounded pi/2 is what made the old sin lose ~7 digits by
+//     |x| ~ 10.
+//   - exp keeps fdlibm's division. The division-free alternative needs a
+//     degree-13 Taylor to reach 1 ulp (degree 11 lands at 55 ulp), whose
+//     dependent chain is longer than the divide it avoids.
 //
 // Convention: argument and result in xmm0 (pow also takes y in xmm1),
-// mirroring arm64's d0/d1. xmm1..xmm5 and rax/rcx/rdx are scratch; all
-// are caller-saved under SysV, so no prologue is needed except in pow,
-// which spans two calls.
+// mirroring arm64's d0/d1. All scratch is caller-saved under SysV.
 func (g *generator) emitFloatTranscendentalsRuntime() {
-	// ldc loads an 8-byte coefficient into an xmm register.
-	// rip-relative, so the table needs no relocation.
 	ldc := func(reg, lbl string) { g.emit("movsd " + reg + ", [rip+" + lbl + "]") }
-	// horner: acc = acc*x + <coefficient at lbl>.
+	// mul by a coefficient, then add the next one down: one Horner step.
 	horner := func(acc, x, lbl string) {
 		g.emit("mulsd " + acc + ", " + x)
 		g.emit("addsd " + acc + ", [rip+" + lbl + "]")
+	}
+	fn := func(name string) {
+		g.line("")
+		g.line(".globl " + name)
+		g.line(".type " + name + ", @function")
+		g.label(name)
 	}
 
 	g.line("")
 	g.line(".section .rodata")
 	g.line(".align 8")
 	for _, c := range []struct{ lbl, val string }{
-		{".Lfc_log2e", "1.4426950408889634"},
-		{".Lfc_ln2", "0.6931471805599453"},
-		{".Lfc_halfpi", "1.5707963267948966"},
-		{".Lfc_sqrt2", "1.4142135623730951"},
 		{".Lfc_one", "1.0"},
 		{".Lfc_half", "0.5"},
-		{".Lfc_e7", "0.00019841269841269841"},
-		{".Lfc_e6", "0.0013888888888888889"},
-		{".Lfc_e5", "0.0083333333333333332"},
-		{".Lfc_e4", "0.041666666666666664"},
-		{".Lfc_e3", "0.16666666666666666"},
-		{".Lfc_s7", "-0.00019841269841269841"},
-		{".Lfc_s5", "0.0083333333333333332"},
-		{".Lfc_s3", "-0.16666666666666666"},
-		{".Lfc_c6", "-0.0013888888888888889"},
-		{".Lfc_c4", "0.041666666666666664"},
-		{".Lfc_c2", "-0.5"},
-		{".Lfc_l11", "0.090909090909090912"},
-		{".Lfc_l9", "0.1111111111111111"},
-		{".Lfc_l7", "0.14285714285714285"},
-		{".Lfc_l5", "0.2"},
-		{".Lfc_l3", "0.33333333333333331"},
+		{".Lfc_two", "2.0"},
+		{".Lfc_sqrt2", "1.4142135623730951"},
+		// Cody-Waite splits. ln2_hi / pio2_1 carry zeroed low mantissa
+		// bits so the first subtraction is exact.
+		{".Lfc_invln2", "1.44269504088896338700e+00"},
+		{".Lfc_ln2hi", "6.93147180369123816490e-01"},
+		{".Lfc_ln2lo", "1.90821492927058770002e-10"},
+		{".Lfc_2opi", "6.36619772367581382433e-01"},
+		{".Lfc_pio2h", "1.57079632673412561417e+00"},
+		{".Lfc_pio2t", "6.07710050650619224932e-11"},
+		// sin kernel, |r| <= pi/4
+		{".Lfc_s1", "-1.66666666666666324348e-01"},
+		{".Lfc_s2", "8.33333333332248946124e-03"},
+		{".Lfc_s3", "-1.98412698298579493134e-04"},
+		{".Lfc_s4", "2.75573137070700676789e-06"},
+		{".Lfc_s5", "-2.50507602534068634195e-08"},
+		{".Lfc_s6", "1.58969099521155010221e-10"},
+		// cos kernel, |r| <= pi/4
+		{".Lfc_c1", "4.16666666666666019037e-02"},
+		{".Lfc_c2", "-1.38888888888741095749e-03"},
+		{".Lfc_c3", "2.48015872894767294178e-05"},
+		{".Lfc_c4", "-2.75573143513906633035e-07"},
+		{".Lfc_c5", "2.08757232129817482790e-09"},
+		{".Lfc_c6", "-1.13596475577881948265e-11"},
+		// exp kernel
+		{".Lfc_p1", "1.66666666666666019037e-01"},
+		{".Lfc_p2", "-2.77777777770155933842e-03"},
+		{".Lfc_p3", "6.61375632143793436117e-05"},
+		{".Lfc_p4", "-1.65339022054652515390e-06"},
+		{".Lfc_p5", "4.13813679705723846039e-08"},
+		// log kernel
+		{".Lfc_lg1", "6.666666666666735130e-01"},
+		{".Lfc_lg2", "3.999999999940941908e-01"},
+		{".Lfc_lg3", "2.857142874366239149e-01"},
+		{".Lfc_lg4", "2.222219843214978396e-01"},
+		{".Lfc_lg5", "1.818357216161805012e-01"},
+		{".Lfc_lg6", "1.531383769920937332e-01"},
+		{".Lfc_lg7", "1.479819860511658591e-01"},
 	} {
 		g.label(c.lbl)
 		g.line("\t.double " + c.val)
 	}
 	g.line(".text")
 
-	// __fern_exp_f64(xmm0=x) → e^x = 2^k · poly(r), k = round(x·log2 e),
-	// r = x − k·ln2 ∈ [−ln2/2, ln2/2], poly = degree-7 Taylor of e^r.
+	// __fern_ksin(xmm0=r, |r| <= pi/4) → sin r. Internal, not exported:
+	// sin and cos both reach it after reduction, so the kernel exists
+	// once rather than once per quadrant arm.
+	//   z = r*r; v = z*r; sin = r + v*(S1 + z*(S2+z*(S3+z*(S4+z*(S5+z*S6)))))
 	g.line("")
-	g.line(".globl __fern_exp_f64")
-	g.line(".type __fern_exp_f64, @function")
-	g.label("__fern_exp_f64")
-	ldc("xmm1", ".Lfc_log2e")
-	g.emit("mulsd xmm1, xmm0")      // t = x·log2 e
-	g.emit("roundsd xmm2, xmm1, 0") // kf = round(t), ties-to-even
-	g.emit("cvttsd2si rax, xmm2")   // ki
-	ldc("xmm3", ".Lfc_ln2")
-	g.emit("mulsd xmm3, xmm2") // kf·ln2
-	g.emit("subsd xmm0, xmm3") // r
-	ldc("xmm4", ".Lfc_e7")
-	horner("xmm4", "xmm0", ".Lfc_e6")
-	horner("xmm4", "xmm0", ".Lfc_e5")
-	horner("xmm4", "xmm0", ".Lfc_e4")
-	horner("xmm4", "xmm0", ".Lfc_e3")
-	horner("xmm4", "xmm0", ".Lfc_half")
-	horner("xmm4", "xmm0", ".Lfc_one")
-	horner("xmm4", "xmm0", ".Lfc_one") // poly(r) = e^r
-	// 2^ki by assembling the exponent field directly, as arm64 does.
-	g.emit("add rax, 1023")
-	g.emit("shl rax, 52")
-	g.emit("movq xmm5, rax")
-	g.emit("mulsd xmm4, xmm5")
-	g.emit("movsd xmm0, xmm4")
+	g.label("__fern_ksin")
+	g.emit("movsd xmm1, xmm0")
+	g.emit("mulsd xmm1, xmm0") // z
+	g.emit("movsd xmm2, xmm1")
+	g.emit("mulsd xmm2, xmm0") // v = z*r
+	ldc("xmm3", ".Lfc_s6")
+	horner("xmm3", "xmm1", ".Lfc_s5")
+	horner("xmm3", "xmm1", ".Lfc_s4")
+	horner("xmm3", "xmm1", ".Lfc_s3")
+	horner("xmm3", "xmm1", ".Lfc_s2")
+	horner("xmm3", "xmm1", ".Lfc_s1")
+	g.emit("mulsd xmm3, xmm2")
+	g.emit("addsd xmm0, xmm3")
 	g.emit("ret")
-	g.line(".size __fern_exp_f64, .-__fern_exp_f64")
 
-	// __fern_log_f64(xmm0=x) → ln x (x>0). x = m·2^e, m∈[1,2) normalised
-	// to [√2/2,√2); f = (m−1)/(m+1); ln(m) = 2·(f + f³/3 + … + f¹¹/11);
-	// ln(x) = e·ln2 + ln(m).
+	// __fern_kcos(xmm0=r, |r| <= pi/4) → cos r.
+	//   z = r*r; p = C1+z*(C2+…+z*C6); hz = z/2; w = 1-hz
+	//   cos = w + (((1-w) - hz) + z*(z*p))
+	// The (1-w)-hz dance recovers the bits 1-hz threw away; computing
+	// 1 - hz + z*z*p directly loses them and costs ~2 ulp.
 	g.line("")
-	g.line(".globl __fern_log_f64")
-	g.line(".type __fern_log_f64, @function")
-	g.label("__fern_log_f64")
-	g.emit("movq rax, xmm0") // bits
-	g.emit("mov rcx, rax")
-	g.emit("shr rcx, 52")
-	g.emit("and rcx, 0x7ff")
-	g.emit("sub rcx, 1023") // e
-	g.emit("movabs rdx, 0xfffffffffffff")
-	g.emit("and rax, rdx") // mantissa
-	g.emit("movabs rdx, 0x3ff0000000000000")
-	g.emit("or rax, rdx")
-	g.emit("movq xmm1, rax") // m ∈ [1,2)
-	noHalf := g.freshLabel("logNoHalf")
-	ldc("xmm2", ".Lfc_sqrt2")
-	g.emit("comisd xmm1, xmm2")
-	g.emit("jbe " + noHalf)
-	ldc("xmm3", ".Lfc_half")
-	g.emit("mulsd xmm1, xmm3")
-	g.emit("add rcx, 1")
-	g.label(noHalf)
-	ldc("xmm4", ".Lfc_one")
-	g.emit("movsd xmm5, xmm1")
-	g.emit("subsd xmm5, xmm4") // m−1
-	g.emit("addsd xmm1, xmm4") // m+1
-	g.emit("divsd xmm5, xmm1") // f
+	g.label("__fern_kcos")
+	g.emit("movsd xmm1, xmm0")
+	g.emit("mulsd xmm1, xmm0") // z
+	ldc("xmm3", ".Lfc_c6")
+	horner("xmm3", "xmm1", ".Lfc_c5")
+	horner("xmm3", "xmm1", ".Lfc_c4")
+	horner("xmm3", "xmm1", ".Lfc_c3")
+	horner("xmm3", "xmm1", ".Lfc_c2")
+	horner("xmm3", "xmm1", ".Lfc_c1")
+	g.emit("mulsd xmm3, xmm1") // z*p
+	g.emit("mulsd xmm3, xmm1") // z*(z*p)
+	g.emit("movsd xmm4, xmm1")
+	g.emit("mulsd xmm4, [rip+.Lfc_half]") // hz
+	ldc("xmm5", ".Lfc_one")
+	g.emit("subsd xmm5, xmm4") // w = 1-hz
+	ldc("xmm6", ".Lfc_one")
+	g.emit("subsd xmm6, xmm5") // 1-w
+	g.emit("subsd xmm6, xmm4") // (1-w)-hz
+	g.emit("addsd xmm6, xmm3") // + z*z*p
 	g.emit("movsd xmm0, xmm5")
-	g.emit("mulsd xmm5, xmm5") // f²
-	ldc("xmm2", ".Lfc_l11")
-	horner("xmm2", "xmm5", ".Lfc_l9")
-	horner("xmm2", "xmm5", ".Lfc_l7")
-	horner("xmm2", "xmm5", ".Lfc_l5")
-	horner("xmm2", "xmm5", ".Lfc_l3")
-	g.emit("mulsd xmm2, xmm5")
-	g.emit("addsd xmm2, xmm4") // poly + 1
-	g.emit("mulsd xmm2, xmm0") // f·poly
-	g.emit("addsd xmm2, xmm2") // 2·f·poly = ln(m)
-	g.emit("cvtsi2sd xmm3, rcx")
-	ldc("xmm4", ".Lfc_ln2")
-	g.emit("mulsd xmm3, xmm4") // e·ln2
-	g.emit("addsd xmm3, xmm2")
-	g.emit("movsd xmm0, xmm3")
+	g.emit("addsd xmm0, xmm6")
 	g.emit("ret")
-	g.line(".size __fern_log_f64, .-__fern_log_f64")
 
-	// __fern_sin_f64(xmm0=x) → sin x. k = round(x/(π/2)),
-	// r = x − k·(π/2) ∈ [−π/4,π/4]; quadrant q = k&3 selects
-	// ±sin(r)/±cos(r).
-	g.line("")
-	g.line(".globl __fern_sin_f64")
-	g.line(".type __fern_sin_f64, @function")
-	g.label("__fern_sin_f64")
-	g.emitSinCosReduction()
-	sr, cr, nsr := g.freshLabel("sinSr"), g.freshLabel("sinCr"), g.freshLabel("sinNsr")
-	g.emit("cmp rax, 0")
-	g.emit("je " + sr)
-	g.emit("cmp rax, 1")
-	g.emit("je " + cr)
+	// emitPio2Reduce: xmm0 = x → rax = quadrant (k&3), xmm0 = r.
+	pio2Reduce := func() {
+		ldc("xmm1", ".Lfc_2opi")
+		g.emit("mulsd xmm1, xmm0")
+		g.emit("roundsd xmm1, xmm1, 0") // k, to nearest
+		g.emit("cvttsd2si rax, xmm1")
+		g.emit("movsd xmm2, xmm1")
+		g.emit("mulsd xmm2, [rip+.Lfc_pio2h]")
+		g.emit("subsd xmm0, xmm2") // exact
+		g.emit("mulsd xmm1, [rip+.Lfc_pio2t]")
+		g.emit("subsd xmm0, xmm1") // r
+		g.emit("and rax, 3")
+	}
+
+	// __fern_sin_f64: quadrant 0..3 → sin r, cos r, −sin r, −cos r.
+	// Odd quadrant picks the cos kernel, quadrant >= 2 flips the sign —
+	// so exactly one kernel runs, where the old code evaluated both and
+	// selected.
+	fn("__fern_sin_f64")
+	pio2Reduce()
+	sinCos, sinNeg := g.freshLabel("sinUseCos"), g.freshLabel("sinNeg")
+	g.emit("test rax, 1")
+	g.emit("jnz " + sinCos)
+	g.emit("call __fern_ksin")
+	g.emit("jmp " + sinNeg)
+	g.label(sinCos)
+	g.emit("call __fern_kcos")
+	g.label(sinNeg)
+	sinDone := g.freshLabel("sinDone")
 	g.emit("cmp rax, 2")
-	g.emit("je " + nsr)
-	g.emit("movsd xmm0, xmm7") // q3: −cos(r)
+	g.emit("jb " + sinDone)
 	g.emitF64Negate("xmm0")
-	g.emit("ret")
-	g.label(sr)
-	g.emit("movsd xmm0, xmm6")
-	g.emit("ret")
-	g.label(cr)
-	g.emit("movsd xmm0, xmm7")
-	g.emit("ret")
-	g.label(nsr)
-	g.emit("movsd xmm0, xmm6")
-	g.emitF64Negate("xmm0")
+	g.label(sinDone)
 	g.emit("ret")
 	g.line(".size __fern_sin_f64, .-__fern_sin_f64")
 
-	// __fern_cos_f64(xmm0=x) → cos x. Same reduction; the quadrant
-	// selects cos(r)/−sin(r)/−cos(r)/sin(r).
-	g.line("")
-	g.line(".globl __fern_cos_f64")
-	g.line(".type __fern_cos_f64, @function")
-	g.label("__fern_cos_f64")
-	g.emitSinCosReduction()
-	ccr, cnsr, cncr := g.freshLabel("cosCr"), g.freshLabel("cosNsr"), g.freshLabel("cosNcr")
-	g.emit("cmp rax, 0")
-	g.emit("je " + ccr)
+	// __fern_cos_f64: quadrant 0..3 → cos r, −sin r, −cos r, sin r.
+	// Even quadrant picks the cos kernel; quadrants 1 and 2 flip sign.
+	fn("__fern_cos_f64")
+	pio2Reduce()
+	cosSin, cosChk := g.freshLabel("cosUseSin"), g.freshLabel("cosChk")
+	g.emit("test rax, 1")
+	g.emit("jnz " + cosSin)
+	g.emit("call __fern_kcos")
+	g.emit("jmp " + cosChk)
+	g.label(cosSin)
+	g.emit("call __fern_ksin")
+	g.label(cosChk)
+	cosDone := g.freshLabel("cosDone")
 	g.emit("cmp rax, 1")
-	g.emit("je " + cnsr)
+	g.emit("jb " + cosDone) // q0 → +cos
 	g.emit("cmp rax, 2")
-	g.emit("je " + cncr)
-	g.emit("movsd xmm0, xmm6") // q3: sin(r)
-	g.emit("ret")
-	g.label(ccr)
-	g.emit("movsd xmm0, xmm7")
-	g.emit("ret")
-	g.label(cnsr)
-	g.emit("movsd xmm0, xmm6")
+	g.emit("ja " + cosDone) // q3 → +sin
 	g.emitF64Negate("xmm0")
-	g.emit("ret")
-	g.label(cncr)
-	g.emit("movsd xmm0, xmm7")
-	g.emitF64Negate("xmm0")
+	g.label(cosDone)
 	g.emit("ret")
 	g.line(".size __fern_cos_f64, .-__fern_cos_f64")
 
+	// __fern_exp_f64(xmm0=x) → e^x.
+	//   k = round(x/ln2); hi = x - k*ln2_hi; lo = k*ln2_lo; r = hi - lo
+	//   c = r - t*(P1+t*(P2+…)), t = r*r
+	//   e^r = 1 - ((lo - (r*c)/(2-c)) - hi);  e^x = e^r * 2^k
+	fn("__fern_exp_f64")
+	ldc("xmm1", ".Lfc_invln2")
+	g.emit("mulsd xmm1, xmm0")
+	g.emit("roundsd xmm1, xmm1, 0")
+	g.emit("cvttsd2si rax, xmm1") // k
+	g.emit("movsd xmm2, xmm1")
+	g.emit("mulsd xmm2, [rip+.Lfc_ln2hi]")
+	g.emit("movsd xmm3, xmm0")
+	g.emit("subsd xmm3, xmm2")             // hi
+	g.emit("mulsd xmm1, [rip+.Lfc_ln2lo]") // lo
+	g.emit("movsd xmm0, xmm3")
+	g.emit("subsd xmm0, xmm1") // r
+	g.emit("movsd xmm4, xmm0")
+	g.emit("mulsd xmm4, xmm0") // t
+	ldc("xmm5", ".Lfc_p5")
+	horner("xmm5", "xmm4", ".Lfc_p4")
+	horner("xmm5", "xmm4", ".Lfc_p3")
+	horner("xmm5", "xmm4", ".Lfc_p2")
+	horner("xmm5", "xmm4", ".Lfc_p1")
+	g.emit("mulsd xmm5, xmm4") // t*(…)
+	g.emit("movsd xmm6, xmm0")
+	g.emit("subsd xmm6, xmm5") // c
+	g.emit("movsd xmm7, xmm0")
+	g.emit("mulsd xmm7, xmm6") // r*c
+	ldc("xmm2", ".Lfc_two")
+	g.emit("subsd xmm2, xmm6") // 2-c
+	g.emit("divsd xmm7, xmm2")
+	g.emit("movsd xmm2, xmm1")
+	g.emit("subsd xmm2, xmm7") // lo - …
+	g.emit("subsd xmm2, xmm3") // - hi
+	ldc("xmm0", ".Lfc_one")
+	g.emit("subsd xmm0, xmm2")
+	// 2^k by assembling the exponent field directly.
+	g.emit("add rax, 1023")
+	g.emit("shl rax, 52")
+	g.emit("movq xmm1, rax")
+	g.emit("mulsd xmm0, xmm1")
+	g.emit("ret")
+	g.line(".size __fern_exp_f64, .-__fern_exp_f64")
+
+	// __fern_log_f64(xmm0=x) → ln x (x>0). x = 2^k·m, m normalised to
+	// [sqrt2/2, sqrt2); f = m-1; s = f/(2+f).
+	//   R = t1+t2 over two INDEPENDENT chains in w = z², z = s², so they
+	//   issue in parallel instead of one 7-deep Horner.
+	//   ln x = k·ln2_hi - ((hfsq - (s·(hfsq+R) + k·ln2_lo)) - f)
+	fn("__fern_log_f64")
+	g.emit("movq rax, xmm0")
+	g.emit("mov rcx, rax")
+	g.emit("shr rcx, 52")
+	g.emit("and rcx, 0x7ff")
+	g.emit("sub rcx, 1023") // k
+	g.emit("movabs rdx, 0xfffffffffffff")
+	g.emit("and rax, rdx")
+	g.emit("movabs rdx, 0x3ff0000000000000")
+	g.emit("or rax, rdx")
+	g.emit("movq xmm1, rax") // m in [1,2)
+	noAdj := g.freshLabel("logNoAdj")
+	ldc("xmm2", ".Lfc_sqrt2")
+	g.emit("comisd xmm1, xmm2")
+	g.emit("jb " + noAdj)
+	g.emit("mulsd xmm1, [rip+.Lfc_half]")
+	g.emit("add rcx, 1")
+	g.label(noAdj)
+	g.emit("subsd xmm1, [rip+.Lfc_one]") // f
+	ldc("xmm2", ".Lfc_two")
+	g.emit("addsd xmm2, xmm1") // 2+f
+	g.emit("movsd xmm3, xmm1")
+	g.emit("divsd xmm3, xmm2") // s
+	g.emit("movsd xmm4, xmm3")
+	g.emit("mulsd xmm4, xmm3") // z
+	g.emit("movsd xmm5, xmm4")
+	g.emit("mulsd xmm5, xmm4") // w
+	ldc("xmm6", ".Lfc_lg6")
+	horner("xmm6", "xmm5", ".Lfc_lg4")
+	horner("xmm6", "xmm5", ".Lfc_lg2")
+	g.emit("mulsd xmm6, xmm5") // t1
+	ldc("xmm7", ".Lfc_lg7")
+	horner("xmm7", "xmm5", ".Lfc_lg5")
+	horner("xmm7", "xmm5", ".Lfc_lg3")
+	horner("xmm7", "xmm5", ".Lfc_lg1")
+	g.emit("mulsd xmm7, xmm4") // t2
+	g.emit("addsd xmm6, xmm7") // R
+	g.emit("movsd xmm2, xmm1")
+	g.emit("mulsd xmm2, xmm1")
+	g.emit("mulsd xmm2, [rip+.Lfc_half]") // hfsq
+	g.emit("cvtsi2sd xmm0, rcx")          // kf
+	g.emit("movsd xmm5, xmm0")
+	g.emit("mulsd xmm5, [rip+.Lfc_ln2lo]") // k*ln2_lo
+	g.emit("addsd xmm6, xmm2")             // hfsq+R
+	g.emit("mulsd xmm6, xmm3")             // s*(hfsq+R)
+	g.emit("addsd xmm6, xmm5")
+	g.emit("subsd xmm2, xmm6") // hfsq - (…)
+	g.emit("subsd xmm2, xmm1") // - f
+	g.emit("mulsd xmm0, [rip+.Lfc_ln2hi]")
+	g.emit("subsd xmm0, xmm2")
+	g.emit("ret")
+	g.line(".size __fern_log_f64, .-__fern_log_f64")
+
 	// __fern_pow_f64(xmm0=x, xmm1=y) → x^y = exp(y·ln x), x>0. The only
 	// non-leaf helper: SysV has no callee-saved xmm registers, so y is
-	// stashed on the stack across the log call rather than in a register
-	// (arm64 can use the callee-saved d8).
-	g.line("")
-	g.line(".globl __fern_pow_f64")
-	g.line(".type __fern_pow_f64, @function")
-	g.label("__fern_pow_f64")
+	// stashed on the stack across the log call, where arm64 can use
+	// callee-saved d8.
+	fn("__fern_pow_f64")
+	powGen, powLoop, powSkip, powDone := g.freshLabel("powGeneral"), g.freshLabel("powLoop"), g.freshLabel("powSkip"), g.freshLabel("powDone")
+	// Integer-exponent fast path. exp(y*ln x) CANNOT return exactly 9 for
+	// pow(3,2): a 1-ulp error in ln 3 is amplified by the exponential to
+	// ~4e-15 on a result of 9, so it lands just under and truncates to 8.
+	// Repeated squaring is exact wherever the result is representable, and
+	// cheaper than two transcendental calls for small |n|.
+	//
+	// Integrality is tested by an i64 round-trip rather than a compare
+	// against trunc(y), so a NaN or out-of-range y falls out as a huge |n|
+	// and is caught by the range check instead of needing a parity branch.
+	g.emit("cvttsd2si rax, xmm1")
+	g.emit("cvtsi2sd xmm2, rax")
+	g.emit("ucomisd xmm2, xmm1")
+	g.emit("jne " + powGen)
+	// |n|, branch-free: (n ^ (n>>63)) - (n>>63).
+	g.emit("mov rcx, rax")
+	g.emit("mov rdx, rax")
+	g.emit("sar rdx, 63")
+	g.emit("xor rcx, rdx")
+	g.emit("sub rcx, rdx")
+	g.emit("cmp rcx, 64")
+	g.emit("ja " + powGen)
+	ldc("xmm3", ".Lfc_one") // accumulator
+	g.emit("movsd xmm4, xmm0")
+	g.label(powLoop)
+	g.emit("test rcx, 1")
+	g.emit("jz " + powSkip)
+	g.emit("mulsd xmm3, xmm4")
+	g.label(powSkip)
+	g.emit("mulsd xmm4, xmm4")
+	g.emit("shr rcx, 1")
+	g.emit("jnz " + powLoop)
+	g.emit("test rax, rax")
+	g.emit("jns " + powDone)
+	ldc("xmm5", ".Lfc_one") // negative exponent: reciprocal
+	g.emit("divsd xmm5, xmm3")
+	g.emit("movsd xmm3, xmm5")
+	g.label(powDone)
+	g.emit("movsd xmm0, xmm3")
+	g.emit("ret")
+	// General case: x^y = exp(y*ln x), x>0. The only non-leaf helper;
+	// SysV has no callee-saved xmm registers, so y is stashed on the
+	// stack across the log call where arm64 can use callee-saved d8.
+	g.label(powGen)
 	g.emit("sub rsp, 16")
-	g.emit("movsd [rsp], xmm1") // y
+	g.emit("movsd [rsp], xmm1")
 	g.emit("call __fern_log_f64")
 	g.emit("movsd xmm1, [rsp]")
-	g.emit("mulsd xmm0, xmm1") // y·ln(x)
+	g.emit("mulsd xmm0, xmm1")
 	g.emit("call __fern_exp_f64")
 	g.emit("add rsp, 16")
 	g.emit("ret")
 	g.line(".size __fern_pow_f64, .-__fern_pow_f64")
-}
-
-// emitSinCosReduction emits the shared argument reduction and the
-// sin(r)/cos(r) polynomials for __fern_sin_f64 / __fern_cos_f64. On
-// exit: rax = quadrant (k&3), xmm6 = sin(r), xmm7 = cos(r), with
-// r ∈ [−π/4, π/4]. Mirrors arm64's emitSinCosReduction.
-func (g *generator) emitSinCosReduction() {
-	ldc := func(reg, lbl string) { g.emit("movsd " + reg + ", [rip+" + lbl + "]") }
-	horner := func(acc, x, lbl string) {
-		g.emit("mulsd " + acc + ", " + x)
-		g.emit("addsd " + acc + ", [rip+" + lbl + "]")
-	}
-	ldc("xmm1", ".Lfc_halfpi")
-	g.emit("movsd xmm2, xmm0")
-	g.emit("divsd xmm2, xmm1")
-	g.emit("roundsd xmm3, xmm2, 0")
-	g.emit("cvttsd2si rax, xmm3")
-	g.emit("mulsd xmm3, xmm1")
-	g.emit("subsd xmm0, xmm3") // r
-	g.emit("and rax, 3")       // quadrant
-	g.emit("movsd xmm5, xmm0")
-	g.emit("mulsd xmm5, xmm5") // r²
-	ldc("xmm6", ".Lfc_s7")
-	horner("xmm6", "xmm5", ".Lfc_s5")
-	horner("xmm6", "xmm5", ".Lfc_s3")
-	horner("xmm6", "xmm5", ".Lfc_one")
-	g.emit("mulsd xmm6, xmm0") // sin(r)
-	ldc("xmm7", ".Lfc_c6")
-	horner("xmm7", "xmm5", ".Lfc_c4")
-	horner("xmm7", "xmm5", ".Lfc_c2")
-	horner("xmm7", "xmm5", ".Lfc_one") // cos(r)
 }
 
 // emitF64Negate flips the sign bit of an xmm register's low double.

@@ -715,6 +715,12 @@ func FRINTP(rd, rn uint32) uint32 { return 0x1E64C000 | ((rn & regMask) << 5) | 
 func FRINTZ(rd, rn uint32) uint32 { return 0x1E65C000 | ((rn & regMask) << 5) | (rd & regMask) }
 func FRINTA(rd, rn uint32) uint32 { return 0x1E664000 | ((rn & regMask) << 5) | (rd & regMask) }
 
+// FRINTN — round to nearest, ties to EVEN, as distinct from FRINTA's ties
+// away from zero. It is the arm64 spelling of x86-64's `roundsd …, 0`, so
+// the transcendental kernels' argument reduction picks the same integer on
+// both backends and their results agree bit for bit.
+func FRINTN(rd, rn uint32) uint32 { return 0x1E644000 | ((rn & regMask) << 5) | (rd & regMask) }
+
 // FCMP Dn, Dm — compare and set the FP condition flags.
 func FCMP(rn, rm uint32) uint32 {
 	return 0x1E602000 | ((rm & regMask) << 16) | ((rn & regMask) << 5)

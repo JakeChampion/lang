@@ -191,6 +191,8 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmFUnaryD(a, "frintz", ops, FRINTZ)
 	case "frinta":
 		return asmFUnaryD(a, "frinta", ops, FRINTA)
+	case "frintn":
+		return asmFUnaryD(a, "frintn", ops, FRINTN)
 	case "fcmp":
 		return asmFcmp(a, ops)
 	case "fmov":
