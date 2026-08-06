@@ -515,9 +515,25 @@ vectorised in a second pass once the encodings existed.
 
 That is a much smaller prerequisite than a register class — eighteen
 encodings, pinned byte-for-byte against GNU `as` in `TestEncodeVectorSurface`
-— but it is not zero, and it is per-assembler. **The same question is open for
-NEON on arm64** and should be answered before the arm64 kernel is written
-rather than after.
+— but it is not zero, and it is per-assembler.
+
+**It was per-assembler in the strongest sense: all three had the gap.** arm64's
+`internal/native/arm64` had no NEON (it gained `DUP`/`LD1`/`CMEQ`/`SHRN`/`UMOV`,
+verified against `aarch64-linux-gnu-as`), and `internal/wasm` had no v128 at
+all — not one 0xFD-prefixed opcode, because nothing in Fern had ever asked for
+one. Each needed its own prerequisite PR with its own external oracle. So the
+rule to carry forward is not "check the assembler once" but **check the
+assembler for every target you are about to emit a vector kernel on, and land
+the encodings first** — which the arm64 and wasm kernels did, and the x86-64
+one did not.
+
+The wasm gap also has a sharper failure mode than the native two, worth
+recording because it shaped that PR's tests. Vector sub-opcodes are uleb128,
+and the space is dense: encode `i16x8.bitmask` (132) as a raw byte and you get
+`f32x4.pmin` — a *valid* instruction. The module still validates and still
+runs. Nothing short of an external assembler can tell you which instruction you
+actually emitted, which is why `internal/wasm/simd` is pinned against
+`wasm-tools` and not against a table someone typed.
 
 The lesson generalises past this row: "no IR change" is not the same as "no
 toolchain change", and the fused design's whole argument is that it stays
@@ -539,6 +555,19 @@ is therefore:
 Step 1 is what makes steps 2 and 3 safe: the intrinsic becomes total *before*
 anything depends on it being fast, so no step in the sequence can leave the
 tree unbuildable.
+
+**Status.** The three *native* backends are done, and each was vectorised as it
+landed rather than in a separate pass — the ordering above splits steps 1 and 3
+to protect the tree, and once the assembler prerequisite of §3.3a is paid for a
+target there is nothing left to protect it from. x86-64 is SSE2 (`pcmpeqb` /
+`pmovmskb` / `bsf`, ~12x), arm64 is NEON (`cmeq` / `shrn` / `rbit`+`clz`), wasm
+is v128 (`i8x16.eq` / `i8x16.bitmask` / `i32.ctz`). The wasm one carries a
+second, scalar path the natives do not need: a short wasm string lives in its
+two words with no address, so there is nothing for `v128.load` to point at.
+
+Remaining before step 2: the three self-host backends (`asm_ir.fern`,
+`asm_arm64_ir.fern`, `wasm_ir.fern`). Until those exist the intrinsic is not
+total, and `std/string` must not call it.
 
 ### 3.5 Testing
 

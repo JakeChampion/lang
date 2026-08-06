@@ -21,6 +21,7 @@ inside a codegen switch:
 | ------- | -------- | ------------ |
 | arm64 / arm64-darwin | ARMv8-A, Advanced SIMD included | `clz`, `rbit`, and the SIMD-side popcount (`cnt` + `addv`). Advanced SIMD is mandatory on the ARMv8-A application profile, so this is the architecture floor, not a raise. |
 | x86-64 | Haswell-class, 2013 — SSE4.2 + BMI1 (AMD: Piledriver/Jaguar and later) | `popcnt` (SSE4.2) and `lzcnt` / `tzcnt` (BMI1), alongside the SSE4.1 `roundsd` and SSE2 floating point the backend already required. |
+| wasm | core wasm 2.0, fixed-width SIMD included | the `v128` family — `v128.load`, `i8x16.splat`, `i8x16.eq`, `i8x16.bitmask` and siblings. SIMD is part of the 2.0 standard rather than an option, and every engine Fern targets (wasmtime, and browsers since 2021) enables it unconditionally, so this is the same kind of floor as arm64's Advanced SIMD. |
 
 **LZCNT / TZCNT have a failure mode POPCNT does not, and it is the reason to
 state the baseline rather than assume it.** Below the baseline, POPCNT is an
