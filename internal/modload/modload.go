@@ -300,6 +300,15 @@ type module struct {
 	// to decide whether `mod.X` should suggest `pub function X`
 	// (default) or `pub const X` (when X is a known private const).
 	allConsts map[string]bool
+	// allDecls is the pre-mangle name set of EVERY top-level decl in
+	// this module, exported or not. The visibility checks below need it
+	// to tell "declared, but private" from "no such name": without it
+	// both report `mod.X is not exported`, which sends a reader off to
+	// add `pub` to a declaration that does not exist. For a TYPE that
+	// message is also the only error produced — nothing downstream
+	// reports the unknown name — so a typo in a qualified type is
+	// indistinguishable from a visibility mistake.
+	allDecls map[string]bool
 	// reexports maps a `pub use`-re-exported name to the flat mangled
 	// name it ultimately resolves to (e.g. "split" → "helpers__split").
 	// A consumer's `thismod.split` rewrites to that mangled name rather
@@ -440,6 +449,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		publicConsts:  map[string]bool{},
 		publicEnums:   map[string]bool{},
 		allConsts:     map[string]bool{},
+		allDecls:      map[string]bool{},
 		reexports:     map[string]string{},
 		reexportTypes: map[string]string{},
 		packageScoped: map[string]bool{},
@@ -454,6 +464,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		if fn.Public {
 			mod.publicFuncs[fn.Name] = true
 		}
+		mod.allDecls[fn.Name] = true
 		if fn.PackageScoped {
 			mod.packageScoped[fn.Name] = true
 		}
@@ -466,6 +477,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		if sd.Public {
 			mod.publicStructs[sd.Name] = true
 		}
+		mod.allDecls[sd.Name] = true
 		if sd.PackageScoped {
 			mod.packageScoped[sd.Name] = true
 		}
@@ -475,6 +487,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		if ed.Public {
 			mod.publicEnums[ed.Name] = true
 		}
+		mod.allDecls[ed.Name] = true
 		if ed.PackageScoped {
 			mod.packageScoped[ed.Name] = true
 		}
@@ -487,6 +500,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 			// across that pass.
 			mod.publicEnums[ud.Name] = true
 		}
+		mod.allDecls[ud.Name] = true
 		if ud.PackageScoped {
 			mod.packageScoped[ud.Name] = true
 		}
@@ -496,6 +510,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		if cd.Public {
 			mod.publicConsts[cd.Name] = true
 		}
+		mod.allDecls[cd.Name] = true
 		if cd.PackageScoped {
 			mod.packageScoped[cd.Name] = true
 		}
@@ -508,6 +523,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		if td.Public {
 			mod.publicStructs[td.Name] = true
 		}
+		mod.allDecls[td.Name] = true
 		if td.PackageScoped {
 			mod.packageScoped[td.Name] = true
 		}
@@ -1595,11 +1611,92 @@ func (r *rewriter) packageScopedOK(mod *module, name string, pos ast.Position) (
 // `mod`. Cross-module function references go through this gate;
 // same-module references skip it because internal calls aren't
 // visibility-restricted.
+// reportUndeclared records the error for a `mod.X` where the module has no
+// top-level `X` at all — as opposed to having a private one. The two used to
+// share the "is not exported" message, so a typo in a qualified name told the
+// reader to add `pub` to a declaration that did not exist. For a qualified
+// TYPE that was also the only error emitted, since nothing downstream reports
+// the unknown name.
+//
+// `kind` names what the reference position expected ("type", "function",
+// "function or const") so the message reads at the site rather than
+// describing the checker.
+func (r *rewriter) reportUndeclared(mod *module, name, kind string, pos ast.Position) {
+	r.errs = append(r.errs, fmt.Errorf("%s:%s: module %q has no %s %q%s",
+		r.modPath, pos, mod.name, kind, name, didYouMean(name, mod.exportedNames())))
+}
+
+// exportedNames is every name this module makes visible to importers, for
+// the did-you-mean hint. Sorted so the suggestion is deterministic.
+func (m *module) exportedNames() []string {
+	seen := map[string]bool{}
+	for _, set := range []map[string]bool{m.publicFuncs, m.publicStructs, m.publicEnums, m.publicConsts} {
+		for n := range set {
+			seen[n] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// didYouMean returns " (did you mean \"X\"?)" for the closest candidate
+// within a small edit distance, or "" when nothing is close enough. Keeping
+// the threshold tight matters more than coverage: a wrong suggestion on a
+// name the reader typed correctly costs more than no suggestion.
+func didYouMean(name string, candidates []string) string {
+	best, bestD := "", 0
+	max := len(name)/3 + 1
+	for _, c := range candidates {
+		d := editDistance(name, c)
+		if d <= max && (best == "" || d < bestD) {
+			best, bestD = c, d
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (did you mean %q?)", best)
+}
+
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = prev[j] + 1
+			if cur[j-1]+1 < cur[j] {
+				cur[j] = cur[j-1] + 1
+			}
+			if prev[j-1]+cost < cur[j] {
+				cur[j] = prev[j-1] + cost
+			}
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
 func (r *rewriter) checkPublicFunc(mod *module, fn string, pos ast.Position) {
 	if mod.publicFuncs[fn] {
 		return
 	}
 	if _, handled := r.packageScopedOK(mod, fn, pos); handled {
+		return
+	}
+	if !mod.allDecls[fn] {
+		r.reportUndeclared(mod, fn, "function", pos)
 		return
 	}
 	r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub function %s …` to make it accessible from other modules)",
@@ -1620,6 +1717,10 @@ func (r *rewriter) checkPublicStruct(mod *module, name string, pos ast.Position)
 	if _, handled := r.packageScopedOK(mod, name, pos); handled {
 		return
 	}
+	if !mod.allDecls[name] {
+		r.reportUndeclared(mod, name, "type", pos)
+		return
+	}
 	r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is not exported (declare it as `pub struct %s …` to make it accessible from other modules)",
 		r.modPath, pos, mod.name, name, name))
 }
@@ -1638,6 +1739,10 @@ func (r *rewriter) checkPublicValue(mod *module, name string, pos ast.Position) 
 		return
 	}
 	if _, handled := r.packageScopedOK(mod, name, pos); handled {
+		return
+	}
+	if !mod.allDecls[name] {
+		r.reportUndeclared(mod, name, "function or const", pos)
 		return
 	}
 	hint := "function"
