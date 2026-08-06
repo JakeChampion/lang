@@ -44,7 +44,7 @@ function main(): i32 {
     }
 
     // 1b. Extension-tag sweep — the registered ids BEYOND kind_count()
-    //     (struct_copy=198 … const_struct=218). Each must sit past
+    //     (struct_copy=198 … popcount=221). Each must sit past
     //     the dense table and round-trip through kind_name, so a tag reachable
     //     from kind_id but unrendered by kind_name (the #5452 skew, which made
     //     ssa_lift's struct_copy bail read "invalid") fails here.
@@ -58,7 +58,7 @@ function main(): i32 {
         "open_file", "syscall3", "raw_scratch", "syscall4", "raw_environ",
         "udp_send", "read_all_stdin", "arg_at", "proc_fork", "proc_waitpid",
         "proc_exec", "arr_reverse", "arr_concat", "arr_push_shared_count",
-        "arr_push_shared_bytes", "const_struct"
+        "arr_push_shared_bytes", "const_struct", "clz", "ctz", "popcount"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;
@@ -123,7 +123,8 @@ function main(): i32 {
         ir.op_load(ir.width_ptr()), ir.op_store(ir.width_ptr()), ir.op_alloc(),
         ir.op_arr_make(2, 0), ir.op_str_concat(), ir.op_map_len(),
         ir.op_struct_make("S", 1), ir.op_call_direct("f", 1), ir.op_if(0),
-        ir.op_br(1), ir.op_drop(), ir.op_return()
+        ir.op_br(1), ir.op_drop(), ir.op_return(),
+        ir.op_clz(32), ir.op_ctz(64), ir.op_popcount(32)
     ];
     var names: string[] = [
         "const_i32", "const_str", "load_local",
@@ -132,7 +133,8 @@ function main(): i32 {
         "load", "store", "alloc",
         "arr_make", "str_concat", "map_len",
         "struct_make", "call_direct", "if",
-        "br", "drop", "return"
+        "br", "drop", "return",
+        "clz", "ctz", "popcount"
     ];
     var tag_ok: i32 = 0;
     var tag_bad: i32 = 0;
