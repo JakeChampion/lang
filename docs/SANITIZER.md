@@ -71,15 +71,38 @@ asm is byte-identical to a build from a compiler that never had the feature.
 
 | | leak census | rc over-release | use-after-free |
 | --- | --- | --- | --- |
-| x86-64 | ✅ | ✅ | ✅ |
-| arm64 | ✅ | ✅ | ✅ |
+| x86-64 (native) | ✅ | ✅ | ✅ |
+| arm64 (native) | ✅ | ✅ | ✅ |
+| x86-64 (self-host) | ✅ | ✅ (no backtrace) | — |
 | wasm | — | — | — |
 
-Both natives carry the whole mode, and they emit the **same** message text and
-the same exit status — a `fern-sanitizer:` line does not tell you which backend
-produced it, which is the point: "build it with `-sanitize`" has to mean one
-thing. `-sanitize` on a wasm or SSA target warns rather than emitting an
-unchecked build. The self-host compiler's own port of the mode is a follow-up.
+Both natives carry the whole mode, and every row above emits the **same**
+message text and the same exit status — a `fern-sanitizer:` line does not tell
+you which compiler produced the binary, which is the point: "build it with
+`-sanitize`" has to mean one thing. `-sanitize` on a wasm or SSA target warns
+rather than emitting an unchecked build.
+
+The **self-host** compiler reads `FERN_SANITIZE=1` at emit time (there is no
+`-sanitize` flag on its driver; the env var is the surface, matching its
+existing `FERN_LEAKCHECK` / `FERN_RC_TRACE` ports), so the flag goes to the
+compiler process, not to the program it produces:
+
+```sh
+FERN_SANITIZE=1 bin/fern-selfhost -target x86-64 /ABS/prog.fern $PWD/internal/stdlib -o prog.s
+```
+
+Its two gaps versus native are honest subsets, not silent differences: no
+use-after-free quarantine (its free sites would each need poisoning), and no
+backtrace under a report (there is no `__fern_report` equivalent in that
+runtime, so the message is the whole diagnostic). This matters because the
+self-host compiler is precisely the long-running, allocation-heavy program the
+mode was argued for.
+
+One census reading that surprises people: `__free(ptr, size)` is a **no-op** in
+the self-host runtime (`irlower.fern` — "a no-op under the bump/leak heap"), so
+a program that raw-allocates and raw-frees reports every block as leaked there
+while native reports it reclaimed. That is the census being accurate about the
+runtime it is measuring, not a divergence to paper over.
 
 One asymmetry worth knowing if you are editing this: arm64's `__fern_str_inc`
 **inlines** its rc bump instead of tail-calling `__fern_rc_inc` (it has to
