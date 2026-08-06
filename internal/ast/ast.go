@@ -1226,15 +1226,20 @@ func init() { ApplySanitize() }
 var LeakCheckEnabled = os.Getenv("FERN_LEAKCHECK") == "1"
 
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR
-// (x86_64 only; a diagnostic build mode, set alongside
+// (x86-64 and arm64; a diagnostic build mode, set alongside
 // RcFreeEnabled). Instead of recycling a freed array buffer, the
 // free sites poison its rc word with RcPoison and quarantine the
-// block (never handed back — __fern_alloc keeps bumping).
-// __fern_rc_inc / __fern_rc_dec then trap (ud2 → SIGILL) the moment
-// they touch a poisoned block — i.e. a stale reference to an
-// over-released buffer — so a gdb backtrace pinpoints the holder the
-// rc undercounted. Chases the residual array over-release that
-// blocks the step-5 flip (see RC-PERCEUS-PLAN.md).
+// block. NOTHING is recycled in this mode — __fern_free declines the
+// freelist push outright, since a reused block would overwrite its own
+// poison — so __fern_alloc just keeps bumping.
+//
+// __fern_rc_inc / __fern_rc_dec then report and die the moment they
+// touch a poisoned block — i.e. a stale reference to an over-released
+// buffer — naming the holder the rc undercounted. Any helper that
+// INLINES an rc op rather than calling out needs its own copy of the
+// check (arm64's __fern_str_inc is the one such site: it has to
+// preserve the (data, len) pair, so it cannot tail-call the helper);
+// miss one and a stale reference walks straight past the detector.
 //
 // Settable via FERN_RC_FREE_DEBUG=1 (the LeakCheckEnabled precedent) so a
 // probe binary can be built with the detector without a fork — the leak
@@ -1306,7 +1311,7 @@ var SandboxEnabled = os.Getenv("FERN_SANDBOX") == "1"
 var RcTrace = os.Getenv("FERN_RC_TRACE") == "1"
 
 // RcUnderflowTrap turns the Phase 3 over-release COUNTER into a TRAP
-// (x86-64 only; a diagnostic build mode). Every site that bumps
+// (x86-64 and arm64; a diagnostic build mode). Every site that bumps
 // __fern_rc_underflow — the inline dec, the __fern_rc_dec /
 // __fern_arr_dec / __fern_map_drop helpers — follows the bump with
 // `ud2`, so the process dies with SIGILL at the exact dec that

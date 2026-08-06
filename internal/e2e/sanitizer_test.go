@@ -264,20 +264,57 @@ func TestSanitizeOffEmitsNoSymbols(t *testing.T) {
 // which is the better diagnosis anyway.) So pin the wiring instead:
 // under the sanitizer both rc helpers compare the rc word against
 // RcPoison and route a match to the named diagnostic through
-// __fern_report, and no bare `ud2` is left as a silent death anywhere.
+// __fern_report, and no bare trap is left as a silent death anywhere.
 func TestSanitizeWiresUseAfterFreeReport(t *testing.T) {
-	asm := emitSanitize(t, "x86_64", sanRcHelpersSrc, true)
-	poison := fmt.Sprintf("cmp ecx, %d", ast.RcPoison)
-	if got := strings.Count(asm, poison); got != 2 {
-		t.Errorf("RcPoison compare appears %d times, want 2 (__fern_rc_inc and __fern_rc_dec)", got)
-	}
-	for _, want := range []string{"__fern_msg_san_uaf", "fern-sanitizer: use-after-free"} {
-		if !strings.Contains(asm, want) {
-			t.Errorf("sanitized asm missing %q", want)
-		}
-	}
-	if strings.Contains(asm, "ud2") {
-		t.Error("sanitized asm still contains a bare ud2: a check that dies without a message is what this mode replaces")
+	for _, tc := range []struct {
+		backend string
+		// poison is how RcPoison reaches a comparison on this
+		// backend: an immediate operand on x86-64, a movz/movk pair
+		// into a scratch register on arm64 (the value needs two
+		// halves, so there is no single-instruction form).
+		poison []string
+		// silentTraps are the die-without-a-message instructions this
+		// backend used to reach for; none may survive.
+		silentTraps []string
+	}{
+		{
+			backend:     "x86_64",
+			poison:      []string{fmt.Sprintf("cmp ecx, %d", ast.RcPoison)},
+			silentTraps: []string{"ud2"},
+		},
+		{
+			backend: "arm64",
+			poison: []string{
+				fmt.Sprintf("movz w2, #%d", ast.RcPoison&0xffff),
+				fmt.Sprintf("movk w2, #%d, lsl #16", (ast.RcPoison>>16)&0xffff),
+			},
+			silentTraps: []string{"udf", "brk "},
+		},
+	} {
+		t.Run(tc.backend, func(t *testing.T) {
+			asm := emitSanitize(t, tc.backend, sanRcHelpersSrc, true)
+			for _, p := range tc.poison {
+				if !strings.Contains(asm, p) {
+					t.Errorf("no RcPoison check materialised (%q missing)", p)
+				}
+			}
+			for _, want := range []string{"__fern_msg_san_uaf", "fern-sanitizer: use-after-free"} {
+				if !strings.Contains(asm, want) {
+					t.Errorf("sanitized asm missing %q", want)
+				}
+			}
+			// Every poison match must reach the reporter. Both
+			// backends spell the tail jump differently, so assert on
+			// the shared destination.
+			if !strings.Contains(asm, "__fern_report") {
+				t.Error("the use-after-free check does not route to __fern_report")
+			}
+			for _, trap := range tc.silentTraps {
+				if strings.Contains(asm, trap) {
+					t.Errorf("sanitized asm still contains a bare %q: a check that dies without a message is what this mode replaces", trap)
+				}
+			}
+		})
 	}
 }
 
@@ -372,11 +409,17 @@ func TestX86_64SanitizeQuarantinesFreedBlocks(t *testing.T) {
 
 // --- arm64 legs (qemu; ride CI) ------------------------------------
 //
-// arm64 carries the leak census and the rc over-release report. It has
-// no RcFreeDebug quarantine, so the use-after-free half of the mode is
-// x86-64 only — the flag is still accepted there and lights up what
-// exists rather than erroring, which is what makes `-sanitize` portable
-// advice.
+// arm64 carries the whole mode: census, rc over-release report, and the
+// use-after-free quarantine. The two backends' diagnostics are the same
+// bytes and the same exit status, so a `fern-sanitizer:` line does not
+// tell you which native produced it — which is the point, since the
+// advice "build it with -sanitize" has to mean one thing.
+//
+// arm64's quarantine has one site x86-64 does not need: __fern_str_inc
+// INLINES its rc bump rather than tail-calling __fern_rc_inc (it has to
+// preserve the (data, len) pair in x0/x1), so it carries its own poison
+// check. A stale retain of a freed string would otherwise walk straight
+// past the detector.
 
 func TestArm64SanitizeCleanRunIsSilent(t *testing.T) {
 	stdout, stderr, code := runSanitizeArm64(t, sanCleanSrc)
@@ -405,6 +448,23 @@ func TestArm64SanitizeLeakVerdict(t *testing.T) {
 	blocks, _ := strconv.Atoi(m[2])
 	if bytes != 128 || blocks != 2 {
 		t.Errorf("verdict says %d bytes in %d blocks, want 128 / 2 (must match x86-64 exactly)", bytes, blocks)
+	}
+}
+
+func TestArm64SanitizeQuarantinesFreedBlocks(t *testing.T) {
+	gcc, qemu := arm64Tooling(t)
+	_, sanErr, sanKiB := buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64", sanQuarantineSrc, true), true)
+	_, _, plainKiB := buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64", sanQuarantineSrc, false), true)
+
+	if sanKiB < 4 {
+		t.Errorf("sanitized bump high-water = %d KiB, want >= 4 (freed blocks must not be recycled)", sanKiB)
+	}
+	if plainKiB >= sanKiB {
+		t.Errorf("unsanitized bump high-water = %d KiB, sanitized = %d KiB: the default build should still recycle", plainKiB, sanKiB)
+	}
+	allocs, frees, live := parseLeakCheckLine(t, sanErr)
+	if allocs != frees || live != 0 {
+		t.Errorf("got allocs=%d frees=%d live=%d, want balanced / 0", allocs, frees, live)
 	}
 }
 

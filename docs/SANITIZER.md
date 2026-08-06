@@ -72,12 +72,20 @@ asm is byte-identical to a build from a compiler that never had the feature.
 | | leak census | rc over-release | use-after-free |
 | --- | --- | --- | --- |
 | x86-64 | ✅ | ✅ | ✅ |
-| arm64 | ✅ | ✅ | — (no quarantine) |
+| arm64 | ✅ | ✅ | ✅ |
 | wasm | — | — | — |
 
-`-sanitize` on arm64 lights up what exists rather than erroring, which is what
-makes it portable advice. The arm64 quarantine and the self-host compiler's
-own port of the mode are follow-ups; the native x86-64 leg is the complete one.
+Both natives carry the whole mode, and they emit the **same** message text and
+the same exit status — a `fern-sanitizer:` line does not tell you which backend
+produced it, which is the point: "build it with `-sanitize`" has to mean one
+thing. `-sanitize` on a wasm or SSA target warns rather than emitting an
+unchecked build. The self-host compiler's own port of the mode is a follow-up.
+
+One asymmetry worth knowing if you are editing this: arm64's `__fern_str_inc`
+**inlines** its rc bump instead of tail-calling `__fern_rc_inc` (it has to
+preserve the `(data, len)` pair in x0/x1), so it carries its own poison check.
+Any future helper that inlines an rc op rather than calling out needs the same
+treatment, or a stale reference walks straight past the detector.
 
 ## Reading a finding
 
