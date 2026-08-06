@@ -7,7 +7,19 @@ surveys the *algorithms*. This document is about the *substrate* they need.
 The input was an external blueprint ("Project Atlas") for a state-of-the-art
 systems language: twelve phases, from a portable SIMD layer and CPU dispatcher
 through allocators, strings, collections, concurrency, io_uring, compression,
-and crypto. Its organising thesis:
+and crypto.
+
+**Provenance, because it changes how much weight the list carries:** it is
+LLM-generated and was written with **no knowledge of Fern** — a generic
+shortlist of what a modern systems language ought to contain, not an
+assessment of this one. That makes it useful as a *checklist of the field* and
+worthless as a *plan of record*, and it explains the pattern in §4: the items
+that misfire do so because they encode assumptions (a malloc heap, shared-
+memory threads, a Windows target, x86-first hardware) that a generic list
+cannot know Fern does not share. Read every row below as "what the field
+generally does" and nothing more.
+
+Its organising thesis:
 
 > The compiler, runtime and standard library are one optimization unit.
 
@@ -26,7 +38,8 @@ the evidence that produced it. The short version:
 | 0 — CPU feature detection + dispatcher | **Not needed at the 128-bit tier.** Deferred to the 256-bit tier. |
 | 0 — portable SIMD *type* (`Vec32<u8>`) | **Wrong first shape.** Fused intrinsics deliver the payoff at a fraction of the cost. |
 | 1 — allocator family (arena/bump/pool/general) | **Done, and partly rejected on purpose.** Fern is not in the malloc world. |
-| 2 — primitive intrinsics | **Mostly done.** `byteswap` / `rotate` are the remaining rows. |
+| 2 — primitive intrinsics | **Mostly done.** `byteswap` / `rotate` are the only remaining rows. |
+| 3 / 4 / 5 — strings, numbers, collections | **Largely done**, ahead of the blueprint's own numbers in places. See `SOTA-STDLIB-BLUEPRINT.md`. |
 | 7 / 8 — concurrency primitives, io_uring | **Blocked on a memory-model decision, not on implementation.** |
 | 12 — compiler reuses the stdlib | **Already true, and more aggressively than Atlas proposes.** |
 | Testing — perf regressions fail CI | **Genuinely missing. The highest-value item Atlas contributes.** |
@@ -182,6 +195,21 @@ but because RC subsumed it: the two-cursor allocator underneath was
 subsequently collapsed to one cursor because nothing selected the second
 region any more.
 
+The removal was not permanent in every form, and the shape that came back is
+instructive about what Fern actually wants from an arena. A **one-level
+checkpoint** — `__heap_mark` / `__heap_release_to`, which rewinds
+`__fern_heap_ptr` and snapshots the freelist heads into a `.bss` shadow —
+exists today, native-only, gated behind an `arena` capability in the platform
+descriptors (`internal/platforms/enforce.go:47`, `platforms.go:85`). It is
+native-only because wasm's linear-memory allocator has no room for the shadow
+below its head table, and gating it turns an internal "unknown callee
+`__fern_heap_mark`" mid-build failure into an E066 at check time.
+
+So the accurate statement is not "Fern rejected arenas" but "Fern rejected the
+*general* arena and kept a narrow checkpoint where it paid for itself". That
+is the same adaptive-dispatch instinct the blueprint argues for, applied to
+memory: the general mechanism lost to RC, and the specialised one survived.
+
 The removal was eyes-open and carries a stated regression — RC cannot collect
 cycles, so a long-running server now leaks request-local cycles the arena reset
 used to reclaim (`docs/CYCLE-COLLECTION-ANALYSIS.md` §4). That is the live
@@ -286,7 +314,11 @@ order of value:
 
 3. **`byteswap` / `rotate` intrinsics** — the two remaining Phase 2 rows, the
    same `bitCountBuiltin` shape as the landed `clz`/`ctz`/`popcount`
-   (`internal/ir/ir.go:18190`).
+   (`internal/ir/ir.go:18190`). The rest of Phase 2 is already shipped:
+   `popcount`/`clz`/`ctz` are real intrinsics on every backend, and the
+   overflow/saturating rows are a *decided semantics* rather than a gap —
+   wrapping is the default with no trap, and `+|` `-|` `*|` `<<|` are the
+   saturating operators (`docs/INTEGER-SEMANTICS.md`).
 
 4. **Streaming compression** (Phase 9) — Fern has none, and Atlas's framing
    ("streaming only; never require loading an entire file") is the right
@@ -312,6 +344,35 @@ Eisel–Lemire, Two-Way search, SwissTable-style small-map linear scan, seeded
 hashing, and the bit-count intrinsics — all landed.
 
 ---
+
+## 2b. Rows that have no referent in Fern
+
+Separate from the five inversions, which are real ideas in the wrong order,
+these are rows that do not describe anything Fern has or targets. They are
+recorded so that a future reader does not spend time re-deriving why they were
+dropped, and because the *pattern* is the useful part: each one encodes a
+platform assumption a context-free list cannot know is false here.
+
+| Row | Why it has no referent |
+| --- | --- |
+| **Windows / IOCP** (Phase 8) | Fern has no Windows target. `fern -targets`: arm64 Linux, arm64-android, arm64-darwin, x86-64 Linux, wasm, wasi-http. |
+| **macOS / kqueue** (Phase 8) | `arm64-darwin` is a *compile* target for native Apple Silicon binaries; there is no macOS server story, and the async model is a single-threaded poll loop. |
+| **`Vec64<u8>`** (Phase 0) | 512-bit vectors. AVX-512 is far outside the declared Haswell baseline; nothing Fern targets guarantees it. |
+| **Gather / Scatter** in the portable SIMD API (Phase 0) | NEON has no gather and wasm `v128` has no gather. An abstraction containing them is not portable to two of three targets — it is an x86 API with fallbacks. |
+| **Rope / PieceTable** as compiler infrastructure (Phase 12) | Zero occurrences in the codebase. These are *editor buffer* structures, not compiler ones; the list has them under the wrong heading. |
+| **Big-integer NTT tier** (Phase 11) | There is no arbitrary-precision type at all. The 2048+-limb tier is computer-algebra territory, several decisions past "should Fern have bigints". |
+| **Differential testing against glibc / LLVM libc / Rust / Go / Java** | Fern's differential oracles already exist and are stronger for its actual failure modes: `-interp` versus each compiled backend, and native versus self-host across ~1000 (fixture, target) pairs. Checking `sort` against Java's would find nothing those miss. |
+| **"Cache misses / branch misses / SIMD utilization" as per-commit CI metrics** | Hardware perf counters are unavailable in most CI containers and meaningless under `qemu-aarch64`, which is how arm64 is tested. Unimplementable as stated — §2.1 is the version of this idea that works. |
+| **`String<23>`** (Phase 1) | 23 is libstdc++'s inline capacity, a consequence of *its* three-word layout. Fern shipped a two-word string ABI (`docs/SSO-PLAN.md`), so the inline capacity follows from that decision rather than being free to pick. |
+| **`Map<4>`** (Phase 1) | Fern's small-map linear scan cuts over at **8** entries, which is both already shipped and the better number. |
+| **"Compiler / Parser / JSON / Regex all use arenas"** (Phase 1) | Fern's compiler, parser, and `std/json` are RC-managed; none of them bracket work in an arena (§1.3). |
+
+The common thread: every row above is correct advice for a language with a
+malloc heap, shared-memory threads, a Windows port, and x86 as the reference
+architecture. Fern has none of those. This is the failure mode to expect from
+any context-free "SOTA checklist" — not that the items are wrong in general,
+but that the assumptions they are conditioned on go unstated, so the reader
+cannot tell which ones transfer.
 
 ## 3. The fused-intrinsic SIMD ABI
 
@@ -434,9 +495,10 @@ written with two amendments:
 - **"Allocation is explicit — prefer stack, inline storage, arenas, then the
   general heap"** does not describe Fern and should read *"prefer inline
   storage, then reuse, then fresh allocation"*. Fern has no general heap tier
-  to fall back to and deliberately removed its user-facing arena (§1.3); the
-  ladder that matters here is Perceus constructor reuse, and the measurable
-  form of the principle is `__heap_bump_bytes()`.
+  to fall back to, and its arena tier is one native-only checkpoint rather than
+  a user-facing allocator (§1.3); the ladder that matters here is Perceus
+  constructor reuse, and the measurable form of the principle is
+  `__heap_bump_bytes()`.
 
 The most valuable of the ten for this codebase is **"measure before
 optimizing"**, for a reason specific to Fern: three attributions in #6127 were
