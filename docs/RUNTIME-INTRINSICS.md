@@ -66,16 +66,29 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > consumes it; an unmappable `mov x8, #N` still clears it, so a syscall with no
 > Darwin form can never inherit the previous one's mapping.
 >
+> **`stat` followed, and it corrects this doc.** The blocker recorded here — and
+> in #6352 / #6356 — was that `stat` needs a per-target source BODY because
+> Darwin's `struct stat` puts a **u16** `st_mode` at 4 where Linux arm64 has a
+> u32 at 16, and `st_size` at 96 rather than 48. That is a real layout
+> difference, but it is still only CONSTANTS, for two reasons the original
+> reading missed. First, the u16 needs no separate load: the only consumer masks
+> with `S_IFMT` (0xF000), so every bit above 15 — Darwin's `st_nlink`, sharing
+> the word — is discarded anyway, and a plain 32-bit load at the right offset is
+> correct on all three. Second, the 2-arg-vs-4-arg asymmetry (x86-64's `stat` 4,
+> which arm64-linux does not have at all) disappears by unifying on the **4-arg
+> `fstatat` family** — newfstatat 262 / newfstatat 79 / fstatat64 470, one
+> signature. So the offsets became a third table, **`statoff(t, name)`**, and
+> `stat` is one body like the rest. arm64 also gained the `__raw_scratch` op and
+> its `__fern_scratch` .bss slot, which the helper hands the kernel to write into.
+>
 > Still **x86-64 IR only**: the three clocks (`monotonic_ns` / `now_unix_ms` /
-> `now_ns`) and `stat` / `read_dir` / `remove_dir_all` — everything whose Darwin
-> form differs by more than a number. These are what is left, and they are
-> blocked on SHAPE, not effort. Darwin has no
+> `now_ns`) and `read_dir` / `remove_dir_all`. These are the genuinely
+> shape-diverging ones. Darwin has no
 > `clock_gettime` at all (gettimeofday against a different struct, or CNTVCT_EL0,
-> not a syscall); its `struct stat` puts `st_mode` at offset 4 as a u16 where
-> Linux arm64 has it at 16 as a u32, and `st_size` at 96 rather than 48; and
-> `getdirentries64` takes a 4th out-param that Linux's `getdents64` has no
-> equivalent of. Each needs a per-target source BODY, not a substituted
-> constant, which is why `sysno` deliberately has no entry for them. wasm has no
+> not a syscall), and `getdirentries64` takes a 4th out-param that Linux's
+> `getdents64` has no equivalent of — an argument the caller must supply and
+> thread, which no constant can stand in for. Each needs a per-target source
+> BODY, which is why `sysno` deliberately has no entry for them. wasm has no
 > generic syscall at all. The clocks
 > slice added one
 > more floor primitive — `__raw_scratch` (a fixed static buffer for the kernel
@@ -88,8 +101,10 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 >
 > **Status update (2026-07, user-typed returns): `stat` migrated.** `stat` is the
 > first leaf returning a **user-typed** value — `Result[FileStat, IoError]` — and
-> it lowers as a Fern function (`asmcore.rt_src_stat`): `stat(2)` into
-> `__raw_scratch`, read `st_mode`/`st_size` with `__load_i32`/`__load_i64`, then
+> it lowers as a Fern function (`asmcore.rt_src_stat`): a stat syscall into
+> `__raw_scratch` (2-arg `stat` when this shipped; the 4-arg `fstatat` family
+> since it went cross-target — see the 2026-08 block above), read
+> `st_mode`/`st_size` with `__load_i32`/`__load_i64`, then
 > build `Ok(FileStat{...})` or, on failure, the errno-mapped `IoError` variant
 > (`ENOENT→NotFound`, `EACCES→PermissionDenied`, `EEXIST→AlreadyExists`,
 > `EINTR→Interrupted`, else `Other`) — the same mapping native's `__fern_io_error`

@@ -7577,7 +7577,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("stat") || s.has_need("read_file") || s.has_need("remove_file") || s.has_need("write_file") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all")) {
         s = s.write("    .text\n");
         var fs_src: string = asmcore.rt_src_io_error();
-        if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(); }
+        if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat("x86_64"); }
         if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_read_file("x86_64"); }
         if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file("x86_64"); }
         if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file("x86_64"); }

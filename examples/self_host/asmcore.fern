@@ -375,6 +375,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "openat") { return "257"; }
         if (name == "unlinkat") { return "263"; }
         if (name == "mkdirat") { return "258"; }
+        if (name == "fstatat") { return "262"; }
         if (name == "getrandom") { return "318"; }
         return "-1";
     }
@@ -386,6 +387,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "openat") { return "463"; }
         if (name == "unlinkat") { return "472"; }
         if (name == "mkdirat") { return "475"; }
+        if (name == "fstatat") { return "470"; }
         // Darwin has no getrandom; getentropy(buf, len) takes the same first
         // two args and ignores a third, but caps each call at 256 bytes and
         // returns 0 rather than a count — see rt_src_random_bytes.
@@ -400,6 +402,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "openat") { return "56"; }
     if (name == "unlinkat") { return "35"; }
     if (name == "mkdirat") { return "34"; }
+    if (name == "fstatat") { return "79"; }
     if (name == "getrandom") { return "278"; }
     return "-1";
 }
@@ -410,6 +413,33 @@ pub function sysno(t: string, name: string): string {
 pub function at_fdcwd(t: string): string {
     if (t == "arm64-darwin") { return "-2"; }
     return "-100";
+}
+
+// statoff is the `struct stat` field-offset table — the third per-target axis
+// after sysno and oflag, and the one that decides whether a leaf reading kernel
+// structs is expressible as ONE source. All three kernels fill a different
+// layout: x86-64 Linux has a u32 st_mode at 24, arm64 Linux at 16, and Darwin's
+// 64-bit-inode stat a **u16** st_mode at 4 with st_size pushed to 96 by four
+// timespecs.
+//
+// The u16 needs no separate treatment, which is the part that makes this work:
+// the only consumer masks with S_IFMT (0xF000), and every bit above 15 —
+// Darwin's st_nlink, sharing the word — is discarded by that mask anyway. So a
+// plain 32-bit load at the target's offset is correct on all three.
+pub function statoff(t: string, name: string): string {
+    if (t == "x86_64") {
+        if (name == "mode") { return "24"; }
+        if (name == "size") { return "48"; }
+        return "0";
+    }
+    if (t == "arm64-darwin") {
+        if (name == "mode") { return "4"; }
+        if (name == "size") { return "96"; }
+        return "0";
+    }
+    if (name == "mode") { return "16"; }
+    if (name == "size") { return "48"; }
+    return "0";
 }
 
 // oflag is the open(2) flag-set table, the other half of sysno: the numbers
@@ -597,20 +627,24 @@ pub function rt_src_clock(which: string): string {
     return "function __fern_now_ns(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 0, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(ts + 8); return sec * (1000000000 as i64) + nsec; }";
 }
 
-// rt_src_stat backs `stat(path)` (#2649) — the first syscall leaf returning a
-// user-typed Result[FileStat, IoError]. NUL-terminate the path, stat(2) (syscall
-// 4, follows symlinks — 2-arg, so __syscall3 suffices) into the fixed static
-// scratch buffer, read st_mode (offset 24, 4 bytes) + st_size (offset 48, 8
-// bytes) via __load_i32/__load_i64, classify by S_IFMT, and build
-// Ok(FileStat{...}) — or, on failure, the errno classified by the shared
-// __fern_io_error (bundled with this helper), handed a FRESH path string so the
-// borrowed `path` param is never stored. The FileStat struct + Result construction
-// lower through the normal IR path (emit_ir_runtime_fern_fn receives all_structs).
-// x86-64-only, and NOT by constant substitution: arm64-linux has no `stat`
-// syscall at all (newfstatat, 4-arg, st_mode at 16) and Darwin's stat64 puts a
-// u16 st_mode at 4 and st_size at 96 — the offsets differ, not just the number.
-pub function rt_src_stat(): string {
-    return "function __fern_stat(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall3(4, pathz, buf, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } var mode: i32 = __load_i32(buf + 24); var size: i64 = __load_i64(buf + 48); var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: size }); }";
+// rt_src_stat backs `stat(path)` (#2649) — the first syscall leaf that returned
+// a user-typed Result[FileStat, IoError]. NUL-terminate the path, fstatat into
+// the fixed static scratch buffer, read st_mode + st_size back with __load_i32 /
+// __load_i64, classify by S_IFMT, and build Ok(FileStat{...}) — or, on failure,
+// the errno classified by the shared __fern_io_error (bundled with this helper),
+// handed a FRESH path string so the borrowed `path` param is never stored.
+//
+// One body for all three targets, which took unifying on the **4-arg fstatat**
+// family: x86-64 newfstatat 262, arm64-linux newfstatat 79, arm64-darwin
+// fstatat64 470, all `(dirfd, path, buf, flags)` with flags 0 meaning
+// follow-symlinks. This helper used to call x86-64's 2-arg `stat` (4), which
+// arm64-linux does not have at all — that asymmetry, plus the differing field
+// offsets, is why #6352/#6356 recorded stat as needing a per-target BODY. It
+// does not: with fstatat and asmcore.statoff it is the same constant
+// substitution as the other leaves. (The u16 st_mode on Darwin needs no special
+// read — see statoff.)
+pub function rt_src_stat(t: string): string {
+    return "function __fern_stat(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz, buf, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } var mode: i32 = __load_i32(buf + " + statoff(t, "mode") + "); var size: i64 = __load_i64(buf + " + statoff(t, "size") + "); var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: size }); }";
 }
 
 pub function (s: EmitState) mark_eprint(): EmitState {
