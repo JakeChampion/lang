@@ -1,0 +1,314 @@
+// examples/proposals/percolation.fern — proposal turn, drawn line 118:
+// "A percolation simulation finding the threshold at which a grid connects."
+//
+// Site percolation on an n x n square lattice. Each site is open with
+// probability p; the grid percolates when some open site in the top row
+// connects to some open site in the bottom row through open neighbours.
+// Connectivity is union-find with two virtual nodes (a source above the
+// top row, a sink below the bottom row), so percolation is one find.
+//
+// The known threshold for site percolation on this lattice is ~0.5927,
+// which gives the simulation an external oracle rather than only
+// self-consistency: `test_threshold_is_near_the_known_value` fails if the
+// estimate drifts away from it.
+//
+// The RNG is a deterministic xorshift with a fixed seed rather than
+// std/rand, so every run — interpreted, compiled, on any backend — sees
+// exactly the same grids and the tests are reproducible.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from
+// std/test, so the file is its own test suite.
+
+import "std/test";
+import "std/i32";
+import "std/i64";
+
+// ------------------------------------------------------------- union-find
+
+// Parent array with union by index and full path compression on find.
+// Arrays are immutable, so every link is `parent.with(i, v)`; the
+// allocation shape of that is what `main` measures.
+struct UF { parent: i32[] }
+
+function uf_new(n: i32): UF {
+    var p: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { p = p.append(i); i = i + 1; }
+    return UF { parent: p };
+}
+
+// Root of x, without compression — the read-only half, used where the
+// caller has no UF to thread back.
+function uf_root(u: UF, x: i32): i32 {
+    var r: i32 = x;
+    while (u.parent[r] != r) { r = u.parent[r]; }
+    return r;
+}
+
+// find with path compression: returns the root AND the updated structure,
+// since flattening the path is a write.
+function uf_find(u: UF, x: i32): (i32, UF) {
+    var r: i32 = uf_root(u, x);
+    var p: i32[] = u.parent;
+    var cur: i32 = x;
+    while (p[cur] != r) {
+        var next: i32 = p[cur];
+        p = p.with(cur, r);
+        cur = next;
+    }
+    return (r, UF { parent: p });
+}
+
+function uf_union(u: UF, a: i32, b: i32): UF {
+    var (ra, u1) = uf_find(u, a);
+    var (rb, u2) = uf_find(u1, b);
+    if (ra == rb) { return u2; }
+    return UF { parent: u2.parent.with(ra, rb) };
+}
+
+function uf_connected(u: UF, a: i32, b: i32): boolean {
+    return uf_root(u, a) == uf_root(u, b);
+}
+
+// ------------------------------------------------------------ percolation
+
+// A grid of n*n sites plus two virtual nodes: n*n is the source (joined to
+// every open top-row site) and n*n+1 the sink (joined to the bottom row).
+struct Grid { n: i32, open: boolean[], uf: UF }
+
+function grid_new(n: i32): Grid {
+    var o: boolean[] = [];
+    var i: i32 = 0;
+    while (i < n * n) { o = o.append(false); i = i + 1; }
+    return Grid { n: n, open: o, uf: uf_new(n * n + 2) };
+}
+
+function idx(n: i32, r: i32, c: i32): i32 { return r * n + c; }
+
+function is_open(g: Grid, r: i32, c: i32): boolean {
+    return g.open[idx(g.n, r, c)];
+}
+
+// Open one site and link it to whichever of its four neighbours are
+// already open. Opening an open site is a no-op, which is what makes the
+// monotonicity property below meaningful.
+function grid_open(g: Grid, r: i32, c: i32): Grid {
+    if (is_open(g, r, c)) { return g; }
+    var n: i32 = g.n;
+    var i: i32 = idx(n, r, c);
+    var o: boolean[] = g.open.with(i, true);
+    var u: UF = g.uf;
+
+    if (r == 0) { u = uf_union(u, i, n * n); }
+    if (r == n - 1) { u = uf_union(u, i, n * n + 1); }
+    if (r > 0 && o[idx(n, r - 1, c)]) { u = uf_union(u, i, idx(n, r - 1, c)); }
+    if (r < n - 1 && o[idx(n, r + 1, c)]) { u = uf_union(u, i, idx(n, r + 1, c)); }
+    if (c > 0 && o[idx(n, r, c - 1)]) { u = uf_union(u, i, idx(n, r, c - 1)); }
+    if (c < n - 1 && o[idx(n, r, c + 1)]) { u = uf_union(u, i, idx(n, r, c + 1)); }
+
+    return Grid { n: n, open: o, uf: u };
+}
+
+function percolates(g: Grid): boolean {
+    return uf_connected(g.uf, g.n * g.n, g.n * g.n + 1);
+}
+
+function open_count(g: Grid): i32 {
+    var c: i32 = 0;
+    var i: i32 = 0;
+    while (i < g.open.len()) {
+        if (g.open[i]) { c = c + 1; }
+        i = i + 1;
+    }
+    return c;
+}
+
+// --------------------------------------------------------------- the RNG
+
+// xorshift64*, deterministic. Returns the next state; callers thread it.
+function xs_next(s: i64): i64 {
+    var x: i64 = s;
+    x = x ^ (x << 13);
+    x = x ^ (x >> 7);
+    x = x ^ (x << 17);
+    return x;
+}
+
+// A value in [0, m) from the state's low bits.
+function xs_below(s: i64, m: i32): i32 {
+    var v: i64 = s;
+    if (v < 0) { v = 0 - v; }
+    return (v % (m as i64)) as i32;
+}
+
+// Open uniformly random sites until the grid percolates; return how many
+// were opened. That count over n*n is one sample of the threshold.
+function sites_to_percolate(n: i32, seed: i64): i32 {
+    var g: Grid = grid_new(n);
+    var s: i64 = seed;
+    var guard: i32 = 0;
+    while (!percolates(g) && guard < n * n * 40) {
+        s = xs_next(s);
+        var r: i32 = xs_below(s, n);
+        s = xs_next(s);
+        var c: i32 = xs_below(s, n);
+        g = grid_open(g, r, c);
+        guard = guard + 1;
+    }
+    return open_count(g);
+}
+
+// ---------------------------------------------------------------- tests
+
+// A grid with nothing open cannot percolate; one with everything open must.
+function test_empty_and_full_grids(): test.TestOutcome {
+    var empty: Grid = grid_new(5);
+    if (percolates(empty)) { return test.fail("an empty grid percolated"); }
+
+    var full: Grid = grid_new(5);
+    var r: i32 = 0;
+    while (r < 5) {
+        var c: i32 = 0;
+        while (c < 5) { full = grid_open(full, r, c); c = c + 1; }
+        r = r + 1;
+    }
+    if (!percolates(full)) { return test.fail("a full grid did not percolate"); }
+    if (open_count(full) != 25) {
+        return test.fail("wanted 25 open, got " + open_count(full).to_string());
+    }
+    return test.pass();
+}
+
+// A hand-built vertical channel percolates; breaking one cell of it must
+// stop percolation. This is the test that would catch a union-find that
+// connects everything to everything.
+function test_a_single_channel_is_enough_and_necessary(): test.TestOutcome {
+    var g: Grid = grid_new(5);
+    var r: i32 = 0;
+    while (r < 5) { g = grid_open(g, r, 2); r = r + 1; }
+    if (!percolates(g)) {
+        return test.fail("an open column did not percolate");
+    }
+
+    // The same column with the middle cell never opened.
+    var b: Grid = grid_new(5);
+    var k: i32 = 0;
+    while (k < 5) {
+        if (k != 2) { b = grid_open(b, k, 2); }
+        k = k + 1;
+    }
+    if (percolates(b)) {
+        return test.fail("a broken column percolated");
+    }
+    return test.pass();
+}
+
+// Monotonicity: opening sites never un-percolates a grid. Once it
+// connects, it stays connected however many more sites open.
+function test_percolation_is_monotone(): test.TestOutcome {
+    var g: Grid = grid_new(6);
+    var s: i64 = 12345;
+    var seen: boolean = false;
+    var step: i32 = 0;
+    while (step < 200) {
+        s = xs_next(s);
+        var r: i32 = xs_below(s, 6);
+        s = xs_next(s);
+        var c: i32 = xs_below(s, 6);
+        g = grid_open(g, r, c);
+        if (percolates(g)) {
+            seen = true;
+        } else if (seen) {
+            return test.fail("grid stopped percolating at step "
+                + step.to_string());
+        }
+        step = step + 1;
+    }
+    if (!seen) {
+        return test.fail("200 random opens on a 6x6 never percolated");
+    }
+    return test.pass();
+}
+
+// Union-find contracts: connectivity is reflexive, symmetric, and
+// transitive after unions, and a union of already-connected nodes is a
+// no-op.
+function test_union_find_contracts(): test.TestOutcome {
+    var u: UF = uf_new(10);
+    if (!uf_connected(u, 3, 3)) { return test.fail("not reflexive"); }
+    if (uf_connected(u, 3, 4)) { return test.fail("connected before union"); }
+
+    u = uf_union(u, 1, 2);
+    u = uf_union(u, 2, 3);
+    if (!uf_connected(u, 1, 3)) { return test.fail("not transitive"); }
+    if (!uf_connected(u, 3, 1)) { return test.fail("not symmetric"); }
+    if (uf_connected(u, 1, 9)) { return test.fail("connected unrelated nodes"); }
+
+    var before: i32 = uf_root(u, 1);
+    u = uf_union(u, 1, 3);
+    if (uf_root(u, 1) != before) {
+        return test.fail("re-union of connected nodes moved the root");
+    }
+    return test.pass();
+}
+
+// The external oracle. Site percolation on a square lattice has a known
+// threshold near 0.5927; averaged over several seeds the estimate must
+// land in a band around it. A simulation that agrees only with itself
+// would pass every other test in this file.
+function test_threshold_is_near_the_known_value(): test.TestOutcome {
+    var n: i32 = 12;
+    var seeds: i64[] = [1, 7, 99, 12345, 424242];
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < seeds.len()) {
+        total = total + sites_to_percolate(n, seeds[i]);
+        i = i + 1;
+    }
+    // Mean fraction, in percent, to stay in integer arithmetic.
+    var pct: i32 = total * 100 / (seeds.len() * n * n);
+    if (pct < 45 || pct > 75) {
+        return test.fail("threshold estimate " + pct.to_string()
+            + "% is outside the plausible band around 59%");
+    }
+    return test.pass();
+}
+
+// ----------------------------------------------------------------- app
+
+function main(): i32 {
+    eprint("percolation — site percolation on a square lattice, union-find");
+
+    var n: i32 = 12;
+    var seeds: i64[] = [1, 7, 99, 12345, 424242];
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < seeds.len()) {
+        var k: i32 = sites_to_percolate(n, seeds[i]);
+        total = total + k;
+        eprint("  seed " + seeds[i].to_string() + ": percolated after "
+            + k.to_string() + " of " + (n * n).to_string() + " sites");
+        i = i + 1;
+    }
+    eprint("mean threshold ~ " + (total * 100 / (seeds.len() * n * n)).to_string()
+        + "%  (known: 59%)");
+
+    // Allocation shape of the union-find churn. `arr.with(i, v)` on a
+    // uniquely-referenced array should reuse its storage; if it copies,
+    // this doubles superlinearly with n.
+    var base: i64 = __heap_bump_bytes();
+    var a: i32 = sites_to_percolate(8, 2024);
+    var m1: i64 = __heap_bump_bytes();
+    var b: i32 = sites_to_percolate(16, 2024);
+    var m2: i64 = __heap_bump_bytes();
+    eprint("bump n=8  (" + a.to_string() + " opens): " + (m1 - base).to_string());
+    eprint("bump n=16 (" + b.to_string() + " opens): " + (m2 - m1).to_string());
+
+    var r: test.TestRunner = test.test_new("percolation");
+    r = r.it("empty and full grids", test_empty_and_full_grids);
+    r = r.it("a single channel is enough and necessary", test_a_single_channel_is_enough_and_necessary);
+    r = r.it("percolation is monotone", test_percolation_is_monotone);
+    r = r.it("union-find contracts", test_union_find_contracts);
+    r = r.it("threshold is near the known value", test_threshold_is_near_the_known_value);
+    return r.finish();
+}
