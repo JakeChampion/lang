@@ -15,13 +15,23 @@ import (
 )
 
 // runNativeWasmCli compiles src through the native preview-2 pipeline
-// (wasmbin core with Preview2WASI + SynthCliRun → component.Compose's
-// cli/run wrapper, no wasm-tools, no preview-1 adapter) and runs the
-// component under wasmtime, returning the process exit code. main()'s
-// i32 return lowers through wasi:cli/run as result<_, _>: 0 → exit 0,
-// non-zero → exit 1. The programs here are import-free (pure
-// computation), so the import-free cli/run builder composes them
-// directly.
+// (wasmbin core with Preview2WASI + SynthCliRun → a wasi:cli/run
+// component, no wasm-tools, no preview-1 adapter) and runs the component
+// under wasmtime, returning the process exit code. main()'s i32 return
+// lowers through wasi:cli/run as result<_, _>: 0 → exit 0, non-zero →
+// exit 1.
+//
+// Imports are CLASSIFIED rather than assumed absent, mirroring what the
+// `fern` CLI and the playground both do. This used to call the
+// import-free builder directly on the theory that these programs are pure
+// computation — which stopped being true the moment core/map started
+// seeding its string hash (#6194): every map-using program now imports
+// wasi:random/random for the seed draw, and a fixed zero-import wrapper
+// produces a component wasmtime refuses to instantiate ("missing module
+// instantiation argument named `wasi:random/random@0.2.0`"). That reads
+// as the program returning 1, i.e. as a CoW failure, which is not what
+// it is. Classifying keeps the harness honest about whatever the core
+// module actually imports.
 //
 // This exercises the real native memory layout (heap at ~1024), where
 // the rc helpers' low-address guard lives — the path the preview-1
@@ -58,7 +68,14 @@ func runNativeWasmCli(t *testing.T, src string) int {
 	if err != nil {
 		t.Fatalf("wasmbin.Build: %v", err)
 	}
+	req, unsupported := component.ClassifyCore(core)
+	if len(unsupported) > 0 {
+		t.Fatalf("core module has imports the composer can't place: %v", unsupported)
+	}
 	comp := component.BuildWasiCliRunComponent(core, "_lang_run")
+	if !component.RequestEmpty(req) {
+		comp = component.Compose(core, req, "_lang_run")
+	}
 	compPath := filepath.Join(dir, "prog.component.wasm")
 	if err := os.WriteFile(compPath, comp, 0o644); err != nil {
 		t.Fatalf("write component: %v", err)
