@@ -18,18 +18,34 @@
 # since any divergence at all fails the leg — and keep the record below of what
 # left, because it is what the next round of probing should be measured against.
 #
-# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus), after #6237:
-# 252 agree, 0 diverge, 260 compile gaps. Count the gaps, not just the
+# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus), after #6246:
+# 263 agree, 0 diverge, 249 compile gaps. Count the gaps, not just the
 # agreements, when reading a run: the leg only proves what it could COMPILE, so
 # a fix that turns a wrong answer into an IR bail raises the gap count while
 # looking like a win in the divergence column.
 #
 # That caution cuts both ways, and this run is the other direction: the previous
-# measurement here was 204 agree / 308 gaps, so #6237 moved FORTY-EIGHT seeds off
-# the gap pile. One bail can cost far more than the seed that exposes it — an
-# if-expression whose branches are 64-bit took the whole MODULE off the IR path,
-# and fernsmith emits if-expressions everywhere, so a single missing branch in
-# one classifier was suppressing a tenth of the corpus.
+# measurement here was 204 agree / 308 gaps, so #6237 and #6246 together moved
+# FIFTY-NINE seeds off the gap pile. One bail can cost far more than the seed
+# that exposes it — an if-expression whose branches are 64-bit took the whole
+# MODULE off the IR path, and fernsmith emits if-expressions everywhere, so a
+# single missing branch in one classifier was suppressing a tenth of the corpus.
+#
+# CENSUS OF THE 249 GAPS, by the reason FERN_STRICT_IR=1 gives, so the next
+# round is aimed rather than sampled:
+#
+#   71  function value <fn>$clo not defined   → #6256, an enum match-EXPRESSION
+#                                               with a lambda arm. One mechanism,
+#                                               isolated to four probes.
+#   13  call to unknown symbol T.to_string    → a method call on a bare type var.
+#  165  no reason string                      → not yet characterised; these need
+#                                               the bail site widened to say why
+#                                               before they can be grouped.
+#
+# The 165 unexplained ones are the bigger pile but the least actionable: the
+# strict-IR message names the FUNCTION it gave up in and nothing else. Making
+# that message carry a reason is probably worth more than reducing them one at a
+# time.
 
 # CRASHES — the self-host-compiled binary died by SIGSEGV where the interpreter
 # returned a value. These were ONE bug: #6207, a `Map { … }` literal whose keys
