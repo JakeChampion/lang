@@ -1,0 +1,43 @@
+// A bare literal carrying a `u32` suffix is unsigned, and the op selection has
+// to see that. `expr_is_u32` had no ExprNumber arm at all — the exact omission
+// #6178 found one width up in `expr_is_u64` — so two u32 literals fell through
+// to the SIGNED instruction: `2147484527u32 % 861u32` answered -677 where the
+// unsigned remainder is 713. Silent: no trap, no diagnostic. #6261.
+//
+// Only BARE literals were affected. The same values through locals are fine,
+// because the slot carries u32; the controls at the bottom pin both routes so
+// they cannot drift apart again.
+import "std/i32";
+import "std/u32";
+
+function main(): i32 {
+    // The reported shape: a dividend past i32-max, so signed reads it negative.
+    if (2147484527u32 % 861u32 != 713u32) { return 1; }
+    if (2147484527u32 / 861u32 != 2494174u32) { return 2; }
+
+    // Shifts: `>>` on a bit-31-set value is the other op whose signedness is
+    // observable (sar vs shr).
+    if (2147484527u32 >> 4u32 != 134217782u32) { return 3; }
+
+    // Ordering compares, where signed gets every direction wrong.
+    if (!(2147484527u32 > 5u32)) { return 4; }
+    if (!(5u32 < 2147484527u32)) { return 5; }
+    if (!(2147484527u32 >= 2147484527u32)) { return 6; }
+
+    // Both operands below 2^31, so signedness decides nothing — the control that
+    // says the fix did not simply invert the choice.
+    if (861u32 % 100u32 != 61u32) { return 7; }
+    if (!(5u32 < 861u32)) { return 8; }
+
+    // Through LOCALS: the route that was already correct.
+    var a: u32 = 2147484527u32;
+    var b: u32 = 861u32;
+    if (a % b != 713u32) { return 9; }
+
+    // Signed i32 stays signed — the fix must not make every 32-bit op unsigned.
+    var neg: i32 = 0i32 - 677i32;
+    if (!(neg < 3i32)) { return 10; }
+    if ((0i32 - 16i32) >> 2i32 != 0i32 - 4i32) { return 12; }
+
+    return 11;
+}

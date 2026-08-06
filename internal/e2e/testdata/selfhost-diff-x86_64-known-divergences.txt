@@ -18,34 +18,63 @@
 # since any divergence at all fails the leg — and keep the record below of what
 # left, because it is what the next round of probing should be measured against.
 #
-# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus), after #6246:
-# 263 agree, 0 diverge, 249 compile gaps. Count the gaps, not just the
+# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus), after #6261:
+# 291 agree, 0 diverge, 221 compile gaps. Count the gaps, not just the
 # agreements, when reading a run: the leg only proves what it could COMPILE, so
 # a fix that turns a wrong answer into an IR bail raises the gap count while
 # looking like a win in the divergence column.
 #
-# That caution cuts both ways, and this run is the other direction: the previous
-# measurement here was 204 agree / 308 gaps, so #6237 and #6246 together moved
-# FIFTY-NINE seeds off the gap pile. One bail can cost far more than the seed
-# that exposes it — an if-expression whose branches are 64-bit took the whole
-# MODULE off the IR path, and fernsmith emits if-expressions everywhere, so a
-# single missing branch in one classifier was suppressing a tenth of the corpus.
+# That caution cuts both ways, and the last three runs went the other way: 204
+# agree / 308 gaps, then 263 / 249 (#6237 + #6246), then 291 / 221 (#6261). One
+# bail can cost far more than the seed that exposes it — an if-expression whose
+# branches are 64-bit took the whole MODULE off the IR path, and fernsmith emits
+# if-expressions everywhere, so a single missing branch in one classifier was
+# suppressing a tenth of the corpus.
 #
-# CENSUS OF THE 249 GAPS, by the reason FERN_STRICT_IR=1 gives, so the next
-# round is aimed rather than sampled:
+# CENSUS OF THE 221 GAPS, so the next round is aimed rather than sampled. The
+# first split is by the reason FERN_STRICT_IR=1 gives:
 #
 #   71  function value <fn>$clo not defined   → #6256, an enum match-EXPRESSION
 #                                               with a lambda arm. One mechanism,
-#                                               isolated to four probes.
+#                                               isolated to four probes. Unmoved
+#                                               by #6261, as expected.
 #   13  call to unknown symbol T.to_string    → a method call on a bare type var.
-#  165  no reason string                      → not yet characterised; these need
-#                                               the bail site widened to say why
-#                                               before they can be grouped.
+#  137  no reason string                      → see the second split below.
 #
-# The 165 unexplained ones are the bigger pile but the least actionable: the
-# strict-IR message names the FUNCTION it gave up in and nothing else. Making
-# that message carry a reason is probably worth more than reducing them one at a
-# time.
+# The no-reason pile used to be the least actionable: the strict-IR message
+# names the FUNCTION it gave up in and nothing else. It does not need the message
+# widened, though — the bail site is recoverable from the BINARY. Build the
+# self-host compiler with symbols and break on the failure constructor:
+#
+#   ./bin/fern -g -target x86-64 -o /tmp/fsh-g examples/self_host/fern.fern
+#   break *__method_irlower__LowerState_fail
+#   commands
+#     silent
+#     info line *(*(unsigned long *)$rsp)
+#     cont
+#   end
+#
+# gdb attributes the line to "fern.fern", but the NUMBER is a line in whichever
+# module the containing symbol names (irlower__* → irlower.fern) — read the
+# symbol, not the filename. There is normally exactly one hit per compile, so
+# the reading is unambiguous, and the whole 137 profile in a few minutes.
+#
+# That gives the second split (line numbers as of #6261):
+#
+#   61  irlower.fern:11837  lower_value_block's non-`return` tail — a value block
+#                           whose last statement is anything but a return.
+#   51  irlower.fern:13623  the `return`-width guard: a width-64 value returned
+#                           from a 32-bit return type. #6261 fixed one CAUSE of a
+#                           false reading here (a u32-suffixed literal past
+#                           i32-max) and took the site from 94 to 51; what is left
+#                           is either a real wide return or another classifier
+#                           hole, and has not been separated yet.
+#   13  irlower.fern:6739 / :6809   lower_i64.
+#    9  irlower.fern:13209  lower_iife_match's payload-bindable gate.
+#    3  irlower.fern:10354 / :10876 lower_expr.
+#
+# So the 221 are three piles, not a fog: 71 one known mechanism (#6256), 112 in
+# two lowering sites, 38 spread over four more.
 
 # CRASHES — the self-host-compiled binary died by SIGSEGV where the interpreter
 # returned a value. These were ONE bug: #6207, a `Map { … }` literal whose keys

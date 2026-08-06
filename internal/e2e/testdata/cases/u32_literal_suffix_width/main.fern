@@ -1,0 +1,48 @@
+// A number literal's explicit SUFFIX is its declared width, and it outranks the
+// literal's magnitude. `infer_expr_width` asked the magnitude first, so
+// `2147484197u32` — past i32-max, but well inside u32-max — reported 64. The
+// `return` lowering refuses a width-64 value from a 32-bit return type, so the
+// whole enclosing function bailed off the IR path and took its module with it.
+//
+// This is the same shape as #6178's `if_expr_rt` hole one classifier over: any
+// suffix must be consulted BEFORE the magnitude rule, never after. #6261.
+import "std/i32";
+import "std/u32";
+
+function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
+
+function main(): i32 {
+    // The reported shape: a u32 if-expression whose branches are both past
+    // i32-max. The desugar lifts it to a `(): u32` lambda, which is where the
+    // returned literal's width was misread.
+    var a: u32 = if (true) { 2147484197u32 } else { 2147484413u32 };
+    if ((((a as i32) & 255i32)) != 37i32) { return 1; }
+
+    // Through a generic, the route the fernsmith seed that exposed it took.
+    var b: u32 = pick(false, 3u32, 2147484413u32);
+    if ((((b as i32) & 255i32)) != 253i32) { return 2; }
+
+    // A plain binding and a plain return, so the fix is not specific to the
+    // lifted-lambda path.
+    var c: u32 = 4294967295u32;
+    if (c != 4294967295u32) { return 3; }
+    if (wide_u32() != 2147484197u32) { return 4; }
+
+    // u8 is the other narrow suffix that can only ever be 32-bit.
+    var d: u8 = 250u8;
+    if ((d as i32) != 250i32) { return 5; }
+
+    // Controls: a genuinely 64-bit suffix must still report 64, and an
+    // UNSUFFIXED literal past i32-max must still be read by magnitude — that is
+    // the rule the suffix check now runs ahead of, not one it replaces.
+    if (wide_u64() != 9223372036854776520u64) { return 6; }
+    var e: i64 = 5000000000;
+    if (e != 5000000000i64) { return 7; }
+    var f: i64 = 7i64;
+    if (f != 7i64) { return 8; }
+
+    return 11;
+}
+
+function wide_u32(): u32 { return 2147484197u32; }
+function wide_u64(): u64 { return 9223372036854776520u64; }
