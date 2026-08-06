@@ -835,13 +835,21 @@ function slot_name_retired(n: string): boolean {
 // and the per-module fixpoint is what distinguishes it from the five that are
 // fine. Do not re-flip it without a narrower gate.
 //
-// "ARRSTRUCT:" (35200) and "ARRTUP:" (32000) are absent because switching them
-// changed NOTHING — measured identical before and after, so their block-scoped
-// leak has a different cause and this is not it. Both collectors and their
-// elem-type-of-decl walkers do recurse into nested blocks, so the credit is not
-// refused for lack of a declaration; the next thing to check is whether the
-// slot's `struct_type` / `arrarr_elem` column is set at a nested binding at all,
-// since both predicates bail on an empty one before ever reaching the lookup.
+// "ARRSTRUCT:" and "ARRTUP:" are absent because switching them changed NOTHING
+// — and their leak is now CLOSED, by #6291 (`.len()` on an array-of-structs is
+// a borrow, not an escape), not by anything in this file.
+//
+// This note used to record them as leaking 35200 / 32000 and point the next
+// reader at "whether the slot's struct_type / arrarr_elem column is set at a
+// nested binding". That hypothesis was wrong, and following it would have cost
+// a day in the wrong predicate: the credit was never refused for a column
+// reason. `.len()` marked the local as ESCAPING, so the shape could not earn
+// any credit however the columns were set. Measured at #6285 the probes leak
+// 67200 / 60800; at #6291 both are 0 — and at #6285 only the `.len()` probes
+// leaked, while element-access and no-access variants were already clean, which
+// is what identifies the mechanism rather than merely dating the fix.
+// TestSelfHostBlockScopedClassesX86_64 now pins both shapes, since #6291 closed
+// them incidentally and nothing else keeps them closed.
 function reclaim_slot_name(s: LowerState, i: i32): string {
     var n: string = s.locals[i].slot_name;
     // `+ ""` materialises the slice as an owned `string` — a bare slice types as
