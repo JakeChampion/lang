@@ -8,9 +8,15 @@ name: Cancel superseded runs
 # branch nobody cares about anymore.
 #
 # This reaps them: on PR close, cancel every queued / in-progress run
-# for the PR's head branch. `pull_request` (not `_target`) is safe
-# here because the only permission needed is `actions: write` on our
-# own repo and we never check out / run untrusted code.
+# for the PR's head branch — EXCEPT the ones a still-open PR is
+# relying on. A branch here routinely outlives the PR that first used
+# it (successive PRs get opened from the same `claude/…` branch), and
+# every PR's runs are filed under that one branch name, so a blind
+# branch-scoped cancel reaps the live PR's CI along with the dead
+# one's. Runs whose head SHA is the head of an open PR are kept.
+# `pull_request` (not `_target`) is safe here because the only
+# permissions needed are `actions: write` + `pull-requests: read` on
+# our own repo and we never check out / run untrusted code.
 
 on:
   pull_request:
@@ -23,6 +29,7 @@ on:
 
 permissions:
   actions: write
+  pull-requests: read
 
 concurrency:
   group: cancel-on-merge-${{ github.event.pull_request.head.ref || github.event.inputs.branch }}
@@ -44,7 +51,20 @@ jobs:
             }
             const { owner, repo } = context.repo;
             const self = process.env.GITHUB_RUN_ID;
+
+            const openPRs = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: "open", per_page: 100,
+            });
+            const keep = new Map();
+            for (const pr of openPRs) {
+              if (pr.head?.ref === branch) keep.set(pr.head.sha, pr.number);
+            }
+            for (const [sha, number] of keep) {
+              core.info(`keeping runs at ${sha.slice(0, 8)} — PR #${number} is still open on ${branch}`);
+            }
+
             let cancelled = 0;
+            let kept = 0;
             for (const status of ["queued", "in_progress"]) {
               const runs = await github.paginate(
                 github.rest.actions.listWorkflowRunsForRepo,
@@ -52,6 +72,10 @@ jobs:
               );
               for (const run of runs) {
                 if (String(run.id) === String(self)) continue; // don't cancel ourselves
+                if (keep.has(run.head_sha)) {
+                  kept++;
+                  continue;
+                }
                 try {
                   await github.rest.actions.cancelWorkflowRun({
                     owner, repo, run_id: run.id,
@@ -63,4 +87,4 @@ jobs:
                 }
               }
             }
-            core.notice(`cancelled ${cancelled} run(s) for ${branch}`);
+            core.notice(`cancelled ${cancelled} run(s) for ${branch}, kept ${kept} belonging to a still-open PR`);
