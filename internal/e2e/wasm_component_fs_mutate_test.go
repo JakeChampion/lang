@@ -255,3 +255,138 @@ func TestCmdLangComponentReadAppend(t *testing.T) {
 		t.Errorf("file content = %q, want %q — append-via-stream did not position at EOF", got, "one\ntwo\n")
 	}
 }
+
+// TestCmdLangComponentReadDirRemoveDirAll closes the loop on the
+// listing surface: `read_dir` over the `directory-entry-stream` cursor,
+// and `remove_dir_all` recursing through it.
+//
+// The entry COUNT is the load-bearing assertion. preview-1's fd_readdir
+// yields "." and ".." and the preview-1 body filters them out;
+// wasi-filesystem specifies that read-directory omits them, so the
+// preview-2 body has no filter at all. If that reading of the spec were
+// wrong this reports 4 entries instead of 2, and the two backends would
+// disagree on every listing.
+//
+// The nesting is what the flat case cannot reach — remove_dir_all must
+// descend rather than fail with "not empty", and must dispatch on the
+// entry's descriptor-type (6 = regular file → unlink, 3 = directory →
+// recurse then remove-directory-at).
+func TestCmdLangComponentReadDirRemoveDirAll(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "rd.fern")
+	// temp_dir's prefix is a preopen-relative PATH here, so passing one
+	// that already contains a directory puts the new level underneath
+	// it — that is what makes this a tree rather than siblings.
+	src := []byte(`function main(): i32 {
+    var d: string = "";
+    match (temp_dir("rd")) { Err(e) => { return 1; }, Ok(p) => { d = p; } }
+    match (write_file(d + "/a.txt", "aaa")) { Err(e) => { return 1; }, Ok(_) => {} }
+    match (write_file(d + "/b.txt", "bb")) { Err(e) => { return 1; }, Ok(_) => {} }
+    match (read_dir(d)) {
+        Err(e) => { return 1; },
+        Ok(names) => {
+            if (names.len() != 2) { return 1; }
+            var seen: i32 = 0;
+            var i: i32 = 0;
+            while (i < names.len()) {
+                if (names[i] == "a.txt") { seen = seen + 1; }
+                if (names[i] == "b.txt") { seen = seen + 1; }
+                i = i + 1;
+            }
+            if (seen != 2) { return 1; }
+        }
+    }
+    var mid: string = "";
+    match (temp_dir(d + "/mid")) { Err(e) => { return 1; }, Ok(p) => { mid = p; } }
+    match (write_file(mid + "/deep.txt", "d")) { Err(e) => { return 1; }, Ok(_) => {} }
+    match (read_dir(mid)) {
+        Err(e) => { return 1; },
+        Ok(names) => { if (names.len() != 1) { return 1; } }
+    }
+    match (remove_dir_all(d)) { Err(e) => { return 1; }, Ok(_) => {} }
+    match (stat(d)) { Ok(fs) => { return 1; }, Err(e) => {} }
+    match (remove_dir_all(d)) { Err(e) => { return 1; }, Ok(_) => {} }
+    return 0;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "rd.wasm")
+	build := exec.Command("go", "run", "./cmd/fern", "-target", "wasm", "-o", compPath, srcPath)
+	build.Dir = projectRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm (read_dir + remove_dir_all) failed: %v\n%s", err, out)
+	}
+	if err := exec.Command("wasmtime", "run", "--dir", dir, compPath).Run(); err != nil {
+		t.Errorf("read_dir + remove_dir_all: wasmtime run failed (want exit 0): %v", err)
+	}
+	// The recursion really removed the tree — nothing but the sources
+	// should be left under the preopen.
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	for _, e := range ents {
+		if e.IsDir() {
+			t.Errorf("remove_dir_all left %q behind", e.Name())
+		}
+	}
+}
+
+// TestCmdLangComponentStdTestSuiteRuns is #6208's actual success
+// criterion, and the thing the issue was opened about.
+//
+// `TestRunner.finish` walks its cleanup paths through remove_dir_all
+// unconditionally, so before part 1 every program merely IMPORTING
+// std/test failed to build for wasm with `unknown callee
+// "remove_dir_all"` — whether or not the suite touched a file. Part 1
+// made it build for preview-1; this makes it BUILD AND RUN as a real
+// component, which is the end of the chain.
+//
+// Comparing the TAP output against the interpreter rather than just
+// checking the exit code is the point: a suite that silently ran zero
+// assertions would also exit 0.
+func TestCmdLangComponentStdTestSuiteRuns(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "suite.fern")
+	src := []byte(`import "std/test";
+function fabs(x: f64): f64 { if (x > 0.0) { return x; } return 0.0 - x; }
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("wasm component suite");
+    r = r.it("abs positive", () => test.assert_eq_f64_near(fabs(3.5), 3.5, 0.001));
+    r = r.it("abs negative", () => test.assert_eq_f64_near(fabs(0.0 - 2.25), 2.25, 0.001));
+    return r.finish();
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "suite.wasm")
+	build := exec.Command("go", "run", "./cmd/fern", "-target", "wasm", "-o", compPath, srcPath)
+	build.Dir = projectRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("a std/test program must build for -target wasm: %v\n%s", err, out)
+	}
+	run := exec.Command("wasmtime", "run", "--dir", dir, compPath)
+	got, err := run.Output()
+	if err != nil {
+		t.Fatalf("a std/test component must run: %v", err)
+	}
+	interp := exec.Command("go", "run", "./cmd/fern", "-interp", srcPath)
+	interp.Dir = projectRoot(t)
+	want, err := interp.Output()
+	if err != nil {
+		t.Fatalf("interpreter oracle failed: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("component TAP output differs from the interpreter\n got:\n%s\nwant:\n%s", got, want)
+	}
+	if !strings.Contains(string(got), "# pass 2") {
+		t.Errorf("suite did not report 2 passing tests:\n%s", got)
+	}
+}

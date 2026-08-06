@@ -1840,12 +1840,18 @@ type FsFeatures struct {
 	Append bool // append-via-stream
 	Unlink bool // unlink-file-at
 	Mkdir  bool // create-directory-at
+	Rmdir  bool // remove-directory-at
 	Stat   bool // stat-at
+	// ReadDir is read-directory + the directory-entry-stream resource
+	// it returns: the pull method and the resource drop come with it,
+	// so one flag covers three imports.
+	ReadDir bool
 }
 
 // Any reports whether the request touches the filesystem at all.
 func (f FsFeatures) Any() bool {
-	return f.OpenAt || f.Read || f.Write || f.Append || f.Unlink || f.Mkdir || f.Stat
+	return f.OpenAt || f.Read || f.Write || f.Append ||
+		f.Unlink || f.Mkdir || f.Rmdir || f.Stat || f.ReadDir
 }
 
 // WasiFilesystemTypesPathInstanceTypeBody is the wasi:filesystem/types
@@ -1863,9 +1869,10 @@ func WasiFilesystemTypesPathInstanceTypeBody(inT, outT uint32, f FsFeatures) []b
 	b := &instTypeBuilder{}
 	v := fsPrelude(b, fsNeeds{
 		in: inT, out: outT,
-		needIn:   f.Read,
-		needOut:  f.Write || f.Append,
-		needUnit: f.Unlink || f.Mkdir,
+		needIn:       f.Read,
+		needOut:      f.Write || f.Append,
+		needUnit:     f.Unlink || f.Mkdir || f.Rmdir,
+		needDescType: f.Stat || f.ReadDir,
 	})
 	if f.OpenAt {
 		fsOpenAt(b, v)
@@ -1885,8 +1892,14 @@ func WasiFilesystemTypesPathInstanceTypeBody(inT, outT uint32, f FsFeatures) []b
 	if f.Mkdir {
 		fsPathMutator(b, v, "create-directory-at")
 	}
+	if f.Rmdir {
+		fsPathMutator(b, v, "remove-directory-at")
+	}
 	if f.Stat {
 		fsStat(b, v)
+	}
+	if f.ReadDir {
+		fsReadDir(b, v)
 	}
 	return b.body()
 }
