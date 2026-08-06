@@ -102,6 +102,39 @@ function main(): i32 {
   if (m.len() != 2) { return 3; }
   return 42;
 }`, 42},
+		// poll(2) readiness — the kqueue port. Until it landed, __fern_poll
+		// on Darwin was `mov x0, #-1; ret`, and -1 is a LEGAL poll answer
+		// ("nothing ready"), so nothing failed: every std/async wait and
+		// tcp_serve_deadline just reported an instant timeout. Nothing in
+		// this lane exercised poll at all, so the stub survived for as long
+		// as the Darwin target has existed.
+		//
+		// The shape is chosen so the stub gives the WRONG answer rather than
+		// a slow one: connecting to our own listener leaves a pending
+		// connection, so the listener fd is deterministically read-ready and
+		// the only correct answer is its index. A stub returns -1 → exit 99.
+		//
+		// The leading -1 in the fd set is load-bearing, not padding. poll(2)
+		// ignores a negative fd by contract and std/tcp relies on that —
+		// it puts wasm_timer_pollable(...), which is -1 on native, straight
+		// into the set. kevent(2) does NOT ignore one; it fails that
+		// registration with EBADF. Without the skip this returns 99 too.
+		//
+		// Validated on both Linux backends before being pointed at Darwin
+		// (x86-64 native and arm64 under qemu both exit 42 via ppoll), so a
+		// failure here is the kqueue port, not the test.
+		{"poll_kqueue_readiness", `
+function main(): i32 {
+  var port: i32 = 18475;
+  var listener: i32 = tcp_listen(port);
+  if (listener < 0) { return 90; }
+  var host_be: i32 = 127 | (0 << 8) | (0 << 16) | (1 << 24);
+  var c: i32 = tcp_connect(host_be, port);
+  if (c < 0) { return 91; }
+  var fds: i32[] = [0 - 1, listener];
+  if (poll(fds, 2000) != 1) { return 99; }
+  return 42;
+}`, 42},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

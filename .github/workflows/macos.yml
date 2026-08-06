@@ -30,6 +30,16 @@ on:
       # Darwin subtests because clang+lld aren't installed).
       - "internal/codegen/arm64/**"
       - "internal/e2e/arm64_test.go"
+      # The Darwin-specific EXECUTION tests. Same argument as
+      # internal/native below and stronger: these are the tests
+      # this runner exists to run, and they are the only place a
+      # Darwin runtime port (kqueue readiness, getentropy, the
+      # AT_FDCWD sign) is executed rather than merely assembled.
+      # Without this entry a PR that adds or fixes one of them and
+      # touches nothing else would skip the only lane that can run
+      # it — the same silent-skip this file's `internal/ir/**`
+      # comment warns about.
+      - "internal/e2e/arm64_darwin_*_test.go"
       # The prelude is shared by every backend; any change to
       # __map_keys / IoError / etc. flows into the Darwin asm.
       - "internal/prelude/**"
