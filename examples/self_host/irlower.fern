@@ -3888,7 +3888,7 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
                     // argument is a string.
                     var gsa: i32 = strarr_ret_argref(s, cid.name);
                     if (gsa >= 0 && gsa < c.args.len()) { return expr_is_str(c.args[gsa], s); }
-                    return s.is_strarr_ret_fn(cid.name);
+                    return s.is_strarr_ret_fn(s.mod_fn_name(cid.name));
                 },
                 parser.ExprFieldAccess(cfa) => {
                     // `xss.first()` / `.last()` on a string[][] yields a string[]
@@ -3969,7 +3969,7 @@ pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
                     // strarr_ret_fns): an f64[] exactly when THAT argument is f64.
                     var gf: i32 = strarr_ret_argref(s, cid.name);
                     if (gf >= 0 && gf < c.args.len()) { return expr_is_f64(c.args[gf], s); }
-                    return s.is_f64arr_ret_fn(cid.name);
+                    return s.is_f64arr_ret_fn(s.mod_fn_name(cid.name));
                 },
                 parser.ExprFieldAccess(cfa) => {
                     // `xss.first()` / `.last()` on an f64[][] yields an f64[]
@@ -4079,7 +4079,7 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
                     if (cid.name == "__alloc_u8") { return true; }
                     // `str_split(s, sep)` yields a fresh string[] (op_str_split).
                     if (cid.name == "str_split" && c.args.len() == 2) { return true; }
-                    return s.is_arr_ret_fn(cid.name);
+                    return s.is_arr_ret_fn(s.mod_fn_name(cid.name));
                 },
                 // `s.bytes()` / `s.as_bytes()` on a string receiver yields a
                 // fresh u8[] (op_str_bytes), and `s.split(sep)` a fresh string[]
@@ -4143,7 +4143,7 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
             // array path (which read a string box as an array header — str_len vs
             // arr_len read different length fields, a silent miscompile). The const
             // ref itself lowers to a call of the const fn (op_call_direct, 0 args).
-            return s.is_const_fn(id.name) && s.is_str_ret_fn(id.name);
+            return s.slot_of(id.name) < 0 && s.is_const_fn(id.name) && s.is_str_ret_fn(id.name);
         },
         parser.ExprBinary(b) => {
             if (b.op == "+") { return expr_is_str(b.left, s) || expr_is_str(b.right, s); }
@@ -4215,7 +4215,7 @@ pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
                     // the call is a string exactly when THAT argument is.
                     var gra: i32 = str_ret_argref(s, cid.name);
                     if (gra >= 0 && gra < c.args.len()) { return expr_is_str(c.args[gra], s); }
-                    return s.is_str_ret_fn(cid.name);
+                    return s.is_str_ret_fn(s.mod_fn_name(cid.name));
                 },
                 // `X.to_string()` yields a string box (the i32 runtime helper or
                 // the string-identity case); a struct's generated `to_string`
@@ -5812,7 +5812,7 @@ pub function arr_index_is_f64(arr: parser.Expr, s: LowerState): boolean {
         parser.ExprCall(c) => {
             // Direct index of an f64[]-returning call: `f()[i]` or `obj.m()[i]`.
             match (c.callee) {
-                parser.ExprIdent(cid) => { return s.is_f64arr_ret_fn(cid.name); },
+                parser.ExprIdent(cid) => { return s.is_f64arr_ret_fn(s.mod_fn_name(cid.name)); },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = expr_struct_type(cfa.obj, s);
                     if (crty == "") { return false; }
@@ -5885,7 +5885,7 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
         parser.ExprCall(c) => {
             // Direct index of an i64[]-returning call: `f()[i]` or `obj.m()[i]`.
             match (c.callee) {
-                parser.ExprIdent(cid) => { return s.is_i64arr_ret_fn(cid.name); },
+                parser.ExprIdent(cid) => { return s.is_i64arr_ret_fn(s.mod_fn_name(cid.name)); },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = expr_struct_type(cfa.obj, s);
                     if (crty == "") { return false; }
@@ -6020,7 +6020,7 @@ pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
                     // exactly when THAT argument is a (non-f64) 64-bit value.
                     var gi: i32 = strarr_ret_argref(s, cid.name);
                     if (gi >= 0 && gi < c.args.len()) { return !expr_is_f64(c.args[gi], s) && infer_expr_width(c.args[gi], s) == 64; }
-                    return s.is_i64arr_ret_fn(cid.name);
+                    return s.is_i64arr_ret_fn(s.mod_fn_name(cid.name));
                 },
                 parser.ExprFieldAccess(cfa) => {
                     // `xss.first()` / `.last()` on an i64[][] / u64[][] yields an
@@ -6194,7 +6194,7 @@ pub function expr_is_f64(e: parser.Expr, s: LowerState): boolean {
                     // f64_from_bits / f32_from_bits reinterpret an integer bit
                     // pattern back into an f64 value.
                     if (cid.name == "f64_from_bits" || cid.name == "f32_from_bits") { return true; }
-                    if (s.is_f64_ret_fn(cid.name)) { return true; }
+                    if (s.is_f64_ret_fn(s.mod_fn_name(cid.name))) { return true; }
                     // An erased-generic fn whose return mirrors argument i
                     // (`id[T](x: T): T`, the "name|$arg<i>" registry entry — kind-
                     // agnostic, recorded in str_ret_fns): the call is f64 exactly
@@ -6384,7 +6384,7 @@ pub function expr_is_u32(e: parser.Expr, s: LowerState): boolean {
             }
             match (c.callee) {
                 parser.ExprIdent(cid) => {
-                    if (s.is_u32_ret_fn(cid.name)) { return true; }
+                    if (s.is_u32_ret_fn(s.mod_fn_name(cid.name))) { return true; }
                     // An erased-generic fn whose return mirrors argument i
                     // (`id[T](x: T): T`) is u32 exactly when that argument is —
                     // the same "name|$arg<i>" argref registry the u64 arm uses.
@@ -6508,7 +6508,7 @@ pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
                 parser.ExprIdent(cid) => {
                     // A concrete u64-returning free function (`f(a) >> 1`): its
                     // result is unsigned, so the chained op selects shr_u / lt_u.
-                    if (s.is_u64_ret_fn(cid.name)) { return true; }
+                    if (s.is_u64_ret_fn(s.mod_fn_name(cid.name))) { return true; }
                     var gui: i32 = str_ret_argref(s, cid.name);
                     if (gui >= 0 && gui < c.args.len() && expr_is_u64(c.args[gui], s)) { return true; }
                     return false;
@@ -6695,14 +6695,24 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
                     if (cid.name == "__arr_push_shared_bytes") { return 64; }
                     // f64_bits reinterprets an f64 as its i64 bit pattern.
                     if (cid.name == "f64_bits") { return 64; }
-                    if (s.is_i64_ret_fn(cid.name)) { return 64; }
-                    // An erased-generic fn whose return mirrors argument i
-                    // ("name|$arg<i>" from str_ret_fns_of — kind-agnostic): the
-                    // call is 64-bit exactly when THAT argument is a (non-f64)
-                    // 64-bit value (`ident[i64](big)`).
-                    var gwi: i32 = str_ret_argref(s, cid.name);
-                    if (gwi >= 0 && gwi < c.args.len()
-                        && !expr_is_f64(c.args[gwi], s) && infer_expr_width(c.args[gwi], s) == 64) { return 64; }
+                    // Both registries below are keyed by BARE NAME, so they only
+                    // answer for a callee that really is a module function. A
+                    // local slot of the same name shadows it — `map(xs, f)` calls
+                    // its PARAMETER `f`, not some module `f` — and without this
+                    // guard a user function named `f` returning i64 made every
+                    // `f(x)` inside std/array's map / flat_map read 64-bit
+                    // (#6283). The sibling ExprIdent arm above already tests
+                    // slot_of the same way; these two did not.
+                    if (s.slot_of(cid.name) < 0) {
+                        if (s.is_i64_ret_fn(cid.name)) { return 64; }
+                        // An erased-generic fn whose return mirrors argument i
+                        // ("name|$arg<i>" from str_ret_fns_of — kind-agnostic): the
+                        // call is 64-bit exactly when THAT argument is a (non-f64)
+                        // 64-bit value (`ident[i64](big)`).
+                        var gwi: i32 = str_ret_argref(s, cid.name);
+                        if (gwi >= 0 && gwi < c.args.len()
+                            && !expr_is_f64(c.args[gwi], s) && infer_expr_width(c.args[gwi], s) == 64) { return 64; }
+                    }
                 },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = method_recv_tyname(cfa.obj, s);
@@ -6964,15 +6974,20 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                     // f64_bits returns an i64 bit pattern: lower via the normal
                     // call path (lower_expr emits op_f64_bits + pushes the result).
                     if (cid.name == "f64_bits") { return lower_expr(e, s); }
-                    if (s.is_i64_ret_fn(cid.name)) { return lower_expr(e, s); }
-                    // An erased-generic call whose return mirrors a 64-bit
-                    // argument IS an i64 value: the callee passes the 8-byte
-                    // slot through untouched, so the normal call path (which
-                    // pushes the full-width result) is the correct lowering —
-                    // the width-32 sign-extend below would truncate it.
-                    var gli: i32 = str_ret_argref(s, cid.name);
-                    if (gli >= 0 && gli < c.args.len()
-                        && !expr_is_f64(c.args[gli], s) && infer_expr_width(c.args[gli], s) == 64) { return lower_expr(e, s); }
+                    // Module-function registries only — a local slot of the same
+                    // name shadows them. See the matching guard in
+                    // infer_expr_width; #6283.
+                    if (s.slot_of(cid.name) < 0) {
+                        if (s.is_i64_ret_fn(cid.name)) { return lower_expr(e, s); }
+                        // An erased-generic call whose return mirrors a 64-bit
+                        // argument IS an i64 value: the callee passes the 8-byte
+                        // slot through untouched, so the normal call path (which
+                        // pushes the full-width result) is the correct lowering —
+                        // the width-32 sign-extend below would truncate it.
+                        var gli: i32 = str_ret_argref(s, cid.name);
+                        if (gli >= 0 && gli < c.args.len()
+                            && !expr_is_f64(c.args[gli], s) && infer_expr_width(c.args[gli], s) == 64) { return lower_expr(e, s); }
+                    }
                 },
                 parser.ExprFieldAccess(cfa) => {
                     var crty: string = method_recv_tyname(cfa.obj, s);
@@ -42295,6 +42310,19 @@ pub function (s: LowerState) i64_sig_of(name: string): string {
 // is_i64_ret_fn reports whether `name` returns a 64-bit integer (i64 OR u64) —
 // the ret flag of its sig is '1' (i64) or '2' (u64). Both are i64-wide, so this
 // width query accepts either; is_u64_ret_fn distinguishes the unsigned case.
+// mod_fn_name returns `name` when it names a module FUNCTION, and "" when a
+// local slot shadows it. Every *_ret_fn registry below is keyed by bare name,
+// so each has to be asked about a module function rather than a parameter that
+// happens to share its name: `map(xs, f)` calls its PARAMETER `f`. Without this
+// a user function named `f` returning i64 or i64[] answered for std/array's `f`
+// parameter, bailing the module on the register backends and emitting a wasm
+// module that would not load (#6283). "" matches no registry entry, so wrapping
+// a lookup in it is always the conservative direction.
+pub function (s: LowerState) mod_fn_name(name: string): string {
+    if (s.slot_of(name) >= 0) { return ""; }
+    return name;
+}
+
 pub function (s: LowerState) is_i64_ret_fn(name: string): boolean {
     var sig: string = s.i64_sig_of(name);
     return sig.len() >= 1 && (sig[0] == 49 || sig[0] == 50);   // 49 = '1' (i64), 50 = '2' (u64)
