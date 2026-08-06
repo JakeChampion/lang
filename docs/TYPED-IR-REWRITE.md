@@ -155,14 +155,33 @@ This is worth stating because the shape is misleading: four probes all involving
 lambdas, one root cause involving none. Reach for the smallest reproducer before
 building the fix — dropping the lambda was what identified the real mechanism.
 
-The machinery to fix it already exists and is one field wide. `ParamDecl.fn_ret`
-carries `"f64"` for such a param (since the fn-return widening), and
-`closure_opt_rets` is already a `name|type` registry populated from exactly that
-field in `lower_func`'s param loop — but it records only `Option[…]` /
-`Result[…]`, and `try_opt_type` returns its lookup verbatim, so scalars cannot
-be folded into it. The fix is a sibling registry (a `clo_scalar_rets` field, the
-`LowerState { ...s, … }` spread keeps that to one constructor edit) plus a read
-in `expr_is_f64`'s ExprCall arm for a bare-ident callee.
+**The fix is NOT in the type predicates** — measured, not assumed. The obvious
+sketch is: `ParamDecl.fn_ret` carries `"f64"` for such a param (since the
+fn-return widening), `closure_opt_rets` is already a `name|type` registry
+populated from that field in `lower_func`'s param loop but records only
+`Option[…]` / `Result[…]` (and `try_opt_type` returns its lookup verbatim, so
+scalars cannot be folded in) — therefore add a `clo_scalar_rets` sibling and
+read it from `expr_is_f64`'s ExprCall arm.
+
+I built exactly that. The registry populates correctly (`apply.f -> f64`,
+verified by instrumentation) and `expr_is_f64` then answers true — **and the
+program still fails identically.** Reverted.
+
+The emitted wasm says why:
+
+```wat
+(func $apply (param i32) (result f64)   ;; signature already correct
+```
+
+`apply`'s own signature is right; the `call_indirect` **inside** it yields i32,
+so the return mismatches. The value's type was never the problem — the indirect
+call's SIGNATURE is. So the fix belongs wherever a fn-param call's result type
+is emitted (the `fn_param_sigs` machinery), and `expr_is_f64` is at best a
+necessary companion to it, not the fix.
+
+Recorded this way deliberately: the plausible one-field sketch is wrong, and
+would cost whoever picks this up a build-and-instrument cycle to discover. The
+signature, not the predicate.
 
 Note the fixpoint is blind to this: the self-host's own sources use no fn-typed
 params, so `internal/e2eselfhost` and the fixture legs are the gates that matter.
