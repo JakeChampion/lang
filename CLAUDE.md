@@ -391,9 +391,23 @@ substantially complete** — despite what older notes here said, constructor
 reuse is implemented and enabled in the self-host (self-overwrite,
 cross-local, enum-donor, consuming-match, tuple reuse, nested-struct
 fields), exercised by the byte-identical self-compile; see
-`docs/SELFHOST-PERCEUS-REUSE.md`'s correction header. The remaining reuse
-deltas are MARGINAL (struct reuse with enum / Map / closure / tuple
-pointer fields — §3 Delta B). Retiring the legacy AST emitters — the
+`docs/SELFHOST-PERCEUS-REUSE.md`'s correction header. The remaining
+REUSE deltas are marginal (struct reuse with enum / Map / closure /
+tuple pointer fields — §3 Delta B), but **"marginal" describes reuse
+only, and this note used to let it stand for goal 2 as a whole.** It
+does not: the RECLAIM side had seven unbounded leaks the self-host has
+and native does not, measured rather than inferred by the
+`FERN_LEAKCHECK=1` differential in **#6127** — ~173 KB across six
+shapes at that sweep, every one scaling linearly with the round count.
+Most are now closed (#6218 / #6225 / #6232 / #6240 / #6251 / #6252 /
+#6255 / #6263); measured on `f58ab5d` the remainder is ~108 KB over
+four shapes — a rebound nested-struct local, a rebound
+`(i32, i32[])` and `(i32, string)` tuple, and a single-bind
+`Option[<struct-with-array>]`. Treat #6127 as the live list, and
+re-measure before quoting any figure here: three of that issue's own
+attributions were wrong because a sub-shape (single bind /
+declared-in-loop / rebound) went unprobed.
+Retiring the legacy AST emitters — the
 per-module epic's step 5 (#3457) — is **DONE**: all three are deleted and
 every backend routes IR-or-error. See
 **`docs/SELFHOST-AST-RETIREMENT.md`** for the record of how (slice 1 done; **#3425 — the self-host-runtime memory leak
