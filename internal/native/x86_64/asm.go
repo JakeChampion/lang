@@ -476,6 +476,14 @@ func (a *Assembler) insn(line string) error {
 		return a.test(ops)
 	case "imul":
 		return a.imul(ops)
+	case "bsf":
+		// The scan-forward sibling of bsr. tzcnt below is the same opcode
+		// with an F3 prefix; bsf itself was simply never needed until the
+		// vector kernels wanted to find the lowest set bit of a pmovmskb
+		// mask, and lzcnt/tzcnt cannot substitute — they are BMI1, and on a
+		// pre-BMI1 CPU the F3 is IGNORED and the instruction silently
+		// behaves as bsr/bsf instead of faulting.
+		return a.bitOp(ops, 0xBC)
 	case "bsr":
 		return a.bitOp(ops, 0xBD)
 	case "lzcnt":
@@ -536,6 +544,21 @@ func (a *Assembler) insn(line string) error {
 		return a.cvtt2si(0xF3, 0x2D, ops)
 	case "roundsd":
 		return a.roundsd(ops)
+	case "pmovmskb":
+		return a.pmovmskb(ops)
+	case "pshufd":
+		return a.pshufd(ops)
+	}
+	if mnem == "movdqu" || mnem == "movdqa" {
+		// Direction is decided by which side is the xmm: `movdqu xmm, mem`
+		// is the 0x6F load, `movdqu mem, xmm` the 0x7F store.
+		if len(ops) == 2 && (ops[0].kind != opReg || ops[0].size != 128) {
+			prefix := byte(0xF3)
+			if mnem == "movdqa" {
+				prefix = 0x66
+			}
+			return a.movdqStore(prefix, ops)
+		}
 	}
 	if s, ok := sseOps[mnem]; ok {
 		return a.sseOp(s.prefix, s.op, ops)

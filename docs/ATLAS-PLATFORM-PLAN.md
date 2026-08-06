@@ -496,6 +496,33 @@ Tail bytes below one vector width run the scalar reference; correctness for
 unaligned heads is handled by scalar-stepping to alignment rather than by
 masked loads, which keeps all three sequences within baseline.
 
+### 3.3a What the first kernel cost that this section did not predict
+
+`__memchr` landed and immediately falsified a claim above. §1.2 and §3 argue
+the fused design needs **no vector register class, no regalloc change, no
+type-system change, and no ABI change**. All four hold. But they were written
+as if that were the whole prerequisite, and it is not:
+
+> **The in-process assemblers must be able to ENCODE vector instructions, and
+> they could not.**
+
+`internal/native/x86_64` — which `-target x86-64` uses by default, `-cc` being
+the opt-out — had no vector surface whatsoever. Only the scalar float ops the
+code generator uses to shuttle f64 through xmm. Not `movdqu`, not `pcmpeqb`,
+not `pmovmskb`, not even `bsf`. The first SSE2 kernel therefore assembled
+under GNU `as` and was rejected in-process, so it shipped scalar and was
+vectorised in a second pass once the encodings existed.
+
+That is a much smaller prerequisite than a register class — eighteen
+encodings, pinned byte-for-byte against GNU `as` in `TestEncodeVectorSurface`
+— but it is not zero, and it is per-assembler. **The same question is open for
+NEON on arm64** and should be answered before the arm64 kernel is written
+rather than after.
+
+The lesson generalises past this row: "no IR change" is not the same as "no
+toolchain change", and the fused design's whole argument is that it stays
+below the IR. Below the IR is where the assembler lives.
+
 ### 3.4 Ordering across six backends
 
 The kernel must exist in all six backends before `std/string` may call it,

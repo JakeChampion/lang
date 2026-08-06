@@ -23,6 +23,80 @@ var sseOps = map[string]struct{ prefix, op byte }{
 	"cvtss2sd": {0xF3, 0x5A}, "cvtsd2ss": {0xF2, 0x5A},
 	"movapd": {0x66, 0x28}, "movaps": {0x00, 0x28},
 	"xorpd": {0x66, 0x57}, "xorps": {0x00, 0x57}, "andpd": {0x66, 0x54}, "andps": {0x00, 0x54},
+
+	// PACKED-BYTE ops, the vector-kernel surface (docs/ATLAS-PLATFORM-PLAN.md
+	// §3). Everything above this line is SCALAR floating point — the f64
+	// shuttling the code generator does — and that is why the assembler had no
+	// vector instructions at all until now: nothing had ever asked for one.
+	//
+	// These four happen to fit the same [prefix] 0F <op> /r shape, so they are
+	// table entries rather than encoders. `movdqu` is the unaligned 128-bit
+	// load/store, `pcmpeqb` the byte-wise compare producing an all-ones mask
+	// per equal lane, and the two `punpckl*` forms are the SSE2 way to
+	// broadcast a byte across a register (interleave with itself twice, then
+	// pshufd) — SSSE3's single-instruction `pshufb` is outside the declared
+	// x86-64 baseline.
+	"movdqu": {0xF3, 0x6F}, "movdqa": {0x66, 0x6F},
+	"pcmpeqb": {0x66, 0x74}, "pcmpeqw": {0x66, 0x75}, "pcmpeqd": {0x66, 0x76},
+	"punpcklbw": {0x66, 0x60}, "punpcklwd": {0x66, 0x61},
+	"por": {0x66, 0xEB}, "pand": {0x66, 0xDB}, "pxor": {0x66, 0xEF},
+}
+
+// movdqStore encodes the STORE direction of movdqu/movdqa — `movdqu
+// [mem], xmm`, opcode 0x7F rather than the 0x6F the load uses.
+//
+// The sseOps table above only covers `xmm <- xmm/mem`, because every scalar
+// float op is that shape. A vector kernel needs the other direction too, and
+// getting it wrong is silent: 0x6F with the operands written backwards
+// assembles cleanly and reads from the wrong address.
+func (a *Assembler) movdqStore(prefix byte, ops []operand) error {
+	if len(ops) != 2 || ops[1].kind != opReg || ops[1].size != 128 {
+		return fmt.Errorf("movdqu/movdqa store expects mem, xmm")
+	}
+	dst, src := ops[0], ops[1]
+	a.emit(prefix)
+	a.emitRexRM(false, src.reg, dst)
+	a.emit(0x0F, 0x7F)
+	a.emitModRM(src.reg, dst)
+	return nil
+}
+
+// pmovmskb encodes `pmovmskb r32, xmm` (66 0F D7 /r): gather the top bit of
+// each of the 16 bytes into the low 16 bits of a GPR.
+//
+// It is the bridge out of the vector domain — the instruction that turns a
+// pcmpeqb mask into something `bsf` can scan — so its destination is a
+// GENERAL-PURPOSE register while ModRM.reg still names it. That inversion is
+// why it cannot be a sseOps entry: the table assumes reg is an xmm.
+func (a *Assembler) pmovmskb(ops []operand) error {
+	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size == 128 ||
+		ops[1].kind != opReg || ops[1].size != 128 {
+		return fmt.Errorf("pmovmskb expects r32/r64, xmm")
+	}
+	dst, src := ops[0], ops[1]
+	a.emit(0x66)
+	if rex := rexFor(false, dst.reg, src.reg, false); rex != 0 {
+		a.emit(rex)
+	}
+	a.emit(0x0F, 0xD7)
+	a.emit(modrmReg(dst.reg, src.reg))
+	return nil
+}
+
+// pshufd encodes `pshufd xmm, xmm/mem, imm8` (66 0F 70 /r ib): permute the
+// four 32-bit lanes by the immediate's four 2-bit selectors. `pshufd x, x, 0`
+// broadcasts lane 0 to all four, which is the last step of the byte splat.
+func (a *Assembler) pshufd(ops []operand) error {
+	if len(ops) != 3 || ops[0].kind != opReg || ops[0].size != 128 || ops[2].kind != opImm {
+		return fmt.Errorf("pshufd expects xmm, xmm/mem, imm8")
+	}
+	dst, src, imm := ops[0], ops[1], ops[2]
+	a.emit(0x66)
+	a.emitRexRM(false, dst.reg, src)
+	a.emit(0x0F, 0x70)
+	a.emitModRM(dst.reg, src)
+	a.emit(byte(imm.imm))
+	return nil
 }
 
 // sseOp encodes a symmetric two-operand SSE instruction (dst is an xmm
