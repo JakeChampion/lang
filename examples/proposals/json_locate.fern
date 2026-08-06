@@ -1,0 +1,317 @@
+// examples/proposals/json_locate.fern — proposal turn, drawn line 34:
+// "A JSON parser that reports the line and column of a syntax error."
+//
+// A hand-written recursive-descent JSON scanner that locates the first
+// syntax error, next to `std/json`'s `json_parse_result` — which grew the
+// same capability in this turn, because the stdlib parser could only say
+// `None`.
+//
+// The two are cross-checked rather than merely both present: for every
+// malformed fixture, this scanner and the stdlib must agree on the
+// offset. An independent implementation is the point — a shared one would
+// agree with a shared bug.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from
+// std/test, so the file is its own test suite.
+
+import "std/test";
+import "std/json";
+import "std/i32";
+
+// Where the scanner stopped, and why. offset < 0 means "no error".
+struct Loc { offset: i32, line: i32, col: i32 }
+
+struct Scan { pos: i32, err: i32 }
+
+function line_col(s: string, off: i32): Loc {
+    var line: i32 = 1;
+    var col: i32 = 1;
+    var i: i32 = 0;
+    var stop: i32 = off;
+    if (stop > s.len()) { stop = s.len(); }
+    while (i < stop) {
+        if (s[i] as i32 == 10) { line = line + 1; col = 1; } else { col = col + 1; }
+        i = i + 1;
+    }
+    return Loc { offset: off, line: line, col: col };
+}
+
+function is_ws(b: i32): boolean {
+    return b == 32 || b == 9 || b == 10 || b == 13;
+}
+
+function skip_ws(s: string, p: Scan): Scan {
+    var i: i32 = p.pos;
+    while (i < s.len() && is_ws(s[i] as i32)) { i = i + 1; }
+    return Scan { pos: i, err: p.err };
+}
+
+function fail(p: Scan): Scan {
+    if (p.err >= 0) { return p; }
+    return Scan { pos: p.pos, err: p.pos };
+}
+
+function lit(s: string, p: Scan, word: string): Scan {
+    if (p.pos + word.len() > s.len()) { return fail(p); }
+    if (s[p.pos:p.pos + word.len()] != word) { return fail(p); }
+    return Scan { pos: p.pos + word.len(), err: p.err };
+}
+
+function scan_string(s: string, p: Scan): Scan {
+    if (p.pos >= s.len() || s[p.pos] as i32 != 34) { return fail(p); }
+    var i: i32 = p.pos + 1;
+    while (i < s.len()) {
+        var b: i32 = s[i] as i32;
+        if (b == 92) { i = i + 2; continue; }
+        if (b == 34) { return Scan { pos: i + 1, err: p.err }; }
+        i = i + 1;
+    }
+    return fail(Scan { pos: s.len(), err: p.err });
+}
+
+function scan_number(s: string, p: Scan): Scan {
+    var i: i32 = p.pos;
+    if (i < s.len() && s[i] as i32 == 45) { i = i + 1; }
+    var digits: i32 = 0;
+    while (i < s.len() && s[i] as i32 >= 48 && s[i] as i32 <= 57) {
+        i = i + 1;
+        digits = digits + 1;
+    }
+    if (digits == 0) { return fail(p); }
+    if (i < s.len() && s[i] as i32 == 46) {
+        i = i + 1;
+        var frac: i32 = 0;
+        while (i < s.len() && s[i] as i32 >= 48 && s[i] as i32 <= 57) {
+            i = i + 1;
+            frac = frac + 1;
+        }
+        if (frac == 0) { return fail(Scan { pos: i, err: p.err }); }
+    }
+    return Scan { pos: i, err: p.err };
+}
+
+function scan_value(s: string, p0: Scan, depth: i32): Scan {
+    if (depth > 64) { return fail(p0); }
+    var p: Scan = skip_ws(s, p0);
+    if (p.pos >= s.len()) { return fail(p); }
+    var b: i32 = s[p.pos] as i32;
+
+    if (b == 34) { return scan_string(s, p); }
+    if (b == 116) { return lit(s, p, "true"); }
+    if (b == 102) { return lit(s, p, "false"); }
+    if (b == 110) { return lit(s, p, "null"); }
+    if (b == 45 || (b >= 48 && b <= 57)) { return scan_number(s, p); }
+
+    if (b == 91) {                                  // '['
+        p = skip_ws(s, Scan { pos: p.pos + 1, err: p.err });
+        if (p.pos < s.len() && s[p.pos] as i32 == 93) {
+            return Scan { pos: p.pos + 1, err: p.err };
+        }
+        loop {
+            p = scan_value(s, p, depth + 1);
+            if (p.err >= 0) { return p; }
+            p = skip_ws(s, p);
+            if (p.pos >= s.len()) { return fail(p); }
+            var c: i32 = s[p.pos] as i32;
+            if (c == 44) { p = Scan { pos: p.pos + 1, err: p.err }; continue; }
+            if (c == 93) { return Scan { pos: p.pos + 1, err: p.err }; }
+            return fail(p);
+        }
+    }
+
+    if (b == 123) {                                 // '{'
+        p = skip_ws(s, Scan { pos: p.pos + 1, err: p.err });
+        if (p.pos < s.len() && s[p.pos] as i32 == 125) {
+            return Scan { pos: p.pos + 1, err: p.err };
+        }
+        loop {
+            p = skip_ws(s, p);
+            p = scan_string(s, p);
+            if (p.err >= 0) { return p; }
+            p = skip_ws(s, p);
+            if (p.pos >= s.len() || s[p.pos] as i32 != 58) { return fail(p); }
+            p = scan_value(s, Scan { pos: p.pos + 1, err: p.err }, depth + 1);
+            if (p.err >= 0) { return p; }
+            p = skip_ws(s, p);
+            if (p.pos >= s.len()) { return fail(p); }
+            var c2: i32 = s[p.pos] as i32;
+            if (c2 == 44) { p = Scan { pos: p.pos + 1, err: p.err }; continue; }
+            if (c2 == 125) { return Scan { pos: p.pos + 1, err: p.err }; }
+            return fail(p);
+        }
+    }
+
+    return fail(p);
+}
+
+// Locate the first syntax error, or a Loc with offset -1 when the whole
+// document is a single well-formed value.
+function locate(s: string): Loc {
+    var p: Scan = scan_value(s, Scan { pos: 0, err: -1 }, 0);
+    if (p.err >= 0) { return line_col(s, p.err); }
+    p = skip_ws(s, p);
+    if (p.pos < s.len()) { return line_col(s, p.pos); }
+    return Loc { offset: -1, line: 0, col: 0 };
+}
+
+// ---------------------------------------------------------------- tests
+
+function good_docs(): string[] {
+    return [
+        "null",
+        "true",
+        "-12.5",
+        "\"hi\"",
+        "[]",
+        "{}",
+        "[1, 2, [3, {\"a\": null}]]",
+        "{\n  \"a\": 1,\n  \"b\": [true, false]\n}",
+    ];
+}
+
+function bad_docs(): string[] {
+    return [
+        "{\n  \"a\": 1,\n  \"b\": ,\n}",
+        "[1, 2,]",
+        "{\"a\" 1}",
+        "tru",
+        "{\"a\": 1} trailing",
+        "[1, 2",
+        "\"unterminated",
+        "1.",
+    ];
+}
+
+// Every well-formed document must be accepted by BOTH implementations.
+function test_good_documents_agree(): test.TestOutcome {
+    var xs: string[] = good_docs();
+    for i in 0..xs.len() {
+        var loc: Loc = locate(xs[i]);
+        if (loc.offset >= 0) {
+            return test.fail("scanner rejected good doc " + i.to_string()
+                + " at offset " + loc.offset.to_string());
+        }
+        match (json.json_parse_result(xs[i])) {
+            Ok(_) => { },
+            Err(e) => {
+                return test.fail("std/json rejected good doc " + i.to_string()
+                    + ": " + e.to_string());
+            },
+        }
+    }
+    return test.pass();
+}
+
+// Every malformed document must be rejected by BOTH, at the SAME offset.
+// This is the cross-check: two independent scanners agreeing on where a
+// document goes wrong is much stronger evidence than either alone.
+function test_bad_documents_agree_on_the_offset(): test.TestOutcome {
+    var xs: string[] = bad_docs();
+    for i in 0..xs.len() {
+        var loc: Loc = locate(xs[i]);
+        if (loc.offset < 0) {
+            return test.fail("scanner accepted bad doc " + i.to_string());
+        }
+        match (json.json_parse_result(xs[i])) {
+            Ok(_) => {
+                return test.fail("std/json accepted bad doc " + i.to_string());
+            },
+            Err(e) => {
+                if (e.offset != loc.offset) {
+                    return test.fail("doc " + i.to_string()
+                        + ": scanner says offset " + loc.offset.to_string()
+                        + ", std/json says " + e.offset.to_string());
+                }
+            },
+        }
+    }
+    return test.pass();
+}
+
+// The location must be derived from the offset consistently: line and
+// column are 1-based, and re-deriving them from the offset must agree.
+function test_line_and_column_are_derived_from_the_offset(): test.TestOutcome {
+    var xs: string[] = bad_docs();
+    for i in 0..xs.len() {
+        match (json.json_parse_result(xs[i])) {
+            Ok(_) => { return test.fail("bad doc " + i.to_string() + " parsed"); },
+            Err(e) => {
+                if (e.line < 1 || e.col < 1) {
+                    return test.fail("doc " + i.to_string() + " has line "
+                        + e.line.to_string() + " col " + e.col.to_string()
+                        + "; both are 1-based");
+                }
+                var mine: Loc = line_col(xs[i], e.offset);
+                if (mine.line != e.line || mine.col != e.col) {
+                    return test.fail("doc " + i.to_string() + ": std/json says "
+                        + e.line.to_string() + ":" + e.col.to_string()
+                        + ", offset " + e.offset.to_string() + " is "
+                        + mine.line.to_string() + ":" + mine.col.to_string());
+                }
+            },
+        }
+    }
+    return test.pass();
+}
+
+// A multi-line document must report the line the error is actually on,
+// not line 1 — the whole reason for carrying a line at all.
+function test_the_reported_line_is_the_offending_one(): test.TestOutcome {
+    var doc: string = "{\n  \"a\": 1,\n  \"b\": ,\n}";
+    match (json.json_parse_result(doc)) {
+        Ok(_) => { return test.fail("malformed document parsed"); },
+        Err(e) => {
+            if (e.line != 3) {
+                return test.fail("wanted line 3, got " + e.line.to_string());
+            }
+            if (e.col != 8) {
+                return test.fail("wanted col 8, got " + e.col.to_string());
+            }
+        },
+    }
+    return test.pass();
+}
+
+// json_parse keeps its Option contract exactly: the two must agree on
+// accept/reject for every fixture, since one now delegates to the other.
+function test_json_parse_still_agrees(): test.TestOutcome {
+    var good: string[] = good_docs();
+    for i in 0..good.len() {
+        match (json.json_parse(good[i])) {
+            Some(_) => { },
+            None => { return test.fail("json_parse rejected good doc " + i.to_string()); },
+        }
+    }
+    var bad: string[] = bad_docs();
+    for j in 0..bad.len() {
+        match (json.json_parse(bad[j])) {
+            Some(_) => { return test.fail("json_parse accepted bad doc " + j.to_string()); },
+            None => { },
+        }
+    }
+    return test.pass();
+}
+
+// ----------------------------------------------------------------- app
+
+function main(): i32 {
+    eprint("json_locate — locating the first syntax error in a document");
+    var xs: string[] = bad_docs();
+    for i in 0..xs.len() {
+        match (json.json_parse_result(xs[i])) {
+            Ok(_) => { eprint("  doc " + i.to_string() + ": parsed"); },
+            Err(e) => {
+                eprint("  doc " + i.to_string() + ": " + e.to_string()
+                    + "  (offset " + e.offset.to_string() + ")");
+            },
+        }
+    }
+
+    var r: test.TestRunner = test.test_new("json_locate");
+    r = r.it("good documents agree", test_good_documents_agree);
+    r = r.it("bad documents agree on the offset", test_bad_documents_agree_on_the_offset);
+    r = r.it("line and column are derived from the offset", test_line_and_column_are_derived_from_the_offset);
+    r = r.it("the reported line is the offending one", test_the_reported_line_is_the_offending_one);
+    r = r.it("json_parse still agrees", test_json_parse_still_agrees);
+    return r.finish();
+}
