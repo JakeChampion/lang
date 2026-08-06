@@ -403,20 +403,38 @@ does not: the RECLAIM side had seven unbounded leaks the self-host has
 and native does not, measured rather than inferred by the
 `FERN_LEAKCHECK=1` differential in **#6127** — ~173 KB across six
 shapes at that sweep, every one scaling linearly with the round count.
-Most are now closed (#6218 / #6225 / #6232 / #6240 / #6251 / #6252 /
-#6255 / #6263 / #6285 / #6291 / #6308); what remains is the
-nested-struct family (a rebound nested-struct local, #6274) and the
+**#6127 is CLOSED** — all seven of its shapes measure zero (#6218 /
+#6225 / #6232 / #6240 / #6251 / #6252 / #6255 / #6263 / #6274 / #6285 /
+#6291 / #6308). This note used to send you there for the live list; it
+no longer is one. **The live list is #6360**: an enum local bound from
+a CALL is never reclaimed on the self-host — `frees=0`, exactly ×2.0
+per doubling, and not Result-specific (`Option` behaves identically).
+Native is clean on every row. Also still open from #6285: the
 BARE-NAME struct credit block-scoped, which needs a narrower gate
 rather than a flip — flipping it segfaults the gen1 self-compile
-(#6285 has the bisect). Treat #6127 as the live list, and re-measure
-before quoting any figure here: FOUR of that issue's own attributions
-were wrong. Three because a sub-shape (single bind / declared-in-loop
-/ rebound) went unprobed, and one because the leaked OBJECT was
-misnamed — `optstruct_single` was recorded as a leaked struct box and
-was the array FIELD buffer, identical in size at the probe's shape, so
-it read as a missing dec when it was a missing `__struct_drop_<P>`.
-Vary one dimension at a time (array length vs field count) and
-re-measure before naming what leaked; it costs one build.
+(#6285 has the bisect).
+
+**Re-measure before quoting any figure in this area.** FIVE
+attributions have now been wrong. Four of #6127's own: three because a
+sub-shape (single bind / declared-in-loop / rebound) went unprobed, and
+one because the leaked OBJECT was misnamed — `optstruct_single` was
+recorded as a leaked struct box and was the array FIELD buffer,
+identical in size at the probe's shape, so it read as a missing dec
+when it was a missing `__struct_drop_<P>`. The fifth was a recorded
+NEXT STEP rather than a measurement: `ARRSTRUCT:` / `ARRTUP:` were
+noted as leaking 35200 / 32000 with "check whether the slot's
+`struct_type` / `arrarr_elem` column is set at a nested binding" as the
+lead. Both are 0 at HEAD, closed by #6291 (`.len()` is a borrow, not an
+escape) as a side effect of a fix aimed elsewhere, and the column was
+never the cause — `.len()` marked the local as escaping, so no credit
+was earnable however the columns were set. Following that lead would
+have cost a day in the wrong predicate.
+
+Vary one dimension at a time (array length vs field count; access
+pattern vs binding form) and re-measure before naming what leaked; it
+costs one build. A fix that lands incidentally needs a pin, or it
+regresses silently — that is why the two shapes above are now cases in
+`TestSelfHostBlockScopedClassesX86_64`.
 Retiring the legacy AST emitters — the
 per-module epic's step 5 (#3457) — is **DONE**: all three are deleted and
 every backend routes IR-or-error. See

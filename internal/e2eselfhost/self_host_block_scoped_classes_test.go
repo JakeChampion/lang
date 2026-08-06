@@ -30,9 +30,14 @@ import (
 //     consuming-match analyses are per-block (#4357) and free the value before
 //     the block ends. Switching them on would be a second claim on a released
 //     box, so they must stay balanced without it.
-//   - "ARRSTRUCT:" and "ARRTUP:" still leak (35200 / 32000) and switching them
-//     changed NOTHING — measured identical before and after — so their cause is
-//     elsewhere and they are left alone rather than half-fixed.
+//   - "ARRSTRUCT:" and "ARRTUP:" once leaked here and switching them changed
+//     NOTHING, because their cause was elsewhere: `.len()` marked the local as
+//     ESCAPING, so the shape could not earn any credit however the columns were
+//     set. #6291 made `.len()` on an array-of-structs a borrow and closed both
+//     incidentally. Measured at #6285 they leak 67200 / 60800 and at #6291 both
+//     are 0; at #6285 only the `.len()` probes leaked, while element-access and
+//     no-access variants were already clean. The two shapes are pinned below —
+//     nothing else keeps a fix that landed as a side effect from regressing.
 //   - The BARE-name struct credit leaks 8800 and stays leaking: switching it on
 //     SEGFAULTS the gen1 self-compile. It is the credit the compiler's own
 //     threaded builders lean on, and it feeds the deep field drop, the precise
@@ -238,6 +243,56 @@ function main(): i32 {
     return x % 83;
 }`,
 			want: 42,
+		},
+		{
+			// ARRSTRUCT — an array-of-structs-with-an-array-field, read
+			// through `.len()`. This leaked 67200 at #6285 and was closed by
+			// #6291 (`.len()` is a borrow, not an escape), i.e. as a SIDE
+			// EFFECT of a fix aimed elsewhere. Nothing pinned it, so it is
+			// pinned here: the `.len()` read is the whole point of the case
+			// and must not be swapped for an element access, which was
+			// already clean at #6285 and would pin nothing.
+			name: "arrstruct_len_declared_in_loop",
+			src: `struct P { xs: i32[], n: i32 }
+function round(r: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var ps: P[] = [P { xs: [i, i + 1], n: i }, P { xs: [i + 2], n: 1 }];
+        acc = acc + ps.len();
+        i = i + 1;
+    }
+    return acc + r;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    return x % 83;
+}`,
+			want: 23,
+		},
+		{
+			// ARRTUP — the tuple sibling of the case above, 60800 at #6285
+			// and closed by the same commit. Same reason for the `.len()`.
+			name: "arrtup_len_declared_in_loop",
+			src: `function round(r: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var ts: (i32[], i32)[] = [([i, i + 1], i), ([i + 2], 1)];
+        acc = acc + ts.len();
+        i = i + 1;
+    }
+    return acc + r;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    return x % 83;
+}`,
+			want: 23,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) { balanced(t, tc.name, tc.src, tc.want) })
