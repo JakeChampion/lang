@@ -73,24 +73,41 @@ func TestWasmRouteProbe(t *testing.T) {
 		"    if (both(x, y)) { return 42; }\n" +
 		"    return 1;\n" +
 		"}\n"
-	// STILL declined: the fold shape. Its type var is bound by an ARRAY param, not
-	// a bare scalar one, so clause (c'') cannot promote it (an unbound var would
-	// survive erased in the clone) and erased_passthrough_safe excludes it because
-	// the body uses the value. It is the boundary case the probe has to be able to
-	// report.
+	// The fold shape, which used to be the declined boundary case: an ARRAY-param
+	// type var, so clause (c'') could not promote it and erased_passthrough_safe
+	// excluded it because the body uses the value. Clause (c-arr) now promotes on
+	// ANY mention of the var in the return, which covers the bare `T` here, so it
+	// monomorphises to a concrete `sum_all__i64` and lowers.
 	//
-	// It is ALSO still miscompiled through the AST route — 1, where the
-	// interpreter says 42 — which is the general finding worth keeping: EVERY
-	// erased-wide shape tested returns the wrong answer through the wasm AST
-	// emitter. That fallback is not a safety net for this family, it is a source
-	// of silent wrong answers, so retiring it strictly improves matters even
-	// before the remaining shapes lower.
+	// Worth keeping the history: through the AST emitter this shape returned 1
+	// where the interpreter says 42, then became a refusal when that emitter
+	// retired, and now it runs and returns 42. The refusal was the right
+	// intermediate state — a silent wrong answer is worse than a loud one — but
+	// it was never the destination.
 	const foldShape = "function sum_all[T](xs: T[], seed: T): T { var acc: T = seed; for x in xs { acc = x; } return acc; }\n" +
 		"function main(): i32 {\n" +
 		"    var xs: i64[] = [1, 2, 5000000000];\n" +
 		"    var s: i64 = sum_all(xs, 0 as i64);\n" +
 		"    if (s == 5000000000) { return 42; }\n" +
 		"    return 1;\n" +
+		"}\n"
+	// STILL declined, and the probe needs a case that is: a TWO-typevar generic
+	// over a wide-element array. `U` is bound only by the callback's return, not
+	// by any bare-scalar or bare-array param, so promoting `T` alone would leave
+	// `U` erased in the clone — the stranded-sibling hazard the `all_tp_count == 1`
+	// guard exists for. Left erased, the callee indexes an 8-byte-element array at
+	// the i32 stride on wasm32, which is silently wrong rather than a trap, so a
+	// refusal is the correct outcome here and not a placeholder for one.
+	const twoVarArrayShape = "function map2[T, U](xs: T[], f: (T) => U): U[] {\n" +
+		"    var out: U[] = [];\n" +
+		"    for x in xs { out = out.append(f(x)); }\n" +
+		"    return out;\n" +
+		"}\n" +
+		"function half(x: i64): i32 { if (x > 1000000000) { return 42; } return 1; }\n" +
+		"function main(): i32 {\n" +
+		"    var xs: i64[] = [5000000000];\n" +
+		"    var ys: i32[] = map2(xs, half);\n" +
+		"    return ys[0];\n" +
 		"}\n"
 
 	for _, tc := range []struct {
@@ -103,7 +120,8 @@ func TestWasmRouteProbe(t *testing.T) {
 		{"erased-wide-passthrough", passthrough, "ir"},
 		{"erased-wide-uses-typevar", usesTypevar, "ir"},
 		{"erased-wide-two-typevars", twoTypevars, "ir"},
-		{"erased-wide-fold-shape", foldShape, "ast"},
+		{"erased-wide-fold-shape", foldShape, "ir"},
+		{"erased-wide-two-var-array", twoVarArrayShape, "ast"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := strings.TrimSpace(string(runCaptureArgs(t, runner, driverBin, []byte(tc.src), "-decide")))
@@ -123,6 +141,9 @@ func TestWasmRouteProbe(t *testing.T) {
 		{"ir-route-runs", passthrough},
 		{"erased-wide-uses-typevar-runs", usesTypevar},
 		{"erased-wide-two-typevars-runs", twoTypevars},
+		// The former declined case. Asserting its VALUE is the point: it returned
+		// 1 through the AST emitter, so pinning that emit would have pinned a bug.
+		{"erased-wide-fold-shape-runs", foldShape},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -144,16 +165,15 @@ func TestWasmRouteProbe(t *testing.T) {
 		})
 	}
 
-	// The still-declined fold shape is now a hard ERROR, which is what retiring
-	// wasm.fern bought here. It used to EMIT, via the AST fallback, and its
-	// answer was deliberately left unasserted because that emit was WRONG (1,
-	// not 42) — pinning it would have pinned a bug. A refusal is strictly better
-	// than a silent wrong answer, and it is the improvement available before the
-	// shape lowers.
+	// A declined module is a hard ERROR, which is what retiring wasm.fern bought
+	// here: the AST fallback used to emit for these and its answer was wrong. The
+	// contract needs a shape that is still genuinely declined to assert against,
+	// which is why twoVarArrayShape replaced foldShape when the latter started
+	// lowering — a refusal test whose subject no longer refuses proves nothing.
 	t.Run("declined-route-refuses", func(t *testing.T) {
 		// Not runCapture: that helper fatals on a non-zero exit, and a non-zero
 		// exit is exactly the contract here.
-		wat, stderr, code := runDeclined(t, runner, driverBin, []byte(foldShape))
+		wat, stderr, code := runDeclined(t, runner, driverBin, []byte(twoVarArrayShape))
 		if code == 0 || len(wat) != 0 {
 			t.Fatalf("driver exited %d with %d bytes, want a refusal — the AST fallback is back, and on this shape it miscompiles", code, len(wat))
 		}
