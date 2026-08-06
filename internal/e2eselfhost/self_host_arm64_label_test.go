@@ -170,8 +170,111 @@ function main(): i32 {
     a.code = arm64_ret(a.code, arm64_lr());             // return to caller
     a = arm64_asm_resolve(a);
     var none: i32[] = [];
-    var bin: i32[] = macho_static_executable(a.code, none, "fern");
+    var bin: i32[] = macho_executable(a.code, none, "fern", macho_entry_off(a), 0);
     write(string_from_bytes_unchecked(bin));
     return 0;
 }
+`
+
+// TestSelfHostArm64GasNumericLabels pins GAS local numeric labels in the
+// in-process assembler: `1:` defines an occurrence, `1f` refers to the NEXT
+// one and `1b` to the most recent. The emitter's array bounds check uses
+// them (`b.lo 1f` / `b __fern_oob_abort` / `1:`) and reuses the same digit
+// once per array index, so resolving by digit alone cannot work.
+//
+// The assembler used to record the definition as a label named "1" and look
+// the reference up as "1f", never match, and then patch the branch to
+// `-1 - site` — a jump to four bytes before .text — with `p.unknown` left
+// empty, so the binary linked and then SIGILL'd or span forever. That was 129
+// of the arm64 leg's SIGILLs. This test is the focused unit check for the
+// resolution rule (the leg is the end-to-end one), and its last two cases pin
+// the refusal that replaced the silent patch.
+func TestSelfHostArm64GasNumericLabels(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host arm64 numeric-label e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	source := arm64NativeSrc(t) + "\n" + arm64NumericLabelSelfTestMain
+
+	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes for the numeric-label self-test")
+	}
+	watPath := filepath.Join(dir, "arm64_numlabel_selftest.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", watPath)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("arm64 numeric-label self-test failed at check %d\n--- WAT ---\n%s", code, wat)
+	}
+}
+
+// arm64NumericLabelSelfTestMain assembles GAS text with two `1:` definitions
+// and one reference of each kind, then decodes the branch immediates. Layout
+// (4 bytes per instruction):
+//
+//	off  0  b.ne 1f     -> the first 1: at 4   (imm19 = 1)
+//	off  4  1: mov      <- definition #1
+//	off  8  b.eq 1f     -> the second 1: at 16 (imm19 = 2)
+//	off 12  mov
+//	off 16  1: mov      <- definition #2
+//	off 20  b 1b        -> back to 16          (imm26 field = 0x3ffffff, i.e. -1)
+const arm64NumericLabelSelfTestMain = `
+function main(): i32 {
+    var src: string = "";
+    src = src + "    b.ne 1f\n";
+    src = src + "1:\n";
+    src = src + "    mov x0, #0\n";
+    src = src + "    b.eq 1f\n";
+    src = src + "    mov x0, #0\n";
+    src = src + "1:\n";
+    src = src + "    mov x0, #0\n";
+    src = src + "    b 1b\n";
+
+    var p: Arm64GasProg = arm64_gas_program(src);
+    // Every reference resolved, so nothing is refused.
+    if (p.unknown.len() != 0) { return 1; }
+    var a: Arm64Asm = p.asm;
+    if (a.code.len() != 24) { return 2; }
+
+    // b.ne 1f @0 -> the FIRST definition (off 4): imm19 = (4 - 0) / 4 = 1.
+    if (imm19_at(a.code, 0) != 1) { return 3; }
+    // b.eq 1f @8 -> the SECOND definition (off 16), NOT the first: imm19 =
+    // (16 - 8) / 4 = 2. This is the check the old digit-keyed lookup could
+    // never pass — it had one label named "1".
+    if (imm19_at(a.code, 8) != 2) { return 4; }
+    // b 1b @20 -> the most recent definition (off 16): rel = -4, so the
+    // 26-bit field holds -1 as 0x3ffffff.
+    if (imm26_at(a.code, 20) != 67108863) { return 5; }
+
+    // An undefined target is REFUSED, not patched to a wild offset.
+    var p2: Arm64GasProg = arm64_gas_program("    b nowhere\n");
+    if (p2.unknown.len() != 1) { return 6; }
+    // A numeric reference with no matching definition is refused the same way.
+    var p3: Arm64GasProg = arm64_gas_program("    b.eq 1f\n    mov x0, #0\n");
+    if (p3.unknown.len() != 1) { return 7; }
+    return 0;
+}
+
+// imm19_at extracts the 19-bit branch offset (in instructions) from the
+// conditional-branch word at byte offset at. Bits 5..23 sit inside the low
+// three bytes, so this needs no 32-bit assembly.
+function imm19_at(code: i32[], at: i32): i32 {
+    var lo: i32 = code[at] + code[at + 1] * 256 + code[at + 2] * 65536;
+    return (lo >> 5) & 524287;
+}
+
+// imm26_at extracts the 26-bit offset from an unconditional-branch word.
+function imm26_at(code: i32[], at: i32): i32 {
+    var w: i32 = code[at] + code[at + 1] * 256 + code[at + 2] * 65536 + (code[at + 3] & 3) * 16777216;
+    return w & 67108863;
+}
+
 `

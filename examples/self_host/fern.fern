@@ -63,7 +63,7 @@ function to_u8(b: i32[]): u8[] {
 // elf.fern — no `.s` + external gcc/ld. Returns the binary bytes packed into a
 // string (written verbatim by write_file), or "" if the assembler hit an
 // instruction it doesn't yet support (the caller reports it and exits 2). The
-// arm64-darwin counterpart is the macho_static_executable path above.
+// arm64-darwin counterpart is the macho_executable path above.
 function arm64_elf_binary(asm: string): string {
     var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(asm);
     if (p.unknown.len() > 0) {
@@ -455,10 +455,10 @@ function run(): i32 {
 
     if (!have_entry) { return usage(); }
 
-    if (target != "x86-64" && target != "arm64" && target != "arm64-asm" && target != "arm64-android" && target != "arm64-darwin" && target != "wasm" && target != "wasm-bin" && target != "wasm-component") {
+    if (target != "x86-64" && target != "arm64" && target != "arm64-asm" && target != "arm64-android" && target != "arm64-darwin" && target != "arm64-darwin-asm" && target != "wasm" && target != "wasm-bin" && target != "wasm-component") {
         eprint("fern: unknown -target: ");
         eprint(target);
-        eprint(" (want x86-64, arm64, arm64-asm, arm64-darwin, wasm, wasm-bin, or wasm-component)\n");
+        eprint(" (want x86-64, arm64, arm64-asm, arm64-darwin, arm64-darwin-asm, wasm, wasm-bin, or wasm-component)\n");
         return 2;
     }
 
@@ -701,6 +701,15 @@ function run(): i32 {
         // importing std/array); the excess is all in arm64_gas_program.
         out_asm = asm_arm64_ir.emit_module_or_error(full, false);
         if (out_asm.len() == 0) { return 2; }
+    } else if (target == "arm64-darwin-asm") {
+        // The darwinized GAS text, stopping short of the in-process
+        // assembler + linker `-target arm64-darwin` runs on top of it. This
+        // is the darwin sibling of -target arm64-asm, and it exists for the
+        // same reason: it is the only way to hand the emitter's output to
+        // clang, which decides whether a misbehaving binary is the
+        // emitter's fault or arm64_gas_program's.
+        out_asm = asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error(full, true));
+        if (out_asm.len() == 0) { return 2; }
     } else if (target == "arm64-android") {
         // arm64-android is the arm64 emitter wrapped in a static-PIE (ET_DYN)
         // image instead of the fixed-address W^X one (AST-emitter fallback).
@@ -715,7 +724,7 @@ function run(): i32 {
         // arm64_native: arm64_gas_program parses + selects instructions,
         // macho_text_vaddr/macho_data_vaddr fix the segment addresses,
         // arm64_gas_link resolves @PAGE/@PAGEOFF + branch fixups against
-        // them, and macho_static_executable writes the signed Mach-O
+        // them, and macho_executable writes the signed Mach-O
         // (ad-hoc LC_CODE_SIGNATURE — Apple Silicon refuses unsigned
         // binaries). No external clang / ld64. The output bytes are packed
         // into a string written verbatim by write_file (see -target
@@ -739,7 +748,11 @@ function run(): i32 {
             return 2;
         }
         var pa2: arm64_native.Arm64Asm = prog.asm;
-        out_asm = string_from_bytes_unchecked(to_u8(arm64_native.macho_static_executable(pa2.code, prog.data, "fern")));
+        // darwinize renames the ELF `_start` entry to `_main`; like the ELF
+        // path, resolve its label rather than assuming offset 0 — the
+        // emitter writes the entry after the user's functions.
+        var deoff: i32 = arm64_native.macho_entry_off(pa2);
+        out_asm = string_from_bytes_unchecked(to_u8(arm64_native.macho_executable(pa2.code, prog.data, "fern", deoff, prog.bss_size)));
     } else if (target == "wasm") {
         // WASI core module in text format (WAT). Runnable directly by
         // `wasmtime run`; main()'s result becomes the process exit code.

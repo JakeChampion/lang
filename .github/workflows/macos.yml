@@ -64,6 +64,11 @@ on:
       # only the macOS runner can confirm a binary it produces
       # actually launches and runs.
       - "internal/native/**"
+      # The self-host arm64-darwin tests. Same argument as
+      # internal/native above, for the self-host writer in
+      # examples/self_host/arm64_native.fern: the Linux shards can
+      # only parse the Mach-O it emits, never launch it.
+      - "internal/e2eselfhost/**"
       # This workflow itself + go module declarations.
       - ".github/workflows/macos.yml"
       - "go.mod"
@@ -123,6 +128,18 @@ jobs:
         # keeps the streamed RUN/PASS/FAIL of the old `-v` run.
         run: |
           "$(go env GOPATH)/bin/gotestsum" --format standard-verbose -- -run TestArm64Darwin ./internal/e2e/
+
+      - name: go test (SELF-HOST arm64-darwin native execution)
+        # The sibling of the step above for the SELF-HOST arm64-darwin path,
+        # which lives in a different package (internal/e2eselfhost) and so was
+        # not selected by the `-run TestArm64Darwin ./internal/e2e/` filter —
+        # nothing in CI ran it on hardware that can execute its output. That
+        # gap is why #6042 (the arena mmap emitted with Linux MAP_ flags),
+        # the static LC_UNIXTHREAD container, the entry-point offset and the
+        # unmapped .bss tail all shipped: on the Linux shards this test only
+        # parses the Mach-O it cannot run.
+        run: |
+          "$(go env GOPATH)/bin/gotestsum" --format standard-verbose -- -run 'TestSelfHostArm64Darwin' ./internal/e2eselfhost/
 
       - name: Compile + run every example for arm64-darwin (native, default)
         # Build each examples/*.fern via the driver's DEFAULT path — the

@@ -3501,25 +3501,50 @@ function arm64_gas_assemble(src: string): Arm64Asm {
 // PART 3 — Mach-O writer + ad-hoc SHA-256 signature
 // ============================================================
 
-// examples/self_host/macho.fern — a minimal static, ad-hoc-signed arm64
-// Mach-O executable writer for the self-hosted *native* backend. This is
+// examples/self_host/macho.fern — a minimal ad-hoc-signed arm64 Mach-O
+// executable writer for the self-hosted *native* backend. This is
 // the Darwin counterpart of elf.fern (Linux): the container half of the
 // native-binary path that aims to remove the external `clang` / `ld64`
 // link step the self-host currently shells out to for arm64-darwin
 // (mirroring the Go reference internal/native/macho/*.go).
 //
-// The image is a fixed-address, non-PIE executable: __PAGEZERO, an r-x
-// __TEXT segment holding the Mach-O header + load commands + machine
-// code, an optional r/w __DATA segment (rodata + writable globals,
-// merged), and a __LINKEDIT segment carrying an ad-hoc code signature.
-// Apple Silicon's kernel refuses to execute an unsigned arm64 binary, so
-// the signature is mandatory; "ad-hoc" means there is no CMS/certificate
-// — the CodeDirectory's SHA-256 page hashes are the identity.
+// The image is a PIE, dyld-loaded executable: __PAGEZERO, an r-x __TEXT
+// segment holding the Mach-O header + load commands + machine code, an
+// optional r/w __DATA segment (rodata + writable globals, merged), and a
+// __LINKEDIT segment carrying an ad-hoc code signature.
 //
-// Execution starts via LC_UNIXTHREAD (the kernel sets PC directly), not
-// LC_MAIN (which needs dyld). The code generator's `_main` entry calls
-// `main` and then exits with a raw `svc #0x80`, so it never returns —
-// exactly what a thread-state entry needs.
+// # What Apple Silicon requires
+//
+// This writer emitted a static, dyld-free, non-PIE LC_UNIXTHREAD image
+// until #6042. Every such binary is SIGKILLed at exec on Apple Silicon:
+// no crash report, nothing in the system log, exit 137 — indistinguishable
+// from an OOM kill, which is how the same container cost the native writer
+// (#6000) a diagnosis too. Raw `svc #0x80` syscalls are fine; it is the
+// dyld-free CONTAINER the kernel rejects. The requirements, in the order
+// they bite:
+//
+//   * MH_PIE. Without it the kernel refuses the image before dyld runs.
+//   * LC_LOAD_DYLINKER + LC_LOAD_DYLIB + LC_MAIN. Every arm64 main
+//     executable is dyld-loaded, so execution starts at LC_MAIN's FILE
+//     offset (dyld adds the slid load address) rather than at an
+//     LC_UNIXTHREAD thread-state pc.
+//   * LC_SYMTAB whenever LC_DYSYMTAB is present, else dyld aborts with
+//     "LC_DYSYMTAB but no LC_SYMTAB load command". Both are emitted with
+//     zero counts: nothing here is exported or imported.
+//   * LC_BUILD_VERSION, naming the platform.
+//   * An ad-hoc LC_CODE_SIGNATURE — no CMS/certificate, the
+//     CodeDirectory's SHA-256 page hashes are the identity.
+//
+// PIE means dyld slides the image, so an absolute address baked into
+// __DATA would arrive stale. The native writer answers that with
+// LC_DYLD_INFO_ONLY rebase opcodes over the assembler's `.quad <symbol>`
+// slots; this image needs none, because the arm64 emitter's only `.quad`
+// is `.quad 0` (heap globals) and every address it computes is
+// PC-relative (adrp/@PAGEOFF, b/bl). The command is still emitted, with
+// an empty rebase stream, so growing a jump table later has one obvious
+// place to fill in. Emit a `.quad <symbol>` without also emitting its
+// rebase opcode and the image loads fine, then segfaults through a stale
+// pointer — which reads as a codegen bug rather than a container one.
 //
 // Conventions (matching elf.fern):
 //   * A byte buffer is an `i32[]` of values in 0..255; each helper appends
@@ -3831,16 +3856,47 @@ function macho_align_up(n: i32, a: i32): i32 {
     return (n + a - 1) & (0 - a);
 }
 
+// macho_dylinker_path is the dynamic linker every arm64 main executable
+// must name, and macho_libsystem_path the one dylib it loads.
+function macho_dylinker_path(): string { return "/usr/lib/dyld"; }
+function macho_libsystem_path(): string { return "/usr/lib/libSystem.B.dylib"; }
+
+// macho_lcstr_fixed_len is the size of an lc_str command's fixed part,
+// before the path: LC_LOAD_DYLIB carries a timestamp + two versions after
+// the name offset, LC_LOAD_DYLINKER carries nothing.
+function macho_lcstr_fixed_len(cmd: i32): i32 {
+    if (cmd == 12) { return 24; }   // LC_LOAD_DYLIB
+    return 12;                      // LC_LOAD_DYLINKER
+}
+
+// macho_lcstr_cmd_len is the padded size of an lc_str command carrying
+// `path`: the fixed part plus the NUL-terminated path, rounded up to 8.
+function macho_lcstr_cmd_len(cmd: i32, path: string): i32 {
+    return macho_align_up(macho_lcstr_fixed_len(cmd) + path.len() + 1, 8);
+}
+
 // macho_load_cmds_len is the total size of all load commands: __PAGEZERO
 // + __TEXT (1 section) + optional __DATA (1 section) + __LINKEDIT +
-// LC_UNIXTHREAD + LC_CODE_SIGNATURE. (segCmd=72, section=80,
-// unixThread=288, codeSig=16.)
+// LC_DYLD_INFO_ONLY + LC_SYMTAB + LC_DYSYMTAB + LC_BUILD_VERSION +
+// LC_LOAD_DYLINKER + LC_LOAD_DYLIB + LC_MAIN + LC_CODE_SIGNATURE.
+// (segCmd=72, section=80, dyldInfo=48, symtab=24, dysymtab=80,
+// buildVersion=24, main=24, codeSig=16.)
+//
+// The trailing `+ 48` is 48 bytes of zero slack between the last load
+// command and the first code byte: the native writer's loadCommandsLen
+// counts dyldInfoCmdLen twice, and this figure is what fixes text_off
+// (hence every address), so the two writers agree on layout only if this
+// one does too. Removing it belongs in a change that moves both.
 function macho_load_cmds_len(has_data: boolean): i32 {
     var n: i32 = 72 + (72 + 80) + 72; // PAGEZERO + TEXT(1 sect) + LINKEDIT
     if (has_data) {
         n = n + (72 + 80); // DATA(1 sect)
     }
-    n = n + 288 + 16; // LC_UNIXTHREAD + LC_CODE_SIGNATURE
+    n = n + 48 + 24 + 80 + 24;  // DYLD_INFO_ONLY + SYMTAB + DYSYMTAB + BUILD_VERSION
+    n = n + macho_lcstr_cmd_len(14, macho_dylinker_path());
+    n = n + macho_lcstr_cmd_len(12, macho_libsystem_path());
+    n = n + 24 + 16;            // LC_MAIN + LC_CODE_SIGNATURE
+    n = n + 48;                 // slack — see the comment above
     return n;
 }
 
@@ -3906,6 +3962,84 @@ function macho_sect(buf: i32[], sect: string, seg: string, addr: i64, size: i32,
     buf = macho_le32(buf, 0); // reserved2
     buf = macho_le32(buf, 0); // reserved3
     return buf;
+}
+
+// macho_lcstr writes an lc_str load command (LC_LOAD_DYLINKER /
+// LC_LOAD_DYLIB): the command, its padded size, a uint32 offset from the
+// start of the command to the NUL-terminated path, then the path itself
+// zero-padded out to that size.
+function macho_lcstr(buf: i32[], cmd: i32, path: string): i32[] {
+    var size: i32 = macho_lcstr_cmd_len(cmd, path);
+    var fixed: i32 = macho_lcstr_fixed_len(cmd);
+    buf = macho_le32(buf, cmd);
+    buf = macho_le32(buf, size);
+    buf = macho_le32(buf, fixed);
+    if (cmd == 12) {
+        buf = macho_le32(buf, 0); // timestamp
+        buf = macho_le32(buf, 0); // current_version
+        buf = macho_le32(buf, 0); // compatibility_version
+    }
+    var i: i32 = 0;
+    while (i < path.len()) {
+        buf = buf.append((path[i] as i32));
+        i = i + 1;
+    }
+    return macho_zeros(buf, size - fixed - path.len());
+}
+
+// macho_dyld_info writes LC_DYLD_INFO_ONLY. Only the rebase stream is ever
+// populated — the image imports, exports and binds nothing — and this
+// emitter has nothing to rebase either, so every off/size pair is zero.
+function macho_dyld_info(buf: i32[], rebase_off: i32, rebase_size: i32): i32[] {
+    buf = macho_le32w(buf, 0x80000022); // LC_DYLD_INFO_ONLY | LC_REQ_DYLD
+    buf = macho_le32(buf, 48);
+    buf = macho_le32(buf, rebase_off);
+    buf = macho_le32(buf, rebase_size);
+    return macho_zeros(buf, 32); // bind, weak_bind, lazy_bind, export
+}
+
+// macho_symtab writes an LC_SYMTAB, and macho_dysymtab an LC_DYSYMTAB with
+// every index and count zero. dyld requires LC_DYSYMTAB on a two-level
+// image and refuses one that carries it without an LC_SYMTAB, so both are
+// present and degenerate: this writer emits no symbols.
+function macho_symtab(buf: i32[], symoff: i32, nsyms: i32, stroff: i32, strsize: i32): i32[] {
+    buf = macho_le32(buf, 2);  // LC_SYMTAB
+    buf = macho_le32(buf, 24);
+    buf = macho_le32(buf, symoff);
+    buf = macho_le32(buf, nsyms);
+    buf = macho_le32(buf, stroff);
+    return macho_le32(buf, strsize);
+}
+
+function macho_dysymtab(buf: i32[]): i32[] {
+    buf = macho_le32(buf, 11); // LC_DYSYMTAB
+    buf = macho_le32(buf, 80);
+    return macho_zeros(buf, 72); // 18 index/count uint32 pairs
+}
+
+// macho_build_version writes LC_BUILD_VERSION declaring the image as
+// macOS. Apple Silicon's kernel SIGKILLs an arm64 main executable that
+// names no platform — a valid ad-hoc signature is not sufficient on its
+// own. minos / sdk are nibble-encoded XXXX.YY.ZZ; 11.0.0 is the first
+// macOS with Apple Silicon, the floor for an arm64 executable. ntools is
+// 0: the tool-version list is informational.
+function macho_build_version(buf: i32[]): i32[] {
+    buf = macho_le32(buf, 50); // LC_BUILD_VERSION = 0x32
+    buf = macho_le32(buf, 24);
+    buf = macho_le32(buf, 1);         // PLATFORM_MACOS
+    buf = macho_le32(buf, 0x000b0000); // minos 11.0.0
+    buf = macho_le32(buf, 0x000b0000); // sdk 11.0.0
+    return macho_le32(buf, 0);        // ntools
+}
+
+// macho_main writes LC_MAIN. entryoff is a FILE offset from the start of
+// the mach header, not a VM address — dyld adds the image's load address
+// itself, which is what makes the entry survive a slide.
+function macho_main(buf: i32[], entryoff: i32): i32[] {
+    buf = macho_le32w(buf, 0x80000028); // LC_MAIN | LC_REQ_DYLD
+    buf = macho_le32(buf, 24);
+    buf = macho_le64(buf, entryoff as i64);
+    return macho_le64(buf, 0); // stacksize: 0 = system default
 }
 
 // ============================================================
@@ -3993,13 +4127,45 @@ function macho_code_signature(content: i32[], code_limit: i32, exec_seg_limit: i
 // the image writer
 // ============================================================
 
-// macho_static_executable wraps machine code and a data blob into a
-// runnable, ad-hoc-signed static arm64 Mach-O executable. Code occupies
+// macho_entry_off resolves the entry offset to pass to macho_executable:
+// the `_main` label's offset in the assembled text, or 0 for a hand-built
+// snippet that has no such label and whose entry is its first byte.
+pub function macho_entry_off(a: Arm64Asm): i32 {
+    var off: i32 = arm64_asm_label_off(a, "_main");
+    if (off < 0) { return 0; }
+    return off;
+}
+
+// macho_executable wraps machine code and a data blob into a runnable,
+// ad-hoc-signed, dyld-loaded PIE arm64 Mach-O executable. Code occupies
 // the r-x __TEXT segment; data (read-only constants + writable globals,
-// merged by the assembler) occupies a r/w __DATA segment. Execution
-// begins at the first code byte (the code generator's `_main`). `ident`
-// is the ad-hoc signing identifier (any short string).
-pub function macho_static_executable(text: i32[], data: i32[], ident: string): i32[] {
+// merged by the assembler) occupies a r/w __DATA segment. `ident` is the
+// ad-hoc signing identifier (any short string).
+//
+// `entry_off` is the entry's offset within `text`, the Mach-O sibling of
+// elf_image_entry's parameter and needed for the same reason: the arm64
+// emitter writes `_main` AFTER the user's functions, so the first code
+// byte is some arbitrary function. Pass 0 only when the entry really is
+// the first byte. Getting this wrong does not fail to launch — dyld calls
+// whatever function is there, which returns a plausible-looking exit
+// code, so a single-function program still "passes" and a multi-function
+// one silently runs the wrong body.
+//
+// `bss` is the zero-init tail past the data bytes — the Mach-O sibling of
+// elf_image_entry_bss's parameter. arm64_gas_link resolves a .bss symbol to
+// `data_vaddr + data.len() + bss_off`, so __DATA's vmsize must cover it
+// while its filesize stays at the bytes actually in the file; the kernel
+// zero-fills the difference. Omit it and every symbol past the emitter's
+// `.skip` reservations (the 64 MiB strbuf, the freelists) resolves outside
+// the mapped segment: reads and writes there fault, and because the
+// affected symbols sit at the tail, the failure looks like a bug in
+// whatever runtime helper happens to touch one first.
+//
+// bss is only honoured when there IS data, matching macho_data_vaddr's
+// has_data test so the linker and the container agree on the layout. The
+// arm64 emitter always emits initialized data (rodata pools + globals)
+// alongside its bss, so a bss-only image cannot arise here.
+pub function macho_executable(text: i32[], data: i32[], ident: string, entry_off: i32, bss: i32): i32[] {
     var has_data: boolean = data.len() > 0;
     var text_len: i32 = text.len();
     var data_len: i32 = data.len();
@@ -4007,24 +4173,28 @@ pub function macho_static_executable(text: i32[], data: i32[], ident: string): i
     var page: i32 = macho_page_size();
     var text_vmsize: i32 = macho_align_up(text_off + text_len, page);
     var data_file_len: i32 = 0;
+    var data_vm_len: i32 = 0;
     if (has_data) {
         data_file_len = macho_align_up(data_len, page);
+        data_vm_len = macho_align_up(data_len + bss, page);
     }
     var code_limit: i32 = text_vmsize + data_file_len;
 
     var base: i64 = macho_base_vaddr();
     var text_vaddr: i64 = base + (text_off as i64);
     var data_vaddr: i64 = base + (text_vmsize as i64);
-    var linkedit_vaddr: i64 = data_vaddr + (data_file_len as i64);
+    var linkedit_vaddr: i64 = data_vaddr + (data_vm_len as i64);
 
     var sig_len: i32 = macho_sig_len(code_limit, ident.len());
     var linkedit_vmsize: i32 = macho_align_up(sig_len, page);
 
-    var ncmds: i32 = 5;
+    var ncmds: i32 = 11;
     if (has_data) {
-        ncmds = 6;
+        ncmds = 12;
     }
-    var sizeofcmds: i32 = macho_load_cmds_len(has_data);
+    // sizeofcmds is the size of the commands ACTUALLY written, which is
+    // macho_load_cmds_len minus its 48 bytes of layout slack.
+    var sizeofcmds: i32 = macho_load_cmds_len(has_data) - 48;
 
     var buf: i32[] = [];
 
@@ -4035,7 +4205,9 @@ pub function macho_static_executable(text: i32[], data: i32[], ident: string): i
     buf = macho_le32(buf, 2);          // MH_EXECUTE
     buf = macho_le32(buf, ncmds);
     buf = macho_le32(buf, sizeofcmds);
-    buf = macho_le32(buf, 1);          // MH_NOUNDEFS
+    // MH_NOUNDEFS | MH_DYLDLINK | MH_TWOLEVEL | MH_PIE. MH_PIE is the one
+    // the kernel checks before dyld runs at all.
+    buf = macho_le32(buf, 0x00200085);
     buf = macho_le32(buf, 0);          // reserved
 
     // ---- __PAGEZERO ----
@@ -4048,22 +4220,25 @@ pub function macho_static_executable(text: i32[], data: i32[], ident: string): i
 
     // ---- __DATA (r/w), 1 section (optional) ----
     if (has_data) {
-        buf = macho_seg(buf, "__DATA", data_vaddr, data_file_len as i64, text_vmsize as i64, data_file_len as i64, 3, 3, 1);
+        // vmsize covers the zero-init bss tail; filesize is just the bytes on
+        // disk. The __data section stays the initialized part.
+        buf = macho_seg(buf, "__DATA", data_vaddr, data_vm_len as i64, text_vmsize as i64, data_file_len as i64, 3, 3, 1);
         buf = macho_sect(buf, "__data", "__DATA", data_vaddr, data_len, text_vmsize, 3, 0);
     }
 
     // ---- __LINKEDIT (r) ----
     buf = macho_seg(buf, "__LINKEDIT", linkedit_vaddr, linkedit_vmsize as i64, code_limit as i64, sig_len as i64, 1, 1, 0);
 
-    // ---- LC_UNIXTHREAD ----
-    buf = macho_le32(buf, 5);   // LC_UNIXTHREAD
-    buf = macho_le32(buf, 288); // cmdsize
-    buf = macho_le32(buf, 6);   // ARM_THREAD_STATE64
-    buf = macho_le32(buf, 68);  // count (uint32 units)
-    // arm_thread_state64: x0..x28 (29), fp, lr, sp (32 u64) then pc, cpsr.
-    buf = macho_zeros(buf, 256);       // x0..x28, fp, lr, sp
-    buf = macho_le64(buf, text_vaddr); // pc (the 33rd u64) == entry
-    buf = macho_zeros(buf, 8);         // cpsr + pad
+    // ---- the dyld command set (see the module comment) ----
+    // The rebase stream is empty, so its offset is only nominal; point it
+    // at the start of __LINKEDIT, where a stream would live.
+    buf = macho_dyld_info(buf, code_limit, 0);
+    buf = macho_symtab(buf, 0, 0, 0, 0);
+    buf = macho_dysymtab(buf);
+    buf = macho_build_version(buf);
+    buf = macho_lcstr(buf, 14, macho_dylinker_path()); // LC_LOAD_DYLINKER
+    buf = macho_lcstr(buf, 12, macho_libsystem_path()); // LC_LOAD_DYLIB
+    buf = macho_main(buf, text_off + entry_off);
 
     // ---- LC_CODE_SIGNATURE ----
     buf = macho_le32(buf, 29);         // LC_CODE_SIGNATURE = 0x1d
@@ -4071,9 +4246,10 @@ pub function macho_static_executable(text: i32[], data: i32[], ident: string): i
     buf = macho_le32(buf, code_limit); // dataoff
     buf = macho_le32(buf, sig_len);    // datasize
 
-    // buf is now exactly text_off bytes (header + load commands).
-
     // ---- code + data ----
+    // pad_to closes the 48-byte slack macho_load_cmds_len reserves past
+    // the last load command, so code starts at text_off.
+    buf = macho_pad_to(buf, text_off);
     buf = macho_cat(buf, text);
     buf = macho_pad_to(buf, text_vmsize);
     if (has_data) {
