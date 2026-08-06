@@ -13,28 +13,27 @@
 # each other; that agreement is what says the self-host compiler is wrong rather
 # than the generated program being invalid.
 #
-# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus), after the
-# i64/u64-suffix width fix: 217 agree, 3 diverge, the rest are compile gaps.
-# Rows that have already left with their fix: 121 / 265 / 365 (#6177, the maps
-# runtime need-gate), 228 / 455 (#6207, a map literal with computed keys
-# building itself string-keyed), and the fifteen below.
-
-# CRASHES — the self-host-compiled binary dies by SIGSEGV where the interpreter
-# returns a value. These are ONE bug: #6207, a map literal whose keys the parser
-# cannot classify, building itself string-keyed so map_set compares integer keys
-# through __fern_str_eq. Seeds 228 / 455 / 200 already left with the two
-# classifiable key forms (#6213 leaf-reachable arithmetic, #6220 casts); 59 and
-# 144 are verified as the same bug by the same test (literal keys fix them, one
-# computed key survives, two crash), and 97's keys are the same unclassifiable
-# set though it is unreduced.
+# THE LIST IS EMPTY. Every seed the leg can compile now agrees with the
+# interpreter. Keep the file — an empty list is the strongest form of the gate,
+# since any divergence at all fails the leg — and keep the record below of what
+# left, because it is what the next round of probing should be measured against.
 #
-# This header said the survivors were "a different cause (or causes)". That was
-# true of what had been measured at the time and false once the rest were
-# reduced — the remaining key forms (calls, indexes, field accesses) are simply
-# the ones no syntactic rule can classify, which is why the fix is structural.
-59 SIGSEGV (self-host 139, interp 41) — https://github.com/JakeChampion/lang/issues/6178
-97 SIGSEGV (self-host 139, interp 230) — https://github.com/JakeChampion/lang/issues/6178
-144 SIGSEGV (self-host 139, interp 96) — https://github.com/JakeChampion/lang/issues/6178
+# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus): 204 agree,
+# 0 diverge, 308 compile gaps. Count the gaps, not just the agreements, when
+# reading a run: the leg only proves what it could compile, and a fix that
+# turns a wrong answer into an IR bail (as #6228 did for seed 502) RAISES the
+# gap count while looking like a win in the divergence column.
+
+# CRASHES — the self-host-compiled binary died by SIGSEGV where the interpreter
+# returned a value. These were ONE bug: #6207, a `Map { … }` literal whose keys
+# the parser could not classify, building itself string-keyed so map_set
+# compared integer keys through __fern_str_eq. Eight rows left with it —
+# 200 / 228 / 455 with the two classifiable key forms (#6213 leaf-reachable
+# arithmetic, #6220 cast targets), then 59 / 97 / 144 once the fix stopped being
+# syntactic and read the `Map[K, V]` declaration instead. Every crash row in the
+# corpus was that bug; the header used to hedge that the survivors might be "a
+# different cause (or causes)", which was true of what had been measured at the
+# time and false once they were reduced.
 
 # WRONG VALUES + ARENA EXHAUSTION — both sections emptied together, because they
 # were ONE bug. infer_expr_width classified a number literal by MAGNITUDE alone,
@@ -54,3 +53,6 @@
 # bailed the same way on the commit before it. The fix moved 502 from a silent
 # wrong answer to a loud compile error, which is the safe direction; closing it
 # is the irt_guess work in #6216 / #6222 / #6223.
+
+# Also gone earlier, with their own fixes: 121 / 265 / 365 (#6177, the maps
+# runtime need-gate).

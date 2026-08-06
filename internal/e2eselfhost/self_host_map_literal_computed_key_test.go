@@ -18,13 +18,27 @@ import (
 // compared the integer keys through `__fern_str_eq`, dereferencing them as
 // pointers. Nothing had to read the map — building it was enough.
 //
-// `two_computed_keys` is the case that fails without the fix (verified by
-// reverting the parser: it exits -1, killed by the signal). The rest pass
-// either way and are here to pin the directions the fix must not break —
-// a single insert never reaches the compare, and the string and
-// undecidable-key paths must keep the kind they had. Every case reads the
-// map back rather than only constructing it, so a non-crashing mistyping
-// would fail too. Oracle: the interpreter.
+// Two fixes stack here. The syntactic one walks each key down to a decisive
+// leaf (`(1 + 1)`, a cast's target) and takes the first key that answers.
+// It cannot answer for a call, a field access or an `if` expression — the
+// parser has no types — so the structural one reads the DECLARATION instead:
+// a `var m: Map[i32, i32] = …` annotation reaches parse_map_lit as
+// `Par.map_kind` and picks the constructor outright, and the guess is only
+// consulted where there is no annotation.
+//
+// The hint reaches a LITERAL only. A hand-written `map_new(8).insert(1, 10)`
+// chain keeps the constructor its author wrote, so asmcore's E038 gate on it
+// still fires — native rejects those chains annotated or not, and
+// TestSelfHostIRCheckGate is what pins that.
+//
+// `two_computed_keys` is the case that fails without the syntactic fix and
+// `undecidable_keys_from_annotation` the one that fails without the
+// structural fix (both verified by reverting the parser: they exit -1,
+// killed by the signal). The rest pass either way and are here to pin the
+// directions neither fix may break — a single insert never reaches the
+// compare, and the string and un-annotated paths must keep the kind they
+// had. Every case reads the map back rather than only constructing it, so a
+// non-crashing mistyping would fail too. Oracle: the interpreter.
 var mapLiteralComputedKeyCases = []struct {
 	name string
 	src  string
@@ -67,15 +81,57 @@ function main(): i32 {
     var m: Map[i32, i32] = Map { (k() as i32): 7i32, (j() as i32): 3i32 };
     return m.get_or(5i32, 0i32) + m.get_or(9i32, 0i32) + m.len();
 }`},
-	// An undecidable key (a call) is the case the parser genuinely cannot
-	// answer without types, so it still falls back to the string ctor. Pinned
-	// as a STRING map so the fallback is exercised deliberately rather than
-	// left to be discovered. 4 + 1 = 5.
-	{"undecidable_key_falls_back", `import "core/map";
+	// The string direction of the ANNOTATION: a `Map[string, …]` declaration
+	// with a key the guess also reads as string. Both agree; the declaration
+	// must not flip it. 4 + 1 = 5.
+	{"undecidable_key_string_annotation", `import "core/map";
 function k(): string { return "z"; }
 function main(): i32 {
     var m: Map[string, i32] = Map { k(): 4i32 };
     return m.get_or("z", 0i32) + m.len();
+}`},
+	// Keys the parser CANNOT classify at all — two calls. Nothing syntactic
+	// decides these, so before the declaration was consulted this built
+	// string-keyed and SIGSEGV'd on the second insert's compare. 6 + 4 + 2 = 12.
+	{"undecidable_keys_from_annotation", `import "core/map";
+function k(): i32 { return 3i32; }
+function j(): i32 { return 8i32; }
+function main(): i32 {
+    var m: Map[i32, i32] = Map { k(): 6i32, j(): 4i32 };
+    return m.get_or(3i32, 0i32) + m.get_or(8i32, 0i32) + m.len();
+}`},
+	// The reduced shape of seed 97: both keys are `if` expressions. An arm can
+	// be decisive on its own but the `if` node is not an operand chain, so the
+	// leaf walk stops at it — the declaration is the only thing that answers.
+	// 9 + 5 + 2 = 16.
+	{"if_expression_keys_from_annotation", `import "core/map";
+function main(): i32 {
+    var c: boolean = true;
+    var m: Map[i32, i32] = Map {
+        (if (c) { 11i32 } else { 12i32 }): 9i32,
+        (if (c) { 21i32 } else { 22i32 }): 5i32
+    };
+    return m.get_or(11i32, 0i32) + m.get_or(21i32, 0i32) + m.len();
+}`},
+	// The declaration's answer describes ONE literal. `Par.map_kind` is cleared
+	// on entry to the literal that consumes it, so a string-keyed literal
+	// declared next to an i32-keyed one does not pick up the neighbour's kind —
+	// the same clearing is what stops a literal nested in a VALUE position from
+	// inheriting the outer key kind. 5 + 6 + 7 + 2 + 1 = 21.
+	{"neighbouring_literals_keep_own_kind", `import "core/map";
+function k(): i32 { return 3i32; }
+function main(): i32 {
+    var outer: Map[i32, i32] = Map { k(): 5i32, (1i32 + 1i32): 6i32 };
+    var inner: Map[string, i32] = Map { ("a" + "b"): 7i32 };
+    return outer.get_or(3i32, 0i32) + outer.get_or(2i32, 0i32) + inner.get_or("ab", 0i32) + outer.len() + inner.len();
+}`},
+	// No annotation to read, so the syntactic guess is still what decides.
+	// This is the direction the structural fix must not quietly take over.
+	// 7 + 1 = 8.
+	{"unannotated_keeps_the_guess", `import "core/map";
+function main(): i32 {
+    var m = Map { (1i32 + 1i32): 7i32 };
+    return m.get_or(2i32, 0i32) + m.len();
 }`},
 }
 
