@@ -19,11 +19,18 @@
 # map literal with computed keys building itself string-keyed).
 
 # CRASHES — the self-host-compiled binary dies by SIGSEGV where the interpreter
-# returns a value. NOT one bug: seeds 228 and 455 were the map-literal key-kind
-# mistyping (#6207) and left with its fix; these four survive it, so they are a
-# different cause (or causes) and want their own reduction. Seed 200 left too:
-# same #6207 mistyping, reached through keys the first fix could not classify
-# (a cast over a call), so a cast now decides on its target type.
+# returns a value. These are ONE bug: #6207, a map literal whose keys the parser
+# cannot classify, building itself string-keyed so map_set compares integer keys
+# through __fern_str_eq. Seeds 228 / 455 / 200 already left with the two
+# classifiable key forms (#6213 leaf-reachable arithmetic, #6220 casts); 59 and
+# 144 are verified as the same bug by the same test (literal keys fix them, one
+# computed key survives, two crash), and 97's keys are the same unclassifiable
+# set though it is unreduced.
+#
+# This header said the survivors were "a different cause (or causes)". That was
+# true of what had been measured at the time and false once the rest were
+# reduced — the remaining key forms (calls, indexes, field accesses) are simply
+# the ones no syntactic rule can classify, which is why the fix is structural.
 59 SIGSEGV (self-host 139, interp 41) — https://github.com/JakeChampion/lang/issues/6178
 97 SIGSEGV (self-host 139, interp 230) — https://github.com/JakeChampion/lang/issues/6178
 144 SIGSEGV (self-host 139, interp 96) — https://github.com/JakeChampion/lang/issues/6178
