@@ -18,90 +18,61 @@
 # since any divergence at all fails the leg — and keep the record below of what
 # left, because it is what the next round of probing should be measured against.
 #
-# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus), after #6276:
-# 338 agree, 0 diverge, 174 compile gaps. Count the gaps, not just the
-# agreements, when reading a run: the leg only proves what it could COMPILE, so
-# a fix that turns a wrong answer into an IR bail raises the gap count while
-# looking like a win in the divergence column.
+# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus), after #6283
+# and the fail_why work: 361 agree, 0 diverge, 151 compile gaps. Count the gaps,
+# not just the agreements, when reading a run: the leg only proves what it could
+# COMPILE, so a fix that turns a wrong answer into an IR bail raises the gap
+# count while looking like a win in the divergence column.
 #
-# That caution cuts both ways, and the last six runs went the other way: 204
+# That caution cuts both ways, and the last seven runs went the other way: 204
 # agree / 308 gaps, then 263 / 249 (#6237 + #6246), 291 / 221 (#6261), 311 / 201
-# (#6268), 325 / 187 (#6272), 338 / 174 (#6276). One bail can cost far more than
-# the seed that exposes it — an if-expression whose branches are 64-bit took the
-# whole MODULE off the IR path, and fernsmith emits if-expressions everywhere, so
-# a single missing branch in one classifier was suppressing a tenth of the
-# corpus.
+# (#6268), 325 / 187 (#6272), 338 / 174 (#6276), 361 / 151. One bail can cost far
+# more than the seed that exposes it — an if-expression whose branches are 64-bit
+# took the whole MODULE off the IR path, and fernsmith emits if-expressions
+# everywhere, so a single missing branch in one classifier was suppressing a
+# tenth of the corpus.
 #
-# CENSUS OF THE 174 GAPS, so the next round is aimed rather than sampled. The
-# first split is by the reason FERN_STRICT_IR=1 gives:
+# HOW TO READ A BAIL: just run it. `FERN_STRICT_IR=1` now names the innermost AST
+# node that refused, via LowerState.fail_why —
 #
-#   78  function value <fn>$clo not defined   → #6256. NOT one mechanism — the
-#                                               issue's own comments record that
-#                                               correction: several shapes share
-#                                               this message, and grouping by
-#                                               message is what made the first
-#                                               reduction fix the wrong thing.
-#                                               Now the LARGEST pile, and it GREW
-#                                               by 7 across #6268 without anything
-#                                               about it changing: seeds that used
-#                                               to stop earlier now get far enough
-#                                               to reach it. Read a moved number
-#                                               as a reordering before a
-#                                               regression.
-#   13  call to unknown symbol T.to_string    → a method call on a bare type var.
-#   83  no reason string                      → see the second split below.
+#   FERN_STRICT_IR: gen_f0 (did not lower: `return` of binary `|`)
 #
-# The no-reason pile used to be the least actionable: the strict-IR message
-# names the FUNCTION it gave up in and nothing else. It does not need the message
-# widened, though — the bail site is recoverable from the BINARY. Build the
-# self-host compiler with symbols and break on the failure constructor:
+# This replaces a gdb recipe that used to live here (build with -g, break on
+# LowerState.fail, read the caller's line). That recipe worked and is how the
+# census below was first built, but it is now strictly worse than reading the
+# message, so it has been deleted rather than left as a second way to do the
+# same thing.
 #
-#   ./bin/fern -g -target x86-64 -o /tmp/fsh-g examples/self_host/fern.fern
-#   break *__method_irlower__LowerState_fail
-#   commands
-#     silent
-#     info line *(*(unsigned long *)$rsp)
-#     cont
-#   end
+# CENSUS OF THE 151 GAPS, so the next round is aimed rather than sampled:
 #
-# gdb attributes the line to "fern.fern", but the NUMBER is a line in whichever
-# module the containing symbol names (irlower__* → irlower.fern) — read the
-# symbol, not the filename. There is normally exactly one hit per compile, so
-# the reading is unambiguous, and the whole 83 profile in a few minutes.
+#   90  function value <fn>$clo not defined   → #6256, and now more than half the
+#                                               pile on its own. NOT one
+#                                               mechanism — the issue's own
+#                                               comments record that correction:
+#                                               several shapes share this
+#                                               message, and grouping by message
+#                                               is what made the first reduction
+#                                               fix the wrong thing. It has grown
+#                                               71 → 78 → 90 while nothing about
+#                                               it changed, purely because seeds
+#                                               that used to stop earlier now
+#                                               reach it. Read a moved number as
+#                                               a reordering before a regression.
+#   14  call to unknown symbol T.to_string    → a method call on a bare type var.
+#   47  a named fail_why, grouped by shape:
+#         13  `return` of a BINARY op (| * % >> << / -| *|)
+#          9  `return` of an IDENT (mostly `__chk_v0`, a %?/ /? match binding)
+#          9  `return` of a CALL (`id`, `pick` — the erased generics)
+#          9  an immediately-invoked value block (if/match-expression or
+#             comprehension desugar), incl. 2 in `return` and 1 in an assignment
+#          4  tuple literal / array literal / field access
+#          3  other
 #
-# That gives the second split, measured after #6276. Line numbers go stale on
-# the next edit to irlower.fern — the FUNCTION name is the durable half:
-#
-#   27  lower_stmt_inner :13660  the `return`-width guard: a width-64 value
-#                           returned from a 32-bit return type. It has never been
-#                           a real wide return — every cause found so far is a
-#                           false width READING upstream, and each was a
-#                           DIFFERENT classifier, four so far: #6261 a
-#                           u32-suffixed literal past i32-max (94 → 51), #6272 a
-#                           match-EXPRESSION taking its IIFE return type from the
-#                           first arm alone (54 → 40), #6276 if_expr_rt not
-#                           reading a NESTED if/match IIFE's own ret_type
-#                           (40 → 27). Treat a hit here as "which classifier lost
-#                           the width", not as a value genuinely too wide — and
-#                           expect the next one to be a fifth classifier rather
-#                           than a repeat.
-#   24  lower_value_block :11865  the wide-tail deferral #6268 added — a 64-bit
-#                           if / match tail in a value block, held back because
-#                           wasm miscompiles it (#6267). Removing the gate does
-#                           not change the gap TOTAL (measured 201 either way):
-#                           these 24 fail again downstream, so the gate is where
-#                           they stop, not why.
-#   21  lower_i64 :6739 / :6809
-#    8  lower_iife_match :13246  the payload-bindable gate.
-#    3  lower_expr :10354 / :10876
-#
-# So the 174 are three piles, not a fog: 78 sharing the $clo message (#6256, now
-# far and away the largest, and being reduced separately), 51 in two lowering
-# sites, 45 over five more. The width guard has gone 94 → 27 across three fixes
-# and the value-block tail 61 → 0, so what began as the biggest pile is nearly
-# drained and the $clo pile has not moved at all. Re-measure before picking —
-# draining one pile reshuffles the others, as the $clo count moving 71 → 78 for
-# free shows.
+# The 47 are what to reduce next: each names its own shape, so they need no
+# instrumentation, and the `return`-of-X rows are 31 of them. Whether they share
+# a cause is UNMEASURED — the $clo pile is the standing warning against assuming
+# a shared message means a shared mechanism, and these share a shape, not even a
+# message. Re-measure before picking: draining one pile reshuffles the others.
 
 # CRASHES — the self-host-compiled binary died by SIGSEGV where the interpreter
 # returned a value. These were ONE bug: #6207, a `Map { … }` literal whose keys
