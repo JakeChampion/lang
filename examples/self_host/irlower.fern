@@ -16783,6 +16783,14 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     if (!target_is_arr && slot_is_reclaimable_struct(s, slot) && !slot_nodeep(s, slot) && s.struct_routes_field_reclaim(asty)) {
         return emit_field_reclaim_store(se, slot, asty, 0 - 1);
     }
+    // A reclaimable rc-payload ENUM local REBIND (`e = Text("hi")`, #6127): deep-drop
+    // the prior chain (payload + box) before storing, the same release the re-declared
+    // loop-local gets on the StmtVar path above. Without this the assign fell through
+    // to emit_arr_store's SHALLOW box dec, which for an rc-payload enum would leak the
+    // payload even once the credit was granted.
+    if (slot_is_reclaimable_rcenum(s, slot)) {
+        return emit_enum_deep_reinit_store(se, slot, s.struct_type_of_slot(slot));
+    }
     return emit_arr_store(se, slot, reassign_inc, target_is_arr || slot_is_reclaimable_struct(s, slot));
     return s.fail();
 }
@@ -21813,6 +21821,61 @@ function rctuple_payload_escapes(stmts: parser.Stmt[], name: string, ttype: stri
 // escape gate here is name_escapes_outside_stmt with the MATCH statement skipped —
 // so the match scrutinee `b` (the consuming read) is NOT counted as an escape,
 // unlike the coarse body_unsafe_for which flags any bare-ident use.
+// all_assigns_fresh_rcenum reports whether EVERY assignment to `name` anywhere in
+// `stmts` (recursively) constructs a FRESH rc-payload enum of the SAME enum
+// `owner` — either an inline variant ctor or a call to a whole-program-proven
+// fresh rc-enum ctor fn.
+//
+// This is what lets collect_fresh_rcenum_names drop its blunt `reassigned`
+// exclusion (#6127), the rc-payload sibling of the scalar-enum rebind. A rebound
+// local orphans its previous chain on every assignment, and refusing the
+// candidate outright meant NOTHING was freed — not the intermediates, not the
+// final value (measured allocs=900 frees=0 over 100 rounds where the same enum
+// re-DECLARED in the loop body is flat at 0, because only the StmtVar path
+// reaches emit_enum_deep_reinit_store).
+//
+// Requiring the same `owner` is what keeps the deep drop well-typed: the release
+// dispatches on the slot's enum type, so a rebind to a different enum would walk
+// the wrong variant table. The caller's escape gate is unchanged, so a value
+// aliased out before being overwritten still disqualifies the name — for a
+// DEEP drop that matters more than it did for the scalar box, since the payload
+// is released too.
+function all_assigns_fresh_rcenum(stmts: parser.Stmt[], name: string, owner: string, structs: parser.StructDecl[], opt_fresh_ret: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (!stmt_assigns_fresh_rcenum(stmts[i], name, owner, structs, opt_fresh_ret)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function stmt_assigns_fresh_rcenum(st: parser.Stmt, name: string, owner: string, structs: parser.StructDecl[], opt_fresh_ret: string[]): boolean {
+    match (st) {
+        parser.StmtAssign(asn) => {
+            if (asn.target != name) { return true; }
+            var o: string = fresh_rcpayload_enum_init(asn.value, structs);
+            if (o == "") { o = rcenum_call_init_owner(asn.value, opt_fresh_ret); }
+            return o != "" && o == owner;
+        },
+        parser.StmtIf(iff) => {
+            return all_assigns_fresh_rcenum(iff.then_body, name, owner, structs, opt_fresh_ret)
+                && all_assigns_fresh_rcenum(iff.else_body, name, owner, structs, opt_fresh_ret);
+        },
+        parser.StmtWhile(w) => { return all_assigns_fresh_rcenum(w.body, name, owner, structs, opt_fresh_ret); },
+        parser.StmtFor(f) => { return all_assigns_fresh_rcenum(f.body, name, owner, structs, opt_fresh_ret); },
+        parser.StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (!all_assigns_fresh_rcenum(m.arms[i].body, name, owner, structs, opt_fresh_ret)) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        parser.StmtDefer(d) => { return stmt_assigns_fresh_rcenum(d.action, name, owner, structs, opt_fresh_ret); },
+        _ => { return true; }
+    }
+}
+
 function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
@@ -21826,7 +21889,13 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
                 // the call result is a sole-owned chain exactly like an inline ctor).
                 var rceo: string = fresh_rcpayload_enum_init(v.init, structs);
                 if (rceo == "") { rceo = rcenum_call_init_owner(v.init, opt_fresh_ret); }
-                if (rceo != "" && util.index_of_str(reassigned, v.name) < 0) {
+                // A REBOUND name is admitted when every assignment constructs a
+                // fresh chain of the SAME enum (#6127) — the rebind then routes
+                // through emit_enum_deep_reinit_store like the re-declared
+                // loop-local already did.
+                var rce_rebind_ok: boolean = util.index_of_str(reassigned, v.name) < 0
+                    || all_assigns_fresh_rcenum(stmts, v.name, rceo, structs, opt_fresh_ret);
+                if (rceo != "" && rce_rebind_ok) {
                     var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
@@ -26060,7 +26129,14 @@ function consumed_rcpayload_enum_frees(body: parser.Stmt[], structs: parser.Stru
         match (body[vi]) {
             parser.StmtVar(v) => {
                 var owner: string = fresh_rcpayload_enum_init(v.init, structs);
-                if (owner != "" && util.index_of_str(reassigned, v.name) < 0) {
+                // A REBOUND name is admitted when every assignment builds a fresh
+                // chain of the same enum (#6127). The rebinds release the orphaned
+                // chains via emit_enum_deep_reinit_store; this free is what releases
+                // the LAST one, and without it the final value's box + payload leaked
+                // (2 blocks per round) even with the rebind release in place.
+                var cre_rebind_ok: boolean = util.index_of_str(reassigned, v.name) < 0
+                    || all_assigns_fresh_rcenum(body, v.name, owner, structs, []);
+                if (owner != "" && cre_rebind_ok) {
                     var match_idx: i32 = sole_top_level_match_idx(body, v.name);
                     if (match_idx > vi) {
                         var arms_use: boolean = match_arms_use_name(body[match_idx], v.name);
