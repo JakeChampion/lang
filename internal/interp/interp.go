@@ -580,6 +580,49 @@ func New() *Interp {
 	registerBitCount("__ctz64", 64, ctzOf)
 	registerBitCount("__popcount32", 32, popOf)
 	registerBitCount("__popcount64", 64, popOf)
+	// __memchr(s, byte, from) — first index of `byte` at or after `from`,
+	// or -1. This is the interpreter's reference semantics for the SIMD
+	// kernel the compiled backends vectorise (docs/ATLAS-PLATFORM-PLAN.md
+	// §3); the differential tests compare each backend against it, so it is
+	// deliberately the dumbest correct implementation.
+	//
+	// `from` is clamped rather than rejected: a negative start behaves as 0
+	// and a start past the end finds nothing, which is what the callers in
+	// std/string's search family already assume of their own scan loops.
+	i.Builtins["__memchr"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__memchr: expected 3 args, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__memchr: expected a string, got %T", args[0])
+		}
+		bn, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__memchr: expected an integer byte, got %T", args[1])
+		}
+		fn, ok := args[2].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__memchr: expected an integer start, got %T", args[2])
+		}
+		want := int64(bn)
+		from := int(int64(fn))
+		if from < 0 {
+			from = 0
+		}
+		// A byte outside 0..255 cannot occur in the haystack. Checked up
+		// front so the scan itself needs no per-iteration guard.
+		if want < 0 || want > 255 {
+			return Number(-1), nil
+		}
+		b := []byte(string(s))
+		for idx := from; idx < len(b); idx++ {
+			if int64(b[idx]) == want {
+				return Number(idx), nil
+			}
+		}
+		return Number(-1), nil
+	}}
 	// __arr_push_shared_count(): the rc==1 cliff counter on the compiled
 	// backends — appends that copied a buffer which still had room, so the
 	// copy was bought by an extra reference. The interpreter has no refcounts

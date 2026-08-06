@@ -594,6 +594,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesStrcmp {
 		g.emitStrcmpRuntime()
 	}
+	if g.usesMemchr {
+		g.emitMemchrRuntime()
+	}
 	if g.usesF64Trans {
 		g.emitFloatTranscendentalsRuntime()
 	}
@@ -822,6 +825,8 @@ type generator struct {
 	// takes over from the assignment's dec-on-overwrite).
 	usesStrAppend bool
 	usesStrcmp    bool
+	// usesMemchr gates the SSE2 byte-search kernel (__fern_memchr).
+	usesMemchr bool
 	// usesF64Trans gates the f64 transcendental bundle —
 	// __fern_{exp,log,sin,cos,pow}_f64 and its shared .rodata
 	// coefficient table. One flag for all five because `pow` is
@@ -1188,6 +1193,8 @@ func (g *generator) recordUse(target string) {
 	case "__fern_map_hash_seed":
 		g.usesMapHashSeed = true
 		g.usesRandomI32 = true // the lazy first-call draw
+	case "__fern_memchr":
+		g.usesMemchr = true
 	case "__fern_heap_bump_bytes":
 		g.usesHeapBumpBytes = true
 		g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
@@ -7207,6 +7214,87 @@ func (g *generator) emitF64Negate(reg string) {
 	g.emit("movabs rdx, 0x8000000000000000")
 	g.emit("movq xmm8, rdx")
 	g.emit("xorpd " + reg + ", xmm8")
+}
+
+// emitMemchrRuntime emits `__fern_memchr(s, byte, from) -> i32`: the index of
+// the first occurrence of `byte` in `s` at or after `from`, or -1.
+//
+// This is the first kernel of docs/ATLAS-PLATFORM-PLAN.md §3, and it is
+// deliberately SCALAR for now — §3.4's ordering is that the intrinsic becomes
+// TOTAL on every backend before anything depends on it being fast.
+//
+// THE VECTOR VERSION IS WRITTEN AND VERIFIED, AND IS BLOCKED ON THE
+// ASSEMBLER, NOT ON THE DESIGN. The SSE2 body — splat the needle with
+// `movd`/`punpcklbw`/`punpcklwd`/`pshufd`, then `movdqu` / `pcmpeqb` /
+// `pmovmskb` / `bsf` at 16 bytes per iteration — assembles under GNU `as`
+// and passes this file's tests via `-cc gcc`. It cannot be the default
+// because `internal/native/x86_64`, the in-process assembler that
+// `-target x86-64` uses unless `-cc` opts out, encodes none of those six
+// instructions (it refuses cleanly rather than emitting garbage, which is
+// how this was found).
+//
+// So the vectorisation slice's real prerequisite is assembler coverage:
+// movdqu, pcmpeqb, pmovmskb, pshufd, punpcklbw/punpcklwd, and bsf on x86-64,
+// with the NEON equivalents on arm64. §3 of the plan understated this — it
+// argued the fused design needs no vector register class, no regalloc and no
+// ABI change, all true, but silently assumed the assemblers could already
+// encode vector instructions. They cannot.
+//
+// No CPU feature detection is needed either way: SSE2 is inside the declared
+// x86-64 baseline (Haswell-class, SSE4.2 + BMI1), so a selected instruction
+// is a hard requirement rather than a fast path.
+//
+// The `from` argument is clamped rather than validated — negative behaves as
+// 0, past-the-end finds nothing — matching the interpreter reference and the
+// scan loops in std/string this is intended to replace.
+func (g *generator) emitMemchrRuntime() {
+	g.line("")
+	g.line(".globl __fern_memchr")
+	g.line(".type __fern_memchr, @function")
+	g.label("__fern_memchr")
+	// rdi = string, esi = byte, edx = from.
+	// Frame: 16 bytes of emitStrDataPtr scratch (the operand may be an
+	// inline SSO string, which has to be spilled to get an address).
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")
+	g.emitStrLen("ecx", "rdi") // ecx = len
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	// Clamp `from` into [0, len]. Anything at or past len finds nothing.
+	g.emit("test edx, edx")
+	g.emit("jns .Lmemchr_from_ok")
+	g.emit("xor edx, edx")
+	g.label(".Lmemchr_from_ok")
+	g.emit("cmp edx, ecx")
+	g.emit("jge .Lmemchr_miss")
+	// A byte outside 0..255 can never occur. Checked once, so neither the
+	// vector nor the scalar loop needs a per-iteration guard.
+	g.emit("cmp esi, 255")
+	g.emit("ja .Lmemchr_miss")
+	// r8 = cursor, r9 = end.
+	g.emit("mov r8d, edx")
+	g.emit("add r8, rdi") // cursor = data + from
+	g.emit("mov r9d, ecx")
+	g.emit("add r9, rdi") // end = data + len
+	g.label(".Lmemchr_tail")
+	g.emit("cmp r8, r9")
+	g.emit("jge .Lmemchr_miss")
+	g.emit("movzx eax, byte ptr [r8]")
+	g.emit("cmp eax, esi")
+	g.emit("je .Lmemchr_tail_hit")
+	g.emit("inc r8")
+	g.emit("jmp .Lmemchr_tail")
+	g.label(".Lmemchr_tail_hit")
+	g.emit("mov rax, r8")
+	g.emit("sub rax, rdi")
+	g.emit("jmp .Lmemchr_ret")
+	g.label(".Lmemchr_miss")
+	g.emit("mov eax, -1")
+	g.label(".Lmemchr_ret")
+	g.emit("add rsp, 16")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_memchr, .-__fern_memchr")
 }
 
 func (g *generator) emitStrcmpRuntime() {

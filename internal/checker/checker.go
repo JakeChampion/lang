@@ -1177,6 +1177,30 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			Result: ast.NumberType{Width: 32, Signed: true},
 		}
 	}
+	// __memchr(s, byte, from): index of the first occurrence of `byte` in
+	// `s` at or after `from`, or -1. The first SIMD kernel — see
+	// docs/ATLAS-PLATFORM-PLAN.md §3.
+	//
+	// It takes a `string`, NOT a pointer and a length, and that is the
+	// design rather than a convenience. Fern has no way to express a raw
+	// pointer into a string's bytes (the blocker on SWAR hashing, #6200),
+	// so a `(ptr, len)` signature would need a new language surface first.
+	// Handing the backend a whole string instead lets IT do the extraction
+	// — it already knows the two-word SSO ABI — so no pointer ever crosses
+	// the language boundary and the vector lifetime stays entirely inside
+	// one emitted body.
+	//
+	// `byte` is taken as i32 rather than u8 so callers can pass an indexed
+	// byte (`s[i]`, itself u8) widened, or a literal, without a cast at
+	// every site. Values outside 0..255 simply never match.
+	c.info.FuncSigs["__memchr"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __heap_mark(): i64 / __heap_release_to(mark: i64) — one-level arena
 	// checkpoint. Mark captures the bump cursor (plus a freelist-head
 	// snapshot); release_to rewinds to it, reclaiming everything allocated
