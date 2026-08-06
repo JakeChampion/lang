@@ -454,6 +454,14 @@ function main(): i32 {
         write(asm_arm64_ir.emit_module_or_error(parser.module_with_builtins(merged), false));
         return 0;
     }
+    if (target == "arm64-darwin") {
+        // The same emitter with the Darwin syscall builtins selected, reskinned
+        // to the Mach-O dialect — the GAS text `fern.fern -target arm64-darwin`
+        // hands to its in-process assembler. Emitted here so a harness can
+        // inspect the darwinized output without building the whole CLI.
+        write(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error(parser.module_with_builtins(merged), true)));
+        return 0;
+    }
     var mwb: parser.Module = parser.module_with_builtins(merged);
     // OVER the merged 512-function IR budget but small enough to fit one process:
     // route per-module (each module is under budget → IR) instead of dropping the

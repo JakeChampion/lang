@@ -440,6 +440,14 @@ pub function op_syscall4(): Op { return op0("syscall4"); }
 // envp pointer (the `char **` the kernel handed _start, saved in __fern_envp).
 // A single `movq __fern_envp(%rip), %rax`. The env leaf walks the array from it.
 pub function op_raw_environ(): Op { return op0("raw_environ"); }
+// raw_addr (#2649 raw-memory floor): pops [ptr, off] → ptr + off, computed at
+// the machine's FULL pointer width. It exists because `p + off` written in the
+// helper source does not survive: the surface type of a raw pointer is i32, so
+// the arm64 backend sign-extends the sum back to 32 bits (`sxtw x0, w0`) and a
+// high heap address comes out truncated. The load/store intrinsics dodge this
+// by folding the offset into the addressing mode; a pointer that has to be
+// PASSED somewhere (a syscall buffer arg) needs this instead.
+pub function op_raw_addr(): Op { return op0("raw_addr"); }
 
 // Random / byte-source builtins (issue #2747) — the cross-backend byte source
 // uuid (#2682) and a future std/crypto build on. Each lowers to a runtime
@@ -1484,6 +1492,7 @@ function kind_id_4(name: string): i32 {
     if (name == "ctz") { return 220; }
     if (name == "popcount") { return 221; }
     if (name == "map_hash_seed") { return 222; }
+    if (name == "raw_addr") { return 223; }
     return 0;
 }
 
@@ -1735,13 +1744,14 @@ function kind_name_4(id: i32): string {
     if (id == 220) { return "ctz"; }
     if (id == 221) { return "popcount"; }
     if (id == 222) { return "map_hash_seed"; }
+    if (id == 223) { return "raw_addr"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … raw_environ=207)
+// extension tags beyond kind_count() (struct_copy=198 … raw_addr=223)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }

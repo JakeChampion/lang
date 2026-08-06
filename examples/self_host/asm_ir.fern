@@ -4559,11 +4559,9 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
         // crash-only supervision (#5686): the entry owns fork / wait4.
         "__fern_proc_fork", "__fern_proc_waitpid", "__fern_proc_exec",
-        // __fern_random_bytes: register-ABI symbol kept for the arm64 / AST
-        // backends (still hand-asm); the x86-64 IR path defines the Fern-compiled
-        // __fn___fern_random_bytes (#2649). Both listed during the transition —
-        // a .globl of an undefined symbol is a harmless no-op per backend.
-        "__fern_random_bytes", "__fn___fern_random_bytes",
+        // random_bytes is Fern on BOTH register backends now (#2649), so only the
+        // stack-ABI symbol exists; the register-ABI __fern_random_bytes is gone.
+        "__fn___fern_random_bytes",
         // clocks (#2649): register-ABI symbols kept for arm64/AST (hand-asm); the
         // x86-64 IR path defines the Fern-compiled __fn___fern_*_ns. Both listed
         // during the transition (a .globl of an undefined symbol is a no-op).
@@ -5078,6 +5076,11 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // [n] → the fixed static scratch buffer's address (#2649). n is a
             // hint; discard it and push &__fern_scratch (reused, never freed).
             s = s.write("    popq %rax\n    leaq __fern_scratch(%rip), %rax\n    pushq %rax\n");
+        } else if (o.kind_tag == 223) {  // raw_addr
+            // pop off (top), ptr; push ptr+off at full width (#2649). The
+            // load/store intrinsics fold their offset into the addressing mode;
+            // this is the form for an address that has to be passed on.
+            s = s.write("    popq %rcx\n    popq %rax\n    addq %rcx, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 5) {  // const_str
             // String literal: intern the bytes in .rodata, build an rc-headered box
             // via __fern_str_box (#2649 Option A) — data = .rodata label, len = byte
@@ -7288,11 +7291,11 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     }
     // random_bytes — now a Fern runtime function (#2649), lowered through the IR
     // pipeline: alloc n bytes, fill from getrandom via the __syscall3 sub-floor,
-    // box with __raw_string. Heap-dependent (present above); x86-64-only (the
-    // getrandom syscall number is arch-specific — arm64/wasm keep their bundle).
+    // box with __raw_string. Heap-dependent (present above). The source is shared
+    // with arm64 (asm_arm64_ir passes its own number); 318 is x86-64 getrandom.
     if (s.has_need("random_bytes")) {
         s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes(), all_structs, s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes("318"), all_structs, s);
     }
     // str_split — now a Fern runtime function (#2649), lowered through the IR
     // pipeline: scan for `sep`, append each segment slice (.append() ->

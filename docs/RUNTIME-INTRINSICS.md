@@ -13,19 +13,41 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > `string_from_bytes_unchecked` and `str_split` all lower as Fern functions via these
 > raw-memory intrinsics.
 >
-> **Status update (2026-07, syscall sub-floor): in progress.** The `__syscall3`
-> intrinsic (below) landed; `random_bytes` and the three clocks (`monotonic_ns`
-> / `now_unix_ms` / `now_ns`) are the syscall leaves moved to Fern so far — on
-> the **x86-64 IR path** (`asmcore.rt_src_random_bytes` / `_monotonic_ns` / …;
-> the arm64 / AST backends keep their hand-asm because the syscall numbers are
-> arch-specific, and wasm has no generic syscall). The clocks slice added one
+> **Status update (2026-08, the syscall floor reaches arm64.)** `random_bytes`
+> is the first syscall leaf to be Fern on **both** register backends: the
+> `__syscall3` op now has an arm64 emitter, and the shared
+> `asmcore.rt_src_random_bytes` source takes the target's entropy syscall number
+> as a parameter (x86-64 getrandom 318 / arm64-linux getrandom 278 /
+> arm64-darwin getentropy BSD 500). That parameterisation is the answer to the
+> "the syscall number is arch-specific, so a shared source can't hardcode one"
+> problem this doc used to close the syscall-leaf section with.
+>
+> Two things made it work. First, **darwinize**: it remaps a syscall by matching
+> a literal `mov x8, #N`, which a generic `__syscall3` — whose number is an
+> operand — never emits, so it instead matches the op's number load
+> (`ldr x8, [sp], #16`), rewrites it to `x16`, flips the trap to `svc #0x80` and
+> normalises the carry-flag errno; the number itself is already the Darwin one
+> because the source was generated for that target. Second, **`__raw_addr`**
+> (added to the table below): the helper fills the buffer in <= 256-byte chunks
+> — getentropy's hard per-call limit, and on Linux the fix for getrandom
+> short-filling an n > 256 — and the chunk address cannot be written `p + off`,
+> which arm64 truncates to 32 bits. Migrating also fixed a live arm64 bug: the
+> hand-asm built a bare 16-byte `{data,len}` box, so every dec of a
+> `random_bytes` string read its refcount out of the preceding allocation;
+> `__raw_string` goes through `__fern_str_box`, which writes the rc header.
+>
+> The three clocks (`monotonic_ns` / `now_unix_ms` / `now_ns`) are still
+> **x86-64 IR only**: unlike getrandom they have no number-compatible Darwin
+> form at all (gettimeofday with a different struct; CNTVCT_EL0, not a syscall),
+> so arm64 keeps its hand-asm there. wasm has no generic syscall. The clocks
+> slice added one
 > more floor primitive — `__raw_scratch` (a fixed static buffer for the kernel
 > to write `timespec`/`stat` into — no per-call heap leak) — and reuses the
 > existing `__load_i64` for the i64 `tv_sec`/`tv_nsec` read-back. What remains
 > hand-written (the residue tracked by
-> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is `read_file` + the
-> rest of the fs family, the syscall leaves on arm64/AST/wasm, `__fern_alloc`
-> itself, and the map/array mutator core.
+> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is the fs family on
+> arm64 (x86-64 has it all — see below), the clocks on arm64, the wasm bundles,
+> `__fern_alloc` itself, and the map/array mutator core.
 >
 > **Status update (2026-07, user-typed returns): `stat` migrated.** `stat` is the
 > first leaf returning a **user-typed** value — `Result[FileStat, IoError]` — and
@@ -135,6 +157,7 @@ nominal.
 | `__raw_scratch(n: i32): i32` | `leaq __fern_scratch(%rip), %rax` | a fixed static (.bss) scratch buffer the syscall leaves hand the kernel to write into (`timespec`, `stat`) — reused, never freed, so no per-call leak. `n` is a size hint; the buffer is fixed. **Non-reentrant** (one leaf reads it fully before another runs) |
 | `__syscall4(nr, a1, a2, a3, a4): i32` | like `__syscall3` plus `a4→%r10; syscall` | the 4-arg sub-floor sibling, for syscalls whose 4th arg is meaningful (`openat`'s `mode` with `O_CREAT`, `newfstatat`'s `flags`) |
 | `__raw_environ(): i32` | `movq __fern_envp(%rip), %rax` | the process `envp` pointer (saved by `_start`); the `env` leaf walks the array from it |
+| `__raw_addr(ptr: i32, off: i32): i32` | `addq %rcx, %rax` / `add x0, x0, x1` | `ptr + off` at the machine's FULL pointer width, for an address that has to be **passed** somewhere (a syscall buffer arg). Writing `p + off` in the helper source does not work: a raw pointer's surface type is `i32`, so arm64 narrows the sum back (`sxtw x0, w0`) and a high heap address arrives truncated. The load/store intrinsics dodge this by folding the offset into the addressing mode; this is the form for everything else |
 
 Reading the kernel-written 8-byte fields (`tv_sec` / `tv_nsec`) back into i64
 math reuses the **existing** `__load_i64(addr): i64` intrinsic (#4375) — no new
@@ -227,17 +250,22 @@ deleting the manual bookkeeping in favour of the real call graph + deadcode.
    **`str_replace`** — the remaining per-byte string builders, one slice each
    (or grouped by similarity), following the established four-backend +
    AST/IR-lock-in-test pattern.
-5. **The syscall leaves** (`read_file`, clocks, `random_bytes`) via the
-   `__syscall3` intrinsic — a separate sub-floor. **In progress:** `__syscall3`
-   landed; `random_bytes` (`rt_src_random_bytes`) and the three clocks
-   (`rt_src_monotonic_ns` / `_now_unix_ms` / `_now_ns`, which also needed
-   `__raw_scratch` + reused `__load_i64`) moved to Fern on the x86-64 IR path. The
-   syscall *number* is arch-specific (x86-64 getrandom = 318 / clock_gettime =
-   228, arm64 = 278 / 113) and the `rt_src_*` sources are shared between the
-   register backends, so arm64/AST parity needs an arch-parameterised source (or
-   a `__sysno_*` constant); wasm keeps its WASI bundles. `read_file` + the fs
-   family (multi-syscall + `stat` scratch + Result) follow.
+5. **The syscall leaves** via the `__syscall3` / `__syscall4` sub-floor.
+   **Done on x86-64 IR:** `random_bytes`, the three clocks (which also needed
+   `__raw_scratch` + `__load_i64`), and the whole fs family — `stat`,
+   `read_file`, `write_file`, `remove_file`, `read_dir`, `remove_dir_all`,
+   `temp_dir`, `env` — over a shared Fern `__fern_io_error` classifier.
+   **On arm64: `random_bytes` only, so far.** The blocker this doc used to name
+   here — "the syscall number is arch-specific and the `rt_src_*` sources are
+   shared, so parity needs an arch-parameterised source" — is now solved:
+   `rt_src_random_bytes(sysno)` takes the number as a parameter, and darwinize
+   rewrites the generic-syscall sequence for Mach-O (see the status block up
+   top). The remaining arm64 leaves are the ones where the *number* is not the
+   only difference: Darwin has no `clock_gettime` (gettimeofday with another
+   struct, or CNTVCT_EL0) and its `stat` layout differs from Linux's, so each
+   needs a per-platform source body rather than a substituted constant.
+   wasm keeps its WASI bundles — it has no generic syscall.
 
-Each slice ships with AST + IR lock-in tests (the helper compiles from Fern,
-the hand-asm label is gone) and reuses the existing behavioural coverage, and
+Each slice ships with IR lock-in tests (the helper compiles from Fern, the
+hand-asm label is gone) and reuses the existing behavioural coverage, and
 must keep the self-compile fixpoint byte-identical.

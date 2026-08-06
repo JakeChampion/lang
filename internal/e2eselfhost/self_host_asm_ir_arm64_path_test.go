@@ -833,6 +833,13 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"i64arr-unannot-forin", `function main(): i32 { var xs = [10 as i64, 20 as i64]; var s: i64 = 0 as i64; for x in xs { s = s + x; } return s as i32; }`, 30},
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
 		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0] as i32; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
+		// random_bytes over MORE than one chunk (#2649). The Fern helper fills
+		// the buffer in <= 256-byte pieces — getentropy's per-call ceiling on
+		// Darwin, and on Linux the fix for getrandom short-filling a big n. The
+		// chunk address is __raw_addr(p, off), so a truncated heap pointer (what
+		// plain `p + off` produces on arm64, where i32 arithmetic sign-extends
+		// back to 32 bits) EFAULTs and leaves the tail zeroed -> 2.
+		{"random-bytes-chunked", `function main(): i32 { var b: string = random_bytes(600); if (b.len() != 600) { return 1; } var v: i32 = 0; var i: i32 = 256; while (i < 600) { v = v | (b[i] as i32); i = i + 1; } if (v == 0) { return 2; } var w: i32 = 0; var j: i32 = 0; while (j < 256) { w = w | (b[j] as i32); j = j + 1; } if (w == 0) { return 3; } return 42; }`, 42},
 		{"uuid-v4", uuidV4Program, 0},
 		// Range-for through the arm64 self-host IR path (#2699). The legacy
 		// AST arm64 emitter has no range desugar, so these ride the IR-only

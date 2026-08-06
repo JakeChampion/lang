@@ -6,11 +6,17 @@ byte-building Tier-2 set (`chr`, `str_concat`, `i32_to_string`,
 `string_from_bytes`, `str_split`) now lowers as Fern functions via the
 raw-memory intrinsics (`RUNTIME-INTRINSICS.md`), on top of the earlier
 Tier-0/1 slices (`__fern_i32_pow`, the five `__fern_arr_i32_*` reducers,
-`__fern_str_to_i32`, and the str predicates/utilities). What remains
+`__fern_str_to_i32`, and the str predicates/utilities). The **syscall
+leaves** followed on the x86-64 IR path (`random_bytes`, the three clocks,
+and the whole fs family) over the `__syscall3` / `__syscall4` /
+`__raw_scratch` / `__raw_environ` sub-floor, and as of 2026-08
+`random_bytes` is the first of them to reach **arm64** as well — the shared
+source takes the target's syscall number as a parameter. What remains
 hand-written — and what keeps
 [#2649](https://github.com/JakeChampion/lang/issues/2649) open — is the
 core allocator / map / array runtime (`__fern_alloc`, `__fern_map_*`,
-`__fern_arr_*` mutators) and the per-backend wasm helper bundles. This is the architecture document the end goal of
+`__fern_arr_*` mutators), the fs + clock leaves on arm64, and the
+per-backend wasm helper bundles. This is the architecture document the end goal of
 [#2649](https://github.com/JakeChampion/lang/issues/2649) needs as more helpers
 move; see the "Slice 1 / Slice 2 (landed)" sections at the end for what the
 first migrations actually took, which was simpler than first proposed. The near-term stepping stone it references
@@ -26,10 +32,9 @@ The backend runtime helpers — `__fern_alloc`, `__fern_str_eq`,
 
 | Backend | Emitter | Gating |
 | --- | --- | --- |
-| self-host x86-64 (legacy AST) | `asm.fern` `emit_runtime` | `need`/`has_need` + `runtime_need_deps`/`close_needs` |
-| self-host x86-64 (IR path) | `asm_ir.fern` `emit_ir_runtime` | same, shared via `asmcore.fern` |
-| self-host arm64 | `asm_arm64.fern` / `asm_arm64_ir.fern` | same |
-| self-host wasm | `wasm.fern` helper bundles | `module_uses_*` + ad-hoc `if` coupling |
+| self-host x86-64 | `asm_ir.fern` `emit_ir_runtime` | `need`/`has_need` + `runtime_need_deps`/`close_needs`, shared via `asmcore.fern` |
+| self-host arm64 | `asm_arm64_ir.fern` | same |
+| self-host wasm | `wasm_ir.fern` helper bundles | `module_uses_*` + ad-hoc `if` coupling |
 | native (Go) x86-64 | `internal/codegen/x86_64/x86_64.go` | `recordUse` use-flags |
 | native (Go) arm64 | `internal/codegen/arm64/arm64.go` | `recordUse` use-flags |
 | native (Go) wasm | `internal/codegen/wasmbin/runtime.go` | use-flags |
