@@ -1304,6 +1304,7 @@ function arm64_funary_d_base(mnem: string): i64 {
     if (mnem == "frintp") { return 0x1e64c000; } // ceil
     if (mnem == "frintz") { return 0x1e65c000; } // trunc
     if (mnem == "frinta") { return 0x1e664000; } // round half away from zero
+    if (mnem == "frintn") { return 0x1e644000; } // round half to EVEN (x86 roundsd mode 0)
     return 0 - 1;
 }
 function arm64_funary_d(buf: i32[], base: i64, rd: i32, rn: i32): i32[] {
@@ -2399,7 +2400,7 @@ function arm64_gas_known(mnem: string): boolean {
     // program loop refused instructions the assembler could already encode
     // perfectly (#6044). Add to both places, or to neither.
     if (mnem == "fcvt" || mnem == "fneg" || mnem == "fabs" || mnem == "fsqrt") { return true; }
-    if (mnem == "frinta" || mnem == "frintm" || mnem == "frintp" || mnem == "frintz") { return true; }
+    if (mnem == "frinta" || mnem == "frintm" || mnem == "frintp" || mnem == "frintz" || mnem == "frintn") { return true; }
     if (arm64_funary_d_base(mnem) >= 0) { return true; }
     if (mnem.len() >= 3 && mnem[0] == 98 && mnem[1] == 46) { return true; } // b.<cond>
     if (mnem.len() == 3 && mnem[0] == 98 && arm64_gas_is_cond(mnem[1:3])) { return true; } // b<cond>
