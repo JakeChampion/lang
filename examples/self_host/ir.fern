@@ -568,6 +568,20 @@ pub function op_arr_push_shared_count(): Op { return op0("arr_push_shared_count"
 // `__fern_arr_push_copied` word, wasm a fixed low-memory slot. Mirrors
 // native's __fern_arr_push_shared_bytes.
 pub function op_arr_push_shared_bytes(): Op { return op0("arr_push_shared_bytes"); }
+// `__map_hash_seed` takes no operands → an i32: core/map's per-process
+// string-hash seed, mixed into its FNV basis so attacker-supplied key strings
+// cannot be precomputed into a colliding set offline (#6194). Drawn once from
+// the same CSPRNG as random_i32 and cached in a runtime word, so every map
+// after the first pays a load rather than a syscall. Never 0 — that is
+// core/map's "unseeded" sentinel, and a 0 reaching a map header would leave
+// that map unseeded.
+//
+// The self-host's own `Map[K, V]` lowers to the native `__fern_map_*` runtime
+// rather than to core/map's Fern bodies, so this op exists for those bodies to
+// COMPILE and LINK (see the `core/map` note in each backend's intrinsic
+// section) — the seed it returns is not what a self-host-compiled program's
+// maps hash with. Seeding the self-host map runtime is separate work.
+pub function op_map_hash_seed(): Op { return op0("map_hash_seed"); }
 // `str_bytes` pops [str] → a fresh u8[] (one i32 slot per byte). Backs both
 // `s.bytes()` (copying) and `s.as_bytes()` — the self-host's slot-array model
 // has no separate zero-copy slice view, so as_bytes returns the same fresh
@@ -1469,6 +1483,7 @@ function kind_id_4(name: string): i32 {
     if (name == "clz") { return 219; }
     if (name == "ctz") { return 220; }
     if (name == "popcount") { return 221; }
+    if (name == "map_hash_seed") { return 222; }
     return 0;
 }
 
@@ -1719,6 +1734,7 @@ function kind_name_4(id: i32): string {
     if (id == 219) { return "clz"; }
     if (id == 220) { return "ctz"; }
     if (id == 221) { return "popcount"; }
+    if (id == 222) { return "map_hash_seed"; }
     return "invalid";
 }
 
@@ -1934,6 +1950,10 @@ pub function op_allocates(tag: i32): boolean {
     // Same gate, same reason as heap_bump_bytes above — and the same for its
     // byte-weighted sibling, which reads the accumulator beside that counter.
     if (tag == 216 || tag == 217) { return true; }
+    // map_hash_seed does not allocate, but it reads (and lazily fills) a
+    // runtime word that only exists alongside the heap runtime. Same gate,
+    // same reason as the two counters above.
+    if (tag == 222) { return true; }
     return false;
 }
 

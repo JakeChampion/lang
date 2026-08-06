@@ -2031,6 +2031,41 @@ func buildRandomI32Body(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
+// buildMapHashSeedBody assembles the wasm bytes for __fern_map_hash_seed.
+//
+// Signature: () → i32
+//
+// core/map mixes this into its FNV basis so attacker-supplied key strings
+// cannot be precomputed into a colliding set offline (#6194). Per PROCESS,
+// not per map: the draw goes through wasi_random_get, which a program
+// creating maps freely must not pay repeatedly.
+//
+// The cached word IS the cache flag — zero means "not yet drawn" — so the
+// drawn value is OR'd with 1. A zero seed is also core/map's "unseeded"
+// sentinel, which would silently leave that map unseeded.
+//
+// Body: if mem[mapHashSeedAddr] == 0 { mem[..] = __fern_random_i32() | 1 };
+// return mem[mapHashSeedAddr]. Works unchanged under preview 2 because it
+// reaches the host only through __fern_random_i32, which has its own
+// preview-2 override.
+func buildMapHashSeedBody(idxs map[string]uint32) []byte {
+	randomI32 := idxs["__fern_random_i32"]
+	var body []byte
+	body = inst.InstI32Const(body, mapHashSeedAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, mapHashSeedAddr)
+	body = inst.InstCall(body, randomI32)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Or(body)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstEnd(body)
+	body = inst.InstI32Const(body, mapHashSeedAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 // preview2HelperBodyOverrides maps helper names whose body bytecode
 // changes under EmitOptions.Preview2WASI to the preview-2 variant.
 // The override is selected at module-assembly time in

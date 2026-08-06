@@ -7462,6 +7462,13 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     if (cid.name == "__arr_push_shared_bytes" && c.args.len() == 0) {
         return s.emit(ir.op_arr_push_shared_bytes());
     }
+    // __map_hash_seed(): core/map's per-process string-hash seed. Lowered
+    // for the same reason core/map's other raw-memory builtins are — so
+    // that module's bodies COMPILE and LINK. The self-host's own Map lowers
+    // to the native __fern_map_* runtime, which does not consult it.
+    if (cid.name == "__map_hash_seed" && c.args.len() == 0) {
+        return s.emit(ir.op_map_hash_seed());
+    }
     if (decl_is_struct(s.structs, cid.name)) {
         if (!decl_is_leaksafe(s.structs, cid.name)) { return s.fail(); }
         // Variant / struct construction via a call form (`Many(items)`,

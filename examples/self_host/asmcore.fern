@@ -2156,6 +2156,9 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // i32 would wrap on exactly the runs it exists to measure.
                     // Matches native's FuncSigs.
                     if (id.name == "__arr_push_shared_bytes") { return ty_i64(); }
+                    // __map_hash_seed(): core/map's per-process string-hash
+                    // seed (#6194). i32, never 0. Matches native's FuncSigs.
+                    if (id.name == "__map_hash_seed") { return ty_i32(); }
                     if (id.name == "__load_i32") { return ty_i32(); }
                     if (id.name == "exit") { return ty_i32(); }
                     if (id.name == "args_count") { return ty_i32(); }

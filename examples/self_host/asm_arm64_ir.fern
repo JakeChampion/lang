@@ -692,6 +692,15 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.mark_heap();
             s = s.write("    adrp x0, __fern_arr_push_copied\n    add x0, x0, :lo12:__fern_arr_push_copied\n    ldr x0, [x0]\n");
             s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 222) {  // map_hash_seed
+            // core/map's per-process string-hash seed. A call, not an inline
+            // read: the draw is lazy, so the branch lives in the helper.
+            // Needs random_i32 for that draw. The self-host's own Map lowers
+            // to __fern_map_* and does not consult this — the op exists so
+            // core/map's bodies link (see the intrinsics section).
+            s = s.need("random_i32");
+            s = s.need("map_hash_seed");
+            s = s.write("    bl __fern_map_hash_seed\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 216) {  // arr_push_shared_count
             // The rc==1 append cliff counter, a plain .bss word bumped by
             // __fern_arr_push's un-share path. Needs the heap runtime for the
@@ -2955,6 +2964,11 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     // back by __fern_rc_underflow_count(). Mirrors the x86-64
     // backend + the native detector.
     s = s.write("__fern_rc_underflow: .quad 0\n");
+    s = s.write("    .align 3\n");
+    // core/map's per-process string-hash seed (#6194). Read and filled only
+    // by __fern_map_hash_seed, which lives in this same unit, so it needs no
+    // .globl (unlike the cliff counter below, which ops read inline).
+    s = s.write("__fern_map_seed: .quad 0\n");
     s = s.write("    .align 3\n");
     // The rc==1 append cliff counter (#6023): appends that copied a buffer
     // which still had spare capacity, so the copy was bought by an extra
@@ -7246,6 +7260,32 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_random_i32, .-__fern_random_i32\n");
+    }
+    // __fern_map_hash_seed() → core/map's per-process string-hash seed
+    // (#6194), drawn once via __fern_random_i32 and cached in the unit-local
+    // __fern_map_seed word.
+    //
+    // Forced nonzero: the word doubles as its own "already drawn" flag, and 0
+    // is also core/map's "unseeded" sentinel, so a drawn 0 would both re-draw
+    // every call and silently leave that map unseeded.
+    if (s.has_need("map_hash_seed")) {
+        s = s.write(".globl __fern_map_hash_seed\n");
+        s = s.write(".type __fern_map_hash_seed, %function\n");
+        s = s.write("__fern_map_hash_seed:\n");
+        s = s.write("    adrp x1, __fern_map_seed\n");
+        s = s.write("    add x1, x1, :lo12:__fern_map_seed\n");
+        s = s.write("    ldr w0, [x1]\n");
+        s = s.write("    cbnz w0, .Lmapseed_ret\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    bl __fern_random_i32\n");
+        s = s.write("    orr w0, w0, #1\n");
+        s = s.write("    adrp x1, __fern_map_seed\n");
+        s = s.write("    add x1, x1, :lo12:__fern_map_seed\n");
+        s = s.write("    str w0, [x1]\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write(".Lmapseed_ret:\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_map_hash_seed, .-__fern_map_hash_seed\n");
     }
     // __fern_proc_exec(x0 = path box, x1 = args box) -> i32 — execve. Only
     // returns on FAILURE (-errno); on success the process image is gone, which

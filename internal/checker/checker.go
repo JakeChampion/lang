@@ -1125,6 +1125,19 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{Width: 64, Signed: true},
 	}
+	// __map_hash_seed(): i32 — core/map's per-process string-hash seed
+	// (#6194). Drawn once from the same CSPRNG as random_i32, cached in a
+	// runtime word, and never zero (0 is core/map's "unseeded" sentinel).
+	//
+	// Compiler-internal rather than a user builtin, which is also what keeps
+	// it out of the capability inventory: seeding every string-keyed map
+	// would otherwise tag `core/map` — and so transitively almost every
+	// package — as reaching `random`, destroying that row's signal. The `__`
+	// prefix is the inventory's documented exemption.
+	c.info.FuncSigs["__map_hash_seed"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
 	// __heap_bump_bytes(): i64 — Phase 6 measurement probe. Returns the
 	// bump allocator's high-water mark (cursor − region base) in bytes; 0
 	// before the first alloc. The cursor only advances on a fresh bump,
