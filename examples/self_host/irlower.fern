@@ -27658,10 +27658,29 @@ function rcpayload_option_cand(v: parser.StmtVar, structs: parser.StructDecl[]):
         // was measured false in #6127 — the field buffer leaked once per bind, and the
         // REBOUND sibling has deep-dropped the same shape since #6252 without an
         // underflow. The literal's own type_name names the struct.
+        // The third disjunct is a DIRECT `string[]` field (#6127). nddo_reach
+        // credits an rc-array, a struct/enum-array, a nested struct and a bare
+        // `string` — but not a `string[]` — so `P { xs: string[], n: i32 }` reached
+        // neither of the first two and the candidate was refused outright: 500
+        // allocs and ZERO frees over 100 rounds, where the same struct bound as a
+        // BARE local is flat at 0. Adding an i32[] beside the string[] already
+        // admits the identical type and reclaims BOTH arrays (600/600, with
+        // __struct_drop_P emitted), so the drop side was complete and only the
+        // admission was short.
+        //
+        // It reuses struct_has_strarr_field rather than adding an arm to
+        // nddo_reach, because that function also decides deep-vs-shallow for
+        // NESTED-STRUCT fields in all three backends' __struct_drop emission — the
+        // surface #6148's use-after-free came from — and only the Option-payload
+        // admission should move. Whether the deep drop actually fires is still
+        // decided at EMIT time by struct_routes_field_reclaim, whose strarrfld
+        // verdict is whole-program: if it refuses the type, emit_struct_field_drops
+        // emits nothing and the payload box plus the option box are still freed.
         parser.ExprStructLit(slit) => {
             var sty: string = slit.type_name;
             if (!slit.has_base && decl_is_struct(structs, sty) && decl_is_leaksafe(structs, sty)
-                && (struct_is_scalar_only(structs, sty) || nested_field_deep_drop_ok(structs, sty))) {
+                && (struct_is_scalar_only(structs, sty) || nested_field_deep_drop_ok(structs, sty)
+                    || struct_has_strarr_field(structs, sty))) {
                 return OptRcCand { variant: kind, ptype: sty };
             }
         },
