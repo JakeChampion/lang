@@ -402,13 +402,19 @@ and native does not, measured rather than inferred by the
 `FERN_LEAKCHECK=1` differential in **#6127** — ~173 KB across six
 shapes at that sweep, every one scaling linearly with the round count.
 Most are now closed (#6218 / #6225 / #6232 / #6240 / #6251 / #6252 /
-#6255 / #6263); measured on `f58ab5d` the remainder is ~108 KB over
-four shapes — a rebound nested-struct local, a rebound
-`(i32, i32[])` and `(i32, string)` tuple, and a single-bind
-`Option[<struct-with-array>]`. Treat #6127 as the live list, and
-re-measure before quoting any figure here: three of that issue's own
-attributions were wrong because a sub-shape (single bind /
-declared-in-loop / rebound) went unprobed.
+#6255 / #6263 / #6285 / #6291 / #6308); what remains is the
+nested-struct family (a rebound nested-struct local, #6274) and the
+BARE-NAME struct credit block-scoped, which needs a narrower gate
+rather than a flip — flipping it segfaults the gen1 self-compile
+(#6285 has the bisect). Treat #6127 as the live list, and re-measure
+before quoting any figure here: FOUR of that issue's own attributions
+were wrong. Three because a sub-shape (single bind / declared-in-loop
+/ rebound) went unprobed, and one because the leaked OBJECT was
+misnamed — `optstruct_single` was recorded as a leaked struct box and
+was the array FIELD buffer, identical in size at the probe's shape, so
+it read as a missing dec when it was a missing `__struct_drop_<P>`.
+Vary one dimension at a time (array length vs field count) and
+re-measure before naming what leaked; it costs one build.
 Retiring the legacy AST emitters — the
 per-module epic's step 5 (#3457) — is **DONE**: all three are deleted and
 every backend routes IR-or-error. See
