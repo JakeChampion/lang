@@ -148,7 +148,31 @@ Both forms are one `match` after parsing — `if let`'s success arm is the
 then-block, `let … else`'s is the rest of the enclosing block, which is
 exactly why its bindings stay live there. So exhaustiveness and
 refutability are decided in a single place, and any pattern form the
-language gains reaches all three binding sites at once.
+language gains reaches every binding site at once.
+
+## Destructuring parameters
+
+A parameter can be a pattern instead of a name, annotated with the type
+it destructures:
+
+```fern
+function dist(Point { x, y }: Point): f64 { … }
+function span((lo, hi): (i32, i32)): i32 { return hi - lo; }
+function area(w @ Point { x, y }: Point): i32 { … }   // `w` is the whole value
+```
+
+`{ x: local }` renames a field and `{ x, .. }` documents the fields left
+unbound, as in a match arm. Both lambda forms take the same grammar:
+
+```fern
+var verbose = function(Point { x, y }: Point): i32 { return x + y; };
+var arrow = (Point { x, y }: Point) => x + y;
+```
+
+A parameter binds unconditionally — there is no else branch to run on a
+miss — so only patterns that always match are allowed. A refutable one
+(an enum variant, a literal element) is a compile error pointing you at
+`match` in the body.
 
 ## Match guards — `when`
 

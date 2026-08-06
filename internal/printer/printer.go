@@ -206,6 +206,26 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 		printExpr(b, x.Init)
 		b.WriteByte(';')
 	case *ast.Destructure:
+		// Struct mode (Fields set) binds by field name, not by position.
+		if x.Fields != nil {
+			b.WriteString("let ")
+			b.WriteString(x.StructName)
+			b.WriteString(" { ")
+			for i, field := range x.Fields {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(field)
+				if i < len(x.Names) && x.Names[i] != field {
+					b.WriteString(": ")
+					b.WriteString(x.Names[i])
+				}
+			}
+			b.WriteString(" } = ")
+			printExpr(b, x.Init)
+			b.WriteByte(';')
+			break
+		}
 		b.WriteString("let (")
 		for i, n := range x.Names {
 			if i > 0 {
