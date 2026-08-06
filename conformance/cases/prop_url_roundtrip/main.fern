@@ -1,3 +1,11 @@
+// Full cross-backend coverage. The arm64-only heap-corruption that
+// originally forced arm64 out of this case (a live string cell recycled
+// by the RcFree freelist drop/reuse path) was root-caused to
+// string_from_bytes allocating via plain __fern_alloc on the two-word
+// ABI — so the resulting string had no rc header and __fern_str_dec
+// read garbage at data-8 / data-4. Fixed in internal/codegen/arm64
+// (string_from_bytes now uses __fern_alloc_rc1, matching __str_slice /
+// __fern_strcat and the wasm two-word path). Tracked as #2817.
 import "std/url";
 import "std/i32";
 

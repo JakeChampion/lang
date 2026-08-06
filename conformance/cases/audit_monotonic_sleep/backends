@@ -1,3 +1,1 @@
-# native wasm sleep_ms (WASI poll-based) is a separate follow-up; monotonic_ns
-# already works on wasm. The other three backends are fixed by #2843.
 interp x86_64 arm64

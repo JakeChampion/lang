@@ -1,0 +1,4 @@
+waiver: harness-self-test
+reason: this case exists to exercise the runner's contains match mode — it
+  deliberately omits "beta" from expected.stdout. It asserts nothing about the
+  language, and is the only remaining user of contains mode.

@@ -1,8 +1,12 @@
 import "std/float";
-// std/float sqrt(16.0) = 4.0. sqrt lowers to a libm call that the
-// `-nostdlib` native backends can't link, so this fixture opts out
-// of arm64/x86_64 via its `backends` file and runs on interp + wasm.
-// Substring match stays robust to trailing fractional digits.
+// std/float sqrt(16.0) = 4.0, byte-exact on all four backends.
+// This used to opt out of arm64/x86_64 with "sqrt needs libm; the
+// -nostdlib native backends can't link it" and to match on a
+// substring "to stay robust to trailing fractional digits". Both
+// were stale: sqrt lowers to a hardware instruction (sqrtsd /
+// fsqrt) with nothing to link, and float formatting is pure Fern
+// and prints no trailing digits. The exclusion cost two backends
+// of real coverage.
 function main(): i32 {
     var x: f64 = 16.0;
     print(x.sqrt().to_string());

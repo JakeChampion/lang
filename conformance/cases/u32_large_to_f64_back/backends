@@ -1,6 +1,0 @@
-# All four. wasm is back (#5992): the fixture's wasm leg is the NATIVE backend
-# (wasmbin), which handles all three correctly — the divergence that got wasm
-# excluded here is in the SELF-HOST wasm emitter (wasm_ir.fern), which no
-# fixture leg runs, so the exclusion removed real native coverage and protected
-# nothing. The self-host gap is pinned where it lives instead.
-interp x86_64 arm64 wasm
