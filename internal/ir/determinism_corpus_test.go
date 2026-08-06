@@ -73,7 +73,15 @@ func TestLowerDeterministicOverFixtureCorpus(t *testing.T) {
 	if testing.Short() {
 		t.Skip("corpus determinism sweep is not a -short test")
 	}
-	cases, err := filepath.Glob(filepath.Join("..", "e2e", "testdata", "cases", "*", "main.fern"))
+	// conformance/cases, not internal/e2e/testdata/cases: #6337 moved the
+	// corpus out of internal/ and this glob did not follow it, which turned
+	// the guard from "the corpus is deterministic" into "there is no corpus"
+	// and made the whole test-units lane red on both arches.
+	//
+	// The count check below is what caught it. Keep it: a corpus glob that
+	// silently matches nothing is the one failure mode of this test that
+	// looks exactly like success.
+	cases, err := filepath.Glob(filepath.Join("..", "..", "conformance", "cases", "*", "main.fern"))
 	if err != nil {
 		t.Fatalf("glob fixtures: %v", err)
 	}
