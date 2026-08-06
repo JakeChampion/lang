@@ -1,0 +1,13 @@
+// Pins E034. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E034`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function main(): i32 {
+    var xs: i32[] = [1, "two"];   // error[E034]: array element type string, expected i32
+
+    var i: f32 = 0.5;
+    var x: i32 = xs[i];           // error[E034]: index must be an integer, got f32
+
+    var n: i32 = 42;
+    return n[0];                  // error[E034]: indexing non-array value of type i32
+}

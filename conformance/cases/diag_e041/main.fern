@@ -1,0 +1,12 @@
+// Pins E041. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E041`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function main(): i32 {
+    var a: i32 = 1;
+    var b: string = "hi";
+    if (a == b) {              // error[E041]: cannot compare i32 and string
+        return 1;
+    }
+    return 0;
+}

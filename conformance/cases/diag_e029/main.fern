@@ -1,0 +1,13 @@
+// Pins E029. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E029`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+enum Color { Red, Green }
+enum Status { Ok, Err }
+
+function f(c: Color): i32 {
+    match (c) {
+        Status.Ok => { return 1; },   // error[E029]: variant pattern qualifier "Status" does not match scrutinee enum Color
+        _ => { return 0; },
+    }
+}

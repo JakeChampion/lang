@@ -1,0 +1,10 @@
+// Pins E012. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E012`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function f(n: i32): i32 {
+    if (n < 0) {
+        return;   // error[E012]: return without value in function returning i32
+    }
+    return n;
+}

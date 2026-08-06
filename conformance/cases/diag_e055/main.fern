@@ -1,0 +1,10 @@
+// Pins E055. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E055`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function main(): i32 {
+var xs: i32[] = [1, 2, 3];
+xs.append(4);            // error[E055]: the new array is discarded; xs is unchanged
+
+    return 0;
+}

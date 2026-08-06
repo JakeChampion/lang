@@ -1,0 +1,1 @@
+Square does not implement Shape, so a 'dyn Shape' cannot downcast to it

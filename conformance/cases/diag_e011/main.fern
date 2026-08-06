@@ -1,0 +1,10 @@
+// Pins E011. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E011`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function main(): i32 {
+    if (true) {
+        break;   // error[E011]: break outside of a loop
+    }
+    return 0;
+}

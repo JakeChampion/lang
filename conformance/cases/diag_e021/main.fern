@@ -1,0 +1,7 @@
+// Pins E021. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E021`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+  trait Ord { function cmp(self: Self, other: Self): i32; }
+  @derive(Ord)                       // error[E021]: cannot @derive(Ord) for Foo:
+  struct Foo { x: i32 }              //   field x of type i32 does not implement Ord

@@ -1,0 +1,6 @@
+// Pins E016. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E016`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+struct Either { value: i32 }
+type Either = Foo | Bar;   // error[E016]: union "Either" collides with a struct of the same name

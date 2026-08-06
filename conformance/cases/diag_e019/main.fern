@@ -1,0 +1,10 @@
+// Pins E019. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E019`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+struct Pair[A, B] { first: A, second: B }
+
+function main(): i32 {
+    var p: Pair[i32] = Pair { first: 1, second: 2 };   // error[E019]: struct Pair has 2 type parameter(s), 1 supplied
+    return p.first;
+}

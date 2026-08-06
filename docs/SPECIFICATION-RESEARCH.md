@@ -368,6 +368,37 @@ Payoff: forces the question "is the rule behind E035 written down
 anywhere?" for 71 rules, and the answer is currently no for most of
 them.
 
+**Correction, from building it.** "Days, and a status promotion rather
+than a rewrite" was right about the policy docs and wrong about the
+diagnostics. Publishing the catalogue is not the work; asking what
+*checks* it is. Two things fell out that the plan did not anticipate:
+
+- **The Go tests do not survive the freeze.** 71 of the 75 codes were
+  exercised by a test under `internal/checker` or `internal/parser`, so
+  by the usual measure the catalogue was well covered. But a Go test
+  measures `internal/`, and after the freeze the self-host compiler is
+  the definition — a conformance case can be run against any
+  implementation, a Go test cannot. By that measure coverage was
+  **16 of 75**. It is now 54 of 74, mostly by deriving cases
+  mechanically from the catalogue's own examples, which has the side
+  effect of checking that those examples produce the errors they claim.
+- **`E039` was dead.** It documented a bare `len(x)` builtin with its
+  own arity and argument-type errors; no `errfCode` site emits it, and
+  `len` is a method, so the example in its own explanation could not
+  compile. `docs/SELFHOST-CHECKER-PORT.md` had already recorded the code
+  as dead without anyone deleting the explanation, so `fern explain
+  E039` went on describing a construct the language does not have. This
+  is the diagnostics analogue of Layer 1's invented grammar rules, and
+  it is the same lesson: catalogues acquire entries that nothing
+  disproves.
+
+The policy docs were indexed rather than rewritten, as planned — but
+that half shipped **ungated**, and `spec/README.md` says so rather than
+implying otherwise. Nothing checks that a claim in `INTEGER-SEMANTICS.md`
+is pinned by a case, or that a case has not quietly contradicted one.
+That is the next increment, and it is the diagnostics index's shape
+again: derive the truth, make the document match it.
+
 ### Layer 3 — specify **Fern Core**, executably (the real work; 1–3 months)
 
 Do not specify the surface language. Specify the core, and let the

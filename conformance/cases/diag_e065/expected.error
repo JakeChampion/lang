@@ -1,0 +1,1 @@
+returning a `str` view of a function-local string: the backing string is reclaimed when "greeting" returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead

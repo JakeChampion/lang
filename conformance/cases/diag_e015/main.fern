@@ -1,0 +1,15 @@
+// Pins E015. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E015`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+enum Shape {
+    Circle(f64),
+    Rect(f64, f64),
+}
+
+function area(s: Shape): f64 {
+    match (s) {
+        Circle(r) => { return r * r; },
+        Rect(w) => { return w; },   // error[E015]: variant Rect has 2 payload(s), got 1 binding(s)
+    }
+}

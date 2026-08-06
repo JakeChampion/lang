@@ -1,0 +1,7 @@
+// Pins E018. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E018`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function add(x: i32, y: i32, x: i32): i32 {   // error[E018]: duplicate parameter "x"
+    return x + y;
+}

@@ -1,0 +1,13 @@
+// Pins E047. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E047`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function main(): i32 {
+    var x: i32 = 999999999999;   // error[E047]: literal 999999999999 does not fit in i32
+    return x;
+}
+
+function main2(): i32 {
+    var y: u8 = 256;             // error[E047]: literal 256 does not fit in u8
+    return y as i32;
+}

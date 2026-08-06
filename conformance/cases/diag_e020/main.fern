@@ -1,0 +1,8 @@
+// Pins E020. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E020`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function main(): i32 {
+    var xs = [];   // error[E020]: empty array literal needs a type annotation
+    return 0;
+}

@@ -1,0 +1,10 @@
+// Pins E056. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E056`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function main(): i32 {
+var xs: i32[] = [1, 2, 3];
+xs[0] = 9;               // error[E056]
+
+    return 0;
+}

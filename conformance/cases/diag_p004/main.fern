@@ -1,0 +1,9 @@
+// Pins P004. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain P004`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function main(): i32 {
+    // error[P004]: at most one `_` placeholder in a piped call
+    5 |> add(_, _);
+    return 0;
+}

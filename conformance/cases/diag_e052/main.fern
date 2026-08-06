@@ -1,0 +1,12 @@
+// Pins E052. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E052`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+struct Point { x: i32, y: i32 }
+
+function f(b: boolean): Point {
+    if (b) {
+        return Point { x: 10, y: 20 };
+    }
+    // error[E052]: when b is false, control falls off the end
+}
