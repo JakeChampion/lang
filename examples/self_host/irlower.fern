@@ -5641,7 +5641,24 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
             }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
-            return decl_field_type(s.structs, oty, fa.field) == "i64[]";
+            var fdt: string = decl_field_type(s.structs, oty, fa.field);
+            // u64[] as well as i64[]: both are 8-byte elements, and the
+            // ExprIdent arm above has always accepted both (is_u64_slot). This
+            // one is belt-and-braces rather than a fix — a `u64[]` field index
+            // already reads correctly, because ix_type_tag falls back to the
+            // typed-IR `ix.ty` when this walk declines. Stating it here means
+            // the answer no longer DEPENDS on that fallback holding.
+            //
+            // And `Cell[i64]` / `Cell[u64]`, because a Cell IS a 1-element array
+            // of its element type — `c.get()` desugars to `c[0]`, so a wide Cell
+            // field reaches this classifier as an index over a field whose
+            // declared type is `Cell[…]`. Without it `h.r.get()` bailed the whole
+            // module off the IR path, which is what made std/sim uncompilable by
+            // the self-host compiler (#6190). `.set` was unaffected at any width
+            // — it reads the element type from cell_elem_type directly — and so
+            // was `Cell[i32]`, whose 4-byte stride is the default this returns
+            // false for. Only the wide READ needed the stride named here.
+            return fdt == "i64[]" || fdt == "u64[]" || fdt == "Cell[i64]" || fdt == "Cell[u64]";
         },
         // Direct index of a slice expression `a[lo:hi][i]`: an i64[] slice is
         // itself an i64[], so recurse into the sliced array — mirroring
