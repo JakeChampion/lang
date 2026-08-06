@@ -22,6 +22,7 @@
 // process, `==` is the right tool and the cheaper one.
 
 import "core/int";
+import "core/bigint";
 // std/string's bodies dispatch (i32) byte methods on `s[i]`
 // values — `.to_ascii_upper()`, `.is_ascii_digit()`,
 // `.is_ascii_alpha()`, `.is_ascii_hex_digit()`,
@@ -3024,56 +3025,58 @@ pub function (s: string) parse_int_radix(base: i32): Option[i32] {
 }
 
 // --- correctly-rounded decimal → f64 (#5566) ------------------------
-// A minimal base-2^32 big-integer, self-contained here: std/string can
-// NOT import std/float (float → std/i32 → std/string would cycle).
+// The exact fallback's arbitrary-precision arithmetic is `core/bigint`.
 //
-// The de-dup this note used to point at is now available: `core/bigint`
-// is a full sign-magnitude arbitrary-precision integer that imports
-// nothing, so std/string CAN import it without a cycle. Migrating these
-// `__bn_*` helpers onto it would delete them outright — deliberately not
-// done in the same change that introduced core/bigint, because this is
-// correctly-rounded float parsing and it deserves its own diff with the
-// float-parse suite run against it.
+// This used to be a private base-2^32 bignum inlined here, because
+// std/string cannot import std/float (float → std/i32 → std/string would
+// cycle) and there was nowhere else for it to live. core/bigint imports
+// NOTHING precisely so that this module can use it, so the six `__bn_*`
+// helpers are gone rather than wrapped.
 //
-// (The note also claimed these mirrored "the formatter's bignum in
-// std/float.fern". That has not been true since Dragonbox landed —
-// std/float.fern has no bignum at all now, and these are the only copy.)
-function __bn_mul_small(a: i64[], k: i64): i64[] {
-    var n: i32 = a.len(); var out: i64[] = []; var carry: i64 = 0; var i: i32 = 0;
-    while (i < n) { var prod: i64 = a[i] * k + carry; out = out.append(prod & 4294967295); carry = prod >> 32; i = i + 1; }
-    while (carry > 0) { out = out.append(carry & 4294967295); carry = carry >> 32; }
-    return out;
-}
-function __bn_add_small(a: i64[], k: i64): i64[] {
-    var n: i32 = a.len(); var out: i64[] = []; var carry: i64 = k; var i: i32 = 0;
-    while (i < n) { var cur: i64 = a[i] + carry; out = out.append(cur & 4294967295); carry = cur >> 32; i = i + 1; }
-    while (carry > 0) { out = out.append(carry & 4294967295); carry = carry >> 32; }
-    return out;
-}
-function __bn_len(a: i64[]): i32 { var n: i32 = a.len(); while (n > 1 && a[n - 1] == 0) { n = n - 1; } return n; }
-function __bn_from_i64(v: i64): i64[] { var a: i64[] = []; a = a.append(v & 4294967295); a = a.append((v >> 32) & 4294967295); return a; }
-function __bn_cmp(a: i64[], b: i64[]): i32 {
-    var la: i32 = __bn_len(a); var lb: i32 = __bn_len(b);
-    if (la < lb) { return 0 - 1; }
-    if (la > lb) { return 1; }
-    var i: i32 = la - 1;
-    while (i >= 0) { if (a[i] < b[i]) { return 0 - 1; } if (a[i] > b[i]) { return 1; } i = i - 1; }
-    return 0;
-}
-function __bn_from_digits(s: string): i64[] {
-    var a: i64[] = __bn_from_i64(0); var i: i32 = 0;
-    while (i < s.len()) { a = __bn_mul_small(a, 10); a = __bn_add_small(a, (s[i] as i64) - 48); i = i + 1; }
-    return a;
+// The migration is not only a de-dup. The private helpers had no scaling
+// primitives, so `__cmp_big` reached its scale factors by ITERATING a
+// multiply-by-small: p separate passes over the limbs to multiply by
+// 10^p, and b passes to multiply by 2^b. core/bigint has both directly —
+// `mul_pow10` folds nine decimal digits per pass (10^9 is the largest
+// power of ten below 2^32, so each partial product still fits a limb
+// slot) and `shl` is a single pass regardless of the shift. That matters
+// because this is the hot loop: __decimal_to_f64 calls __cmp_big up to
+// twice per refinement step, under a 4000-iteration guard.
+//
+// Measured **0.50s -> 0.025s, ~20x** on x86-64 (400 parses of two exact
+// midpoints, three runs each, spread under 2%).
+//
+// BENCHMARKING THIS PATH NEEDS CARE, and the first attempt at the figure
+// above got 2ms on both sides because it never reached the fallback at
+// all. Eisel-Lemire decides almost everything; `_el_parse` only bails
+// when the input has MORE significant digits than fit a u64 *and* the
+// truncated significand is genuinely ambiguous (both ends of the
+// truncation interval must not agree). Ordinary long inputs like
+// "1234...e-320" are decided by the fast path. What forces the fallback
+// is an exact midpoint between two adjacent doubles — e.g.
+// 1 + 2^-53 = 1.00000000000000011102230246251565404236316680908203125,
+// or the same construction down in the subnormal range, which also
+// drives |p| large enough for the scaling loops to dominate.
+function __bn_of_digits(s: string): bigint.BigInt {
+    // `s` carries only significant digits by __decimal_to_f64's contract,
+    // and the empty string is handled before any caller reaches here — so
+    // the None arm is unreachable. It returns zero rather than trapping to
+    // keep the documented `"" is 0` behaviour total.
+    match (bigint.parse(s)) {
+        Some(v) => { return v; },
+        None => { return bigint.zero(); }
+    }
 }
 // compare  Ldig * 10^p  vs  V * 2^b  → -1 / 0 / 1 (cross-multiply, no
 // fractions). Ldig is a bignum; V fits an i64.
-function __cmp_big(Ldig: i64[], p: i32, V: i64, b: i32): i32 {
-    var L: i64[] = Ldig; var R: i64[] = __bn_from_i64(V); var x: i32 = 0;
-    if (p > 0) { x = 0; while (x < p) { L = __bn_mul_small(L, 10); x = x + 1; } }
-    if (p < 0) { x = 0; var pp: i32 = 0 - p; while (x < pp) { R = __bn_mul_small(R, 10); x = x + 1; } }
-    if (b > 0) { x = 0; while (x < b) { R = __bn_mul_small(R, 2); x = x + 1; } }
-    if (b < 0) { x = 0; var bb: i32 = 0 - b; while (x < bb) { L = __bn_mul_small(L, 2); x = x + 1; } }
-    return __bn_cmp(L, R);
+function __cmp_big(Ldig: bigint.BigInt, p: i32, V: i64, b: i32): i32 {
+    var L: bigint.BigInt = Ldig;
+    var R: bigint.BigInt = bigint.from_i64(V);
+    if (p > 0) { L = L.mul_pow10(p); }
+    if (p < 0) { R = R.mul_pow10(0 - p); }
+    if (b > 0) { R = R.shl(b); }
+    if (b < 0) { L = L.shl(0 - b); }
+    return L.cmp(R);
 }
 // IEEE-754 f64 = sig * 2^bexp, sig in [2^52, 2^53) for normals (or the
 // raw fraction for subnormals). These decode the fields of a bit pattern.
@@ -3126,7 +3129,7 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
     if (bits >= INF) { bits = INF - 1; }    // estimate overflowed → max finite
     // Ld = 2 * mantissa: the midpoint tests compare 2*value against the
     // (integer) sum of two adjacent f64s.
-    var Ld: i64[] = __bn_mul_small(__bn_from_digits(dig), 2);
+    var Ld: bigint.BigInt = __bn_of_digits(dig).shl(1);
     var guard: i32 = 0;
     while (guard < 4000) {
         guard = guard + 1;
