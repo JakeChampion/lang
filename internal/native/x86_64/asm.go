@@ -477,9 +477,13 @@ func (a *Assembler) insn(line string) error {
 	case "imul":
 		return a.imul(ops)
 	case "bsr":
-		return a.bitscan(ops, 0xBD)
-	case "bsf":
-		return a.bitscan(ops, 0xBC)
+		return a.bitOp(ops, 0xBD)
+	case "lzcnt":
+		return a.bitOp(ops, 0xBD, 0xF3)
+	case "tzcnt":
+		return a.bitOp(ops, 0xBC, 0xF3)
+	case "popcnt":
+		return a.bitOp(ops, 0xB8, 0xF3)
 	case "idiv":
 		return a.unaryF7(ops, 7)
 	case "div":
@@ -972,16 +976,27 @@ func (a *Assembler) imul(ops []operand) error {
 	return fmt.Errorf("unsupported imul form")
 }
 
-// bitscan encodes "bsr reg, r/m" (op 0xBD) / "bsf reg, r/m" (op 0xBC):
-// REX.W? 0F <op> /r, dst = reg, src = r/m. Same shape as the two-operand
-// imul, differing only in the second opcode byte.
-func (a *Assembler) bitscan(ops []operand, op byte) error {
+// bitOp encodes the "0F <op> /r, dst = reg, src = r/m" family — the same
+// shape as the two-operand imul, differing in the second opcode byte and
+// whether a mandatory F3 precedes everything:
+//
+//	bsr    0xBD, no prefix   — floor(log2), the allocator's size class
+//	lzcnt  0xBD, F3          — count leading zeros
+//	tzcnt  0xBC, F3          — count trailing zeros
+//	popcnt 0xB8, F3          — count set bits
+//
+// Note bsr and lzcnt are THE SAME OPCODE: only the F3 tells them apart,
+// and it must be emitted BEFORE the REX byte. Put it after and the CPU
+// reads a stray prefix on a bsr — a silently different answer (and one
+// that is undefined at a zero input) rather than a fault.
+func (a *Assembler) bitOp(ops []operand, op byte, prefix ...byte) error {
 	if len(ops) != 2 || ops[0].kind != opReg {
-		return fmt.Errorf("bsr/bsf expects reg, r/m")
+		return fmt.Errorf("bsr/lzcnt/tzcnt/popcnt expects reg, r/m")
 	}
 	dst := ops[0]
 	w := dst.size == 64
 	if ops[1].kind == opReg {
+		a.emit(prefix...)
 		if rex := rexFor(w, dst.reg, ops[1].reg, false); rex != 0 {
 			a.emit(rex)
 		}
@@ -990,6 +1005,7 @@ func (a *Assembler) bitscan(ops []operand, op byte) error {
 		return nil
 	}
 	if ops[1].kind == opMem {
+		a.emit(prefix...)
 		if rex := memRex(w, dst.reg, ops[1], false); rex != 0 {
 			a.emit(rex)
 		}
@@ -997,7 +1013,7 @@ func (a *Assembler) bitscan(ops []operand, op byte) error {
 		a.encodeMem(dst.reg, ops[1])
 		return nil
 	}
-	return fmt.Errorf("unsupported bsr/bsf form")
+	return fmt.Errorf("unsupported bsr/lzcnt/tzcnt/popcnt form")
 }
 
 // imul3 encodes the three-operand "imul reg, r/m, imm" (multiply by a

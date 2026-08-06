@@ -412,3 +412,57 @@ func TestMovImmMovzMovk(t *testing.T) {
 		}
 	}
 }
+
+// TestBitCountInsns pins the three instructions the bit-counting IR ops
+// lower to. Known encodings, verified against aarch64-linux-gnu-as:
+//
+//	rbit x0, x0     = 0xdac00000    rbit w0, w0     = 0x5ac00000
+//	cnt v0.8b,v0.8b = 0x0e205800    cnt v1.16b,v2.16b = 0x4e205841
+//	addv b0, v0.8b  = 0x0e31b800    addv b3, v5.16b = 0x4e31b8a3
+//
+// The w-form of rbit matters for the same reason it did for clz: a
+// missing sf clear reverses over 64 bits, so ctz of a 32-bit value
+// would count the zero half and return 32 for every input.
+func TestBitCountInsns(t *testing.T) {
+	cases := []struct {
+		asm  string
+		want uint32
+	}{
+		{"\trbit x0, x0\n", 0xdac00000},
+		{"\trbit w0, w0\n", 0x5ac00000},
+		{"\trbit x3, x7\n", 0xdac000e3},
+		{"\tcnt v0.8b, v0.8b\n", 0x0e205800},
+		{"\tcnt v1.16b, v2.16b\n", 0x4e205841},
+		{"\taddv b0, v0.8b\n", 0x0e31b800},
+		{"\taddv b3, v5.16b\n", 0x4e31b8a3},
+	}
+	for _, c := range cases {
+		got, err := arm64.Assemble(c.asm)
+		if err != nil {
+			t.Fatalf("Assemble(%q): %v", c.asm, err)
+		}
+		want := arm64.Put(nil, c.want)
+		if !bytes.Equal(got, want) {
+			t.Errorf("%q: got % x, want % x", c.asm, got, want)
+		}
+	}
+}
+
+// TestBitCountInsnsReject keeps the vector-operand parser loud rather
+// than silently assembling a different instruction. The encoders set
+// size=00 (byte lanes) only, so a wider arrangement — which needs a
+// different size field — must be refused, as must a mismatched pair.
+func TestBitCountInsnsReject(t *testing.T) {
+	for _, asm := range []string{
+		"\tcnt v0.4h, v0.4h\n",  // halfword lanes: different size field
+		"\tcnt v0.8b, v1.16b\n", // mismatched arrangements
+		"\taddv h0, v0.8h\n",    // halfword destination
+		"\taddv b0, v0.4s\n",    // word lanes
+		"\tcnt v0, v0\n",        // no arrangement at all
+		"\trbit x0, x1, x2\n",   // wrong operand count
+	} {
+		if _, err := arm64.Assemble(asm); err == nil {
+			t.Errorf("Assemble(%q): expected an error, got none", asm)
+		}
+	}
+}

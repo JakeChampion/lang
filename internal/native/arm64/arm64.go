@@ -578,6 +578,43 @@ func CLZ(rd, rn uint32) uint32 {
 	return 0xDAC01000 | ((rn & regMask) << 5) | (rd & regMask)
 }
 
+// RBIT encodes `rbit Xd, Xn` — reverse the bit order of the whole
+// register (Data-processing, 1 source; the sibling of CLZ and REV16).
+// `rbit` then `clz` is the canonical count-trailing-zeros idiom, and it
+// inherits clz's definition at zero: reversing zero leaves zero, whose
+// clz is the operand width — exactly what OpCtz defines.
+// Encoding: base 0xDAC00000 | Rn<<5 | Rd; clearing sf gives the W form.
+func RBIT(rd, rn uint32) uint32 {
+	return 0xDAC00000 | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// CNT encodes `cnt Vd.<T>, Vn.<T>` — per-BYTE population count across a
+// SIMD register (advanced SIMD, two-register misc). It is the only
+// hardware popcount AArch64 has; the scalar side has none, which is why
+// a popcount lowering has to route the value through a v-register.
+// `q` selects the 16B arrangement over 8B.
+// Encoding: base 0x0E205800 | Q<<30 | Rn<<5 | Rd.
+func CNT(rd, rn uint32, q bool) uint32 {
+	return 0x0E205800 | qbit(q) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// ADDV encodes `addv Bd, Vn.<T>` — horizontal add across the byte lanes,
+// producing a scalar in the destination's low byte. Paired with CNT it
+// completes a popcount: per-byte counts, then summed. Only the byte
+// arrangements (size=00) are encoded, which is all a popcount needs; a
+// 64-lane sum maxes out at 64 and cannot overflow the byte.
+// Encoding: base 0x0E31B800 | Q<<30 | Rn<<5 | Rd.
+func ADDV(rd, rn uint32, q bool) uint32 {
+	return 0x0E31B800 | qbit(q) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+func qbit(q bool) uint32 {
+	if q {
+		return 1 << 30
+	}
+	return 0
+}
+
 // UDIV encodes `udiv Xd, Xn, Xm` — unsigned divide (Xn / Xm; division
 // by zero yields 0, per the architecture).
 // Encoding: base 0x9AC00800 | Rm<<16 | Rn<<5 | Rd.

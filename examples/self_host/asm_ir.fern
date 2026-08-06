@@ -5210,34 +5210,28 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rsi\n    movq $420, %rdx\n    call __fern_open_fd\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("open_file");
         } else if (o.kind_tag == 219) {  // clz
-            // bsr/bsf are BASELINE x86-64. LZCNT/TZCNT need BMI1/ABM and
-            // POPCNT needs SSE4.2, and Fern emits static binaries with no
-            // runtime CPU dispatch, so using those would be a SIGILL on an old
-            // CPU rather than a slow binary. The cost is that bsr leaves its
-            // destination undefined at zero while the op defines clz(0) as the
-            // operand width -- hence the explicit branch.
-            var czl: string = lp + "clz" + util.i32_to_string(i);
+            // LZCNT (BMI1) is DEFINED at zero -- it returns the operand width,
+            // which is exactly what the op defines -- so there is no zero
+            // branch here at all. That definedness is why it beats bsr, whose
+            // destination is undefined for a zero input.
             if (o.width == 64) {
-                s = s.write("    popq %rax\n    testq %rax, %rax\n    jz " + czl + "z\n    bsrq %rax, %rax\n    xorq $63, %rax\n    jmp " + czl + "d\n" + czl + "z:\n    movq $64, %rax\n" + czl + "d:\n    pushq %rax\n");
+                s = s.write("    popq %rax\n    lzcntq %rax, %rax\n    pushq %rax\n");
             } else {
-                s = s.write("    popq %rax\n    testl %eax, %eax\n    jz " + czl + "z\n    bsrl %eax, %eax\n    xorl $31, %eax\n    jmp " + czl + "d\n" + czl + "z:\n    movl $32, %eax\n" + czl + "d:\n    pushq %rax\n");
+                s = s.write("    popq %rax\n    lzcntl %eax, %eax\n    pushq %rax\n");
             }
         } else if (o.kind_tag == 220) {  // ctz
-            var ctl: string = lp + "ctz" + util.i32_to_string(i);
+            // TZCNT, likewise defined at zero as the operand width.
             if (o.width == 64) {
-                s = s.write("    popq %rax\n    testq %rax, %rax\n    jz " + ctl + "z\n    bsfq %rax, %rax\n    jmp " + ctl + "d\n" + ctl + "z:\n    movq $64, %rax\n" + ctl + "d:\n    pushq %rax\n");
+                s = s.write("    popq %rax\n    tzcntq %rax, %rax\n    pushq %rax\n");
             } else {
-                s = s.write("    popq %rax\n    testl %eax, %eax\n    jz " + ctl + "z\n    bsfl %eax, %eax\n    jmp " + ctl + "d\n" + ctl + "z:\n    movl $32, %eax\n" + ctl + "d:\n    pushq %rax\n");
+                s = s.write("    popq %rax\n    tzcntl %eax, %eax\n    pushq %rax\n");
             }
         } else if (o.kind_tag == 221) {  // popcount
-            // No BASELINE popcount instruction exists, so this stays SWAR --
-            // inline rather than behind a call, which is still most of the win.
-            // Raising the target baseline to SSE4.2 would replace it with one
-            // POPCNT; that is a project decision, not a codegen one.
+            // POPCNT (SSE4.2), below the BMI1 floor the two above assume.
             if (o.width == 64) {
-                s = s.write("    popq %rax\n    movq %rax, %rcx\n    shrq $1, %rcx\n    movabsq $6148914691236517205, %rdx\n    andq %rdx, %rcx\n    subq %rcx, %rax\n    movabsq $3689348814741910323, %rdx\n    movq %rax, %rcx\n    andq %rdx, %rcx\n    shrq $2, %rax\n    andq %rdx, %rax\n    addq %rcx, %rax\n    movq %rax, %rcx\n    shrq $4, %rcx\n    addq %rcx, %rax\n    movabsq $1085102592571150095, %rdx\n    andq %rdx, %rax\n    movabsq $72340172838076673, %rdx\n    imulq %rdx, %rax\n    shrq $56, %rax\n    pushq %rax\n");
+                s = s.write("    popq %rax\n    popcntq %rax, %rax\n    pushq %rax\n");
             } else {
-                s = s.write("    popq %rax\n    movl %eax, %ecx\n    shrl $1, %ecx\n    andl $1431655765, %ecx\n    subl %ecx, %eax\n    movl %eax, %ecx\n    andl $858993459, %ecx\n    shrl $2, %eax\n    andl $858993459, %eax\n    addl %ecx, %eax\n    movl %eax, %ecx\n    shrl $4, %ecx\n    addl %ecx, %eax\n    andl $252645135, %eax\n    imull $16843009, %eax, %eax\n    shrl $24, %eax\n    pushq %rax\n");
+                s = s.write("    popq %rax\n    popcntl %eax, %eax\n    pushq %rax\n");
             }
         } else if (o.kind_tag == 80) {  // heap_bump_bytes
             // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base.

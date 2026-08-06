@@ -10593,30 +10593,21 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.emit("cset w0, eq")
 		g.push()
 
-	// Bit counting.
+	// Bit counting. All three are hardware instructions, with no fixup
+	// and no branch.
 	//
-	// `clz` is a real instruction and already returns the operand width
-	// for a zero input, which is exactly what the IR op defines — so
-	// leading_zeros is a single instruction with no fixup.
+	// clz already returns the operand width for a zero input, which is
+	// what the IR op defines. ctz is `rbit` + `clz`, and inherits that
+	// definition: reversing zero leaves zero.
 	//
-	// ctz is built FROM clz rather than from `rbit`: isolating the
-	// lowest set bit with `x & -x` leaves a value whose clz gives the
-	// bit position, so ctz = (width-1) - clz(x & -x). The zero input
-	// would fall out as -1, so `csel` selects the width instead. That
-	// is one more instruction than rbit+clz would be, and it is the
-	// deliberate choice — see the popcount note below.
-	//
-	// popcount stays the SWAR sequence, inline. arm64's hardware
-	// popcount lives on the SIMD side (`cnt` counts per byte, `addv`
-	// sums horizontally), and NONE of `rbit` / `cnt` / `addv` are
-	// implemented by the in-process assembler this backend emits
-	// through (`internal/native/arm64`), which is what `cmd/fern
-	// -target arm64` uses by default. Emitting them produces
-	// "unsupported instruction" at assemble time, not a slow binary.
-	// Adding those encodings — including two SIMD forms — is its own
-	// change with its own differential-oracle work (#6075 covers the
-	// same class of gap), so this lands the clz-derived wins now and
-	// leaves the SIMD popcount to that follow-up.
+	// popcount has no scalar form on AArch64 — the hardware popcount is
+	// `cnt`, a per-BYTE count on the SIMD side, summed horizontally by
+	// `addv`. So the value goes through a v-register: `fmov` in, count,
+	// sum, `fmov` out. Writes to a SIMD register zero the lanes above
+	// the written width, so the 32-bit form's `fmov s0, w0` leaves the
+	// upper four bytes of the 8B group zero and the same 8-byte count
+	// is correct for both widths. The result maxes out at 64, so the
+	// byte-wide `addv` destination cannot overflow.
 	case ir.OpClz:
 		g.pop()
 		if op.Width == 64 {
@@ -10628,62 +10619,23 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	case ir.OpCtz:
 		g.pop()
 		if op.Width == 64 {
-			g.emit("neg x1, x0")
-			g.emit("and x1, x0, x1") // lowest set bit isolated
-			g.emit("clz x1, x1")
-			g.emit("mov x2, #63")
-			g.emit("sub x1, x2, x1") // 63 - clz  = bit position
-			g.emit("mov x2, #64")
-			g.emit("cmp x0, #0")
-			g.emit("csel x0, x2, x1, eq") // x == 0 → 64
+			g.emit("rbit x0, x0")
+			g.emit("clz x0, x0")
 		} else {
-			g.emit("neg w1, w0")
-			g.emit("and w1, w0, w1")
-			g.emit("clz w1, w1")
-			g.emit("mov w2, #31")
-			g.emit("sub w1, w2, w1")
-			g.emit("mov w2, #32")
-			g.emit("cmp w0, #0")
-			g.emit("csel w0, w2, w1, eq")
+			g.emit("rbit w0, w0")
+			g.emit("clz w0, w0")
 		}
 		g.push()
 	case ir.OpPopcount:
 		g.pop()
 		if op.Width == 64 {
-			g.emit("lsr x1, x0, #1")
-			g.loadImm64("x2", 0x5555555555555555)
-			g.emit("and x1, x1, x2")
-			g.emit("sub x0, x0, x1")
-			g.loadImm64("x2", 0x3333333333333333)
-			g.emit("and x1, x0, x2")
-			g.emit("lsr x0, x0, #2")
-			g.emit("and x0, x0, x2")
-			g.emit("add x0, x0, x1")
-			g.emit("lsr x1, x0, #4")
-			g.emit("add x0, x0, x1")
-			g.loadImm64("x2", 0x0f0f0f0f0f0f0f0f)
-			g.emit("and x0, x0, x2")
-			g.loadImm64("x2", 0x0101010101010101)
-			g.emit("mul x0, x0, x2")
-			g.emit("lsr x0, x0, #56")
+			g.emit("fmov d0, x0")
 		} else {
-			g.emit("lsr w1, w0, #1")
-			g.loadImm64("x2", 0x55555555)
-			g.emit("and w1, w1, w2")
-			g.emit("sub w0, w0, w1")
-			g.loadImm64("x2", 0x33333333)
-			g.emit("and w1, w0, w2")
-			g.emit("lsr w0, w0, #2")
-			g.emit("and w0, w0, w2")
-			g.emit("add w0, w0, w1")
-			g.emit("lsr w1, w0, #4")
-			g.emit("add w0, w0, w1")
-			g.loadImm64("x2", 0x0f0f0f0f)
-			g.emit("and w0, w0, w2")
-			g.loadImm64("x2", 0x01010101)
-			g.emit("mul w0, w0, w2")
-			g.emit("lsr w0, w0, #24")
+			g.emit("fmov s0, w0")
 		}
+		g.emit("cnt v0.8b, v0.8b")
+		g.emit("addv b0, v0.8b")
+		g.emit("fmov w0, s0")
 		g.push()
 
 	// -------- locals --------

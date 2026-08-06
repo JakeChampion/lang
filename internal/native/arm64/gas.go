@@ -167,6 +167,12 @@ func assembleInsn(a *Assembler, line string) error {
 		return asm2Reg(a, ops, NEG)
 	case "clz":
 		return asm2Reg(a, ops, CLZ)
+	case "rbit":
+		return asm2Reg(a, ops, RBIT)
+	case "cnt":
+		return asmCnt(a, ops)
+	case "addv":
+		return asmAddv(a, ops)
 	case "msub":
 		return asmMsub(a, ops)
 	case "fadd", "fsub", "fmul", "fdiv":
@@ -706,6 +712,82 @@ func asm2Reg(a *Assembler, ops []string, enc func(x, y uint32) uint32) error {
 	}
 	a.Emit(clearSF(enc(x, y), is32(ops[0])))
 	return nil
+}
+
+// asmCnt handles `cnt Vd.8b, Vn.8b` (and the 16b arrangement) — the
+// per-byte population count.
+func asmCnt(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("cnt expects Vd.<T>, Vn.<T>")
+	}
+	rd, qd, err := parseVecArr(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, qn, err := parseVecArr(ops[1])
+	if err != nil {
+		return err
+	}
+	if qd != qn {
+		return fmt.Errorf("cnt operands must share an arrangement: %q, %q", ops[0], ops[1])
+	}
+	a.Emit(CNT(rd, rn, qd))
+	return nil
+}
+
+// asmAddv handles `addv Bd, Vn.8b` (and the 16b arrangement) — the
+// horizontal byte-lane sum, whose destination is a scalar B register.
+func asmAddv(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("addv expects Bd, Vn.<T>")
+	}
+	rd, err := parseBReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, q, err := parseVecArr(ops[1])
+	if err != nil {
+		return err
+	}
+	a.Emit(ADDV(rd, rn, q))
+	return nil
+}
+
+// parseVecArr parses a `vN.8b` / `vN.16b` vector operand, returning the
+// register number and whether the arrangement is the 128-bit (Q) one.
+// Only the byte arrangements are accepted — the wider element sizes have
+// different `size` fields that these encoders do not set, so accepting
+// them would silently assemble the wrong instruction.
+func parseVecArr(s string) (reg uint32, q bool, err error) {
+	s = strings.TrimSpace(s)
+	dot := strings.IndexByte(s, '.')
+	if len(s) < 2 || s[0] != 'v' || dot < 0 {
+		return 0, false, fmt.Errorf("bad vector register %q", s)
+	}
+	n, e := strconv.Atoi(s[1:dot])
+	if e != nil || n < 0 || n > 31 {
+		return 0, false, fmt.Errorf("bad vector register %q", s)
+	}
+	switch s[dot+1:] {
+	case "8b":
+		return uint32(n), false, nil
+	case "16b":
+		return uint32(n), true, nil
+	}
+	return 0, false, fmt.Errorf("unsupported vector arrangement %q", s)
+}
+
+// parseBReg parses a `bN` scalar byte register — the destination shape
+// of `addv` over a byte arrangement.
+func parseBReg(s string) (uint32, error) {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 && s[0] == 'b' {
+		n, err := strconv.Atoi(s[1:])
+		if err == nil && n >= 0 && n <= 31 {
+			return uint32(n), nil
+		}
+	}
+	return 0, fmt.Errorf("bad byte register %q", s)
 }
 
 // asmCsel handles `csel Xd, Xn, Xm, <cond>`.

@@ -62,6 +62,24 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 		{"option", `function pick(n: i32): Option[i32] { if (n == 0) { return None; } return Some(n + 1); } function main(): i32 { match (pick(41)) { Some(v) => { return v; }, None => { return 0; } } return 99; }`, 42, ""},
 		{"enum", `enum Shape { Circle(i32), Square(i32) } function area(s: Shape): i32 { match (s) { Circle(r) => { return r*r*3; }, Square(w) => { return w*w; } } } function main(): i32 { return area(Circle(2)) + area(Square(3)); }`, 21, ""},
 		{"floats", `function main(): i32 { var x: f64 = 3.5; var y: f64 = 2.0; var z: f64 = x*y + x/y - x; if (z > 5.0) { return 7; } return 1; }`, 7, ""},
+		// The bit-counting intrinsics: the only shapes that make the arm64
+		// backend emit `rbit` (ctz) or the SIMD pair `cnt`/`addv` (popcount),
+		// and hence the only ones that exercise those encoders in
+		// arm64_native. Zero comes first — it is the input the op definition
+		// pins (clz/ctz of 0 = the operand width).
+		{"bitcount", `function main(): i32 {
+    if (__ctz32(0 as u32) != 32) { return 1; }
+    if (__ctz64(0 as u64) != 64) { return 2; }
+    if (__popcount32(0 as u32) != 0) { return 3; }
+    if (__popcount64(0 as u64) != 0) { return 4; }
+    if (__ctz32(16 as u32) != 4) { return 5; }
+    if (__ctz64(1048576 as u64) != 20) { return 6; }
+    if (__popcount32(4294967295 as u32) != 32) { return 7; }
+    if (__popcount64(1023 as u64) != 10) { return 8; }
+    if (__clz32(1 as u32) != 31) { return 9; }
+    if (__clz64(1 as u64) != 63) { return 10; }
+    return 42;
+}`, 42, ""},
 	}
 
 	for _, c := range cases {

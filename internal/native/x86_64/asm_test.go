@@ -57,11 +57,27 @@ func TestEncodeIntegerSurface(t *testing.T) {
 		{"sub rax, rcx", "4829c8"},
 		{"add rax, rcx", "4801c8"},
 		{"imul rax, rcx", "480fafc1"},
-		// bit-scan (used by the allocator's large-block power-of-two class):
-		// REX.W 0F BD/BC /r, same shape as the two-operand imul.
+		// bsr — floor(log2), used by the allocator's large-block
+		// power-of-two size class. REX.W 0F BD /r, the two-operand imul
+		// shape.
 		{"bsr rcx, rax", "480fbdc8"},
-		{"bsf rcx, rax", "480fbcc8"},
 		{"bsr rax, rdi", "480fbdc7"},
+		// Bit counting — lzcnt/tzcnt (BMI1) and popcnt (SSE4.2): the same
+		// shape behind a MANDATORY F3 that must precede the REX byte.
+		// `lzcnt` is bsr's OPCODE — the prefix is the only difference, so
+		// the row above and the row below must not collide. F3 after the
+		// REX would decode as a stray prefix on bsr: a different answer,
+		// silently, and undefined at a zero input rather than faulting.
+		{"lzcnt rcx, rax", "f3480fbdc8"},
+		{"tzcnt rcx, rax", "f3480fbcc8"},
+		{"lzcnt eax, edi", "f30fbdc7"},
+		{"tzcnt eax, eax", "f30fbcc0"},
+		{"lzcnt r8, r9", "f34d0fbdc1"},
+		{"popcnt rax, rax", "f3480fb8c0"},
+		{"popcnt eax, eax", "f30fb8c0"},
+		{"popcnt rcx, rdx", "f3480fb8ca"},
+		{"popcnt r8d, r9d", "f3450fb8c1"},
+		{"popcnt rax, qword ptr [rbp-8]", "f3480fb845f8"},
 		{"neg rax", "48f7d8"},
 		{"idiv ecx", "f7f9"},
 		{"sar rax, 1", "48d1f8"},
