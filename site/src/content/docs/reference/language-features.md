@@ -135,6 +135,21 @@ An irrefutable head (a struct pattern, an all-binder tuple pattern)
 is accepted — the `else` is simply dead — so `if let` doubles as a
 destructuring form when you don't need the miss branch.
 
+`let … else` reads the same grammar, so the refutable forms carry over
+there too:
+
+```fern
+let whole @ Some(n) = lookup(id) else { return 0; };
+let Ok(Some(n)) = parse(s) else { return 0; };
+let Red(n) | Blue(n) = c else { return 0; };
+```
+
+Both forms are one `match` after parsing — `if let`'s success arm is the
+then-block, `let … else`'s is the rest of the enclosing block, which is
+exactly why its bindings stay live there. So exhaustiveness and
+refutability are decided in a single place, and any pattern form the
+language gains reaches all three binding sites at once.
+
 ## Match guards — `when`
 
 A `match` arm can carry a `when` condition. The arm matches only if the

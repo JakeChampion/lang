@@ -84,8 +84,6 @@ func (c *checker) mcWalkBlock(fn *ast.FuncDecl, b *ast.Block) {
 		case *ast.If:
 			c.mcWalkStmtBlock(fn, x.Then)
 			c.mcWalkStmtBlock(fn, x.Else)
-		case *ast.LetElse:
-			c.mcWalkBlock(fn, x.Else)
 		case *ast.While:
 			c.mcWalkStmtBlock(fn, x.Body)
 		case *ast.Loop:
@@ -210,10 +208,6 @@ func (c *checker) mcSeq(stmts []ast.Stmt, name, typeName string) (bool, bool) {
 			if all {
 				return true, false
 			}
-		case *ast.LetElse:
-			if c.mcIsBinding(x.Source, name) {
-				return true, false
-			}
 		}
 		// While / For / Loop bodies are opaque (see file header);
 		// Defer is neutral in slice 1.
@@ -268,10 +262,6 @@ func (c *checker) mcStmtConsumesImpl(s ast.Stmt, name, typeName string, report b
 		return c.mcExprConsumes(x.Value, name, typeName, report)
 	case *ast.Match:
 		if c.mcIsBinding(x.Tag, name) {
-			return true
-		}
-	case *ast.LetElse:
-		if c.mcIsBinding(x.Source, name) {
 			return true
 		}
 	}

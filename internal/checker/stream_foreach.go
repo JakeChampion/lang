@@ -69,11 +69,6 @@ func lowerStreamForEachStmt(s ast.Stmt, streamElem map[string]ast.Type) ast.Stmt
 		if x.Else != nil {
 			x.Else = lowerStreamForEachStmt(x.Else, streamElem)
 		}
-	case *ast.LetElse:
-		lowerStreamForEachExpr(x.Source, streamElem)
-		if x.Else != nil {
-			lowerStreamForEachStmt(x.Else, streamElem)
-		}
 	case *ast.While:
 		lowerStreamForEachExpr(x.Cond, streamElem)
 		x.Body = lowerStreamForEachStmt(x.Body, streamElem)

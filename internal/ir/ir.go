@@ -4150,8 +4150,6 @@ func allReturnsArePairFormShape(s ast.Stmt, names map[string]bool, pairForm map[
 			}
 		}
 		return true
-	case *ast.LetElse:
-		return allReturnsArePairFormShape(x.Else, names, pairForm)
 	case *ast.Return:
 		return isPairFormReturnExpr(x.Value, names, pairForm)
 	}
@@ -4699,8 +4697,6 @@ func collectDefers(s ast.Stmt, out *[]*ast.Defer) {
 		}
 	case *ast.If:
 		collectDefers(x.Then, out)
-		collectDefers(x.Else, out)
-	case *ast.LetElse:
 		collectDefers(x.Else, out)
 	case *ast.While:
 		collectDefers(x.Body, out)
@@ -6831,96 +6827,6 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.stmt(n.Else); err != nil {
 				return err
 			}
-		}
-		b.closeScope()
-	case *ast.LetElse:
-		// Lower as: store source ptr, compare tag to varIdx.
-		// On match (then-arm): bind payloads into locals declared
-		// at the OUTER scope so they survive past the LetElse.
-		// On mismatch: run the else block — checker has verified
-		// the else diverges.
-		//
-		// Pair-form scrutinee fast path mirrors IfLet's: consume
-		// (tag, payload) from the operand stack into scratch
-		// locals, dispatch on tag local, bind payload from
-		// payload local — zero alloc end-to-end.
-		_, varIdx, _, ok := b.lookupVariant(n.VariantName)
-		if !ok {
-			return fmt.Errorf("ir: let-else references unknown variant %q", n.VariantName)
-		}
-		// Pre-allocate the binding slots BEFORE the if so the
-		// stores inside the matched branch land in slots the
-		// surrounding scope can read.
-		bindingSlots := make([]int32, len(n.Bindings))
-		for i, name := range n.Bindings {
-			bt := ast.Type(ast.NumberType{})
-			if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
-				bt = n.BindingTypes[i]
-			}
-			bindingSlots[i] = b.bindingSlot(name, bt)
-		}
-		if b.isPairFormScrutinee(n.Source) {
-			tagSlot := b.allocSlot()
-			b.locals[fmt.Sprintf("__letelse_tag_%d", tagSlot)] = tagSlot
-			payloadSlot := b.allocSlot()
-			b.locals[fmt.Sprintf("__letelse_pay_%d", payloadSlot)] = payloadSlot
-			prev := b.suppressPairRebox
-			b.suppressPairRebox = true
-			if err := b.expr(n.Source); err != nil {
-				return err
-			}
-			b.suppressPairRebox = prev
-			b.emit(Op{Kind: OpStoreLocal, I32: payloadSlot})
-			b.emit(Op{Kind: OpStoreLocal, I32: tagSlot})
-			b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
-			b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
-			b.emit(Op{Kind: OpEq})
-			b.openIf(BlockTypeVoid)
-			// Pair-form is scoped to Option[i32]: 0 or 1
-			// bindings. For 0 (None arm) the bindingSlots
-			// loop is empty; for 1 (Some(v)) bind from
-			// payloadSlot directly.
-			for _, slot := range bindingSlots {
-				b.emit(Op{Kind: OpLoadLocal, I32: payloadSlot})
-				b.emit(Op{Kind: OpStoreLocal, I32: slot})
-			}
-			b.elseBranch()
-			if err := b.stmt(n.Else); err != nil {
-				return err
-			}
-			b.closeScope()
-			break
-		}
-		ptrSlot := b.allocSlot()
-		b.locals[fmt.Sprintf("__letelse_p_%d", ptrSlot)] = ptrSlot
-		if err := b.expr(n.Source); err != nil {
-			return err
-		}
-		b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
-		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-		b.emit(Op{Kind: OpMatchTag})
-		b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
-		b.emit(Op{Kind: OpEq})
-		b.openIf(BlockTypeVoid)
-		// Match: load each payload field into its pre-allocated
-		// outer-scope slot.
-		offsets, _ := payloadLayout(n.BindingTypes, len(bindingSlots), b.ptrW)
-		for i, slot := range bindingSlots {
-			bt := ast.Type(ast.NumberType{})
-			if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
-				bt = n.BindingTypes[i]
-			}
-			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-			b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
-			b.emit(Op{Kind: OpAdd})
-			b.emit(payloadLoadOpFor(bt, b.ptrW))
-			b.emit(Op{Kind: OpStoreLocal, I32: slot})
-		}
-		b.elseBranch()
-		// Else block. The checker has verified divergence so
-		// codegen doesn't need to do anything special.
-		if err := b.stmt(n.Else); err != nil {
-			return err
 		}
 		b.closeScope()
 	case *ast.While:

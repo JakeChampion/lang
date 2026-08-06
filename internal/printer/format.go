@@ -739,15 +739,7 @@ func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 		if i > 0 && f.blankBefore(s.Pos().Line) {
 			f.b.WriteByte('\n')
 		}
-		f.drainLeading(s.Pos().Line, depth+1)
-		f.indent(depth + 1)
-		f.formatStmt(s, depth+1)
-		// If the statement just emitted is a single-line shape and
-		// the next queued comment shares its source line, emit it
-		// inline as a trailing comment.
-		if isSingleLineStmt(s) {
-			f.emitTrailing(s.Pos().Line)
-		}
+		f.formatStmtLine(s, depth+1)
 		f.b.WriteByte('\n')
 	}
 	// Comments past the last statement but still "inside" the
@@ -759,6 +751,22 @@ func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 	// recursion level.
 	f.indent(depth)
 	f.b.WriteByte('}')
+}
+
+// formatStmtLine emits one statement's line content — leading comments,
+// indentation, the statement itself, and any inline trailing comment —
+// without a terminating newline, so the caller decides how lines join.
+// Shared by formatBlock and the `let … else` continuation, whose
+// statements are siblings of the binding rather than a nested block.
+func (f *formatter) formatStmtLine(s ast.Stmt, depth int) {
+	f.drainLeading(s.Pos().Line, depth)
+	f.indent(depth)
+	f.formatStmt(s, depth)
+	// If the statement just emitted is a single-line shape and the next
+	// queued comment shares its source line, emit it inline.
+	if isSingleLineStmt(s) {
+		f.emitTrailing(s.Pos().Line)
+	}
 }
 
 // isSingleLineStmt reports whether s emits as a single source line
@@ -833,24 +841,6 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			f.b.WriteString(" else ")
 			f.formatStmt(x.Else, depth)
 		}
-	case *ast.LetElse:
-		f.b.WriteString("let ")
-		f.b.WriteString(x.VariantName)
-		if len(x.Bindings) > 0 {
-			f.b.WriteByte('(')
-			for j, b := range x.Bindings {
-				if j > 0 {
-					f.b.WriteString(", ")
-				}
-				f.b.WriteString(b)
-			}
-			f.b.WriteByte(')')
-		}
-		f.b.WriteString(" = ")
-		f.formatExpr(x.Source, precLowest)
-		f.b.WriteString(" else ")
-		f.formatBlock(x.Else, depth)
-		f.b.WriteByte(';')
 	case *ast.While:
 		f.b.WriteString("while (")
 		f.formatExpr(x.Cond, precLowest)
@@ -947,8 +937,17 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		// A match the parser synthesised from `if let` re-renders as the
 		// `if let` the source spelled — the pattern arm is the
 		// then-branch, the trailing wildcard arm the else.
-		if x.Origin == "if_let" && len(x.Arms) >= 2 {
-			f.b.WriteString("if let ")
+		// A match the parser synthesised from `if let` / `let … else`
+		// re-renders as the binding form the source spelled: the leading
+		// arms are the pattern alternatives, the trailing wildcard arm is
+		// the else.
+		if x.Origin != "" && len(x.Arms) >= 2 {
+			success, els := x.Arms[0].Body, x.Arms[len(x.Arms)-1].Body
+			if x.Origin == ast.OriginLetElse {
+				f.b.WriteString("let ")
+			} else {
+				f.b.WriteString("if let ")
+			}
 			for i, arm := range x.Arms[:len(x.Arms)-1] {
 				if i > 0 {
 					f.b.WriteString(" | ")
@@ -957,9 +956,25 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			}
 			f.b.WriteString(" = ")
 			f.formatExpr(x.Tag, precLowest)
+			if x.Origin == ast.OriginLetElse {
+				f.b.WriteString(" else ")
+				f.formatBlock(els, depth)
+				f.b.WriteByte(';')
+				// The success arm holds the rest of the enclosing block —
+				// where the bindings are live — so its statements re-emit
+				// as the siblings they were written as.
+				for _, s := range success.Stmts {
+					f.b.WriteByte('\n')
+					if f.blankBefore(s.Pos().Line) {
+						f.b.WriteByte('\n')
+					}
+					f.formatStmtLine(s, depth)
+				}
+				return
+			}
 			f.b.WriteByte(' ')
-			f.formatBlock(x.Arms[0].Body, depth)
-			if els := x.Arms[len(x.Arms)-1].Body; len(els.Stmts) > 0 {
+			f.formatBlock(success, depth)
+			if len(els.Stmts) > 0 {
 				f.b.WriteString(" else ")
 				f.formatBlock(els, depth)
 			}

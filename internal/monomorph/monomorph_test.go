@@ -540,7 +540,6 @@ func allASTNodesWithChildren() []string {
 	stmts := []ast.Stmt{
 		(*ast.Block)(nil),
 		(*ast.If)(nil),
-		(*ast.LetElse)(nil),
 		(*ast.While)(nil),
 		(*ast.For)(nil),
 		(*ast.Break)(nil),

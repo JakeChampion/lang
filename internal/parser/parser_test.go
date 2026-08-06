@@ -1949,8 +1949,10 @@ func TestTupleMatchPatternErrors(t *testing.T) {
 	}
 }
 
-// `let Variant(b) = …` continues to route to LetElse — the
-// tuple-destructure branch must not steal it. Smoke test.
+// `let Variant(b) = … else { … };` continues to route to the let-else
+// desugar — the tuple-destructure branch must not steal it. The
+// statement that lands is the origin-tagged match, and the rest of the
+// block is its success arm (that is where the bindings live).
 func TestLetVariantStillParses(t *testing.T) {
 	prog, err := Parse(`enum Option[T] { Some(T), None }
 function f(): i32 {
@@ -1961,8 +1963,24 @@ function f(): i32 {
 		t.Fatal(err)
 	}
 	stmts := prog.Funcs[0].Body.Stmts
-	if _, ok := stmts[0].(*ast.LetElse); !ok {
-		t.Errorf("first stmt should still be *ast.LetElse; got %T", stmts[0])
+	if len(stmts) != 1 {
+		t.Fatalf("let-else should swallow the rest of the block; got %d stmts", len(stmts))
+	}
+	m, ok := stmts[0].(*ast.Match)
+	if !ok {
+		t.Fatalf("first stmt should be the desugared *ast.Match; got %T", stmts[0])
+	}
+	if m.Origin != ast.OriginLetElse {
+		t.Errorf("Origin = %q, want %q", m.Origin, ast.OriginLetElse)
+	}
+	if len(m.Arms) != 2 || m.Arms[0].VariantName != "Some" || !m.Arms[1].IsWildcard {
+		t.Fatalf("want a Some arm plus a wildcard else arm; got %+v", m.Arms)
+	}
+	if len(m.Arms[0].Body.Stmts) != 1 {
+		t.Errorf("success arm should hold the rest of the block; got %+v", m.Arms[0].Body.Stmts)
+	}
+	if len(m.Arms[1].Body.Stmts) != 1 {
+		t.Errorf("else arm should hold the else block; got %+v", m.Arms[1].Body.Stmts)
 	}
 }
 

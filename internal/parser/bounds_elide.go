@@ -314,12 +314,6 @@ func bindsIdent(n ast.Node, name string) bool {
 					found = true
 				}
 			}
-		case *ast.LetElse:
-			for _, b := range x.Bindings {
-				if b == name {
-					found = true
-				}
-			}
 		}
 		return !found
 	})

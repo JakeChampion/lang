@@ -2522,29 +2522,6 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			return i.execStmt(x.Else, e)
 		}
 		return result{flow: flowNormal}, nil
-	case *ast.LetElse:
-		src, err := i.evalExpr(x.Source, e)
-		if err != nil {
-			return result{}, err
-		}
-		ev, ok := src.(*Enum)
-		if !ok {
-			return result{}, fmt.Errorf("interp: let-else source is %T, expected enum value", src)
-		}
-		if ev.VariantName == x.VariantName {
-			// Bindings live in the surrounding scope (not a
-			// new block) — declare directly into `e`.
-			for j, name := range x.Bindings {
-				if j < len(ev.Payloads) {
-					e.declare(name, ev.Payloads[j])
-				}
-			}
-			return result{flow: flowNormal}, nil
-		}
-		// Mismatch — execute the else block. The checker
-		// requires divergence, so this returns / breaks /
-		// continues; we propagate that.
-		return i.execBlock(x.Else, e)
 	case *ast.While:
 		for {
 			c, err := i.evalExpr(x.Cond, e)

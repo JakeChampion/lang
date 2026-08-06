@@ -4992,8 +4992,6 @@ func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
 		case *ast.If:
 			c.resolveTypesInBlock(asBlock(x.Then), params)
 			c.resolveTypesInBlock(asBlock(x.Else), params)
-		case *ast.LetElse:
-			c.resolveTypesInBlock(x.Else, params)
 		case *ast.While:
 			c.resolveTypesInBlock(asBlock(x.Body), params)
 		case *ast.Loop:
@@ -5047,6 +5045,17 @@ func blockDiverges(b *ast.Block) bool {
 	return stmtDiverges(b.Stmts[len(b.Stmts)-1])
 }
 
+// letElseDivergentArm reports whether arm i is a `let … else` else
+// branch. checkMatch requires that branch to terminate the surrounding
+// control flow and reports E022 when it doesn't, so the reachability
+// analyses take the requirement as given rather than reporting a second
+// diagnostic (a spurious E052) about the same mistake. The desugared
+// match then diverges/exits exactly when the rest of the block does —
+// which is what the analyses saw before `let … else` became a match.
+func letElseDivergentArm(m *ast.Match, i int) bool {
+	return m.Origin == ast.OriginLetElse && i == len(m.Arms)-1 && m.Arms[i].IsWildcard
+}
+
 func stmtDiverges(s ast.Stmt) bool {
 	switch x := s.(type) {
 	case *ast.Return, *ast.Break, *ast.Continue:
@@ -5074,7 +5083,10 @@ func stmtDiverges(s ast.Stmt) bool {
 		// be exhaustive at this point (the checker has
 		// already verified that), so we don't need a separate
 		// "did we see a wildcard" branch.
-		for _, arm := range x.Arms {
+		for i, arm := range x.Arms {
+			if letElseDivergentArm(x, i) {
+				continue
+			}
 			if !blockDiverges(arm.Body) {
 				return false
 			}
@@ -5114,7 +5126,10 @@ func stmtExits(s ast.Stmt) bool {
 		if len(x.Arms) == 0 {
 			return false
 		}
-		for _, arm := range x.Arms {
+		for i, arm := range x.Arms {
+			if letElseDivergentArm(x, i) {
+				continue
+			}
 			if !funcBodyExits(arm.Body) {
 				return false
 			}
@@ -8647,9 +8662,6 @@ func walkStmtForNames(s ast.Stmt, selfName string, siblings map[string]*ast.Func
 		walkExprForNames(n.Cond, selfName, siblings, seen)
 		walkStmtForNames(n.Then, selfName, siblings, seen)
 		walkStmtForNames(n.Else, selfName, siblings, seen)
-	case *ast.LetElse:
-		walkExprForNames(n.Source, selfName, siblings, seen)
-		walkBodyForNames(n.Else, selfName, siblings, seen)
 	case *ast.While:
 		walkExprForNames(n.Cond, selfName, siblings, seen)
 		walkStmtForNames(n.Body, selfName, siblings, seen)
@@ -8791,67 +8803,6 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		c.checkStmt(n.Then, s)
 		if n.Else != nil {
 			c.checkStmt(n.Else, s)
-		}
-	case *ast.LetElse:
-		// Same shape as IfLet but bindings escape into the
-		// surrounding scope (= mutate `s` directly) and the
-		// else block must diverge.
-		st := c.checkExpr(n.Source, s)
-		et, ok := st.(ast.EnumType)
-		if !ok {
-			if st != nil {
-				c.errfCode(n.Source.Pos(), "E022", "let-else source must be an enum value, got %s", st)
-			}
-			c.checkBlock(n.Else, s)
-			return
-		}
-		ed := c.info.Enums[et.Name]
-		if ed == nil {
-			c.errfCode(n.Source.Pos(), "E023", "unknown enum %q", et.Name)
-			c.checkBlock(n.Else, s)
-			return
-		}
-		var sub map[string]ast.Type
-		if len(ed.TypeParams) == len(et.Args) && len(et.Args) > 0 {
-			sub = make(map[string]ast.Type, len(ed.TypeParams))
-			for i, tp := range ed.TypeParams {
-				sub[tp] = et.Args[i]
-			}
-		}
-		var variant *ast.EnumVariant
-		for i := range ed.Variants {
-			if ed.Variants[i].Name == n.VariantName {
-				variant = &ed.Variants[i]
-				break
-			}
-		}
-		if variant == nil {
-			c.errfCode(n.P, "E014", "variant %q is not part of enum %s", n.VariantName, ed.Name)
-			c.checkBlock(n.Else, s)
-			return
-		}
-		if len(n.Bindings) != len(variant.Payloads) {
-			c.errfCode(n.P, "E015", "variant %s has %d payload(s), got %d binding(s)",
-				n.VariantName, len(variant.Payloads), len(n.Bindings))
-		}
-		// Bindings flow into the ENCLOSING scope so later
-		// statements see them. Conceptually: the else branch
-		// diverges, so on fall-through to the rest of the
-		// block, the bindings are guaranteed initialised.
-		n.BindingTypes = make([]ast.Type, len(n.Bindings))
-		for k, name := range n.Bindings {
-			var bt ast.Type
-			if k < len(variant.Payloads) {
-				bt = substituteType(variant.Payloads[k], sub)
-			}
-			n.BindingTypes[k] = bt
-			s.names[name] = bt
-		}
-		// Else runs in its own block scope (the bindings
-		// aren't available there — only on the match path).
-		c.checkBlock(n.Else, s)
-		if !blockDiverges(n.Else) {
-			c.errfCode(n.Else.P, "E022", "let-else: else branch must diverge (return / break / continue)")
 		}
 	case *ast.While:
 		t := c.checkExpr(n.Cond, s)
@@ -9236,7 +9187,7 @@ func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVari
 // originLabel names a pattern-binding form for its diagnostics —
 // `ast.Match.Origin` spelled the way the source spells it.
 func originLabel(origin string) string {
-	if origin == "let_else" {
+	if origin == ast.OriginLetElse {
 		return "let-else"
 	}
 	return "if-let"
@@ -9269,6 +9220,15 @@ func bindsVariantPattern(n *ast.Match) bool {
 }
 
 func (c *checker) checkMatch(n *ast.Match, s *scope) {
+	// A `let … else` binds for the rest of its block — the desugar's
+	// success arm — so the else branch (the synthesised trailing wildcard)
+	// must terminate the surrounding control flow. Without that, execution
+	// could reach the rest of the block with the bindings uninitialised.
+	if n.Origin == ast.OriginLetElse && len(n.Arms) >= 2 {
+		if els := n.Arms[len(n.Arms)-1].Body; !blockDiverges(els) {
+			c.errfCode(els.P, "E022", "let-else: else branch must diverge (return / break / continue)")
+		}
+	}
 	tagT := c.checkExpr(n.Tag, s)
 	if tagT == nil {
 		return

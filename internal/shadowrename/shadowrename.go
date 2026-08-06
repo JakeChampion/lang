@@ -155,20 +155,6 @@ func (r *renamer) walkStmt(s ast.Stmt) {
 		if n.Else != nil {
 			r.walkStmt(n.Else)
 		}
-	case *ast.LetElse:
-		r.walkExpr(n.Source)
-		// Else runs in the *outer* scope (before the bindings
-		// are introduced) — match the user's reading.
-		if n.Else != nil {
-			r.walkBlock(n.Else)
-		}
-		// Bindings become visible after the let-else stmt in
-		// the surrounding block. We piggy-back on the
-		// surrounding block's scope by binding into the
-		// current frame.
-		for i, name := range n.Bindings {
-			n.Bindings[i] = r.bindShadow(name)
-		}
 	case *ast.While:
 		r.walkExpr(n.Cond)
 		r.walkStmt(n.Body)
