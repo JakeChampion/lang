@@ -21,9 +21,9 @@ compiler among them). Targets so far:
   linked, and **ad-hoc code-signed in-process** by the pure-Go native
   backend (static, no dyld) — no external toolchain needed. Pass `-cc clang`
   to opt out to clang + `ld64`/`lld`.
-- **x86-64 / amd64** Linux ELF — System V AMD64 ABI, SSE4.2 baseline
-  (Nehalem, 2008). Like arm64, assembled and linked **in-process** by the
-  pure-Go native backend (no external toolchain); pass `-cc
+- **x86-64 / amd64** Linux ELF — System V AMD64 ABI, Haswell-class baseline
+  (2013: SSE4.2 + BMI1). Like arm64, assembled and linked **in-process** by
+  the pure-Go native backend (no external toolchain); pass `-cc
   x86_64-linux-gnu-gcc` to opt out.
 - **WebAssembly** — a WASI Preview 2 Component Model component, ready for
   `wasmtime run` or `wasmtime serve` (`wasi:http/incoming-handler`).

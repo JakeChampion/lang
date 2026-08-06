@@ -308,9 +308,9 @@ pub function (n: u32) log10_floor(): i32 {
 // What each backend emits still varies, and callers do not care. wasm has all
 // six as single opcodes. arm64 gets a real `clz`, derives ctz from `rbit`, and
 // reaches its SIMD-side popcount (`cnt` per byte, `addv` to sum) through a
-// v-register. x86-64 uses `bsr`/`bsf` and `popcnt`; the target baseline is
-// SSE4.2 (2008), so POPCNT is assumable, while LZCNT/TZCNT are not — they need
-// BMI1 (2013), and bsr/bsf already cover clz/ctz.
+// v-register. x86-64 emits `lzcnt` / `tzcnt` / `popcnt`, one instruction each
+// and no branch — the target baseline is Haswell-class (2013), which covers
+// BMI1 and SSE4.2 both.
 //
 // Zero is defined: leading_zeros / trailing_zeros of 0 return the width.
 

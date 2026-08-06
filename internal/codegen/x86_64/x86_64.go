@@ -2243,59 +2243,35 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emit("movzx eax, al")
 		g.push()
 
-	// Bit counting. The target baseline is SSE4.2 (Nehalem, 2008), so
-	// POPCNT is a single instruction. LZCNT / TZCNT are NOT taken: they
-	// need BMI1 (Haswell, 2013), which is a decidedly later baseline
-	// than the popcount one, and clz / ctz already get real instructions
-	// from 386-era bsr / bsf.
+	// Bit counting: one instruction each, no branch. The target CPU
+	// baseline is Haswell-class (2013), which covers BMI1's LZCNT/TZCNT
+	// as well as SSE4.2's POPCNT.
 	//
-	// The cost of bsr/bsf is that they leave the destination UNDEFINED
-	// for a zero input while the IR op defines clz(0) / ctz(0) as the
-	// operand width — hence the explicit zero branch. It is a
-	// predictable branch that is never taken in the common case.
+	// LZCNT and TZCNT are DEFINED at a zero input — they return the
+	// operand width, which is exactly what the IR op defines — so the
+	// zero branch the old bsr/bsf lowering needed is gone rather than
+	// merely predicted. That definedness is the entire reason to prefer
+	// them: bsr/bsf leave the destination UNDEFINED at zero.
+	//
+	// The flip side is a failure mode worth naming: below the baseline
+	// these decode as bsr/bsf with an ignored F3 prefix, so a too-old
+	// CPU answers a different question SILENTLY instead of faulting the
+	// way POPCNT does.
 	case ir.OpClz:
 		g.pop()
-		zero := g.freshLabel("clzZero")
-		done := g.freshLabel("clzDone")
 		if op.Width == 64 {
-			g.emit("test rax, rax")
-			g.emit("jz " + zero)
-			g.emit("bsr rax, rax")
-			g.emit("xor rax, 63")
-			g.emit("jmp " + done)
-			g.label(zero)
-			g.emit("mov eax, 64")
+			g.emit("lzcnt rax, rax")
 		} else {
-			g.emit("test eax, eax")
-			g.emit("jz " + zero)
-			g.emit("bsr eax, eax")
-			g.emit("xor eax, 31")
-			g.emit("jmp " + done)
-			g.label(zero)
-			g.emit("mov eax, 32")
+			g.emit("lzcnt eax, eax")
 		}
-		g.label(done)
 		g.push()
 	case ir.OpCtz:
 		g.pop()
-		zeroC := g.freshLabel("ctzZero")
-		doneC := g.freshLabel("ctzDone")
 		if op.Width == 64 {
-			g.emit("test rax, rax")
-			g.emit("jz " + zeroC)
-			g.emit("bsf rax, rax")
-			g.emit("jmp " + doneC)
-			g.label(zeroC)
-			g.emit("mov eax, 64")
+			g.emit("tzcnt rax, rax")
 		} else {
-			g.emit("test eax, eax")
-			g.emit("jz " + zeroC)
-			g.emit("bsf eax, eax")
-			g.emit("jmp " + doneC)
-			g.label(zeroC)
-			g.emit("mov eax, 32")
+			g.emit("tzcnt eax, eax")
 		}
-		g.label(doneC)
 		g.push()
 	case ir.OpPopcount:
 		g.pop()

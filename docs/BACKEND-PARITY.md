@@ -20,12 +20,18 @@ inside a codegen switch:
 | backend | baseline | what it buys |
 | ------- | -------- | ------------ |
 | arm64 / arm64-darwin | ARMv8-A, Advanced SIMD included | `clz`, `rbit`, and the SIMD-side popcount (`cnt` + `addv`). Advanced SIMD is mandatory on the ARMv8-A application profile, so this is the architecture floor, not a raise. |
-| x86-64 | SSE4.2 (Intel Nehalem, 2008; AMD Barcelona, 2007) | `popcnt`, alongside the SSE2 floating point the backend already required. |
+| x86-64 | Haswell-class, 2013 — SSE4.2 + BMI1 (AMD: Piledriver/Jaguar and later) | `popcnt` (SSE4.2) and `lzcnt` / `tzcnt` (BMI1), alongside the SSE4.1 `roundsd` and SSE2 floating point the backend already required. |
 
-x86-64 stops at SSE4.2 deliberately: LZCNT / TZCNT would need BMI1 (Haswell,
-2013), a much later floor, and 386-era `bsr` / `bsf` already give clz / ctz
-real instructions. Anything above these baselines needs runtime dispatch
-first.
+**LZCNT / TZCNT have a failure mode POPCNT does not, and it is the reason to
+state the baseline rather than assume it.** Below the baseline, POPCNT is an
+invalid opcode and faults. LZCNT / TZCNT are the *same opcodes* as the 386-era
+BSR / BSF distinguished only by a mandatory `F3` prefix — an older CPU ignores
+the prefix and executes BSR / BSF, which answer a different question and are
+undefined at a zero input. So a sub-baseline CPU miscomputes **silently** there
+instead of crashing.
+
+Anything above these baselines (AVX2, BMI2, …) needs runtime dispatch first;
+none of it is used today.
 
 Wasm is the broadest because it was where Map / State / file I/O / preview2
 HTTP landed first. The native backends have caught up on the edge-handler

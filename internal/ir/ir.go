@@ -108,14 +108,14 @@ const (
 	// (32 or 64) and produces an i32 count. Every target has these as
 	// instructions — wasm as single opcodes (i32.clz / i32.ctz /
 	// i32.popcnt), arm64 as clz / rbit+clz / cnt+addv, x86-64 as
-	// bsr / bsf / popcnt — where the portable SWAR sequences they
+	// lzcnt / tzcnt / popcnt — where the portable SWAR sequences they
 	// replace are 12-15 ALU ops.
 	//
 	// Zero is defined: OpClz and OpCtz of 0 return the operand width
 	// (32 or 64), matching wasm's semantics and what the SWAR code
-	// they replace produced. That definition is the whole reason
-	// x86-64 cannot use a bare bsr/bsf, whose result is undefined
-	// for a zero input — see the guard in its lowering.
+	// they replace produced. Every backend gets that for free from its
+	// instruction, which is why x86-64 selects LZCNT/TZCNT (defined at
+	// zero) over the same-opcode bsr/bsf (undefined at zero).
 	OpClz      // (i32|i64) → i32, count of leading zero bits
 	OpCtz      // (i32|i64) → i32, count of trailing zero bits
 	OpPopcount // (i32|i64) → i32, count of set bits

@@ -5210,26 +5210,24 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rsi\n    movq $420, %rdx\n    call __fern_open_fd\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("open_file");
         } else if (o.kind_tag == 219) {  // clz
-            // bsr/bsf, not LZCNT/TZCNT: those need BMI1 (Haswell, 2013), a much
-            // later baseline than the SSE4.2 (2008) one popcount below assumes,
-            // and bsr/bsf are 386-era. The cost is that bsr leaves its
-            // destination undefined at zero while the op defines clz(0) as the
-            // operand width -- hence the explicit branch.
-            var czl: string = lp + "clz" + util.i32_to_string(i);
+            // LZCNT (BMI1) is DEFINED at zero -- it returns the operand width,
+            // which is exactly what the op defines -- so there is no zero
+            // branch here at all. That definedness is why it beats bsr, whose
+            // destination is undefined for a zero input.
             if (o.width == 64) {
-                s = s.write("    popq %rax\n    testq %rax, %rax\n    jz " + czl + "z\n    bsrq %rax, %rax\n    xorq $63, %rax\n    jmp " + czl + "d\n" + czl + "z:\n    movq $64, %rax\n" + czl + "d:\n    pushq %rax\n");
+                s = s.write("    popq %rax\n    lzcntq %rax, %rax\n    pushq %rax\n");
             } else {
-                s = s.write("    popq %rax\n    testl %eax, %eax\n    jz " + czl + "z\n    bsrl %eax, %eax\n    xorl $31, %eax\n    jmp " + czl + "d\n" + czl + "z:\n    movl $32, %eax\n" + czl + "d:\n    pushq %rax\n");
+                s = s.write("    popq %rax\n    lzcntl %eax, %eax\n    pushq %rax\n");
             }
         } else if (o.kind_tag == 220) {  // ctz
-            var ctl: string = lp + "ctz" + util.i32_to_string(i);
+            // TZCNT, likewise defined at zero as the operand width.
             if (o.width == 64) {
-                s = s.write("    popq %rax\n    testq %rax, %rax\n    jz " + ctl + "z\n    bsfq %rax, %rax\n    jmp " + ctl + "d\n" + ctl + "z:\n    movq $64, %rax\n" + ctl + "d:\n    pushq %rax\n");
+                s = s.write("    popq %rax\n    tzcntq %rax, %rax\n    pushq %rax\n");
             } else {
-                s = s.write("    popq %rax\n    testl %eax, %eax\n    jz " + ctl + "z\n    bsfl %eax, %eax\n    jmp " + ctl + "d\n" + ctl + "z:\n    movl $32, %eax\n" + ctl + "d:\n    pushq %rax\n");
+                s = s.write("    popq %rax\n    tzcntl %eax, %eax\n    pushq %rax\n");
             }
         } else if (o.kind_tag == 221) {  // popcount
-            // POPCNT is SSE4.2 (Nehalem, 2008), which is the target baseline.
+            // POPCNT (SSE4.2), below the BMI1 floor the two above assume.
             if (o.width == 64) {
                 s = s.write("    popq %rax\n    popcntq %rax, %rax\n    pushq %rax\n");
             } else {
