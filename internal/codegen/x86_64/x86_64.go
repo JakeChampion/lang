@@ -5292,9 +5292,10 @@ func (g *generator) emitMapDropRuntime() {
 	g.emit("jb .Lmapdrop_freehandle")
 	g.emit("mov ecx, dword ptr [rdx]") // cap (zero-extended)
 	g.emit("imul rcx, rcx, 20")        // cap * (4 + entryStride=16)
-	g.emit(fmt.Sprintf("add rcx, %d", ast.MapHeaderBytes)) // + kv header = size
-	g.emit("mov rsi, rcx")             // size (arg2)
-	g.emit("mov rdi, rdx")             // base = buf (arg1)
+	// ... plus the kv header, giving the buf's total size.
+	g.emit(fmt.Sprintf("add rcx, %d", ast.MapHeaderBytes))
+	g.emit("mov rsi, rcx") // size (arg2)
+	g.emit("mov rdi, rdx") // base = buf (arg1)
 	g.emit("call __fern_free")
 	g.label(".Lmapdrop_freehandle")
 	g.emit("mov rdi, rbx")
