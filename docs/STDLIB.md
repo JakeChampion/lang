@@ -1271,6 +1271,35 @@ User code should reach for the method-syntax surface
 - `parse_int_radix(s, base)` — bases 2..36
 - `int_to_string_radix(n, base)` — bases 2..36
 
+### `core/bigint`
+
+Arbitrary-precision integers. Sign-magnitude, little-endian base
+2^32, one limb per `u64` slot.
+
+Values are **immutable** — every operation returns a fresh `BigInt`,
+matching the pure-collection convention. Types are referenced
+module-qualified (`bigint.BigInt`); functions likewise
+(`bigint.parse`).
+
+- `zero()` / `from_i64(v)` / `parse(s)` → `Option[BigInt]`
+- `(a).add(b)` / `.sub(b)` / `.mul(b)` — schoolbook multiply
+- `(a).negate()` / `.abs()` / `.cmp(b)` / `.eq(b)`
+- `(a).is_zero()` / `.is_negative()` / `.bit_length()`
+- `(a).mul_pow10(k)` / `.shl(k)`
+- `(a).to_string()` / `.hash()`
+
+It imports **nothing**, deliberately: `std/string` needs a bignum
+for `parse_float`'s exact fallback and cannot import anything that
+reaches back to it. That is also why its `Display` / `Eq` / `Ord` /
+`Hash` / `Default` / `Debug` impls live in `core/cmp` rather than
+here — the orphan rule accepts the trait's module or the type's, and
+only that side keeps this module import-free. `cmp` returns the
+-1/0/1 `std/sort` expects, so `cmp.sort` over a `BigInt[]` works.
+
+Only schoolbook multiplication is implemented. The asymptotic ladder
+(Karatsuba → Toom-Cook → NTT) is deliberately not built out until
+there is a workload to measure against.
+
 ### `core/cmp`
 
 The comparison + display trait foundation. Three small traits

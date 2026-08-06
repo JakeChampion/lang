@@ -26,6 +26,7 @@ import "std/string";
 // For the lexicographic `impl Ord for string` (reuses the tested
 // byte-order comparator rather than re-deriving it).
 import "std/sort";
+import "core/bigint";
 
 pub trait Display {
     function to_string(self: Self): string;
@@ -699,6 +700,35 @@ pub function distinct[T: Eq](xs: T[]): T[] {
         if (!contains(out, x)) { out = out.append(x); }
     }
     return out;
+}
+
+// ---- BigInt ----------------------------------------------------
+// `core/bigint` is arbitrary-precision arithmetic and imports NOTHING, so
+// that `std/string` can use it for parse_float's exact fallback without a
+// cycle (std/string -> core/bigint -> core/cmp -> std/string would be one).
+// That is why these impls live HERE rather than next to the type: the orphan
+// rule accepts the trait's module or the type's module, and only this side of
+// the choice keeps core/bigint free of imports. core/cmp -> core/bigint is
+// safe precisely because core/bigint has no imports to come back through.
+//
+// Display / Eq / Ord / Hash are empty: BigInt already carries `to_string`,
+// `eq`, `cmp` and `hash` with exactly these signatures, and an empty impl
+// adopts the existing method — the same shape as `impl Display for i32`.
+// `cmp` returns -1 / 0 / 1, so a BigInt[] drops straight into std/sort.
+
+impl Display for bigint.BigInt { }
+impl Eq for bigint.BigInt { }
+impl Ord for bigint.BigInt { }
+impl Hash for bigint.BigInt { }
+
+impl Default for bigint.BigInt {
+    function default(): bigint.BigInt { return bigint.zero(); }
+}
+
+// A number has no structure to render and no ambiguity to disambiguate, so
+// debug is the decimal form — the same call the numeric primitives make.
+impl Debug for bigint.BigInt {
+    function to_debug(self: Self): string { return self.to_string(); }
 }
 
 // eq_arrays reports whether `a` and `b` have the same length and equal

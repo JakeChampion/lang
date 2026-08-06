@@ -309,6 +309,17 @@ order of value:
    This is buildable now, on existing instruments, and it protects everything
    else on this list. **It should go first.**
 
+   **First slice landed: `TestX86_64AllocScaling`** — and building it corrected
+   the design sketched here. The obvious gate is a recorded byte budget per
+   shape, which is what "record and compare" implies; that gate rots, because
+   every legitimate change to a header size, growth schedule or SSO threshold
+   moves every budget at once, so they get re-recorded in bulk without being
+   read. Measuring the same shape at `n` and `2n` and bounding the **ratio**
+   removes the problem: constant factors cancel, and the asymptotic class —
+   the thing that actually turns a compile from seconds into minutes — comes
+   through unmistakably. Measured: linear shapes 2.00–2.06x per doubling,
+   quadratic 3.78x, against a 2.20x bound. See `docs/TEST-GATES.md`.
+
 2. **The 128-bit SIMD tier** (§3), which unblocks the whole of
    `SOTA-STDLIB-BLUEPRINT` Tier 3.
 
@@ -465,6 +476,9 @@ Per rule 5, each kernel ships with:
 
 1. **Performance-regression CI** on `__heap_bump_bytes()` /
    `__arr_push_shared_bytes()` — protects everything downstream. (§2.1)
+   *Slice 1 landed (`TestX86_64AllocScaling`, allocation asymptotics).
+   Remaining: extending the corpus to the compiler's own hot shapes, and a
+   throughput gate.*
 2. **`__memchr` as the first fused kernel**, by the §3.4 ordering. (§3.3)
 3. **`__memcmp` / UTF-8 validation** as the second and third kernels, proving
    the contract generalises past a single shape.
