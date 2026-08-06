@@ -647,15 +647,6 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   When editing inference/checker/`Ty`/`EmitState`, edit `asmcore.fern`
   once — it is *not* mirrored in the backends. Anything compiling those
   backends must also provide `asmcore.fern`.)
-- **Local CI sign-off (skip lanes you've already run).** CI supports
-  Basecamp `gh-signoff`: after running a suite locally on the exact
-  commit you're pushing, `scripts/signoff <step>` (or `--local` for the
-  whole x86-64/wasm-verifiable set) posts a `signoff/<step>` commit
-  status that the matching workflow's `gate` job reads and skips that
-  lane. Sign-offs pin to the SHA (a new commit re-enables CI), only
-  collaborators can post them (fork PRs always run), and the gate fails
-  open. Don't sign off `e2e-arm64` unless you actually ran it on arm64.
-  Full details + the step→lane map: `docs/CI-SIGNOFF.md`.
 - **Every new feature ships with tests.** Parser-time desugar →
   parser test. Checker rule → checker test. Runtime behaviour →
   e2e test. No "the next PR will add coverage."

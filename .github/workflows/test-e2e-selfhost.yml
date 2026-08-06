@@ -193,29 +193,8 @@ env:
   QUARANTINED_TESTS: ""
 
 jobs:
-  # Local-CI sign-off gate. `gh signoff e2e-selfhost` on this commit skips the
-  # whole pipeline below (see docs/CI-SIGNOFF.md): `build` is gated directly and
-  # `warm` / `cli` / `test` cascade-skip through their `needs: build` dependency.
-  # Fork PRs can't sign off; gate fails open on any error.
-  gate:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      statuses: read
-    outputs:
-      skip: ${{ steps.s.outputs.skip }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: s
-        uses: ./.github/actions/signoff-gate
-        with:
-          step: e2e-selfhost
-          sha: ${{ github.event.pull_request.head.sha || github.sha }}
-
   # Compile the e2e test binary ONCE per arch; the sharded test jobs reuse it.
   build:
-    needs: gate
-    if: needs.gate.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -815,13 +794,13 @@ jobs:
   # (runner reclaim / OOM-kill / job timeout) to a reported-but-nonfatal note;
   # a shard that actually RAN and failed stays fatal either way.
   verify:
-    needs: [gate, test]
+    needs: test
     # `needs.test.result != 'skipped'` keeps this quiet when `test` never ran at
     # all (a `build` failure cascades through `needs`): that is already red at
     # its source, and reporting all 28 shards "vanished" on top of it would bury
     # the real error. `!cancelled()` matches the recording steps' guard — see
     # the note there for why `always()` would manufacture false failures here.
-    if: ${{ !cancelled() && needs.gate.outputs.skip != 'true' && needs.test.result != 'skipped' }}
+    if: ${{ !cancelled() && needs.test.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:

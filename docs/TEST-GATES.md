@@ -3,10 +3,9 @@
 A guide to picking the suites a change actually has to pass, written after two
 compiler bugs shipped past three heavyweight green gates in a row.
 
-The mechanics of running and skipping lanes are in
-[CI-SIGNOFF.md](CI-SIGNOFF.md); this document is about *which* lanes carry
-signal for *which* kind of change, and — more usefully — which ones look
-authoritative and are not.
+This document is about *which* lanes carry signal for *which* kind of
+change, and — more usefully — which ones look authoritative and are not.
+Every lane now runs on every push; there is no way to skip one.
 
 ## The one that surprises people: the fixpoint is self-referential
 
