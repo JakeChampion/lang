@@ -879,7 +879,14 @@ pub function resolve_labels_module(mod: Module): Module {
 // force for the whole iter sub-expression, matching the Go
 // parser's noStructLit (which likewise blocks nested struct lits
 // in the iter — `for x in f(Foo{…})` is rejected on both).
-struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean }
+// `map_kind` is the KEY KIND a `Map { … }` literal about to be parsed should be
+// built with — 1 for i32, 0 for string, -1 for "no annotation, guess". Set by
+// the var-decl parser from the declared type and consumed by parse_map_lit,
+// the same parse-context shape as no_struct. It reaches ONLY a literal: a
+// hand-written `map_new(8).insert(1, 10)` chain keeps the constructor the
+// author wrote, so the E038 gate on it (asmcore.check_map_new_chain, which
+// mirrors a native rejection) still fires.
+struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32 }
 
 function (p: Par) at_end(): boolean {
     if (p.pos >= p.toks.len()) { return true; }
@@ -929,12 +936,15 @@ function (p: Par) peek_col(): i32 {
 }
 
 function (p: Par) advance(): Par {
-    return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct };
+    return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind };
 }
 // with_no_struct returns a cursor with the struct-literal-suppression
 // flag set as given (position unchanged).
 function (p: Par) with_no_struct(v: boolean): Par {
-    return Par { toks: p.toks, pos: p.pos, no_struct: v };
+    return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind };
+}
+function (p: Par) with_map_kind(v: i32): Par {
+    return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v };
 }
 
 // Token-shape queries: each returns "" when the token isn't of
@@ -1240,9 +1250,9 @@ function parse_arrow_lambda(p: Par): (Expr, Par) {
 // genuinely unclassifiable here: the parser has no types, which is the root
 // of why this decision is awkward in the first place (the native compiler
 // keeps a typed `ast.MapLit` and lets the checker answer). Those return -1.
-// Where the literal initializes an ANNOTATED binding that costs nothing —
-// retarget_map_ctor reads `Map[K, V]` off the declaration and overrides
-// whatever this guessed. This is the fallback for the rest.
+// Where the literal initializes an ANNOTATED binding, parse_map_lit takes the
+// key kind straight off the declaration (Par.map_kind) and never asks this.
+// This is the fallback for every other position.
 function map_key_kind_of_expr(e: Expr): i32 {
     match (e) {
         ExprNumber(_) => { return 1; },
@@ -1283,10 +1293,15 @@ function map_key_kind_of_expr(e: Expr): i32 {
 // reached the compare.
 //
 // The key walk below is the guess of last resort. A `var m: Map[K, V] = …`
-// declaration answers the same question exactly, and retarget_map_ctor
-// rewrites this constructor from it where one is present.
+// declaration answers the same question exactly and arrives as Par.map_kind,
+// which takes precedence where it is set.
 function parse_map_lit(p: Par): (Expr, Par) {
-    p = p.advance();   // consume `{`
+    // Take the declaration's answer for THIS literal, then clear it: a
+    // `Map[string, i32]` literal appearing as a VALUE inside a `Map[i32, …]`
+    // literal must not inherit the outer key kind, which would reintroduce
+    // this bug in a rarer shape.
+    var want_kk: i32 = p.map_kind;
+    p = p.with_map_kind(0 - 1).advance();   // consume `{`
     var mlk: Expr[] = [];
     var mlv: Expr[] = [];
     if (p.peek_punct() != "}") {
@@ -1308,7 +1323,7 @@ function parse_map_lit(p: Par): (Expr, Par) {
     // map just as well as the first, and consulting it costs nothing. Only an
     // all-undecidable key set (identifiers, calls) still falls back to
     // map_new — the case the parser cannot answer without types.
-    var kk: i32 = 0 - 1;
+    var kk: i32 = want_kk;
     var kki: i32 = 0;
     while (kki < mlk.len()) {
         if (kk < 0) { kk = map_key_kind_of_expr(mlk[kki]); }
@@ -1342,49 +1357,6 @@ function map_ann_key_kind(t: string): i32 {
     if (inner.len() >= 4 && inner[0:4] == "i32,") { return 1; }
     if (inner.len() >= 7 && inner[0:7] == "string,") { return 0; }
     return 0 - 1;
-}
-
-// retarget_map_ctor rewrites the base constructor of a map-construction
-// expression — a `Map { … }` literal's `map_new[_i32](n).insert(k0,v0)…`
-// desugar chain, or a bare `map_new[_i32](n)` — to the one `kk` names.
-//
-// map_key_kind_of_expr guesses the key kind from the literal's keys, and for
-// a key like `f()`, `p.n` or `if (c) { 1 } else { 2 }` it CANNOT: the parser
-// has no types. It falls back to the string constructor, and an integer-keyed
-// map then compares its keys through __fern_str_eq, dereferencing them as
-// pointers — a SIGSEGV at construction (#6207). A `var m: Map[i32, i32] = …`
-// annotation answers outright what the keys can only hint at, so where one is
-// present it decides and the guess is not consulted. The guess still covers
-// every unannotated position.
-//
-// Anything that is not a recognised map construction is returned untouched —
-// `var m: Map[i32, i32] = other.insert(k, v)` bottoms out at an identifier,
-// not at map_new, and keeps the receiver's kind.
-function retarget_map_ctor(e: Expr, kk: i32): Expr {
-    match (e) {
-        ExprCall(c) => {
-            match (c.callee) {
-                ExprIdent(cid) => {
-                    if ((cid.name == "map_new" || cid.name == "map_new_i32") && c.args.len() == 1) {
-                        var want: string = if (kk == 1) { "map_new_i32" } else { "map_new" };
-                        if (cid.name == want) { return e; }
-                        return e_call_at(e_ident_at(want, cid.line, cid.col), c.args, c.line, c.col);
-                    }
-                    return e;
-                },
-                ExprFieldAccess(cfa) => {
-                    if (cfa.field == "insert" && c.args.len() == 2) {
-                        var nobj: Expr = retarget_map_ctor(cfa.obj, kk);
-                        return e_call_at(e_field_access_at(nobj, "insert", cfa.line, cfa.col), c.args, c.line, c.col);
-                    }
-                    return e;
-                },
-                _ => { return e; }
-            }
-        },
-        _ => {}
-    }
-    return e;
 }
 
 // parse_struct_lit_body parses `{ f: v, … }` (the cursor is on the
@@ -1730,7 +1702,7 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
 // parser's parseExprFromText.
 function parse_expr_from_text(text: string): Expr {
     var toks: lexer.Token[] = lexer.tokenize(text);
-    var sub: Par = Par { toks: toks, pos: 0, no_struct: false };
+    var sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1 };
     var (r_expr, r_p) = parse_expr(sub);
     return r_expr;
 }
@@ -4265,8 +4237,10 @@ function parse_stmt(p: Par): (Stmt, Par) {
         // The source expr is followed by either `;` (plain binding) or
         // the `else` keyword (let-else) — never directly by `{`, so no
         // struct-literal suppression is needed here.
-        var (init_expr, init_p) = parse_expr(p);
-        p = init_p;
+        // A `Map[K, V]` annotation outranks the key-kind guess parse_map_lit
+        // would otherwise bake into the literal's constructor (#6207).
+        var (init_expr, init_p) = parse_expr(p.with_map_kind(map_ann_key_kind(type_name)));
+        p = init_p.with_map_kind(0 - 1);
         // let-else: `let Variant(b..) = E else { divergent };`. The
         // rest of the enclosing block becomes the success arm body;
         // the else block becomes the wildcard arm. Reuses the
@@ -4303,10 +4277,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
         if (p.peek_punct() == ";") { p = p.advance(); }
         // A `Map[K, V]` annotation outranks the key-kind guess parse_map_lit
         // baked into the initializer's constructor (#6207).
-        var vann_kk: i32 = map_ann_key_kind(type_name);
-        var vinit: Expr = init_expr;
-        if (vann_kk >= 0) { vinit = retarget_map_ctor(init_expr, vann_kk); }
-        return (StmtVar { name: name, type_name: type_name, init: vinit, line: vline, col: vcol, is_str: v_is_str }, p);
+        return (StmtVar { name: name, type_name: type_name, init: init_expr, line: vline, col: vcol, is_str: v_is_str }, p);
     }
     if (kw == "return") {
         var rline: i32 = p.peek_line();
@@ -4489,7 +4460,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
 }
 
 pub function parse_program(toks: lexer.Token[]): Stmt[] {
-    var p: Par = Par { toks: toks, pos: 0, no_struct: false };
+    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1 };
     var out: Stmt[] = [];
     while (!p.at_end()) {
         var (r_stmt, r_p) = parse_stmt(p);
@@ -13872,7 +13843,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, Par) {
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
-    var p: Par = Par { toks: toks, pos: 0, no_struct: false };
+    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1 };
     var funcs: FuncDecl[] = [];
     var trait_defaults: TraitDefault[] = [];
     var trait_reqs: TraitReq[] = [];
