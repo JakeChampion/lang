@@ -57,14 +57,14 @@ import (
 // buckets their own probes cannot find, and every one of these steps would
 // then fail.
 //
-// The delete section is deliberately SMALL (three keys, not a sweep) because
-// repeated `without` on a grown map SEGVs on every compiled backend — #6227, a
-// pre-existing fault reproduced on stock main and unrelated to seeding. A
-// sweep here would be red for that reason instead of this one. Three deletes
-// stays under #6227's threshold while still covering what seeding touches: the
-// probe that finds the victim, the tombstone, and the rehash that relocates
-// the swapped-in last entry, each of which must agree with the seed the map
-// was built under.
+// The delete section is a SWEEP — 60 keys, each rebound through the
+// temporary `without` forces. It was three keys until #6227 was fixed, capped
+// because repeated `without` on a grown map SEGV'd on every compiled backend
+// for a reason unrelated to seeding. What the sweep covers is what seeding
+// touches: the probe that finds the victim, the tombstone, and the rehash
+// that relocates the swapped-in last entry, each of which must agree with the
+// seed the map was built under — and 60 of them exercise a table that keeps
+// shrinking under the backfill rather than one tombstone in isolation.
 const mapSeededSemanticsProg = `
 import "core/map";
 import "std/i32";
@@ -93,30 +93,34 @@ function main(): i32 {
     if (m.get_or("key5", 0) != 999) { return 7; }
 
     // Delete tombstones the bucket and swaps the last entry down, so both the
-    // probe and the last-entry rehash must agree with the map's seed. Kept to
-    // three keys by #6227 — see the comment above.
-    var (ma, oka) = m.without("key0");
-    if (!oka) { return 8; }
-    var (mb, okb) = ma.without("key150");
-    if (!okb) { return 9; }
-    var (mc, okc) = mb.without("key299");
-    if (!okc) { return 10; }
-    m = mc;
-    if (m.len() != 297) { return 11; }
-    if (m.has("key0")) { return 12; }
-    if (m.has("key150")) { return 13; }
-    if (m.has("key299")) { return 14; }
-    // The neighbours of the deleted keys must survive the backfill.
-    if (m.get_or("key1", 0 - 1) != 7) { return 15; }
-    if (m.get_or("key149", 0 - 1) != 1043) { return 16; }
-    if (m.get_or("key298", 0 - 1) != 2086) { return 17; }
+    // probe and the last-entry rehash must agree with the map's seed.
+    var d: i32 = 0;
+    while (d < 60) {
+        var (md, okd) = m.without("key" + d.to_string());
+        if (!okd) { return 8; }
+        m = md;
+        d = d + 1;
+    }
+    if (m.len() != 240) { return 9; }
+    var g: i32 = 0;
+    while (g < 60) {
+        if (m.has("key" + g.to_string())) { return 10; }
+        g = g + 1;
+    }
+    // Everything the backfill moved must still be reachable.
+    var s: i32 = 60;
+    while (s < 300) {
+        if (m.get_or("key" + s.to_string(), 0 - 1) != s * 7) { return 11; }
+        s = s + 1;
+    }
+    if (m.get_or("key5", 0 - 1) != 0 - 1) { return 12; }
 
     // Re-insert: the freed slots must be reachable again under the same seed.
     m = m.insert("key0", 1000);
-    m = m.insert("key150", 1001);
-    if (m.len() != 299) { return 18; }
-    if (m.get_or("key0", 0 - 1) != 1000) { return 19; }
-    if (m.get_or("key150", 0 - 1) != 1001) { return 20; }
+    m = m.insert("key30", 1001);
+    if (m.len() != 242) { return 13; }
+    if (m.get_or("key0", 0 - 1) != 1000) { return 14; }
+    if (m.get_or("key30", 0 - 1) != 1001) { return 15; }
 
     return 42;
 }
