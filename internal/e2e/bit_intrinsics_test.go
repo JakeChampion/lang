@@ -11,20 +11,20 @@ package e2e
 // bearing rather than incidental:
 //
 //   - wasm has all six as single opcodes with exactly these zero semantics.
-//   - arm64 gets a real `clz`; ctz is derived from it (`x & -x` then clz, with
-//     a csel for zero); popcount stays SWAR because `rbit` / `cnt` / `addv`
-//     are not implemented by the in-process assembler.
-//   - x86-64 uses `bsr` / `bsf`, which are baseline but leave the destination
-//     UNDEFINED for a zero input, so both carry an explicit zero branch.
-//     popcount stays SWAR because there is no baseline popcount instruction
-//     (POPCNT needs SSE4.2) and Fern emits static binaries with no runtime
-//     CPU dispatch.
+//   - arm64 gets a real `clz`; ctz is `rbit` + `clz`, which inherits the
+//     width-at-zero definition for free (reversing zero leaves zero);
+//     popcount is the SIMD `cnt` + `addv` pair, since AArch64 has no scalar
+//     popcount.
+//   - x86-64 uses `lzcnt` / `tzcnt` / `popcnt`. The first two are DEFINED at
+//     zero — they return the operand width, exactly what the op specifies —
+//     which is why they are selected over the same-opcode `bsr` / `bsf`,
+//     whose destination is undefined there.
 //
-// So ZERO is the case that matters most here: it is the input three of the six
-// lowerings special-case, and the one where a wrong answer is most likely to
-// look plausible (-1, or the width off by one). Every op is checked at zero
-// first, then at every single-bit position across both widths, so an off-by-one
-// in the `31 - clz` / `63 - clz` arithmetic cannot hide at one end.
+// So ZERO is the case that matters most here: it is the input the op
+// definition pins, and the one where a wrong answer is most likely to look
+// plausible (-1, or the width off by one). Every op is checked at zero first,
+// then at every single-bit position across both widths, so an off-by-one in
+// the width arithmetic cannot hide at one end.
 //
 // The interpreter is the oracle and uses math/bits rather than replicating the
 // SWAR sequence — an independent implementation, so a shared bug cannot make
