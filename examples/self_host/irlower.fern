@@ -6311,7 +6311,8 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
             // this an i64[] LITERAL element (`[5000000000]`, incl. the inner array of
             // an i64[][]) skipped the arr_make_i64 path and emitted `i32.const`
             // with an out-of-range constant on the wasm backend (module won't parse).
-            if (!num.is_float && literal_is_i64(num.text)) { return 64; }
+            if (!num.is_float && (literal_is_i64(num.text)
+                    || num.suffix == "i64" || num.suffix == "u64")) { return 64; }
             return 32;
         },
         parser.ExprIdent(id) => {

@@ -13,10 +13,11 @@
 # each other; that agreement is what says the self-host compiler is wrong rather
 # than the generated program being invalid.
 #
-# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus): 202 agree,
-# 19 diverge, 291 are compile gaps. Rows that have already left with their fix:
-# 121 / 265 / 365 (#6177, the maps runtime need-gate) and 228 / 455 (#6207, a
-# map literal with computed keys building itself string-keyed).
+# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus), after the
+# i64/u64-suffix width fix: 217 agree, 3 diverge, the rest are compile gaps.
+# Rows that have already left with their fix: 121 / 265 / 365 (#6177, the maps
+# runtime need-gate), 228 / 455 (#6207, a map literal with computed keys
+# building itself string-keyed), and the fifteen below.
 
 # CRASHES — the self-host-compiled binary dies by SIGSEGV where the interpreter
 # returns a value. These are ONE bug: #6207, a map literal whose keys the parser
@@ -35,24 +36,21 @@
 97 SIGSEGV (self-host 139, interp 230) — https://github.com/JakeChampion/lang/issues/6178
 144 SIGSEGV (self-host 139, interp 96) — https://github.com/JakeChampion/lang/issues/6178
 
-# ARENA EXHAUSTION — exit 125 is __fern_alloc's ExitArenaExhausted, so this is a
-# leak in the lowered code rather than a wrong answer.
-117 exit 125 = arena exhausted (interp 255) — https://github.com/JakeChampion/lang/issues/6178
-
-# WRONG VALUES — silent miscompiles. Twelve of the fifteen have interp=0, which
-# is worth checking as a group before reducing them one at a time.
-4 self-host 39, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-20 self-host 238, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-28 self-host 39, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-29 self-host 112, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-48 self-host 202, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-52 self-host 52, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-99 self-host 128, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-123 self-host 70, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-241 self-host 63, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-324 self-host 0, interp 60 — https://github.com/JakeChampion/lang/issues/6178
-362 self-host 65, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-364 self-host 253, interp 251 — https://github.com/JakeChampion/lang/issues/6178
-375 self-host 249, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-482 self-host 152, interp 0 — https://github.com/JakeChampion/lang/issues/6178
-502 self-host 163, interp 0 — https://github.com/JakeChampion/lang/issues/6178
+# WRONG VALUES + ARENA EXHAUSTION — both sections emptied together, because they
+# were ONE bug. infer_expr_width classified a number literal by MAGNITUDE alone,
+# so a small suffixed literal (`7i64`) read as 32 bits and every 64-bit value
+# derived from one was computed at the wrong width. Fifteen rows left with that
+# fix: 4, 20, 28, 29, 48, 52, 99, 117, 123, 241, 324, 362, 364, 375, 482. The
+# old note here — that the interp=0 rows were "worth checking as a group before
+# reducing them one at a time" — was right; 117's "arena exhausted" was a
+# symptom of the same mis-widening, not a separate leak.
+#
+# Seed 502 also left, but NOT because it was fixed: it now BAILS the IR path
+# (`FERN_STRICT_IR: __lam_22`) instead of returning a wrong value, so the leg
+# can no longer verify a row for it. A lifted if-EXPRESSION whose branches are
+# 64-bit has no return-type inference — irt_guess has no ExprIf arm — so the
+# synthesised __lam_ declares i32 against a 64-bit body. That hole PREDATES the
+# width fix: a big-magnitude branch (`if (c) { 5000000000 } else { … }`) already
+# bailed the same way on the commit before it. The fix moved 502 from a silent
+# wrong answer to a loud compile error, which is the safe direction; closing it
+# is the irt_guess work in #6216 / #6222 / #6223.
