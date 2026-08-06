@@ -8,7 +8,7 @@ ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 LANG_SRCS := $(wildcard examples/*.fern)
 
-.PHONY: all build test vet deadcode actionlint freeze selfhost-cli clean examples run-% fmt fmt-check gofmt gofmt-check
+.PHONY: all build test vet deadcode actionlint testnames freeze selfhost-cli clean examples run-% fmt fmt-check gofmt gofmt-check
 
 all: build test
 
@@ -39,6 +39,13 @@ deadcode:
 # their shell expansions.
 actionlint:
 	go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
+
+# Fail when a workflow selects a Go test by a name nothing answers to.
+# `go test -run` reports exit 0 for a name that matches nothing, so a lane
+# keeps looking authoritative while covering less than it names. See
+# tools/testname_gate.sh.
+testnames:
+	./tools/testname_gate.sh
 
 # Report the live state of the native-convergence freeze preconditions,
 # derived from the tree rather than read off #4451. Fails only on a

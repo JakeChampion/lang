@@ -155,6 +155,15 @@ Worth knowing so you do not assume coverage you do not have:
    and the detail is discarded. Redirect to a file and grep `--- FAIL`.
 6. **`ok` in 0.3s is a SKIP, not a pass.** Usually a missing toolchain; fix the
    dependency rather than taking the green.
+7. **A `-run` name that matches nothing is exit 0.** Deleting a test does not
+   remove it from the workflow that names it, so the lane keeps listing
+   coverage it stopped having. `test-e2e-arm64`'s cross-host job ran 15 of the
+   17 tests in its regex for months, including the arm64 stage-2 fixpoint its
+   55-minute budget was sized for — deleted with the AST emitters in #5972,
+   still named in the regex, still weighted at 900s in
+   `.github/selfhost-test-weights.txt` (#6310). `make testnames` now fails on
+   a name in `.github/` that resolves to no test; when you retire a test, run
+   it before assuming the workflows followed.
 
 ## Diagnostic modes
 
