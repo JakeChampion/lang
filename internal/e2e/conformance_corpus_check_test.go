@@ -58,13 +58,85 @@ func TestCheckCaseFormatRejections(t *testing.T) {
 		},
 		{
 			name:  "unknown backend",
-			files: map[string]string{"main.fern": "", "backends": "interp arm32"},
+			files: map[string]string{"main.fern": "", "backends": "interp arm32", "meta": waiverOK},
 			want:  `unknown backend "arm32"`,
 		},
 		{
 			name:  "backends file selecting nothing",
 			files: map[string]string{"main.fern": "", "backends": "# all of them?\n"},
 			want:  "selects no backends",
+		},
+		{
+			name:  "backends file selecting everything",
+			files: map[string]string{"main.fern": "", "backends": "interp x86_64 arm64 wasm\n"},
+			want:  "which is what omitting it means — delete it",
+		},
+
+		// The waiver rules.
+		{
+			name:  "contains mode with no waiver",
+			files: map[string]string{"main.fern": "", "match": "contains"},
+			want:  "no meta file saying why",
+		},
+		{
+			name:  "backends subset with no waiver",
+			files: map[string]string{"main.fern": "", "backends": "interp wasm"},
+			want:  "no meta file saying why",
+		},
+		{
+			name:  "meta with no waiver key",
+			files: map[string]string{"main.fern": "", "match": "contains", "meta": "reason: because\n"},
+			want:  "meta has no waiver:",
+		},
+		{
+			name:  "unknown waiver kind",
+			files: map[string]string{"main.fern": "", "match": "contains", "meta": "waiver: because-i-said-so\nreason: r\n"},
+			want:  `unknown waiver "because-i-said-so"`,
+		},
+		{
+			name:  "waiver on a case that does not weaken",
+			files: map[string]string{"main.fern": "", "meta": waiverOK},
+			want:  "already asserts byte-exact output on all four backends — delete the meta file",
+		},
+		{
+			name:  "waiver with no reason",
+			files: map[string]string{"main.fern": "", "match": "contains", "meta": "waiver: harness-limit\n"},
+			want:  "has no reason:",
+		},
+		{
+			name:  "implementation-gap with no issue",
+			files: map[string]string{"main.fern": "", "match": "contains", "meta": "waiver: implementation-gap\nreason: r\n"},
+			want:  "needs issue:",
+		},
+		{
+			name:  "issue on a waiver that is not an implementation gap",
+			files: map[string]string{"main.fern": "", "match": "contains", "meta": "waiver: harness-limit\nreason: r\nissue: 42\n"},
+			want:  `only meaningful for waiver "implementation-gap"`,
+		},
+		{
+			name:  "issue written with a leading hash",
+			files: map[string]string{"main.fern": "", "match": "contains", "meta": "waiver: implementation-gap\nreason: r\nissue: #42\n"},
+			want:  "takes a bare number",
+		},
+		{
+			name:  "issue that is not a number",
+			files: map[string]string{"main.fern": "", "match": "contains", "meta": "waiver: implementation-gap\nreason: r\nissue: soon\n"},
+			want:  `issue "soon" is not a number`,
+		},
+		{
+			name:  "unknown meta key",
+			files: map[string]string{"main.fern": "", "match": "contains", "meta": "waiver: harness-limit\nreason: r\nowner: me\n"},
+			want:  `unknown key "owner"`,
+		},
+		{
+			name:  "duplicate meta key",
+			files: map[string]string{"main.fern": "", "match": "contains", "meta": "waiver: harness-limit\nreason: r\nreason: also r\n"},
+			want:  `duplicate key "reason"`,
+		},
+		{
+			name:  "meta line that is not key: value",
+			files: map[string]string{"main.fern": "", "match": "contains", "meta": "waiver: harness-limit\nreason: r\njust a sentence\n"},
+			want:  "is not `key: value`",
 		},
 	}
 
@@ -85,22 +157,62 @@ func TestCheckCaseFormatRejections(t *testing.T) {
 	}
 }
 
-func TestCheckCaseFormatAcceptsAWellFormedCase(t *testing.T) {
-	dir := writeCaseDir(t, map[string]string{
-		"main.fern":       "function main(): i32 { return 0; }",
-		"helper.fern":     "",
-		"expected.stdout": "hi\n",
-		"expected.exit":   "0\n",
-		"stdin":           "",
-		"match":           "contains\n",
-		"backends":        "# not on wasm yet\ninterp x86_64\n",
-	})
-	problems, err := checkCaseFormat(dir)
-	if err != nil {
-		t.Fatalf("checkCaseFormat: %v", err)
+// waiverOK is a complete, valid waiver — used both as the fixture for
+// rules that need a case to be otherwise clean, and as the subject of
+// the "waiver on a case that does not weaken" rejection.
+const waiverOK = "waiver: harness-limit\nreason: the runner cannot observe this\n"
+
+func TestCheckCaseFormatAccepts(t *testing.T) {
+	tests := []struct {
+		name  string
+		files map[string]string
+	}{
+		{
+			name: "fully asserting case, no meta",
+			files: map[string]string{
+				"main.fern":       "function main(): i32 { return 0; }",
+				"helper.fern":     "",
+				"expected.stdout": "hi\n",
+				"expected.exit":   "0\n",
+				"stdin":           "",
+				"match":           "exact\n",
+			},
+		},
+		{
+			name: "weakened case with a justified waiver",
+			files: map[string]string{
+				"main.fern": "function main(): i32 { return 0; }",
+				"match":     "contains\n",
+				"backends":  "# not on wasm yet\ninterp x86_64\n",
+				"meta": "# why this asserts less\n" +
+					"waiver: implementation-gap\n" +
+					"issue: 2843\n" +
+					"reason: the wasm backend has no sleep_ms yet,\n" +
+					"  so this case cannot run there.\n",
+			},
+		},
 	}
-	if len(problems) != 0 {
-		t.Errorf("well-formed case reported problems: %v", problems)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			problems, err := checkCaseFormat(writeCaseDir(t, tc.files))
+			if err != nil {
+				t.Fatalf("checkCaseFormat: %v", err)
+			}
+			if len(problems) != 0 {
+				t.Errorf("well-formed case reported problems: %v", problems)
+			}
+		})
+	}
+}
+
+func TestParseMetaJoinsWrappedReasons(t *testing.T) {
+	m, errs := parseMeta("waiver: harness-limit\nreason: first line\n  second line\n  third line\n")
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors: %v", errs)
+	}
+	if want := "first line second line third line"; m.reason != want {
+		t.Errorf("reason = %q, want %q", m.reason, want)
 	}
 }
 

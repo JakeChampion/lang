@@ -1,0 +1,5 @@
+waiver: implementation-gap
+issue: 2843
+reason: the native wasm backend has no sleep_ms (it needs a WASI poll-based
+  sleep, tracked as a follow-up on #2843). monotonic_ns already works there,
+  so only the sleep half is missing.

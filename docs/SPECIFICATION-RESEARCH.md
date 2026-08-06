@@ -273,18 +273,50 @@ useful; nothing later is required to justify anything earlier.
 
 Move the fixture corpus out from under `internal/` into a top-level,
 implementation-independent location with a documented manifest format,
-and extend the sidecars into real frontmatter: a `features:` list, a
-`spec:` reference to the section a case pins, and an explicit
-`normative: required | implementation-defined | unspecified` marking so
-a case can say *"this is one legal answer, not the only one"*. Keep the
-existing runner reading it; add a second, tiny runner that the
-self-host compiler can drive without Go.
+and extend the sidecars so a case's own metadata says how much it
+asserts. Keep the existing runner reading it; add a second, tiny runner
+that the self-host compiler can drive without Go.
 
-Payoff: 364 incidental tests become the suite the self-host is measured
+Payoff: 362 incidental tests become the suite the self-host is measured
 against once native freezes, and the divergence files become a
 conformance report rather than a bug list. This is the highest
 value-per-hour item on the list by a wide margin, and most of it is
 `git mv` plus a schema.
+
+**Correction, from building it (#6337 + follow-up).** This section
+originally proposed the metadata as a `features:` list, a `spec:`
+reference, and `normative: required | implementation-defined |
+unspecified`. Two thirds of that was wrong, and reading the corpus is
+what showed it:
+
+- `features:` and `spec:` had no consumer. Nothing yet slices the corpus
+  by feature, and there is no spec document for `spec:` to point into
+  until Layers 2–3 exist. Adding either now would have shipped a field
+  that nobody fills, which is the same failure mode as an allowlist
+  nobody prunes.
+- `normative: implementation-defined` had **no instances**. The
+  hypothesis was that some cases pin one legal answer among several. Of
+  the ten cases asserting less than byte-exact-on-all-backends, not one
+  was that. They were an unimplemented backend (1), a limitation of the
+  runner rather than of any backend (1), a self-test of the runner (1),
+  three assertions weakened for reasons the case's own comment
+  contradicted, and four `backends` files that listed all four backends
+  and so restricted nothing.
+
+So the shipped design is a **waiver**: a case that asserts less than the
+maximum must say which of `implementation-gap` (with a tracking issue) /
+`harness-limit` / `unspecified` / `harness-self-test` applies, and a case
+that does not weaken must carry no waiver at all. The second half is the
+half that pays. `f64_sqrt` had been excluded from arm64 and x86-64 since
+`sqrt` needed a libm call to link — which stopped being true, silently,
+leaving two backends of coverage missing behind a case that still looked
+green. A waiver that must be deleted when it stops applying turns that
+from archaeology into a test failure.
+
+The general lesson for the later layers: **the taxonomy has to come from
+reading the artefact, not from the survey.** `unspecified` — the
+category this doc built the whole design around — is currently the one
+kind with no instances at all.
 
 ### Layer 1 — extract the grammar, and check it mechanically (1–2 weeks)
 

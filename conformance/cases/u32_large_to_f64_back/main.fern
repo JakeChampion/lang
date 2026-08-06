@@ -1,3 +1,9 @@
+// All four backends. wasm is back (#5992): this case's wasm leg is the
+// NATIVE backend (wasmbin), which handles it correctly — the divergence
+// that got wasm excluded is in the SELF-HOST wasm emitter (wasm_ir.fern),
+// which no fixture leg runs, so the exclusion removed real native
+// coverage and protected nothing. The self-host gap is pinned where it
+// lives instead.
 function main(): i32 {
     var u: u32 = 3000000000 as u32;
     var f: f64 = u as f64;

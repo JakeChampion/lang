@@ -1,8 +1,10 @@
 import "std/float";
 // f64 arithmetic: 3^2 + 4^2 = 25.0. Float formatting is implemented
-// in pure Fern (std/float), so it is identical on every backend, but
-// we match on a substring to stay robust to trailing fractional
-// digits.
+// in pure Fern (std/float), so it is identical on every backend and
+// this matches byte-exactly. It used to match on a substring "to
+// stay robust to trailing fractional digits" — which the same
+// comment's own reasoning rules out, and which measurement
+// confirms: the output is exactly "25\n".
 function main(): i32 {
     var a: f64 = 3.0;
     var b: f64 = 4.0;

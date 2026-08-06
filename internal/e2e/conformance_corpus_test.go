@@ -22,11 +22,29 @@ import (
 )
 
 // Sidecars the loader understands. Keep in step with loadFixture and the
-// table in conformance/README.md.
+// table in conformance/README.md. `meta` is read by this gate rather than
+// by the loader: it justifies a case that asserts less than the maximum.
 var (
 	runSidecars = []string{"expected.stdout", "expected.exit", "stdin", "match", "backends"}
-	allSidecars = append([]string{"expected.error"}, runSidecars...)
+	allSidecars = append([]string{"expected.error", "meta"}, runSidecars...)
 )
+
+// Waiver kinds a case may claim in its `meta` file. A waiver says why the
+// case asserts less than byte-exact output on all four backends — the
+// distinction being which of these four things is actually true, since
+// they call for completely different follow-up.
+var waiverKinds = []string{
+	"implementation-gap", // a backend has not implemented it yet; needs an issue
+	"harness-limit",      // the runner cannot observe the behaviour there
+	"unspecified",        // the language deliberately grants the freedom
+	"harness-self-test",  // the case exercises the runner, not the language
+}
+
+type caseMeta struct {
+	waiver string
+	issue  string
+	reason string
+}
 
 func TestConformanceCorpusFormat(t *testing.T) {
 	entries, err := os.ReadDir(conformanceCases)
@@ -128,8 +146,18 @@ func checkCaseFormat(dir string) ([]string, error) {
 		}
 	}
 
+	// A case "weakens" when it asserts less than byte-exact stdout across
+	// all four backends. Both ways of doing that are claims about the
+	// language, so both have to be justified in `meta` — see below.
+	weakened := false
+
 	if present["match"] {
-		if mode := strings.TrimSpace(read("match")); mode != "exact" && mode != "contains" {
+		mode := strings.TrimSpace(read("match"))
+		switch mode {
+		case "exact":
+		case "contains":
+			weakened = true
+		default:
 			report("match %q: want \"exact\" or \"contains\"", mode)
 		}
 	}
@@ -145,11 +173,117 @@ func checkCaseFormat(dir string) ([]string, error) {
 		if len(got) == 0 {
 			report("backends file selects no backends — delete it to mean \"all\"")
 		}
+		known := 0
 		for _, b := range got {
 			if !contains(allBackends, b) {
 				report("unknown backend %q in backends file", b)
+				continue
 			}
+			known++
+		}
+		switch {
+		case known == len(allBackends):
+			// Selecting everything is what an absent file already means, so
+			// the list carries nothing; only its comment does, and a comment
+			// belongs in main.fern with the rest of the case's rationale.
+			report("backends file selects all %d backends, which is what omitting it means — delete it, moving any note into main.fern", len(allBackends))
+		case known > 0:
+			weakened = true
 		}
 	}
+
+	problems = append(problems, checkMeta(dir, present["meta"], weakened, read)...)
 	return problems, nil
+}
+
+// checkMeta enforces the rule that carries this file's weight: a case may
+// assert less than the maximum, but not silently. Either direction is a
+// problem — an unjustified weakening hides an implementation gap behind
+// what looks like a passing case, and a stale waiver on a case that no
+// longer weakens is how an obsolete exclusion survives for years (see
+// f64_sqrt, which sat excluded from two backends over a libm link that
+// had stopped being required).
+func checkMeta(dir string, haveMeta, weakened bool, read func(string) string) []string {
+	var problems []string
+	report := func(format string, args ...any) {
+		problems = append(problems, fmt.Sprintf(format, args...))
+	}
+
+	if !haveMeta {
+		if weakened {
+			report("asserts less than byte-exact output on all four backends (contains mode and/or a backends subset) but has no meta file saying why — add one with a waiver: %s", strings.Join(waiverKinds, " | "))
+		}
+		return problems
+	}
+
+	m, errs := parseMeta(read("meta"))
+	for _, e := range errs {
+		report("meta: %s", e)
+	}
+	if m.waiver == "" {
+		report("meta has no waiver: — a meta file exists only to justify a weakened assertion")
+		return problems
+	}
+	if !contains(waiverKinds, m.waiver) {
+		report("meta: unknown waiver %q — want one of %s", m.waiver, strings.Join(waiverKinds, " | "))
+	}
+	if !weakened {
+		report("meta claims waiver %q but the case already asserts byte-exact output on all four backends — delete the meta file", m.waiver)
+	}
+	if strings.TrimSpace(m.reason) == "" {
+		report("meta: waiver %q has no reason: — a waiver without a stated reason is indistinguishable from an oversight", m.waiver)
+	}
+	if m.waiver == "implementation-gap" && m.issue == "" {
+		report("meta: waiver \"implementation-gap\" needs issue: — an unimplemented backend is tracked work, and an untracked gap is a permanent one")
+	}
+	if m.waiver != "implementation-gap" && m.issue != "" {
+		report("meta: issue: is only meaningful for waiver \"implementation-gap\", not %q", m.waiver)
+	}
+	return problems
+}
+
+// parseMeta reads the `key: value` meta format. A line indented relative
+// to its key continues that key's value, so a reason can wrap.
+func parseMeta(src string) (caseMeta, []string) {
+	var m caseMeta
+	var errs []string
+	fields := map[string]*string{"waiver": &m.waiver, "issue": &m.issue, "reason": &m.reason}
+
+	var cur *string
+	for _, raw := range strings.Split(src, "\n") {
+		if t := strings.TrimSpace(raw); t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		if raw != strings.TrimLeft(raw, " \t") && cur != nil {
+			*cur += " " + strings.TrimSpace(raw)
+			continue
+		}
+		key, val, ok := strings.Cut(raw, ":")
+		if !ok {
+			errs = append(errs, fmt.Sprintf("line %q is not `key: value`", strings.TrimSpace(raw)))
+			cur = nil
+			continue
+		}
+		key = strings.TrimSpace(key)
+		dst, known := fields[key]
+		if !known {
+			errs = append(errs, fmt.Sprintf("unknown key %q — want waiver, issue or reason", key))
+			cur = nil
+			continue
+		}
+		if *dst != "" {
+			errs = append(errs, fmt.Sprintf("duplicate key %q", key))
+		}
+		*dst = strings.TrimSpace(val)
+		cur = dst
+	}
+
+	if m.issue != "" {
+		if _, err := strconv.Atoi(strings.TrimPrefix(m.issue, "#")); err != nil {
+			errs = append(errs, fmt.Sprintf("issue %q is not a number", m.issue))
+		} else if strings.HasPrefix(m.issue, "#") {
+			errs = append(errs, "issue: takes a bare number, without the leading #")
+		}
+	}
+	return m, errs
 }

@@ -50,11 +50,18 @@ A case is a directory `cases/<name>/`. Contents:
 | `match` | no | `exact` (default) or `contains`. |
 | `backends` | no | Whitespace-separated subset of `interp x86_64 arm64 wasm`; `#` starts a comment. Defaults to all four. |
 | `expected.error` | no | Marks a **compile-error case** — see below. |
+| `meta` | no | Justifies a case that asserts less than the maximum — see below. Required exactly when the case does. |
 
 No other filenames are permitted, and case directories have no
 subdirectories. Both are enforced (`TestConformanceCorpusFormat`),
 because an unrecognised sidecar is otherwise read as an absent one: a
 `expected.exitcode` typo silently asserts exit `0` rather than failing.
+
+A `backends` file that names all four backends is rejected: that is
+already what omitting the file means, so the list says nothing and only
+its comment carries information — and a comment belongs in `main.fern`
+with the rest of the case's rationale. The rule keeps "has a `backends`
+file" readable as "is restricted".
 
 ### Compile-error cases
 
@@ -79,23 +86,61 @@ reachable so the line can be formatted — i.e. an exact-match case
 targeting wasm must `import "core/int";`, or drop `wasm` from its
 `backends` file.
 
+## Justifying a weaker assertion
+
+The strongest thing a case can say is "this exact stdout, on all four
+backends". There are two ways to say less — `match: contains`, and a
+`backends` subset — and both are claims about the language, so a case
+that uses either **must** carry a `meta` file saying why. A case that
+uses neither must **not** carry one. Both directions are enforced.
+
+`meta` is `key: value` lines; `#` starts a comment, and a line indented
+relative to its key continues that key's value.
+
+| Key | Meaning |
+| --- | --- |
+| `waiver` | Why the case asserts less. One of the four kinds below. Required. |
+| `reason` | Prose. Required — a waiver with no stated reason is indistinguishable from an oversight. |
+| `issue` | Bare issue number, no `#`. Required for `implementation-gap`, rejected for the others. |
+
+The four kinds exist because they call for completely different
+follow-up, and collapsing them is how a gap goes missing:
+
+| `waiver` | Means | Follow-up |
+| --- | --- | --- |
+| `implementation-gap` | A backend has not implemented this yet. | Tracked by `issue`. The case should widen when it lands. |
+| `harness-limit` | The runner cannot *observe* the behaviour on that backend. | None — not a language or backend defect. |
+| `unspecified` | The language deliberately grants the freedom, as `docs/FLOAT-SEMANTICS.md` does for NaN bit-patterns. | None; cite the doc in `reason`. |
+| `harness-self-test` | The case exercises the runner, not the language. | None. |
+
+```
+waiver: implementation-gap
+issue: 2843
+reason: the native wasm backend has no sleep_ms (it needs a WASI
+  poll-based sleep). monotonic_ns already works there.
+```
+
+The rule matters in both directions. An unjustified weakening hides a
+gap behind what looks like a passing case. A *stale* waiver is worse: it
+is how an obsolete exclusion survives for years. `f64_sqrt` sat opted
+out of arm64 and x86-64 with "sqrt needs libm; the `-nostdlib` native
+backends can't link it" long after `sqrt` began lowering to a hardware
+instruction with nothing to link — two backends of real coverage,
+silently absent. It also matched on a substring "to stay robust to
+trailing fractional digits" that the output does not have. Requiring the
+waiver to be deleted the moment the case stops weakening is what turns
+that from archaeology into a test failure.
+
 ## Adding a case
 
 Drop in a directory. No Go code is required, and nothing needs
 registering — the runners discover directories.
 
-Prefer `match: exact`. A `contains` case asserts less, and the gap
-between what it asserts and what the language guarantees is exactly the
-kind of unspecified behaviour this corpus exists to pin down. If a
-case's output genuinely cannot be exact — because the language
-deliberately leaves something free, as `docs/FLOAT-SEMANTICS.md` does
-for NaN bit-patterns — say so in a comment in `main.fern`, so that the
-freedom is a decision on the record rather than a weaker assertion
-nobody revisits.
-
-Same for `backends`: a subset means "this behaviour is not portable",
-which is a claim about the language. Use it when that is true, and file
-an issue when it is merely not implemented yet.
+Prefer the strongest assertion the behaviour supports: byte-exact stdout
+on all four backends, no `meta`. Reach for a waiver when that is
+genuinely not available, not when it is inconvenient — the gap between
+what a case asserts and what the language guarantees is exactly the kind
+of unspecified behaviour this corpus exists to pin down.
 
 ## Runners
 
