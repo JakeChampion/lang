@@ -31,14 +31,23 @@ import "./asm_ir";
 import "./asmcore";
 import "./astwalk";
 
-// Linear-memory layout for the no-string array subset, computed exactly as
-// wasm.emit_module does for an empty string table (tab.next = str_region_base()
-// = 32, heap_extra = 0): fl_base = roundup8(32 + 16) = 48, the 65536-class
-// freelist, then the bump heap at heap_base. heap_base is also the rc helpers'
+// Linear-memory layout: the low scratch, then a unit's string literals, then
+// its aggregate constants, then the fl_cells-entry freelist head array, then
+// the bump heap. Every boundary above the scratch is COMPUTED from the data
+// below it — str_region_base -> str_offset -> const_agg_region_base ->
+// fl_base_for -> heap_base_for — so adding a literal shifts the freelist and
+// the heap rather than landing on them. heap_base is also the rc helpers'
 // low-address guard.
-pub function fl_base(): i32 { return 48; }
+//
+// There were fixed `fl_base()` / `heap_base()` siblings here, documented as
+// "the values the *_for functions produce when there are no literals". Nothing
+// ever called them, and they had not tracked the two constants they were
+// computed from: their comment derived 48 from str_region_base = 32 plus a
+// 16-byte print scratch, and both are 40 now, so the no-literal answer has
+// been 80 for some time. A stale duplicate of a derived quantity is the same
+// hazard as a hand-picked address (#6229) — deleted rather than re-derived,
+// since the derived path is what every caller already uses.
 pub function fl_cells(): i32 { return 65536; }
-pub function heap_base(): i32 { return 48 + 65536 * 4; }
 
 // ---- string literals (data section) -----------------------------------------
 // In the IR subset, string literals live in the data section exactly as
@@ -46,9 +55,8 @@ pub function heap_base(): i32 { return 48 + 65536 * 4; }
 // distinct literal, the first at str_region_base(), each `4 + len` bytes. A string
 // VALUE is a pointer to its block; `.len()` reads the i32 at offset 0. Literals
 // are static (no heap) — only str_concat allocates (via $__fern_str_box). The
-// blocks sit below the freelist/heap, so any literal shifts fl_base/heap_base
-// off the empty-table defaults: fl_base_for / heap_base_for recompute them (and
-// equal fl_base() / heap_base() when there are no literals). The data section
+// blocks sit below the freelist/heap, so every literal pushes both up;
+// fl_base_for / heap_base_for are what compute them. The data section
 // and the $__fern_strcat / $__fern_streq helpers are emitted CALLER-side (in
 // wasm.fern, which owns le32_escape / wat_escape / strcat_helpers) because
 // wasm_ir cannot import wasm without a cycle — same split as the heap runtime.
@@ -135,43 +143,17 @@ pub function str_values(cache: irlower.LowerResult[]): string[] {
 // str_offset returns the data-section offset of literal index `idx`:
 // str_region_base() + the
 // summed block sizes (4 + len) of all prior literals.
-// str_region_base is where a unit's string-literal region starts: the 32-byte
-// low scratch sits below it. That scratch is fully spoken for — fd_write
-// iovec at 0/4/8, the newline byte at 12, the WASI out-parameter slot at 16
-// (path_open writes the opened fd there, fd_readdir / fd_write their counts),
-// the rc==1 append-cliff counter at 20 (see arr_push_shared_addr), the
-// 8-byte cliff WEIGHT accumulator at 24 (see arr_push_copied_addr), and
-// core/map's hash seed at 32 (see map_hash_seed_addr).
-// Named rather than inlined because const_str now emits offsets RELATIVE to it
-// (#5331 step 1), so the two must agree by construction — and because the
-// weight accumulator moved this base from 24 to 32, which every literal offset
-// and both derived bases (fl_base / heap_base) follow automatically.
-pub function str_region_base(): i32 { return 40; }
-
-// map_hash_seed_addr is the 4-byte slot holding core/map's per-process
-// string-hash seed (#6194) — the value the map_hash_seed op lazily draws from
-// $__fern_random_i32 and caches, so a program creating maps freely pays one
-// random_get rather than one per map. Zero means "not yet drawn"; the drawn
-// value is forced nonzero, which is also what keeps it out of collision with
-// core/map's own "unseeded" sentinel.
+// The reserved low scratch, and the string region that starts above it. Each
+// slot is DERIVED from the previous one's end, so widening one shifts
+// everything above it instead of silently landing on a neighbour — the native
+// wasm backend's window had four addresses claimed twice for exactly that
+// reason (#6229; these are disjoint, and now unspellably so).
 //
-// 32, taking the first word of what was the string region and pushing
-// str_region_base 32 -> 40 (the accumulator at 24 moved it 24 -> 32 the same
-// way). Every literal offset and both derived bases follow that base
-// automatically, so widening the scratch again means editing one number.
-// 40 rather than 36 keeps the region 8-aligned for the i64 slots below it.
-pub function map_hash_seed_addr(): i32 { return 32; }
-
-// arr_push_copied_addr is the 8-byte slot holding the SAME cliff, weighted by
-// the bytes each crossing copied (len * 4 — wasm-IR arrays are 4-byte slots),
-// accumulated by $__fern_arr_push's un-share path and read by
-// __arr_push_shared_bytes. i64 because the quantity is arena-scale.
-//
-// The count alone cannot rank crossing sites: a whole-module compile of
-// checker.fern crosses 188 times and copies 812 bytes doing it, while one
-// threaded accumulator over 20k appends copies 2.3 GB. 24 is 8-aligned and was
-// the first word of the string region before this took it.
-pub function arr_push_copied_addr(): i32 { return 24; }
+// The block below arr_push_shared_addr is the WASI print/IO scratch, still
+// written as bare literals at its ~20 use sites: fd_write iovec at 0/4/8, the
+// newline byte at 12, and the WASI out-parameter slot at 16 (path_open writes
+// the opened fd there, fd_readdir / fd_write their counts). 20 is the first
+// word past it, and is where the derived chain starts.
 
 // arr_push_shared_addr is the 4-byte slot holding the rc==1 append cliff
 // counter (#6023): appends that copied a buffer which still had SPARE
@@ -182,11 +164,35 @@ pub function arr_push_copied_addr(): i32 { return 24; }
 // that never emits a string literal still has somewhere to keep it — the same
 // reason the native wasm backend puts it at a fixed low address.
 //
-// 20, not 16: 16 is the WASI out-parameter slot (path_open writes the opened
-// fd there and the fs helpers load it straight back), so a counter there would
-// be clobbered by any file I/O and would in turn corrupt the fd. 20 is the
-// last untouched word of the scratch block.
+// 20, not 16: a counter on the WASI out-parameter slot would be clobbered by
+// any file I/O and would in turn corrupt the fd.
 pub function arr_push_shared_addr(): i32 { return 20; }
+
+// arr_push_copied_addr is the 8-byte slot holding the SAME cliff, weighted by
+// the bytes each crossing copied (len * 4 — wasm-IR arrays are 4-byte slots),
+// accumulated by $__fern_arr_push's un-share path and read by
+// __arr_push_shared_bytes. i64 because the quantity is arena-scale.
+//
+// The count alone cannot rank crossing sites: a whole-module compile of
+// checker.fern crosses 188 times and copies 812 bytes doing it, while one
+// threaded accumulator over 20k appends copies 2.3 GB.
+pub function arr_push_copied_addr(): i32 { return arr_push_shared_addr() + 4; }
+
+// map_hash_seed_addr is the 4-byte slot holding core/map's per-process
+// string-hash seed (#6194) — the value the map_hash_seed op lazily draws from
+// $__fern_random_i32 and caches, so a program creating maps freely pays one
+// random_get rather than one per map. Zero means "not yet drawn"; the drawn
+// value is forced nonzero, which is also what keeps it out of collision with
+// core/map's own "unseeded" sentinel.
+pub function map_hash_seed_addr(): i32 { return arr_push_copied_addr() + 8; }
+
+// str_region_base is where a unit's string-literal region starts: the low
+// scratch sits below it, rounded up to 8 so the i64 slots in that scratch stay
+// aligned. Named rather than inlined because const_str emits offsets RELATIVE
+// to it (#5331 step 1), so the two must agree by construction — and because
+// every slot added below has moved it (24 -> 32 -> 40), which every literal
+// offset and both derived bases (fl_base / heap_base) follow automatically.
+pub function str_region_base(): i32 { return (map_hash_seed_addr() + 4 + 7) / 8 * 8; }
 
 // fn_table_base is where a unit's funcref-table region starts. The elem
 // segment is emitted at index 0 today, so whole-program emit uses 0 — but

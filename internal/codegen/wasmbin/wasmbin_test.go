@@ -2300,9 +2300,12 @@ func TestEmitConstFuncTwoTargets(t *testing.T) {
 // a real heap address. A pool that still overlapped would hand back the
 // small integer it found in the head slot.
 func TestEmitConstFuncPoolClearsFreelistHeads(t *testing.T) {
-	// One more cell than fits below the heads table, so the last few
-	// land exactly where the old layout collided.
-	const n = (freelistHeadsAddr-96)/8 + 4
+	// The WHOLE pool, so the last cell sits at the very top of it. This
+	// used to be derived from the old hand-picked heads base ("one more
+	// cell than fits below the table", when the pool started at 96 and the
+	// table at 256); the layout is chained now, so the pool's own budget is
+	// what bounds the stress.
+	const n = maxClosureCells
 	funcs := make([]*ir.Func, 0, n+1)
 	alloc := &ir.Func{Name: "alloc16", ReturnType: i32()}
 	for i := 0; i < n; i++ {
