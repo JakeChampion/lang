@@ -822,15 +822,17 @@ var strictIRBailReasons = []struct {
     return (u as i32) & 255i32;
 }
 `, "main", "did not lower: immediately-invoked value block"},
-	// The same desugar, but here the lambda is LIFTED to a top-level function
-	// and refuses inside its own body, so the bail names `__lam_0` and the node
-	// is the lifted return rather than the call. Two bails one line apart in the
-	// source that the bare function name would have made look unrelated.
-	{"lifted-lambda-return", `function main(): i32 {
-    var v: i64 = (match ((702i64) /? (3i64)) { Some(c) => c, None => 752i64 });
-    return ((v as i32) & 255i32);
+	// The OTHER half of func_ineligible_reason: the body lowered fine and the
+	// bail is a symbol that does not resolve. It is a different debugging task
+	// — look at the name, not the body — and the bare function name never said
+	// which of the two had happened. This is the #6256 cluster (an array mixing
+	// a fn-valued ident with an inline lambda), the largest one left.
+	{"unresolved-function-value", `function main(): i32 {
+    var v0: (i32) => i32 = ((a: i32) => 189i32);
+    var xs: ((i32) => i32)[] = [v0, (if (true) { v0 } else { ((b: i32) => b) }), v0];
+    return xs.len() & 63i32;
 }
-`, "__lam_0", "did not lower: `return` of ident `c`"},
+`, "main", "function value main$clo not defined"},
 }
 
 // TestSelfHostStrictIRNamesBailReason asserts each fixture's bail names its own
