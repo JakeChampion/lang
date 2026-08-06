@@ -1,0 +1,67 @@
+// An if-EXPRESSION whose branches are wide integer literals must give its
+// desugared IIFE an i64 return type. `if_expr_rt` classified a number literal by
+// neither suffix NOR magnitude, so `(if (c) { 5000000000 } else { … })` got a
+// return type of "i32" — and because that is non-EMPTY, infer_ret_types_module
+// never revisited it. The lambda body then lowered 64-bit against an i32 return
+// and the whole module bailed off the IR path, silently taking every other
+// function with it. #6178.
+//
+// This is the fourth literal classifier in parser.fern and the last one that had
+// the omission: mono_infer and infer_expr_width already read magnitude, and
+// #6214/#6228 taught the array-literal path the suffix.
+//
+// Only i64 was affected, and the controls below say why: string / boolean / f64
+// branches were already classified; an i64 branch reached through an IDENT
+// carries the width on its slot; and an i64 if-expr in `return` position inside
+// an i64-returning function takes it from the enclosing return type. A bare wide
+// literal in a value-position branch is the one shape with nothing else to go on.
+// (The IDENT branch has its own pre-existing gap — see the note at the bottom.)
+import "std/i32";
+
+function via_return(c: boolean): i64 {
+    // `return` position — worked before, pinned so the two routes stay in step.
+    return (if (c) { 5000000000 } else { 6000000000 });
+}
+
+function main(): i32 {
+    // Magnitude, no suffix. This needs no suffix support at all, which is what
+    // says the gap predates the suffix work rather than being caused by it.
+    var a: i64 = (if (false) { 5000000000 } else { 6000000000 });
+    if (a != 6000000000) { return 1; }
+
+    // Explicit suffix, small magnitude — unreachable before #6228 widened
+    // infer_expr_width, and the shape that made fernsmith seed 502 bail.
+    var b: i64 = (if (false) { 887i64 } else { 260i64 });
+    if (b != 260i64) { return 2; }
+
+    var u: u64 = (if (false) { 887u64 } else { 260u64 });
+    if (u != 260u64) { return 3; }
+
+    // Mixed widths: the wide branch has to win the unification.
+    var m: i64 = (if (false) { 5000000000 } else { 6 });
+    if (m != 6) { return 4; }
+
+    // Nested, so the inner IIFE's type has to be right for the outer to be.
+    var n: i64 = (if (false) { 1i64 } else { (if (true) { 260i64 } else { 3i64 }) });
+    if (n != 260i64) { return 5; }
+
+    if (via_return(false) != 6000000000) { return 6; }
+
+    // CONTROLS — branch kinds that were already classified, so a regression in
+    // the classifier shows up here rather than only in the i64 rows.
+    var i: i32 = (if (false) { 5 } else { 6 });
+    if (i != 6) { return 7; }
+
+    var f: f64 = (if (false) { 1.5 } else { 2.5 });
+    if (f < 2.0) { return 8; }
+
+    var s: string = (if (false) { "a" } else { "b" });
+    if (s != "b") { return 9; }
+
+    // NOT covered: an i64 branch reached through an IDENT. That shape bails the
+    // IR path on clean main too — verified by reverting this fix and re-running
+    // it — so it is a separate, pre-existing gap and does not belong in a
+    // regression test for this one. Its trigger is narrower than it looks: with
+    // `==` and no import it lowers, and only the `!=`-with-import form fails.
+    return 11;
+}

@@ -1,0 +1,42 @@
+// A comparison between bare u64 LITERALS must use the unsigned instruction.
+// `expr_is_u64` — the classifier that picks signed vs unsigned for a compare,
+// shift and divide — had no ExprNumber arm at all, so two literals fell through
+// to the signed form: `191u64 < 9223372036854776520u64` read the RHS as a
+// negative i64 and answered FALSE. Silent: no trap, no diagnostic. #6178.
+//
+// Only BARE literals were affected, which is why it survived so long — the same
+// values through locals take the ExprIdent arm, where the slot carries u64. The
+// controls below pin both routes so they cannot drift apart again.
+import "std/i32";
+
+function main(): i32 {
+    // The reported shape: RHS above 2^63, so signed reads it negative.
+    if (!(191u64 < 9223372036854776520u64)) { return 1; }
+    if (9223372036854776520u64 < 191u64) { return 2; }
+
+    // The other orderings, since a signed compare gets each of them wrong in a
+    // different direction.
+    if (!(9223372036854776520u64 > 191u64)) { return 3; }
+    if (!(191u64 <= 9223372036854776520u64)) { return 4; }
+    if (!(9223372036854776520u64 >= 191u64)) { return 5; }
+
+    // Both operands above 2^63, so signedness decides nothing and this passed
+    // even when broken — kept as the control that says the fix did not simply
+    // invert the comparison.
+    if (!(9223372036854776423u64 < 9223372036854776520u64)) { return 6; }
+
+    // Small literals: always worked, must keep working.
+    if (!(191u64 < 617u64)) { return 7; }
+
+    // Through LOCALS: the route that was already correct.
+    var a: u64 = 191u64;
+    var b: u64 = 9223372036854776520u64;
+    if (!(a < b)) { return 8; }
+
+    // Signed i64 stays signed — the fix must not make every wide compare
+    // unsigned.
+    var neg: i64 = 0i64 - 5i64;
+    if (!(neg < 3i64)) { return 9; }
+
+    return 11;
+}

@@ -2104,6 +2104,25 @@ function if_expr_rt(e: Expr): string {
         ExprBool(_) => { return "bool"; },
         ExprNumber(n) => {
             if (n.is_float) { return "f64"; }
+            // A WIDE literal — explicit `i64` / `u64` suffix, or a magnitude past
+            // i32-max — names i64. Defaulting it to i32 gave the desugared IIFE a
+            // return type its body contradicted, and since that type is non-empty
+            // infer_ret_types_module never revisited it: `var w: i64 = (if (c) {
+            // 5000000000 } else { … })` bailed the whole module off the IR path.
+            //
+            // The other branch kinds were already classified, which is why only
+            // wide integers were affected — string / bool / f64 branches, i64 branches
+            // through an IDENT (the slot carries the width), and an i64 if-expr
+            // in `return` position inside an i64 function (the enclosing return
+            // type supplies it) all lowered fine. A bare wide literal is the one
+            // shape with nothing but this classifier to go on.
+            // ANY suffix names the type outright, and must be read BEFORE the
+            // magnitude rule below: `2147484197u32` is a u32 that happens to
+            // exceed i32-max, so classifying it by magnitude calls it i64 and the
+            // IIFE returns the wrong type. `mono_infer` in this file already does
+            // exactly this; the two are sibling literal classifiers.
+            if (n.suffix.len() > 0) { return n.suffix; }
+            if (literal_is_i64(n.text)) { return "i64"; }
             return "i32";
         },
         _ => { return "i32"; }
