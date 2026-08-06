@@ -14773,6 +14773,16 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // per element via __fern_arrarr_free), else every element struct box leaks per
     // iteration. Disjoint from arrstruct (slot_is_reclaimable_structarr excludes
     // field-routing structs), so at most one of these two branches fires per slot.
+    // A STRUCTARR element struct that ROUTES FIELD RECLAIM takes the DEEP walk
+    // instead (#6127): slot_is_reclaimable_structarr excludes rc-array-field
+    // structs, so this can only be a STRFLDOK-admitted string / string[] / fn
+    // -fielded element, whose field the shallow per-element box dec never reaches.
+    // A bare local of the same struct already reclaims its string through
+    // __field_reclaim_<T>'s STRFLDOK arm; it was only the ELEMENT walk that did
+    // not, so the array form leaked one string box per element per iteration.
+    if (slot_is_reclaimable_structarr(sb, slot) && sb.struct_routes_field_reclaim(sb.struct_type_of_slot(slot))) {
+        return emit_arrstruct_reclaim_store(sb, slot, sb.struct_type_of_slot(slot));
+    }
     if (slot_is_reclaimable_structarr(sb, slot)) {
         return emit_structarr_reclaim_store(sb, slot);
     }
@@ -20024,6 +20034,21 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                 // inside the helper. Same one-slot-one-free placement rationale
                 // as the arrarr branch above.
                 st = st.emit(ir.op_call_direct("__fern_optarrarr_free", 1));
+            } else if (slot_is_reclaimable_structarr(st, i) && st.struct_routes_field_reclaim(st.struct_type_of_slot(i))) {
+                // The element struct ROUTES FIELD RECLAIM (#6127) — since the
+                // structarr credit excludes rc-array-field structs, that means a
+                // STRFLDOK-admitted string / string[] / fn field. The shallow
+                // per-element box dec below frees the box without looking inside,
+                // so the field leaked once per element per round (measured 9600
+                // over 100 rounds on a 4-element `N { name: string, v: i32 }[]`,
+                // exactly 4 x one 24-byte string box, against 0 on native) — while
+                // a BARE local of the same struct reclaimed cleanly through
+                // __field_reclaim_<T>'s STRFLDOK arm. Same counted element walk
+                // ARRSTRUCT uses: per element __struct_drop_<T> then the box, then
+                // the outer buffer. It does its own loads and pushes nothing, so
+                // the slot value loaded above is consumed by the shared trailing
+                // drop exactly as the call branches' return value would be.
+                st = emit_arrstruct_deep_free(st, i, st.struct_type_of_slot(i));
             } else if (slot_is_reclaimable_structarr(st, i)) {
                 // SCALAR-FIELD struct-array element-box reclaim (#4355): a fresh,
                 // non-escaping `[P { .. }, P { .. }]` where P has no rc field frees
