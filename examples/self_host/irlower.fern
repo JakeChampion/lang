@@ -20132,6 +20132,20 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         tj = tj + 1;
     }
+    // Sweepable rc-TUPLE locals (`var t: (i32, i32[]) = (i, [i, i+1])`, "TUPRCS:"):
+    // deep-free the final value's rc children then its box (#6127). "TUPRC:" on its
+    // own is consumed only by the StmtVar rebind path, so this class was credited
+    // and entry-zeroed but never released — a single bind leaked buffer AND box every
+    // round. Disjoint from the scalar-tuple loop above (a slot is one class or the
+    // other) and from the rebind path (that frees SUPERSEDED boxes, this the last
+    // one), so no box is dec'd twice.
+    var rtj: i32 = st.n_params;
+    while (rtj < st.locals.len()) {
+        if (!slot_list_has(keeps, rtj) && slot_is_reclaimable_rctuple_sweep(st, rtj)) {
+            st = emit_rctuple_deep_free(st, rtj);
+        }
+        rtj = rtj + 1;
+    }
     // Reclaimable Option[<tuple-with-array>] locals (#4365): deep-free the final
     // live box (Some payload tuple + option box) via the same inline path the
     // loop-rebind uses. An opt_type slot is NOT is_arr, so it takes a dedicated
@@ -21736,6 +21750,57 @@ function collect_fresh_rc_tuple_in_stmt(st: parser.Stmt, structs: parser.StructD
             return a;
         },
         parser.StmtDefer(d) => { return collect_fresh_rc_tuple_in_stmt(d.action, structs, acc); },
+        _ => { return acc; },
+    }
+}
+
+// collect_sweepable_rc_tuple_names gathers the rc-tuple locals whose FINAL value the
+// scope-exit sweep may deep-free — the "TUPRCS:" candidates (#6127).
+//
+// "TUPRC:" is credited by collect_fresh_rc_tuple_names but consumed in only two
+// places: emit_tuple_deep_reinit_store on the StmtVar path, and the entry-zeroing
+// list. Nothing frees the local's LAST value, so a single-bind `var t: (i32, i32[]) =
+// (i, [i, i+1])` leaked its buffer AND its box on every round — allocs=200 frees=0
+// live_bytes=8000 over 100 rounds against 0 on native, with no reassignment anywhere.
+//
+// The sweep has no init literal to consult, so it must free by TYPE
+// (emit_tuple_type_child_drops), and that helper dec's every rc-typed position
+// blind. tuple_arg_payload_fresh is the gate that makes blind sound — the same one
+// OPTTUP already uses for the same helper — and it is why this is a separate,
+// stricter credit rather than a reuse of "TUPRC:". tuple_lit_rc_reclaimable admits a
+// bare-ident element, so `var t: (i32[], i32[]) = (xs, [i, i+2])` is "TUPRC:" while
+// position 0 holds a LIVE LOCAL's buffer; sweeping that by type would free `xs`
+// underneath its owner — #6148's use-after-free class exactly.
+//
+// Requires the declaration's tuple ANNOTATION: the type is what the sweep frees by,
+// and an un-annotated binding gives it nothing to judge positions with.
+function collect_sweepable_rc_tuple_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) { a = collect_sweepable_rc_tuple_in_stmt(stmts[i], structs, a); i = i + 1; }
+    return a;
+}
+function collect_sweepable_rc_tuple_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => {
+            if (v.type_name.len() < 2 || v.type_name[0:1] != "(") { return acc; }
+            if (!tuple_lit_rc_reclaimable(v.init, structs)) { return acc; }
+            if (!tuple_arg_payload_fresh(v.type_name, v.init, structs)) { return acc; }
+            return push_str_unique(acc, v.name);
+        },
+        parser.StmtIf(iff) => {
+            var a: string[] = collect_sweepable_rc_tuple_names(iff.then_body, structs, acc);
+            return collect_sweepable_rc_tuple_names(iff.else_body, structs, a);
+        },
+        parser.StmtWhile(w) => { return collect_sweepable_rc_tuple_names(w.body, structs, acc); },
+        parser.StmtFor(f) => { return collect_sweepable_rc_tuple_names(f.body, structs, acc); },
+        parser.StmtMatch(m) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < m.arms.len()) { a = collect_sweepable_rc_tuple_names(m.arms[i].body, structs, a); i = i + 1; }
+            return a;
+        },
+        parser.StmtDefer(d) => { return collect_sweepable_rc_tuple_in_stmt(d.action, structs, acc); },
         _ => { return acc; },
     }
 }
@@ -24741,12 +24806,31 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // `t.1.y`, and their `.len()` stay borrows and still reclaim. Un-annotated bindings
     // (no type) skip the second gate, preserving prior behaviour. #4365.
     var rctups: string[] = collect_fresh_rc_tuple_names(body, structs, []);
+    var sweeprc: string[] = collect_sweepable_rc_tuple_names(body, structs, []);
     var rti: i32 = 0;
     while (rti < rctups.len()) {
         if (!body_unsafe_for(body, rctups[rti], borrowable)) {
             var rctty: string = rctuple_type_of_decl(body, rctups[rti]);
             if (rctty == "" || !rctuple_payload_escapes(body, rctups[rti], rctty, structs)) {
                 out = out.append("TUPRC:" + rctups[rti]);
+                // "TUPRCS:" additionally lets the scope-exit sweep deep-free the FINAL
+                // value (#6127). "TUPRC:" alone is consumed only by the StmtVar rebind
+                // path, so a SINGLE-BIND rc-tuple was credited, entry-zeroed, and then
+                // never released — allocs=200 frees=0 live_bytes=8000 per 100 rounds
+                // with no reassignment anywhere. Three extra conditions on top of
+                // "TUPRC:", each load-bearing:
+                //   - a tuple ANNOTATION, since the sweep frees by TYPE (it has no
+                //     init literal at exit);
+                //   - tuple_arg_payload_fresh, so every rc-typed position is a fresh
+                //     literal the blind type-driven drop sole-owns — without it
+                //     `(xs, [i, i+2])` would free a live local's buffer;
+                //   - not reassigned, because the assign path emits no release for
+                //     this class, so the final value's shape cannot be judged from
+                //     the declaration alone.
+                if (rctty != "" && util.index_of_str(reassigned, rctups[rti]) < 0
+                        && util.index_of_str(sweeprc, rctups[rti]) >= 0) {
+                    out = out.append("TUPRCS:" + rctups[rti]);
+                }
             }
         }
         rti = rti + 1;
@@ -27147,6 +27231,42 @@ function slot_is_reclaimable_rctuple(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
     return util.index_of_str(s.reclaimable_names, "TUPRC:" + s.locals[i].slot_name) >= 0;
+}
+
+// slot_is_reclaimable_rctuple_sweep: a "TUPRC:" slot whose FINAL value the scope-exit
+// sweep may deep-free too — credited "TUPRCS:" (#6127), which additionally requires a
+// tuple annotation, tuple_arg_payload_fresh (every rc position a fresh literal, so the
+// type-driven drop sole-owns it), and no reassignment. Strictly narrower than
+// slot_is_reclaimable_rctuple, so the rebind path's set is unchanged.
+function slot_is_reclaimable_rctuple_sweep(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (s.locals[i].tuple_elems.len() == 0) { return false; }
+    return util.index_of_str(s.reclaimable_names, "TUPRCS:" + s.locals[i].slot_name) >= 0;
+}
+
+// emit_rctuple_deep_free frees a sweepable rc-tuple slot's fresh rc children
+// (array buffers, string boxes, nested tuple boxes, reclaim-struct boxes — all
+// type-driven via emit_tuple_type_child_drops) and then its own box, leaving the
+// slot zeroed. Null-guarded: slots of this class are entry-zeroed by arr_slots_of,
+// and emit_tuple_type_child_drops DEREFERENCES the box to reach each position, so an
+// untaken-branch slot must skip the whole body rather than rely on __fern_rc_dec's
+// own null guard. The rc-tuple sibling of emit_opttup_deep_free's inner Some arm.
+function emit_rctuple_deep_free(se: LowerState, slot: i32): LowerState {
+    var st: LowerState = se;
+    var ttype: string = "(" + st.locals[slot].tuple_elems + ")";
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));         // slot != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    var rtp: i32[] = [];
+    st = emit_tuple_type_child_drops(st, slot, rtp, ttype);
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));   // free the tuple box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_const_i32(0));
+    return st.emit(ir.op_store_local(slot));
 }
 
 // slot_is_reclaimable_rcenum: a fresh, non-escaping rc-payload enum loop-local
