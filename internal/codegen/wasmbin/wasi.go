@@ -293,6 +293,47 @@ var importSpecs = map[string]importSpec{
 		},
 		results: nil,
 	},
+	"wasi_descriptor_read_directory_p2": {
+		// Preview-2: [method]descriptor.read-directory lowered to
+		//   (self, retptr) -> (). retptr holds
+		//   result<own<directory-entry-stream>, error-code>:
+		//   disc @ +0, stream handle (ok) / error-code (err) @ +4.
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[method]descriptor.read-directory",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_dir_entry_stream_read_p2": {
+		// Preview-2:
+		//   [method]directory-entry-stream.read-directory-entry
+		// lowered to (self, retptr) -> (). retptr holds
+		//   result<option<directory-entry>, error-code>, 20 bytes:
+		//   disc @ +0; on ok the option's disc @ +4 (0 = none = end of
+		//   listing) and, when some, the entry at +8 — type @ +8, name
+		//   ptr @ +12, name len @ +16. On err the error-code @ +4.
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[method]directory-entry-stream.read-directory-entry",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_dir_entry_stream_drop_p2": {
+		// Canonical resource.drop for the listing cursor. The guest
+		// owns the handle read-directory hands back, so the loop must
+		// release it — the component model has no scope-exit for this.
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[resource-drop]directory-entry-stream",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_descriptor_remove_directory_at_p2": {
+		// Preview-2: [method]descriptor.remove-directory-at, the same
+		// (self, path_ptr, path_len, retptr) -> () lowering as the
+		// other path mutators.
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[method]descriptor.remove-directory-at",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_get_arguments_p2": {
 		// Preview-2: wasi:cli/environment@0.2.0::get-arguments() ->
 		// list<string>. Canonical-ABI lowered to `(retptr: i32) ->
@@ -1680,10 +1721,8 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_close")
 		}
 	}
-	// Directory + metadata helpers (#6208). remove_file and temp_dir
-	// have preview-2 halves; stat / read_dir / remove_dir_all still
-	// need read-directory + stat-at, so under Preview2WASI they emit
-	// preview-1 imports the composer rejects by name.
+	// Directory + metadata helpers (#6208). All five have preview-2
+	// halves now.
 	if helpers.set["__fern_remove_file"] {
 		if opts.Preview2WASI {
 			in.add("wasi_get_directories_p2")
@@ -1701,18 +1740,37 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		}
 	}
 	if helpers.set["__fern_open_dir"] {
-		in.add("wasi_path_open")
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_open_at_p2")
+		} else {
+			in.add("wasi_path_open")
+		}
 	}
 	if helpers.set["__fern_read_dir_raw"] {
-		in.add("wasi_fd_readdir")
+		if opts.Preview2WASI {
+			in.add("wasi_descriptor_read_directory_p2")
+			in.add("wasi_dir_entry_stream_read_p2")
+			in.add("wasi_dir_entry_stream_drop_p2")
+		} else {
+			in.add("wasi_fd_readdir")
+		}
 	}
-	if helpers.set["__fern_read_dir"] {
+	if helpers.set["__fern_read_dir"] && !opts.Preview2WASI {
+		// preview-1 closes the listing fd itself; the preview-2 body
+		// drops the entry stream inside __fern_read_dir_raw instead.
 		in.add("wasi_fd_close")
 	}
 	if helpers.set["__fern_rmdir_rec"] {
-		in.add("wasi_path_unlink_file")
-		in.add("wasi_path_remove_directory")
-		in.add("wasi_fd_close")
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_unlink_file_at_p2")
+			in.add("wasi_descriptor_remove_directory_at_p2")
+		} else {
+			in.add("wasi_path_unlink_file")
+			in.add("wasi_path_remove_directory")
+			in.add("wasi_fd_close")
+		}
 	}
 	if helpers.set["__fern_temp_dir"] {
 		if opts.Preview2WASI {
@@ -2141,6 +2199,10 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_remove_file":         buildRemoveFileBodyP2,
 	"__fern_temp_dir":            buildTempDirBodyP2,
 	"__fern_stat":                buildStatBodyP2,
+	"__fern_open_dir":            buildOpenDirBodyP2,
+	"__fern_read_dir_raw":        buildReadDirRawBodyP2,
+	"__fern_read_dir":            buildReadDirBodyP2,
+	"__fern_rmdir_rec":           buildRmdirRecBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.

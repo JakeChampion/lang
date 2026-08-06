@@ -1443,3 +1443,545 @@ func buildStatBodyP2(idxs map[string]uint32) []byte {
 	locals := inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
+
+// ---- preview-2 directory listing ------------------------------------
+//
+// Offsets into the preview-2
+// `result<option<directory-entry>, error-code>` return area. Everything
+// is 4-aligned here — directory-entry is { descriptor-type, string }, no
+// u64 in sight — so the payload starts at 4, unlike descriptor-stat's:
+//
+//	+0   result disc (0 = ok)
+//	+4   option disc (ok)  |  error-code (err)
+//	+8   entry.type        : descriptor-type
+//	+12  entry.name.ptr
+//	+16  entry.name.len
+//
+// 20 bytes, and 24 is what the bodies allocate so one buffer also serves
+// read-directory's 8-byte result.
+const (
+	dirEntryOptDiscOff = 4
+	dirEntryTypeOff    = 8
+	dirEntryNamePtrOff = 12
+	dirEntryNameLenOff = 16
+	dirRetBytes        = 24
+)
+
+// dirRecBytes is the size of one record in the buffer
+// __fern_read_dir_raw hands back on the preview-2 path:
+// { type, name_ptr, name_len }. The preview-1 buffer is a run of WASI
+// dirents instead — variable-length, name inline after a 24-byte
+// header — which is why the two paths cannot share the walk.
+const dirRecBytes = 12
+
+// dirStreamInitialCap is how many entries the drain buffer holds before
+// it doubles. A preview-2 listing has no size to ask for up front (the
+// stream is a cursor), so the buffer grows; 16 covers an ordinary
+// directory in one allocation.
+const dirStreamInitialCap = 16
+
+// buildOpenDirBodyP2 is the preview-2 __fern_open_dir: resolve the
+// preopen and open the path with the DIRECTORY open-flag, which makes
+// the host refuse a regular file (so read_dir on one reports the error
+// rather than succeeding and yielding nothing). Returns the descriptor
+// handle, or -errno.
+//
+// Locals after the one param pair (path_ptr, path_len):
+//
+//	2: $rb  3: $preopen  4: $errno
+func buildOpenDirBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	getDirs := idxs["wasi_get_directories_p2"]
+	openAt := idxs["wasi_descriptor_open_at_p2"]
+
+	var body []byte
+	body = emitPreopenP2(body, alloc, getDirs, 2, 3)
+
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 1) // path-flags: symlink-follow
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, wasiOflagDirectory)
+	body = inst.InstI32Const(body, 1) // descriptor-flags: read
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, openAt)
+
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = appendErrnoFromErrorCode(body, 2, 4)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalGet(body, 4)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, 4)
+
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildReadDirRawBodyP2 is the preview-2 __fern_read_dir_raw: drain the
+// whole listing into one buffer and drop the cursor.
+//
+// Draining eagerly is not an optimisation, it is what makes recursion
+// possible. `read-directory` hands back a cursor, and remove_dir_all
+// descends into a child while its parent's listing is still needed —
+// holding a live stream per level would cap the depth at whatever the
+// host's handle table allows. The preview-1 body drains for the same
+// reason and says so.
+//
+// Buffer contract matches preview-1's: `mem[buf-4]` is the entry count
+// and `buf` is the first record. The records differ — 12-byte
+// { type, name_ptr, name_len } triples rather than variable-length
+// dirents — because the host has already materialised each name into
+// our memory through cabi_realloc.
+//
+// Returns the buffer, or -errno.
+//
+// Locals after the $dirfd param:
+//
+//	1: $rb    2: $stream  3: $cap    4: $count
+//	5: $buf   6: $newbuf  7: $errno  8: $slot
+func buildReadDirRawBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	readDir := idxs["wasi_descriptor_read_directory_p2"]
+	readEntry := idxs["wasi_dir_entry_stream_read_p2"]
+	dropStream := idxs["wasi_dir_entry_stream_drop_p2"]
+
+	var body []byte
+	body = inst.InstI32Const(body, dirRetBytes)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 1)
+
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, readDir)
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = appendErrnoFromErrorCode(body, 1, 7)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalGet(body, 7)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 2)
+
+	// buf = alloc(cap*12 + 4) + 4 — the count lives at buf-4.
+	body = inst.InstI32Const(body, dirStreamInitialCap)
+	body = inst.InstLocalSet(body, 3)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 4)
+	body = emitAllocRecBuf(body, alloc, 3, 5)
+
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstCall(body, readEntry)
+
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, 2)
+			body = inst.InstCall(body, dropStream)
+			body = appendErrnoFromErrorCode(body, 1, 7)
+			body = inst.InstI32Const(body, 0)
+			body = inst.InstLocalGet(body, 7)
+			body = numeric.InstI32Sub(body)
+			body = inst.InstReturn(body)
+		}
+		body = inst.InstEnd(body)
+
+		// `none` is end-of-listing, not an error.
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Load8U(body, 0, dirEntryOptDiscOff)
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstBrIf(body, 1)
+
+		// Grow before writing when the buffer is exactly full.
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstLocalGet(body, 3)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, 3)
+			body = inst.InstI32Const(body, 2)
+			body = numeric.InstI32Mul(body)
+			body = inst.InstLocalSet(body, 3)
+			body = emitAllocRecBuf(body, alloc, 3, 6)
+			body = inst.InstLocalGet(body, 6)
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstI32Const(body, dirRecBytes)
+			body = numeric.InstI32Mul(body)
+			body = memory.InstMemoryCopy(body)
+			body = inst.InstLocalGet(body, 6)
+			body = inst.InstLocalSet(body, 5)
+		}
+		body = inst.InstEnd(body)
+
+		// slot = buf + count*12; write { type, name_ptr, name_len }.
+		body = inst.InstLocalGet(body, 5)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, dirRecBytes)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 8)
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Load8U(body, 0, dirEntryTypeOff)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Load(body, 2, dirEntryNamePtrOff)
+		body = memory.InstI32Store(body, 2, 4)
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Load(body, 2, dirEntryNameLenOff)
+		body = memory.InstI32Store(body, 2, 8)
+
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 4)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, dropStream)
+
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 4)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 5)
+
+	locals := inst.PutLocalsOneGroup(nil, 8, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// emitAllocRecBuf appends "alloc room for capLocal records plus the
+// leading count word, and leave the FIRST RECORD's address in
+// outLocal" — so mem[out-4] is where the count goes.
+func emitAllocRecBuf(body []byte, alloc, capLocal, outLocal uint32) []byte {
+	body = inst.InstLocalGet(body, capLocal)
+	body = inst.InstI32Const(body, dirRecBytes)
+	body = numeric.InstI32Mul(body)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, outLocal)
+	return body
+}
+
+// emitDirRecWalk appends a loop over the 12-byte records in
+// bufLocal[0..countLocal), running `each` with the record's base
+// address in recLocal. The preview-2 counterpart of emitDirentWalk,
+// and much smaller because the records are fixed-width.
+func emitDirRecWalk(body []byte, bufLocal, countLocal, iLocal, recLocal uint32, each func([]byte) []byte) []byte {
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, iLocal)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, iLocal)
+		body = inst.InstLocalGet(body, countLocal)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+		body = inst.InstLocalGet(body, bufLocal)
+		body = inst.InstLocalGet(body, iLocal)
+		body = inst.InstI32Const(body, dirRecBytes)
+		body = numeric.InstI32Mul(body)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, recLocal)
+		body = each(body)
+		body = inst.InstLocalGet(body, iLocal)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, iLocal)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+	return body
+}
+
+// buildReadDirBodyP2 is the preview-2 __fern_read_dir. One pass, not
+// preview-1's two: __fern_read_dir_raw already knows the count, so the
+// string[] can be sized exactly up front.
+//
+// No "." / ".." filter either — wasi-filesystem specifies that
+// read-directory omits them, where preview-1's fd_readdir yields both.
+// The e2e test asserts the resulting counts match across backends,
+// which is what would catch the spec being wrong about that.
+//
+// Locals after the two params:
+//
+//	2: $path_buf  3: $path_byte_len  4: $i     5: $dirfd
+//	6: $buf       7: $count          8: $rec   9: $arr_raw
+//	10: $arr     11: $idx           12: $data 13: $len
+//	14: $errno   15: $err_ptr       16: $box
+func buildReadDirBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
+	buildIoErr := idxs["__build_io_error"]
+	openDir := idxs["__fern_open_dir"]
+	readRaw := idxs["__fern_read_dir_raw"]
+	strCopy := idxs["__fern_str_copy"]
+
+	var body []byte
+	body = emitStrNormalize(body, idxs, 0, 1, 2, 3, 4)
+	body = emitOpenDirOrErr(body, idxs, openDir, buildIoErr, allocBox, 5, 14, 15, 16)
+
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstCall(body, readRaw)
+	body = inst.InstLocalTee(body, 6)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalGet(body, 6)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalSet(body, 14)
+		body = emitResultErr(body, buildIoErr, allocBox, 14, 15, 16)
+	}
+	body = inst.InstEnd(body)
+
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 7)
+
+	// arr_raw = alloc(count*8 + 4); mem[arr_raw] = count; arr = +4.
+	body = inst.InstLocalGet(body, 7)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Mul(body)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 9)
+	body = inst.InstLocalGet(body, 7)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 9)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 10)
+
+	body = emitDirRecWalk(body, 6, 7, 11, 8, func(b []byte) []byte {
+		// (data, len) = __fern_str_copy(name) — the host's name buffer
+		// carries no rc header, so it needs an owned copy like argv's.
+		b = inst.InstLocalGet(b, 8)
+		b = memory.InstI32Load(b, 2, 4)
+		b = inst.InstLocalGet(b, 8)
+		b = memory.InstI32Load(b, 2, 8)
+		b = inst.InstCall(b, strCopy)
+		b = inst.InstLocalSet(b, 13)
+		b = inst.InstLocalSet(b, 12)
+		b = inst.InstLocalGet(b, 10)
+		b = inst.InstLocalGet(b, 11)
+		b = inst.InstI32Const(b, 8)
+		b = numeric.InstI32Mul(b)
+		b = numeric.InstI32Add(b)
+		b = inst.InstLocalSet(b, 14)
+		b = inst.InstLocalGet(b, 14)
+		b = inst.InstLocalGet(b, 12)
+		b = memory.InstI32Store(b, 2, 0)
+		b = inst.InstLocalGet(b, 14)
+		b = inst.InstLocalGet(b, 13)
+		b = memory.InstI32Store(b, 2, 4)
+		return b
+	})
+
+	body = emitResultOkPtr(body, allocBox, 10, 16)
+
+	locals := inst.PutLocalsOneGroup(nil, 15, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// emitOpenDirOrErr appends "fd = __fern_open_dir(path_buf,
+// path_byte_len); if it came back negative, turn -errno into an Err and
+// return". Shared by the read_dir and remove_dir_all halves, which
+// differ only in what they do with the fd.
+func emitOpenDirOrErr(body []byte, idxs map[string]uint32, openDir, buildIoErr, allocBox, fdLocal, errnoLocal, errPtrLocal, boxLocal uint32) []byte {
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, openDir)
+	body = inst.InstLocalTee(body, fdLocal)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalGet(body, fdLocal)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalSet(body, errnoLocal)
+		body = emitResultErr(body, buildIoErr, allocBox, errnoLocal, errPtrLocal, boxLocal)
+	}
+	body = inst.InstEnd(body)
+	return body
+}
+
+// buildRmdirRecBodyP2 is the preview-2 __fern_rmdir_rec: the same
+// depth-first walk as the preview-1 body, over 12-byte records instead
+// of dirents, with unlink-file-at / remove-directory-at in place of the
+// preview-1 syscalls. Returns 0 or an errno.
+//
+// Child paths stay preopen-relative and are rebuilt per entry as
+// `parent + "/" + name`, so every removal targets the preopen
+// descriptor rather than a per-level one. That is what keeps the
+// recursion depth independent of the host's handle table — the
+// listing has already been drained into `buf` by then.
+//
+// Locals after the two params:
+//
+//	2: $fd       3: $buf      4: $count    5: $i
+//	6: $rec      7: $nameptr  8: $namelen  9: $childptr
+//	10: $childlen  11: $j     12: $rb      13: $preopen
+//	14: $errno   15: $dst
+func buildRmdirRecBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	openDir := idxs["__fern_open_dir"]
+	readRaw := idxs["__fern_read_dir_raw"]
+	getDirs := idxs["wasi_get_directories_p2"]
+	unlink := idxs["wasi_descriptor_unlink_file_at_p2"]
+	rmdir := idxs["wasi_descriptor_remove_directory_at_p2"]
+	self := idxs["__fern_rmdir_rec"]
+
+	// Both mutators fail the same way: a non-zero discriminant, with
+	// the error-code at +4, returned to the caller as an errno.
+	mutateOrReturn := func(b []byte, fn, ptrLocal, lenLocal uint32) []byte {
+		b = inst.InstLocalGet(b, 13)
+		b = inst.InstLocalGet(b, ptrLocal)
+		b = inst.InstLocalGet(b, lenLocal)
+		b = inst.InstLocalGet(b, 12)
+		b = inst.InstCall(b, fn)
+		b = inst.InstLocalGet(b, 12)
+		b = memory.InstI32Load8U(b, 0, 0)
+		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+		{
+			b = appendErrnoFromErrorCode(b, 12, 14)
+			b = inst.InstLocalGet(b, 14)
+			b = inst.InstReturn(b)
+		}
+		b = inst.InstEnd(b)
+		return b
+	}
+
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, openDir)
+	body = inst.InstLocalTee(body, 2)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalGet(body, 2)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, readRaw)
+	body = inst.InstLocalTee(body, 3)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalGet(body, 3)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 4)
+
+	body = emitPreopenP2(body, alloc, getDirs, 12, 13)
+
+	body = emitDirRecWalk(body, 3, 4, 5, 6, func(b []byte) []byte {
+		b = inst.InstLocalGet(b, 6)
+		b = memory.InstI32Load(b, 2, 4)
+		b = inst.InstLocalSet(b, 7)
+		b = inst.InstLocalGet(b, 6)
+		b = memory.InstI32Load(b, 2, 8)
+		b = inst.InstLocalSet(b, 8)
+
+		// child = parent + "/" + name
+		b = inst.InstLocalGet(b, 1)
+		b = inst.InstI32Const(b, 1)
+		b = numeric.InstI32Add(b)
+		b = inst.InstLocalGet(b, 8)
+		b = numeric.InstI32Add(b)
+		b = inst.InstLocalTee(b, 10)
+		b = inst.InstCall(b, alloc)
+		b = inst.InstLocalSet(b, 9)
+		b = emitCopyBytes(b, 9, 0, 1, 11)
+		b = inst.InstLocalGet(b, 9)
+		b = inst.InstLocalGet(b, 1)
+		b = numeric.InstI32Add(b)
+		b = inst.InstI32Const(b, '/')
+		b = memory.InstI32Store8(b, 0, 0)
+		b = inst.InstLocalGet(b, 9)
+		b = inst.InstLocalGet(b, 1)
+		b = numeric.InstI32Add(b)
+		b = inst.InstI32Const(b, 1)
+		b = numeric.InstI32Add(b)
+		b = inst.InstLocalSet(b, 15)
+		b = emitCopyBytes(b, 15, 7, 8, 11)
+
+		b = inst.InstLocalGet(b, 6)
+		b = memory.InstI32Load(b, 2, 0)
+		b = inst.InstI32Const(b, descriptorTypeDirectory)
+		b = numeric.InstI32Eq(b)
+		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+		{
+			b = inst.InstLocalGet(b, 9)
+			b = inst.InstLocalGet(b, 10)
+			b = inst.InstCall(b, self)
+			b = inst.InstLocalTee(b, 14)
+			b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+			b = inst.InstLocalGet(b, 14)
+			b = inst.InstReturn(b)
+			b = inst.InstEnd(b)
+		}
+		b = inst.InstElse(b)
+		{
+			b = mutateOrReturn(b, unlink, 9, 10)
+		}
+		b = inst.InstEnd(b)
+		return b
+	})
+
+	// Empty now — remove the directory itself.
+	body = mutateOrReturn(body, rmdir, 0, 1)
+	body = inst.InstI32Const(body, 0)
+
+	locals := inst.PutLocalsOneGroup(nil, 14, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}

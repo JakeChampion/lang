@@ -95,6 +95,15 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			req.File.Mkdir = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.stat-at":
 			req.File.Stat = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.remove-directory-at":
+			req.File.Rmdir = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.read-directory",
+			m == "wasi:filesystem/types@0.2.0" && n == "[method]directory-entry-stream.read-directory-entry",
+			m == "wasi:filesystem/types@0.2.0" && n == "[resource-drop]directory-entry-stream":
+			// One flag for all three: a listing is a cursor, so the
+			// pull method and the drop are inseparable from the
+			// read-directory that mints the handle.
+			req.File.ReadDir = true
 		case m == "wasi:clocks/wall-clock@0.2.0" && n == "now":
 			req.WallNow = true
 		case m == "wasi:cli/environment@0.2.0" && n == "get-arguments":

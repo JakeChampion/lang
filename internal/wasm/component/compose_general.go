@@ -268,6 +268,12 @@ func (g *gComposer) ensureFilesystem(f FsFeatures) {
 	g.inst["wasi:filesystem/types@0.2.0"] = inst
 	tDesc := g.c.aliasType(inst, "descriptor")
 	g.surfaced["descriptor"] = tDesc
+	if f.ReadDir {
+		// The listing cursor is a second resource, and the guest owns
+		// the handle — so it needs surfacing for the canonical
+		// resource.drop the read loop ends with.
+		g.surfaced["directory-entry-stream"] = g.c.aliasType(inst, "directory-entry-stream")
+	}
 	g.inst["wasi:filesystem/preopens@0.2.0"] = g.c.importInstance("wasi:filesystem/preopens@0.2.0", g.c.typeRaw(WasiFilesystemPreopensInstanceTypeBody(tDesc)))
 }
 

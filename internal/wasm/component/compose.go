@@ -27,6 +27,10 @@ var (
 	// stat-at takes a path-flags argument the mutators do not:
 	// (self, path-flags, path_ptr, path_len, ret_ptr) -> ().
 	composeStatAtParams = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7f}
+
+	// read-directory and read-directory-entry both take just a handle
+	// and a return area: (self, ret_ptr) -> ().
+	composeSelfRetParams = []byte{0x7f, 0x7f}
 )
 
 const (
@@ -40,6 +44,10 @@ const (
 	composeUnlinkAtName   = "[method]descriptor.unlink-file-at"
 	composeMkdirAtName    = "[method]descriptor.create-directory-at"
 	composeStatAtName     = "[method]descriptor.stat-at"
+	composeRmdirAtName    = "[method]descriptor.remove-directory-at"
+	composeReadDirName    = "[method]descriptor.read-directory"
+	composeDirEntryName   = "[method]directory-entry-stream.read-directory-entry"
+	composeDirStreamDrop  = "[resource-drop]directory-entry-stream"
 )
 
 type p2composer struct {

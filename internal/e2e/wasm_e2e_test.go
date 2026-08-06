@@ -9380,47 +9380,6 @@ function main(): i32 {
 	}
 }
 
-// TestCmdLangComponentWrapRejectsImports confirms `-component-wrap`
-// gives a clear error (instead of silently producing an invalid
-// component) when the source's wasmbin output has WASI imports the
-// driver doesn't know how to route into a preview-2 component yet.
-//
-// The source has had to move three times, every time because the
-// builtin it named became supported: `print()` when `__fern_print` was
-// ported (#1245), then read+append when the five-way filesystem mode
-// was replaced by a feature set, then `stat` one commit later.
-// Whatever it names is a live to-do list entry, not a permanent
-// limitation — today that is `read_dir`.
-func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "needs_adapter.fern")
-	// `read_dir` has no preview-2 half yet — it needs the
-	// `read-directory` method and the `directory-entry-stream`
-	// resource, the last of #6208 — so under Preview2WASI it still
-	// emits preview-1 path_open / fd_readdir / fd_close, which the
-	// composer does not recognise.
-	src := []byte(`function main(): i32 {
-    match (read_dir(".")) { Ok(names) => {}, Err(e) => {} }
-    return 0;
-}`)
-	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	compPath := filepath.Join(dir, "needs_adapter.wasm")
-	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
-		"-component-wrap",
-		"-o", compPath, srcPath)
-	cmd.Dir = projectRoot(t)
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected `fern -component-wrap` to fail on a program with unrecognised imports, but it succeeded.\noutput:\n%s", out)
-	}
-	if !strings.Contains(string(out), "unrecognised imports") {
-		t.Errorf("expected unrecognised-imports error message in output, got:\n%s", out)
-	}
-}
-
 // TestCmdLangComponentWrapCliWithTcpServer drives a TCP server
 // (tcp_listen / tcp_accept / tcp_close) through `-component-wrap-cli`
 // — the wasi:sockets path, composed adapter-free via
@@ -11465,41 +11424,6 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 	}
 	if err := exec.Command("wasmtime", "run", compPath).Run(); err != nil {
 		t.Fatalf("wasmtime run failed: %v", err)
-	}
-}
-
-// TestCmdLangTargetWasmRejectsUnsupported confirms `-target wasm`
-// surfaces a clear error when the program pulls in a builtin the
-// Go-side composer can't place yet (here `read_dir`, the last of
-// #6208).
-func TestCmdLangTargetWasmRejectsUnsupported(t *testing.T) {
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "unsupported.fern")
-	// `read_dir` still emits preview-1 path_open / fd_readdir /
-	// fd_close under Preview2WASI, so the driver must reject rather
-	// than compose. (Earlier still-unsupported combos — args, tcp_recv,
-	// tcp+print, tcp+clock, tcp+file-read, read+write files,
-	// read+append, stat — each became supported as the composer grew;
-	// read_dir is the current gap, and it closes when #6208 lands
-	// read-directory.)
-	src := []byte(`function main(): i32 {
-    match (read_dir(".")) { Ok(names) => {}, Err(e) => {} }
-    return 0;
-}`)
-	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	compPath := filepath.Join(dir, "unsupported.wasm")
-	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm",
-		"-o", compPath, srcPath)
-	cmd.Dir = projectRoot(t)
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected unsupported-imports rejection, got success: %s", out)
-	}
-	if !strings.Contains(string(out), "unrecognised imports") {
-		t.Errorf("expected unrecognised-imports error, got:\n%s", out)
 	}
 }
 

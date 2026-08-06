@@ -291,8 +291,21 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 		if req.File.Mkdir {
 			g.add(gImport{iface: fsTypes, name: composeMkdirAtName, kind: gMem, params: composePathMutatorParams})
 		}
+		if req.File.Rmdir {
+			g.add(gImport{iface: fsTypes, name: composeRmdirAtName, kind: gMem, params: composePathMutatorParams})
+		}
 		if req.File.Stat {
 			g.add(gImport{iface: fsTypes, name: composeStatAtName, kind: gMem, params: composeStatAtParams})
+		}
+		if req.File.ReadDir {
+			// read-directory-entry hands back an entry NAME, which the
+			// host allocates into our memory — hence realloc, where
+			// read-directory itself only yields a handle.
+			g.add(
+				gImport{iface: fsTypes, name: composeReadDirName, kind: gMem, params: composeSelfRetParams},
+				gImport{iface: fsTypes, name: composeDirEntryName, kind: gMemRealloc, params: composeSelfRetParams},
+				gImport{iface: fsTypes, name: composeDirStreamDrop, kind: gDrop, resourceT: g.surfaced["directory-entry-stream"]},
+			)
 		}
 	}
 
