@@ -1,0 +1,1 @@
+union "Either" collides with a struct of the same name

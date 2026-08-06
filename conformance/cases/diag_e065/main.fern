@@ -1,0 +1,9 @@
+// Pins E065. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E065`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+// error[E065]: the backing string is reclaimed when "greeting" returns
+function greeting(): str {
+    var s: string = "hello, " + name();
+    return s;                 // `str` view of local `s` — dangles
+}

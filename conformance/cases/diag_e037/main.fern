@@ -1,0 +1,13 @@
+// Pins E037. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E037`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3, 4];
+    var i: i64 = 0 as i64;
+    var s = xs[i:2];           // error[E037]: slice low bound must be i32, got i64
+
+    var n: i32 = 42;
+    var bad = n[0:1];          // error[E037]: cannot slice value of type i32
+    return 0;
+}

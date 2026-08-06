@@ -1,0 +1,14 @@
+// Pins E031. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E031`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+// The catalogue's fragment names Status without declaring it; the enum
+// is added here so the arm-type mismatch is what the case actually pins.
+enum Status { Ok, Err }
+
+function f(s: Status): string {
+    return match (s) {
+        Ok => 1,        // i32
+        Err => "err",   // string  → error[E031]: match-expression arms differ: i32 vs string
+    };
+}

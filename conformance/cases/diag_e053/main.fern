@@ -1,0 +1,24 @@
+// Pins E053. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E053`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+// error[E053]: `fip` function "scale" may not allocate (array literal)
+fip function scale(own xs: i32[]): i32[] {
+    return [xs[0] * 2];          // allocates a fresh array
+}
+
+// OK: mutates the uniquely-owned array in place, allocates nothing.
+fip function double_first(own xs: i32[]): i32[] {
+    xs[0] = xs[0] * 2;
+    return xs;
+}
+
+// OK as fbip: the consuming match hands each Cons box straight to the
+// arm's rebuilt Cons — on unique input the function allocates nothing.
+enum List { Cons(i32, List), Nil }
+fbip function map_inc(own xs: List): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h + 1, map_inc(t)); },
+        Nil => { return Nil; },
+    }
+}

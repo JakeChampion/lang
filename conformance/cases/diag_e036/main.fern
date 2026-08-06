@@ -1,0 +1,13 @@
+// Pins E036. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E036`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+enum Color { Red, Green, Blue }
+enum Status { Ok, Err(string) }
+
+function main(): i32 {
+    var c = Red(1);                   // error[E036]: variant Red expects 0 argument(s), got 1
+    var s = Err();                    // error[E036]: variant Err expects 1 argument(s), got 0
+    var bad = Status.Pending;         // error[E036]: enum Status has no variant "Pending"
+    return 0;
+}

@@ -1,0 +1,12 @@
+// Pins E060. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E060`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function main(): i32 {
+// `Square` does not implement `Shape`
+var s: dyn Shape = Circle { r: 2 };
+var x = s as? Square;        // error[E060]: Square does not implement Shape
+var y = s as? i32;           // error[E060]: target must be a concrete struct/enum
+
+    return 0;
+}

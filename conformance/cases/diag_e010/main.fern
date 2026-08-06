@@ -1,0 +1,5 @@
+// Pins E010. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E010`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+struct HttpRequest { method: string }   // error[E010]: struct "HttpRequest" is a reserved built-in name and cannot be redeclared

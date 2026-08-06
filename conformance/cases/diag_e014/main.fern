@@ -1,0 +1,13 @@
+// Pins E014. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E014`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+enum Color { Red, Green, Blue }
+
+function name_of(c: Color): string {
+    match (c) {
+        Red => { return "red"; },
+        Green => { return "green"; },
+        Purple => { return "purple"; },   // error[E014]: variant "Purple" is not part of enum Color
+    }
+}

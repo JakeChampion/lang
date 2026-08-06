@@ -1,0 +1,12 @@
+// Pins P002. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain P002`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function main(): i32 {
+    var x = 42i32;       // OK — explicit i32 typing
+    var y = 42f32;       // error[P002]: unexpected numeric suffix "f32" on integer literal
+                          // (use 42.0f32 if you meant float)
+    var z = 1.5i32;      // error[P002]: unexpected numeric suffix "i32" on float literal
+    var w = 1.e;         // error[P002]: invalid float literal "1.e": ...
+    return x;
+}

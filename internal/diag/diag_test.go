@@ -336,7 +336,7 @@ func TestAvailableCodesEnumeratesCatalogue(t *testing.T) {
 		"E021": true, "E022": true, "E023": true, "E024": true,
 		"E026": true, "E027": true, "E028": true, "E029": true, "E030": true,
 		"E031": true, "E032": true, "E033": true, "E034": true, "E035": true,
-		"E036": true, "E037": true, "E038": true, "E039": true, "E040": true,
+		"E036": true, "E037": true, "E038": true, "E040": true,
 		"E041": true, "E042": true, "E043": true, "E044": true, "E045": true,
 		"E046": true, "E047": true, "E048": true, "E049": true, "E050": true,
 		"E051": true, "E052": true, "E053": true, "E054": true, "E055": true,

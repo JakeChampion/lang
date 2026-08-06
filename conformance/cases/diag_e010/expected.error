@@ -1,0 +1,1 @@
+struct "HttpRequest" is a reserved built-in name and cannot be redeclared

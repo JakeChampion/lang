@@ -1,0 +1,13 @@
+// Pins E058. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E058`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function main(): i32 {
+outer: while (a) {
+    while (b) {
+        break inner;     // error[E058]: no enclosing loop is labelled `inner`
+    }
+}
+
+    return 0;
+}

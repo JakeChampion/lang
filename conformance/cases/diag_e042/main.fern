@@ -1,0 +1,8 @@
+// Pins E042. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E042`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function f(): i32 {
+    var x = Some(42)?;        // error[E042]: `?` on Option requires the surrounding function to return Option[_], got i32
+    return x;
+}

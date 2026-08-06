@@ -1,0 +1,20 @@
+// Pins E063. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E063`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+// error[E063]: the backing array is reclaimed when "first_two" returns
+function first_two(): [i32] {
+    var xs: i32[] = [1, 2, 3];
+    return xs[0:2];            // slice views local `xs` — dangles
+}
+
+// OK: `xs` is owned by the caller, so the view stays valid.
+function first_two(xs: i32[]): [i32] {
+    return xs[0:2];
+}
+
+// OK: return the owned array (a move), then slice at the call site
+// where the owner is live.
+function build(): i32[] {
+    return [1, 2, 3];
+}

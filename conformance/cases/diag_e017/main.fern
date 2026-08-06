@@ -1,0 +1,9 @@
+// Pins E017. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E017`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+enum Status {
+    Ok,
+    Err(string),
+    Ok,        // error[E017]: duplicate variant "Ok" in enum Status
+}

@@ -1,9 +1,15 @@
 # The Fern specification
 
-Status: normative, and partial. `grammar.ebnf` is the syntactic grammar.
-Nothing else is here yet — see `docs/SPECIFICATION-RESEARCH.md` for the
-staged shape this is one layer of, and §"What is not specified" below
-for what a reader must not mistake this for.
+Status: normative, and partial.
+
+| File | What it defines |
+| --- | --- |
+| `grammar.ebnf` | The syntactic grammar. Gated by `internal/grammar`. |
+| `diagnostics.md` | The index of every rejection the front-end can report, and which conformance case pins it. Gated by `TestDiagnosticsIndexIsAccurate`. |
+
+See `docs/SPECIFICATION-RESEARCH.md` for the staged shape these are
+layers of, and §"What is not specified" below for what a reader must
+not mistake this directory for.
 
 Before this file existed, the only description of Fern's syntax was
 `internal/parser/parser.go` — 5.9k lines of hand-written recursive
@@ -73,16 +79,41 @@ unreadable. The known cases:
 The differential gate below therefore runs in **one direction only**:
 everything the parser accepts, the grammar must derive.
 
+## Normative prose that lives in `docs/`
+
+Several rules were written down as policy notes before this directory
+existed, and they are normative — a conforming implementation must
+honour them. They are listed here rather than moved, because they are
+maintained as living documents and a copy would drift:
+
+| Doc | Rule |
+| --- | --- |
+| `docs/INTEGER-SEMANTICS.md` | Integer operations are portable and never trap. `+ - * <<` wrap at the operand's width on every backend. |
+| `docs/FLOAT-SEMANTICS.md` | IEEE 754 for ordinary arithmetic, with the edges **deliberately** under-specified — the NaN bit-pattern in particular. The model for how to write down a freedom. |
+| `docs/ARRAY-BOUNDS.md` | Bounds-checking semantics. |
+| `docs/CLOSURE-CAPTURE.md` | Capture-by-value, enforced as `E049`. |
+| `docs/MODE-LATTICE.md` | The `own` / borrow / view mode lattice. |
+| `docs/MUST-CONSUME.md` | `@must_consume` linear obligations, enforced as `E067`. |
+
+Unlike `grammar.ebnf` and `diagnostics.md`, **none of these has a gate
+tying its prose to a test**. Each states rules that the conformance
+corpus happens to exercise, but nothing checks that a claim in the prose
+is pinned by a case, or that a case has not quietly contradicted one.
+Closing that is the natural next increment, and it is the same shape as
+the diagnostics index: derive the truth, make the document match it.
+
 ## What is not specified
 
-Everything else. There is no statement here of what any of this
-*means* — no evaluation order, no reference-counting or ownership
-semantics, no typing rules, no memory model. `conformance/cases` pins
-behaviour by example and the `docs/` policy notes
-(`INTEGER-SEMANTICS.md`, `FLOAT-SEMANTICS.md`, `ARRAY-BOUNDS.md`,
-`MODE-LATTICE.md`, …) state individual rules, but a reader should not
-mistake this directory for a language definition. It defines what a
-Fern program *looks like*, and nothing about what it does.
+Everything else — and the gap is larger than what is here. There is no
+statement anywhere of what a Fern program *means*: no evaluation order,
+no reference-counting or ownership semantics beyond the mode-lattice
+sketch, no typing rules, no memory model. `conformance/cases` pins
+behaviour by example, which is a description of the current
+implementations' behaviour rather than a definition of the language's.
+
+A reader should not mistake this directory for a language definition. It
+defines what a Fern program looks like and which programs are rejected,
+and almost nothing about what an accepted one does.
 
 ## How this is kept true
 

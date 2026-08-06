@@ -1,0 +1,10 @@
+// Pins E059. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain E059`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function main(): i32 {
+var x: i32 = 5;
+var y = x as? Circle;        // error[E059]: left of `as?` is i32, not a `dyn Trait`
+
+    return 0;
+}

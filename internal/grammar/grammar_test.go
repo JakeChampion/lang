@@ -70,6 +70,11 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		{"destructuring lambda param", `function main(): i32 { var g = ((lo, hi): (i32, i32)) => hi - lo; return 0; }`},
 		{"destructuring function param", `function main(): i32 { var f = function((x, y): (i32, i32)): i32 { return x * y; }; return 0; }`},
 
+		// A block is an expression in its own right, not only as an if/match
+		// branch (docs/BLOCK-EXPRESSIONS.md). Nothing in the repo used a
+		// standalone one until conformance/cases/diag_e061 existed.
+		{"standalone block expression", `function main(): i32 { var x: i32 = { var a: i32 = 1; a + 1 }; return x; }`},
+
 		// Match expressions with guards, on one line.
 		{"match expr", `function main(): i32 { var a = match (p) { (1, b) => b * 10, (x, _) => x }; return a; }`},
 		{"match expr with guard", `function main(): i32 { var b = match (q) { (0, y) => y, (x, y) when x == y => x + y, (x, y) => x - y }; return b; }`},

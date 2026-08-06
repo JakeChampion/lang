@@ -1,0 +1,1 @@
+returning a `[T]` slice that views function-local storage: the backing array is reclaimed when "first_two" returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead

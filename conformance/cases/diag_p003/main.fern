@@ -1,0 +1,10 @@
+// Pins P003. The program is the example from that code's entry
+// in the diagnostic catalogue (`fern explain P003`), so this case
+// also checks the catalogue's example really does produce the error
+// it documents.
+function main(): i32 {
+    foo() = 1;          // error[P003]: left-hand side of assignment is not assignable
+    42 = "x";           // error[P003]: ...
+    (a + b) = 5;        // error[P003]: ...
+    return 0;
+}

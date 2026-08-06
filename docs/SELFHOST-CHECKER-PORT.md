@@ -1247,4 +1247,7 @@ slice:
 Corpus cases: `e023-*`, `e044-*`, `e053-*`, `e065-*`, `e032-*` in
 TestSelfHostCheckerCodesX86_64. E039 turned out to be a dead catalogue
 entry (the Go checker never emits it — no `errfCode` site), so it needed
-no port for unfiltered parity.
+no port for unfiltered parity. Its explanation file has since been
+deleted: it documented a bare `len(x)` builtin that no longer exists
+(`len` is a method), so `fern explain E039` described a construct the
+language does not have.

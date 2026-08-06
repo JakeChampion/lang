@@ -38,15 +38,17 @@ freeze tracker is [#4451](https://github.com/JakeChampion/lang/issues/4451).
 | `CURSOR-IDIOM.md` | [policy] | Immutable read-and-advance cursor idiom (decided 2026-06). |
 | `SPECIFICATION-RESEARCH.md` | [research] | Would a language spec pay for itself? Prior art (Wasm/SpecTec, test262, ruby/spec, K, Redex, Miri) + a staged executable-spec shape. |
 | `FEATURE-AUDIT.md` | [tracker] | Living per-feature × per-backend audit matrix. |
-
-The specification itself lives OUTSIDE `docs/`, at `spec/` (the syntactic
-grammar, gated by `internal/grammar`) and `conformance/` (the behavioural
-corpus). Both are normative; the docs above are not.
 | `TRAIT-USAGE-AUDIT.md` | [record] | Where our own code should use traits; feeds epic #2691. |
 | `ADVERSARIAL-REVIEW-2026-06.md` | [record] | 2026-06 break-the-compiler review; all 17 findings fixed. |
 | `LANGUAGE-REVIEW-2026-07.md` | [record] | 2026-07 whole-language critical review snapshot. |
 | `IMPROVEMENTS.md` | [record] | fernsmith-era improvement backlog; mostly landed, residue in #2852/#2669/#2673. |
 | `GENERIC-VARIANT-FN-PAYLOAD-INFERENCE-GAP.md` | [record] | Generic-variant fn-payload inference gap — fixed. |
+
+The specification itself lives OUTSIDE `docs/`, at `spec/` (the syntactic
+grammar and the diagnostics index) and `conformance/` (the behavioural
+corpus). Those are normative and gated. The `[policy]` docs above are
+normative too but ungated — `spec/README.md` lists which ones and says
+so explicitly.
 
 ## Modules, packages & prelude retirement
 

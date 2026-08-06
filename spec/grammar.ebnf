@@ -275,6 +275,7 @@ Primary     = NUMBER
             | ArrayLit
             | MapLit
             | StructLit
+            | ValueBlock
             | Name
             ;
 
