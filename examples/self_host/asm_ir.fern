@@ -3996,7 +3996,10 @@ pub function eligible_core_known_view_impl(mod: parser.Module, known: string[], 
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (!func_eligible(mod.funcs[i], mod, all_structs, known, sg)) {
-            if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name); }
+            if (strict_ir_on()) {
+                strict_ir_refuse(mod.funcs[i].name
+                    + func_ineligible_reason(mod.funcs[i], mod, all_structs, known, sg));
+            }
             return false;
         }
         i = i + 1;
@@ -4063,19 +4066,22 @@ function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.St
 //
 // The two failure modes are very different to debug and the bare function name
 // does not distinguish them: either the BODY did not lower (an unsupported
-// construct — you need to bisect the function), or the body lowered fine but it
-// REFERENCES a symbol the module view does not contain (a missing import, a
-// monomorphised clone that is not in this view, a helper that was not
-// registered — you need to look at the symbol, not the body). Reporting "the
-// IR path bailed" for both sent an earlier investigation bisecting a function
-// whose body was never the problem.
+// construct), or the body lowered fine but it REFERENCES a symbol the module
+// view does not contain (a missing import, a monomorphised clone that is not in
+// this view, a helper that was not registered — you need to look at the symbol,
+// not the body). Reporting "the IR path bailed" for both sent an earlier
+// investigation bisecting a function whose body was never the problem.
+//
+// The body case then carries LowerResult.why — the innermost node that refused,
+// or the signature gate that did — because "bisect the body", which is what this
+// used to say, is a whole afternoon per bail and cannot group a corpus at all.
 //
 // Only called under strict_ir_on(), so the extra lowering costs nothing on the
 // normal path — which is why func_eligible itself stays a plain boolean and
 // this duplicates its shape rather than the two sharing a richer return.
 function func_ineligible_reason(fd: parser.FuncDecl, mod: parser.Module, sview: parser.StructDecl[], known: string[], sg: irlower.FnSigs): string {
     var r: irlower.LowerResult = irlower.lower_func(fd, sview, sg, false);
-    if (!r.ok) { return " (body did not lower — an unsupported construct; bisect the body)"; }
+    if (!r.ok) { return " (did not lower: " + r.why + ")"; }
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
@@ -6890,7 +6896,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     while (i < im.funcs.len()) {
         var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], im.structs, sg, false);
         if (!r.ok) {
-            if (strict_ir_on()) { strict_ir_refuse(im.funcs[i].name); }
+            if (strict_ir_on()) { strict_ir_refuse(im.funcs[i].name + " (did not lower: " + r.why + ")"); }
             return "";
         }
         var j: i32 = 0;
