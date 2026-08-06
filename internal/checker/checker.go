@@ -7496,6 +7496,15 @@ func scalarModuleFor(t ast.Type) string {
 		if !x.IsSigned() {
 			if x.NormalWidth() == 64 {
 				mod = "std/u64"
+			} else if x.NormalWidth() == 8 {
+				// u8's method surface lives in std/i32, not std/u32:
+				// every `pub function (b: u8) …` in the stdlib is
+				// declared there. Pointing at std/u32 made the hint
+				// unfollowable — importing it changed nothing and the
+				// identical error repeated, with no reason to try
+				// elsewhere. Bytes reach users constantly (indexing a
+				// string yields u8), so this is a common first error.
+				mod = "std/i32"
 			} else {
 				mod = "std/u32"
 			}

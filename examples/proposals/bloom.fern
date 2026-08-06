@@ -1,0 +1,282 @@
+// examples/proposals/bloom.fern — proposal turn, drawn line 54:
+// "A bloom filter with configurable bits and hash count, reporting the
+// false-positive rate."
+//
+// A bloom filter is a set that answers "definitely not present" or
+// "probably present". The property that makes it useful — and the one
+// worth testing hardest — is that it has NO false negatives: whatever was
+// inserted must always be reported present, however saturated the filter
+// gets. A false positive is a design cost; a false negative is a bug.
+//
+// The filter reports two rates, and the tests require them to agree: the
+// MEASURED rate over a disjoint probe set, and the rate ESTIMATED from the
+// fill ratio as `fill^k`. Two independent routes to the same number is a
+// stronger check than either against a hard-coded constant.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from
+// std/test, so the file is its own test suite.
+
+import "std/test";
+import "std/string";
+import "std/i32";
+import "std/u32";
+
+struct Bloom {
+    words: u32[],   // nbits rounded up to a multiple of 32
+    nbits: i32,
+    k: i32,         // hash count
+    added: i32,
+}
+
+function bloom_new(nbits: i32, k: i32): Bloom {
+    var nwords: i32 = (nbits + 31) / 32;
+    var w: u32[] = [];
+    var i: i32 = 0;
+    while (i < nwords) { w = w.append(0 as u32); i = i + 1; }
+    return Bloom { words: w, nbits: nwords * 32, k: k, added: 0 };
+}
+
+// Kirsch-Mitzenmacher: two independent hashes generate k derived ones,
+// h_i = h1 + i*h2, which is as good as k independent hashes for a filter
+// and costs two hash evaluations instead of k.
+function bit_index(b: Bloom, s: string, i: i32): i32 {
+    var h1: u32 = s.hash_fnv32();
+    var h2: u32 = s.hash_djb2();
+    var combined: u32 = h1 + ((i as u32) * h2);
+    return (combined % (b.nbits as u32)) as i32;
+}
+
+function get_bit(b: Bloom, i: i32): boolean {
+    var word: u32 = b.words[i / 32];
+    return ((word >> ((i % 32) as u32)) & (1 as u32)) == (1 as u32);
+}
+
+function set_bit(b: Bloom, i: i32): Bloom {
+    var wi: i32 = i / 32;
+    var mask: u32 = (1 as u32) << ((i % 32) as u32);
+    return Bloom { ...b, words: b.words.with(wi, b.words[wi] | mask) };
+}
+
+function bloom_add(b0: Bloom, s: string): Bloom {
+    var b: Bloom = b0;
+    var i: i32 = 0;
+    while (i < b.k) {
+        b = set_bit(b, bit_index(b, s, i));
+        i = i + 1;
+    }
+    return Bloom { ...b, added: b.added + 1 };
+}
+
+// "Probably present" — every one of the k bits is set.
+function might_contain(b: Bloom, s: string): boolean {
+    var i: i32 = 0;
+    while (i < b.k) {
+        if (!get_bit(b, bit_index(b, s, i))) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Set bits, via popcount per word.
+function popcount_bits(b: Bloom): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < b.words.len()) {
+        total = total + (b.words[i].count_ones() as i32);
+        i = i + 1;
+    }
+    return total;
+}
+
+// The same count the slow way, one bit at a time. Used only to check the
+// popcount path — an intrinsic and a loop must not disagree.
+function count_bits_by_hand(b: Bloom): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < b.nbits) {
+        if (get_bit(b, i)) { total = total + 1; }
+        i = i + 1;
+    }
+    return total;
+}
+
+// Fill ratio in per-mille, to stay in integer arithmetic.
+function fill_permille(b: Bloom): i32 {
+    return popcount_bits(b) * 1000 / b.nbits;
+}
+
+// Estimated false-positive rate in per-mille: fill^k, since a false
+// positive is k independent bits all landing on set ones.
+function estimated_fp_permille(b: Bloom): i32 {
+    var fill: i32 = fill_permille(b);
+    var acc: i32 = 1000;
+    var i: i32 = 0;
+    while (i < b.k) {
+        acc = acc * fill / 1000;
+        i = i + 1;
+    }
+    return acc;
+}
+
+// Measured rate over a probe set disjoint from what was inserted.
+function measured_fp_permille(b: Bloom, probes: string[]): i32 {
+    var hits: i32 = 0;
+    var i: i32 = 0;
+    while (i < probes.len()) {
+        if (might_contain(b, probes[i])) { hits = hits + 1; }
+        i = i + 1;
+    }
+    return hits * 1000 / probes.len();
+}
+
+function keys(prefix: string, n: i32): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(prefix + i.to_string()); i = i + 1; }
+    return out;
+}
+
+// ---------------------------------------------------------------- tests
+
+// The defining property. A false positive is a design cost; a false
+// negative is a bug, at any saturation.
+function test_no_false_negatives(): test.TestOutcome {
+    var sizes: i32[] = [64, 256, 1024];
+    var ks: i32[] = [1, 3, 7];
+    for si in 0..sizes.len() {
+        for ki in 0..ks.len() {
+            var b: Bloom = bloom_new(sizes[si], ks[ki]);
+            var ins: string[] = keys("item-", 40);
+            for i in 0..ins.len() { b = bloom_add(b, ins[i]); }
+            for j in 0..ins.len() {
+                if (!might_contain(b, ins[j])) {
+                    return test.fail("false negative for " + ins[j]
+                        + " at nbits=" + sizes[si].to_string()
+                        + " k=" + ks[ki].to_string());
+                }
+            }
+        }
+    }
+    return test.pass();
+}
+
+// An empty filter has nothing set, so nothing can be "probably present".
+function test_empty_filter_contains_nothing(): test.TestOutcome {
+    var b: Bloom = bloom_new(256, 3);
+    if (popcount_bits(b) != 0) {
+        return test.fail("a fresh filter had bits set");
+    }
+    var probes: string[] = keys("probe-", 50);
+    for i in 0..probes.len() {
+        if (might_contain(b, probes[i])) {
+            return test.fail("empty filter claimed to contain " + probes[i]);
+        }
+    }
+    return test.pass();
+}
+
+// count_ones() and a hand-rolled loop must agree. If the intrinsic is
+// wrong, every rate this filter reports is wrong with it — and both
+// numbers would still be self-consistent.
+function test_popcount_agrees_with_a_manual_count(): test.TestOutcome {
+    var b: Bloom = bloom_new(512, 4);
+    var ins: string[] = keys("x-", 30);
+    for i in 0..ins.len() {
+        b = bloom_add(b, ins[i]);
+        var fast: i32 = popcount_bits(b);
+        var slow: i32 = count_bits_by_hand(b);
+        if (fast != slow) {
+            return test.fail("popcount says " + fast.to_string()
+                + ", manual count says " + slow.to_string()
+                + " after " + (i + 1).to_string() + " inserts");
+        }
+    }
+    return test.pass();
+}
+
+// More bits for the same load means fewer collisions, so the fill ratio
+// must fall monotonically as the filter grows.
+function test_more_bits_means_lower_fill(): test.TestOutcome {
+    var sizes: i32[] = [128, 256, 512, 1024, 2048];
+    var prev: i32 = 1001;
+    for i in 0..sizes.len() {
+        var b: Bloom = bloom_new(sizes[i], 3);
+        var ins: string[] = keys("k-", 40);
+        for j in 0..ins.len() { b = bloom_add(b, ins[j]); }
+        var f: i32 = fill_permille(b);
+        if (f > prev) {
+            return test.fail("fill rose from " + prev.to_string() + " to "
+                + f.to_string() + " when nbits grew to "
+                + sizes[i].to_string());
+        }
+        prev = f;
+    }
+    return test.pass();
+}
+
+// The two routes to a false-positive rate must broadly agree: measured
+// over a disjoint probe set, and estimated as fill^k. A wide band, since
+// one is a sample — the point is that they track, not that they match.
+function test_measured_and_estimated_rates_agree(): test.TestOutcome {
+    var b: Bloom = bloom_new(512, 3);
+    var ins: string[] = keys("in-", 60);
+    for i in 0..ins.len() { b = bloom_add(b, ins[i]); }
+
+    var probes: string[] = keys("out-", 400);
+    var measured: i32 = measured_fp_permille(b, probes);
+    var estimated: i32 = estimated_fp_permille(b);
+
+    var diff: i32 = measured - estimated;
+    if (diff < 0) { diff = 0 - diff; }
+    // Allow 150 per-mille of slack plus the estimate itself — a sample of
+    // 400 probes is noisy, and both numbers are small.
+    if (diff > 150 + estimated) {
+        return test.fail("measured " + measured.to_string()
+            + " and estimated " + estimated.to_string()
+            + " per-mille disagree beyond the sampling band");
+    }
+    return test.pass();
+}
+
+// Insertion is idempotent: adding the same key twice sets no new bits.
+function test_reinsert_sets_no_new_bits(): test.TestOutcome {
+    var b: Bloom = bloom_new(256, 3);
+    b = bloom_add(b, "hello");
+    var after_first: i32 = popcount_bits(b);
+    b = bloom_add(b, "hello");
+    if (popcount_bits(b) != after_first) {
+        return test.fail("re-inserting set new bits: " + after_first.to_string()
+            + " -> " + popcount_bits(b).to_string());
+    }
+    if (!might_contain(b, "hello")) {
+        return test.fail("re-inserted key went missing");
+    }
+    return test.pass();
+}
+
+// ----------------------------------------------------------------- app
+
+function main(): i32 {
+    eprint("bloom — a bloom filter over ()[] configurable bits and hash count");
+    var configs: i32[] = [256, 512, 1024, 2048];
+    for i in 0..configs.len() {
+        var b: Bloom = bloom_new(configs[i], 3);
+        var ins: string[] = keys("in-", 60);
+        for j in 0..ins.len() { b = bloom_add(b, ins[j]); }
+        var probes: string[] = keys("out-", 400);
+        eprint("  nbits=" + b.nbits.to_string() + " k=" + b.k.to_string()
+            + " added=" + b.added.to_string()
+            + " fill=" + fill_permille(b).to_string() + "/1000"
+            + " fp_est=" + estimated_fp_permille(b).to_string() + "/1000"
+            + " fp_measured=" + measured_fp_permille(b, probes).to_string() + "/1000");
+    }
+
+    var r: test.TestRunner = test.test_new("bloom");
+    r = r.it("no false negatives", test_no_false_negatives);
+    r = r.it("empty filter contains nothing", test_empty_filter_contains_nothing);
+    r = r.it("popcount agrees with a manual count", test_popcount_agrees_with_a_manual_count);
+    r = r.it("more bits means lower fill", test_more_bits_means_lower_fill);
+    r = r.it("measured and estimated rates agree", test_measured_and_estimated_rates_agree);
+    r = r.it("reinsert sets no new bits", test_reinsert_sets_no_new_bits);
+    return r.finish();
+}

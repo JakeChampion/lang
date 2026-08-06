@@ -1,0 +1,30 @@
+// `u8`'s method surface lives in `std/i32` — every `pub function (b: u8) …`
+// in the stdlib is declared there. E043's fix-it hint used to name
+// `std/u32`, which declares no u8 methods at all, so following the advice
+// reproduced the identical error with nothing to suggest trying elsewhere.
+//
+// Bytes reach users constantly: indexing a string yields a u8. This case
+// exercises the import the hint now names, so the advice stays followable
+// on every backend rather than only in the checker's own test harness.
+
+import "std/i32";
+
+function main(): i32 {
+    var s: string = "AB";
+    var a: u8 = s[0];
+    var b: u8 = s[1];
+
+    // to_string on a byte, the case the hint is about.
+    if (a.to_string() != "65") { return 1; }
+    if (b.to_string() != "66") { return 2; }
+
+    // The other u8 methods declared alongside it.
+    if (!a.is_ascii_alpha()) { return 3; }
+    if (a.is_ascii_digit()) { return 4; }
+
+    var zero: u8 = 48 as u8;   // '0'
+    if (!zero.is_ascii_digit()) { return 5; }
+    if (zero.is_ascii_alpha()) { return 6; }
+
+    return 0;
+}
