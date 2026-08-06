@@ -1,0 +1,45 @@
+// A NESTED if / match-EXPRESSION must not lose the width the inner expression
+// already worked out. if_expr_rt classified a branch value by its literal shape
+// and fell through to "i32" for everything else — including the 0-arg IIFE both
+// desugars build, whose lambda carries the answer in its ret_type. So an i64
+// if-expression nested inside a match arm labelled the outer IIFE i32 and bailed
+// the module, while the same if-expression UNNESTED lowered fine. #6276.
+import "std/i32";
+import "std/i64";
+import "std/u64";
+
+function id[T](x: T): T { return x; }
+
+function main(): i32 {
+    // The reported shape: the width lives in an if-expression nested in an arm.
+    var a: i64 = match ((6i64) %? (549i64)) { Some(x) => x, None => (if (true) { id(803i64) } else { 421i64 }) };
+    if (a != 6i64) { return 1; }
+
+    // The nested arm actually taken, so the inner value is the one produced.
+    var b: i64 = match ((6i64) %? (0i64)) { Some(x) => x, None => (if (true) { 5000000000i64 } else { 421i64 }) };
+    if (b != 5000000000i64) { return 2; }
+
+    // if nested in if, and match nested in if — the other two pairings, since
+    // both desugars go through the same lambda.
+    var c: i64 = if (false) { 1i64 } else { (if (true) { 6000000000i64 } else { 2i64 }) };
+    if (c != 6000000000i64) { return 3; }
+    var d: i64 = if (false) { 1i64 } else { (match (1i32) { 0 => 2i64, _ => 7000000000i64 }) };
+    if (d != 7000000000i64) { return 4; }
+
+    // Two levels of nesting, so the read is recursive rather than one-deep.
+    var e: i64 = match (1i32) { 0 => 1i64, _ => (if (true) { (if (true) { 8000000000i64 } else { 3i64 }) } else { 4i64 }) };
+    if (e != 8000000000i64) { return 5; }
+
+    // u64 through the same route.
+    var f: u64 = if (false) { 1u64 } else { (if (true) { 9223372036854776520u64 } else { 2u64 }) };
+    if (f != 9223372036854776520u64) { return 6; }
+
+    // Controls: a wholly 32-bit nest must NOT be widened, and a string one must
+    // keep its own tag rather than collapsing to i32.
+    var g: i32 = if (false) { 1i32 } else { (if (true) { 9i32 } else { 2i32 }) };
+    if (g != 9i32) { return 7; }
+    var h: string = if (false) { "no" } else { (if (true) { "yes" } else { "nope" }) };
+    if (h != "yes") { return 8; }
+
+    return 11;
+}

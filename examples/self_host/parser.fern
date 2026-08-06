@@ -2161,6 +2161,25 @@ function if_expr_rt(e: Expr): string {
             if (literal_is_i64(n.text)) { return "i64"; }
             return "i32";
         },
+        // A NESTED if / match-EXPRESSION. Both desugar to a 0-arg IIFE over a
+        // 0-param lambda whose ret_type this function just computed one level
+        // down, so read it back rather than falling through to "i32" — that
+        // fall-through is what made nesting lose a width the inner expression
+        // had already worked out: `match (…) { Some(v) => v, None => (if (c)
+        // { id(803i64) } else { 421i64 }) }` labelled its IIFE i32 and bailed
+        // the module, while the same if-expression unnested was fine. Reading
+        // the lambda covers a hand-written `(function (): T { … })()` too, where
+        // the annotation is the author's. #6276.
+        ExprCall(c) => {
+            if (c.args.len() != 0) { return "i32"; }
+            match (c.callee) {
+                ExprLambda(lam) => {
+                    if (lam.params.len() == 0 && lam.ret_type.len() > 0) { return lam.ret_type; }
+                    return "i32";
+                },
+                _ => { return "i32"; }
+            }
+        },
         _ => { return "i32"; }
     }
 }
@@ -3030,7 +3049,14 @@ function parse_match_expr(p: Par): IfChain {
             abody = [s_return(er_expr)];
             art = if_expr_rt(er_expr);
         }
-        if (first) { rt = art; first = false; }
+        // Combine every arm's tag, not just the first one's. The arms yield ONE
+        // value, so one tag has to describe all of them, and a 64-bit arm is the
+        // one that cannot be narrowed — see wider_rt, which #6246 introduced for
+        // exactly this on the if-expression side. First-arm-wins lost the width
+        // whenever the leading arm was the one with nothing to go on:
+        // `match (x %? y) { Some(v) => v, None => 111i64 }` read `v` as i32,
+        // labelled the IIFE i32, and the i64 `return` then bailed the module.
+        if (first) { rt = art; first = false; } else { rt = wider_rt(rt, art); }
         var pi: i32 = 0;
         while (pi < pats.len()) {
             arms = arms.append(MatchArm { pattern: pats[pi], body: abody, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });

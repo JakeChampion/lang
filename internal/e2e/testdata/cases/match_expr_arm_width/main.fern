@@ -1,0 +1,41 @@
+// A match-EXPRESSION's arms yield ONE value, so one return-type tag has to
+// describe all of them. parse_match_expr took the FIRST arm's tag and dropped
+// every later one, so the width was lost whenever the leading arm was the one
+// with nothing to go on: in `match (x %? y) { Some(v) => v, None => 111i64 }`
+// the bare ident `v` reads i32, the desugared IIFE gets labelled i32, and the
+// i64 `return` then bails the whole module off the IR path.
+//
+// The match sibling of #6246, which added wider_rt for exactly this on the
+// if-expression side. #6272.
+import "std/i32";
+import "std/i64";
+import "std/u64";
+
+function main(): i32 {
+    // The reported shape: the width lives in the SECOND arm.
+    var a: i64 = match ((6i64) %? (549i64)) { Some(x) => x, None => 111i64 };
+    if (a != 6i64) { return 1; }
+
+    // The None arm taken, so the wide literal is the value actually produced.
+    var b: i64 = match ((6i64) %? (0i64)) { Some(x) => x, None => 5000000000i64 };
+    if (b != 5000000000i64) { return 2; }
+
+    // Width in a LATER-than-second arm, since the fold has to reach all of them.
+    var c: i64 = match (2i32) { 0 => 7i64, 1 => 8i64, _ => 9000000000i64 };
+    if (c != 9000000000i64) { return 3; }
+
+    // u64 is the other wide tag wider_rt has to carry.
+    var d: u64 = match ((6u64) %? (0u64)) { Some(x) => x, None => 9223372036854776520u64 };
+    if (d != 9223372036854776520u64) { return 4; }
+
+    // Controls. A first arm that already names the width always worked, and a
+    // wholly 32-bit match must NOT be widened by the fold.
+    var e: i64 = match (1i32) { 0 => 5000000000i64, _ => 12i64 };
+    if (e != 12i64) { return 5; }
+    var f: i32 = match (1i32) { 0 => 3i32, _ => 4i32 };
+    if (f != 4i32) { return 6; }
+    var g: string = match (1i32) { 0 => "no", _ => "yes" };
+    if (g != "yes") { return 7; }
+
+    return 11;
+}

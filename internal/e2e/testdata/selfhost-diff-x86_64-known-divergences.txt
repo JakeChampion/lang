@@ -18,35 +18,38 @@
 # since any divergence at all fails the leg — and keep the record below of what
 # left, because it is what the next round of probing should be measured against.
 #
-# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus), after #6268:
-# 311 agree, 0 diverge, 201 compile gaps. Count the gaps, not just the
+# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus), after #6276:
+# 338 agree, 0 diverge, 174 compile gaps. Count the gaps, not just the
 # agreements, when reading a run: the leg only proves what it could COMPILE, so
 # a fix that turns a wrong answer into an IR bail raises the gap count while
 # looking like a win in the divergence column.
 #
-# That caution cuts both ways, and the last four runs went the other way: 204
+# That caution cuts both ways, and the last six runs went the other way: 204
 # agree / 308 gaps, then 263 / 249 (#6237 + #6246), 291 / 221 (#6261), 311 / 201
-# (#6268). One bail can cost far more than the seed that exposes it — an
-# if-expression whose branches are 64-bit took the whole MODULE off the IR path,
-# and fernsmith emits if-expressions everywhere, so a single missing branch in
-# one classifier was suppressing a tenth of the corpus.
+# (#6268), 325 / 187 (#6272), 338 / 174 (#6276). One bail can cost far more than
+# the seed that exposes it — an if-expression whose branches are 64-bit took the
+# whole MODULE off the IR path, and fernsmith emits if-expressions everywhere, so
+# a single missing branch in one classifier was suppressing a tenth of the
+# corpus.
 #
-# CENSUS OF THE 201 GAPS, so the next round is aimed rather than sampled. The
+# CENSUS OF THE 174 GAPS, so the next round is aimed rather than sampled. The
 # first split is by the reason FERN_STRICT_IR=1 gives:
 #
-#   78  function value <fn>$clo not defined   → #6256, an enum match-EXPRESSION
-#                                               with a lambda arm. One mechanism,
-#                                               isolated to four probes. Now the
-#                                               LARGEST pile, and it GREW by 7
-#                                               across #6268 without anything
-#                                               about it changing: seeds that
-#                                               used to stop earlier now get far
-#                                               enough to reach it. A pile can
-#                                               grow because a different bug was
-#                                               fixed — read a moved number as a
-#                                               reordering before a regression.
+#   78  function value <fn>$clo not defined   → #6256. NOT one mechanism — the
+#                                               issue's own comments record that
+#                                               correction: several shapes share
+#                                               this message, and grouping by
+#                                               message is what made the first
+#                                               reduction fix the wrong thing.
+#                                               Now the LARGEST pile, and it GREW
+#                                               by 7 across #6268 without anything
+#                                               about it changing: seeds that used
+#                                               to stop earlier now get far enough
+#                                               to reach it. Read a moved number
+#                                               as a reordering before a
+#                                               regression.
 #   13  call to unknown symbol T.to_string    → a method call on a bare type var.
-#  110  no reason string                      → see the second split below.
+#   83  no reason string                      → see the second split below.
 #
 # The no-reason pile used to be the least actionable: the strict-IR message
 # names the FUNCTION it gave up in and nothing else. It does not need the message
@@ -64,17 +67,24 @@
 # gdb attributes the line to "fern.fern", but the NUMBER is a line in whichever
 # module the containing symbol names (irlower__* → irlower.fern) — read the
 # symbol, not the filename. There is normally exactly one hit per compile, so
-# the reading is unambiguous, and the whole 110 profile in a few minutes.
+# the reading is unambiguous, and the whole 83 profile in a few minutes.
 #
-# That gives the second split. Line numbers are as of #6268 and go stale on the
-# next edit to irlower.fern — the FUNCTION name is the durable half:
+# That gives the second split, measured after #6276. Line numbers go stale on
+# the next edit to irlower.fern — the FUNCTION name is the durable half:
 #
-#   54  lower_stmt_inner :13660  the `return`-width guard: a width-64 value
-#                           returned from a 32-bit return type. #6261 fixed one
-#                           CAUSE of a false reading here (a u32-suffixed literal
-#                           past i32-max) and took the site 94 → 51; what is left
-#                           is either a real wide return or another classifier
-#                           hole, and has not been separated yet.
+#   27  lower_stmt_inner :13660  the `return`-width guard: a width-64 value
+#                           returned from a 32-bit return type. It has never been
+#                           a real wide return — every cause found so far is a
+#                           false width READING upstream, and each was a
+#                           DIFFERENT classifier, four so far: #6261 a
+#                           u32-suffixed literal past i32-max (94 → 51), #6272 a
+#                           match-EXPRESSION taking its IIFE return type from the
+#                           first arm alone (54 → 40), #6276 if_expr_rt not
+#                           reading a NESTED if/match IIFE's own ret_type
+#                           (40 → 27). Treat a hit here as "which classifier lost
+#                           the width", not as a value genuinely too wide — and
+#                           expect the next one to be a fifth classifier rather
+#                           than a repeat.
 #   24  lower_value_block :11865  the wide-tail deferral #6268 added — a 64-bit
 #                           if / match tail in a value block, held back because
 #                           wasm miscompiles it (#6267). Removing the gate does
@@ -85,9 +95,13 @@
 #    8  lower_iife_match :13246  the payload-bindable gate.
 #    3  lower_expr :10354 / :10876
 #
-# So the 201 are three piles, not a fog: 78 one known mechanism (#6256), 78 in
-# two lowering sites, 45 spread over five more. #6268 emptied what was the
-# second-largest pile (61 at lower_value_block's non-`return` tail) entirely.
+# So the 174 are three piles, not a fog: 78 sharing the $clo message (#6256, now
+# far and away the largest, and being reduced separately), 51 in two lowering
+# sites, 45 over five more. The width guard has gone 94 → 27 across three fixes
+# and the value-block tail 61 → 0, so what began as the biggest pile is nearly
+# drained and the $clo pile has not moved at all. Re-measure before picking —
+# draining one pile reshuffles the others, as the $clo count moving 71 → 78 for
+# free shows.
 
 # CRASHES — the self-host-compiled binary died by SIGSEGV where the interpreter
 # returned a value. These were ONE bug: #6207, a `Map { … }` literal whose keys
