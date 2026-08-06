@@ -27757,6 +27757,44 @@ function opt_stmt_binding_escapes(st: parser.Stmt, name: string, variant: string
 // `name.<f>[j]`, and `name.<f>.len()`. ESCAPES: a bare `name`, and a bare
 // non-scalar field `name.<f>`. Erring toward escape leaks; erring the other way
 // dangles, so unknown shapes fall to the generic recursion and escape.
+// optstruct_chain_leaf_type: the field TYPE `e` reads when it is a pure field-
+// access CHAIN rooted at the bare local `name` of struct type `sty` —
+// `name.<f>` gives f's type, `name.<f>.<g>` gives g's type (f borrowed as the
+// receiver), to any depth. Returns "" when `e` is not such a chain, and "?" when
+// it IS one but a link could not be resolved (an unknown field, or a non-struct
+// intermediate), which the caller must treat as an escape.
+//
+// The one-level version of this refused `p.inner.ys.len()`: the chain fell
+// through to the generic call tail, which reached the bare-ident arm through
+// `p.inner` and reported the non-scalar field `inner` extracted. Reaching `ys`
+// THROUGH `inner` retains only ys's box, so `inner` is borrowed — the same
+// distinction structfld_safe_operand draws for the whole-program scan, and the
+// reason that scan could not reuse the string walker either (#6274).
+function optstruct_chain_leaf_type(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): string {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    if (oid.name != name) { return ""; }
+                    var t0: string = decl_field_type(structs, sty, fa.field);
+                    if (t0.len() == 0) { return "?"; }
+                    return t0;
+                },
+                _ => {
+                    var mid: string = optstruct_chain_leaf_type(fa.obj, name, sty, structs);
+                    if (mid.len() == 0) { return ""; }
+                    if (mid == "?") { return "?"; }
+                    if (!decl_is_struct(structs, mid)) { return "?"; }
+                    var t1: string = decl_field_type(structs, mid, fa.field);
+                    if (t1.len() == 0) { return "?"; }
+                    return t1;
+                }
+            }
+        },
+        _ => { return ""; }
+    }
+}
+
 function optstruct_bind_esc_expr(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprIdent(id) => { return id.name == name; },   // bare payload box escapes
@@ -27764,29 +27802,20 @@ function optstruct_bind_esc_expr(e: parser.Expr, name: string, sty: string, stru
         parser.ExprString(_) => { return false; },
         parser.ExprBool(_) => { return false; },
         parser.ExprFieldAccess(fa) => {
-            match (fa.obj) {
-                parser.ExprIdent(oid) => {
-                    if (oid.name == name) {
-                        var ft: string = decl_field_type(structs, sty, fa.field);
-                        if (is_scalar_type_name(ft)) { return false; }   // scalar field copy
-                        return true;                                     // rc field extracted bare
-                    }
-                    return false;
-                },
-                _ => { return optstruct_bind_esc_expr(fa.obj, name, sty, structs); }
+            var lt: string = optstruct_chain_leaf_type(e, name, sty, structs);
+            if (lt.len() > 0) {
+                if (is_scalar_type_name(lt)) { return false; }   // scalar field copy
+                return true;                                     // rc field extracted bare
             }
+            return optstruct_bind_esc_expr(fa.obj, name, sty, structs);
         },
         parser.ExprIndex(ix) => {
+            // name.<f>[j] / name.<f>.<g>[j] : indexed array-field read — safe; check
+            // the index. An UNRESOLVED chain ("?") is an escape, not a borrow.
+            var at: string = optstruct_chain_leaf_type(ix.array, name, sty, structs);
+            if (at == "?") { return true; }
+            if (at.len() > 0) { return optstruct_bind_esc_expr(ix.index, name, sty, structs); }
             match (ix.array) {
-                parser.ExprFieldAccess(bfa) => {
-                    match (bfa.obj) {
-                        parser.ExprIdent(bid) => {
-                            // name.<f>[j] : indexed array-field read — safe; check the index.
-                            if (bid.name == name) { return optstruct_bind_esc_expr(ix.index, name, sty, structs); }
-                        },
-                        _ => {}
-                    }
-                },
                 parser.ExprIdent(aid) => { if (aid.name == name) { return true; } },
                 _ => {}
             }
@@ -27795,23 +27824,14 @@ function optstruct_bind_esc_expr(e: parser.Expr, name: string, sty: string, stru
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprFieldAccess(cfa) => {
-                    if (cfa.field == "len") {
-                        match (cfa.obj) {
-                            parser.ExprFieldAccess(ofa) => {
-                                match (ofa.obj) {
-                                    parser.ExprIdent(oid) => {
-                                        // name.<f>.len() : length borrow — safe receiver, check args.
-                                        if (oid.name == name) {
-                                            var ci: i32 = 0;
-                                            while (ci < c.args.len()) { if (optstruct_bind_esc_expr(c.args[ci], name, sty, structs)) { return true; } ci = ci + 1; }
-                                            return false;
-                                        }
-                                    },
-                                    _ => {}
-                                }
-                            },
-                            _ => {}
-                        }
+                    // name.<f>.len() / name.<f>.<g>.len() : length borrow — safe
+                    // receiver, check args. An unresolved chain is an escape.
+                    var rt: string = optstruct_chain_leaf_type(cfa.obj, name, sty, structs);
+                    if (cfa.field == "len" && rt == "?") { return true; }
+                    if (cfa.field == "len" && rt.len() > 0) {
+                        var ci: i32 = 0;
+                        while (ci < c.args.len()) { if (optstruct_bind_esc_expr(c.args[ci], name, sty, structs)) { return true; } ci = ci + 1; }
+                        return false;
                     }
                 },
                 _ => {}
