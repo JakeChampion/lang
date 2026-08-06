@@ -7,7 +7,7 @@ import "testing"
 // wasm shares the lowering at ptrW==4).
 //
 // `eval` declares `var t: string` in one arm while a sibling arm binds
-// its pointer-shaped payload as `t`. ir.bindingSlot's shape guard used
+// its pointer-shaped payload as `t`. ir.bindingSlotScoped's shape guard used
 // to read the var slot's type from scratchType (never stamped for
 // info.Locals slots → nil → "single-word"), so the binding REUSED the
 // string's two-word slot: the backend fanned every load/store of the

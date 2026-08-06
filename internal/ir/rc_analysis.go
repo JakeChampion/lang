@@ -3287,7 +3287,7 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 	inLoop := map[*ast.Match]bool{}
 	// rebound[name] — the name is (re)introduced by SOME binding construct
 	// (match / match-expr arm, if-let, let-else). Binding slots are resolved
-	// BY NAME (bindingSlot reuses b.locals[name] — including a param's slot),
+	// BY NAME (bindingSlotScoped reuses b.locals[name] — including a param's slot),
 	// so a param whose name is ever rebound may hold a BORROWED payload at
 	// its match, not the caller's transferred argument; consuming it would
 	// free a value the true owner still holds. Any rebinding of a param name

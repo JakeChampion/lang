@@ -4,7 +4,7 @@ import "testing"
 
 // These pin #4510: a two-word slot (arm64/wasm strings under the two-word
 // ABI, inline dyn on wasm32) and a one-word match binding sharing a NAME
-// used to make (*builder).bindingSlot allocate a fresh slot and PERMANENTLY
+// used to make (*builder).bindingSlotScoped allocate a fresh slot and PERMANENTLY
 // remap b.locals[name]. Everything lowered after the arm then resolved the
 // name to the wrong-shaped slot — a later-lowered `var t: string` stored its
 // two words through the binding's one-word slot (operand imbalance /
