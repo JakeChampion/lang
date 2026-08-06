@@ -6277,6 +6277,20 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
     if (cwe == "i64" || cwe == "u64") { return 64; }
     match (e) {
         parser.ExprNumber(num) => {
+            // An explicit `i64` / `u64` SUFFIX is an unambiguous 64-bit value at
+            // any magnitude, so it decides the width outright. Only the magnitude
+            // used to be consulted, which read `1i64` as 32 — and since a small
+            // magnitude is the normal case, `B { v: [1i64, 2i64] }` built a
+            // 4-byte-stride i32 array while the field read (driven by the
+            // DECLARED `i64[]` / `u64[]` type) did an 8-byte-stride i64.load. Two
+            // i32 elements read back as one i64, silently: `b.v[0] == 1i64` was
+            // false with no trap and no diagnostic (#6188).
+            //
+            // Nothing outside a literal-element array noticed, because every
+            // other route to the width goes through a declared type: an
+            // annotated local (`var v: i64[] = [1i64]`), a local bound then
+            // stored into the field, and a record update all worked.
+            if (num.suffix == "i64" || num.suffix == "u64") { return 64; }
             // A bare integer literal whose value exceeds i32-max is unambiguously
             // an i64 value (the checker forbids it in any i32 context, E047), so
             // width inference must report 64. Smaller literals stay i32 and only

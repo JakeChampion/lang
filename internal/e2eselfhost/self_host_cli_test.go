@@ -63,10 +63,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH; skipping u32-to-string wasm check")
 		}
-		stdlibRoot, err := filepath.Abs("../../internal/stdlib")
-		if err != nil {
-			t.Fatalf("abs stdlib root: %v", err)
-		}
+		stdlibRoot := stdlibRootAbs(t)
 		src := `import "std/u32";
 
 function main(): i32 {
@@ -100,6 +97,104 @@ function main(): i32 {
 		// the string compare fails and this returns 7 rather than 42.
 		if got := cmd.ProcessState.ExitCode(); got != 42 {
 			t.Errorf("u32.to_string() on wasm exited %d, want 42\n%s", got, out)
+		}
+	})
+
+	// An `i64` / `u64` SUFFIX on a numeric literal decides its width outright.
+	// `infer_expr_width` consulted only the MAGNITUDE, so `1i64` read as 32-bit —
+	// and since a small magnitude is the normal case, an array literal of
+	// suffixed elements built itself 4-byte-strided while the field read, driven
+	// by the DECLARED `u64[]` type, used an 8-byte stride and an i64.load. Two
+	// i32 elements came back as one i64 and the compare was false, with no trap
+	// and no validation error: a silently wrong answer (#6188).
+	//
+	// This lives on the CLI driver, not with the other wasm-IR suites, because
+	// wasm_ir_run REFUSES a `u64[]` struct field outright ("module is not
+	// IR-eligible") while the full CLI compiles it. Only the CLI path reproduces.
+	//
+	// Two corrections to the issue, both measured: it is NOT u64-specific —
+	// `i64[]` fails identically, so the discriminator is the suffix rather than
+	// the signedness — and the `import` it says is required is not, the shape
+	// reproduces stdlib-free.
+	//
+	// It is also wasm-ONLY, and not because the wasm backend is at fault: the
+	// register backends give every array element an 8-byte slot whatever its
+	// declared width, so a width misclassification writes and reads the same
+	// bytes there and cannot be observed. The x86-64 leg below is the control
+	// that says so.
+	t.Run("wide-literal-suffix-element-width", func(t *testing.T) {
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Skip("wasmtime not on PATH; skipping wide-literal-suffix width check")
+		}
+		widthCases := []struct {
+			name string
+			src  string
+			// broken: returned the wrong answer before the fix, measured by
+			// reverting it and rebuilding. The rest are controls that already
+			// worked and must keep working.
+			broken bool
+		}{
+			{"u64-array-field", `struct B { v: u64[] }
+function main(): i32 { var b: B = B { v: [1u64, 2u64] }; if (b.v[0] == 1u64) { return 0; } return 1; }`, true},
+			{"i64-array-field", `struct B { v: i64[] }
+function main(): i32 { var b: B = B { v: [1i64, 2i64] }; if (b.v[0] == 1i64) { return 0; } return 1; }`, true},
+			// Later indices, so a fix that got element 0 right by landing on the
+			// same address by luck does not pass.
+			{"later-indices", `struct B { v: u64[] }
+function main(): i32 { var b: B = B { v: [1u64, 2u64, 3u64] }; if (b.v[1] == 2u64 && b.v[2] == 3u64) { return 0; } return 1; }`, true},
+			// The INNER literal is the one carrying suffixes.
+			{"nested-array-field", `struct B { v: u64[][] }
+function main(): i32 { var b: B = B { v: [[1u64, 2u64]] }; if (b.v[0][1] == 2u64) { return 0; } return 1; }`, true},
+			// CONTROL: a big-magnitude literal was already classified 64 by value.
+			// Pins that the magnitude rule still applies — the suffix check is
+			// additional, not a replacement.
+			{"big-magnitude-no-suffix", `struct B { v: i64[] }
+function main(): i32 { var b: B = B { v: [5000000000, 2] }; if (b.v[0] == 5000000000) { return 0; } return 1; }`, false},
+			// CONTROL: width from the suffix alone, outside a struct field.
+			{"unannotated-u64-array-local", `function main(): i32 { var v = [1u64, 2u64]; if (v[1] == 2u64) { return 0; } return 1; }`, false},
+			// CONTROL: a suffixed literal in a TUPLE field, whose width comes
+			// from the declared element type rather than the literal.
+			{"tuple-field-suffix", `struct B { t: (i64, i32) }
+function main(): i32 { var b: B = B { t: (7i64, 3) }; if (b.t.0 == 7i64 && b.t.1 == 3) { return 0; } return 1; }`, false},
+		}
+		for _, wc := range widthCases {
+			wc := wc
+			t.Run(wc.name, func(t *testing.T) {
+				srcPath := filepath.Join(dir, "width_"+wc.name+".fern")
+				if err := os.WriteFile(srcPath, []byte(wc.src+"\n"), 0o644); err != nil {
+					t.Fatalf("write src: %v", err)
+				}
+				wat, code := runDriver(t, "-target", "wasm", srcPath, stdlibRootAbs(t))
+				if code != 0 {
+					t.Fatalf("%s: -target wasm emit exited %d, want 0", wc.name, code)
+				}
+				watPath := filepath.Join(dir, "width_"+wc.name+".wat")
+				if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+					t.Fatalf("write wat: %v", err)
+				}
+				cmd := exec.Command("wasmtime", "run", watPath)
+				out, _ := cmd.CombinedOutput()
+				if got := cmd.ProcessState.ExitCode(); got != 0 {
+					kind := "control case regressed"
+					if wc.broken {
+						kind = "the #6188 width bug is back"
+					}
+					t.Errorf("%s on wasm exited %d, want 0 — %s: an 8-byte element built at a 4-byte stride\n%s",
+						wc.name, got, kind, out)
+				}
+				// The register backends cannot see this class of bug (uniform
+				// 8-byte element slots), so a failure here means something else.
+				asm, acode := runDriver(t, srcPath)
+				if acode != 0 {
+					t.Fatalf("%s: x86-64 emit exited %d, want 0", wc.name, acode)
+				}
+				progBin := buildBin(t, gcc, dir, "width_"+wc.name, string(asm))
+				xcmd := exec.Command(progBin)
+				_ = xcmd.Run()
+				if c := xcmd.ProcessState.ExitCode(); c != 0 {
+					t.Errorf("%s on x86-64 exited %d, want 0 — the control leg failed, so this is not a wasm width issue", wc.name, c)
+				}
+			})
 		}
 	})
 
@@ -1792,4 +1887,16 @@ function main(): i32 {
 			t.Errorf("missing-file driver exited %d, want 1", code)
 		}
 	})
+}
+
+// stdlibRootAbs is the absolute path the CLI driver needs as its stdlib-root
+// argv. Absolute because the driver resolves module imports against it directly
+// and the test's working directory is not the one it runs from.
+func stdlibRootAbs(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
+	return root
 }
