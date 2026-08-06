@@ -79,6 +79,17 @@ function main(): i32 {
     var (a, b) = head_and_one(xs);
     return (a * 10.0) as i32 + b;
 }`}, // 45; was 0
+	{"receiver_typevar_control", `struct Pair { a: i32 }
+function (xs: T[]) firstpair[U](other: U[]): (T, U) { return (xs[0], other[0]); }
+function main(): i32 {
+    var a: f64[] = [4.5];
+    var b: i32[] = [1];
+    var (x, y) = a.firstpair(b);
+    return (x * 10.0) as i32 + y - 1;
+}`}, // 45 — a METHOD must NOT be promoted: its receiver's `T` is not in
+	// type_params, so `all_tp_count` reads 1 while `T` is right there in the
+	// return, and promoting `U` alone would strand `T` erased in the clone.
+	// `array.zip`'s method form is exactly this and fell off the IR path.
 	{"count_of_control", `function count_of[T](xs: T[]): i32 { return xs.len(); }
 function main(): i32 {
     var xs: f64[] = [4.5, 1.5];
