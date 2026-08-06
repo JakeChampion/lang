@@ -140,6 +140,68 @@ function main(): i32 {
 		}
 	})
 
+	t.Run("rebound_local", func(t *testing.T) {
+		// #6127: the candidate is REBOUND in a loop. Every assignment orphans
+		// the box the slot currently holds, so before this shape was admitted
+		// the local leaked one box per iteration AND its final value — the
+		// `reassigned` exclusion refused the candidate outright, so nothing was
+		// freed at all (measured allocs=500 frees=0). The match arms must not
+		// `return`: the consuming-match free is emitted after the match
+		// statement, which a returning arm never reaches, and that is a
+		// separate pre-existing gap this case is not about.
+		src := `enum E { Box(i32, i32), Nil }
+function round(): i32 {
+    var e: E = Nil;
+    var i: i32 = 0;
+    while (i < 4) { e = Box(i, i); i = i + 1; }
+    var t: i32 = 0;
+    match (e) { Box(a, b) => { t = a + b; }, Nil => { t = 0; } }
+    return t;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(); r = r + 1; }
+    return t % 7;
+}`
+		allocs, frees, live := counts(t, "scalar_enum_rebound", src, 5)
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d — every rebind must release the box it "+
+				"overwrites and the consuming match must free the last one", allocs, frees)
+		}
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0 — a rebound scalar-enum local leaks one "+
+				"box per assignment, so this scales with the loop count", live)
+		}
+	})
+
+	t.Run("conditional_rebind", func(t *testing.T) {
+		// Not every path through the loop reassigns, so the release has to be at
+		// the assignment rather than once per iteration.
+		src := `enum E { Box(i32, i32), Nil }
+function round(n: i32): i32 {
+    var e: E = Box(0, 0);
+    var i: i32 = 0;
+    while (i < 4) { if (i % 2 == 0) { e = Box(i, n); } i = i + 1; }
+    var t: i32 = 0;
+    match (e) { Box(a, b) => { t = a + b; }, Nil => { t = 0; } }
+    return t;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    return t % 97;
+}`
+		allocs, frees, live := counts(t, "scalar_enum_condrebind", src, 44)
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d", allocs, frees)
+		}
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0", live)
+		}
+	})
+
 	t.Run("top_level_and_nested_balance", func(t *testing.T) {
 		allocs, frees, live := counts(t, "scalar_enum_mixed", scalarEnumMixedSrc, 47)
 		if allocs != frees {
@@ -289,6 +351,73 @@ function main(): i32 {
     return t % 97;
 }`,
 			want: 58,
+		},
+		{
+			// #6127 rebind hazard: the value is stored into a CONTAINER before
+			// being overwritten, so the old box is still reachable through the
+			// array and releasing it at the rebind is a use-after-free. Reading
+			// the wrong answer (or crashing) here is the failure mode.
+			name: "rebound_value_escapes_to_container",
+			src: `enum E { Box(i32, i32), Nil }
+function round(): i32 {
+    var keep: E[] = [];
+    var e: E = Nil;
+    var i: i32 = 0;
+    while (i < 4) { e = Box(i, i); keep = keep.append(e); i = i + 1; }
+    var t: i32 = 0;
+    var k: i32 = 0;
+    while (k < keep.len()) { match (keep[k]) { Box(a, b) => { t = t + a + b; }, Nil => {} } k = k + 1; }
+    return t;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(); r = r + 1; }
+    return t % 97;
+}`,
+			want: 36,
+		},
+		{
+			// #6127 rebind hazard: passed to a call before being overwritten.
+			name: "rebound_value_passed_to_call",
+			src: `enum E { Box(i32, i32), Nil }
+function sink(x: E): i32 { match (x) { Box(a, b) => { return a + b; }, Nil => { return 0; } } return 0; }
+function round(): i32 {
+    var e: E = Nil;
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) { e = Box(i, i); t = t + sink(e); i = i + 1; }
+    return t;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(); r = r + 1; }
+    return t % 97;
+}`,
+			want: 36,
+		},
+		{
+			// #6127 rebind hazard: aliased into a second local, which still reads
+			// the old box after the rebind.
+			name: "rebound_value_aliased_to_local",
+			src: `enum E { Box(i32, i32), Nil }
+function round(): i32 {
+    var e: E = Box(1, 1);
+    var keep: E = e;
+    e = Box(2, 2);
+    var t: i32 = 0;
+    match (keep) { Box(a, b) => { t = t + a + b; }, Nil => {} }
+    match (e) { Box(a, b) => { t = t + a + b; }, Nil => {} }
+    return t;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(); r = r + 1; }
+    return t % 97;
+}`,
+			want: 18,
 		},
 		{
 			// Used AFTER its match — not dead, so freeing at the first match
