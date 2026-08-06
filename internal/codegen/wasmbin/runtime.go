@@ -489,6 +489,64 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
 					needs.add("__fern_write_file")
+				case "__fern_remove_file":
+					// (path) → Result[void, IoError]. Same
+					// __build_io_error / __fern_str_len /
+					// __fern_str_byte chain read_file needs to
+					// SSO-normalize the path before it reaches
+					// the WASI call. The WASI imports themselves
+					// are added by scanImports once the helper is
+					// in the needs set.
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__fern_remove_file")
+				case "__fern_stat":
+					// (path) → Result[FileStat, IoError]. Same
+					// path-normalize chain as remove_file, plus the
+					// 64-byte filestat record and the FileStat box,
+					// both plain allocs.
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__fern_stat")
+				case "__fern_read_dir":
+					// (path) → Result[string[], IoError]. Opens +
+					// lists via the two internal workers, and copies
+					// each name into an owned string.
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_str_copy")
+					needs.add("__build_io_error")
+					needs.add("__fern_open_dir")
+					needs.add("__fern_read_dir_raw")
+					needs.add("__fern_read_dir")
+				case "__fern_remove_dir_all":
+					// (path) → Result[void, IoError] via the
+					// recursive __fern_rmdir_rec worker, which shares
+					// read_dir's open + listing helpers.
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__fern_open_dir")
+					needs.add("__fern_read_dir_raw")
+					needs.add("__fern_rmdir_rec")
+					needs.add("__fern_remove_dir_all")
+				case "__fern_temp_dir":
+					// (prefix) → Result[string, IoError]. Draws its
+					// uniqueness from the same CSPRNG helper
+					// __fern_random_i32 uses.
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_str_copy")
+					needs.add("__fern_random_i32")
+					needs.add("__build_io_error")
+					needs.add("__fern_temp_dir")
 				case "__fern_tcp_listen":
 					// (port) → i32 — heap pointer to a 12-byte
 					// listener struct (sock, 0, 0), or -errno
@@ -793,6 +851,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 		"__fern_reader_close_fd", "__fern_writer_close",
 		"__fern_writer_write", "__fern_reader_read_line_fd",
 		"__fern_reader_read_chunk",
+		"__fern_remove_file", "__fern_stat", "__fern_read_dir",
+		"__fern_remove_dir_all", "__fern_temp_dir",
 	} {
 		if needs.set[h] {
 			needs.add("__fern_alloc_box")
@@ -1601,6 +1661,67 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildWriteFileBody,
+	},
+	"__fern_remove_file": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[void, IoError]. path_unlink_file under the fd-3
+		// preopen; see wasi_fs_dir.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildRemoveFileBody,
+	},
+	"__fern_stat": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[FileStat, IoError]. path_filestat_get with
+		// SYMLINK_FOLLOW; see wasi_fs_dir.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildStatBody,
+	},
+	"__fern_open_dir": {
+		// (path_buf, path_byte_len) → i32 — an fd, or -(errno).
+		// Shared open step for read_dir / remove_dir_all; takes a
+		// RAW byte path, not an SSO string. See wasi_fs_dir.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildOpenDirBody,
+	},
+	"__fern_read_dir_raw": {
+		// (fd) → i32 — a buffer of packed dirents with the used byte
+		// count at buf-4, or -(errno).
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReadDirRawBody,
+	},
+	"__fern_read_dir": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[string[], IoError]. Base names, unsorted, "." and
+		// ".." filtered out to match os.ReadDir.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReadDirBody,
+	},
+	"__fern_rmdir_rec": {
+		// (path_buf, path_byte_len) → errno. RECURSIVE worker behind
+		// remove_dir_all; raw byte path.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildRmdirRecBody,
+	},
+	"__fern_remove_dir_all": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[void, IoError]. A missing directory is Ok(()).
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildRemoveDirAllBody,
+	},
+	"__fern_temp_dir": {
+		// (prefix_data, prefix_len) → i32 — heap-form
+		// Result[string, IoError] carrying a freshly CREATED
+		// uniquely-named directory, preopen-relative.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTempDirBody,
 	},
 	"__network_handle": {
 		// () → i32 — cached wasi:sockets/instance-network handle.

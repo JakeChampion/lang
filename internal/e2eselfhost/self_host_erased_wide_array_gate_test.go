@@ -92,6 +92,80 @@ function main(): i32 {
 }`}, // 42
 }
 
+// erasedWideArrayBlindCases are callees that take an erased `T[]` but never read
+// an ELEMENT — so no stride is ever used and there is nothing to miscompile. The
+// gate used to refuse them anyway, because it asked only whether a wide-element
+// array reached an erased `T[]` param. `is_empty` is the one such shape in the
+// whole of std/array (the other concrete-return generics — `all`, `any`,
+// `count_where`, `position`, `sum_by` — feed elements to a predicate and stay
+// refused, correctly).
+var erasedWideArrayBlindCases = []struct {
+	name string
+	src  string
+}{
+	{"is_empty_f64", `import "std/array";
+function main(): i32 {
+    var xs: f64[] = [1.5, 2.5];
+    if (array.is_empty(xs)) { return 1; }
+    return 45;
+}`}, // 45
+	{"len_only_generic_f64", `function count_of[T](xs: T[]): i32 { return xs.len(); }
+function main(): i32 {
+    var xs: f64[] = [4.5, 1.5];
+    return count_of(xs) * 20 + 5;
+}`}, // 45
+	{"len_only_generic_i64", `function count_of[T](xs: T[]): i32 { return xs.len(); }
+function main(): i32 {
+    var xs: i64[] = [9000000000, 1];
+    return count_of(xs) * 20 + 5;
+}`}, // 45
+}
+
+// TestSelfHostErasedWideArrayGateBlindWasm pins the other edge of the gate: a
+// callee that only asks its erased array for `.len()` must still lower and run.
+// Paired with TestSelfHostErasedWideArrayGateWasm — that test fails if the gate
+// gets too narrow, this one if it gets too wide, and neither alone is enough.
+func TestSelfHostErasedWideArrayGateBlindWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping erased-wide element-blind wasm cases")
+	}
+	gcc, _ := x86_64Tooling(t)
+	interpBin := buildLangBinForInterp(t)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
+
+	for _, tc := range erasedWideArrayBlindCases {
+		t.Run(tc.name, func(t *testing.T) {
+			want := interpExit(t, interpBin, tc.src)
+			proj := t.TempDir()
+			mainPath := filepath.Join(proj, "main.fern")
+			if err := os.WriteFile(mainPath, []byte(tc.src), 0o644); err != nil {
+				t.Fatalf("write main.fern: %v", err)
+			}
+			outWat := filepath.Join(proj, "out.wat")
+			var stderr strings.Builder
+			cmd := exec.Command(fernBin, "-target", "wasm", mainPath, stdlibRoot, "-o", outWat)
+			cmd.Stderr = &stderr
+			if cerr := cmd.Run(); cerr != nil {
+				t.Fatalf("compile: %v (%s) — a callee that never reads an element uses no stride, so the gate must not refuse it", cerr, stderr.String())
+			}
+			rcmd := exec.Command("wasmtime", "run", outWat)
+			_ = rcmd.Run()
+			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
+				t.Fatalf("wasmtime did not exit normally for %q", tc.name)
+			}
+			if got := rcmd.ProcessState.ExitCode(); got != want {
+				t.Errorf("%s = %d, want %d (interp oracle)", tc.name, got, want)
+			}
+		})
+	}
+}
+
 // TestSelfHostErasedWideArrayGateWasm asserts a wide-element instantiation of a
 // `T[]`-param generic is REFUSED on the wasm IR path rather than miscompiled.
 func TestSelfHostErasedWideArrayGateWasm(t *testing.T) {

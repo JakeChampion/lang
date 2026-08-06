@@ -69,7 +69,7 @@ jobs:
             if [ "${{ matrix.host }}" = "aarch64" ]; then
               gcc -static -nostdlib "build/$name.s" -o "build/$name"
               echo "::group::run $name"
-              ./build/$name || echo "(exited $?)"
+              "./build/$name" || echo "(exited $?)"
               echo "::endgroup::"
             fi
           done

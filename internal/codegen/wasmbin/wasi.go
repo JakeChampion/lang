@@ -404,6 +404,65 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 	},
+	"wasi_path_unlink_file": {
+		// (dirfd, path_ptr, path_len) → errno. Unlinks a REGULAR
+		// file under `dirfd`. Directories need path_remove_directory
+		// instead — unlinking one is EISDIR — which is why
+		// remove_dir_all dispatches on the entry's d_type.
+		module:  "wasi_snapshot_preview1",
+		name:    "path_unlink_file",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_path_remove_directory": {
+		// (dirfd, path_ptr, path_len) → errno. Removes an EMPTY
+		// directory under `dirfd`; a non-empty one is ENOTEMPTY, so
+		// remove_dir_all has to drain the children first.
+		module:  "wasi_snapshot_preview1",
+		name:    "path_remove_directory",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_path_create_directory": {
+		// (dirfd, path_ptr, path_len) → errno. Creates one directory
+		// level under `dirfd`; the parent must already exist. EEXIST
+		// when the name is taken, which is the signal temp_dir's
+		// retry loop uses to pick another name.
+		module:  "wasi_snapshot_preview1",
+		name:    "path_create_directory",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_path_filestat_get": {
+		// (dirfd, flags, path_ptr, path_len, buf_ptr) → errno.
+		// Writes a 64-byte `filestat` at buf_ptr: dev@0, ino@8,
+		// filetype@16 (1 byte), nlink@24, size@32 (u64), and three
+		// timestamps. `stat` reads filetype and size; flags=1 is
+		// SYMLINK_FOLLOW, matching the interpreter's os.Stat.
+		module: "wasi_snapshot_preview1",
+		name:   "path_filestat_get",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_fd_readdir": {
+		// (fd, buf_ptr, buf_len, cookie i64, bufused_ptr) → errno.
+		// Fills buf with packed `dirent` records — next_cookie@0 (u64),
+		// d_ino@8, d_namlen@16 (u32), d_type@20 (1 byte) — each
+		// followed by d_namlen name bytes, unterminated. A full buffer
+		// (bufused == buf_len) means "there may be more"; the helpers
+		// here grow and retry rather than paginating by cookie, since
+		// the entry list has to be materialised into one array anyway.
+		module: "wasi_snapshot_preview1",
+		name:   "fd_readdir",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI64, encode.ValtypeI32,
+		},
+		results: []byte{encode.ValtypeI32},
+	},
 
 	// ---- wasi:sockets imports for the TCP helpers ----
 	//
@@ -1586,6 +1645,32 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_write")
 			in.add("wasi_fd_close")
 		}
+	}
+	// Directory + metadata helpers (#6208). Preview-1 only so far —
+	// the preview-2 halves need seven wasi:filesystem imports plus
+	// composer wiring, and are the follow-up.
+	if helpers.set["__fern_remove_file"] {
+		in.add("wasi_path_unlink_file")
+	}
+	if helpers.set["__fern_stat"] {
+		in.add("wasi_path_filestat_get")
+	}
+	if helpers.set["__fern_open_dir"] {
+		in.add("wasi_path_open")
+	}
+	if helpers.set["__fern_read_dir_raw"] {
+		in.add("wasi_fd_readdir")
+	}
+	if helpers.set["__fern_read_dir"] {
+		in.add("wasi_fd_close")
+	}
+	if helpers.set["__fern_rmdir_rec"] {
+		in.add("wasi_path_unlink_file")
+		in.add("wasi_path_remove_directory")
+		in.add("wasi_fd_close")
+	}
+	if helpers.set["__fern_temp_dir"] {
+		in.add("wasi_path_create_directory")
 	}
 	if helpers.set["__fern_open_reader"] {
 		if opts.Preview2WASI {

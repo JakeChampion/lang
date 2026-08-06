@@ -30,6 +30,16 @@ on:
       # Darwin subtests because clang+lld aren't installed).
       - "internal/codegen/arm64/**"
       - "internal/e2e/arm64_test.go"
+      # The Darwin-specific EXECUTION tests. Same argument as
+      # internal/native below and stronger: these are the tests
+      # this runner exists to run, and they are the only place a
+      # Darwin runtime port (kqueue readiness, getentropy, the
+      # AT_FDCWD sign) is executed rather than merely assembled.
+      # Without this entry a PR that adds or fixes one of them and
+      # touches nothing else would skip the only lane that can run
+      # it — the same silent-skip this file's `internal/ir/**`
+      # comment warns about.
+      - "internal/e2e/arm64_darwin_*_test.go"
       # The prelude is shared by every backend; any change to
       # __map_keys / IoError / etc. flows into the Darwin asm.
       - "internal/prelude/**"
@@ -153,14 +163,14 @@ jobs:
           mkdir -p build
           for f in examples/*.fern; do
             name=$(basename "$f" .fern)
-            if ! ./bin/fern -target arm64-darwin -o "build/$name" "$f" 2>build/$name.err; then
+            if ! ./bin/fern -target arm64-darwin -o "build/$name" "$f" 2>"build/$name.err"; then
               if grep -q "not yet ported" "build/$name.err"; then
                 echo "skip $name (unported darwin runtime helper)"; continue
               fi
               echo "build $name FAILED:"; cat "build/$name.err"; exit 1
             fi
             echo "::group::run $name"
-            ./build/$name || echo "(exited $?)"
+            "./build/$name" || echo "(exited $?)"
             echo "::endgroup::"
           done
 
