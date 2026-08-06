@@ -2205,7 +2205,7 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResu
     var ft: string[] = fn_value_table(ir_cache);
     var unit: string = emit_functions_ns("", mod, ir_cache);
     return emit_ir_module_units_mode([""], [unit], sv, [sv.len()], cv, [cv.len()], ft, [ft.len()], mod,
-        needs_of(ir_cache), indirect_arities(ir_cache), emit_ir_rc_bodies(mod, ir_cache), mode);
+        needs_of(ir_cache), indirect_fn_sigs(ir_cache), emit_ir_rc_bodies(mod, ir_cache), mode);
 }
 
 
@@ -2878,18 +2878,46 @@ pub function fn_value_table(cache: irlower.LowerResult[]): string[] {
     return out;
 }
 
-// indirect_arities collects the distinct argument counts used by call_indirect
-// ops across the module (deduped), so fn_support_section declares one
-// `$fn<argc>` signature type per arity actually dispatched.
-pub function indirect_arities(cache: irlower.LowerResult[]): i32[] {
-    var out: i32[] = [];
+// fn_type_name is the WAT type name a call_indirect dispatches through. An op
+// with no signature tag keeps the historical arity-keyed `$fn<argc>` — every
+// all-i32 and every erased-generic call site, so their output is unchanged —
+// and a tagged one gets `$fn<tag>` ("$fnwl_w"), one type per distinct signature.
+pub function fn_type_name(o: ir.Op): string {
+    if (o.str.len() > 0) { return "$fn" + o.str; }
+    return "$fn" + util.i32_to_string(o.i32_imm);
+}
+
+// fn_sig_key encodes an all-i32 signature of `argc` arguments in the same
+// width-char spelling a tagged op carries ("ww_w" for two args), so
+// indirect_fn_sigs can collect one flat list of signatures and
+// fn_support_section_units can emit each without re-deriving the shape. The
+// TYPE NAME still comes from fn_type_name, which keeps the untagged ones on
+// their `$fn<argc>` spelling.
+pub function fn_sig_key(argc: i32): string {
+    var k: string = "";
+    var i: i32 = 0;
+    while (i < argc) { k = k + "w"; i = i + 1; }
+    return k + "_w";
+}
+
+// indirect_fn_sigs collects the distinct SIGNATURES used by call_indirect ops
+// across the module (deduped), so fn_support_section declares one signature type
+// per shape actually dispatched. An untagged op contributes its all-i32 arity
+// signature under its `$fn<argc>` name; a tagged one contributes its own.
+// Entries are "<name>|<sig>" so the emitter has both without re-deriving either.
+pub function indirect_fn_sigs(cache: irlower.LowerResult[]): string[] {
+    var out: string[] = [];
     var fi: i32 = 0;
     while (fi < cache.len()) {
         var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 150 && !slot_in_list(out, r.ops[i].i32_imm)) {  // call_indirect
-                out = out.append(r.ops[i].i32_imm);
+            if (r.ops[i].kind_tag == 150) {  // call_indirect
+                var nm: string = fn_type_name(r.ops[i]);
+                var sg: string = r.ops[i].str;
+                if (sg.len() == 0) { sg = fn_sig_key(r.ops[i].i32_imm); }
+                var ent: string = nm + "|" + sg;
+                if (util.index_of_str(out, ent) < 0) { out = out.append(ent); }
             }
             i = i + 1;
         }
@@ -2900,15 +2928,45 @@ pub function indirect_arities(cache: irlower.LowerResult[]): i32[] {
     // emitted whenever ANY map is used, not just a struct-keyed one. So both
     // signature types must exist for every map-using module or the (dead, for
     // i32/string keys) call_indirect fails validation. #2671.
+    // The derived hash / eq are plain all-i32 functions, so they take the
+    // arity-keyed names unchanged — signature keying does not reach them.
     if (module_uses_maps(cache)) {
-        if (!slot_in_list(out, 1)) { out = out.append(1); }
-        if (!slot_in_list(out, 2)) { out = out.append(2); }
+        if (util.index_of_str(out, "$fn1|w_w") < 0) { out = out.append("$fn1|w_w"); }
+        if (util.index_of_str(out, "$fn2|ww_w") < 0) { out = out.append("$fn2|ww_w"); }
     }
     return out;
 }
 
+// wasm_type_of_char maps one width char of a signature key to its WAT value
+// type. The inverse of irlower.wasm_width_char, kept next to its only consumer.
+function wasm_type_of_char(c: string): string {
+    if (c == "l") { return "i64"; }
+    if (c == "d") { return "f64"; }
+    if (c == "f") { return "f32"; }
+    return "i32";
+}
+
+// fn_type_decl renders one `(type $name (func (param …)* (result …)))` from an
+// "<name>|<sig>" entry.
+function fn_type_decl(entry: string): string {
+    var bar: i32 = 0;
+    while (bar < entry.len() && entry[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+    var name: str = entry[0 : bar];
+    var sig: str = entry[bar + 1 : entry.len()];
+    var us: i32 = 0;
+    while (us < sig.len() && sig[us] != 95) { us = us + 1; }             // 95 = '_'
+    var out: string = "  (type " + name + " (func";
+    var i: i32 = 0;
+    while (i < us) {
+        out = out + " (param " + wasm_type_of_char(sig[i : i + 1]) + ")";
+        i = i + 1;
+    }
+    return out + " (result " + wasm_type_of_char(sig[us + 1 : sig.len()]) + ")))\n";
+}
+
 // fn_support_section emits the WAT module items that back plain function values:
-// one `(type $fn<N> (func (param i32)×N (result i32)))` per dispatched arity, a
+// one `(type …)` per dispatched SIGNATURE — `$fn<N>` all-i32 for the arity-keyed
+// fallback, `$fn<tag>` for a signature carrying a 64-bit type — a
 // `(table <M> funcref)` sized to the address-taken set, and an `(elem (i32.const
 // 0) $f0 $f1 …)` filling it in fn_value_table order. Empty string when the
 // module has no function values, so non-closure modules are byte-unchanged.
@@ -2921,15 +2979,12 @@ pub function indirect_arities(cache: irlower.LowerResult[]): i32[] {
 //
 // The single-unit call below passes nss = [""] and the whole table, which
 // reproduces the historical output byte for byte.
-pub function fn_support_section_units(nss: string[], all_fns: string[], counts: i32[], arities: i32[]): string {
-    if (all_fns.len() == 0 && arities.len() == 0) { return ""; }
+pub function fn_support_section_units(nss: string[], all_fns: string[], counts: i32[], fn_sigs: string[]): string {
+    if (all_fns.len() == 0 && fn_sigs.len() == 0) { return ""; }
     var out: string = "";
     var ai: i32 = 0;
-    while (ai < arities.len()) {
-        out = out + "  (type $fn" + util.i32_to_string(arities[ai]) + " (func";
-        var pj: i32 = 0;
-        while (pj < arities[ai]) { out = out + " (param i32)"; pj = pj + 1; }
-        out = out + " (result i32)))\n";
+    while (ai < fn_sigs.len()) {
+        out = out + fn_type_decl(fn_sigs[ai]);
         ai = ai + 1;
     }
     var tsize: i32 = all_fns.len();
@@ -2960,7 +3015,7 @@ pub function fn_support_section_units(nss: string[], all_fns: string[], counts: 
 // no function VALUE is taken — so the units form sizes an empty set to 1 slot.
 pub function fn_support_section(cache: irlower.LowerResult[]): string {
     var ft: string[] = fn_value_table(cache);
-    return fn_support_section_units([""], ft, [ft.len()], indirect_arities(cache));
+    return fn_support_section_units([""], ft, [ft.len()], indirect_fn_sigs(cache));
 }
 
 // wasm_arr_bounds_check emits the array index bounds check shared by arr_get /
@@ -4191,9 +4246,13 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             out = out + "    global.get " + fn_base_global(ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(fn_table, o.str) - fn_table_base()) + "\n    i32.add\n";
         } else if (o.kind_tag == 150) {  // call_indirect
             // Indirect call: args + the table index are already on the stack
-            // (the index pushed last, on top). Dispatch through the per-arity
-            // signature `$fn<argc>` (all-i32 params/result this slice).
-            out = out + "    call_indirect (type $fn" + util.i32_to_string(o.i32_imm) + ")\n";
+            // (the index pushed last, on top). Dispatch through the signature the
+            // funcref actually has — `$fn<tag>` when irlower recovered the declared
+            // widths, else the all-i32 `$fn<argc>`. A funcref type is structural in
+            // wasm, so the arity alone cannot tell `(i64) => boolean` from
+            // `(i32) => i32` and dispatching one through the other is rejected at
+            // load (#6282).
+            out = out + "    call_indirect (type " + fn_type_name(o) + ")\n";
         } else if (o.kind_tag == 66) {  // fpow
             // x^y: the one binary transcendental. Both f64 operands are on the
             // stack (x pushed first, y on top — irlower's op_fbin order), matching
@@ -7653,8 +7712,8 @@ function preview1_imports(needs: string[]): string {
 // `unknown func: failed to find name $__fern_env` (#4801). Every caller now
 // shares this one body — including the component modes, via the _mode sibling
 // below — so the drift cannot recur.
-pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_caggs: string[], cagg_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, needs: string[], arities: i32[], rc_bodies: string): string {
-    return emit_ir_module_units_mode(nss, unit_texts, all_strs, str_counts, all_caggs, cagg_counts, all_fns, fn_counts, mod, needs, arities, rc_bodies, 0);
+pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_caggs: string[], cagg_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, needs: string[], fn_sigs: string[], rc_bodies: string): string {
+    return emit_ir_module_units_mode(nss, unit_texts, all_strs, str_counts, all_caggs, cagg_counts, all_fns, fn_counts, mod, needs, fn_sigs, rc_bodies, 0);
 }
 
 // emit_ir_module_units_mode is emit_ir_module_units parameterised by the wasm
@@ -7673,7 +7732,7 @@ pub function emit_ir_module_units(nss: string[], unit_texts: string[], all_strs:
 // mode-independent, which is why the component leg is a fork at two points
 // rather than a second emitter (wasm.fern's AST component path is a full
 // parallel copy; this is not).
-pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_caggs: string[], cagg_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, needs: string[], arities: i32[], rc_bodies: string, mode: i32): string {
+pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_strs: string[], str_counts: i32[], all_caggs: string[], cagg_counts: i32[], all_fns: string[], fn_counts: i32[], mod: parser.Module, needs: string[], fn_sigs: string[], rc_bodies: string, mode: i32): string {
     var out: string = "(module\n";
     if (mode == 0) { out = out + preview1_imports(needs); }
     if (mode == 2) { out = out + component_io_imports(needs); }
@@ -8027,7 +8086,7 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     if (need(needs, "str_from_bytes")) { out = out + string_from_bytes_helper(); }
     // Function-value support: the $fn<N> call_indirect signature types, the
     // funcref table, and its elem segment (empty for non-closure modules).
-    out = out + fn_support_section_units(nss, all_fns, fn_counts, arities);
+    out = out + fn_support_section_units(nss, all_fns, fn_counts, fn_sigs);
     var ui: i32 = 0;
     while (ui < unit_texts.len()) {
         out = out + unit_texts[ui];
@@ -9265,7 +9324,7 @@ pub function extern_sum_param_supported(t: string): boolean {
     // A flat sum param is a NON-array Option[i32|u32] or Result[i32|u32, i32|u32];
     // an array (array_depth != 0) or any other shape is unsupported. Byte-identical
     // to the former scan across the whole type grammar (verified old-vs-new over a
-    // corpus incl. arrays, nested-generic payloads, malformed arities, bare names).
+    // corpus incl. arrays, nested-generic payloads, malformed fn_sigs, bare names).
     var r: parser.TypeRef = parser.parse_type_ref(t);
     if (r.array_depth != 0) { return false; }
     if (r.base == "Option" && r.args.len() == 1) {

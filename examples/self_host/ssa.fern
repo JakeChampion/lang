@@ -2177,7 +2177,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 var eparams: parser.ParamDecl[] = [];
                                 var ep: i32 = 0;
                                 while (ep < lam.params.len()) { eparams = eparams.append(lam.params[ep]); ep = ep + 1; }
-                                eparams = eparams.append(parser.ParamDecl { name: "__env", type_name: "fn", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" });
+                                eparams = eparams.append(parser.ParamDecl { name: "__env", type_name: "fn", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
                                 var ebody: parser.Stmt[] = [];
                                 var cj: i32 = 0;
                                 while (cj < caps.len()) {

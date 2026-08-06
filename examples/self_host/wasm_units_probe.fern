@@ -65,23 +65,6 @@ function with_funcs(m: parser.Module, fs: parser.FuncDecl[]): parser.Module {
     };
 }
 
-// merge_arities unions two call_indirect arity sets — the type section must
-// cover every signature either unit calls through.
-function merge_arities(a: i32[], b: i32[]): i32[] {
-    var out: i32[] = a;
-    var i: i32 = 0;
-    while (i < b.len()) {
-        var seen: boolean = false;
-        var j: i32 = 0;
-        while (j < out.len()) {
-            if (out[j] == b[i]) { seen = true; }
-            j = j + 1;
-        }
-        if (!seen) { out = out.append(b[i]); }
-        i = i + 1;
-    }
-    return out;
-}
 
 function concat_strs(a: string[], b: string[]): string[] {
     var out: string[] = a;
@@ -143,7 +126,7 @@ function main(): i32 {
     // re-emit. Here both caches are in hand, so merging them exercises the same
     // path a cached link takes.
     var needs: string[] = wasm_ir.union_strs(wasm_ir.needs_of(cache_a), wasm_ir.needs_of(cache_b));
-    var arities: i32[] = merge_arities(wasm_ir.indirect_arities(cache_a), wasm_ir.indirect_arities(cache_b));
+    var fn_sigs: string[] = wasm_ir.union_strs(wasm_ir.indirect_fn_sigs(cache_a), wasm_ir.indirect_fn_sigs(cache_b));
 
     // The per-type RC helper bodies come from the MERGED type lists, not a
     // combined cache — the same metadata a cached link reads back. Both units
@@ -166,6 +149,6 @@ function main(): i32 {
         all_strs, [strs_a.len(), strs_b.len()],
         all_caggs, [caggs_a.len(), caggs_b.len()],
         concat_strs(fns_a, fns_b), [fns_a.len(), fns_b.len()],
-        im, needs, arities, rc_bodies));
+        im, needs, fn_sigs, rc_bodies));
     return 0;
 }
