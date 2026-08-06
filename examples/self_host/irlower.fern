@@ -555,9 +555,10 @@ pub function (s: LowerState) slot_of(name: string): i32 {
     // innermost lexical scope. A nested-block `var x` shadow appends a fresh
     // slot (add_local), which a sibling/outer reference must NOT see, but the
     // block body must (and the `add_local`-then-`slot_of` pattern wants the
-    // just-added slot, not an older same-named one). `lower_block` retires the
-    // inner names to `!retired!` on exit, so after the block the outer `x` is
-    // found again. First-match here clobbered the outer slot on shadow (#3726).
+    // just-added slot, not an older same-named one). `lower_block` prefixes the
+    // inner names with `!retired!` on exit, so after the block the outer `x` is
+    // found again — the match here is exact, and no source identifier can start
+    // with `!`. First-match here clobbered the outer slot on shadow (#3726).
     var i: i32 = s.locals.len() - 1;
     while (i >= 0) {
         if (s.locals[i].slot_name == name) { return i; }
@@ -605,10 +606,9 @@ pub function (s: LowerState) is_arr_slot(i: i32): boolean {
     return s.locals[i].is_arr;
 }
 
-// retire_locals renames every local at index >= `from` to the unfindable
-// sentinel "!retired!" (which no real identifier or "$"-temp can equal — and
-// retired slots are never looked up by name, so they may share it), removing it
-// from name resolution while LEAVING the slot in place. Fern is
+// retire_locals prefixes every local at index >= `from` with the unfindable
+// sentinel "!retired!" (which no real identifier or "$"-temp can start with),
+// removing it from name resolution while LEAVING the slot in place. Fern is
 // block-scoped (a `var` in an if / match-arm body is not visible after it — the
 // checker rejects it), but the IR lowerer allocates slots by name function-wide,
 // so a same-named local in a SIBLING scope would otherwise collapse onto one
@@ -619,6 +619,15 @@ pub function (s: LowerState) is_arr_slot(i: i32): boolean {
 // type columns, not names), and the `$tmp + local_names.len()` unique-temp
 // scheme are all unaffected. For valid (non-colliding) programs this is a no-op:
 // nothing resolves a block-scoped name after its block.
+//
+// The original name is KEPT after the sentinel so reclaim_slot_name can recover
+// it (#6127). The reclaim credits are name-keyed, so a flat "!retired!" made
+// every block-scoped local miss its own credit at the function-exit sweep — the
+// loop's re-declaration freed the PRIOR iteration's value and the final one
+// leaked, n-1 of n freed per round on every class. `emit_dec_sweep_except_list`
+// already noted the mechanism in passing ("loop-scoped candidates dodged it only
+// because their retired slot names miss the credit lookup"), from the other side:
+// there it was shielding them from a double free that has since been fixed.
 pub function (s: LowerState) retire_locals(from: i32): LowerState {
     // Rename slots [from, len) one at a time via set_local_name (the `.with`
     // pattern mark_arr uses) rather than rebuilding local_names as a fresh array
@@ -628,10 +637,53 @@ pub function (s: LowerState) retire_locals(from: i32): LowerState {
     var st: LowerState = s;
     var i: i32 = from;
     while (i < st.locals.len()) {
-        st = st.set_local_name(i, "!retired!");
+        // Prefix ONCE. Nested blocks retire the same slot repeatedly — an inner
+        // `if` inside a `while` body retires it, then the while body retires it
+        // again — and stacking sentinels would leave reclaim_slot_name returning
+        // "!retired!t" instead of "t", so a doubly-nested local would still miss
+        // its credit. Measured: exactly half of a sibling-branch corpus stayed
+        // unreclaimed until this guard. #6127.
+        if (!slot_name_retired(st.locals[i].slot_name)) {
+            st = st.set_local_name(i, "!retired!" + st.locals[i].slot_name);
+        }
         i = i + 1;
     }
     return st;
+}
+
+// slot_name_retired: `n` already carries the retire sentinel.
+function slot_name_retired(n: string): boolean {
+    return n.len() > 9 && n[0:9] == "!retired!";
+}
+
+// reclaim_slot_name: slot `i`'s name for a reclaim-CREDIT lookup — its source
+// name, with any "!retired!" prefix removed. Name RESOLUTION must keep using
+// slot_name (a retired slot is out of scope and must stay unfindable); this is
+// only for asking "was this slot's local credited", which stays true after the
+// block that declared it ends. #6127.
+//
+// Sound because the slot index space is MONOTONIC: retire_locals renames, never
+// truncates or reuses, so a retired slot still holds its block's final value at
+// function exit and is the sole reference to it. Entry-zeroing follows
+// automatically — arr_slots_of consumes the same predicates, so an untaken
+// branch's slot routes a guarded null rather than stack garbage.
+//
+// Only the four classes with a MEASURED block-scoped leak use this so far —
+// "TUP:", "OPTTUP:", "OPTSTRUCT:", "OPTARRARR:". The rest still key on
+// slot_name, so their block-scoped locals stay unclaimed at exit (a leak, the
+// safe direction). That is deliberate: switching a class on turns on an
+// exit-sweep release that has never run for these slots, so each one wants its
+// own probe rather than a blanket flip.
+function reclaim_slot_name(s: LowerState, i: i32): string {
+    var n: string = s.locals[i].slot_name;
+    // `+ ""` materialises the slice as an owned `string` — a bare slice types as
+    // `str` and neither returns nor binds as one (E002/E003). Same idiom as the
+    // op-prefix strip at `op[3:op.len()] + ""`.
+    if (slot_name_retired(n)) {
+        var bare: string = n[9:n.len()] + "";
+        return bare;
+    }
+    return n;
 }
 
 // set_local_name rewrites slot i's NAME (used by retire_locals). Mirrors mark_arr
@@ -27276,7 +27328,7 @@ function slot_is_reclaimable_tuple(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "TUP:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "TUP:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // slot_is_reclaimable_tuple_rebind: slot `i` is a "TUP:" tuple whose every
@@ -28566,7 +28618,7 @@ function slot_is_reclaimable_opttup(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].opt_type.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "OPTTUP:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "OPTTUP:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // emit_opttup_deep_free frees the option box in `slot`: null-guarded, if the box
@@ -28869,7 +28921,7 @@ function slot_is_reclaimable_optstruct(s: LowerState, i: i32): boolean {
     var inner: string = opttup_inner_type(s.locals[i].opt_type);
     if (!decl_is_struct(s.structs, inner)) { return false; }
     if (!struct_has_reclaim_array_field(s.structs, inner)) { return false; }
-    return util.index_of_str(s.reclaimable_names, "OPTSTRUCT:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "OPTSTRUCT:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // emit_optstruct_deep_free frees the option box in `slot`: null-guarded, if Some
@@ -29483,7 +29535,7 @@ function slot_is_reclaimable_optarrarr(s: LowerState, i: i32): boolean {
     // collect_fresh_optarrarr_names on the authoritative Option[<scalar-arr-of-arr>]
     // annotation, so it uniquely identifies genuine arr-of-arr option slots.
     if (s.locals[i].opt_type.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "OPTARRARR:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "OPTARRARR:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // emit_optarrarr_deep_free frees the option box in `slot`: null-guarded, if Some
