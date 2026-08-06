@@ -12008,6 +12008,24 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __memchr(s, byte, from) — a runtime-helper CALL, not an inline op,
+	// which is the opposite choice from the bit intrinsics above and for
+	// the opposite reason. A bit count is one instruction, so a call would
+	// cost more than the work; a byte scan is an unbounded loop, so the
+	// call is noise against it and a helper body is the natural home for
+	// the vectorised sequence (docs/ATLAS-PLATFORM-PLAN.md §3.1 rule 3 —
+	// the vector lifetime must stay inside one emitted body).
+	if id.Name == "__memchr" && len(n.Args) == 3 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_memchr", I32: 3})
+			return nil
+		}
+	}
 	// __heap_mark() / __heap_release_to(mark) — the one-level arena
 	// checkpoint pair. Same runtime-helper shape as __heap_bump_bytes so each
 	// backend rewinds its own cursor and snapshots its own freelist heads.
