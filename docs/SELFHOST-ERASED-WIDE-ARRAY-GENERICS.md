@@ -1,7 +1,7 @@
 # Erased-wide `T[]` generics silently miscompile on the self-host wasm path
 
-**Status:** step 1 (gate) DONE — the shape is now refused, not miscompiled.
-Step 2 (promotion) still open.
+**Status:** BOTH steps done. Step 1 made the shape refuse instead of
+miscompiling; step 2 makes it compile correctly.
 **Severity when found:** silent wrong values — not a bail, not a validator
 rejection.
 
@@ -102,6 +102,24 @@ would silently ignore the import and report a verdict about a broken program.
 Both 335-fixture legs stayed green, which also answers the coverage question
 above: no fixture depended on the miscompiled path.
 
-**Step 2 is unchanged and still wanted.** Refusing is better than lying, but
-`array.reverse` on an `f64[]` is a reasonable thing to write, and today it does
-not compile for wasm. The promotion widening is what makes it work.
+## Step 2 landed
+
+`parse_func` gained clause **(c-arr)**: the array-param sibling of clause (c),
+promoting a single-typevar generic with a bare `T[]` param whose return feeds a
+wide container (`has_bare_array_param`). Monomorphisation then clones it per
+concrete element type, so the copy gets a real stride. `reverse` / `rotate_left`
+/ `drop` at f64 now return the right values on wasm instead of being refused.
+
+The exclusion this reverses was justified in-tree as "the wide value rides an
+i32 array pointer, never trips the erased-wide gate, and promoting them would
+over-monomorphise the stdlib". The first half was simply wrong — nothing wide is
+passed by value, so the gate never fired, but the copy was silently wrong
+anyway. The second half is a real cost, and is why the promotion stays guarded
+to `all_tp_count == 1`.
+
+**The gate from step 1 is still load-bearing, and that is deliberate.** A
+two-typevar `map[T, U](xs: T[], f)` at a wide element type is NOT promoted, so
+it is still erased — and still refused rather than miscompiled.
+`TestSelfHostErasedWideArrayGateWasm` now pins exactly that case, so the gate
+cannot rot back into silence once the headline shapes work. Fixing part of a
+class is a reason to keep the guard for the rest of it, not to drop it.
