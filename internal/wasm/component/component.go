@@ -1834,16 +1834,18 @@ func WasiFilesystemTypesOpenAtInstanceTypeBody() []byte {
 // five hand-picked bodies; part 2's three path mutators would have made
 // it forty.
 type FsFeatures struct {
+	OpenAt bool // open-at
 	Read   bool // read-via-stream
 	Write  bool // write-via-stream
 	Append bool // append-via-stream
 	Unlink bool // unlink-file-at
 	Mkdir  bool // create-directory-at
+	Stat   bool // stat-at
 }
 
 // Any reports whether the request touches the filesystem at all.
 func (f FsFeatures) Any() bool {
-	return f.Read || f.Write || f.Append || f.Unlink || f.Mkdir
+	return f.OpenAt || f.Read || f.Write || f.Append || f.Unlink || f.Mkdir || f.Stat
 }
 
 // WasiFilesystemTypesPathInstanceTypeBody is the wasi:filesystem/types
@@ -1865,7 +1867,9 @@ func WasiFilesystemTypesPathInstanceTypeBody(inT, outT uint32, f FsFeatures) []b
 		needOut:  f.Write || f.Append,
 		needUnit: f.Unlink || f.Mkdir,
 	})
-	fsOpenAt(b, v)
+	if f.OpenAt {
+		fsOpenAt(b, v)
+	}
 	if f.Read {
 		fsViaStream(b, v, "read-via-stream", v.rIn)
 	}
@@ -1880,6 +1884,9 @@ func WasiFilesystemTypesPathInstanceTypeBody(inT, outT uint32, f FsFeatures) []b
 	}
 	if f.Mkdir {
 		fsPathMutator(b, v, "create-directory-at")
+	}
+	if f.Stat {
+		fsStat(b, v)
 	}
 	return b.body()
 }

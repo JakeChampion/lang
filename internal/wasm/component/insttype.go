@@ -209,6 +209,52 @@ func fsViaStream(b *instTypeBuilder, v fsVocab, method string, result uint32) {
 		"[method]descriptor."+method)
 }
 
+// fsStat emits the `stat-at` method and the four types its result
+// needs. It is the only filesystem method whose signature is not
+// expressible in the vocabulary fsPrelude already has, which is why it
+// carries its own type block rather than taking typeidxs from fsVocab.
+//
+// The record has to be declared IN FULL even though Fern's `stat`
+// surfaces only two of its six fields: an imported instance type is
+// matched against what the host exports, so a `descriptor-stat` missing
+// its three timestamps is a different type and the component fails to
+// instantiate. The reader in wasi_fs_dir.go skips the fields it does
+// not want by offset.
+//
+// `datetime` is declared inline rather than outer-aliased from
+// wasi:clocks/wall-clock (which is how the WIT's `use` spells it).
+// Record types match structurally, so an inline declaration of the same
+// shape is accepted — and it keeps a program that calls `stat` from
+// having to import a clock it never reads.
+func fsStat(b *instTypeBuilder, v fsVocab) {
+	datetime := b.defExport(InnerTypeRecord([]RecordField{
+		{Name: "seconds", Valtype: CValtypeU64},
+		{Name: "nanoseconds", Valtype: CValtypeU32},
+	}), "datetime")
+	// Case order fixes the discriminants, and they are NOT the
+	// preview-1 filetype numbers: a directory is 3 in both, but a
+	// regular file is 6 here and 4 there.
+	descType := b.defExport(InnerTypeEnum([]string{
+		"unknown", "block-device", "character-device", "directory",
+		"fifo", "symbolic-link", "regular-file", "socket",
+	}), "descriptor-type")
+	optDatetime := b.def(InnerTypeOption(byte(datetime)))
+	stat := b.defExport(InnerTypeRecord([]RecordField{
+		{Name: "type", Valtype: byte(descType)},
+		{Name: "link-count", Valtype: CValtypeU64},
+		{Name: "size", Valtype: CValtypeU64},
+		{Name: "data-access-timestamp", Valtype: byte(optDatetime)},
+		{Name: "data-modification-timestamp", Valtype: byte(optDatetime)},
+		{Name: "status-change-timestamp", Valtype: byte(optDatetime)},
+	}), "descriptor-stat")
+	rStat := b.def(InnerTypeResultOkErr(stat, v.errC))
+	b.funcExport(tcpMethodFuncDecl("stat-at",
+		[]string{"self", "path-flags", "path"},
+		[]byte{byte(v.bDesc), byte(v.pathFlags), CValtypeString},
+		byte(rStat)),
+		"[method]descriptor.stat-at")
+}
+
 // fsPathMutator emits one of the path-mutating methods —
 // `unlink-file-at`, `create-directory-at`, `remove-directory-at`. They
 // share a signature exactly: (borrow<descriptor>, string) ->

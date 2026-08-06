@@ -61,7 +61,7 @@ var knownPreview2Imports = map[[2]string]preview2ImportSpec{
 func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 	var req ComposeRequest
 	var unsupported []string
-	var getDirs, openAt bool
+	var getDirs bool
 	for _, p := range coreModuleImportPairs(bin) {
 		m, n := p.module, p.name
 		switch {
@@ -82,7 +82,7 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 		case m == "wasi:filesystem/preopens@0.2.0" && n == "get-directories":
 			getDirs = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.open-at":
-			openAt = true
+			req.File.OpenAt = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.read-via-stream":
 			req.File.Read = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.write-via-stream":
@@ -93,6 +93,8 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			req.File.Unlink = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.create-directory-at":
 			req.File.Mkdir = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.stat-at":
+			req.File.Stat = true
 		case m == "wasi:clocks/wall-clock@0.2.0" && n == "now":
 			req.WallNow = true
 		case m == "wasi:cli/environment@0.2.0" && n == "get-arguments":
@@ -145,16 +147,21 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			}
 		}
 	}
-	// Every filesystem method is reached by resolving a preopen and
-	// opening a path under it, so get-directories + open-at are the
-	// entry to all of them and a method without them is an incomplete
-	// chain. Which METHODS follow is a free choice — req.File already
-	// carries exactly the set the core imports, and the instance type is
-	// built from it — so unlike the old five-way mode there is no
-	// combination left to reject.
-	if getDirs || openAt || req.File.Any() {
-		if !getDirs || !openAt || !req.File.Any() {
-			unsupported = append(unsupported, "wasi:filesystem (incomplete open-chain: needs get-directories + open-at + at least one descriptor method)")
+	// Every filesystem method resolves a preopen first, so
+	// get-directories is the one universal prerequisite and a method
+	// without it is an incomplete chain. open-at is NOT universal: it
+	// opens a path for streaming, which stat / unlink / mkdir do not do
+	// — they take the preopen descriptor and a path directly. Treating
+	// it as a prerequisite made a stat-only or temp_dir-only program
+	// unbuildable, and made every filesystem component declare an
+	// open-at its core might never import.
+	//
+	// Which methods follow is otherwise a free choice: req.File already
+	// carries exactly the set the core imports and the instance type is
+	// built from it, so there is no combination left to reject.
+	if getDirs || req.File.Any() {
+		if !getDirs || !req.File.Any() {
+			unsupported = append(unsupported, "wasi:filesystem (incomplete chain: needs get-directories + at least one descriptor method)")
 		}
 	}
 	return req, unsupported

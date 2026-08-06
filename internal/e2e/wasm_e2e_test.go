@@ -9385,22 +9385,22 @@ function main(): i32 {
 // component) when the source's wasmbin output has WASI imports the
 // driver doesn't know how to route into a preview-2 component yet.
 //
-// The source has had to move twice, both times because the builtin it
-// named became supported: `print()` when `__fern_print` was ported
-// (#1245), then read+append when the five-way filesystem mode was
-// replaced by a feature set. Whatever it names is a live to-do list
-// entry, not a permanent limitation — today that is `stat`.
+// The source has had to move three times, every time because the
+// builtin it named became supported: `print()` when `__fern_print` was
+// ported (#1245), then read+append when the five-way filesystem mode
+// was replaced by a feature set, then `stat` one commit later.
+// Whatever it names is a live to-do list entry, not a permanent
+// limitation — today that is `read_dir`.
 func TestCmdLangComponentWrapRejectsImports(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "needs_adapter.fern")
-	// `stat` has no preview-2 half yet (#6208 part 2 needs stat-at),
-	// so under Preview2WASI it still emits the preview-1
-	// path_filestat_get import, which the composer does not recognise.
-	// (This used to be read + append, which the five-way filesystem
-	// mode had no body for; the mode is gone and read+append composes,
-	// so the example had to move to a real remaining gap.)
+	// `read_dir` has no preview-2 half yet — it needs the
+	// `read-directory` method and the `directory-entry-stream`
+	// resource, the last of #6208 — so under Preview2WASI it still
+	// emits preview-1 path_open / fd_readdir / fd_close, which the
+	// composer does not recognise.
 	src := []byte(`function main(): i32 {
-    match (stat("a")) { Ok(fs) => {}, Err(e) => {} }
+    match (read_dir(".")) { Ok(names) => {}, Err(e) => {} }
     return 0;
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
@@ -11470,19 +11470,20 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 
 // TestCmdLangTargetWasmRejectsUnsupported confirms `-target wasm`
 // surfaces a clear error when the program pulls in a builtin the
-// Go-side composer can't place yet (here `stat`, whose preview-2 half
-// is the remaining half of #6208).
+// Go-side composer can't place yet (here `read_dir`, the last of
+// #6208).
 func TestCmdLangTargetWasmRejectsUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "unsupported.fern")
-	// `stat` still emits the preview-1 path_filestat_get import under
-	// Preview2WASI, so the driver must reject rather than compose.
-	// (Earlier still-unsupported combos — args, tcp_recv, tcp+print,
-	// tcp+clock, tcp+file-read, read+write files, read+append — each
-	// became supported as the composer grew; stat is the current gap,
-	// and it closes when #6208 part 2 lands stat-at.)
+	// `read_dir` still emits preview-1 path_open / fd_readdir /
+	// fd_close under Preview2WASI, so the driver must reject rather
+	// than compose. (Earlier still-unsupported combos — args, tcp_recv,
+	// tcp+print, tcp+clock, tcp+file-read, read+write files,
+	// read+append, stat — each became supported as the composer grew;
+	// read_dir is the current gap, and it closes when #6208 lands
+	// read-directory.)
 	src := []byte(`function main(): i32 {
-    match (stat("a")) { Ok(fs) => {}, Err(e) => {} }
+    match (read_dir(".")) { Ok(names) => {}, Err(e) => {} }
     return 0;
 }`)
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {

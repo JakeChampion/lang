@@ -276,6 +276,23 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_descriptor_stat_at_p2": {
+		// Preview-2: [method]descriptor.stat-at lowered to
+		//   (self, path-flags, path_ptr, path_len, retptr) -> ().
+		// retptr holds `result<descriptor-stat, error-code>`, 104
+		// bytes: disc @ +0, then the 96-byte descriptor-stat at +8
+		// (type @ +8, link-count @ +16, size @ +24) on the ok arm, or
+		// the error-code at +8 on the err arm. Note the error-code is
+		// at +8 here, not the +4 the single-word results use — the
+		// record's 8-byte alignment pushes the payload out.
+		module: "wasi:filesystem/types@0.2.0",
+		name:   "[method]descriptor.stat-at",
+		params: []byte{
+			encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
+			encode.ValtypeI32, encode.ValtypeI32,
+		},
+		results: nil,
+	},
 	"wasi_get_arguments_p2": {
 		// Preview-2: wasi:cli/environment@0.2.0::get-arguments() ->
 		// list<string>. Canonical-ABI lowered to `(retptr: i32) ->
@@ -1676,7 +1693,12 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		}
 	}
 	if helpers.set["__fern_stat"] {
-		in.add("wasi_path_filestat_get")
+		if opts.Preview2WASI {
+			in.add("wasi_get_directories_p2")
+			in.add("wasi_descriptor_stat_at_p2")
+		} else {
+			in.add("wasi_path_filestat_get")
+		}
 	}
 	if helpers.set["__fern_open_dir"] {
 		in.add("wasi_path_open")
@@ -2118,6 +2140,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_stderr":              buildStderrBodyP2,
 	"__fern_remove_file":         buildRemoveFileBodyP2,
 	"__fern_temp_dir":            buildTempDirBodyP2,
+	"__fern_stat":                buildStatBodyP2,
 }
 
 // buildPrintBodyP2 is the preview-2 variant of buildPrintBody.

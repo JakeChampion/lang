@@ -675,15 +675,26 @@ func buildReadFileBodyP2(idxs map[string]uint32) []byte {
 // Unsupported). error-code disc indices follow
 // WasiFilesystemErrorCodeNames order.
 func appendErrnoFromErrorCode(body []byte, rbLocal, errnoLocal uint32) []byte {
+	return appendErrnoFromErrorCodeAt(body, rbLocal, errnoLocal, 4)
+}
+
+// appendErrnoFromErrorCodeAt is appendErrnoFromErrorCode with the
+// error-code's offset in the return area spelled out. It is 4 for every
+// result whose ok arm is a single word or empty, but the arm's
+// alignment sets it: `result<descriptor-stat, error-code>` puts the
+// error-code at 8, because descriptor-stat's u64 fields make the whole
+// payload 8-aligned. Reading it at 4 there yields the top half of a
+// zeroed word — a silent "ENOENT for everything".
+func appendErrnoFromErrorCodeAt(body []byte, rbLocal, errnoLocal uint32, codeOff uint32) []byte {
 	// errno = ENOENT (default / no-entry).
 	body = inst.InstI32Const(body, errnoNoEnt)
 	body = inst.InstLocalSet(body, errnoLocal)
 	for _, m := range []struct{ discVal, errnoVal int32 }{
 		{0, errnoAccess}, {7, errnoExist}, {11, errnoIntr}, {27, errnoNoTsup},
 	} {
-		// if mem8[rb+4] == discVal { errno = errnoVal }
+		// if mem8[rb+codeOff] == discVal { errno = errnoVal }
 		body = inst.InstLocalGet(body, rbLocal)
-		body = memory.InstI32Load8U(body, 0, 4)
+		body = memory.InstI32Load8U(body, 0, codeOff)
 		body = inst.InstI32Const(body, m.discVal)
 		body = numeric.InstI32Eq(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
