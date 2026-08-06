@@ -466,3 +466,83 @@ func TestBitCountInsnsReject(t *testing.T) {
 		}
 	}
 }
+
+// TestNeonByteKernelInsns pins the NEON packed-byte surface the SIMD kernels
+// need (docs/ATLAS-PLATFORM-PLAN.md §3.3a). Before these, CNT and ADDV — added
+// for popcount — were the assembler's only vector instructions.
+//
+// Every expectation is what `aarch64-linux-gnu-as` emits for the same
+// mnemonic, read back with objdump rather than derived from the ARM ARM.
+// Hand-decoded arrangement/size fields are exactly the thing that looks right
+// and assembles as a different instruction.
+//
+// Each form appears with both a low and a high register so the 5-bit fields
+// are actually exercised; a register number truncated into the wrong bit
+// position still assembles.
+func TestNeonByteKernelInsns(t *testing.T) {
+	cases := []struct {
+		asm  string
+		want uint32
+	}{
+		// dup: the needle splat. One instruction where SSE2 needs four.
+		{"\tdup v0.16b, w1\n", 0x4e010c20},
+		{"\tdup v3.16b, w20\n", 0x4e010e83},
+		{"\tdup v2.8b, w0\n", 0x0e010c02},
+		// ld1: unaligned 16-byte load, the movdqu counterpart. NEON has no
+		// alignment requirement, so there is no movdqa/movdqu split.
+		{"\tld1 {v1.16b}, [x0]\n", 0x4c407001},
+		{"\tld1 {v5.16b}, [x19]\n", 0x4c407265},
+		{"\tld1 {v2.8b}, [x3]\n", 0x0c407062},
+		// cmeq: per-byte equality, the compare half of a memchr block.
+		{"\tcmeq v1.16b, v1.16b, v0.16b\n", 0x6e208c21},
+		{"\tcmeq v7.16b, v8.16b, v9.16b\n", 0x6e298d07},
+		{"\tcmeq v2.8b, v2.8b, v3.8b\n", 0x2e238c42},
+		// shrn: NEON's answer to the absence of pmovmskb. x86 extracts one
+		// bit per byte in a single instruction; NEON has nothing equivalent,
+		// so the idiom is to narrow each 16-bit lane's flag nibble into a
+		// byte and fmov the 64-bit half out. The shift encodes inverted, as
+		// immh:immb = 16 - shift, which is why both ends are pinned.
+		{"\tshrn v1.8b, v1.8h, #4\n", 0x0f0c8421},
+		{"\tshrn v6.8b, v7.8h, #1\n", 0x0f0f84e6},
+		// umov: zero-extending byte-lane extract.
+		{"\tumov w0, v1.b[0]\n", 0x0e013c20},
+		{"\tumov w9, v2.b[15]\n", 0x0e1f3c49},
+	}
+	for _, c := range cases {
+		got, err := arm64.Assemble(c.asm)
+		if err != nil {
+			t.Fatalf("Assemble(%q): %v", c.asm, err)
+		}
+		want := arm64.Put(nil, c.want)
+		if !bytes.Equal(got, want) {
+			t.Errorf("%q: got % x, want % x (GNU as)", c.asm, got, want)
+		}
+	}
+}
+
+// TestNeonByteKernelReject keeps the new operand parsers loud. Each of these
+// is a plausible typo that must NOT assemble as something else — the failure
+// mode this whole family is prone to, since a wrong arrangement or addressing
+// form is usually a valid encoding of a different instruction.
+func TestNeonByteKernelReject(t *testing.T) {
+	for _, asm := range []string{
+		"\tdup v0.4h, w1\n",             // halfword lanes: different size field
+		"\tdup v0.16b, x1\n",            // 64-bit source is a different encoding
+		"\tld1 v1.16b, [x0]\n",          // missing the register-list braces
+		"\tld1 {v1.16b}, [x0, #16]\n",   // offset form is a different encoding
+		"\tld1 {v1.16b}, [x0], #16\n",   // writeback form likewise
+		"\tcmeq v0.8b, v1.16b, v2.8b\n", // mismatched arrangements
+		"\tshrn v1.16b, v1.8h, #4\n",    // shrn destination is always 8b
+		"\tshrn v1.8b, v1.8h, #0\n",     // shift out of range (1..8)
+		"\tshrn v1.8b, v1.8h, #9\n",     //
+		"\tumov x0, v1.b[0]\n",          // X destination is a different encoding
+		"\tumov w0, v1.b[16]\n",         // lane index out of range
+		"\tumov w0, v1.h[0]\n",          // halfword lane is a different encoding
+	} {
+		if _, err := arm64.Assemble(asm); err == nil {
+			t.Errorf("Assemble(%q) succeeded; want a refusal — a wrong "+
+				"arrangement or addressing form is usually a VALID encoding of "+
+				"some other instruction, so silence here means miscompilation", asm)
+		}
+	}
+}
