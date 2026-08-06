@@ -1236,11 +1236,13 @@ function parse_arrow_lambda(p: Par): (Expr, Par) {
 // leftmost operand is the one that fixes the type of an arithmetic or
 // concatenation chain.
 //
-// Only a leaf can decide. An identifier or a call is genuinely
-// unclassifiable here: the parser has no types, which is the root of why
-// this decision is awkward in the first place (the native compiler keeps a
-// typed `ast.MapLit` and lets the checker answer). Those return -1 and the
-// caller falls back.
+// Only a leaf can decide. An identifier, a call or an `if` expression is
+// genuinely unclassifiable here: the parser has no types, which is the root
+// of why this decision is awkward in the first place (the native compiler
+// keeps a typed `ast.MapLit` and lets the checker answer). Those return -1.
+// Where the literal initializes an ANNOTATED binding that costs nothing —
+// retarget_map_ctor reads `Map[K, V]` off the declaration and overrides
+// whatever this guessed. This is the fallback for the rest.
 function map_key_kind_of_expr(e: Expr): i32 {
     match (e) {
         ExprNumber(_) => { return 1; },
@@ -1279,6 +1281,10 @@ function map_key_kind_of_expr(e: Expr): i32 {
 // them as pointers: a SIGSEGV at construction, with no read of the map
 // anywhere (#6207). One computed key merely mistyped the map silently; two
 // reached the compare.
+//
+// The key walk below is the guess of last resort. A `var m: Map[K, V] = …`
+// declaration answers the same question exactly, and retarget_map_ctor
+// rewrites this constructor from it where one is present.
 function parse_map_lit(p: Par): (Expr, Par) {
     p = p.advance();   // consume `{`
     var mlk: Expr[] = [];
@@ -1321,6 +1327,64 @@ function parse_map_lit(p: Par): (Expr, Par) {
         mpi = mpi + 1;
     }
     return parse_postfix(p, mbase);
+}
+
+// map_ann_key_kind reads a map DECLARATION's key kind out of its type
+// annotation — 1 for `Map[i32, …]`, 0 for `Map[string, …]`, -1 for anything
+// else (not a map, or a struct/enum key, which map_new/map_new_i32 cannot
+// spell — those keep whatever the construction site chose). The "i32," /
+// "string," spelling is parse_type_name's canonical join (", " between
+// generic args, no space after `[`); irlower's annotated-`map_new` path
+// matches the same two prefixes.
+function map_ann_key_kind(t: string): i32 {
+    if (t.len() < 5 || t[0:4] != "Map[") { return 0 - 1; }
+    var inner: str = t[4 : t.len()];
+    if (inner.len() >= 4 && inner[0:4] == "i32,") { return 1; }
+    if (inner.len() >= 7 && inner[0:7] == "string,") { return 0; }
+    return 0 - 1;
+}
+
+// retarget_map_ctor rewrites the base constructor of a map-construction
+// expression — a `Map { … }` literal's `map_new[_i32](n).insert(k0,v0)…`
+// desugar chain, or a bare `map_new[_i32](n)` — to the one `kk` names.
+//
+// map_key_kind_of_expr guesses the key kind from the literal's keys, and for
+// a key like `f()`, `p.n` or `if (c) { 1 } else { 2 }` it CANNOT: the parser
+// has no types. It falls back to the string constructor, and an integer-keyed
+// map then compares its keys through __fern_str_eq, dereferencing them as
+// pointers — a SIGSEGV at construction (#6207). A `var m: Map[i32, i32] = …`
+// annotation answers outright what the keys can only hint at, so where one is
+// present it decides and the guess is not consulted. The guess still covers
+// every unannotated position.
+//
+// Anything that is not a recognised map construction is returned untouched —
+// `var m: Map[i32, i32] = other.insert(k, v)` bottoms out at an identifier,
+// not at map_new, and keeps the receiver's kind.
+function retarget_map_ctor(e: Expr, kk: i32): Expr {
+    match (e) {
+        ExprCall(c) => {
+            match (c.callee) {
+                ExprIdent(cid) => {
+                    if ((cid.name == "map_new" || cid.name == "map_new_i32") && c.args.len() == 1) {
+                        var want: string = if (kk == 1) { "map_new_i32" } else { "map_new" };
+                        if (cid.name == want) { return e; }
+                        return e_call_at(e_ident_at(want, cid.line, cid.col), c.args, c.line, c.col);
+                    }
+                    return e;
+                },
+                ExprFieldAccess(cfa) => {
+                    if (cfa.field == "insert" && c.args.len() == 2) {
+                        var nobj: Expr = retarget_map_ctor(cfa.obj, kk);
+                        return e_call_at(e_field_access_at(nobj, "insert", cfa.line, cfa.col), c.args, c.line, c.col);
+                    }
+                    return e;
+                },
+                _ => { return e; }
+            }
+        },
+        _ => {}
+    }
+    return e;
 }
 
 // parse_struct_lit_body parses `{ f: v, … }` (the cursor is on the
@@ -4237,7 +4301,12 @@ function parse_stmt(p: Par): (Stmt, Par) {
             return (s_match_origin(init_expr, le_arms, vline, vcol, "let_else"), p);
         }
         if (p.peek_punct() == ";") { p = p.advance(); }
-        return (StmtVar { name: name, type_name: type_name, init: init_expr, line: vline, col: vcol, is_str: v_is_str }, p);
+        // A `Map[K, V]` annotation outranks the key-kind guess parse_map_lit
+        // baked into the initializer's constructor (#6207).
+        var vann_kk: i32 = map_ann_key_kind(type_name);
+        var vinit: Expr = init_expr;
+        if (vann_kk >= 0) { vinit = retarget_map_ctor(init_expr, vann_kk); }
+        return (StmtVar { name: name, type_name: type_name, init: vinit, line: vline, col: vcol, is_str: v_is_str }, p);
     }
     if (kw == "return") {
         var rline: i32 = p.peek_line();
