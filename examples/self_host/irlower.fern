@@ -16273,6 +16273,18 @@ function refine_map_struct_val(a: parser.StmtAssign, slot: i32, s: LowerState): 
 function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     var slot: i32 = s.slot_of(a.target);
     if (slot < 0) { return s.fail(); }
+    // SCENRB (#6127): rebinding an admitted all-scalar enum / scalar Option local
+    // orphans the box it currently holds, so release it before the new value is
+    // stored. Safe to emit ahead of the RHS: admission requires the name never
+    // escape outside its consuming match, and walk_stmt_escapes reads assignment
+    // RHSs, so `e = f(e)` — the one shape where the old box is still needed here —
+    // is excluded. Params are never candidates (the local is fn-declared), but the
+    // slot check mirrors the enumfrees emission rather than relying on that.
+    if (slot >= s.n_params && util.index_of_str(s.reclaimable_names, "SCENRB:" + a.target) >= 0) {
+        s = s.emit(ir.op_load_local(slot));
+        s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
+        s = s.emit(ir.op_drop());
+    }
     s = refine_map_struct_val(a, slot, s);
     // #4297 CS4: a REASSIGNMENT re-binds the slot's string box, so the
     // slot-carried ownership fact becomes the MEET of the old and new
@@ -25446,6 +25458,90 @@ struct EnumFrees { idxs: i32[], names: string[] }
 // match. Each such x's box is freed right after its match statement. Conservative:
 // any deviation (reassigned, escapes outside the scrutinee, used in an arm body,
 // matched/used after, no match or more than one match mention) drops the candidate.
+// all_assigns_fresh_scalar_enum reports whether EVERY assignment to `name`
+// anywhere in `body` (recursively — the interesting ones sit inside a loop or an
+// `if`) has a freshly-constructed all-scalar enum / scalar Option on its right.
+//
+// This is what lets consumed_scalar_enum_frees drop its blunt `reassigned`
+// exclusion for this shape (#6127). A rebound local orphans its previous box on
+// every assignment, so `var e = Nil; while (…) { e = Box(i, i); }` leaked one box
+// per iteration and freed nothing at all — the candidate was refused outright, so
+// not even the FINAL value was released.
+//
+// Refusing was the safe direction, and widening it is only safe because the
+// escape gate is unchanged: the caller still requires that `name` never appears
+// anywhere but the LHS of these assignments and the scrutinee of its one
+// consuming match. walk_stmt_escapes reads an assignment's RHS only, so a rebind
+// from the name itself (`e = wrap(e)`) escapes and is excluded, as is a value
+// that was aliased out (`keep.append(e)`, `sink(e)`, `var k = e`) before being
+// overwritten — the shapes where releasing the old box would be a use-after-free
+// rather than a reclaim.
+function all_assigns_fresh_scalar_enum(body: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        if (!stmt_assigns_fresh_scalar_enum(body[i], name, structs)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function stmt_assigns_fresh_scalar_enum(st: parser.Stmt, name: string, structs: parser.StructDecl[]): boolean {
+    match (st) {
+        parser.StmtAssign(asn) => {
+            if (asn.target != name) { return true; }
+            return fresh_scalar_enum_init(asn.value, structs) != "" || expr_is_scalar_option_ctor(asn.value);
+        },
+        parser.StmtIf(iff) => {
+            return all_assigns_fresh_scalar_enum(iff.then_body, name, structs)
+                && all_assigns_fresh_scalar_enum(iff.else_body, name, structs);
+        },
+        parser.StmtWhile(w) => { return all_assigns_fresh_scalar_enum(w.body, name, structs); },
+        parser.StmtFor(f) => { return all_assigns_fresh_scalar_enum(f.body, name, structs); },
+        parser.StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (!all_assigns_fresh_scalar_enum(m.arms[i].body, name, structs)) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        parser.StmtDefer(d) => { return stmt_assigns_fresh_scalar_enum(d.action, name, structs); },
+        _ => { return true; }
+    }
+}
+
+// expr_is_scalar_option_ctor mirrors fresh_scalar_option_init for an ASSIGNMENT
+// right-hand side (that helper reads a StmtVar's annotation, which a rebind has
+// no equivalent of): `Some(<scalar literal-ish>)` or `None`.
+function expr_is_scalar_option_ctor(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == "None"; },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name != "Some" || c.args.len() != 1) { return false; }
+                    return expr_is_scalarish(c.args[0]);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
+// expr_is_scalarish accepts the operand forms a scalar Option payload can take
+// without the box carrying anything rc-tracked: a numeric/boolean literal, a
+// bare local, or arithmetic over them.
+function expr_is_scalarish(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprNumber(_) => { return true; },
+        parser.ExprBool(_) => { return true; },
+        parser.ExprIdent(_) => { return true; },
+        parser.ExprBinary(b) => { return expr_is_scalarish(b.left) && expr_is_scalarish(b.right); },
+        _ => { return false; }
+    }
+}
+
 function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[]): EnumFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
@@ -25460,7 +25556,14 @@ function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructD
                 // Option box gained its rc header from opt_make → __fern_arr_box.
                 var owner: string = fresh_scalar_enum_init(v.init, structs);
                 var is_opt: boolean = fresh_scalar_option_init(v);
-                if ((owner != "" || is_opt) && util.index_of_str(reassigned, v.name) < 0) {
+                // A REBOUND name is admitted when every one of its assignments
+                // constructs a fresh all-scalar enum / scalar Option (#6127): the
+                // old box is then dead at each rebind and the escape gate below
+                // still proves nothing else can be holding it. Refusing outright
+                // leaked every intermediate AND the final value.
+                var rebind_ok: boolean = util.index_of_str(reassigned, v.name) < 0
+                    || all_assigns_fresh_scalar_enum(body, v.name, structs);
+                if ((owner != "" || is_opt) && rebind_ok) {
                     // Find the single consuming match: exactly one top-level
                     // statement whose scrutinee is the bare ident `v.name`.
                     var match_idx: i32 = sole_top_level_match_idx(body, v.name);
@@ -33514,6 +33617,21 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var clo_seed: string[] = clo_rc_candidate_names(fn.body, sg.borrowable_params);
     var clo_si: i32 = 0;
     while (clo_si < clo_seed.len()) { reclaim = reclaim.append("CLO:" + clo_seed[clo_si]); clo_si = clo_si + 1; }
+    // SCENRB: an all-scalar enum / scalar Option local that consumed_scalar_enum_frees
+    // admits DESPITE being rebound (#6127). Each rebind orphans the previous box, so
+    // lower_stmt_assign releases it before storing the new one; the final value is
+    // still freed at the consuming match by the enumfrees emission. Marking the name
+    // here is what carries the fn-level admission (escape gate + sole consuming match
+    // + every-assignment-is-a-fresh-ctor) down to the assignment site, which sees only
+    // one statement.
+    var scenrb: EnumFrees = consumed_scalar_enum_frees(fn.body, structs);
+    var scrb_i: i32 = 0;
+    while (scrb_i < scenrb.names.len()) {
+        if (util.index_of_str(body_assign_targets(fn.body), scenrb.names[scrb_i]) >= 0) {
+            reclaim = reclaim.append("SCENRB:" + scenrb.names[scrb_i]);
+        }
+        scrb_i = scrb_i + 1;
+    }
     // #5276: seed each fn-typed PARAM whose fn-type has `dyn Trait` parameter
     // positions as "FNDYN:<name>|<positions>" (comma-separated indices), so an
     // indirect call `f(7)` through the fn value dyn-boxes the argument at those
