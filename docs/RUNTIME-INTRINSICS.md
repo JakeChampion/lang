@@ -36,16 +36,21 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > `random_bytes` string read its refcount out of the preceding allocation;
 > `__raw_string` goes through `__fern_str_box`, which writes the rc header.
 >
-> **The file-content fs leaves followed** — `read_file`, `write_file`,
-> `remove_file` are Fern on arm64 too, with `__syscall4` gaining its arm64
+> **The fs leaves followed** — `read_file`, `write_file`, `remove_file`,
+> `temp_dir` and `env` are Fern on arm64 too, with `__syscall4` gaining its arm64
 > emitter (on arm64 the 4th syscall arg is just `x3`; there is no x86-64-style
 > `%r10` shuffle) and the per-target constants factored into three tables in
 > `asmcore`: **`sysno(t, name)`**, **`at_fdcwd(t)`** (-100 Linux / -2 XNU) and
 > **`oflag(t, name)`** (O_WRONLY|O_CREAT|O_TRUNC is 577 on Linux, 1537 on
-> Darwin). `t` is `"x86_64"` / `"arm64"` / `"arm64-darwin"`. The three leaves
+> Darwin). `t` is `"x86_64"` / `"arm64"` / `"arm64-darwin"`. Those four leaves
 > and the shared `__fern_io_error` classifier emit as one bundle module, so each
 > helper's call to the classifier threads as an ordinary call-graph edge — the
-> #2649 end-state in miniature, now on both register backends.
+> #2649 end-state in miniature, now on both register backends. `env` sits
+> outside the bundle: it issues no syscall (the `__raw_environ` op, which the
+> arm64 emitter now has, reads the `__fern_envp` slot `_start` stashes) and
+> reports a missing variable as `None` rather than an error, so it calls no
+> classifier and needs no per-target constant at all. Its `.bss` slot is emitted
+> unconditionally — `_start`'s save is gated on `heap`, not on `env`.
 >
 > `__raw_addr` also let `read_file` grow the read LOOP its hand-asm always had:
 > the single-read shape was a workaround for the missing primitive, and it
@@ -62,9 +67,9 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > Darwin form can never inherit the previous one's mapping.
 >
 > Still **x86-64 IR only**: the three clocks (`monotonic_ns` / `now_unix_ms` /
-> `now_ns`) and `stat` / `read_dir` / `remove_dir_all` / `temp_dir` / `env`.
-> The first four are not blocked on effort but on SHAPE — unlike getrandom and
-> openat, their Darwin form differs by more than a number. Darwin has no
+> `now_ns`) and `stat` / `read_dir` / `remove_dir_all` — everything whose Darwin
+> form differs by more than a number. These are what is left, and they are
+> blocked on SHAPE, not effort. Darwin has no
 > `clock_gettime` at all (gettimeofday against a different struct, or CNTVCT_EL0,
 > not a syscall); its `struct stat` puts `st_mode` at offset 4 as a u16 where
 > Linux arm64 has it at 16 as a u32, and `st_size` at 96 rather than 48; and

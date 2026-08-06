@@ -4659,8 +4659,8 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_print_int", "__fern_eprint_str", "__fern_putchar",
         "__fern_read_int", "__fern_read_line", "__fn___fern_read_file",
         "__fern_reader_read_chunk", "__fern_reader_close", "__fn___fern_write_file",
-        "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fern_temp_dir", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir", "__fn___fern_remove_file",
-        "__fern_env", "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fern_subprocess",
+        "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir", "__fn___fern_remove_file",
+        "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_arg_at_rc", "__fern_strbuf_append",
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's
         // runtime — .globl so a per-module sibling's `call` resolves against it.
@@ -7581,7 +7581,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_read_file("x86_64"); }
         if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file("x86_64"); }
         if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file("x86_64"); }
-        if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir(); }
+        if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir("x86_64"); }
         if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir(); }
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all(); }
         s = emit_ir_runtime_fern_fn(fs_src, all_structs, s);

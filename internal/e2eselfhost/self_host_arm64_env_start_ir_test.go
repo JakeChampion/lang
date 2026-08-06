@@ -48,8 +48,11 @@ func TestSelfHostArm64EnvpSaveIR(t *testing.T) {
 		t.Fatalf("self-host arm64 emit failed: %v", err)
 	}
 	asm := string(out)
-	if !strings.Contains(asm, "__fern_env:") {
-		t.Fatal("__fern_env helper not emitted — env() did not lower as expected")
+	// The Fern-compiled symbol specifically (#2649): a bare "__fern_env:" match
+	// is also a substring of "__fn___fern_env:", so it would keep passing
+	// whichever of the two the emitter produced.
+	if !strings.Contains(asm, "__fn___fern_env:") {
+		t.Fatal("__fn___fern_env helper not emitted — env() did not lower as expected")
 	}
 
 	// The _start prologue must seed __fern_envp (else env()'s walk derefs null).
