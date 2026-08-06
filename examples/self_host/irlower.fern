@@ -16830,7 +16830,14 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     if (slot_is_reclaimable_rcenum(s, slot)) {
         return emit_enum_deep_reinit_store(se, slot, s.struct_type_of_slot(slot));
     }
-    return emit_arr_store(se, slot, reassign_inc, target_is_arr || slot_is_reclaimable_struct(s, slot));
+    // A reclaimable REBOUND scalar-tuple local (`t = (k, k + 1)`, credited "TUPRB:"):
+    // release the box the slot currently holds before storing the fresh one (#6127).
+    // emit_arr_store's do_dec is cow-guarded and runs AFTER the RHS is lowered, so a
+    // self-referencing rebind (`t = (t.1, t.0 + 1)`) still reads the old box first.
+    // This is the one disjunct the StmtVar path has always carried and this tail did
+    // not, which is why only the final value was ever freed.
+    return emit_arr_store(se, slot, reassign_inc,
+        target_is_arr || slot_is_reclaimable_struct(s, slot) || slot_is_reclaimable_tuple_rebind(s, slot));
     return s.fail();
 }
 
@@ -21558,6 +21565,79 @@ function tuple_type_is_all_scalar(t: string): boolean {
     return any;
 }
 
+// all_assigns_fresh_scalar_tuple reports whether EVERY assignment to `name`
+// anywhere in `body` (recursively — the interesting ones sit inside a loop or an
+// `if`) constructs a fresh all-scalar tuple LITERAL on its right.
+//
+// A "TUP:" local already gets its box freed at scope exit, but a REBOUND one
+// orphans the box it currently holds on every assignment: the StmtVar path hands
+// slot_is_reclaimable_tuple to emit_arr_store's do_dec, and the assign tail did
+// not, so `var t = (i, i+1); while (…) { t = (k, k+1); }` freed only the final
+// box and leaked one per iteration (#6127).
+//
+// Requiring an ExprTuple is what keeps the widening safe. A rebind from an ALIAS
+// (`t = u`) would leave the slot a second reference to u's box, and the exit
+// sweep would then dec it twice — so that shape is refused here and stays on the
+// leak-safe path. The escape gate is unchanged and still excludes a value that
+// was returned, stored into a container, passed to a call, or aliased out before
+// being overwritten: stmt_unsafe_for reads an assignment's RHS, so `t = wrap(t)`
+// escapes too. A self-referencing rebind (`t = (t.1, t.0 + 1)`) is refused here —
+// expr_is_scalarish does not accept an element read — and so keeps leaking. That
+// is conservatism rather than a soundness requirement: emit_arr_store releases the
+// old box only after the RHS has been lowered, so the read would have happened
+// first. Widening to admit it means widening expr_is_scalarish, which the scalar-
+// enum class shares.
+function all_assigns_fresh_scalar_tuple(body: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        if (!stmt_assigns_fresh_scalar_tuple(body[i], name)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function stmt_assigns_fresh_scalar_tuple(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtAssign(asn) => {
+            if (asn.target != name) { return true; }
+            match (asn.value) {
+                // Elements go through expr_is_scalarish rather than
+                // tuple_lit_is_fresh_scalar's literal-only set: the common loop
+                // rebind is `t = (k, k + 1)`, whose second element is arithmetic.
+                // The slot's own type is an all-scalar tuple (that is what earned
+                // the "TUP:" credit), so an ident element is a scalar by typing and
+                // the box holds no pointer the shallow dec would strand.
+                parser.ExprTuple(tl) => {
+                    if (tl.elements.len() == 0) { return false; }
+                    var i: i32 = 0;
+                    while (i < tl.elements.len()) {
+                        if (!expr_is_scalarish(tl.elements[i])) { return false; }
+                        i = i + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
+        parser.StmtIf(iff) => {
+            return all_assigns_fresh_scalar_tuple(iff.then_body, name)
+                && all_assigns_fresh_scalar_tuple(iff.else_body, name);
+        },
+        parser.StmtWhile(w) => { return all_assigns_fresh_scalar_tuple(w.body, name); },
+        parser.StmtFor(f) => { return all_assigns_fresh_scalar_tuple(f.body, name); },
+        parser.StmtMatch(m) => {
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (!all_assigns_fresh_scalar_tuple(m.arms[i].body, name)) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        parser.StmtDefer(d) => { return stmt_assigns_fresh_scalar_tuple(d.action, name); },
+        _ => { return true; }
+    }
+}
+
 // collect_fresh_scalar_tuple_names collects the LOCAL names bound from a fresh
 // scalar tuple literal (`var t = (3, 4)`), recursing into nested control flow the
 // same way collect_fresh_struct_names does. The escape gate (body_unsafe_for) is
@@ -24609,7 +24689,21 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     tups = collect_fresh_tuple_ret_call_names(body, tup_fresh_ret, reassigned, tups);
     var ti: i32 = 0;
     while (ti < tups.len()) {
-        if (!body_unsafe_for(body, tups[ti], borrowable)) { out = out.append("TUP:" + tups[ti]); }
+        if (!body_unsafe_for(body, tups[ti], borrowable)) {
+            out = out.append("TUP:" + tups[ti]);
+            // A REBOUND one also earns "TUPRB:", which lower_stmt_assign reads to
+            // release the superseded box at each assignment (#6127). Without it only
+            // the final value was freed and every prior iteration's box leaked — the
+            // StmtVar path has always passed slot_is_reclaimable_tuple to
+            // emit_arr_store's do_dec, and the assign tail did not. Gated on every
+            // assignment being a fresh all-scalar tuple literal, so a rebind from an
+            // alias keeps the old leak-safe behaviour rather than aliasing a box the
+            // exit sweep would then dec twice.
+            if (util.index_of_str(reassigned, tups[ti]) >= 0
+                    && all_assigns_fresh_scalar_tuple(body, tups[ti])) {
+                out = out.append("TUPRB:" + tups[ti]);
+            }
+        }
         ti = ti + 1;
     }
     // Fresh rc-tuple locals (`var t = (i, [i, i+1])`): a tuple literal carrying a
@@ -27009,6 +27103,18 @@ function slot_is_reclaimable_tuple(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
     return util.index_of_str(s.reclaimable_names, "TUP:" + s.locals[i].slot_name) >= 0;
+}
+
+// slot_is_reclaimable_tuple_rebind: a "TUP:" slot that is also REBOUND, every
+// assignment to it constructing a fresh all-scalar tuple literal — credited
+// "TUPRB:" (#6127). lower_stmt_assign's tail hands this to emit_arr_store's
+// do_dec so each rebind releases the box it supersedes, the same shallow free the
+// StmtVar path and the exit sweep already perform on this class.
+function slot_is_reclaimable_tuple_rebind(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (s.locals[i].tuple_elems.len() == 0) { return false; }
+    return util.index_of_str(s.reclaimable_names, "TUPRB:" + s.locals[i].slot_name) >= 0;
 }
 
 // slot_is_reclaimable_rctuple: a fresh, non-escaping tuple local carrying a fresh
