@@ -43162,6 +43162,31 @@ function lift_stmt(st: parser.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
             var ns: parser.Stmt = parser.StmtIf { cond: ce.expr, then_body: tb.stmts, else_body: eb.stmts };
             return LiftStmts { stmts: [ns], acc: eb.acc };
         },
+        // A match's ARM BODIES need the same walk StmtIf's branches get. Without
+        // it a `return <lambda>` inside an arm never reached lift_call_arg, so no
+        // `__lam_N` was hoisted — and lower_expr's ExprLambda arm then asked for a
+        // `<cur_fn>$clo` that hoist_escaping_closure never built (it only fires on
+        // a body whose LAST statement is literally `return <ExprLambda>`, and a
+        // match-EXPRESSION makes that `return <IIFE call>`). The module bailed off
+        // the IR path: 71 of the 249 remaining fernsmith compile gaps, #6256.
+        //
+        // The if-expression sibling worked precisely because StmtIf was here, so
+        // this is restoring symmetry rather than adding a rule.
+        parser.StmtMatch(m) => {
+            var se: LiftExpr = lift_expr_walk(m.scrutinee, acc, gfns);
+            var ma: LiftAcc = se.acc;
+            var narms: parser.MatchArm[] = [];
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var ge: LiftExpr = lift_expr_walk(m.arms[ai].guard, ma, gfns);
+                var ab: LiftStmts = lift_stmts(m.arms[ai].body, ge.acc, gfns);
+                ma = ab.acc;
+                narms = narms.append(parser.MatchArm { pattern: m.arms[ai].pattern, body: ab.stmts, line: m.arms[ai].line, col: m.arms[ai].col, guard: ge.expr, has_guard: m.arms[ai].has_guard });
+                ai = ai + 1;
+            }
+            var nm: parser.Stmt = parser.StmtMatch { scrutinee: se.expr, arms: narms, line: m.line, col: m.col, origin: m.origin };
+            return LiftStmts { stmts: [nm], acc: ma };
+        },
         parser.StmtWhile(w) => {
             var ce: LiftExpr = lift_expr_walk(w.cond, acc, gfns);
             var b: LiftStmts = lift_stmts(w.body, ce.acc, gfns);
