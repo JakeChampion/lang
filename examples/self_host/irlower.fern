@@ -16830,7 +16830,15 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     if (slot_is_reclaimable_rcenum(s, slot)) {
         return emit_enum_deep_reinit_store(se, slot, s.struct_type_of_slot(slot));
     }
-    return emit_arr_store(se, slot, reassign_inc, target_is_arr || slot_is_reclaimable_struct(s, slot));
+    // A reclaimable REBOUND scalar-tuple local (`t = (i, i + 1)`, credited
+    // "TUPRB:"): release the superseded box before storing the fresh one, the
+    // same cow-guarded shallow dec bind_var_slot already emits for a `var`
+    // re-declaration of the same local. The assign path simply never carried
+    // that term, so every rebind leaked a box (#6127). The RHS was lowered
+    // above, so a rebind that READS the old value (`t = (t.0 + 1, t.1)`) has
+    // already finished with it; a rebind that ALIASES one (`t = u`) never earns
+    // the credit.
+    return emit_arr_store(se, slot, reassign_inc, target_is_arr || slot_is_reclaimable_struct(s, slot) || slot_is_reclaimable_tuple_rebind(s, slot));
     return s.fail();
 }
 
@@ -21558,6 +21566,108 @@ function tuple_type_is_all_scalar(t: string): boolean {
     return any;
 }
 
+// ── TUPRB: release a REBOUND scalar-tuple local's superseded box (#6127) ──
+//
+// `var t: (i32, i32) = (r, 0); while (…) { t = (i, i + 1); }`. The TUP: class
+// already credits `t`: the exit sweep frees the FINAL box, and a `var`
+// RE-DECLARATION frees the prior one (bind_var_slot's emit_arr_store carries a
+// `|| slot_is_reclaimable_tuple` release term). The ASSIGN path never carried
+// that term, so every rebind's superseded box leaked — measured 16000 bytes over
+// 100 rounds with exactly one free per round, the exit sweep's, where native is
+// flat at 0. This is the declare-vs-reassign split #6218 / #6232 / #6225 closed
+// for enums and Options, a third time: the release exists and is correct, it was
+// simply never wired to a reassignment.
+//
+// The extra credit is what the assign path needs that the `var` path does not. A
+// TUP: name is admitted on its DECLARATION alone, and nothing there constrains
+// what a later `t = …` stores; a rebind from a call result or another local makes
+// the slot a second reference, and freeing the superseded box would then race the
+// real owner's release. So "TUPRB:" is granted only when EVERY assignment to the
+// name builds a fresh tuple box — the SARR: per-rebind discipline, rather than
+// refusing the name for being reassigned at all.
+
+// tuple_assign_is_fresh: an assignment value that builds a FRESH all-scalar tuple
+// box — an all-literal/ident tuple literal (tuple_lit_is_fresh_scalar), or any
+// tuple literal under an all-scalar binding annotation. Exactly the two routes
+// collect_fresh_tuple_in_stmt admits at the declaration, so a rebind is held to
+// the same standard as the bind that earned the TUP: credit.
+function tuple_assign_is_fresh(e: parser.Expr, ann: string): boolean {
+    if (tuple_lit_is_fresh_scalar(e)) { return true; }
+    if (!tuple_type_is_all_scalar(ann)) { return false; }
+    match (e) { parser.ExprTuple(_) => { return true; }, _ => { return false; } }
+    return false;
+}
+
+// tuple_rebinds_all_fresh: EVERY assignment to `name` in this statement list
+// (nested blocks included) is a fresh scalar tuple. A single rebind from an alias
+// (`t = u`) or a call disqualifies the whole name: the NEXT rebind's release
+// would then free a box the real owner still holds.
+function tuple_rebinds_all_fresh(stmts: parser.Stmt[], name: string, ann: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => {
+                if (a.target == name && !tuple_assign_is_fresh(a.value, ann)) { return false; }
+            },
+            parser.StmtIf(f) => {
+                if (!tuple_rebinds_all_fresh(f.then_body, name, ann)) { return false; }
+                if (!tuple_rebinds_all_fresh(f.else_body, name, ann)) { return false; }
+            },
+            parser.StmtWhile(w) => { if (!tuple_rebinds_all_fresh(w.body, name, ann)) { return false; } },
+            parser.StmtFor(fo) => { if (!tuple_rebinds_all_fresh(fo.body, name, ann)) { return false; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    if (!tuple_rebinds_all_fresh(m.arms[mi].body, name, ann)) { return false; }
+                    mi = mi + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// tuple_decl_ann_of: the binding annotation on `name`'s declaration, "" when it
+// has none (or none is found). The rebind check needs it because a StmtAssign
+// carries no type of its own, and `(i, i + 1)` is admitted by its annotation
+// rather than by its element shapes. An un-annotated declaration yields "", which
+// leaves tuple_assign_is_fresh on the stricter literal-only route.
+function tuple_decl_ann_of(stmts: parser.Stmt[], name: string): string {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.name == name) { return v.type_name; } },
+            parser.StmtIf(f) => {
+                var ft: string = tuple_decl_ann_of(f.then_body, name);
+                if (ft != "") { return ft; }
+                var fe: string = tuple_decl_ann_of(f.else_body, name);
+                if (fe != "") { return fe; }
+            },
+            parser.StmtWhile(w) => {
+                var wt: string = tuple_decl_ann_of(w.body, name);
+                if (wt != "") { return wt; }
+            },
+            parser.StmtFor(fo) => {
+                var ot: string = tuple_decl_ann_of(fo.body, name);
+                if (ot != "") { return ot; }
+            },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    var mt: string = tuple_decl_ann_of(m.arms[mi].body, name);
+                    if (mt != "") { return mt; }
+                    mi = mi + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
 // collect_fresh_scalar_tuple_names collects the LOCAL names bound from a fresh
 // scalar tuple literal (`var t = (3, 4)`), recursing into nested control flow the
 // same way collect_fresh_struct_names does. The escape gate (body_unsafe_for) is
@@ -24609,7 +24719,19 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     tups = collect_fresh_tuple_ret_call_names(body, tup_fresh_ret, reassigned, tups);
     var ti: i32 = 0;
     while (ti < tups.len()) {
-        if (!body_unsafe_for(body, tups[ti], borrowable)) { out = out.append("TUP:" + tups[ti]); }
+        if (!body_unsafe_for(body, tups[ti], borrowable)) {
+            out = out.append("TUP:" + tups[ti]);
+            // REBOUND scalar-tuple locals (#6127): the extra "TUPRB:" credit the
+            // StmtAssign release consumes. Layered on top of TUP: (same escape
+            // gate, same shallow box free) and granted only when every `t = …`
+            // in the function builds a fresh tuple box — see tuple_rebinds_all_
+            // fresh. Without it the superseded box leaked at every rebind, since
+            // only the `var` re-declaration and the exit sweep ever released one.
+            if (util.index_of_str(reassigned, tups[ti]) >= 0
+                    && tuple_rebinds_all_fresh(body, tups[ti], tuple_decl_ann_of(body, tups[ti]))) {
+                out = out.append("TUPRB:" + tups[ti]);
+            }
+        }
         ti = ti + 1;
     }
     // Fresh rc-tuple locals (`var t = (i, [i, i+1])`): a tuple literal carrying a
@@ -27009,6 +27131,15 @@ function slot_is_reclaimable_tuple(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
     return util.index_of_str(s.reclaimable_names, "TUP:" + s.locals[i].slot_name) >= 0;
+}
+
+// slot_is_reclaimable_tuple_rebind: a reclaimable scalar-tuple slot every one of
+// whose REASSIGNMENTS builds a fresh tuple box, credited "TUPRB:" on top of its
+// TUP: credit. Consumed only by lower_stmt_assign, which releases the superseded
+// box the same shallow way the `var` re-declaration and the exit sweep do. #6127.
+function slot_is_reclaimable_tuple_rebind(s: LowerState, i: i32): boolean {
+    if (!slot_is_reclaimable_tuple(s, i)) { return false; }
+    return util.index_of_str(s.reclaimable_names, "TUPRB:" + s.locals[i].slot_name) >= 0;
 }
 
 // slot_is_reclaimable_rctuple: a fresh, non-escaping tuple local carrying a fresh
