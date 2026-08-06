@@ -272,7 +272,6 @@ func allStmtNodeNames() []string {
 	samples := []ast.Stmt{
 		(*ast.Block)(nil),
 		(*ast.If)(nil),
-		(*ast.IfLet)(nil),
 		(*ast.LetElse)(nil),
 		(*ast.While)(nil),
 		(*ast.Loop)(nil),

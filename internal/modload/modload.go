@@ -1724,12 +1724,6 @@ func collectLocalsStmt(s ast.Stmt, dst map[string]bool) {
 	case *ast.If:
 		collectLocalsStmt(x.Then, dst)
 		collectLocalsStmt(x.Else, dst)
-	case *ast.IfLet:
-		for _, n := range x.Bindings {
-			dst[n] = true
-		}
-		collectLocalsStmt(x.Then, dst)
-		collectLocalsStmt(x.Else, dst)
 	case *ast.LetElse:
 		for _, n := range x.Bindings {
 			dst[n] = true
@@ -1821,12 +1815,6 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 				r.rewriteExpr(&arm.Guard)
 			}
 			r.rewriteBlock(arm.Body)
-		}
-	case *ast.IfLet:
-		r.rewriteExpr(&x.Source)
-		r.rewriteStmt(x.Then)
-		if x.Else != nil {
-			r.rewriteStmt(x.Else)
 		}
 	case *ast.LetElse:
 		r.rewriteExpr(&x.Source)

@@ -84,9 +84,6 @@ func (c *checker) mcWalkBlock(fn *ast.FuncDecl, b *ast.Block) {
 		case *ast.If:
 			c.mcWalkStmtBlock(fn, x.Then)
 			c.mcWalkStmtBlock(fn, x.Else)
-		case *ast.IfLet:
-			c.mcWalkStmtBlock(fn, x.Then)
-			c.mcWalkStmtBlock(fn, x.Else)
 		case *ast.LetElse:
 			c.mcWalkBlock(fn, x.Else)
 		case *ast.While:
@@ -193,6 +190,13 @@ func (c *checker) mcSeq(stmts []ast.Stmt, name, typeName string) (bool, bool) {
 			if c.mcIsBinding(x.Tag, name) {
 				return true, false // destructuring consumes
 			}
+			// A parser-desugared pattern binding (`if let`, Origin != "")
+			// contributes only its source destructure; its arms don't
+			// participate in the all-arms path logic, so the obligation
+			// still has to be discharged by the rest of the sequence.
+			if x.Origin != "" {
+				break
+			}
 			all := len(x.Arms) > 0
 			for _, arm := range x.Arms {
 				ac, av := c.mcSeq(arm.Body.Stmts, name, typeName)
@@ -204,10 +208,6 @@ func (c *checker) mcSeq(stmts []ast.Stmt, name, typeName string) (bool, bool) {
 				}
 			}
 			if all {
-				return true, false
-			}
-		case *ast.IfLet:
-			if c.mcIsBinding(x.Source, name) {
 				return true, false
 			}
 		case *ast.LetElse:
@@ -268,10 +268,6 @@ func (c *checker) mcStmtConsumesImpl(s ast.Stmt, name, typeName string, report b
 		return c.mcExprConsumes(x.Value, name, typeName, report)
 	case *ast.Match:
 		if c.mcIsBinding(x.Tag, name) {
-			return true
-		}
-	case *ast.IfLet:
-		if c.mcIsBinding(x.Source, name) {
 			return true
 		}
 	case *ast.LetElse:

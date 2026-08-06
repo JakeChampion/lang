@@ -41,12 +41,6 @@ func elideStmt(st ast.Stmt) {
 		if x.Else != nil {
 			elideStmt(x.Else)
 		}
-	case *ast.IfLet:
-		elideExpr(x.Source)
-		elideStmt(x.Then)
-		if x.Else != nil {
-			elideStmt(x.Else)
-		}
 	case *ast.While:
 		elideExpr(x.Cond)
 		elideStmt(x.Body)

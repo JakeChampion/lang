@@ -679,16 +679,6 @@ func CloneStmt(s Stmt) Stmt {
 			c.Else = CloneStmt(x.Else)
 		}
 		return &c
-	case *IfLet:
-		c := *x
-		c.Source = CloneExpr(x.Source)
-		c.Bindings = append([]string(nil), x.Bindings...)
-		c.BindingTypes = append([]Type(nil), x.BindingTypes...)
-		c.Then = CloneStmt(x.Then)
-		if x.Else != nil {
-			c.Else = CloneStmt(x.Else)
-		}
-		return &c
 	case *LetElse:
 		c := *x
 		c.Source = CloneExpr(x.Source)
@@ -2263,25 +2253,6 @@ type If struct {
 	IsAssert bool
 }
 
-// IfLet is `if let <Variant>(b1, b2, …) = <expr> { … }
-// [else { … }]` — pattern-binding inside an if without the
-// match ceremony. The pattern is a single variant constructor;
-// on match, payload fields bind into Bindings (typed via
-// BindingTypes, filled by the checker like match arms) and Then
-// runs. On mismatch, Else runs (or the if falls through).
-//
-// Lowered to a one-arm match plus a wildcard fallthrough — see
-// the IR pass.
-type IfLet struct {
-	P            Position
-	VariantName  string
-	Bindings     []string
-	BindingTypes []Type // resolved by the checker; same length as Bindings
-	Source       Expr
-	Then         Stmt
-	Else         Stmt // may be nil
-}
-
 // LetElse is `let <Variant>(b1, b2, …) = <expr> else { <divergent>
 // };` — pattern-binding declaration with a mandatory-divergent
 // else. On match, the bindings are introduced into the enclosing
@@ -2580,6 +2551,17 @@ type Match struct {
 	// interpreter lower the arms as struct field-binds rather than
 	// enum-variant matches.
 	StructMatch string
+	// Origin marks a match the parser synthesised from a pattern-binding
+	// form rather than one the programmer wrote: "if_let" for
+	// `if let PAT = E { … } else { … }`, "" for a real `match`. The
+	// desugar is `match (E) { PAT => { then }, _ => { else } }`, so the
+	// trailing wildcard arm is the else branch, not something the source
+	// spelled — the checker skips the unreachable-arm diagnostics on it
+	// and reports the pattern-binding codes (E022 / E023) instead of the
+	// generic ones a hand-written match of this shape would draw. The
+	// formatter reads it back to re-render the original `if let`.
+	// Mirrors the self-host parser's StmtMatch.origin.
+	Origin string
 }
 
 // MatchArm is one pattern → body pair. The Bindings are the
@@ -2709,7 +2691,6 @@ type MatchExprArm struct {
 
 func (s *Block) Pos() Position                  { return s.P }
 func (s *If) Pos() Position                     { return s.P }
-func (s *IfLet) Pos() Position                  { return s.P }
 func (s *LetElse) Pos() Position                { return s.P }
 func (s *While) Pos() Position                  { return s.P }
 func (s *Loop) Pos() Position                   { return s.P }
@@ -2729,7 +2710,6 @@ func (s *FuncDecl) GenericTypeParams() []string { return s.TypeParams }
 
 func (*Block) isStmt()       {}
 func (*If) isStmt()          {}
-func (*IfLet) isStmt()       {}
 func (*LetElse) isStmt()     {}
 func (*While) isStmt()       {}
 func (*Loop) isStmt()        {}

@@ -155,21 +155,6 @@ func (r *renamer) walkStmt(s ast.Stmt) {
 		if n.Else != nil {
 			r.walkStmt(n.Else)
 		}
-	case *ast.IfLet:
-		r.walkExpr(n.Source)
-		// Bindings land in Then's scope, not Else's.
-		r.pushFrame()
-		for i, name := range n.Bindings {
-			n.Bindings[i] = r.bindShadow(name)
-		}
-		// `Then` may be a Block; the block's own pushFrame is
-		// fine because lookups walk up, so the bindings stay
-		// visible.
-		r.walkStmt(n.Then)
-		r.popFrame()
-		if n.Else != nil {
-			r.walkStmt(n.Else)
-		}
 	case *ast.LetElse:
 		r.walkExpr(n.Source)
 		// Else runs in the *outer* scope (before the bindings

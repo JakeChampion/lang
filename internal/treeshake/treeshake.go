@@ -391,12 +391,6 @@ func walkStmt(s ast.Stmt, byName map[string]*ast.FuncDecl, enqueue func(string))
 		if x.Else != nil {
 			walkStmt(x.Else, byName, enqueue)
 		}
-	case *ast.IfLet:
-		walkExpr(x.Source, byName, enqueue)
-		walkStmt(x.Then, byName, enqueue)
-		if x.Else != nil {
-			walkStmt(x.Else, byName, enqueue)
-		}
 	case *ast.LetElse:
 		walkExpr(x.Source, byName, enqueue)
 		walkStmt(x.Else, byName, enqueue)

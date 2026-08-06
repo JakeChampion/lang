@@ -4137,8 +4137,6 @@ func allReturnsArePairFormShape(s ast.Stmt, names map[string]bool, pairForm map[
 		return true
 	case *ast.If:
 		return allReturnsArePairFormShape(x.Then, names, pairForm) && allReturnsArePairFormShape(x.Else, names, pairForm)
-	case *ast.IfLet:
-		return allReturnsArePairFormShape(x.Then, names, pairForm) && allReturnsArePairFormShape(x.Else, names, pairForm)
 	case *ast.While:
 		return allReturnsArePairFormShape(x.Body, names, pairForm)
 	case *ast.Loop:
@@ -4700,9 +4698,6 @@ func collectDefers(s ast.Stmt, out *[]*ast.Defer) {
 			collectDefers(st, out)
 		}
 	case *ast.If:
-		collectDefers(x.Then, out)
-		collectDefers(x.Else, out)
-	case *ast.IfLet:
 		collectDefers(x.Then, out)
 		collectDefers(x.Else, out)
 	case *ast.LetElse:
@@ -6926,116 +6921,6 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// codegen doesn't need to do anything special.
 		if err := b.stmt(n.Else); err != nil {
 			return err
-		}
-		b.closeScope()
-	case *ast.IfLet:
-		// Lower `if let Variant(b1, b2, ...) = src { Then } [else
-		// { Else }]`. Two shapes:
-		//
-		//   - Heap-form scrutinee (legacy default): eval source
-		//     to a heap-box pointer; load tag from `[ptr+0]`;
-		//     dispatch + bind payload fields by offset.
-		//
-		//   - Pair-form scrutinee (Option[i32] match-style
-		//     consumer fast path): the source is a direct call
-		//     to a pair-form function. Suppress the call's
-		//     rebox, consume (tag, payload) from the operand
-		//     stack into two scratch locals, dispatch on the
-		//     tag local, and bind the payload from the payload
-		//     local. ZERO heap alloc end-to-end.
-		_, varIdx, _, ok := b.lookupVariant(n.VariantName)
-		if !ok {
-			return fmt.Errorf("ir: if-let references unknown variant %q", n.VariantName)
-		}
-		if b.isPairFormScrutinee(n.Source) {
-			tagSlot := b.allocSlot()
-			b.locals[fmt.Sprintf("__iflet_tag_%d", tagSlot)] = tagSlot
-			payloadSlot := b.allocSlot()
-			b.locals[fmt.Sprintf("__iflet_pay_%d", payloadSlot)] = payloadSlot
-			prev := b.suppressPairRebox
-			b.suppressPairRebox = true
-			if err := b.expr(n.Source); err != nil {
-				return err
-			}
-			b.suppressPairRebox = prev
-			// Operand stack: [tag, payload]; top is payload.
-			b.emit(Op{Kind: OpStoreLocal, I32: payloadSlot})
-			b.emit(Op{Kind: OpStoreLocal, I32: tagSlot})
-			b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
-			b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
-			b.emit(Op{Kind: OpEq})
-			b.openIf(BlockTypeVoid)
-			// Pair-form is scoped to Option[i32] today; there's
-			// always exactly one binding (the payload).
-			pairRestores := []func(){}
-			for i, name := range n.Bindings {
-				bt := ast.Type(ast.NumberType{})
-				if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
-					bt = n.BindingTypes[i]
-				}
-				slot, restore := b.bindingSlotScoped(name, bt)
-				pairRestores = append(pairRestores, restore)
-				b.emit(Op{Kind: OpLoadLocal, I32: payloadSlot})
-				b.emit(Op{Kind: OpStoreLocal, I32: slot})
-			}
-			if err := b.stmt(n.Then); err != nil {
-				return err
-			}
-			// Bindings are scoped to Then — undo any cross-shape
-			// temporary remaps (#4510) before Else / following code.
-			for i := len(pairRestores) - 1; i >= 0; i-- {
-				pairRestores[i]()
-			}
-			if n.Else != nil {
-				b.elseBranch()
-				if err := b.stmt(n.Else); err != nil {
-					return err
-				}
-			}
-			b.closeScope()
-			break
-		}
-		ptrSlot := b.allocSlot()
-		b.locals[fmt.Sprintf("__iflet_p_%d", ptrSlot)] = ptrSlot
-		if err := b.expr(n.Source); err != nil {
-			return err
-		}
-		b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
-		// tag at ptr+0; compare to varIdx → i32 0/1.
-		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-		b.emit(Op{Kind: OpMatchTag})
-		b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
-		b.emit(Op{Kind: OpEq})
-		b.openIf(BlockTypeVoid)
-		// Match: bind payloads, run Then.
-		offsets, _ := payloadLayout(n.BindingTypes, len(n.Bindings), b.ptrW)
-		ifletRestores := []func(){}
-		for i, name := range n.Bindings {
-			bt := ast.Type(ast.NumberType{})
-			if i < len(n.BindingTypes) && n.BindingTypes[i] != nil {
-				bt = n.BindingTypes[i]
-			}
-			slot, restore := b.bindingSlotScoped(name, bt)
-			ifletRestores = append(ifletRestores, restore)
-			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-			b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
-			b.emit(Op{Kind: OpAdd})
-			b.emit(payloadLoadOpFor(bt, b.ptrW))
-			b.emit(Op{Kind: OpStoreLocal, I32: slot})
-		}
-		if err := b.stmt(n.Then); err != nil {
-			return err
-		}
-		// Bindings are scoped to Then — undo any cross-shape temporary
-		// remaps (#4510) before the Else branch / following code lowers.
-		for i := len(ifletRestores) - 1; i >= 0; i-- {
-			ifletRestores[i]()
-		}
-		if n.Else != nil {
-			b.elseBranch()
-			if err := b.stmt(n.Else); err != nil {
-				return err
-			}
 		}
 		b.closeScope()
 	case *ast.While:
