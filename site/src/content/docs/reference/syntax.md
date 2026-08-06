@@ -75,6 +75,27 @@ integer-only and otherwise behave exactly like their wrapping
 counterparts — see
 [Integer semantics](https://github.com/JakeChampion/lang/blob/main/docs/INTEGER-SEMANTICS.md).
 
+## Trailing commas
+
+A trailing comma is legal in **every** comma-separated element list —
+array literals, call arguments (positional and named), function and
+lambda parameters, type parameters, generic and call type arguments,
+struct literals and declarations, enum declarations, match arms, tuple
+literals, and map literals:
+
+```fern
+var xs: i32[] = [
+    1,
+    2,
+];
+function f(a: i32, b: i32,): i32 { return add(a, b,); }
+```
+
+One comma, and only after an element: `[,]`, `[1,,]` and `[,1]` are all
+parse errors. `fern -fmt` normalises the trailing comma away, so it is a
+convenience for hand-written and generated source rather than a style the
+formatter emits.
+
 ## Block forms
 
 Statements end with `;` and group in `{ ... }` blocks. Whitespace

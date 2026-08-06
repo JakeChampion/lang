@@ -90,10 +90,11 @@ while (f < a.len()) {
 ```
 
 :::note
-Indexing a `string` yields a **byte** as an `i32`, not a one-character
-string — so `a[f]` is compared against ASCII code points (`'i'` is
-`105`). Use `a[f:f+1]` to slice out a one-byte substring when you need a
-`string`.
+Indexing a `string` yields a **`u8`** — one byte, not a one-character
+string. There are no implicit numeric conversions, so compare it against
+an ASCII code point by casting first: `a[f] as i32 == 105` (`'i'`), which
+is what the `var c: i32 = a[f] as i32;` above does. Use `a[f:f+1]` to
+slice out a one-byte substring when you need a `string`.
 :::
 
 ## Putting it together: a working grep

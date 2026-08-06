@@ -220,6 +220,26 @@ func (p *parser) accept(kind lexer.Kind, text string) (lexer.Token, bool) {
 	return lexer.Token{}, false
 }
 
+// moreElems consumes a comma-separated list's separator and reports whether
+// another element follows. It answers false both when there is no comma and
+// when the comma is a TRAILING one sitting directly before close — so every
+// list routed through it accepts a trailing comma.
+//
+// Every comma-separated element list goes through this one place on purpose.
+// Before it, each of ~11 list loops decided for itself: five spelled
+// `if !accept(",") { break }` (which rejects a trailing comma) and six spelled
+// `if accept(",") { if match(close) { break }; continue }` (which accepts one).
+// The result was a grammar with no rule — trailing commas legal in struct
+// literals and illegal in array literals — and the two compilers did not even
+// agree on the split, so `function f(a: i32,)` compiled self-hosted and was
+// rejected natively.
+func (p *parser) moreElems(close string) bool {
+	if _, ok := p.accept(lexer.Punct, ","); !ok {
+		return false
+	}
+	return !p.match(lexer.Punct, close)
+}
+
 // fipModifierAt reports whether the tokens starting at index i spell a
 // `fip` / `fbip` contextual function modifier — the bare ident or the
 // graded `fip(<int>)` / `fbip(<int>)` allowance form — in a position
@@ -1346,10 +1366,9 @@ func (p *parser) parseTypeParamListWithArgs() ([]string, map[string][]string, ma
 				boundArgs[pname.Text] = ba
 			}
 		}
-		if _, ok := p.accept(lexer.Punct, ","); ok {
-			continue
+		if !p.moreElems("]") {
+			break
 		}
-		break
 	}
 	if _, err := p.expect(lexer.Punct, "]"); err != nil {
 		return nil, nil, nil, err
@@ -1493,7 +1512,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 				}
 				params = append(params, prm)
 				paramDestrs = append(paramDestrs, d)
-				if _, ok := p.accept(lexer.Punct, ","); !ok {
+				if !p.moreElems(")") {
 					break
 				}
 				continue
@@ -1530,7 +1549,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 				}
 			}
 			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype, Own: own, Default: def})
-			if _, ok := p.accept(lexer.Punct, ","); !ok {
+			if !p.moreElems(")") {
 				break
 			}
 		}
@@ -2202,10 +2221,9 @@ func (p *parser) parseType() (ast.Type, error) {
 					return nil, err
 				}
 				args = append(args, at)
-				if _, ok := p.accept(lexer.Punct, ","); ok {
-					continue
+				if !p.moreElems("]") {
+					break
 				}
-				break
 			}
 			if _, err := p.expect(lexer.Punct, "]"); err != nil {
 				return nil, err
@@ -2614,7 +2632,7 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 				}
 				params = append(params, prm)
 				paramDestrs = append(paramDestrs, d)
-				if _, ok := p.accept(lexer.Punct, ","); !ok {
+				if !p.moreElems(")") {
 					break
 				}
 				continue
@@ -2631,7 +2649,7 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 				return nil, err
 			}
 			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype})
-			if _, ok := p.accept(lexer.Punct, ","); !ok {
+			if !p.moreElems(")") {
 				break
 			}
 		}
@@ -2679,7 +2697,7 @@ func (p *parser) parseLambda() (ast.Expr, error) {
 				}
 				params = append(params, prm)
 				paramDestrs = append(paramDestrs, d)
-				if _, ok := p.accept(lexer.Punct, ","); !ok {
+				if !p.moreElems(")") {
 					break
 				}
 				continue
@@ -2696,7 +2714,7 @@ func (p *parser) parseLambda() (ast.Expr, error) {
 				return nil, err
 			}
 			params = append(params, ast.Param{Name: pname.Text, Type: ptype})
-			if _, ok := p.accept(lexer.Punct, ","); !ok {
+			if !p.moreElems(")") {
 				break
 			}
 		}
@@ -5147,7 +5165,7 @@ func (p *parser) parseCallArgs() ([]ast.Expr, []string, error) {
 		}
 		args = append(args, a)
 		names = append(names, name)
-		if _, ok := p.accept(lexer.Punct, ","); !ok {
+		if !p.moreElems(")") {
 			break
 		}
 	}
@@ -5202,7 +5220,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 						return nil, err
 					}
 					typeArgs = append(typeArgs, t)
-					if _, ok := p.accept(lexer.Punct, ","); !ok {
+					if !p.moreElems("]") {
 						break
 					}
 				}
@@ -5896,16 +5914,14 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		case "[":
 			open := p.advance()
 			var elems []ast.Expr
-			if !p.match(lexer.Punct, "]") {
-				for {
-					e, err := p.parseExpr()
-					if err != nil {
-						return nil, err
-					}
-					elems = append(elems, e)
-					if _, ok := p.accept(lexer.Punct, ","); !ok {
-						break
-					}
+			for !p.match(lexer.Punct, "]") {
+				e, err := p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				elems = append(elems, e)
+				if !p.moreElems("]") {
+					break
 				}
 			}
 			if _, err := p.expect(lexer.Punct, "]"); err != nil {

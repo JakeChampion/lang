@@ -966,6 +966,19 @@ function (p: Par) peek_keyword(): string {
     }
     return "";
 }
+// more_elems consumes a comma-separated list's separator and reports
+// whether another element follows, alongside the advanced cursor. It
+// answers false both when there is no comma and when the comma is a
+// TRAILING one sitting directly before `close` — so every list routed
+// through it accepts a trailing comma. The mirror of the native
+// parser's `moreElems` (internal/parser/parser.go); the two must agree
+// or a program's legality depends on which compiler reads it.
+function (p: Par) more_elems(close: string): (boolean, Par) {
+    if (p.peek_punct() != ",") { return (false, p); }
+    var q: Par = p.advance();
+    return (q.peek_punct() != close, q);
+}
+
 // peek2_punct returns the punctuation text of the token ONE past the
 // cursor ("" when it isn't a punctuator / out of range). The 2-token
 // lookahead the call-argument parser needs to spot a named argument
@@ -1471,7 +1484,9 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
                         p = ra_p;
                         args = args.append(ra_expr);
                     }
-                    if (p.peek_punct() == ",") { p = p.advance(); continue; }
+                    var (ca_more, ca_p) = p.more_elems(")");
+                    p = ca_p;
+                    if (ca_more) { continue; }
                     break;
                 }
             }
@@ -1956,7 +1971,9 @@ function parse_primary(p: Par): (Expr, Par) {
                         var (er_expr, er_p) = parse_expr(p);
                         p = er_p;
                         elems = elems.append(er_expr);
-                        if (p.peek_punct() == ",") { p = p.advance(); continue; }
+                        var (ea_more, ea_p) = p.more_elems("]");
+                        p = ea_p;
+                        if (ea_more) { continue; }
                         break;
                     }
                 }
