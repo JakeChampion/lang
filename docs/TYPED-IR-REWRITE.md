@@ -183,6 +183,35 @@ Recorded this way deliberately: the plausible one-field sketch is wrong, and
 would cost whoever picks this up a build-and-instrument cycle to discover. The
 signature, not the predicate.
 
+**Root cause, third and final correction: function values are structurally
+all-i32.** Following "the signature" down two more levels ends at a design
+limitation, not a bug:
+
+- `ir.op_call_indirect(argc)` carries **only the arity** — no result type, no
+  param types (`ir.fern`).
+- `wasm_ir.fn_support_section_units` therefore emits one signature type per
+  *arity*, hardcoded:
+  `(type $fn<N> (func (param i32)×N (result i32)))`.
+
+So on the wasm backend every function value is assumed to take i32 params and
+return i32. An `f64`-returning fn value **cannot be represented at all**, and no
+amount of frontend typing can fix it — `expr_is_f64` being right just means the
+enclosing function is correctly declared `(result f64)` while the
+`call_indirect` inside it is still typed `(result i32)`, which is precisely the
+validator error.
+
+Closing it is a coherent but multi-part change: give the IR op a signature (not
+an arity), key the `$fn…` type set on that signature rather than on argument
+count, and keep the fn-value table / `elem` segment consistent with the new
+keying. The native backends need the matching treatment wherever they select an
+indirect-call signature. That is a project, not a slice — but it is now a
+*specified* project, and the three-line reproducer above is its acceptance test.
+
+The general lesson for this migration: the typed-IR carriers push type
+information down toward codegen, and this is the first place where the
+information arrives correctly and codegen has nowhere to put it. Where that
+happens, widening the IR — not the frontend — is the work.
+
 Note the fixpoint is blind to this: the self-host's own sources use no fn-typed
 params, so `internal/e2eselfhost` and the fixture legs are the gates that matter.
 
