@@ -77,6 +77,14 @@ pub struct LocalInfo {
     // is_i64arr: an i64[]. Like is_f64arr an 8-byte stride, but a[i] reads an
     // i64 and types as i64 (flowing through lower_i64).
     is_i64arr: boolean,
+    // is_boolarr: a boolean[]. Unlike its is_strarr / is_f64arr / is_i64arr
+    // siblings this is DISPATCH-ONLY — a boolean rides the same i32 slot and the
+    // same 4-byte element stride, so no width, stride or rc decision reads it.
+    // What it buys is that `a[i]` types as a boolean rather than i32, so a
+    // method on it keys "boolean.<m>": without it `bs.to_json()` rendered
+    // `[1,0]` instead of `[true,false]`, because the per-element `arr[i].to_json()`
+    // the array serialiser desugars to dispatched i32's impl (#6117).
+    is_boolarr: boolean,
     // is_closurearr: an array of closure BOXES. a[i] yields a box, so a local
     // bound from such an element is marked a closure local and `c()` unpacks the
     // box instead of calling the raw pointer as a table index (which traps).
@@ -157,7 +165,7 @@ pub struct LocalInfo {
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", str_own: 1, borrowed_arr: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", str_own: 1, borrowed_arr: false };
 }
 
 pub function li_set_borrowed_arr(li: LocalInfo, v: boolean): LocalInfo {
@@ -178,6 +186,10 @@ pub function li_set_is_str(li: LocalInfo, v: boolean): LocalInfo {
 
 pub function li_set_is_strarr(li: LocalInfo, v: boolean): LocalInfo {
     return LocalInfo { ...li, is_strarr: v };
+}
+
+pub function li_set_is_boolarr(li: LocalInfo, v: boolean): LocalInfo {
+    return LocalInfo { ...li, is_boolarr: v };
 }
 
 pub function li_set_struct_type(li: LocalInfo, v: string): LocalInfo {
@@ -1059,6 +1071,16 @@ pub function (s: LowerState) cell_elem_of_slot(i: i32): string {
 
 pub function (s: LowerState) mark_strarr(i: i32, v: boolean): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_is_strarr(s.locals[i], v)) };
+}
+
+pub function (s: LowerState) is_boolarr_slot(i: i32): boolean {
+    if (i < 0) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    return s.locals[i].is_boolarr;
+}
+
+pub function (s: LowerState) mark_boolarr(i: i32, v: boolean): LowerState {
+    return LowerState { ...s, locals: s.locals.with(i, li_set_is_boolarr(s.locals[i], v)) };
 }
 
 // str_own_slot / mark_str_own query and set the slot-carried string
@@ -3351,19 +3373,48 @@ function unary_opt_type(op: string): string {
     return "";
 }
 
+// expr_is_boolarr reports whether `e` is a `boolean[]`. The dispatch-only
+// sibling of expr_is_strarr / expr_is_f64arr / expr_is_i64arr — see
+// LocalInfo.is_boolarr for why it steers nothing but the element's method key.
+//
+// A boolean array LITERAL is recognised structurally rather than through the
+// slot, so `[true, false].to_json()` and the `var bs = [true, false]` binding
+// that seeds the slot both resolve. An empty literal is not one: it carries no
+// element evidence, and i32 is the safe default. #6117.
+pub function expr_is_boolarr(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return s.is_boolarr_slot(s.slot_of(id.name)); },
+        parser.ExprArray(a) => {
+            if (a.elements.len() == 0) { return false; }
+            return expr_is_bool(a.elements[0], s);
+        },
+        parser.ExprFieldAccess(_) => { return scalar_arr_field_type(e, s) == "boolean[]"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // expr_is_bool reports whether `e` is a statically-boolean value, so a method
 // call on it dispatches "boolean.<m>" (its own Display / Json impl) instead of
 // falling through to "i32.<m>" — which renders a bool as 1/0 (a `@derive(Json)`
 // struct's boolean field serialised `"ok":1` instead of `"ok":true`). Covers a
 // boolean literal, a boolean-typed struct field (the derived `self.field.to_json()`
-// path), a comparison / logical result, and a `!` negation. A boolean LOCAL is
-// not tracked (no per-slot bool flag), so it still dispatches as i32 — matching
-// the pre-existing behaviour for those; the field-access case is what the
-// derive synthesiser emits.
+// path), an ELEMENT of a boolean[] (#6117, see the ExprIndex arm), a comparison
+// / logical result, and a `!` negation. A boolean SCALAR local is still not
+// tracked — there is no per-slot flag for one, only for the array — so it
+// dispatches as i32, matching the pre-existing behaviour; the field-access case
+// is what the derive synthesiser emits.
 function expr_is_bool(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprBool(_) => { return true; },
         parser.ExprUnary(u) => { return u.op == "!"; },
+        // An element of a boolean[] is a boolean, so `bs[i].to_json()` keys
+        // "boolean.to_json" instead of rendering 1/0 through i32's impl. The
+        // structural walk runs first and the checker's stamped tag fills its
+        // holes — the same ordering rule, for the same reason, as ix_type_tag
+        // (which this deliberately does NOT go through: that helper resolves
+        // element WIDTH, and boolean-ness is not a width). #6117.
+        parser.ExprIndex(ix) => { return expr_is_boolarr(ix.array, s) || ix.ty == "boolean"; },
         parser.ExprBinary(b) => {
             return b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=" || b.op == "&&" || b.op == "||";
         },
@@ -14469,6 +14520,7 @@ pub struct VarTypes {
     is_strarr: boolean,
     is_f64arr: boolean,
     is_i64arr: boolean,
+    is_boolarr: boolean,
     is_closurearr: boolean,
     is_arrarr: boolean,
     arrarr_e: string,
@@ -14498,6 +14550,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     if (vt.is_str) { sb = sb.mark_str_own(slot, str_binding_ownership(v.init, se)); }
     sb = sb.mark_strarr(slot, vt.is_strarr);
     sb = sb.mark_f64arr(slot, vt.is_f64arr);
+    sb = sb.mark_boolarr(slot, vt.is_boolarr);
     sb = sb.mark_i64arr(slot, vt.is_i64arr);
     sb = sb.mark_closurearr(slot, vt.is_closurearr);
     // A `(() => T)[]`-typed slot that is NOT a closure array is a plain
@@ -15139,6 +15192,12 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         vfb = vfb.mark_arr(vfslot, true);
         if (is_float_array_type_name(vfft)) { vfb = vfb.mark_f64arr(vfslot, true); }
         else if (vfft == "i64[]") { vfb = vfb.mark_i64arr(vfslot, true); }
+        // The dispatch-only boolean[] overlay (#6117). This branch RETURNS
+        // before the VarTypes classification, so the element kind has to be
+        // stamped here too — and it is the branch that matters for a field
+        // receiver, because `b.flags.to_json()` snapshots into exactly this
+        // shape of hidden `var` before the serialiser's loop indexes it.
+        else if (vfft == "boolean[]") { vfb = vfb.mark_boolarr(vfslot, true); }
         return vfb.emit(ir.op_store_local(vfslot));
     }
     // Binding an ARRAY-OF-STRUCT field (`var ps: P[] = obj.params`,
@@ -16180,6 +16239,11 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // literal form is handled by a dedicated branch above; here this
     // catches aliasing (`var b = a`) and the `i64[]` annotation.
     var is_i64arr: boolean = expr_is_i64arr(v.init, se) || v.type_name == "i64[]" || v.type_name == "u64[]";
+    // boolean[] tracking (element DISPATCH for a[i] — no width or stride
+    // implication, see LocalInfo.is_boolarr). The annotation is authoritative;
+    // the init predicate catches an alias (`var b = bs`) and a bool literal
+    // array (`var bs = [true, false]`). #6117.
+    var is_boolarr: boolean = expr_is_boolarr(v.init, se) || v.type_name == "boolean[]";
     // INVARIANT: an INIT the element-kind predicates recognise as a typed array
     // is an array.
     //
@@ -16608,6 +16672,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         is_strarr: is_strarr,
         is_f64arr: is_f64arr,
         is_i64arr: is_i64arr,
+        is_boolarr: is_boolarr,
         is_closurearr: is_closurearr,
         is_arrarr: is_arrarr,
         arrarr_e: arrarr_e,
@@ -34459,6 +34524,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var isf32: boolean[] = [];
     var isf64arr: boolean[] = [];
     var isi64arr: boolean[] = [];
+    var isboolarr: boolean[] = [];
     var isu32: boolean[] = [];
     var isu64: boolean[] = [];
     // local_subword kind per slot ("" / "u8"); the
@@ -34525,6 +34591,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         isf32 = isf32.append(rbase == "f32");
         isf64arr = isf64arr.append(false);
         isi64arr = isi64arr.append(false);
+        isboolarr = isboolarr.append(fn.receiver_type == "boolean[]");
         isu32 = isu32.append(is_u32_type_name(fn.receiver_type));
         isu64 = isu64.append(is_u64_type_name(fn.receiver_type));
         subword = subword.append(subword_kind_of_name(fn.receiver_type));
@@ -34640,6 +34707,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // without one did not (#6175).
         isf64arr = isf64arr.append(is_float_array_type_name(fn.params[i].type_name));
         isi64arr = isi64arr.append(fn.params[i].type_name == "i64[]");
+        isboolarr = isboolarr.append(fn.params[i].type_name == "boolean[]");
         isu32 = isu32.append(is_u32_type_name(fn.params[i].type_name));
         isu64 = isu64.append(is_u64_type_name(fn.params[i].type_name));
         subword = subword.append(subword_kind_of_name(fn.params[i].type_name));
@@ -34837,7 +34905,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1, borrowed_arr: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], str_own: 1, borrowed_arr: false });
         lzi = lzi + 1;
     }
     // #4354: approve closure locals for capture RC. The approvals and the

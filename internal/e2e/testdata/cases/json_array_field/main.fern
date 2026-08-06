@@ -4,16 +4,35 @@
 // not "is an array", so a FIELD read fell past it to the primitive-receiver
 // path and serialised the array POINTER: {"items":268435472}. The string[]
 // field was always fine, because expr_is_strarr does cover a field read.
+//
+// The `flags` field and the boolean-array checks below are #6117, a different
+// gap in the same serialiser reached from the other side. The array path is
+// an inline loop over `arr[i].to_json()`, so the ELEMENT's own impl does the
+// rendering — and booleans are i32-backed with no element-kind overlay on the
+// slot, so `arr[i]` typed as i32 and dispatched i32's impl, printing [1,0]
+// instead of [true,false]. A BARE boolean was always fine; only the element
+// path was wrong, which is why no fixture caught it: none had a boolean[].
+//
+// NOT covered here, deliberately: a boolean SCALAR local (`var ok = true;
+// ok.to_json()`) and the `for b in bs` loop variable, which is one. Those
+// dispatch as i32 on the self-host path for a different, pre-existing reason —
+// there is no per-slot flag for a scalar boolean, only for the array — so
+// asserting them here would fail for something this fixture does not test.
 import "std/json";
 
 @derive(json.Json)
-struct Bag { ints: i32[], strs: string[], floats: f64[], bigs: i64[] }
+struct Bag { ints: i32[], strs: string[], floats: f64[], bigs: i64[], flags: boolean[] }
+
+// A boolean[] PARAMETER, which reaches the slot through the param table rather
+// than a var binding — a separate wiring from the local, and the one a stdlib
+// helper would take.
+function render(bs: boolean[]): string { return bs.to_json(); }
 
 function main(): i32 {
-    var b: Bag = Bag { ints: [1, 2, 3], strs: ["a", "b"], floats: [1.5], bigs: [7] };
+    var b: Bag = Bag { ints: [1, 2, 3], strs: ["a", "b"], floats: [1.5], bigs: [7], flags: [true, false] };
 
     // Through the derive, which is where this surfaced.
-    if (b.to_json() != "{\"ints\":[1,2,3],\"strs\":[\"a\",\"b\"],\"floats\":[1.5],\"bigs\":[7]}") { return 1; }
+    if (b.to_json() != "{\"ints\":[1,2,3],\"strs\":[\"a\",\"b\"],\"floats\":[1.5],\"bigs\":[7],\"flags\":[true,false]}") { return 1; }
 
     // Directly on the field, and — the contrast that localises it — the same
     // array bound to a local first, which always worked.
@@ -23,8 +42,30 @@ function main(): i32 {
     if (b.strs.to_json() != "[\"a\",\"b\"]") { return 4; }
 
     // An empty scalar-array field still renders as an empty JSON array.
-    var e: Bag = Bag { ints: [], strs: [], floats: [], bigs: [] };
+    var e: Bag = Bag { ints: [], strs: [], floats: [], bigs: [], flags: [] };
     if (e.ints.to_json() != "[]") { return 5; }
+
+    // #6117, every position the boolean[] element kind has to survive: the
+    // annotated local, an alias of it, the field, a parameter, a bare literal
+    // receiver, and an empty one.
+    var bs: boolean[] = [true, false, true];
+    if (bs.to_json() != "[true,false,true]") { return 6; }
+    var alias = bs;
+    if (alias.to_json() != "[true,false,true]") { return 7; }
+    if (b.flags.to_json() != "[true,false]") { return 8; }
+    if (render(bs) != "[true,false,true]") { return 9; }
+    if ([true].to_json() != "[true]") { return 10; }
+    if (e.flags.to_json() != "[]") { return 11; }
+
+    // A single element read out of the array is a boolean too — the dispatch
+    // fact the serialiser's inline loop depends on, asserted directly so a
+    // regression says which half broke.
+    if (bs[0].to_json() != "true") { return 12; }
+    if (bs[1].to_json() != "false") { return 13; }
+
+    // The i32 array must NOT have become boolean: the overlay is per-slot, and
+    // an over-broad predicate would render these as true/false.
+    if (xs[0].to_json() != "1") { return 14; }
 
     return 42;
 }
