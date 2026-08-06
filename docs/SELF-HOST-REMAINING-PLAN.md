@@ -934,11 +934,14 @@ smallest → largest:
   R+X and x86-64 R+W+X shapes.
 - ✅ **Mach-O writer + ad-hoc signature** — `examples/self_host/macho.fern`,
   mirroring `internal/native/macho/` (`macho.go` + `image.go` + `sign.go`).
-  Static, non-PIE arm64-darwin executable: `__PAGEZERO`, an r-x `__TEXT`
-  (header + load commands + `__text`), an optional r/w `__DATA`, and an
-  r `__LINKEDIT` carrying the code signature; execution starts via
-  `LC_UNIXTHREAD` (kernel sets PC, no dyld). The public entry is
-  `macho_static_executable(text, data, ident)`; `macho_text_vaddr` /
+  PIE, dyld-loaded arm64-darwin executable: `__PAGEZERO`, an r-x `__TEXT`
+  (header + load commands + `__text`), an optional r/w `__DATA` whose vmsize
+  covers the zero-init bss tail, and an r `__LINKEDIT` carrying the code
+  signature; execution starts at `LC_MAIN`'s file offset. It emitted a
+  static, dyld-free `LC_UNIXTHREAD` image until #6042 — every such binary is
+  SIGKILLed at exec on Apple Silicon, the same platform rule #6000 hit on the
+  native writer. The public entry is
+  `macho_executable(text, data, ident, entry_off, bss)`; `macho_text_vaddr` /
   `macho_data_vaddr` expose the same fixed addresses an `@PAGE`/`@PAGEOFF`
   assembler must resolve against (the parity of the Go `SegmentAddrs`).
   Apple Silicon refuses unsigned binaries, so the ad-hoc
@@ -1134,7 +1137,7 @@ smallest → largest:
     CLI `import` the assembler+writer, the three are merged into a single
     `examples/self_host/arm64_native.fern` (same-module bare refs keep
     working; `pub` on the CLI-facing entry points — `arm64_gas_program` /
-    `arm64_gas_link` / `macho_static_executable` / `macho_text_vaddr` /
+    `arm64_gas_link` / `macho_executable` / `macho_text_vaddr` /
     `macho_data_vaddr` + the `Arm64Asm` / `Arm64GasProg` structs). The
     e2e self-tests now concatenate the one module via an `arm64NativeSrc`
     helper; behaviour-preserving (all arm64/Mach-O tests stay green).
@@ -1224,7 +1227,7 @@ smallest → largest:
     its `arm64-darwin` branch runs `asm_arm64.darwinize(...)` →
     `arm64_gas_program` (unknown-instruction guard → `eprint` + exit 2) →
     `macho_text_vaddr`/`macho_data_vaddr` → `arm64_gas_link` →
-    `macho_static_executable`, packing the signed Mach-O bytes into the
+    `macho_executable`, packing the signed Mach-O bytes into the
     output string written verbatim by `write_file`. **The `.s` + `clang`/
     `ld64` path is gone** — `-target arm64-darwin` produces a runnable,
     ad-hoc-signed arm64 executable with no external toolchain, matching the

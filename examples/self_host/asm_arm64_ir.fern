@@ -1631,7 +1631,81 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
 // side is what lets asm_arm64 import this module (for the use_ir dispatch)
 // without a cycle: asm_arm64_ir never imports asm_arm64. Caller must ensure
 // asm_ir.all_eligible(mod) and have seeded `s` (struct_decls / funcs).
-pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitState {
+// emit_ir_start writes the program entry: capture argc / argv / envp, push a
+// frame, call __fn_main, exit with its result. Both IR emitters use it — the
+// whole-program emit_body and the per-module emit_module_ir_unit_arm64, which
+// carried a verbatim copy.
+//
+// The capture convention is the one thing that differs by platform, and it is
+// a total divergence rather than a syscall renumbering, so darwinize cannot
+// reskin it:
+//
+//   Linux: the kernel jumps to `_start` with sp pointing at
+//   [argc, argv[0..], NULL, envp[0..], NULL, auxv], so argc is at [sp],
+//   argv at sp+8, and envp at sp + 16 + argc*8.
+//
+//   Darwin: dyld CALLS `_main(argc, argv, envp, apple)` per AAPCS64 — argc in
+//   x0, argv in x1, envp in x2 — and the stack carries no SVR4-shaped layout
+//   at all. Reading [sp] there yields garbage: it lands in __fern_envp, and
+//   the first env() walk dereferences it (#6042's audit — the same
+//   Linux-value-on-the-darwin-path class as the arena mmap flags).
+function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+    s = s.write("_start:\n");
+    if (darwin) {
+        // x0 / x1 / x2 already hold argc / argv / envp; x3 is the scratch that
+        // keeps the address materialisation off them.
+        if (s.has_need("args")) {
+            s = s.write("    adrp x3, __fern_argc\n");
+            s = s.write("    add x3, x3, :lo12:__fern_argc\n");
+            s = s.write("    str x0, [x3]\n");
+            s = s.write("    adrp x3, __fern_argv\n");
+            s = s.write("    add x3, x3, :lo12:__fern_argv\n");
+            s = s.write("    str x1, [x3]\n");
+        }
+        if (s.has_need("heap")) {
+            s = s.write("    adrp x3, __fern_envp\n");
+            s = s.write("    add x3, x3, :lo12:__fern_envp\n");
+            s = s.write("    str x2, [x3]\n");
+        }
+    } else {
+        // args() reads __fern_argc / __fern_argv; save them from the SysV entry
+        // stack BEFORE the frame push. Gated on the args need so a non-args
+        // program is byte-identical. __fern_args / __fern_arg_at come from
+        // emit_runtime (also gated on the args need).
+        if (s.has_need("args")) {
+            s = s.write("    ldr x0, [sp]\n");
+            s = s.write("    adrp x1, __fern_argc\n");
+            s = s.write("    add x1, x1, :lo12:__fern_argc\n");
+            s = s.write("    str x0, [x1]\n");
+            s = s.write("    add x0, sp, #8\n");
+            s = s.write("    adrp x1, __fern_argv\n");
+            s = s.write("    add x1, x1, :lo12:__fern_argv\n");
+            s = s.write("    str x0, [x1]\n");
+        }
+        // Save envp for env() / subprocess, gated on the heap need so
+        // __fern_envp is declared iff this saves it. Without this the IR-path
+        // _start left it null and env()'s walk (`.Lenv_loop: ldr x1, [x19]`)
+        // dereferenced a null base. sp is unchanged by the args block above,
+        // so the SysV offset holds.
+        if (s.has_need("heap")) {
+            s = s.write("    ldr x0, [sp]\n");            // argc
+            s = s.write("    lsl x0, x0, #3\n");          // argc*8
+            s = s.write("    add x0, x0, #16\n");         // + 16 (argc slot + argv NULL)
+            s = s.write("    add x0, sp, x0\n");          // envp base
+            s = s.write("    adrp x1, __fern_envp\n");
+            s = s.write("    add x1, x1, :lo12:__fern_envp\n");
+            s = s.write("    str x0, [x1]\n");
+        }
+    }
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    bl __fn_main\n");
+    s = s.write("    mov x8, #93\n");      // sys_exit (Linux arm64); darwinize remaps the number + svc
+    s = s.write("    svc #0\n");
+    return s;
+}
+
+pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging matches the AST path (parity with the
     // x86 IR path in asm_ir.emit_module_ir).
@@ -1655,46 +1729,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState): asmcore.EmitSt
         s = emit_function_via_ir(mod.funcs[fi], s, sg);
         fi = fi + 1;
     }
-    s = s.write("_start:\n");
-    // args() reads __fern_argc / __fern_argv; save them from the SysV entry stack
-    // (argc at [sp], argv at sp+8) BEFORE the frame push. Linux ELF, matching
-    // asm_arm64.emit_module's _start. Gated on the args need so a non-args program
-    // is byte-identical. __fern_args / __fern_arg_at come from the caller-appended
-    // asm_arm64.emit_runtime (also gated on the args need).
-    if (s.has_need("args")) {
-        s = s.write("    ldr x0, [sp]\n");
-        s = s.write("    adrp x1, __fern_argc\n");
-        s = s.write("    add x1, x1, :lo12:__fern_argc\n");
-        s = s.write("    str x0, [x1]\n");
-        s = s.write("    add x0, sp, #8\n");
-        s = s.write("    adrp x1, __fern_argv\n");
-        s = s.write("    add x1, x1, :lo12:__fern_argv\n");
-        s = s.write("    str x0, [x1]\n");
-    }
-    // Save envp for env() / subprocess — Linux SysV: envp = sp + 16 + argc*8
-    // on the entry stack. Gated on the heap need, matching asm_arm64.emit_
-    // module's _start (and the __fern_env / subprocess helpers, which live
-    // under the same has_need("heap") block, so __fern_envp is declared iff
-    // this saves it). Without this the IR-path _start left __fern_envp null
-    // and env()'s envp walk (`.Lenv_loop: ldr x1, [x19]`) dereferenced a null
-    // base — every env()-calling program that routes the IR path SIGSEGV'd
-    // (the AST path already saved it; only the two IR _start emitters missed
-    // it). sp is unchanged by the args block above, so the SysV offset holds.
-    if (s.has_need("heap")) {
-        s = s.write("    ldr x0, [sp]\n");            // argc
-        s = s.write("    lsl x0, x0, #3\n");          // argc*8
-        s = s.write("    add x0, x0, #16\n");         // + 16 (argc slot + argv NULL)
-        s = s.write("    add x0, sp, x0\n");          // envp base
-        s = s.write("    adrp x1, __fern_envp\n");
-        s = s.write("    add x1, x1, :lo12:__fern_envp\n");
-        s = s.write("    str x0, [x1]\n");
-    }
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    bl __fn_main\n");
-    s = s.write("    mov x8, #93\n");      // sys_exit (Linux arm64); x0 = main's result
-    s = s.write("    svc #0\n");
-    return s;
+    return emit_ir_start(s, darwin);
 }
 
 // ---- moved verbatim from asm_arm64.fern (#3457 slice 4 untangle) ----
@@ -7578,7 +7613,7 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
     s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
-    s = emit_body(mod, s);
+    s = emit_body(mod, s, darwin);
     // Expand the declarative runtime-dependency closure (see emit_module's IR
     // dispatch) before emit_runtime gates each helper on has_need.
     s = s.close_needs();
@@ -7674,39 +7709,10 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     // args() need. Inert (empty) on the single-unit path.
     var en: i32 = 0;
     while (en < extra_needs.len()) { s = s.need(extra_needs[en]); en = en + 1; }
-    // _start belongs only to the entry (one program entry point). Copied verbatim
-    // from emit_body: save argc/argv from the SysV entry stack (gated on args),
-    // frame push, call __fn_main, exit with its result.
+    // _start belongs only to the entry (one program entry point). This path is
+    // Linux-only — see the `emit_ir_runtime(s, false)` below.
     if (is_entry) {
-        s = s.write("_start:\n");
-        if (s.has_need("args")) {
-            s = s.write("    ldr x0, [sp]\n");
-            s = s.write("    adrp x1, __fern_argc\n");
-            s = s.write("    add x1, x1, :lo12:__fern_argc\n");
-            s = s.write("    str x0, [x1]\n");
-            s = s.write("    add x0, sp, #8\n");
-            s = s.write("    adrp x1, __fern_argv\n");
-            s = s.write("    add x1, x1, :lo12:__fern_argv\n");
-            s = s.write("    str x0, [x1]\n");
-        }
-        // Save envp for env() / subprocess (Linux SysV: envp = sp + 16 +
-        // argc*8), gated on heap like the AST _start and the __fern_env
-        // helper. The multi-unit IR _start missed it just like emit_body's;
-        // without it __fern_envp stays null and env() derefs a null base.
-        if (s.has_need("heap")) {
-            s = s.write("    ldr x0, [sp]\n");            // argc
-            s = s.write("    lsl x0, x0, #3\n");          // argc*8
-            s = s.write("    add x0, x0, #16\n");         // + 16 (argc slot + argv NULL)
-            s = s.write("    add x0, sp, x0\n");          // envp base
-            s = s.write("    adrp x1, __fern_envp\n");
-            s = s.write("    add x1, x1, :lo12:__fern_envp\n");
-            s = s.write("    str x0, [x1]\n");
-        }
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    bl __fn_main\n");
-        s = s.write("    mov x8, #93\n");
-        s = s.write("    svc #0\n");
+        s = emit_ir_start(s, false);
     }
     s = s.close_needs();
     // The entry emits the single shared __fern_* runtime (its helpers are already
@@ -7828,13 +7834,21 @@ function darwin_sysno(n: i32): i32 {
 }
 
 pub function darwinize(asm: string): string {
-    // Accumulate transformed lines into a local string. We deliberately
-    // do NOT use the global strbuf here: emit_module has just run a
-    // strbuf cycle to produce `asm`, and re-entering strbuf inside the
-    // same call chain is fragile. Plain `+` accumulation is O(n^2) in
-    // the worst case, but the arm64-darwin surface is small CLI / edge
-    // programs whose asm is a few KB, so this stays well within budget.
-    var out: string = "";
+    // Accumulate through the global strbuf, exactly as EmitState.write does
+    // and for the same reason: `out = out + line` is O(n^2) and fatal here.
+    // This used to accumulate with `+`, on the stated assumption that "the
+    // arm64-darwin surface is small CLI / edge programs whose asm is a few
+    // KB". It is not: one ordinary fixture (array_chunks_windows_methods)
+    // emits 118,035 lines / 2.7 MB, and copying a string that size once per
+    // line exhausted the compiler's arena. 61 of 339 fixtures failed to
+    // compile for arm64-darwin on that alone, reported as "out of memory
+    // (heap arena exhausted)" with no hint that the container path was at
+    // fault.
+    //
+    // Re-entering strbuf is safe: `asm` is already materialised (the
+    // emitter's own strbuf cycle ended in the strbuf_take that produced it),
+    // so the buffer is drained before this reset.
+    strbuf_reset();
     var n: i32 = asm.len();
     var start: i32 = 0;
     var i: i32 = 0;
@@ -7871,14 +7885,19 @@ pub function darwinize(asm: string): string {
             } else if (darwin_index_of(line, ":lo12:") >= 0) {
                 var idx: i32 = darwin_index_of(line, ":lo12:");
                 out_line = line[0:idx] + line[idx + 6:line.len()] + "@PAGEOFF";
-            } else if (darwin_starts_with(line, "    mov x8, #")) {
-                var num: i32 = util.digits_to_i32(line[13:line.len()]);
+            } else if (darwin_starts_with(body, "mov x8, #")) {
+                // Match the LSTRIPPED body, not a literal "    mov x8, #".
+                // The emitter's indentation is not uniform — the subprocess
+                // helper's `close(fd)` sequences carry two and even three
+                // spaces — and an indent-keyed match left those syscalls with
+                // their Linux number and a Linux `svc #0` in a Mach-O binary.
+                var num: i32 = util.digits_to_i32(body[9:body.len()]);
                 var m: i32 = darwin_sysno(num);
                 if (m >= 0) {
                     out_line = "    mov x16, #" + util.i32_to_string(m);
                     this_sys_num = m;
                 }
-            } else if (line == "    svc #0") {
+            } else if (body == "svc #0") {
                 if (prev_sys_num == 1) {
                     // exit / exit_group: never returns, so no errno
                     // normalisation — just flip the trap.
@@ -7896,10 +7915,9 @@ pub function darwinize(asm: string): string {
             }
 
             if (keep) {
+                strbuf_append(out_line);
                 if (has_nl) {
-                    out = out + out_line + "\n";
-                } else {
-                    out = out + out_line;
+                    strbuf_append("\n");
                 }
             }
             prev_sys_num = this_sys_num;
@@ -7907,5 +7925,5 @@ pub function darwinize(asm: string): string {
         }
         i = i + 1;
     }
-    return out;
+    return strbuf_take();
 }

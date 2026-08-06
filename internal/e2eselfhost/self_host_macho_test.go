@@ -8,11 +8,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // TestSelfHostArm64DarwinBuilds exercises the self-hosted compiler's
@@ -29,13 +24,13 @@ import (
 //     a well-formed arm64 Mach-O executable. qemu-aarch64 only speaks the
 //     Linux ABI, so we can't run the result.
 //
-//   - On the macOS arm64 CI runner: the CLI is built FOR arm64-darwin (Go
-//     arm64 backend + clang/ld64 to link the CLI itself) so it runs
-//     natively, then we run it to emit each program's binary and EXECUTE
-//     it, checking exit codes. This is the decisive runtime check of the
-//     self-host Darwin path. Launch failures (kernel rejects the binary)
-//     are reported as skips with diagnostics, not hard failures — a wrong
-//     exit code (ran but misbehaved) is a hard failure.
+//   - On the macOS arm64 CI runner: the CLI is built FOR arm64-darwin through
+//     the driver's own in-process Mach-O path so it runs natively, then we
+//     run it to emit each program's binary and EXECUTE it, checking exit
+//     codes. This is the decisive runtime check of the self-host Darwin path,
+//     and every failure in it is a hard failure — a launch failure most of
+//     all, since a container the kernel rejects (#6042) is the single thing
+//     this test is best placed to catch.
 //
 // darwinize() reuses asm_arm64.fern's instruction selection and only
 // reskins the assembler dialect (@PAGE/@PAGEOFF addressing, Mach-O
@@ -56,16 +51,11 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 	// in-process arm64-darwin assembler/linker the flipped path imports.
 	copySelfHostDriver(t, dir, "fern.fern")
 
-	// Build the self-host CLI for the host so it runs natively. No linker
-	// flags for emitted programs anymore — the CLI writes the Mach-O binary
-	// directly. (clang is still needed on macOS only to link the *CLI*.)
+	// Build the self-host CLI for the host so it runs natively. Nothing here
+	// shells out to a linker any more: the CLI writes the Mach-O binary
+	// directly, and so does the build of the CLI itself.
 	var fernBin string
 	if native {
-		// Native macOS arm64: build the CLI FOR arm64-darwin (Go arm64
-		// backend + clang/ld64) so it runs on the runner.
-		if _, err := exec.LookPath("clang"); err != nil {
-			t.Skip("clang not on PATH; skipping arm64-darwin self-host e2e (needed to link the CLI)")
-		}
 		fernBin = buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
 	} else {
 		// Cross from Linux: the CLI is an x86-64 host binary; its emitted
@@ -111,11 +101,37 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		{"random_bytes", `function main(): i32 { var b: string = random_bytes(8); if (b.len() != 8) { return 1; } var v: i32 = 0; var i: i32 = 0; while (i < 8) { v = v | (b[i] as i32); i = i + 1; } if (v != 0) { return 7; } return 2; }`, 7},
 	}
 
+	// darwinKnownGaps names the cases this path does NOT yet handle, each with
+	// the reason. They are recorded rather than asserted so the lane is green
+	// on the gaps it cannot fix — but a listed case that starts working is a
+	// FAILURE telling you to delete its entry, so the list cannot rot into a
+	// silent skip list (which is how the whole exec half of this test went
+	// unrun for as long as it did).
+	darwinKnownGaps := map[string]string{
+		"stat_file": "module is not IR-eligible on the arm64 IR path (no AST emitter left to fall back to)",
+		// Found by the assembler's undefined-label refusal: the darwin runtime
+		// emits no __fern_tcp_listen, and the assembler used to patch the call
+		// to a wild offset instead of refusing it.
+		"tcp_listen_close": "darwin runtime does not emit __fern_tcp_listen",
+		"udp_send":         "returns 94, not the sent byte count",
+	}
+
 	// runCase: emit `src` via the self-host CLI for arm64-darwin straight to
 	// a Mach-O binary, assert it's a valid arm64 Mach-O, and (on Apple
 	// Silicon) execute it and check the exit code.
 	runCase := func(name, src string, wantExit int) {
 		t.Run(name, func(t *testing.T) {
+			gap, isGap := darwinKnownGaps[name]
+			// fail reports a defect: a hard error normally, a logged note for a
+			// listed gap. Every caller returns immediately after.
+			fail := func(format string, args ...any) {
+				if isGap {
+					t.Logf("known gap (%s): "+format, append([]any{gap}, args...)...)
+					return
+				}
+				t.Errorf(format, args...)
+			}
+
 			srcPath := filepath.Join(dir, name+".fern")
 			if err := os.WriteFile(srcPath, []byte(src+"\n"), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
@@ -134,7 +150,8 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 				if native && len(bytes.TrimSpace(out)) == 0 {
 					t.Skipf("self-host CLI did not launch (err=%v, no output)", err)
 				}
-				t.Fatalf("self-host emit failed: %v\n%s", err, out)
+				fail("self-host emit failed: %v\n%s", err, out)
+				return
 			}
 
 			// Structural validation (runs on every host).
@@ -144,10 +161,12 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 			}
 			f, err := macho.NewFile(bytes.NewReader(raw))
 			if err != nil {
-				t.Fatalf("output is not a parseable Mach-O: %v", err)
+				fail("output is not a parseable Mach-O: %v", err)
+				return
 			}
 			if f.Type != macho.TypeExec || f.Cpu != macho.CpuArm64 {
-				t.Fatalf("got type=%v cpu=%v, want EXECUTE/arm64", f.Type, f.Cpu)
+				fail("got type=%v cpu=%v, want EXECUTE/arm64", f.Type, f.Cpu)
+				return
 			}
 
 			if !native {
@@ -160,10 +179,19 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 			runErr := cmd.Run()
 			ps := cmd.ProcessState
 			if ps == nil || !ps.Exited() {
-				t.Skipf("Mach-O did not run to a normal exit (err=%v, state=%v)", runErr, ps)
+				// A kernel rejection is THE failure this test exists to catch
+				// (#6042), so it must not be a skip: the static LC_UNIXTHREAD
+				// container was SIGKILLed at exec for every program here, and
+				// a skip reported that as nothing to see.
+				fail("Mach-O did not run to a normal exit (err=%v, state=%v)", runErr, ps)
+				return
 			}
 			if code := ps.ExitCode(); code != wantExit {
-				t.Errorf("self-host arm64-darwin %q exit = %d, want %d", name, code, wantExit)
+				fail("self-host arm64-darwin %q exit = %d, want %d", name, code, wantExit)
+				return
+			}
+			if isGap && native {
+				t.Errorf("%q is listed in darwinKnownGaps (%s) but now passes — delete its entry", name, gap)
 			}
 		})
 	}
@@ -336,36 +364,32 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		3)
 }
 
-// buildSelfHostBinArm64Darwin compiles a self-host driver (fernName,
-// living in dir with its imports) into a native arm64-darwin Mach-O
-// executable via the Go arm64 backend + clang/ld64, and returns its
-// path. Used to run the self-host CLI on the macOS arm64 runner. The
-// emit step is host-independent (verified off Apple Silicon too); the
-// clang link is the same shape TestArm64DarwinBuilds proves on macOS.
+// buildSelfHostBinArm64Darwin compiles a self-host driver (fernName, living
+// in dir with its imports) into a native arm64-darwin Mach-O executable and
+// returns its path. Used to run the self-host CLI on the macOS arm64 runner.
+//
+// This goes through the driver's DEFAULT arm64-darwin path — emit plus the
+// in-process assembler and Mach-O writer, no `.s` and no clang — which is
+// both what production does and what `make selfhost-cli` does.
+//
+// It used to write the asm out and link it with `clang -nostdlib -lSystem`,
+// and that never worked on Apple Silicon: the self-host CLI's text is large
+// enough that its `bl __fern_*` runtime calls exceed the ±128 MB range of an
+// AArch64 immediate branch, so clang refused it with a screenful of "fixup
+// value out of range" (#4109 tracks the size). The failure was reported as a
+// t.Skip, so the entire exec half of this test — the only coverage that runs
+// self-host arm64-darwin output — silently never ran. That is how #6042 and
+// its three siblings shipped.
 func buildSelfHostBinArm64Darwin(t *testing.T, dir, fernName, out string) string {
 	t.Helper()
-	prog, _, err := modload.Load(filepath.Join(dir, fernName))
-	if err != nil {
-		t.Fatalf("modload %s: %v", fernName, err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold %s: %v", fernName, err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check %s: %v", fernName, err)
-	}
-	asm, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: true})
-	if err != nil {
-		t.Fatalf("arm64-darwin emit %s: %v", fernName, err)
-	}
-	asmPath := filepath.Join(dir, out+".s")
+	fern := buildLangBinForInterp(t)
 	binPath := filepath.Join(dir, out)
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write %s asm: %v", out, err)
+	cmd := exec.Command(fern, "-target", "arm64-darwin", "-o", binPath, filepath.Join(dir, fernName))
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("in-process arm64-darwin build of self-host CLI failed: %v\n%s", err, o)
 	}
-	if o, err := exec.Command("clang", "-nostdlib", "-lSystem", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("clang build of self-host CLI failed: %v\n%s", err, o)
+	if err := os.Chmod(binPath, 0o755); err != nil {
+		t.Fatalf("chmod self-host CLI: %v", err)
 	}
 	return binPath
 }

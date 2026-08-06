@@ -145,7 +145,7 @@ const arm64MachOBitOpsDriverMain = "\n" +
 	"    asm = asm + \"    svc #0x80\\n\";\n" +
 	"    var a: Arm64Asm = arm64_gas_assemble(asm);\n" +
 	"    var none: i32[] = [];\n" +
-	"    var bin: i32[] = macho_static_executable(a.code, none, \"fern\");\n" +
+	"    var bin: i32[] = macho_executable(a.code, none, \"fern\", macho_entry_off(a), 0);\n" +
 	"    write(string_from_bytes_unchecked(bin));\n" +
 	"    return 0;\n" +
 	"}\n"
