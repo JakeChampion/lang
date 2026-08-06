@@ -1,0 +1,55 @@
+// A `return <lambda>` inside a MATCH ARM must be lifted the same way one inside
+// an if-branch is. `lift_stmt` walked StmtReturn / StmtVar / StmtExpr /
+// StmtAssign / StmtIf / StmtWhile / StmtFor and fell through the `_` arm for
+// StmtMatch, so a match's arm bodies were never walked at all.
+//
+// The consequence was not a wrong answer but a REFUSAL: no `__lam_N` was
+// hoisted for the arm lambdas, so lower_expr's ExprLambda arm asked for a
+// `<cur_fn>$clo` that hoist_escaping_closure never built — it only fires on a
+// body whose LAST statement is literally `return <ExprLambda>`, and a
+// match-EXPRESSION in return position makes that `return <IIFE call>`. The whole
+// MODULE then bailed off the IR path. #6256.
+//
+// The if-expression sibling always worked, precisely because StmtIf was in that
+// list — so the two rows below are the same program written two ways, and they
+// must stay in step.
+enum Status { Active, Inactive, Pending }
+
+function via_match(s: Status): (i32) => i32 {
+    return (match (s) {
+        Active => ((x: i32) => x),
+        Inactive => ((y: i32) => (y + 1i32)),
+        Pending => ((z: i32) => 72i32)
+    });
+}
+
+function via_if(c: boolean): (i32) => i32 {
+    // The control: this route was never broken.
+    return (if (c) { ((x: i32) => x) } else { ((y: i32) => 72i32) });
+}
+
+function named_arms(s: Status): i32 {
+    // Named-function arms took a different path and also always worked.
+    return (match (s) { Active => 1i32, Inactive => 2i32, Pending => 3i32 });
+}
+
+function main(): i32 {
+    var f: (i32) => i32 = via_match(Active);
+    if (f(7i32) != 7i32) { return 1; }
+
+    var g: (i32) => i32 = via_match(Inactive);
+    if (g(7i32) != 8i32) { return 2; }
+
+    var h: (i32) => i32 = via_match(Pending);
+    if (h(7i32) != 72i32) { return 3; }
+
+    var i1: (i32) => i32 = via_if(true);
+    if (i1(7i32) != 7i32) { return 4; }
+
+    var i2: (i32) => i32 = via_if(false);
+    if (i2(7i32) != 72i32) { return 5; }
+
+    if (named_arms(Inactive) != 2i32) { return 6; }
+
+    return 9;
+}
