@@ -590,6 +590,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // darwinize reskins this sequence for Mach-O exactly as it does
             // syscall3's.
             s = s.write("    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x8, [sp], #16\n    svc #0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 207) {  // raw_environ
+            // env sub-floor (#2649): push the saved process envp pointer, the
+            // `char **` _start stashed in __fern_envp. No operands. The .bss slot
+            // is emitted with the fs runtime (emit_rt_fs), unconditionally, since
+            // _start's save is gated on `heap` rather than on `env`.
+            s = s.write("    adrp x0, __fern_envp\n    add x0, x0, :lo12:__fern_envp\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 223) {  // raw_addr
             // pop off (top), ptr; push ptr+off at full width (#2649). Unlike the
             // `add` op this is NOT followed by the i32 `sxtw` narrow, which is
@@ -883,12 +889,14 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap"); s = s.need("remove_file");
             s = s.write("    bl __fn___fern_remove_file\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 174) {  // temp_dir
-            // [prefixbox] -> make a uniquely-named /tmp dir, push a fresh
-            // Result[string, IoError] box (asm_arm64.emit_runtime's __fern_temp_dir,
-            // in its heap block; it calls __fern_monotonic_ns, which emit_runtime
-            // emits unconditionally). Pop the prefix box into x0, push the result.
-            s = s.need("heap");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_temp_dir\n    str x0, [sp, #-16]!\n");
+            // [prefixbox] IS param[0]; call the Fern-compiled __fn___fern_temp_dir
+            // (asmcore.rt_src_temp_dir, #2649) via the stack ABI. Its body calls
+            // the monotonic_ns BUILTIN, which lowers as an op inside the bundle
+            // and reaches the hand-asm __fern_monotonic_ns (emitted
+            // unconditionally) — so the clock staying hand-written costs nothing
+            // here.
+            s = s.need("heap"); s = s.need("temp_dir");
+            s = s.write("    bl __fn___fern_temp_dir\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 171) {  // read_dir
             // [pathbox] -> list a directory's base-name children, push a fresh
             // Result[string[], IoError] box (asm_arm64.emit_runtime's __fern_read_dir,
@@ -897,12 +905,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_read_dir\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 176) {  // env
-            // [namebox] -> look up an environment variable, push a fresh
-            // Option[string] box (asm_arm64.emit_runtime's __fern_env, in its heap
-            // block; walks __fern_envp saved by _start, both heap-gated). Pop the
-            // name box into x0, push the result box.
-            s = s.need("heap");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_env\n    str x0, [sp, #-16]!\n");
+            // [namebox] IS param[0]; call the Fern-compiled __fn___fern_env
+            // (asmcore.rt_src_env, #2649) via the stack ABI. It walks __fern_envp
+            // through the __raw_environ op — no syscall, so unlike the other
+            // leaves it needed no per-target constants at all.
+            s = s.need("heap"); s = s.need("env");
+            s = s.write("    bl __fn___fern_env\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 175) {  // stat
             // [pathbox] -> stat the named file, push a fresh Result[FileStat,
             // IoError] box (asm_arm64.emit_runtime's __fern_stat, in its heap block;
@@ -4404,197 +4412,19 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write(".size __fern_open_fd, .-__fern_open_fd\n");
 
-    // __fern_env(x0 = name string box) → Option[string]: a
-    // [tag@0, payload@8] box — tag=0 Some(value string box) if set,
-    // tag=1 None otherwise. Walks __fern_envp (saved by _start) for
-    // an entry whose key matches the first name.len bytes followed
-    // by '='. The value box points directly at the immortal envp
-    // bytes (no copy). x19-x24 survive __fern_alloc, as in
-    // __fern_read_file.
+    // __fern_envp: the `char **` _start stashes for env() and subprocess.
+    // Emitted unconditionally because _start's save is gated on `heap`, not on
+    // `env` — a heap program that never calls env() still stores here.
     s = s.write("    .section .bss\n");
     s = s.write("    .align 8\n");
     s = s.write("__fern_envp: .quad 0\n");
     s = s.write("    .section .text\n");
-    s = s.write(".globl __fern_env\n");
-    s = s.write(".type __fern_env, %function\n");
-    s = s.write("__fern_env:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    stp x21, x22, [sp, #-16]!\n");
-    s = s.write("    stp x23, x24, [sp, #-16]!\n");
-    s = s.write("    ldr x20, [x0]\n");           // name data
-    s = s.write("    ldr x21, [x0, #8]\n");       // name len
-    s = s.write("    adrp x19, __fern_envp\n");
-    s = s.write("    add x19, x19, :lo12:__fern_envp\n");
-    s = s.write("    ldr x19, [x19]\n");          // envp base
-    s = s.write(".Lenv_loop:\n");
-    s = s.write("    ldr x1, [x19]\n");           // envp[i]
-    s = s.write("    cbz x1, .Lenv_none\n");
-    // Compare the first name.len bytes of the entry with the name.
-    s = s.write("    mov x9, #0\n");
-    s = s.write(".Lenv_cmp:\n");
-    s = s.write("    cmp x9, x21\n");
-    s = s.write("    b.ge .Lenv_cmpdone\n");
-    s = s.write("    ldrb w10, [x1, x9]\n");
-    s = s.write("    ldrb w11, [x20, x9]\n");
-    s = s.write("    cmp w10, w11\n");
-    s = s.write("    b.ne .Lenv_next\n");
-    s = s.write("    add x9, x9, #1\n");
-    s = s.write("    b .Lenv_cmp\n");
-    s = s.write(".Lenv_cmpdone:\n");
-    // Require '=' immediately after the matched key bytes.
-    s = s.write("    ldrb w10, [x1, x21]\n");
-    s = s.write("    cmp w10, #61\n");            // '='
-    s = s.write("    b.ne .Lenv_next\n");
-    // value start = entry + name.len + 1; strlen it.
-    s = s.write("    add x22, x1, x21\n");
-    s = s.write("    add x22, x22, #1\n");
-    s = s.write("    mov x23, #0\n");
-    s = s.write(".Lenv_strlen:\n");
-    s = s.write("    ldrb w10, [x22, x23]\n");
-    s = s.write("    cbz w10, .Lenv_strlen_done\n");
-    s = s.write("    add x23, x23, #1\n");
-    s = s.write("    b .Lenv_strlen\n");
-    s = s.write(".Lenv_strlen_done:\n");
-    s = s.write("    mov x0, #16\n");             // string box
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    str x22, [x0]\n");           // data@0
-    s = s.write("    str x23, [x0, #8]\n");       // len@8
-    s = s.write("    mov x22, x0\n");             // strbox
-    s = s.write("    mov x0, #16\n");             // Option Some box
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x1, #0\n");
-    s = s.write("    str x1, [x0]\n");            // tag = Some
-    s = s.write("    str x22, [x0, #8]\n");       // payload = strbox
-    s = s.write("    b .Lenv_ret\n");
-    s = s.write(".Lenv_next:\n");
-    s = s.write("    add x19, x19, #8\n");
-    s = s.write("    b .Lenv_loop\n");
-    s = s.write(".Lenv_none:\n");
-    s = s.write("    mov x0, #16\n");             // Option None box
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x1, #1\n");
-    s = s.write("    str x1, [x0]\n");            // tag = None
-    s = s.write("    mov x1, #0\n");
-    s = s.write("    str x1, [x0, #8]\n");
-    s = s.write(".Lenv_ret:\n");
-    s = s.write("    ldp x23, x24, [sp], #16\n");
-    s = s.write("    ldp x21, x22, [sp], #16\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_env, .-__fern_env\n");
+    // __fern_env itself is a Fern runtime function now (#2649):
+    // asmcore.rt_src_env, emitted need-gated in the fs bundle below. It reads
+    // this slot through the __raw_environ op.
 
-    // __fern_temp_dir(x0 = prefix box) → Result[string]. Mirror of
-    // asm.fern: make "/tmp/<prefix>-<monotonic_ns>", mkdirat it,
-    // return Ok(path) / Err(_). arm64 syscalls: mkdirat=34.
-    s = s.write(".globl __fern_temp_dir\n");
-    s = s.write(".type __fern_temp_dir, %function\n");
-    s = s.write("__fern_temp_dir:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    stp x21, x22, [sp, #-16]!\n");
-    s = s.write("    stp x23, x24, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");           // prefix box
-    s = s.write("    bl __fern_monotonic_ns\n");
-    s = s.write("    mov x23, x0\n");           // ns
-    s = s.write("    ldr x20, [x19, #8]\n");    // prefix len
-    s = s.write("    add x0, x20, #27\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x21, x0\n");           // path base
-    s = s.write("    mov w9, #47\n");
-    s = s.write("    strb w9, [x21]\n");         // '/'
-    s = s.write("    mov w9, #116\n");
-    s = s.write("    strb w9, [x21, #1]\n");     // 't'
-    s = s.write("    mov w9, #109\n");
-    s = s.write("    strb w9, [x21, #2]\n");     // 'm'
-    s = s.write("    mov w9, #112\n");
-    s = s.write("    strb w9, [x21, #3]\n");     // 'p'
-    s = s.write("    mov w9, #47\n");
-    s = s.write("    strb w9, [x21, #4]\n");     // '/'
-    s = s.write("    mov x22, #5\n");            // cursor
-    s = s.write("    ldr x10, [x19]\n");         // prefix data
-    s = s.write("    mov x11, #0\n");
-    s = s.write(".Ltd_pcopy:\n");
-    s = s.write("    cmp x11, x20\n");
-    s = s.write("    b.ge .Ltd_pdone\n");
-    s = s.write("    ldrb w9, [x10, x11]\n");
-    s = s.write("    strb w9, [x21, x22]\n");
-    s = s.write("    add x22, x22, #1\n");
-    s = s.write("    add x11, x11, #1\n");
-    s = s.write("    b .Ltd_pcopy\n");
-    s = s.write(".Ltd_pdone:\n");
-    s = s.write("    mov w9, #45\n");            // '-'
-    s = s.write("    strb w9, [x21, x22]\n");
-    s = s.write("    add x22, x22, #1\n");
-    // count digits of ns → x12
-    s = s.write("    mov x9, x23\n");
-    s = s.write("    mov x12, #0\n");
-    s = s.write("    cbnz x9, .Ltd_cnt\n");
-    s = s.write("    mov x12, #1\n");
-    s = s.write("    b .Ltd_cntdone\n");
-    s = s.write(".Ltd_cnt:\n");
-    s = s.write("    cbz x9, .Ltd_cntdone\n");
-    s = s.write("    mov x13, #10\n");
-    s = s.write("    udiv x14, x9, x13\n");
-    s = s.write("    mov x9, x14\n");
-    s = s.write("    add x12, x12, #1\n");
-    s = s.write("    b .Ltd_cnt\n");
-    s = s.write(".Ltd_cntdone:\n");
-    // write digits backward from cursor + ndigits - 1
-    s = s.write("    add x15, x22, x12\n");
-    s = s.write("    sub x15, x15, #1\n");
-    s = s.write("    mov x9, x23\n");
-    s = s.write("    mov x13, #10\n");
-    s = s.write(".Ltd_wr:\n");
-    s = s.write("    udiv x14, x9, x13\n");      // q
-    s = s.write("    msub x16, x14, x13, x9\n"); // rem = x9 - q*10
-    s = s.write("    add x16, x16, #48\n");
-    s = s.write("    strb w16, [x21, x15]\n");
-    s = s.write("    sub x15, x15, #1\n");
-    s = s.write("    mov x9, x14\n");
-    s = s.write("    cbnz x9, .Ltd_wr\n");
-    s = s.write("    add x22, x22, x12\n");      // total len
-    s = s.write("    mov w9, #0\n");
-    s = s.write("    strb w9, [x21, x22]\n");    // NUL
-    // mkdirat(AT_FDCWD, pathz, 0700). AT_FDCWD -100 (Linux) / -2
-    // (Darwin); mode 0700 = 448 is universal. Syscall number
-    // (34 -> Darwin mkdirat 475) + errno remapped by darwinize.
-    if (darwin) {
-        s = s.write("    mov x0, #-2\n");
-    } else {
-        s = s.write("    mov x0, #-100\n");
-    }
-    s = s.write("    mov x1, x21\n");
-    s = s.write("    mov x2, #448\n");
-    s = s.write("    mov x8, #34\n");            // mkdirat
-    s = s.write("    svc #0\n");
-    s = s.write("    cbnz x0, .Ltd_err\n");
-    s = s.write("    mov x0, #16\n");            // string box
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    str x21, [x0]\n");
-    s = s.write("    str x22, [x0, #8]\n");
-    s = s.write("    mov x21, x0\n");            // strbox
-    s = s.write("    mov x0, #16\n");            // Result Ok
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x1, #0\n");
-    s = s.write("    str x1, [x0]\n");           // Ok
-    s = s.write("    str x21, [x0, #8]\n");
-    s = s.write("    b .Ltd_ret\n");
-    s = s.write(".Ltd_err:\n");
-    // x0 = -errno from mkdirat; x21/x22 = the GENERATED path data +
-    // length (the same pair the Ok path boxes). Real IoError payload
-    // instead of NULL (#4624).
-    s = s.write("    neg x0, x0\n    mov x23, x0\n    mov x0, #16\n    bl __fern_alloc\n    str x21, [x0]\n    str x22, [x0, #8]\n    mov x1, x0\n    mov x0, x23\n    bl __fern_io_error\n    mov x21, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #1\n    str x1, [x0]\n    str x21, [x0, #8]\n");
-    s = s.write(".Ltd_ret:\n");
-    s = s.write("    ldp x23, x24, [sp], #16\n");
-    s = s.write("    ldp x21, x22, [sp], #16\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_temp_dir, .-__fern_temp_dir\n");
+    // __fern_temp_dir is a Fern runtime function now (#2649) too —
+    // asmcore.rt_src_temp_dir, emitted in the fs bundle.
 
     // __fern_stat(x0 = path box) → Result[FileStat]. newfstatat=79
     // into a stack buffer; st_mode is at offset 16 on arm64 (vs 24
@@ -7179,21 +7009,28 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("random_bytes")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes(tgt), s.struct_decls, s);
     }
-    // The file-content fs leaves — read_file / write_file / remove_file — share
-    // ONE errno→IoError classifier and are emitted as a single bundle module so
-    // the inter-procedural RC analysis threads each helper's call to io_error as
-    // an ordinary call-graph edge (io_error consumes its fresh path arg; the
-    // helpers hand it a fresh copy, never their borrowed `path`). This mirrors
-    // asm_ir's bundle exactly. The register-ABI hand-asm __fern_io_error stays:
-    // stat / read_dir / remove_dir_all / temp_dir / open_fd still call it, and
-    // those leaves are NOT migratable by constant-substitution alone — Darwin's
-    // stat layout and its getdirentries64 out-param diverge in shape, not number.
-    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("remove_file")) {
+    // The migrated fs leaves — read_file / write_file / remove_file / temp_dir —
+    // share ONE errno→IoError classifier and are emitted as a single bundle
+    // module so the inter-procedural RC analysis threads each helper's call to
+    // io_error as an ordinary call-graph edge (io_error consumes its fresh path
+    // arg; the helpers hand it a fresh copy, never their borrowed `path`). This
+    // mirrors asm_ir's bundle exactly. The register-ABI hand-asm __fern_io_error
+    // stays: stat / read_dir / remove_dir_all / open_fd still call it, and those
+    // are NOT migratable by constant-substitution alone — Darwin's stat layout
+    // and its getdirentries64 out-param diverge in shape, not number.
+    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("remove_file") || s.has_need("temp_dir")) {
         var fs_src: string = asmcore.rt_src_io_error();
         if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_read_file(tgt); }
         if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file(tgt); }
         if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file(tgt); }
+        if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir(tgt); }
         s = emit_ir_runtime_fern_fn(fs_src, s.struct_decls, s);
+    }
+    // env is the odd one out: no syscall at all, so it needs none of `tgt` and
+    // does not join the fs bundle — it calls no io_error (a missing variable is
+    // None, not an error). It reads __fern_envp through the __raw_environ op.
+    if (s.has_need("env")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_env(), s.struct_decls, s);
     }
     // __fern_str_bytes is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_bytes, emitted (need-gated) in the migrated-helpers

@@ -374,6 +374,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "lseek") { return "8"; }
         if (name == "openat") { return "257"; }
         if (name == "unlinkat") { return "263"; }
+        if (name == "mkdirat") { return "258"; }
         if (name == "getrandom") { return "318"; }
         return "-1";
     }
@@ -384,6 +385,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "lseek") { return "199"; }
         if (name == "openat") { return "463"; }
         if (name == "unlinkat") { return "472"; }
+        if (name == "mkdirat") { return "475"; }
         // Darwin has no getrandom; getentropy(buf, len) takes the same first
         // two args and ignores a third, but caps each call at 256 bytes and
         // returns 0 rather than a count — see rt_src_random_bytes.
@@ -397,6 +399,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "lseek") { return "62"; }
     if (name == "openat") { return "56"; }
     if (name == "unlinkat") { return "35"; }
+    if (name == "mkdirat") { return "34"; }
     if (name == "getrandom") { return "278"; }
     return "-1";
 }
@@ -501,11 +504,11 @@ pub function rt_src_env(): string {
 // by the op handler), mkdirat(AT_FDCWD, path, 0700=448) via __syscall3, returns
 // Ok(path) — the built buffer becomes the string — or, on failure, the errno
 // classified by the shared __fern_io_error (bundled with this helper), handed a
-// FRESH copy of the built path. x86-64-only, but only for want of doing it:
-// mkdirat IS number-compatible across the three targets (34 / 34 / 475), so this
-// is the cheapest of the remaining leaves to take to arm64.
-pub function rt_src_temp_dir(): string {
-    return "function __fern_temp_dir(prefix: string): Result[string, IoError] { var t: i64 = monotonic_ns(); var plen: i32 = prefix.len(); var ndig: i32 = 1; var tt: i64 = t; while (tt >= (10 as i64)) { ndig = ndig + 1; tt = tt / (10 as i64); } var total: i32 = 5 + plen + 1 + ndig; var buf: i32 = __raw_alloc(total + 1); __raw_store8(buf, 0, 47); __raw_store8(buf, 1, 116); __raw_store8(buf, 2, 109); __raw_store8(buf, 3, 112); __raw_store8(buf, 4, 47); var i: i32 = 0; while (i < plen) { __raw_store8(buf, 5 + i, prefix[i]); i = i + 1; } __raw_store8(buf, 5 + plen, 45); var pos: i32 = total - 1; var v: i64 = t; if (v == (0 as i64)) { __raw_store8(buf, pos, 48); } else { while (v > (0 as i64)) { __raw_store8(buf, pos, 48 + ((v % (10 as i64)) as i32)); v = v / (10 as i64); pos = pos - 1; } } __raw_store8(buf, total, 0); var rc: i32 = __syscall3(258, -100, buf, 448); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(buf, total))); } return Ok(__raw_string(buf, total)); }";
+// FRESH copy of the built path. Same body on every native target: mkdirat is
+// number-compatible across all three (258 / 34 / 475), so only the number and
+// AT_FDCWD come from `t`. /tmp exists on Linux and XNU alike.
+pub function rt_src_temp_dir(t: string): string {
+    return "function __fern_temp_dir(prefix: string): Result[string, IoError] { var ns: i64 = monotonic_ns(); var plen: i32 = prefix.len(); var ndig: i32 = 1; var tt: i64 = ns; while (tt >= (10 as i64)) { ndig = ndig + 1; tt = tt / (10 as i64); } var total: i32 = 5 + plen + 1 + ndig; var buf: i32 = __raw_alloc(total + 1); __raw_store8(buf, 0, 47); __raw_store8(buf, 1, 116); __raw_store8(buf, 2, 109); __raw_store8(buf, 3, 112); __raw_store8(buf, 4, 47); var i: i32 = 0; while (i < plen) { __raw_store8(buf, 5 + i, prefix[i]); i = i + 1; } __raw_store8(buf, 5 + plen, 45); var pos: i32 = total - 1; var v: i64 = ns; if (v == (0 as i64)) { __raw_store8(buf, pos, 48); } else { while (v > (0 as i64)) { __raw_store8(buf, pos, 48 + ((v % (10 as i64)) as i32)); v = v / (10 as i64); pos = pos - 1; } } __raw_store8(buf, total, 0); var rc: i32 = __syscall3(" + sysno(t, "mkdirat") + ", " + at_fdcwd(t) + ", buf, 448); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(buf, total))); } return Ok(__raw_string(buf, total)); }";
 }
 
 // rt_src_read_file backs `read_file(path)` (#2649, syscall-leaf) → Result[string,

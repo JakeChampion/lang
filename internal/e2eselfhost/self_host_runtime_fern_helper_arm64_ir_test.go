@@ -11,11 +11,12 @@ import (
 // Issue #2649 — the arm64 sibling of TestSelfHostRuntimeHelperStrToI32IsFernIR.
 //
 // The syscall leaves that have reached arm64 as Fern runtime functions:
-// random_bytes over the __syscall3 sub-floor, and the file-content fs leaves
-// (read_file / write_file / remove_file) over __syscall3 + __syscall4, each
-// lowered through the IR pipeline by asm_arm64_ir.emit_ir_runtime_fern_fn. The
-// register-ABI hand-asm they replace — including two ~30-line getrandom /
-// getentropy bodies forked on `darwin` — is gone.
+// random_bytes over the __syscall3 sub-floor, the fs leaves (read_file /
+// write_file / remove_file / temp_dir) over __syscall3 + __syscall4, and env
+// over __raw_environ — each lowered through the IR pipeline by
+// asm_arm64_ir.emit_ir_runtime_fern_fn. The register-ABI hand-asm they replace —
+// including two ~30-line getrandom / getentropy bodies forked on `darwin` — is
+// gone.
 //
 // Behaviour is covered under qemu by TestSelfHostAsmIRArm64Path/random-bytes-*
 // and TestSelfHostIoErrorIRArm64. This test is the emission lock-in and runs on
@@ -37,6 +38,8 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    match (write_file(\"/tmp/fern_lockin.txt\", \"x\")) { Ok(_) => {}, Err(_) => { return 1; } }\n" +
 		"    match (read_file(\"/tmp/fern_lockin.txt\")) { Ok(_) => {}, Err(_) => { return 2; } }\n" +
 		"    match (remove_file(\"/tmp/fern_lockin.txt\")) { Ok(_) => {}, Err(_) => { return 3; } }\n" +
+		"    match (temp_dir(\"lockin\")) { Ok(_) => {}, Err(_) => { return 4; } }\n" +
+		"    match (env(\"PATH\")) { Some(_) => {}, None => {} }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -50,7 +53,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	}
 	asm := string(out)
 
-	for _, leaf := range []string{"random_bytes", "read_file", "write_file", "remove_file"} {
+	for _, leaf := range []string{"random_bytes", "read_file", "write_file", "remove_file", "temp_dir", "env"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -68,6 +71,15 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	// the Fern one specifically.
 	if !strings.Contains(asm, "bl __fn___fern_io_error") {
 		t.Error("the migrated fs leaves do not call the bundled Fern __fern_io_error")
+	}
+	// env has no syscall at all: it reads __fern_envp through the __raw_environ
+	// op. The .bss slot must still be emitted — _start's save is gated on `heap`,
+	// not on `env`, so a heap program that never calls env() stores here too.
+	if !strings.Contains(asm, "__fern_envp: .quad 0") {
+		t.Error("the __fern_envp .bss slot went with the hand-asm __fern_env")
+	}
+	if !strings.Contains(asm, "adrp x0, __fern_envp\n    add x0, x0, :lo12:__fern_envp\n    ldr x0, [x0]\n") {
+		t.Error("__raw_environ did not emit the arm64 envp load")
 	}
 	// write_file's O_CREAT mode arg makes it the __syscall4 user; its number
 	// load rides the same darwinize marker as __syscall3's.
@@ -107,6 +119,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    match (write_file(\"/tmp/fern_lockin_d.txt\", \"x\")) { Ok(_) => {}, Err(_) => { return 1; } }\n" +
 		"    match (read_file(\"/tmp/fern_lockin_d.txt\")) { Ok(_) => {}, Err(_) => { return 2; } }\n" +
 		"    match (remove_file(\"/tmp/fern_lockin_d.txt\")) { Ok(_) => {}, Err(_) => { return 3; } }\n" +
+		"    match (temp_dir(\"lockin\")) { Ok(_) => {}, Err(_) => { return 4; } }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_darwin.fern")
@@ -133,6 +146,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		{"unlinkat", "472"},
 		{"O_WRONLY|O_CREAT|O_TRUNC", "1537"},
 		{"lseek", "199"},
+		{"mkdirat", "475"},
 	} {
 		if !strings.Contains(asm, "mov x0, #"+c.imm+"\n") {
 			t.Errorf("the Darwin %s constant (%s) was not baked into the helper source", c.what, c.imm)
