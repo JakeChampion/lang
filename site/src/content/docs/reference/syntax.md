@@ -78,10 +78,10 @@ counterparts — see
 ## Trailing commas
 
 A trailing comma is legal in **every** comma-separated element list —
-array literals, call arguments (positional and named), function and
-lambda parameters, type parameters, generic and call type arguments,
+array literals, call arguments (positional and named), function, lambda
+and tuple parameters, type parameters, generic and call type arguments,
 struct literals and declarations, enum declarations, match arms, tuple
-literals, and map literals:
+literals, map literals, and the map-foreach binder (`for (k, v,) in m`):
 
 ```fern
 var xs: i32[] = [
