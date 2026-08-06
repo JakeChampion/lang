@@ -1,6 +1,6 @@
 # Settled rulings — do not re-report
 
-Read this in **Phase 0** of a FIP (`docs/FIP.md`). Everything here has been
+Read this in **Phase 0** of a proposal (`docs/FERN-PROPOSALS.md`). Everything here has been
 decided. Filing it again costs the maintainer a context switch and gets closed.
 
 A ruling is *settled*, not *sacred*. If you have an argument that the ruling
@@ -57,7 +57,7 @@ to dodge a break is explicitly not supported — see `docs/BACKEND-PARITY.md`
 **The x86-64 CPU baseline is Haswell-class 2013 (SSE4.2 + BMI1) and the arm64
 baseline is plain ARMv8-A.** Binaries are static with no runtime dispatch, so a
 selected instruction is a hard requirement. Raising or lowering either baseline
-is a project decision, not something a FIP settles.
+is a project decision, not something a proposal settles.
 
 **A wasm leg cannot round-trip an arbitrary exit code.** Two separate reasons,
 often confused:
@@ -129,12 +129,12 @@ native-only feature is a debt entry against #4451, not a free win.
 
 ## Method
 
-**A hack that hides a symptom is not a fix.** Stated in `docs/FIP.md` Phase 4
+**A hack that hides a symptom is not a fix.** Stated in `docs/FERN-PROPOSALS.md` Phase 4
 and repeated here because it is the most common rejection. If the root cause
 lives in a deeper layer, it is fixed in that layer, however large that is.
 
 **A row in a `known-divergences.txt` is already reported.** Deleting a row is
-an excellent FIP; re-filing one is not a FIP at all.
+an excellent proposal; re-filing one is not a proposal at all.
 
 **A `*-PLAN.md` in `docs/` usually means the problem is known.** Check before
 filing; then argue with the plan if you disagree with it.

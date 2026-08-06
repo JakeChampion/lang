@@ -1,4 +1,4 @@
-// examples/fip/brackets_pda.fern — FIP turn, drawn line 246:
+// examples/proposals/brackets_pda.fern — proposal turn, drawn line 246:
 // "A pushdown automaton that checks balanced multi-kind brackets."
 //
 // A genuine PDA: one left-to-right pass, a stack of open frames, and a

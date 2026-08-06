@@ -163,4 +163,4 @@ freeze tracker is [#4451](https://github.com/JakeChampion/lang/issues/4451).
 | `LSP-INTEGRATION-PLAN.md` | [record] | LSP MVP — shipped (`cmd/fern-lsp`); post-MVP ideas in IDE-COMPILATION-RESEARCH. |
 | `TEST-RUNNER-MIGRATION.md` | [record] | Go-test → pure-Fern runner migration audit. |
 | `TEST-GATES.md` | [policy] | Which suite proves what, which look authoritative and are not, and what nothing gates. |
-| `FIP.md` | [policy] | The Fern Improvement Proposal program: build an app as a user, fix the worst defect you hit, ship it. Draw list in `fip/random_app.txt`; settled rulings in `fip/wontfix.md`. |
+| `FERN-PROPOSALS.md` | [policy] | The Fern Proposal program: build an app as a user, fix the worst defect you hit, ship it. Draw list in `proposals/random_app.txt`; settled rulings in `proposals/wontfix.md`. |

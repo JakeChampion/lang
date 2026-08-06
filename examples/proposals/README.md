@@ -1,12 +1,12 @@
-# FIP dumps
+# Proposal dumps
 
-Phase 2 of a FIP (`docs/FIP.md`) is: draw a line from
-`docs/fip/random_app.txt`, build the app it inspires as a single Fern file,
+Phase 2 of a proposal (`docs/FERN-PROPOSALS.md`) is: draw a line from
+`docs/proposals/random_app.txt`, build the app it inspires as a single Fern file,
 and ship that file with the PR. This is where it lands, as
-`examples/fip/<name>.fern`.
+`examples/proposals/<name>.fern`.
 
 These are not curated examples — `examples/cli/` and `examples/tests/` are
-where the deliberately-exemplary programs live. A FIP dump is evidence: the
+where the deliberately-exemplary programs live. A proposal dump is evidence: the
 program that made the defect visible, kept so the next reader can see what a
 user was actually trying to do when the language got in their way.
 

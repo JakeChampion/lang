@@ -1,11 +1,19 @@
-# The FIP Program (Fern Improvement Proposals)
+# The Fern Proposal Program
 
-You are an agent in the FIP program. One turn = one proposal: you USE Fern to
-build something, you SUFFER the language's real defects while doing it, you fix
-the worst one you hit, and you report it as a GitHub issue + PR.
+You are an agent in the Fern Proposal program. One turn = one proposal: you USE
+Fern to build something, you SUFFER the language's real defects while doing it,
+you fix the worst one you hit, and you report it as a GitHub issue + PR.
 
 The point is not to write code. The point is to find out where Fern hurts a
 real user, and to remove that hurt at its root.
+
+No acronym, deliberately. The obvious one — "Fern Improvement Proposal" — is
+already taken: `fip` is a **contextual keyword** in the language (`fip function
+f(own a: i32[])`, with `fbip` beside it), Koka's functional-in-place modifier,
+enforced by E053 and E068 and tested in `internal/parser/fip_test.go`. A
+program document sharing that name is a collision in the one repo where both
+meanings are live. Say "a proposal" and "a proposal turn"; the branch prefix is
+`proposal/`.
 
 Adapted from Victor Taelin's BIP program for Bend
 (<https://gist.github.com/VictorTaelin/d632f46aa55e561d3cd2c43c66f2813e>).
@@ -76,7 +84,7 @@ Follow this exactly, in order.
 ### Phase 0 — Sync and check for duplicates
 
 ```
-git fetch origin main && git checkout -B fip/<slug> origin/main
+git fetch origin main && git checkout -B proposal/<slug> origin/main
 ```
 
 Start from a **fresh** `origin/main` every time. PRs here are squash-merged, so
@@ -87,10 +95,10 @@ Then check what is already known:
 
 - open issues — `list_issues` / `search_issues` (there is no `gh` CLI in this
   environment; use the GitHub MCP tools);
-- `docs/fip/wontfix.md` — settled rulings. NEVER re-report these;
+- `docs/proposals/wontfix.md` — settled rulings. NEVER re-report these;
 - `internal/e2e/testdata/selfhost-*-known-divergences.txt` — defects that are
   already measured, listed and accepted. Do not file them again. *Closing* a
-  row is a first-rate FIP;
+  row is a first-rate proposal;
 - `docs/` — a `*-PLAN.md` or `*-RESEARCH.md` for your area usually means the
   problem is known and the shape of the fix is already argued.
 
@@ -130,7 +138,7 @@ Draw a random number N in 0..255 with a real system RNG:
 python3 -c 'import secrets; print(secrets.randbelow(256))'
 ```
 
-Read ONLY line N of `docs/fip/random_app.txt` (1-indexed line N+1) and use that
+Read ONLY line N of `docs/proposals/random_app.txt` (1-indexed line N+1) and use that
 line as the inspiration for the software you will write. The app need not be
 exactly what the line says, but it MUST be clearly related to it. Keep it
 relatively simple: something you can implement in at most 1000 lines, in one
@@ -180,7 +188,7 @@ If along the way you conclude the app cannot be completed because of an
 incompleteness or failure in Fern, STOP and go to Phase 3 anyway. That is a
 better outcome than a finished app, not a worse one.
 
-Save the file at `examples/fip/<name>.fern` — it ships with your PR.
+Save the file at `examples/proposals/<name>.fern` — it ships with your PR.
 
 ### Phase 3 — Pick the problem
 
@@ -231,7 +239,7 @@ it has the same underlying rule and CLAUDE.md states it: a diff that removes
 lines is at least as valuable as one that adds them. If you replace X with Y,
 X is gone — from the parser, the tests, and the docs — in the same diff. If
 your change makes a comment stale, the comment dies with it. Finding the
-simplification that makes your fix small **is 50% of a FIP**, not a bonus on
+simplification that makes your fix small **is 50% of a proposal**, not a bonus on
 top of it.
 
 What Fern rations instead of tokens is **memory and CI time**. If your change
@@ -281,7 +289,7 @@ squash-merge when green → next turn.**
 
 ```
 git commit -am "<one dense line>"
-git push -u origin fip/<slug>
+git push -u origin proposal/<slug>
 ```
 
 Open the issue and the PR with the GitHub MCP tools, `subscribe_pr_activity`
@@ -347,7 +355,7 @@ merge main in and push. Do not stop at "pushed to the branch".
   `PATH` and set `FERN_WASI_ADAPTER`.
 
 - **Never commit to `main`.** One commit per PR, containing: the minimal
-  solution (simplified — this is essential) + your `examples/fip/<name>.fern` +
+  solution (simplified — this is essential) + your `examples/proposals/<name>.fern` +
   minimal, well-designed, fast regression tests that fail if the problem comes
   back, in a general way. A regression test that only pins your exact repro is
   worth much less than one that pins the class.
