@@ -14634,6 +14634,9 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // A reclaimable Option[<scalar-arr-of-arr>] LOOP-LOCAL (#4365): the arr-of-arr sibling —
     // deep-drop the prior iteration's Some payload (inner buffers + outer via
     // __fern_arrarr_free) + the option box before the store.
+    if (slot_is_reclaimable_optarr(sb, slot)) {
+        return emit_optarr_reclaim_store(sb, slot);
+    }
     if (slot_is_reclaimable_optarrarr(sb, slot)) {
         return emit_optarrarr_reclaim_store(sb, slot);
     }
@@ -16748,6 +16751,14 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     // No rc-word inc (header-less asm box); heap-base-guarded so the initial
     // "" literal's .rodata data is skipped. Closes the O(n) accumulator leak.
     if (slot_is_reclaimable_str(s, slot)) { return emit_str_reclaim_store(se, slot); }
+    // A reclaimable REBOUND Option[<flat scalar array>] (`o = Some([..])`, credited
+    // "OPTARR:"): free the superseded payload buffer + option box before storing the
+    // fresh one. This is the ASSIGN path specifically — the Option family's other
+    // classes only ever reclaim at a `var` re-declaration, because their collectors
+    // refuse reassigned names outright, which is why an `o = Some([..])` rebind
+    // leaked every prior box (#6127). The RHS was lowered above and never aliases
+    // the old box (each rebind is a fresh literal, optarr_rebinds_all_fresh).
+    if (slot_is_reclaimable_optarr(s, slot)) { return emit_optarr_reclaim_store(se, slot); }
     // A reclaimable struct REASSIGN (`s = bump(s)` / `s = s.emit(op)`, the
     // builder consume-rebind) releases the OLD box the same way the StmtVar
     // branch does: emit_arr_store's cow-guarded, rc-guarded SHALLOW arr_dec
@@ -20105,6 +20116,18 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // Reclaimable Option[<scalar-arr-of-arr>] locals (#4365): deep-free the final live box
     // (Some payload via __fern_arrarr_free + option box) via the same inline path the
     // loop-rebind uses. Entry-zeroed via arr_slots_of (slot_is_reclaimable_optarrarr).
+    // Reclaimable REBOUND Option[<flat scalar array>] locals (#6127): free the final
+    // live value's payload buffer + option box, the same inline path the rebind uses.
+    // Entry-zeroed via arr_slots_of, so an untaken-branch slot routes a guarded null.
+    var ofj: i32 = st.n_params;
+    while (ofj < st.locals.len()) {
+        if (!slot_list_has(keeps, ofj) && slot_is_reclaimable_optarr(st, ofj)) {
+            st = emit_optarr_deep_free(st, ofj);
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(ofj));
+        }
+        ofj = ofj + 1;
+    }
     var oaj: i32 = st.n_params;
     while (oaj < st.locals.len()) {
         if (!slot_list_has(keeps, oaj) && slot_is_reclaimable_optarrarr(st, oaj)) {
@@ -20884,7 +20907,7 @@ function arr_slots_of(s: LowerState): i32[] {
         // the exit dec-sweep / loop-rebind release never decs an uninitialised
         // (e.g. untaken-branch) slot — __fern_arr_dec null-guards, but the slot
         // must hold null not stack garbage.
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i) || slot_is_reclaimable_optarrarr(s, i)) { out = out.append(i); }
+        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i) || slot_is_reclaimable_optarrarr(s, i) || slot_is_reclaimable_optarr(s, i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -24825,6 +24848,20 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         out = out.append("OPTARRARR:" + oas[oasi]);
         oasi = oasi + 1;
     }
+    // REBOUND Option[<flat scalar array>] locals (#6127): `var o: Option[i32[]] =
+    // Some([..]); while { o = Some([..]) }`. The simplest payload kind in this
+    // family and the only one with no rebind class — every consuming-match
+    // analysis refuses a reassigned name, so this shape was reclaimed nowhere.
+    // Credited "OPTARR:" so slot_is_reclaimable_optarr routes the loop-rebind +
+    // exit sweep through emit_optarr_deep_free. collect_fresh_optarr_names
+    // REQUIRES the name to be reassigned, the exact complement of those analyses'
+    // gate, so the two sets are disjoint and no box is freed twice.
+    var ofa: string[] = collect_fresh_optarr_names(body, []);
+    var ofai: i32 = 0;
+    while (ofai < ofa.len()) {
+        out = out.append("OPTARR:" + ofa[ofai]);
+        ofai = ofai + 1;
+    }
     // Fresh (<tuple-with-array>)[] locals (#4365): `var xs: (i32, i32[])[] =
     // [(i, [i, i+1]), ...]` — an array whose elements are fresh tuples carrying fresh
     // arrays. Credited "ARRTUP:" so slot_is_reclaimable_arrtup routes the loop-rebind
@@ -28531,6 +28568,300 @@ function emit_optstruct_reclaim_store(se: LowerState, slot: i32, sty: string): L
     return st.emit(ir.op_store_local(slot));
 }
 
+// ── OPTARR: reclaim REBOUND `Option[<flat scalar array>]` locals (#6127) ──
+//
+// The simplest payload kind in the Option family, and the one it never had a
+// loop-rebind class for: OPTAARR covers `Option[<arr>][]`, OPTARRARR
+// `Option[i32[][]]`, OPTSTRUCT `Option[<struct-with-array>]`, OPTTUP
+// `Option[<tuple-with-array>]` — and nothing covered a plain `Option[i32[]]`.
+//
+// A SINGLE-BIND one needs no class: consumed_rcpayload_option_frees frees it at
+// its consuming match, at fn level and (since #4357) per block. What leaked was
+// the REBOUND form — `var o: Option[i32[]] = Some([..]); while { o = Some([..]) }`
+// — because every one of those consuming-match analyses refuses a reassigned
+// name outright, and no rebind class existed to pick it up. Measured 40000 bytes
+// over 100 rounds with ZERO releases emitted, where the same value bound once is
+// flat at 0.
+//
+// That blunt `reassigned` exclusion is shared by all three Option siblings, so
+// the rebound arr-of-arr / struct / tuple forms leak for the same reason; this
+// class fixes only the flat-scalar-array kind, which is the one the #6127 sweep
+// measures and the only one with no class at all.
+//
+// DISJOINTNESS is structural and load-bearing: this class credits ONLY names
+// that ARE reassigned, which is the exact complement of the gate every
+// consuming-match analysis applies. A name is therefore claimed by this class or
+// by those, never both, so no box is freed twice.
+
+// optarr_ann_is: `type_name` is `Option[<leak-safe scalar array>]` — Option of a
+// flat i32[]/i64[]/f64[]/boolean[] buffer, whose whole release is one rc-dec.
+function optarr_ann_is(type_name: string): boolean {
+    var inner: string = opttup_inner_type(type_name);
+    return is_leaksafe_array_field(inner);
+}
+
+// optarr_init_is_fresh: `Some(<fresh scalar array literal>)` or `None`. A bare
+// ident payload would alias a live local whose own sweep also frees the buffer.
+function optarr_init_is_fresh(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "Some" && c.args.len() == 1) {
+                        match (c.args[0]) {
+                            parser.ExprArray(_) => { return true; },
+                            _ => { return false; }
+                        }
+                    }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        parser.ExprIdent(nid) => { return nid.name == "None"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// optarr_rebinds_all_fresh: EVERY assignment to `name` in this statement list (and
+// nested blocks) is itself a fresh `Some([..])` / `None`. This is the SARR:
+// discipline — validate each rebind individually rather than refusing the name
+// for being reassigned at all, which is what left this shape uncredited.
+function optarr_rebinds_all_fresh(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => {
+                if (a.target == name && !optarr_init_is_fresh(a.value)) { return false; }
+            },
+            parser.StmtIf(f) => {
+                if (!optarr_rebinds_all_fresh(f.then_body, name)) { return false; }
+                if (!optarr_rebinds_all_fresh(f.else_body, name)) { return false; }
+            },
+            parser.StmtWhile(w) => { if (!optarr_rebinds_all_fresh(w.body, name)) { return false; } },
+            parser.StmtFor(fo) => { if (!optarr_rebinds_all_fresh(fo.body, name)) { return false; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    if (!optarr_rebinds_all_fresh(m.arms[mi].body, name)) { return false; }
+                    mi = mi + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// optarr_arm_expr_escapes: does `e` use the Some-payload FLAT-ARRAY binding `a` in
+// an escaping way? `a[i]` reads a SCALAR out of the buffer and `a.len()` reads its
+// header, so both are borrows; a bare `a` (call arg, container element, return)
+// takes the buffer pointer and escapes.
+//
+// This is where the arr-of-arr walker cannot be reused: there `g[i]` extracts a
+// ROW POINTER and is rightly an escape, while here the same syntax yields an i32.
+// Borrowing that walker would refuse every ordinary `a[0]` read.
+function optarr_arm_expr_escapes(e: parser.Expr, a: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == a; },
+        parser.ExprNumber(_) => { return false; },
+        parser.ExprString(_) => { return false; },
+        parser.ExprBool(_) => { return false; },
+        parser.ExprIndex(ix) => {
+            var base_is_a: boolean = false;
+            match (ix.array) {
+                parser.ExprIdent(bid) => { if (bid.name == a) { base_is_a = true; } },
+                _ => {}
+            }
+            if (base_is_a) { return optarr_arm_expr_escapes(ix.index, a); }   // a[i]: scalar read
+            return optarr_arm_expr_escapes(ix.array, a) || optarr_arm_expr_escapes(ix.index, a);
+        },
+        parser.ExprBinary(b) => { return optarr_arm_expr_escapes(b.left, a) || optarr_arm_expr_escapes(b.right, a); },
+        parser.ExprUnary(u) => { return optarr_arm_expr_escapes(u.operand, a); },
+        parser.ExprFieldAccess(fa) => { return optarr_arm_expr_escapes(fa.obj, a); },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    var recv_borrow: boolean = false;
+                    if (cfa.field == "len") {
+                        match (cfa.obj) {
+                            parser.ExprIdent(rid) => { if (rid.name == a) { recv_borrow = true; } },
+                            _ => {}
+                        }
+                    }
+                    if (!recv_borrow && optarr_arm_expr_escapes(cfa.obj, a)) { return true; }
+                },
+                _ => { if (optarr_arm_expr_escapes(c.callee, a)) { return true; } }
+            }
+            var ci: i32 = 0;
+            while (ci < c.args.len()) { if (optarr_arm_expr_escapes(c.args[ci], a)) { return true; } ci = ci + 1; }
+            return false;
+        },
+        _ => { return true; }
+    }
+    return true;
+}
+
+// optarr_arm_stmt_escapes: lift optarr_arm_expr_escapes over one statement.
+function optarr_arm_stmt_escapes(st: parser.Stmt, a: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return optarr_arm_expr_escapes(v.init, a); },
+        parser.StmtAssign(asg) => { return optarr_arm_expr_escapes(asg.value, a); },
+        parser.StmtExpr(ex) => { return optarr_arm_expr_escapes(ex.value, a); },
+        parser.StmtReturn(r) => { return optarr_arm_expr_escapes(r.value, a); },
+        parser.StmtIf(f) => {
+            if (optarr_arm_expr_escapes(f.cond, a)) { return true; }
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { if (optarr_arm_stmt_escapes(f.then_body[ti], a)) { return true; } ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { if (optarr_arm_stmt_escapes(f.else_body[ei], a)) { return true; } ei = ei + 1; }
+            return false;
+        },
+        parser.StmtWhile(w) => {
+            if (optarr_arm_expr_escapes(w.cond, a)) { return true; }
+            var wi: i32 = 0;
+            while (wi < w.body.len()) { if (optarr_arm_stmt_escapes(w.body[wi], a)) { return true; } wi = wi + 1; }
+            return false;
+        },
+        _ => { return true; }
+    }
+    return true;
+}
+
+// optarr_payload_escapes: does the Some-arm payload binding of `name` escape
+// anywhere? Mirrors optarrarr_payload_escapes with the flat-array borrow rules.
+function optarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtMatch(m) => {
+                var is_scrut: boolean = false;
+                match (m.scrutinee) {
+                    parser.ExprIdent(sid) => { if (sid.name == name) { is_scrut = true; } },
+                    _ => {}
+                }
+                if (is_scrut) {
+                    var ai: i32 = 0;
+                    while (ai < m.arms.len()) {
+                        match (m.arms[ai].pattern) {
+                            parser.PatVariant(pv) => {
+                                var vn: string = pv.type_name;
+                                var vc: i32 = 0;
+                                while (vc < pv.type_name.len()) { if (pv.type_name[vc] == 46) { vn = pv.type_name[vc + 1 : pv.type_name.len()] + ""; } vc = vc + 1; }
+                                if (vn == "Some" && pv.binding != "" && pv.binding != "_") {
+                                    if (m.arms[ai].has_guard && optarr_arm_expr_escapes(m.arms[ai].guard, pv.binding)) { return true; }
+                                    var bi: i32 = 0;
+                                    while (bi < m.arms[ai].body.len()) { if (optarr_arm_stmt_escapes(m.arms[ai].body[bi], pv.binding)) { return true; } bi = bi + 1; }
+                                }
+                            },
+                            _ => {}
+                        }
+                        ai = ai + 1;
+                    }
+                }
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { if (optarr_payload_escapes(m.arms[mi].body, name)) { return true; } mi = mi + 1; }
+            },
+            parser.StmtIf(f) => {
+                if (optarr_payload_escapes(f.then_body, name)) { return true; }
+                if (optarr_payload_escapes(f.else_body, name)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (optarr_payload_escapes(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (optarr_payload_escapes(fo.body, name)) { return true; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// collect_fresh_optarr_names: REBOUND `Option[<flat scalar array>]` locals whose
+// every binding and rebinding is a fresh Some([..]) / None, consumed by exactly one
+// match in this statement list, dead after it, non-escaping, and whose Some arm
+// binds the payload only as a borrow. Reassignment is REQUIRED here (see the
+// disjointness note above), so a single-bind local is left to
+// consumed_rcpayload_option_frees.
+//
+// The escape gate is name_escapes_outside_stmt with the consuming match SKIPPED,
+// exactly as the sibling collectors use it — body_unsafe_for cannot be substituted
+// here, because it reads a bare-ident match SCRUTINEE as an escape and so refuses
+// every match-consumed Option outright.
+function collect_fresh_optarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var reassigned: string[] = body_assign_targets(stmts);
+    var vi: i32 = 0;
+    while (vi < stmts.len()) {
+        match (stmts[vi]) {
+            parser.StmtVar(v) => {
+                if (optarr_ann_is(v.type_name)
+                    && optarr_init_is_fresh(v.init)
+                    && util.index_of_str(reassigned, v.name) >= 0
+                    && optarr_rebinds_all_fresh(stmts, v.name)) {
+                    var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
+                    if (match_idx > vi
+                        && !match_arms_use_name(stmts[match_idx], v.name)
+                        && !optarr_payload_escapes(stmts, v.name)
+                        && !name_used_after(stmts, v.name, match_idx)
+                        && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
+                        a = push_str_unique(a, v.name);
+                    }
+                }
+            },
+            parser.StmtIf(f) => { a = collect_fresh_optarr_names(f.then_body, a); a = collect_fresh_optarr_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_optarr_names(w.body, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_optarr_names(fo.body, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_fresh_optarr_names(m.arms[mi].body, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return a;
+}
+
+// emit_optarr_deep_free: null-guard, then on the Some tag free the payload BUFFER
+// with one __fern_rc_dec (a flat scalar array is a single rc-headered block — no
+// element walk, which is what makes this the shallowest member of the family),
+// then free the option box. Mirrors emit_optarrarr_deep_free with
+// __fern_arrarr_free replaced by the flat dec.
+function emit_optarr_deep_free(se: LowerState, slot: i32): LowerState {
+    var st: LowerState = se;
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));         // old != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_tag());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("eq", 0, false));         // tag == 0 (Some)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_payload());               // flat scalar-array buffer
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-Some
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));            // free the option box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-not-null
+    return st;
+}
+
+// emit_optarr_reclaim_store: the loop-rebind. Stash `new`, deep-free the OLD box, store new.
+function emit_optarr_reclaim_store(se: LowerState, slot: i32): LowerState {
+    var scratch: string = "$oaf" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));            // stash new
+    st = emit_optarr_deep_free(st, slot);            // free old payload + box
+    st = st.emit(ir.op_load_local(tmp));             // new
+    return st.emit(ir.op_store_local(slot));
+}
+
 // ── OPTARRARR: reclaim `Option[<scalar-arr-of-arr>]` locals (#4365) ──
 // The arr-of-arr sibling of OPTSTRUCT: the Some payload is an arr-of-arr box, freed whole by
 // the backend-complete __fern_arrarr_free (inner scalar buffers + outer). Scalar-inner only
@@ -28758,6 +29089,17 @@ function collect_fresh_optarrarr_names(stmts: parser.Stmt[], acc: string[]): str
         vi = vi + 1;
     }
     return a;
+}
+
+// slot_is_reclaimable_optarr: slot i holds a REBOUND, fresh, non-escaping
+// Option[<flat scalar array>] local credited "OPTARR:" by reclaimable_names_of.
+// Its payload is one rc-headered buffer, so the release is a flat dec of the
+// payload then the option box (emit_optarr_deep_free). #6127.
+function slot_is_reclaimable_optarr(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (s.locals[i].opt_type.len() == 0) { return false; }
+    return util.index_of_str(s.reclaimable_names, "OPTARR:" + s.locals[i].slot_name) >= 0;
 }
 
 // slot_is_reclaimable_optarrarr: slot i holds a fresh, non-escaping
