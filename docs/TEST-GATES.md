@@ -177,7 +177,11 @@ answer, these are the tools, in the order they are usually reached for:
   it drops into an existing harness; a finding is a named message plus a
   backtrace, and the two fatal checks exit 124. Both natives carry all three,
   with identical message text and status, so a finding does not depend on which
-  backend built it. Full contract, costs, and what it does *not* catch:
+  backend built it. The **self-host x86-64 compiler reads `FERN_SANITIZE=1`
+  too** (emit-time, like its `FERN_LEAKCHECK` / `FERN_RC_TRACE` ports), giving
+  the census and the over-release report — which is what puts the mode on the
+  long-running allocation-heavy program it was argued for. Full contract,
+  costs, and what it does *not* catch:
   `docs/SANITIZER.md`. The individual flags below remain the right tool once
   you know what you are chasing.
 - **`__rc_underflow_count()`** — the counter. Exact yes/no signal for "did this

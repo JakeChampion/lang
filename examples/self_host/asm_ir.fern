@@ -983,7 +983,38 @@ function rc_trace_on(): boolean {
 // says where. Both counters tick in the same __fern_hev_* helpers, off the
 // same rounded size, so the trace's own tallies reproduce this line exactly.
 function leak_check_on(): boolean {
+    if (sanitize_on()) { return true; }
     match (env("FERN_LEAKCHECK")) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+}
+
+// sanitize_on reports whether FERN_SANITIZE is set — the self-host port of
+// ast.SanitizeEnabled (#5545). One opt-in surface over the heap detectors,
+// so you can reach for it before knowing which check will fire.
+//
+// This backend's half of the mode is the leak census (hence leak_check_on
+// above folding it in) plus the rc over-release report: an over-release stops
+// being a counter nobody reads and becomes `fern-sanitizer: rc over-release
+// (double free)` on stderr followed by exit 124, at the offending dec. A
+// clean run stays silent of `fern-sanitizer:` lines, so "was this clean" is
+// answerable without reading the census numbers.
+//
+// Two gaps versus the native backend, both honest subsets rather than
+// silently-different behaviour:
+//
+//   - No use-after-free quarantine. Native poisons a freed block's rc word
+//     and refuses to recycle it; this runtime's free sites would each need
+//     the same treatment.
+//   - No backtrace under the report. Native routes through __fern_report,
+//     which walks the frame-pointer chain; there is no such helper here, so
+//     the message is the whole diagnostic.
+//
+// It deliberately does NOT imply FERN_RC_TRACE: per-heap-event output is a
+// probe you point at a reduced repro, not a standing mode.
+function sanitize_on(): boolean {
+    match (env("FERN_SANITIZE")) {
         Some(_) => { return true; },
         None => { return false; }
     }
@@ -1061,6 +1092,15 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(".Llc_a:\n    .ascii \"leakcheck: allocs=\"\n");
         s = s.write(".Llc_f:\n    .ascii \" frees=\"\n");
         s = s.write(".Llc_l:\n    .ascii \" live_bytes=\"\n");
+    }
+    if (sanitize_on()) {
+        // Sanitizer diagnostics (#5545). The texts must match the native
+        // backends' byte-for-byte: a `fern-sanitizer:` line must not tell you
+        // which compiler produced the binary.
+        s = s.write(".Lsan_df:\n    .ascii \"fern-sanitizer: rc over-release (double free)\\n\"\n");
+        s = s.write(".Lsan_leak:\n    .ascii \"fern-sanitizer: leak \"\n");
+        s = s.write(".Lsan_bytesin:\n    .ascii \" bytes in \"\n");
+        s = s.write(".Lsan_blocks:\n    .ascii \" blocks\"\n");
     }
     s = s.write("    .section .text\n");
     // __fern_hev_a(site, ptr, words) — stack args at 8/16/24(%rsp), pushed by
@@ -1215,6 +1255,35 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    leaq .Lhev_nl(%rip), %rsi\n");
         s = s.write("    movq $1, %rdx\n");
         s = s.write("    call .Lhev_w\n");
+        if (sanitize_on()) {
+            // Sanitizer leak VERDICT (#5545), after the summary. Only a
+            // POSITIVE balance is a leak: zero is clean, and a negative one is
+            // an over-free, which the over-release detector reports at the
+            // offending dec — calling that a leak would be wrong twice over.
+            s = s.write("    movq __fern_lc_alloc_bytes(%rip), %rax\n");
+            s = s.write("    subq __fern_lc_free_bytes(%rip), %rax\n");
+            s = s.write("    testq %rax, %rax\n");
+            s = s.write("    jle .Lsan_leak_done\n");
+            s = s.write("    leaq .Lsan_leak(%rip), %rsi\n");
+            s = s.write("    movq $21, %rdx\n");
+            s = s.write("    call .Lhev_w\n");
+            s = s.write("    movq __fern_lc_alloc_bytes(%rip), %rdi\n");
+            s = s.write("    subq __fern_lc_free_bytes(%rip), %rdi\n");
+            s = s.write("    call .Llc_num\n");
+            s = s.write("    leaq .Lsan_bytesin(%rip), %rsi\n");
+            s = s.write("    movq $10, %rdx\n");
+            s = s.write("    call .Lhev_w\n");
+            s = s.write("    movq __fern_lc_alloc_count(%rip), %rdi\n");
+            s = s.write("    subq __fern_lc_free_count(%rip), %rdi\n");
+            s = s.write("    call .Llc_num\n");
+            s = s.write("    leaq .Lsan_blocks(%rip), %rsi\n");
+            s = s.write("    movq $7, %rdx\n");
+            s = s.write("    call .Lhev_w\n");
+            s = s.write("    leaq .Lhev_nl(%rip), %rsi\n");
+            s = s.write("    movq $1, %rdx\n");
+            s = s.write("    call .Lhev_w\n");
+            s = s.write(".Lsan_leak_done:\n");
+        }
         s = s.write("    ret\n");
         // .Llc_num(%rdi = signed i64): decimal itoa, digits built backwards
         // from the end of a stack buffer (an i64 is at most 19 digits + sign),
@@ -1251,8 +1320,42 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    call .Lhev_w\n");
         s = s.write("    addq $48, %rsp\n");
         s = s.write("    ret\n");
+        if (sanitize_on()) {
+            // __fern_san_abort() — the sanitizer's fatal report (#5545).
+            // Writes the one diagnostic this backend can raise and exits 124.
+            //
+            // Never returns, so it is free to clobber: every caller is a dec
+            // that has already established it is over-releasing. .globl
+            // because the rc dec helpers that call it are emitted into
+            // ORDINARY generated code, which under -per-module-emit-all lands
+            // in a different unit from this block (the entry's).
+            //
+            // 124 matches the native backends: clear of the 128+signal range
+            // so no signal death can forge it, and distinct from 125
+            // (arena exhaustion) so the two are told apart by status alone.
+            s = s.write("    .globl __fern_san_abort\n");
+            s = s.write("__fern_san_abort:\n");
+            s = s.write("    leaq .Lsan_df(%rip), %rsi\n");
+            s = s.write("    movq $46, %rdx\n");
+            s = s.write("    call .Lhev_w\n");
+            s = s.write("    movq $124, %rdi\n");
+            s = s.write("    movq $60, %rax\n");
+            s = s.write("    syscall\n");
+        }
     }
     return s;
+}
+
+// san_underflow_abort emits the fatal report that follows an
+// __fern_rc_underflow bump under FERN_SANITIZE (#5545), so an over-release
+// dies AT the offending dec instead of only incrementing a counter that
+// nothing reads until the run is over.
+//
+// Empty when the flag is off, which is what keeps an ordinary build's asm
+// byte-identical to one from a compiler without the mode.
+function san_underflow_abort(): string {
+    if (sanitize_on()) { return "    call __fern_san_abort\n"; }
+    return "";
 }
 
 // hev_shim_site emits a box shim's site prologue: record OUR caller as the
@@ -1705,6 +1808,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    je .Larrdec_free\n");
     s = s.write("    jg .Larrdec_dec\n");
     s = s.write("    incl __fern_rc_underflow(%rip)\n");
+    s = s.write(san_underflow_abort());
     s = s.write("    jmp .Larrdec_ret\n");
     s = s.write(".Larrdec_dec:\n");
     s = s.write("    subl $1, %ecx\n");
@@ -1818,6 +1922,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp .Lstrfree_ret\n");
     s = s.write(".Lstrfree_uf:\n");
     s = s.write("    incl __fern_rc_underflow(%rip)\n");
+    s = s.write(san_underflow_abort());
     s = s.write(".Lstrfree_ret:\n");
     s = s.write("    ret\n");
     // __fern_str_arr_free(arr) — string[] ELEMENT reclaim (#4355), the
@@ -1887,6 +1992,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp .Lsaf_ret\n");
     s = s.write(".Lsaf_uf:\n");
     s = s.write("    incl __fern_rc_underflow(%rip)\n");
+    s = s.write(san_underflow_abort());
     s = s.write(".Lsaf_ret:\n");
     s = s.write("    ret\n");
     // Large tier (#3425): recycle the >=512 KiB string[] outer buffer (base =
@@ -1961,6 +2067,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp .Laaf_ret\n");
     s = s.write(".Laaf_uf:\n");
     s = s.write("    incl __fern_rc_underflow(%rip)\n");
+    s = s.write(san_underflow_abort());
     s = s.write(".Laaf_ret:\n");
     s = s.write("    ret\n");
     // Large tier (#3425): recycle the >=512 KiB arr-of-arr outer buffer instead of
@@ -2027,6 +2134,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp .Lssaf_ret\n");
     s = s.write(".Lssaf_uf:\n");
     s = s.write("    incl __fern_rc_underflow(%rip)\n");
+    s = s.write(san_underflow_abort());
     s = s.write(".Lssaf_ret:\n");
     s = s.write("    ret\n");
     // Large tier (#3425): recycle the >=512 KiB string[][] outer buffer instead of
@@ -2117,6 +2225,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp .Loaf_ret\n");
     s = s.write(".Loaf_uf:\n");
     s = s.write("    incl __fern_rc_underflow(%rip)\n");
+    s = s.write(san_underflow_abort());
     s = s.write(".Loaf_ret:\n");
     s = s.write("    ret\n");
     // Large tier (#3425): recycle the >=512 KiB Option[]-array outer buffer instead
