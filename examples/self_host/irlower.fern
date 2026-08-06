@@ -20800,10 +20800,14 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // slot decs a null (guarded no-op).
     var j: i32 = st.n_params;
     while (j < st.locals.len()) {
-        if (!slot_list_has(keeps, j) && slot_is_reclaimable_struct(st, j)) {
+        var live_credit: boolean = slot_is_reclaimable_struct(st, j);
+        var scoped_credit: boolean = !live_credit && slot_is_reclaimable_struct_scoped(st, j);
+        if (!slot_list_has(keeps, j) && (live_credit || scoped_credit)) {
             // Deep-drop the struct's scalar-array fields (sole-owned literals), then
             // free the box. Order matters: read the fields before freeing the box.
-            st = emit_struct_field_drops(st, j);
+            // A BLOCK-SCOPED slot (credit reached only through the retired name) takes
+            // the BOX-ONLY form — the #3456 shallow contract, as for a "NODEEP:" slot.
+            if (!scoped_credit) { st = emit_struct_field_drops(st, j); }
             st = st.emit(ir.op_load_local(j));
             st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
             st = st.emit(ir.op_drop());
@@ -21729,7 +21733,7 @@ function arr_slots_of(s: LowerState): i32[] {
         // the exit dec-sweep / loop-rebind release never decs an uninitialised
         // (e.g. untaken-branch) slot — __fern_arr_dec null-guards, but the slot
         // must hold null not stack garbage.
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i) || slot_is_reclaimable_optarrarr(s, i) || slot_is_reclaimable_optarr(s, i)) { out = out.append(i); }
+        if (s.is_arr_slot(i) || slot_is_reclaimable_struct_scoped(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i) || slot_is_reclaimable_optarrarr(s, i) || slot_is_reclaimable_optarr(s, i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -28340,6 +28344,38 @@ function slot_is_reclaimable_struct(s: LowerState, i: i32): boolean {
     // (double-firing both loops over-released the concrete's box).
     if (sty.len() > 4 && sty[0:4] == "dyn ") { return false; }
     return util.index_of_str(s.reclaimable_names, s.locals[i].slot_name) >= 0;
+}
+
+// slot_is_reclaimable_struct_scoped: slot_is_reclaimable_struct with the
+// RETIRED-name lookup (#6127) — the credit is keyed on the source name, and a
+// BLOCK-SCOPED local's slot_name carries the "!retired!" prefix once its block
+// ends, so the exact-match lookup above misses it and a struct declared inside a
+// `while` body is never swept. Measured 8800 bytes over 100 rounds on a
+// `S { xs: i32[], n: i32 }` declared in a loop, against 0 on native.
+//
+// #6285 gave nine other classes this lookup by switching it inside their shared
+// predicate. That is exactly what must NOT happen here: slot_is_reclaimable_struct
+// has fourteen consumers, and it drives the loop-rebind stores, the reuse donor and
+// recipient releases and the precise drop as well as the sweep. Flipping it
+// wholesale SEGFAULTS the gen1 self-compile, because those other releases are not
+// all sole-owner for a block-scoped slot.
+//
+// So this variant is used at exactly TWO sites, which have to agree with each
+// other and with nothing else:
+//   - the function-exit sweep's struct loop, which frees the box; and
+//   - arr_slots_of, which zeroes the slot at entry — without which the sweep would
+//     dec stack garbage in a function whose block never ran.
+// The two move-on-return keeps sets deliberately keep the exact-match lookup: they
+// resolve a slot from a live AST name reference (`return r` / `return r.f`), and
+// slot_of matches exactly, so a retired slot can never appear in them — a returned
+// value's name is still live at the return.
+function slot_is_reclaimable_struct_scoped(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    var sty: string = s.struct_type_of_slot(i);
+    if (sty.len() == 0) { return false; }
+    if (sty.len() > 4 && sty[0:4] == "dyn ") { return false; }
+    return util.index_of_str(s.reclaimable_names, reclaim_slot_name(s, i)) >= 0;
 }
 
 // slot_is_reclaimable_tuple: slot `i` is a fresh, non-escaping SCALAR-tuple local

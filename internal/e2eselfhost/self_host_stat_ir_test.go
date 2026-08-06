@@ -17,10 +17,12 @@ import (
 // -> AST, dragging the `batch7` test module (std/test's assert_is_file /
 // assert_is_dir / assert_file_size) to the legacy emitter (#3457). It now lowers
 // to op_stat -> __fn___fern_stat, which on x86-64 is now a Fern runtime function
-// (#2649: asmcore.rt_src_stat — stat(2) via __syscall3 into __raw_scratch, then
-// build Ok(FileStat{...}) / Err(NotFound(_))); arm64/AST keep the hand-asm
-// __fern_stat (FileStat pre-interned via shape_ref). `Contains(asm, "__fern_stat")`
-// still holds — __fn___fern_stat contains it as a substring.
+// (#2649: asmcore.rt_src_stat — fstatat via __syscall4 into __raw_scratch, then
+// build Ok(FileStat{...}) / Err(NotFound(_))). arm64 runs the SAME Fern body now;
+// the FileStat shape is still pre-interned via shape_ref on both.
+// `Contains(asm, "__fern_stat")` holds either way — __fn___fern_stat contains it
+// as a substring — so it is not a guard against a revert; the lock-in tests in
+// self_host_runtime_fern_helper_*_test.go are.
 //
 // This is the first struct-RESULT builtin on the IR path: the match arm
 // `Ok(s) => s.is_file` binds `s` as a FileStat struct and the field reads resolve

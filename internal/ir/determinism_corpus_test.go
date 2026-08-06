@@ -11,7 +11,7 @@ package ir_test
 // drop order a coin flip. Five FIXTURES had that shape and had been compiling
 // to two different binaries at random for as long as the bug existed.
 //
-// So this runs the same comparison over the whole e2e fixture corpus, which is
+// So this runs the same comparison over the whole conformance corpus, which is
 // the closest thing the project has to "real programs" and grows on its own as
 // features land. New nondeterminism gets caught by whoever introduces it
 // rather than by whoever next attempts a byte-identity comparison — which is
@@ -73,14 +73,15 @@ func TestLowerDeterministicOverFixtureCorpus(t *testing.T) {
 	if testing.Short() {
 		t.Skip("corpus determinism sweep is not a -short test")
 	}
-	// conformance/cases, not internal/e2e/testdata/cases: #6337 moved the
-	// corpus out of internal/ and this glob did not follow it, which turned
-	// the guard from "the corpus is deterministic" into "there is no corpus"
-	// and made the whole test-units lane red on both arches.
+	// The corpus root, spelled out rather than imported: e2eharness.ConformanceCases
+	// is the same literal, but importing the e2e harness into a unit-test package
+	// to read one constant drags the whole build-and-run machinery in with it.
+	// internal/ir sits one level below internal/, like internal/e2e, so the
+	// relative path is identical.
 	//
-	// The count check below is what caught it. Keep it: a corpus glob that
-	// silently matches nothing is the one failure mode of this test that
-	// looks exactly like success.
+	// The count check below is why the move (#6337) was caught the same day
+	// rather than months later: a corpus glob that silently matches nothing is
+	// the one failure mode of this test that looks exactly like success.
 	cases, err := filepath.Glob(filepath.Join("..", "..", "conformance", "cases", "*", "main.fern"))
 	if err != nil {
 		t.Fatalf("glob fixtures: %v", err)

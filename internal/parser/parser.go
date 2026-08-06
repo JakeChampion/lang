@@ -4624,20 +4624,12 @@ func (p *parser) parseTodo() (ast.Stmt, error) {
 
 func (p *parser) parseVar() (ast.Stmt, error) {
 	kw := p.advance()
-	// Tuple-destructuring form: `var (a, b, ...) = expr;`. Mirrors
-	// `let (a, b, ...) = expr;` (handled by parseTupleDestructure)
-	// but uses the `var` keyword to keep the source surface uniform
-	// with regular `var name = expr;` declarations. Both forms
-	// produce the same `*ast.Destructure` AST node.
-	if p.match(lexer.Punct, "(") {
-		return p.parseTupleDestructure(kw.Pos)
-	}
-	// Struct-destructuring form: `var Point { x, y } = expr;`. Detected by
-	// an identifier immediately followed by `{` (a plain `var name` decl is
-	// followed by `:`, `=`, or `;`). Same `*ast.Destructure` node as the
-	// tuple form, with Fields set.
-	if p.peek().Kind == lexer.Ident && p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "{" {
-		return p.parseStructDestructure(kw.Pos)
+	// Destructuring form: `var (a, b, …) = expr;` / `var Point { x, y } =
+	// expr;`. Mirrors the `let` spellings (both route to parseDestructure)
+	// but uses the `var` keyword to keep the source surface uniform with
+	// regular `var name = expr;` declarations.
+	if p.atDestructurePattern() {
+		return p.parseDestructure(kw.Pos)
 	}
 	name, err := p.expect(lexer.Ident, "")
 	if err != nil {
@@ -4790,19 +4782,13 @@ func (p *parser) parseUse(parent *ast.Block) error {
 // unreachable in that position either way.
 func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	kw := p.advance() // let
-	// `let (a, b, ...) = expr;` — tuple destructuring shorthand.
-	// No `else` branch: a tuple is statically arity-checked, so
-	// the binding can't fail at runtime the way enum
-	// destructuring can.
-	if p.match(lexer.Punct, "(") {
-		return p.parseTupleDestructure(kw.Pos)
-	}
-	// `let Point { x, y } = expr;` — struct destructuring (identifier
-	// immediately followed by `{`). A struct pattern is irrefutable, so
-	// there is nothing for an `else` to catch; the refutable forms all
-	// have `(`, `.`, `@` or a literal after the name, never `{`.
-	if p.peek().Kind == lexer.Ident && p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "{" {
-		return p.parseStructDestructure(kw.Pos)
+	// `let (a, b, …) = expr;` / `let Point { x, y } = expr;` — the
+	// irrefutable forms, which take no `else`: a tuple is statically
+	// arity-checked and a struct has one shape, so neither can fail the
+	// way an enum destructure can. The refutable forms below all have
+	// `(`, `.`, `@` or a literal after the name, never `{`.
+	if p.atDestructurePattern() {
+		return p.parseDestructure(kw.Pos)
 	}
 	pats, err := p.parseOrPatterns()
 	if err != nil {
@@ -4838,111 +4824,6 @@ func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 		p.parseBlockStmts(rest)
 	}
 	return p.buildPatternBindingMatch(kw.Pos, pats, src, rest, elseBlk, ast.OriginLetElse)
-}
-
-// parseTupleDestructure handles `let (a, b, …) = expr;` —
-// position-based binding into the enclosing scope from a
-// tuple-typed expression. Caller has consumed `let`; the
-// upcoming `(` opens the binding list. At least 2 names
-// are required (matches the no-singleton-tuples rule).
-func (p *parser) parseTupleDestructure(letPos ast.Position) (ast.Stmt, error) {
-	if _, err := p.expect(lexer.Punct, "("); err != nil {
-		return nil, err
-	}
-	var names []string
-	if !p.match(lexer.Punct, ")") {
-		for {
-			nameTok, err := p.expect(lexer.Ident, "")
-			if err != nil {
-				return nil, err
-			}
-			names = append(names, nameTok.Text)
-			if _, ok := p.accept(lexer.Punct, ","); ok {
-				if p.match(lexer.Punct, ")") {
-					break
-				}
-				continue
-			}
-			break
-		}
-	}
-	if _, err := p.expect(lexer.Punct, ")"); err != nil {
-		return nil, err
-	}
-	if len(names) < 2 {
-		return nil, p.errorf(letPos, "tuple destructure needs at least 2 names")
-	}
-	if _, err := p.expect(lexer.Punct, "="); err != nil {
-		return nil, err
-	}
-	src, err := p.parseExpr()
-	if err != nil {
-		return nil, err
-	}
-	if _, err := p.expect(lexer.Punct, ";"); err != nil {
-		return nil, err
-	}
-	for i, nm := range names {
-		names[i] = discardName(nm, letPos, i)
-	}
-	return &ast.Destructure{P: letPos, Names: names, Init: src}, nil
-}
-
-// parseStructDestructure handles `let Point { x, y } = expr;` /
-// `var Point { x, y } = expr;` — bind each named field of a struct-typed
-// expression into the enclosing scope. Shorthand `{ x }` binds the field
-// `x` to a local `x`; `{ x: nx }` binds field `x` to `nx` (rename). A
-// trailing `..` marks that other fields are intentionally omitted (any
-// subset may be bound; `..` is documentation, not enforcement). The
-// cursor is on the struct-name identifier. Produces the shared
-// *ast.Destructure node with Fields set (struct mode).
-func (p *parser) parseStructDestructure(letPos ast.Position) (ast.Stmt, error) {
-	nameTok := p.advance() // struct-name identifier
-	if _, err := p.expect(lexer.Punct, "{"); err != nil {
-		return nil, err
-	}
-	var names, fields []string
-	for !p.match(lexer.Punct, "}") {
-		if p.match(lexer.Punct, "..") {
-			p.advance()
-			break
-		}
-		fieldTok, err := p.expect(lexer.Ident, "")
-		if err != nil {
-			return nil, err
-		}
-		binding := fieldTok.Text
-		if _, ok := p.accept(lexer.Punct, ":"); ok {
-			bindTok, err := p.expect(lexer.Ident, "")
-			if err != nil {
-				return nil, err
-			}
-			binding = bindTok.Text
-		}
-		fields = append(fields, fieldTok.Text)
-		names = append(names, binding)
-		if _, ok := p.accept(lexer.Punct, ","); ok {
-			continue
-		}
-		break
-	}
-	if _, err := p.expect(lexer.Punct, "}"); err != nil {
-		return nil, err
-	}
-	if len(fields) == 0 {
-		return nil, p.errorfCode(letPos, "P001", "struct destructure needs at least one field")
-	}
-	if _, err := p.expect(lexer.Punct, "="); err != nil {
-		return nil, err
-	}
-	src, err := p.parseExpr()
-	if err != nil {
-		return nil, err
-	}
-	if _, err := p.expect(lexer.Punct, ";"); err != nil {
-		return nil, err
-	}
-	return &ast.Destructure{P: letPos, Names: names, Fields: fields, StructName: nameTok.Text, Init: src}, nil
 }
 
 // atParamPattern reports whether the cursor is on a destructuring
@@ -4999,7 +4880,7 @@ func (p *parser) parseParamPattern() (ast.Param, *ast.Destructure, error) {
 	if err != nil {
 		return ast.Param{}, nil, err
 	}
-	d, err := p.paramDestructure(pos, pat)
+	d, err := p.irrefutableDestructure(pos, pat, paramSite)
 	if err != nil {
 		return ast.Param{}, nil, err
 	}
@@ -5028,10 +4909,16 @@ func (p *parser) parseParamPattern() (ast.Param, *ast.Destructure, error) {
 	return ast.Param{Name: holder, NamePos: pos, Type: ptype}, d, nil
 }
 
-// paramDestructure converts an irrefutable pattern into the equivalent
-// *ast.Destructure, or reports why the pattern can't stand in a binding
-// site with no miss branch.
-func (p *parser) paramDestructure(pos ast.Position, pat matchPattern) (*ast.Destructure, error) {
+// irrefutableDestructure converts a pattern into the equivalent
+// *ast.Destructure, or reports why the pattern can't stand at a binding
+// site with no miss branch — a destructuring parameter, or the
+// `let`/`var` destructuring forms. `site` names the site for the
+// diagnostic ("parameter" / "destructuring binding").
+//
+// The two shapes that always match are a tuple of binders and `_`, and a
+// struct pattern. Everything else the shared grammar can express can
+// fail, and needs a `match` / `if let` / `let … else` instead.
+func (p *parser) irrefutableDestructure(pos ast.Position, pat matchPattern, site string) (*ast.Destructure, error) {
 	switch {
 	case pat.TupleElems != nil:
 		names := make([]string, len(pat.TupleElems))
@@ -5040,25 +4927,94 @@ func (p *parser) paramDestructure(pos ast.Position, pat matchPattern) (*ast.Dest
 			case el.IsWildcard:
 				names[i] = "_"
 			case el.Literal != nil:
-				return nil, p.refutableParamErr(pos, "a literal tuple element")
+				return nil, p.refutableBindErr(pos, "a literal tuple element", site)
 			default:
 				names[i] = el.Name
 			}
 		}
-		return &ast.Destructure{P: pos, Names: names}, nil
+		return &ast.Destructure{P: pos, Names: discardNames(names, pos), Init: nil}, nil
 	case pat.NamedFields:
-		return &ast.Destructure{P: pos, Names: pat.Bindings, Fields: pat.fieldNames, StructName: pat.VariantName}, nil
+		if len(pat.fieldNames) == 0 {
+			return nil, p.errorfCode(pos, "P001", "struct destructure needs at least one field")
+		}
+		return &ast.Destructure{P: pos, Names: discardNames(pat.Bindings, pos), Fields: pat.fieldNames, StructName: pat.VariantName}, nil
 	case pat.VariantName != "":
-		return nil, p.refutableParamErr(pos, "an enum variant pattern")
+		return nil, p.refutableBindErr(pos, "an enum variant pattern", site)
 	case pat.Literal != nil:
-		return nil, p.refutableParamErr(pos, "a literal pattern")
+		return nil, p.refutableBindErr(pos, "a literal pattern", site)
 	}
-	return nil, p.refutableParamErr(pos, "this pattern")
+	return nil, p.refutableBindErr(pos, "this pattern", site)
 }
 
-func (p *parser) refutableParamErr(pos ast.Position, what string) error {
+// discardNames renames each `_` element to its own internal name, so a
+// pattern may discard more than one position without the elements
+// colliding as a redeclared `_` (#6346 — `_` is a discard at every
+// binding site, never a variable). Non-discard names pass through.
+func discardNames(names []string, pos ast.Position) []string {
+	out := make([]string, len(names))
+	for i, nm := range names {
+		out[i] = discardName(nm, pos, i)
+	}
+	return out
+}
+
+// Binding sites that irrefutableDestructure serves, named for its
+// diagnostics. Only a parameter has somewhere to put an `@` binding (the
+// synthetic parameter itself).
+const (
+	paramSite       = "parameter"
+	destructureSite = "destructuring binding"
+)
+
+func (p *parser) refutableBindErr(pos ast.Position, what, site string) error {
 	return p.errorfCode(pos, "P001",
-		"%s can fail to match, so it cannot be a parameter pattern — a parameter has no else branch; destructure with a tuple `(a, b)` or struct `S { x, y }` pattern, or `match` on the value in the body", what)
+		"%s can fail to match, so it cannot be a %s pattern — there is no else branch here; destructure with a tuple `(a, b)` or struct `S { x, y }` pattern, or `match` on the value in the body", what, site)
+}
+
+// atDestructurePattern reports whether the cursor opens one of the
+// irrefutable `let` / `var` destructuring forms — `(` for a tuple
+// pattern, `IDENT {` for a struct one. A plain `var name` declaration is
+// followed by `:`, `=` or `;`, and every refutable `let` form puts `(`,
+// `.`, `@` or a literal after the name, so neither collides.
+func (p *parser) atDestructurePattern() bool {
+	if p.match(lexer.Punct, "(") {
+		return true
+	}
+	return p.peek().Kind == lexer.Ident &&
+		p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "{"
+}
+
+// parseDestructure handles the irrefutable binding statements
+// `let (a, b) = expr;` / `let Point { x, y } = expr;` and their `var`
+// spellings. The head reads through parseMatchPattern like every other
+// binding site; there is no `else` here, so a refutable pattern is a
+// parse error rather than a runtime miss. The cursor is on the pattern's
+// first token, the keyword having been consumed.
+//
+// An `@` binding can't arrive here: atDestructurePattern only claims a
+// leading `(` or `IDENT {`, and the `IDENT @` form routes to the
+// refutable `let … else` path (where the `@` has a match arm to bind in).
+func (p *parser) parseDestructure(kwPos ast.Position) (ast.Stmt, error) {
+	pat, err := p.parseMatchPattern()
+	if err != nil {
+		return nil, err
+	}
+	d, err := p.irrefutableDestructure(kwPos, pat, destructureSite)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "="); err != nil {
+		return nil, err
+	}
+	src, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+	d.Init = src
+	return d, nil
 }
 
 // prependParamDestructures splices the desugared `let (a, b) = <synth>;`

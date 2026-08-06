@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Fail when a workflow selects a Go test by a name nothing in the tree
-# answers to.
+# Fail when a lane selects a Go test by a name nothing in the tree answers to.
+#
+# "Lane" is .github/workflows/*.yml plus scripts/netlify-smoke-test, the
+# Netlify smoke lane, which names its own tests the same way and has the same
+# failure mode.
 #
 # `go test -run` treats an unmatched name as "select nothing", silently and
 # with exit 0, so a lane keeps reporting green while covering less than its own
@@ -9,7 +12,7 @@
 # fixpoint its 55-minute budget was sized for, deleted with the AST emitters in
 # #5972 and never removed from the regex (#6310).
 #
-# Two strengths of check, because .github/ uses names two ways:
+# Two strengths of check, because the lanes use names two ways:
 #
 #   EXACT   a name terminated by `$`, `|` or `)` — the `^(A|B|C)$` and `^A$`
 #           forms, plus the `ISOLATED_DRIVER_TESTS` alternation — and every
@@ -37,29 +40,29 @@ fi
 
 # Whole-line comments are prose and may name a test that was legitimately
 # retired; only the machine-read parts of these files select anything.
-yaml=$(grep -hvE '^[[:space:]]*#' .github/workflows/*.yml)
+lanes=$(grep -hvE '^[[:space:]]*#' .github/workflows/*.yml scripts/netlify-smoke-test)
 weights=$(grep -hvE '^[[:space:]]*#' .github/selfhost-test-weights.txt)
 
 {
-	printf '%s\n' "$yaml" | grep -oE '\bTest[A-Za-z0-9_]+[$|)]' | sed -E 's/.$//'
+	printf '%s\n' "$lanes" | grep -oE '\bTest[A-Za-z0-9_]+[$|)]' | sed -E 's/.$//'
 	printf '%s\n' "$weights" | grep -oE '^Test[A-Za-z0-9_]+'
 } | sort -u >"$exact"
 
-printf '%s\n' "$yaml" | grep -oE '\bTest[A-Za-z0-9_]+' | sort -u |
+printf '%s\n' "$lanes" | grep -oE '\bTest[A-Za-z0-9_]+' | sort -u |
 	grep -vxF -f "$exact" >"$prefix" || true
 
 status=0
 while read -r n; do
 	[ -n "$n" ] || continue
 	grep -qxF "$n" "$names" && continue
-	echo "testname gate: '$n' is selected exactly in .github/ but is not a test function" >&2
+	echo "testname gate: '$n' is selected exactly by a lane but is not a test function" >&2
 	status=1
 done <"$exact"
 
 while read -r n; do
 	[ -n "$n" ] || continue
 	grep -qE "^${n}" "$names" && continue
-	echo "testname gate: '$n' is used as a test-name prefix in .github/ but matches no test" >&2
+	echo "testname gate: '$n' is used as a test-name prefix by a lane but matches no test" >&2
 	status=1
 done <"$prefix"
 
@@ -71,4 +74,4 @@ if [ "$status" -ne 0 ]; then
 	exit 1
 fi
 
-echo "testname gate: $(wc -l <"$exact" | tr -d ' ') exact + $(wc -l <"$prefix" | tr -d ' ') prefix test selectors in .github/ resolve"
+echo "testname gate: $(wc -l <"$exact" | tr -d ' ') exact + $(wc -l <"$prefix" | tr -d ' ') prefix test selectors resolve"

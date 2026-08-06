@@ -1,0 +1,62 @@
+// `json_parse_result` locates a syntax error. `json_parse` could only
+// answer `None`, so a malformed document reported that it was malformed
+// and nothing else — the position was known at the point of failure and
+// discarded.
+//
+// Also pins RFC 8259's number grammar, which the parser used to accept
+// loosely: `1.` (no fraction digits), `01` (leading zero) and `1e` / `1e+`
+// (no exponent digits) all parsed. A JSON parser that accepts what no
+// other implementation does is worse than one that rejects too much,
+// because the disagreement is silent.
+
+import "std/json";
+
+function located(doc: string, line: i32, col: i32): boolean {
+    match (json.json_parse_result(doc)) {
+        Ok(_) => { return false; },
+        Err(e) => { return e.line == line && e.col == col; },
+    }
+}
+
+function rejected(doc: string): boolean {
+    match (json.json_parse(doc)) {
+        Some(_) => { return false; },
+        None => { return true; },
+    }
+}
+
+function accepted(doc: string): boolean {
+    match (json.json_parse(doc)) {
+        Some(_) => { return true; },
+        None => { return false; },
+    }
+}
+
+function main(): i32 {
+    // The error is on line 3, at the comma standing where a value belongs.
+    if (!located("{\n  \"a\": 1,\n  \"b\": ,\n}", 3, 8)) { return 1; }
+    // Trailing content is located at the first byte past the value.
+    if (!located("{\"a\": 1} trailing", 1, 10)) { return 2; }
+    // A single-line document still reports line 1.
+    if (!located("[1, 2,]", 1, 7)) { return 3; }
+
+    // RFC 8259 number grammar: these are not numbers.
+    if (!rejected("1.")) { return 4; }
+    if (!rejected("01")) { return 5; }
+    if (!rejected("1e")) { return 6; }
+    if (!rejected("1e+")) { return 7; }
+    if (!rejected(".5")) { return 8; }
+    if (!rejected("-")) { return 9; }
+
+    // ...and these are.
+    if (!accepted("1")) { return 10; }
+    if (!accepted("-0")) { return 11; }
+    if (!accepted("0.5")) { return 12; }
+    if (!accepted("1.0e5")) { return 13; }
+    if (!accepted("[1, 2, [3, {\"a\": null}]]")) { return 14; }
+
+    // A well-formed document must still parse through the Option API,
+    // which now delegates to the Result one.
+    if (!accepted("{\n  \"a\": 1,\n  \"b\": [true, false]\n}")) { return 15; }
+    return 0;
+}

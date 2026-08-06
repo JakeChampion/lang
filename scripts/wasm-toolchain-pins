@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#
+# scripts/wasm-toolchain-pins — print the project's pinned wasm toolchain
+# versions as shell assignments, for `eval` by anything that installs them:
+#
+#   eval "$(scripts/wasm-toolchain-pins)"   # WASMTIME_VER, WASMTOOLS_VER
+#
+# The pins themselves live in .github/actions/setup-fern/action.yml, whose own
+# header declares it the single place to edit ("Kept here so a single edit
+# updates every consumer"). Its wasm cache key is the one line that carries
+# both versions together, so this reads that line rather than restating them.
+#
+# Why it matters that this is derived. The pins are not cosmetic: wasmtime v46
+# changed the component-model-async ABI (async functype tag 0x40 -> 0x43, and
+# component instances became non-reentrant), so running the WASI Preview-3
+# async/stream/future tests under an older wasmtime fails with an opaque
+# `invalid leading byte (0x43)` rather than anything that names the version.
+# A copy of the pins that silently falls behind buys exactly that failure —
+# the comment beside the copy in .claude/hooks/session-start.sh still claimed
+# "wasmtime v37 ... and wasm-tools 1.240" long after the pin moved to v46.
+#
+# A parse failure is fatal on purpose: guessing a version installs a toolchain
+# that mismatches the tests.
+
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
+action="$root/.github/actions/setup-fern/action.yml"
+
+key=$(grep -oE 'key: wasm-\$\{\{ runner\.arch \}\}-[0-9.]+-v[0-9.]+' "$action" | head -1)
+if [ -z "$key" ]; then
+  echo "error: no pinned wasm toolchain versions in $action" >&2
+  echo "       (looked for its 'key: wasm-\${{ runner.arch }}-<wasm-tools>-v<wasmtime>' cache key)" >&2
+  exit 1
+fi
+
+echo "WASMTIME_VER=$(sed -E 's/.*\}\}-([0-9.]+)-v([0-9.]+)$/\2/' <<<"$key")"
+echo "WASMTOOLS_VER=$(sed -E 's/.*\}\}-([0-9.]+)-v([0-9.]+)$/\1/' <<<"$key")"

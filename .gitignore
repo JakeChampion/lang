@@ -8,6 +8,9 @@
 /bin/
 /build/
 /.gotmp/
+# scripts/netlify-smoke-test's local cache (self-host driver binaries, the
+# pinned wasm toolchain). On Netlify this lives in the build cache instead.
+/.smoke-cache/
 *.s
 *.o
 # Ignore local Claude Code config, but track the shared SessionStart hook
