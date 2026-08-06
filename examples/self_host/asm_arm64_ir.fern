@@ -569,6 +569,25 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // (#2649 Option A A1b). len -> x1, data -> x0, call, push the box.
             s = s.mark_heap();
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_box\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 204) {  // syscall3
+            // Syscall sub-floor (#2649), the arm64 sibling of asm_ir's handler:
+            // operand stack [nr, a1, a2, a3] (a3 on top) — a3->x2, a2->x1, a1->x0,
+            // nr->x8, `svc #0`, result in x0. No runtime symbol.
+            //
+            // `ldr x8, [sp], #16` is also the marker darwinize keys the Mach-O
+            // rewrite off: it cannot remap a syscall number it only sees at
+            // runtime (its `mov x8, #N` rule needs a literal), so it instead
+            // rewrites this load to x16, flips the trap to `svc #0x80` and
+            // normalises the carry-flag errno. The NUMBER is therefore already
+            // the target's — the rt_src_* source is generated per backend with
+            // the Darwin BSD number when `darwin` is set. That instruction
+            // appears nowhere else in this emitter, so the match is unambiguous.
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x8, [sp], #16\n    svc #0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 223) {  // raw_addr
+            // pop off (top), ptr; push ptr+off at full width (#2649). Unlike the
+            // `add` op this is NOT followed by the i32 `sxtw` narrow, which is
+            // the whole point — a heap address survives it.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x0, x0, x1\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 5) {  // const_str
             // String literal: intern in .rodata, build an rc-headered box via
             // __fern_str_box (#2649 Option A A1b) — data = .rodata label, len = byte
@@ -611,10 +630,16 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.mark_arr_slice();
             s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_arr_slice\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 185) {  // random_bytes
-            // operand stack [n]; __fern_random_bytes(x0=n) -> string box in x0.
-            // asm_arm64.emit_runtime emits the helper inside its heap block.
+            // [n] IS param[0]; call the Fern-compiled __fn___fern_random_bytes
+            // (asmcore.rt_src_random_bytes, #2649) via the stack ABI, mirroring
+            // asm_ir's handler. The body fills the buffer through the __syscall3
+            // sub-floor and boxes it with __raw_string (so, unlike the hand-asm
+            // this replaced, the result carries the rc header __fern_str_box
+            // writes — an unheadered box made every dec of a random_bytes string
+            // read its refcount out of the preceding allocation).
             s = s.mark_heap();
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_random_bytes\n    str x0, [sp, #-16]!\n");
+            s = s.need("random_bytes");
+            s = s.write("    bl __fn___fern_random_bytes\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 186) {  // random_i32
             // no operands; __fern_random_i32() -> i32 in x0. Helper is gated by
             // the random_i32 need (asm_arm64.emit_runtime), heap-independent.
@@ -5707,8 +5732,7 @@ function emit_rt_subprocess(s: asmcore.EmitState, darwin: boolean): asmcore.Emit
 }
 
 // emit_rt_net emits the socket primitives (tcp listen / accept / recv / send /
-// close / connect / pollable, udp_send) plus __fern_alloc_u8 and
-// __fern_random_bytes.
+// close / connect / pollable, udp_send) plus __fern_alloc_u8.
 function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write("__fern_tcp_listen:\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
@@ -6001,73 +6025,13 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write(".size __fern_alloc_u8, .-__fern_alloc_u8\n");
 
-    // __fern_string_from_bytes is now a Fern runtime function (#2649): see
-    // asmcore.rt_src_string_from_bytes, emitted (need-gated on str_from_bytes)
-    // in the migrated-helpers section via the raw-memory intrinsics. The single
-    // shared body serves both arm64 AST + IR. No longer in this heap block.
-    // __fern_random_bytes(x0 = n) → string box of n random bytes
-    // via getrandom (aarch64 syscall 278).
-    s = s.write(".globl __fern_random_bytes\n");
-    s = s.write(".type __fern_random_bytes, %function\n");
-    s = s.write("__fern_random_bytes:\n");
-    if (darwin) {
-        // Darwin: getentropy(buf, len) (BSD 500), max 256 bytes per
-        // call, no flags arg — loop in 256-byte chunks. x21 (cursor)
-        // / x22 (remaining) are callee-save so they survive the
-        // syscall. Mirrors the Go backend's emitRandomBytesRuntime.
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");           // n
-        s = s.write("    bl __fern_alloc\n");        // alloc n bytes (x0 = n)
-        s = s.write("    mov x20, x0\n");           // buf
-        s = s.write("    mov x21, x20\n");          // write cursor
-        s = s.write("    mov x22, x19\n");          // bytes remaining
-        s = s.write(".Lrb_loop:\n");
-        s = s.write("    cbz x22, .Lrb_done\n");
-        s = s.write("    mov x0, x21\n");
-        s = s.write("    mov x1, #256\n");
-        s = s.write("    cmp x22, x1\n");
-        s = s.write("    csel x1, x22, x1, lo\n");   // min(remaining, 256)
-        s = s.write("    mov x16, #500\n");          // getentropy
-        s = s.write("    svc #0x80\n");
-        s = s.write("    mov x1, #256\n");           // recompute chunk size
-        s = s.write("    cmp x22, x1\n");
-        s = s.write("    csel x1, x22, x1, lo\n");
-        s = s.write("    add x21, x21, x1\n");
-        s = s.write("    sub x22, x22, x1\n");
-        s = s.write("    b .Lrb_loop\n");
-        s = s.write(".Lrb_done:\n");
-        s = s.write("    mov x0, #16\n");           // string box
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x20, [x0]\n");          // data@0
-        s = s.write("    str x19, [x0, #8]\n");      // len@8
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-    } else {
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");           // n
-        s = s.write("    bl __fern_alloc\n");        // alloc n bytes (x0 = n)
-        s = s.write("    mov x20, x0\n");           // buf
-        s = s.write("    mov x0, x20\n");           // getrandom(buf, n, 0)
-        s = s.write("    mov x1, x19\n");
-        s = s.write("    mov x2, #0\n");
-        s = s.write("    mov x8, #278\n");          // sys_getrandom
-        s = s.write("    svc #0\n");
-        s = s.write("    mov x0, #16\n");           // string box
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x20, [x0]\n");          // data@0
-        s = s.write("    str x19, [x0, #8]\n");      // len@8
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-    }
-    s = s.write(".size __fern_random_bytes, .-__fern_random_bytes\n");
+    // __fern_string_from_bytes and __fern_random_bytes used to live here; both
+    // are Fern runtime functions now (#2649), emitted need-gated in the
+    // migrated-helpers section from asmcore.rt_src_string_from_bytes /
+    // rt_src_random_bytes. random_bytes is no longer forked on `darwin` either:
+    // the shared source is generated with the target's entropy syscall number
+    // (getrandom 278 / getentropy 500) and fills the buffer in <= 256-byte
+    // chunks, which is what getentropy's per-call limit needed the fork for.
 
     // __fern_i32_gcd / __fern_i32_lcm are now Fern runtime functions (#2649):
     // see asmcore.rt_src_i32_gcd / _lcm, emitted (need-gated) in the migrated-
@@ -7268,6 +7232,17 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("str_split")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_split(), s.struct_decls, s);
     }
+    // __fern_random_bytes — Fern runtime function (#2649), the first syscall leaf
+    // to reach arm64: the body fills the buffer through the __syscall3 sub-floor
+    // and boxes it with __raw_string. The source is shared with x86-64; only the
+    // entropy syscall number differs — arm64-linux getrandom 278, arm64-darwin
+    // getentropy BSD 500 (darwinize cannot remap a number the emitter only has at
+    // runtime, so the Darwin number is baked in here instead). heap dep.
+    if (s.has_need("random_bytes")) {
+        var rb_sysno: string = "278";
+        if (darwin) { rb_sysno = "500"; }
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes(rb_sysno), s.struct_decls, s);
+    }
     // __fern_str_bytes is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_bytes, emitted (need-gated) in the migrated-helpers
     // section below. The single shared body serves both arm64 AST + IR. It builds
@@ -7780,8 +7755,12 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
 //     number-compatible Darwin form are emitted directly by the code
 //     generator behind its `darwin` flag instead: clock_gettime →
 //     gettimeofday (now_unix_ms) / CNTVCT_EL0 (monotonic_ns), getrandom
-//     → getentropy (random_bytes), nanosleep → select (sleep_ms), and
-//     the subprocess pipe2 → pipe / clone → fork divergences. The
+//     → getentropy (random_i32), nanosleep → select (sleep_ms), and
+//     the subprocess pipe2 → pipe / clone → fork divergences. A THIRD
+//     shape rides the generic `__syscall3` op (#2649): its number is an
+//     operand rather than a literal, so the Fern runtime source bakes in
+//     the target's number and darwinize only rewrites the number
+//     register + trap — see the `ldr x8, [sp], #16` rule below. The
 //     supported surface is the core language (arithmetic, control flow,
 //     functions, structs, enums, arrays, strings incl. heap concat,
 //     closures, maps), stdin/stdout I/O, the filesystem builtins
@@ -7867,7 +7846,9 @@ pub function darwinize(asm: string): string {
     var i: i32 = 0;
     // prev_sys_num holds the Darwin number of a remapped syscall whose
     // `mov x16, #M` we just emitted, so the following `svc` knows whether
-    // (and how) to flip the trap + normalise the errno. -1 = none.
+    // (and how) to flip the trap + normalise the errno. -1 = none. The
+    // generic-syscall marker below parks 0 there — not a real Darwin number,
+    // just "fallible, normalise" (0 is unused as a BSD syscall number).
     var prev_sys_num: i32 = 0 - 1;
     var norm_n: i32 = 0;   // fresh-label counter for errno normalisation
     while (i <= n) {
@@ -7898,6 +7879,15 @@ pub function darwinize(asm: string): string {
             } else if (darwin_index_of(line, ":lo12:") >= 0) {
                 var idx: i32 = darwin_index_of(line, ":lo12:");
                 out_line = line[0:idx] + line[idx + 6:line.len()] + "@PAGEOFF";
+            } else if (body == "ldr x8, [sp], #16") {
+                // The __syscall3 op's number load (#2649) — a generic syscall
+                // whose number is an operand, not a literal, so the `mov x8, #N`
+                // rule below cannot see it. The number in the operand is already
+                // the Darwin one (the rt_src_* source is generated per target),
+                // so only the number REGISTER and the trap need rewriting; 0
+                // marks it fallible so the `svc` arm normalises the errno.
+                out_line = "    ldr x16, [sp], #16";
+                this_sys_num = 0;
             } else if (darwin_starts_with(body, "mov x8, #")) {
                 // Match the LSTRIPPED body, not a literal "    mov x8, #".
                 // The emitter's indentation is not uniform — the subprocess
