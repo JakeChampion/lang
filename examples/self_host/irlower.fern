@@ -6045,6 +6045,16 @@ pub function expr_is_u32arr(e: parser.Expr, s: LowerState): boolean {
 // select the unsigned form (#5245).
 pub function expr_is_u32(e: parser.Expr, s: LowerState): boolean {
     match (e) {
+        // A bare literal carrying a `u32` SUFFIX is unsigned — the u32 sibling of
+        // expr_is_u64's arm, and the same omission: with no ExprNumber arm at all,
+        // `2147484527u32 % 861u32` selected the SIGNED remainder and answered -677
+        // where the unsigned one gives 713. Silent, like its u64 twin, and hidden
+        // for the same reason: the same values through locals take the ExprIdent
+        // arm below, where the slot carries u32.
+        parser.ExprNumber(num) => {
+            if (num.is_float) { return false; }
+            return num.suffix == "u32";
+        },
         parser.ExprIdent(id) => { return s.is_u32_slot(s.slot_of(id.name)); },
         parser.ExprIndex(ix) => {
             // a[i] on a u32[] is a u32 element. The array is an ident slot
@@ -6340,8 +6350,16 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
             // this an i64[] LITERAL element (`[5000000000]`, incl. the inner array of
             // an i64[][]) skipped the arr_make_i64 path and emitted `i32.const`
             // with an out-of-range constant on the wasm backend (module won't parse).
-            if (!num.is_float && (literal_is_i64(num.text)
-                    || num.suffix == "i64" || num.suffix == "u64")) { return 64; }
+            if (num.is_float) { return 32; }
+            // An explicit suffix is the literal's DECLARED width, and it outranks
+            // its magnitude. `2147484197u32` is past i32-max but well inside
+            // u32-max, so reading it by value alone called it 64 and the enclosing
+            // function bailed off the IR path — the `return` guard below refuses a
+            // width-64 value from a 32-bit return type. Only `f` suffixes are
+            // absent here: the lexer sets is_float for those (#6261).
+            if (num.suffix == "i64" || num.suffix == "u64") { return 64; }
+            if (num.suffix.len() > 0) { return 32; }
+            if (literal_is_i64(num.text)) { return 64; }
             return 32;
         },
         parser.ExprIdent(id) => {
