@@ -826,8 +826,16 @@ var strictIRBailReasons = []struct {
 	// and refuses inside its own body, so the bail names `__lam_0` and the node
 	// is the lifted return rather than the call. Two bails one line apart in the
 	// source that the bare function name would have made look unrelated.
-	{"lifted-lambda-return", `function main(): i32 {
-    var v: i64 = (match ((702i64) /? (3i64)) { Some(c) => c, None => 752i64 });
+	//
+	// The `None` arm is a CALL, not a literal, and that is the whole ingredient
+	// (#6292): #6271 taught `lower_value_tail` the literal-arm form, so with
+	// `None => 752i64` this program lowers and the fixture asserted a gap that
+	// had closed. Any non-literal arm still refuses — `(752i64 + 0i64)` does
+	// too — but a call cannot be constant-folded back into the literal shape,
+	// so it is the spelling that survives a folder improvement.
+	{"lifted-lambda-return", `function fallback(): i64 { return 752i64; }
+function main(): i32 {
+    var v: i64 = (match ((702i64) /? (3i64)) { Some(c) => c, None => fallback() });
     return ((v as i32) & 255i32);
 }
 `, "__lam_0", "did not lower: `return` of ident `c`"},
@@ -838,10 +846,19 @@ var strictIRBailReasons = []struct {
 // of them collapse to the same message.
 func TestSelfHostStrictIRNamesBailReason(t *testing.T) {
 	_, runner, driverBin := strictIRDriver(t)
+	langBin := buildLangBinForInterp(t)
 
 	seen := map[string]string{}
 	for _, tc := range strictIRBailReasons {
 		t.Run(tc.name, func(t *testing.T) {
+			// The "VALID" half of the table's contract, gated rather than
+			// asserted in a comment: a program the native compiler rejects
+			// bails for reasons that say nothing about the IR subset, which is
+			// how three earlier gap reports came to be filed against programs
+			// the checker refuses.
+			if out, err := nativeCheck(t, langBin, tc.src); err != nil {
+				t.Fatalf("the native compiler rejects this fixture, so its bail says nothing about the IR subset: %v\n%s", err, out)
+			}
 			out, stderr, code := runDriver(t, runner, driverBin, []byte(tc.src), true)
 			if code != 3 {
 				t.Fatalf("driver exited %d with %d bytes, want a strict-IR refusal (3)\n%s", code, len(out), stderr)
@@ -860,6 +877,17 @@ func TestSelfHostStrictIRNamesBailReason(t *testing.T) {
 		}
 		seen[tc.reason] = tc.name
 	}
+}
+
+// nativeCheck runs `fern -check` over `src` and returns the compiler's output
+// alongside any rejection.
+func nativeCheck(t *testing.T, langBin, src string) ([]byte, error) {
+	t.Helper()
+	f := filepath.Join(t.TempDir(), "fixture.fern")
+	if err := os.WriteFile(f, []byte(src), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	return exec.Command(langBin, "-check", f).CombinedOutput()
 }
 
 // TestSelfHostStrictIRWasm runs the corpus through the wasm IR driver. The

@@ -163,14 +163,14 @@ jobs:
           mkdir -p build
           for f in examples/*.fern; do
             name=$(basename "$f" .fern)
-            if ! ./bin/fern -target arm64-darwin -o "build/$name" "$f" 2>build/$name.err; then
+            if ! ./bin/fern -target arm64-darwin -o "build/$name" "$f" 2>"build/$name.err"; then
               if grep -q "not yet ported" "build/$name.err"; then
                 echo "skip $name (unported darwin runtime helper)"; continue
               fi
               echo "build $name FAILED:"; cat "build/$name.err"; exit 1
             fi
             echo "::group::run $name"
-            ./build/$name || echo "(exited $?)"
+            "./build/$name" || echo "(exited $?)"
             echo "::endgroup::"
           done
 
