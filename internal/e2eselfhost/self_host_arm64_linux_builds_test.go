@@ -80,6 +80,25 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
     if (__clz64(1 as u64) != 63) { return 10; }
     return 42;
 }`, 42, ""},
+		// The f64 transcendentals through the SELF-HOST emitter. Every check
+		// here fails on the kernels this replaced: the domain cases returned
+		// finite garbage (exp(1000) was -6.1e-183 because 2^k is assembled as
+		// (k+1023)<<52 and k=1443 overflows into the sign bit; log(0) was
+		// -709.09; log(-1) was 0), and sin(10) was off in the 7th digit
+		// because pi/2 was carried as two chunks rather than three.
+		{"transcendental", `function main(): i32 {
+    if (!(__exp_f64(1000.0) > 1.0e308)) { return 1; }        // must overflow to +Inf
+    if (!(__exp_f64((0.0 - 1000.0)) == 0.0)) { return 2; }   // must underflow to 0
+    if (!(__log_f64(0.0) < (0.0 - 1.0e308))) { return 3; }   // must be -Inf
+    var n: f64 = __log_f64((0.0 - 1.0));                     // must be NaN
+    if (n == n) { return 4; }
+    if ((__pow_f64(3.0, 2.0) as i32) != 9) { return 5; }     // exact, not 8
+    if ((__pow_f64(10.0, 3.0) as i32) != 1000) { return 6; }
+    var d: f64 = __sin_f64(10.0) - (0.0 - 0.54402111088936981);
+    if (d < 0.0) { d = 0.0 - d; }
+    if (d > 1.0e-15) { return 7; }                           // 3-part reduction
+    return 42;
+}`, 42, ""},
 	}
 
 	for _, c := range cases {
