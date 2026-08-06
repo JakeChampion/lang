@@ -1151,6 +1151,57 @@ var RcReuseEnabled = true
 // so test subprocesses and the CLI can toggle it without a fork.
 var RcReuseDropGuided = os.Getenv("FERN_RC_REUSE_DROP_GUIDED") == "1"
 
+// SanitizeEnabled is the single opt-in surface for the debug
+// memory-safety runtime (#5545) — the "sanitizer build" that turns the
+// scattered, individually-named heap detectors into one coherent mode.
+// Set it and the three heap checks below light up together:
+//
+//	LeakCheckEnabled  — leak census at exit
+//	RcUnderflowTrap   — rc over-release (double free), reported + fatal
+//	RcFreeDebug       — use-after-free quarantine, reported + fatal
+//
+// It deliberately does NOT enable RcTrace: that is per-heap-event
+// stderr output, a tool you point at a reduced repro, not something a
+// standing mode can afford. The individual flags stay settable on their
+// own for exactly that kind of narrow probe; this one is what you reach
+// for when you don't yet know which check will fire.
+//
+// The two failing checks ABORT with a named diagnostic on stderr
+// (`fern-sanitizer: …` — see the backends' sanAbort) rather than only
+// bumping a counter or dying on a bare `ud2`, so a sanitizer run says
+// what went wrong without a debugger attached; the SIGILL is still
+// there underneath for the gdb backtrace that says where.
+//
+// Integers need no sanitizer here — they are total and never-trap by
+// policy (docs/INTEGER-SEMANTICS.md), so there is no integer-UB to
+// catch. The surface is purely the heap/rc correctness that Perceus's
+// manual inc/dec makes possible to get wrong.
+//
+// Zero release cost: with the flag off every check is unemitted and the
+// asm is byte-identical to a build without the feature. Settable via
+// FERN_SANITIZE=1 (the LeakCheckEnabled precedent) or the CLI's
+// -sanitize; the CLI path assigns this var and calls ApplySanitize.
+var SanitizeEnabled = os.Getenv("FERN_SANITIZE") == "1"
+
+// ApplySanitize folds SanitizeEnabled into the component detector
+// flags. Called from this package's init for the env-var path, and
+// again by the CLI after -sanitize parses — the component flags are
+// plain vars read directly by the backends, so a late SanitizeEnabled
+// assignment has to be pushed down rather than derived.
+//
+// It only ever turns flags ON: an individual FERN_* flag already set
+// stays set, and clearing SanitizeEnabled does not un-apply.
+func ApplySanitize() {
+	if !SanitizeEnabled {
+		return
+	}
+	LeakCheckEnabled = true
+	RcUnderflowTrap = true
+	RcFreeDebug = true
+}
+
+func init() { ApplySanitize() }
+
 // LeakCheckEnabled gates the native leak detector (#5362 slice 1): a
 // compile-time build mode that counts every __fern_alloc (count +
 // 16-rounded bytes) and every __fern_free (count + identically rounded
@@ -1167,7 +1218,11 @@ var RcReuseDropGuided = os.Getenv("FERN_RC_REUSE_DROP_GUIDED") == "1"
 // free (see the emitter comments). x86-64 + arm64; wasm ignores the
 // flag. With the flag OFF the emitted asm is byte-identical to a build
 // without the feature. Settable via FERN_LEAKCHECK=1 (the
-// RcReuseDropGuided precedent) so the CLI can toggle it without a fork.
+// RcReuseDropGuided precedent) so the CLI can toggle it without a fork,
+// or implied by SanitizeEnabled — which also adds a leak VERDICT line
+// (`fern-sanitizer: leak <K> bytes in <N> blocks`) after the summary
+// when live_bytes is non-zero, so a sanitizer run doesn't need the
+// numbers read to say whether it was clean.
 var LeakCheckEnabled = os.Getenv("FERN_LEAKCHECK") == "1"
 
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR
@@ -1183,7 +1238,15 @@ var LeakCheckEnabled = os.Getenv("FERN_LEAKCHECK") == "1"
 //
 // Settable via FERN_RC_FREE_DEBUG=1 (the LeakCheckEnabled precedent) so a
 // probe binary can be built with the detector without a fork — the leak
-// counters say a block was never freed, this says a live block was.
+// counters say a block was never freed, this says a live block was — or
+// implied by SanitizeEnabled.
+//
+// A quarantined block still counts as a FREE for the leak census: the
+// quarantine sites poison the rc word and then run the ordinary
+// reclamation path, and it is __fern_free that skips the freelist push.
+// Accounting where the release happens rather than where the memory is
+// recycled is what lets the two detectors run together — otherwise
+// every correctly-freed array reads as a leak.
 var RcFreeDebug = os.Getenv("FERN_RC_FREE_DEBUG") == "1"
 
 // SandboxEnabled installs a seccomp-bpf filter at `_start` permitting
@@ -1256,7 +1319,13 @@ var RcTrace = os.Getenv("FERN_RC_TRACE") == "1"
 // with no quarantined block to trip over — invisible to RcFreeDebug,
 // counted by __rc_underflow_count(), and located by nothing until this.
 //
-// Settable via FERN_RC_UNDERFLOW_TRAP=1 (the RcFreeDebug precedent).
+// The trap is a `call __fern_san_abort` carrying a fixed message, not a
+// bare `ud2`: the process still dies of SIGILL (inside the abort
+// helper, one frame above the offending dec, so the backtrace is
+// unchanged) but stderr now says WHAT died. x86-64 and arm64.
+//
+// Settable via FERN_RC_UNDERFLOW_TRAP=1 (the RcFreeDebug precedent) or
+// implied by SanitizeEnabled.
 var RcUnderflowTrap = os.Getenv("FERN_RC_UNDERFLOW_TRAP") == "1"
 
 // TrmcEnabled gates tail-recursion-modulo-cons. A function whose recursive

@@ -161,17 +161,34 @@ Worth knowing so you do not assume coverage you do not have:
 When a gate fails and the failure is a heap corruption rather than a wrong
 answer, these are the tools, in the order they are usually reached for:
 
+- **`-sanitize` / `FERN_SANITIZE=1`** — start here. One compile-time flag over
+  all three heap detectors below (over-release, use-after-free, leak census),
+  for when you do not yet know which one will fire. A clean run prints no
+  `fern-sanitizer:` line at all and leaves exit code and stdout untouched, so
+  it drops into an existing harness; a finding is a named message plus a
+  backtrace, and the two fatal checks exit 124. Native x86-64 has all three,
+  arm64 has the census and the over-release report. Full contract, costs, and
+  what it does *not* catch: `docs/SANITIZER.md`. The individual flags below
+  remain the right tool once you know what you are chasing.
 - **`__rc_underflow_count()`** — the counter. Exact yes/no signal for "did this
   compile over-release anything", readable from Fern. The self-host drivers
   call it themselves on every run (`util.rc_underflow_guard`).
-- **`FERN_RC_UNDERFLOW_TRAP=1`** — turns each counter bump into `ud2`, so the
-  process dies with SIGILL *at the offending dec* and a gdb backtrace names the
-  function. This is the one that locates a bug; the counter only detects it.
-- **`FERN_RC_FREE_DEBUG=1`** — quarantines freed array/map blocks and traps on
-  a later touch. Complementary, not redundant: it sees an over-release that
-  went through a free, and is blind to a plain dec taking a count 1 → 0 (which
-  frees nothing) followed by another. Use `FERN_RC_UNDERFLOW_TRAP` for that
-  case.
+- **`FERN_RC_UNDERFLOW_TRAP=1`** — makes each counter bump fatal *at the
+  offending dec*: `fern-sanitizer: rc over-release (double free)` on stderr,
+  the #5538 frame-pointer backtrace under it, exit 124. This is the one that
+  locates a bug; the counter only detects it. (It used to be a bare `ud2` and
+  a SIGILL you had to be under gdb to interpret — `break __fern_report` gets
+  you that stop back if you want the live registers.)
+- **`FERN_RC_FREE_DEBUG=1`** — quarantines freed array/map/box blocks and
+  reports `fern-sanitizer: use-after-free` on a later touch. Complementary,
+  not redundant: it sees an over-release that went through a free, and is
+  blind to a plain dec taking a count 1 → 0 (which frees nothing) followed by
+  another. Use `FERN_RC_UNDERFLOW_TRAP` for that case — and note the
+  over-release guard sits ahead of the free, so a drifting count usually
+  reports as a double free before it can dangle. Nothing is recycled in this
+  mode (a reused block would overwrite its own poison), so the heap only
+  grows; the release is still *counted*, so `FERN_LEAKCHECK` stays accurate
+  with both on.
 - **`__arr_push_shared_count()`** — the rc==1 cliff counter, for the other
   failure mode: a compile that is CORRECT but quadratic. `__fern_arr_push_grow`
   mutates in place only at rc == 1; one stray retain upstream makes every
@@ -202,7 +219,9 @@ answer, these are the tools, in the order they are usually reached for:
   breakpoint gives each crossing's oldLen / stride if you want the distribution
   rather than the total.
 - **`FERN_LEAKCHECK=1`** — alloc/free counts and live bytes at exit. The other
-  direction: what the rc detector cannot see.
+  direction: what the rc detector cannot see. Under `-sanitize` the same
+  counters also produce a one-line verdict (`fern-sanitizer: leak <K> bytes in
+  <N> blocks`) when the balance is positive, so a leak needs no number read.
 - **`FERN_RC_TRACE=1`** — one stderr line per heap event:
   `rctrace <a|f> <ptr> <size> <site>`, all three numbers fixed-width 16-hex,
   `site` being the *caller's* return address. Stands to `FERN_LEAKCHECK` as

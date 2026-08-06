@@ -284,6 +284,19 @@ var emitDebugSyms bool
 // rather than a parameter because `run` already carries fifteen.
 var embeddedAssets *embed.Set
 
+// sanitizerTargets are the -target values whose backend emits the #5545 heap
+// detectors. The arm64 family shares one generator, so android / darwin ride
+// along with plain arm64 (with that backend's coverage: census + rc
+// over-release, no use-after-free quarantine). The SSA-direct and wasm
+// backends carry no instrumentation, so -sanitize on those is a warning, not
+// a silently unchecked build.
+var sanitizerTargets = map[string]bool{
+	"x86-64":        true,
+	"arm64":         true,
+	"arm64-android": true,
+	"arm64-darwin":  true,
+}
+
 func definesMain(code string) bool { return mainFuncRe.MatchString(code) }
 
 // format renders err against the right source for each entry it
@@ -626,6 +639,7 @@ func main() {
 	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
 	colorMode := flag.String("color", "auto", "colourise diagnostics: auto (default — colour only when stderr is a terminal and NO_COLOR is unset), always, or never.")
 	asciiBoxes := flag.Bool("ascii", false, "with coloured diagnostics, draw the gutter with a plain `|` instead of the box-drawing `│` (also selected automatically when the locale isn't UTF-8).")
+	sanitize := flag.Bool("sanitize", false, "debug build: turn on the heap memory-safety detectors together (native x86-64/arm64). Reports an rc over-release (double free) and a use-after-free of a quarantined block as a named `fern-sanitizer:` line on stderr followed by a fatal SIGILL, and prints a leak census at exit. Costs allocation throughput and never recycles a freed block, so it is for debugging, not for shipping; an unsanitized build is byte-identical to one from a compiler without the feature. Same as FERN_SANITIZE=1.")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: fern [-target arm64|arm64-android|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.fern [-- ARGS...]")
 		fmt.Fprintln(os.Stderr, "       fern -fmt [-w | -d] FILE.fern")
@@ -640,6 +654,21 @@ func main() {
 	}
 	flag.Parse()
 	emitDebugSyms = *emitDebug
+	if *sanitize {
+		// The backends read the component detector flags directly, so a
+		// late -sanitize has to be pushed down into them; ApplySanitize
+		// only ever turns flags on, so FERN_SANITIZE=1 -sanitize and any
+		// individually-set FERN_* flag all compose.
+		ast.SanitizeEnabled = true
+		ast.ApplySanitize()
+		// Only the two mainline native backends carry the detectors. Say
+		// so rather than accepting the flag and emitting nothing —
+		// silence here reads as "sanitizer ran, program is clean", which
+		// is the one wrong conclusion this mode must never support.
+		if !sanitizerTargets[*target] {
+			fmt.Fprintf(os.Stderr, "fern: warning: -sanitize has no effect on -target %s (native x86-64 and arm64 only); this build carries no checks\n", *target)
+		}
+	}
 	if *embedDir != "" {
 		set, err := embed.Load(*embedDir)
 		if err != nil {
