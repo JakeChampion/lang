@@ -263,3 +263,59 @@ sym:
 		t.Errorf("asm rip-relative block = %s, want %s", got, want)
 	}
 }
+
+// TestEncodeVectorSurface pins the packed-byte instructions the SIMD kernels
+// need (docs/ATLAS-PLATFORM-PLAN.md §3). Until these landed the assembler had
+// NO vector instructions at all — only the scalar float ops the code generator
+// uses to shuttle f64 through xmm — which is why __memchr shipped scalar: its
+// SSE2 body assembles under GNU `as` but the in-process assembler, the default
+// for -target x86-64, could not encode a single instruction of it.
+//
+// Every expectation below is the byte sequence GNU `as` produces for the same
+// mnemonic, captured from `objdump -d -M intel` rather than derived from the
+// manual — the point is to agree with the reference assembler, and hand-decoded
+// ModRM/REX is exactly the kind of thing that looks right and is not.
+//
+// The register choices are deliberate: each form appears once with low
+// registers and once with r8+/xmm8+ so the REX.R/REX.B extension bits are
+// exercised, since dropping a REX bit still assembles and silently addresses
+// the wrong register.
+func TestEncodeVectorSurface(t *testing.T) {
+	cases := []struct{ src, want string }{
+		// Unaligned 128-bit load (0x6F) and STORE (0x7F). The two directions
+		// are separate opcodes; using the load form for a store assembles
+		// cleanly and reads the wrong address, so both are pinned.
+		{"movdqu xmm0, [r8]", "f3410f6f00"},
+		{"movdqu xmm3, [rdi + 16]", "f30f6f5f10"},
+		{"movdqu [rdi], xmm2", "f30f7f17"},
+		{"movdqa xmm1, [rax]", "660f6f08"},
+		// Byte-wise equality — the compare half of a memchr block.
+		{"pcmpeqb xmm0, xmm1", "660f74c1"},
+		{"pcmpeqb xmm9, xmm10", "66450f74ca"},
+		// The SSE2 byte-splat chain. pshufb would be one instruction but is
+		// SSSE3, outside the declared baseline.
+		{"punpcklbw xmm1, xmm1", "660f60c9"},
+		{"punpcklwd xmm1, xmm1", "660f61c9"},
+		{"pshufd xmm1, xmm1, 0", "660f70c900"},
+		{"pshufd xmm5, xmm6, 27", "660f70ee1b"},
+		// The bridge out of the vector domain: mask -> GPR. Note ModRM.reg
+		// names a GENERAL-PURPOSE register here, which is why it needs its
+		// own encoder rather than a table entry.
+		{"pmovmskb eax, xmm0", "660fd7c0"},
+		{"pmovmskb r10d, xmm11", "66450fd7d3"},
+		// Scan-forward, which turns that mask into a lane index. NOT tzcnt:
+		// tzcnt is BMI1 and on a pre-BMI1 CPU its F3 prefix is ignored, so it
+		// degrades silently to bsf rather than faulting.
+		{"bsf eax, eax", "0fbcc0"},
+		{"bsf rcx, rdx", "480fbcca"},
+		// Bitwise packed ops, for kernels that combine several masks.
+		{"por xmm0, xmm1", "660febc1"},
+		{"pand xmm2, xmm3", "660fdbd3"},
+		{"pxor xmm4, xmm4", "660fefe4"},
+	}
+	for _, c := range cases {
+		if got := asm(t, c.src); got != c.want {
+			t.Errorf("asm(%q) = %s, want %s (GNU as)", c.src, got, c.want)
+		}
+	}
+}

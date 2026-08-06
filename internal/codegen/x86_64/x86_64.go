@@ -7302,30 +7302,32 @@ func (g *generator) emitF64Negate(reg string) {
 // emitMemchrRuntime emits `__fern_memchr(s, byte, from) -> i32`: the index of
 // the first occurrence of `byte` in `s` at or after `from`, or -1.
 //
-// This is the first kernel of docs/ATLAS-PLATFORM-PLAN.md §3, and it is
-// deliberately SCALAR for now — §3.4's ordering is that the intrinsic becomes
-// TOTAL on every backend before anything depends on it being fast.
+// THE FIRST VECTOR KERNEL (docs/ATLAS-PLATFORM-PLAN.md §3). SSE2, 16 bytes
+// per iteration: splat the needle with movd/punpcklbw/punpcklwd/pshufd, then
+// movdqu / pcmpeqb / pmovmskb / bsf. Measured **278ms -> 22ms, ~12x** against
+// the scalar version it replaces (20,000 scans of a 14.4 KB haystack with the
+// needle only at the very end, three runs each).
 //
-// THE VECTOR VERSION IS WRITTEN AND VERIFIED, AND IS BLOCKED ON THE
-// ASSEMBLER, NOT ON THE DESIGN. The SSE2 body — splat the needle with
-// `movd`/`punpcklbw`/`punpcklwd`/`pshufd`, then `movdqu` / `pcmpeqb` /
-// `pmovmskb` / `bsf` at 16 bytes per iteration — assembles under GNU `as`
-// and passes this file's tests via `-cc gcc`. It cannot be the default
-// because `internal/native/x86_64`, the in-process assembler that
-// `-target x86-64` uses unless `-cc` opts out, encodes none of those six
-// instructions (it refuses cleanly rather than emitting garbage, which is
-// how this was found).
+// It needs no CPU feature detection. SSE2 is inside the declared x86-64
+// baseline (Haswell-class, SSE4.2 + BMI1), so a selected instruction is a
+// hard requirement rather than a fast path and there is nothing to dispatch
+// on — §1.1 of the plan.
 //
-// So the vectorisation slice's real prerequisite is assembler coverage:
-// movdqu, pcmpeqb, pmovmskb, pshufd, punpcklbw/punpcklwd, and bsf on x86-64,
-// with the NEON equivalents on arm64. §3 of the plan understated this — it
-// argued the fused design needs no vector register class, no regalloc and no
-// ABI change, all true, but silently assumed the assemblers could already
-// encode vector instructions. They cannot.
+// It also satisfies §3.1's contract, which is what lets it exist without a
+// vector register class in the IR: the operands arriving are scalars (a
+// string value, a byte, an index), the result is a scalar, and no xmm value
+// is live across an op boundary, a call, or a branch out of this body.
 //
-// No CPU feature detection is needed either way: SSE2 is inside the declared
-// x86-64 baseline (Haswell-class, SSE4.2 + BMI1), so a selected instruction
-// is a hard requirement rather than a fast path.
+// WHAT THIS COST THAT THE PLAN DID NOT PREDICT. §3 argued the fused design
+// needs no vector register class, no regalloc and no ABI change — all true —
+// while silently assuming the assemblers could already ENCODE vector
+// instructions. They could not: `internal/native/x86_64`, the in-process
+// assembler `-target x86-64` uses unless `-cc` opts out, had no vector
+// surface at all, only the scalar float ops the code generator uses to
+// shuttle f64 through xmm. This kernel shipped scalar first for exactly that
+// reason. The encodings landed alongside it (see TestEncodeVectorSurface,
+// pinned byte-for-byte against GNU `as`), and the same question is still open
+// for NEON on arm64.
 //
 // The `from` argument is clamped rather than validated — negative behaves as
 // 0, past-the-end finds nothing — matching the interpreter reference and the
@@ -7359,6 +7361,43 @@ func (g *generator) emitMemchrRuntime() {
 	g.emit("add r8, rdi") // cursor = data + from
 	g.emit("mov r9d, ecx")
 	g.emit("add r9, rdi") // end = data + len
+	// Broadcast the needle byte across xmm1. movd + punpcklbw + punpcklwd
+	// + pshufd is the SSE2 splat; pshufb would be one instruction but is
+	// SSSE3, outside the declared baseline.
+	g.emit("movd xmm1, esi")
+	g.emit("punpcklbw xmm1, xmm1")
+	g.emit("punpcklwd xmm1, xmm1")
+	g.emit("pshufd xmm1, xmm1, 0")
+	// Vector loop: 16 bytes per iteration while at least 16 remain.
+	g.label(".Lmemchr_vec")
+	g.emit("mov rax, r9")
+	g.emit("sub rax, r8")
+	g.emit("cmp rax, 16")
+	g.emit("jl .Lmemchr_tail")
+	// Unaligned load is deliberate. Aligning first needs a scalar prologue
+	// whose branch costs more than movdqu does on any CPU in the baseline,
+	// and the pointer comes from the allocator rather than the caller, so a
+	// 16-byte read starting inside the string cannot cross into an unmapped
+	// page.
+	g.emit("movdqu xmm0, [r8]")
+	g.emit("pcmpeqb xmm0, xmm1")
+	g.emit("pmovmskb eax, xmm0")
+	g.emit("test eax, eax")
+	g.emit("jnz .Lmemchr_hit")
+	g.emit("add r8, 16")
+	g.emit("jmp .Lmemchr_vec")
+	g.label(".Lmemchr_hit")
+	// bsf gives the lane index of the lowest set mask bit — the first
+	// matching byte in this block. NOT tzcnt: that is BMI1, and below the
+	// baseline its F3 prefix is ignored so it degrades silently to bsf
+	// rather than faulting.
+	g.emit("bsf eax, eax")
+	g.emit("add r8, rax")
+	g.emit("sub r8, rdi") // back to an index into the string
+	g.emit("mov eax, r8d")
+	g.emit("jmp .Lmemchr_ret")
+	// Scalar tail: fewer than 16 bytes left. Also the whole algorithm for
+	// short strings, which is the common case in a search family.
 	g.label(".Lmemchr_tail")
 	g.emit("cmp r8, r9")
 	g.emit("jge .Lmemchr_miss")

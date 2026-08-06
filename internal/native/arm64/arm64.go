@@ -608,6 +608,65 @@ func ADDV(rd, rn uint32, q bool) uint32 {
 	return 0x0E31B800 | qbit(q) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
+// The NEON byte-kernel surface (docs/ATLAS-PLATFORM-PLAN.md §3.3a). CNT and
+// ADDV above were added for popcount and were, until these, the assembler's
+// ONLY vector instructions — everything else here is scalar. §3 argued the
+// fused-intrinsic design needs no vector register class in the IR, which
+// holds, but the assemblers still have to encode what the kernels emit; on
+// x86-64 that gap cost a whole extra slice.
+//
+// All four are byte-arrangement only, matching parseVecArr's restriction:
+// the wider element sizes live in the same encodings with a different `size`
+// field, so accepting them without setting it would assemble a different
+// instruction that looks correct.
+
+// DUP encodes `dup Vd.<T>, Wn` — broadcast the low byte of a GPR to every
+// lane. This is the needle splat, and it is one instruction where SSE2 needs
+// four (movd + two punpckl + pshufd).
+// Encoding: base 0x0E010C00 | Q<<30 | Rn<<5 | Rd.
+func DUP(rd, rn uint32, q bool) uint32 {
+	return 0x0E010C00 | qbit(q) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// LD1 encodes `ld1 {Vt.<T>}, [Xn]` — the single-register, no-writeback form.
+// NEON has no alignment requirement here, so this is the direct counterpart
+// of movdqu rather than of movdqa.
+// Encoding: base 0x0C407000 | Q<<30 | Rn<<5 | Rt.
+func LD1(rt, rn uint32, q bool) uint32 {
+	return 0x0C407000 | qbit(q) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// CMEQ encodes `cmeq Vd.<T>, Vn.<T>, Vm.<T>` — per-byte equality, producing
+// an all-ones lane where the bytes match. The register form; the
+// compare-against-zero form is a different encoding and is not accepted here.
+// Encoding: base 0x2E208C00 | Q<<30 | Rm<<16 | Rn<<5 | Rd.
+func CMEQ(rd, rn, rm uint32, q bool) uint32 {
+	return 0x2E208C00 | qbit(q) | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// SHRN encodes `shrn Vd.8b, Vn.8h, #shift` — narrowing right shift, halving
+// 16-bit lanes into bytes.
+//
+// It is how a NEON kernel gets a comparison mask into a GPR at all. x86 has
+// pmovmskb, which extracts one bit per byte directly; NEON has no equivalent,
+// so the idiom is shrn #4 to compress each 16-bit lane's flag nibble into a
+// byte, then fmov the resulting 64-bit half out. Recording that here because
+// the absence of pmovmskb is the single biggest shape difference between the
+// two vector kernels.
+//
+// `shift` is in 1..8 and encodes as immh:immb = 16 - shift.
+// Encoding: base 0x0F088400 | (16-shift)<<16 | Rn<<5 | Rd.
+func SHRN(rd, rn, shift uint32) uint32 {
+	return 0x0F088400 | ((16 - (shift & 0x1F)) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// UMOV encodes `umov Wd, Vn.b[index]` — zero-extending extract of one byte
+// lane into a GPR.
+// Encoding: base 0x0E013C00 | index<<17 | Rn<<5 | Rd.
+func UMOV(rd, rn, index uint32) uint32 {
+	return 0x0E013C00 | ((index & 0xF) << 17) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
 func qbit(q bool) uint32 {
 	if q {
 		return 1 << 30

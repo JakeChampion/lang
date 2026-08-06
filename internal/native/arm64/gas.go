@@ -173,6 +173,16 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmCnt(a, ops)
 	case "addv":
 		return asmAddv(a, ops)
+	case "dup":
+		return asmDup(a, ops)
+	case "ld1":
+		return asmLd1(a, ops)
+	case "cmeq":
+		return asmCmeq(a, ops)
+	case "shrn":
+		return asmShrn(a, ops)
+	case "umov":
+		return asmUmov(a, ops)
 	case "msub":
 		return asmMsub(a, ops)
 	case "fadd", "fsub", "fmul", "fdiv":
@@ -753,6 +763,172 @@ func asmAddv(a *Assembler, ops []string) error {
 	}
 	a.Emit(ADDV(rd, rn, q))
 	return nil
+}
+
+// asmDup handles `dup Vd.<T>, Wn` — broadcast a GPR's low byte to every lane.
+func asmDup(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("dup expects Vd.<T>, Wn")
+	}
+	rd, q, err := parseVecArr(ops[0])
+	if err != nil {
+		return err
+	}
+	if !is32(ops[1]) {
+		return fmt.Errorf("dup source must be a W register, got %q", ops[1])
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	a.Emit(DUP(rd, rn, q))
+	return nil
+}
+
+// asmLd1 handles `ld1 {Vt.<T>}, [Xn]` — the single-register, no-writeback
+// load. The braces are part of the syntax, not decoration, so they are
+// required rather than tolerated: accepting a bare `vN.16b` here would let a
+// typo assemble as something else.
+func asmLd1(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("ld1 expects {Vt.<T>}, [Xn]")
+	}
+	list := strings.TrimSpace(ops[0])
+	if !strings.HasPrefix(list, "{") || !strings.HasSuffix(list, "}") {
+		return fmt.Errorf("ld1 expects a single-register list {Vt.<T>}, got %q", ops[0])
+	}
+	rt, q, err := parseVecArr(strings.TrimSpace(list[1 : len(list)-1]))
+	if err != nil {
+		return err
+	}
+	rn, err := parseBracketedBase(ops[1])
+	if err != nil {
+		return err
+	}
+	a.Emit(LD1(rt, rn, q))
+	return nil
+}
+
+// asmCmeq handles `cmeq Vd.<T>, Vn.<T>, Vm.<T>` — the register form of the
+// per-byte equality compare.
+func asmCmeq(a *Assembler, ops []string) error {
+	if len(ops) != 3 {
+		return fmt.Errorf("cmeq expects Vd.<T>, Vn.<T>, Vm.<T>")
+	}
+	rd, qd, err := parseVecArr(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, qn, err := parseVecArr(ops[1])
+	if err != nil {
+		return err
+	}
+	rm, qm, err := parseVecArr(ops[2])
+	if err != nil {
+		return err
+	}
+	if qd != qn || qd != qm {
+		return fmt.Errorf("cmeq operands must share an arrangement: %q, %q, %q", ops[0], ops[1], ops[2])
+	}
+	a.Emit(CMEQ(rd, rn, rm, qd))
+	return nil
+}
+
+// asmShrn handles `shrn Vd.8b, Vn.8h, #shift` — the narrowing right shift a
+// NEON kernel uses in place of x86's pmovmskb.
+//
+// The arrangements are fixed rather than parsed: the destination is always
+// 8b and the source always 8h for this encoding, so parseVecArr (which only
+// knows byte arrangements) cannot express the source. Checking the spelling
+// literally is what keeps a wrong arrangement from silently assembling.
+func asmShrn(a *Assembler, ops []string) error {
+	if len(ops) != 3 {
+		return fmt.Errorf("shrn expects Vd.8b, Vn.8h, #shift")
+	}
+	rd, err := parseVecNamed(ops[0], "8b")
+	if err != nil {
+		return err
+	}
+	rn, err := parseVecNamed(ops[1], "8h")
+	if err != nil {
+		return err
+	}
+	sh, err := parseImm(ops[2])
+	if err != nil {
+		return err
+	}
+	if sh < 1 || sh > 8 {
+		return fmt.Errorf("shrn shift must be 1..8, got %d", sh)
+	}
+	a.Emit(SHRN(rd, rn, uint32(sh)))
+	return nil
+}
+
+// asmUmov handles `umov Wd, Vn.b[index]` — zero-extending byte-lane extract.
+func asmUmov(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("umov expects Wd, Vn.b[index]")
+	}
+	if !is32(ops[0]) {
+		return fmt.Errorf("umov destination must be a W register, got %q", ops[0])
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, idx, err := parseVecLane(ops[1])
+	if err != nil {
+		return err
+	}
+	a.Emit(UMOV(rd, rn, idx))
+	return nil
+}
+
+// parseVecNamed parses `vN.<arr>` requiring exactly the given arrangement.
+func parseVecNamed(s, arr string) (uint32, error) {
+	s = strings.TrimSpace(s)
+	suffix := "." + arr
+	if !strings.HasPrefix(s, "v") || !strings.HasSuffix(s, suffix) {
+		return 0, fmt.Errorf("expected vN.%s, got %q", arr, s)
+	}
+	n, err := strconv.Atoi(s[1 : len(s)-len(suffix)])
+	if err != nil || n < 0 || n > 31 {
+		return 0, fmt.Errorf("bad vector register %q", s)
+	}
+	return uint32(n), nil
+}
+
+// parseVecLane parses `vN.b[i]` — a single byte lane of a vector register.
+func parseVecLane(s string) (reg, index uint32, err error) {
+	s = strings.TrimSpace(s)
+	open := strings.IndexByte(s, '[')
+	if !strings.HasPrefix(s, "v") || open < 0 || !strings.HasSuffix(s, "]") {
+		return 0, 0, fmt.Errorf("expected vN.b[index], got %q", s)
+	}
+	head := s[:open]
+	if !strings.HasSuffix(head, ".b") {
+		return 0, 0, fmt.Errorf("umov lane must be a byte lane (.b), got %q", s)
+	}
+	n, e := strconv.Atoi(head[1 : len(head)-2])
+	if e != nil || n < 0 || n > 31 {
+		return 0, 0, fmt.Errorf("bad vector register %q", s)
+	}
+	i, e := strconv.Atoi(s[open+1 : len(s)-1])
+	if e != nil || i < 0 || i > 15 {
+		return 0, 0, fmt.Errorf("byte lane index must be 0..15, got %q", s)
+	}
+	return uint32(n), uint32(i), nil
+}
+
+// parseBracketedBase parses `[xN]` — the base-register-only addressing form
+// ld1 takes. An offset or writeback is a DIFFERENT encoding, so anything
+// beyond a bare register is rejected rather than ignored.
+func parseBracketedBase(s string) (uint32, error) {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "[") || !strings.HasSuffix(s, "]") {
+		return 0, fmt.Errorf("expected [xN], got %q", s)
+	}
+	return parseReg(strings.TrimSpace(s[1 : len(s)-1]))
 }
 
 // parseVecArr parses a `vN.8b` / `vN.16b` vector operand, returning the
