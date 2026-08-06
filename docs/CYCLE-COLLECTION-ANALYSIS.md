@@ -17,7 +17,42 @@ Status: design analysis. No compiler code changed by this doc.
 > **any** cycle a long-running handler builds leaks until exit
 > (not just `state`-rooted ones).
 
-## TL;DR
+> **UPDATE (2026-08-06): THE CYCLE IS NO LONGER CONSTRUCTIBLE, AND
+> THIS DOCUMENT'S RECOMMENDATION WAS ADOPTED.** Everything below
+> describing a constructible cycle is now HISTORICAL. Read the TL;DR
+> as "what was true on 2026-06-01", not as a live risk assessment —
+> taken at face value it sends a reader off to build a cycle
+> collector for cycles that cannot exist.
+>
+> The last section recommends "cycle-free by construction, enforced
+> by the checker". That is what shipped, at three enforcement points:
+>
+> - **E048** — struct fields are immutable after construction, so
+>   `a.next = [b]` no longer type-checks ("rebuild with
+>   `T { ...old, next: value }`"). This was the sole mechanism the
+>   proof below relies on.
+> - **E048's subscript counterpart** — the same ban for element
+>   assignment, completing the immutable-data enforcement.
+> - **E057** — `Cell[T]`, the sanctioned mutable box, restricts `T`
+>   to scalars and `string` *explicitly* so "a cell can never
+>   reconstruct a reference cycle" (`internal/checker/checker.go:635`).
+>   `Cell[Node]` and `Cell[fn]` are both rejected.
+>
+> Re-verified 2026-08-06 by running the proof program below: it now
+> fails `-check` with two E048s. The remaining routes were probed and
+> are closed too — a struct rebuild (`S { ...s, xs: [s] }`) captures
+> a SNAPSHOT of the old value rather than creating a back-edge, which
+> is value semantics doing the work, and an array `.append` of a
+> container to itself has the same shape.
+>
+> **Consequence for the RC design: Fern needs no cycle collector.**
+> Not "not yet" — the constructs that could close a cycle are
+> rejected at check time. If a future feature reintroduces
+> interior mutability over composite types (a `Cell[T]` widened past
+> scalars, a `ref`/`weak` type, or bringing back field assignment),
+> that feature reopens this question and should cite this document.
+
+## TL;DR (historical — see the update above)
 
 **Yes — a Fern program can construct a reference cycle today, and
 it does so through a real, shipped, all-backends-supported feature:

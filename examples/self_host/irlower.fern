@@ -15616,6 +15616,15 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                         },
                         _ => {}
                     }
+                    // arrarr_elem is only recorded for an ANNOTATED `(tuple)[]`
+                    // local, so `var ps = mk();` (or a bare `mk()[0]`) leaves the
+                    // walk empty and every element read as a 4-byte i32 — an f64
+                    // element then came back garbage with no diagnostic. ExprIndex.ty
+                    // (#6165) already carries the checker's type for this node; this
+                    // is the same walk-first/tag-fills-the-hole fallback
+                    // expr_tuple_elem_tag's ExprIndex arm has, which is why
+                    // `ps[0].1` was right while `var (i, v) = ps[0]` was not.
+                    if (dtag == "" && dix.ty.len() >= 2 && dix.ty[0:1] == "(") { dtag = tuple_type_elem_tag(dix.ty, dk); }
                 },
                 parser.ExprCall(dcl) => {
                     // `var (a, b, …) = f()` / `= obj.f()` — recover element
@@ -39541,7 +39550,13 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             // the element STRIDE is erased too, and a wide-element array copied
             // at the i32 stride is silently wrong. Flags it so erased_wide_expr
             // can refuse the shape instead of miscompiling it.
-            else if (funcs[k].receiver_type.len() == 0 && is_erased_typevar_array(funcs[k].params[pj].type_name, structs)) {
+            //
+            // Only when the body actually READS an element (elem_read_in_body).
+            // A callee that only asks for `.len()` never uses a stride, so the
+            // refusal would cost coverage for nothing — `is_empty[T](xs: T[])`
+            // at an `f64[]`. The predicate calls everything but `.len()` a read.
+            else if (funcs[k].receiver_type.len() == 0 && is_erased_typevar_array(funcs[k].params[pj].type_name, structs)
+                     && elem_read_in_body(funcs[k].body, funcs[k].params[pj].name)) {
                 flags = flags + "7";
                 any = true;
             }
@@ -39556,6 +39571,129 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
         k = k + 1;
     }
     return out;
+}
+// elem_read_expr / elem_read_stmt / elem_read_in_body decide whether an erased
+// `T[]` param's ELEMENT is ever touched — the question flag '7' skipped asking.
+//
+// The wasm refusal exists because an erased element width makes the callee copy
+// an 8-byte-element array at a 4-byte stride. A callee that never reads an
+// element never uses a stride, so refusing it costs coverage and buys nothing:
+// `is_empty[T](xs: T[]): boolean { return xs.len() == 0; }` at an `f64[]` was
+// rejected outright.
+//
+// The predicate is deliberately lopsided. It answers "does this use read an
+// element?" with YES for everything except the one form that provably cannot —
+// `name` as the receiver of `.len()`, which reads the header word and nothing
+// else. A bare mention of `name` anywhere else counts as a read, including a
+// reassignment target, because the array flows on from there and this pass does
+// not follow it. Getting this wrong in the permissive direction reopens a
+// silent-miscompile class, so an unrecognised use is a read.
+//
+// Measured before narrowing: of the 47 single-typevar `T[]`-param generics in
+// std/array, exactly ONE is element-blind (`is_empty`). Every other
+// concrete-return shape (`all`, `any`, `count_where`, `position`, `sum_by`, …)
+// feeds elements to a predicate and stays refused, correctly.
+function elem_read_expr(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    // `name.len()` — the one blind use. Skip the receiver, still
+                    // walk the args (`f(name)` inside them is a read).
+                    var blind: boolean = false;
+                    if (fa.field == "len") {
+                        match (fa.obj) {
+                            parser.ExprIdent(rid) => { if (rid.name == name) { blind = true; } },
+                            _ => {}
+                        }
+                    }
+                    if (!blind && elem_read_expr(fa.obj, name)) { return true; }
+                },
+                _ => { if (elem_read_expr(c.callee, name)) { return true; } }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { if (elem_read_expr(c.args[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return elem_read_expr(b.left, name) || elem_read_expr(b.right, name); },
+        parser.ExprUnary(u) => { return elem_read_expr(u.operand, name); },
+        parser.ExprIndex(ix) => { return elem_read_expr(ix.array, name) || elem_read_expr(ix.index, name); },
+        parser.ExprSlice(sl) => { return elem_read_expr(sl.array, name) || elem_read_expr(sl.start, name) || elem_read_expr(sl.end, name); },
+        parser.ExprFieldAccess(fa) => { return elem_read_expr(fa.obj, name); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (elem_read_expr(a.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (elem_read_expr(t.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base && elem_read_expr(sl.base, name)) { return true; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (elem_read_expr(sl.field_values[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) { if (elem_read_stmt(lm.body[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+function elem_read_stmt(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return elem_read_expr(v.init, name); },
+        parser.StmtReturn(r) => { return elem_read_expr(r.value, name); },
+        parser.StmtExpr(e) => { return elem_read_expr(e.value, name); },
+        // A reassignment target is a read: the param is rebound and the array
+        // flows on from a place this pass does not follow.
+        parser.StmtAssign(a) => { return a.target == name || elem_read_expr(a.value, name); },
+        parser.StmtIf(f) => {
+            if (elem_read_expr(f.cond, name)) { return true; }
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { if (elem_read_stmt(f.then_body[ti], name)) { return true; } ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { if (elem_read_stmt(f.else_body[ei], name)) { return true; } ei = ei + 1; }
+            return false;
+        },
+        parser.StmtWhile(w) => {
+            if (elem_read_expr(w.cond, name)) { return true; }
+            var i: i32 = 0;
+            while (i < w.body.len()) { if (elem_read_stmt(w.body[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtFor(fo) => {
+            if (elem_read_expr(fo.iter, name)) { return true; }
+            var i: i32 = 0;
+            while (i < fo.body.len()) { if (elem_read_stmt(fo.body[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtMatch(m) => {
+            if (elem_read_expr(m.scrutinee, name)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && elem_read_expr(m.arms[ai].guard, name)) { return true; }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { if (elem_read_stmt(m.arms[ai].body[bi], name)) { return true; } bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return elem_read_stmt(d.action, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+function elem_read_in_body(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (elem_read_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    return false;
 }
 // borrowable_params_of computes, for each free function, which params are
 // "borrowable" — provably only borrow-read in the body and never escaping

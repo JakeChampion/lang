@@ -268,6 +268,15 @@ Worth checking for before adding a carrier: the cheapest remaining wins in this
 migration are consumers that never learned to read an annotation already in
 place.
 
+**And a consumer is rarely alone.** The tuple DESTRUCTURE has its own copy of
+that `ExprIndex` arm — `var (a, b) = arr[i]`, typed from the same
+`arrarr_elem` — and it did not get the fallback when `expr_tuple_elem_tag` did.
+So one token apart, `ps[0].1` was right and `var (i, v) = ps[0]` returned
+garbage for an f64 element (255 on x86-64, 0 on wasm, compiler exit 0). The two
+arms are written as siblings and are commented as siblings; only one of them was
+fixed. When wiring a carrier into a consumer, grep for the walk it replaces —
+here `arrarr_elem_of_slot` — and fix every reader of it in the same diff.
+
 **Not every carrier belongs in the shared tag vocabulary.** `ExprSlice.ty` needs
 an ARRAY spelling (`"f64[]"`), and `type_to_irtag` has no `TypeArray` arm — it
 returns `""` for every array-valued expression. Adding one there is the obvious

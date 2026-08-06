@@ -15,6 +15,14 @@ name: Lint
 #                lands beside an existing one).
 #   deadcode   — `make deadcode`: fails on any unreachable function
 #                not in tools/deadcode-allowlist.txt.
+#   actionlint — `make actionlint`: lints .github/workflows/*.yml and the
+#                composite actions. These files gated everything else in
+#                the repo while nothing gated them, so a bad `runs-on`, an
+#                expression naming a context the trigger doesn't provide,
+#                or a `permissions:` block missing a scope the job calls
+#                only showed up as a red run — or as a job doing the wrong
+#                thing quietly. Also runs shellcheck over `run:` blocks
+#                (preinstalled on the ubuntu runners).
 #   freeze     — `make freeze`: reports the live state of the native-
 #                convergence freeze preconditions, derived from the tree.
 #                Fails only when ground is LOST (an AST emitter returns, a
@@ -106,6 +114,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
       - run: make deadcode
+
+  actionlint:
+    needs: gate
+    if: needs.gate.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+      - run: make actionlint
 
   freeze:
     needs: gate
