@@ -11693,7 +11693,47 @@ func (b *builder) call(n *ast.Call) error {
 	if _, ok := n.Callee.(*ast.Ident); !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
 	}
+	if recv := b.mapCowRetainReceiver(n); recv != nil && !isMapDeleteCall(n) {
+		return b.callWithMapCowRetain(n, recv)
+	}
 	return b.callBody(n)
+}
+
+// callWithMapCowRetain lowers a Map COW mutator whose result is the map
+// itself (`m.insert(k, v)` / `m.cleared()`) and then applies the COW-seam
+// retain — see mapCowRetainReceiver for why it is conditional. The result is
+// stashed so the receiver can be re-read for the pointer compare; `recv` is
+// an Ident or FieldAccess, so re-reading it is a plain load with no side
+// effect, and neither the mutator nor its COW writes the receiver's slot /
+// field, so the reload still yields the PRE-call handle.
+func (b *builder) callWithMapCowRetain(n *ast.Call, recv ast.Expr) error {
+	if err := b.callBody(n); err != nil {
+		return err
+	}
+	resSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mapcow_res_%d", resSlot)] = resSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: resSlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
+	if err := b.expr(recv); err != nil {
+		return err
+	}
+	b.emitMapCowRetainTest(resSlot)
+	b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
+	return nil
+}
+
+// emitMapCowRetainTest consumes the (result, pre-COW receiver) handle pair
+// on the stack and inc's the result iff the two are the same handle — i.e.
+// iff __map_cow_inplace mutated in place and the receiver's binding still
+// names what the call handed back. On the copy branch the result is a fresh
+// rc=1 the caller already solely owns, so retaining there would leak.
+func (b *builder) emitMapCowRetainTest(resSlot int32) {
+	b.emit(Op{Kind: OpEq})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
+	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpEnd})
 }
 
 // callBody is the original b.call body — kept as a helper so
@@ -14947,8 +14987,8 @@ func (b *builder) assign(n *ast.Assign) error {
 				// emits (which neither frees the box nor recurses, leaking the
 				// box + nested fields). Shares emitStructEnumSlotDrop with the
 				// reinit path — routes through __drop_struct_ / __drop_enum_
-				// when droppable, flat dec otherwise (Map handles, non-uniform
-				// generic enums). Gated on freeEligible like the array / string
+				// when droppable, flat dec otherwise (non-uniform generic
+				// enums). Gated on freeEligible like the array / string
 				// siblings: only an OWNED (untainted) local frees here — a
 				// borrowed / escaped one keeps the plain dec, so a live alias is
 				// never reclaimed out from under. The in-place reuse paths
@@ -14956,7 +14996,57 @@ func (b *builder) assign(n *ast.Assign) error {
 				// early above, so this is only the genuine-overwrite case.
 				// Net-zero on the operand stack, leaving the new RHS value for
 				// the store below.
-				b.emitStructEnumSlotDrop(idx, sety)
+				//
+				// A Map handle is COW-aware, because the RHS may BE the handle
+				// the slot already holds: __map_cow_inplace returns the
+				// receiver unchanged when it mutates in place, so `t =
+				// t.insert(a, 1).insert(b, 2)` stores back exactly what it
+				// overwrote. The binding therefore owes a release only when
+				// the reference genuinely changed hands:
+				//
+				//   - new != old — the old handle lost this binding's claim.
+				//     Release it with the BUF-AND-HANDLE free, not the flat
+				//     dec (which frees nothing: every COW-copied table leaked,
+				//     1328 B an iteration in the temporary-bound insert loop
+				//     of #6227) and not emitMapSlotDrop's full walk (which the
+				//     exit sweep and the reinit path use). The column walks
+				//     must NOT run here — __map_cow_inplace copies the kv
+				//     buffer SHALLOWLY, so the fresh handle being stored
+				//     shares the old one's key / value pointers, and freeing
+				//     the key column pulls those strings out from under it
+				//     (SIGSEGV under qemu-aarch64; #6242 is the shallow copy
+				//     itself, and widens this back once it lands). The old BUFFER is
+				//     exclusively the old handle's, so that part is
+				//     unambiguously owed; __fern_map_drop self-guards on
+				//     rc==1, so a still-shared handle only dec's.
+				//   - new == old — the same reference carried across the
+				//     rebind. A release is owed only if an alias inc created a
+				//     second count for it (`m = m2`); a self-mutation created
+				//     none, and dec'ing there is the over-release
+				//     isSelfMapMutation's COW-aware branch exists to avoid.
+				if mst, isMap := sety.(ast.StructType); isMap && mst.Name == "Map" {
+					aliasInced := needsRcIncOnAlias(n.Value, b) && !b.rc.moveSites[n]
+					newTmp := b.allocSlot()
+					b.locals[fmt.Sprintf("__mapow_new_%d", newTmp)] = newTmp
+					b.emit(Op{Kind: OpStoreLocal, I32: newTmp})
+					b.emit(Op{Kind: OpLoadLocal, I32: idx})
+					b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
+					b.emit(Op{Kind: OpNe})
+					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+					b.emit(Op{Kind: OpLoadLocal, I32: idx})
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
+					b.emit(Op{Kind: OpDrop})
+					if aliasInced {
+						b.emit(Op{Kind: OpElse})
+						b.emit(Op{Kind: OpLoadLocal, I32: idx})
+						b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+						b.emit(Op{Kind: OpDrop})
+					}
+					b.emit(Op{Kind: OpEnd})
+					b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
+				} else {
+					b.emitStructEnumSlotDrop(idx, sety)
+				}
 			} else {
 				flatDec := func() {
 					b.emit(Op{Kind: OpLoadLocal, I32: idx})
@@ -15411,6 +15501,64 @@ func isMapMutatorCall(e ast.Expr) bool {
 		return true
 	}
 	return false
+}
+
+// isMapDeleteCall reports whether e is `m.without(k)` — the one Map COW
+// mutator whose result is a (Map, boolean) TUPLE rather than the map, so the
+// COW-seam retain has to be applied to the handle going into the tuple (see
+// emitMapDeleteReturningTuple) instead of to the call's own result.
+func isMapDeleteCall(e ast.Expr) bool {
+	call, ok := e.(*ast.Call)
+	if !ok {
+		return false
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	return ok && id.Name == "__method_Map_delete"
+}
+
+// mapCowRetainReceiver returns the receiver of a Map COW mutator call that
+// owes the COW-seam retain, or nil when it does not.
+//
+// A mutator's result is meant to be an owned reference like any other call
+// result, but __map_cow_inplace only makes it one on the aliased branch:
+//
+//   - rc > 1 (aliased): a fresh deep copy at rc=1. The result is its only
+//     owner — already owned, nothing to retain.
+//   - rc <= 1 (sole owner): the SAME handle, un-retained. Whoever takes the
+//     result and the receiver's binding then share ONE count, and both
+//     release it (#6227 — `var m2 = m.insert(k, v); m = m2;` dropped entries
+//     silently; the `without` spelling, whose tuple return cannot be written
+//     any other way, freed the handle and SEGV'd on the next probe).
+//
+// Two conditions make the retain owed, one static per condition:
+//
+//   - The result is BOUND (mapCowBindSites) — otherwise it is a temporary
+//     nobody releases and the retain leaks a whole table per evaluation.
+//   - The receiver names a binding that survives the call: an lvalue that is
+//     not moved into it. A temporary receiver transfers its own rc=1 to the
+//     result and owes nothing.
+//
+// The runtime half — did COW actually copy? — is emitMapCowRetainTest.
+// Restricted to Ident / FieldAccess so the emitted pointer compare can
+// re-read the receiver without re-running side effects.
+func (b *builder) mapCowRetainReceiver(e ast.Expr) ast.Expr {
+	call, ok := e.(*ast.Call)
+	if !ok || !isMapMutatorCall(call) || len(call.Args) == 0 {
+		return nil
+	}
+	if !b.rc.mapCowBindSites[call] {
+		return nil
+	}
+	recv := call.Args[0]
+	switch recv.(type) {
+	case *ast.Ident, *ast.FieldAccess:
+	default:
+		return nil
+	}
+	if !isMapType(b.exprType(recv)) || b.rc.moveSites[recv] {
+		return nil
+	}
+	return recv
 }
 
 // isBorrowedMapFieldResultMove reports whether e is an ident that (a) names a
@@ -17847,9 +17995,27 @@ func (b *builder) emitMapDeleteReturningTuple(n *ast.Call, kType ast.Type) error
 	// An aliased map (rc>1) is deep-copied here, so the source
 	// alias keeps the deleted key; a uniquely-held map is mutated
 	// in place.
+	//
+	// The in-place branch hands back the handle the receiver's binding
+	// still names, and the result tuple below stores it as an owned
+	// element — so the seam owes a retain (mapCowRetainReceiver). Delete
+	// is the one mutator that cannot take the retain at the call result:
+	// that result is the tuple box, not the map.
+	preSlot := int32(-1)
+	if b.mapCowRetainReceiver(n) != nil {
+		preSlot = b.allocSlot()
+		b.locals[fmt.Sprintf("__del_pre_%d", preSlot)] = preSlot
+		b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
+		b.emit(Op{Kind: OpStoreLocal, I32: preSlot})
+	}
 	b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
 	b.emit(Op{Kind: OpCallDirect, Str: "__map_cow_inplace", I32: 1})
 	b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
+	if preSlot >= 0 {
+		b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
+		b.emit(Op{Kind: OpLoadLocal, I32: preSlot})
+		b.emitMapCowRetainTest(mapSlot)
+	}
 
 	// Push map and key for the delete call, boxing key when needed.
 	b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})

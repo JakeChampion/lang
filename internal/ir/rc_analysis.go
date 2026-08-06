@@ -224,6 +224,19 @@ type rcPlan struct {
 	// a Map field initialised by a direct mutator call, so the new container
 	// owns an independent buffer. Filled by computeBorrowedMapFieldResults.
 	borrowedMapFieldResults map[string]bool
+	// mapCowBindSites holds the Map COW-mutator CALL nodes whose result is
+	// bound straight to a new local — `var m2 = m.insert(k, v)` and
+	// `var (m2, ok) = m.without(k)`. Those are the sites that owe the COW-seam
+	// retain (#6227): the binding co-exists with the receiver's binding, so on
+	// the in-place branch two names share one refcount and both release it.
+	// Every OTHER position a mutator result can appear in is deliberately
+	// excluded, because there the result is a temporary nobody binds and a
+	// retain would leak it instead: a chained receiver
+	// (`m.insert(a, 1).insert(b, 2)`), a call argument (`f(m.insert(k, v))`),
+	// and a projected tuple (`m = m.without(k).0`) each measured ~1.8 kB an
+	// iteration — a whole copied table — when the retain fired there.
+	// Purely syntactic; filled by computeMapCowBindSites.
+	mapCowBindSites map[ast.Node]bool
 }
 
 // computeRcAnalyses runs every per-function Perceus RC decision analysis, in
@@ -253,6 +266,7 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.returnOwnMove = b.computeReturnOwnMoves()
 	b.rc.ctorAliasInced = b.computeCtorAliasInced()
 	b.rc.borrowedMapFieldResults = b.computeBorrowedMapFieldResults()
+	b.rc.mapCowBindSites = b.computeMapCowBindSites()
 	b.rc.arraySetInc = b.computeArraySetIncs()
 	b.computeBorrowedAliases()
 	b.rc.dynAliasElemArrays = map[string]bool{}
@@ -3764,6 +3778,30 @@ func (b *builder) computeBorrowedMapFieldResults() map[string]bool {
 		}
 		if mapMutatorReceiverIsFieldAccess(v.Init) {
 			out[v.Name] = true
+		}
+		return true
+	})
+	return out
+}
+
+// computeMapCowBindSites finds the Map COW-mutator calls bound directly to a
+// new local — see the mapCowBindSites field doc (#6227). `insert` / `cleared`
+// return the map and bind through `var`; `without` returns a (Map, boolean)
+// tuple and can ONLY be consumed by destructuring, which is why it was the
+// spelling that surfaced the bug. Purely syntactic: the walk runs on the
+// already-mangled AST, the same form isMapMutatorCall matches at the call site.
+func (b *builder) computeMapCowBindSites() map[ast.Node]bool {
+	out := map[ast.Node]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch s := n.(type) {
+		case *ast.Var:
+			if c, ok := s.Init.(*ast.Call); ok && isMapMutatorCall(c) && !isMapDeleteCall(c) {
+				out[c] = true
+			}
+		case *ast.Destructure:
+			if c, ok := s.Init.(*ast.Call); ok && isMapDeleteCall(c) {
+				out[c] = true
+			}
 		}
 		return true
 	})

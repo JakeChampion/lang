@@ -125,6 +125,20 @@ expected action, so just do it. The default flow is always:
 branch → commit → push → PR → subscribe. Don't stop at "pushed to
 the branch" — finish the loop every time.
 
+**Open the PR EARLY — do not sit on a push waiting for a local
+sweep to finish.** CI is faster than this dev machine: a Claude Code
+sandbox is a 4-core container where `internal/e2e` runs 45+ minutes in
+one process, while CI shards the same work across machines and comes
+back sooner. So the moment the targeted suites for what you touched are
+green, push and open the PR, and let any long whole-package sweep you
+started keep running alongside it — CI will reach the same answer first.
+Say in the PR body which suites you ran and which are still in flight;
+that is the honest report, and it beats a 45-minute stall before anyone
+can even see the diff. (This does not weaken the engineering bar below:
+run the gates that carry signal for your change, and drive the PR to
+green once CI reports. It only says the PR is the place to wait, not
+your terminal.)
+
 When you open a PR, subscribe to its activity (`subscribe_pr_activity`)
 without being asked. The user prefers to be alerted via the subscription
 flow rather than driving manual CI checks after the fact.
@@ -420,8 +434,12 @@ a `__mkclo$` env box, and irlower's "clo" element tag drives env-first
   over-retains), and the rc diagnostic modes in the order you reach for them.
   #6018 passed the per-module fixpoint AND all 335 fixtures AND the native
   suite while segfaulting the driver.
-- **Confirm passing tests before opening a PR.** Run the full relevant
-  suite locally (including the WASM e2e tests — the pinned toolchain is
+- **Run the TARGETED suites for what you touched before you push** — not
+  a whole-package sweep you then wait on. A sweep is worth starting, but
+  it is not a gate you hold the PR behind: see "Working with PRs" above,
+  CI shards it and answers sooner than this 4-core box. What must be
+  green before the push is the set that carries signal for your change.
+  Run it locally (including the WASM e2e tests — the pinned toolchain is
   **wasmtime v46.0.1 + wasm-tools 1.253.0** (see
   `.github/actions/setup-fern/action.yml`; the `.claude/hooks/session-start.sh`
   hook installs them locally under `~/.fern-wasm/`). Export the binaries onto
