@@ -533,6 +533,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesStrcmp {
 		g.emitStrcmpRuntime()
 	}
+	if g.usesMemchr {
+		g.emitMemchrRuntime()
+	}
 	if g.usesStrcat {
 		g.emitStrcatRuntime()
 	}
@@ -3463,6 +3466,112 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 // comparator returning 0 (equal) / 1 (different). Layout:
 // length-prefix + word-grain bulk + byte-grain tail; pointer
 // args are post-prefix.
+// emitMemchrRuntime emits `__fern_memchr(s, byte, from) -> i32`: the index of
+// the first occurrence of `byte` in `s` at or after `from`, or -1.
+//
+// The arm64 half of docs/ATLAS-PLATFORM-PLAN.md §3's first kernel. NEON, 16
+// bytes per iteration, and — unlike the x86-64 side — the assembler could
+// encode it the day it was written, because §3.3a's prerequisite was removed
+// first this time.
+//
+// NOTE THE ABI DIFFERS FROM x86-64. arm64 runs the two-word string ABI
+// (`ast.UseTwoWordStrings`), so a `string` argument occupies TWO registers:
+// x0 = data word, x1 = length word, which pushes `byte` to x2 and `from` to
+// x3. The x86-64 helper takes the string in a single register. Verified by
+// disassembling a three-argument call rather than inferred, because getting
+// this wrong reads a length as a byte and still runs.
+//
+// THE INTERESTING DIFFERENCE FROM SSE2 IS THE MASK EXTRACTION. x86 has
+// pmovmskb: one instruction turning a compare result into one bit per byte,
+// ready for bsf. NEON HAS NO EQUIVALENT. The idiom instead is
+//
+//	cmeq  v0.16b, v0.16b, v1.16b   // 0x00 / 0xFF per byte
+//	shrn  v0.8b,  v0.8h,  #4       // each 16-bit lane -> one byte, 4 bits/lane
+//	fmov  x11,    d0               // 64 bits = 16 lanes x 4 bits
+//
+// so every input byte becomes a NIBBLE rather than a bit, and the lane index
+// is the lowest set bit divided by four. That factor of four is the whole
+// reason `shrn` exists in the assembler's new instruction set.
+//
+// Conversely the splat is cheaper here: `dup v1.16b, w2` is one instruction
+// where SSE2 needs movd + two punpckl + pshufd.
+//
+// No feature detection: Advanced SIMD is mandatory in the declared ARMv8-A
+// baseline, so these are hard requirements rather than a fast path (§1.1).
+func (g *generator) emitMemchrRuntime() {
+	g.line("")
+	g.line(".global __fern_memchr")
+	g.typeDirective("__fern_memchr")
+	g.label("__fern_memchr")
+	// Frame: fp/lr (16) + 16 bytes of inline-SSO spill scratch at [x29+16]
+	// + 16 alignment padding = 48.
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("mov x4, x0") // data word
+	g.emit("mov x5, x1") // length word
+	// Order matters: emitStrLen2W OVERWRITES its source register on the
+	// inline path (ubfx lenX, lenX, ...), so the data pointer has to be
+	// materialised while the length word is still intact.
+	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
+	g.emitStrLen2W("w6", "x5")               // w6 = byte length
+	// Clamp `from` into [0, len]; at or past the end finds nothing.
+	g.emit("tbz w3, #31, .Lmemchr_from_ok")
+	g.emit("mov w3, #0")
+	g.label(".Lmemchr_from_ok")
+	g.emit("cmp w3, w6")
+	g.emit("b.ge .Lmemchr_miss")
+	// A byte outside 0..255 can never occur. One unsigned compare covers
+	// both ends — a negative `byte` is a huge unsigned value — so neither
+	// loop below needs a per-iteration guard.
+	g.emit("cmp w2, #255")
+	g.emit("b.hi .Lmemchr_miss")
+	g.emit("add x8, x7, w3, uxtw") // cursor = data + from
+	g.emit("add x9, x7, w6, uxtw") // end    = data + len
+	g.emit("dup v1.16b, w2")
+	g.label(".Lmemchr_vec")
+	g.emit("sub x10, x9, x8")
+	g.emit("cmp x10, #16")
+	g.emit("b.lt .Lmemchr_tail")
+	// Unaligned load is deliberate, as on x86-64: NEON has no alignment
+	// requirement, and the pointer comes from the allocator rather than the
+	// caller, so a 16-byte read starting inside the string cannot cross into
+	// an unmapped page.
+	g.emit("ld1 {v0.16b}, [x8]")
+	g.emit("cmeq v0.16b, v0.16b, v1.16b")
+	g.emit("shrn v0.8b, v0.8h, #4")
+	g.emit("fmov x11, d0")
+	g.emit("cbz x11, .Lmemchr_next")
+	// Lowest set bit -> lane. Four mask bits per input byte, hence the >>2.
+	g.emit("rbit x12, x11")
+	g.emit("clz x12, x12")
+	g.emit("lsr x12, x12, #2")
+	g.emit("add x8, x8, x12")
+	g.emit("sub x0, x8, x7")
+	g.emit("b .Lmemchr_ret")
+	g.label(".Lmemchr_next")
+	g.emit("add x8, x8, #16")
+	g.emit("b .Lmemchr_vec")
+	// Scalar tail: fewer than 16 bytes left. Also the whole algorithm for
+	// short strings, which is the common case in a search family.
+	g.label(".Lmemchr_tail")
+	g.emit("cmp x8, x9")
+	g.emit("b.ge .Lmemchr_miss")
+	g.emit("ldrb w10, [x8]")
+	g.emit("cmp w10, w2")
+	g.emit("b.eq .Lmemchr_tail_hit")
+	g.emit("add x8, x8, #1")
+	g.emit("b .Lmemchr_tail")
+	g.label(".Lmemchr_tail_hit")
+	g.emit("sub x0, x8, x7")
+	g.emit("b .Lmemchr_ret")
+	g.label(".Lmemchr_miss")
+	g.emit("mov x0, #-1")
+	g.label(".Lmemchr_ret")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_memchr")
+}
+
 func (g *generator) emitStrcmpRuntime() {
 	g.line("")
 	g.line(".global __fern_strcmp")
@@ -8917,6 +9026,8 @@ type generator struct {
 	usesCCallF32 [5]bool
 	usesCCallF64 [5]bool
 	usesStrcmp   bool
+	// usesMemchr gates the NEON byte-search kernel (__fern_memchr).
+	usesMemchr bool
 	// usesTcp pulls in the full TCP socket runtime
 	// (__fern_tcp_listen / __fern_tcp_accept / __fern_tcp_recv
 	// / __fern_tcp_send / __fern_tcp_close). Gated on call-
@@ -11996,6 +12107,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__fern_map_hash_seed":
 			g.usesMapHashSeed = true
 			g.usesRandomI32 = true // the lazy first-call draw
+		case "__fern_memchr":
+			g.usesMemchr = true
 		case "__fern_heap_bump_bytes":
 			g.usesHeapBumpBytes = true
 			g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
