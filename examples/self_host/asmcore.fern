@@ -349,62 +349,137 @@ pub function rt_src_chr(): string {
     return "function __fern_chr(b: i32): string { var p: i32 = __raw_alloc(1); __raw_store8(p, 0, b); return __raw_string(p, 1); }";
 }
 
+// sysno is the ONE table of syscall numbers the Fern runtime leaves are
+// generated against (#2649). `t` is the emitting backend's target — "x86_64",
+// "arm64" (Linux) or "arm64-darwin" — and the returned decimal string is spliced
+// straight into the helper source, so a single rt_src_* body serves all three.
+//
+// Why the number is baked in rather than translated later: on the Mach-O path
+// `darwinize` remaps a syscall by matching a literal `mov x8, #N`, which the
+// generic __syscall3 / __syscall4 ops never emit (their number is an operand it
+// only sees at runtime). darwinize therefore rewrites only the number register
+// and the trap, and the number has to be Darwin's already. Entries are limited
+// to syscalls whose ARGUMENT and RESULT shape agree across the three, which is
+// why getdirentries64 (a 4th out-param Linux's getdents64 has no equivalent of)
+// is absent — a leaf that diverges in shape needs a per-target body, not a
+// substituted constant. An unknown name returns "-1", which every kernel here
+// rejects with ENOSYS — NOT "0", which is a valid number on two of the three
+// targets (x86-64 `read`, Darwin's indirect-syscall trampoline) and would have
+// made a typo issue a real syscall instead of failing.
+pub function sysno(t: string, name: string): string {
+    if (t == "x86_64") {
+        if (name == "read") { return "0"; }
+        if (name == "write") { return "1"; }
+        if (name == "close") { return "3"; }
+        if (name == "lseek") { return "8"; }
+        if (name == "openat") { return "257"; }
+        if (name == "unlinkat") { return "263"; }
+        if (name == "getrandom") { return "318"; }
+        return "-1";
+    }
+    if (t == "arm64-darwin") {
+        if (name == "read") { return "3"; }
+        if (name == "write") { return "4"; }
+        if (name == "close") { return "6"; }
+        if (name == "lseek") { return "199"; }
+        if (name == "openat") { return "463"; }
+        if (name == "unlinkat") { return "472"; }
+        // Darwin has no getrandom; getentropy(buf, len) takes the same first
+        // two args and ignores a third, but caps each call at 256 bytes and
+        // returns 0 rather than a count — see rt_src_random_bytes.
+        if (name == "getrandom") { return "500"; }
+        return "-1";
+    }
+    // arm64 (Linux).
+    if (name == "read") { return "63"; }
+    if (name == "write") { return "64"; }
+    if (name == "close") { return "57"; }
+    if (name == "lseek") { return "62"; }
+    if (name == "openat") { return "56"; }
+    if (name == "unlinkat") { return "35"; }
+    if (name == "getrandom") { return "278"; }
+    return "-1";
+}
+
+// at_fdcwd is the *at() family's "relative to the current directory" dirfd:
+// -100 on Linux, -2 on XNU. It only matters for a relative path (an absolute
+// one ignores dirfd), which is exactly the case that broke before #6002.
+pub function at_fdcwd(t: string): string {
+    if (t == "arm64-darwin") { return "-2"; }
+    return "-100";
+}
+
+// oflag is the open(2) flag-set table, the other half of sysno: the numbers
+// differ between Linux and XNU even where the syscall does not. O_RDONLY is 0
+// everywhere so it needs no entry; the write set is
+// O_WRONLY|O_CREAT|O_TRUNC = 1|0x40|0x200 = 577 on Linux and
+// 1|0x200|0x400 = 1537 on Darwin, which is exactly the kind of constant that
+// silently creates the wrong file rather than failing.
+pub function oflag(t: string, name: string): string {
+    if (t == "arm64-darwin") {
+        if (name == "wr_creat_trunc") { return "1537"; }
+        return "0";
+    }
+    if (name == "wr_creat_trunc") { return "577"; }
+    return "0";
+}
+
 // rt_src_random_bytes backs `random_bytes(n)` (#2649) — the first syscall-leaf
 // helper written in Fern, over the syscall sub-floor (docs/RUNTIME-INTRINSICS.md
 // step 5). Allocate n bytes, fill them from the CSPRNG in <= 256-byte chunks,
 // box the buffer back into a string. Only dep is `heap` (mark_random_bytes).
 //
-// `sysno` is the entropy syscall's number on the target, which is what makes ONE
-// source serve every native backend: x86-64 getrandom = 318, arm64-linux
-// getrandom = 278, arm64-darwin getentropy = BSD 500. The three agree on the
-// (buf, len, flags) argument shape — Darwin simply ignores the third arg — but
-// NOT on the result: getrandom returns the byte count, getentropy returns 0. So
-// the loop advances by the requested chunk, never by the result, and reads the
-// result only to detect failure (< 0) — the same contract the hand-asm bodies
-// this replaced held. The 256-byte chunking is getentropy's hard per-call
-// limit; on Linux it additionally fixes the short-fill the single-shot version
-// had for n > 256, where getrandom may return fewer bytes than asked.
+// The three targets agree on the (buf, len, flags) argument shape — Darwin's
+// getentropy simply ignores the third arg — but NOT on the result: getrandom
+// returns the byte count, getentropy returns 0. So the loop advances by the
+// requested chunk, never by the result, and reads the result only to detect
+// failure (< 0) — the same contract the hand-asm bodies this replaced held. The
+// 256-byte chunking is getentropy's hard per-call limit; on Linux it
+// additionally fixes the short-fill the single-shot version had for n > 256,
+// where getrandom may return fewer bytes than asked.
 // The chunk buffer address is `__raw_addr(p, off)`, not `p + off`: a raw pointer
 // is typed i32 on the Fern surface, so the arm64 backend sign-extends the sum of
 // an ordinary `+` back to 32 bits and the syscall gets a truncated heap address.
 // wasm keeps its WASI `random_get` bundle — it has no generic syscall.
-pub function rt_src_random_bytes(sysno: string): string {
-    return "function __fern_random_bytes(n: i32): string { var p: i32 = __raw_alloc(n); var off: i32 = 0; while (off < n) { var want: i32 = n - off; if (want > 256) { want = 256; } var r: i32 = __syscall3(" + sysno + ", __raw_addr(p, off), want, 0); if (r < 0) { off = n; } else { off = off + want; } } return __raw_string(p, n); }";
+pub function rt_src_random_bytes(t: string): string {
+    return "function __fern_random_bytes(n: i32): string { var p: i32 = __raw_alloc(n); var off: i32 = 0; while (off < n) { var want: i32 = n - off; if (want > 256) { want = 256; } var r: i32 = __syscall3(" + sysno(t, "getrandom") + ", __raw_addr(p, off), want, 0); if (r < 0) { off = n; } else { off = off + want; } } return __raw_string(p, n); }";
 }
 
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL
-// (#2649) — the single definition of the mapping native's __fern_io_error + the
-// arm64 hand-asm carry, so stat / read_file / remove_file / write_file stop
-// INLINING the five-way branch and just call it. `path` is consumed (moved into
-// the path-carrying variant, or dropped by RC on the payload-less Interrupted
-// branch), so callers hand it a FRESH string. Emitted once and bundled with the
-// fs helpers that call it (asm_ir's fs-helper bundle), so the standard
-// inter-procedural RC analysis threads the call-graph edge — this IS the #2649
-// "dependencies are the call graph" end-state, in miniature. x86-64 IR only; the
-// arm64 / AST backends keep the hand-asm __fern_io_error.
+// (#2649) — the single definition of the mapping native's __fern_io_error carries,
+// so the fs leaves stop INLINING the five-way branch and just call it. `path` is
+// consumed (moved into the path-carrying variant, or dropped by RC on the
+// payload-less Interrupted branch), so callers hand it a FRESH string. Emitted
+// once and bundled with the fs helpers that call it (each backend's fs-helper
+// bundle), so the standard inter-procedural RC analysis threads the call-graph
+// edge — this IS the #2649 "dependencies are the call graph" end-state, in
+// miniature. Bundled on BOTH register backends now; the arm64 register-ABI
+// hand-asm __fern_io_error survives only for the leaves still hand-written there
+// (stat / read_dir / remove_dir_all / temp_dir / open_fd).
 pub function rt_src_io_error(): string {
     return "function __fern_io_error(e: i32, path: string): IoError { if (e == 2) { return NotFound(path); } if (e == 13) { return PermissionDenied(path); } if (e == 17) { return AlreadyExists(path); } if (e == 4) { return Interrupted; } return Other(path, \"\"); }";
 }
 
 // rt_src_remove_file backs `remove_file(path)` (#2649, syscall-leaf) →
 // Result[void, IoError]. NUL-terminate the path, unlinkat(AT_FDCWD, path, 0)
-// (syscall 263, 3-arg so __syscall3 suffices), Ok(()) on success / on failure the
-// errno classified by the shared __fern_io_error (bundled with this helper) —
-// handed a FRESH path string, so the borrowed `path` param is never stored.
-pub function rt_src_remove_file(): string {
-    return "function __fern_remove_file(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(263, -100, pathz, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
+// (3-arg, so __syscall3 suffices), Ok(()) on success / on failure the errno
+// classified by the shared __fern_io_error (bundled with this helper) — handed a
+// FRESH path string, so the borrowed `path` param is never stored. Same body on
+// every native target; only the unlinkat number and AT_FDCWD come from `t`.
+pub function rt_src_remove_file(t: string): string {
+    return "function __fern_remove_file(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_write_file backs `write_file(path, contents)` (#2649, syscall-leaf) →
 // Result[void, IoError]. NUL-terminate the path, openat(AT_FDCWD, path,
-// O_WRONLY|O_CREAT|O_TRUNC=577, mode=420=0644) — the mode arg is meaningful, so
-// this is the first __syscall4 user. Copy the contents bytes into a buffer and
-// write them in ONE write (single write, no offset-loop, like read_file's single
-// read — regular-file writes complete in one call), close. None on success; on
-// openat failure the errno classified by the shared __fern_io_error (bundled with
-// this helper), handed a FRESH path string. x86-64-only (arch-specific syscalls).
-pub function rt_src_write_file(): string {
-    return "function __fern_write_file(path: string, contents: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(257, -100, pathz, 577, 420); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var clen: i32 = contents.len(); var cbuf: i32 = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j]); j = j + 1; } __syscall3(1, fd, cbuf, clen); __syscall3(3, fd, 0, 0); return Ok(()); }";
+// O_WRONLY|O_CREAT|O_TRUNC, mode=420=0644) — the mode arg is meaningful, so this
+// is the __syscall4 user. Copy the contents bytes into a buffer, write them with
+// a short-write loop, close. Ok(()) on success; on openat failure the errno
+// classified by the shared __fern_io_error (bundled with this helper), handed a
+// FRESH path string. Only the syscall numbers, AT_FDCWD and the open flag-set
+// come from `t` — the flag-set genuinely differs (577 Linux / 1537 Darwin).
+pub function rt_src_write_file(t: string): string {
+    return "function __fern_write_file(path: string, contents: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, " + oflag(t, "wr_creat_trunc") + ", 420); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var clen: i32 = contents.len(); var cbuf: i32 = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j]); j = j + 1; } var put: i32 = 0; while (put < clen) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd, __raw_addr(cbuf, put), clen - put); if (w <= 0) { put = clen; } else { put = put + w; } } __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return Ok(()); }";
 }
 
 // rt_src_env backs `env(name)` (#2649) → Option[string]. Walks the process envp
@@ -413,7 +488,8 @@ pub function rt_src_write_file(): string {
 // kernel-immortal bytes in place), it copies because the entry pointer is a high
 // stack address the i32 raw-pointer floor can't offset 64-bit-safely as a Fern
 // value — but __raw_load8(entry, off) offsets in the emitter, so per-byte reads
-// are safe. x86-64-only.
+// are safe. x86-64-only: it needs no syscall at all, just the __raw_environ op,
+// which the arm64 emitter does not implement yet — that is the whole blocker.
 pub function rt_src_env(): string {
     return "function __fern_env(name: string): Option[string] { var nlen: i32 = name.len(); var envp: i32 = __raw_environ(); var idx: i32 = 0; var done: i32 = 0; while (done == 0) { var entry: i32 = __raw_load_ptr(envp, idx); if (entry == 0) { done = 1; } else { var m: i32 = 1; var k: i32 = 0; while (k < nlen) { if (__raw_load8(entry, k) != name[k]) { m = 0; k = nlen; } else { k = k + 1; } } if (m == 1) { if (__raw_load8(entry, nlen) == 61) { var vs: i32 = nlen + 1; var vlen: i32 = 0; while (__raw_load8(entry, vs + vlen) != 0) { vlen = vlen + 1; } var vbuf: i32 = __raw_alloc(vlen + 1); var c: i32 = 0; while (c < vlen) { __raw_store8(vbuf, c, __raw_load8(entry, vs + c)); c = c + 1; } return Some(__raw_string(vbuf, vlen)); } } idx = idx + 1; } } return None; }";
 }
@@ -425,25 +501,30 @@ pub function rt_src_env(): string {
 // by the op handler), mkdirat(AT_FDCWD, path, 0700=448) via __syscall3, returns
 // Ok(path) — the built buffer becomes the string — or, on failure, the errno
 // classified by the shared __fern_io_error (bundled with this helper), handed a
-// FRESH copy of the built path. x86-64-only (arch-specific syscall number).
+// FRESH copy of the built path. x86-64-only, but only for want of doing it:
+// mkdirat IS number-compatible across the three targets (34 / 34 / 475), so this
+// is the cheapest of the remaining leaves to take to arm64.
 pub function rt_src_temp_dir(): string {
     return "function __fern_temp_dir(prefix: string): Result[string, IoError] { var t: i64 = monotonic_ns(); var plen: i32 = prefix.len(); var ndig: i32 = 1; var tt: i64 = t; while (tt >= (10 as i64)) { ndig = ndig + 1; tt = tt / (10 as i64); } var total: i32 = 5 + plen + 1 + ndig; var buf: i32 = __raw_alloc(total + 1); __raw_store8(buf, 0, 47); __raw_store8(buf, 1, 116); __raw_store8(buf, 2, 109); __raw_store8(buf, 3, 112); __raw_store8(buf, 4, 47); var i: i32 = 0; while (i < plen) { __raw_store8(buf, 5 + i, prefix[i]); i = i + 1; } __raw_store8(buf, 5 + plen, 45); var pos: i32 = total - 1; var v: i64 = t; if (v == (0 as i64)) { __raw_store8(buf, pos, 48); } else { while (v > (0 as i64)) { __raw_store8(buf, pos, 48 + ((v % (10 as i64)) as i32)); v = v / (10 as i64); pos = pos - 1; } } __raw_store8(buf, total, 0); var rc: i32 = __syscall3(258, -100, buf, 448); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(buf, total))); } return Ok(__raw_string(buf, total)); }";
 }
 
 // rt_src_read_file backs `read_file(path)` (#2649, syscall-leaf) → Result[string,
-// IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY=0) (syscall
-// 257; mode ignored for O_RDONLY so __syscall3 suffices), lseek-size the file
-// (syscall 8), read the whole thing in ONE read into a sized buffer that BECOMES
-// the returned string (RC-managed, like random_bytes), close. On open/read
-// failure, the errno is classified by the shared __fern_io_error (bundled with
-// this helper), handed a FRESH path string, so the borrowed `path` param is never
-// stored. The success path is unchanged, so the compiler's own read_file stays
-// byte-for-byte. Single-read (no offset-into-buffer arithmetic, which the i32
-// raw-pointer floor can't do 64-bit-safely on a high heap buffer): correct for
-// regular files ≤ 2 GiB read without interruption, which covers the use (the
-// compiler reading source). x86-64-only (arch-specific syscall numbers).
-pub function rt_src_read_file(): string {
-    return "function __fern_read_file(path: string): Result[string, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 0); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var size: i32 = __syscall3(8, fd, 0, 2); __syscall3(8, fd, 0, 0); var buf: i32 = __raw_alloc(size + 1); var got: i32 = __syscall3(0, fd, buf, size); __syscall3(3, fd, 0, 0); if (got < 0) { return Err(__fern_io_error(0 - got, __raw_string(pathz, plen))); } return Ok(__raw_string(buf, got)); }";
+// IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY=0) (mode is
+// ignored without O_CREAT, so __syscall3 suffices), lseek-size the file, read it
+// into a sized buffer that BECOMES the returned string (RC-managed, like
+// random_bytes), close. On open/read failure the errno is classified by the
+// shared __fern_io_error (bundled with this helper), handed a FRESH path string,
+// so the borrowed `path` param is never stored.
+//
+// The read is a LOOP now, not the single read this helper shipped with. That
+// single read was a workaround for the missing pointer-offset primitive — the
+// comment here used to say the i32 raw-pointer floor "can't do 64-bit-safe
+// `buf + offset` arithmetic on a high heap buffer", which was true of `+` and is
+// what `__raw_addr` exists to fix. The loop matches what every hand-asm
+// read_file did, so a short read (a signal, a pipe-backed fd) no longer silently
+// truncates the file. Still i32-sized, so > 2 GiB is out of scope either way.
+pub function rt_src_read_file(t: string): string {
+    return "function __fern_read_file(path: string): Result[string, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, 0); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var size: i32 = __syscall3(" + sysno(t, "lseek") + ", fd, 0, 2); __syscall3(" + sysno(t, "lseek") + ", fd, 0, 0); var buf: i32 = __raw_alloc(size + 1); var got: i32 = 0; var bad: i32 = 0; var done: i32 = 0; while (done == 0) { if (got >= size) { done = 1; } else { var n: i32 = __syscall3(" + sysno(t, "read") + ", fd, __raw_addr(buf, got), size - got); if (n < 0) { bad = n; done = 1; } else { if (n == 0) { done = 1; } else { got = got + n; } } } } __syscall3(" + sysno(t, "close") + ", fd, 0, 0); if (bad < 0) { return Err(__fern_io_error(0 - bad, __raw_string(pathz, plen))); } return Ok(__raw_string(buf, got)); }";
 }
 
 // rt_src_read_dir backs `read_dir(path)` (#2649, syscall-leaf) → Result[string[],
@@ -459,8 +540,10 @@ pub function rt_src_read_file(): string {
 // d_type(1) d_name(@19, NUL-terminated). On openat failure the errno is classified
 // by the shared __fern_io_error (bundled with this helper), handed a FRESH path
 // string. The result string[] is built with .append() (→ __fern_arr_push /
-// arr_push_owned for the sole-owner local, like str_split). x86-64-only (arch-
-// specific syscall numbers); arm64/AST keep their hand-asm.
+// arr_push_owned for the sole-owner local, like str_split). x86-64-only, and NOT
+// by constant substitution: Darwin's getdirentries64 takes a 4th out-param that
+// getdents64 has no equivalent of, and its dirent puts d_name at 21 rather than
+// 19 — a per-target body, not a per-target number.
 pub function rt_src_read_dir(): string {
     return "function __fern_read_dir(path: string): Result[string[], IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 65536); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var names: string[] = []; var done: i32 = 0; while (done == 0) { var buf: i32 = __raw_alloc(65536); var n: i32 = __syscall3(217, fd, buf, 65536); if (n <= 0) { done = 1; } else { var pos: i32 = 0; while (pos < n) { var reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; var nlen: i32 = 0; while (__raw_load8(buf, pos + 19 + nlen) != 0) { nlen = nlen + 1; } var skip: i32 = 0; if (nlen == 1) { if (__raw_load8(buf, pos + 19) == 46) { skip = 1; } } if (nlen == 2) { if (__raw_load8(buf, pos + 19) == 46) { if (__raw_load8(buf, pos + 20) == 46) { skip = 1; } } } if (skip == 0) { var nbuf: i32 = __raw_alloc(nlen + 1); var k: i32 = 0; while (k < nlen) { __raw_store8(nbuf, k, __raw_load8(buf, pos + 19 + k)); k = k + 1; } names = names.append(__raw_string(nbuf, nlen)); } pos = pos + reclen; } } } __syscall3(3, fd, 0, 0); return Ok(names); }";
 }
@@ -485,8 +568,8 @@ pub function rt_src_read_dir(): string {
 // returned Result[void, IoError], which is safe. The fd is held open across the
 // recursion (best-effort; realistic tree depth only). Bundled with io_error in the
 // fs module so its error-path call threads as an ordinary call-graph edge, and
-// recurses by its own name (→ __fn___fern_remove_dir_all). x86-64-only (arch-
-// specific syscall numbers); arm64/AST keep their hand-asm.
+// recurses by its own name (→ __fn___fern_remove_dir_all). x86-64-only for the
+// same reason read_dir is: it carries its own getdents64 loop.
 pub function rt_src_remove_dir_all(): string {
     return "function __fern_remove_dir_all(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 65536); if (fd < 0) { var e: i32 = 0 - fd; if (e == 2) { return Ok(()); } if (e == 20) { __syscall3(263, -100, pathz, 0); return Ok(()); } return Err(__fern_io_error(e, __raw_string(pathz, plen))); } var done: i32 = 0; while (done == 0) { var buf: i32 = __raw_alloc(65536); var n: i32 = __syscall3(217, fd, buf, 65536); if (n <= 0) { done = 1; } else { var pos: i32 = 0; while (pos < n) { var reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; var nl: i32 = 0; while (__raw_load8(buf, pos + 19 + nl) != 0) { nl = nl + 1; } var skip: i32 = 0; if (nl == 1) { if (__raw_load8(buf, pos + 19) == 46) { skip = 1; } } if (nl == 2) { if (__raw_load8(buf, pos + 19) == 46) { if (__raw_load8(buf, pos + 20) == 46) { skip = 1; } } } if (skip == 0) { var cl: i32 = plen + 1 + nl; var cb: i32 = __raw_alloc(cl + 1); var a: i32 = 0; while (a < plen) { __raw_store8(cb, a, path[a]); a = a + 1; } __raw_store8(cb, plen, 47); var b: i32 = 0; while (b < nl) { __raw_store8(cb, plen + 1 + b, __raw_load8(buf, pos + 19 + b)); b = b + 1; } __raw_store8(cb, cl, 0); match (__fern_remove_dir_all(__raw_string(cb, cl))) { Ok(_) => {}, Err(_) => {} } } pos = pos + reclen; } } } __syscall3(3, fd, 0, 0); __syscall3(263, -100, pathz, 512); return Ok(()); }";
 }
@@ -520,7 +603,9 @@ pub function rt_src_clock(which: string): string {
 // __fern_io_error (bundled with this helper), handed a FRESH path string so the
 // borrowed `path` param is never stored. The FileStat struct + Result construction
 // lower through the normal IR path (emit_ir_runtime_fern_fn receives all_structs).
-// x86-64-only (arch-specific syscall number); arm64/AST keep their hand-asm.
+// x86-64-only, and NOT by constant substitution: arm64-linux has no `stat`
+// syscall at all (newfstatat, 4-arg, st_mode at 16) and Darwin's stat64 puts a
+// u16 st_mode at 4 and st_size at 96 — the offsets differ, not just the number.
 pub function rt_src_stat(): string {
     return "function __fern_stat(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall3(4, pathz, buf, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } var mode: i32 = __load_i32(buf + 24); var size: i64 = __load_i64(buf + 48); var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: size }); }";
 }

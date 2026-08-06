@@ -36,18 +36,50 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > `random_bytes` string read its refcount out of the preceding allocation;
 > `__raw_string` goes through `__fern_str_box`, which writes the rc header.
 >
-> The three clocks (`monotonic_ns` / `now_unix_ms` / `now_ns`) are still
-> **x86-64 IR only**: unlike getrandom they have no number-compatible Darwin
-> form at all (gettimeofday with a different struct; CNTVCT_EL0, not a syscall),
-> so arm64 keeps its hand-asm there. wasm has no generic syscall. The clocks
+> **The file-content fs leaves followed** — `read_file`, `write_file`,
+> `remove_file` are Fern on arm64 too, with `__syscall4` gaining its arm64
+> emitter (on arm64 the 4th syscall arg is just `x3`; there is no x86-64-style
+> `%r10` shuffle) and the per-target constants factored into three tables in
+> `asmcore`: **`sysno(t, name)`**, **`at_fdcwd(t)`** (-100 Linux / -2 XNU) and
+> **`oflag(t, name)`** (O_WRONLY|O_CREAT|O_TRUNC is 577 on Linux, 1537 on
+> Darwin). `t` is `"x86_64"` / `"arm64"` / `"arm64-darwin"`. The three leaves
+> and the shared `__fern_io_error` classifier emit as one bundle module, so each
+> helper's call to the classifier threads as an ordinary call-graph edge — the
+> #2649 end-state in miniature, now on both register backends.
+>
+> `__raw_addr` also let `read_file` grow the read LOOP its hand-asm always had:
+> the single-read shape was a workaround for the missing primitive, and it
+> silently truncated on a short read. `write_file` gained the matching
+> short-write loop.
+>
+> Landing that surfaced a **darwinize** bug worth knowing about: its pending
+> syscall number was reset by every line, so it only rewrote an `svc` that came
+> IMMEDIATELY after the number load. The two abort paths (`.Lalloc_oom`,
+> `__fern_oob_abort`) load their exit status in between, so `exit(125)` /
+> `exit(134)` kept a Linux `svc #0` in Mach-O output and died by trap instead of
+> exiting with the status. The pending number is now sticky until an `svc`
+> consumes it; an unmappable `mov x8, #N` still clears it, so a syscall with no
+> Darwin form can never inherit the previous one's mapping.
+>
+> Still **x86-64 IR only**: the three clocks (`monotonic_ns` / `now_unix_ms` /
+> `now_ns`) and `stat` / `read_dir` / `remove_dir_all` / `temp_dir` / `env`.
+> The first four are not blocked on effort but on SHAPE — unlike getrandom and
+> openat, their Darwin form differs by more than a number. Darwin has no
+> `clock_gettime` at all (gettimeofday against a different struct, or CNTVCT_EL0,
+> not a syscall); its `struct stat` puts `st_mode` at offset 4 as a u16 where
+> Linux arm64 has it at 16 as a u32, and `st_size` at 96 rather than 48; and
+> `getdirentries64` takes a 4th out-param that Linux's `getdents64` has no
+> equivalent of. Each needs a per-target source BODY, not a substituted
+> constant, which is why `sysno` deliberately has no entry for them. wasm has no
+> generic syscall at all. The clocks
 > slice added one
 > more floor primitive — `__raw_scratch` (a fixed static buffer for the kernel
 > to write `timespec`/`stat` into — no per-call heap leak) — and reuses the
 > existing `__load_i64` for the i64 `tv_sec`/`tv_nsec` read-back. What remains
 > hand-written (the residue tracked by
-> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is the fs family on
-> arm64 (x86-64 has it all — see below), the clocks on arm64, the wasm bundles,
-> `__fern_alloc` itself, and the map/array mutator core.
+> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is the shape-diverging
+> leaves on arm64 listed just above, the wasm bundles, `__fern_alloc` itself, and
+> the map/array mutator core.
 >
 > **Status update (2026-07, user-typed returns): `stat` migrated.** `stat` is the
 > first leaf returning a **user-typed** value — `Result[FileStat, IoError]` — and
@@ -61,10 +93,10 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > (it receives `all_structs`), which is the capability `read_file` and the rest of
 > the fs family need. **`read_file` followed** (`asmcore.rt_src_read_file` →
 > `Result[string, IoError]`): openat/lseek/read/close via `__syscall3`, the sized
-> read buffer becomes the `Ok(string)`. It reads the whole file in ONE `read`
-> (into an lseek-sized buffer, passed whole) rather than a read-loop, because the
-> i32 raw-pointer floor can't do 64-bit-safe `buf + offset` arithmetic on a high
-> heap buffer — correct for regular files ≤ 2 GiB read without interruption. And
+> read buffer becomes the `Ok(string)`. (It shipped reading the whole file in ONE
+> `read` because the i32 raw-pointer floor could not offset a high heap buffer
+> 64-bit-safely; `__raw_addr` closed that, and it is a read LOOP now — see the
+> 2026-08 block above.) And
 > **`remove_file`** (`rt_src_remove_file` → `Option[IoError]`): `unlinkat` via
 > `__syscall3`, `None` on success / the errno-mapped `Some(IoError)` on failure.
 > `write_file` (`rt_src_write_file` → `Option[IoError]`, the first `__syscall4`

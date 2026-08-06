@@ -9,13 +9,18 @@ Tier-0/1 slices (`__fern_i32_pow`, the five `__fern_arr_i32_*` reducers,
 `__fern_str_to_i32`, and the str predicates/utilities). The **syscall
 leaves** followed on the x86-64 IR path (`random_bytes`, the three clocks,
 and the whole fs family) over the `__syscall3` / `__syscall4` /
-`__raw_scratch` / `__raw_environ` sub-floor, and as of 2026-08
-`random_bytes` is the first of them to reach **arm64** as well — the shared
-source takes the target's syscall number as a parameter. What remains
+`__raw_scratch` / `__raw_environ` sub-floor, and as of 2026-08 they are
+reaching **arm64** as well: `random_bytes` first, then the file-content fs
+leaves (`read_file` / `write_file` / `remove_file`) with their shared
+`__fern_io_error`. Each is ONE source across all three native targets, with
+the syscall numbers, `AT_FDCWD` and open flag-sets coming from
+`asmcore.sysno` / `at_fdcwd` / `oflag` keyed by the target. What remains
 hand-written — and what keeps
 [#2649](https://github.com/JakeChampion/lang/issues/2649) open — is the
 core allocator / map / array runtime (`__fern_alloc`, `__fern_map_*`,
-`__fern_arr_*` mutators), the fs + clock leaves on arm64, and the
+`__fern_arr_*` mutators), the arm64 leaves whose Darwin form diverges in
+SHAPE rather than in constants (the clocks, `stat`, `read_dir`,
+`remove_dir_all`, `temp_dir`, `env`), and the
 per-backend wasm helper bundles. This is the architecture document the end goal of
 [#2649](https://github.com/JakeChampion/lang/issues/2649) needs as more helpers
 move; see the "Slice 1 / Slice 2 (landed)" sections at the end for what the
