@@ -6153,10 +6153,7 @@ func (g *generator) emitPollRuntime() {
 	g.typeDirective("__fern_poll")
 	g.label("__fern_poll")
 	if g.darwin {
-		// arm64-darwin readiness = kqueue, deferred. Stub: -1.
-		g.emit("mov x0, #-1")
-		g.emit("ret")
-		g.sizeDirective("__fern_poll")
+		g.emitPollRuntimeKqueue()
 		return
 	}
 	// Frame: fp/lr + callee-saves x19..x23 + a 16-byte timespec scratch.
@@ -6229,6 +6226,203 @@ func (g *generator) emitPollRuntime() {
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldr x23, [sp, #48]")
 	g.emit("ldp x29, x30, [sp], #80")
+	g.emit("ret")
+	g.sizeDirective("__fern_poll")
+	g.line(".ltorg")
+}
+
+// Darwin BSD syscall numbers for the kqueue readiness path. Bare BSD
+// numbers, matching the rest of the Darwin syscalls in this file (arm64
+// macOS puts the number in x16 and traps with `svc #0x80`; there is no
+// syscall-class prefix, unlike x86-64 Darwin).
+const (
+	darKqueue = 362
+	darKevent = 363
+)
+
+// struct kevent (Darwin, 64-bit) is 32 bytes:
+//
+//	 0  uintptr_t ident    the fd
+//	 8  int16_t   filter   EVFILT_READ = -1
+//	10  uint16_t  flags    EV_ADD on the way in; EV_ERROR on the way out
+//	12  uint32_t  fflags
+//	16  intptr_t  data
+//	24  void     *udata    we stash the caller's fd INDEX here
+const (
+	keventSize  = 32
+	kevIdent    = 0
+	kevFilter   = 8
+	kevFlags    = 10
+	kevFflags   = 12
+	kevData     = 16
+	kevUdata    = 24
+	evfiltRead  = 0xffff // EVFILT_READ (-1) in the low 16 bits
+	evAdd       = 0x0001
+	evErrorFlag = 0x4000
+)
+
+// emitPollRuntimeKqueue is `__fern_poll`'s arm64-darwin body: the same
+// contract as the Linux ppoll path — take a length-prefixed i32[] of fds
+// and a millisecond timeout, return the INDEX of the first readable fd or
+// -1 — implemented over kqueue(2) + kevent(2).
+//
+// Three things differ from a straight ppoll transliteration, and each one
+// is a correctness requirement rather than a style choice:
+//
+//  1. NEGATIVE FDS ARE SKIPPED. poll(2) ignores a negative fd by contract,
+//     and callers rely on it: `std/tcp`'s deadline path appends
+//     `wasm_timer_pollable(...)`, which is -1 on native, straight into the
+//     set. kevent(2) does not ignore them — it fails the registration with
+//     EBADF — so a faithful port has to filter them out. The caller's
+//     original index is stashed in `udata` so the returned index still
+//     refers to the array it passed in, not to the filtered changelist.
+//
+//  2. THE KQUEUE IS PER-CALL. kqueue is stateful where ppoll is stateless:
+//     it is an fd holding registrations, not a set passed per call. Keeping
+//     a persistent kqueue across calls would amortise the registration, but
+//     it needs somewhere to store that fd's lifetime, which this helper — a
+//     leaf function with no state — has no place for. Creating and closing
+//     one per call is the honest first version: correct, and slower than it
+//     eventually should be. See docs/ATLAS-PLATFORM-PLAN.md §2c.
+//
+//  3. EV_ERROR EVENTS ARE SKIPPED. A failed registration comes back as an
+//     event with EV_ERROR set rather than as a kevent(2) failure, so
+//     treating every returned event as "ready" would report a bad fd as
+//     readable.
+//
+// The scan takes the MINIMUM udata rather than the first returned event,
+// because kevent returns events in its own order while the ppoll path
+// returns the lowest ready index. Callers should not depend on which ready
+// fd they are handed, but matching the two backends costs one comparison
+// and removes a way for them to differ.
+func (g *generator) emitPollRuntimeKqueue() {
+	// Frame: fp/lr + x19..x26 + a 16-byte timespec scratch at [x29, #80].
+	g.emit("stp x29, x30, [sp, #-112]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]") // x19 = nfds, x20 = fds ptr
+	g.emit("stp x21, x22, [sp, #32]") // x21 = changelist, x22 = loop i
+	g.emit("stp x23, x24, [sp, #48]") // x23 = timeout_ms, x24 = kq fd
+	g.emit("stp x25, x26, [sp, #64]") // x25 = eventlist, x26 = nchanges
+	g.emit("mov x20, x0")
+	g.emit("mov x23, x1")
+	g.emitArrayLen("w19", "x20")
+	g.emit("cmp w19, #0")
+	g.emit("b.le .Lkq_none")
+
+	// changelist and eventlist, nfds entries each. The eventlist is sized
+	// for nfds rather than 1 so the scan below can pick the lowest index.
+	g.emit("lsl w0, w19, #5")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x21, x0")
+	g.emit("lsl w0, w19, #5")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x25, x0")
+
+	// Marshal, skipping negative fds; x26 counts what actually registered.
+	g.emit("mov x26, #0")
+	g.emit("mov x22, #0")
+	g.label(".Lkq_fill")
+	g.emit("cmp x22, x19")
+	g.emit("b.ge .Lkq_filled")
+	g.emit("ldr w0, [x20, x22, lsl #2]")
+	g.emit("cmp w0, #0")
+	g.emit("b.lt .Lkq_skip")
+	g.emit("mov x9, #%d", keventSize)
+	g.emit("mul x10, x26, x9")
+	g.emit("add x9, x21, x10") // &changelist[nchanges]
+	g.emit("sxtw x0, w0")
+	g.emit("str x0, [x9, #%d]", kevIdent)
+	g.emit("mov w1, #%d", evfiltRead)
+	g.emit("strh w1, [x9, #%d]", kevFilter)
+	g.emit("mov w1, #%d", evAdd)
+	g.emit("strh w1, [x9, #%d]", kevFlags)
+	g.emit("str wzr, [x9, #%d]", kevFflags)
+	g.emit("str xzr, [x9, #%d]", kevData)
+	g.emit("str x22, [x9, #%d]", kevUdata) // caller's index, not ours
+	g.emit("add x26, x26, #1")
+	g.label(".Lkq_skip")
+	g.emit("add x22, x22, #1")
+	g.emit("b .Lkq_fill")
+	g.label(".Lkq_filled")
+	g.emit("cmp x26, #0")
+	g.emit("b.le .Lkq_none") // every fd was negative: nothing to wait on
+
+	// kq = kqueue()
+	g.emit("mov x16, #%d", darKqueue)
+	g.emit("svc #0x80")
+	g.emit("b.cs .Lkq_none")
+	g.emit("mov x24, x0")
+
+	// timeout_ms < 0 → NULL timespec (block); else { sec, nsec }.
+	g.emit("cmp x23, #0")
+	g.emit("b.lt .Lkq_infinite")
+	g.emit("mov x9, #1000")
+	g.emit("udiv x10, x23, x9")
+	g.emit("msub x11, x10, x9, x23")
+	g.emit("ldr x12, =1000000")
+	g.emit("mul x11, x11, x12")
+	g.emit("add x5, x29, #80")
+	g.emit("stp x10, x11, [x5]")
+	g.emit("b .Lkq_call")
+	g.label(".Lkq_infinite")
+	g.emit("mov x5, #0")
+	g.label(".Lkq_call")
+	// kevent(kq, changelist, nchanges, eventlist, nevents, timeout).
+	// One call both registers and waits.
+	g.emit("mov x0, x24")
+	g.emit("mov x1, x21")
+	g.emit("mov w2, w26")
+	g.emit("mov x3, x25")
+	g.emit("mov w4, w26")
+	g.emit("mov x16, #%d", darKevent)
+	g.emit("svc #0x80")
+	g.emit("mov x22, x0") // n (or garbage if the carry flag is set)
+	g.emit("b.cs .Lkq_close_none")
+
+	// close(kq) before inspecting the results — the fd is dead either way,
+	// and leaking one per poll would exhaust the table on a server loop.
+	g.emit("mov x0, x24")
+	g.emit("mov x16, #%d", darClose)
+	g.emit("svc #0x80")
+
+	g.emit("cmp x22, #0")
+	g.emit("b.le .Lkq_none")
+	// Scan the returned events for the lowest udata, skipping EV_ERROR.
+	g.emit("mov x0, #-1")
+	g.emit("mov x9, #0")
+	g.label(".Lkq_scan")
+	g.emit("cmp x9, x22")
+	g.emit("b.ge .Lkq_ret")
+	g.emit("mov x11, #%d", keventSize)
+	g.emit("mul x12, x9, x11")
+	g.emit("add x10, x25, x12")
+	g.emit("ldrh w13, [x10, #%d]", kevFlags)
+	g.emit("mov w14, #%d", evErrorFlag)
+	g.emit("and w13, w13, w14")
+	g.emit("cbnz w13, .Lkq_next") // failed registration, not readiness
+	g.emit("ldr x11, [x10, #%d]", kevUdata)
+	g.emit("cmp x0, #0")
+	g.emit("b.lt .Lkq_take") // nothing chosen yet
+	g.emit("cmp x11, x0")
+	g.emit("b.ge .Lkq_next")
+	g.label(".Lkq_take")
+	g.emit("mov x0, x11")
+	g.label(".Lkq_next")
+	g.emit("add x9, x9, #1")
+	g.emit("b .Lkq_scan")
+
+	g.label(".Lkq_close_none")
+	g.emit("mov x0, x24")
+	g.emit("mov x16, #%d", darClose)
+	g.emit("svc #0x80")
+	g.label(".Lkq_none")
+	g.emit("mov x0, #-1")
+	g.label(".Lkq_ret")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x23, x24, [sp, #48]")
+	g.emit("ldp x25, x26, [sp, #64]")
+	g.emit("ldp x29, x30, [sp], #112")
 	g.emit("ret")
 	g.sizeDirective("__fern_poll")
 	g.line(".ltorg")
