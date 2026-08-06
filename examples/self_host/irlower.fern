@@ -19997,7 +19997,11 @@ function struct_lit_precise_ok(structs: parser.StructDecl[], slit: parser.ExprSt
 // (array / scalar struct / tuple, dispatched by slot flags); "box-shallow" = a scalar
 // Option/Result/enum box (a plain __fern_rc_dec — the scalar payload is an inline
 // value, so no field/element walk); "opt-rcpayload" = an rc-payload Option/Result
-// (emit_opt_payload_drop: op_opt_payload → payload dec → box dec); "opt-strpayload"
+// (emit_opt_payload_drop: op_opt_payload → payload dec → box dec);
+// "opt-structpayload:<P>" = an Option/Result whose payload is a struct with
+// rc-array fields (#6127 — emit_opt_struct_payload_drop: op_opt_payload →
+// __struct_drop_<P> → payload dec → box dec, the struct name riding in the kind);
+// "opt-strpayload"
 // = a STRING-payload Option/Result (#4355 — emit_opt_str_payload_drop:
 // op_opt_payload → __fern_str_free → box dec); "enum-rcpayload:<E>"
 // = an rc-payload user enum (emit_enum_variant_drops: runtime variant-dispatch deep-
@@ -20104,12 +20108,15 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // cannot (an Ok-array box and an Err-scalar box spell the same).
                 var is_rcopt: boolean = false;
                 var rcopt_str: boolean = false;
+                var rcopt_sty: string = "";
                 if (!is_lit && !is_opt) {
                     var rcc: OptRcCand = rcpayload_option_cand(v, structs);
                     if (rcc.variant != "") {
                         if (!body_has_top_level_match(body, v.name) && !opt_body_binding_escapes(body, v.name, rcc.variant)) {
                             is_rcopt = true;
                             rcopt_str = rcc.ptype == "string";
+                            rcopt_sty = opt_payload_deep_sty(rcc.ptype, structs);
+                            if (rcopt_sty.len() > 0 && opt_body_field_moved(body, v.name, rcc.variant, rcopt_sty, structs)) { rcopt_sty = ""; }
                         }
                     }
                 }
@@ -20171,6 +20178,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                     if (last > i) {
                         var kind: string = "";
                         if (is_rcopt && rcopt_str) { kind = "opt-strpayload"; }
+                        else if (is_rcopt && rcopt_sty.len() > 0) { kind = "opt-structpayload:" + rcopt_sty; }
                         else if (is_rcopt) { kind = "opt-rcpayload"; }
                         else if (is_opt || is_enum) { kind = "box-shallow"; }
                         else if (is_rcenum) { kind = "enum-rcpayload:" + rcenum_owner; }
@@ -27398,15 +27406,18 @@ function rcpayload_option_cand(v: parser.StmtVar, structs: parser.StructDecl[]):
         // by shape (a fresh box per construction), unlike a bare `a + b` producer
         // whose un-annotated form could be an int add. #4355.
         parser.ExprString(_) => { return OptRcCand { variant: kind, ptype: "string" }; },
-        // FRESH leak-safe struct literal payload — sole owner (rc==1). The box is
-        // freed by a shallow __fern_rc_dec (emit_opt_payload_drop). A scalar-only
-        // struct box holds only inline scalars (nothing to walk); a struct with
-        // leak-safe ARRAY fields is ALSO admitted with the SAME shallow free — its
-        // array fields are NOT owned by a counted ref from the payload struct (unlike
-        // the enum path, whose construction alias-incs the field), so they are
-        // reclaimed by the surrounding machinery and a __struct_drop_<T> deep-drop
-        // here would OVER-RELEASE them (double-free). The literal's own type_name
-        // names the struct.
+        // FRESH leak-safe struct literal payload — sole owner (rc==1). The two
+        // admitted shapes need DIFFERENT frees, which is what opt_payload_deep_sty
+        // decides: a scalar-only struct box holds only inline scalars, so the
+        // shallow __fern_rc_dec of emit_opt_payload_drop is complete; a struct with
+        // rc-ARRAY fields needs __struct_drop_<T> first (emit_opt_struct_payload_drop),
+        // because the construction alias-incs those fields and nothing else releases
+        // them — the drop zeroes the slot, so the exit sweep's own deep free never
+        // runs. This comment used to claim the opposite (that a deep drop here would
+        // over-release, the fields being reclaimed by "surrounding machinery"); that
+        // was measured false in #6127 — the field buffer leaked once per bind, and the
+        // REBOUND sibling has deep-dropped the same shape since #6252 without an
+        // underflow. The literal's own type_name names the struct.
         parser.ExprStructLit(slit) => {
             var sty: string = slit.type_name;
             if (!slit.has_base && decl_is_struct(structs, sty) && decl_is_leaksafe(structs, sty)
@@ -27499,19 +27510,257 @@ function opt_stmt_binding_escapes(st: parser.Stmt, name: string, variant: string
     }
 }
 
+// ── The arm binding may MOVE a field out, and only the DEEP drop cares (#6127) ──
+//
+// `binding_escapes_arm` proves the arm does not let the payload STRUCT BOX
+// outlive the match, which is all the shallow box dec needs. The deep drop frees
+// the box's rc FIELDS as well, so it needs the stronger property: no field of the
+// binding is extracted whole. `match (o) { Some(p) => { held = p.xs; } … }` passes
+// the box-level gate — `p` itself never escapes — while handing `held` the buffer
+// the deep drop would free, a use-after-free the freelist happily hides.
+//
+// So this walker gates ONLY the deep-drop upgrade: a moved field downgrades the
+// drop back to the shallow box dec (today's sound leak), it never withdraws the
+// candidate. Same borrow vocabulary as rctuple_esc_expr, rooted one level up at a
+// bare local's field (`name.<f>`) instead of a tuple element (`name.<i>`).
+// SAFE: a scalar field read `name.<f>` (value copy), an indexed array-field read
+// `name.<f>[j]`, and `name.<f>.len()`. ESCAPES: a bare `name`, and a bare
+// non-scalar field `name.<f>`. Erring toward escape leaks; erring the other way
+// dangles, so unknown shapes fall to the generic recursion and escape.
+function optstruct_bind_esc_expr(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },   // bare payload box escapes
+        parser.ExprNumber(_) => { return false; },
+        parser.ExprString(_) => { return false; },
+        parser.ExprBool(_) => { return false; },
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    if (oid.name == name) {
+                        var ft: string = decl_field_type(structs, sty, fa.field);
+                        if (is_scalar_type_name(ft)) { return false; }   // scalar field copy
+                        return true;                                     // rc field extracted bare
+                    }
+                    return false;
+                },
+                _ => { return optstruct_bind_esc_expr(fa.obj, name, sty, structs); }
+            }
+        },
+        parser.ExprIndex(ix) => {
+            match (ix.array) {
+                parser.ExprFieldAccess(bfa) => {
+                    match (bfa.obj) {
+                        parser.ExprIdent(bid) => {
+                            // name.<f>[j] : indexed array-field read — safe; check the index.
+                            if (bid.name == name) { return optstruct_bind_esc_expr(ix.index, name, sty, structs); }
+                        },
+                        _ => {}
+                    }
+                },
+                parser.ExprIdent(aid) => { if (aid.name == name) { return true; } },
+                _ => {}
+            }
+            return optstruct_bind_esc_expr(ix.array, name, sty, structs) || optstruct_bind_esc_expr(ix.index, name, sty, structs);
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "len") {
+                        match (cfa.obj) {
+                            parser.ExprFieldAccess(ofa) => {
+                                match (ofa.obj) {
+                                    parser.ExprIdent(oid) => {
+                                        // name.<f>.len() : length borrow — safe receiver, check args.
+                                        if (oid.name == name) {
+                                            var ci: i32 = 0;
+                                            while (ci < c.args.len()) { if (optstruct_bind_esc_expr(c.args[ci], name, sty, structs)) { return true; } ci = ci + 1; }
+                                            return false;
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+            if (optstruct_bind_esc_expr(c.callee, name, sty, structs)) { return true; }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) { if (optstruct_bind_esc_expr(c.args[ai], name, sty, structs)) { return true; } ai = ai + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return optstruct_bind_esc_expr(b.left, name, sty, structs) || optstruct_bind_esc_expr(b.right, name, sty, structs); },
+        parser.ExprUnary(u) => { return optstruct_bind_esc_expr(u.operand, name, sty, structs); },
+        parser.ExprSlice(sl) => { return optstruct_bind_esc_expr(sl.array, name, sty, structs) || optstruct_bind_esc_expr(sl.start, name, sty, structs) || optstruct_bind_esc_expr(sl.end, name, sty, structs); },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) { if (optstruct_bind_esc_expr(ar.elements[i], name, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (optstruct_bind_esc_expr(t.elements[i], name, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base && optstruct_bind_esc_expr(sl.base, name, sty, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (optstruct_bind_esc_expr(sl.field_values[i], name, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+function optstruct_bind_esc_stmt(st: parser.Stmt, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return optstruct_bind_esc_expr(v.init, name, sty, structs); },
+        parser.StmtReturn(r) => { return optstruct_bind_esc_expr(r.value, name, sty, structs); },
+        parser.StmtExpr(e) => { return optstruct_bind_esc_expr(e.value, name, sty, structs); },
+        parser.StmtAssign(a) => { return optstruct_bind_esc_expr(a.value, name, sty, structs); },
+        parser.StmtIf(f) => {
+            if (optstruct_bind_esc_expr(f.cond, name, sty, structs)) { return true; }
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { if (optstruct_bind_esc_stmt(f.then_body[ti], name, sty, structs)) { return true; } ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { if (optstruct_bind_esc_stmt(f.else_body[ei], name, sty, structs)) { return true; } ei = ei + 1; }
+            return false;
+        },
+        parser.StmtWhile(w) => {
+            if (optstruct_bind_esc_expr(w.cond, name, sty, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < w.body.len()) { if (optstruct_bind_esc_stmt(w.body[i], name, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtFor(fo) => {
+            if (optstruct_bind_esc_expr(fo.iter, name, sty, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < fo.body.len()) { if (optstruct_bind_esc_stmt(fo.body[i], name, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtMatch(m) => {
+            if (optstruct_bind_esc_expr(m.scrutinee, name, sty, structs)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && optstruct_bind_esc_expr(m.arms[ai].guard, name, sty, structs)) { return true; }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { if (optstruct_bind_esc_stmt(m.arms[ai].body[bi], name, sty, structs)) { return true; } bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return optstruct_bind_esc_stmt(d.action, name, sty, structs); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// opt_arm_field_moved: for the consuming match `st` of an option whose constructed
+// variant is `variant` and whose payload is the struct `sty`, does that variant's
+// arm move one of the payload's rc fields out? The field-level sibling of
+// opt_arm_binding_escapes, and read the same way: only the CONSTRUCTED variant's
+// arm can run, so only its binding is checked.
+function opt_arm_field_moved(st: parser.Stmt, variant: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (st) {
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var arm: parser.MatchArm = m.arms[ai];
+                match (arm.pattern) {
+                    parser.PatVariant(pv) => {
+                        var vname: string = pv.type_name;
+                        var vc: i32 = 0;
+                        while (vc < pv.type_name.len()) {
+                            if (pv.type_name[vc] == 46) { vname = pv.type_name[vc + 1 : pv.type_name.len()] + ""; }
+                            vc = vc + 1;
+                        }
+                        if (vname == variant && pv.binding != "" && pv.binding != "_") {
+                            if (arm.has_guard && optstruct_bind_esc_expr(arm.guard, pv.binding, sty, structs)) { return true; }
+                            var bi: i32 = 0;
+                            while (bi < arm.body.len()) {
+                                if (optstruct_bind_esc_stmt(arm.body[bi], pv.binding, sty, structs)) { return true; }
+                                bi = bi + 1;
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+}
+
+// opt_body_field_moved: opt_arm_field_moved lifted over a whole body, for the
+// precise-drop path whose consuming match sits in a NESTED block — the field-level
+// sibling of opt_body_binding_escapes, and the same recursion.
+function opt_body_field_moved(stmts: parser.Stmt[], name: string, variant: string, sty: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (opt_stmt_field_moved(stmts[i], name, variant, sty, structs)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+function opt_stmt_field_moved(st: parser.Stmt, name: string, variant: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (st) {
+        parser.StmtMatch(m) => {
+            match (m.scrutinee) {
+                parser.ExprIdent(id) => {
+                    if (id.name == name && opt_arm_field_moved(st, variant, sty, structs)) { return true; }
+                },
+                _ => {}
+            }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (opt_body_field_moved(m.arms[ai].body, name, variant, sty, structs)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtIf(iff) => {
+            return opt_body_field_moved(iff.then_body, name, variant, sty, structs)
+                || opt_body_field_moved(iff.else_body, name, variant, sty, structs);
+        },
+        parser.StmtWhile(w) => { return opt_body_field_moved(w.body, name, variant, sty, structs); },
+        parser.StmtFor(f) => { return opt_body_field_moved(f.body, name, variant, sty, structs); },
+        _ => { return false; }
+    }
+}
+
+// opt_payload_deep_sty: the payload struct type whose rc-ARRAY fields the drop
+// must deep-release before freeing the payload box — "" when the shallow box dec
+// is complete (a flat scalar-array buffer, a string, or a scalar-only struct).
+// rcpayload_option_cand admits a struct payload under
+// `struct_is_scalar_only || nested_field_deep_drop_ok`, so a non-scalar-only one
+// is exactly the deep-drop-ok case, and __struct_drop_<T> is emitted for it.
+function opt_payload_deep_sty(ptype: string, structs: parser.StructDecl[]): string {
+    if (!decl_is_struct(structs, ptype)) { return ""; }
+    if (struct_is_scalar_only(structs, ptype)) { return ""; }
+    return ptype;
+}
+
 // OptRcFrees: parallel arrays for the rc-payload option/result free — the
 // consuming match index, the freed local name, and whether the payload is a
 // STRING (#4355: released via __fern_str_free instead of the shallow
 // __fern_rc_dec — on asm a string box's data buffer is separate and its
 // 24-byte block class differs from the array layout, so the array dec would
-// free it wrongly). blockable marks payloads whose drop is COMPLETE on its
+// free it wrongly). `stys[i]` is opt_payload_deep_sty's verdict: non-empty
+// names a struct payload whose rc-array fields need __struct_drop_<T> before
+// the box dec (#6127 — a `Some(P { xs: [..], n: .. })` bound ONCE leaked its
+// `xs` buffer every round, where the same value REBOUND in a loop has been
+// deep-freed since #6252). blockable marks payloads whose drop is COMPLETE on its
 // own (string / leak-safe scalar-array) — the only kinds lower_block's
 // per-nested-block pass may claim. A struct-literal payload's shallow box
 // dec relies on the surrounding OPTSTRUCT machinery to release its array
 // FIELDS; a block-level drop zeroes the slot and starves that machinery,
 // leaking the field buffers (the #5453 CI regression) — so struct payloads
 // stay fn-level-only, where the pass and the machinery agree.
-struct OptRcFrees { idxs: i32[], names: string[], strs: boolean[], blockable: boolean[] }
+struct OptRcFrees { idxs: i32[], names: string[], strs: boolean[], blockable: boolean[], stys: string[] }
 
 // consumed_rcpayload_option_frees: finds every function-local `var o = Some([..])`
 // / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) or `Some(P{..})` /
@@ -27526,6 +27775,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
     var names: string[] = [];
     var strs: boolean[] = [];
     var blockable: boolean[] = [];
+    var stys: string[] = [];
     var reassigned: string[] = body_assign_targets(body);
     var vi: i32 = 0;
     while (vi < body.len()) {
@@ -27544,6 +27794,9 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                             names = names.append(v.name);
                             strs = strs.append(cand.ptype == "string");
                             blockable = blockable.append(cand.ptype == "string" || is_leaksafe_array_field(cand.ptype));
+                            var dsty: string = opt_payload_deep_sty(cand.ptype, structs);
+                            if (dsty.len() > 0 && opt_arm_field_moved(body[match_idx], cand.variant, dsty, structs)) { dsty = ""; }
+                            stys = stys.append(dsty);
                         }
                     }
                 }
@@ -27552,7 +27805,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
         }
         vi = vi + 1;
     }
-    return OptRcFrees { idxs: idxs, names: names, strs: strs, blockable: blockable };
+    return OptRcFrees { idxs: idxs, names: names, strs: strs, blockable: blockable, stys: stys };
 }
 
 // emit_opt_payload_drop frees the rc payload of the option box in `slot`, then
@@ -27590,6 +27843,40 @@ function emit_opt_payload_drop(s: LowerState, slot: i32): LowerState {
     // release the payload (flat scalar-array buffer or scalar-only struct box).
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_opt_payload());
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    // free the option box itself and zero the slot.
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_store_local(slot));
+    return st;
+}
+
+// emit_opt_struct_payload_drop — the STRUCT-payload sibling of
+// emit_opt_payload_drop (#6127). Same shape, one step longer: the payload at
+// offset 8 is a struct box whose rc-ARRAY fields the construction alias-inc'd,
+// so they are deep-released via __struct_drop_<sty> (emit_struct_field_drops,
+// routed by marking a scratch slot with the type) BEFORE the box dec. Without
+// it the box was freed and its field buffers were not — and because this drop
+// zeroes the slot, the exit sweep's own OPTSTRUCT deep free saw a null and
+// never picked them up.
+//
+// No null / tag guard, matching emit_opt_payload_drop: rcpayload_option_cand
+// admitted a specific CONSTRUCTED variant (`Some(P { .. })`), and the name is
+// neither reassigned nor escaping, so the box is live and carries that
+// variant's payload at the point of the drop.
+function emit_opt_struct_payload_drop(s: LowerState, slot: i32, sty: string): LowerState {
+    var scratch: string = "$optsp" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(scratch);
+    var pslot: i32 = st.slot_of(scratch);
+    st = st.mark_struct_type(pslot, sty);
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_payload());
+    st = st.emit(ir.op_store_local(pslot));
+    st = emit_struct_field_drops(st, pslot);
+    st = st.emit(ir.op_load_local(pslot));
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
     st = st.emit(ir.op_drop());
     // free the option box itself and zero the slot.
@@ -35386,6 +35673,14 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                     // type. A scalar payload took the "box-shallow" branch above (op_opt_
                     // payload on an inline scalar would wrongly dec the value).
                     s = emit_opt_payload_drop(s, dslot);
+                } else if (dslot >= s.n_params && pk.len() > 18 && pk[0:18] == "opt-structpayload:") {
+                    // The STRUCT-payload sibling of "opt-rcpayload" (#6127): the box at
+                    // offset 8 is a struct whose rc-array fields the construction
+                    // alias-inc'd, so __struct_drop_<T> runs before the box dec
+                    // (emit_opt_struct_payload_drop). The struct NAME rides in the kind,
+                    // exactly as the enum name does for "enum-rcpayload:" — the slot type
+                    // Option[P] names it, but a Result[P, E] does not.
+                    s = emit_opt_struct_payload_drop(s, dslot, pk[18 : pk.len()]);
                 } else if (dslot >= s.n_params && pk == "opt-strpayload") {
                     // Fresh STRING-payload Option/Result (#4355), last-used in a nested
                     // block — same gates as "opt-rcpayload", but the payload at offset 8
@@ -35474,6 +35769,8 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                 if (roslot >= s.n_params) {
                     if (rcoptfrees.strs[roi]) {
                         s = emit_opt_str_payload_drop(s, roslot);
+                    } else if (rcoptfrees.stys[roi].len() > 0) {
+                        s = emit_opt_struct_payload_drop(s, roslot, rcoptfrees.stys[roi]);
                     } else {
                         s = emit_opt_payload_drop(s, roslot);
                     }
