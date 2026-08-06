@@ -1,0 +1,22 @@
+import "core/int";
+import "std/i32";
+
+// Struct patterns: `Type{field: binding}` and the `Type{field}`
+// shorthand, in match arms and in a `let` destructure. A struct-pattern
+// arm followed by another arm needs its trailing comma — the arm body's
+// `{` and the pattern's `{` are otherwise ambiguous.
+struct Point { x: i32, y: i32 }
+
+function classify(p: Point): i32 {
+    match (p) {
+        Point{x: a, y: b} when a == b => { return a + b; },
+        Point{x, y} => { return x - y; },
+    }
+}
+
+function main(): i32 {
+    let Point{x, y} = Point{x: 8, y: 34};
+    print(classify(Point{x: 21, y: 21}).to_string());
+    print(classify(Point{x: 50, y: 8}).to_string());
+    return x + y;
+}

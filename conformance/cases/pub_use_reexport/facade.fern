@@ -1,0 +1,3 @@
+// `pub use "PATH".{ names };` re-exports another module's declarations
+// under this module's name, so a consumer reaches them as `facade.name`.
+pub use "./helper".{ answer };

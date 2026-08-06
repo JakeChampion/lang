@@ -1,0 +1,305 @@
+# Fern syntactic grammar.
+#
+# This is a PEG over the TOKEN stream, not over characters: `|` is
+# ORDERED choice (first match wins) and `{ }` is greedy and possessive.
+# See spec/README.md for why, and for the lexical grammar that produces
+# the terminals IDENT / NUMBER / FLOAT / STRING / FSTRING.
+#
+# The first rule is the start symbol. Every rule is reachable from it and
+# none is left-recursive; both are enforced.
+
+Program     = { TopLevel } ;
+
+# ---------------------------------------------------------------- top level
+
+TopLevel    = Import | PubUse | Attribute | Declaration ;
+
+Import      = 'import' STRING [ 'as' IDENT ] ';' ;
+PubUse      = 'pub' 'use' STRING '.' '{' UseNames '}' ';' ;
+UseNames    = IDENT { ',' IDENT } [ ',' ] ;
+
+Attribute   = '@' IDENT [ '(' [ AttrArgs ] ')' ] ;
+AttrArgs    = AttrArg { ',' AttrArg } [ ',' ] ;
+AttrArg     = STRING | NUMBER | QualName ;
+
+Declaration = FuncDecl
+            | StructDecl
+            | EnumDecl
+            | TypeDecl
+            | TraitDecl
+            | ImplDecl
+            | ConstDecl
+            | Visibility Declaration
+            ;
+
+Visibility  = 'pub' [ '(' IDENT ')' ] ;
+
+# `fip` / `fbip` are contextual: identifiers everywhere but here.
+FuncMod     = 'fip' [ NUMBER ] | 'fbip' [ NUMBER ] | 'async' ;
+
+FuncDecl    = { FuncMod } 'function' [ Receiver ] DeclName [ TypeParams ]
+              '(' [ ParamList ] ')' [ ':' Type ] ( Block | ';' ) ;
+# `default` is a keyword but is admitted as a declared name, so a type
+# can implement core/cmp's Default trait.
+DeclName    = IDENT | 'default' ;
+
+# A method is written `function (self: T) name(...)`.
+Receiver    = '(' [ 'own' ] IDENT ':' Type ')' ;
+
+TypeParams  = '[' TypeParam { ',' TypeParam } [ ',' ] ']' ;
+TypeParam   = IDENT [ ':' Bounds ] ;
+Bounds      = Bound { '+' Bound } ;
+Bound       = QualName [ TypeArgs ] ;
+
+ParamList   = Param { ',' Param } [ ',' ] ;
+Param       = TupleParam | NamedParam ;
+NamedParam  = 'own' IDENT [ ':' Type ] [ '=' Expr ]
+            | IDENT [ ':' Type ] [ '=' Expr ]
+            ;
+TupleParam  = '(' IDENT { ',' IDENT } ')' ':' Type ;
+
+StructDecl  = 'struct' IDENT [ TypeParams ] '{' { FieldDecl } '}' [ ';' ] ;
+FieldDecl   = [ Visibility ] IDENT ':' Type [ ',' | ';' ] ;
+
+EnumDecl    = 'enum' IDENT [ TypeParams ] '{' [ VariantList ] '}' [ ';' ] ;
+VariantList = Variant { ',' Variant } [ ',' ] ;
+Variant     = IDENT [ VariantPayload ] ;
+VariantPayload
+            = '(' [ Type { ',' Type } [ ',' ] ] ')'
+            | '{' [ FieldDecl { FieldDecl } ] '}'
+            ;
+
+# `type X = A | B;` is a union; `type X = T;` an alias.
+TypeDecl    = 'type' IDENT [ TypeParams ] '=' Type { '|' Type } ';' ;
+
+TraitDecl   = 'trait' IDENT [ TypeParams ] [ ':' Bounds ] '{' { TraitItem } '}' [ ';' ] ;
+TraitItem   = 'type' IDENT [ ':' Bounds ] ';'
+            | { FuncMod } 'function' [ Receiver ] DeclName [ TypeParams ]
+              '(' [ ParamList ] ')' [ ':' Type ] ( Block | ';' )
+            ;
+
+ImplDecl    = 'impl' [ TypeParams ] Type [ 'for' Type ] '{' { ImplItem } '}' [ ';' ] ;
+ImplItem    = 'type' IDENT '=' Type ';' | Attribute | FuncDecl ;
+
+ConstDecl   = 'const' IDENT [ ':' Type ] '=' Expr ';' ;
+
+# -------------------------------------------------------------------- types
+
+Type        = OwnType ;
+OwnType     = ( 'own' | 'borrow' ) Type
+            | DynType
+            ;
+DynType     = 'dyn' Bound { '+' Bound }
+            | FnOrTupleType
+            ;
+
+# `(A, B) => C` is a function type; `(A, B)` a tuple; `(A)` a grouping.
+FnOrTupleType
+            = '(' [ Type { ',' Type } [ ',' ] ] ')' ( '=>' Type | { TypeSuffix } )
+            | SliceType
+            ;
+SliceType   = '[' Type ']' { TypeSuffix }
+            | PrimaryType { TypeSuffix }
+            ;
+TypeSuffix  = '[' ']' ;
+
+PrimaryType = PrimitiveType
+            | NamedType
+            ;
+PrimitiveType
+            = 'i32' | 'i64' | 'u8' | 'u32' | 'u64' | 'usize'
+            | 'f32' | 'f64' | 'boolean' | 'void' | 'string'
+            ;
+# `str`, `char`, `float`, `Self` are contextual type names, not keywords.
+NamedType   = IDENT [ '.' IDENT ] [ TypeArgs ] ;
+TypeArgs    = '[' TypeArg { ',' TypeArg } [ ',' ] ']' ;
+TypeArg     = IDENT '=' Type | Type ;
+
+# --------------------------------------------------------------- statements
+
+Block       = '{' { Stmt } '}' ;
+# A block in expression position may end in an unterminated expression,
+# which is its value. Statement blocks may not, so the two are distinct
+# rules rather than one permissive one.
+ValueBlock  = '{' { Stmt } [ Expr ] '}' ;
+
+Stmt        = Block
+            | LabeledLoop
+            | IfStmt
+            | WhileStmt
+            | LoopStmt
+            | ForStmt
+            | MatchStmt
+            | VarStmt
+            | LetStmt
+            | UseStmt
+            | ReturnStmt
+            | BreakStmt
+            | ContinueStmt
+            | DeferStmt
+            | LocalFunc
+            | ExprStmt
+            ;
+
+LabeledLoop = IDENT ':' ( WhileStmt | LoopStmt | ForStmt ) ;
+
+IfStmt      = 'if' 'let' Pattern '=' Expr Block [ 'else' ( IfStmt | Block ) ]
+            | 'if' '(' Expr ')' Block [ 'else' ( IfStmt | Block ) ]
+            ;
+WhileStmt   = 'while' '(' Expr ')' Block ;
+LoopStmt    = 'loop' Block ;
+
+ForStmt     = 'for' '(' [ ForInit ] ';' [ Expr ] ';' [ Expr ] ')' Block
+            | 'for' ForBinding 'in' NoStructExpr Block
+            | 'for' '(' ForBinding 'in' Expr ')' Block
+            ;
+ForInit     = VarNoSemi | Expr ;
+ForBinding  = '(' IDENT { ',' IDENT } ')' | IDENT ;
+
+MatchStmt   = 'match' NoStructExpr '{' { MatchArm } '}' [ ';' ] ;
+MatchArm    = ArmPatterns [ 'when' Expr ] '=>' ArmBody [ ',' ] ;
+ArmPatterns = Pattern { '|' Pattern } ;
+ArmBody     = ValueBlock | Expr ;
+
+VarStmt     = VarNoSemi ';' ;
+VarNoSemi   = 'var' ( TupleBinding | IDENT ) [ ':' Type ] '=' Expr ;
+TupleBinding
+            = '(' IDENT { ',' IDENT } [ ',' ] ')' ;
+
+# `let PATTERN = expr else { … };`, plus tuple/struct destructuring.
+LetStmt     = 'let' Pattern '=' Expr [ 'else' Block ] ';' ;
+
+# Callback-flattening bind. `<-` lexes as two punctuation tokens.
+UseStmt     = 'use' IDENT [ ':' Type ] '<' '-' Expr ';' ;
+
+ReturnStmt  = 'return' [ Expr ] ';' ;
+BreakStmt   = 'break' [ IDENT ] [ Expr ] ';' ;
+ContinueStmt
+            = 'continue' [ IDENT ] ';' ;
+DeferStmt   = ( 'defer' | 'errdefer' ) ( Block | Expr ';' ) ;
+LocalFunc   = 'function' IDENT [ TypeParams ] '(' [ ParamList ] ')' [ ':' Type ] Block ;
+
+ExprStmt    = Expr ';' ;
+
+# ----------------------------------------------------------------- patterns
+
+Pattern     = StructPattern
+            | TuplePattern
+            | VariantPattern
+            | LiteralPattern
+            | BindingPattern
+            ;
+StructPattern
+            = QualName '{' [ FieldPattern { ',' FieldPattern } [ ',' ] ] '}' ;
+FieldPattern
+            = IDENT [ ':' IDENT ] ;
+TuplePattern
+            = '(' Pattern { ',' Pattern } [ ',' ] ')' ;
+VariantPattern
+            = QualName '(' [ Pattern { ',' Pattern } [ ',' ] ] ')' ;
+LiteralPattern
+            = [ '-' ] ( NUMBER | FLOAT ) | STRING | 'true' | 'false' ;
+BindingPattern
+            = QualName | '_' ;
+QualName    = PrimitiveType '.' IDENT { '.' IDENT }
+            | IDENT { '.' IDENT }
+            ;
+
+# -------------------------------------------------------------- expressions
+#
+# One rule per precedence tier, mirroring the parser's ladder from
+# parseAssign down to parsePrimary. Assignment is right-associative;
+# every binary tier is left-associative, written as a repetition so the
+# grammar stays non-left-recursive.
+#
+# The grammar is deliberately a SUPERSET here: `1 = 2` derives, and the
+# parser rejects it as P003. Assignability is a static rule, not a
+# syntactic one — see spec/README.md.
+
+Expr        = Assign ;
+Assign      = Pipe [ AssignOp Assign ] ;
+AssignOp    = '=' | '+=' | '-=' | '*=' | '/=' | '%='
+            | '&=' | '|=' | '^=' | '<<=' | '>>='
+            ;
+Pipe        = Range { '|>' Range } ;
+Range       = LogicOr [ ( '..=' | '..' ) LogicOr ] ;
+LogicOr     = LogicAnd { '||' LogicAnd } ;
+LogicAnd    = BitOr { '&&' BitOr } ;
+BitOr       = BitXor { '|' BitXor } ;
+BitXor      = BitAnd { '^' BitAnd } ;
+BitAnd      = Equality { '&' Equality } ;
+Equality    = Relational { ( '==' | '!=' ) Relational } ;
+Relational  = Shift { ( '<=' | '>=' | '<' | '>' ) Shift } ;
+Shift       = Additive { ( '<<|' | '<<?' | '>>?' | '<<' | '>>' ) Additive } ;
+Additive    = Multiplicative { ( '+|' | '-|' | '+?' | '-?' | '+' | '-' ) Multiplicative } ;
+Multiplicative
+            = Unary { ( '*|' | '*?' | '/?' | '%?' | '*' | '/' | '%' ) Unary } ;
+Unary       = ( '-' | '!' ) Unary | Cast ;
+Cast        = Postfix { 'as' [ '?' ] Type } ;
+
+Postfix     = Primary { PostfixOp } ;
+# Each bracketed form closes its own ']'. Sharing one '[' … ']' around an
+# inner choice would not backtrack: PEG does not retry an alternative
+# once it has succeeded, so `arr[i - 1]` would commit to reading `i` as a
+# type argument and then fail on the '-'.
+PostfixOp   = '(' [ CallArgs ] ')'
+            | '[' [ Expr ] ':' [ Expr ] ']'
+            | '[' Expr ']'
+            | '[' TypeArgList ']'
+            | '.' MemberName [ TypeArgs ]
+            | '::' MemberName
+            | '?'
+            ;
+MemberName  = IDENT | NUMBER | 'default' ;
+CallArgs    = CallArg { ',' CallArg } [ ',' ] ;
+CallArg     = IDENT '=' Expr | Expr ;
+# `f[i32](x)` — explicit generic instantiation.
+TypeArgList = Type { ',' Type } [ ',' ] ;
+
+# NoStructExpr is Expr with the brace-suffixed struct literal withheld,
+# for the positions where a `{` opens a block instead: `for x in E {`
+# and `match E {`. The parser draws the same distinction contextually.
+NoStructExpr
+            = Assign ;
+
+Primary     = NUMBER
+            | FLOAT
+            | STRING
+            | FSTRING
+            | 'true'
+            | 'false'
+            | IfExpr
+            | MatchExpr
+            | LambdaExpr
+            | ArrowLambda
+            | ParenOrTuple
+            | ArrayLit
+            | MapLit
+            | StructLit
+            | Name
+            ;
+
+IfExpr      = 'if' '(' Expr ')' BranchBody 'else' ( IfExpr | BranchBody ) ;
+BranchBody  = ValueBlock | Expr ;
+MatchExpr   = 'match' NoStructExpr '{' { MatchExprArm } '}' ;
+MatchExprArm
+            = ArmPatterns [ 'when' Expr ] '=>' ( ValueBlock | Expr ) [ ',' ] ;
+
+LambdaExpr  = 'function' [ '(' [ ParamList ] ')' ] [ ':' Type ] ValueBlock ;
+# The parameter list is always parenthesized. A bare `x => e` is NOT
+# Fern (the parser reports P001), and admitting it here would swallow
+# the `=>` of a match arm: `when x == y => x + y` would read `y => x + y`
+# as a lambda and leave the arm with no arrow.
+ArrowLambda = '(' [ LambdaParams ] ')' '=>' Expr ;
+LambdaParams
+            = LambdaParam { ',' LambdaParam } [ ',' ] ;
+LambdaParam = TupleParam | IDENT [ ':' Type ] ;
+
+ParenOrTuple
+            = '(' Expr { ',' Expr } [ ',' ] ')' ;
+ArrayLit    = '[' [ Expr { ',' Expr } [ ',' ] ] ']' ;
+MapLit      = 'Map' '{' [ MapEntry { ',' MapEntry } [ ',' ] ] '}' ;
+MapEntry    = Expr ':' Expr ;
+StructLit   = QualName [ TypeArgs ] '{' [ LitField { ',' LitField } [ ',' ] ] '}' ;
+LitField    = '...' Expr | IDENT ':' Expr | IDENT ;
+Name        = QualName [ '::' IDENT ] | '_' ;
