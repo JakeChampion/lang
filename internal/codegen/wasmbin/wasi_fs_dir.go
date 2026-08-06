@@ -1323,3 +1323,123 @@ func buildTempDirBodyP2(idxs map[string]uint32) []byte {
 	locals := inst.PutLocalsOneGroup(nil, 15, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
+
+// Offsets into the preview-2 `result<descriptor-stat, error-code>`
+// return area — the canonical-ABI layout, not preview-1's filestat
+// record, and different in every offset that matters.
+//
+// descriptor-stat is 8-aligned because link-count and size are u64, so
+// the result's payload starts at 8 rather than 4:
+//
+//	+0   disc (0 = ok)
+//	+8   descriptor-type   (ok)  |  error-code (err)
+//	+16  link-count : u64
+//	+24  size       : u64
+//	+32  data-access-timestamp        : option<datetime>  (24 bytes)
+//	+56  data-modification-timestamp  : option<datetime>
+//	+80  status-change-timestamp      : option<datetime>
+//
+// so the whole area is 104 bytes. The three timestamps are declared in
+// the instance type — the record would not match the host's without
+// them — and read by nobody: Fern's FileStat has no timestamp fields.
+const (
+	statAtTypeOff  = 8
+	statAtSizeOff  = 24
+	statAtRetBytes = 104
+)
+
+// Preview-2 `descriptor-type` discriminants. These are NOT the
+// preview-1 filetype values wasiFiletypeRegular / …Directory hold: a
+// directory is 3 in both, but a regular file is 6 here and 4 there.
+const (
+	descriptorTypeDirectory int32 = 3
+	descriptorTypeRegular   int32 = 6
+)
+
+// buildStatBodyP2 is the preview-2 buildStatBody: get-directories →
+// stat-at, then the same FileStat struct the preview-1 body builds, so
+// a program cannot tell which path it ran on.
+//
+// `size` narrows to the low word of a u64, exactly as preview-1 does —
+// FileStat.size is declared i32 in the checker, and a file past 2 GiB
+// is outside what the rest of the string / array surface can hold.
+//
+// Locals after the two params:
+//
+//	2: $rb       3: $path_buf  4: $path_byte_len  5: $preopen
+//	6: $errno    7: $filetype  8: $fs (struct data ptr)
+//	9: $box     10: $err_ptr  11: $i
+func buildStatBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
+	buildIoErr := idxs["__build_io_error"]
+	getDirs := idxs["wasi_get_directories_p2"]
+	statAt := idxs["wasi_descriptor_stat_at_p2"]
+
+	var body []byte
+	// The return area first, so it lands word-aligned before the path
+	// normalize advances the cursor by an arbitrary byte count.
+	body = inst.InstI32Const(body, statAtRetBytes)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 2)
+	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 11)
+
+	// get-directories needs its own scratch: rb is the stat-at return
+	// area and is 104 bytes, so the 8-byte list header would be
+	// overwritten — but the preopen handle is read out before stat-at
+	// runs, so one buffer would in fact do. Keeping them separate costs
+	// 16 bytes and removes the ordering constraint entirely.
+	body = emitPreopenP2(body, alloc, getDirs, 10, 5)
+
+	// stat-at(preopen, path-flags=symlink-follow, path_buf, len, rb).
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, statAt)
+
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = appendErrnoFromErrorCodeAt(body, 2, 6, statAtTypeOff)
+		body = emitResultErr(body, buildIoErr, allocBox, 6, 10, 9)
+	}
+	body = inst.InstEnd(body)
+
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, statAtTypeOff)
+	body = inst.InstLocalSet(body, 7)
+
+	// FileStat: 8-byte rc sentinel header + { is_file, is_dir, size }.
+	body = inst.InstI32Const(body, 8+12)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 8)
+	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 8)
+
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstLocalGet(body, 7)
+	body = inst.InstI32Const(body, descriptorTypeRegular)
+	body = numeric.InstI32Eq(body)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstLocalGet(body, 7)
+	body = inst.InstI32Const(body, descriptorTypeDirectory)
+	body = numeric.InstI32Eq(body)
+	body = memory.InstI32Store(body, 2, 4)
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load(body, 2, statAtSizeOff)
+	body = memory.InstI32Store(body, 2, 8)
+
+	body = emitResultOkPtr(body, allocBox, 8, 9)
+
+	locals := inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}

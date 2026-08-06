@@ -23,6 +23,10 @@ var (
 	// to (ptr, len) and the `result<_, error-code>` return goes through a
 	// return area, so (self, path_ptr, path_len, ret_ptr) -> ().
 	composePathMutatorParams = []byte{0x7f, 0x7f, 0x7f, 0x7f}
+
+	// stat-at takes a path-flags argument the mutators do not:
+	// (self, path-flags, path_ptr, path_len, ret_ptr) -> ().
+	composeStatAtParams = []byte{0x7f, 0x7f, 0x7f, 0x7f, 0x7f}
 )
 
 const (
@@ -35,6 +39,7 @@ const (
 	composeAppendViaName  = "[method]descriptor.append-via-stream"
 	composeUnlinkAtName   = "[method]descriptor.unlink-file-at"
 	composeMkdirAtName    = "[method]descriptor.create-directory-at"
+	composeStatAtName     = "[method]descriptor.stat-at"
 )
 
 type p2composer struct {

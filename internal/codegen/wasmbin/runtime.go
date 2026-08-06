@@ -753,19 +753,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_drop_arr_str")
 					needs.add("__fern_rc_dec")
 					needs.add("__fern_str_dec")
-					// __fern_str_dec's body UNCONDITIONALLY calls
-					// __fern_box_free in its rc==1 branch (and box_free calls
-					// __free), so both must be present whenever str_dec is —
-					// regardless of RcFreeEnabled (the flat scanRuntimeHelpers
-					// pass does no transitive-dep closure, so a case that pulls
-					// str_dec in must also pull str_dec's own deps). Omitting
-					// box_free let helperIdxs["__fern_box_free"] miss → 0, and
-					// str_dec's `call 0` then resolved to whatever user function
-					// occupied funcidx 0 (a 5-param comparator in the sort_by
-					// repro) → "expected i32 but nothing on stack" invalid wasm
-					// (#4816). Mirrors the direct "__fern_str_dec" case above.
-					needs.add("__fern_box_free")
-					needs.add("__free")
+					// str_dec's own callees (box_free → __free) come
+					// from unconditionalHelperCalls. __fern_alloc does
+					// not: it is needed only when rc-free is on, which
+					// is a property of this site, not of str_dec.
 					if ast.RcFreeEnabled {
 						needs.add("__fern_alloc")
 					}
@@ -837,29 +828,77 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 			}
 		}
 	}
-	// Phase 1e-enums-runtime: these runtime helpers build Option /
-	// Result / IoError boxes through __fern_alloc_box, which
-	// prepends the 8-byte static-sentinel rc header so a future
-	// enum-ii predicate widening can run __fern_rc_inc/dec on the
-	// boxes safely (they short-circuit on the high bit).
-	// __fern_alloc_box calls __fern_alloc internally — already in
-	// the set, since every one of these also allocates directly.
-	for _, h := range []string{
-		"__fern_env", "__fern_read_line", "__build_io_error",
-		"__fern_read_file", "__fern_write_file",
-		"__fern_open_reader", "__fern_open_writer", "__fern_open_appender",
-		"__fern_reader_close_fd", "__fern_writer_close",
-		"__fern_writer_write", "__fern_reader_read_line_fd",
-		"__fern_reader_read_chunk",
-		"__fern_remove_file", "__fern_stat", "__fern_read_dir",
-		"__fern_remove_dir_all", "__fern_temp_dir",
-	} {
+	closeUnconditionalHelperCalls(&needs)
+	return needs
+}
+
+// unconditionalHelperCalls records helper→helper calls that hold for
+// EVERY emission of the caller, so the callee must be in the set
+// whenever the caller is.
+//
+// The scan above is flat: each `case` hand-lists what its helper
+// calls, and a callee's OWN callees have to be repeated at every one
+// of those sites. That is not a rule anyone remembers. When it is
+// broken the failure is silent and remote — a missing key reads 0 out
+// of helperIdxs, so the body emits `call 0`, which resolves to
+// whatever happens to occupy funcidx 0. #4816 was `__fern_str_dec`
+// missing `__fern_box_free`, landing on a 5-param comparator. The
+// same omission then shipped again in `__fern_temp_dir` /
+// `__fern_read_dir`, which pull in `__fern_str_copy` without its
+// `__fern_alloc_rc1`: invisible while any other helper happened to
+// drag rc1 in, and invalid wasm the moment none did.
+//
+// Declaring the edge once and closing over it is what makes the rule
+// unbreakable rather than merely written down. Every edge here is
+// read off the callee lookup at the top of the caller's build*Body.
+var unconditionalHelperCalls = map[string][]string{
+	"__fern_str_copy":  {"__fern_alloc_rc1"},
+	"__fern_str_dec":   {"__fern_box_free"},
+	"__fern_box_free":  {"__free"},
+	"__fern_alloc_box": {"__fern_alloc"},
+	"__fern_alloc_rc1": {"__fern_alloc"},
+}
+
+// helperAllocBoxCallers are the helpers that build an Option / Result
+// / IoError box through __fern_alloc_box, which prepends the 8-byte
+// static-sentinel rc header so an rc_inc/dec on a box is safe (it
+// short-circuits on the high bit).
+var helperAllocBoxCallers = []string{
+	"__fern_env", "__fern_read_line", "__build_io_error",
+	"__fern_read_file", "__fern_write_file",
+	"__fern_open_reader", "__fern_open_writer", "__fern_open_appender",
+	"__fern_reader_close_fd", "__fern_writer_close",
+	"__fern_writer_write", "__fern_reader_read_line_fd",
+	"__fern_reader_read_chunk",
+	"__fern_remove_file", "__fern_stat", "__fern_read_dir",
+	"__fern_remove_dir_all", "__fern_temp_dir",
+}
+
+// closeUnconditionalHelperCalls adds every transitively-reachable
+// callee to the set, to a fixpoint. Cheap — the set is tens of
+// entries and the edge map is tiny — and it runs unconditionally so a
+// new helper picks up its callee's callees for free.
+func closeUnconditionalHelperCalls(needs *runtimeNeeds) {
+	for _, h := range helperAllocBoxCallers {
 		if needs.set[h] {
 			needs.add("__fern_alloc_box")
 			break
 		}
 	}
-	return needs
+	for changed := true; changed; {
+		changed = false
+		for caller, callees := range unconditionalHelperCalls {
+			if !needs.set[caller] {
+				continue
+			}
+			for _, callee := range callees {
+				if !needs.set[callee] {
+					needs.add(callee)
+					changed = true
+				}
+			}
+		}
+	}
 }
 
 // runtimeHelperSpecs is the registry. Keyed by the canonical
