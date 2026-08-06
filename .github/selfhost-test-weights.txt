@@ -61,13 +61,9 @@ TestSelfHostFnArrayFieldGateX86_64 12
 TestSelfHostFnArrayFieldGateWasm 12
 TestSelfHostTupleFnZeroArgIRX86_64 12
 TestSelfHostTupleFnZeroArgIRWasm 12
-TestSelfHostAsmX86_64 90
 TestSelfHostModloadPerModuleWholeCompilerArm64 80
-TestSelfHostLoadFixpointX86_64 330
 TestSelfHostFieldReclaimIRX86_64 55
 TestSelfHostAsmIRPath 28
-TestSelfHostStage2FixedPoint 27
-TestSelfHostModloadFixpointX86_64 18
 TestSelfHostStdTestE2E 18
 
 # The watbin / wit / component family, un-quarantined from #4801 (measured on
@@ -175,13 +171,12 @@ TestSelfHostArm64ModloadNativeBuild 120
 # Dominated by the one modload driver build it shares with the rest of the
 # suite; MEASURED 108 s cold, near-free once that driver is warm.
 TestSelfHostArm64ProcExecRuns 15
-# The arm64 stage-2 fixed point had NO entry — `TestSelfHostStage2FixedPoint`
-# above is a different test, and the lookup is exact — so LPT ranked a
-# ~15-MINUTE test with the sub-second ones and packed a shard around it. Any
-# change to the test list can then drop it in a bucket that blows the 18-minute
-# -test.timeout; adding two tests in #5953 did exactly that (run 30581856560,
-# x86_64-shard9: `panic: test timed out after 18m0s` with the test 13m31s in).
-# MEASURED from that run: 53 s of stage-1/stage-2 build, then `self` 709 s —
-# mmc2 re-emitting the compiler UNDER QEMU — plus sort_wider 25 s and two more
-# cases still to go.
-TestSelfHostStage2FixedPointArm64 900
+# `TestSelfHostStage2FixedPointArm64` sat here at 900 — a real measurement
+# (run 30581856560: 53 s of stage-1/stage-2 build, then `self` 709 s of mmc2
+# re-emitting the compiler under qemu) for a test that had already been
+# deleted with `asm_arm64_load_run.fern` in #5972. Four other entries were
+# dead the same way. They cost nothing — the sharder only weights names its
+# `-test.list` input actually contains — but they read as coverage, and the
+# same staleness in `test-e2e-arm64.yml` was load-bearing there (#6310).
+# `make testnames` now fails on a name in .github/ that matches no test, so
+# an entry cannot outlive its test again.
