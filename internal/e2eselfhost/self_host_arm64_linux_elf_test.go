@@ -129,6 +129,26 @@ function main(): i32 {
 		{"array", `function main(): i32 { var a = [1,2,3,4,5]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15},
 		{"strbuild", `function main(): i32 { var s: string = ""; var i: i32 = 0; while (i < 3) { s = s + "ab"; i = i + 1; } return s.len(); }`, 6},
 		{"floats", `function main(): i32 { var x: f64 = 3.5; var y: f64 = 2.0; var z: f64 = x*y + x/y - x; if (z > 5.0) { return 7; } return 1; }`, 7},
+		// The bit-counting intrinsics, which are the only place the arm64
+		// backend emits `rbit` (ctz) or the SIMD pair `cnt`/`addv` (popcount).
+		// This is the leg that proves them: the self-host emitter's output
+		// goes through arm64_native's new encoders and then actually RUNS.
+		// A failing check returns its own id rather than a wrong sum, and
+		// zero comes first — it is the input the definition pins (clz/ctz of
+		// 0 = the width) and where a wrong answer looks most plausible.
+		{"bitcount", `function main(): i32 {
+    if (__ctz32(0 as u32) != 32) { return 1; }
+    if (__ctz64(0 as u64) != 64) { return 2; }
+    if (__popcount32(0 as u32) != 0) { return 3; }
+    if (__popcount64(0 as u64) != 0) { return 4; }
+    if (__ctz32(16 as u32) != 4) { return 5; }
+    if (__ctz64(1048576 as u64) != 20) { return 6; }
+    if (__popcount32(4294967295 as u32) != 32) { return 7; }
+    if (__popcount64(1023 as u64) != 10) { return 8; }
+    if (__clz32(1 as u32) != 31) { return 9; }
+    if (__clz64(1 as u64) != 63) { return 10; }
+    return 42;
+}`, 42},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

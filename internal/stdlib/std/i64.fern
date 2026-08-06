@@ -141,12 +141,11 @@ pub function (n: i64) is_between(lo: i64, hi: i64): boolean {
 // the runtime.
 //
 // What each backend emits still varies, and callers do not care. wasm has all
-// six as single opcodes. arm64 gets a real `clz` and derives ctz from it.
-// x86-64 uses baseline `bsr`/`bsf`. popcount stays a SWAR sequence on BOTH
-// register backends — inline rather than behind a call — because arm64's
-// hardware popcount is on the SIMD side (`cnt`/`addv`, not implemented by the
-// in-process assembler) and x86-64's POPCNT needs SSE4.2, which Fern cannot
-// assume while emitting static binaries with no runtime CPU dispatch.
+// six as single opcodes. arm64 gets a real `clz`, derives ctz from `rbit`, and
+// reaches its SIMD-side popcount (`cnt` per byte, `addv` to sum) through a
+// v-register. x86-64 uses `bsr`/`bsf` and `popcnt`; the target baseline is
+// SSE4.2 (2008), so POPCNT is assumable, while LZCNT/TZCNT are not — they need
+// BMI1 (2013), and bsr/bsf already cover clz/ctz.
 //
 // Zero is defined: leading_zeros / trailing_zeros of 0 return the width.
 

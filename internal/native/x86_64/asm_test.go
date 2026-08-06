@@ -62,6 +62,13 @@ func TestEncodeIntegerSurface(t *testing.T) {
 		{"bsr rcx, rax", "480fbdc8"},
 		{"bsf rcx, rax", "480fbcc8"},
 		{"bsr rax, rdi", "480fbdc7"},
+		// popcnt (SSE4.2) — the same /r shape behind a mandatory F3,
+		// which must precede the REX byte, not follow it.
+		{"popcnt rax, rax", "f3480fb8c0"},
+		{"popcnt eax, eax", "f30fb8c0"},
+		{"popcnt rcx, rdx", "f3480fb8ca"},
+		{"popcnt r8d, r9d", "f3450fb8c1"},
+		{"popcnt rax, qword ptr [rbp-8]", "f3480fb845f8"},
 		{"neg rax", "48f7d8"},
 		{"idiv ecx", "f7f9"},
 		{"sar rax, 1", "48d1f8"},

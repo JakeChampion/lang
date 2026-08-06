@@ -9,6 +9,24 @@ Three code-generation backends ship today:
 | x86-64  | Linux | ELF         | System V AMD64     | newer; some gaps        |
 | wasm    | n/a  | wasm32 module | wasm CC + WASI    | the "everything" backend |
 
+## CPU baseline
+
+Fern emits **static binaries with no runtime CPU dispatch**, so every
+instruction a backend selects is a hard requirement of the produced binary —
+an unavailable one is a SIGILL at first execution, not a slow path. The
+baselines are therefore a project-level decision, recorded here rather than
+inside a codegen switch:
+
+| backend | baseline | what it buys |
+| ------- | -------- | ------------ |
+| arm64 / arm64-darwin | ARMv8-A, Advanced SIMD included | `clz`, `rbit`, and the SIMD-side popcount (`cnt` + `addv`). Advanced SIMD is mandatory on the ARMv8-A application profile, so this is the architecture floor, not a raise. |
+| x86-64 | SSE4.2 (Intel Nehalem, 2008; AMD Barcelona, 2007) | `popcnt`, alongside the SSE2 floating point the backend already required. |
+
+x86-64 stops at SSE4.2 deliberately: LZCNT / TZCNT would need BMI1 (Haswell,
+2013), a much later floor, and 386-era `bsr` / `bsf` already give clz / ctz
+real instructions. Anything above these baselines needs runtime dispatch
+first.
+
 Wasm is the broadest because it was where Map / State / file I/O / preview2
 HTTP landed first. The native backends have caught up on the edge-handler
 critical path (`function handle(req): resp` → HTTP/1.1 server). Everything

@@ -652,24 +652,23 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
                 s = s.write("    ldr x0, [sp], #16\n    clz w0, w0\n    str x0, [sp, #-16]!\n");
             }
         } else if (o.kind_tag == 220) {  // ctz
-            // Derived from clz rather than `rbit`: isolate the lowest set bit
-            // with `x & -x`, whose clz gives its position, then csel the width
-            // for a zero input. `rbit` is NOT implemented by the in-process
-            // assembler (internal/native/arm64), so emitting it would fail at
-            // assemble time rather than merely run slower.
+            // `rbit` then `clz`. Reversing zero leaves zero, so the width-at-
+            // zero definition comes for free from clz, with no fixup.
             if (o.width == 64) {
-                s = s.write("    ldr x0, [sp], #16\n    neg x1, x0\n    and x1, x0, x1\n    clz x1, x1\n    mov x2, #63\n    sub x1, x2, x1\n    mov x2, #64\n    cmp x0, #0\n    csel x0, x2, x1, eq\n    str x0, [sp, #-16]!\n");
+                s = s.write("    ldr x0, [sp], #16\n    rbit x0, x0\n    clz x0, x0\n    str x0, [sp, #-16]!\n");
             } else {
-                s = s.write("    ldr x0, [sp], #16\n    neg w1, w0\n    and w1, w0, w1\n    clz w1, w1\n    mov w2, #31\n    sub w1, w2, w1\n    mov w2, #32\n    cmp w0, #0\n    csel w0, w2, w1, eq\n    str x0, [sp, #-16]!\n");
+                s = s.write("    ldr x0, [sp], #16\n    rbit w0, w0\n    clz w0, w0\n    str x0, [sp, #-16]!\n");
             }
         } else if (o.kind_tag == 221) {  // popcount
-            // SWAR, inline. arm64's hardware popcount lives on the SIMD side
-            // (`cnt` per byte then `addv` to sum), and neither instruction is
-            // implemented by the in-process assembler -- see the ctz note.
+            // arm64's hardware popcount is SIMD-side: `cnt` counts per BYTE,
+            // `addv` sums the byte lanes. So the value rides through v0. A
+            // write to a SIMD register zeroes the lanes above it, so the
+            // 32-bit form's `fmov s0, w0` leaves the upper four bytes zero and
+            // the same 8-byte count serves both widths.
             if (o.width == 64) {
-                s = s.write("    ldr x0, [sp], #16\n    lsr x1, x0, #1\n    mov x2, #0x5555\n    movk x2, #0x5555, lsl #16\n    movk x2, #0x5555, lsl #32\n    movk x2, #0x5555, lsl #48\n    and x1, x1, x2\n    sub x0, x0, x1\n    mov x2, #0x3333\n    movk x2, #0x3333, lsl #16\n    movk x2, #0x3333, lsl #32\n    movk x2, #0x3333, lsl #48\n    and x1, x0, x2\n    lsr x0, x0, #2\n    and x0, x0, x2\n    add x0, x0, x1\n    lsr x1, x0, #4\n    add x0, x0, x1\n    mov x2, #0x0f0f\n    movk x2, #0x0f0f, lsl #16\n    movk x2, #0x0f0f, lsl #32\n    movk x2, #0x0f0f, lsl #48\n    and x0, x0, x2\n    mov x2, #0x0101\n    movk x2, #0x0101, lsl #16\n    movk x2, #0x0101, lsl #32\n    movk x2, #0x0101, lsl #48\n    mul x0, x0, x2\n    lsr x0, x0, #56\n    str x0, [sp, #-16]!\n");
+                s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov w0, s0\n    str x0, [sp, #-16]!\n");
             } else {
-                s = s.write("    ldr x0, [sp], #16\n    lsr w1, w0, #1\n    mov w2, #0x5555\n    movk w2, #0x5555, lsl #16\n    and w1, w1, w2\n    sub w0, w0, w1\n    mov w2, #0x3333\n    movk w2, #0x3333, lsl #16\n    and w1, w0, w2\n    lsr w0, w0, #2\n    and w0, w0, w2\n    add w0, w0, w1\n    lsr w1, w0, #4\n    add w0, w0, w1\n    mov w2, #0x0f0f\n    movk w2, #0x0f0f, lsl #16\n    and w0, w0, w2\n    mov w2, #0x0101\n    movk w2, #0x0101, lsl #16\n    mul w0, w0, w2\n    lsr w0, w0, #24\n    str x0, [sp, #-16]!\n");
+                s = s.write("    ldr x0, [sp], #16\n    fmov s0, w0\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov w0, s0\n    str x0, [sp, #-16]!\n");
             }
         } else if (o.kind_tag == 80) {  // heap_bump_bytes
             // bump high-water mark = (__fern_heap_ptr == 0) ? 0 : ptr − base.

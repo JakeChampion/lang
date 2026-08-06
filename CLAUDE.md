@@ -76,6 +76,14 @@ as a constraint to preserve.
 - WASI / WebAssembly (currently exercised via wasmtime)
 - x86-64 / amd64 Linux ELF — System V AMD64 ABI, native
   exec on x86_64 hosts + `qemu-x86_64` on non-x86 hosts.
+  **CPU baseline is SSE4.2** (Nehalem, 2008) — binaries are
+  static with no runtime dispatch, so a selected instruction
+  is a hard requirement, not a fast path. LZCNT/TZCNT are
+  above it (BMI1, 2013) and deliberately unused. arm64's
+  baseline is plain ARMv8-A, Advanced SIMD included. The
+  per-backend table lives in `docs/BACKEND-PARITY.md`;
+  raising either baseline is a project decision, not a
+  codegen one.
   Six PR shape (#269–#274) covers everything from exit
   codes through arithmetic, control flow, strings + alloc,
   composite types + floats, TCP + HTTP, and the

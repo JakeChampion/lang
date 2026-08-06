@@ -1206,6 +1206,33 @@ function arm64_clz(buf: i32[], rd: i32, rn: i32, w: boolean): i32[] {
     if (w) { word = word & 0x7fffffff; }
     return arm64_le32(buf, word);
 }
+// rbit Xd, Xn -> 0xDAC00000 | Rn<<5 | Rd. Third member of the same DP-1-source
+// family as rev16/clz, and the ctz idiom's first half: `rbit` then `clz`
+// counts trailing zeros, inheriting clz's width-at-zero (reversing zero
+// leaves zero). The `w` flag clears sf exactly as clz's does -- without it a
+// 32-bit ctz would reverse over 64 bits and count the empty upper half.
+function arm64_rbit(buf: i32[], rd: i32, rn: i32, w: boolean): i32[] {
+    var word: i64 = 0xdac00000 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (w) { word = word & 0x7fffffff; }
+    return arm64_le32(buf, word);
+}
+// cnt Vd.8b, Vn.8b -> 0x0E205800 | Q<<30 | Rn<<5 | Rd -- per-BYTE population
+// count, the only popcount AArch64 has (there is no scalar form, which is why
+// a popcount lowering routes its value through a v-register).
+function arm64_cnt(buf: i32[], rd: i32, rn: i32, q: boolean): i32[] {
+    var word: i64 = 0x0e205800 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (q) { word = word | 0x40000000; }
+    return arm64_le32(buf, word);
+}
+// addv Bd, Vn.8b -> 0x0E31B800 | Q<<30 | Rn<<5 | Rd -- horizontal sum across
+// the byte lanes into the destination's low byte. Paired with `cnt` it
+// completes a popcount; the sum tops out at 64, so the byte-wide destination
+// cannot overflow. Only the byte arrangements (size=00) are encoded.
+function arm64_addv(buf: i32[], rd: i32, rn: i32, q: boolean): i32[] {
+    var word: i64 = 0x0e31b800 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (q) { word = word | 0x40000000; }
+    return arm64_le32(buf, word);
+}
 
 // ---- byte/halfword/sign-extending load/store (unsigned scaled imm) ----
 // ldrb/strb size 0 (no scale); ldrh/strh size 1 (÷2); ldrsw size 2 (÷4).
@@ -1628,6 +1655,72 @@ function arm64_gas_is_d(tok: string): boolean {
 function arm64_gas_is_s(tok: string): boolean {
     var t: string = arm64_gas_trim(tok);
     return t.len() >= 1 && t[0] == 115; // 's'
+}
+
+// arm64_gas_vreg_arr decodes an ARRANGED vector operand (`v0.8b` / `v1.16b`)
+// to its register number, or -1. Only the byte arrangements are accepted: the
+// cnt/addv encoders set size=00, so a wider element size would assemble as a
+// DIFFERENT instruction on the same bytes rather than fail.
+function arm64_gas_vreg_arr(tok: string): i32 {
+    var s: string = arm64_gas_trim(tok);
+    var dot: i32 = arm64_str_indexof(s, ".");
+    if (s.len() < 4 || s[0] != 118 || dot < 2) { return 0 - 1; }  // 'v'
+    var n: i32 = 0;
+    var i: i32 = 1;
+    while (i < dot) {
+        var c: i32 = s[i] as i32;
+        if (c < 48 || c > 57) { return 0 - 1; }
+        n = n * 10 + (c - 48);
+        i = i + 1;
+    }
+    if (n > 31) { return 0 - 1; }
+    var arr: string = s[dot:s.len()] + "";
+    if (arr == ".8b" || arr == ".16b") { return n; }
+    return 0 - 1;
+}
+
+// arm64_gas_vreg_arr_q reports the 128-bit (Q) arrangement.
+function arm64_gas_vreg_arr_q(tok: string): boolean {
+    var s: string = arm64_gas_trim(tok);
+    var dot: i32 = arm64_str_indexof(s, ".");
+    if (dot < 0) { return false; }
+    return (s[dot:s.len()] + "") == ".16b";
+}
+
+// arm64_gas_breg decodes a `bN` scalar byte register — the destination shape
+// of an `addv` over a byte arrangement — to its number, or -1.
+function arm64_gas_breg(tok: string): i32 {
+    var s: string = arm64_gas_trim(tok);
+    if (s.len() < 2 || s[0] != 98) { return 0 - 1; }  // 'b'
+    var n: i32 = 0;
+    var i: i32 = 1;
+    while (i < s.len()) {
+        var c: i32 = s[i] as i32;
+        if (c < 48 || c > 57) { return 0 - 1; }
+        n = n * 10 + (c - 48);
+        i = i + 1;
+    }
+    if (n > 31) { return 0 - 1; }
+    return n;
+}
+
+// arm64_gas_bad_vec_token guards cnt/addv's SIMD operands the way
+// arm64_gas_bad_reg_token guards the general-purpose ones: a shape the byte-
+// lane encoders cannot express is returned so the caller records it on
+// p.unknown and refuses the output, rather than letting a -1 sentinel fold
+// into the register field.
+function arm64_gas_bad_vec_token(mnem: string, rest: string): string {
+    if (mnem != "cnt" && mnem != "addv") { return ""; }
+    var ops: string[] = arm64_gas_operands(rest);
+    if (ops.len() != 2) { return mnem + ":arity"; }
+    if (arm64_gas_vreg_arr(ops[1]) < 0) { return arm64_gas_trim(ops[1]); }
+    if (mnem == "addv") {
+        if (arm64_gas_breg(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
+        return "";
+    }
+    if (arm64_gas_vreg_arr(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
+    if (arm64_gas_vreg_arr_q(ops[0]) != arm64_gas_vreg_arr_q(ops[1])) { return arm64_gas_trim(ops[1]); }
+    return "";
 }
 
 // arm64_gas_operands splits an operand list on top-level commas, ignoring
@@ -2150,6 +2243,18 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_clz(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
         return a;
     }
+    if (mnem == "rbit") {
+        a = Arm64Asm { ...a, code: arm64_rbit(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
+        return a;
+    }
+    if (mnem == "cnt") {
+        a = Arm64Asm { ...a, code: arm64_cnt(a.code, arm64_gas_vreg_arr(ops[0]), arm64_gas_vreg_arr(ops[1]), arm64_gas_vreg_arr_q(ops[0])) };
+        return a;
+    }
+    if (mnem == "addv") {
+        a = Arm64Asm { ...a, code: arm64_addv(a.code, arm64_gas_breg(ops[0]), arm64_gas_vreg_arr(ops[1]), arm64_gas_vreg_arr_q(ops[1])) };
+        return a;
+    }
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") {
         // post-index `ldrb/strb Wt, [Xn], #imm` (the byte-copy loop): 3
         // operands, ops[1]="[Xn]", ops[2]="#imm".
@@ -2283,6 +2388,7 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "ubfx" || mnem == "cset" || mnem == "adrp" || mnem == "sxtw" || mnem == "sbfiz") { return true; }
     if (mnem == "lsl" || mnem == "lsr" || mnem == "asr" || mnem == "cmn" || mnem == "csel" || mnem == "and") { return true; }
     if (mnem == "orr" || mnem == "eor" || mnem == "subs" || mnem == "udiv" || mnem == "sdiv" || mnem == "msub" || mnem == "rev16" || mnem == "clz") { return true; }
+    if (mnem == "rbit" || mnem == "cnt" || mnem == "addv") { return true; }  // ctz = rbit+clz; popcount = cnt+addv
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") { return true; }
     if (mnem == "mrs") { return true; } // sysreg validity checked in the program loop
     if (mnem == "fadd" || mnem == "fsub" || mnem == "fmul" || mnem == "fdiv" || mnem == "fcmp" || mnem == "fmov" || mnem == "fcvtzs" || mnem == "fcvtzu" || mnem == "scvtf" || mnem == "ucvtf") { return true; }
@@ -3104,6 +3210,14 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         var badreg: string = arm64_gas_bad_reg_token(rest);
         if (badreg.len() > 0) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badreg) };
+        }
+        // Same discipline for cnt/addv's SIMD operands: the byte-lane encoders
+        // cannot express a wider arrangement, and folding a -1 into the
+        // register field would emit a plausible instruction on the wrong
+        // register.
+        var badvec: string = arm64_gas_bad_vec_token(mnem, rest);
+        if (badvec.len() > 0) {
+            p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badvec) };
         }
         // Same discipline for a register in the OFFSET position of a form whose
         // only encoder takes an immediate: refuse the line instead of silently

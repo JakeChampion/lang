@@ -105,10 +105,11 @@ const (
 	OpNot // logical ! (i32.eqz)
 
 	// Bit-counting intrinsics. Each consumes one integer of `Width`
-	// (32 or 64) and produces an i32 count. Every target has these
-	// as instructions — wasm as single opcodes (i32.clz / i32.ctz /
-	// i32.popcnt), arm64 as clz / rbit+clz / cnt+addv — where the
-	// portable SWAR sequences they replace are 12-15 ALU ops.
+	// (32 or 64) and produces an i32 count. Every target has these as
+	// instructions — wasm as single opcodes (i32.clz / i32.ctz /
+	// i32.popcnt), arm64 as clz / rbit+clz / cnt+addv, x86-64 as
+	// bsr / bsf / popcnt — where the portable SWAR sequences they
+	// replace are 12-15 ALU ops.
 	//
 	// Zero is defined: OpClz and OpCtz of 0 return the operand width
 	// (32 or 64), matching wasm's semantics and what the SWAR code

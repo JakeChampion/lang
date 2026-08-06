@@ -10,11 +10,12 @@ import (
 	"testing"
 )
 
-// TestSelfHostArm64BitOpsGas byte-checks the runtime instruction surface
-// added in slice 3j of arm64_gas/arm64_encode — neg, ubfx, tbz/tbnz (with
-// an imm14 label fixup), and the extended condition codes (cc/cs/hi/ls/…)
-// — against the llvm-mc-pinned encodings, through the self-host wasm
-// pipeline. Exit 0 = all pass, else the failing check id.
+// TestSelfHostArm64BitOpsGas byte-checks arm64_gas/arm64_encode's bit-
+// manipulation surface — neg, ubfx, tbz/tbnz (with an imm14 label fixup),
+// the extended condition codes (cc/cs/hi/ls/…), and the bit-counting trio
+// rbit / cnt / addv that the popcount and ctz lowerings emit — against the
+// llvm-mc-pinned encodings, through the self-host wasm pipeline. Exit 0 =
+// all pass, else the failing check id.
 func TestSelfHostArm64BitOpsGas(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arm64 bitops gas e2e")
@@ -122,6 +123,37 @@ function main(): i32 {
     if (f.code[0] != 40 || f.code[1] != 0 || f.code[2] != 0 || f.code[3] != 84) { return 6; }
     // condition-code values.
     if (arm64_gas_cond("cc") != 3 || arm64_gas_cond("hs") != 2 || arm64_gas_cond("ls") != 9) { return 7; }
+    // rbit x0, x0 -> 0xDAC00000 -> 00 00 C0 DA. The ctz idiom's first half.
+    var g: Arm64Asm = arm64_gas_assemble("rbit x0, x0");
+    if (g.code[0] != 0 || g.code[1] != 0 || g.code[2] != 192 || g.code[3] != 218) { return 8; }
+    // rbit w0, w0 -> 0x5AC00000 -> 00 00 C0 5A. The sf clear: without it a
+    // 32-bit ctz reverses over 64 bits and counts the empty upper half.
+    var h: Arm64Asm = arm64_gas_assemble("rbit w0, w0");
+    if (h.code[0] != 0 || h.code[1] != 0 || h.code[2] != 192 || h.code[3] != 90) { return 9; }
+    // cnt v0.8b, v0.8b -> 0x0E205800 -> 00 58 20 0E
+    var i0: Arm64Asm = arm64_gas_assemble("cnt v0.8b, v0.8b");
+    if (i0.code[0] != 0 || i0.code[1] != 88 || i0.code[2] != 32 || i0.code[3] != 14) { return 10; }
+    // addv b0, v0.8b -> 0x0E31B800 -> 00 B8 31 0E
+    var j0: Arm64Asm = arm64_gas_assemble("addv b0, v0.8b");
+    if (j0.code[0] != 0 || j0.code[1] != 184 || j0.code[2] != 49 || j0.code[3] != 14) { return 11; }
+    // The Q bit, on both: cnt v1.16b, v2.16b -> 0x4E205841 -> 41 58 20 4E
+    var k0: Arm64Asm = arm64_gas_assemble("cnt v1.16b, v2.16b");
+    if (k0.code[0] != 65 || k0.code[1] != 88 || k0.code[2] != 32 || k0.code[3] != 78) { return 12; }
+    // addv b3, v5.16b -> 0x4E31B8A3 -> A3 B8 31 4E
+    var l0: Arm64Asm = arm64_gas_assemble("addv b3, v5.16b");
+    if (l0.code[0] != 163 || l0.code[1] != 184 || l0.code[2] != 49 || l0.code[3] != 78) { return 13; }
+    // An arrangement the byte-lane encoders cannot express must be REFUSED,
+    // not folded into the byte-lane encoding — that would be a different
+    // instruction on the same bytes. Same for a mismatched pair and for a
+    // destination of the wrong shape.
+    if (arm64_gas_bad_vec_token("cnt", "v0.4h, v0.4h").len() == 0) { return 14; }
+    if (arm64_gas_bad_vec_token("cnt", "v0.8b, v1.16b").len() == 0) { return 15; }
+    if (arm64_gas_bad_vec_token("addv", "h0, v0.8h").len() == 0) { return 16; }
+    if (arm64_gas_bad_vec_token("addv", "v0.8b, v0.8b").len() == 0) { return 17; }
+    if (arm64_gas_bad_vec_token("cnt", "v0.8b").len() == 0) { return 18; }
+    // …and a well-formed pair must NOT be refused.
+    if (arm64_gas_bad_vec_token("cnt", "v0.8b, v0.8b").len() != 0) { return 19; }
+    if (arm64_gas_bad_vec_token("addv", "b0, v0.8b").len() != 0) { return 20; }
     return 0;
 }
 `
