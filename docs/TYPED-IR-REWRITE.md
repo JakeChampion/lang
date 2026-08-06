@@ -134,6 +134,16 @@ leaves every `ty` empty and gets the structural walk unchanged.
 | `ExprIndex.ty` | #6165 | `ix_type_tag` — the leaf behind the `ExprIndex` arms of `expr_is_f64` and `infer_expr_width` AND the two load sites (`lower_expr`'s `arr_get` width, `lower_i64`'s `arr_get_i64`), so the element width and the value's downstream type answer from one place |
 | `ExprSlice.ty` | this slice | the `ExprSlice` arm of `lower_expr` — both the `expr_is_arr_src` **gate** (a non-empty tag proves array-ness the walk cannot reach) and `slice_elem_is_wide` (the `arr_slice` element width). Names the SOURCE array's type, via the checker's `type_to_arrtag` |
 
+**CLOSED (the section below is the record of why it was blocked).** `fn_ret` now
+carries scalar returns, and `parse_stmt`'s var binding stamps them onto an
+unannotated lambda init, so the declared type answers before `irt_guess` is ever
+consulted. The audit the note called for found exactly ONE consumer that treated
+a non-empty, non-string, unbracketed `fn_ret` as a struct name
+(`struct_ret_fns_aug`, irlower). It now asks `parser.is_struct_ret_name` — the
+same predicate that decides what `fn_ret` keeps — which rejects brackets,
+`"string"` and every scalar, so producer and consumer cannot drift. That
+substitution also deleted two ad-hoc exclusions at the call site.
+
 **Open: a lambda's declared return type never reaches the lambda.** A lifted
 lambda's return type is *inferred* from its body by `irt_guess`, which #6216 and
 #6222 extended to nine expression forms. But inference is the wrong source when

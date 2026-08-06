@@ -33549,14 +33549,14 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     while (pri < fn.params.len()) {
         if (fn.params[pri].ret_arr) { arr_ret_fns_aug = arr_ret_fns_aug.append(fn.params[pri].name); }
         // A fn-value param whose return names a bare struct registers a
-        // sg.struct_ret_fns entry (drives `g().field`, #3640). fn_ret now ALSO
-        // carries a (possibly generic) bracketed enum return spelling for
-        // enum-variant fn payloads (#4722) — exclude those bracketed spellings
-        // here so this registration is byte-identical to before (they are read
-        // only via the StructFieldDecl.fn_ret path in the monomorphiser).
-        if (fn.params[pri].type_name == "fn" && fn.params[pri].fn_ret.len() > 0
-            && fn.params[pri].fn_ret != "string"
-            && !util.contains(fn.params[pri].fn_ret, "[")) {
+        // sg.struct_ret_fns entry (drives `g().field`, #3640). fn_ret also
+        // carries bracketed enum return spellings (#4722), "string", and now
+        // SCALAR returns — none of which name a struct. Ask the parser's
+        // is_struct_ret_name rather than enumerating the exclusions here: it
+        // already rejects brackets, "string" and every scalar, and it is the
+        // same predicate that decides what fn_ret keeps in the first place, so
+        // the two cannot drift.
+        if (fn.params[pri].type_name == "fn" && parser.is_struct_ret_name(fn.params[pri].fn_ret)) {
             struct_ret_fns_aug = struct_ret_fns_aug.append(fn.params[pri].name + "|" + fn.params[pri].fn_ret);
         }
         pri = pri + 1;
