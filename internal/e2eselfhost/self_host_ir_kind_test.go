@@ -30,14 +30,19 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	bin := buildSelfHostBin(t, gcc, dir, "ir_kind_run.fern", "ir_kind_run")
 
 	// Golden report — locks kind_count, the full-table bijection (all 197 ids
-	// round-trip), the extension-tag sweep (the 24 registered ids beyond
-	// kind_count(), struct_copy=198 … popcount=221 — #5452's skew
+	// round-trip), the extension-tag sweep (the 25 registered ids beyond
+	// kind_count(), struct_copy=198 … map_hash_seed=222 — #5452's skew
 	// left them unrendered by kind_name), the KIND_INVALID sentinels, a few stable ids,
 	// and every classifier predicate's answer on representative kinds.
+	//
+	// ext_ok and tag_consistency move together whenever an extension op is
+	// added: both count entries in ir_kind_run.fern's sweep lists, and the
+	// point of the golden is that adding a kind_id without registering it in
+	// BOTH shows up here rather than as an "invalid" name at some call site.
 	const want = "kind_count=197\n" +
 		"bijection_ok=197\n" +
 		"bijection_failures=0\n" +
-		"ext_ok=24\n" +
+		"ext_ok=25\n" +
 		"ext_failures=0\n" +
 		"unknown_id=0\n" +
 		"id0=invalid\n" +
@@ -50,7 +55,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"is_term return=1 br=1 exit=1 brif=0\n" +
 		"is_fold add=1 div_s=1 ge_s=1 fadd=0\n" +
 		"is_commute add=1 xor=1 sub=0 shl=0\n" +
-		"tag_consistency ok=24 bad=0\n"
+		"tag_consistency ok=25 bad=0\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
