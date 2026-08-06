@@ -7326,8 +7326,9 @@ func (g *generator) emitF64Negate(reg string) {
 // surface at all, only the scalar float ops the code generator uses to
 // shuttle f64 through xmm. This kernel shipped scalar first for exactly that
 // reason. The encodings landed alongside it (see TestEncodeVectorSurface,
-// pinned byte-for-byte against GNU `as`), and the same question is still open
-// for NEON on arm64.
+// pinned byte-for-byte against GNU `as`). The gap turned out to be universal:
+// arm64's assembler had no NEON either, and `internal/wasm` had no v128 —
+// three assemblers, three prerequisite PRs.
 //
 // The `from` argument is clamped rather than validated — negative behaves as
 // 0, past-the-end finds nothing — matching the interpreter reference and the

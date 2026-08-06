@@ -19,6 +19,7 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/inst"
 	"github.com/jakechampion/lang/internal/wasm/memory"
 	"github.com/jakechampion/lang/internal/wasm/numeric"
+	"github.com/jakechampion/lang/internal/wasm/simd"
 )
 
 // emitFreelistBin appends the size→(capacity, class) binning both
@@ -241,6 +242,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// return-transfer / element-init). Pulls in rc_inc.
 					needs.add("__fern_rc_inc")
 					needs.add("__fern_str_inc")
+				case "__fern_memchr":
+					// The v128 byte-search kernel. Its inline-string
+					// branch reads through str_byte, and it asks
+					// str_len for the logical length in both branches.
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_memchr")
 				case "__fern_print":
 					// fd_write under the hood; transitively
 					// pulls in the byte-copy + alloc helpers.
@@ -1062,6 +1070,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildStrByteBody,
+	},
+	"__fern_memchr": {
+		// (data, len, byte, from) → i32 index, or -1.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildMemchrBody,
 	},
 	"__fern_print": {
 		// (data, len) → ()
@@ -3207,6 +3221,180 @@ func buildStrLenBody(_ map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstEnd(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildMemchrBody assembles wasm bytes for __fern_memchr.
+//
+// Signature: (param $data $len $byte $from i32) (result i32) — the string
+// arrives as its two words, so this is four params where the x86-64 helper
+// takes three registers.
+//
+// THE THIRD VECTOR KERNEL (docs/ATLAS-PLATFORM-PLAN.md §3), and the shortest
+// of the three. wasm has `i8x16.bitmask`, which is x86's pmovmskb: one bit
+// per input byte, so `i32.ctz` of the mask IS the lane index. NEON has no
+// such instruction and pays for it with a shrn/rbit/clz sequence and a
+// divide-by-four.
+//
+// Two structural differences from the native kernels, both forced by the
+// wasm string representation rather than chosen:
+//
+//   - SHORT STRINGS HAVE NO ADDRESS. A string with the 0x80000000 flag set
+//     is stored IN its two words, not in memory, so there is nothing for
+//     v128.load to point at. Those take a scalar loop over __fern_str_byte.
+//     Nothing is lost: the inline form holds at most 7 bytes, which is under
+//     half a vector.
+//   - THE SPLAT IS RECOMPUTED PER ITERATION rather than hoisted, because
+//     hoisting it needs a v128 local and therefore the v128 valtype in the
+//     locals vector. One instruction per 16 bytes is not worth that surface;
+//     the splat is loop-invariant and engines hoist it themselves.
+//
+// Locals after the four params: $n (4), $i (5), $m (6).
+func buildMemchrBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	const (
+		pData = 0
+		pLen  = 1
+		pByte = 2
+		pFrom = 3
+		lN    = 4
+		lI    = 5
+		lM    = 6
+	)
+	var body []byte
+
+	// A byte outside 0..255 cannot occur in the haystack. Checked up front,
+	// like the interpreter reference, so the scan needs no per-lane guard —
+	// and so the splat below is exact rather than truncating.
+	body = inst.InstLocalGet(body, pByte)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstLocalGet(body, pByte)
+	body = inst.InstI32Const(body, 255)
+	body = numeric.InstI32GtS(body)
+	body = numeric.InstI32Or(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, -1)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+
+	// $n = __fern_str_len($data, $len)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, lN)
+
+	// $i = max($from, 0) — clamped, not rejected, matching the reference.
+	body = inst.InstLocalGet(body, pFrom)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstEnd(body)
+
+	// Inline (SSO) haystack: scalar loop through __fern_str_byte, which is
+	// the only reader that can see bytes living in the two words.
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstLocalGet(body, lN)
+		body = numeric.InstI32GeS(body)
+		body = inst.InstBrIf(body, 1)
+		body = inst.InstLocalGet(body, pData)
+		body = inst.InstLocalGet(body, pLen)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstCall(body, strByte)
+		body = inst.InstLocalGet(body, pByte)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, lI)
+		body = inst.InstBr(body, 0)
+		body = inst.InstEnd(body) // loop
+		body = inst.InstEnd(body) // block
+		body = inst.InstI32Const(body, -1)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	// Heap haystack: $data is the byte address, so the vector loop applies.
+	// 16 bytes per iteration while a whole vector fits.
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GtS(body)
+	body = inst.InstBrIf(body, 1)
+	// $m = i8x16.bitmask(i8x16.eq(v128.load($data + $i), splat($byte)))
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, lI)
+	body = numeric.InstI32Add(body)
+	// align 0: a Fern string buffer carries no 16-byte alignment guarantee,
+	// and `$i` walks it in 16-byte steps from an arbitrary `from`.
+	body = simd.InstV128Load(body, 0, 0)
+	body = inst.InstLocalGet(body, pByte)
+	body = simd.InstI8x16Splat(body)
+	body = simd.InstI8x16Eq(body)
+	body = simd.InstI8x16Bitmask(body)
+	body = inst.InstLocalTee(body, lM)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lM)
+	body = numeric.InstI32Ctz(body)
+	body = numeric.InstI32Add(body)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	// Scalar tail: the final 0..15 bytes.
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, lI)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstLocalGet(body, pByte)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	body = inst.InstI32Const(body, -1)
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildLoadI32Body — i32 (addr) → i32. Single i32.load at offset 0.

@@ -103,7 +103,16 @@ func memchrCases() []struct {
 	return out
 }
 
-func TestX86_64Memchr(t *testing.T) {
+// runMemchrCorpus drives the whole corpus through one backend and compares
+// every answer against memchrRef. `run` compiles and runs a program and
+// returns its stdout — one decimal per case, in order.
+//
+// The three legs share this body deliberately: what differs between backends
+// is the kernel, not the expectation, so a divergence should show up as one
+// leg disagreeing with the same reference rather than as three drifting
+// copies of the comparison logic.
+func runMemchrCorpus(t *testing.T, run func(t *testing.T, src string) string) {
+	t.Helper()
 	cases := memchrCases()
 
 	var body strings.Builder
@@ -114,16 +123,12 @@ func TestX86_64Memchr(t *testing.T) {
 		want = append(want, fmt.Sprint(memchrRef(c.s, c.b, c.from)))
 	}
 
-	src := `import "std/i32";
+	out := run(t, `import "std/i32";
 
 function main(): i32 {
-` + body.String() + `    return 0;
+`+body.String()+`    return 0;
 }
-`
-	out, exit := compileAndRunX86_64(t, src)
-	if exit != 0 {
-		t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
-	}
+`)
 	got := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	if len(got) != len(want) {
 		t.Fatalf("printed %d lines, want %d — the program and the expectation "+
@@ -144,6 +149,16 @@ function main(): i32 {
 		t.Errorf("... and %d more mismatches (%d of %d)", bad-10, bad, len(want))
 	}
 	t.Logf("%d cases checked against the Go reference", len(want))
+}
+
+func TestX86_64Memchr(t *testing.T) {
+	runMemchrCorpus(t, func(t *testing.T, src string) string {
+		out, exit := compileAndRunX86_64(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
 }
 
 // fernQuote renders a Go string as a Fern string literal, escaping the bytes
@@ -189,42 +204,38 @@ func fernQuote(s string) string {
 //
 // Runs under qemu-aarch64 locally and natively on the arm64 CI lane.
 func TestArm64Memchr(t *testing.T) {
-	cases := memchrCases()
-
-	var body strings.Builder
-	want := make([]string, 0, len(cases))
-	for _, c := range cases {
-		body.WriteString(fmt.Sprintf("    write((__memchr(%s, %d, %d)).to_string()); write(\"\\n\");\n",
-			fernQuote(c.s), c.b, c.from))
-		want = append(want, fmt.Sprint(memchrRef(c.s, c.b, c.from)))
-	}
-
-	src := `import "std/i32";
-
-function main(): i32 {
-` + body.String() + `    return 0;
-}
-`
-	out, exit := compileAndRunArm64(t, src)
-	if exit != 0 {
-		t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
-	}
-	got := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(got) != len(want) {
-		t.Fatalf("printed %d lines, want %d", len(got), len(want))
-	}
-	bad := 0
-	for i := range want {
-		if strings.TrimSpace(got[i]) != want[i] {
-			bad++
-			if bad <= 10 {
-				t.Errorf("__memchr(%q, %d, %d) = %s, want %s",
-					cases[i].s, cases[i].b, cases[i].from, strings.TrimSpace(got[i]), want[i])
-			}
+	runMemchrCorpus(t, func(t *testing.T, src string) string {
+		out, exit := compileAndRunArm64(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
 		}
-	}
-	if bad > 10 {
-		t.Errorf("... and %d more mismatches (%d of %d)", bad-10, bad, len(want))
-	}
-	t.Logf("%d cases checked against the Go reference", len(want))
+		return out
+	})
+}
+
+// The wasm leg runs the SAME corpus again, and adds a case class neither
+// native leg has: on wasm a SHORT string is stored in its two words with no
+// address at all, so there is nothing for `v128.load` to point at and the
+// kernel has a second, scalar path for it. Every haystack under 8 bytes in
+// the corpus above — including the empty one — exercises that path, and a
+// kernel that ignored the distinction would read the length word as a
+// pointer.
+//
+// wasm is also the only one of the three targets whose mask extraction is
+// free: `i8x16.bitmask` is pmovmskb, one bit per byte, so `i32.ctz` of it is
+// the lane index directly.
+func TestWASMMemchr(t *testing.T) {
+	runMemchrCorpus(t, func(t *testing.T, src string) string {
+		out, _ := invokeWasmtime(t, src)
+		// The component harness builds with PrintMainResult, so main()'s
+		// return value arrives as one extra line after the corpus. Check
+		// it — it is the leg's only signal that the program ran to
+		// completion rather than stopping early with the right prefix —
+		// then hand back just the corpus lines.
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		if n := len(lines); n == 0 || strings.TrimSpace(lines[n-1]) != "0" {
+			t.Fatalf("main() result line = %q, want \"0\"", lines[len(lines)-1])
+		}
+		return strings.Join(lines[:len(lines)-1], "\n")
+	})
 }
