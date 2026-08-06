@@ -40,7 +40,7 @@ across `docs/` and `internal/`, and no (c).
 
 | Spec ingredient | Fern's existing version | Gap |
 | --- | --- | --- |
-| Conformance suite | `internal/e2e/testdata/cases/` — 364 `.fern` fixtures, declarative sidecars (`expected.stdout`, `expected.exit`, `stdin`, `match`, `backends`, `expected.error`), run across interp / x86-64 / arm64 / wasm | Lives inside `internal/`, i.e. inside one implementation. Incidental, not normative: nothing says which behaviours are *required* vs which merely happen to be what the interp does. |
+| Conformance suite | `conformance/cases/` — 364 `.fern` fixtures, declarative sidecars (`expected.stdout`, `expected.exit`, `stdin`, `match`, `backends`, `expected.error`), run across interp / x86-64 / arm64 / wasm | Lives inside `internal/`, i.e. inside one implementation. Incidental, not normative: nothing says which behaviours are *required* vs which merely happen to be what the interp does. |
 | Conformance report | `selfhost-{wasm,x86_64,arm64}-known-divergences.txt` — per-target expectation files, where a new divergence fails *and* a listed fixture that starts passing fails | Already the right mechanism. Framed as a bug list rather than a conformance delta. |
 | Multiple implementations to keep honest | Five: `internal/interp`, three native backends, and the self-host compiler (its own parser + checker + three emitters) | The self-host is measured *against native*, not against a spec. |
 | Static-semantics catalogue | 71+ stable diagnostic codes with a `fern explain E0NN` catalogue (`internal/diag/explanations`) and `catalogue_completeness_test.go` forbidding an unexplained code | The codes are stable and explained; the *rules* they enforce are written down only as checker code. |
@@ -449,6 +449,34 @@ several stages downstream (the closure-dispatch cluster
 them into an error naming the malformed op. It is also the natural
 enforcement point for Layer 3's typing rules, which is why it belongs
 here rather than in a testing doc.
+
+**Correction, from building it.** The structural half took an afternoon,
+not a week, and it found nothing: across **478 lowered programs** (the
+whole corpus, at both pointer widths) there was not one bad local index,
+unbalanced scope, out-of-range branch depth, or arity mismatch. That is
+a real result rather than a disappointment — it says the lowering passes
+are structurally sound today, and it is the precondition for the
+verifier being *usable*: a checker that fires on correct input gets
+disabled within a week.
+
+Two things the plan did not anticipate:
+
+- **The callee check needed an authority, not a heuristic.** The first
+  version accepted a defined function, an extern, or a `__`-prefixed
+  runtime symbol, and reported 166 problems — all of them builtins
+  (`print`, `map_new`, `now_ns`) that are none of those three.
+  `internal/caps` already holds the authoritative inventory, gated by
+  its own completeness tests, so the verifier consults it. A new builtin
+  therefore cannot quietly become an unverifiable callee.
+- **The type half is the real work.** Stack discipline and operand
+  widths need a stack-effect table for all 93 opcodes, which is where a
+  wasm-style validator gets its power. That is a separate increment, and
+  it is the one that would have caught the closure-dispatch cluster this
+  section cites.
+
+So the honest reading: the verifier as shipped is a floor, not the
+guard-rail the section promised. It makes a class of bug impossible to
+ship silently, and the class it currently covers turns out to be empty.
 
 ### Layer 5 — mechanisation and translation validation (not recommended yet)
 
