@@ -473,6 +473,19 @@ pub struct LowerState {
     optret_pending: string[],
     n_params: i32,
     ok: boolean,
+    // fail_why: a one-line description of the INNERMOST AST node that refused to
+    // lower, stamped by lower_expr / lower_stmt on the way back out of a failed
+    // lowering. Empty while ok.
+    //
+    // The 133 `s.fail()` sites are spread across lower_expr's arms and a long
+    // tail of helpers, and none of them knew where they were: a bailed function
+    // reported only its own NAME, so a third of the fernsmith corpus (135 of 512
+    // seeds, measured 2026-08-06) bailed with no groupable reason at all and the
+    // only way to learn anything was to bisect each body by hand. Stamping at the
+    // two dispatchers costs one field and two wrappers instead of 133 hand-written
+    // tags, and lands on the innermost node because the inner frame unwinds first
+    // and later frames only fill an EMPTY slot.
+    fail_why: string,
 }
 
 pub function (s: LowerState) emit(op: ir.Op): LowerState {
@@ -527,6 +540,95 @@ pub function (s: LowerState) erased_passthrough(): boolean { return (s.ret_arrdy
 
 pub function (s: LowerState) fail(): LowerState {
     return LowerState { ...s, ok: false };
+}
+
+// note_fail records `why` as the bail description, but only when none is set
+// yet. First writer wins, and the first writer is the innermost frame: an
+// unwinding lowering passes through lower_expr / lower_stmt from the failing
+// node outwards, so the deepest node describes the bail and every enclosing one
+// leaves it alone. Reporting the outermost instead would name the function's
+// top-level statement on every bail, which is what the bare function name
+// already said.
+pub function (s: LowerState) note_fail(why: string): LowerState {
+    if (s.fail_why.len() > 0) { return s; }
+    return LowerState { ...s, fail_why: why };
+}
+
+// expr_bail_tag names an expression for the strict-IR bail diagnostic. Beyond
+// the node kind it carries the one detail that distinguishes same-kind bails
+// from each other — a binary/unary operator, a callee or field name, a struct
+// type — because "call" alone groups every unlowerable call in the corpus into
+// one indistinguishable bucket.
+function expr_bail_tag(e: parser.Expr): string {
+    match (e) {
+        parser.ExprNumber(_) => { return "number literal"; },
+        parser.ExprIdent(id) => { return "ident `" + id.name + "`"; },
+        parser.ExprString(_) => { return "string literal"; },
+        parser.ExprBool(_) => { return "bool literal"; },
+        parser.ExprBinary(b) => { return "binary `" + b.op + "`"; },
+        parser.ExprUnary(u) => { return "unary `" + u.op + "`"; },
+        parser.ExprCall(c) => { return call_bail_tag(c); },
+        parser.ExprArray(_) => { return "array literal"; },
+        parser.ExprTuple(_) => { return "tuple literal"; },
+        parser.ExprIndex(_) => { return "index"; },
+        parser.ExprSlice(_) => { return "slice"; },
+        parser.ExprStructLit(sl) => { return "struct literal `" + sl.type_name + "`"; },
+        parser.ExprFieldAccess(fa) => { return "field access `." + fa.field + "`"; },
+        parser.ExprLambda(_) => { return "lambda"; },
+        _ => { return "unknown expression"; }
+    }
+}
+
+// call_bail_tag spells a call's target for expr_bail_tag: a named function, a
+// `.method`, or the shape of whatever else is in callee position (a call
+// through a computed function value is a different problem from an unlowerable
+// builtin, and the tag has to say which).
+//
+// The zero-arg inline lambda gets its own wording because it is almost never
+// something anyone wrote: `if` and `match` in VALUE position parse into an
+// immediately-invoked zero-param lambda (parse_primary's `if` / `match` arms),
+// as do the array- and map-comprehension desugars. Calling that "a lambda"
+// sends the reader looking for a lambda in a source file that has none.
+function call_bail_tag(c: parser.ExprCall): string {
+    match (c.callee) {
+        parser.ExprIdent(id) => { return "call `" + id.name + "`"; },
+        parser.ExprFieldAccess(fa) => { return "call `." + fa.field + "`"; },
+        parser.ExprLambda(lam) => {
+            if (lam.params.len() == 0 && c.args.len() == 0) {
+                return "immediately-invoked value block (an if-/match-expression or comprehension desugar)";
+            }
+            return "call of an inline lambda";
+        },
+        parser.ExprIndex(_) => { return "call of an indexed element"; },
+        _ => { return "call of a computed value"; }
+    }
+}
+
+// stmt_bail_tag is expr_bail_tag's statement half. Reached only when a bail
+// happens in a statement's own lowering rather than inside one of its
+// expressions — the expression frames stamp first.
+//
+// The value-carrying statements name their value's SHAPE as well as their own
+// kind. Reaching this arm means no lower_expr frame ran, i.e. the statement's
+// own type-directed path (a return coerced to i64 / dyn / Option, a var binding
+// choosing a slot kind) refused the value before dispatching on it — so the
+// shape it refused is the whole diagnostic. Without it, half of these bails
+// report the bare word "return".
+function stmt_bail_tag(st: parser.Stmt): string {
+    match (st) {
+        parser.StmtVar(v) => { return "`var " + v.name + "` bound from " + expr_bail_tag(v.init); },
+        parser.StmtReturn(r) => { return "`return` of " + expr_bail_tag(r.value); },
+        parser.StmtExpr(x) => { return "expression statement " + expr_bail_tag(x.value); },
+        parser.StmtIf(_) => { return "`if`"; },
+        parser.StmtWhile(_) => { return "`while`"; },
+        parser.StmtAssign(a) => { return "assignment to `" + a.target + "` from " + expr_bail_tag(a.value); },
+        parser.StmtMatch(_) => { return "`match`"; },
+        parser.StmtFor(f) => { return "`for " + f.var_name + "`"; },
+        parser.StmtBreak(_) => { return "`break`"; },
+        parser.StmtContinue(_) => { return "`continue`"; },
+        parser.StmtDefer(_) => { return "`defer`"; },
+        _ => { return "unknown statement"; }
+    }
 }
 
 // is_arr_ret_fn reports whether `name` is a function returning an array.
@@ -9844,7 +9946,18 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     return s.fail();
 }
 
+// lower_expr lowers one expression, stamping the bail description on the way
+// out of a failure (see LowerState.fail_why). The dispatch itself is
+// lower_expr_dispatch; this wrapper is the only place the tag is computed, and
+// it computes it only on the failing path, so the hot path pays one call.
 pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
+    if (!s.ok) { return s; }
+    var r: LowerState = lower_expr_dispatch(e, s);
+    if (r.ok) { return r; }
+    return r.note_fail(expr_bail_tag(e));
+}
+
+function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
     if (!s.ok) { return s; }
     match (e) {
         parser.ExprNumber(n) => {
@@ -13563,6 +13676,12 @@ function const_agg_of(slit: parser.ExprStructLit, structs: parser.StructDecl[]):
 // statement's dying call args (grow_exempt_names_of_stmt) are visible to the
 // call-site bracket only while THIS statement lowers.
 pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
+    var r: LowerState = lower_stmt_grow_exempt(st, s);
+    if (r.ok) { return r; }
+    return r.note_fail(stmt_bail_tag(st));
+}
+
+function lower_stmt_grow_exempt(st: parser.Stmt, s: LowerState): LowerState {
     var gex: string[] = grow_exempt_names_of_stmt(st);
     if (gex.len() == 0) { return lower_stmt_inner(st, s); }
     var gr: LowerState = lower_stmt_inner(st, s.with_grow_exempt(gex));
@@ -21091,6 +21210,30 @@ pub struct LowerResult {
     // f64_slots: the local slots holding f64 values; the wasm backend declares
     // these (local f64). The register backends ignore it (f64 shares the slot).
     f64_slots: i32[],
+    // why: why this function did not lower — either a SIGNATURE refusal raised
+    // in lower_func itself (an unlowerable return / receiver / param type) or
+    // the body's innermost failing node, carried out of LowerState.fail_why.
+    // Empty when ok. The strict-IR diagnostic prints it; nothing on the emit
+    // path reads it.
+    why: string,
+}
+
+// lower_failed builds a signature-refusal LowerResult carrying `why`. The
+// signature gates run before any lowering, so the ops / slot lists are all empty
+// and only the reason varies — five near-identical 8-field literals that said
+// nothing about which gate refused.
+function lower_failed(fn: parser.FuncDecl, why: string): LowerResult {
+    var noops: ir.Op[] = [];
+    var noslots: i32[] = [];
+    return LowerResult { ok: false, ops: noops, n_locals: 0, n_params: fn.params.len(), erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots, why: why };
+}
+
+// fail_why_or_unknown reads a failed state's bail description, naming the gap
+// rather than printing an empty reason when a bail bypassed both dispatchers
+// (a helper called straight from lower_func's body loop).
+function fail_why_or_unknown(s: LowerState): string {
+    if (s.fail_why.len() == 0) { return "unattributed bail (no lower_expr / lower_stmt frame stamped it)"; }
+    return s.fail_why;
 }
 
 // arr_slots_of collects the OWNED array slots (>= n_params) — the ones the
@@ -34142,7 +34285,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // scalar-only struct param / receiver constraint below.
     if (decl_is_struct(structs, fn.ret_type)) {
         if (!decl_is_leaksafe(structs, fn.ret_type)) {
-            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
+            return lower_failed(fn, "returns struct `" + fn.ret_type + "`, which is not leak-safe (a field needs RC)");
         }
     }
     // A tuple-returning function IS lowered when every element is scalar (i32 /
@@ -34160,7 +34303,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (else tuple_elem_tags chokes on the trailing "[]" and wrongly bails).
     if (fn.ret_type.len() > 0 && fn.ret_type[0] == 40 && !is_array_type_name(fn.ret_type)) {   // 40 = '('
         if (!tuple_elems_lowerable(fn.ret_type, structs)) {
-            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
+            return lower_failed(fn, "returns tuple `" + fn.ret_type + "`, whose elements are not all lowerable");
         }
     }
     // i64 params + returns ARE lowered now: an i64 param is marked i64 in the
@@ -34235,10 +34378,10 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         var r_is_opt: boolean = fn.receiver_type.len() >= 8 && (fn.receiver_type[0:7] == "Option[" || fn.receiver_type[0:7] == "Result[");
         if (r_is_struct) {
             if (!decl_is_leaksafe(structs, rbase)) {
-                return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
+                return lower_failed(fn, "receiver struct `" + rbase + "` is not leak-safe (a field needs RC)");
             }
         } else if (!r_is_prim && !r_is_enum && !r_is_opt && !r_is_map) {
-            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: 0, erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
+            return lower_failed(fn, "receiver type `" + fn.receiver_type + "` is not a primitive / struct / enum / Option / Map");
         }
         // A nominal receiver (struct or enum) carries its type name in
         // local_struct_type — a struct for field access, an enum for a
@@ -34272,7 +34415,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     while (i < fn.params.len()) {
         // A struct param must be a scalar-field struct; otherwise bail.
         if (decl_is_struct(structs, fn.params[i].type_name) && !decl_is_leaksafe(structs, fn.params[i].type_name)) {
-            return LowerResult { ok: false, ops: empty, n_locals: 0, n_params: fn.params.len(), erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots };
+            return lower_failed(fn, "param `" + fn.params[i].name + ": " + fn.params[i].type_name + "` is a struct that is not leak-safe (a field needs RC)");
         }
         names = names.append(fn.params[i].name);
         // A closure/fn param whose signature returns Option/Result: record it so a
@@ -34739,7 +34882,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], own_params: mv_own_params_for(fn, sg.move_arr_params), n_params: names.len(), ok: true };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], own_params: mv_own_params_for(fn, sg.move_arr_params), n_params: names.len(), ok: true, fail_why: "" };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -34878,9 +35021,9 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     if (trmc_ctor != "") {
         var ts: LowerState = emit_trmc(fn, trmc_ctor, s);
         if (ts.ok) {
-            return LowerResult { ok: true, ops: ts.ops, n_locals: ts.locals.len(), n_params: ts.n_params, erased_wide: erased_wide_stmts(fn.body, ts), arr_slots: arr_slots_of(ts), i64_slots: i64_slots_of(ts), f64_slots: f64_slots_of(ts) };
+            return LowerResult { ok: true, ops: ts.ops, n_locals: ts.locals.len(), n_params: ts.n_params, erased_wide: erased_wide_stmts(fn.body, ts), arr_slots: arr_slots_of(ts), i64_slots: i64_slots_of(ts), f64_slots: f64_slots_of(ts), why: "" };
         }
-        return LowerResult { ok: false, ops: [], n_locals: 0, n_params: 0, erased_wide: false, arr_slots: [], i64_slots: [], f64_slots: [] };
+        return lower_failed(fn, "TRMC body did not lower: " + fail_why_or_unknown(ts));
     }
     var j: i32 = 0;
     while (j < fn.body.len()) {
@@ -35032,7 +35175,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             s = lower_stmt_or_self_assign_reuse(fn.body[j], s);
         }
         s = s.with_optret_pending(optret_prev);
-        if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params, erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots }; }
+        if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params, erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots, why: fail_why_or_unknown(s) }; }
         var pi: i32 = 0;
         while (pi < pdrops.idxs.len()) {
             if (pdrops.idxs[pi] == j) {
@@ -35231,7 +35374,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // param-rebind so deep recursion is O(1) stack instead of a SIGSEGV. A no-op
     // for functions without an adjacent `call_direct self ; return` pair.
     var tco_ops: ir.Op[] = tco_self_tail(s.ops, fn.name, s.n_params);
-    return LowerResult { ok: true, ops: tco_ops, n_locals: s.locals.len(), n_params: s.n_params, erased_wide: erased_wide_stmts(fn.body, s), arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s) };
+    return LowerResult { ok: true, ops: tco_ops, n_locals: s.locals.len(), n_params: s.n_params, erased_wide: erased_wide_stmts(fn.body, s), arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s), why: "" };
 }
 
 // LoweredFn is one function's lowered form, tagged with its name + arity so
@@ -41515,7 +41658,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "" };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {

@@ -684,15 +684,7 @@ func runDriver(t *testing.T, runner []string, bin string, src []byte, strict boo
 // loop var with no element type and the function bails. That limit is deliberate,
 // not an oversight, which is what makes it a stable fixture — the three-deep form
 // lowers, and is covered by TestSelfHostMode0GapsIR.
-func bailingProgram() []byte {
-	return []byte(`function main(): i32 {
-    var hyper: i32[][][][] = [[[[1]], [[2, 3]]]];
-    var sum = 0;
-    for cube in hyper { for plane in cube { for row in plane { for v in row { sum = sum + v; } } } }
-    return sum;
-}
-`)
-}
+func bailingProgram() []byte { return []byte(strictIRBailReasons[0].src) }
 
 func strictIRDriver(t *testing.T) (string, []string, string) {
 	t.Helper()
@@ -772,9 +764,101 @@ func TestSelfHostStrictIRRefusesBail(t *testing.T) {
 	if onCode != 3 {
 		t.Fatalf("FERN_STRICT_IR=1: driver exited %d with %d bytes, want a refusal (3)\n%s", onCode, len(on), stderr)
 	}
-	// The bail is now a per-FUNCTION one, so the flag names the function.
+	// The bail is now a per-FUNCTION one, so the flag names the function — and
+	// says what in it refused (see TestSelfHostStrictIRNamesBailReason).
 	if !strings.Contains(stderr, "FERN_STRICT_IR:") || !strings.Contains(stderr, "main") {
 		t.Errorf("refusal did not name the bailing function:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "did not lower: `for v`") {
+		t.Errorf("refusal did not name the construct that refused:\n%s", stderr)
+	}
+}
+
+// strictIRBailReasons pins that a body-lowering bail names the CONSTRUCT that
+// refused, not merely the function it was in.
+//
+// Before this, every such bail printed the function name and nothing else. On
+// the fernsmith corpus that made 135 of 512 seeds — a quarter of the corpus,
+// and every seed the $clo and unknown-symbol scans did not already explain —
+// indistinguishable from each other: the only way to learn anything from one
+// was to bisect its body by hand, and there was no way to tell whether two
+// bails were the same bug. With reasons, those 135 resolve into named clusters
+// and the largest single one (the immediately-invoked value block below) covers
+// 67 of them.
+//
+// Each program here is VALID — checked against the native compiler, not merely
+// observed to bail — because an invalid program bails for reasons that say
+// nothing about the IR subset, which is how three earlier gap reports came to
+// be filed against programs the checker rejects.
+//
+// A row breaking because its gap CLOSED is the intended failure: the fixture no
+// longer demonstrates a reason, so replace it with a program that still bails.
+// Do not weaken the assertion to keep it green.
+var strictIRBailReasons = []struct {
+	name   string
+	src    string
+	fn     string
+	reason string
+}{
+	// A loop over the innermost level of a 4-deep nested array — the repo's
+	// long-standing bail fixture, here pinned to report the STATEMENT that
+	// refused rather than just `main`.
+	{"nested-for", `function main(): i32 {
+    var hyper: i32[][][][] = [[[[1]], [[2, 3]]]];
+    var sum = 0;
+    for cube in hyper { for plane in cube { for row in plane { for v in row { sum = sum + v; } } } }
+    return sum;
+}
+`, "main", "did not lower: `for v`"},
+	// A match in VALUE position parses into an immediately-invoked zero-param
+	// lambda, so the bail lands on a call whose callee is a lambda the source
+	// never wrote. Naming it "a lambda" sent a reader looking for one; the
+	// reason names the desugar instead. Reduced from fernsmith seed 59: a
+	// checked u32 shift with a non-literal shift amount as the scrutinee (the
+	// i32 spelling of the same program lowers).
+	{"iife-value-block", `function main(): i32 {
+    var v: u32 = 7u32;
+    var u: u32 = (match ((490u32) <<? (v)) { Some(c) => c, None => 9u32 });
+    return (u as i32) & 255i32;
+}
+`, "main", "did not lower: immediately-invoked value block"},
+	// The same desugar, but here the lambda is LIFTED to a top-level function
+	// and refuses inside its own body, so the bail names `__lam_0` and the node
+	// is the lifted return rather than the call. Two bails one line apart in the
+	// source that the bare function name would have made look unrelated.
+	{"lifted-lambda-return", `function main(): i32 {
+    var v: i64 = (match ((702i64) /? (3i64)) { Some(c) => c, None => 752i64 });
+    return ((v as i32) & 255i32);
+}
+`, "__lam_0", "did not lower: `return` of ident `c`"},
+}
+
+// TestSelfHostStrictIRNamesBailReason asserts each fixture's bail names its own
+// construct, and — the part that makes the reasons worth having — that no two
+// of them collapse to the same message.
+func TestSelfHostStrictIRNamesBailReason(t *testing.T) {
+	_, runner, driverBin := strictIRDriver(t)
+
+	seen := map[string]string{}
+	for _, tc := range strictIRBailReasons {
+		t.Run(tc.name, func(t *testing.T) {
+			out, stderr, code := runDriver(t, runner, driverBin, []byte(tc.src), true)
+			if code != 3 {
+				t.Fatalf("driver exited %d with %d bytes, want a strict-IR refusal (3)\n%s", code, len(out), stderr)
+			}
+			if !strings.Contains(stderr, "FERN_STRICT_IR: "+tc.fn+" ") {
+				t.Errorf("refusal did not name %q as the bailing function:\n%s", tc.fn, stderr)
+			}
+			if !strings.Contains(stderr, tc.reason) {
+				t.Errorf("refusal did not carry the reason %q:\n%s", tc.reason, stderr)
+			}
+		})
+		if prev, dup := seen[tc.reason]; dup {
+			t.Errorf("%s and %s expect the same reason %q — a reason that does not "+
+				"distinguish two different bails is no better than the bare function name",
+				prev, tc.name, tc.reason)
+		}
+		seen[tc.reason] = tc.name
 	}
 }
 
