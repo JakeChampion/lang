@@ -18,8 +18,11 @@
 # since any divergence at all fails the leg — and keep the record below of what
 # left, because it is what the next round of probing should be measured against.
 #
-# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus): 220 agree,
-# 0 diverge, the rest are compile gaps.
+# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus): 204 agree,
+# 0 diverge, 308 compile gaps. Count the gaps, not just the agreements, when
+# reading a run: the leg only proves what it could compile, and a fix that
+# turns a wrong answer into an IR bail (as #6228 did for seed 502) RAISES the
+# gap count while looking like a win in the divergence column.
 
 # CRASHES — the self-host-compiled binary died by SIGSEGV where the interpreter
 # returned a value. These were ONE bug: #6207, a `Map { … }` literal whose keys
