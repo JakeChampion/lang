@@ -1,7 +1,9 @@
 # `T[] -> T` generics silently miscompile on the self-host x86-64 backend
 
-**Status:** open bug, characterised. No fix in this note.
-**Severity:** silent wrong values — compiler exits 0, no diagnostic.
+**Status:** FIXED. Clause (c-arr) in `parse_func` now also promotes a bare
+typevar return, so `first_of[T](xs: T[]): T` monomorphises per concrete element
+type. Every row in the table below is now the oracle's value on every path.
+**Severity when found:** silent wrong values — compiler exits 0, no diagnostic.
 
 ## Reproducer
 
@@ -23,8 +25,8 @@ function main(): i32 {
 | `string` | 45 | 45 | **40** (`len()` → 0) | 45 |
 | struct | 45 | 45 | refused | refused |
 
-Only `i32` is correct. Struct elements are correctly *refused*. The other three
-are silent wrong answers.
+Only `i32` was correct. Struct elements were correctly *refused*. The other
+three were silent wrong answers.
 
 ## This is NOT the erased-wide stride problem
 
@@ -56,15 +58,58 @@ array and return it as an erased value":
 Neither the erased param alone nor the erased return alone is broken. The
 combination is.
 
-## A self-inflicted coverage note
+## Root cause
 
-While measuring the above, `count_of[T](xs: T[]): i32` at an `f64[]` came back
-**refused on wasm**. That is the #6250 gate being wider than it needs to be: the
-callee never touches an element, so no stride is ever used, and refusing it buys
+It is not the value's width — it is that the CALL SITE does not know what came
+back. Compare the two `.len()` lowerings the self-host x86-64 backend emitted
+for a `string[]`:
+
+```
+    movq 8(%rax), %rax      # xs[0].len()        — string box, length at +8
+    movq (%rax), %rax       # first_of(xs).len() — ARRAY box, length at +0
+```
+
+The callee is fine: it loads the element at an 8-byte stride and returns it in
+`%rax`. The caller then dispatches `.len()` on an erased `T` result and falls
+back to the array receiver, so it reads the wrong slot of a perfectly good
+string box and gets 0. `f64` and `i64` go wrong for the mirror-image reason —
+the result is moved and operated on as the wrong kind of value.
+
+## Fix
+
+Clause (c-arr) in `parse_func` already promoted a single-typevar generic with a
+bare `T[]` param whose return *feeds a wide container* (`reverse[T](xs: T[]):
+T[]`, #6238). It now also fires when the return IS the bare typevar, so
+`first_of` is monomorphised to `first_of__f64(xs: f64[]): f64` and the call site
+has a concrete result type. That fixes all three broken widths at once, and it
+also makes the struct case — previously refused on both self-host backends —
+lower and run.
+
+Nothing in the stdlib or the compiler matches `T[] -> T` (a scan found zero), so
+the bootstrap monomorphises nothing new and byte-identity holds. This is the
+same argument clauses (c′) and (c″) rest on.
+
+Pinned by `TestSelfHostErasedElemReturn{X86_64,Wasm}`, which assert VALUES
+against the interp oracle rather than routing — every case here routed `ir`,
+exited 0, and reported nothing under `FERN_STRICT_IR=1`.
+
+## Still open: the gate is wider than it needs to be
+
+`count_of[T](xs: T[]): i32` at an `f64[]` is still **refused on wasm**. The
+promotion above does not reach it — the return is concrete, so there is nothing
+wide to make concrete — and the #6250 gate keys on "a wide-element array reaches
+an erased `T[]` param" without asking whether the element is ever read. This
+callee never touches one, so no stride is ever used and refusing it buys
 nothing.
 
-The gate keys on "a wide-element array reaches an erased `T[]` param" without
-asking whether the element is ever read. Tightening it — refuse only when the
-erased element actually escapes — is a real improvement, but it is exactly the
-kind of plausible-looking narrowing that wants a measurement first rather than a
-confident edit. Recorded here rather than fixed on the spot.
+Measured cost, so the tightening is scoped rather than assumed: of the 47
+single-typevar `T[]`-param generics in `std/array`, exactly **one** is
+element-blind — `is_empty[T](xs: T[]): boolean { return xs.len() == 0; }`. All
+the other concrete-return shapes (`all`, `any`, `count_where`, `position`,
+`sum_by`, …) feed elements to a predicate and so are genuinely width-sensitive;
+the gate is right to refuse those. So the fix is narrow: don't flag a `T[]` param
+whose only use is as a `.len()` receiver.
+
+Deliberately not folded into this change. Narrowing a safety gate wants its own
+diff and its own evidence, and the failure mode is the worst kind — too narrow
+and the silent-miscompile class comes straight back.

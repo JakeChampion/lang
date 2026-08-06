@@ -5422,7 +5422,19 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // an 8-byte-element array at a 4-byte stride: silently wrong values
         // (#6238). Promoting clones the generic per concrete element type, which
         // gives the copy a real stride.
-        if (all_tp_count == 1 && has_bare_array_param(params, un) && feeds_wide_container(ret_type, un)) { promote = true; }
+        //
+        // A BARE typevar return (`first_of[T](xs: T[]): T`) counts as well, and
+        // that half is not a wasm story at all — it is a silent miscompile on the
+        // REGISTER backends (#6273). The 8-byte slot makes the element stride
+        // harmless there, but the call site still has to know what the returned
+        // value IS: an erased `T` result reaches a `.len()` as an ARRAY receiver,
+        // so `first_of(strs).len()` loads offset 0 (the array length) instead of
+        // offset 8 (the string length) and yields 0. `f64` and `i64` returns are
+        // wrong for the mirror-image reason. Nothing wide is passed by value here
+        // either, so the erased-wide gate never fires — the clone is what gives
+        // the call site a concrete result type.
+        if (all_tp_count == 1 && has_bare_array_param(params, un)
+            && (feeds_wide_container(ret_type, un) || ret_type == un)) { promote = true; }
         // (c′) genuinely two-typevar Result[T, E] with a bare-scalar param — the
         // `okg[T, E](x: T): Result[T, E]` shape clause (c) leaves open. Promoting
         // ONLY the wide param strands the other var erased on the Err arm
