@@ -1,0 +1,42 @@
+// `_` is a DISCARD at every binding site, not a variable named `_`.
+//
+// Each occurrence is its own discard, so several may share a scope, and
+// none of them introduces a name — see cases/underscore_not_readable for
+// the other half of that contract.
+//
+// It was already a wildcard in match patterns and in `for (k, _) in m`,
+// and only in `var` bindings and parameters was it a real binding: two of
+// them in one scope collided with "variable "_" already declared", and the
+// value you said to discard could be read back out.
+
+function pair(): (i32, i32) {
+    return (10, 3);
+}
+
+// A discarded parameter, twice in one signature.
+function constant(_: i32, _: string): i32 {
+    return 7;
+}
+
+function main(): i32 {
+    // Two tuple destructures in one scope, each discarding an element.
+    var (a, _) = pair();
+    var (_, b) = pair();
+
+    // Every element discarded.
+    var (_, _) = pair();
+
+    // A discarded plain binding, twice.
+    var _ = 99;
+    var _ = 98;
+
+    // Still a wildcard in the positions where it always was.
+    var m: i32 = 0;
+    match (Some(5)) {
+        Some(_) => { m = 1; },
+        None => { m = 2; },
+    }
+
+    // 10 + 3 + 7 + 1 = 21
+    return a + b + constant(1, "x") + m;
+}

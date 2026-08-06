@@ -1,0 +1,14 @@
+// The other half of the discard contract: `_` introduces no name, so
+// reading it back is an undefined identifier rather than a way to recover
+// the value the binding said to throw away.
+//
+// This used to compile and return 2 — the discarded element.
+
+function pair(): (i32, i32) {
+    return (1, 2);
+}
+
+function main(): i32 {
+    var (a, _) = pair();
+    return _;
+}

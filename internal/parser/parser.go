@@ -220,6 +220,31 @@ func (p *parser) accept(kind lexer.Kind, text string) (lexer.Token, bool) {
 	return lexer.Token{}, false
 }
 
+// discardName maps a binding name to the name that actually enters scope.
+// `_` is a DISCARD wherever a binding is introduced — a var, a tuple- or
+// struct-destructure element, or a parameter — so each occurrence gets its
+// own unique internal name instead. Two consequences, both intended: two
+// discards in one scope no longer collide, and `_` itself is not in scope,
+// so reading it back is an undefined-variable error rather than a way to
+// retrieve the value you said to throw away.
+//
+// Renaming rather than binding nothing keeps every downstream consumer
+// unchanged — IR lowering, the interpreter and the rc analysis all key a
+// local off this name (`b.locals[name]`), so an absent binding would be a
+// "no slot" compiler error rather than a discard.
+//
+// `_` was already a wildcard in match patterns and `for (k, _) in m`, and
+// only a binding here; the two compilers had also drifted apart over which
+// half was which, so `var (a, _) = t(); var (b, _) = t();` compiled
+// self-hosted and was rejected natively. The self-host mirror is
+// `discard_name` in examples/self_host/parser.fern.
+func discardName(name string, pos ast.Position, nth int) string {
+	if name != "_" {
+		return name
+	}
+	return fmt.Sprintf("__discard_%d_%d_%d", pos.Line, pos.Col, nth)
+}
+
 // moreElems consumes a comma-separated list's separator and reports whether
 // another element follows. It answers false both when there is no comma and
 // when the comma is a TRAILING one sitting directly before close — so every
@@ -1548,7 +1573,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 					return nil, err
 				}
 			}
-			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype, Own: own, Default: def})
+			params = append(params, ast.Param{Name: discardName(pname.Text, pname.Pos, len(params)), NamePos: pname.Pos, Type: ptype, Own: own, Default: def})
 			if !p.moreElems(")") {
 				break
 			}
@@ -2589,7 +2614,7 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 			if err != nil {
 				return nil, err
 			}
-			params = append(params, ast.Param{Name: pname.Text, NamePos: pname.Pos, Type: ptype})
+			params = append(params, ast.Param{Name: discardName(pname.Text, pname.Pos, len(params)), NamePos: pname.Pos, Type: ptype})
 			if !p.moreElems(")") {
 				break
 			}
@@ -2654,7 +2679,7 @@ func (p *parser) parseLambda() (ast.Expr, error) {
 			if err != nil {
 				return nil, err
 			}
-			params = append(params, ast.Param{Name: pname.Text, Type: ptype})
+			params = append(params, ast.Param{Name: discardName(pname.Text, pname.Pos, len(params)), Type: ptype})
 			if !p.moreElems(")") {
 				break
 			}
@@ -4543,7 +4568,7 @@ func (p *parser) parseVar() (ast.Stmt, error) {
 	if _, err := p.expect(lexer.Punct, ";"); err != nil {
 		return nil, err
 	}
-	return &ast.Var{P: kw.Pos, Name: name.Text, Type: typ, Init: init, WasAnnotated: wasAnnotated}, nil
+	return &ast.Var{P: kw.Pos, Name: discardName(name.Text, kw.Pos, 0), Type: typ, Init: init, WasAnnotated: wasAnnotated}, nil
 }
 
 // parseUse desugars `use IDENT : TYPE <- EXPR;` plus the
@@ -4787,6 +4812,9 @@ func (p *parser) parseTupleDestructure(letPos ast.Position) (ast.Stmt, error) {
 	}
 	if _, err := p.expect(lexer.Punct, ";"); err != nil {
 		return nil, err
+	}
+	for i, nm := range names {
+		names[i] = discardName(nm, letPos, i)
 	}
 	return &ast.Destructure{P: letPos, Names: names, Init: src}, nil
 }
