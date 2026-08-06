@@ -2569,6 +2569,17 @@ var CallDirectAliases = map[string]string{
 	"open_writer":   "__fern_open_writer",
 	"open_appender": "__fern_open_appender",
 
+	// Directory + metadata (#6208). `std/test` needs stat / read_dir /
+	// temp_dir / remove_dir_all to build at all — TestRunner.finish
+	// scrubs its cleanup paths unconditionally — so without these a
+	// program merely importing the test runner failed to compile for
+	// wasm. See wasi_fs_dir.go.
+	"remove_file":    "__fern_remove_file",
+	"stat":           "__fern_stat",
+	"read_dir":       "__fern_read_dir",
+	"temp_dir":       "__fern_temp_dir",
+	"remove_dir_all": "__fern_remove_dir_all",
+
 	// stdio Writers, mirrors of stdin for consistency. fd=1 / 2.
 	"stdout": "__fern_stdout",
 	"stderr": "__fern_stderr",
