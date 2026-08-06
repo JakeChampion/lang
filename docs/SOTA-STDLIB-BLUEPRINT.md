@@ -37,12 +37,20 @@ published shortlists:
 | SIMD `memchr` / `memcmp` | Not implementable |
 | Sorting networks over vector registers | Not implementable |
 
-These are not "not yet prioritised" — they are blocked on a vector-type
-surface in the IR plus per-backend lowering (SSE2/AVX2, NEON, wasm `v128`).
-That is a large, self-contained project, and it is the **prerequisite** for a
-whole tier of work rather than a row in it. Where a SIMD algorithm has a
-credible SWAR (SIMD-within-a-register, 64-bit-word) variant, the row says so —
-SWAR is available today and is often 4–8× over byte-at-a-time.
+These are not "not yet prioritised" — they need per-backend lowering
+(SSE2/SSE4.2, NEON, wasm `v128`), which is the **prerequisite** for a whole
+tier of work rather than a row in it. Where a SIMD algorithm has a credible
+SWAR (SIMD-within-a-register, 64-bit-word) variant, the row says so — SWAR is
+available today and is often 4–8× over byte-at-a-time.
+
+**Amended (2026-08-06):** the rows above originally read as blocked on a
+*vector-type surface in the IR*, which turned out to overstate the
+prerequisite — `docs/ATLAS-PLATFORM-PLAN.md` §1.2 argues the payoff is
+reachable without one. "Not implementable" in the table above should be read as
+"not implementable as the published algorithm is written", not as "unreachable
+in Fern". The declared CPU baselines already guarantee 128-bit SIMD on all
+three targets, so the tier also needs no CPU feature detection or runtime
+dispatch (§1.1).
 
 **2. Memory is a bump arena plus reference counting, not a general malloc.**
 The mimalloc / jemalloc / snmalloc / tcmalloc branch of the usual shortlist
@@ -304,6 +312,18 @@ lowering) is the single prerequisite that unblocks simdjson-style parsing,
 simdutf validation, true SwissTable probing, vectorised `memchr`/`memcmp`, and
 sorting networks. It should be evaluated as one project with that whole tier as
 its payoff, not attempted piecemeal.
+
+**That evaluation has since happened — see `docs/ATLAS-PLATFORM-PLAN.md` §1.2
+and §3.** Its conclusion changes this tier's cost, not its payoff: a
+first-class vector *type* needs a second register class in six backends
+(both native backends are stack machines over 8-byte operand slots, and f64
+already proves the pattern — the vector register file is entered and left
+inside a single op), whereas every item on the payoff list above is a
+whole-loop kernel with scalar inputs and a scalar result. Confining the vector
+lifetime inside one IR op reaches the same payoff with no register class, no
+regalloc change, and no type-system change. The tier is therefore **no longer
+blocked on a language-level vector type**; it is sequenced behind a
+performance-regression gate, with `__memchr` as the first kernel.
 
 ## What landed in this pass
 
