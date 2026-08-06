@@ -23,27 +23,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Local-CI sign-off gate. `gh signoff fuzz-parse` on this commit skips the
-  # lane below (see docs/CI-SIGNOFF.md). Fork PRs can't sign off; gate fails
-  # open on any error.
-  gate:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      statuses: read
-    outputs:
-      skip: ${{ steps.s.outputs.skip }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: s
-        uses: ./.github/actions/signoff-gate
-        with:
-          step: fuzz-parse
-          sha: ${{ github.event.pull_request.head.sha || github.sha }}
-
   fuzz:
-    needs: gate
-    if: needs.gate.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
