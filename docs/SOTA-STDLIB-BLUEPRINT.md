@@ -6,6 +6,13 @@ prioritisation document**, not a plan of record: every row records what the
 code does *today* (verified by reading it, not assumed), what the literature's
 current best is, and a verdict.
 
+Its companion is **`SOTA-STDLIB-MATRIX-2026.md`**, which turns this audit into
+an execution matrix: a prerequisite, a phase and an acceptance gate per row,
+plus an explicit verdict for every entry on the standard published shortlist —
+including the ones Fern should not adopt. Read this file for *where we stand*
+and that one for *what to pick up next*. When a row lands, update both: the
+verdict there, the measurement here.
+
 The organising philosophy — the one worth keeping even where the individual
 rows go stale:
 
@@ -183,7 +190,7 @@ seed, so nothing outside it depends on how the seed is used.
 
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
-| UTF-8 validation | Byte-at-a-time DFA | simdutf block validation | BLOCKED (SIMD); **DFA is already the right scalar answer** |
+| UTF-8 validation | Branch ladder over the leading byte, continuation checks inlined | Höhrmann table DFA, then simdutf | **GAP** — the table DFA is unblocked; this row previously read "byte-at-a-time DFA … already the right scalar answer", which reading `is_valid_utf8` disproves |
 | UTF-8 length / decode | Scalar | Scalar is fine below SIMD | OK |
 | UTF-8 ↔ UTF-16 | `std/utf8` | simdutf | BLOCKED |
 
