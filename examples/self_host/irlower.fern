@@ -21387,8 +21387,9 @@ function collect_fresh_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], ac
 }
 
 // tuple_lit_is_fresh_scalar reports whether `e` is a NON-EMPTY tuple literal whose
-// every element is a flat scalar LITERAL (number / boolean) or a bare IDENT. Such
-// a `(3, 4)` / `(i, 1)` builds a fresh, sole-owner tuple box; freeing it is a
+// every element is a flat scalar LITERAL (number / boolean / string) or a bare
+// IDENT. Such a `(3, 4)` / `(i, 1)` / `(i, "hi")` builds a fresh, sole-owner tuple
+// box; freeing it is a
 // SHALLOW __fern_rc_dec (the box release helper __fern_arr_dec, NOT the deep
 // element-walking __fern_arr_dec_ptr), so it never touches the elements — an ident
 // that happens to be a pointer (a string / struct / array local) simply stays
@@ -21398,6 +21399,17 @@ function collect_fresh_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], ac
 // (field access / call / nested literal) stay excluded — a conservative bound, not
 // a safety requirement. The escape gate (body_unsafe_for, in the callers) proves
 // the box is a sole owner before any of this fires.
+//
+// A STRING-literal element is admitted on the same argument, and more easily than
+// the bare ident already here: the shallow release never reads the element, and a
+// literal has no other owner to dangle. Excluding it cost the whole box — `(i,
+// "hi")` earned no credit at all, so a single bind leaked the tuple box AND its
+// string (200 allocs / 0 frees / 6400 live_bytes over 100 rounds against 0 on
+// native, identical for a 2-byte and a 25-byte literal, while the same tuple with
+// a bare-ident string element measures 101/100/24). The string box itself stays
+// leak-mode here, as it does for an ident element; releasing it is the separate
+// release-side-on-strings change that strfld_reclaim_ok_types_of's history warns
+// about, and is not what this admits.
 function tuple_lit_is_fresh_scalar(e: parser.Expr): boolean {
     match (e) {
         parser.ExprTuple(tl) => {
@@ -21407,6 +21419,7 @@ function tuple_lit_is_fresh_scalar(e: parser.Expr): boolean {
                 match (tl.elements[i]) {
                     parser.ExprNumber(_) => {},
                     parser.ExprBool(_) => {},
+                    parser.ExprString(_) => {},
                     parser.ExprIdent(_) => {},
                     _ => { return false; }
                 }
