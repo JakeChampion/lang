@@ -45735,6 +45735,40 @@ function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.F
 // param `idx` is fn-typed (coarse type_name "fn"). The lift-pass mirror of
 // LowerState.callee_param_is_fn / asmcore.callee_param_is_fn, reading the module
 // funcs directly (no fn_param_sigs registry available at lift time).
+// lift_local_fn_param_is_fn is lift_callee_param_is_fn for a NESTED local
+// function — `function helper(f: (i32) => i32): i32 { … }` declared inside
+// another function's body, which the parser represents as a `var helper =
+// <lambda>` binding.
+//
+// The module-function lookup cannot see one: hoist_local_funcs_module only
+// rewrites bodies containing a SELF-RECURSIVE local, so a plain nested function
+// stays a statement and never reaches `mfuncs`. The lift therefore judged a
+// fn-value argument to it as "callee param is not fn-typed" and passed the value
+// RAW. The callee dispatches env-first — it reads slot 0 of what it assumes is a
+// [funcval, caps…] box — so it dereferenced a bare code address and the program
+// segfaulted with no diagnostic at all (#6341). Binding the same value to a
+// local first happened to work, because that path boxes it.
+function lift_local_fn_param_is_fn(fd: parser.FuncDecl, callee: string, idx: i32): boolean {
+    var i: i32 = 0;
+    while (i < fd.body.len()) {
+        match (fd.body[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == callee) {
+                    match (v.init) {
+                        parser.ExprLambda(lm) => {
+                            if (idx < lm.params.len() && lm.params[idx].type_name == "fn") { return true; }
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 function lift_callee_param_is_fn(mfuncs: parser.FuncDecl[], callee: string, idx: i32): boolean {
     var i: i32 = 0;
     while (i < mfuncs.len()) {
@@ -46015,7 +46049,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                     // module to AST (slice 5b; bare/non-capturing already worked).
                     var vfr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs, structs);
                     fs = vfr.funcs; ct = vfr.counter; nargs = nargs.append(vfr.expr);
-                } else if (!is_mkclo && cnm.len() > 0 && lift_callee_param_is_fn(mfuncs, cnm, ai)) {
+                } else if (!is_mkclo && cnm.len() > 0 && (lift_callee_param_is_fn(mfuncs, cnm, ai) || lift_local_fn_param_is_fn(fd, cnm, ai))) {
                     var fr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs, structs);
                     fs = fr.funcs; ct = fr.counter; nargs = nargs.append(fr.expr);
                 } else if (mfield.len() > 0 && (lift_callee_param_is_fn(mfuncs, mfield, ai) || lift_method_arg_is_fn(call.args[ai], mfield, ai, mfuncs))) {
