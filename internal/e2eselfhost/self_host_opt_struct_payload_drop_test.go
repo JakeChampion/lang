@@ -264,10 +264,19 @@ func TestSelfHostOptStructPayloadDropHazardsX86_64(t *testing.T) {
 		name string
 		src  string
 		want int
-		// maxFrees bounds the releases: the shape leaks by design (the field
-		// moved out is not reclaimed), so exceeding this is an over-release the
-		// exit code alone may not surface.
-		maxFrees int64
+		// wantFrees is EXACT, and every value here matches what native frees on
+		// the same program. These shapes leak by design (the field moved out is
+		// not reclaimed), so the count is the assertion that separates "more
+		// reclaim" from "the moved field released under a live reference" —
+		// which the exit code does not, until the freelist reuses the block.
+		//
+		// It was a `maxFrees` ceiling and is exact now because the ceiling let a
+		// value drift silently in the safe direction: #6319 made the nested-block
+		// candidate admissible and this row went 100 -> 300, which the ceiling
+		// reported only as "too many". Native frees 300 here too, so the move was
+		// reclaim rather than an over-release — but reading the number alone could
+		// not say which, and an exact value flags a DROP in reclaim as well.
+		wantFrees int64
 	}{
 		{
 			name: "field_extracted_to_an_outer_local",
@@ -285,8 +294,8 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
-			want:     57,
-			maxFrees: 300,
+			want:      57,
+			wantFrees: 300,
 		},
 		{
 			name: "field_appended_into_a_container",
@@ -304,8 +313,8 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
-			want:     40,
-			maxFrees: 400,
+			want:      40,
+			wantFrees: 400,
 		},
 		{
 			name: "field_passed_to_a_callee_that_keeps_it",
@@ -324,8 +333,8 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
-			want:     40,
-			maxFrees: 300,
+			want:      40,
+			wantFrees: 300,
 		},
 		{
 			// The whole payload box escapes — refused one level up, by the
@@ -345,8 +354,8 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
-			want:     40,
-			maxFrees: 0,
+			want:      40,
+			wantFrees: 0,
 		},
 		{
 			// The consuming match in a NESTED block routes through the precise-drop
@@ -369,8 +378,8 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
-			want:     40,
-			maxFrees: 100,
+			want:      40,
+			wantFrees: 300,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -394,9 +403,11 @@ function main(): i32 {
 			if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 				t.Fatalf("parse %q: %v", summary, err)
 			}
-			if frees > tc.maxFrees {
-				t.Errorf("frees=%d, want at most %d (allocs=%d live=%d) — the extra release "+
-					"is the moved field being freed under a live reference", frees, tc.maxFrees, allocs, live)
+			if frees != tc.wantFrees {
+				t.Errorf("frees=%d, want exactly %d (allocs=%d live=%d) — a HIGHER count is "+
+					"the moved field being released under a live reference; a lower one means "+
+					"this probe stopped exercising the path it was written for",
+					frees, tc.wantFrees, allocs, live)
 			}
 		})
 	}
