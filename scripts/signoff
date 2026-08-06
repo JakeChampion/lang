@@ -26,7 +26,7 @@ set -euo pipefail
 # in .github/workflows/*.yml and the table in docs/CI-SIGNOFF.md.
 declare -A LANES=(
   [units]="Test units"
-  [lint]="Lint (vet / build / fmt-check / deadcode)"
+  [lint]="Lint (vet / build / fmt-check / deadcode / actionlint)"
   [examples]="Examples"
   [fernsmith]="Test fernsmith"
   [e2e-x86_64]="Test e2e x86_64"

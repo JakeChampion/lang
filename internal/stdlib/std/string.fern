@@ -3025,10 +3025,19 @@ pub function (s: string) parse_int_radix(base: i32): Option[i32] {
 
 // --- correctly-rounded decimal → f64 (#5566) ------------------------
 // A minimal base-2^32 big-integer, self-contained here: std/string can
-// NOT import std/float (float → std/i32 → std/string would cycle), so
-// the formatter's bignum in std/float.fern is mirrored rather than
-// shared. Extracting a common std/i64 bignum module is a possible
-// future de-dup, out of scope for this fix.
+// NOT import std/float (float → std/i32 → std/string would cycle).
+//
+// The de-dup this note used to point at is now available: `core/bigint`
+// is a full sign-magnitude arbitrary-precision integer that imports
+// nothing, so std/string CAN import it without a cycle. Migrating these
+// `__bn_*` helpers onto it would delete them outright — deliberately not
+// done in the same change that introduced core/bigint, because this is
+// correctly-rounded float parsing and it deserves its own diff with the
+// float-parse suite run against it.
+//
+// (The note also claimed these mirrored "the formatter's bignum in
+// std/float.fern". That has not been true since Dragonbox landed —
+// std/float.fern has no bignum at all now, and these are the only copy.)
 function __bn_mul_small(a: i64[], k: i64): i64[] {
     var n: i32 = a.len(); var out: i64[] = []; var carry: i64 = 0; var i: i32 = 0;
     while (i < n) { var prod: i64 = a[i] * k + carry; out = out.append(prod & 4294967295); carry = prod >> 32; i = i + 1; }

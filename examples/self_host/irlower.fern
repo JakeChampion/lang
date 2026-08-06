@@ -770,12 +770,42 @@ function slot_name_retired(n: string): boolean {
 // automatically — arr_slots_of consumes the same predicates, so an untaken
 // branch's slot routes a guarded null rather than stack garbage.
 //
-// Only the four classes with a MEASURED block-scoped leak use this so far —
-// "TUP:", "OPTTUP:", "OPTSTRUCT:", "OPTARRARR:". The rest still key on
-// slot_name, so their block-scoped locals stay unclaimed at exit (a leak, the
-// safe direction). That is deliberate: switching a class on turns on an
-// exit-sweep release that has never run for these slots, so each one wants its
-// own probe rather than a blanket flip.
+// Each class is admitted on its own probe rather than by a blanket flip —
+// switching one on turns on an exit-sweep release that has never run for these
+// slots. The first four were "TUP:" / "OPTTUP:" / "OPTSTRUCT:" / "OPTARRARR:";
+// these measured the same n-1-of-n signature and followed, each verified to go
+// to 0 with allocs == frees:
+//
+//   ARRARR / ARRARRS   7200      OPTAARR   12000      TUPRC / TUPRCS   8000
+//   SARR               4800      STRUCTARR(A)   9600
+//
+// TUPRC needs BOTH its credits switched: "TUPRC:" drives the rebind and
+// "TUPRCS:" (#6251) the exit sweep, and flipping only the first left the shape
+// measuring exactly its unfixed 8000.
+//
+// Three classes are deliberately NOT here, each for a different measured reason.
+//
+// "RCENUM:" and "OPTARR:" are already flat at 0 — their consuming-match analyses
+// are per-block (#4357) and free the value before the block ends. Switching them
+// on would be a second claim on a released box.
+//
+// The BARE-name struct credit (slot_is_reclaimable_struct) leaks 8800 here and
+// stays leaking, because switching it on **segfaults the gen1 self-compile**.
+// That credit is the most heavily used one in the compiler's own sources — the
+// threaded LowerState / EmitState builders — and it feeds the deep field drop,
+// the precise drop and the reuse-donor paths, not just the exit sweep. So the
+// releases it turns on for block-scoped slots are not all sole-owner. This is
+// the concrete case behind the warning above: the leak is the safe direction,
+// and the per-module fixpoint is what distinguishes it from the five that are
+// fine. Do not re-flip it without a narrower gate.
+//
+// "ARRSTRUCT:" (35200) and "ARRTUP:" (32000) are absent because switching them
+// changed NOTHING — measured identical before and after, so their block-scoped
+// leak has a different cause and this is not it. Both collectors and their
+// elem-type-of-decl walkers do recurse into nested blocks, so the credit is not
+// refused for lack of a declaration; the next thing to check is whether the
+// slot's `struct_type` / `arrarr_elem` column is set at a nested binding at all,
+// since both predicates bail on an empty one before ever reaching the lookup.
 function reclaim_slot_name(s: LowerState, i: i32): string {
     var n: string = s.locals[i].slot_name;
     // `+ ""` materialises the slice as an owned `string` — a bare slice types as
@@ -15601,6 +15631,15 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                         },
                         _ => {}
                     }
+                    // arrarr_elem is only recorded for an ANNOTATED `(tuple)[]`
+                    // local, so `var ps = mk();` (or a bare `mk()[0]`) leaves the
+                    // walk empty and every element read as a 4-byte i32 — an f64
+                    // element then came back garbage with no diagnostic. ExprIndex.ty
+                    // (#6165) already carries the checker's type for this node; this
+                    // is the same walk-first/tag-fills-the-hole fallback
+                    // expr_tuple_elem_tag's ExprIndex arm has, which is why
+                    // `ps[0].1` was right while `var (i, v) = ps[0]` was not.
+                    if (dtag == "" && dix.ty.len() >= 2 && dix.ty[0:1] == "(") { dtag = tuple_type_elem_tag(dix.ty, dk); }
                 },
                 parser.ExprCall(dcl) => {
                     // `var (a, b, …) = f()` / `= obj.f()` — recover element
@@ -27625,7 +27664,7 @@ function slot_is_reclaimable_rctuple(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "TUPRC:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "TUPRC:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // slot_is_reclaimable_rctuple_sweep: a "TUPRC:" slot whose FINAL value the scope-exit
@@ -27637,7 +27676,7 @@ function slot_is_reclaimable_rctuple_sweep(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "TUPRCS:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "TUPRCS:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // emit_rctuple_deep_free frees a sweepable rc-tuple slot's fresh rc children
@@ -28836,9 +28875,9 @@ function slot_is_reclaimable_arrarr(s: LowerState, i: i32): boolean {
     // can't dangle a live local. Scalar-kind inners value-copy their
     // elements, so the lax rows-are-literals credit suffices.
     if (s.arrarr_elem_of_slot(i) == "string") {
-        return util.index_of_str(s.reclaimable_names, "ARRARRS:" + s.locals[i].slot_name) >= 0;
+        return util.index_of_str(s.reclaimable_names, "ARRARRS:" + reclaim_slot_name(s, i)) >= 0;
     }
-    return util.index_of_str(s.reclaimable_names, "ARRARR:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "ARRARR:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // arrarr_free_helper_of picks the release helper from the slot's INNER element
@@ -28861,7 +28900,7 @@ function slot_is_reclaimable_optaarr(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_arr) { return false; }
     if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return false; }
-    return util.index_of_str(s.reclaimable_names, "OPTAARR:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "OPTAARR:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // emit_optaarr_reclaim_store: the option-element twin of
@@ -30184,7 +30223,7 @@ function slot_is_reclaimable_arrtup(s: LowerState, i: i32): boolean {
     if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return false; }
     var et: string = s.locals[i].arrarr_elem;
     if (et.len() < 2 || et[0:1] != "(") { return false; }
-    return util.index_of_str(s.reclaimable_names, "ARRTUP:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "ARRTUP:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // emit_arrtup_deep_free frees the array-of-tuples buffer in `slot`: null-guarded, a
@@ -30517,7 +30556,7 @@ function slot_is_reclaimable_arrstruct(s: LowerState, i: i32): boolean {
     var sty: string = s.struct_type_of_slot(i);
     if (sty.len() == 0) { return false; }
     if (!struct_has_reclaim_array_field(s.structs, sty)) { return false; }
-    return util.index_of_str(s.reclaimable_names, "ARRSTRUCT:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "ARRSTRUCT:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // emit_arrstruct_deep_free frees the array-of-structs buffer in `slot`: null-guarded, a
@@ -30605,7 +30644,7 @@ function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
     if (sty.len() == 0) { return false; }
     if (sty.len() > 4 && sty[0:4] == "dyn ") { return false; }
     if (struct_has_reclaim_array_field(s.structs, sty)) { return false; }
-    if (util.index_of_str(s.reclaimable_names, "STRUCTARR:" + s.locals[i].slot_name) >= 0) { return true; }
+    if (util.index_of_str(s.reclaimable_names, "STRUCTARR:" + reclaim_slot_name(s, i)) >= 0) { return true; }
     // APPEND-BUILT candidates (#6127) carry a SEPARATE credit and a STRICTER
     // rule: the element struct's fields must be scalar or `string`.
     //
@@ -30630,7 +30669,7 @@ function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
     // which is the sound direction and measurably the same code. Without this,
     // an append-built `N[]` leaked its element boxes too: 28800 bytes over 100
     // rounds against the literal-built form's 9600 (the strings alone).
-    if (util.index_of_str(s.reclaimable_names, "STRUCTARRA:" + s.locals[i].slot_name) >= 0) {
+    if (util.index_of_str(s.reclaimable_names, "STRUCTARRA:" + reclaim_slot_name(s, i)) >= 0) {
         return struct_all_scalar_or_string_fields(s.structs, sty);
     }
     return false;
@@ -30697,7 +30736,7 @@ function slot_is_reclaimable_strarr(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_strarr) { return false; }
-    return util.index_of_str(s.reclaimable_names, "SARR:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "SARR:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // dyn_reclaim_concrete_of (#4351): the payload tag registered for dyn local
@@ -39526,7 +39565,13 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             // the element STRIDE is erased too, and a wide-element array copied
             // at the i32 stride is silently wrong. Flags it so erased_wide_expr
             // can refuse the shape instead of miscompiling it.
-            else if (funcs[k].receiver_type.len() == 0 && is_erased_typevar_array(funcs[k].params[pj].type_name, structs)) {
+            //
+            // Only when the body actually READS an element (elem_read_in_body).
+            // A callee that only asks for `.len()` never uses a stride, so the
+            // refusal would cost coverage for nothing — `is_empty[T](xs: T[])`
+            // at an `f64[]`. The predicate calls everything but `.len()` a read.
+            else if (funcs[k].receiver_type.len() == 0 && is_erased_typevar_array(funcs[k].params[pj].type_name, structs)
+                     && elem_read_in_body(funcs[k].body, funcs[k].params[pj].name)) {
                 flags = flags + "7";
                 any = true;
             }
@@ -39541,6 +39586,129 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
         k = k + 1;
     }
     return out;
+}
+// elem_read_expr / elem_read_stmt / elem_read_in_body decide whether an erased
+// `T[]` param's ELEMENT is ever touched — the question flag '7' skipped asking.
+//
+// The wasm refusal exists because an erased element width makes the callee copy
+// an 8-byte-element array at a 4-byte stride. A callee that never reads an
+// element never uses a stride, so refusing it costs coverage and buys nothing:
+// `is_empty[T](xs: T[]): boolean { return xs.len() == 0; }` at an `f64[]` was
+// rejected outright.
+//
+// The predicate is deliberately lopsided. It answers "does this use read an
+// element?" with YES for everything except the one form that provably cannot —
+// `name` as the receiver of `.len()`, which reads the header word and nothing
+// else. A bare mention of `name` anywhere else counts as a read, including a
+// reassignment target, because the array flows on from there and this pass does
+// not follow it. Getting this wrong in the permissive direction reopens a
+// silent-miscompile class, so an unrecognised use is a read.
+//
+// Measured before narrowing: of the 47 single-typevar `T[]`-param generics in
+// std/array, exactly ONE is element-blind (`is_empty`). Every other
+// concrete-return shape (`all`, `any`, `count_where`, `position`, `sum_by`, …)
+// feeds elements to a predicate and stays refused, correctly.
+function elem_read_expr(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    // `name.len()` — the one blind use. Skip the receiver, still
+                    // walk the args (`f(name)` inside them is a read).
+                    var blind: boolean = false;
+                    if (fa.field == "len") {
+                        match (fa.obj) {
+                            parser.ExprIdent(rid) => { if (rid.name == name) { blind = true; } },
+                            _ => {}
+                        }
+                    }
+                    if (!blind && elem_read_expr(fa.obj, name)) { return true; }
+                },
+                _ => { if (elem_read_expr(c.callee, name)) { return true; } }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) { if (elem_read_expr(c.args[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return elem_read_expr(b.left, name) || elem_read_expr(b.right, name); },
+        parser.ExprUnary(u) => { return elem_read_expr(u.operand, name); },
+        parser.ExprIndex(ix) => { return elem_read_expr(ix.array, name) || elem_read_expr(ix.index, name); },
+        parser.ExprSlice(sl) => { return elem_read_expr(sl.array, name) || elem_read_expr(sl.start, name) || elem_read_expr(sl.end, name); },
+        parser.ExprFieldAccess(fa) => { return elem_read_expr(fa.obj, name); },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (elem_read_expr(a.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (elem_read_expr(t.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base && elem_read_expr(sl.base, name)) { return true; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (elem_read_expr(sl.field_values[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) { if (elem_read_stmt(lm.body[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+function elem_read_stmt(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return elem_read_expr(v.init, name); },
+        parser.StmtReturn(r) => { return elem_read_expr(r.value, name); },
+        parser.StmtExpr(e) => { return elem_read_expr(e.value, name); },
+        // A reassignment target is a read: the param is rebound and the array
+        // flows on from a place this pass does not follow.
+        parser.StmtAssign(a) => { return a.target == name || elem_read_expr(a.value, name); },
+        parser.StmtIf(f) => {
+            if (elem_read_expr(f.cond, name)) { return true; }
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { if (elem_read_stmt(f.then_body[ti], name)) { return true; } ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { if (elem_read_stmt(f.else_body[ei], name)) { return true; } ei = ei + 1; }
+            return false;
+        },
+        parser.StmtWhile(w) => {
+            if (elem_read_expr(w.cond, name)) { return true; }
+            var i: i32 = 0;
+            while (i < w.body.len()) { if (elem_read_stmt(w.body[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtFor(fo) => {
+            if (elem_read_expr(fo.iter, name)) { return true; }
+            var i: i32 = 0;
+            while (i < fo.body.len()) { if (elem_read_stmt(fo.body[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtMatch(m) => {
+            if (elem_read_expr(m.scrutinee, name)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && elem_read_expr(m.arms[ai].guard, name)) { return true; }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { if (elem_read_stmt(m.arms[ai].body[bi], name)) { return true; } bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return elem_read_stmt(d.action, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+function elem_read_in_body(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (elem_read_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    return false;
 }
 // borrowable_params_of computes, for each free function, which params are
 // "borrowable" — provably only borrow-read in the body and never escaping
