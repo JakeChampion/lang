@@ -35113,6 +35113,16 @@ pub function is_erased_typevar(t: string, structs: parser.StructDecl[]): boolean
     return is_bare_typevar_name(t) && !decl_is_struct(structs, t) && !decl_is_enum(structs, t);
 }
 
+// is_erased_typevar_array reports whether `t` spells an ARRAY of a bare typevar
+// (`T[]`). The element sibling of is_erased_typevar: the value is a pointer
+// either way, so nothing here is "wide", but the element WIDTH is erased and on
+// wasm32 that is the difference between a 4- and an 8-byte stride.
+pub function is_erased_typevar_array(t: string, structs: parser.StructDecl[]): boolean {
+    if (t.len() < 3) { return false; }
+    if (t[t.len() - 2 : t.len()] != "[]") { return false; }
+    return is_erased_typevar(t[0 : t.len() - 2] + "", structs);
+}
+
 // erased_expr_uses_any: does `e` reference any of the (erased-param) names?
 function erased_expr_uses_any(e: parser.Expr, names: string[]): boolean {
     var ids: string[] = astwalk.collect_idents_expr(e, []);
@@ -38650,6 +38660,16 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
                 if (erased_widenable(funcs[k], structs)) { flags = flags + "6"; } else { flags = flags + "5"; }
                 any = true;
             }
+            // '7': an erased typevar ARRAY param (`xs: T[]`). Distinct from '5'
+            // because the erasure is in the ELEMENT, not the value: nothing wide
+            // is passed by value, so the '5' detector never fires — but on wasm32
+            // the element STRIDE is erased too, and a wide-element array copied
+            // at the i32 stride is silently wrong. Flags it so erased_wide_expr
+            // can refuse the shape instead of miscompiling it.
+            else if (funcs[k].receiver_type.len() == 0 && is_erased_typevar_array(funcs[k].params[pj].type_name, structs)) {
+                flags = flags + "7";
+                any = true;
+            }
             else { flags = flags + "0"; }
             pj = pj + 1;
         }
@@ -41252,6 +41272,14 @@ function erased_wide_expr(e: parser.Expr, s: LowerState): boolean {
                             if (s.callee_param_is_typevar(cid.name, ai)
                                 && (expr_is_f64(c.args[ai], s) || infer_expr_width(c.args[ai], s) == 64)
                                 && !s.callee_param_is_erased_widened(cid.name, ai)) { return true; }
+                            // A wide-ELEMENT array through an erased `T[]` param.
+                            // Nothing wide is passed by value, so the check above
+                            // cannot see it; but the callee indexes and appends at
+                            // an erased element width, which on wasm32 is a 4-byte
+                            // stride through an 8-byte-element array — silently
+                            // wrong values, not a trap. Refuse the module instead.
+                            if (s.callee_param_is_erased_array(cid.name, ai)
+                                && (expr_is_f64arr(c.args[ai], s) || expr_is_i64arr(c.args[ai], s))) { return true; }
                             ai = ai + 1;
                         }
                     } else {
@@ -41313,6 +41341,24 @@ pub function (s: LowerState) callee_param_is_typevar(name: string, idx: i32): bo
         if (bar < e.len() && e[0:bar] == name) {
             var pos: i32 = bar + 1 + idx;
             return pos < e.len() && (e[pos] == 53 || e[pos] == 54);   // 53 = '5', 54 = '6'
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// callee_param_is_erased_array reports whether callee `name`'s param `idx` is an
+// erased typevar ARRAY param — flag '7'. Drives the wasm erased-wide refusal for
+// a wide-ELEMENT array argument.
+pub function (s: LowerState) callee_param_is_erased_array(name: string, idx: i32): boolean {
+    var i: i32 = 0;
+    while (i < s.sigs.fn_param_sigs.len()) {
+        var e: string = s.sigs.fn_param_sigs[i];
+        var bar: i32 = 0;
+        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+        if (bar < e.len() && e[0:bar] == name) {
+            var pos: i32 = bar + 1 + idx;
+            return pos < e.len() && e[pos] == 55;   // 55 = '7'
         }
         i = i + 1;
     }

@@ -1,7 +1,9 @@
 # Erased-wide `T[]` generics silently miscompile on the self-host wasm path
 
-**Status:** open bug, characterised. No fix in this note.
-**Severity:** silent wrong values — not a bail, not a validator rejection.
+**Status:** step 1 (gate) DONE — the shape is now refused, not miscompiled.
+Step 2 (promotion) still open.
+**Severity when found:** silent wrong values — not a bail, not a validator
+rejection.
 
 ## Reproducer
 
@@ -80,3 +82,26 @@ Two directions, and the choice is a real one:
 
 Recommend (2) then (1): a loud failure is a correct failure, and it makes (1)'s
 test surface obvious.
+
+## Step 1 landed
+
+The gate now refuses the shape. `fn_param_sigs_of` gained flag `'7'` for an
+erased typevar ARRAY param (`is_erased_typevar_array`), and
+`erased_wide_expr`'s wasm branch flags a call passing a wide-element array
+(`expr_is_f64arr` / `expr_is_i64arr`) to such a param. `reverse` / `rotate_left`
+/ `drop` at f64 now produce the standard IR-ineligibility diagnostic instead of
+wrong numbers.
+
+The gate keys on the ELEMENT width, not on the generic, so narrow
+instantiations are untouched: `array.reverse` at `i32[]` and `string[]` still
+lower and run. Both directions are pinned by
+`TestSelfHostErasedWideArrayGate{,Narrow}Wasm`, which drive `fern.fern` — the
+real CLI — because these programs `import "std/array"` and a loader-less driver
+would silently ignore the import and report a verdict about a broken program.
+
+Both 335-fixture legs stayed green, which also answers the coverage question
+above: no fixture depended on the miscompiled path.
+
+**Step 2 is unchanged and still wanted.** Refusing is better than lying, but
+`array.reverse` on an `f64[]` is a reasonable thing to write, and today it does
+not compile for wasm. The promotion widening is what makes it work.
