@@ -12,8 +12,9 @@ import (
 //
 // The syscall leaves that have reached arm64 as Fern runtime functions:
 // random_bytes over the __syscall3 sub-floor, the fs leaves (read_file /
-// write_file / remove_file / temp_dir) over __syscall3 + __syscall4, and env
-// over __raw_environ — each lowered through the IR pipeline by
+// write_file / remove_file / temp_dir / stat) over __syscall3 + __syscall4 +
+// __raw_scratch, and env over __raw_environ — each lowered through the IR
+// pipeline by
 // asm_arm64_ir.emit_ir_runtime_fern_fn. The register-ABI hand-asm they replace —
 // including two ~30-line getrandom / getentropy bodies forked on `darwin` — is
 // gone.
@@ -40,6 +41,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    match (remove_file(\"/tmp/fern_lockin.txt\")) { Ok(_) => {}, Err(_) => { return 3; } }\n" +
 		"    match (temp_dir(\"lockin\")) { Ok(_) => {}, Err(_) => { return 4; } }\n" +
 		"    match (env(\"PATH\")) { Some(_) => {}, None => {} }\n" +
+		"    match (stat(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 5; } }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -53,7 +55,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	}
 	asm := string(out)
 
-	for _, leaf := range []string{"random_bytes", "read_file", "write_file", "remove_file", "temp_dir", "env"} {
+	for _, leaf := range []string{"random_bytes", "read_file", "write_file", "remove_file", "temp_dir", "env", "stat"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -75,6 +77,14 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	// env has no syscall at all: it reads __fern_envp through the __raw_environ
 	// op. The .bss slot must still be emitted — _start's save is gated on `heap`,
 	// not on `env`, so a heap program that never calls env() stores here too.
+	// stat writes into the fixed .bss scratch through __raw_scratch, so both the
+	// slot and the op's address materialisation have to be there.
+	if !strings.Contains(asm, "__fern_scratch: .skip 256") {
+		t.Error("the __fern_scratch .bss slot is missing — stat has nowhere to land")
+	}
+	if !strings.Contains(asm, "adrp x0, __fern_scratch\n    add x0, x0, :lo12:__fern_scratch\n") {
+		t.Error("__raw_scratch did not emit the arm64 scratch-buffer address")
+	}
 	if !strings.Contains(asm, "__fern_envp: .quad 0") {
 		t.Error("the __fern_envp .bss slot went with the hand-asm __fern_env")
 	}
@@ -120,6 +130,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    match (read_file(\"/tmp/fern_lockin_d.txt\")) { Ok(_) => {}, Err(_) => { return 2; } }\n" +
 		"    match (remove_file(\"/tmp/fern_lockin_d.txt\")) { Ok(_) => {}, Err(_) => { return 3; } }\n" +
 		"    match (temp_dir(\"lockin\")) { Ok(_) => {}, Err(_) => { return 4; } }\n" +
+		"    match (stat(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 5; } }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_darwin.fern")
@@ -147,6 +158,8 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		{"O_WRONLY|O_CREAT|O_TRUNC", "1537"},
 		{"lseek", "199"},
 		{"mkdirat", "475"},
+		{"fstatat64", "470"},
+		{"st_size offset", "96"},
 	} {
 		if !strings.Contains(asm, "mov x0, #"+c.imm+"\n") {
 			t.Errorf("the Darwin %s constant (%s) was not baked into the helper source", c.what, c.imm)

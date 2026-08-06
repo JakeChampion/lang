@@ -848,6 +848,11 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		// mkdirat into a monotonic_ns-named /tmp dir, then a write/read/remove
 		// inside it, then a set and an unset environment variable. PATH is
 		// present under qemu-user too (it forwards the host environment).
+		// stat through the Fern helper on the 4-arg fstatat family (#2649):
+		// /tmp is a directory on every host and under qemu-user, and the
+		// missing sibling exercises the errno -> NotFound classification. A
+		// wrong st_mode offset reads st_nlink or st_dev and misclassifies.
+		{"stat-dir-and-missing", `function main(): i32 { match (stat("/tmp")) { Ok(d) => { if (d.is_file) { return 1; } if (!d.is_dir) { return 2; } match (stat("/tmp/fern_no_such_path_xyz")) { Ok(_) => { return 3; }, Err(e) => { match (e) { NotFound(_) => { return 37; }, _ => { return 4; } } } } }, Err(_) => { return 5; } } }`, 37},
 		{"tempdir-env", `function main(): i32 { match (temp_dir("fernrt")) { Ok(d) => { if (d.len() < 12) { return 1; } match (write_file(d + "/f.txt", "abc")) { Ok(_) => {}, Err(_) => { return 2; } } match (read_file(d + "/f.txt")) { Ok(c) => { if (c != "abc") { return 3; } }, Err(_) => { return 4; } } match (remove_file(d + "/f.txt")) { Ok(_) => {}, Err(_) => { return 5; } } match (env("PATH")) { Some(v) => { if (v.len() == 0) { return 6; } }, None => { return 7; } } match (env("FERN_DEFINITELY_UNSET_XYZ")) { Some(_) => { return 8; }, None => {} } return 39; }, Err(_) => { return 9; } } }`, 39},
 		{"fs-roundtrip", `function main(): i32 { var p: string = "/tmp/fern_fsrt_a64.txt"; match (write_file(p, "hello world")) { Ok(_) => {}, Err(_) => { return 1; } } match (read_file(p)) { Ok(c) => { if (c != "hello world") { return 2; } }, Err(_) => { return 3; } } match (remove_file(p)) { Ok(_) => {}, Err(_) => { return 4; } } match (read_file(p)) { Ok(_) => { return 5; }, Err(_) => {} } return 41; }`, 41},
 		{"random-bytes-chunked", `function main(): i32 { var b: string = random_bytes(600); if (b.len() != 600) { return 1; } var v: i32 = 0; var i: i32 = 256; while (i < 600) { v = v | (b[i] as i32); i = i + 1; } if (v == 0) { return 2; } var w: i32 = 0; var j: i32 = 0; while (j < 256) { w = w | (b[j] as i32); j = j + 1; } if (w == 0) { return 3; } return 42; }`, 42},
