@@ -220,3 +220,108 @@ func paramPatternCaseByName(t *testing.T, name string) struct {
 	t.Fatalf("no param pattern case named %q", name)
 	return paramPatternCases[0]
 }
+
+// The `let` / `var` destructuring statements read the same grammar, via
+// the same irrefutableDestructure conversion — the last of #5356's five
+// binding sites to stop hand-rolling its own parse. `_` is renamed per
+// occurrence at every element position (#6346), which is what lets a
+// pattern discard more than one slot without the elements colliding.
+var destructureStmtCases = []struct {
+	name string
+	src  string
+	want int
+}{
+	{
+		name: "tuple_and_struct_forms",
+		src: `struct P { x: i32, y: i32 }
+function main(): i32 {
+  var (a, b) = (1, 2);
+  let (c, d) = (3, 4);
+  var P { x, y } = P { x: 5, y: 6 };
+  let P { x: nx, .. } = P { x: 7, y: 8 };
+  return a + b + c + d + x + y + nx;
+}`,
+		want: 28, // 1+2+3+4+5+6+7
+	},
+	{
+		// Repeated discards across and within patterns: each `_` gets its
+		// own internal name, so none of these redeclare anything.
+		name: "repeated_discards",
+		src: `struct P { x: i32, y: i32 }
+function main(): i32 {
+  var (a, _) = (1, 2);
+  var (_, b) = (3, 4);
+  let (_, _) = (5, 6);
+  let P { x: _, y } = P { x: 7, y: 8 };
+  return a + b + y;
+}`,
+		want: 13, // 1 + 4 + 8
+	},
+	{
+		// The same rule inside a destructured PARAMETER, which routes
+		// through the identical conversion — this shape was E013
+		// ("variable \"_\" already declared") before the two paths shared it.
+		name: "repeated_discards_in_param",
+		src: `function g((_, _): (i32, i32)): i32 { return 7; }
+function h((a, _): (i32, i32), (_, b): (i32, i32)): i32 { return a * 10 + b; }
+function main(): i32 { return g((1, 2)) + h((3, 4), (5, 6)); }`,
+		want: 43, // 7 + 36
+	},
+}
+
+func TestDestructureStmtInterp(t *testing.T) {
+	for _, tc := range destructureStmtCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runInterpByte(t, tc.src); got != tc.want {
+				t.Errorf("interp = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDestructureStmtX86_64(t *testing.T) {
+	for _, tc := range destructureStmtCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, code := compileAndRunX86_64(t, tc.src); code != tc.want {
+				t.Errorf("native x86-64 = %d, want %d", code, tc.want)
+			}
+		})
+	}
+}
+
+func TestDestructureStmtArm64(t *testing.T) {
+	for _, tc := range destructureStmtCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, code := compileAndRunArm64(t, tc.src); code != tc.want {
+				t.Errorf("native arm64 = %d, want %d", code, tc.want)
+			}
+		})
+	}
+}
+
+func TestDestructureStmtWasm(t *testing.T) {
+	for _, tc := range destructureStmtCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runWasm(t, tc.src); got != tc.want {
+				t.Errorf("wasm = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// A refutable pattern in a `let` / `var` destructure is rejected. The
+// `let` spelling has a refutable form, so it asks for the `else` that
+// makes it one; `var` has none, so the pattern simply isn't a
+// destructure.
+func TestDestructureStmtRefutableRejected(t *testing.T) {
+	for _, src := range []string{
+		"enum O { A(i32), B }\nfunction main(): i32 { let A(v) = A(1); return v; }",
+		"enum O { A(i32), B }\nfunction main(): i32 { var A(v) = A(1); return v; }",
+		"function main(): i32 { let (1, b) = (1, 2); return b; }",
+		"struct P { x: i32 }\nfunction main(): i32 { var P {} = P { x: 1 }; return 0; }",
+	} {
+		if _, _, err := modload.LoadSource(src); err == nil {
+			t.Errorf("expected a parse error for:\n%s", src)
+		}
+	}
+}
