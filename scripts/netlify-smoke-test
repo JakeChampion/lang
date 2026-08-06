@@ -251,15 +251,6 @@ install_wasm_toolchain() {
   wasmtime --version && wasm-tools --version
 }
 
-# arm64 needs qemu-aarch64 plus an aarch64 cross-gcc. A Netlify build runs
-# unprivileged with no apt, so this is normally 'no' there and 'yes' on a dev
-# box that ran .claude/hooks/session-start.sh. Detected rather than assumed, so
-# the summary reports what was actually covered either way.
-have_arm64=no
-if command -v qemu-aarch64 >/dev/null 2>&1 && command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
-  have_arm64=yes
-fi
-
 # ---------------------------------------------------------------------------
 # run_stage NAME FLOOR_S FUNC
 #
@@ -295,16 +286,34 @@ run_stage() {
   t0=$(date +%s)
   export -f "${func?}"
   # The FULL output goes to $log, which the assertions then read; the console
-  # copy drops `=== RUN` and passing subtests, because the conformance stage
-  # alone emits ~4000 of those and a deploy log nobody scrolls is a deploy log
-  # nobody reads. Every FAIL line, indented or not, survives the filter.
+  # copy is filtered, because the conformance stage alone emits ~4000 lines and
+  # a deploy log nobody scrolls is a deploy log nobody reads. Two passes:
   #
-  # Read PIPESTATUS[0], never the pipeline's own status: tee and grep both
+  #   grep  drops `=== RUN` and passing/skipped subtest results.
+  #   awk   collapses runs of identical lines into a count. Dropping the
+  #         subtest results above leaves each skip's REASON line behind, and
+  #         those are identical per fixture — the first live deploy printed
+  #         `aarch64 cross toolchain not available` 342 times, once per
+  #         fixture, which is the single largest thing in the log. Collapsing
+  #         rather than matching that string keeps the fact visible (it is
+  #         real coverage this host does not have) and generalises to whatever
+  #         repeats next.
+  #
+  # Every FAIL line, indented or not, survives both.
+  #
+  # Read PIPESTATUS[0], never the pipeline's own status: tee, grep and awk all
   # report their own, so `$?` here would call every failing stage a pass.
   # docs/TEST-GATES.md records that mistake costing a lost internal/e2e failure
   # that never reproduced.
   timeout --foreground "$limit" bash -c "$func" 2>&1 |
-    tee "$log" | grep -vE '^=== (RUN|CONT|PAUSE)|^ +--- (PASS|SKIP)'
+    tee "$log" |
+    grep -vE '^=== (RUN|CONT|PAUSE)|^ +--- (PASS|SKIP)' |
+    awk '
+      $0 == prev { n++; next }
+      { if (n) printf "    ... (previous line repeated %d more time%s)\n", n, (n == 1 ? "" : "s")
+        n = 0; print; prev = $0; fflush() }
+      END { if (n) printf "    ... (previous line repeated %d more time%s)\n", n, (n == 1 ? "" : "s") }
+    '
   rc=${PIPESTATUS[0]}
   secs=$(($(date +%s) - t0))
 
@@ -344,8 +353,16 @@ stage_units() { # ~80s warm, half of it internal/ir's corpus determinism sweep
   go test $pkgs
 }
 
-stage_conformance() { # ~75s warm for 342 fixtures x 4 backends
-  go test -run '^TestFernFixtures$' -v ./internal/e2e/
+# `-count=1` — this is the one stage that must not be served from Go's test
+# cache. The cache is content-addressed on the test binary and the inputs the
+# test was seen to read, which does not include "is there a qemu-aarch64 on this
+# host". Caught in the act: with the arm64 toolchain removed, this stage replayed
+# a cached result and reported `arm64=348` — 348 fixtures of coverage that had
+# not run here. The per-backend counts below are stated as fact in the deploy
+# log, so they have to come from a run that actually happened. The other stages
+# make no such claim and keep the cache.
+stage_conformance() { # ~75s for 342 fixtures x 4 backends
+  go test -count=1 -run '^TestFernFixtures$' -v ./internal/e2e/
 }
 
 # The self-hosted compiler's x86-64 IR path, end to end: the driver build
@@ -381,24 +398,36 @@ stage_selfhost() {
 # number — and zero for a backend this container CAN reach means the toolchain
 # broke, not that the tests are fine. Reported either way, so the deploy log
 # states its own coverage instead of implying total coverage.
+backend_passes() { # LOG BACKEND
+  local n
+  n=$(grep -c -- "--- PASS: TestFernFixtures/[^/]*/$2 " "$1")
+  echo "${n:-0}"
+}
+
 check_conformance_coverage() {
-  local log=$1 counts backend n reachable=(interp x86_64)
+  local log=$1 counts backend reachable=(interp x86_64)
   [ "$have_wasm" = yes ] && reachable+=(wasm)
-  [ "$have_arm64" = yes ] && reachable+=(arm64)
 
   counts=$(grep -oE -- '--- PASS: TestFernFixtures/[^/]+/[a-z0-9_]+' "$log" |
     awk -F/ '{print $3}' | sort | uniq -c | awk '{printf "%s=%s ", $2, $1}')
   note_last "${counts% }"
 
   for backend in "${reachable[@]}"; do
-    n=$(grep -c -- "--- PASS: TestFernFixtures/[^/]*/$backend " "$log")
-    if [ "${n:-0}" -lt 100 ]; then
-      fail_last "the $backend backend passed only ${n:-0} fixtures, and its toolchain is present — that is a break, not a skip"
+    if [ "$(backend_passes "$log" "$backend")" -lt 100 ]; then
+      fail_last "the $backend backend passed only $(backend_passes "$log" "$backend") fixtures, and its toolchain is present — that is a break, not a skip"
       return 0
     fi
   done
-  [ "$have_arm64" = yes ] ||
+
+  # arm64 is judged by its COUNT, not by probing for qemu + a cross-gcc.
+  # A separate probe is a second opinion that can disagree with what actually
+  # ran, and it did: hiding qemu-aarch64 made the probe report "arm64
+  # uncovered" beside a count of 348 passing arm64 fixtures, because the
+  # harness resolves its runner differently. The counts are the authority —
+  # they are the thing that was measured.
+  if [ "$(backend_passes "$log" arm64)" -eq 0 ]; then
     note_last "${stage_note[${#stage_names[@]} - 1]} (arm64 uncovered: no qemu/cross-gcc)"
+  fi
 }
 
 # ---------------------------------------------------------------------------
