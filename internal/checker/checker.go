@@ -788,7 +788,8 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ImplForPattern:      map[string]map[string]ast.Type{},
 			AssocBindings:       map[string]map[string]ast.Type{},
 		},
-		variantOf: map[string][]variantRef{},
+		variantOf:            map[string][]variantRef{},
+		shadowedGenericCalls: map[*ast.Call]bool{},
 	}
 	// Map operations need core/map linked. If the program came through
 	// modload (LoadedStdlibPaths populated) but didn't pull core/map
@@ -4812,6 +4813,16 @@ type checker struct {
 	// values the caller can transfer.
 	ownFuncs map[string][]bool
 
+	// shadowedGenericCalls records the Call nodes whose callee name
+	// matches a module-level generic function but resolves to a value
+	// binding that shadows it (#6302). `c.info.GenericFuncs` is keyed
+	// by bare name, so every pass that consults it — argument-driven
+	// inference, destination refinement, numeric settling — would
+	// otherwise rewrite a plain closure call into an instantiation of
+	// the unrelated generic. The scope is only in hand while the Call
+	// is checked; the later passes read the verdict from here.
+	shadowedGenericCalls map[*ast.Call]bool
+
 	// elemHint carries the expected element type for an array literal
 	// being checked at a coercion site (var init / return / argument).
 	// It is set ONLY immediately around a checkExpr call whose argument
@@ -7583,6 +7594,25 @@ func (c *checker) capturedType(name string, s *scope) (ast.Type, bool) {
 	return nil, false
 }
 
+// identValueBinding resolves `name` to a value — a parameter, a `var`,
+// a match binding, or a captured outer local — and reports whether it
+// found one. It covers the two arms that precede `FuncSigs` in
+// checkExpr's *ast.Ident case (scope → captureChain → FuncSigs), so a
+// caller can tell which of the two a bare name came from.
+//
+// Both users are name-keyed module-level maps that a value binding of
+// the same name must shadow (#6302): `Info.GenericFuncs` on the
+// generic-call path, where `function apply(v: i32, id: (i32) => i32)`
+// calling `id(v)` resolved to a module-level `id[T]` and reported E040
+// for a type parameter the call site never mentions, and `Info.FuncSigs`
+// in inferUseParam, which read the module signature before the scope.
+func (c *checker) identValueBinding(name string, s *scope) (ast.Type, bool) {
+	if t, ok := s.lookup(name); ok {
+		return t, true
+	}
+	return c.capturedType(name, s)
+}
+
 func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	c.current = fn
 	defer func() { c.current = nil }()
@@ -10230,14 +10260,18 @@ func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
 		c.errfCode(fn.P, "E032", "use: cannot infer binding type for non-identifier source — add an explicit `: TYPE` annotation")
 		return
 	}
-	sig, ok := c.info.FuncSigs[id.Name]
-	if !ok {
-		// Maybe it's a local function in the outer scope.
-		if t, ok := outer.lookup(id.Name); ok {
-			if ft, isFunc := t.(*ast.FuncType); isFunc {
-				sig = ft
-			}
-		}
+	// A value binding — a fn-typed parameter, a `var` holding a
+	// closure, a local function — SHADOWS a module function of the
+	// same name, so it is consulted first. Reading FuncSigs first
+	// inferred the callback's parameter type from the module
+	// function while the call itself dispatched to the shadowing
+	// binding, and the mismatch surfaced as an E038 naming two
+	// signatures the source never put together (#6302).
+	var sig *ast.FuncType
+	if t, isValue := c.identValueBinding(id.Name, outer); isValue {
+		sig, _ = t.(*ast.FuncType)
+	} else {
+		sig = c.info.FuncSigs[id.Name]
 	}
 	if sig == nil || len(sig.Params) == 0 {
 		c.errfCode(fn.P, "E032", "use: callee %q has no signature; add an explicit `: TYPE` annotation", id.Name)
@@ -11473,9 +11507,22 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// - Inferred: `f(42)` — `sub` starts empty and gets filled
 		//   in by walking args against the function's declared
 		//   params via unifyType below.
+		// Neither shape applies when a value binding of the same
+		// name SHADOWS the generic — `identValueBinding` covers the
+		// two arms of the resolution order `checkExpr` already used
+		// for the callee above. The verdict is recorded because the
+		// destination-refinement and numeric-settling passes see
+		// the Call without a scope and have to agree with it.
+		if id, ok := n.Callee.(*ast.Ident); ok {
+			if _, isGen := c.info.GenericFuncs[id.Name]; isGen {
+				if _, isValue := c.identValueBinding(id.Name, s); isValue {
+					c.shadowedGenericCalls[n] = true
+				}
+			}
+		}
 		var sub map[string]ast.Type
 		var genericFn *ast.FuncDecl
-		if id, ok := n.Callee.(*ast.Ident); ok {
+		if id, ok := n.Callee.(*ast.Ident); ok && !c.shadowedGenericCalls[n] {
 			if fn, isGen := c.info.GenericFuncs[id.Name]; isGen {
 				genericFn = fn
 				sub = make(map[string]ast.Type, len(fn.TypeParams))
@@ -12929,7 +12976,7 @@ func isPrimitiveTypeName(name string) bool {
 
 func (c *checker) refineSingleCallTypeArgs(call *ast.Call, dst ast.Type) {
 	id, ok := call.Callee.(*ast.Ident)
-	if !ok {
+	if !ok || c.shadowedGenericCalls[call] {
 		return
 	}
 	fn, isGen := c.info.GenericFuncs[id.Name]
@@ -13448,7 +13495,7 @@ func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
 		// `(id(7i64) as i32)` flipped id's T to i32, monomorph
 		// produced id__i32 with i32-typed params, and the
 		// re-check rejected the i64 literal arg.
-		if id, ok := x.Callee.(*ast.Ident); ok {
+		if id, ok := x.Callee.(*ast.Ident); ok && !c.shadowedGenericCalls[x] {
 			if fn, isGen := c.info.GenericFuncs[id.Name]; isGen {
 				for i, p := range fn.Params {
 					if i >= len(x.Args) {
@@ -13549,7 +13596,7 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 		// / Polymorphic default and the f64 destination
 		// load returned garbage (observed: `0` for a
 		// `pick(true, 3.14, 0.0)` call).
-		if id, ok := x.Callee.(*ast.Ident); ok {
+		if id, ok := x.Callee.(*ast.Ident); ok && !c.shadowedGenericCalls[x] {
 			if fn, isGen := c.info.GenericFuncs[id.Name]; isGen {
 				for i, p := range fn.Params {
 					if i >= len(x.Args) {

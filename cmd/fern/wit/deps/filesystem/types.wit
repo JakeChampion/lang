@@ -2,14 +2,22 @@ package wasi:filesystem@0.2.0;
 
 // Vendored subset of the wasi:filesystem@0.2.0 types interface —
 // only the resources / methods the wasm backend's preview-2 file
-// I/O actually emits (open-at + read/write/append via-stream +
-// resource drops). Source:
+// I/O actually emits. Source:
 // https://github.com/WebAssembly/wasi-filesystem
+//
+// The directory + metadata half (#6208) added stat-at, the three
+// path mutators, and read-directory with its directory-entry-stream
+// cursor, so the subset now covers all five filesystem builtins:
+// read_file / write_file / open_* over the via-streams, stat over
+// stat-at, remove_file over unlink-file-at, temp_dir over
+// create-directory-at, and read_dir / remove_dir_all over
+// read-directory + remove-directory-at.
 interface types {
     use wasi:io/streams@0.2.0.{input-stream, output-stream, error};
     use wasi:clocks/wall-clock@0.2.0.{datetime};
 
     type filesize = u64;
+    type link-count = u64;
 
     enum descriptor-type {
         unknown, block-device, character-device, directory,
@@ -44,6 +52,35 @@ interface types {
             open-flags: open-flags,
             %flags: descriptor-flags,
         ) -> result<descriptor, error-code>;
+        stat-at: func(
+            path-flags: path-flags,
+            path: string,
+        ) -> result<descriptor-stat, error-code>;
+        create-directory-at: func(path: string) -> result<_, error-code>;
+        unlink-file-at: func(path: string) -> result<_, error-code>;
+        remove-directory-at: func(path: string) -> result<_, error-code>;
+        read-directory: func() -> result<directory-entry-stream, error-code>;
+    }
+
+    // The listing cursor. Unlike preview-1's fd_readdir this does NOT
+    // yield "." or "..", which is why the preview-2 read_dir body has
+    // no filter where the preview-1 one does.
+    resource directory-entry-stream {
+        read-directory-entry: func() -> result<option<directory-entry>, error-code>;
+    }
+
+    record directory-entry {
+        %type: descriptor-type,
+        name: string,
+    }
+
+    record descriptor-stat {
+        %type: descriptor-type,
+        link-count: link-count,
+        size: filesize,
+        data-access-timestamp: option<datetime>,
+        data-modification-timestamp: option<datetime>,
+        status-change-timestamp: option<datetime>,
     }
 
     filesystem-error-code: func(err: borrow<error>) -> option<error-code>;

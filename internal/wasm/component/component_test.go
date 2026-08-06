@@ -686,14 +686,14 @@ func TestWasiFilesystemTypesReadWritePathInstanceTypeBody_Validates(t *testing.T
 		t.Skip("wasm-tools not on PATH")
 	}
 	buf := component.PutComponentHeader(nil)
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())                                                                // type 0
-	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)                                                                         // inst 0
-	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")                                                                                 // type 1
-	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadWriteInstanceTypeBody(1))                                                    // type 2
-	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)                                                                       // inst 1
-	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")                                                                         // type 3
-	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")                                                                          // type 4
-	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesPathInstanceTypeBody(4, 3, component.FsFeatures{Read: true, Write: true})) // type 5
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoErrorInstanceTypeBody())                                                                              // type 0
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/error@0.2.0", 0)                                                                                       // inst 0
+	buf = component.PutAliasSectionInstanceExportType(buf, 0, "error")                                                                                               // type 1
+	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadWriteInstanceTypeBody(1))                                                                  // type 2
+	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)                                                                                     // inst 1
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")                                                                                       // type 3
+	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")                                                                                        // type 4
+	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesPathInstanceTypeBody(4, 3, component.FsFeatures{OpenAt: true, Read: true, Write: true})) // type 5
 	buf = component.PutImportSectionOneInstance(buf, "wasi:filesystem/types@0.2.0", 5)
 	dir := t.TempDir()
 	p := filepath.Join(dir, "fsrw.wasm")
@@ -807,7 +807,7 @@ func TestWasiFilesystemTypesReadPathInstanceTypeBody_Validates(t *testing.T) {
 	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsReadInstanceTypeBody(1))
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)
 	buf = component.PutAliasSectionInstanceExportType(buf, 1, "input-stream")
-	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesPathInstanceTypeBody(3, 0, component.FsFeatures{Read: true}))
+	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesPathInstanceTypeBody(3, 0, component.FsFeatures{OpenAt: true, Read: true}))
 	buf = component.PutImportSectionOneInstance(buf, "wasi:filesystem/types@0.2.0", 4)
 	dir := t.TempDir()
 	p := filepath.Join(dir, "fsreadpath.wasm")
@@ -842,7 +842,7 @@ func TestWasiFilesystemTypesWritePathInstanceTypeBody_Validates(t *testing.T) {
 	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsInstanceTypeBody(1))
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)
 	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")
-	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesPathInstanceTypeBody(0, 3, component.FsFeatures{Write: true}))
+	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesPathInstanceTypeBody(0, 3, component.FsFeatures{OpenAt: true, Write: true}))
 	buf = component.PutImportSectionOneInstance(buf, "wasi:filesystem/types@0.2.0", 4)
 	dir := t.TempDir()
 	p := filepath.Join(dir, "fswritepath.wasm")
@@ -877,7 +877,7 @@ func TestWasiFilesystemTypesAppendPathInstanceTypeBody_Validates(t *testing.T) {
 	buf = component.PutTypeSectionRawBody(buf, component.WasiIoStreamsInstanceTypeBody(1))
 	buf = component.PutImportSectionOneInstance(buf, "wasi:io/streams@0.2.0", 2)
 	buf = component.PutAliasSectionInstanceExportType(buf, 1, "output-stream")
-	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesPathInstanceTypeBody(0, 3, component.FsFeatures{Append: true}))
+	buf = component.PutTypeSectionRawBody(buf, component.WasiFilesystemTypesPathInstanceTypeBody(0, 3, component.FsFeatures{OpenAt: true, Append: true}))
 	buf = component.PutImportSectionOneInstance(buf, "wasi:filesystem/types@0.2.0", 4)
 	dir := t.TempDir()
 	p := filepath.Join(dir, "fsappendpath.wasm")

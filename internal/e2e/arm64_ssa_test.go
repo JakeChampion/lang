@@ -449,9 +449,9 @@ function main(): i32 { var x: f64 = 16.0; return (x.sqrt()) as i32; }`,
 			want: 4,
 		},
 		{
-			// exp — a range-reduced degree-7 Taylor polynomial (the __exp_f64 helper +
-			// the shared .rodata coefficient table). exp(1) ≈ e; the tolerance check
-			// (a few ulp of the polynomial approx) returns 1 when within 0.001.
+			// exp — fdlibm's __ieee754_exp (the __exp_f64 helper + the shared .rodata
+			// coefficient table): k = round(x/ln2), a two-chunk ln2 subtraction, the
+			// P1–P5 rational correction. exp(1) ≈ e; within 0.001 → 1.
 			name: "stdlib_float_exp",
 			src: `import "std/float";
 function main(): i32 {
@@ -461,8 +461,9 @@ function main(): i32 {
 			want: 1,
 		},
 		{
-			// log — mantissa normalisation + an odd-power series for ln(m) (__log_f64).
-			// log(e) ≈ 1; within-tolerance → 1.
+			// log — fdlibm's __ieee754_log (__log_f64): mantissa normalisation to
+			// [√2/2, √2), s = f/(2+f), the Lg1–Lg7 series in s². log(e) ≈ 1;
+			// within-tolerance → 1.
 			name: "stdlib_float_log",
 			src: `import "std/float";
 function main(): i32 {
@@ -472,19 +473,40 @@ function main(): i32 {
 			want: 1,
 		},
 		{
-			// pow — exp(y·ln x), exercising __pow_f64's chained calls into __log_f64 /
-			// __exp_f64 through their x0-bits ABI. pow(2, 10) ≈ 1024; within 0.5 → 1.
+			// pow — an integral y (10) takes __pow_f64's exact repeated-squaring path,
+			// which is a leaf and never reaches __log_f64 / __exp_f64. pow(2, 10) is
+			// therefore exactly 1024, not merely within 0.5 of it.
 			name: "stdlib_float_pow",
 			src: `import "std/float";
 function main(): i32 {
   var p = (2.0).pow(10.0);
-  return if ((p - 1024.0).abs() < 0.5) { 1 } else { 0 };
+  return if (p == 1024.0) { 1 } else { 0 };
 }`,
 			want: 1,
 		},
 		{
-			// sin — quadrant-reduced (k=round(x/(π/2))) odd-power series via the shared
-			// reduction (__sin_f64). sin(π/2) ≈ 1; within-tolerance → 1.
+			// The domain edges, which the polynomials this replaced got wrong on
+			// every backend: exp overflowed into the SIGN bit (exp(1000) was
+			// -6.1e-183, not +Inf), log(0) was -709.09 rather than -Inf, and log of
+			// a negative was 0 rather than NaN. Each predicate contributes a bit, so
+			// one exit code names which edge broke.
+			name: "stdlib_float_domain",
+			src: `import "std/float";
+function main(): i32 {
+  var r: i32 = 0;
+  if ((1000.0).exp() > 1.0e308) { r = r + 1; }
+  if ((0.0 - 1000.0).exp() == 0.0) { r = r + 2; }
+  if ((0.0).log() < (0.0 - 1.0e308)) { r = r + 4; }
+  var n = (0.0 - 1.0).log();
+  if (n != n) { r = r + 8; }
+  return r;
+}`,
+			want: 15,
+		},
+		{
+			// sin — the shared reduction (k = round(x·2/π), a three-chunk π/2
+			// subtraction) plus fdlibm's __kernel_sin. sin(π/2) ≈ 1; within-tolerance
+			// → 1.
 			name: "stdlib_float_sin",
 			src: `import "std/float";
 function main(): i32 {
@@ -494,8 +516,8 @@ function main(): i32 {
 			want: 1,
 		},
 		{
-			// cos — same reduction, cos-quadrant selection (__cos_f64). cos(π) ≈ -1;
-			// within-tolerance → 1.
+			// cos — same reduction, __kernel_cos, cos-quadrant selection (__cos_f64).
+			// cos(π) ≈ -1; within-tolerance → 1.
 			name: "stdlib_float_cos",
 			src: `import "std/float";
 function main(): i32 {

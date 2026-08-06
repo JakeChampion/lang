@@ -36,6 +36,7 @@ freeze tracker is [#4451](https://github.com/JakeChampion/lang/issues/4451).
 | `DYN-TRAITS.md` | [reference] | `dyn Trait` objects; slices 1–4 shipped. |
 | `PUB-PACKAGE.md` | [reference] | `pub(package)` visibility. |
 | `CURSOR-IDIOM.md` | [policy] | Immutable read-and-advance cursor idiom (decided 2026-06). |
+| `SPECIFICATION-RESEARCH.md` | [research] | Would a language spec pay for itself? Prior art (Wasm/SpecTec, test262, ruby/spec, K, Redex, Miri) + a staged executable-spec shape. |
 | `FEATURE-AUDIT.md` | [tracker] | Living per-feature × per-backend audit matrix. |
 | `TRAIT-USAGE-AUDIT.md` | [record] | Where our own code should use traits; feeds epic #2691. |
 | `ADVERSARIAL-REVIEW-2026-06.md` | [record] | 2026-06 break-the-compiler review; all 17 findings fixed. |
@@ -161,3 +162,5 @@ freeze tracker is [#4451](https://github.com/JakeChampion/lang/issues/4451).
 | `LITERATE.md` | [reference] | Literate programming (`.fern.md`, tangle/weave). |
 | `LSP-INTEGRATION-PLAN.md` | [record] | LSP MVP — shipped (`cmd/fern-lsp`); post-MVP ideas in IDE-COMPILATION-RESEARCH. |
 | `TEST-RUNNER-MIGRATION.md` | [record] | Go-test → pure-Fern runner migration audit. |
+| `TEST-GATES.md` | [policy] | Which suite proves what, which look authoritative and are not, and what nothing gates. |
+| `FIP.md` | [policy] | The Fern Improvement Proposal program: build an app as a user, fix the worst defect you hit, ship it. Draw list in `fip/random_app.txt`; settled rulings in `fip/wontfix.md`. |

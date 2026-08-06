@@ -13,7 +13,7 @@ name: Test e2e arm64
 # check.
 #
 # The `cross-host` job below covers the OTHER half of the arm64 story:
-# the seven cross-compiler-on-host tests (x86 host binary emitting arm64
+# the fifteen cross-compiler-on-host tests (x86 host binary emitting arm64
 # asm, the emitted binaries running under qemu-aarch64) that need BOTH a
 # native x86 host AND the aarch64 cross toolchain — a combination no
 # other lane provides, so before this job they ran NOWHERE: the x86
@@ -59,17 +59,27 @@ jobs:
         # element corruption (#5729) both slipped past it.
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestArm64' ./internal/e2e/
 
-  # The seven cross-compiler-on-host tests — see the header comment. The
-  # heavyweights are the arm64 stage-2 fixed point (mmc2, an aarch64
-  # binary built from the self-host compiler's own arm64 output,
-  # recompiles the whole compiler under qemu — ~10-20 min emulated) and
-  # the native-mmc equivalence gate (the Go arm64 backend's full driver
-  # emit + in-process assemble, run under qemu against the x86 cross
-  # driver), so this lane gets a generous timeout rather than sharding.
+  # The fifteen cross-compiler-on-host tests — see the header comment. The
+  # heavyweight is the native-mmc equivalence gate (the Go arm64 backend's
+  # full driver emit + in-process assemble, run under qemu against the x86
+  # cross driver); everything else is a light IR-path element test.
+  #
+  # This comment used to open by naming an arm64 stage-2 fixed point (mmc2
+  # recompiling the whole compiler under qemu, "~10-20 min emulated") as the
+  # reason for a 55-minute budget. That test (added in #1671) was driven by
+  # `asm_arm64_load_run.fern` and went with the AST emitters in #5972; the
+  # regex, the weights file and this budget were never updated, so `-run`
+  # silently selected nothing for it and the lane spent its life sized 15x
+  # its real cost (#6310). Nothing replaced it — the arm64 stage-2 fixpoint
+  # is UNCOVERED today, where the x86 side has the per-module gen0==gen1
+  # fixpoints as successors. Writing an IR-path replacement is its own
+  # piece of work; sizing a lane for a test it does not run is not the way
+  # to hold the space open. Measured on runs 31111127744 / 31114366935: the
+  # job takes 3m55s / 3m32s end to end, the test step 3m16s / 3m07s.
   cross-host:
     name: test-e2e-arm64-cross-host
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
@@ -79,14 +89,16 @@ jobs:
         uses: ./.github/actions/apt-cross-toolchain
         with:
           qemu-package: qemu-user
-      # The x86-driver-emits-arm64 + qemu-aarch64 tests (both the stage-2 /
-      # native-mmc heavyweights and the lighter IR-path element tests like
-      # TupleFnIRArm64 / CloArrayFieldCallIRArm64) skip on both the x86
-      # selfhost shards (no aarch64 cross toolchain) and the aarch64 shards
-      # (no native-x86 driver), so this lane is their only home. Extend the
-      # regex when a new such cross-host test lands.
+      # The x86-driver-emits-arm64 + qemu-aarch64 tests (the native-mmc
+      # heavyweight and the lighter IR-path element tests like TupleFnIRArm64
+      # / CloArrayFieldCallIRArm64) skip on both the x86 selfhost shards (no
+      # aarch64 cross toolchain) and the aarch64 shards (no native-x86
+      # driver), so this lane is their only home. Extend the regex when a new
+      # such cross-host test lands — `make testnames` fails if a name here
+      # matches nothing, which is what stopped two dead entries from riding
+      # along unnoticed.
       - name: go test (cross-host arm64)
         run: >-
-          gotestsum --format pkgname-and-test-fails -- -timeout 50m
-          -run '^(TestSelfHostStage2FixedPointArm64|TestSelfHostArm64NativeMmcMatchesCrossHost|TestSelfHostStdTestE2EArm64|TestSelfHostDeriveStdlibIRArm64|TestSelfHostArm64StrForeachAST|TestSelfHostArm64EnvpSaveIR|TestSelfHostArm64UnsignedDivAST|TestSelfHostTupleFnIRArm64|TestSelfHostCloArrayFieldCallIRArm64|TestSelfHostCloArrayFieldBindIRArm64|TestSelfHostTupleFnStructFieldArm64|TestSelfHostReturnClosureElemIRArm64|TestSelfHostReturnClosureContainerIRArm64|TestSelfHostReturnMatchPayloadIRArm64|TestSelfHostReturnLambdaDispatchIRArm64|TestSelfHostReturnClosureNestedIRArm64|TestSelfHostTryOptionPayloadIRArm64)$'
+          gotestsum --format pkgname-and-test-fails -- -timeout 18m
+          -run '^(TestSelfHostArm64NativeMmcMatchesCrossHost|TestSelfHostStdTestE2EArm64|TestSelfHostDeriveStdlibIRArm64|TestSelfHostArm64EnvpSaveIR|TestSelfHostArm64UnsignedDivAST|TestSelfHostTupleFnIRArm64|TestSelfHostCloArrayFieldCallIRArm64|TestSelfHostCloArrayFieldBindIRArm64|TestSelfHostTupleFnStructFieldArm64|TestSelfHostReturnClosureElemIRArm64|TestSelfHostReturnClosureContainerIRArm64|TestSelfHostReturnMatchPayloadIRArm64|TestSelfHostReturnLambdaDispatchIRArm64|TestSelfHostReturnClosureNestedIRArm64|TestSelfHostTryOptionPayloadIRArm64)$'
           ./internal/e2eselfhost/

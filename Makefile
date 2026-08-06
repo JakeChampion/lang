@@ -8,7 +8,7 @@ ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 LANG_SRCS := $(wildcard examples/*.fern)
 
-.PHONY: all build test vet deadcode actionlint freeze selfhost-cli clean examples run-% fmt fmt-check gofmt gofmt-check
+.PHONY: all build test vet deadcode actionlint testnames freeze selfhost-cli clean examples run-% fmt fmt-check gofmt gofmt-check
 
 all: build test
 
@@ -40,6 +40,13 @@ deadcode:
 actionlint:
 	go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
 
+# Fail when a workflow selects a Go test by a name nothing answers to.
+# `go test -run` reports exit 0 for a name that matches nothing, so a lane
+# keeps looking authoritative while covering less than it names. See
+# tools/testname_gate.sh.
+testnames:
+	./tools/testname_gate.sh
+
 # Report the live state of the native-convergence freeze preconditions,
 # derived from the tree rather than read off #4451. Fails only on a
 # REGRESSION (ground lost). See tools/freeze_gate.sh.
@@ -68,7 +75,7 @@ freeze:
 #
 # Use ABSOLUTE paths. A relative one was unopenable from an arm64-darwin binary
 # until #6002 (AT_FDCWD is -2 on XNU, not -100), and absolute is what every
-# harness uses anyway. Note the exit code cannot carry a value >= 125: WASI
+# harness uses anyway. Note the exit code cannot carry a value >= 126: WASI
 # refuses anything outside [0..126), so wasmtime reports 1.
 SELFHOST_TARGET ?= $(shell uname -s | grep -qi darwin && echo arm64-darwin || echo x86-64)
 selfhost-cli: bin/fern

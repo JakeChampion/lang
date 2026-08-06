@@ -5298,3 +5298,96 @@ function main(): i32 { var s: string = "A"; var b: u8 = s[0]; print(b); return 0
 		t.Errorf("print(u8) with `impl Display for u8` in scope: %v", err)
 	}
 }
+
+// A value binding SHADOWS a module-level function of the same name — and
+// that has to hold when the module function is GENERIC (#6302). The
+// generic-call path keys `c.info.GenericFuncs` by bare name, so a fn-typed
+// parameter called `id` resolved to a module `id[T]` and the call was
+// rejected with E040 for a type parameter the call site never mentions.
+// Dropping the `[T]` made the identical program check clean, which is what
+// identified the generic path as the culprit.
+func TestCheckValueBindingShadowsGenericFunc(t *testing.T) {
+	const genericID = `function id[T](x: T): T { return x; }
+function inc(x: i32): i32 { return x + 1; }
+`
+	cases := []struct {
+		name string
+		src  string
+	}{
+		// The issue's repro: a fn-typed PARAMETER named after the generic.
+		{"fn-param", `function apply(v: i32, id: (i32) => i32): i32 { return id(v); }
+function main(): i32 { return apply(7, inc); }`},
+		// A local `var` holding a closure, same name.
+		{"local-var", `function main(): i32 { var id: (i32) => i32 = inc; return id(7); }`},
+		// A CAPTURED outer local: the callee resolves through the
+		// captureChain rather than the current scope, the other half of
+		// the resolution order the fix mirrors.
+		{"capture", `function main(): i32 {
+	var id: (i32) => i32 = inc;
+	function call_it(v: i32): i32 { return id(v); }
+	return call_it(7);
+}`},
+		// Shadowed in one function, still callable as the generic in
+		// another — the fix must not disable the generic module-wide.
+		{"shadow-and-generic", `function apply(v: i32, id: (i32) => i32): i32 { return id(v); }
+function plain(v: i32): i32 { return id(v); }
+function main(): i32 { return apply(7, inc) + plain(1); }`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := checkSource(t, genericID+tc.src); err != nil {
+				t.Errorf("a value binding must shadow the generic %q: %v", "id", err)
+			}
+		})
+	}
+
+	// Control: the same programs with the module function NON-generic
+	// already checked clean, and must continue to.
+	const plainID = `function id(x: i32): i32 { return x; }
+function inc(x: i32): i32 { return x + 1; }
+`
+	if err := checkSource(t, plainID+`function apply(v: i32, id: (i32) => i32): i32 { return id(v); }
+function main(): i32 { return apply(7, inc); }`); err != nil {
+		t.Errorf("non-generic control regressed: %v", err)
+	}
+}
+
+// The same shadowing rule for a `use` clause's source call (#6302).
+// inferUseParam read `Info.FuncSigs` before the scope, so a `use x <-
+// withRes();` whose `withRes` is a shadowing binding inferred the
+// callback parameter's type from the unrelated MODULE `withRes` — here
+// `i32` instead of `string`. The call itself still dispatched to the
+// binding, so the mismatch surfaced as an E038 naming two signatures the
+// source never put together.
+func TestCheckValueBindingShadowsUseClauseCallee(t *testing.T) {
+	const mods = `function withRes(cb: (i32) => i32): i32 { return cb(4); }
+function taker(f: (string) => i32): i32 { return f("hi"); }
+`
+	// A local `var` shadowing the module function: `x` must bind as
+	// `string`, the shadowing callee's callback parameter type.
+	if err := checkSource(t, mods+`function g(): i32 {
+	var withRes = taker;
+	use x <- withRes();
+	if (x == "hi") { return 21; }
+	return 0;
+}
+function main(): i32 { return g(); }`); err != nil {
+		t.Errorf("a `use` source call must resolve to the shadowing binding: %v", err)
+	}
+
+	// A fn-typed PARAMETER shadowing it, same requirement.
+	if err := checkSource(t, mods+`function run(withRes: ((string) => i32) => i32): i32 {
+	use x <- withRes();
+	if (x == "hi") { return 21; }
+	return 0;
+}
+function main(): i32 { return run(taker); }`); err != nil {
+		t.Errorf("a fn-typed param must shadow the `use` source callee: %v", err)
+	}
+
+	// Unshadowed, the module function is still what a `use` resolves to.
+	if err := checkSource(t, mods+`function g(): i32 { use x <- withRes(); return x + 1; }
+function main(): i32 { return g(); }`); err != nil {
+		t.Errorf("unshadowed `use` regressed: %v", err)
+	}
+}

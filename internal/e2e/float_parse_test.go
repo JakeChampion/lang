@@ -210,6 +210,24 @@ var eiselLemireFallbackInputs = []string{
 	"1.3521474617058375324272254e50",
 	"8.3262956204380971506040e-201",
 	"1.2953469714866854880915224074720591739e76",
+
+	// EXACT MIDPOINTS between adjacent doubles. The entries above are
+	// ambiguous-truncation inputs; these are the harder class — the value
+	// sits exactly halfway, so the answer is decided entirely by
+	// round-half-to-even and any drift in the big-integer comparison
+	// flips a bit rather than merely being imprecise.
+	//
+	// They also stress the scaling path hardest: __cmp_big's factors are
+	// large here, which is what makes them the right benchmark for that
+	// code. (Ordinary long inputs like "1234...e-320" do NOT reach the
+	// fallback at all — the fast path decides them — so timing the
+	// fallback with those measures nothing.)
+	//
+	// 1 + 2^-53, the midpoint between 1.0 and the next double up:
+	"1.00000000000000011102230246251565404236316680908203125",
+	// The same construction in the subnormal range (1.5 * 2^-1074),
+	// midway between the smallest subnormal and its successor:
+	"7.4109846876186981626485318930233205854758970392148714663837852375101326090531312779794975454245398856969484704316857659638998506553390969459816219401617281718945106978546710679176872575177347315553308e-324",
 }
 
 // TestParseFloatEiselLemireFallback pins the slow-path handoff: these inputs

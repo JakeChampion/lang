@@ -924,6 +924,18 @@ func (g *generator) emitDataSections() {
 		g.line(`	.asciz " live_bytes="`)
 		g.label(".Llc_str_nl")
 		g.line(`	.asciz "\n"`)
+		if ast.SanitizeEnabled {
+			// The sanitizer's leak VERDICT (#5545) — see the x86-64
+			// twin. Printed after the summary when live_bytes > 0, so a
+			// clean run's stderr carries no `fern-sanitizer:` line at
+			// all and the pass condition needs no number read.
+			g.label(".Lsan_str_leak")
+			g.line("\t.asciz " + escapeForGAS(sanLeakPrefix))
+			g.label(".Lsan_str_bytesin")
+			g.line("\t.asciz " + escapeForGAS(sanLeakMiddle))
+			g.label(".Lsan_str_blocks")
+			g.line("\t.asciz " + escapeForGAS(sanLeakSuffix))
+		}
 	}
 	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount || g.usesMapHashSeed || ast.LeakCheckEnabled {
 		g.line("")
@@ -1093,16 +1105,41 @@ func (g *generator) emitDataSections() {
 // match the x86-64 backend's table (internal/codegen/x86_64) so a program's
 // abort output is identical across natives. Ordered (not a map) for
 // deterministic emission.
+//
+// `when`, if non-nil, gates the message on a debug build mode — see the
+// x86-64 table. The sanitizer's use-after-free diagnostic has no entry here
+// because arm64 has no RcFreeDebug quarantine to report: this backend's half
+// of the sanitizer (#5545) is the leak census plus the rc over-release below.
 var abortMessages = []struct {
 	label, text string
 	code        int
+	when        func() bool
 }{
-	{"__fern_msg_arr_oob", "fern: array index out of range\n", 134},
-	{"__fern_msg_slice_oob", "fern: slice index out of range\n", 134},
-	{"__fern_msg_oom", "fern: out of memory (heap arena exhausted)\n", ExitArenaExhausted},
-	{"__fern_msg_slice_range", "fern: slice range out of bounds\n", 134},
-	{"__fern_msg_str_slice", "fern: string index out of range\n", 134},
+	{"__fern_msg_arr_oob", "fern: array index out of range\n", 134, nil},
+	{"__fern_msg_slice_oob", "fern: slice index out of range\n", 134, nil},
+	{"__fern_msg_oom", "fern: out of memory (heap arena exhausted)\n", ExitArenaExhausted, nil},
+	{"__fern_msg_slice_range", "fern: slice range out of bounds\n", 134, nil},
+	{"__fern_msg_str_slice", "fern: string index out of range\n", 134, nil},
+	{sanDoubleFreeMsg, "fern-sanitizer: rc over-release (double free)\n", ExitSanitizer, func() bool { return ast.RcUnderflowTrap }},
 }
+
+// sanDoubleFreeMsg is the rc-over-release diagnostic's .rodata label. The
+// text must match the x86-64 backend's entry, like every other message here.
+const sanDoubleFreeMsg = "__fern_msg_san_double_free"
+
+// ExitSanitizer mirrors the x86-64 backend's constant — see the comment there
+// for why a sanitizer abort has a status distinct from 125.
+const ExitSanitizer = 124
+
+// The sanitizer's exit-time leak verdict segments (#5545), duplicated from the
+// x86-64 backend for the same reason ExitArenaExhausted is: the two codegen
+// packages are deliberately independent. The text must stay identical — a
+// program's sanitizer output must not depend on which native built it.
+const (
+	sanLeakPrefix = "fern-sanitizer: leak "
+	sanLeakMiddle = " bytes in "
+	sanLeakSuffix = " blocks"
+)
 
 // ExitArenaExhausted mirrors the x86-64 backend's constant — see the comment
 // there for why this is not 137. Duplicated rather than shared because the two
@@ -1221,6 +1258,9 @@ func (g *generator) emitAbortRuntime() {
 		g.line(".section .rodata")
 	}
 	for _, m := range abortMessages {
+		if m.when != nil && !m.when() {
+			continue
+		}
 		g.label(m.label)
 		g.line("\t.asciz " + escapeForGAS(m.text))
 	}
@@ -1562,10 +1602,7 @@ func (g *generator) emitArrDecRuntime() {
 	g.emit("tbnz w2, #31, .Larrdec_ret")
 	g.emit("cmp w2, #0")
 	g.emit("b.gt .Larrdec_pos")
-	g.adrpAdd("x3", "__fern_rc_underflow")
-	g.emit("ldr w4, [x3]")
-	g.emit("add w4, w4, #1")
-	g.emit("str w4, [x3]")
+	g.rcUnderflowBump("x3", "w4")
 	g.emit("b .Larrdec_dec")
 	g.label(".Larrdec_pos")
 	g.emit("cmp w2, #1")
@@ -1617,10 +1654,7 @@ func (g *generator) emitMapDropRuntime() {
 	g.emit("tbnz w1, #31, .Lmapdrop_ret")
 	g.emit("cmp w1, #0")
 	g.emit("b.gt .Lmapdrop_pos")
-	g.adrpAdd("x2", "__fern_rc_underflow")
-	g.emit("ldr w3, [x2]")
-	g.emit("add w3, w3, #1")
-	g.emit("str w3, [x2]")
+	g.rcUnderflowBump("x2", "w3")
 	g.emit("b .Lmapdrop_dec")
 	g.label(".Lmapdrop_pos")
 	g.emit("cmp w1, #1")
@@ -1958,16 +1992,39 @@ func (g *generator) emitRcDecRuntime() {
 	// guards) this dec over-releases — bump __fern_rc_underflow.
 	g.emit("cmp w1, #0")
 	g.emit("b.gt .Lrcdec_dec")
-	g.adrpAdd("x2", "__fern_rc_underflow")
-	g.emit("ldr w3, [x2]")
-	g.emit("add w3, w3, #1")
-	g.emit("str w3, [x2]")
+	g.rcUnderflowBump("x2", "w3")
 	g.label(".Lrcdec_dec")
 	g.emit("sub w1, w1, #1")
 	g.emit("stur w1, [x0, #-8]")
 	g.label(".Lrcdec_ret")
 	g.emit("ret")
 	g.sizeDirective("__fern_rc_dec")
+}
+
+// rcUnderflowBump emits the __fern_rc_underflow increment every
+// over-releasing dec runs through — load / add / store on the BSS counter,
+// using addrReg for its address and valReg (a w-register) for the value —
+// followed, under ast.RcUnderflowTrap (FERN_RC_UNDERFLOW_TRAP=1, or
+// FERN_SANITIZE=1), by the fatal report that turns the counter from a
+// post-hoc oracle into a diagnosis at the offending dec.
+//
+// The report routes through __fern_report (#5538), so an over-release names
+// its cause on stderr and prints the frame-pointer backtrace under it. x29
+// still holds the caller's frame at every site, so the first address named is
+// the function whose dec was wrong. It never returns, which is why clobbering
+// x0/x1/x2 here is safe even mid-helper.
+//
+// The four bump sites (__fern_arr_dec, __fern_map_drop, __fern_rc_dec, and
+// the inlined OpRcDec fast path) carried four copies of the same sequence;
+// they share this one so the counter and its trap cannot drift apart.
+func (g *generator) rcUnderflowBump(addrReg, valReg string) {
+	g.adrpAdd(addrReg, "__fern_rc_underflow")
+	g.emit("ldr %s, [%s]", valReg, addrReg)
+	g.emit("add %s, %s, #1", valReg, valReg)
+	g.emit("str %s, [%s]", valReg, addrReg)
+	if ast.RcUnderflowTrap {
+		g.emitAbort(sanDoubleFreeMsg)
+	}
 }
 
 // emitRcUnderflowCountRuntime emits `__fern_rc_underflow_count()
@@ -4615,6 +4672,42 @@ func (g *generator) emitLcReportRuntime() {
 	g.adrpAdd("x1", ".Llc_str_nl")
 	g.emit("mov x2, #1")
 	g.emit("bl .Llc_write")
+	if ast.SanitizeEnabled {
+		// Sanitizer leak verdict (#5545). Only a POSITIVE balance is a
+		// leak: zero is clean and a negative one is an over-free, which
+		// the rc over-release detector reports at the offending dec.
+		g.adrpAdd("x9", "__fern_lc_alloc_bytes")
+		g.emit("ldr x10, [x9]")
+		g.adrpAdd("x9", "__fern_lc_free_bytes")
+		g.emit("ldr x11, [x9]")
+		g.emit("subs x10, x10, x11")
+		g.emit("b.le .Lsan_leak_done")
+		g.adrpAdd("x1", ".Lsan_str_leak")
+		g.emit("mov x2, #%d", len(sanLeakPrefix))
+		g.emit("bl .Llc_write")
+		g.adrpAdd("x9", "__fern_lc_alloc_bytes")
+		g.emit("ldr x0, [x9]")
+		g.adrpAdd("x9", "__fern_lc_free_bytes")
+		g.emit("ldr x1, [x9]")
+		g.emit("sub x0, x0, x1")
+		g.emit("bl .Llc_wrnum")
+		g.adrpAdd("x1", ".Lsan_str_bytesin")
+		g.emit("mov x2, #%d", len(sanLeakMiddle))
+		g.emit("bl .Llc_write")
+		g.adrpAdd("x9", "__fern_lc_alloc_count")
+		g.emit("ldr x0, [x9]")
+		g.adrpAdd("x9", "__fern_lc_free_count")
+		g.emit("ldr x1, [x9]")
+		g.emit("sub x0, x0, x1")
+		g.emit("bl .Llc_wrnum")
+		g.adrpAdd("x1", ".Lsan_str_blocks")
+		g.emit("mov x2, #%d", len(sanLeakSuffix))
+		g.emit("bl .Llc_write")
+		g.adrpAdd("x1", ".Llc_str_nl")
+		g.emit("mov x2, #1")
+		g.emit("bl .Llc_write")
+		g.label(".Lsan_leak_done")
+	}
 	g.emit("ldp x29, x30, [sp], #16")
 	g.emit("ret")
 	// .Llc_write(x1 = buf, x2 = len): one write(2) to stderr. Leaf —
@@ -11705,10 +11798,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			decLbl := g.freshLabel("rcopDec")
 			g.emit("cmp w1, #0")
 			g.emit("b.gt %s", decLbl)
-			g.adrpAdd("x2", "__fern_rc_underflow")
-			g.emit("ldr w3, [x2]")
-			g.emit("add w3, w3, #1")
-			g.emit("str w3, [x2]")
+			g.rcUnderflowBump("x2", "w3")
 			g.label(decLbl)
 			g.emit("sub w1, w1, #1")
 		}

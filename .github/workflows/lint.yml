@@ -23,6 +23,12 @@ name: Lint
 #                only showed up as a red run — or as a job doing the wrong
 #                thing quietly. Also runs shellcheck over `run:` blocks
 #                (preinstalled on the ubuntu runners).
+#   testnames  — `make testnames`: every `Test…` name in .github/ must be a
+#                test function or a prefix of one. `go test -run` exits 0
+#                for a name that matches nothing, so the arm64 cross-host
+#                lane ran 15 of the 17 tests it listed — including the one
+#                its 55-minute budget was sized for — and reported green
+#                the whole time (#6310).
 #   freeze     — `make freeze`: reports the live state of the native-
 #                convergence freeze preconditions, derived from the tree.
 #                Fails only when ground is LOST (an AST emitter returns, a
@@ -93,6 +99,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
       - run: make actionlint
+
+  testnames:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+      - run: make testnames
 
   freeze:
     runs-on: ubuntu-latest
