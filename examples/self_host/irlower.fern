@@ -11738,12 +11738,22 @@ function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState, f
     // (#4522, `{ if (early) { return 0; } tail }`). Lower it INLINE — the
     // leading statements run in the current function (so a user
     // return/break/continue escapes to the function/loop, exactly like the
-    // native *ast.BlockExpr arm) and only the FINAL synthetic `return tail`
-    // becomes the value temp. The if/match-EXPRESSION desugar is a
-    // single-statement body (its arm returns ARE the value) and stays on the
-    // path below. See lower_value_block.
+    // native *ast.BlockExpr arm) and only the FINAL statement becomes the
+    // block's value. See lower_value_block.
     if (lam.body.len() != 1) { return lower_value_block(lam.body, s, force_i64); }
-    match (lam.body[0]) {
+    return lower_value_stmt(lam.body[0], s, force_i64);
+}
+
+// lower_value_stmt lowers the ONE statement that produces a value-position
+// body's value. It is reached from two places, and they are the same problem:
+// lower_iife with a single-statement body (the if / match-EXPRESSION desugars,
+// whose arm returns ARE the value), and lower_value_block's tail after the
+// leading statements have run. Keeping them one function is what closed #6268 —
+// lower_value_block understood only a `return` tail, so the identical if /
+// match it already handled one call up bailed the enclosing function to the AST
+// emitter as soon as anything preceded it.
+function lower_value_stmt(st: parser.Stmt, s: LowerState, force_i64: boolean): LowerState {
+    match (st) {
         parser.StmtIf(iff) => {
             var tmp: string = "$ife" + util.i32_to_string(s.locals.len());
             var ts: LowerState = s.add_local(tmp);
@@ -11756,9 +11766,9 @@ function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState, f
             // expression `var x: i64 = if (c) { 5 } else { 9 }` lowers instead of
             // bailing), else a string temp (pointer) for a string result, else the
             // default i32 temp. The temp type steers branch-tail value lowering.
-            var ifre: parser.Expr = iife_first_return_expr(lam.body[0]);
+            var ifre: parser.Expr = iife_first_return_expr(st);
             if (expr_is_f64(ifre, ts)) { ts = ts.mark_f64(tslot, true); }
-            else if (force_i64 || iife_any_return_i64(lam.body[0], ts)) { ts = ts.mark_i64(tslot, true); }
+            else if (force_i64 || iife_any_return_i64(st, ts)) { ts = ts.mark_i64(tslot, true); }
             else if (expr_is_str(ifre, ts)) { ts = ts.mark_str(tslot, true); }
             var rs: LowerState = lower_value_if(iff, tslot, ts);
             if (!rs.ok) { return rs; }
@@ -11802,9 +11812,10 @@ function lower_iife(c: parser.ExprCall, lam: parser.ExprLambda, s: LowerState, f
 // escapes to the enclosing function/loop (NOT captured as the block's value);
 // the final synthetic `return tail` is rewritten to `tmp = tail` (a store into
 // a fresh value temp, exactly as lower_iife_match rewrites its arm tails), and
-// the temp is loaded as the block's value. Bails to the AST emitter when the
-// last statement isn't a value-return (a divergent no-tail block — parse_
-// branch_body appends an s_unknown there).
+// the temp is loaded as the block's value. A tail that is not a value-return
+// goes to lower_value_stmt, which is the same treatment lower_iife gives a
+// single-statement body; only a divergent no-tail block (parse_branch_body
+// appends an s_unknown there) still bails.
 function lower_value_block(body: parser.Stmt[], s: LowerState, force_i64: boolean): LowerState {
     var n: i32 = body.len();
     if (n == 0) { return s.fail(); }
@@ -11834,7 +11845,33 @@ function lower_value_block(body: parser.Stmt[], s: LowerState, force_i64: boolea
             if (!ts.ok) { return ts; }
             return ts.emit(ir.op_load_local(tslot));
         },
-        _ => { return s.fail(); }
+        // Any OTHER tail — an if / match-EXPRESSION whose arm returns are
+        // themselves the value. Run the leading statements inline exactly as the
+        // `return` arm does, then hand the tail to lower_value_stmt, the same
+        // code lower_iife uses when that if / match is the body's only
+        // statement. There is nothing block-specific about the tail; what makes
+        // it arrive here is that something PRECEDES it (#6268), which the lift
+        // routinely arranges by prepending a capture rebinding.
+        _ => {
+            // A 64-BIT tail is held back. Measured on wasm, an `i64[]`-returning
+            // `var v: i64 = if (p > 4i64) { p * 3i64 } else { 7i64 }` reached
+            // this way emits WAT wasmtime rejects ("expected i32, found i64"):
+            // the array literal's ops land ahead of the branch that computes the
+            // value, so the store reads a slot nothing wrote. The register
+            // backends get the same shape right, but a bail is a refusal and a
+            // wrong answer is not, so the deferral is unconditional rather than
+            // target-split — the wasm eligibility gate lowers with
+            // for_wasm=false and would not see a for_wasm-only bail. #6267.
+            if (force_i64 || iife_any_return_i64(last, s)) { return s.fail(); }
+            var bs: LowerState = s;
+            var bi: i32 = 0;
+            while (bi < n - 1) {
+                bs = lower_stmt(body[bi], bs);
+                if (!bs.ok) { return bs; }
+                bi = bi + 1;
+            }
+            return lower_value_stmt(last, bs, force_i64);
+        }
     }
     return s.fail();
 }
