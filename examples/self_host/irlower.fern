@@ -45694,6 +45694,102 @@ function lift_method_arg_is_fn(arg: parser.Expr, mfield: string, idx: i32, mfunc
     return false;
 }
 
+// ---- fn-valued arms of a CAPTURING value-position if / match (#6256) --------
+//
+// A value-position `if` / `match` parses as an IIFE — `ExprCall{callee:
+// ExprLambda{params: [], body: [StmtIf|StmtMatch]}}`. Whether its arms ever meet
+// a closure-lift pass depends on something that has nothing to do with the arms:
+// a NO-CAPTURE IIFE is hoisted to a top-level `__lam_N` FuncDecl by
+// lift_call_arg, and BECOMING a FuncDecl is what gets its body walked. A
+// CAPTURING one is "left in place (stays on AST)", lower_iife lowers its arms
+// inline in the enclosing function, and no lift pass ever sees them. So a
+// fn-valued arm reached lower_expr as a bare ExprLambda and asked for a
+// `<cur_fn>$clo` nothing had built — the module bailed with "function value
+// <fn>$clo not defined". A fn-typed arm was worse than a bail: it lowered to a
+// bare fn pointer that the env-first call side dispatched as a box (#6256's
+// SIGSEGV row).
+//
+// The fix is to stop the fork existing: hoist the capturing IIFE to a real
+// top-level function too, taking its captures as ORDINARY PARAMETERS. An IIFE
+// is applied immediately, so its captures need no env box — by-value params
+// carry them, which also lifts the i64/u64/f64 restriction the env box imposes
+// (cap_slot_ok rejects a wide scalar; a param does not). The IIFE call site
+// becomes `<fd>$iifeN(caps…)`, an ordinary direct call returning a fn value —
+// the shape a local binding and a `return` already dispatch env-first, which is
+// what makes the RESULT usable and not just the arms well-formed. Boxing the
+// arms alone left the destination unmarked and turned a bail into a SIGSEGV.
+//
+// Once hoisted the body is a FuncDecl, so the worklist drain re-processes it
+// and every ordinary pass walks its arms — the same mechanism that already
+// makes a NO-CAPTURE IIFE work, and the reason this needs no arm walker.
+//
+// Gated on the IIFE both CAPTURING (lambda_has_no_captures — the very predicate
+// that decides whether the existing hoist fires) and holding a fn-VALUED arm.
+// Everything else is left exactly as it was, so no working program changes path.
+function iife_arms_hold_fn_value(stmts: parser.Stmt[], fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                if (lift_arg_is_fn_value(r.value, mfuncs)) { return true; }
+                // A fn-typed LOCAL or PARAM arm (`(if (c) { v0 } else { … })`)
+                // is a fn value too, but lift_arg_is_fn_value declines it — that
+                // predicate answers "is this worth env-boxing?", and an already-
+                // boxed local is not. Here the question is "does this arm yield a
+                // fn?", so the declared type answers it.
+                match (r.value) {
+                    parser.ExprIdent(aid) => { if (cap_type(aid.name, fd, structs, mfuncs) == "fn") { return true; } },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(iff) => {
+                if (iife_arms_hold_fn_value(iff.then_body, fd, structs, mfuncs)) { return true; }
+                if (iife_arms_hold_fn_value(iff.else_body, fd, structs, mfuncs)) { return true; }
+            },
+            parser.StmtMatch(mm) => {
+                var a: i32 = 0;
+                while (a < mm.arms.len()) {
+                    if (iife_arms_hold_fn_value(mm.arms[a].body, fd, structs, mfuncs)) { return true; }
+                    a = a + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// hoist_capturing_iife builds `<fd>$iifeN(caps…)` from the IIFE lambda and
+// returns the direct call that replaces it. Declines — signalled by returning
+// the counter unchanged — when any capture's type does not resolve, leaving the
+// IIFE exactly as it was so the module bails as before.
+function hoist_capturing_iife(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloRes {
+    var caps: string[] = lambda_captures(lam, fd);
+    var ps: parser.ParamDecl[] = [];
+    var args: parser.Expr[] = [];
+    var ci: i32 = 0;
+    while (ci < caps.len()) {
+        var cty: string = cap_type(caps[ci], fd, structs, mfuncs);
+        // A fn-typed capture declines. cap_type coarsens every fn type to "fn",
+        // dropping the arity / return type a fn-typed PARAM needs (fn_ret,
+        // fn_param_dyn), so the param this would synthesize is not the one the
+        // call side reads — it lowered to a bare-dispatched box and SIGSEGV'd.
+        // Declining leaves the module bailing exactly as it does today; the
+        // fn-typed-arm shapes are tracked separately rather than traded for a
+        // silent miscompile.
+        if (cty.len() == 0 || cty == "fn") { return InlineCloRes { expr: parser.ExprLambda { params: lam.params, ret_type: lam.ret_type, body: lam.body, use_infer: lam.use_infer }, funcs: funcs, counter: counter }; }
+        ps = ps.append(parser.ParamDecl { name: caps[ci], type_name: cty, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "" });
+        args = args.append(parser.ExprIdent { name: caps[ci], line: 0, col: 0 });
+        ci = ci + 1;
+    }
+    var nm: string = fd.name + "$iife" + util.i32_to_string(counter);
+    var notp: string[] = [];
+    var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
+    var ncall: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: nm, line: 0, col: 0 }, args: args, line: 0, col: 0, type_argc: 0, ty: "" };
+    return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
+}
+
 // lift_inline_closures_expr walks an expression, hoisting capturing inline
 // lambdas in array-element and struct-field-value positions, AND wrapping
 // fn-typed CALL ARGUMENTS into uniform env boxes (slice #3445 follow-up). A call
@@ -45797,6 +45893,24 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
             var ncallee: parser.Expr = call.callee;
             match (call.callee) {
                 parser.ExprIdent(_) => {},
+                parser.ExprLambda(ielam) => {
+                    // A CAPTURING IIFE holding a fn-valued arm — the value-position
+                    // if/match desugar lift_call_arg will NOT hoist, so nothing ever
+                    // walks its arms and nothing marks its destination (#6256).
+                    // Hoist it into a real function taking its captures as params;
+                    // the call that replaces it is an ordinary fn-value-returning
+                    // call both a binding and a return already handle. A no-capture
+                    // IIFE falls through untouched — the existing hoist gets it.
+                    if (call.args.len() == 0 && ielam.params.len() == 0
+                        && !lambda_has_no_captures(ielam, gfns)
+                        && iife_arms_hold_fn_value(ielam.body, fd, structs, mfuncs)) {
+                        var iar: InlineCloRes = hoist_capturing_iife(ielam, fd, fs, ct, structs, mfuncs);
+                        if (iar.counter > ct) {
+                            fs = iar.funcs; ct = iar.counter;
+                            return InlineCloRes { expr: iar.expr, funcs: fs, counter: ct };
+                        }
+                    }
+                },
                 _ => {
                     var cr: InlineCloRes = lift_inline_closures_expr(call.callee, fd, fs, ct, gfns, structs, mfuncs);
                     fs = cr.funcs; ct = cr.counter; ncallee = cr.expr;
