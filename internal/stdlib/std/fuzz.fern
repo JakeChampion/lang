@@ -198,70 +198,27 @@ function __fuzz_escape(s: string): string {
 // Use through `r.fuzz(...)` rather than calling directly;
 // the receiver-method form folds the result into the
 // runner's TAP stream.
-// The body is spelled out here rather than delegating to `fuzz_run_seeded`
-// with a freshly drawn seed, which is what it obviously wants to be.
+// A fresh seed drawn from the CSPRNG, then `fuzz_run_seeded`. The seed is
+// named in every failure diagnostic, so any failure this finds replays exactly
+// by passing that seed back to `fuzz_run_seeded`.
 //
-// THE ROOT CAUSE IS A NAME COLLISION, not delegation (#6191). The parameter
-// below is called `target`, and a fuzz program conventionally names its target
-// function `target` too. Compilers that resolve a bare fn-name ident against
-// the MODULE function table when boxing it into an env trampoline pick the
-// module function over the shadowing parameter, and the callee then invokes an
-// unrelated top-level function — silently, with no diagnostic and no crash.
-// That is why `fuzz_run(seeds, n, always_passing_target)` reported a failure
-// raised by a completely different target.
+// This body used to be a spelled-out copy of `fuzz_run_seeded` — about forty
+// duplicated lines — because delegating tripped a compiler bug (#6191). The
+// parameter is called `target`, and a fuzz program conventionally names its
+// target function `target` too; a compiler that resolved a bare fn-name ident
+// against the MODULE function table when boxing it into an env trampoline
+// picked the module function over the shadowing parameter, so the callee
+// invoked an unrelated top-level function — silently. Delegation was never the
+// trigger, only the thing that put `target` in a fn-value ARGUMENT position,
+// which is where the boxing happened.
 //
-// Delegation is not the trigger; it only matters because it puts `target` in a
-// fn-value ARGUMENT position, which is where the boxing happens. The collision
-// reproduces with a single call site and with the shadowing function never
-// called — merely declared. The self-host lift pass is fixed for the
-// PARAMETER case, but the NATIVE WASM backend still has it, so restoring the
-// delegation here would trade a fixed backend for a broken one.
-//
-// Do NOT "simplify" this back into a delegation until #6191 closes on every
-// backend. Renaming the parameter would also dodge it, and is deliberately not
-// done: `target` is the right name, and a stdlib that has to avoid words its
-// users might pick is a worse outcome than the bug being visible here.
+// Both halves of that are fixed (the parameter case and the capture case the
+// `r.fuzz` receiver method below takes), and the native wasm backend never had
+// it — #6211 was a misreading of the component runner's 0/1 exit status. So the
+// duplication is gone. The parameter keeps the name `target`: a stdlib that has
+// to avoid words its users might pick would be a worse outcome than the bug.
 pub function fuzz_run(seeds: string[], iterations: i32, target: (string) => test.TestOutcome): test.TestOutcome {
-    var rng_seed: i64 = (math.random_int(0 - 2000000000, 2000000000)) as i64;
-    if (iterations <= 0) {
-        return test.fail("fuzz_run: iterations must be > 0, got " + iterations.to_string());
-    }
-    if (seeds.len() == 0) {
-        return test.fail("fuzz_run: at least one seed required");
-    }
-    var i: i32 = 0;
-    while (i < seeds.len()) {
-        match (target(seeds[i])) {
-            Fail(msg) => {
-                return test.fail("seed[" + i.to_string() + "] = \"" +
-                            __fuzz_escape(seeds[i]) + "\": " + msg);
-            },
-            Pass => { },
-        }
-        i = i + 1;
-    }
-    var st: i64 = rand.rng_seed(rng_seed);
-    var iter: i32 = 0;
-    while (iter < iterations) {
-        var seed: string = __fuzz_pick_seed(seeds, iter);
-        var mpick = rand.rng_below(st, __fuzz_mutator_count());
-        st = mpick.0;
-        var mode: i32 = mpick.1;
-        var mutated = __fuzz_mutate(seed, mode, st);
-        st = mutated.0;
-        var input: string = mutated.1;
-        match (target(input)) {
-            Fail(msg) => {
-                return test.fail("iter " + iter.to_string() +
-                            " mode " + mode.to_string() +
-                            " rng_seed " + rng_seed.to_string() +
-                            " input \"" + __fuzz_escape(input) + "\": " + msg);
-            },
-            Pass => { },
-        }
-        iter = iter + 1;
-    }
-    return test.pass();
+    return fuzz_run_seeded(seeds, iterations, (math.random_int(0 - 2000000000, 2000000000)) as i64, target);
 }
 
 // fuzz_run_seeded(seeds, iterations, rng_seed, target) — `fuzz_run` with the

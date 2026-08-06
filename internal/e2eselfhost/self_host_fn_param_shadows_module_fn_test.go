@@ -38,13 +38,20 @@ import (
 // `uncalled-module-fn` returns 1 instead of 42, `forwarded-through-two-levels`
 // returns 1 instead of 2.
 //
-// NOT covered here, because it is not fixed: the same collision through a
-// CAPTURE rather than a parameter. A lambda that captures a fn-typed parameter
-// is lifted to a `$clo` function, and the capture is boxed by the same lookup —
-// `std/fuzz`'s `r.fuzz(...)` receiver method miscompiles today for exactly that
-// reason. #6191 stays open on it; see the issue for why declining there is not
-// the fix (it segfaults instead, so the capture must be boxed against the env
-// slot rather than skipped).
+// The CAPTURE half of #6191 is covered too, by the `captured-*` cases. It had a
+// different cause than the parameter half, which is why declining in the lift
+// pass only segfaulted: `lambda_captures` excluded any name present in the
+// module function table, so a fn-typed parameter that shadowed one was reported
+// as NOT captured at all. The lambda then took the no-capture `$wrapN` lift,
+// whose hoisted body resolves the name against the module table — there was no
+// env slot to decline to, because nothing had been captured. Removing the
+// exclusion (an enclosing local shadows a global, so `encl` alone decides)
+// makes the lambda capture it, and the existing param guard then leaves the
+// capture ident alone.
+//
+// Teeth for those: before the fix `captured-fn-param` returned 1 instead of 2,
+// and `std/fuzz`'s documented `r.fuzz(...)` receiver method reported
+// `not ok 1 - always passes: found 0xFF` where the interpreter reported `ok 1`.
 var fnParamShadowsModuleFnCases = []struct {
 	name string
 	src  string
@@ -90,6 +97,38 @@ function other(x: i32): i32 { return 2; }
 function apply(f: (i32) => i32): i32 { return f(0); }
 function fwd(pick: (i32) => i32): i32 { return apply(pick); }
 function main(): i32 { return fwd(other); }`, 2},
+
+	// CAPTURE, not parameter: the lambda `() => run(target)` closes over the
+	// fn-typed parameter `target`, which shadows an uncalled module function of
+	// the same name. This is the shape `std/fuzz`'s `r.fuzz` receiver method
+	// takes — `r.it(name, () => fuzz_run(seeds, iterations, target))`.
+	{"captured-fn-param", `
+function target(x: i32): i32 { return 1; }
+function other(x: i32): i32 { return 2; }
+function run(f: (i32) => i32): i32 { return f(0); }
+function call_thunk(t: () => i32): i32 { return t(); }
+function outer(target: (i32) => i32): i32 { return call_thunk(() => run(target)); }
+function main(): i32 { return outer(other); }`, 2},
+
+	// The captured parameter reached DIRECTLY rather than forwarded, so the
+	// capture path is exercised without a second fn-value argument position.
+	{"captured-fn-param-called-directly", `
+function target(x: i32): i32 { return 1; }
+function other(x: i32): i32 { return 2; }
+function call_thunk(t: () => i32): i32 { return t(); }
+function outer(target: (i32) => i32): i32 { return call_thunk(() => target(0)); }
+function main(): i32 { return outer(other); }`, 2},
+
+	// A capture alongside a NON-shadowing one, so the fix cannot work by
+	// capturing everything: `bump` is a genuine global and must stay a direct
+	// reference, while `target` must be captured. 2 + 30 = 32.
+	{"captured-mixed-with-real-global", `
+function target(x: i32): i32 { return 1; }
+function other(x: i32): i32 { return 2; }
+function bump(x: i32): i32 { return x + 30; }
+function call_thunk(t: () => i32): i32 { return t(); }
+function outer(target: (i32) => i32): i32 { return call_thunk(() => bump(target(0))); }
+function main(): i32 { return outer(other); }`, 32},
 
 	// Both candidates reachable, so a wrong resolution cannot be masked by the
 	// shadowing function being dead: each call must run its own.
