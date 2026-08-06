@@ -29,8 +29,11 @@
 //        1 = non-array pointer, 2 = array(plain elems),
 //        3 = array(rc elems)); high bytes = value element
 //        stride for kinds 2/3 (see mapValTag / __map_val_*)
-//   +16  buckets : i32[cap]            (-1 empty, -2 tombstone)
-//   +16+cap*4  entries : (k,v)[cap]    per-entry stride = 2 * __ptr_width()
+//   +16  hashSeed : i32 — per-process string-hash seed, 0 = unseeded
+//        (string keys only — see __map_seed / #6194)
+//   +20  pad      : i32 — keeps the entry column 8-byte aligned
+//   +24  buckets : i32[cap]            (-1 empty, -2 tombstone)
+//   +24+cap*4  entries : (k,v)[cap]    per-entry stride = 2 * __ptr_width()
 //                                      (8 on wasm32, 16 on arm64)
 //
 // Lives in `core/` rather than `std/` because the bodies are
@@ -73,21 +76,47 @@ pub function __map_pow2_ceil(n: i32): i32 {
 
 // __map_hdr_bytes returns the kv-buffer header size for a given key
 // kind. Every kind — scalar / string / wide-boxed (0 / 1 / 2) and the
-// user struct/enum key (kind 3) — uses the same 16-byte header (cap,
-// len, keyKind, valTag); buckets start at +16. The user key's derived
-// hash/eq are threaded in as per-call function VALUES (there is no
-// usize->fn cast; E033), NOT stored in the buffer, so kind 3 needs no
-// extra header slots. The helper is retained (rather than inlining 16
-// at every site) so a future store-in-buffer optimisation can re-widen
-// one kind's header without touching the ~20 offset sites. See #2671.
+// user struct/enum key (kind 3) — uses the same 24-byte header (cap,
+// len, keyKind, valTag, hashSeed, pad); buckets start at +24. The user
+// key's derived hash/eq are threaded in as per-call function VALUES
+// (there is no usize->fn cast; E033), NOT stored in the buffer, so
+// kind 3 needs no extra header slots. The helper is retained (rather
+// than inlining the constant at every site) so a future
+// store-in-buffer optimisation can re-widen one kind's header without
+// touching the ~20 offset sites. See #2671.
+//
+// The header widened 16 -> 24 for the hash seed (#6194). The pad at
+// +20 keeps the buckets 8-byte aligned, which the entry column (two
+// pointer-width slots) needs on arm64: an odd multiple of 4 before a
+// cap*4 bucket array would leave the entries at a 4-byte offset.
 pub function __map_hdr_bytes(keyKind: i32): i32 {
-    return 16;
+    return 24;
 }
 
 // __map_hdr reads the kv buffer's keyKind (at +8) and returns its
 // header size — the buf-having counterpart to __map_hdr_bytes.
 function __map_hdr(buf: usize): i32 {
     return __map_hdr_bytes(__load_i32(buf + 8));
+}
+
+// __map_seed reads the kv buffer's per-map hash seed (at +16).
+//
+// ZERO MEANS UNSEEDED, and that convention is load-bearing in two
+// places: it makes an unseeded map hash byte-identically to the
+// pre-#6194 implementation (__map_fnv_str_seeded's basis is the FNV
+// offset basis XOR the seed), and it is what lets __map_bucket_hash
+// pick between the seeded string hash and the caller-supplied
+// `hash_fn` with a single compare and no extra function value.
+//
+// ONLY STRING-KEYED MAPS (keyKind 1) EVER CARRY A NONZERO SEED —
+// map_new_impl is the only writer and seeds nothing else. That is the
+// invariant __map_bucket_hash relies on when it reinterprets the key
+// as a string on the seeded path: a scalar / wide / user-struct key
+// reaching that branch would hash a non-string as a string. Seeding a
+// user-struct key would need the seed threaded into the key type's
+// derived `hash`, which is codegen's to do, not this module's.
+function __map_seed(buf: usize): i32 {
+    return __load_i32(buf + 16);
 }
 
 // Hash function:
@@ -127,9 +156,9 @@ function __map_wang_mix(k: i32): i32 {
     return h;
 }
 
-// __map_fnv_str is the string-key bucket hash: FNV-1a over 4-byte blocks,
-// finished with a murmur3 fmix32 avalanche. Shared by __map_hash and
-// __map_hash_str.
+// __map_fnv_str_seeded is the string-key bucket hash: FNV-1a over 4-byte
+// blocks, finished with a murmur3 fmix32 avalanche, over a seeded offset
+// basis. Reached through __map_bucket_hash.
 //
 // Two changes from the textbook byte-at-a-time FNV-1a this replaced:
 //
@@ -164,11 +193,24 @@ function __map_wang_mix(k: i32): i32 {
 // affects distribution only. Iteration order is unaffected: entries live in
 // an insertion-ordered array and the cursor walks that, not the buckets.
 //
-// NOT a DoS-resistant hash: it is unseeded and public, so an attacker who
-// controls key strings can still force collisions. That wants SipHash behind
-// a per-process seed; see docs/SOTA-STDLIB-BLUEPRINT.md.
-function __map_fnv_str(s: string): i32 {
-    var h: u32 = 2166136261 as u32;             // 0x811c9dc5, FNV offset basis
+// SEEDING (#6194): the `seed` argument is XORed into the FNV offset basis, so
+// `seed == 0` reproduces the unseeded hash EXACTLY — the pre-#6194 bucket
+// layout is the seed-0 case of this function, not a separate code path. A
+// nonzero seed enters the compression rather than post-mixing the result,
+// which is the only placement that helps: post-mixing is a function of the
+// hash, so `h(a) == h(b)` implies `mix(h(a)) == mix(h(b))` and every
+// precomputed collision survives it.
+//
+// FNV-with-a-seeded-basis is NOT SipHash, and the difference matters against
+// different attackers. It defeats OFFLINE precomputation, which is the whole
+// of the practical hash-flooding attack: the collision set has to be computed
+// against the live seed, and the seed is drawn per process. It does NOT
+// defeat an attacker with an online oracle — FNV is invertible, so measurable
+// per-request timing feedback can recover the seed and the attack resumes.
+// SipHash-1-3 behind the same seed slot is the upgrade, and it is a drop-in
+// here: nothing outside this function depends on how the seed is consumed.
+function __map_fnv_str_seeded(s: string, seed: i32): i32 {
+    var h: u32 = (2166136261 as u32) ^ (seed as u32);   // 0x811c9dc5, FNV offset basis
     var prime: u32 = 16777619 as u32;           // 0x01000193
     var sLen: i32 = s.len();
     var i: i32 = 0;
@@ -206,6 +248,27 @@ pub function map_new_impl(cap_hint: i32, keyKind: i32, valKind: i32): usize {
     __store_i32(buf + 4,  0);
     __store_i32(buf + 8,  keyKind);
     __store_i32(buf + 12, valKind);
+    // Hash seed (#6194) — string keys only, see __map_seed. The seed is
+    // per PROCESS, not per map: __map_hash_seed() draws once from the same
+    // CSPRNG as random_i32 and caches, so this is a load rather than a
+    // syscall on every map after the first.
+    //
+    // Attacker-controlled strings reaching a Map is the ordinary case for
+    // Fern's edge-handler workload — header, query, and JSON-object keys all
+    // land here — so this defaults ON rather than waiting to be opted into.
+    // An opt-in seed would have to be threaded through map literals,
+    // `map.from`, and `json.parse` to reach the keys that actually need it,
+    // which is exactly the surface an attacker picks.
+    //
+    // Safe to vary run to run because BUCKET ORDER IS NOT OBSERVABLE:
+    // entries live in an insertion-ordered array and every iteration path
+    // (`keys` / `values` / `entries` / the MapIter cursor) walks that array,
+    // never the bucket table. std/json's key-order preservation rides on the
+    // same property and is unaffected.
+    var seed: i32 = 0;
+    if (keyKind == 1) { seed = __map_hash_seed(); }
+    __store_i32(buf + 16, seed);
+    __store_i32(buf + 20, 0);                     // pad — keeps buckets 8-byte aligned
     __memset(buf + hdr, 255, cap * 4);            // buckets → all -1
     // Map handle is a heap-allocated pointer cell. 8 bytes
     // accommodates a 64-bit `buf` pointer on arm64; wasm32
@@ -312,7 +375,7 @@ pub function __map_len_impl(m: usize): i32 {
 // The adapters are named top-level functions (no captures, statically
 // allocated closure cells — no per-call environment). They take the key
 // as `usize` and hash/compare it DIRECTLY (via __map_wang_mix /
-// __map_fnv_str / __load_i64): routing through `__map_hash(k as i32, …)`
+// __map_fnv_str_seeded / __load_i64): routing through `__map_hash(k as i32, …)`
 // here would TRUNCATE a 64-bit string/cell pointer before the
 // `k as string` reconstruction and silently probe the wrong bucket —
 // exactly the i32-param footgun __map_hash's own doc describes (#5042
@@ -328,8 +391,41 @@ function __map_hash_wide(k: usize): i32 {
     return __map_wang_mix(lo ^ hi);
 }
 function __map_eq_wide(a: usize, b: usize): boolean { return __load_i64(a) == __load_i64(b); }
-function __map_hash_str(k: usize): i32 { return __map_fnv_str(k as string); }
+function __map_hash_str(k: usize): i32 { return __map_fnv_str_seeded(k as string, 0); }
 function __map_eq_str(a: usize, b: usize): boolean { return (a as string) == (b as string); }
+
+// __map_bucket_hash picks the bucket hash for one probe. It is the ONLY place
+// the seed is consumed, so every probe/grow/set/delete site agrees by
+// construction.
+//
+// The `seed` argument always comes from __map_seed(buf) at the call site —
+// never threaded down from a caller. That is deliberate, and it is what makes
+// a whole class of bug unrepresentable: a probe and a grow that disagreed
+// about the seed would not corrupt the map, they would REHASH IT UNSEEDED and
+// carry on working, silently losing the defence with no failing lookup to
+// notice it. Reading from the buffer at each site leaves nothing to disagree
+// about. (Confirmed the hard way: an earlier shape that passed the seed down
+// as a parameter survived deliberately zeroing it at the grow call, because
+// the grow wrote its zero into the new header and everything downstream then
+// agreed on "unseeded".)
+//
+// Threading the seed as a plain i32 alongside the existing `hash_fn` function
+// value — rather than replacing `hash_fn` with a seed-taking one — is what
+// keeps this change inside this module. The `_keyed` entry points below are
+// named by all six backends (`__method_Map_set_keyed` and friends resolve to
+// `__map_set_keyed_impl`), so their `(usize) => i32` hash-function signature is
+// part of the compiler/stdlib contract; widening it to `(usize, i32) => i32`
+// would mean an arity change in every emitter for a seed that only the string
+// path ever uses.
+//
+// Correctness rests on __map_seed's invariant that only keyKind 1 carries a
+// nonzero seed: the seeded branch reinterprets `k` as a string, which is sound
+// for a string key and nothing else. Scalar, wide, and user-struct keys hold a
+// zero seed and so always take `hash_fn`.
+function __map_bucket_hash(k: usize, hash_fn: (usize) => i32, seed: i32): i32 {
+    if (seed != 0) { return __map_fnv_str_seeded(k as string, seed); }
+    return hash_fn(k);
+}
 
 // __map_lookup returns the entry index of the matching key, or -1 if
 // not present (probing details: __map_lookup_keyed).
@@ -712,7 +808,7 @@ function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: 
         return 0 - 1;
     }
 
-    var bucket: i32 = hash_fn(k) & mask;
+    var bucket: i32 = __map_bucket_hash(k, hash_fn, __map_seed(buf)) & mask;
     while (true) {
         var b: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
         if (b == 0 - 1) { return 0 - 1; }
@@ -749,6 +845,7 @@ pub function __map_lookup_val_keyed(m: usize, k: usize, hash_fn: (usize) => i32,
 
 function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
     var oldBuf: usize = __load_ptr(m);
+    var seed: i32 = __map_seed(oldBuf);
     var oldCap: i32 = __load_i32(oldBuf);
     var oldLen: i32 = __load_i32(oldBuf + 4);
     var oldKK:  i32 = __load_i32(oldBuf + 8);
@@ -765,6 +862,8 @@ function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
     __store_i32(newBuf + 4,  oldLen);
     __store_i32(newBuf + 8,  oldKK);
     __store_i32(newBuf + 12, oldVK);
+    __store_i32(newBuf + 16, seed);   // a grow must not change the map's hash
+    __store_i32(newBuf + 20, 0);
     __memset(newBuf + hdr, 255, newCap * 4);
     var newEntries: usize = newBuf + hdr + newCap * 4;
     var i: i32 = 0;
@@ -773,7 +872,7 @@ function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
         var val: usize = __load_ptr(oldEntries + i * entryStride + ptrW);
         __store_ptr(newEntries + i * entryStride,        key);
         __store_ptr(newEntries + i * entryStride + ptrW, val);
-        var bucket: i32 = hash_fn(key) & newMask;
+        var bucket: i32 = __map_bucket_hash(key, hash_fn, seed) & newMask;
         while (true) {
             var b: i32 = __load_i32(newBuf + hdr + bucket * 4);
             if (b == 0 - 1) {
@@ -805,7 +904,7 @@ pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
     var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-    var bucket: i32 = hash_fn(k) & mask;
+    var bucket: i32 = __map_bucket_hash(k, hash_fn, __map_seed(buf)) & mask;
     var insertSlot: i32 = 0 - 1;
     var done: boolean = false;
     while (!done) {
@@ -835,13 +934,14 @@ pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)
 
 pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): boolean {
     var buf: usize = __load_ptr(m);
+    var seed: i32 = __map_seed(buf);
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);
     var mask: i32 = cap - 1;
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
     var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-    var bucket: i32 = hash_fn(k) & mask;
+    var bucket: i32 = __map_bucket_hash(k, hash_fn, seed) & mask;
     var foundBucket: i32 = 0 - 1;
     var idx: i32 = 0;
     while (true) {
@@ -866,7 +966,7 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
         // as the scalar path. See the module header's "Iteration
         // order" contract (#4388).
         var lastKey: usize = __load_ptr(entriesBase + last * entryStride);
-        var lastBucket: i32 = hash_fn(lastKey) & mask;
+        var lastBucket: i32 = __map_bucket_hash(lastKey, hash_fn, seed) & mask;
         while (__load_i32(buf + __map_hdr(buf) + lastBucket * 4) != last) {
             lastBucket = (lastBucket + 1) & mask;
         }

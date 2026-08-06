@@ -1279,6 +1279,24 @@ var TrmcEnabled = true
 // refcount and isn't the high-bit static sentinel.
 const RcPoison = 0x7EEDFACE
 
+// MapHeaderBytes is the size of a core/map kv-buffer header — the bytes
+// before the bucket array. Layout: cap+0, len+4, keyKind+8, valTag+12,
+// hashSeed+16, pad+20 (see core/map.fern's module header).
+//
+// It is the SINGLE Go-side spelling of a constant that also exists in Fern
+// as `__map_hdr_bytes`, and the two must agree exactly: the Fern runtime
+// allocates and indexes the buffer, while the Go side both frees it
+// (__fern_map_drop, once per backend) and walks its entry column (the
+// generated __drop_map_* loops in internal/ir). Disagreeing by 8 bytes
+// makes every column walk read the entry array off by two slots, which
+// presents as a SEGV in the drop path rather than as anything resembling a
+// layout bug — and it does so on arm64 first, because its 16-byte entry
+// stride puts the misread further out than wasm32's 8.
+//
+// A test pins the two spellings together (internal/e2e's map header check),
+// so widening the header again means changing both and nothing else.
+const MapHeaderBytes = 24
+
 // CodegenMu serialises native codegen calls that read or
 // write `TwoWordOverride`. arm64.Emit toggles the flag during
 // its Emit body; x86_64.Emit reads it via `ir.LowerWith`.

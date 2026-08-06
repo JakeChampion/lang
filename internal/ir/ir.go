@@ -12040,6 +12040,15 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __map_hash_seed(): i32 — core/map's per-process string-hash seed
+	// (#6194). Same runtime-helper shape as the probes around it: each
+	// backend owns the cached word and the lazy CSPRNG draw that fills it.
+	if id.Name == "__map_hash_seed" && len(n.Args) == 0 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_map_hash_seed", I32: 0})
+			return nil
+		}
+	}
 	// __heap_bump_bytes(): i64 — Phase 6 measurement probe. Returns the
 	// bump allocator's high-water mark in bytes (current cursor minus the
 	// region base; 0 before the first allocation). The cursor only moves
@@ -16449,11 +16458,11 @@ func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
 	b.emit(Op{Kind: OpLoad})
 	b.emit(Op{Kind: OpStoreLocal, I32: lenSlot})
 
-	// entriesBase = buf + 16 + cap * 4
+	// entriesBase = buf + ast.MapHeaderBytes + cap * 4
 	entriesSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mv_entries_%d", entriesSlot)] = entriesSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
-	b.emit(Op{Kind: OpConstI32, I32: 16})
+	b.emit(Op{Kind: OpConstI32, I32: ast.MapHeaderBytes})
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpLoadLocal, I32: capSlot})
 	b.emit(Op{Kind: OpConstI32, I32: 4})
@@ -16623,11 +16632,11 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 	b.emit(Op{Kind: OpLoad})
 	b.emit(Op{Kind: OpStoreLocal, I32: lenSlot})
 
-	// entriesBase = buf + 16 + cap * 4
+	// entriesBase = buf + ast.MapHeaderBytes + cap * 4
 	entriesSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mk_entries_%d", entriesSlot)] = entriesSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: bufSlot})
-	b.emit(Op{Kind: OpConstI32, I32: 16})
+	b.emit(Op{Kind: OpConstI32, I32: ast.MapHeaderBytes})
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpLoadLocal, I32: capSlot})
 	b.emit(Op{Kind: OpConstI32, I32: 4})

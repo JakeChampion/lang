@@ -58,7 +58,8 @@ function main(): i32 {
         "open_file", "syscall3", "raw_scratch", "syscall4", "raw_environ",
         "udp_send", "read_all_stdin", "arg_at", "proc_fork", "proc_waitpid",
         "proc_exec", "arr_reverse", "arr_concat", "arr_push_shared_count",
-        "arr_push_shared_bytes", "const_struct", "clz", "ctz", "popcount"
+        "arr_push_shared_bytes", "const_struct", "clz", "ctz", "popcount",
+        "map_hash_seed"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;
@@ -124,7 +125,8 @@ function main(): i32 {
         ir.op_arr_make(2, 0), ir.op_str_concat(), ir.op_map_len(),
         ir.op_struct_make("S", 1), ir.op_call_direct("f", 1), ir.op_if(0),
         ir.op_br(1), ir.op_drop(), ir.op_return(),
-        ir.op_clz(32), ir.op_ctz(64), ir.op_popcount(32)
+        ir.op_clz(32), ir.op_ctz(64), ir.op_popcount(32),
+        ir.op_map_hash_seed()
     ];
     var names: string[] = [
         "const_i32", "const_str", "load_local",
@@ -134,7 +136,8 @@ function main(): i32 {
         "arr_make", "str_concat", "map_len",
         "struct_make", "call_direct", "if",
         "br", "drop", "return",
-        "clz", "ctz", "popcount"
+        "clz", "ctz", "popcount",
+        "map_hash_seed"
     ];
     var tag_ok: i32 = 0;
     var tag_bad: i32 = 0;

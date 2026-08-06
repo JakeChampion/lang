@@ -546,6 +546,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesArrPushSharedBytes {
 		g.emitArrPushSharedBytesRuntime()
 	}
+	if g.usesMapHashSeed {
+		g.emitMapHashSeedRuntime()
+	}
 	if g.usesHeapBumpBytes {
 		g.emitHeapBumpBytesRuntime()
 	}
@@ -974,6 +977,11 @@ type generator struct {
 	// __fern_arr_push_grow adds to at the same cliff the counter counts).
 	// Set when the IR emits the matching OpCallDirect.
 	usesArrPushSharedBytes bool
+	// usesMapHashSeed gates `__fern_map_hash_seed` — core/map's
+	// per-process string-hash seed (#6194). Set when the IR emits the
+	// matching OpCallDirect; also pulls in __fern_random_i32, which fills
+	// the cached word on first call.
+	usesMapHashSeed bool
 	// usesHeapBumpBytes gates the Phase 6 measurement reader
 	// `__fern_heap_bump_bytes` (returns __fern_heap_ptr − __fern_heap_base,
 	// the bump high-water mark). Set when the IR emits the matching
@@ -1169,6 +1177,9 @@ func (g *generator) recordUse(target string) {
 		g.usesArrPushSharedCount = true
 	case "__fern_arr_push_shared_bytes":
 		g.usesArrPushSharedBytes = true
+	case "__fern_map_hash_seed":
+		g.usesMapHashSeed = true
+		g.usesRandomI32 = true // the lazy first-call draw
 	case "__fern_heap_bump_bytes":
 		g.usesHeapBumpBytes = true
 		g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
@@ -4432,7 +4443,7 @@ func (g *generator) emitDataSections() {
 	// path spill is overwritten on each call, but the value
 	// is consumed immediately by OpLoadByte before the next
 	// __str_idx fires).
-	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesReaderWriter || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount || ast.LeakCheckEnabled {
+	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesReaderWriter || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount || g.usesMapHashSeed || ast.LeakCheckEnabled {
 		g.line("")
 		g.line(".section .bss")
 		if ast.LeakCheckEnabled {
@@ -4523,6 +4534,15 @@ func (g *generator) emitDataSections() {
 			// emitArrPushSharedBytesRuntime for why the count alone is
 			// not a ranking signal.
 			g.label("__fern_arr_push_copied")
+			g.line("\t.quad 0")
+		}
+		if g.usesMapHashSeed {
+			// core/map's per-process string-hash seed (#6194), i32 in
+			// the low word. Zero means "not yet drawn" AND is core/map's
+			// "unseeded" sentinel, so __fern_map_hash_seed forces the
+			// drawn value nonzero and the two readings can't collide.
+			g.line(".align 8")
+			g.label("__fern_map_seed")
 			g.line("\t.quad 0")
 		}
 		if ast.RcFreeEnabled && g.usesAlloc {
@@ -5221,7 +5241,7 @@ func (g *generator) emitArrDecRuntime() {
 // handle `m` is a heap cell whose rc lives at [m-8] and whose buf
 // pointer (the buckets+entries buffer) lives at [m+0]. On the LAST
 // reference (rc==1) the handle's storage is returned to the freelist:
-// first the buf (size = 16 + cap*(4+entryStride), cap at [buf+0],
+// first the buf (size = 24 + cap*(4+entryStride), cap at [buf+0],
 // entryStride = 2*ptrW = 16 on x86-64), then the 16-byte handle cell
 // itself (base = m-8). Entry KEYS / VALUES are NOT walked here — their
 // rc accounting is untouched, so they leak exactly as before (a
@@ -5272,7 +5292,7 @@ func (g *generator) emitMapDropRuntime() {
 	g.emit("jb .Lmapdrop_freehandle")
 	g.emit("mov ecx, dword ptr [rdx]") // cap (zero-extended)
 	g.emit("imul rcx, rcx, 20")        // cap * (4 + entryStride=16)
-	g.emit("add rcx, 16")              // + 16-byte header = size
+	g.emit(fmt.Sprintf("add rcx, %d", ast.MapHeaderBytes)) // + kv header = size
 	g.emit("mov rsi, rcx")             // size (arg2)
 	g.emit("mov rdi, rdx")             // base = buf (arg1)
 	g.emit("call __fern_free")
@@ -5711,6 +5731,40 @@ func (g *generator) emitArrPushSharedCountRuntime() {
 	g.emit("mov eax, dword ptr [rip + __fern_arr_push_shared]")
 	g.emit("ret")
 	g.line(".size __fern_arr_push_shared_count, .-__fern_arr_push_shared_count")
+}
+
+// emitMapHashSeedRuntime emits `__fern_map_hash_seed() -> i32` — the
+// per-process string-hash seed core/map mixes into its FNV basis so an
+// attacker who controls key strings cannot precompute a colliding set
+// offline (#6194).
+//
+// PER PROCESS, NOT PER MAP: the draw is a getrandom syscall, which a program
+// that creates maps freely must not pay repeatedly. The cached word makes
+// every map after the first a load.
+//
+// The cache flag and the value are the SAME word: zero means "not yet
+// drawn", and `or eax, 1` forces the drawn value nonzero so a legitimately
+// drawn seed can never read back as undrawn. That also lines up with
+// core/map's own convention, where a zero seed means "unseeded" and selects
+// the caller-supplied hash instead of the seeded string hash — a seed of 0
+// escaping into the buffer would silently disable seeding for that map.
+func (g *generator) emitMapHashSeedRuntime() {
+	g.line("")
+	g.line(".globl __fern_map_hash_seed")
+	g.line(".type __fern_map_hash_seed, @function")
+	g.label("__fern_map_hash_seed")
+	g.emit("mov eax, dword ptr [rip + __fern_map_seed]")
+	g.emit("test eax, eax")
+	g.emit("jnz .Lmapseed_ret")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("call __fern_random_i32")
+	g.emit("or eax, 1") // never 0 — see the doc above
+	g.emit("mov dword ptr [rip + __fern_map_seed], eax")
+	g.emit("pop rbp")
+	g.label(".Lmapseed_ret")
+	g.emit("ret")
+	g.line(".size __fern_map_hash_seed, .-__fern_map_hash_seed")
 }
 
 // emitArrPushSharedBytesRuntime emits `__fern_arr_push_shared_bytes() -> i64`

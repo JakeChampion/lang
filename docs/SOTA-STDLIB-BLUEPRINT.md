@@ -121,7 +121,7 @@ the same treatment; it was left alone here to keep the change reviewable.
 | `Map` layout | Open addressing, separate key/value columns | SwissTable control bytes + group probe | BLOCKED on SIMD; **SWAR variant viable** |
 | String hash | **FNV-1a over 4-byte blocks + fmix32 avalanche** | wyhash / XXH3 | **DONE (this pass)** |
 | Scalar hash | Wang mix | Fine | OK |
-| Adversarial keys | None — no seeding | SipHash, randomised seed | GAP (matters if Fern serves untrusted input) |
+| Adversarial keys | **Per-process seed XORed into the FNV basis, default on** | SipHash, randomised seed | **DONE for offline attacks (this pass)**; SipHash still wanted against an online oracle |
 | Tiny map | **Linear scan at or below 8 entries** | Linear scan below ~8 entries | **DONE (this pass)** |
 | Checksum | — | xxHash / CRC32 | GAP |
 
@@ -138,9 +138,27 @@ assembling a 64-bit word from eight indexed byte loads costs more than it
 saves. That makes it a bigger change than it looks, gated on how comfortable
 the language is exposing string data pointers.
 
-The seeding gap is a security consideration, not just a performance one: with
-an unseeded, publicly-known hash, an attacker who controls map keys can force
+Seeding is a security consideration, not just a performance one: with an
+unseeded, publicly-known hash, an attacker who controls map keys can force
 collisions. That matters for the HTTP/JSON surface, less so for the compiler.
+
+String-keyed maps now carry a **per-process seed** (#6194), drawn once from the
+same CSPRNG as `random_i32` via the compiler-internal `__map_hash_seed()` and
+cached in a runtime word, then XORed into the FNV offset basis. It is on by
+default: an opt-in seed would have to be threaded through map literals,
+`map.from` and `json.parse` to reach the keys that actually need it, which is
+exactly the surface an attacker picks. Enabling it by default is safe because
+bucket order is not observable — `core/map` iterates the insertion-ordered
+entry array, never the bucket table, so `std/json`'s key-order preservation is
+unaffected.
+
+What that closes and what it does not: the seed defeats OFFLINE precomputation,
+which is the whole of the practical hash-flooding attack, because the colliding
+set has to be computed against a seed drawn per process. It does NOT defeat an
+attacker with an online timing oracle — FNV is invertible, so enough per-request
+feedback recovers the seed. SipHash-1-3 behind the same seed slot is the
+upgrade, and it is a drop-in: `__map_fnv_str_seeded` is the only consumer of the
+seed, so nothing outside it depends on how the seed is used.
 
 ### Strings and bytes
 
@@ -263,9 +281,10 @@ constraints above.
 2. **Eisel–Lemire `parse_float`.** The sibling of the Dragonbox work; needs a
    128-bit high-multiply.
 3. ~~Move `std/fuzz` onto the seeded generator~~ — done, see below.
-4. ~~Small-map linear-scan path~~ — done, see below. What remains on
-   `core/map` is a **per-process hash seed** (the hash is unseeded and public,
-   so attacker-controlled keys can force collisions) and the SWAR group probe.
+4. ~~Small-map linear-scan path~~, ~~per-process hash seed~~ — done, see
+   below. What remains on `core/map` is the SWAR group probe, and SipHash for
+   the seeded path (the seed closes offline precomputation; an online timing
+   oracle can still recover an invertible FNV).
 5. ~~Adaptive sort~~, ~~`random_int` modulo bias~~, ~~SWAR bit counting~~,
    ~~bit-counting intrinsics~~,
    ~~map string hash~~, ~~seeded PCG32~~ — done, see below.

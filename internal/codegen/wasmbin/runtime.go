@@ -365,6 +365,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// 4 random bytes to the fixed scratch slot
 					// and returns them as an i32.
 					needs.add("__fern_random_i32")
+				case "__fern_map_hash_seed":
+					// core/map's per-process string-hash seed —
+					// one lazy __fern_random_i32 draw, cached at
+					// mapHashSeedAddr.
+					needs.add("__fern_random_i32")
+					needs.add("__fern_map_hash_seed")
 				case "__fern_random_bytes":
 					// (n) → (data, len) — wasi_random_get into
 					// a fresh n-byte heap allocation. Returns
@@ -1085,6 +1091,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildRandomI32Body,
 	},
+	"__fern_map_hash_seed": {
+		// () → i32 — core/map's per-process string-hash seed, drawn once
+		// via __fern_random_i32 and cached. See buildMapHashSeedBody.
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildMapHashSeedBody,
+	},
 	"__fern_random_bytes": {
 		// (n) → (data, len) — heap-form string of n random
 		// bytes via wasi_random_get. Empty (n=0) → inline empty
@@ -1385,7 +1398,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 	},
 	"__fern_map_drop": {
 		// (m) → m. Phase 3 map reclamation handler; on the last
-		// reference (rc==1) frees the buf (size = 16 + cap*(4+8))
+		// reference (rc==1) frees the buf (size = 24 + cap*(4+8))
 		// then the 16-byte handle. See buildMapDropBody.
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
@@ -2059,6 +2072,18 @@ const arrPushSharedAddr = 56
 // threaded accumulator over 20k appends copies 2.3 GB.
 const arrPushCopiedAddr = 72
 
+// mapHashSeedAddr is the 4-byte slot at mem [96..100) holding core/map's
+// per-process string-hash seed (#6194). Zero means "not yet drawn";
+// __fern_map_hash_seed forces the drawn value nonzero so the slot doubles as
+// its own cache flag — and so a seed of 0, which is core/map's "unseeded"
+// sentinel, can never reach a map header.
+//
+// 96 is the first address past the named low-memory scratch (which tops out
+// at stderrHandleAddr+4 = 96) and well below freelistHeadsAddr at 256, so it
+// is in the genuinely unclaimed window rather than sharing a slot with
+// another helper.
+const mapHashSeedAddr = 96
+
 // buildStrLenBody assembles the wasm bytes for __fern_str_len.
 //
 // Signature: (param $data i32) (param $len i32) (result i32)
@@ -2385,7 +2410,7 @@ func buildArrDecBody(helperIdxs map[string]uint32) []byte {
 // buildMapDropBody — (m) → m. Phase 3 map reclamation handler (wasm
 // mirror of the native helpers). A Map handle `m` has its rc at
 // [m-8] and its buf pointer at [m+0]. On the last reference (rc==1)
-// the storage returns to the freelist: the buf (size = 16 +
+// the storage returns to the freelist: the buf (size = 24 +
 // cap*(4+entryStride), cap at [buf+0], entryStride = 2*ptrW = 8 on
 // wasm32) then the 16-byte handle cell (base = m-8). Entry keys/values
 // are NOT walked — their accounting is untouched (they leak, as
@@ -2442,9 +2467,9 @@ func buildMapDropBody(helperIdxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, 2)
 			body = memory.InstI32Load(body, 2, 0)
 			body = inst.InstLocalSet(body, 3)
-			// __free(base = buf, size = 16 + cap*(4+entryStride=8) = 16 + cap*12)
+			// __free(base = buf, size = 24 + cap*(4+entryStride=8) = 24 + cap*12)
 			body = inst.InstLocalGet(body, 2) // base
-			body = inst.InstI32Const(body, 16)
+			body = inst.InstI32Const(body, ast.MapHeaderBytes)
 			body = inst.InstLocalGet(body, 3)
 			body = inst.InstI32Const(body, 12)
 			body = numeric.InstI32Mul(body)

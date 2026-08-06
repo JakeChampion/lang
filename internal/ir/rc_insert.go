@@ -2363,9 +2363,9 @@ func genMapValDropFn(perValueDrop string, ptrW int) *Func {
 		{Kind: OpAdd},
 		{Kind: OpLoad},
 		{Kind: OpStoreLocal, I32: 2},
-		// entriesBase = buf + 16 + cap*4   (cap = mem[buf])
+		// entriesBase = buf + ast.MapHeaderBytes + cap*4   (cap = mem[buf])
 		{Kind: OpLoadLocal, I32: 1},
-		{Kind: OpConstI32, I32: 16},
+		{Kind: OpConstI32, I32: ast.MapHeaderBytes},
 		{Kind: OpAdd},
 		{Kind: OpLoadLocal, I32: 1},
 		{Kind: OpLoad},
@@ -2489,9 +2489,9 @@ func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 		{Kind: OpAdd},
 		{Kind: OpLoad},
 		{Kind: OpStoreLocal, I32: 2},
-		// entriesBase = buf + 16 + cap*4   (cap = mem[buf])
+		// entriesBase = buf + ast.MapHeaderBytes + cap*4   (cap = mem[buf])
 		{Kind: OpLoadLocal, I32: 1},
-		{Kind: OpConstI32, I32: 16},
+		{Kind: OpConstI32, I32: ast.MapHeaderBytes},
 		{Kind: OpAdd},
 		{Kind: OpLoadLocal, I32: 1},
 		{Kind: OpLoad},

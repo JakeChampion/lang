@@ -139,13 +139,28 @@ pub function str_values(cache: irlower.LowerResult[]): string[] {
 // low scratch sits below it. That scratch is fully spoken for — fd_write
 // iovec at 0/4/8, the newline byte at 12, the WASI out-parameter slot at 16
 // (path_open writes the opened fd there, fd_readdir / fd_write their counts),
-// the rc==1 append-cliff counter at 20 (see arr_push_shared_addr), and the
-// 8-byte cliff WEIGHT accumulator at 24 (see arr_push_copied_addr).
+// the rc==1 append-cliff counter at 20 (see arr_push_shared_addr), the
+// 8-byte cliff WEIGHT accumulator at 24 (see arr_push_copied_addr), and
+// core/map's hash seed at 32 (see map_hash_seed_addr).
 // Named rather than inlined because const_str now emits offsets RELATIVE to it
 // (#5331 step 1), so the two must agree by construction — and because the
 // weight accumulator moved this base from 24 to 32, which every literal offset
 // and both derived bases (fl_base / heap_base) follow automatically.
-pub function str_region_base(): i32 { return 32; }
+pub function str_region_base(): i32 { return 40; }
+
+// map_hash_seed_addr is the 4-byte slot holding core/map's per-process
+// string-hash seed (#6194) — the value the map_hash_seed op lazily draws from
+// $__fern_random_i32 and caches, so a program creating maps freely pays one
+// random_get rather than one per map. Zero means "not yet drawn"; the drawn
+// value is forced nonzero, which is also what keeps it out of collision with
+// core/map's own "unseeded" sentinel.
+//
+// 32, taking the first word of what was the string region and pushing
+// str_region_base 32 -> 40 (the accumulator at 24 moved it 24 -> 32 the same
+// way). Every literal offset and both derived bases follow that base
+// automatically, so widening the scratch again means editing one number.
+// 40 rather than 36 keeps the region 8-aligned for the i64 slots below it.
+pub function map_hash_seed_addr(): i32 { return 32; }
 
 // arr_push_copied_addr is the 8-byte slot holding the SAME cliff, weighted by
 // the bytes each crossing copied (len * 4 — wasm-IR arrays are 4-byte slots),
@@ -236,7 +251,9 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "print_str")) { out = out.append("print_str"); }
     if (module_emits_op_cached(cache, "putchar")) { out = out.append("putchar"); }
     if (module_emits_op_cached(cache, "random_bytes")) { out = out.append("random_bytes"); }
-    if (module_emits_op_cached(cache, "random_i32")) { out = out.append("random_i32"); }
+    if (module_emits_op_cached(cache, "random_i32") || module_emits_op_cached(cache, "map_hash_seed")) {
+        out = out.append("random_i32");   // map_hash_seed's lazy draw calls it
+    }
     if (module_emits_op_cached(cache, "read_chunk")) { out = out.append("read_chunk"); }
     if (module_emits_op_cached(cache, "read_dir")) { out = out.append("read_dir"); }
     if (module_emits_op_cached(cache, "read_file")) { out = out.append("read_file"); }
@@ -1289,7 +1306,8 @@ pub function module_calls_strarrarr_free(cache: irlower.LowerResult[]): boolean 
 // module_uses_random reports whether the module calls random_bytes or random_i32
 // (so the wasi random_get import is emitted).
 pub function module_uses_random(cache: irlower.LowerResult[]): boolean {
-    return module_emits_op_cached(cache, "random_bytes") || module_emits_op_cached(cache, "random_i32");
+    return module_emits_op_cached(cache, "random_bytes") || module_emits_op_cached(cache, "random_i32")
+        || module_emits_op_cached(cache, "map_hash_seed");   // its lazy draw calls $__fern_random_i32
 }
 
 // module_uses_divrem reports whether any function uses i32 div/rem (so the
@@ -3309,6 +3327,18 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // $__fern_arr_push accumulates on its un-share path. i64, not i32:
             // it counts bytes, not appends.
             out = out + "    i32.const " + util.i32_to_string(arr_push_copied_addr()) + "\n    i64.load\n";
+        } else if (o.kind_tag == 222) {  // map_hash_seed
+            // core/map's per-process string-hash seed: draw once via
+            // $__fern_random_i32, force it nonzero, cache it at the fixed low
+            // slot. Inline rather than a helper — wasm's structured `if` needs
+            // no label. The self-host's own Map lowers to the $__fern_map_*
+            // runtime and does not consult this; the op exists so core/map's
+            // bodies compile and link.
+            var seed_at: string = util.i32_to_string(map_hash_seed_addr());
+            out = out + "    i32.const " + seed_at + "\n    i32.load\n    i32.eqz\n    if\n";
+            out = out + "    i32.const " + seed_at + "\n    call $__fern_random_i32\n";
+            out = out + "    i32.const 1\n    i32.or\n    i32.store\n    end\n";
+            out = out + "    i32.const " + seed_at + "\n    i32.load\n";
         } else if (o.kind_tag == 216) {  // arr_push_shared_count
             // The rc==1 append cliff counter — a plain i32 load from the fixed
             // low-memory slot $__fern_arr_push bumps on its un-share path. i32,

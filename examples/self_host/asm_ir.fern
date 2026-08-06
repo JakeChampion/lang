@@ -358,6 +358,33 @@ function emit_ir_random_i32(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+// emit_ir_map_hash_seed appends the __fern_map_hash_seed() helper — core/map's
+// per-process string-hash seed (#6194), drawn once via __fern_random_i32 and
+// cached in the unit-local __fern_map_seed word.
+//
+// Forced nonzero: the word doubles as its own "already drawn" flag, and 0 is
+// also core/map's "unseeded" sentinel, so a drawn 0 would both re-draw every
+// call and silently leave that map unseeded.
+//
+// A CALL rather than an inline read (unlike __arr_push_shared_count) because
+// the lazy draw has a branch, and a helper keeps the label out of every call
+// site. Emitted beside random_i32, and heap-independent for the same reason.
+function emit_ir_map_hash_seed(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_map_hash_seed:\n");
+    s = s.write("    movl __fern_map_seed(%rip), %eax\n");
+    s = s.write("    testl %eax, %eax\n");
+    s = s.write("    jne .Lmapseed_ret\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    call __fern_random_i32\n");
+    s = s.write("    orl $1, %eax\n");
+    s = s.write("    movl %eax, __fern_map_seed(%rip)\n");
+    s = s.write("    leave\n");
+    s = s.write(".Lmapseed_ret:\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 // The clock helpers (__fern_monotonic_ns / _now_unix_ms / _now_ns) are now Fern
 // runtime functions (#2649): asmcore.rt_src_monotonic_ns / _now_unix_ms / _now_ns,
 // lowered through the IR pipeline via emit_ir_runtime_fern_fn in the entry block
@@ -1334,6 +1361,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_heap_base: .quad 0\n");
     s = s.write("    .align 8\n");
     s = s.write("__fern_rc_underflow: .quad 0\n");
+    s = s.write("    .align 8\n");
+    // core/map's per-process string-hash seed (#6194). Read and filled only
+    // by __fern_map_hash_seed, which lives in this same unit, so it needs no
+    // .globl (unlike the cliff counter below, which ops read inline).
+    s = s.write("__fern_map_seed: .quad 0\n");
     s = s.write("    .align 8\n");
     // The rc==1 append cliff counter (#6023): appends that copied a buffer which
     // still had spare capacity, so the copy was bought by an extra reference
@@ -5231,6 +5263,16 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    movq __fern_arr_push_copied(%rip), %rax\n");
             s = s.write("    pushq %rax\n");
             s = s.need("heap");
+        } else if (o.kind_tag == 222) {  // map_hash_seed
+            // core/map's per-process string-hash seed. A call, not an inline
+            // read: the draw is lazy, so the branch lives in the helper.
+            // Needs random_i32 for that draw. The self-host's own Map lowers
+            // to __fern_map_* and does not consult this — the op exists so
+            // core/map's bodies link (see the intrinsics section below).
+            s = s.need("random_i32");
+            s = s.need("map_hash_seed");
+            s = s.write("    call __fern_map_hash_seed\n");
+            s = s.write("    pushq %rax\n");
         } else if (o.kind_tag == 216) {  // arr_push_shared_count
             // The rc==1 append cliff counter, a plain .bss word bumped by
             // __fern_arr_push's un-share path. Needs the heap runtime for the
@@ -7362,6 +7404,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
     if (s.has_need("random_i32")) { s = emit_ir_random_i32(s); }
+    if (s.has_need("map_hash_seed")) { s = emit_ir_map_hash_seed(s); }
     // fork / wait4 allocate nothing either — same heap-independent gating.
     if (s.has_need("proc_fork")) { s = emit_ir_proc_fork(s); }
     if (s.has_need("proc_waitpid")) { s = emit_ir_proc_waitpid(s); }

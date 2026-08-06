@@ -592,6 +592,28 @@ func New() *Interp {
 	// cliff to cross under the interpreter, so no bytes copied either — 0,
 	// for exactly the reason the counter beside it reports 0.
 	i.Builtins["__arr_push_shared_bytes"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	// __map_hash_seed(): core/map's per-process string-hash seed (#6194).
+	//
+	// The interpreter never runs core/map.fern — `Map` is a native
+	// *interp.Map over a Go map — so it has no bucket table to seed and the
+	// only way this is reached is a program calling the builtin directly.
+	// It still draws a real per-process seed rather than returning 0, so a
+	// test that asserts "the seed is stable within a run and nonzero" holds
+	// under -interp for the same reason it holds on the compiled backends.
+	// Drawing lazily (rather than at registration) keeps a program that
+	// never touches it from consuming entropy at all.
+	mapHashSeed := int32(0)
+	i.Builtins["__map_hash_seed"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) {
+		if mapHashSeed == 0 {
+			var b [4]byte
+			if _, err := cryptorand.Read(b[:]); err != nil {
+				return nil, fmt.Errorf("__map_hash_seed: %v", err)
+			}
+			v := uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
+			mapHashSeed = int32(v) | 1 // never 0 — 0 is core/map's "unseeded" sentinel
+		}
+		return Number(int64(mapHashSeed)), nil
+	}}
 	// __heap_mark() / __heap_release_to(mark): the arena checkpoint pair. The
 	// interpreter is GC'd, so there is no cursor to capture or rewind — mark
 	// hands back the same "no checkpoint" 0 the codegen backends use when
