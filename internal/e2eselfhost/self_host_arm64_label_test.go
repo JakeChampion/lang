@@ -278,3 +278,124 @@ function imm26_at(code: i32[], at: i32): i32 {
 }
 
 `
+
+// TestSelfHostArm64BranchRange pins #6264: the three branch patchers MASK the
+// displacement into their immediate field, so before this an overflow wrapped
+// into a different, valid-looking branch with nothing reported — the assembler
+// succeeded, the binary linked, and it jumped somewhere arbitrary. The native
+// assembler both errors on this (internal/native/arm64/asm.go) and veneers the
+// imm26 case (veneer.go); this is the refuse-first half of that parity.
+//
+// The self-host compiler's own __text is ~56 MB, so imm26's ±128 MB is not
+// exceeded by today's build and the check is defensive there. imm19 (±1 MB)
+// and imm14 (±32 KB) are intra-function reaches, which a single large lowering
+// function can plausibly cross — those are the live cases.
+func TestSelfHostArm64BranchRange(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host arm64 branch-range e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+
+	source := arm64NativeSrc(t) + "\n" + arm64BranchRangeSelfTestMain
+
+	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
+	if len(wat) == 0 {
+		t.Fatal("wasm emitter produced 0 bytes for the branch-range self-test")
+	}
+	watPath := filepath.Join(dir, "arm64_branchrange_selftest.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", watPath)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("arm64 branch-range self-test failed at check %d\n--- WAT ---\n%s", code, wat)
+	}
+}
+
+// arm64BranchRangeSelfTestMain checks arm64_rel_fits at each field's exact
+// boundary, then drives a real over-range branch through both patch sites (the
+// immediate one for a backward branch, arm64_asm_resolve for a forward one) and
+// asserts it is recorded rather than encoded. imm14 is used for the integration
+// half because ±32 KB is 8192 instructions — reachable in a test, where imm26
+// would need 33 million.
+const arm64BranchRangeSelfTestMain = `
+function main(): i32 {
+    // ---- imm26: field holds rel/4, so the reach is +/- (1 << 27) bytes ----
+    if (!arm64_rel_fits(0, 26)) { return 1; }
+    if (!arm64_rel_fits(4 * 33554431, 26)) { return 2; }        // (1<<25)-1 insns
+    if (arm64_rel_fits(4 * 33554432, 26)) { return 3; }         // one past the top
+    if (!arm64_rel_fits(0 - 4 * 33554432, 26)) { return 4; }    // -(1<<25) insns
+    if (arm64_rel_fits(0 - 4 * 33554436, 26)) { return 5; }     // one past the bottom
+
+    // ---- imm19: +/- 1 MB ----
+    if (!arm64_rel_fits(4 * 262143, 19)) { return 6; }
+    if (arm64_rel_fits(4 * 262144, 19)) { return 7; }
+    if (!arm64_rel_fits(0 - 4 * 262144, 19)) { return 8; }
+    if (arm64_rel_fits(0 - 4 * 262148, 19)) { return 9; }
+
+    // ---- imm14: +/- 32 KB ----
+    if (!arm64_rel_fits(4 * 8191, 14)) { return 10; }
+    if (arm64_rel_fits(4 * 8192, 14)) { return 11; }
+    if (!arm64_rel_fits(0 - 4 * 8192, 14)) { return 12; }
+    if (arm64_rel_fits(0 - 4 * 8196, 14)) { return 13; }
+
+    // A displacement that is not 4-aligned is unencodable at any width.
+    if (arm64_rel_fits(2, 26)) { return 14; }
+    if (arm64_rel_fits(0 - 1, 19)) { return 15; }
+
+    // The kind -> width mapping the patch sites use.
+    if (arm64_branch_field_bits(0) != 26) { return 16; }
+    if (arm64_branch_field_bits(1) != 19) { return 17; }
+    if (arm64_branch_field_bits(2) != 14) { return 18; }
+
+    // ---- integration, BACKWARD (patched immediately) ----
+    // Place the label, put 8200 instructions between it and the tbz, and the
+    // displacement (-32800) is past imm14's -32768.
+    var a: Arm64Asm = arm64_asm_new();
+    a = arm64_asm_label(a, "far");
+    var i: i32 = 0;
+    while (i < 8200) {
+        a = Arm64Asm { ...a, code: arm64_movz(a.code, arm64_x0(), 0, 0, false) };
+        i = i + 1;
+    }
+    var before: i32 = a.code.len();
+    a = arm64_asm_tbz(a, arm64_x1(), 0, "far");
+    if (a.oor.len() != 1) { return 19; }
+    // The placeholder is still there (the instruction was emitted, not patched)
+    // and no fixup was queued, so nothing downstream will encode it either.
+    if (a.code.len() != before + 4) { return 20; }
+    if (a.fix_offs.len() != 0) { return 21; }
+
+    // ---- integration, FORWARD (resolved later) ----
+    var b: Arm64Asm = arm64_asm_new();
+    b = arm64_asm_tbz(b, arm64_x1(), 0, "ahead");
+    if (b.fix_offs.len() != 1) { return 22; }   // queued, range not yet knowable
+    var j: i32 = 0;
+    while (j < 8200) {
+        b = Arm64Asm { ...b, code: arm64_movz(b.code, arm64_x0(), 0, 0, false) };
+        j = j + 1;
+    }
+    b = arm64_asm_label(b, "ahead");
+    if (b.oor.len() != 0) { return 23; }        // still unresolved at this point
+    b = arm64_asm_resolve(b);
+    if (b.oor.len() != 1) { return 24; }
+
+    // An in-range branch is unaffected: same shape, 8 instructions apart.
+    var c: Arm64Asm = arm64_asm_new();
+    c = arm64_asm_label(c, "near");
+    var k: i32 = 0;
+    while (k < 8) {
+        c = Arm64Asm { ...c, code: arm64_movz(c.code, arm64_x0(), 0, 0, false) };
+        k = k + 1;
+    }
+    c = arm64_asm_tbz(c, arm64_x1(), 0, "near");
+    if (c.oor.len() != 0) { return 25; }
+    return 0;
+}
+
+`

@@ -384,11 +384,12 @@ pub struct Arm64Asm {
     // than rescanned afterwards: resolve already looks every fixup name up, and
     // a second pass over both tables would be quadratic on a real program.
     unres: string[],
+    oor: string[],       // branches whose displacement overflows its field (see arm64_rel_fits)
 }
 
 // arm64_asm_new returns an empty assembler state.
 function arm64_asm_new(): Arm64Asm {
-    return Arm64Asm { code: [], lab_names: [], lab_offs: [], fix_offs: [], fix_names: [], fix_kinds: [], unres: [] };
+    return Arm64Asm { code: [], lab_names: [], lab_offs: [], fix_offs: [], fix_names: [], fix_kinds: [], unres: [], oor: [] };
 }
 
 // arm64_asm_label records `name` at the current code offset.
@@ -411,6 +412,47 @@ pub function arm64_asm_label_off(a: Arm64Asm, name: string): i32 {
     return 0 - 1;
 }
 
+// ---- branch reach ----
+//
+// The three patchers below MASK the displacement into its immediate field, so
+// an overflow does not fail — it wraps into a different, valid-looking branch.
+// Nothing downstream can tell: the assembler reports success, the binary links,
+// and it jumps somewhere arbitrary at run time. That is the same silence the
+// undefined-label case used to produce, and it is reachable here: clang refuses
+// to link the self-host compiler's own text because its `bl __fern_*` calls
+// exceed imm26's ±128 MB, and this assembler links that text without comment.
+//
+// The native assembler checks (internal/native/arm64/asm.go, "outside the
+// signed %d-bit range") and inserts veneers for imm26 (veneer.go). This is the
+// refuse-first half of that parity: a diagnostic instead of a wrong branch.
+
+// arm64_branch_field_bits is the immediate width a fixup kind patches: imm26
+// for b/bl, imm19 for b.cond/cbz/cbnz, imm14 for tbz/tbnz.
+function arm64_branch_field_bits(kind: i32): i32 {
+    if (kind == 1) { return 19; }
+    if (kind == 2) { return 14; }
+    return 26;
+}
+
+// arm64_rel_fits reports whether a byte displacement is encodable in a signed
+// `bits`-wide instruction-count field. AArch64 scales branch offsets by 4, so
+// the field holds rel/4 and the reach is +/- (1 << (bits + 1)) bytes: 128 MB
+// for imm26, 1 MB for imm19, 32 KB for imm14. A displacement that is not
+// 4-aligned is unencodable at any width.
+function arm64_rel_fits(rel: i32, bits: i32): boolean {
+    if ((rel & 3) != 0) { return false; }
+    var half: i32 = 1;
+    var k: i32 = 0;
+    while (k < bits - 1) { half = half * 2; k = k + 1; }
+    var insns: i32 = rel / 4;
+    return insns >= (0 - half) && insns < half;
+}
+
+// arm64_oor_note describes an over-range branch for the refusal list.
+function arm64_oor_note(name: string, rel: i32, bits: i32): string {
+    return name + " (" + arm64_gas_dec(rel) + " bytes, imm" + arm64_gas_dec(bits) + ")";
+}
+
 // arm64_asm_fixup_or_patch handles a branch placeholder just emitted into
 // a.code (its instruction word at a.code.len()-4). `kind` selects the
 // immediate field. If the target label is already placed, patch now;
@@ -424,6 +466,10 @@ function arm64_asm_fixup_or_patch(own a: Arm64Asm, name: string, kind: i32): Arm
         // `.with` inside the patch helpers down the copy path — one full
         // .text clone per backward branch. Owning `a` lets the field be
         // emptied first, so the local below is the only reference.
+        var bits: i32 = arm64_branch_field_bits(kind);
+        if (!arm64_rel_fits(target - at, bits)) {
+            return Arm64Asm { ...a, oor: a.oor.append(arm64_oor_note(name, target - at, bits)) };
+        }
         var code: i32[] = a.code;
         a = Arm64Asm { ...a, code: [] };
         if (kind == 1) {
@@ -493,6 +539,12 @@ function arm64_asm_resolve(own a: Arm64Asm): Arm64Asm {
             // refusal list, so the CLI reports the label instead of emitting a
             // binary that traps.
             a = Arm64Asm { ...a, unres: a.unres.append(a.fix_names[i]) };
+            i = i + 1;
+            continue;
+        }
+        var rbits: i32 = arm64_branch_field_bits(a.fix_kinds[i]);
+        if (!arm64_rel_fits(target - at, rbits)) {
+            a = Arm64Asm { ...a, oor: a.oor.append(arm64_oor_note(a.fix_names[i], target - at, rbits)) };
             i = i + 1;
             continue;
         }
@@ -3385,6 +3437,11 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
     while (ui < a.unres.len()) {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("label:" + a.unres[ui]) };
         ui = ui + 1;
+    }
+    var oi: i32 = 0;
+    while (oi < a.oor.len()) {
+        p = Arm64GasProg { ...p, unknown: p.unknown.append("branch out of range: " + a.oor[oi]) };
+        oi = oi + 1;
     }
     return Arm64GasProg { ...p, asm: a };
 }
