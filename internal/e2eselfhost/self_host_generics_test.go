@@ -21,7 +21,7 @@ var genericsCases = []struct {
 	src  string
 	exit int
 }{
-	// The two upstream parity cases (internal/e2e/testdata/cases).
+	// The two upstream parity cases (conformance/cases).
 	{"generic-id", "function id[T](x: T): T { return x; } function main(): i32 { var a = id(42); var s = id(\"hi\"); if (s == \"hi\") { return a; } return 0; }", 42},
 	{"generic-box", "struct Box[T] { value: T } function unbox[T](b: Box[T]): T { return b.value; } function main(): i32 { var b: Box[i32] = Box { value: 42 }; return unbox(b); }", 42},
 	// Multiple type params on a function and a struct.

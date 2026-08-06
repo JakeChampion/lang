@@ -320,7 +320,7 @@ func runSelfHostFixtureLeg(t *testing.T, leg selfHostLeg) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, leg.gcc, dir, "fern.fern", "fern")
 
-	root := "testdata/cases"
+	root := conformanceCases
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatalf("read %s: %v", root, err)
