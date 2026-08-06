@@ -5391,3 +5391,38 @@ function main(): i32 { return g(); }`); err != nil {
 		t.Errorf("unshadowed `use` regressed: %v", err)
 	}
 }
+
+// TestScalarModuleHintIsFollowable: E043's "add `import …`" hint must name a
+// module that actually carries the method. For `u8` it named `std/u32`,
+// which declares no u8 methods at all — every `pub function (b: u8) …` in
+// the stdlib is in `std/i32`. Following the advice reproduced the identical
+// error, with nothing to suggest trying elsewhere.
+//
+// Bytes reach users constantly (indexing a string yields u8), so this is a
+// common first error. TestByteDisplayGateAndDispatchAgree above already
+// observed the wrong module name in passing while fixing the Display gate;
+// this pins the hint itself.
+func TestScalarModuleHintIsFollowable(t *testing.T) {
+	cases := []struct {
+		name    string
+		decl    string
+		wantMod string
+	}{
+		{"u8 points at std/i32", `var s: string = "A"; var b: u8 = s[0]; print(b.to_string());`, `std/i32`},
+		{"u32 still points at std/u32", `var x: u32 = 5; print(x.to_string());`, `std/u32`},
+		{"u64 still points at std/u64", `var x: u64 = 5; print(x.to_string());`, `std/u64`},
+		{"i64 still points at std/i64", `var x: i64 = 5; print(x.to_string());`, `std/i64`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkSource(t, "function main(): i32 { "+tc.decl+" return 0; }")
+			if err == nil {
+				t.Fatalf("expected an unresolved-method error")
+			}
+			want := "add `import \"" + tc.wantMod + "\"`"
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("wanted the hint to say %q, got:\n%s", want, err.Error())
+			}
+		})
+	}
+}
