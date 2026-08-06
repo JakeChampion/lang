@@ -1,5 +1,5 @@
 // Data-driven end-to-end fixtures. Each directory under
-// `testdata/cases/<name>/` is a self-contained program that is
+// `conformance/cases/<name>/` is a self-contained program that is
 // compiled and run across every backend (interp, x86-64, arm64,
 // wasm) and checked against its expected stdout and exit code. This
 // is the declarative counterpart to the inline-source backend tests:
@@ -149,10 +149,10 @@ func loadFixture(t *testing.T, dir string) *fixtureSpec {
 	return f
 }
 
-// TestFernFixtures discovers every directory under testdata/cases and
+// TestFernFixtures discovers every directory under conformance/cases and
 // runs it across the backends it opts into.
 func TestFernFixtures(t *testing.T) {
-	root := "testdata/cases"
+	root := conformanceCases
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatalf("read %s: %v", root, err)

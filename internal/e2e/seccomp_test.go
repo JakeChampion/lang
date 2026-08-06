@@ -355,7 +355,7 @@ func TestSeccompFixtureCorpus(t *testing.T) {
 	if os.Getenv("RUN_SECCOMP_CORPUS") != "1" {
 		t.Skip("set RUN_SECCOMP_CORPUS=1 to run the sandbox over the whole fixture corpus (~330 fixtures, built twice)")
 	}
-	root := "testdata/cases"
+	root := conformanceCases
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatalf("read %s: %v", root, err)

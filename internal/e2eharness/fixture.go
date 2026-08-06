@@ -88,3 +88,13 @@ func Contains(xs []string, x string) bool {
 	}
 	return false
 }
+
+// ConformanceCases is the conformance corpus root, expressed relative to
+// a test package directory (internal/e2e and internal/e2eselfhost are
+// both one level below internal/, so the same literal serves both).
+//
+// The corpus deliberately lives OUTSIDE internal/: it describes the
+// language, not any one implementation of it, and both the Go-side
+// backends and the self-host compiler are measured against it. See
+// conformance/README.md for the case format.
+const ConformanceCases = "../../conformance/cases"

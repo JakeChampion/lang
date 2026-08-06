@@ -81,7 +81,7 @@ function main(): i32 {
 	// produced six distinct hashes over fifteen compiles).
 	//
 	// Not caught by TestLowerDeterministicOverFixtureCorpus either: that
-	// globs internal/e2e/testdata/cases, and the programs that exhibited
+	// globs internal/e2e/conformance/cases, and the programs that exhibited
 	// this were examples/tests/* — std/test users, which build many
 	// capturing closures. A corpus guard is only as wide as its corpus.
 	"closure_drop_thunks": `

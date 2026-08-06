@@ -20,7 +20,7 @@ import (
 // Freeing is semantically invisible: a program must produce
 // byte-identical stdout + the same exit code whether or not the
 // freelist is enabled. These tests run the entire data-driven
-// fixture corpus (testdata/cases) BOTH flag-off and flag-on and
+// fixture corpus (conformance/cases) BOTH flag-off and flag-on and
 // assert the two runs agree. Any divergence is a reclamation bug
 // (a freed-then-reused block that was still referenced) surfaced by
 // a real program — exactly the evidence needed before flipping
@@ -67,11 +67,11 @@ func runFixtureArm64FreeOn(t *testing.T, mainPath, stdin string) (string, int) {
 	return runBin(cmd, stdin)
 }
 
-// forEachRunnableFixture walks testdata/cases and invokes fn for
+// forEachRunnableFixture walks conformance/cases and invokes fn for
 // every non-compile-error fixture that targets `backend`.
 func forEachRunnableFixture(t *testing.T, backend string, fn func(t *testing.T, f *fixtureSpec)) {
 	t.Helper()
-	root := "testdata/cases"
+	root := conformanceCases
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatalf("read %s: %v", root, err)
