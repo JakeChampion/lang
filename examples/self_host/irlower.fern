@@ -6134,6 +6134,18 @@ pub function expr_is_u64arr(e: parser.Expr, s: LowerState): boolean {
 pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
     if (cell_get_elem(e, s) == "u64") { return true; }
     match (e) {
+        // A bare literal carrying a `u64` SUFFIX is unsigned. There was no
+        // ExprNumber arm at all, so a comparison of two literals fell through to
+        // the signed instruction: `191u64 < 9223372036854776520u64` read the RHS
+        // as a negative i64 and answered FALSE. Silent — no trap, no diagnostic.
+        //
+        // Only bare literals were affected. The same values through locals are
+        // fine, because the slot carries u64 (the ExprIdent arm above), which is
+        // why this survived: almost everything reaches a compare through a slot.
+        parser.ExprNumber(num) => {
+            if (num.is_float) { return false; }
+            return num.suffix == "u64";
+        },
         parser.ExprIdent(id) => { return s.is_u64_slot(s.slot_of(id.name)); },
         parser.ExprIndex(ix) => {
             match (ix.array) {
