@@ -1080,6 +1080,32 @@ pub function expr_is_result(e: parser.Expr, s: LowerState): boolean {
 // for i32 (so it is an i64 value): >10 digits always, exactly 10 digits if it
 // exceeds i32-max "2147483647". (Negative literals are unary minus over a
 // positive literal, so the sign is handled separately.)
+// lit_has_i64_suffix reports whether `e` is a number literal carrying an
+// EXPLICIT `i64` / `u64` suffix. literal_is_i64 classifies by MAGNITUDE only,
+// so a small suffixed literal (`7i64`) reads as i32 — fine for a scalar, which
+// lower_i64 widens from its context, but wrong for an ARRAY LITERAL, whose
+// element width has to be decided before any context applies. Without this
+// `[7i64, 9i64]` missed the arr_make_i64 path and was built at 4-byte stride
+// with i32 stores while every read used stride 8 and an i64 load: element 0
+// returned the low half of the packed pair (accidentally right) and element 1
+// read past the allocation (#6188).
+//
+// Deliberately NOT folded into infer_expr_width: that is consulted for every
+// expression, and widening a suffixed literal there makes a lifted `__lam_`
+// if/match expression infer a 64-bit body against its default i32 ret_type,
+// which bails the module off the IR path (measured on fernsmith seeds 265 and
+// 502). The array-literal element is the one place that needs the suffix.
+pub function lit_has_i64_suffix(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprNumber(num) => {
+            if (num.is_float) { return false; }
+            return num.suffix == "i64" || num.suffix == "u64";
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 pub function literal_is_i64(text: string): boolean {
     var n: i32 = text.len();
     if (n > 10) { return true; }
@@ -10708,7 +10734,8 @@ pub function lower_expr(e: parser.Expr, s: LowerState): LowerState {
             // which BAILS on an `as i64` element (as_i64 has no lower_expr arm),
             // so without this an i64[] literal in a non-binding position (e.g. a
             // tuple element `([x as i64], y)`) bailed the module to AST. #3353.
-            if (n > 0 && !expr_is_f64(arr.elements[0], s) && infer_expr_width(arr.elements[0], s) == 64) {
+            if (n > 0 && !expr_is_f64(arr.elements[0], s)
+                    && (infer_expr_width(arr.elements[0], s) == 64 || lit_has_i64_suffix(arr.elements[0]))) {
                 var ia64: LowerState = s;
                 var iae: i32 = 0;
                 while (iae < n) {
