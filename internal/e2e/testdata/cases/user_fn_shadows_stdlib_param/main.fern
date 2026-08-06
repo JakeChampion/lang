@@ -1,0 +1,48 @@
+// Every *_ret_fn registry in irlower is keyed by BARE NAME, and the callee
+// lookups did not check whether a local slot shadowed that name. std/array's
+// `map[T, U](xs: T[], f: (T) => U)` and `flat_map` both take a fn-typed
+// parameter called `f`, so a USER function named `f` answered for it: `f(x)`
+// inside those stdlib functions read the user's return width.
+//
+// The damage depended on which registry got poisoned — `f(): i64` bailed the
+// module off the IR path on the register backends, `f(): i64[]` compiled clean
+// on x86-64 and emitted a wasm module that would not load, blaming
+// array__flat_map. The user's `f` is never passed anywhere in either case.
+//
+// Sibling of #6191, which fixed the LIFT's name-keyed lookup ($wrapN resolving
+// a fn-typed parameter to a module function). Same confusion, second lookup.
+// #6283.
+import "std/array";
+import "std/i32";
+
+// The reported names and return types. Nothing here is passed to std/array.
+function f(): i64 { return 12i64; }
+function g(): i64[] { return [7i64]; }
+
+// The same collision at the other widths the registries track, so a future
+// lookup that forgets the guard fails here rather than in someone's program.
+function keep(): string { return "kept"; }
+function pred(): f64 { return 1.5; }
+
+function main(): i32 {
+    if (f() != 12i64) { return 1; }
+    if (g()[0] != 7i64) { return 2; }
+    if (keep() != "kept") { return 3; }
+    if (pred() < 1.4 || pred() > 1.6) { return 4; }
+
+    // std/array's higher-order functions must still work — their parameters are
+    // exactly the names shadowed above, so this is the half that broke.
+    var xs: i32[] = [1, 2, 3];
+    var doubled: i32[] = xs.map((x: i32) => x * 2);
+    if (doubled[2] != 6) { return 5; }
+    var evens: i32[] = xs.filter((x: i32) => x % 2 == 0);
+    if (evens.len() != 1 || evens[0] != 2) { return 6; }
+    var flat: i32[] = xs.flat_map((x: i32) => [x, x]);
+    if (flat.len() != 6 || flat[5] != 3) { return 7; }
+
+    // NOT covered here: a WIDE element through flat_map. That answers wrong on
+    // wasm for an unrelated, pre-existing reason (#6287), so including it would
+    // make this fixture fail for something it does not test.
+
+    return 11;
+}
