@@ -319,6 +319,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_str_replace(cache)) { out = out.append("@uses_str_replace"); }
     if (module_uses_str_reverse(cache)) { out = out.append("@uses_str_reverse"); }
     if (module_uses_str_slice(cache)) { out = out.append("@uses_str_slice"); }
+    if (module_uses_memchr(cache)) { out = out.append("@uses_memchr"); }
     if (module_uses_str_to_i32(cache)) { out = out.append("@uses_str_to_i32"); }
     if (module_uses_str_trim(cache)) { out = out.append("@uses_str_trim"); }
     if (module_uses_strbuf(cache)) { out = out.append("@uses_strbuf"); }
@@ -604,6 +605,22 @@ pub function module_uses_maps(cache: irlower.LowerResult[]): boolean {
             // a module that never constructs a map (e.g. a keys() read on a
             // map param). #4353.
             if (r.ops[i].kind_tag == 131 || r.ops[i].kind_tag == 132) { return true; }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// module_uses_memchr gates $__fern_memchr, the byte-search kernel of
+// ATLAS-PLATFORM-PLAN §3. Same shape as module_uses_str_slice below.
+pub function module_uses_memchr(cache: irlower.LowerResult[]): boolean {
+    var fi: i32 = 0;
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind_tag == 224) { return true; }  // memchr
             i = i + 1;
         }
         fi = fi + 1;
@@ -3585,6 +3602,11 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // stack: src, start, end -> $__fern_substr(src, start, end) copies the
             // bytes into a fresh block (wasm strings are inline, so no view).
             out = out + "    call $__fern_substr\n";
+        } else if (o.kind_tag == 224) {  // memchr
+            // stack: s, byte, from -> i32 index or -1. A call, not inline: the
+            // body needs a loop over its own locals, and the operand stack here
+            // is the wasm value stack.
+            out = out + "    call $__fern_memchr\n";
         } else if (o.kind_tag == 214) {  // arr_reverse
             // stack: arr -> fresh reversed array block ($__fern_arr_reverse, the
             // WAT twin of the register backends' helper; gated @uses_arr_reverse).
@@ -5138,6 +5160,37 @@ pub function substr_helper(): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c)))\n";
     o = o + "    (local.get $p))\n";
+    return o;
+}
+// memchr_helper emits $__fern_memchr(s, byte, from) -> the index of the first
+// `byte` at or after `from`, or -1 (ATLAS-PLATFORM-PLAN §3).
+//
+// SCALAR, and that is the plan's ordering rather than an oversight: §3.4 makes
+// the intrinsic total in every backend before making it fast in any, so no
+// caller can be written against a lowering that does not exist yet. The native
+// wasm backend serves the same meaning with a v128 kernel
+// (i8x16.eq / i8x16.bitmask / i32.ctz); substituting one here is a later slice
+// and changes nothing above this function.
+//
+// Reads only the source block ([len@0][bytes@4]) — no allocation, no calls, so
+// it needs no runtime beyond itself.
+pub function memchr_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_memchr (param $s i32) (param $byte i32) (param $from i32) (result i32)\n";
+    o = o + "    (local $len i32) (local $i i32)\n";
+    // A byte outside 0..255 can never appear in the haystack. Checked first so
+    // the scan needs no per-iteration guard.
+    o = o + "    (if (i32.or (i32.lt_s (local.get $byte) (i32.const 0)) (i32.gt_s (local.get $byte) (i32.const 255))) (then (return (i32.const -1))))\n";
+    o = o + "    (local.set $len (i32.load (local.get $s)))\n";
+    // `from` clamps rather than traps: negative behaves as 0.
+    o = o + "    (local.set $i (local.get $from))\n";
+    o = o + "    (if (i32.lt_s (local.get $i) (i32.const 0)) (then (local.set $i (i32.const 0))))\n";
+    o = o + "    (block $d (loop $c\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
+    o = o + "      (if (i32.eq (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))) (local.get $byte)) (then (return (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c)))\n";
+    o = o + "    (i32.const -1))\n";
     return o;
 }
 // str_predicate_helpers emits the IR-path scalar string search predicates —
@@ -7987,6 +8040,7 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // $__fern_substr backs str_slice AND str_split (split slices each
     // segment), so emit it for either — but only ONCE.
     if (need(needs, "@uses_str_slice") || need(needs, "str_split") || need(needs, "@uses_str_lines")) { out = out + substr_helper(); }
+    if (need(needs, "@uses_memchr")) { out = out + memchr_helper(); }
     // $__fern_str_split (+ its private $__fern_arr_push) for the IR path.
     if (need(needs, "str_split") || need(needs, "@uses_str_lines")) { out = out + str_split_helper(); }
     // $__fern_arr_str_join (a shim over $__fern_str_join) backs xs.join(sep) — the

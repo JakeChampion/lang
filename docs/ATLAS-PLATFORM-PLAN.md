@@ -565,9 +565,24 @@ is v128 (`i8x16.eq` / `i8x16.bitmask` / `i32.ctz`). The wasm one carries a
 second, scalar path the natives do not need: a short wasm string lives in its
 two words with no address, so there is nothing for `v128.load` to point at.
 
-Remaining before step 2: the three self-host backends (`asm_ir.fern`,
-`asm_arm64_ir.fern`, `wasm_ir.fern`). Until those exist the intrinsic is not
-total, and `std/string` must not call it.
+The three *self-host* backends followed, and there step 1's scalar-first
+ordering is the whole point rather than a formality: `asm_ir.fern` /
+`asm_arm64_ir.fern` emit an inline byte loop, `wasm_ir.fern` a
+`$__fern_memchr` WAT helper. Step 1 is therefore **complete — the intrinsic is
+total**, and step 2 (`std/string` adoption) is unblocked.
+
+One thing the six lowerings did *not* end up sharing is a string
+representation, and it is worth recording because it is what made three of the
+six non-trivial. Native x86-64 uses a one-word `string`; native arm64 and
+native wasm use two words with small-string optimisation (and wasm's SSO form
+has no address at all, so its kernel needs a second scalar path); the self-host
+backends use a `[data@0, len@8]` box on the register targets and a
+`[len@0][bytes@4]` block on wasm. The op is the same op in all six; nothing
+below it is.
+
+Remaining: step 3 for the self-host tier — swapping those scalar bodies for
+vector ones. Unlike the native tier that is pure speed with no totality
+argument behind it, so it ranks below §4's other items.
 
 ### 3.5 Testing
 

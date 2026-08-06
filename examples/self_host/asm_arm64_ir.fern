@@ -136,6 +136,36 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // [data + i]; ldrb zero-extends into w0.
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x0, [x0]\n    ldrb w0, [x0, x1]\n    str x0, [sp, #-16]!\n"); return s;
     }
+    if (o.kind_tag == 224) {  // memchr
+        // operand stack [box, byte, from] (from on top) -> i32 index or -1.
+        // Scalar for the same reason as the x86-64 sibling: §3.4 makes the
+        // intrinsic total everywhere before making it fast anywhere. The
+        // native arm64 emitter runs a NEON kernel over the same meaning.
+        var mlo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var l_clamped: string = mlo.name;
+        var mlo2: asmcore.LabelOut = asmcore.fresh_label(mlo.state);
+        var l_loop: string = mlo2.name;
+        var mlo3: asmcore.LabelOut = asmcore.fresh_label(mlo2.state);
+        var l_none: string = mlo3.name;
+        var mlo4: asmcore.LabelOut = asmcore.fresh_label(mlo3.state);
+        var l_done: string = mlo4.name;
+        s = mlo4.state;
+        s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+        s = s.write("    cmp x2, #0\n    b.ge " + l_clamped + "\n    mov x2, #0\n");
+        s = s.write(l_clamped + ":\n");
+        // Unsigned compare against 255 rejects both a negative byte and one
+        // above the range in a single test.
+        s = s.write("    cmp x1, #255\n    b.hi " + l_none + "\n");
+        s = s.write(l_loop + ":\n");
+        s = s.write("    cmp x2, x3\n    b.ge " + l_none + "\n");
+        s = s.write("    ldrb w4, [x0, x2]\n");
+        s = s.write("    cmp x4, x1\n    b.eq " + l_done + "\n");
+        s = s.write("    add x2, x2, #1\n    b " + l_loop + "\n");
+        s = s.write(l_none + ":\n    mov x2, #-1\n");
+        s = s.write(l_done + ":\n    str x2, [sp, #-16]!\n");
+        return s;
+    }
     if (o.kind_tag == 102) {  // str_slice
         // operand stack [src box, start, end] (end on top). Zero-copy view, now
         // rc-HEADERED with an IMMORTAL sentinel (#2649): a 24-byte box

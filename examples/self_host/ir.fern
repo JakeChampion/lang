@@ -448,6 +448,19 @@ pub function op_raw_environ(): Op { return op0("raw_environ"); }
 // by folding the offset into the addressing mode; a pointer that has to be
 // PASSED somewhere (a syscall buffer arg) needs this instead.
 pub function op_raw_addr(): Op { return op0("raw_addr"); }
+// memchr (docs/ATLAS-PLATFORM-PLAN.md §3): pops [str, byte, from] → the i32
+// index of the first occurrence of `byte` at or after `from`, or -1. Allocates
+// nothing and reads only the source bytes.
+//
+// It is an OP rather than a Fern function for one reason: an op is what a
+// backend can SUBSTITUTE. The native backends replace it with a 16-byte-per-
+// iteration vector kernel (SSE2 / NEON / v128); the self-host backends serve
+// the scalar meaning, which is the §3.4 ordering — the intrinsic becomes
+// TOTAL before anything depends on it being fast.
+//
+// `from` clamps (negative behaves as 0, past-the-end finds nothing) and a
+// byte outside 0..255 never matches, matching the interpreter reference.
+pub function op_memchr(): Op { return op0("memchr"); }
 
 // Random / byte-source builtins (issue #2747) — the cross-backend byte source
 // uuid (#2682) and a future std/crypto build on. Each lowers to a runtime
@@ -1505,6 +1518,7 @@ function kind_id_4(name: string): i32 {
     if (name == "popcount") { return 221; }
     if (name == "map_hash_seed") { return 222; }
     if (name == "raw_addr") { return 223; }
+    if (name == "memchr") { return 224; }
     return 0;
 }
 
@@ -1757,13 +1771,14 @@ function kind_name_4(id: i32): string {
     if (id == 221) { return "popcount"; }
     if (id == 222) { return "map_hash_seed"; }
     if (id == 223) { return "raw_addr"; }
+    if (id == 224) { return "memchr"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … raw_addr=223)
+// extension tags beyond kind_count() (struct_copy=198 … memchr=224)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -1994,5 +2009,5 @@ pub function is_str_op_kind(tag: i32): boolean {
         || tag == 110 || tag == 111 || tag == 112 || tag == 113
         || tag == 114
         || tag == 115 || tag == 116 || tag == 98
-        || tag == 99 || tag == 100;
+        || tag == 99 || tag == 100 || tag == 224;
 }

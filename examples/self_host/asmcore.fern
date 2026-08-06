@@ -2261,6 +2261,11 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // __map_hash_seed(): core/map's per-process string-hash
                     // seed (#6194). i32, never 0. Matches native's FuncSigs.
                     if (id.name == "__map_hash_seed") { return ty_i32(); }
+                    // __memchr(s, byte, from): the index of the first `byte`
+                    // at or after `from`, or -1 (ATLAS-PLATFORM-PLAN §3). i32
+                    // for both the index and the not-found sentinel; the
+                    // haystack length it searches is an i32 everywhere.
+                    if (id.name == "__memchr") { return ty_i32(); }
                     if (id.name == "__load_i32") { return ty_i32(); }
                     if (id.name == "exit") { return ty_i32(); }
                     if (id.name == "args_count") { return ty_i32(); }
