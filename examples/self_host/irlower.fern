@@ -16830,7 +16830,14 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     if (slot_is_reclaimable_rcenum(s, slot)) {
         return emit_enum_deep_reinit_store(se, slot, s.struct_type_of_slot(slot));
     }
-    return emit_arr_store(se, slot, reassign_inc, target_is_arr || slot_is_reclaimable_struct(s, slot));
+    // A reclaimable SCALAR-TUPLE rebind (`p = (i, i + 1)`, credited "TUPREBIND:"):
+    // release the box this store supersedes. emit_arr_store's do_dec branch is
+    // exactly the right release — cow-guarded so a self-store never frees the live
+    // box, and a SHALLOW __fern_rc_dec, which is all a scalar tuple needs (no
+    // element walk, nothing inside to dangle). Without it "TUP:" freed only the
+    // final value at scope exit and every rebind's box leaked (#6127).
+    return emit_arr_store(se, slot, reassign_inc,
+        target_is_arr || slot_is_reclaimable_struct(s, slot) || slot_is_reclaimable_tuple_rebind(s, slot));
     return s.fail();
 }
 
@@ -21600,6 +21607,90 @@ function collect_fresh_tuple_in_stmt(st: parser.Stmt, acc: string[]): string[] {
     }
 }
 
+// scalar_tuple_decl_ann_all_scalar: the `var` declaring `name` (searched through
+// nested control flow, since the interesting rebinds sit in loops) annotates it as
+// an all-scalar tuple type. The declaration's ANNOTATION is what lets an assignment
+// be judged — an assignment carries no type of its own, so `p = (i, i + 1)` can only
+// be known scalar-element-wise through the slot it stores into.
+function scalar_tuple_decl_ann_all_scalar(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.name == name) { return tuple_type_is_all_scalar(v.type_name); } },
+            parser.StmtIf(f) => {
+                if (scalar_tuple_decl_ann_all_scalar(f.then_body, name)) { return true; }
+                if (scalar_tuple_decl_ann_all_scalar(f.else_body, name)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (scalar_tuple_decl_ann_all_scalar(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (scalar_tuple_decl_ann_all_scalar(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    if (scalar_tuple_decl_ann_all_scalar(m.arms[mi].body, name)) { return true; }
+                    mi = mi + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// all_assigns_fresh_scalar_tuple: EVERY assignment to `name` (recursively) builds a
+// FRESH scalar tuple — an all-scalar-element literal, or any tuple literal when the
+// declaration annotated the slot all-scalar (`ann_ok`, which is what admits the
+// ubiquitous `p = (i, i + 1)` whose elements are expressions rather than leaves).
+//
+// This is the gate on the "TUPREBIND:" credit (#6127). The plain "TUP:" credit is
+// already granted to a rebound name — its escape gate never looked at reassignment —
+// so the scope-exit sweep frees the FINAL box while every box the rebinds orphaned
+// leaks (measured allocs=500 frees=100 live_bytes=16000 over 100 rounds against 0
+// on native, where the same tuple bound ONCE is flat at 0). What was missing is a
+// release at the assignment, not a credit.
+//
+// Requiring every assignment to be fresh is what makes releasing the OLD box sound.
+// A single `p = q` rebind would leave the slot holding q's box, and the next
+// assignment's release would free a box `q` still owns — so one non-fresh
+// assignment anywhere disqualifies the name and it keeps its current leak. The
+// SARR: discipline: validate each rebind rather than refuse the name for being
+// rebound at all.
+function all_assigns_fresh_scalar_tuple(stmts: parser.Stmt[], name: string, ann_ok: boolean): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (!stmt_assigns_fresh_scalar_tuple(stmts[i], name, ann_ok)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function stmt_assigns_fresh_scalar_tuple(st: parser.Stmt, name: string, ann_ok: boolean): boolean {
+    match (st) {
+        parser.StmtAssign(a) => {
+            if (a.target != name) { return true; }
+            if (tuple_lit_is_fresh_scalar(a.value)) { return true; }
+            if (!ann_ok) { return false; }
+            match (a.value) { parser.ExprTuple(_) => { return true; }, _ => { return false; } }
+        },
+        parser.StmtIf(f) => {
+            return all_assigns_fresh_scalar_tuple(f.then_body, name, ann_ok)
+                && all_assigns_fresh_scalar_tuple(f.else_body, name, ann_ok);
+        },
+        parser.StmtWhile(w) => { return all_assigns_fresh_scalar_tuple(w.body, name, ann_ok); },
+        parser.StmtFor(fo) => { return all_assigns_fresh_scalar_tuple(fo.body, name, ann_ok); },
+        parser.StmtMatch(m) => {
+            var mi: i32 = 0;
+            while (mi < m.arms.len()) {
+                if (!all_assigns_fresh_scalar_tuple(m.arms[mi].body, name, ann_ok)) { return false; }
+                mi = mi + 1;
+            }
+            return true;
+        },
+        parser.StmtDefer(d) => { return stmt_assigns_fresh_scalar_tuple(d.action, name, ann_ok); },
+        _ => { return true; }
+    }
+}
+
 // collect_fresh_rc_tuple_names gathers LOCAL names bound from a fresh tuple literal
 // carrying a fresh ARRAY-literal element (`var t = (i, [i, i+1])`,
 // tuple_lit_rc_reclaimable) — the rc sibling of collect_fresh_scalar_tuple_names.
@@ -24609,7 +24700,21 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     tups = collect_fresh_tuple_ret_call_names(body, tup_fresh_ret, reassigned, tups);
     var ti: i32 = 0;
     while (ti < tups.len()) {
-        if (!body_unsafe_for(body, tups[ti], borrowable)) { out = out.append("TUP:" + tups[ti]); }
+        if (!body_unsafe_for(body, tups[ti], borrowable)) {
+            out = out.append("TUP:" + tups[ti]);
+            // A REBOUND scalar tuple additionally earns "TUPREBIND:" when every
+            // assignment builds a fresh tuple (#6127), which lets lower_stmt_assign
+            // release the box the rebind orphans. "TUP:" alone only frees the FINAL
+            // value at scope exit, so a loop rebind leaked one box per iteration.
+            // A separate credit rather than a widened "TUP:" because the two answer
+            // different questions — "TUP:" that the box is non-escaping and freeable
+            // at exit, this that the SUPERSEDED box is freeable at the assignment.
+            if (util.index_of_str(reassigned, tups[ti]) >= 0
+                && all_assigns_fresh_scalar_tuple(body, tups[ti],
+                        scalar_tuple_decl_ann_all_scalar(body, tups[ti]))) {
+                out = out.append("TUPREBIND:" + tups[ti]);
+            }
+        }
         ti = ti + 1;
     }
     // Fresh rc-tuple locals (`var t = (i, [i, i+1])`): a tuple literal carrying a
@@ -27009,6 +27114,15 @@ function slot_is_reclaimable_tuple(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
     return util.index_of_str(s.reclaimable_names, "TUP:" + s.locals[i].slot_name) >= 0;
+}
+
+// slot_is_reclaimable_tuple_rebind: slot `i` is a "TUP:" tuple whose every
+// assignment was proven to build a fresh scalar tuple, so the box the assignment
+// SUPERSEDES can be released as well as the final one (#6127). Implies
+// slot_is_reclaimable_tuple — the credit is only ever appended alongside "TUP:".
+function slot_is_reclaimable_tuple_rebind(s: LowerState, i: i32): boolean {
+    if (!slot_is_reclaimable_tuple(s, i)) { return false; }
+    return util.index_of_str(s.reclaimable_names, "TUPREBIND:" + s.locals[i].slot_name) >= 0;
 }
 
 // slot_is_reclaimable_rctuple: a fresh, non-escaping tuple local carrying a fresh
