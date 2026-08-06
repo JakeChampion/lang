@@ -1038,3 +1038,47 @@ func TestFormatPipeHoleRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// A struct destructure binds BY FIELD NAME. The formatter used to render
+// every *ast.Destructure as the positional tuple form, so `let Point { x:
+// a, y } = p;` came back out as `let (a, y) = p;` — a different program
+// (positional binding, rename lost), and one that fails outright on a
+// partial or reordered bind. Both destructure modes must survive the
+// round trip, including the parameter-pattern desugar that produces a
+// struct-mode Destructure in the body prelude.
+func TestFormatStructDestructureKeepsFieldNames(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{
+			name: "rename",
+			src:  "struct Point { x: i32, y: i32 }\nfunction f(p: Point): i32 { let Point { x: a, y } = p; return a + y; }",
+			want: "let Point { x: a, y } = p;",
+		},
+		{
+			name: "partial",
+			src:  "struct Point { x: i32, y: i32 }\nfunction f(p: Point): i32 { let Point { y } = p; return y; }",
+			want: "let Point { y } = p;",
+		},
+		{
+			name: "param_pattern_prelude",
+			src:  "struct Point { x: i32, y: i32 }\nfunction f(Point { x: a, y }: Point): i32 { return a + y; }",
+			want: "let Point { x: a, y } = __ptuple_",
+		},
+		{
+			name: "tuple_mode_unchanged",
+			src:  "function f(t: (i32, i32)): i32 { let (a, b) = t; return a + b; }",
+			want: "let (a, b) = t;",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatSrc(t, tc.src)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("got:\n%s\nwant it to contain %q", got, tc.want)
+			}
+			// Re-parse + re-format: the output must be a valid program that
+			// formats to itself, which is what catches a mode swap.
+			if again := formatSrc(t, got); again != got {
+				t.Errorf("not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+			}
+		})
+	}
+}

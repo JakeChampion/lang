@@ -905,6 +905,27 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.formatExpr(x.Init, precLowest)
 		f.b.WriteByte(';')
 	case *ast.Destructure:
+		// Struct mode (Fields set) binds BY FIELD NAME; rendering it as the
+		// positional tuple form would re-parse to a different program.
+		if x.Fields != nil {
+			f.b.WriteString("let ")
+			f.b.WriteString(x.StructName)
+			f.b.WriteString(" { ")
+			for i, field := range x.Fields {
+				if i > 0 {
+					f.b.WriteString(", ")
+				}
+				f.b.WriteString(field)
+				if i < len(x.Names) && x.Names[i] != field {
+					f.b.WriteString(": ")
+					f.b.WriteString(x.Names[i])
+				}
+			}
+			f.b.WriteString(" } = ")
+			f.formatExpr(x.Init, precLowest)
+			f.b.WriteByte(';')
+			break
+		}
 		f.b.WriteString("let (")
 		for i, n := range x.Names {
 			if i > 0 {

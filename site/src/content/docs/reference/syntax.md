@@ -121,6 +121,9 @@ isn't significant.
 - **`let Pat = expr else { ... };`** — refutable binding, same pattern
   grammar as `if let` and `match`; the pattern's bindings are live for
   the rest of the block and the `else` block must diverge.
+- **`function f(Pat: T)`** — destructuring parameter, same grammar again
+  but irrefutable only (a tuple or struct pattern, optionally with an
+  `@` binding for the whole value).
 - **`defer expr;`** / **`errdefer expr;`** — schedule expr to run on
   function exit (LIFO); `errdefer` runs only on an error exit.
 
