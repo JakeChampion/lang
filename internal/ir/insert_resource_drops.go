@@ -191,11 +191,6 @@ func insertDefersInStmt(s ast.Stmt, kept map[string]string) {
 		if x.Else != nil {
 			insertDefersInStmt(x.Else, kept)
 		}
-	case *ast.IfLet:
-		insertDefersInStmt(x.Then, kept)
-		if x.Else != nil {
-			insertDefersInStmt(x.Else, kept)
-		}
 	case *ast.LetElse:
 		if x.Else != nil {
 			insertDefersInStmt(x.Else, kept)

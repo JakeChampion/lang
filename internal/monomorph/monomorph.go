@@ -1066,19 +1066,6 @@ func substituteStmt(s ast.Stmt, sub map[string]ast.Type) {
 		if x.Else != nil {
 			substituteStmt(x.Else, sub)
 		}
-	case *ast.IfLet:
-		substituteExpr(x.Source, sub)
-		// BindingTypes are concrete after the checker stamped
-		// them in the original generic body; substitute so
-		// per-clone they specialise to the concrete instantiation
-		// of the enum / struct payload.
-		for i := range x.BindingTypes {
-			x.BindingTypes[i] = substituteType(x.BindingTypes[i], sub)
-		}
-		substituteStmt(x.Then, sub)
-		if x.Else != nil {
-			substituteStmt(x.Else, sub)
-		}
 	case *ast.LetElse:
 		substituteExpr(x.Source, sub)
 		for i := range x.BindingTypes {
@@ -1432,12 +1419,6 @@ func walkStmtStructLits(s ast.Stmt, fn func(*ast.StructLit)) {
 		if x.Else != nil {
 			walkStmtStructLits(x.Else, fn)
 		}
-	case *ast.IfLet:
-		walkExprStructLits(x.Source, fn)
-		walkStmtStructLits(x.Then, fn)
-		if x.Else != nil {
-			walkStmtStructLits(x.Else, fn)
-		}
 	case *ast.LetElse:
 		walkExprStructLits(x.Source, fn)
 		walkBlockStructLits(x.Else, fn)
@@ -1692,14 +1673,6 @@ func rewriteStmtTypes(s ast.Stmt, info *checker.Info, into map[instKey][]ast.Typ
 		if x.Else != nil {
 			rewriteStmtTypes(x.Else, info, into)
 		}
-	case *ast.IfLet:
-		for i := range x.BindingTypes {
-			x.BindingTypes[i] = rewriteType(x.BindingTypes[i], info, into)
-		}
-		rewriteStmtTypes(x.Then, info, into)
-		if x.Else != nil {
-			rewriteStmtTypes(x.Else, info, into)
-		}
 	case *ast.LetElse:
 		for i := range x.BindingTypes {
 			x.BindingTypes[i] = rewriteType(x.BindingTypes[i], info, into)
@@ -1747,12 +1720,6 @@ func walkStmt(s ast.Stmt, fn func(*ast.Call)) {
 		walkExpr(x.Value, fn)
 	case *ast.If:
 		walkExpr(x.Cond, fn)
-		walkStmt(x.Then, fn)
-		if x.Else != nil {
-			walkStmt(x.Else, fn)
-		}
-	case *ast.IfLet:
-		walkExpr(x.Source, fn)
 		walkStmt(x.Then, fn)
 		if x.Else != nil {
 			walkStmt(x.Else, fn)

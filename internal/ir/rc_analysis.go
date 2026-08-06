@@ -1140,8 +1140,6 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				// payloads with no projection dup.
 				escapeCountedYield(arm.Body)
 			}
-		case *ast.IfLet:
-			markBindings(s.Bindings)
 		case *ast.LetElse:
 			markBindings(s.Bindings)
 		case *ast.Call:
@@ -2719,9 +2717,6 @@ func collectNestedBlocks(s ast.Stmt, out *[]*ast.Block) {
 	case *ast.If:
 		collectNestedBlocks(x.Then, out)
 		collectNestedBlocks(x.Else, out)
-	case *ast.IfLet:
-		collectNestedBlocks(x.Then, out)
-		collectNestedBlocks(x.Else, out)
 	case *ast.LetElse:
 		collectNestedBlocks(x.Else, out)
 	case *ast.While:
@@ -3341,8 +3336,6 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 			for _, arm := range x.Arms {
 				markRebound(arm.Bindings)
 			}
-		case *ast.IfLet:
-			markRebound(x.Bindings)
 		case *ast.LetElse:
 			markRebound(x.Bindings)
 		}
@@ -3508,8 +3501,6 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 				for _, arm := range x.Arms {
 					disqualify(arm.Bindings)
 				}
-			case *ast.IfLet:
-				disqualify(x.Bindings)
 			case *ast.LetElse:
 				disqualify(x.Bindings)
 			}

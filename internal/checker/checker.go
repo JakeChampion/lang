@@ -4992,9 +4992,6 @@ func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
 		case *ast.If:
 			c.resolveTypesInBlock(asBlock(x.Then), params)
 			c.resolveTypesInBlock(asBlock(x.Else), params)
-		case *ast.IfLet:
-			c.resolveTypesInBlock(asBlock(x.Then), params)
-			c.resolveTypesInBlock(asBlock(x.Else), params)
 		case *ast.LetElse:
 			c.resolveTypesInBlock(x.Else, params)
 		case *ast.While:
@@ -5071,11 +5068,6 @@ func stmtDiverges(s ast.Stmt) bool {
 			return false
 		}
 		return stmtDiverges(x.Then) && stmtDiverges(x.Else)
-	case *ast.IfLet:
-		if x.Else == nil {
-			return false
-		}
-		return stmtDiverges(x.Then) && stmtDiverges(x.Else)
 	case *ast.Match:
 		// Every arm must diverge for the match itself to
 		// diverge. Wildcard arm is required for the match to
@@ -5115,8 +5107,6 @@ func stmtExits(s ast.Stmt) bool {
 		return funcBodyExits(x)
 	case *ast.If:
 		// A one-armed if can fall through; both arms must exit.
-		return x.Else != nil && stmtExits(x.Then) && stmtExits(x.Else)
-	case *ast.IfLet:
 		return x.Else != nil && stmtExits(x.Then) && stmtExits(x.Else)
 	case *ast.Match:
 		// Exhaustiveness is checked separately; here every arm must exit
@@ -8657,10 +8647,6 @@ func walkStmtForNames(s ast.Stmt, selfName string, siblings map[string]*ast.Func
 		walkExprForNames(n.Cond, selfName, siblings, seen)
 		walkStmtForNames(n.Then, selfName, siblings, seen)
 		walkStmtForNames(n.Else, selfName, siblings, seen)
-	case *ast.IfLet:
-		walkExprForNames(n.Source, selfName, siblings, seen)
-		walkStmtForNames(n.Then, selfName, siblings, seen)
-		walkStmtForNames(n.Else, selfName, siblings, seen)
 	case *ast.LetElse:
 		walkExprForNames(n.Source, selfName, siblings, seen)
 		walkBodyForNames(n.Else, selfName, siblings, seen)
@@ -8866,74 +8852,6 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		c.checkBlock(n.Else, s)
 		if !blockDiverges(n.Else) {
 			c.errfCode(n.Else.P, "E022", "let-else: else branch must diverge (return / break / continue)")
-		}
-	case *ast.IfLet:
-		// Source must produce an enum whose variant list contains
-		// VariantName. Bindings are in scope for Then only.
-		st := c.checkExpr(n.Source, s)
-		et, ok := st.(ast.EnumType)
-		if !ok {
-			if st != nil {
-				c.errfCode(n.Source.Pos(), "E022", "if-let source must be an enum value, got %s", st)
-			}
-			c.checkStmt(n.Then, s)
-			if n.Else != nil {
-				c.checkStmt(n.Else, s)
-			}
-			return
-		}
-		ed := c.info.Enums[et.Name]
-		if ed == nil {
-			c.errfCode(n.Source.Pos(), "E023", "unknown enum %q", et.Name)
-			c.checkStmt(n.Then, s)
-			if n.Else != nil {
-				c.checkStmt(n.Else, s)
-			}
-			return
-		}
-		// Resolve type-arg substitution so generic enums
-		// (`Option[i32]`, `Result[T, E]`) bind payloads to the
-		// concrete instantiated types instead of the abstract
-		// parameters.
-		var sub map[string]ast.Type
-		if len(ed.TypeParams) == len(et.Args) && len(et.Args) > 0 {
-			sub = make(map[string]ast.Type, len(ed.TypeParams))
-			for i, tp := range ed.TypeParams {
-				sub[tp] = et.Args[i]
-			}
-		}
-		var variant *ast.EnumVariant
-		for i := range ed.Variants {
-			if ed.Variants[i].Name == n.VariantName {
-				variant = &ed.Variants[i]
-				break
-			}
-		}
-		if variant == nil {
-			c.errfCode(n.P, "E014", "variant %q is not part of enum %s", n.VariantName, ed.Name)
-			c.checkStmt(n.Then, s)
-			if n.Else != nil {
-				c.checkStmt(n.Else, s)
-			}
-			return
-		}
-		if len(n.Bindings) != len(variant.Payloads) {
-			c.errfCode(n.P, "E015", "variant %s has %d payload(s), got %d binding(s)",
-				n.VariantName, len(variant.Payloads), len(n.Bindings))
-		}
-		thenScope := newScope(s)
-		n.BindingTypes = make([]ast.Type, len(n.Bindings))
-		for k, name := range n.Bindings {
-			var bt ast.Type
-			if k < len(variant.Payloads) {
-				bt = substituteType(variant.Payloads[k], sub)
-			}
-			n.BindingTypes[k] = bt
-			thenScope.names[name] = bt
-		}
-		c.checkStmt(n.Then, thenScope)
-		if n.Else != nil {
-			c.checkStmt(n.Else, s)
 		}
 	case *ast.While:
 		t := c.checkExpr(n.Cond, s)
@@ -9315,6 +9233,41 @@ func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVari
 
 // wildcard). Bindings are typed against the matching variant's
 // payload list and bound in a fresh per-arm scope.
+// originLabel names a pattern-binding form for its diagnostics —
+// `ast.Match.Origin` spelled the way the source spells it.
+func originLabel(origin string) string {
+	if origin == "let_else" {
+		return "let-else"
+	}
+	return "if-let"
+}
+
+// syntheticElseArm reports whether arm i is the trailing wildcard a
+// pattern-binding desugar synthesised to hold its else branch. Nobody
+// wrote it, so the unreachable-arm diagnostics that fire when the
+// preceding pattern is irrefutable (a struct pattern, an all-binder
+// tuple pattern) must not be reported against it.
+func syntheticElseArm(n *ast.Match, i int) bool {
+	return n.Origin != "" && i == len(n.Arms)-1 && n.Arms[i].IsWildcard
+}
+
+// bindsVariantPattern reports whether every non-synthetic arm is a
+// positional variant pattern — the one pattern shape that can only mean
+// an enum destructure, and so the shape that draws E022 when the source
+// isn't an enum. Struct, tuple and literal patterns have their own
+// scrutinee kinds and are checked against those instead.
+func bindsVariantPattern(n *ast.Match) bool {
+	for i, arm := range n.Arms {
+		if syntheticElseArm(n, i) {
+			continue
+		}
+		if arm.VariantName == "" || arm.NamedFields {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	tagT := c.checkExpr(n.Tag, s)
 	if tagT == nil {
@@ -9322,6 +9275,16 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	}
 	et, ok := tagT.(ast.EnumType)
 	if !ok {
+		// A pattern-binding desugar (`if let V(x) = e`) destructuring a
+		// non-enum source gets the binding-form diagnostic rather than
+		// the shape-based match errors the desugared form would draw.
+		if n.Origin != "" && bindsVariantPattern(n) {
+			c.errfCode(n.Tag.Pos(), "E022", "%s source must be an enum value, got %s", originLabel(n.Origin), tagT)
+			for _, arm := range n.Arms {
+				c.checkBlock(arm.Body, s)
+			}
+			return
+		}
 		// Tuple scrutinee: arms are tuple patterns `(p0, p1, …)` or
 		// the wildcard — see checkTupleMatch.
 		if tup, isTup := tagT.(ast.TupleType); isTup {
@@ -9577,8 +9540,8 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 // is unreachable (E026-family), and a match with neither is E030.
 func (c *checker) checkTupleMatch(n *ast.Match, tup ast.TupleType, s *scope) {
 	sawIrrefutable := false
-	for _, arm := range n.Arms {
-		if sawIrrefutable {
+	for i, arm := range n.Arms {
+		if sawIrrefutable && !syntheticElseArm(n, i) {
 			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
 		}
 		if arm.IsWildcard {
@@ -9676,8 +9639,8 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 		}
 	}
 	sawIrrefutable := false
-	for _, arm := range n.Arms {
-		if sawIrrefutable {
+	for i, arm := range n.Arms {
+		if sawIrrefutable && !syntheticElseArm(n, i) {
 			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
 		}
 		if arm.IsWildcard {

@@ -2394,69 +2394,10 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 
 func (p *parser) parseIf() (ast.Stmt, error) {
 	kw := p.advance()
-	// `if let <Variant>(b1, …) = <expr> { … }` — pattern-binding
-	// shorthand for a one-arm match. Disambiguated by the `let`
-	// keyword right after `if`. The match's payload bindings are
-	// in scope for Then only.
+	// `if let <pattern> = <expr> { … } [else { … }]` — pattern-binding
+	// shorthand. Disambiguated by the `let` keyword right after `if`.
 	if p.match(lexer.Keyword, "let") {
-		p.advance() // let
-		variantTok, err := p.expect(lexer.Ident, "")
-		if err != nil {
-			return nil, err
-		}
-		var bindings []string
-		if _, ok := p.accept(lexer.Punct, "("); ok {
-			if !p.match(lexer.Punct, ")") {
-				for {
-					nameTok, err := p.expect(lexer.Ident, "")
-					if err != nil {
-						return nil, err
-					}
-					bindings = append(bindings, nameTok.Text)
-					if _, ok := p.accept(lexer.Punct, ","); ok {
-						if p.match(lexer.Punct, ")") {
-							break
-						}
-						continue
-					}
-					break
-				}
-			}
-			if _, err := p.expect(lexer.Punct, ")"); err != nil {
-				return nil, err
-			}
-		}
-		if _, err := p.expect(lexer.Punct, "="); err != nil {
-			return nil, err
-		}
-		// Suppress trailing struct-literal parsing while reading
-		// the source — the `{` that follows opens Then.
-		prevNS := p.noStructLit
-		p.noStructLit = true
-		src, err := p.parseExpr()
-		p.noStructLit = prevNS
-		if err != nil {
-			return nil, err
-		}
-		then, err := p.parseStmt()
-		if err != nil {
-			return nil, err
-		}
-		var els ast.Stmt
-		if _, ok := p.accept(lexer.Keyword, "else"); ok {
-			els, err = p.parseStmt()
-			if err != nil {
-				return nil, err
-			}
-		}
-		return &ast.IfLet{
-			P:           kw.Pos,
-			VariantName: variantTok.Text,
-			Bindings:    bindings,
-			Source:      src,
-			Then:        then,
-			Else:        els,
-		}, nil
+		return p.parseIfLet(kw.Pos)
 	}
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
 		return nil, err
@@ -3214,12 +3155,6 @@ func desugarForEachStmt(s ast.Stmt, streamFns map[string]bool) ast.Stmt {
 		if x.Else != nil {
 			x.Else = desugarForEachStmt(x.Else, streamFns)
 		}
-	case *ast.IfLet:
-		desugarForEachExpr(x.Source, streamFns)
-		x.Then = desugarForEachStmt(x.Then, streamFns)
-		if x.Else != nil {
-			x.Else = desugarForEachStmt(x.Else, streamFns)
-		}
 	case *ast.LetElse:
 		desugarForEachExpr(x.Source, streamFns)
 		if x.Else != nil {
@@ -3509,13 +3444,8 @@ func (p *parser) parseStmtRawArms() ([]stmtRawArm, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(pats) > 1 {
-		for _, pt := range pats {
-			if pt.hasNestedSub() {
-				return nil, p.errorfCode(pt.P, "P001",
-					"or-patterns (`|`) may not contain nested patterns — use separate arms")
-			}
-		}
+	if err := p.rejectNestedInOrPattern(pats); err != nil {
+		return nil, err
 	}
 	out := make([]stmtRawArm, len(pats))
 	for i, pat := range pats {
@@ -3529,6 +3459,105 @@ func (p *parser) parseStmtRawArms() ([]stmtRawArm, error) {
 		out[i] = stmtRawArm{pat: pat, guard: g, body: b}
 	}
 	return out, nil
+}
+
+// rejectNestedInOrPattern enforces the or-pattern restriction shared by
+// every binding site: an or-pattern binds one shared name set, which a
+// nested sub-pattern would violate. Single-alternative heads are exempt.
+func (p *parser) rejectNestedInOrPattern(pats []matchPattern) error {
+	if len(pats) < 2 {
+		return nil
+	}
+	for _, pt := range pats {
+		if pt.hasNestedSub() {
+			return p.errorfCode(pt.P, "P001",
+				"or-patterns (`|`) may not contain nested patterns — use separate arms")
+		}
+	}
+	return nil
+}
+
+// parseIfLet parses `if let P1 | P2 | … = <expr> <then> [else <else>]`
+// and desugars it to the equivalent statement match
+//
+//	match (<expr>) { P1 => { then }, …, _ => { else } }
+//
+// tagged Origin "if_let". Consuming parseMatchPattern is what gives
+// `if let` the whole shared pattern grammar — struct patterns, tuple
+// patterns, nested patterns, `@` bindings, literals and ranges — and
+// keeps refutability and exhaustiveness in the one place that already
+// reasons about them. The `let` keyword has been peeked, not consumed.
+func (p *parser) parseIfLet(ifPos ast.Position) (ast.Stmt, error) {
+	p.advance() // let
+	first, err := p.parseMatchPattern()
+	if err != nil {
+		return nil, err
+	}
+	pats := []matchPattern{first}
+	for p.match(lexer.Punct, "|") {
+		p.advance()
+		nxt, err := p.parseMatchPattern()
+		if err != nil {
+			return nil, err
+		}
+		pats = append(pats, nxt)
+	}
+	if err := p.rejectNestedInOrPattern(pats); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "="); err != nil {
+		return nil, err
+	}
+	// Suppress trailing struct-literal parsing while reading the source —
+	// the `{` that follows opens the then-branch.
+	prevNS := p.noStructLit
+	p.noStructLit = true
+	src, err := p.parseExpr()
+	p.noStructLit = prevNS
+	if err != nil {
+		return nil, err
+	}
+	then, err := p.parseStmt()
+	if err != nil {
+		return nil, err
+	}
+	elseBlk := &ast.Block{P: ifPos}
+	if _, ok := p.accept(lexer.Keyword, "else"); ok {
+		els, err := p.parseStmt()
+		if err != nil {
+			return nil, err
+		}
+		elseBlk = stmtAsBlock(els)
+	}
+	thenBlk := stmtAsBlock(then)
+	raw := make([]stmtRawArm, 0, len(pats)+1)
+	for i, pat := range pats {
+		b := thenBlk
+		if i > 0 {
+			b = ast.CloneBlock(thenBlk)
+		}
+		raw = append(raw, stmtRawArm{pat: pat, body: b})
+	}
+	// The else branch is the trailing wildcard arm. desugarNestedStmtArms
+	// also reads it as the outer fallthrough, so `if let Some(Ok(n)) = e`
+	// routes a `Some(Err(_))` payload into the else rather than falling off
+	// a non-exhaustive inner match.
+	raw = append(raw, stmtRawArm{pat: matchPattern{P: ifPos, IsWildcard: true}, body: elseBlk})
+	arms, err := p.desugarNestedStmtArms(raw)
+	if err != nil {
+		return nil, err
+	}
+	return &ast.Match{P: ifPos, Tag: src, Arms: arms, Origin: "if_let"}, nil
+}
+
+// stmtAsBlock adapts a single statement to the *ast.Block a match arm
+// body needs. `if let Some(x) = o return x;` takes a bare statement;
+// wrapping it introduces the same scope the braced form has.
+func stmtAsBlock(s ast.Stmt) *ast.Block {
+	if b, ok := s.(*ast.Block); ok {
+		return b
+	}
+	return &ast.Block{P: s.Pos(), Stmts: []ast.Stmt{s}}
 }
 
 // stmtArmFromPattern builds a flat *ast.MatchArm from a (already
@@ -5495,12 +5524,6 @@ func rewriteBuilderStmt(s ast.Stmt, b string) ast.Stmt {
 		n.Stmts = rewriteBuilderStmts(n.Stmts, b)
 		return n
 	case *ast.If:
-		n.Then = rewriteBuilderStmt(n.Then, b)
-		if n.Else != nil {
-			n.Else = rewriteBuilderStmt(n.Else, b)
-		}
-		return n
-	case *ast.IfLet:
 		n.Then = rewriteBuilderStmt(n.Then, b)
 		if n.Else != nil {
 			n.Else = rewriteBuilderStmt(n.Else, b)

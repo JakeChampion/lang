@@ -851,27 +851,6 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.b.WriteString(" else ")
 		f.formatBlock(x.Else, depth)
 		f.b.WriteByte(';')
-	case *ast.IfLet:
-		f.b.WriteString("if let ")
-		f.b.WriteString(x.VariantName)
-		if len(x.Bindings) > 0 {
-			f.b.WriteByte('(')
-			for j, b := range x.Bindings {
-				if j > 0 {
-					f.b.WriteString(", ")
-				}
-				f.b.WriteString(b)
-			}
-			f.b.WriteByte(')')
-		}
-		f.b.WriteString(" = ")
-		f.formatExpr(x.Source, precLowest)
-		f.b.WriteByte(' ')
-		f.formatStmt(x.Then, depth)
-		if x.Else != nil {
-			f.b.WriteString(" else ")
-			f.formatStmt(x.Else, depth)
-		}
 	case *ast.While:
 		f.b.WriteString("while (")
 		f.formatExpr(x.Cond, precLowest)
@@ -965,39 +944,33 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			f.b.WriteByte(';')
 		}
 	case *ast.Match:
+		// A match the parser synthesised from `if let` re-renders as the
+		// `if let` the source spelled — the pattern arm is the
+		// then-branch, the trailing wildcard arm the else.
+		if x.Origin == "if_let" && len(x.Arms) >= 2 {
+			f.b.WriteString("if let ")
+			for i, arm := range x.Arms[:len(x.Arms)-1] {
+				if i > 0 {
+					f.b.WriteString(" | ")
+				}
+				f.formatArmPattern(arm)
+			}
+			f.b.WriteString(" = ")
+			f.formatExpr(x.Tag, precLowest)
+			f.b.WriteByte(' ')
+			f.formatBlock(x.Arms[0].Body, depth)
+			if els := x.Arms[len(x.Arms)-1].Body; len(els.Stmts) > 0 {
+				f.b.WriteString(" else ")
+				f.formatBlock(els, depth)
+			}
+			return
+		}
 		f.b.WriteString("match (")
 		f.formatExpr(x.Tag, precLowest)
 		f.b.WriteString(") {\n")
 		for i, arm := range x.Arms {
 			f.indent(depth + 1)
-			if arm.IsWildcard {
-				f.b.WriteByte('_')
-			} else {
-				if arm.VariantModule != "" {
-					f.b.WriteString(arm.VariantModule)
-					f.b.WriteByte('.')
-				}
-				f.b.WriteString(arm.VariantName)
-				if arm.NamedFields {
-					f.b.WriteString(" { ")
-					for j, b := range arm.Bindings {
-						if j > 0 {
-							f.b.WriteString(", ")
-						}
-						f.b.WriteString(b)
-					}
-					f.b.WriteString(" }")
-				} else if len(arm.Bindings) > 0 {
-					f.b.WriteByte('(')
-					for j, b := range arm.Bindings {
-						if j > 0 {
-							f.b.WriteString(", ")
-						}
-						f.b.WriteString(b)
-					}
-					f.b.WriteByte(')')
-				}
-			}
+			f.formatArmPattern(arm)
 			if arm.Guard != nil {
 				f.b.WriteString(" when ")
 				f.formatExpr(arm.Guard, precLowest)
@@ -1030,6 +1003,77 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		}
 		f.b.WriteByte(' ')
 		f.formatBlock(x.Body, depth)
+	}
+}
+
+// formatArmPattern renders one arm's pattern — every shape
+// parseMatchPattern accepts, so it serves both `match` arms and the
+// `if let` head that shares the grammar.
+func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
+	if arm.AtBinding != "" {
+		f.b.WriteString(arm.AtBinding)
+		f.b.WriteString(" @ ")
+	}
+	switch {
+	case arm.IsWildcard:
+		f.b.WriteByte('_')
+	case arm.Literal != nil:
+		f.formatExpr(arm.Literal, precLowest)
+		if arm.RangeHi != nil {
+			if arm.RangeInclusive {
+				f.b.WriteString("..=")
+			} else {
+				f.b.WriteString("..")
+			}
+			f.formatExpr(arm.RangeHi, precLowest)
+		}
+	case arm.TupleElems != nil:
+		f.b.WriteByte('(')
+		for i, el := range arm.TupleElems {
+			if i > 0 {
+				f.b.WriteString(", ")
+			}
+			switch {
+			case el.IsWildcard:
+				f.b.WriteByte('_')
+			case el.Literal != nil:
+				f.formatExpr(el.Literal, precLowest)
+			default:
+				f.b.WriteString(el.Name)
+			}
+		}
+		f.b.WriteByte(')')
+	default:
+		if arm.VariantModule != "" {
+			f.b.WriteString(arm.VariantModule)
+			f.b.WriteByte('.')
+		}
+		f.b.WriteString(arm.VariantName)
+		if arm.NamedFields {
+			f.b.WriteString(" { ")
+			for i, b := range arm.Bindings {
+				if i > 0 {
+					f.b.WriteString(", ")
+				}
+				// `S { field: local }` renames; the shorthand `S { x }`
+				// has FieldNames[i] == Bindings[i].
+				if i < len(arm.FieldNames) && arm.FieldNames[i] != "" && arm.FieldNames[i] != b {
+					f.b.WriteString(arm.FieldNames[i])
+					f.b.WriteString(": ")
+				}
+				f.b.WriteString(b)
+			}
+			f.b.WriteString(" }")
+		} else if len(arm.Bindings) > 0 {
+			f.b.WriteByte('(')
+			for i, b := range arm.Bindings {
+				if i > 0 {
+					f.b.WriteString(", ")
+				}
+				f.b.WriteString(b)
+			}
+			f.b.WriteByte(')')
+		}
 	}
 }
 

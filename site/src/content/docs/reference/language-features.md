@@ -118,6 +118,23 @@ if let Some(cached) = lookup(id) {
 }
 ```
 
+The `if let` head takes the **same pattern grammar as a `match` arm** —
+it *is* a one-arm match after parsing — so every pattern form is
+available:
+
+```fern
+if let Point { x, y } = origin { … }        // struct pattern
+if let (a, b) = divmod(17, 5) { … }         // tuple pattern
+if let whole @ Some(n) = lookup(id) { … }   // `@` binding
+if let Ok(Some(n)) = parse(s) { … }         // nested pattern
+if let Red(n) | Blue(n) = c { … }           // or-pattern
+if let 10..=20 = score { … }                // range pattern
+```
+
+An irrefutable head (a struct pattern, an all-binder tuple pattern)
+is accepted — the `else` is simply dead — so `if let` doubles as a
+destructuring form when you don't need the miss branch.
+
 ## Match guards — `when`
 
 A `match` arm can carry a `when` condition. The arm matches only if the

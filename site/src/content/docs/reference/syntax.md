@@ -81,8 +81,11 @@ Statements end with `;` and group in `{ ... }` blocks. Whitespace
 isn't significant.
 
 - **`if (cond) { ... } else { ... }`** — statement or expression.
-- **`if let Pat(b) = expr { ... } else { ... }`** — one-arm match; `b`
-  is in scope for the `then` block only.
+- **`if let Pat = expr { ... } else { ... }`** — one-arm match; the
+  pattern's bindings are in scope for the `then` block only. `Pat` is
+  the same grammar `match` arms use, so struct patterns, tuple
+  patterns, nested patterns, or-patterns, `@` bindings, literals and
+  ranges all work here.
 - **`while (cond) { ... }`** — pre-test loop.
 - **`for (init; cond; step) { ... }`** — three-part loop.
 - **`for x in expr { ... }`** — foreach over an array, slice, range or
