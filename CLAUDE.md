@@ -50,8 +50,10 @@ as a constraint to preserve.
 - ARM64 / aarch64 Darwin — Mach-O for native Apple Silicon Macs
   (`-target arm64-darwin`). No Linux container needed; clang +
   ld64 (native) or clang + lld (cross from Linux) link directly.
-  Verified end-to-end on the `macos-latest` CI runner (Apple
-  Silicon arm64; tracks Apple's current macOS release). Policy:
+  Verified end-to-end on the `macos-15` CI runner (Apple Silicon
+  arm64). CI deliberately pins that label rather than the floating
+  `macos-latest`, so a runner-image roll cannot break the build
+  without a visible commit. Policy:
   only the latest macOS is supported — see
   `docs/BACKEND-PARITY.md` for the version-support stance and
   known limitations. All pointer-

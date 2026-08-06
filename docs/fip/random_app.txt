@@ -1,0 +1,256 @@
+A word-frequency counter that reports the top N words in a text, ties broken alphabetically.
+A diff tool that prints a unified diff of two text files.
+A tool that reflows paragraphs to a given column width, preserving indentation and blank lines.
+A CSV-to-JSON converter that handles quoted fields, embedded commas and embedded newlines.
+A JSON pretty-printer that sorts object keys and normalises number formatting.
+An INI/TOML-subset config parser with typed lookups and a useful error on a malformed line.
+A tool that strips comments from source code in a C-like language, respecting string literals.
+A line-numbering filter that skips blank lines and right-aligns the numbers.
+A tool that finds duplicate lines in a file and reports their line numbers.
+A grep-like tool supporting literal, glob and anchored patterns with a context window.
+A tool that converts between tabs and spaces with configurable tab stops.
+A word-wrap-aware text justifier that pads inter-word gaps evenly.
+A Markdown-to-plain-text renderer that keeps list structure and drops inline markup.
+A tool that extracts every URL from a document and reports them deduplicated.
+A template engine supporting variable substitution, conditionals and loops.
+A base64 encoder/decoder that streams and validates padding strictly.
+A hex dump utility with offsets, hex columns and a printable ASCII gutter.
+A ROT-N / Caesar cipher tool that leaves non-letters untouched.
+A run-length encoder and decoder that round-trips arbitrary bytes.
+A Huffman coder that builds a tree, encodes a string, and decodes it back.
+An LZ77-style compressor with a sliding window and a match-length table.
+A UTF-8 validator that reports the byte offset and reason for the first invalid sequence.
+A tool that transcodes between UTF-8 and a fixed codepoint array, reporting non-BMP characters.
+A URL percent-encoder/decoder with correct reserved-character handling.
+A quoted-printable encoder/decoder for email bodies.
+A Base32 encoder with configurable alphabet and padding.
+A tool that computes a CRC32 of a file and verifies it against a stored value.
+A varint encoder/decoder that round-trips 64-bit values.
+A bencode (BitTorrent) parser that renders the structure as indented text.
+A tool that packs and unpacks a fixed-schema binary record format.
+An arithmetic expression evaluator with correct precedence, associativity and parentheses.
+A parser for a tiny Lisp that evaluates arithmetic and `let` bindings.
+A regular-expression matcher supporting `.`, `*`, `+`, `?`, character classes and anchors.
+A glob matcher supporting `*`, `?`, `[a-z]` and `**` across path segments.
+A JSON parser that reports the line and column of a syntax error.
+A tokenizer for a C-like language that classifies every token and reports the unterminated ones.
+A shunting-yard converter from infix to reverse Polish notation, plus an RPN evaluator.
+A parser for `key=value; key=value` cookie strings with whitespace tolerance.
+A date parser that accepts several formats and normalises to ISO-8601.
+A semantic-version parser and comparator, including prerelease ordering.
+A command-line argument parser with flags, values, `--`, and clustered short options.
+A parser for a subset of SQL `SELECT` that prints the parsed structure.
+A parser for a small stack-based language, with a bytecode interpreter for it.
+A pretty-printer that re-indents a bracket language and reports unbalanced delimiters.
+A parser for HTTP request lines and headers that rejects malformed input precisely.
+A calculator REPL that supports variables, history and a small set of functions.
+A dynamic array (vector) with explicit capacity growth, reporting reallocation counts.
+A hash map with open addressing, resizing, and a load-factor report.
+A binary search tree with insert, delete, in-order traversal and a height report.
+An AVL or red-black tree that verifies its balance invariant after every operation.
+A trie that stores strings and answers prefix queries and longest-common-prefix.
+A priority queue (binary heap) with push, pop and a heap-invariant check.
+A ring buffer with a fixed capacity and overwrite-oldest semantics.
+A disjoint-set (union-find) structure with path compression and union by rank.
+A bloom filter with configurable bits and hash count, reporting the false-positive rate.
+A doubly-linked list built on index handles rather than pointers.
+An LRU cache with a capacity bound and a hit/miss report.
+An immutable persistent list with structural sharing between versions.
+A skip list with a deterministic level assignment for reproducibility.
+A sparse matrix stored as coordinate triples, with addition and multiplication.
+A suffix array builder with a longest-repeated-substring query.
+A graph stored as adjacency lists, with a topological sort and cycle detection.
+An interval tree answering "which intervals contain point X".
+A merge sort, quick sort and insertion sort compared on the same input, with comparison counts.
+Dijkstra's shortest path over a small weighted graph, printing the path and cost.
+Breadth-first and depth-first traversal of a maze, comparing the paths found.
+An A* pathfinder on a grid with obstacles and a Manhattan heuristic.
+A minimum spanning tree (Kruskal or Prim) over a small weighted graph.
+A longest-common-subsequence implementation that reconstructs the subsequence.
+An edit-distance (Levenshtein) implementation that prints the edit script.
+A knapsack solver that reports both the optimal value and the chosen items.
+A topological scheduler that orders tasks with dependencies and detects cycles.
+A stable sort over records by multiple keys with configurable direction.
+A string-search implementation (Knuth-Morris-Pratt or Boyer-Moore) with a match count.
+A cycle detector over a linked structure using Floyd's tortoise and hare.
+A reservoir sampler that draws k items from a stream of unknown length.
+A convex hull over a set of 2D points, printed as an ordered ring.
+An n-queens solver that counts solutions and prints one board.
+A Sudoku solver that reads a puzzle and prints the solved grid.
+A big-integer type supporting addition, multiplication and decimal printing.
+A rational-number type in lowest terms, with arithmetic and comparison.
+A fixed-point decimal type for money, with correct rounding on division.
+A prime sieve that reports the count of primes below N and the largest gap.
+A modular-exponentiation and modular-inverse implementation.
+A matrix type with multiplication, transpose and determinant for small sizes.
+A statistics summary: mean, median, mode, variance and standard deviation.
+A linear regression over a small dataset, reporting slope, intercept and R-squared.
+A numeric integrator comparing the trapezoid rule and Simpson's rule.
+A root finder comparing bisection and Newton-Raphson on the same function.
+A complex-number type with arithmetic and a Mandelbrot membership test.
+A continued-fraction expander that approximates a float as a fraction.
+A random-number generator (xorshift or PCG) with a chi-squared uniformity check.
+A base converter that renders an integer in any base from 2 to 36 and back.
+A GCD/LCM tool that also prints the Bezout coefficients.
+A floating-point inspector that prints the sign, exponent and mantissa of an f64.
+A units converter with a small dimensional-analysis check.
+A histogram renderer that bins numeric input and draws bars in ASCII.
+A sparkline renderer that compresses a numeric series into one line of block characters.
+A progress-bar renderer with a rate estimate and an ETA.
+A table formatter that aligns columns, handles wide cells and draws box-drawing borders.
+An ASCII bar chart with axis labels and automatic scaling.
+A calendar printer that renders a month or a year, with correct leap years.
+A terminal colouriser that applies ANSI styles and strips them when not a TTY.
+A box-drawing tool that wraps text in a titled frame.
+A tree renderer that prints a nested structure with the usual connector glyphs.
+A diff renderer that colours additions and deletions and aligns the gutters.
+A hex/RGB/HSL colour converter with a nearest-named-colour lookup.
+A Conway's Game of Life that runs a fixed number of generations and prints the board.
+A cellular automaton (rule 110 or similar) rendered as ASCII rows.
+A Langton's Ant simulation reporting the step at which the highway forms.
+A random-walk simulation reporting the distribution of final distances.
+A traffic simulation on a one-lane loop, reporting throughput against density.
+A queueing simulation (M/M/1) reporting average wait time against arrival rate.
+A predator-prey (Lotka-Volterra) simulation printing populations over time.
+A forest-fire simulation reporting the burned fraction against tree density.
+A sandpile model that stabilises a grid and counts topplings.
+A diffusion-limited aggregation that grows a cluster on a grid.
+An N-body gravity simulation over a few bodies, reporting total energy drift.
+A percolation simulation finding the threshold at which a grid connects.
+A Monte Carlo estimator for pi, reporting error against trial count.
+An elevator scheduler simulating requests and reporting average wait.
+A cache simulator comparing LRU, FIFO and random eviction on the same trace.
+A tic-tac-toe player with a perfect minimax opponent.
+A Connect Four game with a depth-limited search and a board evaluator.
+A text adventure with rooms, items and an inventory.
+A hangman game with a word list and a guess tracker.
+A Mastermind solver that narrows candidates by feedback.
+A 2048 board that applies moves and reports whether the board changed.
+A Nim game with a perfect player using the XOR strategy.
+A card-shuffling and dealing engine with a verifiable shuffle.
+A Blackjack hand evaluator handling soft aces and splits.
+A poker hand ranker that compares two hands correctly.
+A Battleship board that places ships legally and resolves shots.
+A Minesweeper board that generates mines, computes neighbour counts and floods empty regions.
+A word-ladder solver that finds the shortest chain between two words.
+A crossword-grid checker that verifies symmetry and word-length constraints.
+A Rubik's-cube move engine that applies a move sequence and detects the solved state.
+A chess move generator for a single piece type, respecting board edges and blockers.
+An HTTP server that serves a JSON API with routing and correct status codes.
+An HTTP server that serves static files with content-type detection and 404 handling.
+An HTTP request router with path parameters and method dispatch.
+A middleware chain for an HTTP handler: logging, timing and error recovery.
+A tiny reverse proxy that rewrites a path prefix and forwards headers.
+An HTTP client that fetches a URL, follows redirects and reports the timing.
+A rate limiter (token bucket) applied to an HTTP handler.
+A health-check endpoint that reports uptime, version and a dependency status.
+A webhook receiver that verifies an HMAC signature before acting.
+A server-sent-events endpoint that streams a counter.
+A URL shortener with an in-memory store and collision handling.
+A content-negotiation helper that picks a response format from an Accept header.
+An HTTP cache-header calculator (ETag, Last-Modified, conditional requests).
+A form-encoded body parser with multi-value keys.
+A tiny TCP echo server with a line protocol and a graceful shutdown.
+A log-line parser that extracts fields from a common log format and reports error rates.
+A structured logger that emits JSON lines with levels and fields.
+A log-tailer that follows a file and filters by level.
+A metrics aggregator that computes counters, gauges and percentiles from events.
+A tool that watches a directory and reports created, modified and deleted files.
+A file deduplicator that groups files by content hash.
+A directory-size reporter that prints the largest subtrees.
+A file-tree walker that applies a glob filter and prints matches with sizes.
+A tool that renames files in bulk from a pattern, with a dry-run mode.
+A backup tool that copies changed files and reports what it skipped.
+A tool that splits a large file into fixed-size chunks and reassembles them.
+An .env file loader with interpolation and a typed accessor.
+A tool that reads from stdin, transforms lines, and writes atomically to a temp file then renames.
+A recursive-descent parser for a small imperative language, producing an AST.
+A type checker for a small expression language with a useful error on a mismatch.
+A tree-walking interpreter for a small language with functions and closures.
+A bytecode compiler and stack VM for arithmetic and control flow.
+A register allocator over a tiny IR, reporting spills.
+A constant-folding and dead-code-elimination pass over a small IR.
+A pretty-printer for an AST that round-trips through the parser.
+A lexer generator that builds a matcher from a small token specification.
+A macro expander that substitutes forms and detects unbounded recursion.
+A name resolver that reports shadowing and unused bindings.
+A control-flow-graph builder that identifies unreachable blocks.
+A simple garbage-collector simulation (mark and sweep) over a synthetic heap.
+A reference-counting simulation that detects a cycle it cannot collect.
+A stack-machine assembler and disassembler that round-trip.
+A source-map builder that maps generated lines back to original lines.
+An iterator pipeline that lazily maps, filters and takes from an infinite source.
+A stream fold that processes input in constant memory and reports peak allocation.
+A generator of permutations and combinations, produced lazily.
+A chunking iterator that groups a stream into fixed-size windows.
+A zip/unzip over two iterators of different lengths, with an explicit policy.
+A `groupBy` over a stream that preserves first-seen order.
+A deduplicating iterator that remembers only what it must.
+A merge of k sorted streams into one sorted output.
+A retry helper with exponential backoff and a jitter policy.
+A pipeline that composes fallible steps with `Result` and `?`, reporting the first failure.
+An error type with source-chaining that prints a full cause chain.
+A validation combinator that accumulates every error rather than stopping at the first.
+A state machine with typed transitions that rejects illegal ones at compile time.
+A small event bus with typed subscribers and unsubscribe.
+A memoiser that caches results of a pure function and reports the hit rate.
+A tool that renders a phone keypad's letter combinations for a number.
+A Roman-numeral converter, both directions, rejecting malformed numerals.
+A number-to-English-words converter handling scale words up to billions.
+An ISBN/IBAN/credit-card checksum validator.
+A password strength estimator with an entropy calculation.
+A passphrase generator from a word list with a configurable entropy target.
+A UUID generator and parser that validates version and variant bits.
+A slug generator that transliterates, lowercases and deduplicates separators.
+A Soundex or Metaphone implementation for fuzzy name matching.
+A fuzzy string matcher that ranks candidates by score for a "did you mean" hint.
+A spell checker that suggests corrections within edit distance 2.
+A text-wrapping justifier that hyphenates using a small rule set.
+A pluraliser and inflector with an irregular-forms table.
+A tool that anonymises a text by replacing named entities with stable placeholders.
+A CSV column extractor that handles ragged rows and reports them.
+A tool that converts a nested structure into a flat dotted-key mapping and back.
+A time-duration parser and formatter (`1h30m`, `90m`, `5400s`) that round-trips.
+A cron-expression parser that reports the next N firing times.
+A timezone-free date arithmetic library: add days/months, clamp end-of-month.
+A rate calculator that reports events per second over a sliding window.
+A scheduler that runs tasks at intervals and reports drift.
+A working-days calculator with a holiday table.
+An age calculator that is correct on leap days.
+A week-number calculator that follows the ISO-8601 rules.
+A tool that renders a Gantt-style timeline in ASCII from start/duration pairs.
+A deadline propagator that threads a budget through a call chain.
+A stopwatch-based benchmark harness that reports median and interquartile range.
+A sunrise/sunset calculator for a given latitude and day of year.
+A key-value store with append-only writes and a compaction pass.
+A write-ahead log with replay and a torn-write check.
+An in-memory index supporting range queries over a sorted key space.
+A tiny query planner that chooses between a scan and an index lookup.
+A snapshot/restore mechanism over an in-memory store.
+A B-tree page layout simulated in a byte array, with split and merge.
+A copy-on-write map that shares structure between snapshots.
+A transaction log with optimistic concurrency and conflict detection.
+A schema migrator that applies ordered migrations and records what ran.
+A tombstone-based delete with a garbage-collection pass.
+A CRDT counter or grow-only set that merges replicas.
+A vector clock implementation that orders concurrent events.
+A consistent-hashing ring with virtual nodes and a rebalance report.
+A leader-election simulation over a small set of nodes.
+A gossip-protocol simulation reporting convergence time.
+An interpreter for Brainfuck with bounded tape and useful errors.
+An interpreter for a subset of Forth with a dictionary of user words.
+A Turing-machine simulator that runs a table and reports halting.
+A lambda-calculus evaluator with capture-avoiding substitution.
+A regular-expression-to-NFA compiler with a subset-construction step to a DFA.
+A context-free grammar recogniser (CYK or Earley) over a small grammar.
+A PEG parser combinator library used to parse a small format.
+A pushdown automaton that checks balanced multi-kind brackets.
+A finite-state transducer that normalises a token stream.
+A tiny spreadsheet with cell references, formulas and cycle detection.
+A dependency resolver that picks versions satisfying a constraint set.
+A build-system core that decides what to rebuild from a dependency graph and timestamps.
+A task runner that executes a dependency DAG with a concurrency limit.
+A plugin registry with typed hooks and a deterministic invocation order.
+A feature-flag evaluator with percentage rollouts and stable bucketing.
+A configuration merger that layers defaults, file and environment with precedence.
+A tiny dependency-injection container resolving a graph of constructors.
