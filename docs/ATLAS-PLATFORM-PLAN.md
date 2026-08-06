@@ -210,18 +210,24 @@ So the accurate statement is not "Fern rejected arenas" but "Fern rejected the
 is the same adaptive-dispatch instinct the blueprint argues for, applied to
 memory: the general mechanism lost to RC, and the specialised one survived.
 
-The removal was eyes-open and carries a stated regression — RC cannot collect
-cycles, so a long-running server now leaks request-local cycles the arena reset
-used to reclaim (`docs/CYCLE-COLLECTION-ANALYSIS.md` §4). That is the live
-memory question. Re-introducing a general allocator tier would not answer it,
-and Atlas's Phase 1 does not address ownership at all, which is where Fern's
-actual memory bugs are: the seven unbounded self-host-vs-native reclaim leaks
-measured under `FERN_LEAKCHECK=1` in **#6127** (~108 KB over four shapes
-remaining as of `f58ab5d`).
+The removal was eyes-open and was recorded as carrying a regression: RC cannot
+collect cycles, so a long-running server would leak request-local cycles the
+arena reset used to reclaim. **That regression did not materialise, and this
+paragraph asserted it as live for one revision of this document.** Cycles are
+not constructible in Fern — E048 (fields immutable after construction), its
+subscript counterpart, and E057 (`Cell[T]` restricted to scalars and `string`
+so a cell cannot close a cycle) between them reject every route
+`CYCLE-COLLECTION-ANALYSIS.md`'s proof depends on. See §4's closed-questions
+list for the verification.
 
-**Verdict:** Phase 1 is closed as written. The successor items are (a) cycle
-collection — trial-deletion or backup tracing — and (b) closing #6127. Both are
-about *reclaim*, not about *allocation*.
+So Phase 1's successor is not a cycle collector. It is ownership, which Atlas
+does not address at all and which is where Fern's actual memory bugs are: the
+seven unbounded self-host-vs-native reclaim leaks measured under
+`FERN_LEAKCHECK=1` in **#6127** (~108 KB over four shapes remaining as of
+`f58ab5d`).
+
+**Verdict:** Phase 1 is closed as written, and so is the cycle question. The
+successor item is closing #6127 — *reclaim*, not *allocation*.
 
 The one Phase 1 idea that does survive intact is **small-object optimisation**
 ("every collection has inline storage"). Fern has it for strings
@@ -552,12 +558,28 @@ into an ordinary build item:
   its trait impls in `core/cmp` to keep the module import-free. The Karatsuba /
   Toom-Cook / NTT ladder stays unbuilt until there is a workload to measure.
 - **Is macOS a server target?** Yes (2026-08-06) — §2c, sequenced as item 3.
+- **How should Fern collect reference cycles?** **It should not — cycles are
+  not constructible.** This question was listed here as open, and §1.3 asserted
+  that a long-running server "leaks any reference cycle a handler builds". Both
+  were wrong, and wrong by trusting a stale document rather than the checker:
+  `CYCLE-COLLECTION-ANALYSIS.md`'s TL;DR still says a cycle is constructible,
+  which was true on 2026-06-01 and has not been since. Its own recommendation —
+  cycle-free by construction, enforced by the checker — is what shipped. **E048**
+  makes struct fields immutable after construction (killing `a.next = [b]`, the
+  only mechanism that doc's proof relies on), its subscript counterpart does the
+  same for elements, and **E057** restricts `Cell[T]` to scalars and `string`
+  *explicitly* so a cell cannot reconstruct a cycle
+  (`internal/checker/checker.go:635`). Verified 2026-08-06: the proof program
+  now fails `-check`; `Cell[Node]` and `Cell[fn]` are rejected; a struct rebuild
+  captures a snapshot rather than a back-edge.
+
+  The one thing that keeps this live: a future feature reintroducing interior
+  mutability over composite types — `Cell[T]` widened past scalars, a `ref` or
+  `weak` type, or field assignment coming back — reopens it. Such a feature
+  should cite `CYCLE-COLLECTION-ANALYSIS.md` and this entry.
 
 Still open, and still decisions rather than implementations:
 
-- **Cycle collection** (§1.3). RC cannot collect cycles, and the per-request
-  arena reset that used to make request-scoped cycles safe is gone. Trial
-  deletion or backup tracing; `docs/CYCLE-COLLECTION-ANALYSIS.md` §4.
 - **The multicore shape** (§1.4). #5366's share-nothing workers with
   per-worker heaps is the candidate, forced by non-atomic Perceus refcounts.
   Until it is settled, new stdlib surface should stop accreting against an
