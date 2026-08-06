@@ -1856,7 +1856,13 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
         // A replaced fn (closure) field — the x86 fr_clo arm's transcription
         // (clofld-gated shallow arr_dec, generic branch below).
         var fr_clo: boolean = fdt == "fn" && s.has_need("strfldok:clo:" + sty);
-        if (fr_str || fr_str_arr || fr_clo || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+        // A replaced DIRECT nested-struct / nested-enum field (#6127) — the x86
+        // fr_struct / fr_enum arms' transcription: shallow arr_dec of the
+        // superseded field box via the generic branch below, whole-program-scan
+        // gated ("structfldok:<T>").
+        var fr_struct: boolean = irlower.decl_is_struct(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
+        var fr_enum: boolean = irlower.decl_is_enum(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
+        if (fr_str || fr_str_arr || fr_clo || fr_struct || fr_enum || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
             s = s.write("    ldr x1, [x11, #" + off + "]\n");      // old.field_k
@@ -7621,6 +7627,10 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
+    // #6127: the DIRECT nested-struct / nested-enum field arm (see the x86 twin).
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs);
+    var nfoi: i32 = 0;
+    while (nfoi < nfok.len()) { s = s.need("structfldok:" + nfok[nfoi]); nfoi = nfoi + 1; }
     // #5235: plain-fn-pointer-array field registry (see the emit_module_funcs twin).
     var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, mod.structs);
     var fpi: i32 = 0;
@@ -7693,6 +7703,10 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     var sfok: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
+    // #6127: the DIRECT nested-struct / nested-enum field arm, whole-program.
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(all_funcs, all_structs);
+    var nfoi: i32 = 0;
+    while (nfoi < nfok.len()) { s = s.need("structfldok:" + nfok[nfoi]); nfoi = nfoi + 1; }
     // #5235: seed the plain-fn-pointer-array field registry as needs so
     // emit_arm64_struct_drop_one buffer-only-decs those fields (no element walk).
     var fpk: string[] = irlower.fnptr_arr_fields_of(all_funcs, all_structs);

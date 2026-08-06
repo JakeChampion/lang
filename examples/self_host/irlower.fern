@@ -36770,6 +36770,207 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
     return out;
 }
 
+// ── structfldok: admit the DIRECT nested-struct / nested-enum field arm ──────
+//
+// The struct/enum sibling of strfld_reclaim_ok_types_of, and the precondition
+// #6148's revert established for #6127's nested_struct row. A rebound struct
+// local whose field is itself a struct leaks that field's box on every rebind:
+// __struct_drop_<T> HAS k_struct / k_enum arms, so a SINGLE bind reclaims
+// cleanly at scope exit (measured 200/200/0), but __field_reclaim_<T>'s field
+// loop has no such arm, so only the rebinds leak (900/600/12000 over 100 rounds
+// against 0 on native).
+//
+// #6148 added the arms without an admission scan and it was a use-after-free:
+// a struct-literal field value is sole-owned at rc=1, so `items.append(p.node)`
+// takes an UNCOUNTED alias, and the next rebind's field release freed a box the
+// container still pointed at. The self-host has no read-side alias-inc for these
+// reads, so the scan IS the safety argument — hand-rolling a looser predicate to
+// make a probe pass is exactly what had to be reverted.
+//
+// It cannot reuse strfld_collect_unsafe: that walker recurses into a marked
+// access's RECEIVER as unsafe, so `o.f.v` would mark `f` and exclude every type
+// whose nested field is merely read through. Here the receiver of a borrow chain
+// is a borrow — the inner read is judged under its own field's name — which is
+// the one structural difference between the two scans.
+pub function structfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+    var unsafe_names: string[] = [];
+    var ki: i32 = 0;
+    while (ki < funcs.len()) {
+        unsafe_names = structfld_collect_unsafe_stmts(funcs[ki].body, unsafe_names);
+        ki = ki + 1;
+    }
+    var out: string[] = [];
+    var si: i32 = 0;
+    while (si < structs.len()) {
+        var has: boolean = false;
+        var ok: boolean = true;
+        var fi: i32 = 0;
+        while (fi < structs[si].fields.len()) {
+            var fdt: string = structs[si].fields[fi].type_name;
+            if (decl_is_struct(structs, fdt) || decl_is_enum(structs, fdt)) {
+                has = true;
+                if (util.index_of_str(unsafe_names, structs[si].fields[fi].name) >= 0) { ok = false; }
+            }
+            fi = fi + 1;
+        }
+        if (has && ok) { out = out.append(structs[si].name); }
+        si = si + 1;
+    }
+    return out;
+}
+
+// structfld_mark: record e's field name as unsafely read, then treat its
+// RECEIVER as a borrow. This is the difference from strfld_mark, which recurses
+// into the receiver as unsafe: reaching `g` through `o.f.g` retains only g's
+// box, so `f` is borrowed and stays admissible.
+function structfld_mark(e: parser.Expr, acc: string[]): string[] {
+    var a: string[] = acc;
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            a = push_str_unique(a, fa.field);
+            a = structfld_safe_operand(fa.obj, a);
+        },
+        _ => {}
+    }
+    return a;
+}
+
+// structfld_safe_operand: the DIRECT read here is a transient borrow — do not
+// mark it, but keep walking beneath.
+function structfld_safe_operand(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprFieldAccess(fa) => { return structfld_safe_operand(fa.obj, acc); },
+        _ => {}
+    }
+    return structfld_collect_unsafe(e, acc);
+}
+
+// structfld_collect_unsafe: every field NAME read in a position that could
+// outlive its box. A bare ExprFieldAccess reached here — not consumed by one of
+// the borrow parents — is unsafe by default.
+function structfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
+    var a: string[] = acc;
+    match (e) {
+        parser.ExprFieldAccess(_) => { return structfld_mark(e, a); },
+        parser.ExprBinary(b) => {
+            a = structfld_safe_operand(b.left, a);
+            return structfld_safe_operand(b.right, a);
+        },
+        parser.ExprUnary(u) => { return structfld_collect_unsafe(u.operand, a); },
+        parser.ExprIndex(ix) => {
+            a = structfld_safe_operand(ix.array, a);
+            return structfld_collect_unsafe(ix.index, a);
+        },
+        parser.ExprSlice(sl) => {
+            a = structfld_collect_unsafe(sl.array, a);
+            match (sl.array) { parser.ExprFieldAccess(_) => { a = structfld_mark(sl.array, a); }, _ => {} }
+            a = structfld_collect_unsafe(sl.start, a);
+            return structfld_collect_unsafe(sl.end, a);
+        },
+        // A struct-literal FIELD VALUE re-homes the box into the new literal
+        // (`PS { node: other.node }`) — the new owner outlives this one, so the
+        // read is unsafe. strfld's walker never visits ExprStructLit at all;
+        // this scan must, because a nested-struct field is exactly the thing
+        // that gets copied between literals.
+        parser.ExprStructLit(sl2) => {
+            var fi: i32 = 0;
+            while (fi < sl2.field_values.len()) {
+                a = structfld_collect_unsafe(sl2.field_values[fi], a);
+                fi = fi + 1;
+            }
+            // A functional-update BASE (`S { ..o, n: 1 }`) copies o's field
+            // pointers into the new box, so every one of them gains an owner.
+            if (sl2.has_base) { a = structfld_collect_unsafe(sl2.base, a); }
+            return a;
+        },
+        // A tuple element is a store into a box that outlives the read, the
+        // same position as an array element.
+        parser.ExprTuple(tl2) => {
+            var ti2: i32 = 0;
+            while (ti2 < tl2.elements.len()) {
+                a = structfld_collect_unsafe(tl2.elements[ti2], a);
+                ti2 = ti2 + 1;
+            }
+            return a;
+        },
+        // An array literal ELEMENT is a store into a container that outlives
+        // the read, the literal-built sibling of `xs.append(o.f)`.
+        parser.ExprArray(arr) => {
+            var ai2: i32 = 0;
+            while (ai2 < arr.elements.len()) {
+                a = structfld_collect_unsafe(arr.elements[ai2], a);
+                ai2 = ai2 + 1;
+            }
+            return a;
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    // A method CALL on a field borrows its receiver for the
+                    // call — `o.f.len()` / `o.f.method()` read through it. The
+                    // receiver chain is judged by structfld_safe_operand; the
+                    // arguments below are what can retain.
+                    a = structfld_safe_operand(cfa.obj, a);
+                },
+                _ => { a = structfld_collect_unsafe(c.callee, a); }
+            }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                a = structfld_collect_unsafe(c.args[ai], a);
+                ai = ai + 1;
+            }
+            return a;
+        },
+        _ => {}
+    }
+    return a;
+}
+
+// structfld_collect_unsafe_stmts: a direct `var t = x.f` init is SAFE — the
+// binding is a borrow the exit sweep does not double-free — while a REASSIGN
+// `t = x.f` is not, matching the string scan's split.
+function structfld_collect_unsafe_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { a = structfld_safe_operand(v.init, a); },
+            parser.StmtReturn(r) => { a = structfld_collect_unsafe(r.value, a); },
+            parser.StmtAssign(as2) => { a = structfld_collect_unsafe(as2.value, a); },
+            parser.StmtExpr(ex) => { a = structfld_collect_unsafe(ex.value, a); },
+            parser.StmtIf(iff) => {
+                a = structfld_collect_unsafe(iff.cond, a);
+                a = structfld_collect_unsafe_stmts(iff.then_body, a);
+                a = structfld_collect_unsafe_stmts(iff.else_body, a);
+            },
+            parser.StmtWhile(w) => {
+                a = structfld_collect_unsafe(w.cond, a);
+                a = structfld_collect_unsafe_stmts(w.body, a);
+            },
+            parser.StmtFor(fo) => {
+                a = structfld_collect_unsafe(fo.iter, a);
+                a = structfld_collect_unsafe_stmts(fo.body, a);
+            },
+            parser.StmtMatch(m) => {
+                a = structfld_collect_unsafe(m.scrutinee, a);
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    if (m.arms[mi].has_guard) { a = structfld_collect_unsafe(m.arms[mi].guard, a); }
+                    a = structfld_collect_unsafe_stmts(m.arms[mi].body, a);
+                    mi = mi + 1;
+                }
+            },
+            parser.StmtDefer(d) => {
+                var one: parser.Stmt[] = [d.action];
+                a = structfld_collect_unsafe_stmts(one, a);
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 // struct_has_strarr_field: does `sty` declare at least one string[] field?
 pub function struct_has_strarr_field(structs: parser.StructDecl[], sty: string): boolean {
     var i: i32 = 0;
