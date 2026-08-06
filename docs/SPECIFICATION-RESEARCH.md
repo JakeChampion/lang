@@ -332,6 +332,29 @@ and ambiguity decisions visible for the first time; is the prerequisite
 for any second front-end (a formatter, a syntax-highlighter, a
 tree-sitter grammar, another implementation).
 
+**Correction, from building it.** The plan above said "generate a parser
+(or a recogniser) from the grammar and differentially test it against
+`internal/parser`". That is what shipped (`spec/grammar.ebnf` +
+`internal/grammar`, 736/736), and the derivation gate was the easy part —
+the first draft reached 731/731 in four iterations. What the plan MISSED
+is that derivation alone does not keep a grammar honest.
+
+A production nothing uses is invisible to a derivation gate, and the
+first draft had four: `race`/`concurrent` blocks (a **retired** surface
+the parser now rejects), `resource` declarations (assembled from a
+keyword in the parser's dispatch table; no spelling parses), `use x = e`
+(the real form is `use x <- e`), and a bare `x => e` lambda. All four
+read exactly like the productions that were true. So the gate grew a
+third check — **every rule must be exercised by a real program** — and
+that is the one to carry into Layer 3: a semantics with an unexercised
+rule has the same defect and is far harder to spot by eye.
+
+Coverage also pays in the other direction. Three rules it flagged were
+real but had **zero** conformance coverage — `pub use` re-exports,
+struct patterns, and the `use` bind — so the corpus grew by three cases
+rather than the grammar shrinking. A grammar-coverage gate doubles as a
+corpus-coverage gate, which was not why it was built.
+
 ### Layer 2 — promote the diagnostics and the policy docs (days)
 
 The `E0NN` catalogue plus `catalogue_completeness_test.go` is already a
