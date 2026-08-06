@@ -2232,6 +2232,111 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emit("movzx eax, al")
 		g.push()
 
+	// Bit counting, on BASELINE x86-64 only. LZCNT / TZCNT need
+	// BMI1/ABM and POPCNT needs SSE4.2; Fern emits static binaries with
+	// no runtime CPU dispatch, so using them would turn an old CPU into
+	// a SIGILL at the first bit operation. bsr / bsf are 386-era and
+	// universally available, so clz and ctz get real instructions
+	// everywhere.
+	//
+	// The cost is that bsr/bsf leave the destination UNDEFINED for a
+	// zero input while the IR op defines clz(0) / ctz(0) as the operand
+	// width — hence the explicit zero branch. It is a predictable branch
+	// that is never taken in the common case.
+	case ir.OpClz:
+		g.pop()
+		zero := g.freshLabel("clzZero")
+		done := g.freshLabel("clzDone")
+		if op.Width == 64 {
+			g.emit("test rax, rax")
+			g.emit("jz " + zero)
+			g.emit("bsr rax, rax")
+			g.emit("xor rax, 63")
+			g.emit("jmp " + done)
+			g.label(zero)
+			g.emit("mov eax, 64")
+		} else {
+			g.emit("test eax, eax")
+			g.emit("jz " + zero)
+			g.emit("bsr eax, eax")
+			g.emit("xor eax, 31")
+			g.emit("jmp " + done)
+			g.label(zero)
+			g.emit("mov eax, 32")
+		}
+		g.label(done)
+		g.push()
+	case ir.OpCtz:
+		g.pop()
+		zeroC := g.freshLabel("ctzZero")
+		doneC := g.freshLabel("ctzDone")
+		if op.Width == 64 {
+			g.emit("test rax, rax")
+			g.emit("jz " + zeroC)
+			g.emit("bsf rax, rax")
+			g.emit("jmp " + doneC)
+			g.label(zeroC)
+			g.emit("mov eax, 64")
+		} else {
+			g.emit("test eax, eax")
+			g.emit("jz " + zeroC)
+			g.emit("bsf eax, eax")
+			g.emit("jmp " + doneC)
+			g.label(zeroC)
+			g.emit("mov eax, 32")
+		}
+		g.label(doneC)
+		g.push()
+	case ir.OpPopcount:
+		// No baseline popcount instruction exists, so this stays the
+		// SWAR sequence — the same algorithm the stdlib used, but
+		// inline rather than behind a call, and on the IR path so
+		// constant folding and register allocation see it.
+		//
+		// This is the one place the intrinsic work does NOT buy a
+		// hardware instruction on x86-64. Raising the target baseline
+		// to SSE4.2 would fix it; that is a project-level decision,
+		// not one to make silently inside a codegen switch.
+		g.pop()
+		if op.Width == 64 {
+			g.emit("mov rcx, rax")
+			g.emit("shr rcx, 1")
+			g.emit("mov rdx, 0x5555555555555555")
+			g.emit("and rcx, rdx")
+			g.emit("sub rax, rcx")
+			g.emit("mov rdx, 0x3333333333333333")
+			g.emit("mov rcx, rax")
+			g.emit("and rcx, rdx")
+			g.emit("shr rax, 2")
+			g.emit("and rax, rdx")
+			g.emit("add rax, rcx")
+			g.emit("mov rcx, rax")
+			g.emit("shr rcx, 4")
+			g.emit("add rax, rcx")
+			g.emit("mov rdx, 0x0f0f0f0f0f0f0f0f")
+			g.emit("and rax, rdx")
+			g.emit("mov rdx, 0x0101010101010101")
+			g.emit("imul rax, rdx")
+			g.emit("shr rax, 56")
+		} else {
+			g.emit("mov ecx, eax")
+			g.emit("shr ecx, 1")
+			g.emit("and ecx, 0x55555555")
+			g.emit("sub eax, ecx")
+			g.emit("mov ecx, eax")
+			g.emit("and ecx, 0x33333333")
+			g.emit("shr eax, 2")
+			g.emit("and eax, 0x33333333")
+			g.emit("add eax, ecx")
+			g.emit("mov ecx, eax")
+			g.emit("shr ecx, 4")
+			g.emit("add eax, ecx")
+			g.emit("and eax, 0x0f0f0f0f")
+			g.emit("imul eax, eax, 0x01010101")
+			g.emit("shr eax, 24")
+		}
+		g.push()
+
 	// -------- locals --------
 	//
 	// Slot i sits at [rbp - (i+1)*8] — mirrors arm64's

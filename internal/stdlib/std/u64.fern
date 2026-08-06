@@ -304,58 +304,38 @@ pub function (n: u64) log10_floor(): i32 {
 }
 
 // === u64 bit ops (the unsigned counterparts to std/i64's) ===
-// Software implementations over u64 shifts/masks, O(64) per call — the
-// same shape as std/i64's, but with no sign bit (unsigned shifts are
-// logical).
-
-// __swar_popcount64 is __swar_popcount32's 64-bit sibling; see it for the
-// SWAR explanation. The masks are built by doubling the 32-bit constants
-// rather than written as literals, so no 64-bit literal is needed. Each byte
-// holds at most 8 and the total at most 64, so the low 7 bits hold it.
-function __swar_popcount64(n: u64): i32 {
-    var m1: u64 = ((1431655765 as u64) << (32 as u64)) | (1431655765 as u64);
-    var m2: u64 = ((858993459 as u64) << (32 as u64)) | (858993459 as u64);
-    var m4: u64 = ((252645135 as u64) << (32 as u64)) | (252645135 as u64);
-    var x: u64 = n;
-    x = x - ((x >> (1 as u64)) & m1);
-    x = (x & m2) + ((x >> (2 as u64)) & m2);
-    x = (x + (x >> (4 as u64))) & m4;
-    x = x + (x >> (8 as u64));
-    x = x + (x >> (16 as u64));
-    x = x + (x >> (32 as u64));
-    return (x & (127 as u64)) as i32;
-}
-
-// __swar_clz64 / __swar_ctz64 — the 64-bit forms of __swar_clz32 / __swar_ctz32.
-function __swar_clz64(n: u64): i32 {
-    var x: u64 = n;
-    x = x | (x >> (1 as u64));
-    x = x | (x >> (2 as u64));
-    x = x | (x >> (4 as u64));
-    x = x | (x >> (8 as u64));
-    x = x | (x >> (16 as u64));
-    x = x | (x >> (32 as u64));
-    return 64 - __swar_popcount64(x);
-}
-
-function __swar_ctz64(n: u64): i32 {
-    if (n == (0 as u64)) { return 64; }
-    return __swar_popcount64(n ^ (n - (1 as u64))) - 1;
-}
+//
+// `count_ones` / `leading_zeros` / `trailing_zeros` are one-line wrappers over
+// the compiler intrinsics `__popcount*` / `__clz*` / `__ctz*`, each of which
+// lowers to a SINGLE IR op (#6197). They used to be SWAR sequences — 12-15 ALU
+// ops apiece — which was the right answer while the language had no intrinsic
+// surface. Measured on x86-64, 20M `count_ones()` calls cost 0.489s against
+// 0.099s for the same loop with a trivial callee: the SWAR body was ~80% of
+// the runtime.
+//
+// What each backend emits still varies, and callers do not care. wasm has all
+// six as single opcodes. arm64 gets a real `clz` and derives ctz from it.
+// x86-64 uses baseline `bsr`/`bsf`. popcount stays a SWAR sequence on BOTH
+// register backends — inline rather than behind a call — because arm64's
+// hardware popcount is on the SIMD side (`cnt`/`addv`, not implemented by the
+// in-process assembler) and x86-64's POPCNT needs SSE4.2, which Fern cannot
+// assume while emitting static binaries with no runtime CPU dispatch.
+//
+// Zero is defined: leading_zeros / trailing_zeros of 0 return the width.
 
 // `count_ones()` — the number of set bits in `n`.
-pub function (n: u64) count_ones(): i32 { return __swar_popcount64(n); }
+pub function (n: u64) count_ones(): i32 { return __popcount64(n); }
 
 // `count_zeros()` — the number of clear bits (`64 - count_ones()`).
 pub function (n: u64) count_zeros(): i32 { return 64 - n.count_ones(); }
 
 // `leading_zeros()` — the number of zero bits above the highest set bit
 // (`0` → 64).
-pub function (n: u64) leading_zeros(): i32 { return __swar_clz64(n); }
+pub function (n: u64) leading_zeros(): i32 { return __clz64(n); }
 
 // `trailing_zeros()` — the number of zero bits below the lowest set bit
 // (`0` → 64).
-pub function (n: u64) trailing_zeros(): i32 { return __swar_ctz64(n); }
+pub function (n: u64) trailing_zeros(): i32 { return __ctz64(n); }
 
 // `bit_length()` — the position of the highest set bit, plus one
 // (`64 - leading_zeros()`); `0` → 0.

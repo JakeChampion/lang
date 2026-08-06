@@ -296,74 +296,38 @@ pub function (n: u32) log10_floor(): i32 {
 }
 
 // === u32 bit ops (the unsigned counterparts to std/i32's) ===
-// Software implementations over u32 shifts/masks (no intrinsics
-// surface in the language), O(32) per call — the same shape as the
-// std/i32 family, but simpler: unsigned shifts are logical, so there is
-// no sign bit to reason about.
-
-// __swar_popcount32 counts set bits with SWAR (SIMD-within-a-register):
-// the count is accumulated in-place in 2-, then 4-, then 8-bit fields of the
-// word itself, so a fixed handful of shifts/masks replaces the 32-iteration
-// loop this used to be. No branches, no data-dependent work — the cost is the
-// same for 0 as for 0xFFFFFFFF.
 //
-// The last stage sums the per-byte counts by folding the word onto itself
-// rather than by the usual `* 0x01010101 >> 24` multiply, which keeps this
-// clear of any question about how u32 multiplication overflows. Each byte
-// holds at most 8, so the running sums stay under 255 and never carry across
-// byte boundaries; the total is at most 32, so the low 6 bits hold it.
+// `count_ones` / `leading_zeros` / `trailing_zeros` are one-line wrappers over
+// the compiler intrinsics `__popcount*` / `__clz*` / `__ctz*`, each of which
+// lowers to a SINGLE IR op (#6197). They used to be SWAR sequences — 12-15 ALU
+// ops apiece — which was the right answer while the language had no intrinsic
+// surface. Measured on x86-64, 20M `count_ones()` calls cost 0.489s against
+// 0.099s for the same loop with a trivial callee: the SWAR body was ~80% of
+// the runtime.
 //
-// (A single POPCNT / CNT / i32.popcnt instruction exists on every backend and
-// would beat this, but the language has no intrinsic surface yet — see
-// docs/SOTA-STDLIB-BLUEPRINT.md.)
-function __swar_popcount32(n: u32): i32 {
-    var m1: u32 = 1431655765 as u32;    // 0x55555555, pairs
-    var m2: u32 = 858993459 as u32;     // 0x33333333, nibbles
-    var m4: u32 = 252645135 as u32;     // 0x0F0F0F0F, bytes
-    var x: u32 = n;
-    x = x - ((x >> (1 as u32)) & m1);
-    x = (x & m2) + ((x >> (2 as u32)) & m2);
-    x = (x + (x >> (4 as u32))) & m4;
-    x = x + (x >> (8 as u32));
-    x = x + (x >> (16 as u32));
-    return (x & (63 as u32)) as i32;
-}
-
-// __swar_clz32 counts leading zeros by smearing the highest set bit down over
-// every lower position, then counting what is left: `32 - popcount`. Branchless
-// and correct for 0 (nothing to smear, popcount 0, so 32).
-function __swar_clz32(n: u32): i32 {
-    var x: u32 = n;
-    x = x | (x >> (1 as u32));
-    x = x | (x >> (2 as u32));
-    x = x | (x >> (4 as u32));
-    x = x | (x >> (8 as u32));
-    x = x | (x >> (16 as u32));
-    return 32 - __swar_popcount32(x);
-}
-
-// __swar_ctz32 counts trailing zeros: for a non-zero `x`, `x ^ (x - 1)` sets
-// exactly the bits from position 0 up to and including the lowest set bit, so
-// its popcount is one more than the answer. Uses only XOR and a subtract that
-// cannot underflow (x >= 1 on this path).
-function __swar_ctz32(n: u32): i32 {
-    if (n == (0 as u32)) { return 32; }
-    return __swar_popcount32(n ^ (n - (1 as u32))) - 1;
-}
+// What each backend emits still varies, and callers do not care. wasm has all
+// six as single opcodes. arm64 gets a real `clz` and derives ctz from it.
+// x86-64 uses baseline `bsr`/`bsf`. popcount stays a SWAR sequence on BOTH
+// register backends — inline rather than behind a call — because arm64's
+// hardware popcount is on the SIMD side (`cnt`/`addv`, not implemented by the
+// in-process assembler) and x86-64's POPCNT needs SSE4.2, which Fern cannot
+// assume while emitting static binaries with no runtime CPU dispatch.
+//
+// Zero is defined: leading_zeros / trailing_zeros of 0 return the width.
 
 // `count_ones()` — the number of set bits in `n`.
-pub function (n: u32) count_ones(): i32 { return __swar_popcount32(n); }
+pub function (n: u32) count_ones(): i32 { return __popcount32(n); }
 
 // `count_zeros()` — the number of clear bits (`32 - count_ones()`).
 pub function (n: u32) count_zeros(): i32 { return 32 - n.count_ones(); }
 
 // `leading_zeros()` — the number of zero bits above the highest set bit
 // (`0` → 32).
-pub function (n: u32) leading_zeros(): i32 { return __swar_clz32(n); }
+pub function (n: u32) leading_zeros(): i32 { return __clz32(n); }
 
 // `trailing_zeros()` — the number of zero bits below the lowest set bit
 // (`0` → 32).
-pub function (n: u32) trailing_zeros(): i32 { return __swar_ctz32(n); }
+pub function (n: u32) trailing_zeros(): i32 { return __ctz32(n); }
 
 // `bit_length()` — the position of the highest set bit, plus one
 // (`32 - leading_zeros()`); `0` → 0. The unsigned sibling of i32's.

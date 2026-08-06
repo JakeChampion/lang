@@ -177,9 +177,9 @@ survives without SIMD, and the compiler's own lexer is the beneficiary.
 
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
-| `count_ones` | **Branchless SWAR** | `POPCNT` / NEON `CNT` / wasm `i32.popcnt` | **DONE (this pass)**; intrinsic still open |
-| `leading_zeros` | **Branchless smear + popcount** | `LZCNT` / `CLZ` / `i32.clz` | **DONE (this pass)**; intrinsic still open |
-| `trailing_zeros` | **Branchless `x ^ (x-1)` + popcount** | `TZCNT` / `RBIT`+`CLZ` / `i32.ctz` | **DONE (this pass)**; intrinsic still open |
+| `count_ones` | **Intrinsic** (`i32.popcnt` on wasm; inline SWAR on the register backends) | `POPCNT` / NEON `CNT` / wasm `i32.popcnt` | **DONE**; hardware popcount needs a baseline decision |
+| `leading_zeros` | **Intrinsic** — `i32.clz` / arm64 `clz` / x86 `bsr` | `LZCNT` / `CLZ` / `i32.clz` | **DONE (this pass)** |
+| `trailing_zeros` | **Intrinsic** — `i32.ctz` / clz-derived / x86 `bsf` | `TZCNT` / `RBIT`+`CLZ` / `i32.ctz` | **DONE (this pass)** |
 | `byte_swap` | Software | `BSWAP` / `REV` | GAP |
 | `rotate_left/right` | Software | `ROL`/`ROR` / wasm `rotl` | GAP |
 
@@ -267,6 +267,7 @@ constraints above.
    `core/map` is a **per-process hash seed** (the hash is unseeded and public,
    so attacker-controlled keys can force collisions) and the SWAR group probe.
 5. ~~Adaptive sort~~, ~~`random_int` modulo bias~~, ~~SWAR bit counting~~,
+   ~~bit-counting intrinsics~~,
    ~~map string hash~~, ~~seeded PCG32~~ — done, see below.
 
 **Tier 2 — unblocked, narrower**
@@ -421,13 +422,41 @@ additionally computes the OLD biased mapping and asserts it is measurably
 skewed (86/85/85 for range 3), so the suite cannot silently pass if the fix is
 reverted.
 
-**Bit counting is now branchless SWAR.** `count_ones`, `leading_zeros` and
-`trailing_zeros` were 32- and 64-iteration loops in each of std/i32, std/i64,
-std/u32 and std/u64. They now accumulate the count in-place in 2-, then 4-,
-then 8-bit fields of the word; leading zeros smears the top set bit downward
-and subtracts a popcount; trailing zeros uses the `x ^ (x - 1)` identity. All
-branchless, so the cost no longer depends on the value. Measured 4.3x faster on
-x86-64 over 3M iterations of all three.
+**Bit counting goes through compiler intrinsics.** `count_ones`,
+`leading_zeros` and `trailing_zeros` on `std/{i32,i64,u32,u64}` were branchless
+SWAR sequences — 12-15 ALU ops each, portable and correct, and the right answer
+while the language had no intrinsic surface. They are now one-line wrappers over
+`__popcount*` / `__clz*` / `__ctz*`, each lowering to a SINGLE IR op
+(`OpPopcount` / `OpClz` / `OpCtz`) across all six backends plus the interpreter.
+
+**Measured, because the estimate mattered.** On x86-64, 20M `count_ones()`
+calls: **0.489s → 0.127s (3.9x)**. `leading_zeros` lands at 0.108s against a
+0.099s bare-loop floor — effectively free. The isolation is what justified the
+work: the same loop with a trivial callee costs 0.099s, so the SWAR *body* was
+~80% of the runtime and call overhead was negligible. A first reading off C
+timings alone suggested the win would be under 10%; it was wrong, and only
+measuring the three variants separately showed why.
+
+**What each backend actually emits differs, deliberately:**
+
+| | clz | ctz | popcount |
+| --- | --- | --- | --- |
+| wasm | `i32.clz` | `i32.ctz` | `i32.popcnt` |
+| arm64 | `clz` | `x & -x` then `clz` + `csel` | inline SWAR |
+| x86-64 | `bsr` + zero branch | `bsf` + zero branch | inline SWAR |
+
+The two popcount gaps are **not** oversights. On x86-64, `POPCNT` requires
+SSE4.2 and Fern emits static binaries with no runtime CPU dispatch, so using it
+would turn a pre-2008 CPU into a SIGILL at the first bit operation rather than
+a slow binary — raising the baseline is a project decision, not a codegen one.
+On arm64 the hardware popcount lives on the SIMD side (`cnt` per byte, `addv`
+to sum), and neither `cnt`, `addv`, nor `rbit` is implemented by the in-process
+assembler `cmd/fern -target arm64` uses by default; emitting them fails at
+assemble time. Both still gain from being inline on the IR path rather than
+behind a Fern-level call, which is where the 3.9x comes from.
+
+Zero is defined: clz/ctz of 0 return the operand width, matching wasm's
+semantics and what the SWAR code returned.
 
 The per-byte totals are summed by folding the word onto itself rather than by
 the customary `* 0x01010101 >> 24` multiply, which sidesteps any question about

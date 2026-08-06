@@ -1141,6 +1141,28 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{},
 		Result: ast.NumberType{Width: 64, Signed: true},
 	}
+	// Bit-counting intrinsics: __clz32 / __ctz32 / __popcount32 and their
+	// 64-bit siblings. Each takes one integer of its width and returns an
+	// i32 count. clz/ctz of 0 return the operand width (32 or 64), matching
+	// wasm's definition and the SWAR code these replace.
+	//
+	// Separate names per width rather than one overload, because the width
+	// is what the backend needs on Op.Width and the argument's static type
+	// is what fixes it. std/{i32,i64,u32,u64} wrap these in the readable
+	// count_ones() / leading_zeros() / trailing_zeros() methods; the raw
+	// names are compiler-internal.
+	for _, n := range []string{"__clz32", "__ctz32", "__popcount32"} {
+		c.info.FuncSigs[n] = &ast.FuncType{
+			Params: []ast.Type{ast.NumberType{Width: 32, Signed: false}},
+			Result: ast.NumberType{Width: 32, Signed: true},
+		}
+	}
+	for _, n := range []string{"__clz64", "__ctz64", "__popcount64"} {
+		c.info.FuncSigs[n] = &ast.FuncType{
+			Params: []ast.Type{ast.NumberType{Width: 64, Signed: false}},
+			Result: ast.NumberType{Width: 32, Signed: true},
+		}
+	}
 	// __heap_mark(): i64 / __heap_release_to(mark: i64) — one-level arena
 	// checkpoint. Mark captures the bump cursor (plus a freelist-head
 	// snapshot); release_to rewinds to it, reclaiming everything allocated

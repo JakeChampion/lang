@@ -7397,6 +7397,31 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     if (cid.name == "__heap_bump_bytes" && c.args.len() == 0) {
         return s.emit(ir.op_heap_bump_bytes());
     }
+    // Bit-counting intrinsics (#6197). Unlike the probes around them these are
+    // NOT runtime-helper calls: they lower to one IR op, which is the point --
+    // the SWAR sequences they replace measured ~19.5 ns per call against
+    // ~0.7 ns for a hardware instruction, and a call would put most of that
+    // back. Separate names per width because the operand width has to reach
+    // the backend on Op.width.
+    if (c.args.len() == 1) {
+        var bw: i32 = 0;
+        if (cid.name == "__clz32" || cid.name == "__ctz32" || cid.name == "__popcount32") { bw = 32; }
+        if (cid.name == "__clz64" || cid.name == "__ctz64" || cid.name == "__popcount64") { bw = 64; }
+        if (bw != 0) {
+            // The 64-bit forms lower their operand through lower_i64, not
+            // lower_expr: an inline wide expression (`x as u64`, a shift, an
+            // i64 literal) only materialises as a full 64-bit value on that
+            // path. Using lower_expr made `__popcount64(7 as u64)` bail while
+            // the same call on a u64 LOCAL lowered, which is the tell -- the
+            // local had already been widened at its binding.
+            var ba: LowerState = s;
+            if (bw == 64) { ba = lower_i64(c.args[0], s); } else { ba = lower_expr(c.args[0], s); }
+            if (!ba.ok) { return ba; }
+            if (cid.name == "__clz32" || cid.name == "__clz64") { return ba.emit(ir.op_clz(bw)); }
+            if (cid.name == "__ctz32" || cid.name == "__ctz64") { return ba.emit(ir.op_ctz(bw)); }
+            return ba.emit(ir.op_popcount(bw));
+        }
+    }
     // __arr_push_shared_count(): appends that copied a buffer
     // which still had spare capacity — the rc==1 cliff. Same
     // allocation-free introspection shape as heap_bump_bytes;
