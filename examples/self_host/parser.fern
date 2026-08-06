@@ -11118,6 +11118,29 @@ function irt_guess(e: Expr, params: ParamDecl[], funcs: FuncDecl[]): string {
             if (el == "") { return ""; }
             return el + "[]";
         },
+        // `a[i]` yields the element type of whatever `a` infers to. Reached for
+        // a LIFTED lambda (`() => a[1]`, `() => mk()[1]`), whose synthesised
+        // FuncDecl carries ret_type "" — without this the inference bailed, the
+        // function defaulted to returning i32, and an f64 body failed the wasm
+        // validator inside the lifted function itself ("expected i32, found
+        // f64"). No slot table is needed: a capture arrives as a PARAM of the
+        // lifted function, so irt_param_type names it, and a call source is
+        // named by irt_func_ret — the two sources irt_guess already has.
+        ExprIndex(ix) => {
+            var at: string = irt_guess(ix.array, params, funcs);
+            if (at.len() >= 3 && at[at.len() - 2 : at.len()] == "[]") { return at[0 : at.len() - 2] + ""; }
+            return "";
+        },
+        // `t.N` on a tuple — the same lifted-lambda story (`() => t.0` over a
+        // captured tuple). me_tuple_elem_type already decodes a "(T0, T1)"
+        // spelling depth-aware; reuse it rather than write a second decoder. A
+        // non-numeric field is a struct field, which needs a struct table this
+        // pass does not have, so it stays "" and the inference bails as before.
+        ExprFieldAccess(fa) => {
+            var ot: string = irt_guess(fa.obj, params, funcs);
+            if (ot.len() == 0) { return ""; }
+            return me_tuple_elem_type(ot, fa.field);
+        },
         ExprCall(c) => {
             match (c.callee) {
                 ExprIdent(cid) => {
