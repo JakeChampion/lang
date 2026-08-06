@@ -232,9 +232,11 @@ one place instead of tribal knowledge.
 
 **Fastest local self-host loop: `make selfhost-cli`.** It builds the
 self-host compiler to a native binary for this host — **~2 minutes**
-once on an x86-64 host (this note said ~15 minutes, which was the
-arm64-darwin figure and is ~7x off in the direction that discourages
-using the loop at all), then ~1.3s per program, versus minutes per
+once on an x86-64 host, and **~13s warm / ~40s from a cold Go build
+cache on arm64-darwin** (measured 2026-08-06 on an M-series Mac; this
+note attributed ~15 minutes to arm64-darwin, which is ~25x off in the
+direction that discourages using the loop at all — the same error the
+x86-64 figure had). Then ~1.3s per program, versus minutes per
 program interpreted and 90+ minutes for an unsharded
 `internal/e2eselfhost`:
 
