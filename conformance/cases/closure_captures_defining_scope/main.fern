@@ -1,0 +1,70 @@
+// A closure captures the bindings in scope where it was DEFINED, and keeps
+// them after that scope is rebound or has ended. Self-referential enums are
+// well covered by the corpus; this pins the SEMANTIC property built on top
+// of them, which a type-level test cannot reach.
+//
+// The shape is the one a tree-walking interpreter needs: a value that holds
+// an environment, where getting it wrong yields dynamic scoping — a program
+// that still type-checks, still runs, and quietly answers 20 instead of 1.
+
+enum Env {
+    Empty,
+    Bind(string, i32, Env),
+}
+
+function lookup(env: Env, name: string): i32 {
+    match (env) {
+        Empty => { return -1; },
+        // Innermost binding wins: this frame before its tail.
+        Bind(n, v, rest) => {
+            if (n == name) { return v; }
+            return lookup(rest, name);
+        },
+    }
+}
+
+// A captured environment, held in a struct that outlives the scope that
+// built it.
+struct Closure { captured: Env }
+
+function make(env: Env): Closure {
+    return Closure { captured: env };
+}
+
+function call(c: Closure, name: string): i32 {
+    return lookup(c.captured, name);
+}
+
+function main(): i32 {
+    var outer: Env = Bind("x", 1, Empty);
+    var c: Closure = make(outer);
+
+    // Rebinding x AFTER the closure was made must not reach it: under
+    // dynamic scoping this next lookup would return 20.
+    var shadowed: Env = Bind("x", 20, outer);
+    if (call(c, "x") != 1) { return 1; }
+    if (lookup(shadowed, "x") != 20) { return 2; }
+
+    // The older binding is still reachable through the tail.
+    if (lookup(Bind("y", 7, shadowed), "x") != 20) { return 3; }
+    if (lookup(Bind("y", 7, shadowed), "y") != 7) { return 4; }
+    if (lookup(shadowed, "absent") != -1) { return 5; }
+
+    // Two closures over different environments do not share bindings.
+    var a: Closure = make(Bind("v", 10, Empty));
+    var b: Closure = make(Bind("v", 100, Empty));
+    if (call(a, "v") != 10) { return 6; }
+    if (call(b, "v") != 100) { return 7; }
+
+    // Deep chain: the outermost binding survives 100 frames.
+    var deep: Env = Bind("root", 42, Empty);
+    var i: i32 = 0;
+    while (i < 100) {
+        deep = Bind("f", i, deep);
+        i = i + 1;
+    }
+    if (lookup(deep, "root") != 42) { return 8; }
+    if (lookup(deep, "f") != 99) { return 9; }
+
+    return 0;
+}
