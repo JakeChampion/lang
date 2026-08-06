@@ -16791,14 +16791,21 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     // No rc-word inc (header-less asm box); heap-base-guarded so the initial
     // "" literal's .rodata data is skipped. Closes the O(n) accumulator leak.
     if (slot_is_reclaimable_str(s, slot)) { return emit_str_reclaim_store(se, slot); }
-    // A reclaimable REBOUND Option[<flat scalar array>] (`o = Some([..])`, credited
-    // "OPTARR:"): free the superseded payload buffer + option box before storing the
-    // fresh one. This is the ASSIGN path specifically — the Option family's other
-    // classes only ever reclaim at a `var` re-declaration, because their collectors
-    // refuse reassigned names outright, which is why an `o = Some([..])` rebind
-    // leaked every prior box (#6127). The RHS was lowered above and never aliases
-    // the old box (each rebind is a fresh literal, optarr_rebinds_all_fresh).
+    // A reclaimable REBOUND Option (`o = Some(..)`, credited "OPTARR:" /
+    // "OPTARRARR:" / "OPTSTRUCT:" / "OPTTUP:"): free the superseded payload + option
+    // box before storing the fresh one, at the depth that payload kind needs. This
+    // is the ASSIGN path — before #6127 the whole family reclaimed only at a `var`
+    // re-declaration, so an `o = Some(..)` rebind leaked every prior box. The RHS
+    // was lowered above and never aliases the old box: each rebind is a fresh
+    // literal (opt_rebinds_all_fresh), which is what the credits require.
     if (slot_is_reclaimable_optarr(s, slot)) { return emit_optarr_reclaim_store(se, slot); }
+    if (slot_is_reclaimable_optarrarr(s, slot)) { return emit_optarrarr_reclaim_store(se, slot); }
+    if (slot_is_reclaimable_optstruct(s, slot)) {
+        return emit_optstruct_reclaim_store(se, slot, opttup_inner_type(s.locals[slot].opt_type));
+    }
+    if (slot_is_reclaimable_opttup(s, slot)) {
+        return emit_opttup_reclaim_store(se, slot, opttup_inner_type(s.locals[slot].opt_type));
+    }
     // A reclaimable struct REASSIGN (`s = bump(s)` / `s = s.emit(op)`, the
     // builder consume-rebind) releases the OLD box the same way the StmtVar
     // branch does: emit_arr_store's cow-guarded, rc-guarded SHALLOW arr_dec
@@ -27728,6 +27735,13 @@ function opttup_payload_escapes(stmts: parser.Stmt[], name: string, inner: strin
 // the payload only as a borrow (opt_body_binding_escapes false), and o must not be
 // used or escape anywhere outside that match (name_used_after /
 // name_escapes_outside_stmt with the match skipped). Recurses nested blocks.
+//
+// A REASSIGNED name is admitted when every rebind is itself fresh
+// (opt_rebinds_all_fresh, #6127). It used to be refused outright, which left a
+// loop-rebound Option credited nowhere at all and leaking every box it built —
+// 60000 bytes over 100 rounds with ZERO releases emitted. #6225 established the
+// per-rebind discipline for the flat-array kind; this is the same relaxation for
+// the tuple payload.
 function collect_fresh_opttup_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
@@ -27737,7 +27751,8 @@ function collect_fresh_opttup_names(stmts: parser.Stmt[], structs: parser.Struct
             parser.StmtVar(v) => {
                 if (opttup_ann_is(v.type_name, structs)
                     && opttup_init_is_fresh(opttup_inner_type(v.type_name), v.init, structs)
-                    && util.index_of_str(reassigned, v.name) < 0) {
+                    && (util.index_of_str(reassigned, v.name) < 0
+                        || opt_rebinds_all_fresh(stmts, v.name, "tup", opttup_inner_type(v.type_name), structs))) {
                     var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
@@ -28747,7 +28762,8 @@ function optstruct_payload_escapes(stmts: parser.Stmt[], name: string, sty: stri
 
 // collect_fresh_optstruct_names: the struct sibling of collect_fresh_opttup_names — a fresh
 // Some(<struct lit>)/None under an Option[<struct-with-array>] annotation, consumed by
-// exactly one borrow-only match in the same block, not reassigned, not escaping.
+// exactly one borrow-only match in the same block, not escaping. A reassigned name is
+// admitted when every rebind is itself fresh (opt_rebinds_all_fresh, #6127).
 function collect_fresh_optstruct_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
@@ -28757,7 +28773,8 @@ function collect_fresh_optstruct_names(stmts: parser.Stmt[], structs: parser.Str
             parser.StmtVar(v) => {
                 if (optstruct_ann_is(v.type_name, structs)
                     && optstruct_init_is_fresh(v.init, structs)
-                    && util.index_of_str(reassigned, v.name) < 0) {
+                    && (util.index_of_str(reassigned, v.name) < 0
+                        || opt_rebinds_all_fresh(stmts, v.name, "struct", "", structs))) {
                     var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
@@ -28898,27 +28915,45 @@ function optarr_init_is_fresh(e: parser.Expr): boolean {
     return false;
 }
 
-// optarr_rebinds_all_fresh: EVERY assignment to `name` in this statement list (and
-// nested blocks) is itself a fresh `Some([..])` / `None`. This is the SARR:
-// discipline — validate each rebind individually rather than refusing the name
-// for being reassigned at all, which is what left this shape uncredited.
-function optarr_rebinds_all_fresh(stmts: parser.Stmt[], name: string): boolean {
+// opt_assign_is_fresh: does `e` build a FRESH Option box of the given payload
+// `kind` — the same predicate each class already applies to its DECLARATION,
+// dispatched by kind so one rebind walker serves all four.
+//   "arr"     Option[<flat scalar array>]        (OPTARR:)
+//   "arrarr"  Option[<scalar arr-of-arr>]        (OPTARRARR:)
+//   "struct"  Option[<struct-with-array>]        (OPTSTRUCT:)
+//   "tup"     Option[<tuple-with-array>]         (OPTTUP:)
+function opt_assign_is_fresh(e: parser.Expr, kind: string, inner: string, structs: parser.StructDecl[]): boolean {
+    if (kind == "tup") { return opttup_init_is_fresh(inner, e, structs); }
+    if (kind == "struct") { return optstruct_init_is_fresh(e, structs); }
+    if (kind == "arrarr") { return optarrarr_init_is_fresh(e); }
+    return optarr_init_is_fresh(e);
+}
+
+// opt_rebinds_all_fresh: EVERY assignment to `name` in this statement list (and
+// nested blocks) itself builds a fresh Option box. This is the SARR: discipline —
+// validate each rebind individually rather than refusing the name for being
+// reassigned at all, which is what left every rebound Option uncredited.
+//
+// One walker for the whole family (#6127). The four collectors are structurally
+// identical and differ only in which freshness predicate they apply, so the
+// recursion belongs in one place; opt_assign_is_fresh carries the difference.
+function opt_rebinds_all_fresh(stmts: parser.Stmt[], name: string, kind: string, inner: string, structs: parser.StructDecl[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtAssign(a) => {
-                if (a.target == name && !optarr_init_is_fresh(a.value)) { return false; }
+                if (a.target == name && !opt_assign_is_fresh(a.value, kind, inner, structs)) { return false; }
             },
             parser.StmtIf(f) => {
-                if (!optarr_rebinds_all_fresh(f.then_body, name)) { return false; }
-                if (!optarr_rebinds_all_fresh(f.else_body, name)) { return false; }
+                if (!opt_rebinds_all_fresh(f.then_body, name, kind, inner, structs)) { return false; }
+                if (!opt_rebinds_all_fresh(f.else_body, name, kind, inner, structs)) { return false; }
             },
-            parser.StmtWhile(w) => { if (!optarr_rebinds_all_fresh(w.body, name)) { return false; } },
-            parser.StmtFor(fo) => { if (!optarr_rebinds_all_fresh(fo.body, name)) { return false; } },
+            parser.StmtWhile(w) => { if (!opt_rebinds_all_fresh(w.body, name, kind, inner, structs)) { return false; } },
+            parser.StmtFor(fo) => { if (!opt_rebinds_all_fresh(fo.body, name, kind, inner, structs)) { return false; } },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
                 while (mi < m.arms.len()) {
-                    if (!optarr_rebinds_all_fresh(m.arms[mi].body, name)) { return false; }
+                    if (!opt_rebinds_all_fresh(m.arms[mi].body, name, kind, inner, structs)) { return false; }
                     mi = mi + 1;
                 }
             },
@@ -29072,7 +29107,7 @@ function collect_fresh_optarr_names(stmts: parser.Stmt[], acc: string[]): string
                 if (optarr_ann_is(v.type_name)
                     && optarr_init_is_fresh(v.init)
                     && util.index_of_str(reassigned, v.name) >= 0
-                    && optarr_rebinds_all_fresh(stmts, v.name)) {
+                    && opt_rebinds_all_fresh(stmts, v.name, "arr", "", [])) {
                     var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
@@ -29330,7 +29365,8 @@ function optarrarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean 
 
 // collect_fresh_optarrarr_names: the arr-of-arr sibling of collect_fresh_opttup_names — a
 // fresh Some(<arr-of-arr lit>)/None under an Option[<scalar-arr-of-arr>] annotation, consumed
-// by exactly one borrow-only match in the same block, not reassigned, not escaping.
+// by exactly one borrow-only match in the same block, not escaping. A reassigned name is
+// admitted when every rebind is itself fresh (opt_rebinds_all_fresh, #6127).
 function collect_fresh_optarrarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
@@ -29340,7 +29376,8 @@ function collect_fresh_optarrarr_names(stmts: parser.Stmt[], acc: string[]): str
             parser.StmtVar(v) => {
                 if (optarrarr_ann_is(v.type_name)
                     && optarrarr_init_is_fresh(v.init)
-                    && util.index_of_str(reassigned, v.name) < 0) {
+                    && (util.index_of_str(reassigned, v.name) < 0
+                        || opt_rebinds_all_fresh(stmts, v.name, "arrarr", "", []))) {
                     var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
                     if (match_idx > vi
                         && !match_arms_use_name(stmts[match_idx], v.name)
