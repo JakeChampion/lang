@@ -310,6 +310,19 @@ pub struct FnSigs {
     // tuple_ret_fns: "name|rettype" for functions returning a tuple, so
     // `var x = f()` / `var (a, b) = f()` recovers each element's type tag.
     tuple_ret_fns: string[],
+    // arrtup_ret_fns: "name|(elem tuple)" for functions returning an ARRAY OF
+    // tuples (`mk(): (i32, f64)[]`). Distinct from tuple_ret_fns, whose entries
+    // are the tuple's own element tags: here the value is the ELEMENT TUPLE's
+    // full spelling, which is what an array slot's arrarr_elem holds.
+    //
+    // Without it, `var ps = mk();` recorded no arrarr_elem — that is only
+    // derived from an ANNOTATION or an array LITERAL — so every consumer that
+    // reads a tuple tag off the slot fell through to an untyped 4-byte read.
+    // On wasm32 an f64 element then came back wrong while a string element (a
+    // 4-byte pointer) survived, so it read as a width bug rather than a missing
+    // tag. Populating the slot fixes all four readers at once, including
+    // `for p in ps`, which has no ExprIndex node to fall back on.
+    arrtup_ret_fns: string[],
     // struct_ret_fns: "name|StructType" for functions returning a (leaf-safe,
     // scalar-field) struct, so `var p = f()` tracks p's type for `p.x`.
     struct_ret_fns: string[],
@@ -16712,6 +16725,24 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                         },
                         _ => {}
                     }
+                }
+            },
+            // UNANNOTATED array-of-tuples from a CALL (`var ps = mk()` where
+            // `mk(): (i32, f64)[]`). The literal arm above covers the inline
+            // form; this is the same gap one step out, and it is the SOURCE of
+            // the missing tag rather than another place to paper over it —
+            // populating arrarr_e here serves every consumer that reads a tuple
+            // tag off the slot, including `for p in ps`, which has no
+            // ExprIndex node and so cannot use the per-consumer `.ty` fallback
+            // that `ps[0].N` and `var (a, b) = ps[0]` rely on.
+            parser.ExprCall(atc) => {
+                match (atc.callee) {
+                    parser.ExprIdent(atcid) => { arrarr_e = se.arrtup_ret_type(atcid.name); },
+                    parser.ExprFieldAccess(atcfa) => {
+                        var atcrty: string = expr_struct_type(atcfa.obj, se);
+                        if (atcrty != "") { arrarr_e = se.arrtup_ret_type(atcrty + "." + atcfa.field); }
+                    },
+                    _ => {}
                 }
             },
             _ => {}
@@ -38769,6 +38800,74 @@ function irl_looks_type_var(s: string): boolean {
 // `pair("xy", 3)` types element 0 "string" — before, the raw "K" tag read as
 // a scalar and `s.0.len()` on the returned string silently miscompiled to 0
 // on BOTH the IR path and the legacy AST fallback.
+// arrtup_ret_fns_of records "name|(elem tuple)" for each function returning an
+// ARRAY OF TUPLES (`mk(): (i32, f64)[]`), keyed like tuple_ret_fns_of — bare
+// name for a free function, "<BaseType>.<method>" for a method.
+//
+// The value is the ELEMENT TUPLE's spelling with the "[]" stripped, i.e. exactly
+// what an array slot's arrarr_elem holds, so the binding site can transfer it
+// onto the slot verbatim.
+//
+// Only a CONCRETE element tuple is recorded. A generic `(i32, T)[]` return would
+// put a type var in the slot tag, and every consumer treats a tag as a resolved
+// type — the call site's own instantiation is the checker's job (#6299), not
+// something to approximate here.
+pub function arrtup_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        var rt: string = funcs[k].ret_type;
+        if (rt.len() >= 5 && rt[0] == 40 && rt[rt.len() - 2 : rt.len()] == "[]") {   // 40 = '('
+            var elem: str = rt[0 : rt.len() - 2];
+            if (elem.len() >= 2 && elem[elem.len() - 1] == 41 && !irl_type_has_var(elem)) {   // 41 = ')'
+                var key: string = funcs[k].name;
+                if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+                out = out.append(key + "|" + elem);
+            }
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+// irl_type_has_var reports whether a type spelling contains a bare type VARIABLE
+// segment — the `irl_looks_type_var` convention tuple_ret_fns_of already keys on,
+// applied across a tuple's comma-separated segments.
+function irl_type_has_var(ty: string): boolean {
+    var depth: i32 = 0;
+    var start: i32 = 0;
+    var i: i32 = 0;
+    var inner: string = ty;
+    if (inner.len() >= 2 && inner[0] == 40) { inner = inner[1 : inner.len() - 1] + ""; }   // 40 = '('
+    while (i <= inner.len()) {
+        if (i == inner.len() || (inner[i] == 44 && depth == 0)) {   // 44 = ','
+            var seg: str = inner[start : i];
+            if (seg.len() > 0 && seg[0] == 32) { seg = seg[1 : seg.len()]; }   // 32 = ' '
+            if (irl_looks_type_var(seg)) { return true; }
+            start = i + 1;
+        } else {
+            if (inner[i] == 40 || inner[i] == 91) { depth = depth + 1; }   // '(' '['
+            if (inner[i] == 41 || inner[i] == 93) { depth = depth - 1; }   // ')' ']'
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// arrtup_ret_type returns the ELEMENT TUPLE spelling of an array-of-tuples
+// returning function `name`, or "" if it isn't one.
+pub function (s: LowerState) arrtup_ret_type(name: string): string {
+    var i: i32 = 0;
+    while (i < s.sigs.arrtup_ret_fns.len()) {
+        var e: string = s.sigs.arrtup_ret_fns[i];
+        var bar: i32 = 0;
+        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+        if (bar < e.len() && e[0:bar] == name) { return e[bar + 1 : e.len()] + ""; }
+        i = i + 1;
+    }
+    return "";
+}
+
 pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
@@ -40608,7 +40707,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
 pub function fn_sigs_empty(): FnSigs {
     var e: string[] = [];
     return FnSigs { arr_ret_fns: e, str_ret_fns: e, strarr_ret_fns: e, arr_method_fns: e,
-        opt_ret_fns: e, i64_ret_fns: e, tuple_ret_fns: e, struct_ret_fns: e, map_ret_fns: e,
+        opt_ret_fns: e, i64_ret_fns: e, tuple_ret_fns: e, arrtup_ret_fns: e, struct_ret_fns: e, map_ret_fns: e,
         f64_ret_fns: e, f64arr_ret_fns: e, i64arr_ret_fns: e, fn_param_sigs: e, closure_fns: e,
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: e,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
@@ -40646,6 +40745,7 @@ pub function fn_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], 
         opt_ret_fns: opt_ret_fns_of(funcs),
         i64_ret_fns: i64_ret_fns_of(funcs),
         tuple_ret_fns: tuple_ret_fns_of(funcs),
+        arrtup_ret_fns: arrtup_ret_fns_of(funcs),
         struct_ret_fns: struct_ret_fns_of(funcs, structs),
         map_ret_fns: map_ret_fns_of(funcs),
         f64_ret_fns: f64_ret_fns_of(funcs),
