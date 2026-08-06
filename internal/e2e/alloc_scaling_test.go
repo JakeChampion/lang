@@ -233,7 +233,7 @@ func parseVolume(t *testing.T, label, out string, exit int) int64 {
 	return 0
 }
 
-func TestAllocScalingX86_64(t *testing.T) {
+func TestX86_64AllocScaling(t *testing.T) {
 	for _, tc := range allocScaleCases {
 		t.Run(tc.name, func(t *testing.T) {
 			out1, exit1 := compileAndRunX86_64(t, tc.volumeSrc(tc.n))

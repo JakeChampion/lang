@@ -65,7 +65,7 @@ bytes over ~1000 (fixture, target) pairs will. ~8 minutes per side.
 
 Worth knowing so you do not assume coverage you do not have:
 
-- **Allocation ASYMPTOTICS — now gated, by `TestAllocScalingX86_64`**
+- **Allocation ASYMPTOTICS — now gated, by `TestX86_64AllocScaling`**
   (`internal/e2e/alloc_scaling_test.go`). The differential below compares the
   two compilers against *each other*, so a regression that lands in the shared
   frontend, or in a stdlib function both compile the same way, moves both sides

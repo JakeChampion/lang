@@ -309,7 +309,7 @@ order of value:
    This is buildable now, on existing instruments, and it protects everything
    else on this list. **It should go first.**
 
-   **First slice landed: `TestAllocScalingX86_64`** — and building it corrected
+   **First slice landed: `TestX86_64AllocScaling`** — and building it corrected
    the design sketched here. The obvious gate is a recorded byte budget per
    shape, which is what "record and compare" implies; that gate rots, because
    every legitimate change to a header size, growth schedule or SSO threshold
@@ -476,7 +476,7 @@ Per rule 5, each kernel ships with:
 
 1. **Performance-regression CI** on `__heap_bump_bytes()` /
    `__arr_push_shared_bytes()` — protects everything downstream. (§2.1)
-   *Slice 1 landed (`TestAllocScalingX86_64`, allocation asymptotics).
+   *Slice 1 landed (`TestX86_64AllocScaling`, allocation asymptotics).
    Remaining: extending the corpus to the compiler's own hot shapes, and a
    throughput gate.*
 2. **`__memchr` as the first fused kernel**, by the §3.4 ordering. (§3.3)
