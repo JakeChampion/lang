@@ -50,6 +50,26 @@ var (
 	preview2Err  error
 )
 
+// wasmtimePin is the wasmtime version this suite is verified against, and the
+// single place the number lives on the Go side. CI installs it via
+// .github/actions/setup-fern/action.yml; TestWasmtimePinMatchesCI asserts the
+// two agree so this cannot drift into a lie.
+const wasmtimePin = "46.0.1"
+
+// wasmtimeVersion returns the version of the wasmtime on PATH, parsed out of
+// `wasmtime --version` ("wasmtime 46.0.1 (abcdef 2025-01-01)").
+func wasmtimeVersion() (string, error) {
+	out, err := exec.Command("wasmtime", "--version").Output()
+	if err != nil {
+		return "", fmt.Errorf("wasmtime --version: %w", err)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 {
+		return "", fmt.Errorf("wasmtime --version: unparseable output %q", out)
+	}
+	return fields[1], nil
+}
+
 func skipIfPreview2Missing(t *testing.T) {
 	t.Helper()
 	preview2Once.Do(func() {
@@ -63,6 +83,21 @@ func skipIfPreview2Missing(t *testing.T) {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			preview2Err = errors.New("wasmtime not on PATH")
 			return
+		}
+		// Version-gate, not just presence. The component-model-async ABI is
+		// not stable across wasmtime majors: v46 introduced the async
+		// functype tag 0x43 and non-reentrant component instances, so the
+		// Preview-3 tests below fail under an older one with `invalid
+		// leading byte (0x43)` or `cannot enter component instance` —
+		// errors that name neither wasmtime nor its version, and read as a
+		// codegen bug. Measured: a system wasmtime 39 turns this file's P3
+		// cluster into ~20 failures with no hint of the cause.
+		if v, err := wasmtimeVersion(); err != nil {
+			preview2Err = err
+		} else if v != wasmtimePin {
+			preview2Err = fmt.Errorf("wasmtime %s on PATH, but this suite is pinned to %s "+
+				"(see .github/actions/setup-fern/action.yml); the component-model-async "+
+				"ABI differs between them", v, wasmtimePin)
 		}
 	})
 	if preview2Err != nil {
