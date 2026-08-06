@@ -1246,7 +1246,21 @@ function map_key_kind_of_expr(e: Expr): i32 {
         ExprNumber(_) => { return 1; },
         ExprString(_) => { return 0; },
         ExprBinary(b) => { return map_key_kind_of_expr(b.left); },
-        ExprUnary(u) => { return map_key_kind_of_expr(u.operand); },
+        ExprUnary(u) => {
+            // An `as <type>` cast (op "as_<type>") is DECISIVE on its target,
+            // whatever the operand is — `(f(x) >> 32u64) as i32` is an integer
+            // key even though nothing below the cast can be classified. Reading
+            // the target rather than recursing into the operand mirrors
+            // mono_infer, which already treats casts this way; recursing was
+            // what left a generated map keyed entirely on casts and
+            // if-expressions still falling back to the string constructor after
+            // the first #6207 fix.
+            if (u.op.len() > 3 && u.op[0:3] == "as_") {
+                if (u.op[3:u.op.len()] == "string") { return 0; }
+                return 1;
+            }
+            return map_key_kind_of_expr(u.operand);
+        },
         _ => { return 0 - 1; }
     }
     return 0 - 1;

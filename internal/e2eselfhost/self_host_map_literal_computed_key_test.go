@@ -56,6 +56,17 @@ function main(): i32 {
     var m: Map[string, i32] = Map { ("a" + "b"): 5i32 };
     return m.get_or("ab", 0i32) + m.len();
 }`},
+	// A cast is decisive on its TARGET even when nothing below it is: the
+	// operand here is a call, which the parser cannot classify. Generated
+	// programs really do key maps this way — this is the shape that survived
+	// the first fix and kept seed 200 crashing. 7 + 3 + 2 = 12.
+	{"cast_over_undecidable_operand", `import "core/map";
+function k(): i32 { return 5i32; }
+function j(): i32 { return 9i32; }
+function main(): i32 {
+    var m: Map[i32, i32] = Map { (k() as i32): 7i32, (j() as i32): 3i32 };
+    return m.get_or(5i32, 0i32) + m.get_or(9i32, 0i32) + m.len();
+}`},
 	// An undecidable key (a call) is the case the parser genuinely cannot
 	// answer without types, so it still falls back to the string ctor. Pinned
 	// as a STRING map so the fallback is exercised deliberately rather than
