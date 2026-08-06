@@ -4220,6 +4220,10 @@ function parse_stmt(p: Par): (Stmt, Par) {
         // view-escape chase treats a `str` binding as a view of its
         // initializer, but a `string` binding as owned backing storage.
         var v_is_str: boolean = false;
+        // The declared fn type's RETURN spelling, kept past the annotation block
+        // so a lambda init can be stamped with it below. "" when the binding has
+        // no annotation or the annotation is not a fn type.
+        var v_fn_ret: string = "";
         if (p.peek_punct() == ":") {
             p = p.advance();
             if (p.peek_ident() == "str") {
@@ -4229,6 +4233,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
             var (vtr_name, vtr_ret_arr, vtr_fn_ret, vtr_p) = parse_type_name(p);
             p = vtr_p;
             type_name = vtr_name;
+            v_fn_ret = vtr_fn_ret;
         }
         if (p.peek_punct() != "=") {
             return (s_unknown("missing = in var"), p);
@@ -4275,8 +4280,13 @@ function parse_stmt(p: Par): (Stmt, Par) {
             return (s_match_origin(init_expr, le_arms, vline, vcol, "let_else"), p);
         }
         if (p.peek_punct() == ";") { p = p.advance(); }
-        // A `Map[K, V]` annotation outranks the key-kind guess parse_map_lit
-        // baked into the initializer's constructor (#6207).
+        // `var f: () => f64 = () => <body>;` — the binding already states the
+        // lambda's return type, so stamp it rather than leaving irt_guess to
+        // reconstruct it from the body. Inference can only answer for the
+        // expression forms it has arms for; a builtin-method body
+        // (`m.get_or(k, 0.0)`) is unanswerable there without absorbing the whole
+        // builtin surface. The annotation outranks the inference.
+        init_expr = stamp_lambda_ret(init_expr, v_fn_ret);
         return (StmtVar { name: name, type_name: type_name, init: init_expr, line: vline, col: vcol, is_str: v_is_str }, p);
     }
     if (kw == "return") {
@@ -4502,7 +4512,16 @@ pub function parse_program(toks: lexer.Token[]): Stmt[] {
 // identifier that isn't a primitive / built-in tag. Over-recording is harmless
 // (the downstream field lookup just fails to resolve and bails as before); this
 // only filters the obvious non-structs so the registry stays clean.
-function is_struct_ret_name(n: string): boolean {
+// is_scalar_ret_name reports whether `n` names a scalar the fn-return carrier
+// keeps for lambda-return stamping. Deliberately NOT is_struct_ret_name's
+// complement: only these exact spellings qualify, so an unknown name still
+// falls through as before.
+function is_scalar_ret_name(n: string): boolean {
+    return n == "i32" || n == "i64" || n == "u8" || n == "u32" || n == "u64"
+        || n == "f32" || n == "f64" || n == "boolean";
+}
+
+pub function is_struct_ret_name(n: string): boolean {
     if (n.len() == 0) { return false; }
     // Reject anything carrying array / generic / tuple / qualified syntax — a
     // bare struct name has none of these.
@@ -4800,6 +4819,13 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
                 // filters "string" out (a string is not a struct), so this adds
                 // no spurious struct-return entry.
                 else if (!r_is_arr && rr_name == "string") { fn_ret_ty = "string"; }
+                // A SCALAR return (`() => f64`) is kept too, so a lambda bound to
+                // this type can be stamped with its declared return instead of
+                // having it re-inferred from the body (irt_guess cannot type a
+                // builtin-method body at all). The one consumer that treated a
+                // non-empty, non-string, unbracketed fn_ret as a STRUCT name now
+                // asks is_struct_ret_name directly, which rejects every scalar.
+                else if (!r_is_arr && is_scalar_ret_name(rr_name)) { fn_ret_ty = rr_name; }
                 return (fnr_name, r_is_arr, fn_ret_ty, fnr_p);
             }
             // Tuple type — return the reconstructed precise spelling
@@ -11168,6 +11194,22 @@ function irt_func_ret(funcs: FuncDecl[], name: string): string {
         i = i + 1;
     }
     return "";
+}
+
+// stamp_lambda_ret gives an UNANNOTATED lambda the return type its binding's
+// declared fn type names (`var f: () => f64 = () => …`). A lambda that already
+// carries an explicit `: R`, a non-lambda init, or an empty spelling all pass
+// through unchanged, so this only ever fills a hole.
+function stamp_lambda_ret(e: Expr, fn_ret: string): Expr {
+    if (fn_ret.len() == 0) { return e; }
+    match (e) {
+        ExprLambda(lm) => {
+            if (lm.ret_type.len() > 0) { return e; }
+            return ExprLambda { params: lm.params, ret_type: fn_ret, body: lm.body, use_infer: lm.use_infer };
+        },
+        _ => { return e; }
+    }
+    return e;
 }
 
 // irt_method_ret returns the declared return type of `<recv_type>.<name>`, or ""
