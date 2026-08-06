@@ -1,0 +1,491 @@
+#!/usr/bin/env bash
+#
+# scripts/netlify-smoke-test — a budget-bounded smoke CI lane that runs inside
+# a Netlify build, so the project keeps a compile-and-test signal on every push
+# when GitHub Actions is unavailable.
+#
+# It is NOT a replacement for .github/workflows/*. Those shard the real suites
+# across many machines for tens of minutes; this gets one small container and a
+# single-digit number of minutes shared with the docs build. What it does buy is
+# the fast, broad half of the signal — does the tree compile, do the unit tests
+# pass, does the conformance corpus still run correctly on interp / x86-64 /
+# wasm, does the self-hosted compiler still build and compile a program — in a
+# window where nothing else is reporting.
+#
+# ---------------------------------------------------------------------------
+# Design: a deadline, not a wish
+#
+# Netlify kills a build at its wall-clock limit (15 minutes by default) and the
+# deploy is simply lost — no site, no test output, nothing. So the stages here
+# run against a DEADLINE. Before each one the script asks how much budget is
+# left; a stage that cannot plausibly finish is not started, and every stage
+# that does start runs under `timeout`. The deploy therefore always reaches the
+# summary, and the summary always says which stages ran.
+#
+# The corollary is the rule this script is built around: A STAGE THAT DID NOT
+# RUN MUST NEVER LOOK LIKE A STAGE THAT PASSED. Three mechanisms enforce it.
+#
+#   1. Every skip is named in the summary with its reason, and the exit line
+#      counts them. A run where nothing completed FAILS — a smoke test that
+#      tested nothing is a false green, not a pass.
+#
+#   2. Each stage asserts on its own output that it really tested something.
+#      `go test -run` exits 0 when the regex matches nothing, and a package
+#      whose tests all t.Skip() exits 0 too, so the natural failure mode of a
+#      misconfigured environment is a silent, instant green.
+#
+#   3. Missing tooling is a failure, not a skip. The conformance corpus runs
+#      every fixture on wasm and each wasm leg t.Skip()s without wasmtime, so a
+#      quietly-failed install costs a quarter of that stage's coverage and says
+#      nothing. .github/actions/setup-fern carries the same preflight for the
+#      same reason; its comment records 36 component tests that skipped
+#      silently for a long stretch of #3457.
+#
+# ---------------------------------------------------------------------------
+# Knobs (set under [build.environment] in netlify.toml, or in the Netlify UI)
+#
+#   FERN_SMOKE            strict (default) | advisory | off
+#                         strict   — a failing stage fails the deploy. This is
+#                                    the point: a smoke test that cannot turn
+#                                    the build red is not CI.
+#                         advisory — run and report, always exit 0. For when a
+#                                    docs fix must ship past a known-red tree.
+#                         off      — do not run at all.
+#   FERN_SMOKE_BUDGET_S   total seconds for all stages (default 540). Sized for
+#                         Netlify's 15-minute wall with the docs build — which
+#                         runs first, see netlify.toml — taking the rest.
+#   FERN_SMOKE_STAGES     comma-separated subset of the stage names below, in
+#                         the order they should run. Default: all of them.
+#   FERN_SMOKE_CACHE      directory for the Go build cache, the self-host driver
+#                         cache and the wasm toolchain. Defaults to Netlify's
+#                         persistent build cache when running there, which is
+#                         what makes later deploys fast enough to reach the
+#                         later stages at all.
+#
+# Stages, cheapest-and-broadest first, so a tight budget still buys the signal
+# with the best coverage-per-second:
+#
+#   build        go build + go vet over every package
+#   units        every Go package except the four slow ones (see
+#                scripts/unit-test-packages)
+#   conformance  the whole conformance/cases corpus on every backend the
+#                container can reach — interp, x86-64 and wasm here; arm64
+#                needs qemu plus a cross-gcc, which an unprivileged Netlify
+#                build cannot install, and is reported as uncovered rather
+#                than passed over quietly
+#   selfhost     the self-hosted compiler's x86-64 IR path: builds the
+#                asm_ir_run driver and compiles + runs programs through it
+#
+# Run it locally exactly as Netlify does:
+#
+#   scripts/netlify-smoke-test
+#   FERN_SMOKE_STAGES=build,units FERN_SMOKE_BUDGET_S=300 scripts/netlify-smoke-test
+
+# NOT `set -e`: a failing stage must not abort the run. Every stage is recorded
+# and the summary is the deliverable, so the script decides its own exit code at
+# the end from what it observed.
+set -uo pipefail
+
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.." || exit 2
+repo="$PWD"
+export repo
+
+mode="${FERN_SMOKE:-strict}"
+case "$mode" in
+  off)
+    echo "==> smoke: FERN_SMOKE=off, skipping"
+    exit 0
+    ;;
+  strict | advisory) ;;
+  *)
+    echo "error: FERN_SMOKE must be strict, advisory or off (got '$mode')" >&2
+    exit 2
+    ;;
+esac
+
+budget="${FERN_SMOKE_BUDGET_S:-540}"
+started=$(date +%s)
+
+elapsed() { echo $(($(date +%s) - started)); }
+remaining() { echo $((budget - $(elapsed))); }
+
+logdir=$(mktemp -d)
+trap 'rm -rf "$logdir"' EXIT
+logfile() { echo "$logdir/$1.log"; }
+
+# ---------------------------------------------------------------------------
+# Cache. Netlify preserves one directory between builds of a site; everything
+# else in the container is discarded. Pointing GOCACHE at it turns the cold
+# multi-minute `internal/e2e` compile into a warm one, which is the difference
+# between reaching the later stages and running out of budget on the first two.
+#
+# A dev box already has a warm GOCACHE of its own and would not thank us for
+# being pointed at a cold one, so the redirect only happens where the container
+# is disposable: on Netlify, or when FERN_SMOKE_CACHE names a directory
+# explicitly. Everything else — the self-host driver cache, the wasm toolchain —
+# has no such default and is kept under the repo locally.
+cache="${FERN_SMOKE_CACHE:-}"
+if [ -n "$cache" ] || [ "${NETLIFY:-}" = "true" ]; then
+  [ -n "$cache" ] || cache="${NETLIFY_BUILD_BASE:-/opt/build}/cache/fern-smoke"
+  export GOCACHE="$cache/go-build"
+  mkdir -p "$GOCACHE"
+else
+  cache="$repo/.smoke-cache"
+fi
+# The self-host driver cache is content-addressed on a driver's import closure
+# (hashSelfHostSources), so it survives across deploys and only misses when the
+# compiler sources that driver actually depends on change.
+export FERN_SELFHOST_BUILD_CACHE="$cache/selfhost-drivers"
+mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
+
+# ---------------------------------------------------------------------------
+# Memory. A cold self-host driver build peaks around 3.7 GB in the Go emit and
+# 2.6 GB in the in-process assemble; the harness reserves 4.3 GB for one
+# (FERN_BUILD_HEAVY_MB) against ~85% of MemTotal. On a container smaller than
+# that the build is not slow, it is OOM-killed — exit 137, which reads like a
+# test failure. Measure the host and let the selfhost stage decide.
+mem_total_mb=0
+if [ -r /proc/meminfo ]; then
+  mem_total_mb=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
+fi
+
+echo "==> smoke: $(go version)"
+echo "==> smoke: host $(nproc 2>/dev/null || echo '?') cpu, ${mem_total_mb} MB RAM, budget ${budget}s, mode $mode"
+echo "==> smoke: cache $cache"
+
+# ---------------------------------------------------------------------------
+# Stage bookkeeping.
+
+stage_names=()
+stage_status=()
+stage_secs=()
+stage_note=()
+failures=0
+completed=0
+
+record() { # name status secs note
+  stage_names+=("$1")
+  stage_status+=("$2")
+  stage_secs+=("$3")
+  stage_note+=("${4:-}")
+}
+
+# fail_last turns the most recently recorded stage from PASS into FAIL. Used by
+# the post-hoc assertions, which can only judge a stage after reading its log.
+fail_last() { # note
+  local i=$((${#stage_names[@]} - 1))
+  [ "${stage_status[$i]}" = PASS ] || return 0
+  echo "==> smoke: FAIL ${stage_names[$i]} — $1" >&2
+  stage_status[i]=FAIL
+  stage_note[i]="$1"
+  failures=$((failures + 1))
+}
+
+note_last() { # note
+  stage_note[${#stage_names[@]} - 1]="$1"
+}
+
+# assert_passes LOG MIN — a `go test -run` whose regex matches nothing exits 0,
+# and a package whose tests all t.Skip() exits 0 too. Neither is a pass. Counts
+# TOP-LEVEL `--- PASS` lines only (subtests are indented), so a stage naming N
+# tests can assert exactly N and go red when one is renamed out from under it —
+# which is the whole point: `make testnames` guards the workflows against that,
+# and nothing guards this script but this line.
+assert_passes() {
+  local got
+  got=$(grep -c '^--- PASS' "$1" 2>/dev/null)
+  got=${got:-0}
+  [ "$got" -ge "$2" ] ||
+    fail_last "ran $got of the $2 tests it names — a renamed or deleted test silently shrinks this stage"
+}
+
+# assert_ok_packages LOG MIN — the same guard for a non-verbose `go test`, whose
+# only per-package evidence is its `ok <pkg> <time>` lines. A package with no
+# test files prints `?   <pkg> [no test files]` and is deliberately not counted.
+assert_ok_packages() {
+  local got
+  got=$(grep -c '^ok  ' "$1" 2>/dev/null)
+  got=${got:-0}
+  [ "$got" -ge "$2" ] ||
+    fail_last "ran almost nothing: $got packages reported ok, expected at least $2"
+}
+
+# ---------------------------------------------------------------------------
+# The wasm toolchain.
+#
+# The pinned versions come from scripts/wasm-toolchain-pins, which derives them
+# from .github/actions/setup-fern — a third hand-copied pin is a third pin that
+# can fall behind, and a mismatched wasmtime fails as an opaque `invalid leading
+# byte (0x43)` rather than as a version complaint.
+install_wasm_toolchain() {
+  local arch dir base
+  case "$(uname -m)" in
+    x86_64) arch=x86_64-linux ;;
+    aarch64) arch=aarch64-linux ;;
+    *)
+      echo "smoke: no wasm toolchain build for $(uname -m)" >&2
+      return 1
+      ;;
+  esac
+  eval "$("$repo/scripts/wasm-toolchain-pins")" || return 1
+  # shellcheck disable=SC2153 # both come from the eval on the line above
+  local wasmtime_ver=$WASMTIME_VER wasmtools_ver=$WASMTOOLS_VER
+  dir="$cache/wasm-$wasmtime_ver-$wasmtools_ver-$arch"
+  export PATH="$dir:$PATH"
+  export FERN_WASI_ADAPTER="$dir/wasi_snapshot_preview1.command.wasm"
+
+  if [ -x "$dir/wasmtime" ] && [ -x "$dir/wasm-tools" ] && [ -f "$FERN_WASI_ADAPTER" ]; then
+    echo "==> smoke: wasm toolchain cached ($("$dir/wasmtime" --version | head -1))"
+    return 0
+  fi
+
+  echo "==> smoke: installing wasmtime v$wasmtime_ver + wasm-tools $wasmtools_ver"
+  mkdir -p "$dir"
+  base=https://github.com/bytecodealliance
+  curl -sSfL "$base/wasmtime/releases/download/v$wasmtime_ver/wasmtime-v$wasmtime_ver-$arch.tar.xz" |
+    tar -xJ -C "$dir" --strip-components=1 --wildcards '*/wasmtime' || return 1
+  curl -sSfL -o "$FERN_WASI_ADAPTER" \
+    "$base/wasmtime/releases/download/v$wasmtime_ver/wasi_snapshot_preview1.command.wasm" || return 1
+  curl -sSfL "$base/wasm-tools/releases/download/v$wasmtools_ver/wasm-tools-$wasmtools_ver-$arch.tar.gz" |
+    tar -xz -C "$dir" --strip-components=1 --wildcards '*/wasm-tools' || return 1
+  wasmtime --version && wasm-tools --version
+}
+
+# arm64 needs qemu-aarch64 plus an aarch64 cross-gcc. A Netlify build runs
+# unprivileged with no apt, so this is normally 'no' there and 'yes' on a dev
+# box that ran .claude/hooks/session-start.sh. Detected rather than assumed, so
+# the summary reports what was actually covered either way.
+have_arm64=no
+if command -v qemu-aarch64 >/dev/null 2>&1 && command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
+  have_arm64=yes
+fi
+
+# ---------------------------------------------------------------------------
+# run_stage NAME FLOOR_S FUNC
+#
+# FLOOR_S is a rough measured cost, used two ways: a stage is not started with
+# less than FLOOR_S left, and a started stage is capped at 3x FLOOR_S. Those two
+# limits are what let the script tell "the deploy budget ran out" (not a defect —
+# reported as a skip) apart from "this stage blew three times its expected cost"
+# (a real hang — reported as a failure). Being imprecise about FLOOR_S only
+# shifts where that line sits; the deadline holds either way.
+#
+# FUNC runs under `timeout`, which needs a command rather than a shell function,
+# hence the exported-function + `bash -c` hop.
+run_stage() {
+  local name=$1 floor=$2 func=$3
+  local log rem limit deadline_bound rc secs t0
+
+  log=$(logfile "$name")
+  rem=$(remaining)
+  if [ "$rem" -lt "$floor" ]; then
+    echo "==> smoke: SKIP $name — ${rem}s left, needs ~${floor}s"
+    record "$name" SKIP 0 "budget: ${rem}s left, needs ~${floor}s"
+    return 0
+  fi
+
+  limit=$((floor * 3))
+  deadline_bound=0
+  if [ "$rem" -lt "$limit" ]; then
+    limit=$rem
+    deadline_bound=1
+  fi
+
+  echo "==> smoke: $name (${rem}s of budget left, capped at ${limit}s)"
+  t0=$(date +%s)
+  export -f "${func?}"
+  # The FULL output goes to $log, which the assertions then read; the console
+  # copy drops `=== RUN` and passing subtests, because the conformance stage
+  # alone emits ~4000 of those and a deploy log nobody scrolls is a deploy log
+  # nobody reads. Every FAIL line, indented or not, survives the filter.
+  #
+  # Read PIPESTATUS[0], never the pipeline's own status: tee and grep both
+  # report their own, so `$?` here would call every failing stage a pass.
+  # docs/TEST-GATES.md records that mistake costing a lost internal/e2e failure
+  # that never reproduced.
+  timeout --foreground "$limit" bash -c "$func" 2>&1 |
+    tee "$log" | grep -vE '^=== (RUN|CONT|PAUSE)|^ +--- (PASS|SKIP)'
+  rc=${PIPESTATUS[0]}
+  secs=$(($(date +%s) - t0))
+
+  if [ "$rc" -eq 124 ]; then
+    if [ "$deadline_bound" -eq 1 ]; then
+      echo "==> smoke: SKIP $name — deadline reached after ${secs}s"
+      record "$name" SKIP "$secs" "budget: killed at the deadline"
+    else
+      echo "==> smoke: FAIL $name — exceeded 3x its ~${floor}s estimate" >&2
+      record "$name" FAIL "$secs" "hung: over 3x the ~${floor}s estimate"
+      failures=$((failures + 1))
+    fi
+    return 0
+  fi
+
+  completed=$((completed + 1))
+  if [ "$rc" -ne 0 ]; then
+    record "$name" FAIL "$secs" "exit $rc"
+    failures=$((failures + 1))
+    return 0
+  fi
+  record "$name" PASS "$secs" ""
+}
+
+# ---------------------------------------------------------------------------
+# The stages. Floors are measured on a 4-core container with a warm GOCACHE;
+# the 3x cap is what absorbs a cold one.
+
+stage_build() { # ~30s warm
+  go build ./... && go vet ./...
+}
+
+stage_units() { # ~80s warm, half of it internal/ir's corpus determinism sweep
+  local pkgs
+  pkgs=$("$repo/scripts/unit-test-packages") || return 1
+  # shellcheck disable=SC2086 # the package list is deliberately word-split
+  go test $pkgs
+}
+
+stage_conformance() { # ~75s warm for 342 fixtures x 4 backends
+  go test -run '^TestFernFixtures$' -v ./internal/e2e/
+}
+
+# The self-hosted compiler's x86-64 IR path, end to end: the driver build
+# compiles the whole self-host front-end + asm_ir with the Go backend, and the
+# tests then feed programs through that binary and run what it emits.
+#
+# The DRIVER is the entire cost — measured at ~38s, against ~0.3s for each test
+# after it — so the set is chosen so that all seven build the SAME one
+# (asm_ir_run.fern) and pay for it once. Picking by topic instead is what makes
+# this stage expensive: TestSelfHostArgAtIRX86_64 also builds asm_pathprobe_run
+# and wasm_ir_run, and pairing it with one asm_run test cost 72s for two tests
+# where these seven cost 41s. `grep -L 'wasm_ir_run\|asm_pathprobe_run\|asm_run'`
+# over the files that name asm_ir_run.fern is how to extend the list safely.
+#
+# Within that constraint they cover the ground the self-host IR path actually
+# breaks on: escaping closures and closure values (the #5001/#5007/#5009/#5026
+# dispatch cluster lived exactly there and lowered fine while segfaulting at
+# runtime), rc reclaim, own-receiver methods and block scoping.
+#
+# The driver is content-addressed in FERN_SELFHOST_BUILD_CACHE, so a deploy that
+# did not touch the compiler sources it depends on restores it instead.
+# Names are spelled out in full rather than factored into `^TestSelfHost(A|B)$`:
+# tools/testname_gate.sh matches whole `Test...` identifiers, so the factored
+# form hides every alternative from it, and `make testnames` would keep passing
+# while this stage quietly selected one fewer test.
+stage_selfhost() {
+  go test -v ./internal/e2eselfhost/ -run '^(TestSelfHostClosureEscapeIRX86_64|TestSelfHostClosureX86IR|TestSelfHostFnValueX86IR|TestSelfHostCaptureLambdaX86IR|TestSelfHostBlockScopedReclaimX86_64|TestSelfHostArrArrAppendReclaimX86_64|TestSelfHostOwnReceiverIRX86_64)$'
+}
+
+# ---------------------------------------------------------------------------
+# Per-backend accounting for the conformance corpus. Every fixture runs on every
+# backend, so "how many fixtures passed on backend X" is the honest coverage
+# number — and zero for a backend this container CAN reach means the toolchain
+# broke, not that the tests are fine. Reported either way, so the deploy log
+# states its own coverage instead of implying total coverage.
+check_conformance_coverage() {
+  local log=$1 counts backend n reachable=(interp x86_64)
+  [ "$have_wasm" = yes ] && reachable+=(wasm)
+  [ "$have_arm64" = yes ] && reachable+=(arm64)
+
+  counts=$(grep -oE -- '--- PASS: TestFernFixtures/[^/]+/[a-z0-9_]+' "$log" |
+    awk -F/ '{print $3}' | sort | uniq -c | awk '{printf "%s=%s ", $2, $1}')
+  note_last "${counts% }"
+
+  for backend in "${reachable[@]}"; do
+    n=$(grep -c -- "--- PASS: TestFernFixtures/[^/]*/$backend " "$log")
+    if [ "${n:-0}" -lt 100 ]; then
+      fail_last "the $backend backend passed only ${n:-0} fixtures, and its toolchain is present — that is a break, not a skip"
+      return 0
+    fi
+  done
+  [ "$have_arm64" = yes ] ||
+    note_last "${stage_note[${#stage_names[@]} - 1]} (arm64 uncovered: no qemu/cross-gcc)"
+}
+
+# ---------------------------------------------------------------------------
+
+default_stages="build,units,conformance,selfhost"
+IFS=',' read -r -a selected <<<"${FERN_SMOKE_STAGES:-$default_stages}"
+
+# Install the wasm toolchain only when something asks for it. Conformance is the
+# only stage that runs wasm, and a `FERN_SMOKE_STAGES=build,units` run has no
+# business going red because a GitHub release download blipped.
+have_wasm=no
+if [[ ",${FERN_SMOKE_STAGES:-$default_stages}," == *,conformance,* ]]; then
+  if install_wasm_toolchain; then
+    have_wasm=yes
+  else
+    # A failed stage, not a warning. Without the toolchain a quarter of the
+    # corpus's coverage disappears into t.Skip() and the deploy still goes
+    # green — the exact false green this script exists to prevent.
+    record wasm-toolchain FAIL 0 "install failed; the conformance wasm leg would silently skip"
+    failures=$((failures + 1))
+  fi
+fi
+
+for s in "${selected[@]}"; do
+  case "$s" in
+    build)
+      run_stage build 60 stage_build
+      ;;
+    units)
+      run_stage units 120 stage_units
+      # 56 packages have tests today; 30 is a floor that catches a collapsed
+      # run without going red every time one is split or merged.
+      assert_ok_packages "$(logfile units)" 30
+      ;;
+    conformance)
+      run_stage conformance 150 stage_conformance
+      # No assert_passes here: check_conformance_coverage is strictly stronger.
+      # It demands 100+ passing fixtures on EVERY backend this container can
+      # reach, so a `-run` regex gone stale (0 tests, exit 0) and a lost
+      # toolchain (that backend at 0) both land as a failure.
+      [ "${stage_status[-1]}" = PASS ] && check_conformance_coverage "$(logfile conformance)"
+      ;;
+    selfhost)
+      # The driver build is the memory-heavy step. Below ~6 GB it is not slow,
+      # it is OOM-killed, so decline it loudly rather than reporting a 137 as a
+      # compiler failure.
+      if [ "$mem_total_mb" -gt 0 ] && [ "$mem_total_mb" -lt 6000 ]; then
+        echo "==> smoke: SKIP selfhost — ${mem_total_mb} MB RAM, a cold driver build needs ~6 GB"
+        record selfhost SKIP 0 "host has ${mem_total_mb} MB RAM, needs ~6 GB"
+        continue
+      fi
+      run_stage selfhost 120 stage_selfhost
+      assert_passes "$(logfile selfhost)" 7
+      ;;
+    *)
+      echo "error: unknown stage '$s' in FERN_SMOKE_STAGES" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
+# Summary. This is the artifact anyone reads in a deploy log, so it says what
+# ran, what did not, and why — not just a colour.
+
+echo
+echo "==> smoke summary — ${budget}s budget, $(elapsed)s used"
+for i in "${!stage_names[@]}"; do
+  printf '    %-14s %-4s %5ss  %s\n' \
+    "${stage_names[$i]}" "${stage_status[$i]}" "${stage_secs[$i]}" "${stage_note[$i]}"
+done
+echo
+
+skipped=0
+for s in "${stage_status[@]}"; do [ "$s" = SKIP ] && skipped=$((skipped + 1)); done
+
+if [ "$completed" -eq 0 ]; then
+  echo "==> smoke: FAILED — no stage ran to completion; a smoke test that tested nothing is not a pass" >&2
+  failures=$((failures + 1))
+elif [ "$failures" -eq 0 ]; then
+  echo "==> smoke: ok — $completed stage(s) passed, $skipped skipped for budget"
+else
+  echo "==> smoke: FAILED — $failures failed, $completed completed, $skipped skipped for budget" >&2
+fi
+
+if [ "$failures" -gt 0 ] && [ "$mode" = advisory ]; then
+  echo "==> smoke: FERN_SMOKE=advisory, not failing the deploy"
+  exit 0
+fi
+[ "$failures" -eq 0 ]

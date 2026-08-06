@@ -33,13 +33,14 @@ if ! command -v qemu-aarch64 >/dev/null 2>&1 || ! command -v aarch64-linux-gnu-g
 fi
 
 # --- wasmtime + wasm-tools + WASI preview1 adapter (wasm e2e suite) ---
-# Versions pinned to match .github/actions/setup-fern (bump together).
-# wasmtime v37 is required for the WASI P3 async tests (component-model-async
-# is compiled out of v34) and wasm-tools 1.240 for composing the extern-variant
-# provider components — older pins fail ~40 wasm e2e tests that CI passes.
+# Versions READ from .github/actions/setup-fern, so they cannot fall behind it.
+# They used to be copied here, and the comment beside the copy still described
+# the v37 / 1.240 pins long after CI had moved to v46 / 1.253 — a pin that
+# drifts buys an opaque `invalid leading byte (0x43)` from the Preview-3 async
+# tests rather than anything naming a version. See scripts/wasm-toolchain-pins.
 WT_DIR="$HOME/.fern-wasm"
-WASMTIME_VER="v46.0.1"
-WASMTOOLS_VER="1.253.0"
+eval "$("$(dirname "${BASH_SOURCE[0]}")/../../scripts/wasm-toolchain-pins")"
+WASMTIME_VER="v$WASMTIME_VER"
 case "$(uname -m)" in
   x86_64)  WT_ARCH="x86_64-linux" ;;
   aarch64) WT_ARCH="aarch64-linux" ;;
