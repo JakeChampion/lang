@@ -161,24 +161,6 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 			b.WriteString(" else ")
 			printStmt(b, x.Else)
 		}
-	case *ast.LetElse:
-		b.WriteString("let ")
-		b.WriteString(x.VariantName)
-		if len(x.Bindings) > 0 {
-			b.WriteByte('(')
-			for j, n := range x.Bindings {
-				if j > 0 {
-					b.WriteString(", ")
-				}
-				b.WriteString(n)
-			}
-			b.WriteByte(')')
-		}
-		b.WriteString(" = ")
-		printExpr(b, x.Source)
-		b.WriteString(" else ")
-		printStmt(b, x.Else)
-		b.WriteByte(';')
 	case *ast.While:
 		b.WriteString("while (")
 		printExpr(b, x.Cond)

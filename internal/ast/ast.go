@@ -679,13 +679,6 @@ func CloneStmt(s Stmt) Stmt {
 			c.Else = CloneStmt(x.Else)
 		}
 		return &c
-	case *LetElse:
-		c := *x
-		c.Source = CloneExpr(x.Source)
-		c.Bindings = append([]string(nil), x.Bindings...)
-		c.BindingTypes = append([]Type(nil), x.BindingTypes...)
-		c.Else = CloneBlock(x.Else)
-		return &c
 	case *While:
 		c := *x
 		c.Cond = CloneExpr(x.Cond)
@@ -2327,21 +2320,6 @@ type If struct {
 	IsAssert bool
 }
 
-// LetElse is `let <Variant>(b1, b2, …) = <expr> else { <divergent>
-// };` — pattern-binding declaration with a mandatory-divergent
-// else. On match, the bindings are introduced into the enclosing
-// scope (live for the rest of the block). On mismatch, the else
-// block runs and must terminate the surrounding control flow
-// (return / break / continue) — the checker enforces this so
-// fall-through into "bindings used uninitialised" is impossible.
-type LetElse struct {
-	P            Position
-	VariantName  string
-	Bindings     []string
-	BindingTypes []Type
-	Source       Expr
-	Else         *Block
-}
 type While struct {
 	P    Position
 	Cond Expr
@@ -2614,6 +2592,16 @@ type ExprStmt struct {
 // body. Exhaustiveness is checked at type-check time: every variant
 // of the scrutinee's enum type must appear, OR the arm list ends
 // with a wildcard pattern (`_`).
+// Origin values for a Match the parser synthesised from a
+// pattern-binding form. `if let` and `let … else` differ only in where
+// the success arm's body comes from — the then-block for one, the rest
+// of the enclosing block for the other — and in the extra rule the
+// checker applies (a `let … else` else branch must diverge).
+const (
+	OriginIfLet   = "if_let"
+	OriginLetElse = "let_else"
+)
+
 type Match struct {
 	P    Position
 	Tag  Expr
@@ -2626,14 +2614,14 @@ type Match struct {
 	// enum-variant matches.
 	StructMatch string
 	// Origin marks a match the parser synthesised from a pattern-binding
-	// form rather than one the programmer wrote: "if_let" for
-	// `if let PAT = E { … } else { … }`, "" for a real `match`. The
-	// desugar is `match (E) { PAT => { then }, _ => { else } }`, so the
-	// trailing wildcard arm is the else branch, not something the source
-	// spelled — the checker skips the unreachable-arm diagnostics on it
-	// and reports the pattern-binding codes (E022 / E023) instead of the
-	// generic ones a hand-written match of this shape would draw. The
-	// formatter reads it back to re-render the original `if let`.
+	// form rather than one the programmer wrote — OriginIfLet /
+	// OriginLetElse; empty for a real `match`. Either way the desugar is
+	// `match (E) { PAT => { success }, _ => { else } }`, so the trailing
+	// wildcard arm is the else branch, not something the source spelled —
+	// the checker skips the unreachable-arm diagnostics on it and reports
+	// the pattern-binding codes (E022 / E023) instead of the generic ones
+	// a hand-written match of this shape would draw. The formatter reads
+	// it back to re-render the original form.
 	// Mirrors the self-host parser's StmtMatch.origin.
 	Origin string
 }
@@ -2765,7 +2753,6 @@ type MatchExprArm struct {
 
 func (s *Block) Pos() Position                  { return s.P }
 func (s *If) Pos() Position                     { return s.P }
-func (s *LetElse) Pos() Position                { return s.P }
 func (s *While) Pos() Position                  { return s.P }
 func (s *Loop) Pos() Position                   { return s.P }
 func (s *For) Pos() Position                    { return s.P }
@@ -2784,7 +2771,6 @@ func (s *FuncDecl) GenericTypeParams() []string { return s.TypeParams }
 
 func (*Block) isStmt()       {}
 func (*If) isStmt()          {}
-func (*LetElse) isStmt()     {}
 func (*While) isStmt()       {}
 func (*Loop) isStmt()        {}
 func (*For) isStmt()         {}

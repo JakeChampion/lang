@@ -203,9 +203,6 @@ func walkStmtForNames(s ast.Stmt, selfName string, siblings map[string]*ast.Func
 		walkExprForNames(n.Cond, selfName, siblings, seen)
 		walkStmtForNames(n.Then, selfName, siblings, seen)
 		walkStmtForNames(n.Else, selfName, siblings, seen)
-	case *ast.LetElse:
-		walkExprForNames(n.Source, selfName, siblings, seen)
-		walkBodyForNames(n.Else, selfName, siblings, seen)
 	case *ast.While:
 		walkExprForNames(n.Cond, selfName, siblings, seen)
 		walkStmtForNames(n.Body, selfName, siblings, seen)
@@ -560,18 +557,6 @@ func (c *converter) rewriteStmt(s ast.Stmt, ctx *captureCtx) (ast.Stmt, error) {
 			return nil, err
 		}
 		n.Expr = ne
-		return n, nil
-	case *ast.LetElse:
-		ns, err := c.rewriteExpr(n.Source, ctx)
-		if err != nil {
-			return nil, err
-		}
-		n.Source = ns
-		if n.Else != nil {
-			if err := c.rewriteBlock(n.Else, ctx); err != nil {
-				return nil, err
-			}
-		}
 		return n, nil
 	case *ast.Match:
 		nt, err := c.rewriteExpr(n.Tag, ctx)

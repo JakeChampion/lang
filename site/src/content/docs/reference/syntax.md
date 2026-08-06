@@ -118,8 +118,9 @@ isn't significant.
   it instead of the innermost one.
 - **`match (expr) { Pat(b) => { ... }, ... }`** — pattern dispatch.
   Arms may carry a `when` guard.
-- **`let Pat(b) = expr else { ... };`** — refutable binding; the `else`
-  block must diverge.
+- **`let Pat = expr else { ... };`** — refutable binding, same pattern
+  grammar as `if let` and `match`; the pattern's bindings are live for
+  the rest of the block and the `else` block must diverge.
 - **`defer expr;`** / **`errdefer expr;`** — schedule expr to run on
   function exit (LIFO); `errdefer` runs only on an error exit.
 

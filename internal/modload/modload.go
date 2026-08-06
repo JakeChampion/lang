@@ -1724,11 +1724,6 @@ func collectLocalsStmt(s ast.Stmt, dst map[string]bool) {
 	case *ast.If:
 		collectLocalsStmt(x.Then, dst)
 		collectLocalsStmt(x.Else, dst)
-	case *ast.LetElse:
-		for _, n := range x.Bindings {
-			dst[n] = true
-		}
-		collectLocals(x.Else, dst)
 	case *ast.While:
 		collectLocalsStmt(x.Body, dst)
 	case *ast.Loop:
@@ -1816,9 +1811,6 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 			}
 			r.rewriteBlock(arm.Body)
 		}
-	case *ast.LetElse:
-		r.rewriteExpr(&x.Source)
-		r.rewriteBlock(x.Else)
 	case *ast.Defer:
 		r.rewriteExpr(&x.Expr)
 	case *ast.FuncDecl:

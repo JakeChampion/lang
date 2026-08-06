@@ -1140,8 +1140,6 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				// payloads with no projection dup.
 				escapeCountedYield(arm.Body)
 			}
-		case *ast.LetElse:
-			markBindings(s.Bindings)
 		case *ast.Call:
 			// Retain sinks the checker lowers to Calls. None of
 			// these inc the stored rc value (unlike StructLit /
@@ -2717,8 +2715,6 @@ func collectNestedBlocks(s ast.Stmt, out *[]*ast.Block) {
 	case *ast.If:
 		collectNestedBlocks(x.Then, out)
 		collectNestedBlocks(x.Else, out)
-	case *ast.LetElse:
-		collectNestedBlocks(x.Else, out)
 	case *ast.While:
 		collectNestedBlocks(x.Body, out)
 	case *ast.Loop:
@@ -2871,7 +2867,7 @@ func (b *builder) preciseDropTarget(stmts []ast.Stmt, di int, name string, reass
 // extension (vs a simple top-level Var / ExprStmt / Return use).
 func (b *builder) isControlFlowStmt(st ast.Node) bool {
 	switch st.(type) {
-	case *ast.If, *ast.While, *ast.Loop, *ast.For, *ast.Match, *ast.LetElse, *ast.Block:
+	case *ast.If, *ast.While, *ast.Loop, *ast.For, *ast.Match, *ast.Block:
 		return true
 	}
 	return false
@@ -3336,8 +3332,6 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 			for _, arm := range x.Arms {
 				markRebound(arm.Bindings)
 			}
-		case *ast.LetElse:
-			markRebound(x.Bindings)
 		}
 		return true
 	})
@@ -3501,8 +3495,6 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 				for _, arm := range x.Arms {
 					disqualify(arm.Bindings)
 				}
-			case *ast.LetElse:
-				disqualify(x.Bindings)
 			}
 			return true
 		})

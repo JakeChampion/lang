@@ -231,11 +231,6 @@ func rewriteStmtChildren(n Node, fn func(Expr) Expr) {
 		if x.Else != nil {
 			rewriteStmtChildren(x.Else, fn)
 		}
-	case *LetElse:
-		x.Source = rewriteExpr(x.Source, fn)
-		if x.Else != nil {
-			rewriteStmtChildren(x.Else, fn)
-		}
 	case *While:
 		x.Cond = rewriteExpr(x.Cond, fn)
 		rewriteStmtChildren(x.Body, fn)
@@ -409,11 +404,6 @@ func walkChildren(n Node, fn func(Node) bool) {
 	case *If:
 		Walk(x.Cond, fn)
 		Walk(x.Then, fn)
-		if x.Else != nil {
-			Walk(x.Else, fn)
-		}
-	case *LetElse:
-		Walk(x.Source, fn)
 		if x.Else != nil {
 			Walk(x.Else, fn)
 		}

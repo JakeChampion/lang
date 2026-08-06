@@ -2304,6 +2304,19 @@ func (p *parser) parseBlock() (*ast.Block, error) {
 		return nil, err
 	}
 	block := &ast.Block{P: open.Pos}
+	p.parseBlockStmts(block)
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return block, err
+	}
+	return block, nil
+}
+
+// parseBlockStmts fills block with statements up to (but not consuming)
+// the closing `}`. Shared by parseBlock and the two statement-position
+// desugars that swallow the rest of their enclosing block — `use` and
+// `let … else` — so the tail they capture is parsed by exactly the same
+// loop, error sync and progress guard as the block they were written in.
+func (p *parser) parseBlockStmts(block *ast.Block) {
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		before := p.i
 		// `use IDENT : TYPE <- EXPR;` is a statement-position
@@ -2321,7 +2334,32 @@ func (p *parser) parseBlock() (*ast.Block, error) {
 			}
 			// `use` consumes the rest of the block as its
 			// callback body, so the current block is finished.
-			break
+			return
+		}
+		// `let` is the other rest-of-block desugar: `let PAT = E else
+		// { … };` binds for the rest of THIS block, so that remainder
+		// becomes the success arm. Only the direct-in-a-block form may
+		// capture it — a `let … else` reached as a braceless branch body
+		// (`if (c) let X(v) = e else { … };`) has no remainder of its own
+		// and must not steal the enclosing block's, so parseStmt asks for
+		// the non-capturing form.
+		if p.match(lexer.Keyword, "let") {
+			s, err := p.parseLet(true)
+			if err != nil {
+				p.errors = append(p.errors, err)
+				p.syncToStmt()
+				if p.i == before {
+					p.advance()
+				}
+				continue
+			}
+			if s != nil {
+				block.Stmts = append(block.Stmts, s)
+			}
+			if m, ok := s.(*ast.Match); ok && m.Origin == ast.OriginLetElse {
+				return
+			}
+			continue
 		}
 		s, err := p.parseStmt()
 		if err != nil {
@@ -2336,10 +2374,6 @@ func (p *parser) parseBlock() (*ast.Block, error) {
 			block.Stmts = append(block.Stmts, s)
 		}
 	}
-	if _, err := p.expect(lexer.Punct, "}"); err != nil {
-		return block, err
-	}
-	return block, nil
 }
 
 func (p *parser) parseStmt() (ast.Stmt, error) {
@@ -2417,7 +2451,9 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 		case "var":
 			return p.parseVar()
 		case "let":
-			return p.parseLetElse()
+			// Not directly inside a block (a braceless branch body), so
+			// there is no rest-of-block for a `let … else` to bind over.
+			return p.parseLet(false)
 		case "match":
 			return p.parseMatch()
 		case "function":
@@ -3198,11 +3234,6 @@ func desugarForEachStmt(s ast.Stmt, streamFns map[string]bool) ast.Stmt {
 		if x.Else != nil {
 			x.Else = desugarForEachStmt(x.Else, streamFns)
 		}
-	case *ast.LetElse:
-		desugarForEachExpr(x.Source, streamFns)
-		if x.Else != nil {
-			desugarForEachStmt(x.Else, streamFns)
-		}
 	case *ast.While:
 		desugarForEachExpr(x.Cond, streamFns)
 		x.Body = desugarForEachStmt(x.Body, streamFns)
@@ -3525,27 +3556,15 @@ func (p *parser) rejectNestedInOrPattern(pats []matchPattern) error {
 //
 //	match (<expr>) { P1 => { then }, …, _ => { else } }
 //
-// tagged Origin "if_let". Consuming parseMatchPattern is what gives
+// tagged Origin OriginIfLet. Consuming parseMatchPattern is what gives
 // `if let` the whole shared pattern grammar — struct patterns, tuple
 // patterns, nested patterns, `@` bindings, literals and ranges — and
 // keeps refutability and exhaustiveness in the one place that already
 // reasons about them. The `let` keyword has been peeked, not consumed.
 func (p *parser) parseIfLet(ifPos ast.Position) (ast.Stmt, error) {
 	p.advance() // let
-	first, err := p.parseMatchPattern()
+	pats, err := p.parseOrPatterns()
 	if err != nil {
-		return nil, err
-	}
-	pats := []matchPattern{first}
-	for p.match(lexer.Punct, "|") {
-		p.advance()
-		nxt, err := p.parseMatchPattern()
-		if err != nil {
-			return nil, err
-		}
-		pats = append(pats, nxt)
-	}
-	if err := p.rejectNestedInOrPattern(pats); err != nil {
 		return nil, err
 	}
 	if _, err := p.expect(lexer.Punct, "="); err != nil {
@@ -3572,25 +3591,53 @@ func (p *parser) parseIfLet(ifPos ast.Position) (ast.Stmt, error) {
 		}
 		elseBlk = stmtAsBlock(els)
 	}
-	thenBlk := stmtAsBlock(then)
+	return p.buildPatternBindingMatch(ifPos, pats, src, stmtAsBlock(then), elseBlk, ast.OriginIfLet)
+}
+
+// parseOrPatterns parses the `P1 | P2 | …` head shared by `if let` and
+// `let … else` — parseMatchPattern alternatives with no guard and no
+// `=>`, leaving the cursor on the `=`.
+func (p *parser) parseOrPatterns() ([]matchPattern, error) {
+	first, err := p.parseMatchPattern()
+	if err != nil {
+		return nil, err
+	}
+	pats := []matchPattern{first}
+	for p.match(lexer.Punct, "|") {
+		p.advance()
+		nxt, err := p.parseMatchPattern()
+		if err != nil {
+			return nil, err
+		}
+		pats = append(pats, nxt)
+	}
+	if err := p.rejectNestedInOrPattern(pats); err != nil {
+		return nil, err
+	}
+	return pats, nil
+}
+
+// buildPatternBindingMatch assembles the desugared match both binding
+// forms produce: one arm per or-pattern alternative running success,
+// then a trailing wildcard arm running els. desugarNestedStmtArms also
+// reads that wildcard as the outer fallthrough, so a nested head
+// (`if let Some(Ok(n)) = e`) routes a `Some(Err(_))` payload into the
+// else rather than falling off a non-exhaustive inner match.
+func (p *parser) buildPatternBindingMatch(pos ast.Position, pats []matchPattern, src ast.Expr, success, els *ast.Block, origin string) (ast.Stmt, error) {
 	raw := make([]stmtRawArm, 0, len(pats)+1)
 	for i, pat := range pats {
-		b := thenBlk
+		b := success
 		if i > 0 {
-			b = ast.CloneBlock(thenBlk)
+			b = ast.CloneBlock(success)
 		}
 		raw = append(raw, stmtRawArm{pat: pat, body: b})
 	}
-	// The else branch is the trailing wildcard arm. desugarNestedStmtArms
-	// also reads it as the outer fallthrough, so `if let Some(Ok(n)) = e`
-	// routes a `Some(Err(_))` payload into the else rather than falling off
-	// a non-exhaustive inner match.
-	raw = append(raw, stmtRawArm{pat: matchPattern{P: ifPos, IsWildcard: true}, body: elseBlk})
+	raw = append(raw, stmtRawArm{pat: matchPattern{P: pos, IsWildcard: true}, body: els})
 	arms, err := p.desugarNestedStmtArms(raw)
 	if err != nil {
 		return nil, err
 	}
-	return &ast.Match{P: ifPos, Tag: src, Arms: arms, Origin: "if_let"}, nil
+	return &ast.Match{P: pos, Tag: src, Arms: arms, Origin: origin}, nil
 }
 
 // stmtAsBlock adapts a single statement to the *ast.Block a match arm
@@ -4638,28 +4685,12 @@ func (p *parser) parseUse(parent *ast.Block) error {
 	// block. We open a synthetic block, slurp statements until
 	// the upcoming `}`, then leave that `}` for the caller's
 	// loop to consume.
+	// parseBlockStmts runs the same loop the callback body would have got
+	// had it been written as a real block — including the nested-`use`
+	// recursion and the `let … else` rest-capture, both of which have to
+	// see this body as their enclosing block.
 	body := &ast.Block{P: kw.Pos}
-	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
-		before := p.i
-		if p.match(lexer.Keyword, "use") {
-			// Nested use — recursive desugar. The callback body
-			// is itself the parent for further use chains.
-			if err := p.parseUse(body); err != nil {
-				return err
-			}
-			break
-		}
-		s, err := p.parseStmt()
-		if err != nil {
-			return err
-		}
-		if s != nil {
-			body.Stmts = append(body.Stmts, s)
-		}
-		if p.i == before {
-			p.advance()
-		}
-	}
+	p.parseBlockStmts(body)
 	if len(p.returnTypeStack) == 0 {
 		return p.errorf(kw.Pos, "use must appear inside a function body")
 	}
@@ -4691,13 +4722,25 @@ func (p *parser) parseUse(parent *ast.Block) error {
 	return nil
 }
 
-// parseLetElse parses `let <Variant>(b1, b2, …) = <expr> else
-// { <divergent> };`. Bindings introduced by the pattern are
-// added to the enclosing scope (live for the rest of the
-// block); the else branch must terminate the surrounding
-// control flow — the checker enforces that, here we just parse
-// the syntax.
-func (p *parser) parseLetElse() (ast.Stmt, error) {
+// parseLet parses the three `let` statement forms. Tuple and struct
+// destructuring (`let (a, b) = e;` / `let Point { x, y } = e;`) are
+// irrefutable and produce an *ast.Destructure; everything else is
+// `let PAT = <expr> else { <divergent> };`, which desugars to
+//
+//	match (<expr>) { PAT => { <rest of the enclosing block> },
+//	                 _  => { <else> } }
+//
+// tagged Origin OriginLetElse. Putting the block's remainder in the
+// success arm is what keeps the pattern's bindings live for the rest of
+// the block without a bespoke node: they are arm bindings, and the arm
+// spans everything that follows. The else branch must terminate the
+// surrounding control flow — the checker enforces that, here we just
+// parse the syntax.
+//
+// captureRest is false when there is no enclosing block to bind over (a
+// braceless branch body), leaving the success arm empty; the bindings are
+// unreachable in that position either way.
+func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	kw := p.advance() // let
 	// `let (a, b, ...) = expr;` — tuple destructuring shorthand.
 	// No `else` branch: a tuple is statically arity-checked, so
@@ -4707,36 +4750,15 @@ func (p *parser) parseLetElse() (ast.Stmt, error) {
 		return p.parseTupleDestructure(kw.Pos)
 	}
 	// `let Point { x, y } = expr;` — struct destructuring (identifier
-	// immediately followed by `{`). A `let Variant(...)` let-else has `(`
-	// after the name, never `{`, so the two don't collide.
+	// immediately followed by `{`). A struct pattern is irrefutable, so
+	// there is nothing for an `else` to catch; the refutable forms all
+	// have `(`, `.`, `@` or a literal after the name, never `{`.
 	if p.peek().Kind == lexer.Ident && p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "{" {
 		return p.parseStructDestructure(kw.Pos)
 	}
-	variantTok, err := p.expect(lexer.Ident, "")
+	pats, err := p.parseOrPatterns()
 	if err != nil {
 		return nil, err
-	}
-	var bindings []string
-	if _, ok := p.accept(lexer.Punct, "("); ok {
-		if !p.match(lexer.Punct, ")") {
-			for {
-				nameTok, err := p.expect(lexer.Ident, "")
-				if err != nil {
-					return nil, err
-				}
-				bindings = append(bindings, nameTok.Text)
-				if _, ok := p.accept(lexer.Punct, ","); ok {
-					if p.match(lexer.Punct, ")") {
-						break
-					}
-					continue
-				}
-				break
-			}
-		}
-		if _, err := p.expect(lexer.Punct, ")"); err != nil {
-			return nil, err
-		}
 	}
 	if _, err := p.expect(lexer.Punct, "="); err != nil {
 		return nil, err
@@ -4759,16 +4781,15 @@ func (p *parser) parseLetElse() (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+	semi, err := p.expect(lexer.Punct, ";")
+	if err != nil {
 		return nil, err
 	}
-	return &ast.LetElse{
-		P:           kw.Pos,
-		VariantName: variantTok.Text,
-		Bindings:    bindings,
-		Source:      src,
-		Else:        elseBlk,
-	}, nil
+	rest := &ast.Block{P: semi.Pos}
+	if captureRest {
+		p.parseBlockStmts(rest)
+	}
+	return p.buildPatternBindingMatch(kw.Pos, pats, src, rest, elseBlk, ast.OriginLetElse)
 }
 
 // parseTupleDestructure handles `let (a, b, …) = expr;` —
@@ -5573,11 +5594,6 @@ func rewriteBuilderStmt(s ast.Stmt, b string) ast.Stmt {
 		n.Then = rewriteBuilderStmt(n.Then, b)
 		if n.Else != nil {
 			n.Else = rewriteBuilderStmt(n.Else, b)
-		}
-		return n
-	case *ast.LetElse:
-		if n.Else != nil {
-			n.Else.Stmts = rewriteBuilderStmts(n.Else.Stmts, b)
 		}
 		return n
 	case *ast.While:

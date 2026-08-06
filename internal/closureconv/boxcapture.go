@@ -278,11 +278,6 @@ func rewriteBoxedStmt(s ast.Stmt, boxed map[string]ast.Type) {
 		if x.Else != nil {
 			rewriteBoxedStmt(x.Else, boxed)
 		}
-	case *ast.LetElse:
-		x.Source = rewriteBoxedExpr(x.Source, boxed)
-		if x.Else != nil {
-			rewriteBoxedStmt(x.Else, boxed)
-		}
 	case *ast.While:
 		x.Cond = rewriteBoxedExpr(x.Cond, boxed)
 		rewriteBoxedStmt(x.Body, boxed)
