@@ -30104,6 +30104,25 @@ function arrtup_elem_esc_expr(e: parser.Expr, name: string, ttype: string, struc
                 },
                 _ => {}
             }
+            // `name.len()` on the ARRAY ITSELF — the tuple sibling of the
+            // arrstruct case: a header read, no element touched, so it is a borrow.
+            // Without it any `.len()` on the local recursed into the callee, hit
+            // the bare-ident arm and refused the whole credit. #6127.
+            match (c.callee) {
+                parser.ExprFieldAccess(lfa) => {
+                    match (lfa.obj) {
+                        parser.ExprIdent(lid) => {
+                            if (lid.name == name && lfa.field == "len") {
+                                var li: i32 = 0;
+                                while (li < c.args.len()) { if (arrtup_elem_esc_expr(c.args[li], name, ttype, structs)) { return true; } li = li + 1; }
+                                return false;
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
             if (arrtup_elem_esc_expr(c.callee, name, ttype, structs)) { return true; }
             var ci: i32 = 0;
             while (ci < c.args.len()) { if (arrtup_elem_esc_expr(c.args[ci], name, ttype, structs)) { return true; } ci = ci + 1; }
@@ -30434,6 +30453,29 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                                     }
                                 },
                                 _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            // `name.len()` on the ARRAY ITSELF — a header read, no element touched,
+            // so it is a borrow exactly like the element-field `.len()` above. It
+            // used to fall through to the generic tail, which recurses into the
+            // callee and hits the bare-ident arm, so ANY `.len()` on the local
+            // refused the whole credit. Measured: the identical array leaked 8000
+            // over 100 rounds with `ps.len()` and reclaimed cleanly with
+            // `ps[0].xs[0]` — reading LESS made it leak, and one `.len()` poisoned
+            // the credit even alongside an element read. #6127.
+            match (c.callee) {
+                parser.ExprFieldAccess(lfa) => {
+                    match (lfa.obj) {
+                        parser.ExprIdent(lid) => {
+                            if (lid.name == name && lfa.field == "len") {
+                                var li: i32 = 0;
+                                while (li < c.args.len()) { if (arrstruct_elem_esc_expr(c.args[li], name, sty, structs)) { return true; } li = li + 1; }
+                                return false;
                             }
                         },
                         _ => {}
