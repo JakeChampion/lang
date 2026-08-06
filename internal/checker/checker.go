@@ -4806,8 +4806,11 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 }
 
 type checker struct {
-	info      *Info
-	errors    []error
+	info   *Info
+	errors []error
+	// seenDiags drops a diagnostic identical to one already recorded at
+	// the same position — see errfCode.
+	seenDiags map[diagKey]bool
 	current   *ast.FuncDecl
 	loopDepth int
 	// tryConvN uniquifies the temp-var name in the error-converting `?`
@@ -7085,7 +7088,32 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 // fields, wrong-arity calls). Future PRs expand coverage —
 // each stamping is mechanical, just touches the errf call.
 func (c *checker) errfCode(pos ast.Position, code, format string, args ...any) {
-	c.errors = append(c.errors, &Error{Pos: pos, Msg: fmt.Sprintf(format, args...), Path: c.currentFile(), ErrCode: code})
+	msg := fmt.Sprintf(format, args...)
+	path := c.currentFile()
+	// Identical diagnostics at the same position are dropped. Several
+	// checks reach the same expression by different routes — a string
+	// `a < b` produced the same E009 twice, byte for byte — and a reader
+	// counting errors has no way to tell a repeat from two real problems.
+	// Deduping here rather than at each site keeps it true for every
+	// check, including ones added later.
+	key := diagKey{pos: pos, code: code, msg: msg, path: path}
+	if c.seenDiags == nil {
+		c.seenDiags = map[diagKey]bool{}
+	}
+	if c.seenDiags[key] {
+		return
+	}
+	c.seenDiags[key] = true
+	c.errors = append(c.errors, &Error{Pos: pos, Msg: msg, Path: path, ErrCode: code})
+}
+
+// diagKey identifies a diagnostic for the duplicate check above: same
+// place, same code, same words, same file.
+type diagKey struct {
+	pos  ast.Position
+	code string
+	msg  string
+	path string
 }
 
 // requireValue rejects a void-typed expression used where a value is
@@ -12031,7 +12059,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.requireInteger(n.P, rt, n.Op)
 			common, ok := commonIntegerWidth(lt, rt)
 			if !ok {
-				c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				// A cast cannot help operands that are not integers at all --
+				// `"a" < "b"` has no `as` that makes it work -- and requireInteger
+				// above has already said the true thing. Suggesting `as` there
+				// sends the reader to write a conversion that does not exist.
+				if isInteger(lt) && isInteger(rt) {
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				}
 				return ast.BoolType{}
 			}
 			c.settleNumeric(n.Left, common)
