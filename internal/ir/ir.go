@@ -15014,7 +15014,8 @@ func (b *builder) assign(n *ast.Assign) error {
 				//     buffer SHALLOWLY, so the fresh handle being stored
 				//     shares the old one's key / value pointers, and freeing
 				//     the key column pulls those strings out from under it
-				//     (SIGSEGV under qemu-aarch64). The old BUFFER is
+				//     (SIGSEGV under qemu-aarch64; #6242 is the shallow copy
+				//     itself, and widens this back once it lands). The old BUFFER is
 				//     exclusively the old handle's, so that part is
 				//     unambiguously owed; __fern_map_drop self-guards on
 				//     rc==1, so a still-shared handle only dec's.

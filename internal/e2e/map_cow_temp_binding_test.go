@@ -193,7 +193,7 @@ func TestMapCowTempBindingNoUnderflowArm64(t *testing.T) {
 //
 // x86-64 ONLY. arm64 leaks ~42 B per string-keyed insert in the DIRECT form
 // too — measured on stock main at 4576 / 16352 / 66528 B for 100 / 400 / 1600
-// iterations, identical before and after this change — so a flatness
+// iterations, identical before and after this change (#6243) — so a flatness
 // assertion there measures that pre-existing churn, not this one. The leak
 // this pins is 1328 B an iteration, thirty times larger, and x86-64 shows it
 // against a genuinely flat baseline.
