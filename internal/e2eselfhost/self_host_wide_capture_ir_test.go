@@ -103,6 +103,37 @@ func TestSelfHostWideCaptureIR(t *testing.T) {
 		// the pass regressed by cellaring it anyway.
 		{"direct-called-i64-binding", "function main(): i32 { var base: i64 = 7000000000; var f = () => base + 2000000000; return (f() / 1000000000) as i32; }", 9},
 		{"direct-called-f64-binding", "function main(): i32 { var d: f64 = 10.5; var f = () => d * 4.0; return f() as i32; }", 42},
+
+		// IMMEDIATELY-INVOKED lambdas — the other shape that never reaches the
+		// env box, and the one the pass used to cellar anyway (#6278). `if` and
+		// `match` in value position parse into `(<zero-param lambda>)()`, which
+		// lower_iife lowers INLINE in the enclosing scope, so the names it reads
+		// are the enclosing function's own locals. The cell re-bind was not
+		// merely wasted work: prepending a statement turned the one-statement
+		// body into a value BLOCK, and a 64-bit block tail is deferred (#6267),
+		// so the whole enclosing function bailed off the IR path over a capture
+		// that never needed boxing.
+		//
+		// Every case here was checked to BAIL on the parent commit and to answer
+		// 42 with the fix. A second value block or a closure local is what tips
+		// the pass into converting — with neither, the same expression already
+		// lowered, so a case without one pins nothing.
+		{"iife-i64-two-value-blocks", "function main(): i32 {\n    var v1: i64 = 40i64;\n    var q: i64 = (if (true) { 2i64 } else { 3i64 });\n    var r: i64 = (if (false) { 9i64 } else { (v1 | v1) });\n    return ((r + q) as i32) & 63i32;\n}", 42},
+		{"iife-u64-two-value-blocks", "function main(): i32 {\n    var v1: u64 = 40u64;\n    var q: u64 = (if (true) { 2u64 } else { 3u64 });\n    var r: u64 = (if (false) { 9u64 } else { (v1 | v1) });\n    return ((r + q) as i32) & 63i32;\n}", 42},
+		{"iife-i64-beside-closure-local", "function main(): i32 {\n    var v1: i64 = 40i64;\n    var g: () => i32 = (() => 2i32);\n    var r: i64 = (if (false) { 9i64 } else { (v1 | v1) });\n    return (((r as i32) + g()) & 63i32);\n}", 42},
+		{"iife-match-i64-beside-closure-local", "enum S { A, B }\nfunction main(): i32 {\n    var v1: i64 = 40i64;\n    var g: () => i32 = (() => 2i32);\n    var r: i64 = (match (B) { A => 9i64, B => (v1 | v1) });\n    return (((r as i32) + g()) & 63i32);\n}", 42},
+		// The narrow control: the same program at i32, which lowered before and
+		// must keep lowering. It is what isolates the WIDTH as the variable —
+		// is_wide_cap_type is the only reason the pass looked at these at all.
+		// (An f64 spelling is deliberately absent: it already lowered on the
+		// parent commit, so it would pin nothing.)
+		{"iife-i32-two-value-blocks-control", "function main(): i32 {\n    var v1: i32 = 40i32;\n    var q: i32 = (if (true) { 2i32 } else { 3i32 });\n    var r: i32 = (if (false) { 9i32 } else { (v1 | v1) });\n    return (r + q) & 63i32;\n}", 42},
+		// The other direction, and the one that catches an over-broad exemption:
+		// an IIFE and a genuinely ESCAPING lambda in the same body, both closing
+		// over wide locals. The IIFE is exempt, the escaper must still be
+		// cellared — so this answers correctly only if the exemption stayed
+		// scoped to the callee it applies to.
+		{"iife-beside-escaping-closure", outcome + "function check(): i32 {\n    var b: i64 = 20 as i64;\n    var v: i64 = if (b > 4i64) { b | b } else { 7i64 };\n    return run(function(): Outcome { return Fail((v + 22i64) as i32); });\n}\nfunction main(): i32 { return check(); }", 42},
 	}
 
 	for _, tc := range cases {

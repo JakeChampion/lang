@@ -839,6 +839,17 @@ function main(): i32 {
     return ((v as i32) & 255i32);
 }
 `, "__lam_0", "did not lower: `return` of ident `c`"},
+	// The OTHER half of func_ineligible_reason: the body lowered fine and the
+	// bail is a symbol that does not resolve. It is a different debugging task
+	// — look at the name, not the body — and the bare function name never said
+	// which of the two had happened. This is the #6256 cluster (an array mixing
+	// a fn-valued ident with an inline lambda), the largest one left.
+	{"unresolved-function-value", `function main(): i32 {
+    var v0: (i32) => i32 = ((a: i32) => 189i32);
+    var xs: ((i32) => i32)[] = [v0, (if (true) { v0 } else { ((b: i32) => b) }), v0];
+    return xs.len() & 63i32;
+}
+`, "main", "function value main$clo not defined"},
 }
 
 // TestSelfHostStrictIRNamesBailReason asserts each fixture's bail names its own

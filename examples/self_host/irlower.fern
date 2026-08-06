@@ -46381,6 +46381,25 @@ function is_wide_cap_type(t: string): boolean {
     return t == "i64" || t == "u64" || t == "f64";
 }
 
+// is_iife_callee reports whether `c` is an immediately-invoked zero-param
+// lambda — `(<lambda>)()`, the shape the parser builds for `if` / `match` in
+// value position and for the array / map comprehension desugars.
+//
+// It matters to the wide-capture pass because such a lambda is invoked in the
+// enclosing scope and cannot escape it: lower_iife lowers the body INLINE, so
+// the names it reads are the enclosing function's own locals and no env box is
+// ever built. Snapshotting them into cells is therefore not merely wasted —
+// the cell RE-BIND it prepends turns a one-statement body into a value BLOCK,
+// and a 64-bit block tail is deferred (#6267), so the enclosing function bailed
+// off the IR path over a capture that never needed boxing (#6278).
+function is_iife_callee(c: parser.ExprCall): boolean {
+    if (c.args.len() != 0) { return false; }
+    match (c.callee) {
+        parser.ExprLambda(lm) => { return lm.params.len() == 0; },
+        _ => { return false; }
+    }
+}
+
 // wcap_cell_name is the cell local for a wide capture. The `$` prefix cannot
 // collide with a user ident (the guarantee `$lamret$` already relies on).
 function wcap_cell_name(c: string): string { return "$wc$" + c; }
@@ -46470,6 +46489,31 @@ function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs:
             return WCapExpr { expr: parser.ExprUnary { op: u.op, operand: o.expr, line: u.line, col: u.col }, caps: o.caps };
         },
         parser.ExprCall(c) => {
+            // An IMMEDIATELY-INVOKED lambda never reaches the env box, so its
+            // wide captures need no cell — the same argument
+            // wcap_stmt_needs_env_box already makes for a `var f = <lambda>`
+            // that is only ever direct-called, applied to the other shape that
+            // cannot escape. Recurse into the body (a lambda nested THERE may
+            // still escape) but leave this lambda's own captures alone.
+            if (is_iife_callee(c)) {
+                match (c.callee) {
+                    parser.ExprLambda(ilm) => {
+                        var iacc: WCaps = acc;
+                        var ib: parser.Stmt[] = [];
+                        var ii: i32 = 0;
+                        while (ii < ilm.body.len()) {
+                            var irs: WCapStmt = wcap_stmt(ilm.body[ii], fd, gfns, structs, mfuncs, iacc, atargets);
+                            iacc = irs.caps;
+                            ib = ib.append(irs.stmt);
+                            ii = ii + 1;
+                        }
+                        var ilam: parser.Expr = parser.ExprLambda { params: ilm.params, ret_type: ilm.ret_type, body: ib, use_infer: ilm.use_infer };
+                        var noargs: parser.Expr[] = [];
+                        return WCapExpr { expr: parser.ExprCall { callee: ilam, args: noargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, caps: iacc };
+                    },
+                    _ => {}
+                }
+            }
             var cal: WCapExpr = wcap_expr(c.callee, fd, gfns, structs, mfuncs, acc, atargets);
             var a: WCaps = cal.caps;
             var na: parser.Expr[] = [];
@@ -46684,6 +46728,23 @@ function has_wide_cap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], 
         parser.ExprBinary(b) => { return has_wide_cap_expr(b.left, fd, gfns, structs, mfuncs, atargets) || has_wide_cap_expr(b.right, fd, gfns, structs, mfuncs, atargets); },
         parser.ExprUnary(u) => { return has_wide_cap_expr(u.operand, fd, gfns, structs, mfuncs, atargets); },
         parser.ExprCall(c) => {
+            // Mirrors wcap_expr's IIFE exemption: an immediately-invoked
+            // lambda's OWN wide captures need no cell, so looking at them here
+            // would report work the rewriter declines to do — and
+            // box_wide_captures would rebuild a body it did not change.
+            if (is_iife_callee(c)) {
+                match (c.callee) {
+                    parser.ExprLambda(ilm) => {
+                        var isi: i32 = 0;
+                        while (isi < ilm.body.len()) {
+                            if (has_wide_cap_stmt(ilm.body[isi], fd, gfns, structs, mfuncs, atargets)) { return true; }
+                            isi = isi + 1;
+                        }
+                        return false;
+                    },
+                    _ => {}
+                }
+            }
             if (has_wide_cap_expr(c.callee, fd, gfns, structs, mfuncs, atargets)) { return true; }
             var i: i32 = 0;
             while (i < c.args.len()) {
