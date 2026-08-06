@@ -1494,6 +1494,38 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
             k = k + 1;
         }
     }
+    // The NESTED case that rule leaves open: the return names a type parameter
+    // somewhere inside a container rather than being one — `enum2[T](xs: T[]):
+    // (i32, T)[]`. The guard above is `is_unknown`, which tests the TOP level
+    // only, so a `(i32, T)[]` return (a TypeArray at top level) never reaches
+    // it; this is a separate block rather than a widened guard so the existing
+    // rule's behaviour is untouched.
+    //
+    // Left unresolved, the type var reaches the annotate pass, and
+    // `type_to_irtag` yields "" for a tuple with an unserialisable element — so
+    // `ExprIndex.ty` is EMPTY (measured, not inferred: see
+    // docs/SELFHOST-GENERIC-CALL-ELEMENT-TAG.md) and lowering falls back to an
+    // untyped 4-byte read. `array.enumerate` at an `f64[]` returned 255 for 45.
+    //
+    // Only a FULLY concrete substitution is returned. If any variable stays
+    // unbound the result still contains unknown, and falling through preserves
+    // exactly what the caller saw before — so this can add type information but
+    // never change an answer that was already complete.
+    if (sig.type_param_count > 0 && type_contains_unknown(sig.ret_type) && sig.ret_type_name.len() > 0) {
+        var bn: string[] = [];
+        var bt: Type[] = [];
+        var bpi: i32 = 0;
+        while (bpi < sig.param_type_names.len() && bpi < c.args.len()) {
+            var (bn2, bt2) = gc_bind_param(parser.parse_type_ref(sig.param_type_names[bpi]), check_expr(c.args[bpi], s), s.structs, s.unions, bn, bt);
+            bn = bn2;
+            bt = bt2;
+            bpi = bpi + 1;
+        }
+        if (bn.len() > 0) {
+            var gsubst: Type = type_from_ref_subst(parser.parse_type_ref(sig.ret_type_name), bn, bt, s.structs, s.unions);
+            if (!type_contains_unknown(gsubst)) { return gsubst; }
+        }
+    }
     return sig.ret_type;
 }
 
@@ -2508,6 +2540,61 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: Type[]
     return type_from_ref_su(r, structs, unions);
 }
 
+// gc_is_typevar_name reports whether a bare type NAME is a type VARIABLE rather
+// than a declared type — i.e. it resolves to nothing. `T` resolves to unknown,
+// `f64` and a declared `Box` do not, so a concrete spelling can never be
+// mistaken for a variable and shadow a real type.
+function gc_is_typevar_name(n: string, structs: StructSig[], unions: UnionSig[]): boolean {
+    if (n.len() == 0) { return false; }
+    return type_contains_unknown(type_from_name_with_structs_unions(n, structs, unions));
+}
+
+// gc_bind_param collects type-parameter bindings by unifying a parameter's
+// declared type SPELLING against the ARGUMENT's actual type, structurally:
+// `T[]` against an `f64[]` argument binds `T` to f64, a bare `T` binds
+// directly, and a tuple spelling descends element-wise. It is the inference the
+// exact-match rule at the call site (#4346 piece 2) explicitly left open — its
+// own comment names "a return type param that appears only nested" as a further
+// slice, and `enum2[T](xs: T[]): (i32, T)[]` is exactly that shape.
+//
+// First binding wins; a shape that does not line up contributes nothing rather
+// than guessing, so an unbindable variable simply leaves the return type
+// partially unknown and the caller falls back to the old behaviour.
+function gc_bind_param(r: parser.TypeRef, at: Type, structs: StructSig[], unions: UnionSig[], names: string[], types: Type[]): (string[], Type[]) {
+    var ns: string[] = names;
+    var ts: Type[] = types;
+    if (r.array_depth > 0) {
+        match (at) {
+            TypeArray(a) => {
+                var elem: parser.TypeRef = parser.TypeRef { base: r.base, args: r.args, array_depth: r.array_depth - 1, is_tuple: r.is_tuple };
+                return gc_bind_param(elem, a.elem, structs, unions, ns, ts);
+            },
+            _ => { return (ns, ts); }
+        }
+    }
+    if (r.is_tuple && r.args.len() >= 2) {
+        match (at) {
+            TypeTuple(tp) => {
+                if (tp.elements.len() == r.args.len()) {
+                    var ti: i32 = 0;
+                    while (ti < r.args.len()) {
+                        var (tn2, tt2) = gc_bind_param(r.args[ti], tp.elements[ti], structs, unions, ns, ts);
+                        ns = tn2;
+                        ts = tt2;
+                        ti = ti + 1;
+                    }
+                }
+            },
+            _ => { }
+        }
+        return (ns, ts);
+    }
+    if (r.args.len() == 0 && gc_is_typevar_name(r.base, structs, unions) && util.index_of_str(ns, r.base) < 0) {
+        ns = ns.append(r.base);
+        ts = ts.append(at);
+    }
+    return (ns, ts);
+}
 
 pub function type_from_name_with_names_and_unions(name: string, struct_names: string[], union_names: string[]): Type {
     // Array suffix `Elem[]` → TypeArray via the structured TypeRef's array_depth
