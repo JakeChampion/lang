@@ -19,11 +19,11 @@ import (
 // string. The corpus therefore sweeps LENGTH and POSITION exhaustively over a
 // small range rather than sampling interesting-looking strings.
 //
-// That sweep is the point. The current body is scalar, so most of these cases
-// are trivially equivalent; they exist so that the vectorisation slice, which
-// replaces the loop with movdqu/pcmpeqb/pmovmskb, lands against a corpus that
-// already covers its block boundaries. Writing them afterwards would be
-// writing them to fit whatever the new code does.
+// That sweep is the point, and it paid: the corpus was written while both
+// bodies were still scalar, so when they were replaced with 16-byte vector
+// loops (SSE2 on x86-64, NEON on arm64) it already covered every block
+// boundary they have, and it passed unchanged. Written afterwards it would
+// have been written to fit whatever the new code did.
 
 // memchrRef is the reference semantics, matching the interpreter builtin: the
 // first index of `b` at or after `from`, or -1. `from` clamps at 0; a byte
@@ -169,4 +169,62 @@ func fernQuote(s string) string {
 	}
 	b.WriteByte('"')
 	return b.String()
+}
+
+// The arm64 leg runs the SAME corpus. It is not redundant with the x86-64 one:
+// the two kernels differ in both ABI and algorithm, and each difference has
+// already produced a real bug.
+//
+//   - ABI. arm64 uses the two-word string representation, so a `string`
+//     argument occupies TWO operand-stack slots where x86-64 uses one. The
+//     first version of this call declared three arguments and no types, so
+//     arm64 popped three slots for four values and received the LENGTH as its
+//     data pointer — an immediate segfault, while x86-64 stayed green.
+//
+//   - Mask extraction. x86 has pmovmskb (one bit per byte, straight into
+//     bsf); NEON has no equivalent and must narrow with `shrn #4`, giving
+//     four mask bits per byte, so the lane index is the lowest set bit
+//     divided by four. An off-by-a-factor-of-four there is invisible on
+//     x86-64 by construction.
+//
+// Runs under qemu-aarch64 locally and natively on the arm64 CI lane.
+func TestArm64Memchr(t *testing.T) {
+	cases := memchrCases()
+
+	var body strings.Builder
+	want := make([]string, 0, len(cases))
+	for _, c := range cases {
+		body.WriteString(fmt.Sprintf("    write((__memchr(%s, %d, %d)).to_string()); write(\"\\n\");\n",
+			fernQuote(c.s), c.b, c.from))
+		want = append(want, fmt.Sprint(memchrRef(c.s, c.b, c.from)))
+	}
+
+	src := `import "std/i32";
+
+function main(): i32 {
+` + body.String() + `    return 0;
+}
+`
+	out, exit := compileAndRunArm64(t, src)
+	if exit != 0 {
+		t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+	}
+	got := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(got) != len(want) {
+		t.Fatalf("printed %d lines, want %d", len(got), len(want))
+	}
+	bad := 0
+	for i := range want {
+		if strings.TrimSpace(got[i]) != want[i] {
+			bad++
+			if bad <= 10 {
+				t.Errorf("__memchr(%q, %d, %d) = %s, want %s",
+					cases[i].s, cases[i].b, cases[i].from, strings.TrimSpace(got[i]), want[i])
+			}
+		}
+	}
+	if bad > 10 {
+		t.Errorf("... and %d more mismatches (%d of %d)", bad-10, bad, len(want))
+	}
+	t.Logf("%d cases checked against the Go reference", len(want))
 }

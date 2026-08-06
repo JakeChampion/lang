@@ -11928,7 +11928,18 @@ func (b *builder) callBody(n *ast.Call) error {
 					return err
 				}
 			}
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_memchr", I32: 3})
+			// ArgTypes is load-bearing, not decoration. Under the
+			// two-word string ABI (arm64, wasm) a `string` argument
+			// occupies TWO operand-stack slots, so a backend that pops
+			// I32=3 slots reads the length as the data pointer and the
+			// byte as the length. Declaring the types lets each backend
+			// compute the slot count itself — the same mechanism
+			// `__str_slice` uses for its identical (string, i32, i32)
+			// shape. Without it this segfaults on arm64 and is fine on
+			// x86-64, which is exactly the kind of divergence that
+			// survives a green x86-64 suite.
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_memchr", I32: 3,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
 			return nil
 		}
 	}
