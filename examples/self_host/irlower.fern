@@ -42288,7 +42288,7 @@ function closure_captures(lam: parser.ExprLambda, s: LowerState): string[] {
     return caps;
 }
 
-function lambda_captures(lam: parser.ExprLambda, gfns: string[], fd: parser.FuncDecl): string[] {
+function lambda_captures(lam: parser.ExprLambda, fd: parser.FuncDecl): string[] {
     var used: string[] = [];
     var si: i32 = 0;
     while (si < lam.body.len()) { used = astwalk.collect_idents_stmt(lam.body[si], used); si = si + 1; }
@@ -42300,7 +42300,15 @@ function lambda_captures(lam: parser.ExprLambda, gfns: string[], fd: parser.Func
     // Only an ENCLOSING LOCAL can be a capture (fd's RECEIVER + params + every name
     // bound in fd.body). Without this, a free ident that is a USER enum constructor
     // or an I/O builtin (not in gfns) was wrongly captured, making make_clo_func
-    // decline (not an i32 local). Globals are referenced directly in the hoisted body.
+    // decline (not an i32 local). A global that is NOT shadowed is not an enclosing
+    // local either, so it fails this test and is referenced directly in the hoisted
+    // body — which is why membership in `gfns` is not consulted here. It used to be,
+    // as an additional exclusion, and that is what left #6191's capture case broken:
+    // a name that is BOTH an enclosing local and a module function is shadowed, so it
+    // must be captured, and the gfns exclusion said the opposite. The lambda then
+    // reported no captures at all, took the no-capture `$wrapN` lift, and resolved
+    // the name against the module function table inside the trampoline — a silent
+    // call to an unrelated top-level function of the same name.
     // The receiver is an enclosing local like any param: a method's lambda reading
     // `a.base` captures `a`. Omitting it made `caps` EMPTY for such a lambda, so the
     // no-capture lift hoisted the body to a `<fd>$wrapN` trampoline where the
@@ -42315,7 +42323,7 @@ function lambda_captures(lam: parser.ExprLambda, gfns: string[], fd: parser.Func
     var ui: i32 = 0;
     while (ui < used.len()) {
         var u: string = used[ui];
-        if (util.index_of_str(bound, u) < 0 && util.index_of_str(gfns, u) < 0
+        if (util.index_of_str(bound, u) < 0
                 && util.index_of_str(encl, u) >= 0
                 && u != "None" && u != "true" && u != "false"
                 && u != "Some" && u != "Ok" && u != "Err"
@@ -42918,7 +42926,7 @@ struct ClosureLift { body: parser.Stmt[], acc: LiftAcc, changed: boolean }
 // fname. Returns changed=true with the rewritten body + appended lifted fn when
 // every guard holds, else the inputs unchanged.
 function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: parser.ExprLambda, fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], assigns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): ClosureLift {
-    var caps: string[] = lambda_captures(lam, gfns, fd);
+    var caps: string[] = lambda_captures(lam, fd);
     // A capture-FREE lambda binding (`var f = function(x){…}; f(a)`) is lifted
     // the same way, with no capture args — `f(a)` becomes a direct call to the
     // hoisted `__lam_N(a)`. (Previously declined here, so it fell through to the
@@ -43096,7 +43104,7 @@ function cap_slot_ok(t: string): boolean {
 // (`lift_inline_closures`) so the two agree byte-for-byte on the box layout.
 function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): HoistResult {
     var none: parser.FuncDecl = fd;
-    var caps: string[] = lambda_captures(lam, gfns, fd);
+    var caps: string[] = lambda_captures(lam, fd);
     if (caps.len() == 0) { return HoistResult { func: none, ok: false }; }
     var ci: i32 = 0;
     while (ci < caps.len()) {
@@ -43171,7 +43179,7 @@ struct InlineCloRes { expr: parser.Expr, funcs: parser.FuncDecl[], counter: i32 
 // aggregate position. On success returns the `__mkclo$<name>(caps…)` marker plus
 // the hoisted function appended; on decline returns the lambda unchanged.
 function try_inline_closure(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloRes {
-    var caps: string[] = lambda_captures(lam, gfns, fd);
+    var caps: string[] = lambda_captures(lam, fd);
     if (caps.len() == 0) { return InlineCloRes { expr: parser.ExprLambda { params: lam.params, ret_type: lam.ret_type, body: lam.body, use_infer: lam.use_infer }, funcs: funcs, counter: counter }; }
     var cloname: string = fd.name + "$clo" + util.i32_to_string(counter);
     var hr: HoistResult = make_clo_func(lam, cloname, fd, gfns, structs, mfuncs);
@@ -43266,7 +43274,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.F
 function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: parser.FuncDecl[], structs: parser.StructDecl[]): InlineCloRes {
     match (e) {
         parser.ExprLambda(lam) => {
-            var caps: string[] = lambda_captures(lam, gfns, fd);
+            var caps: string[] = lambda_captures(lam, fd);
             if (caps.len() > 0) { return try_inline_closure(lam, fd, funcs, counter, gfns, structs, mfuncs); }
             // No-capture lambda → wrap trampoline (body inlined, __env ignored).
             var wn: string = fd.name + "$wrap" + util.i32_to_string(counter);
@@ -43555,7 +43563,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
             var sc: i32 = 0;
             while (sc < arr.elements.len()) {
                 match (arr.elements[sc]) {
-                    parser.ExprLambda(sclam) => { if (lambda_captures(sclam, gfns, fd).len() > 0) { has_cap_lam = true; } },
+                    parser.ExprLambda(sclam) => { if (lambda_captures(sclam, fd).len() > 0) { has_cap_lam = true; } },
                     _ => {}
                 }
                 sc = sc + 1;
@@ -44549,7 +44557,7 @@ function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs:
         parser.ExprLambda(lm) => {
             // This lambda's own wide captures, in lambda_captures order.
             var mine: WCaps = WCaps { names: [], types: [] };
-            var caps: string[] = lambda_captures(lm, gfns, fd);
+            var caps: string[] = lambda_captures(lm, fd);
             var ci: i32 = 0;
             while (ci < caps.len()) {
                 mine = wcaps_add(mine, caps[ci], cap_type(caps[ci], fd, structs, mfuncs), atargets);
@@ -44782,7 +44790,7 @@ function box_wide_captures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, gfns
 function has_wide_cap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], atargets: string[]): boolean {
     match (e) {
         parser.ExprLambda(lm) => {
-            var caps: string[] = lambda_captures(lm, gfns, fd);
+            var caps: string[] = lambda_captures(lm, fd);
             var ci: i32 = 0;
             while (ci < caps.len()) {
                 var cn: string = caps[ci];
@@ -44907,7 +44915,7 @@ function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], struct
             _ => {}
         }
         if (lam_ok) {
-            var caps: string[] = lambda_captures(lam, gfns, fd);
+            var caps: string[] = lambda_captures(lam, fd);
             var wtargets: string[] = body_assign_targets(lam.body);
             // Escape test (#5394): a returned inline lambda (bname == "")
             // escapes by definition; a `var f = <lambda>` binding escapes when
