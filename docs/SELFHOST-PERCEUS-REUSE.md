@@ -191,8 +191,30 @@ port:
    Map / closure / tuple pointer fields (leak-safe, just not reused in place).
 
 Both were bounded optimisation deltas, not the memory-management-correctness gap
-the earlier framing implied. Goal 2's *behavioural* target (no leaks, in-place
-reuse of the common struct / enum / match cases) is substantially met.
+the earlier framing implied.
+
+**Correction (2026-08-06): the "no leaks" half of that target was not met, and
+saying so here is what delayed finding out.** This section used to end "Goal 2's
+*behavioural* target (no leaks, in-place reuse of the common struct / enum /
+match cases) is substantially met." The reuse half stands. The no-leaks half did
+not: the `FERN_LEAKCHECK=1` differential in
+[#6127](https://github.com/JakeChampion/lang/issues/6127) found **seven unbounded
+leaks the self-host has and native does not** — ~173 KB across six shapes at that
+sweep, every one scaling linearly with the round count, on ordinary shapes
+(a loop-rebound tuple, enum, Option or struct local).
+
+They were invisible to every gate for the reason `docs/TEST-GATES.md` gives: the
+rc detector counts over-*releases* only, so a leak reads as a clean 0; the
+fixpoint is self-referential and blind to a stable leak; and the alloc
+differential compares per-churn growth the freelist can mask.
+
+Most are now closed (#6218 / #6225 / #6232 / #6240 / #6251 / #6252 / #6255 /
+#6263). Measured on `f58ab5d`, ~108 KB remains over four shapes. **#6127 is the
+live list — re-measure before quoting any figure, from here or from the issue.**
+Three of that issue's own attributions were wrong because a sub-shape went
+unprobed; isolating **single bind / declared-in-loop / rebound** as three
+separate probes before attributing a cause costs one build and has been decisive
+every time.
 
 ---
 

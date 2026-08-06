@@ -26188,16 +26188,18 @@ function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructD
 // (i32[]/i64[]/f64[]/boolean[]; a flat rc-headered element buffer, exactly the
 // types emit_struct_field_drops already deep-drops on a struct's reclamation).
 //
-// NOTE on `string`: a string is NOT eligible. On this IR path a string is a
-// {data_ptr, len} fat-pointer struct allocated raw via __fern_alloc(16) with NO
-// rc header (its data may be a static / SSO / zero-copy slice view aliasing
-// another buffer), and the whole path treats strings as LEAK-ONLY ("strings are
-// never freed" — decl_is_leaksafe). Calling __fern_rc_dec on a string would read
-// a non-existent rc header (heap bytes at ptr-8) and mis-free / over-release. So
-// only rc-headered array payloads are deep-dropped; string payloads leak as
-// everywhere else on this path. string[] / nested struct / enum / map / option /
-// tuple payloads are EXCLUDED too (their buffers hold pointers needing an element
-// walk that a shallow dec does not perform). At the free the
+// A `string` payload IS eligible, and a nested struct is too — see
+// enum_field_rc_droppable, which admits `t == "string"` (#4355) and a
+// deep-drop-ok or scalar-only nested struct. String boxes have been rc-HEADERED
+// since #4294 and are released by the rc-aware __fern_str_free (box + separate
+// data buffer on asm, one inline block on wasm), with
+// variant_struct_payloads_fresh keeping the payload the box's sole owner. This
+// paragraph used to say the opposite at length — that a string was a raw
+// __fern_alloc(16) fat pointer with no rc header, so decing one would mis-free —
+// which was true before #4294 and has been wrong ever since.
+//
+// Still EXCLUDED: string[] / enum / map / option / tuple payloads, whose buffers
+// hold pointers needing an element walk a shallow dec does not perform. At the free the
 // runtime variant of x is unknown, so per variant V with an rc payload we emit a
 // `variant_is(box, V)` guard that struct_gets + decs exactly V's rc fields, then
 // the box dec — a runtime variant-dispatch deep-drop (emit_enum_variant_drops).
