@@ -2161,6 +2161,25 @@ function if_expr_rt(e: Expr): string {
             if (literal_is_i64(n.text)) { return "i64"; }
             return "i32";
         },
+        // A NESTED if / match-EXPRESSION. Both desugar to a 0-arg IIFE over a
+        // 0-param lambda whose ret_type this function just computed one level
+        // down, so read it back rather than falling through to "i32" — that
+        // fall-through is what made nesting lose a width the inner expression
+        // had already worked out: `match (…) { Some(v) => v, None => (if (c)
+        // { id(803i64) } else { 421i64 }) }` labelled its IIFE i32 and bailed
+        // the module, while the same if-expression unnested was fine. Reading
+        // the lambda covers a hand-written `(function (): T { … })()` too, where
+        // the annotation is the author's. #6276.
+        ExprCall(c) => {
+            if (c.args.len() != 0) { return "i32"; }
+            match (c.callee) {
+                ExprLambda(lam) => {
+                    if (lam.params.len() == 0 && lam.ret_type.len() > 0) { return lam.ret_type; }
+                    return "i32";
+                },
+                _ => { return "i32"; }
+            }
+        },
         _ => { return "i32"; }
     }
 }
