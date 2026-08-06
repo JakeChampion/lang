@@ -842,7 +842,8 @@ wasm; pervasive differential testing; `fernsmith`, a seeded,
 invariant *is* the oracle, feeding parse-roundtrip and differential-
 execution fuzz lanes in CI; a formatter idempotence gate; a dead-code gate.
 The 20-workflow CI matrix covers all targets including native Apple
-Silicon, with a signed-off-locally lane-skip mechanism (`CI-SIGNOFF.md`).
+Silicon, with a signed-off-locally lane-skip mechanism (since removed —
+every lane runs on every push).
 Known flakiness exists at the edges (a wasi:sockets UDP e2e got a bounded
 retry in the HEAD commit) and self-host builds are resource-monsters
 (~16–18 GB RAM peaks; exit-137 OOMs documented as a known non-failure).

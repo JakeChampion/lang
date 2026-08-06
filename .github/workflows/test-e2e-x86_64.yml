@@ -22,27 +22,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Local-CI sign-off gate. `gh signoff e2e-x86_64` on this commit skips the
-  # lane below (see docs/CI-SIGNOFF.md). Fork PRs can't sign off, so they run;
-  # the gate fails open on any error.
-  gate:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      statuses: read
-    outputs:
-      skip: ${{ steps.s.outputs.skip }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: s
-        uses: ./.github/actions/signoff-gate
-        with:
-          step: e2e-x86_64
-          sha: ${{ github.event.pull_request.head.sha || github.sha }}
-
   test:
-    needs: gate
-    if: needs.gate.outputs.skip != 'true'
     name: test-e2e-x86_64
     runs-on: ubuntu-latest
     steps:
@@ -72,8 +52,6 @@ jobs:
   # it is the tool that found the bug once it worked. ~60s, so it gets its own
   # job rather than being folded into the lane above.
   native-asm:
-    needs: gate
-    if: needs.gate.outputs.skip != 'true'
     name: test-e2e-x86_64-native-asm
     runs-on: ubuntu-latest
     steps:
@@ -87,8 +65,6 @@ jobs:
         run: gotestsum --format pkgname-and-test-fails -- -run '^TestFernFixtures$' ./internal/e2e/
 
   seccomp-corpus-x86_64:
-    needs: gate
-    if: needs.gate.outputs.skip != 'true'
     # #6071's over-tightness gate at corpus scale, and the precondition for
     # ever defaulting the sandbox on. Four hand-written programs cannot show
     # that a filter derived from one program's emitted syscalls is right for

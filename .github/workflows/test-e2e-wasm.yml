@@ -39,30 +39,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Local-CI sign-off gate. `gh signoff e2e-wasm` on this commit skips the lane
-  # below (see docs/CI-SIGNOFF.md). The wasm suite runs locally under wasmtime,
-  # so this lane is a good sign-off candidate. Fork PRs can't sign off; gate
-  # fails open on any error.
-  gate:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      statuses: read
-    outputs:
-      skip: ${{ steps.s.outputs.skip }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: s
-        uses: ./.github/actions/signoff-gate
-        with:
-          step: e2e-wasm
-          sha: ${{ github.event.pull_request.head.sha || github.sha }}
-
   # Compile the internal/e2e test binary ONCE per arch (short job — never
   # reclaimed by the runner pool). No wasmtime needed here: this only builds.
   build:
-    needs: gate
-    if: needs.gate.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -85,8 +64,7 @@ jobs:
           if-no-files-found: error
 
   test:
-    needs: [gate, build]
-    if: needs.gate.outputs.skip != 'true'
+    needs: build
     strategy:
       fail-fast: false
       matrix:

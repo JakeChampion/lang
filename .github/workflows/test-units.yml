@@ -27,28 +27,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Local-CI sign-off gate. If this commit was signed off with
-  # `gh signoff units` (see docs/CI-SIGNOFF.md), skip the lane below —
-  # the author already ran the unit suite locally. Fork PRs can't post a
-  # sign-off status, so they always run; the gate fails open on any error.
-  gate:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      statuses: read
-    outputs:
-      skip: ${{ steps.s.outputs.skip }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: s
-        uses: ./.github/actions/signoff-gate
-        with:
-          step: units
-          sha: ${{ github.event.pull_request.head.sha || github.sha }}
-
   test:
-    needs: gate
-    if: needs.gate.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
