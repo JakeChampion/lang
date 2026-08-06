@@ -16938,6 +16938,23 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     if (!target_is_arr && slot_is_reclaimable_struct(s, slot) && !slot_nodeep(s, slot) && s.struct_routes_field_reclaim(asty)) {
         return emit_field_reclaim_store(se, slot, asty, 0 - 1);
     }
+    // A reclaimable rc-TUPLE local REBIND (`p = (i, "hi")` / `p = (i, [i, i+1])`,
+    // #6127): deep-drop the superseded chain — the fresh rc children then the box —
+    // before storing. This is the ASSIGN sibling of the StmtVar re-declaration path,
+    // which has driven emit_tuple_deep_reinit_store all along; the assign path had
+    // no branch for the class at all, so a rebound rc-tuple fell through to
+    // emit_arr_store's shallow store and freed NOTHING (allocs=1000 frees=0 over 100
+    // rounds). The drop is driven by the NEW literal's shape, which describes the
+    // old box because the credit now requires every assignment to rebuild the same
+    // fresh rc-tuple type (all_assigns_fresh_rc_tuple).
+    match (a.value) {
+        parser.ExprTuple(atl) => {
+            if (slot_is_reclaimable_rctuple(s, slot)) {
+                return emit_tuple_deep_reinit_store(se, slot, atl);
+            }
+        },
+        _ => {}
+    }
     // A reclaimable rc-payload ENUM local REBIND (`e = Text("hi")`, #6127): deep-drop
     // the prior chain (payload + box) before storing, the same release the re-declared
     // loop-local gets on the StmtVar path above. Without this the assign fell through
@@ -21893,6 +21910,58 @@ function collect_fresh_rc_tuple_in_stmt(st: parser.Stmt, structs: parser.StructD
 //
 // Requires the declaration's tuple ANNOTATION: the type is what the sweep frees by,
 // and an un-annotated binding gives it nothing to judge positions with.
+// all_assigns_fresh_rc_tuple: EVERY assignment to `name` (recursively) rebuilds a
+// fresh rc-tuple of the SAME annotated type `ttype` — a tuple literal that is both
+// rc-reclaimable and payload-fresh, the two conditions the declaration itself had
+// to satisfy to reach collect_sweepable_rc_tuple_names.
+//
+// This is what lets the "TUPRCS:" sweep credit drop its `reassigned` exclusion
+// (#6127). #6251 left that exclusion deliberately, noting the assign path emitted
+// no release for this class so the final value's shape could not be judged from
+// the declaration alone — a rebound rc-tuple therefore freed NOTHING, not the
+// superseded chains and not the last one (measured allocs=1000 frees=0
+// live_bytes=32000 over 100 rounds on `(i32, string)` against 0 on native).
+// Proving every assignment rebuilds the same shape is exactly what makes the
+// declaration's type a sound description of the final value.
+//
+// Both halves are needed and #6232 is the worked example of why: the assign-site
+// release alone still leaks the LAST chain, and this credit alone still leaks
+// every superseded one.
+function all_assigns_fresh_rc_tuple(stmts: parser.Stmt[], name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (!stmt_assigns_fresh_rc_tuple(stmts[i], name, ttype, structs)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function stmt_assigns_fresh_rc_tuple(st: parser.Stmt, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+    match (st) {
+        parser.StmtAssign(a) => {
+            if (a.target != name) { return true; }
+            return tuple_lit_rc_reclaimable(a.value, structs)
+                && tuple_arg_payload_fresh(ttype, a.value, structs);
+        },
+        parser.StmtIf(f) => {
+            return all_assigns_fresh_rc_tuple(f.then_body, name, ttype, structs)
+                && all_assigns_fresh_rc_tuple(f.else_body, name, ttype, structs);
+        },
+        parser.StmtWhile(w) => { return all_assigns_fresh_rc_tuple(w.body, name, ttype, structs); },
+        parser.StmtFor(fo) => { return all_assigns_fresh_rc_tuple(fo.body, name, ttype, structs); },
+        parser.StmtMatch(m) => {
+            var mi: i32 = 0;
+            while (mi < m.arms.len()) {
+                if (!all_assigns_fresh_rc_tuple(m.arms[mi].body, name, ttype, structs)) { return false; }
+                mi = mi + 1;
+            }
+            return true;
+        },
+        parser.StmtDefer(d) => { return stmt_assigns_fresh_rc_tuple(d.action, name, ttype, structs); },
+        _ => { return true; }
+    }
+}
+
 function collect_sweepable_rc_tuple_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
@@ -24946,7 +25015,17 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
                 //   - not reassigned, because the assign path emits no release for
                 //     this class, so the final value's shape cannot be judged from
                 //     the declaration alone.
-                if (rctty != "" && util.index_of_str(reassigned, rctups[rti]) < 0
+                //   - not reassigned, OR every assignment rebuilds a fresh rc-tuple
+                //     of the SAME type (all_assigns_fresh_rc_tuple, #6127). #6251
+                //     excluded reassigned names outright because the assign path
+                //     emitted no release, which left a REBOUND rc-tuple freeing
+                //     nothing at all; lower_stmt_assign now deep-drops the superseded
+                //     chain, and proving every assignment rebuilds the same shape is
+                //     what makes the declaration's type a sound description of the
+                //     final value the sweep frees by.
+                var rc_rebind_ok: boolean = util.index_of_str(reassigned, rctups[rti]) < 0
+                    || all_assigns_fresh_rc_tuple(body, rctups[rti], rctty, structs);
+                if (rctty != "" && rc_rebind_ok
                         && util.index_of_str(sweeprc, rctups[rti]) >= 0) {
                     out = out.append("TUPRCS:" + rctups[rti]);
                 }
