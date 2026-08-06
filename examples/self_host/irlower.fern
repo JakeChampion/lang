@@ -12173,9 +12173,25 @@ function lower_value_block(body: parser.Stmt[], s: LowerState, force_i64: boolea
             // the array literal's ops land ahead of the branch that computes the
             // value, so the store reads a slot nothing wrote. The register
             // backends get the same shape right, but a bail is a refusal and a
-            // wrong answer is not, so the deferral is unconditional rather than
-            // target-split — the wasm eligibility gate lowers with
-            // for_wasm=false and would not see a for_wasm-only bail. #6267.
+            // wrong answer is not, so the deferral is unconditional. #6267.
+            //
+            // The reason this is NOT target-split is not the one previously
+            // recorded here. That read "the wasm eligibility gate lowers with
+            // for_wasm=false and would not see a for_wasm-only bail", which is
+            // false: wasm_eligible goes through wasm_ir_deferrals_ok(
+            // lower_all_for(mod)), whose cache lower_all_for_view builds with
+            // lower_func(…, true), and all_lowered_ok fails the module on any
+            // LowerResult.ok == false. A for_wasm-only bail IS seen by the gate,
+            // so the split is mechanically safe.
+            //
+            // It stays unconditional because splitting it buys nothing
+            // measurable: on the 512-seed fernsmith corpus this guard never
+            // fires at all — lowering with it removed is BYTE-IDENTICAL across
+            // all 380 compiling seeds — and no hand-written repro that reaches
+            // it has been produced since. Splitting an unreachable guard is an
+            // untestable behaviour change. If someone lands a program that hits
+            // it on a register backend, the split is a one-word edit and this
+            // note is the argument for it.
             if (force_i64 || iife_any_return_i64(last, s)) { return s.fail(); }
             var bs: LowerState = s;
             var bi: i32 = 0;
