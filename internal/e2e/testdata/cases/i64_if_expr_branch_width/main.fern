@@ -15,6 +15,11 @@
 // carries the width on its slot; and an i64 if-expr in `return` position inside
 // an i64-returning function takes it from the enclosing return type. A bare wide
 // literal in a value-position branch is the one shape with nothing else to go on.
+//
+// Classifying the literal is half of it. parse_if_chain then had to STOP
+// discarding the else branch's tag: it kept the then-branch's and computed the
+// else's for nothing, so a literal that is wide only in the else branch was
+// classified correctly and then thrown away. See the `e1` / `e2` rows.
 // (The IDENT branch has its own pre-existing gap — see the note at the bottom.)
 import "std/i32";
 
@@ -45,6 +50,17 @@ function main(): i32 {
     var n: i64 = (if (false) { 1i64 } else { (if (true) { 260i64 } else { 3i64 }) });
     if (n != 260i64) { return 5; }
 
+    // Width in the ELSE branch only. The row above has its wide branch first,
+    // so it passes on the then-branch's tag alone; parse_if_chain computed the
+    // else branch's tag and discarded it, which left these two bailing the IR
+    // path. `wider_rt` combines the two instead, since the branches yield one
+    // value and a 64-bit one cannot be narrowed to fit the other's tag.
+    var e1: i64 = (if (false) { 6 } else { 5000000000 });
+    if (e1 != 5000000000) { return 10; }
+
+    var e2: i64 = (if (true) { 5 } else { 887i64 });
+    if (e2 != 5) { return 11; }
+
     if (via_return(false) != 6000000000) { return 6; }
 
     // CONTROLS — branch kinds that were already classified, so a regression in
@@ -63,5 +79,5 @@ function main(): i32 {
     // it — so it is a separate, pre-existing gap and does not belong in a
     // regression test for this one. Its trigger is narrower than it looks: with
     // `==` and no import it lowers, and only the `!=`-with-import form fails.
-    return 11;
+    return 12;
 }

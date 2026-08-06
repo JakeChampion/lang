@@ -2165,6 +2165,20 @@ function if_expr_rt(e: Expr): string {
     }
 }
 
+// wider_rt combines the two branch tags of an if-expression. The branches yield
+// ONE value, so one tag has to describe both, and a 64-bit branch is the one
+// that cannot be narrowed: declaring i32 over it is the same contradiction
+// if_expr_rt was fixed to stop producing. Anything else keeps the then-branch's
+// tag, which is what parse_if_chain did unconditionally — it computed the else
+// branch's tag and dropped it on the floor, so width appearing only in the else
+// branch was still lost (`if (c) { 6 } else { 5000000000 }`).
+function wider_rt(a: string, b: string): string {
+    if (a == b) { return a; }
+    if (a == "i64" || a == "u64") { return a; }
+    if (b == "i64" || b == "u64") { return b; }
+    return a;
+}
+
 // LitArm is one arm of a match on a non-enum (i32 / string) scrutinee:
 // a literal to compare against (`lit`, dispatched via `==`) or the `_`
 // catch-all (`is_wild`), plus an optional guard and the arm body. The
@@ -2759,6 +2773,7 @@ function parse_if_chain(p: Par): IfChain {
         var (elseb_body, elseb_rt, elseb_p) = parse_branch_body(p);
         p = elseb_p;
         else_body = elseb_body;
+        rt = wider_rt(rt, elseb_rt);
     }
     return IfChain { par: p, stmt: s_if(condr_expr, then_body, else_body), rt: rt, needs_default_return: false, value_local: "" };
 }
