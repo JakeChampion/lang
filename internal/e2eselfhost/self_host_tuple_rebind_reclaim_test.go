@@ -183,6 +183,28 @@ function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t +
 			want: 27,
 		},
 		{
+			// The counterpart to the case above, and the one that separates a
+			// borrow-AWARE escape gate from one keyed on syntax: identical at the call
+			// site, opposite in ownership. `keep` stores the tuple into an array it
+			// returns, so the box outlives every rebind and the credit must be
+			// refused. If both this and `borrowed_by_call_still_correct` did not hold
+			// at once, the gate would be either unsound or useless. (#6241)
+			name: "kept_by_call_refused",
+			src: `function keep(p: (i32, i32)): (i32, i32)[] { return [p]; }
+function round(r: i32): i32 {
+    var t: (i32, i32) = (r, 1);
+    var held: (i32, i32)[] = keep(t);
+    var i: i32 = 0;
+    while (i < 4) {
+        t = (i, i + 1);
+        i = i + 1;
+    }
+    return held[0].0 + held[0].1 + t.0;
+}
+function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 71; }`,
+			want: 25,
+		},
+		{
 			// The new value is built by reading the old one. The cow guard is what
 			// keeps this correct — the RHS is lowered before the release, and a
 			// self-store must not free the live box.
