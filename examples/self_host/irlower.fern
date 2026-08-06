@@ -6134,6 +6134,14 @@ pub function expr_is_u64arr(e: parser.Expr, s: LowerState): boolean {
 pub function expr_is_u64(e: parser.Expr, s: LowerState): boolean {
     if (cell_get_elem(e, s) == "u64") { return true; }
     match (e) {
+        // A `u64`-suffixed LITERAL is a u64 value. Without this arm every
+        // predicate below could recognise a u64 local, element, field or cast
+        // but not the literal itself, so `9223372036854776423u64 <= 17u64`
+        // selected the SIGNED compare: bit 63 is set, the value reads negative,
+        // and the comparison answers backwards. Only visible past 2^63 — below
+        // that signed and unsigned agree — which is why it survived (#6178,
+        // fernsmith seed 127).
+        parser.ExprNumber(unum) => { return !unum.is_float && unum.suffix == "u64"; },
         parser.ExprIdent(id) => { return s.is_u64_slot(s.slot_of(id.name)); },
         parser.ExprIndex(ix) => {
             match (ix.array) {

@@ -18,11 +18,14 @@
 # since any divergence at all fails the leg — and keep the record below of what
 # left, because it is what the next round of probing should be measured against.
 #
-# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus): 204 agree,
-# 0 diverge, 308 compile gaps. Count the gaps, not just the agreements, when
+# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus): 263 agree,
+# 0 diverge, 249 compile gaps. Count the gaps, not just the agreements, when
 # reading a run: the leg only proves what it could compile, and a fix that
 # turns a wrong answer into an IR bail (as #6228 did for seed 502) RAISES the
-# gap count while looking like a win in the divergence column.
+# gap count while looking like a win in the divergence column. The converse is
+# the reason this run moved 59 seeds from gap to agree: widening the IR subset
+# also puts previously-unreachable code under the oracle, and two of the 65
+# seeds it unlocked turned out to be carrying latent miscompiles (see below).
 
 # CRASHES — the self-host-compiled binary died by SIGSEGV where the interpreter
 # returned a value. These were ONE bug: #6207, a `Map { … }` literal whose keys
@@ -56,3 +59,12 @@
 
 # Also gone earlier, with their own fixes: 121 / 265 / 365 (#6177, the maps
 # runtime need-gate).
+
+# NEVER LISTED, because they were compile gaps until the if-expression width fix
+# admitted them and were fixed in the same change: 380 and 127. Worth recording
+# as the shape to expect from future subset widening — an unlocked seed is not
+# automatically an agreeing seed. 380 was the fix over-widening (a `u32` literal
+# above i32-max is 32 bits wide, and the magnitude rule must not see it once a
+# suffix has spoken); 127 was independent and older — `expr_is_u64` had no
+# ExprNumber arm, so `9223372036854776423u64 <= 17u64` compared SIGNED and
+# answered backwards, invisible below 2^63 where the two compares agree.
