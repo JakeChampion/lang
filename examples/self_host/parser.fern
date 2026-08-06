@@ -5414,6 +5414,15 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // now closed by clause (c′) below (it promotes BOTH vars, so nothing is
         // stranded).
         if (all_tp_count == 1 && has_bare_scalar_param(params, un) && feeds_wide_container(ret_type, un)) { promote = true; }
+        // (c-arr) the ARRAY-param sibling: `reverse[T](xs: T[]): T[]`. The note
+        // above excluded these on the grounds that a wide value "rides an i32
+        // array pointer, never trips the erased-wide gate" — half of which was
+        // wrong. Nothing wide is passed by value, so the gate never fired, but
+        // the ELEMENT width is erased too, and on wasm32 the callee then copies
+        // an 8-byte-element array at a 4-byte stride: silently wrong values
+        // (#6238). Promoting clones the generic per concrete element type, which
+        // gives the copy a real stride.
+        if (all_tp_count == 1 && has_bare_array_param(params, un) && feeds_wide_container(ret_type, un)) { promote = true; }
         // (c′) genuinely two-typevar Result[T, E] with a bare-scalar param — the
         // `okg[T, E](x: T): Result[T, E]` shape clause (c) leaves open. Promoting
         // ONLY the wide param strands the other var erased on the Err arm
@@ -13611,6 +13620,17 @@ function type_mentions_var(ty: string, name: string): boolean {
 // `dup[T](x: T): T[]` (promote) from `map[T,U](xs: T[], …)` (an ARRAY param — the
 // wide value rides an i32 array pointer, not a bare scalar, so it never trips the
 // erased-wide gate and must stay erased to avoid over-monomorphising the stdlib).
+// has_bare_array_param reports whether some param's type is EXACTLY `name[]` — a
+// bare-typevar ARRAY param (`xs: T[]`). The element sibling of
+// has_bare_scalar_param: the erasure is in the element, not the value.
+function has_bare_array_param(params: ParamDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < params.len()) {
+        if (params[i].type_name == name + "[]") { return true; }
+        i = i + 1;
+    }
+    return false;
+}
 function has_bare_scalar_param(params: ParamDecl[], name: string): boolean {
     var i: i32 = 0;
     while (i < params.len()) {
