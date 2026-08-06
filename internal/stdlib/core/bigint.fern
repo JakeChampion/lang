@@ -1,0 +1,462 @@
+// Arbitrary-precision integers.
+//
+// This module imports NOTHING, deliberately. `std/string` needs a bignum for
+// parse_float's exact fallback and cannot import anything that reaches back to
+// it (`std/float` -> `std/i32` -> `std/string` is the cycle that forced the
+// private copy this module replaces). Sitting at the bottom of the graph with
+// no imports is what lets both `std/string` and `std/float` use it. That is
+// also why there are no `impl Display for BigInt` / `impl Ord for BigInt`
+// blocks here: those traits live in `core/cmp`, which imports `std/string`, so
+// implementing them here would reintroduce the cycle. They belong in a
+// higher-level wrapper if they are ever wanted.
+//
+// REPRESENTATION: sign-magnitude. The magnitude is little-endian base 2^32,
+// one limb per `u64` slot with the upper 32 bits of each slot always zero.
+//
+// The slot type is u64 and NOT i64, and the margin is exactly zero — this is
+// the whole reason base 2^32 works. In the schoolbook inner loop the widest
+// intermediate is one partial product plus the running limb plus the carry:
+//
+//     (2^32 - 1)^2 + (2^32 - 1) + (2^32 - 1)  ==  2^64 - 1
+//
+// which is u64 MAX precisely. In an i64 slot the same expression overflows at
+// the first full-width product — (2^32-1)^2 is 1.8e19 against an i64 ceiling
+// of 9.2e18 — so `4294967295 * 4294967295` comes back as 1. That is not a
+// hypothetical: this module was first written with i64 limbs and a comment
+// asserting the product fit, and the differential against math/big caught it
+// on the first run.
+//
+// Base 2^32 rather than full u64 limbs is the other half of the choice. A
+// 32x32 partial product is a single native multiply on every backend including
+// wasm32; u64 limbs would need a 64x64 -> 128 widening multiply per pair,
+// assembled from four 32x32 products (see `_db_mul64` in std/float.fern) —
+// roughly four times the work per pair for twice the bits per limb.
+//
+// The trade is stated rather than hidden: on 64-bit natives, u64 limbs with a
+// hardware mulhi would win on large multiplies. Revisit that only alongside a
+// Karatsuba threshold, and only with measurements. The asymptotic ladder
+// (schoolbook -> Karatsuba -> Toom-Cook -> NTT) is deliberately NOT built out
+// here: Fern has no bigint workload yet, and speccing four multiplication
+// regimes before one of them has a caller is exactly the "measure before
+// optimizing" failure docs/ATLAS-PLATFORM-PLAN.md flags.
+//
+// VALUES ARE IMMUTABLE. Every operation returns a fresh BigInt, matching the
+// pure-collection convention (`m = m.insert(k, v)`). Perceus constructor reuse
+// is what keeps that affordable: when the receiver's refcount is 1 its limb
+// array can be reused in place rather than copied.
+//
+// INVARIANTS, maintained by every constructor and operation:
+//   - `mag` has no leading zero limbs, except that zero is exactly `[0]`.
+//   - every limb is in [0, 2^32).
+//   - zero is never negative (`neg` is false whenever the magnitude is zero),
+//     so `cmp` never has to special-case a negative zero.
+
+pub struct BigInt {
+    neg: boolean,
+    mag: u64[],
+}
+
+// 2^32 - 1, 2^32, and the limb shift. Functions rather than constants because
+// a module-level `var` is not the idiom here.
+function __bi_mask(): u64 { return 4294967295 as u64; }
+function __bi_base(): u64 { return 4294967296 as u64; }
+function __bi_sh32(): u64 { return 32 as u64; }
+
+// __bi_trim drops leading zero limbs, leaving at least one limb so that zero
+// is `[0]` rather than the empty array. Every magnitude-producing helper ends
+// with this, which is what lets `__bi_cmp_mag` compare lengths first.
+function __bi_trim(a: u64[]): u64[] {
+    var n: i32 = a.len();
+    while (n > 1 && a[n - 1] == (0 as u64)) { n = n - 1; }
+    if (n == a.len()) { return a; }
+    var out: u64[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(a[i]); i = i + 1; }
+    return out;
+}
+
+function __bi_is_zero_mag(a: u64[]): boolean {
+    return a.len() == 1 && a[0] == (0 as u64);
+}
+
+// __bi_make applies the zero-is-never-negative invariant.
+function __bi_make(neg: boolean, mag: u64[]): BigInt {
+    var m: u64[] = __bi_trim(mag);
+    if (__bi_is_zero_mag(m)) { return BigInt { neg: false, mag: m }; }
+    return BigInt { neg: neg, mag: m };
+}
+
+// --- magnitude primitives (unsigned, operate on trimmed limb arrays) ---
+
+// __bi_cmp_mag returns -1 / 0 / 1. Both inputs must be trimmed, which is why
+// comparing lengths first is sound.
+function __bi_cmp_mag(a: u64[], b: u64[]): i32 {
+    if (a.len() < b.len()) { return 0 - 1; }
+    if (a.len() > b.len()) { return 1; }
+    var i: i32 = a.len() - 1;
+    while (i >= 0) {
+        if (a[i] < b[i]) { return 0 - 1; }
+        if (a[i] > b[i]) { return 1; }
+        i = i - 1;
+    }
+    return 0;
+}
+
+function __bi_add_mag(a: u64[], b: u64[]): u64[] {
+    var mask: u64 = __bi_mask();
+    var sh: u64 = __bi_sh32();
+    var la: i32 = a.len();
+    var lb: i32 = b.len();
+    var n: i32 = la;
+    if (lb > n) { n = lb; }
+    var out: u64[] = [];
+    var carry: u64 = 0 as u64;
+    var i: i32 = 0;
+    while (i < n) {
+        var s: u64 = carry;
+        if (i < la) { s = s + a[i]; }
+        if (i < lb) { s = s + b[i]; }
+        out = out.append(s & mask);
+        carry = s >> sh;
+        i = i + 1;
+    }
+    if (carry > (0 as u64)) { out = out.append(carry); }
+    return __bi_trim(out);
+}
+
+// __bi_sub_mag computes a - b and REQUIRES a >= b. Callers establish that with
+// __bi_cmp_mag and swap operands (flipping the result sign) when they must.
+//
+// The borrow is decided by comparison rather than by letting the subtraction
+// go negative: limbs are u64, so a wrapped difference is a huge positive
+// number, not a detectable negative one. `b[i] + borrow` is at most 2^32 and
+// cannot overflow the slot.
+function __bi_sub_mag(a: u64[], b: u64[]): u64[] {
+    var base: u64 = __bi_base();
+    var la: i32 = a.len();
+    var lb: i32 = b.len();
+    var out: u64[] = [];
+    var borrow: u64 = 0 as u64;
+    var i: i32 = 0;
+    while (i < la) {
+        var d: u64 = borrow;
+        if (i < lb) { d = d + b[i]; }
+        if (a[i] >= d) {
+            out = out.append(a[i] - d);
+            borrow = 0 as u64;
+        } else {
+            out = out.append(a[i] + base - d);
+            borrow = 1 as u64;
+        }
+        i = i + 1;
+    }
+    return __bi_trim(out);
+}
+
+// Schoolbook multiply, O(la*lb). See the header for why every intermediate
+// fits a u64 slot with exactly zero margin.
+function __bi_mul_mag(a: u64[], b: u64[]): u64[] {
+    var mask: u64 = __bi_mask();
+    var sh: u64 = __bi_sh32();
+    var la: i32 = a.len();
+    var lb: i32 = b.len();
+    if (__bi_is_zero_mag(a) || __bi_is_zero_mag(b)) {
+        var z: u64[] = [];
+        return z.append(0 as u64);
+    }
+    var out: u64[] = [];
+    var i: i32 = 0;
+    while (i < la + lb) { out = out.append(0 as u64); i = i + 1; }
+    i = 0;
+    while (i < la) {
+        var carry: u64 = 0 as u64;
+        var ai: u64 = a[i];
+        var j: i32 = 0;
+        while (j < lb) {
+            var cur: u64 = out[i + j] + ai * b[j] + carry;
+            out = out.with(i + j, cur & mask);
+            carry = cur >> sh;
+            j = j + 1;
+        }
+        var k: i32 = i + lb;
+        while (carry > (0 as u64)) {
+            var c2: u64 = out[k] + carry;
+            out = out.with(k, c2 & mask);
+            carry = c2 >> sh;
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return __bi_trim(out);
+}
+
+// __bi_mul_small requires k < 2^32 so that a[i]*k + carry stays inside the
+// slot. Callers pass powers of ten at or below 10^9.
+function __bi_mul_small(a: u64[], k: u64): u64[] {
+    var mask: u64 = __bi_mask();
+    var sh: u64 = __bi_sh32();
+    var out: u64[] = [];
+    var carry: u64 = 0 as u64;
+    var i: i32 = 0;
+    while (i < a.len()) {
+        var prod: u64 = a[i] * k + carry;
+        out = out.append(prod & mask);
+        carry = prod >> sh;
+        i = i + 1;
+    }
+    while (carry > (0 as u64)) { out = out.append(carry & mask); carry = carry >> sh; }
+    return __bi_trim(out);
+}
+
+function __bi_add_small(a: u64[], k: u64): u64[] {
+    var mask: u64 = __bi_mask();
+    var sh: u64 = __bi_sh32();
+    var out: u64[] = [];
+    var carry: u64 = k;
+    var i: i32 = 0;
+    while (i < a.len()) {
+        var cur: u64 = a[i] + carry;
+        out = out.append(cur & mask);
+        carry = cur >> sh;
+        i = i + 1;
+    }
+    while (carry > (0 as u64)) { out = out.append(carry & mask); carry = carry >> sh; }
+    return __bi_trim(out);
+}
+
+// __bi_divmod_small divides a magnitude by a small positive divisor, returning
+// (quotient limbs, remainder). Long division from the top limb down;
+// `rem * 2^32 + limb` must fit the slot, which holds for any divisor below
+// 2^32 — to_string only ever passes 10^9.
+function __bi_divmod_small(a: u64[], d: u64): (u64[], u64) {
+    var mask: u64 = __bi_mask();
+    var sh: u64 = __bi_sh32();
+    var n: i32 = a.len();
+    var q: u64[] = [];
+    var i: i32 = 0;
+    while (i < n) { q = q.append(0 as u64); i = i + 1; }
+    var rem: u64 = 0 as u64;
+    i = n - 1;
+    while (i >= 0) {
+        var cur: u64 = (rem << sh) | (a[i] & mask);
+        q = q.with(i, cur / d);
+        rem = cur % d;
+        i = i - 1;
+    }
+    return (__bi_trim(q), rem);
+}
+
+// --- construction ---
+
+pub function zero(): BigInt {
+    var z: u64[] = [];
+    return BigInt { neg: false, mag: z.append(0 as u64) };
+}
+
+pub function from_i64(v: i64): BigInt {
+    var mask: u64 = __bi_mask();
+    var sh: u64 = __bi_sh32();
+    var neg: boolean = v < 0;
+    // Negate through u64 so i64 MIN, whose magnitude has no i64
+    // representation, does not wrap back to itself.
+    var u: u64 = v as u64;
+    if (neg) { u = (0 as u64) - u; }
+    var m: u64[] = [];
+    m = m.append(u & mask);
+    m = m.append((u >> sh) & mask);
+    return __bi_make(neg, m);
+}
+
+// parse reads an optional sign followed by one or more decimal digits. `None`
+// on an empty string, a lone sign, or any non-digit byte — no whitespace
+// trimming and no underscore separators, matching parse_int.
+//
+// Digits are folded nine at a time: 10^9 is the largest power of ten below
+// 2^32, so `__bi_mul_small` by it keeps every partial product inside the slot.
+// That is ~9x fewer limb passes than folding one digit at a time.
+pub function parse(s: string): Option[BigInt] {
+    var n: i32 = s.len();
+    if (n == 0) { return None; }
+    var i: i32 = 0;
+    var neg: boolean = false;
+    if (s[0] == 45) { neg = true; i = 1; }
+    else { if (s[0] == 43) { i = 1; } }
+    if (i >= n) { return None; }
+    var mag: u64[] = [];
+    mag = mag.append(0 as u64);
+    while (i < n) {
+        var chunk: u64 = 0 as u64;
+        var scale: u64 = 1 as u64;
+        var taken: i32 = 0;
+        while (i < n && taken < 9) {
+            var c: i32 = s[i] as i32;
+            if (c < 48 || c > 57) { return None; }
+            chunk = chunk * (10 as u64) + ((c - 48) as u64);
+            scale = scale * (10 as u64);
+            taken = taken + 1;
+            i = i + 1;
+        }
+        mag = __bi_mul_small(mag, scale);
+        mag = __bi_add_small(mag, chunk);
+    }
+    return Some(__bi_make(neg, mag));
+}
+
+// --- queries ---
+
+pub function (a: BigInt) is_zero(): boolean { return __bi_is_zero_mag(a.mag); }
+
+pub function (a: BigInt) is_negative(): boolean { return a.neg; }
+
+// bit_length is the number of bits in the magnitude — 0 for zero.
+pub function (a: BigInt) bit_length(): i32 {
+    if (__bi_is_zero_mag(a.mag)) { return 0; }
+    var top: i32 = a.mag.len() - 1;
+    var v: u64 = a.mag[top];
+    var bits: i32 = 0;
+    while (v > (0 as u64)) { bits = bits + 1; v = v >> (1 as u64); }
+    return top * 32 + bits;
+}
+
+pub function (a: BigInt) cmp(b: BigInt): i32 {
+    if (a.neg && !b.neg) { return 0 - 1; }
+    if (!a.neg && b.neg) { return 1; }
+    var c: i32 = __bi_cmp_mag(a.mag, b.mag);
+    if (a.neg) { return 0 - c; }
+    return c;
+}
+
+pub function (a: BigInt) eq(b: BigInt): boolean { return a.cmp(b) == 0; }
+
+// hash folds the sign and every limb with the `h * 31 + field` shape the
+// `Hash` trait documents, so a BigInt composes with derived hashes the same
+// way a struct's fields do.
+//
+// The `a == b => a.hash() == b.hash()` law holds here BECAUSE the
+// representation is canonical: trimmed magnitudes mean equal values always
+// have identical limb arrays, and zero-is-never-negative means the two
+// spellings of zero cannot exist to hash differently. Both invariants are
+// load-bearing for this function, not just tidiness.
+//
+// i32 arithmetic wraps rather than trapping (docs/INTEGER-SEMANTICS.md), which
+// is what makes the accumulate loop well-defined.
+pub function (a: BigInt) hash(): i32 {
+    var h: i32 = 17;
+    if (a.neg) { h = 31; }
+    var i: i32 = 0;
+    while (i < a.mag.len()) {
+        h = h * 31 + ((a.mag[i] & __bi_mask()) as i32);
+        i = i + 1;
+    }
+    return h;
+}
+
+// --- arithmetic ---
+
+pub function (a: BigInt) negate(): BigInt { return __bi_make(!a.neg, a.mag); }
+
+pub function (a: BigInt) abs(): BigInt { return __bi_make(false, a.mag); }
+
+pub function (a: BigInt) add(b: BigInt): BigInt {
+    if (a.neg == b.neg) { return __bi_make(a.neg, __bi_add_mag(a.mag, b.mag)); }
+    // Opposite signs: the larger magnitude decides the result sign.
+    var c: i32 = __bi_cmp_mag(a.mag, b.mag);
+    if (c == 0) { return zero(); }
+    if (c > 0) { return __bi_make(a.neg, __bi_sub_mag(a.mag, b.mag)); }
+    return __bi_make(b.neg, __bi_sub_mag(b.mag, a.mag));
+}
+
+pub function (a: BigInt) sub(b: BigInt): BigInt { return a.add(b.negate()); }
+
+pub function (a: BigInt) mul(b: BigInt): BigInt {
+    var neg: boolean = a.neg != b.neg;
+    return __bi_make(neg, __bi_mul_mag(a.mag, b.mag));
+}
+
+// mul_pow10 multiplies by 10^k, chunked by 10^9 for the same headroom reason
+// as `parse`. A negative k is a no-op rather than a division: dividing would
+// not be exact, and silently truncating is worse than doing nothing visible.
+pub function (a: BigInt) mul_pow10(k: i32): BigInt {
+    if (k <= 0) { return a; }
+    var mag: u64[] = a.mag;
+    var left: i32 = k;
+    while (left > 0) {
+        var step: i32 = left;
+        if (step > 9) { step = 9; }
+        var scale: u64 = 1 as u64;
+        var i: i32 = 0;
+        while (i < step) { scale = scale * (10 as u64); i = i + 1; }
+        mag = __bi_mul_small(mag, scale);
+        left = left - step;
+    }
+    return __bi_make(a.neg, mag);
+}
+
+// shl multiplies by 2^k.
+pub function (a: BigInt) shl(k: i32): BigInt {
+    if (k <= 0 || __bi_is_zero_mag(a.mag)) { return a; }
+    var mask: u64 = __bi_mask();
+    var sh: u64 = __bi_sh32();
+    var limbShift: i32 = k / 32;
+    var bitShift: u64 = (k % 32) as u64;
+    var out: u64[] = [];
+    var i: i32 = 0;
+    while (i < limbShift) { out = out.append(0 as u64); i = i + 1; }
+    var carry: u64 = 0 as u64;
+    i = 0;
+    while (i < a.mag.len()) {
+        var cur: u64 = (a.mag[i] << bitShift) | carry;
+        out = out.append(cur & mask);
+        carry = cur >> sh;
+        i = i + 1;
+    }
+    if (carry > (0 as u64)) { out = out.append(carry); }
+    return __bi_make(a.neg, out);
+}
+
+// --- rendering ---
+
+// to_string emits base-10 by repeatedly dividing by 10^9 and emitting nine
+// digits per step, ~9x fewer division passes than one digit at a time. Every
+// chunk but the most significant is zero-padded to nine.
+pub function (a: BigInt) to_string(): string {
+    if (__bi_is_zero_mag(a.mag)) { return "0"; }
+    var chunks: u64[] = [];
+    var cur: u64[] = a.mag;
+    while (!__bi_is_zero_mag(cur)) {
+        var dm: (u64[], u64) = __bi_divmod_small(cur, 1000000000 as u64);
+        cur = dm.0;
+        chunks = chunks.append(dm.1);
+    }
+    var out: string = "";
+    if (a.neg) { out = "-"; }
+    var i: i32 = chunks.len() - 1;
+    out = out + __bi_chunk_str(chunks[i], false);
+    i = i - 1;
+    while (i >= 0) {
+        out = out + __bi_chunk_str(chunks[i], true);
+        i = i - 1;
+    }
+    return out;
+}
+
+// __bi_chunk_str renders one base-10^9 chunk, zero-padded to nine digits when
+// it is not the leading one.
+function __bi_chunk_str(v: u64, pad: boolean): string {
+    var digits: u8[] = [];
+    var x: u64 = v;
+    if (x == (0 as u64)) { digits = digits.append(48); }
+    while (x > (0 as u64)) {
+        digits = digits.append(((x % (10 as u64)) + (48 as u64)) as u8);
+        x = x / (10 as u64);
+    }
+    var out: u8[] = [];
+    if (pad) {
+        var need: i32 = 9 - digits.len();
+        var p: i32 = 0;
+        while (p < need) { out = out.append(48); p = p + 1; }
+    }
+    var i: i32 = digits.len() - 1;
+    while (i >= 0) { out = out.append(digits[i]); i = i - 1; }
+    return string_from_bytes_unchecked(out);
+}

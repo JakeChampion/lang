@@ -5448,7 +5448,33 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         // an 8-byte-element array at a 4-byte stride: silently wrong values
         // (#6238). Promoting clones the generic per concrete element type, which
         // gives the copy a real stride.
-        if (all_tp_count == 1 && has_bare_array_param(params, un) && feeds_wide_container(ret_type, un)) { promote = true; }
+        //
+        // The trigger is ANY mention of the var in the return, not a list of
+        // container spellings. That started as `feeds_wide_container`, then grew a
+        // bare-typevar case for #6273 — and the spelling after that,
+        // `pair_of[T](xs: T[]): (T, T)`, was wrong again, as was the `(i32, T)[]`
+        // of `array.enumerate`. Every one of them is the same defect wearing a
+        // different return type, so the condition asks the question that actually
+        // matters: does the CALL SITE have to know what came back?
+        //
+        // On wasm the reason is the erased element stride. On the REGISTER
+        // backends — where the 8-byte slot makes the stride harmless — the reason
+        // is the result type: an erased `T` result reaches a `.len()` as an ARRAY
+        // receiver, so `first_of(strs).len()` loads offset 0 (the array length)
+        // instead of offset 8 (the string length) and yields 0; f64 and i64 go
+        // wrong for the mirror-image reason. Nothing wide is passed by value in
+        // either case, so the erased-wide gate never fires and the module lowers
+        // silently. The clone is what gives the call site a concrete result.
+        //
+        // FREE FUNCTIONS ONLY, and that guard is doing the same job as
+        // `all_tp_count == 1`. A METHOD's receiver carries its own type var,
+        // which is not in `type_params` and so is not counted — so
+        // `pub function (xs: T[]) zip[U](other: U[]): (T, U)[]` reads as a
+        // single-var generic while `T` is right there in the return. Promoting
+        // `U` alone strands `T` erased in the clone, the malformed-clone hazard
+        // the count guard exists to prevent, and `a.zip(b)` fell off the IR path
+        // entirely. Free functions have no receiver var to strand.
+        if (receiver_type.len() == 0 && all_tp_count == 1 && has_bare_array_param(params, un) && type_mentions_var(ret_type, un)) { promote = true; }
         // (c′) genuinely two-typevar Result[T, E] with a bare-scalar param — the
         // `okg[T, E](x: T): Result[T, E]` shape clause (c) leaves open. Promoting
         // ONLY the wide param strands the other var erased on the Err arm

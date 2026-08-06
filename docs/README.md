@@ -143,6 +143,9 @@ freeze tracker is [#4451](https://github.com/JakeChampion/lang/issues/4451).
 | `STDLIB.md` | [reference] | The stdlib: module map, conventions, receiver-method dispatch. |
 | `STDLIB-ROADMAP.md` | [tracker] | Seven-language survey → prioritised additions; residue tracked in #4416/#4385. |
 | `STDLIB-DESIGN-RESEARCH.md` | [research] | Depth research: HTTP, JSON, date/time, I/O. |
+| `SOTA-STDLIB-BLUEPRINT.md` | [research] | Per-primitive survey against the best known algorithm; verdicts + recommended order. |
+| `ATLAS-PLATFORM-PLAN.md` | [plan] | Platform companion to the blueprint: SIMD/dispatch/allocator/concurrency ordering, and the fused-intrinsic SIMD ABI. |
+| `STRINGS-SOTA.md` | [research] | String/byte-primitive depth survey. |
 | `ARRAY-BUILDER-PLAN.md` | [plan] | Array-builder design. |
 | `PURE-COLLECTION-API-PLAN.md` | [plan] | Pure (persistent) collection API. |
 | `MAP-SPECIALIZATION.md` | [record] | Compile-time Map monomorphization proposal — unstarted (#4368); prose predates prelude removal. |

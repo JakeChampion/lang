@@ -1,0 +1,282 @@
+package e2e
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+// Allocation ASYMPTOTICS are ungated. `TestSelfHostAllocDifferentialX86_64`
+// compares how much the two compilers allocate against each other, which
+// catches them drifting apart — but a regression that lands in the shared
+// frontend, or in a stdlib function both compile the same way, moves both
+// sides equally and stays green. docs/TEST-GATES.md lists allocation volume
+// under "what nothing gates"; the differential closed half of it. This closes
+// the other half: does a shape still allocate in the COMPLEXITY CLASS it is
+// supposed to?
+//
+// That is the regression that actually hurts. The two most expensive stdlib
+// bugs found in the last pass were both asymptotic, not constant-factor: a
+// naive substring search that went quadratic on repetitive input (2.655s ->
+// 0.014s once fixed) and a merge sort that materialised a full copy of the
+// array on every pass. Neither changes an answer, so no correctness gate can
+// see them, and both look fine at the small n a unit test would use.
+//
+// WHY A RATIO AND NOT A BYTE BUDGET. The obvious design is to record
+// `__heap_bump_bytes()` per shape and fail on exceeding it. That gate rots:
+// every legitimate change to a header size, a growth schedule, or the SSO
+// threshold moves every recorded number at once, so the budgets get re-recorded
+// in bulk without being read, and a real regression rides in with the batch.
+// Worse, the failure it reports ("42 KB, budget 39 KB") does not tell you
+// whether anything is actually wrong.
+//
+// Measuring the same shape at n and 2n and bounding the RATIO is immune to all
+// of that. Constant factors cancel — a change that makes every allocation 20%
+// bigger does not move the ratio at all — while the asymptotic class comes
+// through unmistakably. Measured on this corpus: a linear shape sits at
+// 2.03-2.06x per doubling and a quadratic one at 3.79-3.89x. There is no
+// tuning problem in that gap.
+//
+// WHAT `__heap_bump_bytes()` MEANS HERE, precisely: bytes the bump allocator
+// handed out FRESH, i.e. total allocation minus whatever the freelist
+// recycled. It is a high-water mark, not a traffic counter — a shape that
+// allocates and frees the same block a million times reports one block. That
+// makes it the right instrument for this gate (it tracks the working set the
+// program actually forces the allocator to find) and the wrong one for
+// counting churn; `__arr_push_shared_bytes()` is the traffic counter, and the
+// differential gate already uses it.
+//
+// Never peak RSS: it varies 12x with transparent hugepages (43 MB local vs
+// 552 MB on a CI runner, same binary and input), because the arena is a 16 GiB
+// MAP_NORESERVE mapping whose first touch maps a 2 MB page under THP=always
+// and a 4 KB page under madvise. `__heap_bump_bytes()` is exact, host-
+// independent, and meaningful under qemu.
+//
+// Native x86-64 only, and deliberately cheap: a compile is ~18 ms, so the
+// whole corpus runs in well under a second and can sit in a fast lane. The
+// self-host side of the same question is the differential gate's job.
+
+// allocScaleCase is one shape, measured at n and 2n in separate processes.
+//
+// decls must define `churn(n: i32): i32` — one self-contained unit of work
+// returning something derived from the result, so nothing can be optimised
+// away as dead. Each measurement runs churn ONCE from a cold heap, so the
+// figure is that shape's peak fresh allocation with no freelist priming from
+// a previous iteration.
+type allocScaleCase struct {
+	name  string
+	decls string
+	n     int
+
+	// maxRatio bounds volume(2n) / volume(n), scaled by 100 to keep the
+	// table integer-only. 220 admits linear growth with headroom; a
+	// quadratic shape lands near 390 and cannot hide under it.
+	//
+	// A shape whose allocation is genuinely CONSTANT in n takes ~110: it
+	// should not grow at all, and pinning that is the point of including it.
+	maxRatio int
+
+	// wantQuadratic marks a shape that is SUPPOSED to be superlinear, so the
+	// gate asserts the ratio is ABOVE maxRatio instead of below it. Without
+	// this, a shape like naive `s = s + x` in a loop would have to be left
+	// out of the corpus, and the gate would lose its own calibration — these
+	// entries are what prove the bound still separates the two classes.
+	wantQuadratic bool
+}
+
+var allocScaleCases = []allocScaleCase{
+	{
+		// The accumulator every byte-emitter in the self-host compiler is
+		// built from. If `.append` ever stops growing capacity
+		// geometrically, or starts copying a buffer it could have extended,
+		// this is where it shows.
+		name: "array-append",
+		decls: `function churn(n: i32): i32 {
+    var a: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { a = a.append(i); i = i + 1; }
+    return a.len();
+}`,
+		n:        400,
+		maxRatio: 220,
+	},
+	{
+		// The same accumulator threaded through a borrowed param and handed
+		// back — the shape that developed OPPOSITE cliffs in the two
+		// compilers (docs/TEST-GATES.md). Included here for its asymptotics
+		// rather than the cross-compiler split the differential covers.
+		name: "array-append-through-call",
+		decls: `function step(acc: i32[], v: i32): i32[] { return acc.append(v); }
+function churn(n: i32): i32 {
+    var a: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { a = step(a, i); i = i + 1; }
+    return a.len();
+}`,
+		n:        400,
+		maxRatio: 220,
+	},
+	{
+		// String building the RIGHT way: collect, then join once. This is the
+		// documented alternative to the quadratic shape below, so if it ever
+		// stops being linear the advice goes with it.
+		name: "string-parts-join",
+		decls: `import "std/string";
+function churn(n: i32): i32 {
+    var parts: string[] = [];
+    var i: i32 = 0;
+    while (i < n) { parts = parts.append("item"); i = i + 1; }
+    return parts.join(",").len();
+}`,
+		n:        400,
+		maxRatio: 220,
+	},
+	{
+		// Map insert. The table has to rehash as it grows; geometric
+		// resizing keeps that linear in total.
+		name: "map-insert",
+		decls: `import "std/i32";
+import "core/map";
+function churn(n: i32): i32 {
+    var m: Map[string, i32] = map_new(8);
+    var i: i32 = 0;
+    while (i < n) { m = m.insert(i.to_string(), i); i = i + 1; }
+    return m.len();
+}`,
+		n:        400,
+		maxRatio: 220,
+	},
+	{
+		// Substring search over a haystack that grows with n. Two-Way is
+		// O(1) SPACE — it allocates no skip table — so the allocation here
+		// is the haystack itself and nothing per-search. A regression to an
+		// allocating search algorithm shows as growth beyond the input.
+		name: "substring-search",
+		decls: `import "std/string";
+function churn(n: i32): i32 {
+    var hay: string[] = [];
+    var i: i32 = 0;
+    while (i < n) { hay = hay.append("abcab"); i = i + 1; }
+    var s: string = hay.join("");
+    return s.index_of("abcabx") + s.index_of("bcab") + 2;
+}`,
+		n:        400,
+		maxRatio: 220,
+	},
+	{
+		// CALIBRATION: naive left-fold string concatenation, which is
+		// inherently quadratic — every `+` copies the whole accumulated
+		// prefix. This is not a bug to fix; it is the control that proves the
+		// bound above still discriminates. If this ever drops BELOW the
+		// bound, either the gate stopped measuring or `+` grew a rope/builder
+		// representation — both of which must be noticed deliberately.
+		name: "string-concat-fold",
+		decls: `import "std/string";
+function churn(n: i32): i32 {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < n) { s = s + "x"; i = i + 1; }
+    return s.len();
+}`,
+		n:             400,
+		maxRatio:      220,
+		wantQuadratic: true,
+	},
+}
+
+// volumeSrc returns a program that prints the bytes one churn(n) hands out
+// fresh, measured from a cold heap.
+//
+// b0 is read BEFORE the churn so process startup and any stdlib module
+// initialisation are excluded — otherwise a fixed startup cost would inflate
+// the n measurement, depress the ratio, and make the gate quietly lenient.
+func (c allocScaleCase) volumeSrc(n int) string {
+	return fmt.Sprintf(`import "std/i64";
+%s
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var w: i32 = churn(%d);
+    var b1: i64 = __heap_bump_bytes();
+    if (w < 0) { return 251; }
+    print("VOLUME " + (b1 - b0).to_string());
+    return 0;
+}
+`, c.decls, n)
+}
+
+// parseVolume pulls the byte count out of the probe's stdout.
+//
+// The value is printed rather than returned as an exit code on purpose: an
+// exit code caps at 255, which would force the figure into KB and lose the
+// resolution the ratio is computed from.
+func parseVolume(t *testing.T, label, out string, exit int) int64 {
+	t.Helper()
+	if exit == 251 {
+		t.Fatalf("%s: churn returned a negative value — the probe is not measuring the work it thinks it is", label)
+	}
+	if exit != 0 {
+		t.Fatalf("%s: probe exited %d, want 0\noutput:\n%s", label, exit, out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "VOLUME ") {
+			continue
+		}
+		v, err := strconv.ParseInt(strings.TrimPrefix(line, "VOLUME "), 10, 64)
+		if err != nil {
+			t.Fatalf("%s: unparseable VOLUME line %q: %v", label, line, err)
+		}
+		return v
+	}
+	t.Fatalf("%s: no VOLUME line in output:\n%s", label, out)
+	return 0
+}
+
+func TestX86_64AllocScaling(t *testing.T) {
+	for _, tc := range allocScaleCases {
+		t.Run(tc.name, func(t *testing.T) {
+			out1, exit1 := compileAndRunX86_64(t, tc.volumeSrc(tc.n))
+			v1 := parseVolume(t, tc.name+"@n", out1, exit1)
+			out2, exit2 := compileAndRunX86_64(t, tc.volumeSrc(2*tc.n))
+			v2 := parseVolume(t, tc.name+"@2n", out2, exit2)
+
+			if v1 <= 0 {
+				t.Fatalf("churn(%d) allocated %d bytes — a shape that allocates "+
+					"nothing cannot show a scaling regression, so this case is not "+
+					"measuring anything", tc.n, v1)
+			}
+
+			ratio := int(v2 * 100 / v1)
+
+			// Log on every case, pass or fail. The ratio drifting toward the
+			// bound is the early warning, and it is invisible if only
+			// failures print.
+			t.Logf("n=%d: %d B   2n=%d: %d B   ratio %d.%02dx (bound %d.%02dx)",
+				tc.n, v1, 2*tc.n, v2, ratio/100, ratio%100, tc.maxRatio/100, tc.maxRatio%100)
+
+			if tc.wantQuadratic {
+				if ratio <= tc.maxRatio {
+					t.Errorf("%s is the CALIBRATION case: it is inherently quadratic and "+
+						"must measure ABOVE %d.%02dx, but came in at %d.%02dx (%d B -> %d B). "+
+						"Either this shape stopped being quadratic — which would be a real "+
+						"improvement worth recording by removing wantQuadratic — or the gate "+
+						"has stopped discriminating and every other case in this corpus is "+
+						"now passing vacuously",
+						tc.name, tc.maxRatio/100, tc.maxRatio%100, ratio/100, ratio%100, v1, v2)
+				}
+				return
+			}
+
+			if ratio > tc.maxRatio {
+				t.Errorf("%s allocation grew %d.%02dx when n doubled (%d B at n=%d -> %d B "+
+					"at n=%d), over the %d.%02dx bound. Doubling the input should at most "+
+					"double the memory; this is superlinear, which is the O(n) -> O(n^2) "+
+					"class of regression that leaves every correctness test green while "+
+					"making the shape unusable at real sizes",
+					tc.name, ratio/100, ratio%100, v1, tc.n, v2, 2*tc.n,
+					tc.maxRatio/100, tc.maxRatio%100)
+			}
+		})
+	}
+}
