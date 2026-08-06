@@ -14027,6 +14027,27 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                 // reclaim uses — deep on wasm via $__fern_map_release);
                                 // the shared tail drop discards the helper's return.
                                 se = se.emit(ir.op_call_direct("__fern_map_free", 1));
+                            } else if (util.index_of_str(s.sigs.str_fresh_ret_fns, dcid.name) >= 0) {
+                                // A discarded call to a STRING-fresh-ret free function
+                                // (`mk(a);`): the result is a freshly-allocated string
+                                // nothing else will ever hold, so the shared tail drop
+                                // leaks it once per evaluation. Measured on a 200-round
+                                // churn: allocs=601 frees=200 live_bytes=9624, growing
+                                // x2 per doubling, where native is 200/200/0. Release it
+                                // with the rc-aware __fern_str_free (box + heap data at
+                                // rc==1; .rodata-guarded), the same helper the discarded
+                                // concat arm above uses; the shared tail drop discards
+                                // the helper's return.
+                                //
+                                // str_fresh_ret_fns, not the looser str_ret_fns, for the
+                                // reason it is the gate everywhere else: it means EVERY
+                                // return of this callee is freshly allocated, never an
+                                // alias of a borrowed arg / field / literal — freeing
+                                // one of those drops a box a live local still holds.
+                                // Unlike the concat-OPERAND position (#6171), a discard
+                                // has no reader to outlive: the statement is the value's
+                                // whole lifetime.
+                                se = se.emit(ir.op_call_direct("__fern_str_free", 1));
                             } else {
                                 // A discarded call to a TUPLE-fresh-ret free function
                                 // ("TUPRET:<name>|<flags>", #4365 discarded rc-field
