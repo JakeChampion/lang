@@ -299,7 +299,7 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		// backends answered 42 — a divergence in the ORACLE leg, which is the
 		// one this suite cannot catch by construction unless a row disagrees
 		// with the other two. Also pinned as a four-backend fixture
-		// (testdata/cases/try_op_in_closure).
+		// (conformance/cases/try_op_in_closure).
 		{"try-in-closure", `function main(): i32 { var f: (Option[i32]) => Option[i32] = function (o: Option[i32]): Option[i32] { var v: i32 = o?; return Some(v + 1); }; match (f(None)) { Some(a) => { return a; }, None => { match (f(Some(41))) { Some(b) => { return b; }, None => { return 0; } } } } }`, 42},
 	}
 

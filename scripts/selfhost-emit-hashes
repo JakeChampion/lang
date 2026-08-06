@@ -45,7 +45,7 @@ fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STD="$ROOT/internal/stdlib"
-CASES="$ROOT/internal/e2e/testdata/cases"
+CASES="$ROOT/conformance/cases"
 
 # The self-host compiler needs ABSOLUTE paths: a relative one is unopenable
 # from an arm64-darwin binary (AT_FDCWD is -2 on XNU, not -100).

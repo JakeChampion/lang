@@ -25,6 +25,9 @@ var compileFilesModload = e2eharness.CompileFilesModload
 var compileSourceModload = e2eharness.CompileSourceModload
 var compileStdProgModload = e2eharness.CompileStdProgModload
 var componentCoreSection = e2eharness.ComponentCoreSection
+
+const conformanceCases = e2eharness.ConformanceCases
+
 var contains = e2eharness.Contains
 var copySelfHostFiles = e2eharness.CopySelfHostFiles
 var copySelfHostDriver = e2eharness.CopySelfHostDriver
