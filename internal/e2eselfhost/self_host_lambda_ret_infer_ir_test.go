@@ -111,6 +111,23 @@ function main(): i32 {
     var f: () => f64 = () => a[1] * 2.0;
     return (f() * 10.0) as i32;
 }`}, // 45
+	// A BUILTIN-method body, which inference cannot answer without absorbing the
+	// whole map/array/string surface. Resolved from the binding's DECLARED return
+	// type instead — the annotation outranking the inference.
+	{"lambda_builtin_map_get_or", `import "core/map";
+function main(): i32 {
+    var m: Map[string, f64] = map_new(4);
+    m = m.insert("k", 4.5);
+    var f: () => f64 = () => m.get_or("k", 0.0);
+    return (f() * 10.0) as i32;
+}`}, // 45
+	// The declared type must not override an EXPLICIT lambda annotation, and an
+	// i32 declared return must stay i32 — the stamp only ever fills a hole.
+	{"lambda_declared_i32_narrow", `function main(): i32 {
+    var a: i32[] = [1, 40];
+    var f: () => i32 = () => a[1];
+    return f() + 2;
+}`}, // 42
 }
 
 // TestSelfHostLambdaRetInferIR_X86_64 pins irt_guess's ExprIndex /
