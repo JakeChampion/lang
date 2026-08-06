@@ -134,6 +134,36 @@ leaves every `ty` empty and gets the structural walk unchanged.
 | `ExprIndex.ty` | #6165 | `ix_type_tag` — the leaf behind the `ExprIndex` arms of `expr_is_f64` and `infer_expr_width` AND the two load sites (`lower_expr`'s `arr_get` width, `lower_i64`'s `arr_get_i64`), so the element width and the value's downstream type answer from one place |
 | `ExprSlice.ty` | this slice | the `ExprSlice` arm of `lower_expr` — both the `expr_is_arr_src` **gate** (a non-empty tag proves array-ness the walk cannot reach) and `slice_elem_is_wide` (the `arr_slice` element width). Names the SOURCE array's type, via the checker's `type_to_arrtag` |
 
+**Open: a lambda's declared return type never reaches the lambda.** A lifted
+lambda's return type is *inferred* from its body by `irt_guess`, which #6216 and
+#6222 extended to nine expression forms. But inference is the wrong source when
+the binding already states the answer:
+
+```fern
+var f: () => f64 = () => m.get_or("k", 0.0);   // still miscompiles
+```
+
+`irt_guess` cannot type a **builtin** method call without absorbing the whole
+builtin surface (map / array / string), and it should not have to — the binding
+says `f64`.
+
+The annotation route is blocked one level down, and precisely: `parse_type_name`
+*does* recover a fn type's return spelling, but deliberately keeps only
+**struct**, **nominal-enum** and **string** returns (`fn_ret_ty`, parser.fern) —
+scalars are dropped as "primitives need no field lookup", which was true of every
+consumer that existed when it was written. So `var f: () => f64` yields an empty
+`fn_ret`, and a stamp-the-lambda fix built on it is inert. Verified by
+instrumenting it: `STAMP fn_ret=[] lam_ret=[]`.
+
+Closing this means widening `fn_ret` to carry scalar returns, which changes what
+every existing `fn_ret` consumer sees (`ParamDecl.fn_ret`,
+`StructFieldDecl.fn_ret`, `struct_ret_fns`, …). Those consumers appear to filter
+by struct-ness already — the note beside `fn_ret_ty` says the `struct_ret_fns`
+consumer "filters 'string' out (a string is not a struct)" — so the widening is
+plausibly safe, but it is a sidecar audit plus full gates, i.e. its own slice.
+Worth doing: it replaces a growing inference table with the declared type, which
+is the same "stop re-deriving what is already known" move as the carriers.
+
 **Some holes need a consumer, not a carrier.** `mk()[i].N` — a tuple element
 behind an index of a call result — lowered the element as a 4-byte i32, failing
 the wasm validator on an f64. The cause was not a missing annotation:
