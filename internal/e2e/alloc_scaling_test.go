@@ -256,6 +256,43 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// Binding a tuple's STRUCT element to a local — `var q: P = p.1` —
+		// incs at the binding site and was never credited with owning the
+		// reference, so the element leaked once per extraction, unbounded.
+		//
+		// rhsTainted admits the same read out of a struct-typed local as a
+		// counted alias and was one type short of admitting it out of a tuple,
+		// though both halves of that rule's argument hold for tuples: the
+		// binding incs, and the tuple deep-drops its elements at scope exit.
+		// The leak grew with the ELEMENT's width (32 B at three fields, 80 B
+		// at fifteen) and not the tuple's, which is what identified it.
+		//
+		// `(value, state)` threading is the shape that hits it. Reading the
+		// field straight through the tuple was flat all along — but `p.1.a`
+		// did not compile at all until the sibling fix in this change, so
+		// there was no leak-free spelling.
+		//
+		// Constant in n: one tuple and one element per round.
+		name: "tuple-struct-element-binding",
+		decls: `struct P { a: i32, b: i32, c: i32 }
+function pull(s: P): (i32, P) { return (s.a, P { a: s.a + 1, b: s.b, c: s.c }); }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var s: P = P { a: 0, b: 0, c: 0 };
+    var i: i32 = 0;
+    while (i < n) {
+        var p: (i32, P) = pull(s);
+        var q: P = p.1;
+        t = t + q.a;
+        s = q;
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// CALIBRATION: naive left-fold string concatenation, which is
 		// inherently quadratic — every `+` copies the whole accumulated
 		// prefix. This is not a bug to fix; it is the control that proves the
