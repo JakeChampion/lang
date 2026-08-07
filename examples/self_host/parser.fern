@@ -2233,6 +2233,22 @@ function if_expr_rt(e: Expr): string {
                 _ => { return "i32"; }
             }
         },
+        // ARITHMETIC over the branch value. The comment above says "the other
+        // branch kinds were already classified" — a binary was not, so
+        // `if (c) { 107u64 / 42u64 } else { … }` labelled its IIFE i32 while the
+        // body computed u64. Being non-empty, that tag also stops
+        // infer_ret_types_module revisiting the lambda, so nothing downstream
+        // can recover the width and the module bails ("did not lower: `return`
+        // of binary `/`").
+        //
+        // A comparison yields a bool whatever its operands are; anything else
+        // takes wider_rt of the two sides, the same combination parse_if_chain
+        // already applies ACROSS branches, so a width appearing on either side
+        // survives.
+        ExprBinary(b) => {
+            if (irt_is_cmp(b.op)) { return "bool"; }
+            return wider_rt(if_expr_rt(b.left), if_expr_rt(b.right));
+        },
         _ => { return "i32"; }
     }
 }
