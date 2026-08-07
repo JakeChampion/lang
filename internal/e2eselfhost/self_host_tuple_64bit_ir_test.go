@@ -9,9 +9,8 @@ import (
 )
 
 // TestSelfHostTuple64bitIR is the correctness gate for f64/i64 tuple elements on
-// the wasm IR backend. Tuples previously bailed any module whose tuple had an i64
-// element (and silently 4-byte-truncated an f64 one); they now use a uniform
-// 8-byte element slot with the matching i64.store/load vs f64.store/load
+// the wasm IR backend. Tuples use a uniform 8-byte element slot with the
+// matching i64.store/load vs f64.store/load
 // (register backends already used 8-byte slots). Rounds out 64-bit types across
 // all composites. Results pinned to hardcoded oracle values.
 func TestSelfHostTuple64bitIR(t *testing.T) {
@@ -68,7 +67,7 @@ func TestSelfHostTuple64bitIR(t *testing.T) {
 		{"i64-dotN", `function main(): i32 { var t = (20000000000, 3); var b: i64 = t.0; if (b > 15000000000) { return 7; } return 0; }`, 7},
 		// mixed (i64, i32) tuple: i32 element at .1 stays correct alongside the i64.
 		{"mixed-i32", `function main(): i32 { var t = (9000000000, 4); return t.1; }`, 4},
-		// f64 tuple element via .N: t.1 = 2.5; > 2.0 -> 6 (previously 4-byte-truncated)
+		// f64 tuple element via .N: t.1 = 2.5; > 2.0 -> 6 (4-byte truncation fails)
 		{"f64-dotN", `function main(): i32 { var t = (1, 2.5); var f: f64 = t.1; if (f > 2.0) { return 6; } return 0; }`, 6},
 		// i64 destructure: var (a, b) = (5e9, 6e9); a + b = 11e9 > 1e10 -> 5
 		{"i64-destructure", `function main(): i32 { var (a, b) = (5000000000, 6000000000); var s: i64 = a + b; if (s > 10000000000) { return 5; } return 0; }`, 5},

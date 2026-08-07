@@ -1600,9 +1600,8 @@ function build(): i32 {
 // instantiation as a field — Option[i32] — DOES mint a per-instantiation
 // drop fn, so its box is reclaimed.
 //
-// This test previously asserted the opposite, on the premise that such a
-// field is "pair-form, no heap box" and that a box_free on it "would
-// corrupt". Both halves are false, and the measurement is direct:
+// Such a field is NOT "pair-form, no heap box", and a box_free on it does
+// not corrupt. The measurement is direct:
 // `struct H { a: i32, n: i32 }` built in a loop allocates 1 block per
 // iteration; adding an Option[i32] field makes it 2. The Option field is
 // separately boxed. With the drop suppressed it leaked 16 bytes per
@@ -1691,9 +1690,9 @@ func TestLowerStringAliasIncIsUniform(t *testing.T) {
 // TestLowerStringReclaimOnNative verifies string reclamation now fires on a
 // native ptrW (8) too: a fresh owned string local (`s = pre + "x"`) is
 // free-eligible and drops via the freeing __fern_str_dec at its last
-// reference. This used to be gated to the two-word ABIs (wasm / arm64), so
-// native heap strings leaked; computeFreeEligible now admits native
-// single-word string locals and __fern_str_dec frees the box at rc==1 with
+// reference. Gating this to the two-word ABIs (wasm / arm64) leaks native
+// heap strings, so computeFreeEligible admits native single-word string
+// locals and __fern_str_dec frees the box at rc==1 with
 // the size-class-matched length+1 payload. See docs/IR-SELFCOMPILE-OOM.
 func TestLowerStringReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
@@ -2105,8 +2104,8 @@ func TestLowerStringClosureCaptureReclaimOnArm64TwoWord(t *testing.T) {
 
 // TestLowerTupleBoxReclaim verifies an owned tuple local reclaims its
 // heap box at the last reference: the exit sweep must emit an
-// rc==1-gated __fern_box_free (tuples previously leaked their box
-// entirely — no rc header, never swept).
+// rc==1-gated __fern_box_free. Without an rc header a tuple is never
+// swept and its box leaks entirely.
 func TestLowerTupleBoxReclaim(t *testing.T) {
 	p := lowerSourceWith(t, `function build(): i32 {
     var t: (i32, i32) = (1, 2);

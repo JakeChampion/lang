@@ -1,9 +1,9 @@
 // RC of a `dyn Trait` value held as an ENUM PAYLOAD (docs/DYN-TRAITS.md
 // §7.8 — the nested-container follow-up after the array-element kind
 // shipped). An enum variant carrying a `dyn` payload — `enum Box {
-// Wrap(dyn Shape), Empty }` — previously LEAKED the boxed `dyn` (its
-// {data,vtable} cell, the concrete object, and any String the concrete
-// transitively owns) on the natives: the enum's recursive drop declined
+// Wrap(dyn Shape), Empty }` — leaks the boxed `dyn` (its {data,vtable}
+// cell, the concrete object, and any String the concrete transitively owns)
+// on the natives if the enum's recursive drop declines
 // a `DynTraitType` payload (`enumVariantDropPlan` / `appendChildDrop` /
 // `dropStructField` gated `DynTraitType` out).
 //

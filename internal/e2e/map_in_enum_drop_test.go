@@ -9,8 +9,8 @@ import (
 
 // Regression for #4425: dropping a value of a Map-transitively-containing enum
 // (the built-in JsonValue, whose JObject variant carries a Map[string,
-// JsonValue]) used to emit a call to __map_drop_values in the generated drop
-// glue. That helper lives in core/map.fern and is loaded ONLY when a program
+// JsonValue]) must not emit a call to __map_drop_values in the generated
+// drop glue. That helper lives in core/map.fern and is loaded ONLY when a program
 // imports "core/map" (the checker requires the import for map *operations*) —
 // but a program can use JsonValue WITHOUT any map operation (e.g. a local /
 // array of JString values). The whole-enum drop glue still emits the JObject

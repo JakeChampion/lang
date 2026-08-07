@@ -44,7 +44,7 @@ import (
 // Bumped 8 → 32 once the wasmbin path stopped tripping on string-
 // slot drops, 32 → 64 once the differential oracle started running
 // cleanly, then 64 → 122 once the FlattenBranches stack-balance
-// guard freed the seeds that previously broke the WAT validator.
+// guard freed the seeds that broke the WAT validator.
 // The 122 cap was specifically gated by seed 122's remaining
 // WAT-only closure-table emission bug; with the WAT sub-test now
 // retired from the oracle (the wasmbin path covers the same wasm

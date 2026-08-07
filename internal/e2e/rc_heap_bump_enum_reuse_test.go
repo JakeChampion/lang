@@ -9,9 +9,9 @@ import (
 // Enum reuse-path payload reclamation (RC-Perceus, the enum analog of 5f).
 // A self-overwrite `e = Variant(...)` of an owned, uniquely-held enum reuses
 // the old box in place (Phase 5e constructor reuse). When the old box holds
-// a droppable (rc-tracked) payload, `tryEnumReuseOverwrite` previously kept
-// the box but never freed that payload — the normal overwrite-dec that would
-// free it is bypassed — so `e = Wrap([..])` in a loop leaked the prior
+// a droppable (rc-tracked) payload, `tryEnumReuseOverwrite` must free that
+// payload as well as keeping the box — the normal overwrite-dec that would
+// free it is bypassed — or `e = Wrap([..])` in a loop leaks the prior
 // payload every iteration (probe: wasm 1616 -> 160016 B, unbounded).
 //
 // The fix frees the OLD payload on the reuse branch (uniform droppable
