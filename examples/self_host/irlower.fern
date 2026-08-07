@@ -7955,6 +7955,16 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         if (!mc2.ok) { return mc2; }
         return mc2.emit(ir.op_memchr());
     }
+    // __ascii_run(s, from) → i32 (ATLAS-PLATFORM-PLAN §3, second kernel). Two
+    // operands, same substitutable-op shape as __memchr; the miss value is the
+    // LENGTH rather than -1, so callers can skip a run branch-free.
+    if (cid.name == "__ascii_run" && c.args.len() == 2) {
+        var ar0: LowerState = lower_expr(c.args[0], s);
+        if (!ar0.ok) { return ar0; }
+        var ar1: LowerState = lower_expr(c.args[1], ar0);
+        if (!ar1.ok) { return ar1; }
+        return ar1.emit(ir.op_ascii_run());
+    }
     // __arr_push_shared_count(): appends that copied a buffer
     // which still had spare capacity — the rc==1 cliff. Same
     // allocation-free introspection shape as heap_bump_bytes;

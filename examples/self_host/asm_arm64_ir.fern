@@ -166,6 +166,35 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(l_done + ":\n    str x2, [sp, #-16]!\n");
         return s;
     }
+    if (o.kind_tag == 227) {  // ascii_run
+        // operand stack [box, from] (from on top) -> the index of the first
+        // byte at or after `from` with its high bit set, or the LENGTH.
+        // Scalar for memchr's reason; two operands rather than three, there
+        // being no byte to compare against.
+        var alo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var a_clamped: string = alo.name;
+        var alo2: asmcore.LabelOut = asmcore.fresh_label(alo.state);
+        var a_loop: string = alo2.name;
+        var alo3: asmcore.LabelOut = asmcore.fresh_label(alo2.state);
+        var a_none: string = alo3.name;
+        var alo4: asmcore.LabelOut = asmcore.fresh_label(alo3.state);
+        var a_done: string = alo4.name;
+        s = alo4.state;
+        s = s.write("    ldr x2, [sp], #16\n    ldr x0, [sp], #16\n");
+        s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+        s = s.write("    cmp x2, #0\n    b.ge " + a_clamped + "\n    mov x2, #0\n");
+        s = s.write(a_clamped + ":\n");
+        s = s.write(a_loop + ":\n");
+        s = s.write("    cmp x2, x3\n    b.ge " + a_none + "\n");
+        s = s.write("    ldrb w4, [x0, x2]\n");
+        // ldrb zero-extends, so bit 7 is the high bit.
+        s = s.write("    tbnz w4, #7, " + a_done + "\n");
+        s = s.write("    add x2, x2, #1\n    b " + a_loop + "\n");
+        // The miss value is the LENGTH, not -1.
+        s = s.write(a_none + ":\n    mov x2, x3\n");
+        s = s.write(a_done + ":\n    str x2, [sp, #-16]!\n");
+        return s;
+    }
     if (o.kind_tag == 102) {  // str_slice
         // operand stack [src box, start, end] (end on top). Zero-copy view, now
         // rc-HEADERED with an IMMORTAL sentinel (#2649): a 24-byte box

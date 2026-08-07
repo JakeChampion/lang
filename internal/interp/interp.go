@@ -624,6 +624,50 @@ func New() *Interp {
 		}
 		return Number(-1), nil
 	}}
+	// __ascii_run(s, from) — the index of the first byte at or after `from`
+	// whose high bit is set, or len(s) if the rest is all ASCII.
+	//
+	// The second fused SIMD kernel (docs/ATLAS-PLATFORM-PLAN.md §3), and a
+	// cheaper one than __memchr: x86's pmovmskb and wasm's i8x16.bitmask
+	// gather exactly the high bit of each byte, which IS the ASCII test, so
+	// the vector body needs no compare instruction at all.
+	//
+	// It is deliberately NOT a whole `__utf8_validate`. Validation's
+	// multi-byte arms are branchy, per-length, and full of overlong and
+	// surrogate rules — the readable place for them is Fern. What actually
+	// dominates an ASCII-heavy ingest body (JSON, HTTP, source) is the run
+	// of ASCII between them, and that is the part a vector skips 16 bytes at
+	// a time. Splitting it this way also makes the intrinsic reusable by any
+	// scanner that wants "first high byte", rather than a single-caller blob
+	// duplicated across seven backends.
+	//
+	// `from` clamps like __memchr's: negative behaves as 0. Returning len(s)
+	// rather than -1 on "no high byte" is what lets a caller write
+	// `i = __ascii_run(s, i)` as a straight skip with no branch.
+	i.Builtins["__ascii_run"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("__ascii_run: expected 2 args, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__ascii_run: expected a string, got %T", args[0])
+		}
+		fn, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__ascii_run: expected an integer start, got %T", args[1])
+		}
+		from := int(int64(fn))
+		if from < 0 {
+			from = 0
+		}
+		b := []byte(string(s))
+		for idx := from; idx < len(b); idx++ {
+			if b[idx] >= 0x80 {
+				return Number(idx), nil
+			}
+		}
+		return Number(len(b)), nil
+	}}
 	// __arr_push_shared_count(): the rc==1 cliff counter on the compiled
 	// backends — appends that copied a buffer which still had room, so the
 	// copy was bought by an extra reference. The interpreter has no refcounts

@@ -644,6 +644,22 @@ func CMEQ(rd, rn, rm uint32, q bool) uint32 {
 	return 0x2E208C00 | qbit(q) | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
+// CMLT encodes `cmlt Vd.<T>, Vn.<T>, #0` — per-byte signed compare against
+// zero, producing an all-ones lane where the byte's high bit is set.
+//
+// That IS the "not ASCII" test, in one instruction and with no operand to
+// splat, which is what makes the ascii-run kernel cheaper than the memchr one
+// on this side as well as on x86-64 (where the counterpart saving is that
+// pmovmskb alone answers the question, with no compare at all).
+//
+// Only the compare-against-zero form exists — #0 is not an immediate field,
+// it is part of the opcode, so a non-zero immediate is a different instruction
+// entirely and the parser refuses it rather than silently encoding this one.
+// Encoding: base 0x0E20A800 | Q<<30 | Rn<<5 | Rd.
+func CMLT(rd, rn uint32, q bool) uint32 {
+	return 0x0E20A800 | qbit(q) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
 // SHRN encodes `shrn Vd.8b, Vn.8h, #shift` — narrowing right shift, halving
 // 16-bit lanes into bytes.
 //

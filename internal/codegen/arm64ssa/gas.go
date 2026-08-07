@@ -465,6 +465,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_drop_arr_str": emitDropArrStrHelper,
 	"__str_idx":           emitStrIdxHelper,
 	"__fern_memchr":       emitMemchrHelper,
+	"__fern_ascii_run":    emitAsciiRunHelper,
 	"__arr_idx":           emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
 	"__arr_idx_1":         emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
 	"__arr_idx_8":         emitArrIdxHelperN("__arr_idx_8", 3),  // stride 8 (i64 / pointer)
@@ -2234,6 +2235,48 @@ func emitMemchrHelper(w func(string, ...any)) {
 	w("\tret")
 	w(".Lssa_memchr_none:")
 	w("\tmov x0, #-1")
+	w("\tret")
+}
+
+// emitAsciiRunHelper writes __fern_ascii_run(s, from) -> the index of the first
+// byte at or after `from` with its high bit set, or len(s) if the rest is ASCII
+// (docs/ATLAS-PLATFORM-PLAN.md §3, second kernel).
+//
+// SCALAR, for emitMemchrHelper's reason and one more. This backend's helpers
+// are hand-written GAS text with no NEON in them at all, and the entry exists
+// here for TOTALITY rather than for speed: §3.4 requires an op to lower on
+// every backend before any caller may adopt it, precisely so an adoption
+// cannot turn into a link error on the target nobody remembered. __memchr
+// learned that the expensive way — it was added to the other six backends,
+// adopted, and only then did CI report `branch to undefined label
+// "fn___fern_memchr"` from this seventh one.
+//
+// One-word strings with the length at [ptr-4], so `from` is x1 with no slot
+// arithmetic — one register earlier than __memchr's x2, there being no byte
+// operand. Leaf: no frame.
+//
+// Returns the length rather than -1 on a miss, matching the intrinsic's
+// branch-free-skip contract everywhere else.
+func emitAsciiRunHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_ascii_run"))
+	w("\tldur w2, [x0, #-4]") // len
+	// `from` clamps at 0 rather than trapping, matching the interpreter.
+	w("\tcmp x1, #0")
+	w("\tb.ge .Lssa_ascii_scan")
+	w("\tmov x1, #0")
+	w(".Lssa_ascii_scan:")
+	w("\tcmp w1, w2")
+	w("\tb.ge .Lssa_ascii_none")
+	w("\tldrb w3, [x0, x1]") // zero-extending, so bit 7 is the high bit
+	w("\ttbnz w3, #7, .Lssa_ascii_found")
+	w("\tadd x1, x1, #1")
+	w("\tb .Lssa_ascii_scan")
+	w(".Lssa_ascii_found:")
+	w("\tmov x0, x1")
+	w("\tret")
+	w(".Lssa_ascii_none:")
+	w("\tmov x0, x2") // no high byte: the answer is len
 	w("\tret")
 }
 
