@@ -281,15 +281,17 @@ function __str_find_from(s: string, sLen: i32, needle: string, nLen: i32, start:
         return from;
     }
     if (nLen > sLen - from) { return 0 - 1; }
-    if (nLen == 1) {
-        var c: i32 = needle[0] as i32;
-        var i: i32 = from;
-        while (i < sLen) {
-            if ((s[i] as i32) == c) { return i; }
-            i = i + 1;
-        }
-        return 0 - 1;
-    }
+    // The single-byte case IS __memchr (docs/ATLAS-PLATFORM-PLAN.md §3): the
+    // native backends serve it with a 16-byte-per-iteration vector kernel
+    // (SSE2 / NEON / v128), the self-host ones with a byte loop identical to
+    // the one this replaces. Measured 208ms -> 5ms on 3000 scans of a 14.4 KB
+    // haystack with the needle at the very end — 0.21 GB/s to 8.64 GB/s.
+    //
+    // `from` is already clamped above and `needle[0]` is always 0..255, so
+    // neither of __memchr's guards can fire here; they exist for direct
+    // callers. It reads the string's own length, which every caller of
+    // __str_find_from passes as `sLen` — checked across all 20 call sites.
+    if (nLen == 1) { return __memchr(s, needle[0] as i32, from); }
     return __str_two_way(s, sLen, needle, nLen, from);
 }
 
