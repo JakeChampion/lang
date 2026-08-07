@@ -6,22 +6,12 @@ import (
 	"testing"
 )
 
-// iifeBodyLiftIRCases pin lambda lifting INSIDE a value-position `if`/`match` —
-// #6256, the `<fn>$clo not defined` bail cluster.
+// iifeBodyLiftIRCases pin that a lambda nested inside a value-position
+// `if`/`match` reaches the lift — #6256, the `<fn>$clo not defined` cluster. An
+// unlifted one stays an AST-only closure and the IR path cannot name it.
 //
-// A value-position `if` desugars to a zero-param IIFE, and the lift walks a
-// call by lifting its callee and then its arguments. A capturing lambda in
-// either position used to be returned untouched, so nothing nested in the
-// IIFE's body was ever reached: a lambda written inside an `if` branch stayed
-// an AST-only closure, `hoist_escaping_closure` named it `<fn>$clo`, and the IR
-// path then bailed on a function value it had no definition for.
-//
-// lift_lambda_body_only walks such a body instead of skipping it, which is what
-// gets the nested lambda hoisted to a top-level `__lam_N` the IR path can name.
-//
-// Both repro cases were checked to BAIL on the parent commit. The control
-// already compiled and must keep compiling — it is what isolates "lambda nested
-// inside the IIFE body" as the variable rather than "lambda array in an if".
+// The exit code is asserted, not just that the module lowered: a compile-only
+// assertion passes on a silent miscompile.
 var iifeBodyLiftIRCases = []struct {
 	name string
 	src  string
@@ -81,17 +71,12 @@ func TestSelfHostIifeBodyLiftIRX86_64(t *testing.T) {
 	}
 }
 
-// nestedIifeGateSrc is a value-position `match` whose scrutinee AND whose arm
-// each hold their own value-position `if`. It compiles today, and walking the
-// IIFE body is what threatens it: hoisting the scrutinee's inner IIFE out to a
-// top-level `__lam_N` splits one desugar across the IR and AST paths, and the
-// outer form then bails. lift_call_callee's in-IIFE gate is what keeps it
-// whole; without the gate this module bails.
+// nestedIifeGateSrc holds a value-position `if` in both a `match` scrutinee and
+// one of its arms. Hoisting the inner IIFE out of the outer one makes this
+// module refuse, so it pins lift_call_callee's in-IIFE gate.
 //
-// Only the strict-IR verdict is asserted, not the exit code: this shape is
-// mis-answered by both self-host backends today (#6400, a pre-existing
-// miscompile of `-?` unrelated to the lift), so pinning an exit code here would
-// pin the wrong number.
+// Only the strict-IR verdict is asserted: this shape is mis-answered by both
+// self-host backends (#6400), so an exit code here would pin the wrong number.
 const nestedIifeGateSrc = `function main(): i32 {
     var b: boolean = true;
     var w: u32 = (match ((2147484129u32) -? (if (true) { 2147484571u32 } else { 250u32 })) { Some(c) => c, None => (if (b) { 5u32 } else { 687u32 }) });

@@ -836,10 +836,13 @@ function main(): i32 {
     return ((v as i32) & 255i32);
 }
 `, "__lam_0", "did not lower: `return` of ident `c`"},
-	// which of the two had happened.
+	// The OTHER half of func_ineligible_reason: the body lowered fine and the
+	// bail is a symbol that does not resolve — a different debugging task from a
+	// refused body, which the bare function name never distinguished.
 	//
-	// The branch lambdas capture `n`, so they stay closures inside the desugar's
-	// lifted IIFE instead of hoisting to top-level `__lam_N` functions.
+	// The branch lambdas must CAPTURE. A no-capture one hoists to a top-level
+	// `__lam_N` and the module lowers; a capturing one cannot, so it stays an
+	// AST-only closure and `<fn>$clo` never resolves.
 	{"unresolved-function-value", `function main(): i32 {
     var n: i32 = 7i32;
     var v2: (i32) => i32 = (if (true) { ((x: i32) => (x + n)) } else { ((x: i32) => 41i32) });
