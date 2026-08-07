@@ -72,8 +72,8 @@ struct H { f: (i32) => i32, id: i32 } function main(): i32 { var m: Map[i32, i32
 		// A method-call iter (`for x in s.get()`) and a free-function iter
 		// (`for x in items()`): the binder's type is the callee's declared
 		// array return type, resolved from the module fn decls threaded into
-		// the lift pass (callee_ret_type, #5193). Previously these resolved ""
-		// and the module fell to the miscompiling AST path.
+		// the lift pass (callee_ret_type, #5193). Resolving "" instead drops the
+		// module to the miscompiling AST path.
 		{"forin-method-iter-binder",
 			`struct S { items: i32[], n: i32 } function (s: S) get(): i32[] { return s.items; } struct H { f: (i32) => i32, id: i32 } function g(s: S): i32 { var acc: i32 = 0; for x in s.get() { var h: H = H { f: function (q: i32): i32 { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(S { items: [1, 2, 3], n: 0 }); }`,
 			15, ".Lir_g"},

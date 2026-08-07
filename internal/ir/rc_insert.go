@@ -1238,15 +1238,7 @@ func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 	// Ineligible locals (borrowed params and borrowed-derived views) hold no
 	// reference of their own, so the DEEP free must not fire for them.
 	//
-	// An earlier version of this comment named `var a1 = match (o) { _ => a0 }`
-	// as the motivating hazard — "an alias shape needsRcIncOnAlias doesn't
-	// catch", which a dec here would over-release. That is NOT the case:
-	// probing it shows needsRcIncOnAlias DOES catch it (one inc per match arm),
-	// `a1` comes out freeEligible, and the shape is already balanced. The claim
-	// was load-bearing — it was cited as the reason cause A's fix was unsafe —
-	// so it is corrected rather than left standing (#5879).
-	//
-	// The real distinction is narrower: ineligibility has several causes, and
+	// The distinction is narrow: ineligibility has several causes, and
 	// only a CONSTRUCTION alias-inc (rc.ctorAliasInced) leaves the local
 	// holding a counted reference it must give back. That case gets the flat
 	// dec below; every other ineligible local is still skipped entirely.

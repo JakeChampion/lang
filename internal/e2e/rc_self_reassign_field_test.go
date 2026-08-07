@@ -25,9 +25,9 @@ import (
 // (1) the bounded-heap win for the string-free accumulator, (2) that a
 // string-FIELD accumulator is value-correct + over-release-free now that it
 // reclaims, and (3) the bounded-heap win for the string-FIELD accumulator —
-// the self-host LowerState/EmitState `s = s.emit(op)` shape whose flat-dec'd
-// old boxes previously pinned the ops array at rc >= 2 and turned every
-// append into a whole-array clone (the #3425 Effect-A quadratic).
+// the self-host LowerState/EmitState `s = s.emit(op)` shape, where flat-dec'ing
+// the old boxes pins the ops array at rc >= 2 and turns every append into a
+// whole-array clone (the #3425 Effect-A quadratic).
 
 func selfReassignFieldBumpSrc(n string) string {
 	return `struct Blk { insts: i32[] }

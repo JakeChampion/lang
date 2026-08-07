@@ -150,7 +150,7 @@ func TestX86_64FilesystemOpsTapLinksNatively(t *testing.T) {
 	}
 }
 
-// ---- arm64 (previously had NO fs-op lowering at all) ----
+// ---- arm64 ----
 
 func TestArm64FsOpsRoundTrip(t *testing.T) {
 	out, code := compileAndRunArm64(t, fsOpsRoundTripSrc)

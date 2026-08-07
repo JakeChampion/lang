@@ -64,11 +64,10 @@ func CompileAndRunX86_64(t *testing.T, src string) (stdout string, exitCode int)
 	gcc, runner := X86_64Tooling(t)
 
 	// Route the source through modload (write to temp file, then
-	// `modload.Load`) so cross-module qualified calls in the
-	// stdlib (`int.int_to_string_radix(…)` etc.) get rewritten.
-	// Without this, the bare `parser.Parse` path used previously
-	// skipped modload's rewriter entirely. Mirrors the same
-	// refactor in `CompileAndRunArm64`.
+	// `modload.Load`) so cross-module qualified calls in the stdlib
+	// (`int.int_to_string_radix(…)` etc.) get rewritten. A bare
+	// `parser.Parse` skips modload's rewriter entirely. Mirrors
+	// `CompileAndRunArm64`.
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {

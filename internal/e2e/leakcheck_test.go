@@ -1353,9 +1353,9 @@ func TestArm64LeakCheckToStringReclaim(t *testing.T) {
 	}
 }
 
-// A fresh string temp handed straight to a string-RETURNING call used to be
-// reclaimed by nobody (#5942) — one heap block per call, unbounded in a loop.
-// Binding the intermediate to a `var` first reclaimed it, so the two shapes
+// A fresh string temp handed straight to a string-RETURNING call must be
+// reclaimed (#5942), or it costs one heap block per call, unbounded in a
+// loop. Binding the intermediate to a `var` first reclaims it, so the two shapes
 // below differ only in whether the intermediate has a name, and had to differ
 // only in that after the fix too.
 //

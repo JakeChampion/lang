@@ -48,7 +48,8 @@ type rcPlan struct {
 	// borrowed), so no caller-side coordination is needed. It is the
 	// borrow-inference fix for the O(N^2) self-reassign accumulator leak: the
 	// self-host SSA builder / emitter thread their string-bearing accumulators
-	// through such params, which previously could not deep-drop the old value.
+	// through such params, and without the promotion none can deep-drop the
+	// old value.
 	consumedParams map[string]bool
 	// freeEligible[name] is true for array-typed locals the
 	// borrow-aware analysis proved are OWNED — safe for the array
@@ -3203,9 +3204,8 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 // unguarded non-wildcard arm whose body is exactly `return Ctor(..)`
 // constructing a payloadful variant of the SAME (uniform-box-sized) enum hands
 // the consumed scrutinee box straight to that construction via the reuse token
-// instead of freeing it (true zero-alloc FBIP). This used to be registered
-// mid-lowering by the match arm's reuseCtor hook; deciding it here keeps the
-// rcPlan immutable during lowering.
+// instead of freeing it (true zero-alloc FBIP). Deciding it here rather than
+// mid-lowering is what keeps the rcPlan immutable while lowering runs.
 //
 // The gates reproduce the lowering-time hook exactly: `ownParamEnumScrutinee`
 // requires the tag to be an *ast.Ident naming an `own` enum param (an Ident
@@ -3585,8 +3585,8 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 
 // stmtReferencesName reports whether any *ast.Ident named `name` appears
 // anywhere in the subtree `st` — the shared occurrence predicate behind the
-// last-use / deadness scans (#4480). Previously duplicated verbatim inside
-// computeReuseSources, computePreciseDrops, and flowsIntoUncountedAlias.
+// last-use / deadness scans (#4480). Shared by computeReuseSources,
+// computePreciseDrops, and flowsIntoUncountedAlias.
 func stmtReferencesName(st ast.Node, name string) bool {
 	found := false
 	ast.Walk(st, func(n ast.Node) bool {

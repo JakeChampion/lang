@@ -8,7 +8,7 @@ import (
 )
 
 // constCases exercise top-level `const NAME: T = EXPR;` declarations,
-// which the self-host parser previously stalled on (exit-137). They
+// which the self-host parser must not stall on (exit-137). They
 // desugar to a zero-arg function; a bare reference lowers to a call.
 // Values cross-checked vs the Go backend.
 var constCases = []struct {

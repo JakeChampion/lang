@@ -11,9 +11,9 @@ import (
 )
 
 // A match whose arms produce different values via a result slot must lift to
-// VALID SSA — the join needs a phi over the arm values. Previously the merge
-// gave up (picking one arm's value) when an unreachable predecessor edge left
-// the result slot undefined, producing `ret v` for a value defined on only one
+// VALID SSA — the join needs a phi over the arm values. A merge that gives up
+// and picks one arm's value when an unreachable predecessor edge leaves the
+// result slot undefined produces `ret v` for a value defined on only one
 // path (ssa.Verify: "uses vN before its def dominates").
 func TestLiftMatchOptionJoinPhi(t *testing.T) {
 	src := `

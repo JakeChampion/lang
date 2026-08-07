@@ -9,9 +9,9 @@ import (
 )
 
 // TestSelfHostI64MethodsIR is the correctness gate for i64 methods (a method
-// whose signature contains i64) on the wasm IR backend. These previously bailed:
-// the body reads an i64 field (now lowered, #2733) and i64_ret_fns_of recorded
-// only free functions; it now records methods keyed "<Type>.<method>", with the
+// whose signature contains i64) on the wasm IR backend. The body reads an i64
+// field (#2733) and i64_ret_fns_of records methods keyed "<Type>.<method>" as
+// well as free functions, with the
 // infer_expr_width / lower_i64 method cases recovering the result's i64-ness and
 // param_is_i64 routing i64 args through lower_i64. Results pinned to oracle values.
 func TestSelfHostI64MethodsIR(t *testing.T) {

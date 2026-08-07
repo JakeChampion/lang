@@ -8,9 +8,9 @@ import (
 )
 
 // Every ordered comparison against a NaN is false; only `!=` is true. The
-// renderer used to read ZF/CF alone (sete/setne/setb/setbe), which `ucomisd`
-// sets identically for "unordered" and for "equal"/"below" — so four of the
-// six predicates were wrong on NaN. The sibling arm64ssa backend had the same
+// renderer must not read ZF/CF alone (sete/setne/setb/setbe): `ucomisd` sets
+// those identically for "unordered" and for "equal"/"below", so four of the
+// six predicates come out wrong on NaN. The sibling arm64ssa backend has the same
 // class of bug with the unsigned AArch64 condition codes, caught by sweeping
 // the fernsmith printable corpus through `-target arm64-ssa`; this backend has
 // no CLI target to sweep, so the model-vs-assembly oracle stands in.

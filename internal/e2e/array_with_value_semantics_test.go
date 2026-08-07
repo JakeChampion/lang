@@ -5,9 +5,9 @@ import "testing"
 // TestArrayWithValueSemantics guards #2832: `Array.with(i, v)` is the pure
 // (functional) element-set — it must return a NEW array and leave the
 // receiver unchanged when the receiver is still read after the call. The
-// compiled backends previously reused the receiver's buffer in place at
+// compiled backends must not reuse the receiver's buffer in place at
 // rc==1 (an in-place reuse / FBIP optimisation that's only sound when the
-// receiver is dead after the call), so `a` and the result aliased and `a`
+// receiver is dead after the call), or `a` and the result alias and `a`
 // was mutated — disagreeing with the interpreter's value semantics.
 //
 // emitArraySet now rc-incs a LIVE-after receiver before

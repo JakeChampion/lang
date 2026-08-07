@@ -111,11 +111,26 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > `__fern_oob_abort` itself stays: the per-access `jae` / `b.lo` checks still
 > branch to it.
 >
-> Still **x86-64 IR only**: `read_dir` / `remove_dir_all`. Darwin's
-> `getdirentries64` takes a 4th out-param that Linux's `getdents64` has no
-> equivalent of — an argument the caller must supply and thread, which no
-> constant can stand in for. They need a per-target source BODY, which is why
-> `sysno` deliberately has no entry for them. wasm has no generic syscall at all.
+> **Nothing is x86-64 IR only any more.** `read_dir` / `remove_dir_all` were
+> the last two, recorded as needing a per-target source BODY because Darwin's
+> `getdirentries64` takes a 4th out-param `getdents64` has no equivalent of.
+> `__syscall4` was already in the floor, so the shared body issues FOUR
+> arguments on every target and hands Linux a register it ignores — one arity
+> beats a branch, and the slot is an ordinary 8-byte `__raw_alloc` rather than
+> `__raw_scratch`, which stat and the clocks also want. The dirent layouts
+> differ only in where the name starts (19 vs 21, XNU carrying a `d_namlen`
+> the Linux record does not): `direntoff`. wasm still has no generic syscall
+> and keeps its own bundles.
+>
+> `O_DIRECTORY` is the cautionary half. It is the one open flag whose value
+> differs between the two **Linux** arches as well as on Darwin — 65536 on
+> x86-64, 16384 on arm64 (an arch-specific override), 1048576 on XNU — so
+> `oflag` needs a real three-way split, not the usual Darwin-vs-Linux fork.
+> Every wrong choice is a silent wrong FLAG rather than a rejected constant:
+> 65536 on arm64 Linux is `O_RDONLY|O_DIRECT` (EINVAL on `/tmp`), and 65536 on
+> Darwin is `O_NDELAY|O_ASYNC` (the open succeeds and the first read fails).
+> The retired arm64 hand-asm carried this in a comment, and deleting it
+> without reading it cost a debug cycle.
 >
 > The clocks slice added one more floor primitive — `__raw_scratch` (a fixed
 > static buffer for the kernel to write `timespec` / `timeval` / `stat` into —

@@ -24,10 +24,9 @@ import "math"
 // doesn't track types per Value yet, so downstream passes that
 // care about the const flavour should switch on Kind.
 //
-// Phase 1 covers the integer + boolean cases the existing
-// `internal/ir/constprop.go` peephole pass handles; Phase 2
-// adds string concat + bool short-circuit folds when those
-// land on the SSA side.
+// Covers the integer + boolean cases `internal/ir/constprop.go`
+// handles. String concat and bool short-circuit folds are not
+// folded here.
 func Fold(f *Func) {
 	if f == nil {
 		return

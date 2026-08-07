@@ -106,9 +106,9 @@ func TestStringLiteralEscapes(t *testing.T) {
 }
 
 // A string literal containing multi-byte UTF-8 characters must be
-// preserved byte-for-byte. The lexer previously did `b.WriteRune(c)`
-// where `c` was a single source byte (`rune(l.src[l.i])`), so each
-// byte of a multi-byte character was re-encoded as its own code point
+// preserved byte-for-byte. `b.WriteRune(c)` on a single source byte
+// (`rune(l.src[l.i])`) re-encodes each byte of a multi-byte character
+// as its own code point
 // — turning `∃` (0xE2 0x88 0x83) into three mojibake runes. Strings
 // are UTF-8 byte arrays here, so the token text must equal the
 // original source bytes. Surfaced as a format → parse → format

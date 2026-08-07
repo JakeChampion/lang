@@ -573,9 +573,9 @@ func trimPkg(s string) string {
 // TestMonomorphTupleArgProducesAssemblerSafeName locks in that a
 // generic function/struct instantiated with a TUPLE type argument
 // mangles to a symbol containing no parentheses. A tuple type's
-// String() is `(i32, i32)`; sanitize() previously left the `(`/`)`
-// intact, so the clone name `id__(i32__i32)` reached the native
-// assemblers and failed to assemble (wasm tolerated it). The
+// String() is `(i32, i32)`; sanitize() has to strip the `(`/`)`, or
+// the clone name `id__(i32__i32)` reaches the native assemblers and
+// fails to assemble (wasm tolerates it). The
 // emitted clone names must be `[A-Za-z0-9_]`-only.
 // A polymorphically-recursive generic struct (`Nest[T]` whose field is
 // typed `Nest[Nest[T]]`) demands an unbounded family of instantiations,
@@ -652,9 +652,9 @@ function main(): i32 {
 // nested generic instantiation like `Box[Box[i32]]` mangles to the
 // SAME name whether the outer struct's type arg arrives raw
 // (StructType{Name:"Box", Args:[i32]}) or pre-rewritten
-// (StructType{Name:"Box__i32"}). A mismatch previously surfaced as
-// a monomorph re-check failure: "cannot assign Box__Box_i32_ to
-// variable of type Box__Box__i32".
+// (StructType{Name:"Box__i32"}). A mismatch surfaces as a monomorph
+// re-check failure: "cannot assign Box__Box_i32_ to variable of type
+// Box__Box__i32".
 func TestMonomorphNestedGenericNameIsConsistent(t *testing.T) {
 	src := `struct Box[T] { v: T }
 function main(): i32 {

@@ -56,9 +56,6 @@ func (v Value) String() string {
 func (v Value) IsValid() bool { return v.ID != 0 }
 
 // OpKind enumerates the operations an SSA op can perform.
-// Phase 1 covers the minimum set the legacy IR needs;
-// Phase 2 fleshes out the long tail (call shapes, struct/
-// array ops, closure conversion).
 type OpKind int
 
 const (

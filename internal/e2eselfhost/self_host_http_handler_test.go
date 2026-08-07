@@ -36,7 +36,7 @@ function main(): i32 {
 // link, because the merged closure crosses the 512-function IR budget and the
 // file-based driver had no over-budget rescue, so the whole program dropped to
 // the AST emitter, which cannot emit those builtins at all. Every one of its
-// functions lowers on the IR path; only the routing was wrong.
+// functions lowers on the IR path, so this is a routing gate.
 //
 // Linking is the assertion that matters here: it is what catches a unit whose
 // runtime helper the entry never emitted (the all_runtime_need_roots gap) and a
@@ -107,9 +107,9 @@ function main(): i32 {
 // TestSelfHostOverBudgetProgramsRunX86_64 pins the per-module rescue on two
 // programs that pull in the same ~925-function stdlib closure:
 //
-//   - http-parse calls no builtin the AST emitter is missing. It used to be
-//     held back from the concat by a gate, because routing it through IR hit
-//     two IR-path over-frees (the container-read alias and the param-receiver
+//   - http-parse calls no builtin the AST emitter is missing. Holding it back
+//     from the concat by a gate hides two IR-path over-frees (the
+//     container-read alias and the param-receiver
 //     append, both fixed). The gate is gone, so it now takes the concat like
 //     every other over-budget program — and must still run correctly.
 //   - raw-socket-serve drives a real socket, which the AST emitter cannot emit

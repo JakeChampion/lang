@@ -380,6 +380,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "getrandom") { return "318"; }
         if (name == "exit") { return "60"; }
         if (name == "clock_gettime") { return "228"; }
+        if (name == "getdents") { return "217"; }
         return "-1";
     }
     if (t == "arm64-darwin") {
@@ -402,6 +403,11 @@ pub function sysno(t: string, name: string): string {
         // subsec_off / subsec_per_sec). clock_gettime has no row here on
         // purpose: -1 would be issued as a real syscall number.
         if (name == "gettimeofday") { return "116"; }
+        // getdirentries64, not getdents64. Same first three arguments, plus a
+        // 4th out-param the kernel updates with the new directory position —
+        // see rt_src_read_dir for why the shared body issues __syscall4 on
+        // every target rather than branching on the arity.
+        if (name == "getdents") { return "344"; }
         return "-1";
     }
     // arm64 (Linux).
@@ -417,6 +423,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "getrandom") { return "278"; }
     if (name == "exit") { return "93"; }
     if (name == "clock_gettime") { return "113"; }
+    if (name == "getdents") { return "61"; }
     return "-1";
 }
 
@@ -461,13 +468,61 @@ pub function statoff(t: string, name: string): string {
 // O_WRONLY|O_CREAT|O_TRUNC = 1|0x40|0x200 = 577 on Linux and
 // 1|0x200|0x400 = 1537 on Darwin, which is exactly the kind of constant that
 // silently creates the wrong file rather than failing.
+// oflag is the open(2) flag word. Note that unlike every other table here,
+// O_DIRECTORY differs between the two LINUX arches as well as on Darwin: it is
+// 0o200000 (65536) on x86-64, 0o40000 (16384) on arm64 — an arch-specific
+// override of the asm-generic value — and 0x100000 (1048576) on XNU. So this
+// one needs a real three-way split, not the usual Darwin-vs-Linux fork.
+//
+// Every wrong value is a SILENT wrong flag rather than a rejected constant:
+// 65536 on arm64 Linux is O_RDONLY|O_DIRECT (EINVAL on /tmp), and 65536 on
+// Darwin is O_NDELAY|O_ASYNC (the open succeeds and the first read fails). The
+// retired arm64 hand-asm carried this in a comment; it is a table row now.
+//
+// O_WRONLY|O_CREAT|O_TRUNC is 577 on both Linux arches (O_CREAT and O_TRUNC are
+// generic) and 1537 on XNU.
 pub function oflag(t: string, name: string): string {
     if (t == "arm64-darwin") {
         if (name == "wr_creat_trunc") { return "1537"; }
+        if (name == "rd_directory") { return "1048576"; }
         return "0";
     }
+    if (t == "x86_64") {
+        if (name == "wr_creat_trunc") { return "577"; }
+        if (name == "rd_directory") { return "65536"; }
+        return "0";
+    }
+    // arm64 (Linux).
     if (name == "wr_creat_trunc") { return "577"; }
+    if (name == "rd_directory") { return "16384"; }
     return "0";
+}
+
+// atflag is the *at() family's flag word. AT_REMOVEDIR — "unlink this as a
+// directory, not a file" — is 0x200 on Linux and 0x80 on XNU.
+pub function atflag(t: string, name: string): string {
+    if (t == "arm64-darwin") {
+        if (name == "removedir") { return "128"; }
+        return "0";
+    }
+    if (name == "removedir") { return "512"; }
+    return "0";
+}
+
+// direntoff gives the byte offsets inside one directory record. d_reclen is at
+// 16 on both, but the name is not: Linux's linux_dirent64 is
+// { u64 d_ino; s64 d_off; u16 d_reclen @16; u8 d_type @18; char d_name[] @19 }
+// while XNU's dirent carries a second u16 (d_namlen @18) before d_type, putting
+// the name at 21. Getting this wrong reads a directory of names shifted by two
+// bytes, which is the kind of bug that looks like corruption rather than an
+// offset.
+pub function direntoff(t: string, name: string): string {
+    if (t == "arm64-darwin") {
+        if (name == "name") { return "21"; }
+        return "16";
+    }
+    if (name == "name") { return "19"; }
+    return "16";
 }
 
 // rt_src_random_bytes backs `random_bytes(n)` (#2649) — the first syscall-leaf
@@ -599,50 +654,61 @@ pub function rt_src_read_file(t: string): string {
 }
 
 // rt_src_read_dir backs `read_dir(path)` (#2649, syscall-leaf) → Result[string[],
-// IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY|O_DIRECTORY=
-// 65536) (syscall 257; mode ignored without O_CREAT so __syscall3 suffices), then
-// DRAIN the directory with a loop of getdents64 (syscall 217) reads into a FRESH
-// 64 KiB buffer each iteration — appending each entry's base name (skipping "." /
-// "..") to a string[]. The fresh-buffer-per-read shape avoids the `buf + off`
-// pointer arithmetic the i32 raw-pointer floor can't do 64-bit-safely (getdents64
-// never splits a linux_dirent64 record across calls, so each buffer parses
-// independently); the record fields are read via __raw_load8(buf, pos+k), which
-// offsets in the emitter. Record layout: d_ino(8) d_off(8) d_reclen(u16 @16)
-// d_type(1) d_name(@19, NUL-terminated). On openat failure the errno is classified
-// by the shared __fern_io_error (bundled with this helper), handed a FRESH path
-// string. The result string[] is built with .append() (→ __fern_arr_push /
-// arr_push_owned for the sole-owner local, like str_split). x86-64-only, and NOT
-// by constant substitution: Darwin's getdirentries64 takes a 4th out-param that
-// getdents64 has no equivalent of, and its dirent puts d_name at 21 rather than
-// 19 — a per-target body, not a per-target number.
-pub function rt_src_read_dir(): string {
-    return "function __fern_read_dir(path: string): Result[string[], IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 65536); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var names: string[] = []; var done: i32 = 0; while (done == 0) { var buf: i32 = __raw_alloc(65536); var n: i32 = __syscall3(217, fd, buf, 65536); if (n <= 0) { done = 1; } else { var pos: i32 = 0; while (pos < n) { var reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; var nlen: i32 = 0; while (__raw_load8(buf, pos + 19 + nlen) != 0) { nlen = nlen + 1; } var skip: i32 = 0; if (nlen == 1) { if (__raw_load8(buf, pos + 19) == 46) { skip = 1; } } if (nlen == 2) { if (__raw_load8(buf, pos + 19) == 46) { if (__raw_load8(buf, pos + 20) == 46) { skip = 1; } } } if (skip == 0) { var nbuf: i32 = __raw_alloc(nlen + 1); var k: i32 = 0; while (k < nlen) { __raw_store8(nbuf, k, __raw_load8(buf, pos + 19 + k)); k = k + 1; } names = names.append(__raw_string(nbuf, nlen)); } pos = pos + reclen; } } } __syscall3(3, fd, 0, 0); return Ok(names); }";
+// IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY|O_DIRECTORY),
+// then DRAIN the directory with a loop of getdents reads into a FRESH 64 KiB
+// buffer each iteration — appending each entry's base name (skipping "." / "..")
+// to a string[]. The fresh-buffer-per-read shape avoids the `buf + off` pointer
+// arithmetic the i32 raw-pointer floor cannot do 64-bit-safely (a directory
+// record is never split across calls, so each buffer parses independently); the
+// record fields are read via __raw_load8(buf, pos+k), which offsets in the
+// emitter. On openat failure the errno is classified by the shared
+// __fern_io_error (bundled with this helper), handed a FRESH path string. The
+// result string[] is built with .append() (→ __fern_arr_push / arr_push_owned
+// for the sole-owner local, like str_split).
+//
+// This was recorded as needing "a per-target body, not a per-target number",
+// on two grounds. Both turn out to be table rows over the existing floor:
+//
+//   * Darwin's getdirentries64 takes a 4th out-param (the updated directory
+//     position) that getdents64 has no equivalent of. __syscall4 is already in
+//     the floor, so the body issues FOUR arguments on every target and hands
+//     Linux a pointer it ignores — getdents64 reads three. That is deliberate:
+//     one arity beats branching, and an ignored register is free. The slot is
+//     an ordinary 8-byte __raw_alloc rather than __raw_scratch, because scratch
+//     is a single shared buffer and stat / the clocks also want it.
+//   * The dirent layouts differ, but only in where the name starts (19 vs 21,
+//     XNU carrying a d_namlen the Linux record does not) — direntoff.
+//
+// What is NOT a table row is O_DIRECTORY: 65536 on Linux, 1048576 on XNU. The
+// Linux value on Darwin means O_NDELAY|O_ASYNC, so the open SUCCEEDS and the
+// first read fails — see oflag.
+pub function rt_src_read_dir(t: string): string {
+    var nameoff: string = direntoff(t, "name");
+    return "function __fern_read_dir(path: string): Result[string[], IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, " + oflag(t, "rd_directory") + "); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var basep: i32 = __raw_alloc(8); var names: string[] = []; var done: i32 = 0; while (done == 0) { var buf: i32 = __raw_alloc(65536); var n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd, buf, 65536, basep); if (n <= 0) { done = 1; } else { var pos: i32 = 0; while (pos < n) { var reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; var nlen: i32 = 0; while (__raw_load8(buf, pos + " + nameoff + " + nlen) != 0) { nlen = nlen + 1; } var skip: i32 = 0; if (nlen == 1) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { skip = 1; } } if (nlen == 2) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { if (__raw_load8(buf, pos + " + nameoff + " + 1) == 46) { skip = 1; } } } if (skip == 0) { var nbuf: i32 = __raw_alloc(nlen + 1); var k: i32 = 0; while (k < nlen) { __raw_store8(nbuf, k, __raw_load8(buf, pos + " + nameoff + " + k)); k = k + 1; } names = names.append(__raw_string(nbuf, nlen)); } pos = pos + reclen; } } } __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return Ok(names); }";
 }
 
-// rt_src_remove_dir_all backs `remove_dir_all(path)` (#2649, the last fs
-// syscall-leaf) → Result[void, IoError]: a best-effort recursive rm -rf. It classifies
-// the target with openat(AT_FDCWD, path, O_RDONLY|O_DIRECTORY=65536): ENOENT (2) →
-// None (already gone); ENOTDIR (20) → unlinkat the file, None; any other error →
-// Err(__fern_io_error(e, path)); success → it is a directory, so it DRAINS the
-// dir with a getdents64 loop over a fresh 64 KiB buffer per read (the read_dir
-// shape), building each child path (path + "/" + name) directly in a raw buffer
-// and recursing, then rmdirs via unlinkat(..., AT_REMOVEDIR=512).
+// rt_src_remove_dir_all backs `remove_dir_all(path)` (#2649, the last fs leaf) →
+// Result[void, IoError]. Recursive post-order delete: open the dir, walk it with
+// its own getdents loop over a fresh 64 KiB buffer per read (the read_dir shape,
+// duplicated rather than shared because this one needs the child path, not the
+// name array), recurse into every entry, then rmdir the directory itself.
 //
-// Everything is done with the raw-memory intrinsics — deliberately NOT via the
-// (Fern) read_dir builtin. read_dir returns an RC-managed string[]; holding that
-// array live while recursing (each recursion allocates heavily) corrupts it — a
-// self-host RC/arena bug where the held array's memory is reused by the
-// recursion's allocations (SIGSEGV on any dir with a subdirectory; see #2649).
-// The raw getdents buffer + child-path buffers are __raw_alloc'd (bump-only, never
-// freed → never reclaimed → never reused by the recursion), so they stay valid
-// across the recursive call; the only RC value crossing the recursion is the
-// returned Result[void, IoError], which is safe. The fd is held open across the
-// recursion (best-effort; realistic tree depth only). Bundled with io_error in the
-// fs module so its error-path call threads as an ordinary call-graph edge, and
-// recurses by its own name (→ __fn___fern_remove_dir_all). x86-64-only for the
-// same reason read_dir is: it carries its own getdents64 loop.
-pub function rt_src_remove_dir_all(): string {
-    return "function __fern_remove_dir_all(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 65536); if (fd < 0) { var e: i32 = 0 - fd; if (e == 2) { return Ok(()); } if (e == 20) { __syscall3(263, -100, pathz, 0); return Ok(()); } return Err(__fern_io_error(e, __raw_string(pathz, plen))); } var done: i32 = 0; while (done == 0) { var buf: i32 = __raw_alloc(65536); var n: i32 = __syscall3(217, fd, buf, 65536); if (n <= 0) { done = 1; } else { var pos: i32 = 0; while (pos < n) { var reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; var nl: i32 = 0; while (__raw_load8(buf, pos + 19 + nl) != 0) { nl = nl + 1; } var skip: i32 = 0; if (nl == 1) { if (__raw_load8(buf, pos + 19) == 46) { skip = 1; } } if (nl == 2) { if (__raw_load8(buf, pos + 19) == 46) { if (__raw_load8(buf, pos + 20) == 46) { skip = 1; } } } if (skip == 0) { var cl: i32 = plen + 1 + nl; var cb: i32 = __raw_alloc(cl + 1); var a: i32 = 0; while (a < plen) { __raw_store8(cb, a, path[a]); a = a + 1; } __raw_store8(cb, plen, 47); var b: i32 = 0; while (b < nl) { __raw_store8(cb, plen + 1 + b, __raw_load8(buf, pos + 19 + b)); b = b + 1; } __raw_store8(cb, cl, 0); match (__fern_remove_dir_all(__raw_string(cb, cl))) { Ok(_) => {}, Err(_) => {} } } pos = pos + reclen; } } } __syscall3(3, fd, 0, 0); __syscall3(263, -100, pathz, 512); return Ok(()); }";
+// A missing path is Ok (idempotent delete). ENOTDIR (20 on both Linux and XNU)
+// means the path is a plain file, so unlink it and report success — that is what
+// makes `remove_dir_all` usable as "delete this, whatever it is".
+//
+// Recursing on EVERY entry rather than branching on d_type is deliberate: the
+// recursive call's own ENOTDIR arm unlinks a file, so one path handles both, and
+// d_type is not reliable on every filesystem (DT_UNKNOWN). It costs an extra
+// openat per file.
+//
+// The raw getdents buffer + child-path buffers are __raw_alloc'd (bump-only,
+// never freed within the call) — the same trade the rest of the syscall leaves
+// make. Target-parameterised on the same rows as read_dir, plus AT_REMOVEDIR
+// (512 on Linux, 128 on XNU — atflag).
+pub function rt_src_remove_dir_all(t: string): string {
+    var nameoff: string = direntoff(t, "name");
+    return "function __fern_remove_dir_all(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, " + oflag(t, "rd_directory") + "); if (fd < 0) { var e: i32 = 0 - fd; if (e == 2) { return Ok(()); } if (e == 20) { __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz, 0); return Ok(()); } return Err(__fern_io_error(e, __raw_string(pathz, plen))); } var basep: i32 = __raw_alloc(8); var done: i32 = 0; while (done == 0) { var buf: i32 = __raw_alloc(65536); var n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd, buf, 65536, basep); if (n <= 0) { done = 1; } else { var pos: i32 = 0; while (pos < n) { var reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; var nl: i32 = 0; while (__raw_load8(buf, pos + " + nameoff + " + nl) != 0) { nl = nl + 1; } var skip: i32 = 0; if (nl == 1) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { skip = 1; } } if (nl == 2) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { if (__raw_load8(buf, pos + " + nameoff + " + 1) == 46) { skip = 1; } } } if (skip == 0) { var cl: i32 = plen + 1 + nl; var cb: i32 = __raw_alloc(cl + 1); var a: i32 = 0; while (a < plen) { __raw_store8(cb, a, path[a]); a = a + 1; } __raw_store8(cb, plen, 47); var b: i32 = 0; while (b < nl) { __raw_store8(cb, plen + 1 + b, __raw_load8(buf, pos + " + nameoff + " + b)); b = b + 1; } __raw_store8(cb, cl, 0); match (__fern_remove_dir_all(__raw_string(cb, cl))) { Ok(_) => {}, Err(_) => {} } } pos = pos + reclen; } } } __syscall3(" + sysno(t, "close") + ", fd, 0, 0); __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz, " + atflag(t, "removedir") + "); return Ok(()); }";
 }
 
 // clock_read emits the statements that leave `sec` and `sub` bound — the

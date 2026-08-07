@@ -21,8 +21,9 @@ import (
 //	struct P { xs: i32[2], n+4 } allocs 300  frees 200   4000   <- struct did not
 //
 // so the unfreed block is the FIELD BUFFER, not the payload box. (The #6127
-// sweep recorded this shape as a leaked struct box; the size sweep above is what
-// corrected it, and it changed the fix from "free the box" to "drop the fields".)
+// leaked object here is the array FIELD buffer, not the struct box — identical
+// in size at this shape, so the size sweep above is what tells them apart, and
+// it is the difference between "free the box" and "drop the fields".)
 //
 // The REBOUND sibling has deep-dropped the same shape since #6252
 // (emit_optstruct_deep_free → __struct_drop_<P>), which is also the evidence

@@ -25,9 +25,8 @@ var castCases = []struct {
 	{"u8-in-range", "function main(): i32 { return (15 as u8) as i32; }", 15},
 	{"u32-passthrough", "function main(): i32 { var x: i32 = 42; return (x as u32) as i32; }", 42},
 	{"cast-with-bitwise", "function main(): i32 { var b: i32 = 171; return ((b >> 4) & 15) as u8 as i32; }", 10},
-	// Bitwise / shift operators (previously absent from the parser's
-	// precedence table — silently dropped, and a parser runaway inside
-	// parens).
+	// Bitwise / shift operators. Absent from the parser's precedence table
+	// they are silently dropped, with a parser runaway inside parens.
 	{"bit-and", "function main(): i32 { return 5 & 3; }", 1},
 	{"bit-or", "function main(): i32 { return 5 | 2; }", 7},
 	{"bit-xor", "function main(): i32 { return 6 ^ 3; }", 5},

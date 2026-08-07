@@ -77,7 +77,7 @@ func TestSelfHostFnValueIR(t *testing.T) {
 		{"mixed-arity", `function z(): i32 { return 5; } function s(x: i32): i32 { return x * 2; } function run0(f: () => i32): i32 { return f(); } function run1(g: (i32) => i32, n: i32): i32 { return g(n); } function main(): i32 { return run0(z) + run1(s, 18); }`, 41},
 		// #3574: bind a bare ZERO-ARG fn name to a `fn`-typed local, then call it.
 		// `f` is a value here (the fn-typed target disambiguates), not a const-call
-		// of f — previously this stored f()'s result and `g()` segfaulted.
+		// of f — storing f()'s result instead makes `g()` segfault.
 		{"bind-zero-arg", `function f(): i32 { return 7; } function main(): i32 { var g: () => i32 = f; return g(); }`, 7},
 		// ...called twice off the same bound value.
 		{"bind-call-twice", `function f(): i32 { return 7; } function main(): i32 { var g: () => i32 = f; return g() + g(); }`, 14},
@@ -85,7 +85,7 @@ func TestSelfHostFnValueIR(t *testing.T) {
 		{"bind-one-arg", `function inc(x: i32): i32 { return x + 1; } function main(): i32 { var g: (i32) => i32 = inc; return g(41); }`, 42},
 		// #3574 (array half): a `(() => i32)[]` literal of bare named-fn VALUES.
 		// Each element is a fn pointer (const_func), not a const-call of f, so the
-		// indexed `fns[i]()` dispatches the pointer — previously segfaulted.
+		// indexed `fns[i]()` dispatches the pointer.
 		{"arr-bind-call", `function f(): i32 { return 7; } function main(): i32 { var fns: (() => i32)[] = [f]; return fns[0](); }`, 7},
 		{"arr-two-sum", `function f(): i32 { return 7; } function g(): i32 { return 5; } function main(): i32 { var fns: (() => i32)[] = [f, g]; return fns[0]() + fns[1](); }`, 12},
 		// loop over a bare-named-fn array, calling each through a variable index.

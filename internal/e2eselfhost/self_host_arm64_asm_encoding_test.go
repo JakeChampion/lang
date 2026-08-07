@@ -152,9 +152,7 @@ _start:
     movz x2, #1, lsl #16
     movk x2, #0xffff, lsl #32
     // movn, explicitly. #6060 gave the self-host assembler a dispatch for it
-    // (it used to emit nothing at all) but the oracle had none, so this row had
-    // to be dropped and the encoder was covered only indirectly via mov #-100.
-    // #6075 taught the oracle movn, so the direct rows are back.
+    // and #6075 taught the oracle movn, so the direct rows work.
     movn x0, #99
     movn x3, #1, lsl #16
     movn w5, #7
@@ -319,10 +317,10 @@ func refusalsFor(t *testing.T, bin string, runner []string, snippet string) []st
 }
 
 // TestSelfHostArm64AsmUnresolvedBranchRefused pins the behaviour that made the
-// three #6045 bugs survivable in the first place: a branch whose target does not
-// resolve used to be patched as though the -1 "not placed" sentinel were an
-// offset, so the assembler emitted a well-formed binary that branched into the
-// ELF header instead of reporting anything. It must refuse.
+// three #6045 bugs survivable in the first place: patching a branch whose
+// target does not resolve as though the -1 "not placed" sentinel were an offset
+// emits a well-formed binary that branches into the ELF header instead of
+// reporting anything. It must refuse.
 //
 // Both shapes here are ones the emitter cannot produce, which is the point — the
 // guard has to hold for input nobody is currently generating, or it is not a

@@ -1,7 +1,7 @@
 // The struct-update spread `p = T{ ...p, f: v }` is Fern's record-update
 // idiom — E048 forbids field assignment, so every mutation of a struct is
-// written this way. It used to be the ONE self-overwrite shape
-// tryStructReuseOverwrite refused, because that path places only the
+// written this way, so tryStructReuseOverwrite must not refuse it — that
+// path places only the
 // explicitly listed fields and a fresh box's un-listed ones would read back
 // as 0. Filling the un-listed fields in as the `p.<name>` the spread means
 // (structUpdateFieldInits) makes them ordinary CARRIED fields, which the

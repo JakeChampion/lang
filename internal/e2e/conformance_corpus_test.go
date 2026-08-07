@@ -26,6 +26,11 @@ import (
 // by the loader: it justifies a case that asserts less than the maximum.
 var (
 	runSidecars = []string{"expected.stdout", "expected.exit", "stdin", "match", "backends"}
+	// reclaim-observable is a marker, not a value: its presence inverts the
+	// *FixturesFreeMatchesNoFree gates for the case (they require the two runs
+	// to DIFFER). It is read by fixture_test.go and rc_freelist_test.go, so it
+	// is a real sidecar — it was just never registered here, which made the
+	// case that introduced it fail this format check.
 	allSidecars = append([]string{"expected.error", "meta", "reclaim-observable"}, runSidecars...)
 )
 

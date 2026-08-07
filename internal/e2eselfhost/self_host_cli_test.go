@@ -1133,7 +1133,7 @@ function main(): i32 {
 		// The COMPILE path (not just `-check`) must reject the immutable-data
 		// cycle rules before codegen, so the self-host compiler is not MORE
 		// permissive than native — which always type-checks ahead of codegen
-		// (issue #2825: `p.x = v` previously compiled+ran on the self-host).
+		// (issue #2825: `p.x = v` must not compile+run on the self-host).
 		// A rejection exits non-zero with the coded diagnostic on stderr and
 		// emits NO asm; the sanctioned functional-update form still compiles.
 		for _, c := range []struct {

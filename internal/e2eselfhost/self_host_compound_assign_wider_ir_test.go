@@ -16,7 +16,7 @@ import (
 // in addition to the full i32 operator set, plus loop accumulation via `+=`.
 //
 // This pins the wider-type half of the "Compound assignment += -= *= …" audit
-// row (docs/FEATURE-AUDIT.md), previously exercised on the i32 path. Each case
+// row (docs/FEATURE-AUDIT.md); the i32 path is covered elsewhere. Each case
 // is oracle-checked against the interpreter, routing-pinned to "ir", and returns
 // a value <= 120 (wasmtime exit-code truncation, cf. #2908).
 var compoundAssignWiderIRCases = []struct {

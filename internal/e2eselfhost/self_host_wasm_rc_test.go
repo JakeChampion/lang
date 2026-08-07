@@ -159,8 +159,8 @@ func TestSelfHostRcFreeWasm(t *testing.T) {
 }
 
 // TestSelfHostRcCallResultWasm exercises reclamation of CALL-RESULT array
-// locals (`var x = build()`): previously leaked (never swept), now counted
-// and released at function exit because the callee is a user function
+// locals (`var x = build()`): counted and released at function exit rather
+// than never swept, because the callee is a user function
 // declared to return an array (so its StmtReturn applies return-retain).
 // Each program asserts the value AND a clean over-release detector — the
 // crucial case being a callee that returns a BORROWED param (return-retain

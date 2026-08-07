@@ -61,8 +61,7 @@ var interpProgs = []struct {
 	{"default-one", "function inc(n: i32, by: i32 = 1): i32 { return n + by; } function main(): i32 { return inc(41); }", 42},
 	{"default-multi", "function box(w: i32, h: i32 = 2, d: i32 = 3): i32 { return w * 100 + h * 10 + d; } function main(): i32 { return box(1) - 81; }", 42},
 	{"float", "function main(): i32 { var f: f64 = 3.5; var g: f64 = 2.5; if (f + g > 5.0) { return 7; } return 0; }", 7},
-	// `as` numeric casts — the interp's unary evaluator previously errored
-	// on every `as_<Type>` op ("unknown unary op"); now an integer-target
+	// `as` numeric casts — an integer-target
 	// cast is identity on an int / truncates a float, and a float-target
 	// cast widens an int / is identity on a float.
 	{"cast-i64-to-i32", "function main(): i32 { var v: i64 = 9; return v as i32; }", 9},
@@ -70,9 +69,8 @@ var interpProgs = []struct {
 	{"cast-i32-to-f64", "function main(): i32 { var n: i32 = 5; var f: f64 = n as f64; return (f + 0.5) as i32; }", 5},
 	{"cast-in-i64-array-sum", "function main(): i32 { var xs: i64[] = [3, 5, 90]; var s: i64 = 0; for v in xs { s = s + v; } return s as i32; }", 98},
 	// Non-numeric `as <Type>` ascription (#2669) — `as_i32[]` is a zero-cost
-	// identity on the value. eval_unary previously errored ("unknown unary op:
-	// as_i32[]") on every non-numeric cast; it now passes the operand through
-	// unchanged, matching the AST/IR emitters.
+	// identity on the value. eval_unary passes the operand through unchanged,
+	// matching the AST/IR emitters.
 	{"asc-array-identity", "function main(): i32 { var a = [3, 4] as i32[]; return a[0] + a[1]; }", 7},
 	// Range-for `for i in LOW..HIGH`: the parser emits a synthetic
 	// __range(LOW, HIGH) for-iter that the IR path lowers (irlower) but the
@@ -122,8 +120,8 @@ var interpProgs = []struct {
 	{"bit-shl", "function main(): i32 { return 1 << 4; }", 16},
 	{"bit-shr", "function main(): i32 { return 256 >> 2; }", 64},
 	// Total division semantics (#4348 item 6): integer `x / 0 == 0` and
-	// `x % 0 == x` (docs/INTEGER-SEMANTICS.md), not a runtime error — the
-	// engine previously returned VErr (exit 254 after error-swallowing).
+	// `x % 0 == x` (docs/INTEGER-SEMANTICS.md), not a runtime error (VErr,
+	// which exits 254 after error-swallowing).
 	{"div-by-zero-total", "function main(): i32 { return 7 / 0; }", 0},
 	{"mod-by-zero-total", "function main(): i32 { return 7 % 0; }", 7},
 	// Float division by zero is IEEE, not an error: `1.0/0.0` is +Inf and
@@ -166,9 +164,9 @@ var interpProgs = []struct {
 	// Callback-passing `use x <- call();` monadic bind (#4335): the rest of the
 	// block becomes a callback lambda appended as the call's last argument, and
 	// the block returns the call's result — `use r <- apply(41); return r + 1;`
-	// desugars to `return apply(41, (r) => { return r + 1; });`. Previously the
-	// line shredded (no `use` arm in parse_block/parse_stmt). apply invokes the
-	// callback with 41, so r + 1 == 42.
+	// desugars to `return apply(41, (r) => { return r + 1; });`. Needs a `use`
+	// arm in parse_block/parse_stmt. apply invokes the callback with 41, so
+	// r + 1 == 42.
 	{"use-monadic-bind", "function apply(n: i32, cb: (i32) => i32): i32 { return cb(n); } function main(): i32 { use r <- apply(41); return r + 1; }", 42},
 	// `as u8` truncates to the low 8 bits at runtime (#4348 item 3, cast slice):
 	// the interp treated the cast as identity, so a u8 cast didn't wrap. Now
@@ -204,9 +202,9 @@ var interpProgs = []struct {
 	// Nullary enum variants: `E.Red` constructs a payload-less variant
 	// value (a zero-field struct tagged with the variant name), and a
 	// qualified variant pattern `E.Red` matches it by its final path
-	// segment. The interp previously errored on the `E.Red` field-access
-	// (bare enum-type object resolved to no value) and never constructed
-	// the value. Payload variants (`E.Some(x)`) are a separate follow-up.
+	// segment — a bare enum-type object otherwise resolves to no value and
+	// the field access errors. Payload variants (`E.Some(x)`) are not
+	// covered here.
 	{"enum-nullary-match", "enum E { A, B } function main(): i32 { var e = E.B; match (e) { E.A => { return 1; }, E.B => { return 2; } } }", 2},
 	{"enum-nullary-first", "enum E { A, B } function main(): i32 { var e = E.A; match (e) { E.A => { return 1; }, E.B => { return 2; } } }", 1},
 	{"enum-three-way", "enum Color { Red, Green, Blue } function main(): i32 { var c = Color.Green; match (c) { Color.Red => { return 1; }, Color.Green => { return 2; }, Color.Blue => { return 3; } } }", 2},
@@ -239,8 +237,8 @@ var interpProgs = []struct {
 	{"enum-method-with-arg", "enum Opt { Some(i32), None } function (o: Opt) unwrap_or(dflt: i32): i32 { match (o) { Opt.Some(x) => { return x; }, Opt.None => { return dflt; } } } function main(): i32 { return Opt.Some(7).unwrap_or(0) + Opt.None.unwrap_or(5); }", 12},
 
 	// i64 values beyond i32 range. The interp's VInt is a 32-bit slot, so an
-	// i64 literal / arithmetic result that exceeds i32 previously truncated
-	// (`5000000000` wrapped). A second integer variant, VInt64, now holds
+	// i64 literal / arithmetic result that exceeds i32 would truncate
+	// (`5000000000` wraps). A second integer variant, VInt64, holds
 	// wide values as two i32 halves (a raw i64 union payload trips a
 	// native-backend drop fault; two i32 fields drop cleanly). A declared
 	// i64 type at a var/param binding promotes a compact value to VInt64 so
@@ -263,11 +261,11 @@ var interpProgs = []struct {
 	{"i32-overflow-unchanged", "function main(): i32 { var x: i32 = 100000; return x * 100000; }", 0},
 	// Typed u32 / f32 carriers (#4348 final slice). VUint tags a u32 bit
 	// pattern so div / rem / compares / `>>` run UNSIGNED (logical shift,
-	// count masked &31 — docs/INTEGER-SEMANTICS.md); previously u32 ops ran
-	// signed through VInt. VFloat32 tags an f32-precision value (stored as
+	// count masked &31 — docs/INTEGER-SEMANTICS.md) rather than signed
+	// through VInt. VFloat32 tags an f32-precision value (stored as
 	// the already-rounded f64, the #4366 model): arithmetic computes at f64
-	// then rounds the result to single precision, sticky through chains —
-	// previously f32 arithmetic ran at full f64. Each src pinned natively.
+	// then rounds the result to single precision, sticky through chains,
+	// rather than running at full f64. Each src pinned natively.
 	{"u32-shr-logical", "function main(): i32 { var x: u32 = 4294967288 as u32; var y = x >> 2; if (y == (1073741822 as u32)) { return 42; } return 7; }", 42},
 	{"u32-div-unsigned", "function main(): i32 { var x: u32 = 4294967290 as u32; var y: u32 = 5 as u32; if (x / y > (100 as u32)) { return 42; } return 7; }", 42},
 	{"u32-cmp-unsigned", "function main(): i32 { var x: u32 = 4294967290 as u32; if (x > (5 as u32)) { return 42; } return 7; }", 42},
@@ -330,7 +328,7 @@ var interpProgs = []struct {
 // TestSelfHostInterpDriverX86_64 is the keystone of the inference
 // overhaul: the self-hosted compiler compiles the self-hosted
 // INTERPRETER (interp.fern, whose Value union has VInt/VString/VFloat
-// all with field `v` — previously mis-inferred). The resulting binary
+// all with field `v`). The resulting binary
 // evaluates programs and exits with their result.
 func TestSelfHostInterpDriverX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)

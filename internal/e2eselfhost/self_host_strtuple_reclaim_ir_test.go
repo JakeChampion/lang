@@ -55,9 +55,9 @@ var strTupleReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// A string LITERAL element next to a fresh array: previously the string
-	// element rejected the whole tuple (all three allocations leaked); now the
-	// array routes the deep drop and the immortal literal is skipped.
+	// A string LITERAL element next to a fresh array: the array routes the deep
+	// drop and the immortal literal is skipped. Rejecting the whole tuple on the
+	// string element leaks all three allocations.
 	{"str-tuple-lit-mixed", `function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;
@@ -73,8 +73,8 @@ var strTupleReclaimCases = []struct {
 }`, 0},
 	// All-literal tuple `(i, "abc")`: construction str_box's the literal into
 	// a fresh copy, so the tuple routes the DEEP path (element copy freed,
-	// then the box) — previously the string element rejected the tuple from
-	// every reclaim class and all levels leaked per iteration.
+	// then the box). Rejecting the tuple on its string element leaks every
+	// level per iteration.
 	{"str-tuple-lit-shallow", `function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;

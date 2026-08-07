@@ -52,8 +52,8 @@ func TestSelfHostArm64DarwinMachORealAsm(t *testing.T) {
 		{"struct_method", `struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = Box { v: 4 }; return x.scale(3); }`, 12},
 		{"array_sum", `function main(): i32 { var a = [1, 2, 3, 4, 5]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15},
 		// Closures / function-pointer calls lower to `blr` (indirect call) —
-		// which the in-process arm64 assembler must encode (regression guard:
-		// it previously landed in p.unknown -> "UNKNOWN: blr").
+		// which the in-process arm64 assembler must encode rather than landing
+		// in p.unknown -> "UNKNOWN: blr".
 		{"closure", `function main(): i32 { var k = 40; var f = function(x: i32): i32 { return x + k; }; return f(2); }`, 42},
 		{"higher_order", `function apply(g: (i32) => i32, n: i32): i32 { return g(n); } function dbl(x: i32): i32 { return x * 2; } function main(): i32 { return apply(dbl, 21); }`, 42},
 	}

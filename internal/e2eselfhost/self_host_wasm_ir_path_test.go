@@ -15,8 +15,8 @@ import (
 // flat WAT); otherwise it takes the ordinary ROUTED path. Each program is
 // emitted BOTH ways, run under wasmtime, and the two exit codes must match.
 //
-// The two sides used to be IR-vs-AST — the AST emitter is gone (#3457), so this
-// now compares FORCED to ROUTED. It still catches a gate that declines a module
+// The two sides are FORCED and ROUTED (the AST emitter is gone, #3457). This
+// catches a gate that declines a module
 // the IR path handles correctly, and a forced emit that diverges from the routed
 // one; it no longer compares two emitters. A program the gates decline is a
 // refusal on the routed side rather than an AST fallback.
@@ -115,8 +115,8 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"bitwise", "function main(): i32 { return (6 & 3) | 8; }"},
 		{"shift", "function main(): i32 { return 1 << 4; }"},
 		// Hex literals: lowered via op_const_i32_text (source text spliced into
-		// `i32.const`), where the IR path previously zeroed every `0x..` via a
-		// decimal-only parse. Exit codes are mod 256 — shifts/masks expose the
+		// `i32.const`). A decimal-only parse zeroes every `0x..`. Exit codes are
+		// mod 256 — shifts/masks expose the
 		// high bits.
 		{"hex-small", "function main(): i32 { return 0xFF & 0x0F; }"},
 		{"hex-shift", "function main(): i32 { return (0x61626380 >> 8) & 255; }"},
