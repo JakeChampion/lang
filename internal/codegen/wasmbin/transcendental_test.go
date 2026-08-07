@@ -9,25 +9,17 @@ import (
 	"github.com/jakechampion/lang/internal/ir"
 )
 
-// TestEmitTranscendentalHelpers — exp / log / sin / cos / pow had no lowering
-// in this backend at all, so thirteen std/float methods were unbuildable for
-// wasm and failed with `unknown callee "__exp_f64"` (#6404). These five are the
-// only primitives; exp2, exp10, log2, log10, tan, sinh, cosh, tanh and cbrt
-// compose from them in float.fern.
+// TestEmitTranscendentalHelpers covers the five f64 primitives (#6404).
 //
-// The bar is deliberately NOT "matches Go's math package". These are fdlibm
-// kernels, shared with the x86-64 / arm64 emitters and with the self-host WAT
-// path, so they are expected to sit within a ulp or so of a correctly-rounded
-// libm and to AGREE WITH EACH OTHER. What this pins is that the port did not
-// mistranslate a constant or a stack order — an error of that kind is orders
-// out, not ulps.
+// The bar is agreement with the other backends, not with Go's math package:
+// these are fdlibm kernels shared with x86-64 / arm64, so a few ulp from a
+// correctly-rounded libm is expected. What ulp bounds catch is a mistranslated
+// constant or stack order, which is orders out rather than ulps.
 //
-// The domain guards are checked EXACTLY, because they are the part with no
-// tolerance to spend: without them exp(1000) returns -6.1e-183 rather than
-// +Inf (2^k is built as (k+1023)<<52 and k=1443 overflows the exponent field
-// into the sign bit) and log(0) returns -709.09 rather than -Inf.
+// Domain guards and the integral-y pow path are checked EXACTLY — neither has
+// tolerance to spend.
 func TestEmitTranscendentalHelpers(t *testing.T) {
-	// ulpDiff counts representable doubles between a and b. 0 == bit-identical.
+	// ulpDiff counts representable doubles between a and b.
 	ulpDiff := func(a, b float64) uint64 {
 		if a == b {
 			return 0
@@ -111,8 +103,7 @@ func TestEmitTranscendentalHelpers(t *testing.T) {
 		})
 	}
 
-	// pow: the integer-exponent path must be EXACT, which is the whole reason
-	// it exists — exp(y*ln x) cannot return exactly 9 for pow(3,2).
+	// The integral-y path must be exact; that is why it exists.
 	for _, c := range []struct {
 		name string
 		x, y float64
@@ -171,8 +162,8 @@ func TestEmitTranscendentalHelpers(t *testing.T) {
 	}
 }
 
-// parseWasmFloat reads the f64 runUnderWasmtime printed, accepting the
-// Inf/NaN spellings the runtime's formatter uses.
+// parseWasmFloat reads the f64 runUnderWasmtime printed, accepting the runtime
+// formatter's Inf/NaN spellings.
 func parseWasmFloat(t *testing.T, s string) float64 {
 	t.Helper()
 	s = strings.TrimSpace(s)

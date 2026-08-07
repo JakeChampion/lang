@@ -6057,30 +6057,18 @@ func buildTruncF64Body(_ map[string]uint32) []byte {
 
 // --- f64 transcendentals (#6404) --------------------------------------------
 //
-// exp / log / sin / cos / pow had no lowering here at all, so thirteen
-// std/float methods were unbuildable for -target wasm and failed with
-// `unknown callee "__exp_f64"` — a message naming an internal symbol rather
-// than the method the author called. Only these five are primitives; exp2,
-// exp10, log2, log10, tan, sinh, cosh, tanh and cbrt all compose from them in
-// float.fern and needed no work here.
+// fdlibm kernels, transliterated from the self-host wasm-IR path's WAT emitters
+// (wasm_ir.fern) so all four backends share constants and reduction order.
+// exp / log / sin / cos / pow are the only primitives; exp2, exp10, log2,
+// log10, tan, sinh, cosh, tanh and cbrt compose from them in float.fern.
 //
-// The kernels are fdlibm's, transliterated from the self-host wasm-IR path's
-// WAT emitters (wasm_ir.fern's exp_func / log_func / pow_func and siblings),
-// which are in turn the wasm siblings of the arm64 helpers. Same constants,
-// same order, same domain guards — so all four backends agree bit-for-bit on
-// the reduction and disagree only where the hardware does.
+// Two things that are easy to get wrong here:
 //
-// Two things the WAT source records that are easy to lose in a port:
-//
-//   - f64.nearest is ties-to-EVEN, which is what arm64's `frintn` and x86's
-//     `roundsd …, 0` do, so every backend picks the same k. (`frinta`, ties-
-//     away, would not.)
-//   - Every function guards its domain. Without that exp(1000) returns
-//     -6.1e-183 rather than +Inf, because 2^k is built as (k+1023)<<52 and
-//     k=1443 overflows the exponent field into the SIGN bit; log(0) returns
-//     -709.09 rather than -Inf. Infinities are spelled as
-//     f64.reinterpret_i64 of their bit patterns, the same idiom 2^k uses,
-//     rather than relying on a literal.
+//   - f64.nearest is ties-to-even, matching arm64 `frintn` and x86
+//     `roundsd …, 0`, so every backend picks the same k. `frinta` would not.
+//   - The domain guards are load-bearing, not defensive. 2^k is built as
+//     (k+1023)<<52, so without them exp(1000) overflows the exponent field into
+//     the sign bit and returns -6.1e-183 instead of +Inf.
 
 // f64 bit patterns for the infinities, used by the domain guards.
 const (
@@ -6116,13 +6104,11 @@ func instPolyStep(body []byte, p, t uint32, c float64) []byte {
 	return inst.InstLocalSet(body, p)
 }
 
-// buildExpF64Body — (f64) → f64, fdlibm __ieee754_exp.
+// buildExpF64Body — (f64) → f64, fdlibm __ieee754_exp. ln2 is carried as hi/lo
+// so the reduction keeps its low bits.
 //
-// x = k*ln2 + r with |r| <= ln2/2, e^x = 2^k * e^r, and e^r from the P1..P5
-// rational. ln2 is carried as hi/lo so the reduction keeps its low bits.
 // Locals (all f64, param x is 0): kf=1 r=2 hi=3 lo=4 t=5 c=6 p=7. k is
-// recomputed by truncating kf at the end rather than held in an i64 local, so
-// the locals vector stays a single group.
+// recomputed from kf at the end so the locals vector stays a single group.
 func buildExpF64Body(_ map[string]uint32) []byte {
 	const (
 		lx = 0 // param x
@@ -6236,11 +6222,9 @@ func putLocalsGroups(buf []byte, groups ...localGroup) []byte {
 	return buf
 }
 
-// buildLogF64Body — (f64) → f64, fdlibm __ieee754_log.
-//
-// x = 2^k * m with m normalised to [sqrt2/2, sqrt2); f = m-1; s = f/(2+f).
-// R(z) is two INDEPENDENT chains in w = z^2 so they evaluate in parallel
-// rather than as one 7-deep Horner.
+// buildLogF64Body — (f64) → f64, fdlibm __ieee754_log. x = 2^k * m with m in
+// [sqrt2/2, sqrt2). R(z) is two independent chains in w = z^2 so they evaluate
+// in parallel rather than as one 7-deep Horner.
 //
 // Locals: f64 m=1 f=2 s=3 z=4 w=5 t1=6 t2=7 hfsq=8 kf=9, then i64 k=10 bits=11.
 func buildLogF64Body(_ map[string]uint32) []byte {
@@ -6388,12 +6372,11 @@ func buildLogF64Body(_ map[string]uint32) []byte {
 }
 
 // instTrigReduceAndPolys emits the shared Cody-Waite reduction plus sin(r) and
-// cos(r) for both trig wrappers. Locals are declared by the caller and must be
-// laid out as: k=1 r=2 r2=3 sinr=4 cosr=5 hz=6 cw=7 (f64), q=8 (i64).
+// cos(r). Locals are declared by the caller as: k=1 r=2 r2=3 sinr=4 cosr=5
+// hz=6 cw=7 (f64), q=8 (i64).
 //
-// pi/2 is carried as THREE 33-bit chunks (~99 bits). Two is not enough near a
-// zero of sine, where the reduced argument IS the answer, so the reduction's
-// absolute error becomes the result's relative error.
+// pi/2 needs THREE 33-bit chunks: near a zero of sine the reduced argument is
+// the answer, so the reduction's absolute error becomes the relative error.
 func instTrigReduceAndPolys(body []byte) []byte {
 	const (
 		lx   = 0
@@ -6555,12 +6538,9 @@ func buildCosF64Body(_ map[string]uint32) []byte {
 
 // buildPowF64Body — (f64, f64) → f64.
 //
-// The integer-exponent fast path is NOT an optimisation. exp(y*ln x) cannot
-// return exactly 9 for pow(3, 2): a 1-ulp error in ln 3, amplified by the
-// exponential, lands just under, and `as i32` then truncates it to 8. Repeated
-// squaring is exact wherever the result is representable. Integrality is an
-// i64 round-trip, so a NaN or out-of-range y falls out as a huge |n| that the
-// range check rejects and the general path handles.
+// The integral-y path is exact repeated squaring, which is required rather than
+// faster: exp(y*ln x) cannot return exactly 9 for pow(3, 2). Integrality is an
+// i64 round-trip, so NaN and out-of-range y fall out as a huge |n|.
 //
 // Locals: f64 acc=2 base=3, then i64 n=4 an=5 (params x=0, y=1).
 func buildPowF64Body(funcs map[string]uint32) []byte {
@@ -6595,14 +6575,8 @@ func buildPowF64Body(funcs map[string]uint32) []byte {
 		body = numeric.InstI64Sub(body)
 		body = inst.InstLocalSet(body, an)
 		body = inst.InstEnd(body)
-		// Bound the loop at |n| <= 64, matching the self-host WAT emitter.
-		// This is NOT about representability — 2^280 is a perfectly finite
-		// double, and it is exactly this bound that sends it down the
-		// exp(y*log x) path and makes it several ulp out (#6405). The bound
-		// caps both the iteration count and the accumulated rounding for a
-		// general x, whose intermediate squarings are not exact. Raising it
-		// is #6405's call to make, with its own measurements; matching the
-		// other backends is this change's job.
+		// |n| <= 64 caps accumulated rounding for a general x, not
+		// representability; it is why 2^280 takes the exp(y*log x) path (#6405).
 		body = inst.InstLocalGet(body, an)
 		body = inst.InstI64Const(body, 64)
 		body = numeric.InstI64LeS(body)
