@@ -179,6 +179,8 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmLd1(a, ops)
 	case "cmeq":
 		return asmCmeq(a, ops)
+	case "cmlt":
+		return asmCmlt(a, ops)
 	case "shrn":
 		return asmShrn(a, ops)
 	case "umov":
@@ -831,6 +833,40 @@ func asmCmeq(a *Assembler, ops []string) error {
 		return fmt.Errorf("cmeq operands must share an arrangement: %q, %q, %q", ops[0], ops[1], ops[2])
 	}
 	a.Emit(CMEQ(rd, rn, rm, qd))
+	return nil
+}
+
+// asmCmlt handles `cmlt Vd.<T>, Vn.<T>, #0` — per-byte signed compare against
+// zero, i.e. "is the high bit set".
+//
+// The immediate is checked to be literally zero rather than encoded: this
+// encoding has no immediate field, #0 is part of the opcode. `cmlt v0.16b,
+// v0.16b, #1` is not a wider version of this instruction, it does not exist,
+// and encoding it as if it were would produce a compare against zero that
+// reads correct at the call site.
+func asmCmlt(a *Assembler, ops []string) error {
+	if len(ops) != 3 {
+		return fmt.Errorf("cmlt expects Vd.<T>, Vn.<T>, #0")
+	}
+	rd, qd, err := parseVecArr(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, qn, err := parseVecArr(ops[1])
+	if err != nil {
+		return err
+	}
+	if qd != qn {
+		return fmt.Errorf("cmlt operands must share an arrangement: %q, %q", ops[0], ops[1])
+	}
+	imm, err := parseImm(ops[2])
+	if err != nil {
+		return err
+	}
+	if imm != 0 {
+		return fmt.Errorf("cmlt takes only the compare-against-zero form, got #%d", imm)
+	}
+	a.Emit(CMLT(rd, rn, qd))
 	return nil
 }
 

@@ -2532,6 +2532,11 @@ var CallDirectAliases = map[string]string{
 	// and stay unimplemented in wasmbin for now (the WAT path
 	// is in the same state).
 	"__sqrt_f64":  "__fern_sqrt_f64",
+	"__exp_f64":   "__fern_exp_f64",
+	"__log_f64":   "__fern_log_f64",
+	"__sin_f64":   "__fern_sin_f64",
+	"__cos_f64":   "__fern_cos_f64",
+	"__pow_f64":   "__fern_pow_f64",
 	"__abs_f64":   "__fern_abs_f64",
 	"__floor_f64": "__fern_floor_f64",
 	"__ceil_f64":  "__fern_ceil_f64",

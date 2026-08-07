@@ -2513,6 +2513,13 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // for both the index and the not-found sentinel; the
                     // haystack length it searches is an i32 everywhere.
                     if (id.name == "__memchr") { return ty_i32(); }
+                    // __ascii_run(s, from): the index of the first byte at or
+                    // after `from` with its high bit set, or the LENGTH if the
+                    // rest is ASCII (ATLAS-PLATFORM-PLAN §3). i32 either way —
+                    // both answers are offsets into an i32-length string, which
+                    // is why the miss value can be a real index rather than a
+                    // sentinel outside the type.
+                    if (id.name == "__ascii_run") { return ty_i32(); }
                     if (id.name == "__load_i32") { return ty_i32(); }
                     if (id.name == "exit") { return ty_i32(); }
                     if (id.name == "args_count") { return ty_i32(); }

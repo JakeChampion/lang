@@ -7506,11 +7506,13 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 		}
 		if !pairFormScrutinee && !consumeScrut && consumeOwnedName == "" {
+			bns := make([][]string, 0, len(n.Arms))
 			bts := make([][]ast.Type, 0, len(n.Arms))
 			for _, arm := range n.Arms {
+				bns = append(bns, arm.Bindings)
 				bts = append(bts, arm.BindingTypes)
 			}
-			scrutEnum, reclaimScrut = b.reclaimableMatchScrutinee(n.Tag, bts, nil)
+			scrutEnum, reclaimScrut = b.reclaimableMatchScrutinee(n.Tag, bns, bts, nil)
 		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
@@ -8259,11 +8261,13 @@ func (b *builder) expr(e ast.Expr) error {
 		// completes (value-consuming position; see reclaimableMatchScrutinee).
 		// Gated additionally on the RESULT being non-pointer (resultType): a
 		// pointer result could alias an extracted payload, so it's left alone.
+		bns := make([][]string, 0, len(n.Arms))
 		bts := make([][]ast.Type, 0, len(n.Arms))
 		for _, arm := range n.Arms {
+			bns = append(bns, arm.Bindings)
 			bts = append(bts, arm.BindingTypes)
 		}
-		scrutEnum, reclaimScrut := b.reclaimableMatchScrutinee(n.Tag, bts, resultType)
+		scrutEnum, reclaimScrut := b.reclaimableMatchScrutinee(n.Tag, bns, bts, resultType)
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
 		for _, arm := range n.Arms {
@@ -12087,6 +12091,21 @@ func (b *builder) callBody(n *ast.Call) error {
 			// survives a green x86-64 suite.
 			b.emit(Op{Kind: OpCallDirect, Str: "__fern_memchr", I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
+			return nil
+		}
+	}
+	// __ascii_run(s, from) — the same runtime-helper-call shape as __memchr
+	// above, and ArgTypes is load-bearing here for the same reason: `string`
+	// is two operand slots on arm64 and wasm, one on x86-64.
+	if id.Name == "__ascii_run" && len(n.Args) == 2 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_ascii_run", I32: 2,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
 			return nil
 		}
 	}

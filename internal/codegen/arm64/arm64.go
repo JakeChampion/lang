@@ -540,6 +540,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesMemchr {
 		g.emitMemchrRuntime()
 	}
+	if g.usesAsciiRun {
+		g.emitAsciiRunRuntime()
+	}
 	if g.usesStrcat {
 		g.emitStrcatRuntime()
 	}
@@ -3577,6 +3580,96 @@ func (g *generator) emitMemchrRuntime() {
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
 	g.sizeDirective("__fern_memchr")
+}
+
+// emitAsciiRunRuntime emits `__fern_ascii_run(s, from) -> i32`: the index of
+// the first byte at or after `from` whose high bit is set, or len(s) if the
+// rest is ASCII.
+//
+// The arm64 half of docs/ATLAS-PLATFORM-PLAN.md §3's second kernel. It is
+// cheaper than __memchr on both architectures, but for different reasons, and
+// the difference is worth naming because it is the same asymmetry as the mask
+// extraction, running the other way:
+//
+//   - x86-64 saves the COMPARE. pmovmskb already gathers the top bit of each
+//     byte, which is the whole question, so the vector body is load / gather /
+//     test — no splat, no compare at all.
+//   - arm64 saves the SPLAT. NEON still needs a compare to widen "high bit
+//     set" into an all-ones lane before shrn can narrow it, but `cmlt v0.16b,
+//     v0.16b, #0` compares against zero, so there is no operand to broadcast:
+//     the dup that __memchr needs disappears.
+//
+// Two-word string ABI as in __memchr (x0 = data word, x1 = length word), which
+// puts `from` in w2 — one register earlier than __memchr's w3, since there is
+// no byte operand.
+//
+// Returns len(s) rather than -1 on a miss, the same deliberate break with
+// __memchr's convention: the caller is a validator advancing a cursor, so
+// `i = __ascii_run(s, i)` has to be a branch-free skip.
+func (g *generator) emitAsciiRunRuntime() {
+	g.line("")
+	g.line(".global __fern_ascii_run")
+	g.typeDirective("__fern_ascii_run")
+	g.label("__fern_ascii_run")
+	// Frame as __memchr's: fp/lr + 16 bytes of inline-SSO spill scratch at
+	// [x29+16] + alignment padding.
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("mov x4, x0") // data word
+	g.emit("mov x5, x1") // length word
+	// Order matters, as in __memchr: emitStrLen2W overwrites its source on
+	// the inline path, so materialise the pointer while the length word is
+	// still intact.
+	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
+	g.emitStrLen2W("w6", "x5")               // w6 = byte length
+	// Clamp `from` into [0, len]; at or past the end the answer is len.
+	g.emit("tbz w2, #31, .Lascii_from_ok")
+	g.emit("mov w2, #0")
+	g.label(".Lascii_from_ok")
+	g.emit("cmp w2, w6")
+	g.emit("b.ge .Lascii_end")
+	g.emit("add x8, x7, w2, uxtw") // cursor = data + from
+	g.emit("add x9, x7, w6, uxtw") // end    = data + len
+	g.label(".Lascii_vec")
+	g.emit("sub x10, x9, x8")
+	g.emit("cmp x10, #16")
+	g.emit("b.lt .Lascii_tail")
+	// Unaligned load, safe for __memchr's reason: the pointer is
+	// allocator-owned, so a 16-byte read starting inside the string cannot
+	// reach an unmapped page.
+	g.emit("ld1 {v0.16b}, [x8]")
+	g.emit("cmlt v0.16b, v0.16b, #0")
+	g.emit("shrn v0.8b, v0.8h, #4")
+	g.emit("fmov x11, d0")
+	g.emit("cbz x11, .Lascii_next")
+	// Lowest set bit -> lane, four mask bits per input byte.
+	g.emit("rbit x12, x11")
+	g.emit("clz x12, x12")
+	g.emit("lsr x12, x12, #2")
+	g.emit("add x8, x8, x12")
+	g.emit("sub x0, x8, x7")
+	g.emit("b .Lascii_ret")
+	g.label(".Lascii_next")
+	g.emit("add x8, x8, #16")
+	g.emit("b .Lascii_vec")
+	// Scalar tail: the final 0..15 bytes, and the whole algorithm for a
+	// short string.
+	g.label(".Lascii_tail")
+	g.emit("cmp x8, x9")
+	g.emit("b.ge .Lascii_end")
+	g.emit("ldrb w10, [x8]") // zero-extending, so bit 7 is the high bit
+	g.emit("tbnz w10, #7, .Lascii_tail_hit")
+	g.emit("add x8, x8, #1")
+	g.emit("b .Lascii_tail")
+	g.label(".Lascii_tail_hit")
+	g.emit("sub x0, x8, x7")
+	g.emit("b .Lascii_ret")
+	g.label(".Lascii_end")
+	g.emit("mov w0, w6") // no high byte: the answer is len
+	g.label(".Lascii_ret")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_ascii_run")
 }
 
 func (g *generator) emitStrcmpRuntime() {
@@ -9065,6 +9158,8 @@ type generator struct {
 	usesStrcmp   bool
 	// usesMemchr gates the NEON byte-search kernel (__fern_memchr).
 	usesMemchr bool
+	// usesAsciiRun gates the NEON high-bit scan kernel (__fern_ascii_run).
+	usesAsciiRun bool
 	// usesTcp pulls in the full TCP socket runtime
 	// (__fern_tcp_listen / __fern_tcp_accept / __fern_tcp_recv
 	// / __fern_tcp_send / __fern_tcp_close). Gated on call-
@@ -12150,6 +12245,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRandomI32 = true // the lazy first-call draw
 		case "__fern_memchr":
 			g.usesMemchr = true
+		case "__fern_ascii_run":
+			g.usesAsciiRun = true
 		case "__fern_heap_bump_bytes":
 			g.usesHeapBumpBytes = true
 			g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base

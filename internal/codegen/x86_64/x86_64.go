@@ -597,6 +597,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesMemchr {
 		g.emitMemchrRuntime()
 	}
+	if g.usesAsciiRun {
+		g.emitAsciiRunRuntime()
+	}
 	if g.usesF64Trans {
 		g.emitFloatTranscendentalsRuntime()
 	}
@@ -828,6 +831,8 @@ type generator struct {
 	// takes over from the assignment's dec-on-overwrite).
 	usesStrAppend bool
 	usesStrcmp    bool
+	// usesAsciiRun gates the SSE2 high-bit scan kernel (__fern_ascii_run).
+	usesAsciiRun bool
 	// usesMemchr gates the SSE2 byte-search kernel (__fern_memchr).
 	usesMemchr bool
 	// usesF64Trans gates the f64 transcendental bundle —
@@ -1193,6 +1198,8 @@ func (g *generator) recordUse(target string) {
 		g.usesRcDec = true
 	case "__fern_rc_underflow_count":
 		g.usesRcUnderflowCount = true
+	case "__fern_ascii_run":
+		g.usesAsciiRun = true
 	case "__fern_arr_push_shared_count":
 		g.usesArrPushSharedCount = true
 	case "__fern_arr_push_shared_bytes":
@@ -7305,6 +7312,92 @@ func (g *generator) emitF64Negate(reg string) {
 	g.emit("movabs rdx, 0x8000000000000000")
 	g.emit("movq xmm8, rdx")
 	g.emit("xorpd " + reg + ", xmm8")
+}
+
+// emitAsciiRunRuntime emits `__fern_ascii_run(s, from) -> i32`: the index of
+// the first byte at or after `from` whose high bit is set, or len(s) if the
+// rest is ASCII.
+//
+// THE SECOND VECTOR KERNEL (docs/ATLAS-PLATFORM-PLAN.md §3), and cheaper than
+// the first. `pmovmskb` gathers the top bit of each of the 16 bytes — which is
+// exactly the ASCII test — so this needs NO splat and NO compare, where
+// __memchr needs four instructions to broadcast the needle and a `pcmpeqb` per
+// block. The whole vector body is movdqu / pmovmskb / test.
+//
+// It returns len(s) rather than -1 when it finds nothing, which is not the
+// __memchr convention and is deliberate: the caller is a validator advancing a
+// cursor, so `i = __ascii_run(s, i)` has to be a straight skip. A -1 would put
+// a branch on the hot path of every ASCII run.
+//
+// Same §3.1 contract as __memchr: scalars in, scalar out, no xmm value live
+// across an op boundary, a call, or a branch out of this body.
+func (g *generator) emitAsciiRunRuntime() {
+	g.line("")
+	g.line(".globl __fern_ascii_run")
+	g.line(".type __fern_ascii_run, @function")
+	g.label("__fern_ascii_run")
+	// rdi = string, esi = from.
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")
+	g.emitStrLen("ecx", "rdi") // ecx = len
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	// Clamp `from` into [0, len]; at or past the end the answer is len.
+	g.emit("test esi, esi")
+	g.emit("jns .Lascii_from_ok")
+	g.emit("xor esi, esi")
+	g.label(".Lascii_from_ok")
+	g.emit("cmp esi, ecx")
+	g.emit("jge .Lascii_end")
+	// r8 = cursor, r9 = end.
+	g.emit("mov r8d, esi")
+	g.emit("add r8, rdi")
+	g.emit("mov r9d, ecx")
+	g.emit("add r9, rdi")
+	// Vector loop: 16 bytes per iteration while at least 16 remain. The
+	// unaligned load is safe for the same reason as __memchr's — the pointer
+	// is allocator-owned, so a 16-byte read starting inside the string cannot
+	// reach an unmapped page.
+	g.label(".Lascii_vec")
+	g.emit("mov rax, r9")
+	g.emit("sub rax, r8")
+	g.emit("cmp rax, 16")
+	g.emit("jl .Lascii_tail")
+	g.emit("movdqu xmm0, [r8]")
+	g.emit("pmovmskb eax, xmm0")
+	g.emit("test eax, eax")
+	g.emit("jnz .Lascii_hit")
+	g.emit("add r8, 16")
+	g.emit("jmp .Lascii_vec")
+	g.label(".Lascii_hit")
+	// bsf, not tzcnt: tzcnt is BMI1 and below the baseline its F3 prefix is
+	// ignored, degrading silently to bsf rather than faulting.
+	g.emit("bsf eax, eax")
+	g.emit("add r8, rax")
+	g.emit("sub r8, rdi")
+	g.emit("mov eax, r8d")
+	g.emit("jmp .Lascii_ret")
+	// Scalar tail: the final 0..15 bytes, and the whole algorithm for a short
+	// string.
+	g.label(".Lascii_tail")
+	g.emit("cmp r8, r9")
+	g.emit("jge .Lascii_end")
+	g.emit("movzx eax, byte ptr [r8]")
+	g.emit("test al, al")
+	g.emit("js .Lascii_tail_hit") // sign bit set == byte >= 0x80
+	g.emit("inc r8")
+	g.emit("jmp .Lascii_tail")
+	g.label(".Lascii_tail_hit")
+	g.emit("mov rax, r8")
+	g.emit("sub rax, rdi")
+	g.emit("jmp .Lascii_ret")
+	g.label(".Lascii_end")
+	g.emit("mov eax, ecx") // no high byte: the answer is len
+	g.label(".Lascii_ret")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_ascii_run, .-__fern_ascii_run")
 }
 
 // emitMemchrRuntime emits `__fern_memchr(s, byte, from) -> i32`: the index of
