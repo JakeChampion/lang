@@ -10435,6 +10435,7 @@ func (b *builder) binary(n *ast.Binary) error {
 	if err := b.expr(n.Right); err != nil {
 		return err
 	}
+	b.widenShiftCount(n)
 	if n.IsFloat {
 		op, ok := floatOp(n.Op)
 		if !ok {
@@ -10598,6 +10599,48 @@ func isAllOnesMask(v int64, intWidth int) bool {
 		return v == -1
 	}
 	return v == -1 || v == 0xFFFFFFFF
+}
+
+// widenShiftCount extends a 32-bit shift COUNT to 64 bits when the shift
+// itself is 64-bit. wasm's `i64.shl` / `i64.shr_s` / `i64.shr_u` require BOTH
+// operands to be i64, so a 32-bit count leaves an (i64, i32) pair on the stack
+// and produces a module that fails validation: "type mismatch: expected i64,
+// found i32". The compiler reported success and wasmtime refused to load the
+// result — a build that silently produced nothing runnable.
+//
+// Two of the three ways to write a count were already covered: a constant one
+// takes emitShlByConst, fixed earlier when strength reduction started rewriting
+// `i64-expr * 2^k` into a shift, and a parameter or ordinary local reaches the
+// shift through a checker-inserted cast. A LOOP VARIABLE goes through neither
+// — `for i in 0..n { s << i }` arrives as a bare 32-bit local under a 64-bit
+// shift. Covering the general case rather than that one shape keeps the
+// invariant ("the count reaches the shift at the shift's width") from
+// depending on which of those paths a future expression happens to take.
+//
+// Native targets read the count from a register regardless of its declared
+// width, which is why the interpreter, x86-64 and arm64 all agreed on the
+// right answer while only wasm broke.
+//
+// The extend follows the COUNT's own signedness. A shift count is a small
+// non-negative number in every valid program, so the two agree wherever it
+// matters; using the count's own signedness rather than the value's keeps the
+// widening faithful to the expression that produced it.
+func (b *builder) widenShiftCount(n *ast.Binary) {
+	if n.Op != "<<" && n.Op != ">>" {
+		return
+	}
+	if n.IntWidth != 64 || n.IsFloat {
+		return
+	}
+	rt, ok := b.exprType(n.Right).(ast.NumberType)
+	if !ok || rt.NormalWidth() == 64 || rt.IsPointerWidth() {
+		return
+	}
+	if rt.IsSigned() {
+		b.emit(Op{Kind: OpExtendI32S})
+		return
+	}
+	b.emit(Op{Kind: OpExtendI32U})
 }
 
 // emitShlByConst pushes a constant shift count `k` of the
