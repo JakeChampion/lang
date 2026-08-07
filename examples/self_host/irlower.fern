@@ -39877,6 +39877,29 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                                 // fn-typed enum payload (`match (b) { W(f) => return f }`,
                                 // #5202 case D) — the box the caller must dispatch env-first.
                                 if (!hit && body_binds_fn_payload_via_match(b, nrid.name, structs)) { hit = true; }
+                                // (b') `return p` where p is this function's own
+                                // fn-typed PARAM. A fn-typed param is ALWAYS a box
+                                // here — the lift pass routes every fn-value
+                                // argument through try_fn_field_value ("there is
+                                // one fn-arg shape, the box"), and lower_func
+                                // already mark_closure_local's every "fn" param on
+                                // the strength of that. So a declared-fn-returning
+                                // function that returns one returns a box, and the
+                                // caller's binding has to dispatch env-first.
+                                //
+                                // Reached by the #6324 hoist: it carries a captured
+                                // fn-typed local into the hoisted function as a
+                                // param, so the arm that read a local now reads a
+                                // param and form (b) stopped matching. Without this
+                                // the caller bare-called the box — a bail turned
+                                // into a SIGSEGV.
+                                if (!hit) {
+                                    var pk: i32 = 0;
+                                    while (pk < funcs[fi].params.len()) {
+                                        if (funcs[fi].params[pk].name == nrid.name && funcs[fi].params[pk].type_name == "fn") { hit = true; }
+                                        pk = pk + 1;
+                                    }
+                                }
                             },
                             // (c) `return <closure-returning call>` — a factory
                             // that forwards another factory's box, e.g.
@@ -45202,6 +45225,104 @@ function cap_type(name: string, fd: parser.FuncDecl, structs: parser.StructDecl[
     return cap_type_at(name, fd, 4, structs, mfuncs);
 }
 
+// cap_local_init returns the initialiser of the local `name` bound by a `var` in
+// `body`, or an unknown expression when there is none. The sibling of
+// cap_type_in_stmts' walk — that one answers "what type is it", this one answers
+// "what was it bound FROM", which is the only place a fn-typed local's signature
+// still survives (see cap_param_for).
+function cap_local_init(body: parser.Stmt[], name: string): parser.Expr {
+    var i: i32 = 0;
+    while (i < body.len()) {
+        var found: parser.Expr = parser.e_unknown("");
+        match (body[i]) {
+            parser.StmtVar(v) => { if (v.name == name) { return v.init; } },
+            parser.StmtIf(iff) => {
+                found = cap_local_init(iff.then_body, name);
+                match (found) { parser.ExprUnknown(_) => { found = cap_local_init(iff.else_body, name); }, _ => {} }
+            },
+            parser.StmtWhile(w) => { found = cap_local_init(w.body, name); },
+            parser.StmtFor(fo) => { found = cap_local_init(fo.body, name); },
+            parser.StmtMatch(mm) => {
+                var a: i32 = 0;
+                while (a < mm.arms.len()) {
+                    match (found) { parser.ExprUnknown(_) => { found = cap_local_init(mm.arms[a].body, name); }, _ => {} }
+                    a = a + 1;
+                }
+            },
+            _ => {}
+        }
+        match (found) { parser.ExprUnknown(_) => {}, _ => { return found; } }
+        i = i + 1;
+    }
+    return parser.e_unknown("");
+}
+
+// cap_param_for builds the ParamDecl that carries capture `name` into a hoisted
+// function, or declines by returning one with an empty type_name.
+//
+// The point of it is fn-TYPED captures (#6324). cap_type coarsens every fn type
+// to the flat "fn" tag, which is enough for the env-box path (make_clo_func only
+// needs to know the value is pointer-shaped) but NOT enough to synthesize a
+// fn-typed PARAM: that additionally needs fn_ret, fn_param_types and
+// fn_param_dyn, the sidecars parse_param records precisely because the flat tag
+// throws the signature away. A param built without them is not the one the call
+// side reads — hoist_capturing_iife used to decline every fn-typed capture for
+// exactly this reason, which is what kept #6256's Repro D bailing.
+//
+// Two sources are exact enough to use, and nothing else is:
+//
+//   * a PARAM or receiver — copy fd.params[i] wholesale. Nothing is
+//     reconstructed, so nothing can be reconstructed wrong.
+//   * a LOCAL bound from a lambda literal — the lambda carries its own params
+//     and ret_type (the parser stamps a binding's annotated return onto it via
+//     stamp_lambda_ret), so the signature is recoverable without guessing.
+//
+// A local bound from anything else (a call, another local) declines: StmtVar
+// keeps only the coarse type_name, so the signature is genuinely gone and there
+// is nothing to recover it from. Declining leaves the module bailing as it does
+// today.
+//
+// Being exact matters more here than usual: wasm funcref types are STRUCTURAL
+// (#6282), so a wrong fn_param_types does not degrade into a slow path — it
+// produces a module the loader rejects, or an `indirect call type mismatch` at
+// runtime. Copy where possible, reconstruct only from an unambiguous source,
+// decline otherwise.
+function cap_param_for(name: string, fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): parser.ParamDecl {
+    var declined: parser.ParamDecl = parser.ParamDecl { name: name, type_name: "", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
+    var pi: i32 = 0;
+    while (pi < fd.params.len()) {
+        if (fd.params[pi].name == name) { return fd.params[pi]; }
+        pi = pi + 1;
+    }
+    var cty: string = cap_type(name, fd, structs, mfuncs);
+    if (cty.len() == 0) { return declined; }
+    if (cty != "fn") {
+        return parser.ParamDecl { name: name, type_name: cty, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
+    }
+    match (cap_local_init(fd.body, name)) {
+        parser.ExprLambda(lam) => {
+            var ptys: string = "";
+            var dyns: string = "";
+            var pj: i32 = 0;
+            while (pj < lam.params.len()) {
+                var pt: string = lam.params[pj].type_name;
+                if (pt.len() == 0) { return declined; }
+                if (pj > 0) { ptys = ptys + ","; }
+                ptys = ptys + pt;
+                if (pt.len() > 4 && pt[0:4] == "dyn ") {
+                    if (dyns.len() > 0) { dyns = dyns + ","; }
+                    dyns = dyns + util.i32_to_string(pj);
+                }
+                pj = pj + 1;
+            }
+            if (lam.ret_type.len() == 0) { return declined; }
+            return parser.ParamDecl { name: name, type_name: "fn", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: lam.ret_type, fn_param_dyn: dyns, fn_param_types: ptys };
+        },
+        _ => { return declined; }
+    }
+    return declined;
+}
+
 function cap_type_at(name: string, fd: parser.FuncDecl, depth: i32, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): string {
     // The receiver binds like a param (see lambda_captures), so resolve it first.
     if (fd.receiver_name.len() > 0 && fd.receiver_name == name) { return fd.receiver_type; }
@@ -46332,6 +46453,48 @@ function expr_is_closure_box(e: parser.Expr, s: LowerState): boolean {
 // Gated on the IIFE both CAPTURING (lambda_has_no_captures — the very predicate
 // that decides whether the existing hoist fires) and holding a fn-VALUED arm.
 // Everything else is left exactly as it was, so no working program changes path.
+// iife_arms_have_lambda reports whether any arm of a value-position if/match
+// yields an inline LAMBDA, which is the only thing the hoist is needed for.
+//
+// The two halves of #6256 must not both fire on the same IIFE. An IIFE whose
+// arms are all already-boxed fn values (closure locals) needs no hoist at all:
+// #6323's clo_init marking recognises the IIFE init directly and binds the
+// destination as a closure local. Hoisting it would REPLACE the IIFE with an
+// ordinary call, so that marking no longer matches — measured, it turned three
+// green shapes back into SIGSEGVs. A lambda arm is different: nothing has boxed
+// it yet, so it needs to become a FuncDecl for the ordinary passes to reach.
+//
+// So the hoist takes the lambda-arm case and #6323 takes the boxed-arm case,
+// and a MIXED IIFE (Repro D — one closure-local arm, one lambda) hoists,
+// because the lambda is the binding constraint.
+function iife_arms_have_lambda(stmts: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                match (r.value) {
+                    parser.ExprLambda(_) => { return true; },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(iff) => {
+                if (iife_arms_have_lambda(iff.then_body)) { return true; }
+                if (iife_arms_have_lambda(iff.else_body)) { return true; }
+            },
+            parser.StmtMatch(mm) => {
+                var a: i32 = 0;
+                while (a < mm.arms.len()) {
+                    if (iife_arms_have_lambda(mm.arms[a].body)) { return true; }
+                    a = a + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 function iife_arms_hold_fn_value(stmts: parser.Stmt[], fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -46376,22 +46539,29 @@ function hoist_capturing_iife(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs
     var args: parser.Expr[] = [];
     var ci: i32 = 0;
     while (ci < caps.len()) {
-        var cty: string = cap_type(caps[ci], fd, structs, mfuncs);
-        // A fn-typed capture declines. cap_type coarsens every fn type to "fn",
-        // dropping the arity / return type a fn-typed PARAM needs (fn_ret,
-        // fn_param_dyn), so the param this would synthesize is not the one the
-        // call side reads — it lowered to a bare-dispatched box and SIGSEGV'd.
-        // Declining leaves the module bailing exactly as it does today; the
-        // fn-typed-arm shapes are tracked separately rather than traded for a
-        // silent miscompile.
-        if (cty.len() == 0 || cty == "fn") { return InlineCloRes { expr: parser.ExprLambda { params: lam.params, ret_type: lam.ret_type, body: lam.body, use_infer: lam.use_infer }, funcs: funcs, counter: counter }; }
-        ps = ps.append(parser.ParamDecl { name: caps[ci], type_name: cty, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
+        // cap_param_for carries a fn-TYPED capture through with its signature
+        // intact (#6324) — copied from the ParamDecl when the capture is a
+        // param, reconstructed from the lambda when it is a local bound from
+        // one. It declines (empty type_name) when the signature is unrecoverable,
+        // which leaves the module bailing exactly as it does today rather than
+        // trading a refusal for a silent miscompile.
+        var cp: parser.ParamDecl = cap_param_for(caps[ci], fd, structs, mfuncs);
+        if (cp.type_name.len() == 0) { return InlineCloRes { expr: parser.ExprLambda { params: lam.params, ret_type: lam.ret_type, body: lam.body, use_infer: lam.use_infer }, funcs: funcs, counter: counter }; }
+        ps = ps.append(cp);
         args = args.append(parser.ExprIdent { name: caps[ci], line: 0, col: 0 });
         ci = ci + 1;
     }
     var nm: string = fd.name + "$iife" + util.i32_to_string(counter);
     var notp: string[] = [];
-    var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
+    // Declared `fn` return, not the IIFE lambda's own ret_type. The hoist only
+    // fires when the arms yield a fn value, so this function IS a higher-order
+    // factory, and closure_ret_fns_of's "return <ident bound to a closure>" form
+    // is gated on exactly that declaration. Without it a MIXED IIFE (one closure-
+    // local arm, one lambda) hoisted to a call the caller then bound as a plain
+    // scalar — `w(3)` bare-dispatched the box and SIGSEGV'd, turning a bail into
+    // a crash. The coarse "fn" tag is what a hand-written fn-returning function
+    // carries, so this is the same declaration, not a special case.
+    var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
     var ncall: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: nm, line: 0, col: 0 }, args: args, line: 0, col: 0, type_argc: 0, ty: "" };
     return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }
@@ -46509,6 +46679,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                     // IIFE falls through untouched — the existing hoist gets it.
                     if (call.args.len() == 0 && ielam.params.len() == 0
                         && !lambda_has_no_captures(ielam, gfns)
+                        && iife_arms_have_lambda(ielam.body)
                         && iife_arms_hold_fn_value(ielam.body, fd, structs, mfuncs)) {
                         var iar: InlineCloRes = hoist_capturing_iife(ielam, fd, fs, ct, structs, mfuncs);
                         if (iar.counter > ct) {
