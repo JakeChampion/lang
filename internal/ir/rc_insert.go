@@ -295,21 +295,17 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 //     box this lowering stores in ptrSlot and dispatches on via OpMatchTag);
 //   - every NAMED arm binding is non-pointer, so no pointer payload is
 //     extracted into a binding that would outlive (and alias) the freed box.
-//     A payload position bound to `_` is exempt: nothing is extracted, so
-//     nothing can alias the box, and the generated per-enum drop
-//     (emitEnumDropViaGenFn) releases that payload variant-aware and deep.
-//     That exemption is the whole of #6417 — a boxed enum only exists when
-//     some variant's payload is pointer-shaped, so refusing on the TYPE alone
-//     rejected essentially every boxed `Result`, including the ubiquitous
-//     `Err(_)` idiom where the payload is never bound at all;
+//     A `_` position is exempt: it extracts nothing, and the generated
+//     per-enum drop releases that payload variant-aware and deep;
 //   - for the expression form, the RESULT is non-pointer too (`resultType`;
 //     pass nil for the statement form, which yields no value).
 //
 // emitEnumSlotDrop then frees the box under an is_unique gate, so an aliased
 // scrutinee (rc>1 via a return-transfer inc) is only dec'd, never freed.
-// bindingNames / bindingTypes are parallel per-arm slices — the statement and
+//
+// bindingNames / bindingTypes are parallel per-arm slices: the statement and
 // expression forms carry different arm types (*ast.MatchArm vs
-// *ast.MatchExprArm), so they are flattened to these rather than passing arms.
+// *ast.MatchExprArm).
 func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]string, bindingTypes [][]ast.Type, resultType ast.Type) (ast.EnumType, bool) {
 	if !ast.RcFreeEnabled {
 		return ast.EnumType{}, false
@@ -330,9 +326,7 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]strin
 			if bt == nil || !ast.IsPointerType(bt) {
 				continue
 			}
-			// `_` extracts nothing, so there is no binding to outlive the
-			// post-match free. The two slices are parallel, but be defensive
-			// about a short names slice rather than assuming.
+			// `_` extracts nothing, so no binding outlives the free.
 			if a < len(bindingNames) && i < len(bindingNames[a]) && bindingNames[a][i] == "_" {
 				continue
 			}

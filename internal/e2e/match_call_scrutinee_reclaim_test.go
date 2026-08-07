@@ -6,24 +6,12 @@ import (
 	"testing"
 )
 
-// --- match-on-call scrutinee reclaim (#6417) -------------------------------
-//
-// `reclaimableMatchScrutinee` frees a fresh owned enum box after the match
-// that consumed it. It refused whenever ANY arm binding position had a
-// pointer TYPE — but a boxed enum only exists when some variant's payload is
-// pointer-shaped, so that clause rejected essentially every boxed `Result`,
-// including the ubiquitous `Err(_)` idiom where nothing is bound at all.
-//
-// A `_` position extracts nothing, so no binding can outlive the post-match
-// free, and the generated per-enum drop releases that payload variant-aware
-// and deep. Those positions are now exempt.
-//
-// Both directions are pinned. A payload bound to a real NAME stays refused —
-// that binding could alias the box past the free — and the leak is the safe
-// direction there.
+// A fresh owned enum box is freed after the match that consumed it
+// (reclaimableMatchScrutinee, #6417). Both directions are pinned: a `_`
+// payload position is eligible, a payload bound to a real NAME is not.
 
 // A boxed enum whose Err-side payload is a string, matched directly on the
-// call. This leaked one box per iteration (frees=0) before the fix.
+// call.
 const matchCallWildcardSrc = `enum E { A(i32), B(string) }
 function mk(i: i32): E {
     if (i < 0) { return B("x"); }
@@ -45,7 +33,7 @@ function main(): i32 {
     return x % 83;
 }`
 
-// The Result spelling of the same shape — the form #6417 was filed against.
+// The Result spelling of the same shape.
 const matchCallResultSrc = `function make(i: i32): Result[i32, string] {
     if (i < 0) { return Err("neg"); }
     return Ok(i);
@@ -66,8 +54,7 @@ function main(): i32 {
     return x % 83;
 }`
 
-// Control: an all-scalar boxed enum was already eligible and must stay so —
-// the new exemption must not disturb the path it sits beside.
+// Control: an all-scalar boxed enum is eligible and must stay so.
 const matchCallScalarSrc = `enum E { A(i32, i32, i32), B(i32) }
 function mk(i: i32): E {
     if (i < 0) { return B(0); }
@@ -89,10 +76,8 @@ function main(): i32 {
     return x % 83;
 }`
 
-// HAZARD: the string payload is bound to a real name AND re-wrapped, so the
-// binding outlives the arm. Must stay REFUSED — i.e. must still leak. The
-// leak is the safe direction; freeing here could strand or double-release the
-// payload the binding carries onward.
+// The string payload is bound to a real name and re-wrapped, so the binding
+// outlives the arm. Must stay refused — i.e. must still leak.
 const matchCallBoundPayloadSrc = `function make(i: i32): Result[i32, string] {
     if (i < 0) { return Err("neg"); }
     return Ok(i);
