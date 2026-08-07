@@ -10,8 +10,8 @@ import (
 
 // annotateScopeCases widen the typed-IR annotation (#5531) from the flat
 // statement scope to the scopes a nested BODY actually sees. The annotate pass
-// previously rebuilt a for-loop body and a match arm in the ENCLOSING scope, so
-// the loop variable / variant payload was unbound there and any call whose type
+// must not rebuild a for-loop body or a match arm in the ENCLOSING scope: the
+// loop variable / variant payload is unbound there, so any call whose type
 // depends on one (a method on the binding, above all) resolved to TypeUnknown —
 // tag "", the structural fallback. annotate_for_scope / annotate_arm_scope now
 // bind them as check_stmt does, so those calls carry the checker's type.

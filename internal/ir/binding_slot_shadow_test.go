@@ -100,10 +100,10 @@ function main(): i32 {
 // TwoWordOverride) colliding with a pointer-shaped binding
 // `ST(t)` — the binding must get a FRESH slot, not reuse the var's.
 //
-// bindingSlotScoped's shape guard used to read the existing slot's type from
+// bindingSlotScoped's shape guard must not read the existing slot's type from
 // b.scratchType, which is never stamped for `var`-declared (info.Locals)
-// slots — nil read as "single-word", the guard passed, and the binding
-// reused the string's two-word slot. The backend sizes physical slots
+// slots: nil reads as "single-word", the guard passes, and the binding
+// reuses the string's two-word slot. The backend sizes physical slots
 // from the declared local type, so every OpLoadLocal / OpStoreLocal of
 // the binding fanned into two words while the IR balanced the operand
 // stack for one: the store popped a garbage second word and each load

@@ -82,8 +82,8 @@ func TestSelfHostMatchPayloadCaptureIRX86_64(t *testing.T) {
 		// binding's type comes from the callee's Option/Result return type,
 		// resolved from the module fn decls threaded into the lift pass
 		// (callee_ret_type: free function `pop`, receiver method `b.take()`).
-		// Previously the scrutinee type resolved "" and the payload binding
-		// declined the lift, falling to the miscompiling AST path.
+		// A scrutinee type resolving "" makes the payload binding decline the
+		// lift, falling to the miscompiling AST path.
 		{"call-scrutinee-option-free-fn",
 			`struct H { f: (i32) => i32, id: i32 } function pop(i: i32): Option[i32] { if (i > 0) { return Some(i); } return None; } function g(i: i32): i32 { var r: i32 = 0; match (pop(i)) { Some(v) => { var h: H = H { f: function (x: i32): i32 { return x + v; }, id: v }; r = h.f(10) + h.id; }, None => { r = 0; } } return r; } function main(): i32 { return g(5); }`,
 			20},

@@ -248,9 +248,9 @@ function main(): i32 { return 0; }`,
 // A struct-update literal nested inside a tuple-literal return value
 // must have its TypeName mangled with the module prefix, and its
 // spread Base must be rewritten too. This is the cursor idiom's shape
-// (`return (result, Cur { ...p, pos: … })`) — the rewriter previously
-// never descended into TupleLit elements, so the StructLit TypeName
-// stayed bare and the checker reported "unknown struct type". Regress
+// (`return (result, Cur { ...p, pos: … })`) — a rewriter that never
+// descends into TupleLit elements leaves the StructLit TypeName bare and
+// the checker reports "unknown struct type". Regress
 // against that: walk the mangled function body and assert no bare
 // `Cur` StructLit survives.
 func TestLoadMangleStructUpdateInTupleReturn(t *testing.T) {

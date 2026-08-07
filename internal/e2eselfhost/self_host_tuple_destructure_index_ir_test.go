@@ -19,8 +19,8 @@ import (
 // bindings fell to the untyped i32 default. expr_tuple_elem_tag's own ExprIndex
 // arm already had the ExprIndex.ty fallback (#6165); the destructure did not.
 //
-// Which is exactly the shape of the evidence: `ps[0].1` was right while
-// `var (i, v) = ps[0]` was wrong, one token apart. The controls below hold that
+// Which matches the evidence: `ps[0].1` is right while `var (i, v) = ps[0]`
+// is wrong, one token apart. The controls below hold that
 // line — remove the fallback and only the destructure cases fail.
 var tupleDestructureIndexCases = []struct {
 	name string

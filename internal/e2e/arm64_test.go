@@ -489,10 +489,8 @@ function main(): i32 {
 // Replaces the bare-Expr returns from PR #402 with explicit
 // Result propagation through `parse_factor` / `parse_term` /
 // `parse_expr`. The struct-typed Err payload (`ParseError {
-// message, pos }`) exercises a pair-form-return path that
-// previously had a layout bug — see this PR's prelude / IR
-// fix for "mixed-width Result variants now route through
-// heap-box rebox".
+// message, pos }`) exercises the pair-form-return path where
+// mixed-width Result variants route through a heap-box rebox.
 //
 // Errors covered:
 //   - Empty input: "unexpected end of input"
@@ -695,10 +693,10 @@ function main(): i32 {
 // Regression for the void-call phantom-push codegen bug.
 // `arr.append(v)` inlines an internal `__memcpy` call which is
 // VOID-RETURNING in lang's type system. The native backends
-// (arm64 + x86_64) previously pushed rax/x0 unconditionally
-// after every `bl`/`call`, leaving a phantom slot from the
-// runtime helper's stale return register. The phantom slot
-// got consumed by the surrounding OpStore — in this case the
+// (arm64 + x86_64) must not push rax/x0 unconditionally
+// after every `bl`/`call`: that leaves a phantom slot holding
+// the runtime helper's stale return register. The phantom slot
+// is consumed by the surrounding OpStore — here the
 // struct-lit field initialiser — corrupting the field address
 // and crashing on the subsequent store. Fixed by gating the
 // post-call push on the callee's return type (void → no push).
@@ -8601,11 +8599,11 @@ func TestArm64NestedTupleFieldExprType(t *testing.T) {
 }
 
 // `return (1234567890123, 42)` from a function with a
-// `(i64, i32)` signature used to be rejected as "return
+// `(i64, i32)` signature must not be rejected as "return
 // type mismatch: function returns (i64, i32) but
-// expression is (i32, i32)". `settleNumeric` had been
-// taught to propagate tuple-element widths into the AST,
-// but the `Return` path didn't refresh its local `got`
+// expression is (i32, i32)". `settleNumeric` propagates
+// tuple-element widths into the AST, and the `Return` path
+// has to refresh its local `got`
 // from the post-settle tree — so the assignability check
 // still saw the pre-settle `(i32, i32)` shape and rejected
 // a valid return.
@@ -9946,12 +9944,11 @@ function main(): i32 {
 		// values are HEAP-allocated strings (built via concat
 		// at runtime), NOT .rodata literals. On macOS the
 		// mmap address hint is ignored and the heap lands at
-		// a high (>4 GiB) address. The prelude's Map runtime
-		// previously declared pointer locals + params as
-		// `i32`, truncating the high 32 bits of the round-
-		// tripped pointer; the fix in this PR migrates the
-		// V-side of every Map helper (and most K-side cases)
-		// to `usize` so the full 8-byte address survives. The
+		// a high (>4 GiB) address. Declaring the Map runtime's
+		// pointer locals + params as `i32` truncates the high 32
+		// bits of the round-tripped pointer, so the V-side of
+		// every Map helper (and most K-side cases) is `usize`
+		// and the full 8-byte address survives. The
 		// previous `t.Skip` on Darwin has been removed —
 		// macOS CI now exercises this case alongside Linux.
 	}
@@ -12278,11 +12275,11 @@ func TestArm64TupleNestedTuple(t *testing.T) {
 }
 
 // Chained numeric tuple field access — `t.1.0` where the inner
-// is itself a tuple. The lexer previously ate `1.0` as a single
-// float token, so the second `.0` got lost and the parser failed
-// with "expected Ident, got 1.0". Fix tracks the previous-token
-// kind and suppresses the `.<digit>` → float upgrade right after
-// a `.` punctuator.
+// is itself a tuple. Lexing `1.0` as a single float token loses
+// the second `.0` and the parser fails with "expected Ident, got
+// 1.0", so the lexer tracks the previous-token kind and
+// suppresses the `.<digit>` → float upgrade right after a `.`
+// punctuator.
 func TestArm64LexerChainedTupleNumericAccess(t *testing.T) {
 	src := `function main(): i32 {
     var t: (i32, (i32, i32)) = (1, (2, 3));
@@ -12298,11 +12295,10 @@ func TestArm64LexerChainedTupleNumericAccess(t *testing.T) {
 
 // Empty `Map {}` with a destination annotation must inherit
 // K / V from the destination rather than defaulting to
-// `Map[i32, i32]`. Previously the checker rejected `var m:
-// Map[string, i32] = Map {};` with E003 "cannot assign Map[i32,
-// i32] to variable of type Map[string, i32]" because settleNumeric
-// only walked entries (no-op for empty) and the surrounding
-// assignable check saw the pre-settle default.
+// `Map[i32, i32]`. settleNumeric walking only entries is a no-op
+// for an empty literal, which leaves the surrounding assignable
+// check looking at the pre-settle default and rejecting `var m:
+// Map[string, i32] = Map {};` with E003.
 func TestArm64EmptyMapDestinationInference(t *testing.T) {
 	src := `
 import "core/map";
@@ -12374,11 +12370,11 @@ function main(): i32 {
 }
 
 // Map with a pointer-shaped value type (tuple / struct / array).
-// `__map_get_impl` returns `Option[usize]`; the payload functions
-// previously sized usize as 4 bytes, so on natives the 8-byte V
-// pointer got truncated and mis-offset when wrapped in Some. The
-// consumer read `Option[V]` at the pointer offset (8) → garbage →
-// segfault. Fix: usize is pointer-width in payloadSlotSize /
+// `__map_get_impl` returns `Option[usize]`. Sizing usize as 4
+// bytes in the payload functions truncates and mis-offsets the
+// 8-byte V pointer on natives when it is wrapped in Some; the
+// consumer then reads `Option[V]` at the pointer offset (8) →
+// garbage → segfault. usize is pointer-width in payloadSlotSize /
 // payloadStoreOpFor / payloadLoadOpFor, and `m.get` reboxes the
 // helper's Option[usize] into a consumer-shaped Option[V].
 func TestArm64MapPointerShapedValues(t *testing.T) {

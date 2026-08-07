@@ -18,9 +18,8 @@ import (
 //   - tuple-destructure type inference: `var (a, b) = recv.method()`
 //     now types each binding from the method's tuple return, so a
 //     destructured struct/map element dispatches its own methods/fields
-//     instead of mis-mangling as `__fn_i32__<m>`. Previously only
-//     free-function tuple returns were typed; method-call returns fell
-//     back to ("i32","i32").
+//     instead of mis-mangling as `__fn_i32__<m>`. Typing only free-function
+//     tuple returns falls method-call returns back to ("i32","i32").
 //
 // Exit codes cross-checked against the Go backend semantics.
 var selfHostProgCases = []struct {

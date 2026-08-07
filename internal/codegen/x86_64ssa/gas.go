@@ -828,10 +828,10 @@ func fBinSeq(in Inst) string {
 // NaN, and only `!=` is true.
 //
 // `ucomisd` reports unordered as ZF=1 PF=1 CF=1, which is indistinguishable
-// from "equal" (ZF=1) or "below" (CF=1) if you read ZF/CF alone. The mapping
-// this used to emit did exactly that — sete/setne/setb/setbe — so four of the
-// six predicates were wrong on NaN. Only seta (!CF && !ZF) and setae (!CF) are
-// unordered-safe as written.
+// from "equal" (ZF=1) or "below" (CF=1) if you read ZF/CF alone. So the
+// obvious mapping — sete/setne/setb/setbe — is wrong on NaN for four of the
+// six predicates. Only seta (!CF && !ZF) and setae (!CF) are unordered-safe
+// as written.
 //
 // So: the two `>`-family predicates keep their setcc, the two `<`-family ones
 // reach the same answer by comparing the operands in the opposite order
@@ -1513,10 +1513,9 @@ func shiftSeq(in Inst) string {
 	// COUNT: x86 masks a shift count to the width of its destination — `shl r32,
 	// cl` uses cl & 31, `shl r64, cl` uses cl & 63. So `460 << 124` at i32 width
 	// is `460 << 28` = -1073741824, but on the full register it becomes
-	// `460 << 60`, whose low 32 bits are 0. shl/sar previously took the full
-	// register on the grounds that "shl's excess bits are masked off by maskFix"
-	// and "sar wants the sign-extended operand" — both true of the VALUE, and
-	// neither says anything about the count.
+	// `460 << 60`, whose low 32 bits are 0. "shl's excess bits are masked off
+	// by maskFix" and "sar wants the sign-extended operand" are both true of
+	// the VALUE, and neither licenses taking the full register for the COUNT.
 	//
 	// The 32-bit form reads only the low 32 bits; the caller's trailing maskFix
 	// re-sign-extends to the storage convention.

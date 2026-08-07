@@ -8,9 +8,9 @@ import (
 )
 
 // A MAIN-LESS module — a library compiled standalone — now lowers on the
-// self-host IR path (#3457 slice 5). It used to be a blanket refusal:
-// emit_module_ir_unit's `_start` emitted `call __fn_main` unconditionally, so the
-// eligibility gate carried a `require_main` flag that bailed any such module to
+// self-host IR path (#3457 slice 5). An `_start` that emits `call __fn_main`
+// unconditionally forces a `require_main` eligibility flag, which bails any
+// such module to
 // the legacy AST emitter. `_start` now exits 0 instead when there is no main, and
 // the flag is gone.
 //

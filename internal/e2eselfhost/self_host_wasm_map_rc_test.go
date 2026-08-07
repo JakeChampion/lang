@@ -10,8 +10,8 @@ import (
 // TestSelfHostRcMapGrowWasm proves the map keys/vals/used arrays are now
 // rc-boxed (via $__fern_str_box — flat, so [arr + i*4] addressing is
 // unchanged) and that $__fern_map_grow FREES the old arrays after rehashing
-// instead of leaking them on every resize. Previously a map that grew N times
-// leaked 3*N raw arrays. Values stay correct (the string key/value pointers
+// instead of leaking them on every resize: a map that grows N times otherwise
+// leaks 3*N raw arrays. Values stay correct (the string key/value pointers
 // are copied into the new arrays before the old buffers are freed) and the
 // over-release detector stays 0 (the old buffers are freed flat — the moved
 // string elements survive in the new arrays). The map box itself + its final

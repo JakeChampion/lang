@@ -1401,13 +1401,10 @@ func IsPointerType(t Type) bool {
 // `print` auto-`to_string` gate, and monomorph's `T.f()` associated-call
 // rewrite. Returns false for types that can't carry methods.
 //
-// This is the ONE copy of the width switch on purpose. It used to be
-// open-coded at each of those sites, and every copy had to learn each
-// new width independently: when `u8` became its own type (#5629) two of
-// them kept naming a byte `u32`, so a `print(b)` gate passed on u32's
-// `to_string` while dispatch looked for u8's, and `T.default()` at
-// `T = u8` rewrote onto `impl Default for u32`. Add a width here and
-// every site learns it at once.
+// This is the ONE copy of the width switch on purpose: add a width here
+// and every site above learns it at once. Open-coding it per site means
+// each copy has to learn each new width independently, and a copy that
+// misses one misdispatches silently (#5629).
 func ReceiverTypeName(t Type) (string, bool) {
 	switch rt := t.(type) {
 	case StructType:

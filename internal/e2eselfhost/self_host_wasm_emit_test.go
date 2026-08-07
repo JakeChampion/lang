@@ -62,8 +62,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// `/` or `%` nested inside a compound literal (tuple / array /
 		// struct-lit) or an index/slice position must still trigger
 		// emission of the $__fern_idiv / $__fern_irem helpers — the
-		// "uses divrem?" scan has to recurse into those nodes (regression:
-		// harden11; it previously only looked through binary/unary/call).
+		// "uses divrem?" scan has to recurse into those nodes, not just
+		// binary/unary/call.
 		{"div-in-tuple", "function divmod(a: i32, b: i32): (i32, i32) { return (a / b, a % b); } function main(): i32 { var (q, r) = divmod(17, 5); return q + r; }", 5, ""},
 		{"div-in-array", "function main(): i32 { var xs: i32[] = [100 / 4, 100 % 7]; return xs[0] + xs[1]; }", 27, ""},
 		{"div-in-struct-lit", "struct R { v: i32 } function main(): i32 { var r = R { v: 84 / 2 }; return r.v; }", 42, ""},
@@ -340,9 +340,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"cell-string", "function main(): i32 { var c: Cell[string] = cell_new(\"A\"); c.set(\"hi\"); write(c.get()); return 0; }", 0, "hi"},
 		// Cell stored in a STRUCT FIELD: get/set on `b.c` (a field access).
 		// is_cell_expr resolves the owner struct + the field's declared Cell
-		// type so the wasm backend dispatches the cell load/store (it
-		// previously only recognised Ident/cell_new receivers and miscompiled
-		// `b.c.get()` to a bare i32.load). This is the lam_ctr/lamdefs shape.
+		// type so the wasm backend dispatches the cell load/store. Recognising
+		// only Ident/cell_new receivers miscompiles `b.c.get()` to a bare
+		// i32.load. This is the lam_ctr/lamdefs shape.
 		{"cell-i32-field", "struct Box { c: Cell[i32] } function main(): i32 { var b: Box = Box { c: cell_new(5) }; b.c.set(b.c.get() + 1); return b.c.get(); }", 6, ""},
 		{"cell-str-field", "struct Box { c: Cell[string] } function main(): i32 { var b: Box = Box { c: cell_new(\"ab\") }; b.c.set(\"xyz\"); return b.c.get().len(); }", 3, ""},
 		{"arr-index-first", "function main(): i32 { var a = [42, 99, 7]; return a[0]; }", 42, ""},
@@ -573,8 +573,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"f64-mixed-int-literal", "function main(): i32 { print_int((3.5 + 2) as i32); return 0; }", 0, "5"},
 		{"f64-reassign", "function main(): i32 { var a: f64 = 1.0; a = a * 3.0; print_int(a as i32); return 0; }", 0, "3"},
 		// f64_bits / f64_from_bits reinterpret an f64 to/from its IEEE-754
-		// i64 bit pattern (i64.reinterpret_f64 / f64.reinterpret_i64) — the
-		// wasm backend previously lacked these (native had them).
+		// i64 bit pattern (i64.reinterpret_f64 / f64.reinterpret_i64).
 		{"f64-bits-hi", "function main(): i32 { return (f64_bits(3.5) >> 56) as i32; }", 64, ""},
 		{"f64-bits-roundtrip", "function main(): i32 { var x: f64 = 3.5; if (f64_from_bits(f64_bits(x)) == x) { return 7; } return 0; }", 7, ""},
 		{"f64-loop-accumulate", "function main(): i32 { var sum: f64 = 0.0; var i: i32 = 0; while (i < 4) { sum = sum + 1.5; i = i + 1; } print_int(sum as i32); return 0; }", 0, "6"},
@@ -590,9 +589,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Un-annotated f64 locals: `var x = 1.5` (no `: f64`) must declare its
 		// wasm local as f64 to match the f64 value stored — the type is inferred
 		// from the initialiser (literal / float arith / negation / `as f64`).
-		// Regression: collect_f64_var_names previously only honoured an explicit
-		// annotation, so an inferred-f64 local was declared i32 and the module
-		// failed to validate (i32 local <- f64.const).
+		// collect_f64_var_names has to honour the inferred type, not just an
+		// explicit annotation: an inferred-f64 local declared i32 fails module
+		// validation (i32 local <- f64.const).
 		{"f64-inferred-unused", "function main(): i32 { var z = 1.5; return 5; }", 5, ""},
 		{"f64-inferred-cast-print", "function main(): i32 { var x = 3.5; print_int(x as i32); return 0; }", 0, "3"},
 		{"f64-inferred-arith", "function main(): i32 { var x = 2.5 + 1.5; print_int(x as i32); return 0; }", 0, "4"},
@@ -718,8 +717,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"tuple-string-len", "function main(): i32 { var t = (0, \"hello\"); print_int(t.1.len()); return 0; }", 0, "5"},
 		{"tuple-nested", "function main(): i32 { var t = (1, (2, 3)); var inner = t.1; print_int(inner.0 + inner.1); return 0; }", 0, "5"},
 		// Destructuring a tuple whose element is a struct must keep the
-		// element's struct type so `p.field` resolves (it previously read a
-		// bogus `(i32.const 0)`). Covers an inline literal, an intermediate
+		// element's struct type so `p.field` resolves rather than reading a
+		// bogus `(i32.const 0)`. Covers an inline literal, an intermediate
 		// tuple local, a tuple-returning free function and method, and a
 		// pair of structs. Regression: tuple-destructure-struct pass.
 		{"destructure-struct-inline", "struct P { x: i32 } function main(): i32 { var (p, n) = (P { x: 40 }, 2); return p.x + n; }", 42, ""},
@@ -768,9 +767,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// make-time snapshot; they reach the IR path now (#5479).
 		{"closure-capture-in-loop", "function main(): i32 { var total: i32 = 0; var add = function(x: i32): i32 { return x + total; }; var i: i32 = 1; while (i <= 3) { total = total + add(i); i = i + 1; } print_int(total); return 0; }", 0, "11"},
 		// Capturing a *struct* into a lambda must keep its struct type so a
-		// `cap.field` read resolves the field offset (it previously emitted
-		// a bogus `(i32.const 0)` because the capture wasn't sv-typed in the
-		// lambda; the method-receiver sub-case also needs the receiver in
+		// `cap.field` read resolves the field offset. An untyped capture emits
+		// a bogus `(i32.const 0)`; the method-receiver sub-case also needs the
+		// receiver in
 		// the capture set). Regression: struct-capture pass.
 		{"closure-capture-struct-local", "struct Point { x: i32, y: i32 } function main(): i32 { var p = Point { x: 30, y: 12 }; var f = function(): i32 { return p.x + p.y; }; return f(); }", 42, ""},
 		{"closure-capture-struct-two-fields", "struct Cfg { mult: i32, add: i32 } function main(): i32 { var c = Cfg { mult: 3, add: 1 }; var f = function(x: i32): i32 { return x * c.mult + c.add; }; return f(10); }", 31, ""},
@@ -811,8 +810,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"derive-display-nested", "@derive(Display) struct Inner { n: i32 } @derive(Display) struct Outer { a: Inner, tag: string } function main(): i32 { var p: Outer = Outer { a: Inner { n: 5 }, tag: \"hi\" }; write(p.to_string()); return 0; }", 0, "Outer { a: Inner { n: 5 }, tag: hi }"},
 		// User-defined enums: positional variant construction (`Circle(3)`),
 		// unit variants (`Nil` as a bare ident), and `match` binding the
-		// payload — previously only Option/Result were special-cased, so a
-		// `$Circle` call was undefined. See docs/TRAITS.md.
+		// payload. Special-casing only Option/Result leaves a `$Circle` call
+		// undefined. See docs/TRAITS.md.
 		{"enum-construct-match", "enum Shape { Circle(i32), Square(i32) } function main(): i32 { var a: Shape = Circle(3); match (a) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; }", 27, ""},
 		{"enum-second-variant", "enum Shape { Circle(i32), Square(i32) } function main(): i32 { var a: Shape = Square(4); match (a) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; }", 16, ""},
 		{"enum-unit-variant", "enum Opt { Has(i32), Nil } function main(): i32 { var n: Opt = Nil; match (n) { Has(v) => { return v; }, Nil => { return 9; } } return 0; }", 9, ""},
@@ -849,9 +848,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// var-typed receiver form.
 		{"derive-ord-enum", "trait Ord { function cmp(self: Self, other: Self): i32; } impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } } @derive(Ord) enum Lvl { Low(i32), High } function main(): i32 { var a: Lvl = Low(1); var a2: Lvl = Low(2); var h: Lvl = High; var lo: Lvl = Low(0); var a3: Lvl = Low(1); var r: i32 = 0; if (a.cmp(a2) < 0) { r = r + 1; } if (a.cmp(h) < 0) { r = r + 2; } if (h.cmp(lo) > 0) { r = r + 4; } if (a.cmp(a3) == 0) { r = r + 8; } return r; }", 15, ""},
 		// INLINE variant-call receivers (`Has(5).eq(…)`, `Nil.eq(…)`,
-		// `Low(1).cmp(…)`, `Circle(3).area()`) — previously the one wasm
-		// gap: struct_type_of couldn't recover the enum from a bare variant
-		// constructor, so dispatch fell to the i32 path (pointer compare).
+		// `Low(1).cmp(…)`, `Circle(3).area()`): struct_type_of has to recover
+		// the enum from a bare variant constructor, or dispatch falls to the
+		// i32 path (pointer compare).
 		// enum_of_variant now maps the variant to its enum via the enum
 		// methods' match arms, so inline receivers dispatch statically.
 		{"inline-variant-eq", "trait Eq { function eq(self: Self, other: Self): boolean; } impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } @derive(Eq) enum Opt { Has(i32), Nil } function main(): i32 { var r: i32 = 0; if (Has(5).eq(Has(5))) { r = r + 1; } if (!Has(5).eq(Has(6))) { r = r + 2; } if (!Has(5).eq(Nil)) { r = r + 4; } if (Nil.eq(Nil)) { r = r + 8; } return r; }", 15, ""},
@@ -907,13 +906,13 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"struct-array-field", "struct Bag { items: i32[] } function main(): i32 { var b = Bag { items: [10, 20, 30] }; print_int(b.items.len()); print_int(b.items[1]); return 0; }", 0, "320"},
 		// A struct field whose type is a *struct* array: indexing it and
 		// reading the element's field (`bag.items[i].x`) must resolve the
-		// element struct type (it previously emitted a bogus (i32.const 0)).
-		// Also covers a recursive struct (a node holding a child array).
+		// element struct type rather than a bogus (i32.const 0). Also covers
+		// a recursive struct (a node holding a child array).
 		{"struct-array-struct-field", "struct Pt { x: i32, y: i32 } struct Bag { items: Pt[] } function main(): i32 { var b = Bag { items: [Pt { x: 5, y: 6 }, Pt { x: 7, y: 8 }] }; print_int(b.items[0].x); print_int(b.items[1].y); return 0; }", 0, "58"},
 		{"struct-array-field-recursive", "struct SExpr { kind: i32, items: SExpr[] } function main(): i32 { var leaf = SExpr { kind: 2, items: [] }; var lst = SExpr { kind: 0, items: [leaf, leaf] }; return lst.items.len() + lst.items[0].kind; }", 4, ""},
 		// A struct-array *param* (`ts: Tk[]`) is a struct-array local too, so
 		// `ts[i].field` and `for t in ts { … t.field … }` resolve the element
-		// struct type (it previously read a bogus (i32.const 0)).
+		// struct type rather than a bogus (i32.const 0).
 		{"struct-array-param-index", "struct Tk { kind: i32, text: string } function first(ts: Tk[]): i32 { return ts[0].kind; } function main(): i32 { var ts = [Tk { kind: 5, text: \"a\" }, Tk { kind: 9, text: \"b\" }]; print_int(first(ts)); return 0; }", 0, "5"},
 		{"struct-array-param-for", "struct Tk { kind: i32, text: string } function sumk(ts: Tk[]): i32 { var s = 0; for t in ts { s = s + t.kind; } return s; } function main(): i32 { var ts = [Tk { kind: 5, text: \"a\" }, Tk { kind: 9, text: \"b\" }]; print_int(sumk(ts)); return 0; }", 0, "14"},
 		{"struct-string-field", "struct P { name: string, age: i32 } function main(): i32 { var p = P { name: \"sam\", age: 30 }; write(f\"{p.name} is {p.age}\"); return 0; }", 0, "sam is 30"},
@@ -959,9 +958,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"fstring-method-interp", "function main(): i32 { var s: string = \"hello\"; write(f\"upper={s.to_ascii_upper()}\"); return 0; }", 0, "upper=HELLO"},
 		{"array-of-tuples", "function main(): i32 { var ps = [(1, 2), (3, 4)]; var t = ps[1]; print_int(t.0 + t.1); return 0; }", 0, "7"},
 		// A `(T, U)[]` *annotation* must parse: the parenthesized tuple type
-		// followed by `[]` previously left the `[]` on the cursor, so the
-		// `var`'s local was never declared ("unknown local"). Now the
-		// trailing `[]` is consumed.
+		// followed by `[]` must consume the trailing `[]`; leaving it on the
+		// cursor means the `var`'s local is never declared ("unknown local").
 		{"tuple-array-annotated", "function main(): i32 { var ps: (i32, i32)[] = [(1, 2), (3, 4)]; var t = ps[1]; return t.0 + t.1; }", 7, ""},
 		{"tuple-array-for", "function main(): i32 { var ps: (i32, i32)[] = [(10, 20), (30, 40)]; var s: i32 = 0; for p in ps { s = s + p.0; } return s; }", 40, ""},
 		// Closure arrays `(() => R)[]`: a closure read from an `fn[]` element
@@ -995,9 +993,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"count-vowels", "function isvowel(c: i32): boolean { return c == 97 || c == 101 || c == 105 || c == 111 || c == 117; } function main(): i32 { var s: string = \"hello world\"; var n: i32 = 0; var i: i32 = 0; while (i < s.len()) { if (isvowel((s[i] as i32))) { n = n + 1; } i = i + 1; } print_int(n); return 0; }", 0, "3"},
 		{"string-reverse", "function main(): i32 { var s: string = \"abcde\"; var out: string = \"\"; var i: i32 = s.len() - 1; while (i >= 0) { out = out + s[i:i + 1]; i = i - 1; } write(out); return 0; }", 0, "edcba"},
 
-		// Hardening pass 7: compound assignment (incl. the array-element
-		// form, which previously dropped the old value), hex / escape /
-		// unary, and complex conditions.
+		// Compound assignment (including the array-element form, which must
+		// not drop the old value), hex / escape / unary, and complex
+		// conditions.
 		{"compound-assign-var", "function main(): i32 { var x: i32 = 10; x += 5; x -= 2; x *= 2; x /= 3; x %= 5; print_int(x); return 0; }", 0, "3"},
 		{"compound-assign-array", "function main(): i32 { var xs = [1, 2, 3]; xs[1] += 10; xs[2] *= 5; print_int(xs[1]); print_int(xs[2]); return 0; }", 0, "1215"},
 		{"compound-assign-field", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c.n += 3; c.n *= 2; print_int(c.n); return 0; }", 0, "16"},

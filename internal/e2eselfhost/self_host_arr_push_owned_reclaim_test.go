@@ -11,8 +11,8 @@ import (
 // TestSelfHostArrPushOwnedReclaimArm64 covers the arm64 port of the sole-owner
 // self-append reclaim-on-grow (`__fern_arr_push_owned`): the unaliased
 // `a = a.append(v)` form now frees the dead old buffer when the push reallocates,
-// instead of leaking it (arm64 previously aliased arr_push_owned to plain
-// __fern_arr_push). Verified by CORRECTNESS under qemu — a wrong free of the live
+// instead of leaking it — arm64 must not alias arr_push_owned to plain
+// __fern_arr_push. Verified by CORRECTNESS under qemu — a wrong free of the live
 // growing buffer is a use-after-free that corrupts the sum — plus an asm-content
 // check that the owned helper is dispatched (`bl __fern_arr_push_owned`) and its
 // real reclaim body (the freelist push `str x2, [x3, x1, lsl #3]`) is emitted.

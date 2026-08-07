@@ -352,7 +352,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// (rc-headered, like struct_make) instead of raw __fern_alloc, so a fresh,
 		// non-escaping `var t = (3, 4)` (all scalar-literal elements) is freed by the
 		// exit dec-sweep (a shallow __fern_rc_dec — no rc element to walk) instead of
-		// leaking. Previously tuples were leak-only on every backend. Value + the
+		// leaking. Value + the
 		// over-release detector (`__rc_underflow()==0`) pin that the box is freed
 		// exactly once.
 		{"scalar-tuple-reclaim-value", `function go(): i32 { var t: (i32, i32) = (3, 4); return t.0 + t.1; } function main(): i32 { return go(); }`, 7},
@@ -429,9 +429,10 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// RC-PAYLOAD (leak-safe scalar array) Option/Result deep-drop free: a
 		// `var o = Some([..])` / `Ok([..])` / `Err([..])` with a flat scalar-array
 		// payload now DEEP-DROPS its payload (op_opt_payload → __fern_rc_dec) then
-		// frees the box, right after its single consuming match — previously both the
-		// box AND the array leaked (fresh_scalar_option_init admits only scalar
-		// payloads). The constructed variant is statically known, so the drop is
+		// frees the box, right after its single consuming match. Without the deep
+		// drop both the box AND the array leak (fresh_scalar_option_init admits
+		// only scalar payloads). The constructed variant is statically known, so
+		// the drop is
 		// straight-line (no variant_is guard). A borrow-only arm binding (`Some(v) =>
 		// v[i] / v.len()`) is admitted (opt_arm_binding_escapes); the payload's last
 		// borrow ends before the post-match free. Value + `__rc_underflow()==0` pin
@@ -472,8 +473,8 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// `Ok(P{..})` with a FRESH leak-safe struct-LITERAL payload now frees the
 		// payload box (and, for an array-field struct, deep-drops its fields via
 		// __struct_drop_<P>) then the option box, right after its single consuming
-		// match. Previously the struct payload leaked (rc-payload option admitted only
-		// array payloads). The fresh-literal rule keeps the payload box sole-owner
+		// match. Admitting only array payloads leaks the struct one. The
+		// fresh-literal rule keeps the payload box sole-owner
 		// (rc==1). Borrow-only arm binding (`Some(p) => p.x + p.y`) admitted. Value +
 		// `__rc_underflow()==0` pin the payload box AND the option box freed once each.
 		{"option-struct-payload-value", `struct P { x: i32, y: i32 } function go(): i32 { var o: Option[P] = Some(P { x: 3, y: 4 }); var r = 0; match (o) { Some(p) => { r = p.x + p.y; }, None => { r = 0; }, } return r; } function main(): i32 { return go(); }`, 7},
@@ -487,7 +488,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// owned by a counted ref from the option-payload struct (the surrounding
 		// machinery reclaims it), so a __struct_drop_<Buf> deep-drop here would
 		// OVER-RELEASE it — the shallow box free is correct. Reclaims the Buf box + the
-		// option box (both previously leaked). Value + detector 0.
+		// option box. Value + detector 0.
 		{"option-struct-arrfield-payload-value", `struct Buf { xs: i32[], n: i32 } function go(): i32 { var o: Option[Buf] = Some(Buf { xs: [10, 20, 30], n: 3 }); var r = 0; match (o) { Some(b) => { r = b.xs[1] + b.n; }, None => { r = 0; } } return r; } function main(): i32 { return go(); }`, 23},
 		{"option-struct-arrfield-payload-detector", `struct Buf { xs: i32[], n: i32 } function go(): i32 { var o: Option[Buf] = Some(Buf { xs: [10, 20, 30], n: 3 }); var r = 0; match (o) { Some(b) => { r = b.xs[1] + b.n; }, None => { r = 0; } } if (r != 23) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
 		// Wildcard arm (no binding / no field read) — still shallow-freed cleanly.
@@ -533,7 +534,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// rc-payload sibling of the scalar-option precise-if drop above. An
 		// `Option[i32[]]` / `Option[P]` / `Option[Buf]` with no top-level match and a
 		// borrow-only nested payload binding has its payload + box freed by
-		// emit_opt_payload_drop right after the enclosing statement (previously leaked).
+		// emit_opt_payload_drop right after the enclosing statement.
 		// FIRING: f(5): o=Some([10,20,30]), the if runs the match, c=v[0]+v[2]=40,
 		// return 40+5=45.
 		{"option-arr-precise-if-value", `function f(n: i32): i32 { var o: Option[i32[]] = Some([10, 20, 30]); var c = 0; if (n > 0) { match (o) { Some(v) => { c = v[0] + v[2]; }, None => {} } } return c + n; } function main(): i32 { return f(5); }`, 45},
@@ -551,9 +552,9 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// array payload `v` to an outer var, so opt_body_binding_escapes rejects the
 		// precise-drop candidate — the option must NOT be freed (v moved out). Detector 0.
 		{"option-arr-precise-binding-escapes-detector", `function go(): i32 { var o: Option[i32[]] = Some([7, 8, 9]); var out: i32[] = [0]; if (true) { match (o) { Some(v) => { out = v; }, None => {} } } var r = out[0] + out[2]; if (r != 16) { return 99; } return __rc_underflow(); } function main(): i32 { return go(); }`, 0},
-		// RESULT precise-drop parity: the emission now dispatches on a per-drop KIND
-		// (not the slot type), so a scalar RESULT box — whose slot type Result[T,E] is
-		// NOT type_is_scalar_option — is freed too (it previously leaked: never fired).
+		// RESULT precise-drop parity: the emission dispatches on a per-drop KIND, not
+		// the slot type, so a scalar RESULT box — whose slot type Result[T,E] is NOT
+		// type_is_scalar_option — is freed too.
 		// f(5): Ok(4), c=4, 4+5=9.
 		{"result-scalar-precise-if-value", `function f(n: i32): i32 { var r: Result[i32, i32] = Ok(4); var c = 0; if (n > 0) { match (r) { Ok(v) => { c = v; }, Err(e) => { c = e; } } } return c + n; } function main(): i32 { return f(5); }`, 9},
 		{"result-scalar-precise-if-detector", `function f(n: i32): i32 { var r: Result[i32, i32] = Ok(4); var c = 0; if (n > 0) { match (r) { Ok(v) => { c = v; }, Err(e) => { c = e; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 9) { return 99; } return __rc_underflow(); }`, 0},
@@ -586,7 +587,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// sibling of the rc-payload-option precise drop. A `Poly([..])` (array-payload
 		// variant) with no top-level match and a borrow-only arm binding has its runtime
 		// variant deep-dropped + box freed (emit_enum_variant_drops) after the enclosing
-		// statement (previously leaked). The enum name rides in the "enum-rcpayload:<E>"
+		// statement. The enum name rides in the "enum-rcpayload:<E>"
 		// kind. FIRING: f(5): x=Poly([10,20,30]), c=a[0]+a[2]=40, return 40+5=45.
 		{"enum-arr-precise-if-value", `enum Shape { Poly(i32[]), Dot(i32) } function f(n: i32): i32 { var x = Poly([10, 20, 30]); var c = 0; if (n > 0) { match (x) { Poly(a) => { c = a[0] + a[2]; }, Dot(d) => { c = d; } } } return c + n; } function main(): i32 { return f(5); }`, 45},
 		{"enum-arr-precise-if-detector", `enum Shape { Poly(i32[]), Dot(i32) } function f(n: i32): i32 { var x = Poly([10, 20, 30]); var c = 0; if (n > 0) { match (x) { Poly(a) => { c = a[0] + a[2]; }, Dot(d) => { c = d; } } } return c + n; } function main(): i32 { var z = f(5); if (z != 45) { return 99; } return __rc_underflow(); }`, 0},
@@ -607,9 +608,9 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"struct-array-field-reclaim-value", `struct Buf { xs: i32[], n: i32 } function go(): i32 { var b = Buf { xs: [10, 20, 30], n: 3 }; return b.xs[1] + b.n; } function main(): i32 { return go(); }`, 23},
 		{"struct-array-field-reclaim-detector", `struct Buf { xs: i32[], n: i32 } function main(): i32 { var b = Buf { xs: [10, 20, 30], n: 3 }; var r = b.xs[1] + b.n; if (r != 23) { return 99; } return __rc_underflow(); }`, 0},
 		// Array-field from an ALIASED VARIABLE (this slice): `Box { v: a }` where
-		// `a` is an rc-tracked scalar-array local. Previously bailed to the AST
-		// emitter (only a FRESH literal was admitted); now the alias is admitted
-		// via a Perceus dup (rc_inc) at the construction store, so the struct's
+		// `a` is an rc-tracked scalar-array local. Admitting only a FRESH literal
+		// bails the module to the AST emitter; the alias is admitted via a
+		// Perceus dup (rc_inc) at the construction store, so the struct's
 		// field owns a counted reference. The exit dec-sweep still decs `a`'s slot
 		// and the struct's array field deep-drops at the box's reclamation — the
 		// inc balances both decs (rc 1 →inc 2 →sweep(a) 1 →field-drop 0). Reads
@@ -624,8 +625,8 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"struct-arr-field-two-alias-detector", `struct Box { v: i32[] } function main(): i32 { var a = [1, 2, 3]; var b = Box { v: a }; var c = Box { v: a }; var r = b.v[0] + c.v[1]; if (r != 3) { return 99; } return __rc_underflow(); }`, 0},
 		// Read an array OUT of a struct field (RC-frontier slice 2). The three
 		// alias-creating positions — bind (`var y = h.items`), return
-		// (`return h.items`), assign (`x = h.items`) — previously bailed to the AST
-		// emitter; now each lowers via the IR with a Perceus dup (rc_inc) so the new
+		// (`return h.items`), assign (`x = h.items`) — each lowers via the IR with
+		// a Perceus dup (rc_inc) so the new
 		// owner holds a counted reference, balanced against the struct's own
 		// field-drop + the exit-sweep (and, for return, the caller's eventual dec).
 		//
@@ -665,9 +666,9 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// a second owner of the same array. A Perceus dup (rc_inc) at the construction
 		// store gives the field its counted reference: the source struct's field-drop
 		// and the new struct's field-drop each dec, the inc covers the second owner
-		// (rc 1 →inc 2 →src-field-drop 1 →new-field-drop 0). Previously bailed to AST
-		// (only a fresh literal / bare ident was admitted); now routes "ir". Reads
-		// back correctly and the over-release detector stays 0.
+		// (rc 1 →inc 2 →src-field-drop 1 →new-field-drop 0). Routes "ir"; admitting
+		// only a fresh literal / bare ident would bail to AST. Reads back correctly
+		// and the over-release detector stays 0.
 		{"field-copy-scalar-value", `struct S { xs: i32[], n: i32 } function main(): i32 { var s = S { xs: [10, 20, 30], n: 3 }; var s2 = S { xs: s.xs, n: s.n }; return s2.xs[1] + s2.n; }`, 23},
 		{"field-copy-scalar-detector", `struct S { xs: i32[], n: i32 } function main(): i32 { var s = S { xs: [10, 20, 30], n: 3 }; var s2 = S { xs: s.xs, n: s.n }; var r = s2.xs[1] + s2.n; if (r != 23) { return 99; } return __rc_underflow(); }`, 0},
 		// i64[] field-copy: the 8-byte-element array aliased through struct_get + the
@@ -959,8 +960,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// concise arrow form into the SAME ExprLambda the verbose `function (params):
 		// R { return expr; }` produces, so it rides the existing lambda-lift + IR
 		// lowering with no codegen changes. Each case routes "ir" and is oracle-checked
-		// against the native interpreter. Previously the self-host parser had NO arrow
-		// syntax at all, so these mis-parsed and bailed to the AST emitter.
+		// against the native interpreter.
 		// Non-capturing binding, called once: __lam_N(5) = 6.
 		{"arrow-lambda-noncap-binding", `function main(): i32 { var f = (x: i32): i32 => x + 1; return f(5); }`, 6},
 		// Capturing binding (captures outer `n`): param-lifted with n threaded as an

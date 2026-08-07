@@ -13,9 +13,9 @@ import (
 // passed to exit() (two's complement for negatives), so `return -3` exits 253
 // (0xFD) and `return -1` exits 255.
 //
-// runInterp previously abs'd a negative return (`code = -code`) before masking,
-// so `-3` interpreted to exit 3 while the same program compiled to native /
-// IR exited 253 — a reference-oracle divergence (the interpreter is the
+// runInterp must not abs a negative return (`code = -code`) before masking:
+// that interprets `-3` to exit 3 while the same program compiled to native /
+// IR exits 253 — a reference-oracle divergence (the interpreter is the
 // documented oracle for the differential self-host tests, which only stay sound
 // because they avoid negative returns; cf. the <= 120/125 exit clamps). Each
 // case asserts the interpreter exit == the native x86-64 exit == the expected

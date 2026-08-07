@@ -4579,20 +4579,15 @@ const (
 // ExitArenaExhausted is the status a Fern binary exits with when __fern_alloc's
 // bounds check trips — the fixed bump arena is full.
 //
-// Deliberately NOT 137, which is what this used to be. 137 is 128+9, the status
-// a shell reports for a SIGKILL, so an arena trap was indistinguishable from the
-// kernel OOM-killer reaping the process. The two have opposite causes and
-// opposite fixes: an arena trap is a REAL, reproducible failure in the program
-// (usually a leak) that recurs on the next run, while a SIGKILL means the HOST
-// ran out of RAM and the run should be retried with a smaller budget. Telling
-// them apart cost a manual investigation every time, and three harness sites had
-// given up and were treating any 137 as infra — silently swallowing genuine
-// compiler regressions.
+// Deliberately NOT 137 (128+9, a shell's SIGKILL status), which would make an
+// arena trap indistinguishable from the kernel OOM-killer. The two have
+// opposite causes and opposite fixes: an arena trap is a real, reproducible
+// program failure (usually a leak), while a SIGKILL means the HOST ran out of
+// RAM and the run should be retried with a smaller budget.
 //
 // 125 is clear of the whole 128+signal range, so no signal death can forge it,
-// and under the 126 ceiling WASI imposes on exit statuses, so the value survives
-// being reported through wasmtime. The stderr message is unchanged and remains
-// the primary diagnostic; this only makes the status alone sufficient.
+// and under the 126 ceiling WASI imposes on exit statuses, so the value
+// survives being reported through wasmtime.
 const ExitArenaExhausted = 125
 
 func abortMsg(label string) (text string, code int) {

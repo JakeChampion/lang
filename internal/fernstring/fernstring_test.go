@@ -102,10 +102,10 @@ func TestIsInline(t *testing.T) {
 // Length* extracts the byte length: from the high length-nibble
 // for inline-form (matching PackInline*'s encoding) and as-is
 // for heap-form (length lives in low bits, flag clear). The
-// pre-fix implementation masked just the flag bit, which
-// returned a jumbled `(bytes_4_6 | (length << 24))` value
-// for real inline-encoded inputs; this test pins the corrected
-// behaviour against actual PackInline*-shaped values.
+// Masking just the flag bit returns a jumbled
+// `(bytes_4_6 | (length << 24))` value for real inline-encoded
+// inputs; this pins the behaviour against actual
+// PackInline*-shaped values.
 func TestLengthMasksFlag(t *testing.T) {
 	// Inline-form: length lives in bits 56..59 (native) /
 	// 24..26 (wasm). PackInlineNative for "A".."LMNO" emits

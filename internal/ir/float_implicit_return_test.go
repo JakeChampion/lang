@@ -11,9 +11,9 @@ import (
 // zero return. That zero must carry the DECLARED float width: an f64 function
 // gets OpConstF64, an f32 function gets OpConstF32.
 //
-// It used to be OpConstF32 unconditionally. The natives don't notice — the
+// OpConstF32 unconditionally is wrong. The natives don't notice — the
 // value is unreachable and both widths live in the same register file — but
-// wasm's stack is typed, so an f64 result fed an f32 constant made the whole
+// wasm's stack is typed, so an f64 result fed an f32 constant makes the whole
 // module fail validation ("expected f64, found f32") and every program with an
 // f64-returning `match` was rejected at instantiation, std/test included
 // (#6192).

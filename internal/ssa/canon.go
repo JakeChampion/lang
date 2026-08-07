@@ -4,9 +4,9 @@ package ssa
 // form so structurally equivalent expressions hash to the
 // same CSE key.
 //
-// Phase 1 covers commutative binary ops: Args ordered with
-// the lower Value.ID first. This is enough to make
-// `a + b` and `b + a` look identical to CSE.
+// Commutative binary ops get their Args ordered with the lower
+// Value.ID first, which is what makes `a + b` and `b + a` look
+// identical to CSE.
 //
 // Commutative ops:
 //   - OpAdd, OpMul          (algebraic)

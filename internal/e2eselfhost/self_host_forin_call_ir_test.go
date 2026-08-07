@@ -11,9 +11,9 @@ import (
 // for-in loop whose iterable is an array-returning function call — is admitted to
 // the IR path on the register backends. The loop snapshots the call result into a
 // hidden local (array-typed via arr_ret_fns / strarr_ret_fns) and iterates it;
-// previously the register eligibility probe lowered each function with EMPTY
-// array registries, so the snapshot's slot wasn't seen as an array, the for-in
-// bailed, and the whole module was (wrongly) deemed ineligible -> AST.
+// a register eligibility probe that lowers each function with EMPTY array
+// registries does not see the snapshot's slot as an array, so the for-in bails
+// and the whole module is wrongly deemed ineligible -> AST.
 // all_eligible now uses ir_eligible_wide (the same registries
 // emit_function_via_ir uses), so eligibility means "lowers" and these modules
 // take the small IR path. (The wasm gate stays narrow — its array-call foreach

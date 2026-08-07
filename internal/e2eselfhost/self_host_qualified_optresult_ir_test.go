@@ -11,10 +11,10 @@ import (
 
 // qualifiedOptResultIRCases widen the self-host IR subset: the qualified built-in
 // Option/Result construction spellings — `Option.Some(x)`, `Option.None`,
-// `Result.Ok(x)`, `Result.Err(x)` — now lower on the IR path. Previously only the
-// bare forms (`Some(x)` / `Ok(x)` / `None`) lowered; a qualified construction made
-// the whole module IR-ineligible and fell back to the AST emitter (which mis-lowers
-// it as `# unresolved ident: <Enum>`). The qualified forms produce the identical
+// `Result.Ok(x)`, `Result.Err(x)` — lower on the IR path alongside the bare
+// forms (`Some(x)` / `Ok(x)` / `None`). A qualified construction that makes the
+// whole module IR-ineligible falls back to the AST emitter, which mis-lowers it
+// as `# unresolved ident: <Enum>`. The qualified forms produce the identical
 // value as the bare ones (the same op_opt_make / op_opt_none box), so they share a
 // `lower_opt_make_payload` helper.
 //

@@ -118,8 +118,7 @@ function main(): i32 {
 }`, 0},
 	// DISCARDED nested tuple statement (`((w, [w, w+1]), w);`) — the discarded-
 	// statement arm takes the same recursive deep-drop. (Regression guard for the
-	// expr_scalar_leaf fix: previously the shallow scalar-tuple discard leaked the
-	// inner box.)
+	// expr_scalar_leaf fix — a shallow scalar-tuple discard leaks the inner box.)
 	{"nested-tuple-discarded", `function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;

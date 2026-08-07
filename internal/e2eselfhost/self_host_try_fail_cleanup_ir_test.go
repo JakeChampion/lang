@@ -10,9 +10,9 @@ import (
 )
 
 // tryFailCleanupIRCases pin the RC dec-sweep on the self-host `?` (try) FAILURE
-// path (#4334). `lower_try` used to emit the failure-path early return with no
-// cleanup, so every owned array / string / struct / map / tuple local live at a
-// `?` leaked when the `?` short-circuited — the only uncleaned exit on the IR
+// path (#4334). A failure-path early return with no cleanup leaks every owned
+// array / string / struct / map / tuple local live at a `?` when the `?`
+// short-circuits — the only uncleaned exit on the IR
 // path (StmtReturn already swept). The fix routes the failure return through the
 // same emit_dec_sweep_except a normal return runs, mirroring native's
 // emitRcDecLocalsAtExit at the TryOp failure edge.

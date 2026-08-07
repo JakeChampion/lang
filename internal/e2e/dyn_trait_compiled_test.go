@@ -364,11 +364,10 @@ func TestWASMDynTraitPrimitiveReceiver(t *testing.T) {
 // --- Uniform primitive boxing for `dyn Trait` (docs/DYN-TRAITS.md §4.2.3).
 // A primitive/string concrete coercing to `dyn` is heap-boxed so `data` is
 // always a one-word pointer, and the vtable slots point at unboxing wrappers
-// (`__dynbox_<C>_<m>`). This closes the previously-broken cases: i64/f64 on
-// wasm (wider than the inline i32 data slot) and string on wasm + arm64 (a
-// two-word value / non-integer receiver ABI). These differential tests run
-// each previously-broken case across ALL THREE backends and assert the
-// stdout matches the interpreter. ---
+// (`__dynbox_<C>_<m>`). The hard cases are i64/f64 on wasm (wider than the
+// inline i32 data slot) and string on wasm + arm64 (a two-word value /
+// non-integer receiver ABI). These differential tests run each across ALL
+// THREE backends and assert the stdout matches the interpreter. ---
 
 // dynAllBackends runs src on all three compiled backends + the interpreter
 // and asserts each compiled stdout matches the interpreter's, and that the
@@ -443,8 +442,8 @@ func dynCompiledBackends(t *testing.T, src, want string) {
 	})
 }
 
-// dyn over i64 — the boxed `data` cell now holds the full 8-byte value
-// (previously broken on wasm, where the inline i32 data slot truncated it).
+// dyn over i64 — the boxed `data` cell holds the full 8-byte value, which
+// wasm's inline i32 data slot would truncate.
 // Compiled-only: the interpreter can't dispatch dyn-over-i64 (width-less
 // Number), so this checks the three backends against a literal expectation.
 func TestDynTraitPrimitiveI64(t *testing.T) {
@@ -466,7 +465,7 @@ function main(): i32 {
 }
 
 // dyn over f64 — the boxed cell carries the 8-byte float and the wrapper
-// reloads it with the f64 ABI (previously broken on wasm).
+// reloads it with the f64 ABI. wasm is the backend that needs this.
 func TestDynTraitPrimitiveF64(t *testing.T) {
 	src := `import "std/float";
 trait Show {
@@ -486,8 +485,8 @@ function main(): i32 {
 }
 
 // dyn over string — the value-box holds the two-word `(data, len)` string
-// and the wrapper reloads it with the two-word load (previously broken on
-// wasm + arm64). The impl returns `self.len()` (the design's example).
+// and the wrapper reloads it with the two-word load, which wasm + arm64
+// both need. The impl returns `self.len()` (the design's example).
 func TestDynTraitPrimitiveString(t *testing.T) {
 	src := `import "std/i32";
 trait Show {

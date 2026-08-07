@@ -335,8 +335,8 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		// Generic array CLOSURE-methods (.reduce / .flat_map / .sort_by / .map[U] /
 		// .fold[A]) flipped to IR by the __arrm_* free-generic rewrite (slices 3+4,
 		// #3976/#3977); pin the whole 8-test suite on the differential gate so the
-		// IR routing can't silently regress (it was previously only covered by the
-		// synthetic single-function closure/typaram IR tests).
+		// IR routing can't silently regress behind the synthetic single-function
+		// closure/typaram IR tests.
 		{"array_hof", langSrcAbs(t, "examples/tests/array_hof_test.fern"), ""},
 		{"array_accessors", langSrcAbs(t, "examples/tests/array_accessors_test.fern"), ""},
 		{"array_dedup", langSrcAbs(t, "examples/tests/array_dedup_test.fern"), ""},
@@ -379,9 +379,9 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		// non-async AST-router (#3457).
 		{"map_verbs", langSrcAbs(t, "examples/tests/map_verbs_test.fern"), ""},
 		// crypto + u32 lower fully on the IR path now that remove_dir_all (the
-		// TestRunner.finish cleanup call) lowers there — previously the bail
-		// dragged every std/test module onto the AST emitter, whose u32
-		// arithmetic doesn't truncate to 32 bits, miscompiling SHA-256 (#3457).
+		// TestRunner.finish cleanup call) lowers there. A bail drags every
+		// std/test module onto the AST emitter, whose u32 arithmetic doesn't
+		// truncate to 32 bits, miscompiling SHA-256 (#3457).
 		{"u32_arith", langSrcAbs(t, "examples/tests/u32_arith_test.fern"), ""},
 		{"crypto", langSrcAbs(t, "examples/tests/crypto_test.fern"), ""},
 		{"synthetic_fail", failing, ""},
