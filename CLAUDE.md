@@ -201,6 +201,47 @@ to measure with, and the arm64/qemu policy all live in
 its numbers were previously off by an order of magnitude, and a stale one costs
 an hour per attempt.
 
+## Code comments
+
+A comment is a brief note explaining what the code does when that is not obvious
+from the implementation. It is **not a changelog**, and not a place to record the
+reasoning behind a change you were just asked to make.
+
+Write one when the code is genuinely non-obvious: a workaround for an external
+bug, a non-intuitive invariant, a subtle ordering requirement. Prefer a clearer
+name or a smaller function over a comment that explains awkward code.
+
+Do not:
+
+- **Narrate the change you just made** — "we now retry here because the stage
+  was returning 502s". That belongs in the commit message or PR description.
+- **Restate the code in English** — `// increment the counter`.
+- **Add a header comment to a function just because you touched it.**
+- **Leave "previously we did X, now we do Y" notes.**
+- **Write an essay reconstructing the investigation** that led to a line of code.
+
+That last one is the most common failure. Six lines on one field, walking through
+the alternative that was not taken and what would have gone wrong otherwise:
+
+```go
+// FlushInterval is how often buffered records are written to disk.
+//
+// It has to be set by the caller. The zero value is not treated as "use the
+// default": it disables flushing entirely, so records accumulate in memory
+// until the process exits and are then lost. Nothing reports an error when
+// that happens, and the buffer looks healthy right up to the point the data
+// is gone.
+```
+
+The reader needs one fact, not the debugging session:
+
+```go
+// Zero disables flushing rather than selecting the default.
+```
+
+If the reason for a change matters to a future reader, keep it to one short line
+at the point it applies — not a paragraph at the top of the function.
+
 ## Erasure — deletion is half the job
 
 Coding agents add by reflex and rarely subtract. Counteract this constantly: a
@@ -212,9 +253,9 @@ diff that removes lines is at least as valuable as one that adds them.
   gone from parser, tests, and docs. Bug fix — bad: a special-case `if` shields
   the symptom; good: the cause dies. Behaviour change — bad: old-behaviour tests
   linger or get dodged; good: deleted.
-- **Comments.** No narration comments inside function bodies. A refactor that
-  makes a comment stale deletes or rewrites it in the same diff. A done TODO
-  leaves with the fix. Same for stale notes in `docs/` and this file.
+- **Comments.** A refactor that makes a comment stale deletes or rewrites it in
+  the same diff. A done TODO leaves with the fix. Same for stale notes in `docs/`
+  and this file. What a comment should say in the first place is above.
 - **New code.** Scan for an existing concept to reuse before introducing a new
   one; find the simplest shape. If something confused you while reading, that is
   a bad abstraction — untangle it if it is in your blast radius.
