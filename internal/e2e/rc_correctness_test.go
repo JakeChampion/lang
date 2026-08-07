@@ -889,8 +889,8 @@ function main(): i32 {
 		// ([..], [..])` extracts two array pointers; dup-on-projection
 		// makes a/b owned array locals that arr_dec-free their buffers at
 		// scope exit, while the tuple's deep-drop dec's its own element
-		// refs + frees the box. Previously the bindings were tainted and
-		// leaked every buffer. Churned 200x — a leak would grow the heap
+		// refs + frees the box. Tainting the bindings leaks every buffer.
+		// Churned 200x — a leak would grow the heap
 		// and a miscount would drift the underflow detector. a[1] = k+1,
 		// b[2] = k+4; sum_{0..199}(2k+5) = 2*19900 + 1000 = 40800.
 		name: "tuple_destructure_arrays_reclaim_churn",
@@ -923,9 +923,9 @@ function main(): i32 {
 }`,
 	},
 	{
-		// Map with STRUCT values (valKind 4). Previously struct map values
-		// leaked entirely — not retained on set/get, not dropped. They now
-		// route through the generated __drop_map_struct_<Item> loop
+		// Map with STRUCT values (valKind 4). Without retain-on-set/get and
+		// a drop, struct map values leak entirely. They route through the
+		// generated __drop_map_struct_<Item> loop
 		// (deep-dropping each value via __drop_struct_Item → its box + xs
 		// buffer) at the map's last reference, with set/get retains
 		// balancing it. Churned 200x: a leak grows the heap, a miscount
@@ -3074,9 +3074,9 @@ function main(): i32 {
 		// (`Holder { b: Option[Item] }`). Generic-enum LOCALS already
 		// reclaim (the inline emitDec path substitutes the type args); a
 		// nested field reaches the drop through __drop_struct_Holder →
-		// dropFnNameFor, which previously bailed on any EnumType with Args
-		// and flat-dec'd — leaking the Option box + Item + its buffer. It
-		// now substitutes (Option[Item] → Some(Item)), confirms the
+		// dropFnNameFor. Bailing on any EnumType with Args and flat-dec'ing
+		// leaks the Option box + Item + its buffer, so it substitutes
+		// (Option[Item] → Some(Item)), confirms the
 		// instantiation is heap-boxed (pointer payload), and routes to a
 		// per-instantiation __drop_enum_<mangled> the worklist regenerates
 		// from the stashed substituted decl. Churned 100x.
@@ -3214,9 +3214,9 @@ function main(): i32 {
 	},
 	{
 		// Transitive reclamation — a PLAIN-array struct FIELD (i32[]).
-		// Previously dropStructField only deep-dropped array-OF-struct
-		// fields; a plain `data: i32[]` field flat-dec'd and leaked its
-		// buffer. It now frees the buffer via __fern_arr_dec on the
+		// dropStructField has to deep-drop plain arrays too, not only
+		// array-OF-struct fields: a flat-dec'd `data: i32[]` leaks its
+		// buffer. It frees the buffer via __fern_arr_dec on the
 		// owner's last reference (is_unique-gated). Churned 100x.
 		// sum_{0..99}(i+1) = 5050.
 		name: "struct_plain_array_field_churn_free",
@@ -3297,9 +3297,9 @@ function main(): i32 {
 	},
 	{
 		// Uniform union with array payloads (E = A(i32[]) | B(i32[])):
-		// previously the branchless uniform path flat-dec'd and leaked
-		// the array buffer; now it steers to variant-plan and frees it
-		// per tag-guarded arm. Churned.
+		// the branchless uniform path would flat-dec and leak the array
+		// buffer, so this steers to variant-plan and frees it per
+		// tag-guarded arm. Churned.
 		name: "uniform_enum_array_payload_churn_free",
 		src: `
 import "core/int";
@@ -3389,10 +3389,10 @@ function main(): i32 {
 		// `a[0].with(0, 9)` on a NESTED array: the receiver `a[0]` is a
 		// projection out of the live outer array `a`, i.e. a BORROW — the inner
 		// buffer is still owned by `a`, so an in-place cow would corrupt `a[0]`.
-		// computeArraySetIncs previously treated any non-ident receiver as a
-		// dead fresh temp and skipped the inc, so native mutated `a[0]` in place
-		// (`a[0][0]` became 9) → 9 + 9 = 18 instead of the copy-on-write 9 + 1
-		// = 10 (interp/self-host were already correct). The fix forces the inc
+		// computeArraySetIncs must not treat a non-ident receiver as a dead
+		// fresh temp and skip the inc: that mutates `a[0]` in place on native
+		// (`a[0][0]` becomes 9) → 9 + 9 = 18 instead of the copy-on-write
+		// 9 + 1 = 10. It forces the inc
 		// for an Index/FieldAccess/Slice receiver so cow copies. r[0]=9,
 		// a[0][0]=1 → 10; the -10 makes a correct run read 0.
 		name: "nested_array_with_borrowed_element",
@@ -3733,8 +3733,8 @@ function main(): i32 {
 		// ARRAY-BEARING cursor struct (Par-shaped — the self-host parser's)
 		// threaded through `(value, cursor)` tuple returns. The param is
 		// consumed-promoted (it is reassigned) but borrow-taint keeps it
-		// out of freeEligible; the entry inc used to be freeEligible-gated
-		// too, so the reassignment's unconditional overwrite dec stole the
+		// out of freeEligible. The entry inc must NOT be freeEligible-gated
+		// too, or the reassignment's unconditional overwrite dec steals the
 		// caller's count on every call, and the caller's destructure-temp
 		// deep drop freed a cursor box that live bindings still referenced
 		// (the self-host modload fixpoint crashed in __fern_alloc this way).

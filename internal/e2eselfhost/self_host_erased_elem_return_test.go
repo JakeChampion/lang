@@ -19,8 +19,8 @@ import (
 //
 // This is why the cases assert VALUES rather than routing. Every one of them
 // routed `ir`, exited 0, and reported nothing under FERN_STRICT_IR=1 — the
-// path probe cannot see this class at all. The struct case is here because it
-// used to be REFUSED on both backends; promotion makes it lower and run.
+// path probe cannot see this class at all. The struct case is here because
+// promotion is what makes it lower and run rather than being refused.
 //
 // Neither half alone is broken (`count_of[T](xs: T[]): i32` and the #5586
 // pass-through `id_of[T](x: T): T` were both always correct), so the two

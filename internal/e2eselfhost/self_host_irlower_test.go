@@ -191,8 +191,8 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"result-err", "function main(): i32 { var r: Result[i32, i32] = Err(7); match (r) { Ok(v) => { return v; }, Err(e) => { return e * 6; } } }", 42},
 		// Boxes that CROSS a function boundary: the evaluator's heap is now shared
 		// across the whole call chain (threaded through eval_call as EvalOut), so a
-		// box a callee allocates and RETURNS survives into its caller. Previously
-		// the per-call heap left the returned pointer dangling -> SIGABRT (134).
+		// box a callee allocates and RETURNS survives into its caller. A per-call
+		// heap leaves the returned pointer dangling -> SIGABRT (134).
 		// Covers an array (the originally-documented limitation), a struct, a
 		// tuple, and an Option returned from a function.
 		{"array-returned", "function mk(): i32[] { return [40, 2]; } function main(): i32 { var a = mk(); return a[0] + a[1]; }", 42},

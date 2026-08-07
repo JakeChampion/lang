@@ -15,9 +15,9 @@ import (
 // signed-negative in a 32-bit slot, so wasm's signed `i32.shr_s` / `div_s` /
 // `gt_s` diverge from the unsigned answer; irlower must select the `_u` opcode.
 //
-// expr_is_u32 previously only recognised a u32 IDENT slot and a u32[] ident
-// element — so `p.n >> k`, `t.0 >> k`, `[big][0] >> k`, `a[lo:hi][0] >> k`, and a
-// `U(u32) => x` match binding all lowered SIGNED. This is wasm-only: x86-64 /
+// expr_is_u32 must recognise more than a u32 IDENT slot and a u32[] ident
+// element, or `p.n >> k`, `t.0 >> k`, `[big][0] >> k`, `a[lo:hi][0] >> k`, and
+// a `U(u32) => x` match binding all lower SIGNED. This is wasm-only: x86-64 /
 // arm64 keep the u32 zero-extended in a 64-bit register, so a signed shift/div
 // already matched there. Every value here has bit 31 set, so each case fails
 // with the signed opcode and passes with the unsigned one; expected values are

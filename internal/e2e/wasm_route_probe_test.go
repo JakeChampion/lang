@@ -73,9 +73,9 @@ func TestWasmRouteProbe(t *testing.T) {
 		"    if (both(x, y)) { return 42; }\n" +
 		"    return 1;\n" +
 		"}\n"
-	// The fold shape, which used to be the declined boundary case: an ARRAY-param
-	// type var, so clause (c'') could not promote it and erased_passthrough_safe
-	// excluded it because the body uses the value. Clause (c-arr) now promotes on
+	// The fold shape: an ARRAY-param type var, so clause (c'') cannot promote it
+	// and erased_passthrough_safe excludes it because the body uses the value.
+	// Clause (c-arr) promotes on
 	// ANY mention of the var in the return, which covers the bare `T` here, so it
 	// monomorphises to a concrete `sum_all__i64` and lowers.
 	//
@@ -166,8 +166,8 @@ func TestWasmRouteProbe(t *testing.T) {
 	}
 
 	// A declined module is a hard ERROR, which is what retiring wasm.fern bought
-	// here: the AST fallback used to emit for these and its answer was wrong. The
-	// contract needs a shape that is still genuinely declined to assert against,
+	// here: an AST fallback would emit for these and answer wrongly. The
+	// contract needs a shape that is genuinely declined to assert against,
 	// which is why twoVarArrayShape replaced foldShape when the latter started
 	// lowering — a refusal test whose subject no longer refuses proves nothing.
 	t.Run("declined-route-refuses", func(t *testing.T) {

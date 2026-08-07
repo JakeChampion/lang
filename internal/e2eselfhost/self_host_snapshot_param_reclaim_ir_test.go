@@ -105,8 +105,8 @@ function main(): i32 {
 }
 
 // TestSelfHostSnapshotParamReclaimArm64 is the arm64 mirror: __fern_snapshot_dec
-// is now a REAL rc-guarded shallow free on arm64 (previously a leak-safe
-// pass-through). The heavy OOM-churn is x86-only (it needs ~240M allocations to
+// is a REAL rc-guarded shallow free on arm64, not a leak-safe pass-through.
+// The heavy OOM-churn is x86-only (it needs ~240M allocations to
 // exhaust the bump heap, far too slow under qemu); arm64 is verified by
 // CORRECTNESS — a wrong free of the caller's snapshot or a shared field buffer
 // corrupts the result — plus an asm-content check that the real freelist-push

@@ -939,8 +939,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e031-if-enum-variant-arms-ok", "enum Sh { Circle(i32), Empty }\nfunction main(): i32 { var c = true; var r = if (c) { Circle(1) } else { Empty }; return 0; }\n", nil},
 		{"e031-match-nested-if-arm-ok", "enum O { A, B }\nfunction main(): i32 { var o: O = A; var r = match (o) { A => if (1<2) { 1 } else { 2 }, B => 3 }; return r; }\n", nil},
 		{"e031-match-tuple-arms-ok", "enum O { A, B }\nfunction main(): i32 { var o: O = A; var r = match (o) { A => (1,2), B => (3,4) }; return r.0; }\n", nil},
-		// Faithful-precision cases (previously missed by the conservative
-		// "all aggregates compatible" predicate; now match the Go checker):
+		// Faithful-precision cases — a conservative "all aggregates compatible"
+		// predicate misses these; they must match the Go checker:
 		{"e031-two-unrelated-structs", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { var c = true; var r = if (c) { P { x: 1 } } else { Q { y: 2 } }; return 0; }\n", []string{"E031"}},
 		{"e031-tuple-elem-mismatch", "function main(): i32 { var c = true; var r = if (c) { (1, \"x\") } else { (1, 2) }; return 0; }\n", []string{"E031"}},
 		{"e031-array-elem-mismatch", "function main(): i32 { var c = true; var r = if (c) { [\"x\"] } else { [1] }; return 0; }\n", []string{"E031"}},

@@ -18,7 +18,7 @@ import (
 // mis-lower or bail.
 //
 // This pins the wider-type half of the "var x: T = expr + type inference" audit
-// row (docs/FEATURE-AUDIT.md, previously "i32 path; wider types pending"). Each
+// row (docs/FEATURE-AUDIT.md); the i32 path is covered elsewhere. Each
 // case is oracle-checked against the interpreter, routing-pinned to "ir", and
 // returns a value <= 120 (wasmtime exit-code truncation, cf. #2908).
 var varInferenceIRCases = []struct {

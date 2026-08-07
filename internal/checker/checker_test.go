@@ -23,11 +23,11 @@ func checkSource(t *testing.T, src string) error {
 
 // TestGenericStructLitFieldCheckedAgainstDestination covers a generic struct
 // literal whose field value conflicts with an explicit destination
-// instantiation — `var b: Box[i32] = Box { v: "x" }`. The field used to be
-// checked only against the free parameter `T` (which unified to `string`), so
-// the mismatch slipped past the checker and crashed monomorph re-check with a
-// confusing "compiler bug". The destination now seeds the type-arg
-// substitution, so it's a clean E043 at check time — while genuinely valid
+// instantiation — `var b: Box[i32] = Box { v: "x" }`. Checking the field only
+// against the free parameter `T` (which unifies to `string`) lets the mismatch
+// slip past and crashes monomorph re-check with a confusing "compiler bug".
+// The destination seeds the type-arg substitution, so it's a clean E043 at
+// check time — while genuinely valid
 // instantiations and unannotated inference still pass.
 func TestGenericStructLitFieldCheckedAgainstDestination(t *testing.T) {
 	mustErr := func(src, want string) {
@@ -174,11 +174,11 @@ func TestUnknownTypeReported(t *testing.T) {
 
 // TestBinaryOperandErrorNoCascade guards two bugs in one: a binary
 // expression with an already-errored operand (here `q()`, an undefined
-// identifier, whose type is nil) used to emit a *second*, cascading E009
-// "operator requires …" diagnostic — and, worse, format the nil operand
-// type into that message as the literal Go garbage `%!s(<nil>)`. checkExpr
-// on a Binary now bails when either operand failed to type, so only the
-// root cause is reported and no malformed type string leaks out.
+// identifier, whose type is nil) must not emit a *second*, cascading E009
+// "operator requires …" diagnostic, nor format the nil operand type into
+// that message as the literal Go garbage `%!s(<nil>)`. checkExpr on a
+// Binary bails when either operand failed to type, so only the root cause
+// is reported and no malformed type string leaks out.
 func TestBinaryOperandErrorNoCascade(t *testing.T) {
 	check := func(src string) (errCount, nilFmt int) {
 		err := checkSource(t, src)
@@ -277,10 +277,10 @@ func TestWasmReactorBuiltinSigs(t *testing.T) {
 // non-leading position — in particular a function-typed payload whose
 // result is the type parameter — must infer that parameter from the
 // payload that actually pins it, not by positionally pairing the
-// type-arg slot with the leading constructor argument. Regression for
-// the variant post-settle refresh, which previously mis-bound `T` to
-// the first (i32-literal) argument and reported `Box[i32]` where
-// `Box[string]` was expected. See docs/GENERIC-VARIANT-FN-PAYLOAD-INFERENCE-GAP.md.
+// type-arg slot with the leading constructor argument — that pairing
+// binds `T` to the first (i32-literal) argument and reports `Box[i32]`
+// where `Box[string]` is expected.
+// See docs/GENERIC-VARIANT-FN-PAYLOAD-INFERENCE-GAP.md.
 func TestVariantTypeParamFromFnPayload(t *testing.T) {
 	ok := []string{
 		// T comes from the second, function-typed payload; the leading
@@ -737,10 +737,9 @@ func TestUnimportedStdlibMethodIsRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a type error for .split() without import \"std/string\", got nil")
 	}
-	// The diagnostic names the method and the module that would define
-	// it. It used to read "field access on non-struct value of type
-	// string", which described neither the call the user wrote nor the
-	// import they were missing.
+	// The diagnostic names the method and the module that would define it.
+	// "field access on non-struct value of type string" describes neither
+	// the call the user wrote nor the import they are missing.
 	for _, want := range []string{`no method "split" on string`, "add `import \"std/string\"`"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err.Error(), want)
@@ -1487,10 +1486,10 @@ func TestIfExprStillRejectsActualBranchMismatch(t *testing.T) {
 }
 
 // Postfix `?` produces the unwrapped Some payload type.
-// Regression: a non-variant call returning Option[T] used to be
-// refreshed by postSettleType's Call branch as Option[<arg type>],
-// because the gate didn't distinguish variant constructors from
-// regular function calls. The minimal repro is a function whose
+// A non-variant call returning Option[T] must not be refreshed by
+// postSettleType's Call branch as Option[<arg type>]; the gate has to
+// distinguish variant constructors from regular function calls. The
+// minimal repro is a function whose
 // first param is an array type — the arg-rebuild would turn
 // `Option[i32]` into e.g. `Option[boolean[]]`.
 func TestNonVariantCallReturningGenericEnum(t *testing.T) {
@@ -1757,9 +1756,9 @@ func TestStructLitMissingField(t *testing.T) {
 }
 
 // A value-returning function that can fall off the end without a return
-// is rejected (E052). Regression for F4 in
-// docs/ADVERSARIAL-REVIEW-2026-06.md — previously this type-checked and
-// crashed at runtime with a void value where a struct was expected.
+// is rejected (E052). Without the check it type-checks and crashes at
+// runtime with a void value where a struct was expected — F4 in
+// docs/ADVERSARIAL-REVIEW-2026-06.md.
 func TestMissingReturnRejected(t *testing.T) {
 	for _, src := range []string{
 		// one-armed if: falls through when b is false
@@ -2404,9 +2403,9 @@ func TestGenericEnumArityChecked(t *testing.T) {
 // `use n <- generic_fn(args...);` must infer `n`'s type by
 // solving the callee's type parameters from the args, then
 // applying the substitution to the callback's first param.
-// Previously the checker stamped the raw parameter type
-// straight onto `n` — which left it as `T` for generic
-// callees, breaking subsequent uses like `n + 1`.
+// Stamping the raw parameter type straight onto `n` leaves
+// it as `T` for generic callees, breaking subsequent uses
+// like `n + 1`.
 func TestUseInfersBindingTypeFromGenericCallee(t *testing.T) {
 	src := `function each[T](items: T[], cb: (T) => i32): i32 {
     return cb(items[0]);
@@ -3529,7 +3528,7 @@ function main(): i32 { return 0; }`, "only Eq, Display, Debug, Ord, Hash, Json, 
 // TestDeriveGenericEnum — `@derive` on a generic enum synthesises a
 // parametric impl `impl[T: Trait] Trait for E[T]`, so the derived
 // methods type-check field-wise through the bound and monomorphise per
-// instantiation. (Generic-enum derive used to be rejected outright.)
+// instantiation.
 func TestDeriveGenericEnum(t *testing.T) {
 	src := `trait Eq { function eq(self: Self, other: Self): boolean; }
 impl Eq for i32 { function eq(self: i32, other: i32): boolean { return self == other; } }

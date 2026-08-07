@@ -16,8 +16,7 @@ import (
 // via a custom provider (docs/WIT-BRING-YOUR-OWN.md): an `@import` extern returns
 // a canonical `list<u8>`, lifted into a Fern `u8[]`, composed through
 // ComposeFromWorldAuto + a custom provider (not the legacy wasi:random registry).
-// This was previously deferred on a suspected gMemRealloc trap; that path now
-// composes + runs cleanly, so this pins it.
+// Pins the gMemRealloc path, which composes + runs cleanly.
 //
 // The provider exports `bytes: func(n: u32) -> list<u8>` returning [0,1,…,n-1];
 // the Fern side requests 4 and checks element [3] == 3 and the length.

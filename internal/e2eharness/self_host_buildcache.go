@@ -95,10 +95,9 @@ var fernImportRe = regexp.MustCompile(`(?m)^\s*import\s+"([^"]+)"`)
 // the cache-key note above), so hashing them would only add churn.
 //
 // Everything else (`./lexer`, a bare sibling `lexer`) is LOCAL and must
-// resolve. The distinction used to be implicit — an unresolvable path was
-// skipped whatever it was, and `std/…` happened to be unresolvable — which
-// meant a genuinely missing local source was indistinguishable from a stdlib
-// import and dropped out of the key without a word.
+// resolve. The distinction is explicit so that a genuinely missing local
+// source is an error rather than being silently skipped as if it were a
+// stdlib import.
 func isExternalFernImport(imp string) bool {
 	return !strings.HasPrefix(imp, "./") && strings.Contains(imp, "/")
 }

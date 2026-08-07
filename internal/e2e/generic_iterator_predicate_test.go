@@ -13,12 +13,10 @@ import (
 // every NATIVE backend (interp / x86-64 / wasm / arm64) AND on the self-host IR
 // path (TestSelfHostGenericPredicateAdaptersIR* below).
 //
-// The earlier diagnosis here — "a closure whose RETURN type is `boolean`, called
-// indirectly through a function-typed parameter, miscompiles" — was WRONG. The
-// real #2686-tail bug was that the self-host IR lift pass
-// (lift_inline_closures_stmts) walked only var-init / return / expr-stmt /
-// assignment and the nested BODIES of if/while/for — never a statement's
-// CONDITION or iterated expression. Every case here calls the adapter in such a
+// The #2686-tail bug is in the self-host IR lift pass
+// (lift_inline_closures_stmts): it must walk a statement's CONDITION and
+// iterated expression, not only var-init / return / expr-stmt / assignment
+// and the nested BODIES of if/while/for. Every case here calls the adapter in such a
 // position (`if (any(…))` / `if (all(…))` / `match (find(…))`), so the lambda
 // argument was never env-boxed while the callee's fn-param — marked a closure
 // local — unpacked an env box from the bare fn pointer and crashed. The "boolean

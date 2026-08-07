@@ -65,8 +65,8 @@ function main(): i32 {
 // wasm_timer_pollable to the poll set each round): a fast future (10ms) beats
 // the 60ms budget and carries its result; a slow one (300ms) misses and lands
 // on_timeout. Proves the wasm host-timeout path (docs/ASYNC-FUTURE-UNIFICATION.md)
-// — previously with_deadline ignored its deadline on wasm (and the
-// monotonic_ns + timer-pollable combination didn't even compose).
+// — with_deadline honours its deadline on wasm, and monotonic_ns composes
+// with the timer-pollable.
 func TestAsyncWasmWithDeadline(t *testing.T) {
 	src := `import "std/async";
 

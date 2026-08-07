@@ -592,9 +592,8 @@ func exportExists(t *testing.T, bin []byte, want string) bool {
 // clear error. This pins the contract that gaps surface as
 // failures, not as silently-wrong output.
 //
-// Previously this used `tcp_listen`; TCP has since landed in
-// wasmbin (see wasi_tcp.go). The next remaining gap is
-// `subprocess` — wasi:cli/exec-process isn't wired into the
+// The remaining gap is `subprocess` (TCP landed in wasmbin, see
+// wasi_tcp.go) — wasi:cli/exec-process isn't wired into the
 // runtime helpers yet, so any program that spawns a child
 // surfaces an "unknown callee" / "unsupported" failure. As
 // each gap closes, update this test to point at the next.

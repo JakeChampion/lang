@@ -758,11 +758,10 @@ func (a *Assembler) mov(ops []operand, abs bool) error {
 		return a.regMem(0x8A, dst, src)
 	case dst.kind == opMem && src.kind == opImm:
 		// Honour the operand size from the `byte/word/dword/qword ptr`
-		// prefix. Previously this always emitted C7 + imm32 (a 4-byte
-		// store), so `mov byte ptr [mem], imm` silently wrote 4 bytes —
-		// a 3-byte buffer overrun (e.g. __fern_strcat's 1-byte NUL
-		// terminator past a `len+1` allocation, #3544). C6 /0 ib is the
-		// byte form; word needs the 0x66 size prefix + imm16.
+		// prefix. Emitting C7 + imm32 unconditionally makes
+		// `mov byte ptr [mem], imm` write 4 bytes — a 3-byte buffer
+		// overrun (#3544). C6 /0 ib is the byte form; word needs the
+		// 0x66 size prefix + imm16.
 		switch dst.memSize {
 		case 8:
 			// mov r/m8, imm8 : [REX] C6 /0 ib

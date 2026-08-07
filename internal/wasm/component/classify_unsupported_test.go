@@ -12,9 +12,9 @@ import (
 // being dropped on the floor and producing a component that fails to
 // instantiate later.
 //
-// This used to be covered end to end, by compiling a Fern program whose
-// builtins had no preview-2 route. That is no longer possible: with
-// #6208 closed, every filesystem builtin composes, and the source those
+// End-to-end coverage (compiling a Fern program whose builtins had no
+// preview-2 route) is not possible: with #6208 closed, every filesystem
+// builtin composes, and the source those
 // tests used had already had to move three times as the composer grew
 // (print → read+append → stat → read_dir). A test whose subject keeps
 // disappearing is testing the to-do list, not the contract — so the

@@ -13,9 +13,9 @@ import (
 // the self-host IR path and run correctly.
 //
 // The native compiler accepts both the bare (`Custom(7)` / `Custom(v) =>`) and
-// qualified spellings, but the self-host IR path previously only handled the bare
-// form: a qualified construction made the whole module IR-ineligible and fell
-// back to the AST emitter, which mis-lowers it (`# unresolved ident: Color`) and
+// qualified spellings, and the self-host IR path must handle both: a qualified
+// construction that makes the whole module IR-ineligible falls back to the AST
+// emitter, which mis-lowers it (`# unresolved ident: Color`) and
 // produces a binary that crashes — a native-vs-self-host gap and a miscompile.
 // With qualified construction + qualified patterns lowered in irlower.fern, the
 // module is IR-eligible and lowers correctly.
