@@ -48,7 +48,8 @@ func writeSelfHostCLIProject(t *testing.T) string {
 		"flatten.fern", "wasm_ir.fern",
 		"checker.fern", "interp.fern", "printer.fern", "ssa.fern",
 		"ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "watbin.fern",
-		"constfold.fern", "arm64_native.fern", "elf.fern", "fern.fern",
+		"constfold.fern", "arm64_native.fern", "x86_native.fern",
+		"elf.fern", "fern.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {

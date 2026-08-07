@@ -2828,12 +2828,23 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
         }
         return a;
     }
-    if (mnem == "cmovl") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_l(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (mnem == "cmovle") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_le(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (mnem == "cmovg") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_g(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (mnem == "cmovge") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_ge(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (mnem == "cmove" || mnem == "cmovz") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_e(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (mnem == "cmovne" || mnem == "cmovnz") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_ne(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    // The operand-size suffix is optional on cmov in AT&T and the emitter
+    // writes both spellings (`cmovneq` at asm_ir.fern:5293), so strip a
+    // trailing `q` before matching. Every operand here is 64-bit.
+    var cmv: string = mnem;
+    if (cmv.len() > 5 && cmv[0:4] == "cmov" && cmv[cmv.len() - 1] == 113) { // 'q'
+        cmv = cmv[0:cmv.len() - 1] + "";
+    }
+    if (cmv == "cmovl") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_l(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmovle") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_le(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmovg") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_g(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmovge") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_ge(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmovb") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_b(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmovbe") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_be(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmova") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_a(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmovae") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_ae(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmove" || cmv == "cmovz") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_e(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmovne" || cmv == "cmovnz") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_ne(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
     // movsxd is the AT&T spelling GNU as also accepts for movslq — same
     // sign-extending 32-to-64 load (REX.W 63 /r), so it shares the handler.
     if (mnem == "movslq" || mnem == "movsxd") {
