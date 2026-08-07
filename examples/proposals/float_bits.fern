@@ -1,0 +1,401 @@
+// examples/proposals/float_bits.fern — proposal turn, drawn line 95:
+// "A floating-point inspector that prints the sign, exponent and mantissa of
+// an f64."
+//
+// IEEE-754 binary64: one sign bit, eleven exponent bits, fifty-two mantissa
+// bits. The decoding is a handful of shifts, and every one of them is easy to
+// get right on 1.0 and wrong everywhere the format stops being uniform —
+// which is at both ends. A subnormal has a stored exponent of zero and *no*
+// implicit leading one; zero and infinity are the two all-or-nothing exponent
+// fields; NaN is an infinity with a non-zero mantissa; and -0.0 differs from
+// 0.0 in exactly the bit an inspector exists to show you.
+//
+// So the load-bearing test is not "the fields look right", it is a ROUND TRIP
+// over bit patterns: decode to (sign, exponent, mantissa), rebuild the 64 bits
+// from those three, and require the same bits back. Comparing the rebuilt
+// f64 with `==` would be the wrong test twice over — `NaN == NaN` is false and
+// `-0.0 == 0.0` is true, so the comparison would reject every correct answer
+// for one and accept a wrong one for the other. Bits are the only equality
+// that means anything here.
+//
+// The second test recomputes the VALUE from the fields by arithmetic —
+// (-1)^s x significand x 2^e — and requires it to equal the original. The
+// round trip alone would pass on a decoder that shifted consistently but
+// wrongly; this one pins the fields to what they are supposed to mean.
+//
+// `std/float`'s own predicates (`is_nan`, `is_finite`, `is_inf`,
+// `is_sign_negative`) are the independent oracle for the classifier: they
+// reach the same facts by different routes, so a disagreement is a real one.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/i64";
+import "std/u64";
+import "std/float";
+import "std/string";
+
+// Stored fields, exactly as they sit in the 64 bits — `exp` is the RAW
+// eleven-bit field, not the unbiased exponent, and `mantissa` is the stored
+// fifty-two bits without any implicit leading one. Keeping them raw is what
+// lets the round trip be a pure re-assembly with no interpretation in it.
+struct Fields { sign: i32, exp: i32, mantissa: u64 }
+
+// Fern has no top-level bindings, so the format's constants are functions.
+function BIAS(): i32 { return 1023; }
+function MANT_BITS(): i32 { return 52; }
+function MANT_MASK(): u64 { return 4503599627370495; }   // 2^52 - 1
+function EXP_MASK(): u64 { return 2047; }                // 2^11 - 1
+function IMPLICIT(): u64 { return 4503599627370496; }    // 2^52
+
+function decode(x: f64): Fields {
+    var b: u64 = f64_bits(x) as u64;
+    return Fields {
+        sign: ((b >> 63) & 1) as i32,
+        exp: ((b >> 52) & EXP_MASK()) as i32,
+        mantissa: b & MANT_MASK(),
+    };
+}
+
+function encode(f: Fields): u64 {
+    return ((f.sign as u64) << 63) | ((f.exp as u64) << 52) | f.mantissa;
+}
+
+// ------------------------------------------------------------ classifying
+
+function CLASS_ZERO(): i32 { return 0; }
+function CLASS_SUBNORMAL(): i32 { return 1; }
+function CLASS_NORMAL(): i32 { return 2; }
+function CLASS_INFINITE(): i32 { return 3; }
+function CLASS_NAN(): i32 { return 4; }
+
+// The two extreme exponent fields are the special ones: 0 means "no implicit
+// leading bit" (zero when the mantissa is empty, subnormal when it is not),
+// and 2047 means "not a finite number" (infinity when the mantissa is empty,
+// NaN when it is not). Everything between is an ordinary normal.
+function classify(f: Fields): i32 {
+    if (f.exp == 0) {
+        if (f.mantissa == 0) { return CLASS_ZERO(); }
+        return CLASS_SUBNORMAL();
+    }
+    if (f.exp == 2047) {
+        if (f.mantissa == 0) { return CLASS_INFINITE(); }
+        return CLASS_NAN();
+    }
+    return CLASS_NORMAL();
+}
+
+function class_name(c: i32): string {
+    if (c == CLASS_ZERO()) { return "zero"; }
+    if (c == CLASS_SUBNORMAL()) { return "subnormal"; }
+    if (c == CLASS_NORMAL()) { return "normal"; }
+    if (c == CLASS_INFINITE()) { return "infinite"; }
+    return "nan";
+}
+
+// The significand with its implicit bit restored, and the unbiased exponent
+// that goes with it. A subnormal has no implicit bit and its exponent is the
+// SAME as the smallest normal's — the format's one genuine discontinuity, and
+// the thing an off-by-one here would silently smooth over.
+function significand(f: Fields): u64 {
+    if (f.exp == 0) { return f.mantissa; }
+    return f.mantissa | IMPLICIT();
+}
+
+function unbiased_exp(f: Fields): i32 {
+    if (f.exp == 0) { return 1 - BIAS(); }
+    return f.exp - BIAS();
+}
+
+// ------------------------------------------------------------- the corpus
+
+// Every boundary the format has, plus enough ordinary values that a decoder
+// broken only in the middle would still be caught.
+function corpus(): f64[] {
+    return [
+        0.0,
+        -0.0,                                   // differs from 0.0 in one bit
+        1.0, 0.0 - 1.0, 2.0, 0.5, 0.0 - 0.5,
+        3.0, 10.0, 0.1, 1e100, 1e-100,
+        3.141592653589793,
+        f64_from_bits(1),                       // smallest positive subnormal
+        f64_from_bits(4503599627370495),        // largest subnormal
+        f64_from_bits(4503599627370496),        // smallest positive normal
+        f64_from_bits(9218868437227405311),     // largest finite
+        f64_from_bits(-9223372036854775807 - 1), // -0.0 by bits
+        f64_from_bits(9218868437227405312),     // +Inf
+        f64_from_bits(-4503599627370496),       // -Inf
+        f64_from_bits(9221120237041090560),     // quiet NaN
+        f64_from_bits(9218868437227405313),     // signalling NaN
+    ];
+}
+
+function names(): string[] {
+    return ["0.0", "-0.0", "1.0", "-1.0", "2.0", "0.5", "-0.5",
+            "3.0", "10.0", "0.1", "1e100", "1e-100", "pi",
+            "min subnormal", "max subnormal", "min normal", "max finite",
+            "-0.0 by bits", "+Inf", "-Inf", "quiet NaN", "signalling NaN"];
+}
+
+// ------------------------------------------------------------- reporting
+
+function describe(x: f64): string {
+    var f: Fields = decode(x);
+    var c: i32 = classify(f);
+    var s: string = "sign=" + f.sign.to_string()
+        + " exp=" + f.exp.to_string()
+        + " mantissa=" + f.mantissa.to_string()
+        + " [" + class_name(c) + "]";
+    if (c == CLASS_NORMAL() || c == CLASS_SUBNORMAL()) {
+        s = s + " = " + significand(f).to_string() + " x 2^"
+            + (unbiased_exp(f) - MANT_BITS()).to_string();
+    }
+    return s;
+}
+
+// 2^e, built by repeated doubling or halving rather than by `pow`. Every
+// intermediate is a power of two and therefore exact, all the way down to the
+// smallest subnormal, so this is an exact oracle where `pow` is not — the
+// native backends' `pow(2.0, 280.0)` is several ULP off an exactly
+// representable answer (#6405), and it does not build for wasm at all (#6404,
+// along with twelve other libm methods). Doubling uses only multiplication,
+// which every backend has as a single instruction.
+function pow2(e: i32): f64 {
+    var v: f64 = 1.0;
+    if (e >= 0) {
+        for i in 0..e { v = v * 2.0; }
+        return v;
+    }
+    for i in 0..(0 - e) { v = v * 0.5; }
+    return v;
+}
+
+// ---------------------------------------------------------------- tests
+
+// THE test. Decode to three fields, rebuild the 64 bits from exactly those
+// three, and require the identical pattern back. Bits, not `==`: `NaN == NaN`
+// is false and `-0.0 == 0.0` is true, so a value comparison would reject every
+// correct answer for one and accept a wrong one for the other.
+function test_the_fields_rebuild_the_original_bits(): test.TestOutcome {
+    var xs: f64[] = corpus();
+    var ns: string[] = names();
+    for i in 0..xs.len() {
+        var want: u64 = f64_bits(xs[i]) as u64;
+        var got: u64 = encode(decode(xs[i]));
+        if (got != want) {
+            return test.fail(ns[i] + ": decoded to " + describe(xs[i])
+                + ", which rebuilds as " + got.to_string() + " not "
+                + want.to_string());
+        }
+    }
+    return test.pass();
+}
+
+// Every bit pattern is somebody's f64, so the round trip has to hold for
+// patterns nobody would write down as a literal. Walking one bit at a time
+// across all 64 positions covers each field's boundary from both sides.
+function test_every_single_bit_position_round_trips(): test.TestOutcome {
+    for i in 0..64 {
+        var bits: i64 = (1 as u64 << i) as i64;
+        var x: f64 = f64_from_bits(bits);
+        var got: u64 = encode(decode(x));
+        if (got != (bits as u64)) {
+            return test.fail("bit " + i.to_string() + " set: " + describe(x)
+                + " rebuilds as " + got.to_string() + " not "
+                + (bits as u64).to_string());
+        }
+    }
+    return test.pass();
+}
+
+// The round trip alone would pass on a decoder that shifted consistently but
+// wrongly — swap the exponent and mantissa widths and the bits still reassemble.
+// This pins the fields to their MEANING: significand x 2^(e-52) must reproduce
+// the number, computed by arithmetic rather than by bit twiddling.
+function test_the_fields_reproduce_the_value(): test.TestOutcome {
+    var xs: f64[] = corpus();
+    var ns: string[] = names();
+    for i in 0..xs.len() {
+        var f: Fields = decode(xs[i]);
+        var c: i32 = classify(f);
+        if (c != CLASS_NORMAL() && c != CLASS_SUBNORMAL()) { continue; }
+        var v: f64 = (significand(f) as f64) * pow2(unbiased_exp(f) - MANT_BITS());
+        if (f.sign == 1) { v = 0.0 - v; }
+        if (v != xs[i]) {
+            return test.fail(ns[i] + ": " + describe(xs[i])
+                + " reconstructs as " + v.to_string() + ", not " + xs[i].to_string());
+        }
+    }
+    return test.pass();
+}
+
+// The classifier against std/float's predicates, which reach the same facts
+// through comparisons rather than bits. Both must agree on all five classes,
+// for every value in the corpus.
+function test_the_classifier_agrees_with_the_stdlib(): test.TestOutcome {
+    var xs: f64[] = corpus();
+    var ns: string[] = names();
+    for i in 0..xs.len() {
+        var c: i32 = classify(decode(xs[i]));
+        var x: f64 = xs[i];
+        if ((c == CLASS_NAN()) != x.is_nan()) {
+            return test.fail(ns[i] + ": bits say " + class_name(c)
+                + ", std/float says is_nan=" + x.is_nan().to_string());
+        }
+        if ((c == CLASS_INFINITE()) != x.is_inf()) {
+            return test.fail(ns[i] + ": bits say " + class_name(c)
+                + ", std/float says is_inf=" + x.is_inf().to_string());
+        }
+        var finite: boolean = c == CLASS_ZERO() || c == CLASS_SUBNORMAL()
+            || c == CLASS_NORMAL();
+        if (finite != x.is_finite()) {
+            return test.fail(ns[i] + ": bits say " + class_name(c)
+                + ", std/float says is_finite=" + x.is_finite().to_string());
+        }
+    }
+    return test.pass();
+}
+
+// The sign bit is the whole reason an inspector beats a comparison: it is the
+// only difference between 0.0 and -0.0, which compare EQUAL, and NaN carries
+// one that no arithmetic will show you.
+function test_the_sign_bit_survives_where_comparison_cannot(): test.TestOutcome {
+    var pz: f64 = 0.0;
+    var nz: f64 = -0.0;
+    // `0.0 - 0.0` is +0.0, not -0.0 — subtraction of equals yields positive
+    // zero under round-to-nearest, and only the unary minus produces the
+    // negative one. Writing the corpus the other way is how this file first
+    // got its own -0.0 entry wrong, and the test below is what said so.
+    if (f64_bits(0.0 - 0.0) != f64_bits(0.0)) {
+        return test.fail("0.0 - 0.0 is not +0.0");
+    }
+    if (pz != nz) {
+        return test.fail("0.0 and -0.0 do not compare equal; this test is"
+            + " no longer about what it says it is");
+    }
+    if (decode(pz).sign != 0 || decode(nz).sign != 1) {
+        return test.fail("0.0 has sign " + decode(pz).sign.to_string()
+            + " and -0.0 has sign " + decode(nz).sign.to_string());
+    }
+    if (encode(decode(pz)) == encode(decode(nz))) {
+        return test.fail("0.0 and -0.0 decode to the same bits");
+    }
+    var xs: f64[] = corpus();
+    var ns: string[] = names();
+    for i in 0..xs.len() {
+        if (decode(xs[i]).sign == 1) {
+            if (!xs[i].is_sign_negative()) {
+                return test.fail(ns[i] + ": sign bit set, but std/float says"
+                    + " is_sign_negative=false");
+            }
+        } else {
+            if (xs[i].is_sign_negative()) {
+                return test.fail(ns[i] + ": sign bit clear, but std/float says"
+                    + " is_sign_negative=true");
+            }
+        }
+    }
+    return test.pass();
+}
+
+// The subnormal boundary, from both sides. The largest subnormal and the
+// smallest normal are adjacent bit patterns, and they are the one place the
+// format changes rule: the implicit bit appears and the unbiased exponent does
+// NOT change. A decoder that derives the exponent uniformly gets a value one
+// factor of two out on exactly one of these two.
+function test_the_subnormal_boundary_is_continuous(): test.TestOutcome {
+    var maxsub: f64 = f64_from_bits(4503599627370495);
+    var minnorm: f64 = f64_from_bits(4503599627370496);
+    var a: Fields = decode(maxsub);
+    var b: Fields = decode(minnorm);
+    if (classify(a) != CLASS_SUBNORMAL()) {
+        return test.fail("largest subnormal classified as " + class_name(classify(a)));
+    }
+    if (classify(b) != CLASS_NORMAL()) {
+        return test.fail("smallest normal classified as " + class_name(classify(b)));
+    }
+    if (unbiased_exp(a) != unbiased_exp(b)) {
+        return test.fail("the exponent jumps across the boundary: "
+            + unbiased_exp(a).to_string() + " then " + unbiased_exp(b).to_string()
+            + " — a subnormal shares the smallest normal's exponent");
+    }
+    // Adjacent patterns, so the significands must be adjacent too.
+    if (significand(b) != significand(a) + 1) {
+        return test.fail("significands are not adjacent across the boundary: "
+            + significand(a).to_string() + " then " + significand(b).to_string());
+    }
+    if (!(maxsub < minnorm)) {
+        return test.fail("the largest subnormal is not below the smallest normal");
+    }
+    return test.pass();
+}
+
+// Powers of two have an empty mantissa and an exponent that walks by one, so
+// the exponent field is checked against something independent of the decoder:
+// the number of doublings.
+function test_powers_of_two_walk_the_exponent(): test.TestOutcome {
+    var x: f64 = 1.0;
+    for i in 0..64 {
+        var f: Fields = decode(x);
+        if (f.mantissa != 0) {
+            return test.fail("2^" + i.to_string() + " has mantissa "
+                + f.mantissa.to_string() + ", which should be empty");
+        }
+        if (unbiased_exp(f) != i) {
+            return test.fail("2^" + i.to_string() + " has unbiased exponent "
+                + unbiased_exp(f).to_string());
+        }
+        if (f.sign != 0) {
+            return test.fail("2^" + i.to_string() + " has its sign bit set");
+        }
+        x = x * 2.0;
+    }
+    return test.pass();
+}
+
+// NaN is not one value. Both a quiet and a signalling pattern must classify as
+// NaN and keep their distinct mantissas — a decoder that normalised them, or a
+// test that used `==`, would call them the same thing.
+function test_nan_payloads_are_distinguishable(): test.TestOutcome {
+    var q: f64 = f64_from_bits(9221120237041090560);
+    var s: f64 = f64_from_bits(9218868437227405313);
+    if (classify(decode(q)) != CLASS_NAN() || classify(decode(s)) != CLASS_NAN()) {
+        return test.fail("a NaN pattern did not classify as nan");
+    }
+    if (decode(q).mantissa == decode(s).mantissa) {
+        return test.fail("the two NaN payloads decode identically: "
+            + decode(q).mantissa.to_string());
+    }
+    if (encode(decode(q)) != (f64_bits(q) as u64)
+        || encode(decode(s)) != (f64_bits(s) as u64)) {
+        return test.fail("a NaN payload did not survive the round trip");
+    }
+    if (q == q) {
+        return test.fail("NaN compares equal to itself; this test is no longer"
+            + " about what it says it is");
+    }
+    return test.pass();
+}
+
+// ------------------------------------------------------------------- app
+
+function main(): i32 {
+    eprint("float_bits — the sign, exponent and mantissa of an f64");
+    var xs: f64[] = corpus();
+    var ns: string[] = names();
+    for i in 0..xs.len() {
+        eprint("  " + ns[i] + ": " + describe(xs[i]));
+    }
+
+    var t: test.TestRunner = test.test_new("float_bits");
+    t = t.it("the fields rebuild the original bits", test_the_fields_rebuild_the_original_bits);
+    t = t.it("every single bit position round trips", test_every_single_bit_position_round_trips);
+    t = t.it("the fields reproduce the value", test_the_fields_reproduce_the_value);
+    t = t.it("the classifier agrees with the stdlib", test_the_classifier_agrees_with_the_stdlib);
+    t = t.it("the sign bit survives where comparison cannot", test_the_sign_bit_survives_where_comparison_cannot);
+    t = t.it("the subnormal boundary is continuous", test_the_subnormal_boundary_is_continuous);
+    t = t.it("powers of two walk the exponent", test_powers_of_two_walk_the_exponent);
+    t = t.it("nan payloads are distinguishable", test_nan_payloads_are_distinguishable);
+    return t.finish();
+}
