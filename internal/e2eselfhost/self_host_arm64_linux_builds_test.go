@@ -122,9 +122,9 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 			if f.Machine != elf.EM_AARCH64 || f.Type != elf.ET_EXEC {
 				t.Fatalf("got machine=%v type=%v, want AARCH64/EXEC", f.Machine, f.Type)
 			}
-			// The compiler must emit a RUNNABLE binary. This used to be an
-			// os.Chmod: the self-host CLI wrote 0644 where the native one
-			// writes 0755, and the harness quietly repaired it, so nothing
+			// The compiler must emit a RUNNABLE binary. An os.Chmod here
+			// would mask the self-host CLI writing 0644 where the native one
+			// writes 0755: the harness repairs it quietly, so nothing
 			// gated the mode. That repair is why a hand-run of the same
 			// command exited 1 with no output — indistinguishable from a
 			// program that ran and returned 1, and it cost one investigation

@@ -573,8 +573,7 @@ function main(): i32 {
 	// matters too, not just the cell-ness: a string cell whose slot misses
 	// is_strarr loads its element as an i32, so `.len()` reads a non-pointer.
 	// i64 cells are absent, but NOT because of a codegen divergence — an earlier
-	// note here claimed the IR path and the interpreter "disagree" on Cell[i64],
-	// which was wrong. `var c: Cell[i64] = cell_new(5000000000)` is REJECTED by
+	// `var c: Cell[i64] = cell_new(5000000000)` is REJECTED by
 	// the native checker (E003: cannot assign Cell[i32] to Cell[i64]): cell_new
 	// types its argument in isolation, so a bare literal settles to i32 and the
 	// annotation never reaches it. The interpreter was not computing a different
@@ -673,9 +672,7 @@ func runDriver(t *testing.T, runner []string, bin string, src []byte, strict boo
 // bailingProgram is a valid program the IR path deterministically declines, so
 // the strict-mode tripwire has something real to fire on.
 //
-// It used to be a module past the 512-function merged-bundle budget, described
-// here as "the one bail site deterministically reachable from a valid program".
-// That budget is gone (#3457), so the shape had to change — and the replacement
+// The 512-function merged-bundle budget is gone (#3457), so the shape is
 // is better, because the budget was a whole-MODULE gate while this is a genuine
 // per-function `lower_func` bail, which is what the flag exists to name.
 //

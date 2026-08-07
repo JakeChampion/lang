@@ -40,8 +40,8 @@ func TestLoadReturnsSourceOnParseError(t *testing.T) {
 		t.Fatalf("srcs[entry] = %q, want the full entry source", got)
 	}
 
-	// End-to-end: the formatter must now render the offending source line
-	// (previously blank), with the caret under the reserved name.
+	// End-to-end: the formatter must render the offending source line, not a
+	// blank one, with the caret under the reserved name.
 	out := diag.Format(entry, srcs[abs], err)
 	if !strings.Contains(out, "function f32(): i32") {
 		t.Errorf("diagnostic did not render the offending source line:\n%s", out)

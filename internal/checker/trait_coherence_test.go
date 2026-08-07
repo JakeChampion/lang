@@ -18,8 +18,8 @@ func wantE021Contains(t *testing.T, name, src, substr string) {
 	}
 }
 
-// An enum-returning trait method used to be rejected with a spurious E021
-// ("expected (E)=>E, got (E)=>E") because the parser models the bare enum name
+// An enum-returning trait method must not be rejected with a spurious E021
+// ("expected (E)=>E, got (E)=>E"). The parser models the bare enum name
 // in the trait signature as a StructType while the impl method carries an
 // EnumType. normalizeEnumKinds reconciles the kinds. Pins both the borrowed and
 // the consuming (`own self`) forms — the latter is the headline FBIP map.

@@ -14,9 +14,9 @@ import (
 // cloned variant `A`'s payload `Opt[U]` substitutes to `Opt[i32]`, which must in
 // turn be mangled to `Opt__i32` and cloned; and a nested `match (o)` on the
 // bound payload must recover `o`'s real type `Opt[i32]` (not the outer arg
-// `i32`). Previously the cloned variant field kept the un-mangled `Opt[i32]`
-// (dangling on the dropped generic `Opt`) and the binding was typed as the bare
-// outer arg, so the module bailed to the AST emitter (which miscompiled it).
+// `i32`). A cloned variant field keeping the un-mangled `Opt[i32]` dangles on
+// the dropped generic `Opt`, and typing the binding as the bare outer arg bails
+// the module to the AST emitter, which miscompiles it.
 // Native handles it, so this closes a goal-1 IR-subset gap. Each exit code is
 // pinned against the native interpreter oracle and kept <= 120.
 type genEnumPayloadGenEnumIRCase struct {

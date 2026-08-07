@@ -28,8 +28,8 @@ import (
 //
 // Asserts the program decides IR, the asm carries the i32 clone
 // (`__mapm_merge__i32__i32`), and the program runs to exit 0 — at i32 keys
-// (the case that previously SIGSEGV'd) AND at string keys (the case that was
-// accidentally correct under the string default).
+// (the case that SIGSEGVs without it) AND at string keys (accidentally
+// correct under the string default).
 //
 // Native only: the file-loading driver reads stdlib modules by host path from
 // argv (mirrors TestSelfHostStdTestE2E / TestSelfHostImportAliasIR).

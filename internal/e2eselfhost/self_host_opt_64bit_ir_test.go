@@ -65,7 +65,7 @@ func TestSelfHostOpt64bitIR(t *testing.T) {
 	}{
 		// Some(i64) -> match -> bound v is i64. 2e10 > 1.5e10 -> 7
 		{"some-i64", `function main(): i32 { var r: Option[i64] = Some(20000000000); match (r) { Some(v) => { if (v > 15000000000) { return 7; } }, None => { return 0; } } return 0; }`, 7},
-		// Some(f64) -> bound v is f64 (previously 4-byte-truncated). 2.5 > 2.0 -> 6
+		// Some(f64) -> bound v is f64 (a 4-byte truncation fails). 2.5 > 2.0 -> 6
 		{"some-f64", `function main(): i32 { var r: Option[f64] = Some(2.5); match (r) { Some(v) => { if (v > 2.0) { return 6; } }, None => { return 0; } } return 0; }`, 6},
 		// None still discriminates correctly alongside the widened payload.
 		{"none", `function main(): i32 { var r: Option[i64] = None; match (r) { Some(v) => { return 1; }, None => { return 8; } } return 0; }`, 8},
