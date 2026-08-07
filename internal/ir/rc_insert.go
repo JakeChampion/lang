@@ -325,6 +325,99 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingTypes [][]ast.T
 	return et, true
 }
 
+// reclaimablePairFormPayload reports whether a PAIR-FORM match's payload
+// binding is a fresh owned heap value the arm can release once its body ends,
+// and returns the binding's type.
+//
+// The pair-form return ABI hands back `(tag, payload)` in registers with no
+// box, so reclaimableMatchScrutinee — which frees a box — has nothing to free
+// and declines. A pair-form payload is nonetheless allowed to be POINTER-shaped
+// (isPairFormPayloadShape admits array / slice / struct / tuple), and for those
+// the register IS the only reference: the callee allocated it, the match binds
+// it as a borrow, and nobody owns it. `match (mk()) { Some(v) => { … } }` over
+// a per-iteration-fresh `mk()` therefore leaked the whole payload every
+// iteration — the idiomatic lookup-then-read shape, growing without bound.
+//
+// Eligibility is deliberately tighter than the box path's:
+//   - the callee is PROVEN to return a value that aliases no parameter
+//     (returnsNoParamEscape true, not merely present). The box path can lean on
+//     "an aliased return is rc>=2 via the return-transfer inc, and the free is
+//     is_unique-gated"; with no box there is no such inc to lean on, so the
+//     payload's freshness has to be proven outright;
+//   - the binding is CONFINED to its arm (pairFormPayloadConfined), so the
+//     pointer cannot outlive the release.
+//
+// The release itself is emitOwnedSlotDrop — the same type-directed deep drop
+// the loop-var reinit path uses — so a struct payload routes through its
+// is_unique-gated __drop_struct_<N> and an array through __fern_arr_dec.
+func (b *builder) reclaimablePairFormPayload(tag ast.Expr, bt ast.Type, body ast.Stmt, name string) bool {
+	if !ast.RcFreeEnabled || bt == nil || !ast.IsPointerType(bt) {
+		return false
+	}
+	// Not ownedCallResultType: that gate rejects a pair-form callee outright
+	// (b.pairForm), which is exactly the set this one is for. The checks it
+	// shares are spelled out instead — a direct call to a user-declared,
+	// non-builtin function proven to return no parameter's heap.
+	call, ok := tag.(*ast.Call)
+	if !ok {
+		return false
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	if _, isLocal := b.locals[id.Name]; isLocal {
+		return false
+	}
+	if strings.HasPrefix(id.Name, "__") {
+		return false
+	}
+	if !b.returnsNoParamEscape[id.Name] {
+		return false
+	}
+	return pairFormPayloadConfined(body, name)
+}
+
+// pairFormPayloadConfined reports whether every mention of `name` in `body` is
+// a plain read THROUGH the value — the target of a field access or the base of
+// an index — and so cannot let the pointer outlive the arm.
+//
+// It is a whitelist, not a blacklist: an occurrence the walk does not recognise
+// as one of those two shapes counts as an escape. That deliberately declines
+// shapes that are often fine (passing the binding to a function that only
+// reads it, printing it) in exchange for not having to enumerate the sinks —
+// a missed reclaim is the leak we already have, while a missed escape is a
+// use-after-free. A shadowing declaration inside the arm errs the same safe
+// way: its uses are attributed to the binding, so anything the shadow does
+// with the name suppresses the release.
+func pairFormPayloadConfined(body ast.Stmt, name string) bool {
+	if body == nil {
+		return false
+	}
+	excused := map[*ast.Ident]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FieldAccess:
+			if id, ok := x.Target.(*ast.Ident); ok && id.Name == name {
+				excused[id] = true
+			}
+		case *ast.Index:
+			if id, ok := x.Array.(*ast.Ident); ok && id.Name == name {
+				excused[id] = true
+			}
+		}
+		return true
+	})
+	confined := true
+	ast.Walk(body, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == name && !excused[id] {
+			confined = false
+		}
+		return true
+	})
+	return confined
+}
+
 // reclaimableTryScrutinee reports whether a `?`'s source Option/Result box is
 // a FRESH owned call result the TryOp lowering can free once the success
 // payload is extracted — the value-consuming-position sibling of

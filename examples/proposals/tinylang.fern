@@ -1,0 +1,283 @@
+// examples/proposals/tinylang.fern — proposal turn, drawn line 168:
+// "A tree-walking interpreter for a small language with functions and
+// closures."
+//
+// A lambda calculus with integers: literals, variables, addition, `let`,
+// single-argument lambdas and application. Evaluation is a tree walk over
+// a self-referential `Expr` enum, and environments are a persistent
+// linked list so a closure keeps the bindings that were in scope when it
+// was made, not the ones live when it is called.
+//
+// The tests that matter are the ones a naive implementation gets wrong:
+// a closure must capture its defining environment (dynamic scoping fails
+// `test_closures_capture_their_defining_scope`), shadowing must be
+// innermost-wins, and a returned closure must outlive the `let` that
+// built it.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from
+// std/test, so the file is its own test suite.
+
+import "std/test";
+import "std/i32";
+
+enum Expr {
+    Num(i32),
+    Var(string),
+    Add(Expr, Expr),
+    Let(string, Expr, Expr),    // let NAME = e1 in e2
+    Lam(string, Expr),          // \NAME. body
+    App(Expr, Expr),
+}
+
+// A persistent environment. Cons keeps the tail alive, so a closure that
+// captured an older environment is unaffected by later bindings.
+enum Env {
+    Empty,
+    Bind(string, Value, Env),
+}
+
+enum Value {
+    VNum(i32),
+    VClos(string, Expr, Env),   // param, body, captured environment
+    VErr(string),
+}
+
+function lookup(env: Env, name: string): Value {
+    match (env) {
+        Empty => { return VErr("unbound variable \"" + name + "\""); },
+        Bind(n, v, rest) => {
+            // Innermost binding wins: this frame is checked before its tail.
+            if (n == name) { return v; }
+            return lookup(rest, name);
+        },
+    }
+}
+
+function is_err(v: Value): boolean {
+    match (v) {
+        VErr(_) => { return true; },
+        _ => { return false; },
+    }
+}
+
+function err_text(v: Value): string {
+    match (v) {
+        VErr(m) => { return m; },
+        _ => { return ""; },
+    }
+}
+
+function as_num(v: Value): i32 {
+    match (v) {
+        VNum(n) => { return n; },
+        _ => { return 0; },
+    }
+}
+
+function eval(e: Expr, env: Env): Value {
+    match (e) {
+        Num(n) => { return VNum(n); },
+        Var(name) => { return lookup(env, name); },
+        Add(l, r) => {
+            var lv: Value = eval(l, env);
+            if (is_err(lv)) { return lv; }
+            var rv: Value = eval(r, env);
+            if (is_err(rv)) { return rv; }
+            match (lv) {
+                VNum(a) => {
+                    match (rv) {
+                        VNum(b) => { return VNum(a + b); },
+                        _ => { return VErr("cannot add a non-number"); },
+                    }
+                },
+                _ => { return VErr("cannot add a non-number"); },
+            }
+        },
+        Let(name, bound, body) => {
+            var bv: Value = eval(bound, env);
+            if (is_err(bv)) { return bv; }
+            return eval(body, Bind(name, bv, env));
+        },
+        // A lambda captures the environment it was DEFINED in. Everything
+        // interesting about this interpreter follows from that line.
+        Lam(param, body) => { return VClos(param, body, env); },
+        App(f, arg) => {
+            var fv: Value = eval(f, env);
+            if (is_err(fv)) { return fv; }
+            var av: Value = eval(arg, env);
+            if (is_err(av)) { return av; }
+            match (fv) {
+                VClos(param, body, captured) => {
+                    return eval(body, Bind(param, av, captured));
+                },
+                _ => { return VErr("cannot apply a non-function"); },
+            }
+        },
+    }
+}
+
+function run(e: Expr): Value { return eval(e, Empty); }
+
+// ---------------------------------------------------------------- tests
+
+function test_arithmetic_and_let(): test.TestOutcome {
+    if (as_num(run(Add(Num(2), Add(Num(3), Num(4))))) != 9) {
+        return test.fail("2 + (3 + 4) should be 9");
+    }
+    // let x = 5 in x + x
+    var e: Expr = Let("x", Num(5), Add(Var("x"), Var("x")));
+    if (as_num(run(e)) != 10) { return test.fail("let x = 5 in x + x should be 10"); }
+    return test.pass();
+}
+
+// Innermost binding wins.
+function test_shadowing_is_innermost_wins(): test.TestOutcome {
+    // let x = 1 in (let x = 2 in x)
+    var e: Expr = Let("x", Num(1), Let("x", Num(2), Var("x")));
+    if (as_num(run(e)) != 2) {
+        return test.fail("inner binding should shadow, got "
+            + as_num(run(e)).to_string());
+    }
+    // let x = 1 in (let y = 2 in x)  — the outer one is still reachable
+    var f: Expr = Let("x", Num(1), Let("y", Num(2), Var("x")));
+    if (as_num(run(f)) != 1) { return test.fail("outer binding lost"); }
+    return test.pass();
+}
+
+// THE test. A closure must see the bindings from where it was DEFINED,
+// not from where it is called. Under dynamic scoping this returns 20.
+//
+//   let x = 1 in
+//   let f = (\_ . x) in
+//   let x = 20 in
+//   f 0
+function test_closures_capture_their_defining_scope(): test.TestOutcome {
+    var e: Expr =
+        Let("x", Num(1),
+        Let("f", Lam("ignored", Var("x")),
+        Let("x", Num(20),
+        App(Var("f"), Num(0)))));
+    var got: i32 = as_num(run(e));
+    if (got == 20) {
+        return test.fail("closure saw the CALLER's x — that is dynamic scoping");
+    }
+    if (got != 1) {
+        return test.fail("closure should have captured x = 1, got "
+            + got.to_string());
+    }
+    return test.pass();
+}
+
+// A closure returned from a `let` must outlive the binding that built it.
+//
+//   let mk = (\a . (\b . a + b)) in
+//   ((mk 3) 4)
+function test_a_returned_closure_outlives_its_scope(): test.TestOutcome {
+    var e: Expr =
+        Let("mk", Lam("a", Lam("b", Add(Var("a"), Var("b")))),
+        App(App(Var("mk"), Num(3)), Num(4)));
+    if (as_num(run(e)) != 7) {
+        return test.fail("curried add should be 7, got "
+            + as_num(run(e)).to_string());
+    }
+    return test.pass();
+}
+
+// Two closures from the same lambda must not share a parameter binding.
+//
+//   let mk = (\a . (\b . a + b)) in
+//   (mk 10) 1 + (mk 100) 1
+function test_closures_do_not_share_bindings(): test.TestOutcome {
+    var mk: Expr = Lam("a", Lam("b", Add(Var("a"), Var("b"))));
+    var e: Expr =
+        Let("mk", mk,
+        Add(App(App(Var("mk"), Num(10)), Num(1)),
+            App(App(Var("mk"), Num(100)), Num(1))));
+    if (as_num(run(e)) != 112) {
+        return test.fail("wanted 11 + 101 = 112, got "
+            + as_num(run(e)).to_string());
+    }
+    return test.pass();
+}
+
+// Errors name the problem and propagate out of nested evaluation rather
+// than being silently absorbed.
+function test_errors_propagate_with_a_reason(): test.TestOutcome {
+    var unbound: Value = run(Add(Num(1), Var("nope")));
+    if (!is_err(unbound)) { return test.fail("unbound variable was not an error"); }
+    if (err_text(unbound) != "unbound variable \"nope\"") {
+        return test.fail("unhelpful error: " + err_text(unbound));
+    }
+    var applied: Value = run(App(Num(1), Num(2)));
+    if (!is_err(applied)) { return test.fail("applying a number was not an error"); }
+
+    var added: Value = run(Add(Num(1), Lam("x", Var("x"))));
+    if (!is_err(added)) { return test.fail("adding a function was not an error"); }
+
+    // An error deep inside a let body still reaches the top.
+    var deep: Value = run(Let("a", Num(1), Let("b", Num(2), Var("c"))));
+    if (!is_err(deep)) { return test.fail("deep unbound variable was absorbed"); }
+    return test.pass();
+}
+
+// Evaluation is deep: a right-nested chain must not blow up or lose
+// precision, and the environment must stay correct all the way down.
+function test_deep_nesting(): test.TestOutcome {
+    var e: Expr = Num(0);
+    var i: i32 = 0;
+    while (i < 200) {
+        e = Add(Num(1), e);
+        i = i + 1;
+    }
+    if (as_num(run(e)) != 200) {
+        return test.fail("200 nested adds should be 200, got "
+            + as_num(run(e)).to_string());
+    }
+    // 100 nested lets, innermost variable read from the outermost binding.
+    var body: Expr = Var("v0");
+    var k: i32 = 100;
+    while (k > 0) {
+        body = Let("v" + k.to_string(), Num(k), body);
+        k = k - 1;
+    }
+    var full: Expr = Let("v0", Num(42), body);
+    if (as_num(run(full)) != 42) {
+        return test.fail("deep let chain lost the outermost binding");
+    }
+    return test.pass();
+}
+
+// ----------------------------------------------------------------- app
+
+function show(label: string, e: Expr): void {
+    var v: Value = run(e);
+    if (is_err(v)) {
+        eprint("  " + label + " => error: " + err_text(v));
+    } else {
+        eprint("  " + label + " => " + as_num(v).to_string());
+    }
+}
+
+function main(): i32 {
+    eprint("tinylang — a tree-walking interpreter with closures");
+    show("2 + (3 + 4)", Add(Num(2), Add(Num(3), Num(4))));
+    show("let x = 5 in x + x", Let("x", Num(5), Add(Var("x"), Var("x"))));
+    show("let x=1 in let f=\\_.x in let x=20 in f 0",
+        Let("x", Num(1),
+        Let("f", Lam("_", Var("x")),
+        Let("x", Num(20),
+        App(Var("f"), Num(0))))));
+    show("(\\a.\\b. a+b) 3 4",
+        App(App(Lam("a", Lam("b", Add(Var("a"), Var("b")))), Num(3)), Num(4)));
+    show("1 + nope", Add(Num(1), Var("nope")));
+
+    var r: test.TestRunner = test.test_new("tinylang");
+    r = r.it("arithmetic and let", test_arithmetic_and_let);
+    r = r.it("shadowing is innermost-wins", test_shadowing_is_innermost_wins);
+    r = r.it("closures capture their defining scope", test_closures_capture_their_defining_scope);
+    r = r.it("a returned closure outlives its scope", test_a_returned_closure_outlives_its_scope);
+    r = r.it("closures do not share bindings", test_closures_do_not_share_bindings);
+    r = r.it("errors propagate with a reason", test_errors_propagate_with_a_reason);
+    r = r.it("deep nesting", test_deep_nesting);
+    return r.finish();
+}

@@ -4,7 +4,7 @@ Status: normative. This directory defines observable Fern behaviour by
 example. A change to a case's expected output is a change to the
 language, and should be reviewed as one.
 
-`cases/` holds 361 self-contained programs, each a directory with the
+`cases/` holds 437 self-contained programs, each a directory with the
 program plus a few declarative sidecar files describing what running it
 must produce. Every Fern implementation is measured against it:
 `internal/interp`, the three native backends (x86-64, arm64, wasm), and
@@ -73,6 +73,16 @@ declarative coverage of the rejection paths behind the `E0NN` codes.
 Such a case must carry none of `expected.stdout`, `expected.exit`,
 `stdin`, `match` or `backends`; those are ignored on this path, and a
 case that sets one is asserting something that is not being checked.
+
+### A program that aborts cannot opt into wasm
+
+The same convention makes an *aborting* case unobservable on the wasm
+leg: a trapping program never reaches the trailing result line, so the
+runner sees empty stdout rather than an exit code, and the case fails
+whatever `expected.exit` says. The abort family (`oob_index_read` and
+its siblings) therefore restricts `backends` to the natives and carries
+a `harness-limit` waiver. This is a property of how the exit code is
+recovered, not of the wasm backend, which traps exactly as intended.
 
 ### The wasm exit-code convention
 

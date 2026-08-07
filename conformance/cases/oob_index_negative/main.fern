@@ -1,0 +1,17 @@
+// spec: AB-02
+//
+// A negative index aborts too. The bounds check is a single unsigned
+// compare against the length, so -1 reads as a huge unsigned value and
+// fails the same test that catches an index past the end — one branch
+// covering both ends of the range.
+import "std/i32";
+
+function at(xs: i32[], i: i32): i32 {
+    return xs[i];
+}
+
+function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    print(at(xs, 0 - 1).to_string());
+    return 0;
+}

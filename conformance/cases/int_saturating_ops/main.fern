@@ -1,0 +1,30 @@
+// spec: IS-08
+//
+// The saturating operators clamp to the operand type's [MIN, MAX]
+// instead of wrapping. They are opt-in surface: `+` still wraps, and a
+// program that never writes `|` after an arithmetic operator is
+// unchanged — which is why both halves appear here.
+//
+// `<<|` is the sharp one. Its clamp cannot be expressed as a pre-check
+// against MIN, because an arithmetic shift yields the floor and the
+// bound needs the ceiling, so it post-checks the wrapped result by
+// shifting back. `(-2) <<| 31` clamping LOW is the case that catches a
+// post-check that only handles the high side.
+import "std/i32";
+
+function id(n: i32): i32 { return n; }
+function idu(n: u8): u8 { return n; }
+
+function main(): i32 {
+    print((id(2147483647) +| 1).to_string());
+    print((id(0 - 2147483647 - 1) -| 1).to_string());
+    print((id(100000) *| 100000).to_string());
+    print((id(1) <<| 31).to_string());
+    print((id(0 - 2) <<| 31).to_string());
+    print(((idu(250u8) +| 10u8) as i32).to_string());
+    print(((idu(10u8) -| 250u8) as i32).to_string());
+    // The wrapping default is untouched by the presence of the
+    // saturating form.
+    print((id(2147483647) + 1).to_string());
+    return 0;
+}

@@ -44,7 +44,7 @@ involution, ordering, permutation, algebraic law), we prefer a
   of the numeric surface, interp = oracle), `diff_oracle_test.go`
   (fernsmith-generated whole programs), and the in-language `std/fuzz`
   harness. Property fixtures live under
-  `internal/e2e/testdata/cases/prop_*`.
+  `conformance/cases/prop_*`.
 
 This approach immediately paid off: the very first batch surfaced a real
 arm64-only heap-corruption bug (see audit log, 2026-06-09).
@@ -54,7 +54,7 @@ arm64-only heap-corruption bug (see audit log, 2026-06-09).
 The data-driven fixture harness (`internal/e2e/fixture_test.go`,
 `TestFernFixtures`) compiles and runs a program across **all four
 backends** and checks stdout + exit code. Most audit work lands as new
-fixtures under `internal/e2e/testdata/cases/<name>/`. A fixture exercising
+fixtures under `conformance/cases/<name>/`. A fixture exercising
 a feature on all four backends is the strongest evidence a feature is
 sound; a unit/checker test covers front-end-only behaviour.
 
@@ -4100,7 +4100,7 @@ Author note: module-level free functions are called qualified
 ### 2026-06-12 — std/string core methods audited (native 4-backend differential)
 
 **Native arm (all four backends):** new fixture
-`internal/e2e/testdata/cases/audit_std_string` — `to_upper` / `to_lower` /
+`conformance/cases/audit_std_string` — `to_upper` / `to_lower` /
 `trim` / `starts_with` / `ends_with` / `contains` / `index_of` / `replace` /
 `repeat` / `pad_start` / `split`, with result strings compared directly. ✅ on
 interp / x86-64 / arm64 / wasm.
@@ -4116,7 +4116,7 @@ Author note: `pad_start(n, ch)` takes the fill string as a second argument.
 ### 2026-06-12 — std library: std/i32 + std/math + std/array reductions audited (no new bugs)
 
 **Native arm (all four backends):** new fixture
-`internal/e2e/testdata/cases/audit_std_numeric` — std/i32 scalar methods
+`conformance/cases/audit_std_numeric` — std/i32 scalar methods
 (abs/min/max/clamp/pow/gcd/lcm/is_prime/is_even/signum), std/math (range), and
 std/array reductions (sum/max/min/product/sorted_asc). ✅ on interp / x86-64 /
 arm64 / wasm — a 4-backend differential check that these heavily-used pure
@@ -4134,7 +4134,7 @@ the array-reduction `max`/`min` are receiver methods.
 ### 2026-06-12 — env / clock / randomness builtins audited; native `monotonic_ns` + `sleep_ms` gap found
 
 **Native arm (all four backends):** new fixture
-`internal/e2e/testdata/cases/audit_env_time_random` — `env` (unset → `None`),
+`conformance/cases/audit_env_time_random` — `env` (unset → `None`),
 `now_unix_ms` (epoch lower-bound), `random_bytes` (length), `random_i32`
 (usable). ✅ on interp / x86-64 / arm64 / wasm.
 
@@ -4156,7 +4156,7 @@ covered on interp + self-host pending the fix.
 ### 2026-06-12 — I/O built-in functions audited; self-host `putchar` gap found
 
 **Native arm (all four backends):** new fixture
-`internal/e2e/testdata/cases/audit_io_builtins` — exact-stdout pinning of
+`conformance/cases/audit_io_builtins` — exact-stdout pinning of
 `write` (raw), `putchar` (byte), `print` (line), `eprint` (stderr, must not
 reach stdout), and `.len()` (string + array). ✅ on interp / x86-64 / arm64 /
 wasm.
@@ -4180,7 +4180,7 @@ line), so the §B `exit` wasm cell is ⚠️.
 ### 2026-06-12 — sized ints / floats / generics / traits / closures audited (no new bugs)
 
 **Native arm (all four backends):** two new fixtures —
-`internal/e2e/testdata/cases/audit_numeric_types` (i64 arithmetic, u8/u16
+`conformance/cases/audit_numeric_types` (i64 arithmetic, u8/u16
 cast-wrapping, narrowing cast, f32/f64 arithmetic + comparison) and
 `audit_generics_traits_closures` (generic fn + struct + method, trait + impl
 dispatch, anonymous-function lambda, closure capture, function values,
@@ -4209,7 +4209,7 @@ all of the above. All pass on the self-hosted compiler.
 ### 2026-06-12 — strings / arrays / maps audited; Array.with reuse soundness bug found; #2821 fix re-guarded
 
 **Native arm (all four backends):** new fixture
-`internal/e2e/testdata/cases/audit_strings_arrays_maps` — string `.len()` /
+`conformance/cases/audit_strings_arrays_maps` — string `.len()` /
 concat / `==`/`!=` / byte index / slice `s[i:j]`; array literal / index / `.len()`
 / `.with` / iteration; `Map` `insert` / `get_or` / `has` / `len` with i32 and
 string keys. ✅ on interp / x86-64 / arm64 / wasm.
@@ -4235,7 +4235,7 @@ the §A Blocks row flipped to 🔧.
 ### 2026-06-12 — composite types + pattern matching audited; struct-immutability self-host gap found
 
 **Native arm (all four backends):** new fixture
-`internal/e2e/testdata/cases/audit_types_match` — struct decl / literal / field
+`conformance/cases/audit_types_match` — struct decl / literal / field
 access / **functional update**, methods (receiver clause), enum sum types +
 payloads (incl. unit variants), `match` statement + expression, tuples + `.0`/`.1`
 + destructuring, and the built-in `Option[T]` / `Result[T, E]`. ✅ on
@@ -4286,7 +4286,7 @@ driver binary from `examples/self_host/`, feed it Fern source, assemble + run,
 check exit code).
 
 **Native arm (all four backends):** new fixture
-`internal/e2e/testdata/cases/audit_core_builtins` — a single program exercising
+`conformance/cases/audit_core_builtins` — a single program exercising
 integer arithmetic / comparison / bitwise / unary minus, operator precedence,
 boolean logic **with short-circuit non-evaluation proven via a divide-by-zero
 RHS that must never run**, compound assignment, `if`/`else`, `if`-expression,
@@ -4353,7 +4353,7 @@ different iterations (state-dependent), so it is **not** a logic error in
 the mix of a string-slice branch (`out = out + s[i:i+1]`) and a
 `string_from_bytes_unchecked` branch inside an encode loop, followed by a decode loop that
 reads the result — driven cumulatively over several LCG-generated inputs.
-`internal/e2e/testdata/cases/prop_url_roundtrip/main.fern` reproduces it directly
+`conformance/cases/prop_url_roundtrip/main.fern` reproduces it directly
 on arm64 (drop the `backends` sidecar to see the arm64 leg fail).
 
 **Status: FIXED (2026-06-13).** `prop_url_roundtrip` now runs on **all four
@@ -4383,7 +4383,7 @@ mirror. Guarded by `prop_url_roundtrip` running on arm64 again.
 
 ### 2026-06-09 — first property-test batch (base64, hex, url, sort, string)
 
-Added five property fixtures under `internal/e2e/testdata/cases/prop_*`:
+Added five property fixtures under `conformance/cases/prop_*`:
 
 - `prop_codec_roundtrip` — `base64` + `hex` decode∘encode round-trip. ✅ all 4 backends.
 - `prop_url_roundtrip` — `url` decode∘encode round-trip. ✅ all 4 backends (the arm64 `string_from_bytes_unchecked` rc-header bug above is fixed).

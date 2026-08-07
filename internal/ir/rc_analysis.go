@@ -1511,10 +1511,33 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// non-struct source keeps the conservative taint. The escape sink
 		// walk is unchanged, so a projection flowing into an UNCOUNTED sink
 		// (`m.set(k, r.field)`) still taints its source there.
+		// A TUPLE local is the same argument, and was one type short of it.
+		// `var q: P = p.1` incs at the binding site exactly as the struct read
+		// does, and the tuple deep-drops its elements at scope exit
+		// (__drop_tuple_<…>), so the extracted element owns its own reference.
+		// Falling through to the conservative taint left `q` un-reclaimable
+		// and the inc unbalanced: the element leaked once per extraction,
+		// unbounded, and grew with the element's width rather than the
+		// tuple's. `(value, state)` threading is where this shows up, and
+		// reading the field straight through — `p.1.a` — was flat all along.
+		//
+		// A MAP element is excluded, and it is not a hypothetical: crediting
+		// one segfaulted map_delete_tuple_churn_free on both natives. The
+		// counted-alias argument above rests on the destination's drop being
+		// is_unique-gated and shallow, which holds for a struct / array /
+		// enum element and NOT for a map — emitMapSlotDrop deep-frees the
+		// value column, so `var m = t.0` on a `(Map, boolean)` freed a map
+		// the tuple still referenced. ownedCallResultType singles maps out
+		// for the same reason; this is that caution, one site over.
 		if id, ok := x.Target.(*ast.Ident); ok {
 			if _, isLocal := b.locals[id.Name]; isLocal {
-				if _, isStruct := b.exprType(id).(ast.StructType); isStruct {
+				switch b.exprType(id).(type) {
+				case ast.StructType:
 					return false
+				case ast.TupleType:
+					if !isMapType(b.exprType(x)) {
+						return false
+					}
 				}
 			}
 		}

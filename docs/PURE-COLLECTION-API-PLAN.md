@@ -360,7 +360,7 @@ before flipping the gate):
    warn-on-use aliases. Migrate `internal/stdlib/` and `examples/` to
    the new names + the builder where loops are involved.
 3. **Flip E055** (unused pure result). Convert the existing bare-statement
-   fixtures (`internal/e2e/testdata/cases/map_i32`,
+   fixtures (`conformance/cases/map_i32`,
    `map_string_key`, and the array equivalents) from
    *acceptance* fixtures into *reassignment* form, and add a
    **rejection** fixture for the discarded form — including the

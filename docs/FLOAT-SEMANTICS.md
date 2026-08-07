@@ -143,7 +143,7 @@ does all of its work in integer arithmetic over the IEEE-754 fields
 (`f64_bits` / `f32_bits`), never in the float domain, so its output is
 **byte-for-byte identical across interp / x86_64 / arm64 / wasm** for
 every value. This is the contract, and it is enforced by the
-`float_to_string_parity` fixture (`internal/e2e/testdata/cases/`), which
+`float_to_string_parity` fixture (`conformance/cases/`), which
 runs one program on all four backends under exact-stdout comparison —
 f32's only cross-backend formatting coverage, since it is excluded from
 the differential oracle (below).
@@ -309,7 +309,7 @@ exercise the portable subset only. Adding tests that assert specific
 NaN bit-patterns across backends would contradict this doc — don't.
 
 The `float_to_string_parity` fixture
-(`internal/e2e/testdata/cases/float_to_string_parity/`) pins the printing
+(`conformance/cases/float_to_string_parity/`) pins the printing
 + round-trip contract above: one program, run across all four backends
 under exact-stdout comparison (formatting parity) plus in-program
 round-trip-within-tolerance assertions. Extend its value table when the

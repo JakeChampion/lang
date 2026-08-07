@@ -73,6 +73,15 @@ type fixtureSpec struct {
 	backends     map[string]bool
 	compileError bool   // true → expected to fail the front-end
 	wantError    string // required substring of the compile error
+
+	// reclaimObservable marks a case whose output is DELIBERATELY different
+	// with reclamation off — a case about the allocator rather than about the
+	// language. The *FixturesFreeMatchesNoFree gates invert for these: instead
+	// of requiring identical output they require DIFFERENT output, so the
+	// marker is a claim to verify rather than a check to skip. A case that
+	// carries it and does not diverge is a failure, which is what stops it
+	// being reached for to silence an unrelated free-off divergence.
+	reclaimObservable bool
 }
 
 var allBackends = []string{"interp", "x86_64", "arm64", "wasm"}
@@ -125,6 +134,10 @@ func loadFixture(t *testing.T, dir string) *fixtureSpec {
 		t.Fatalf("%s: bad expected.exit %q: %v", f.name, exitStr, err)
 	}
 	f.wantExit = n
+
+	if _, ok := readOptionalFile(dir, "reclaim-observable"); ok {
+		f.reclaimObservable = true
+	}
 
 	if raw, ok := readOptionalFile(dir, "backends"); ok {
 		for _, ln := range strings.Split(raw, "\n") {

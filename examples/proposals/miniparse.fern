@@ -1,0 +1,742 @@
+// examples/proposals/miniparse.fern — proposal turn, drawn line 167:
+// "A recursive-descent parser for a small imperative language, producing
+// an AST."
+//
+// Lexer, precedence-climbing expression parser, statement parser, and a
+// printer that renders the AST back to source.
+//
+// The oracle is the printer, not a table of expected trees. `print` fully
+// parenthesises, so reparsing its output must reach the SAME tree — which
+// makes `print(parse(print(parse(s))))` equal to `print(parse(s))` for
+// every source, a fixpoint that a hand-written expected tree cannot state
+// as cheaply and that catches the whole class of precedence and
+// associativity errors at once. A parser that binds `-` to the right, or
+// `*` below `+`, still produces a tree; it does not survive round-tripping
+// through explicit parentheses.
+//
+// Positions are the second thing a parser is for, so every rejection case
+// asserts a line and column, not merely that something failed. An error
+// that points at the end of the file is a parser that has forgotten where
+// it was.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from
+// std/test, so the file is its own test suite.
+
+import "std/test";
+import "std/string";
+import "std/i32";
+
+// --------------------------------------------------------------- tokens
+
+// Token kinds. Punctuation and keywords are distinguished by `text`, so
+// the parser matches on a single kind plus a string rather than on
+// twenty variants that all mean "a fixed spelling".
+function tk_eof(): i32 { return 0; }
+function tk_num(): i32 { return 1; }
+function tk_ident(): i32 { return 2; }
+function tk_punct(): i32 { return 3; }
+function tk_keyword(): i32 { return 4; }
+
+struct Token { kind: i32, text: string, value: i32, line: i32, col: i32 }
+
+function is_digit(b: i32): boolean { return b >= 48 && b <= 57; }
+
+function is_ident_start(b: i32): boolean {
+    return (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || b == 95;
+}
+
+function is_ident_part(b: i32): boolean {
+    return is_ident_start(b) || is_digit(b);
+}
+
+function keywords(): string[] {
+    return ["var", "if", "else", "while", "print"];
+}
+
+function is_keyword(w: string): boolean {
+    var ks: string[] = keywords();
+    for i in 0..ks.len() { if (ks[i] == w) { return true; } }
+    return false;
+}
+
+// The two-character operators, tried before the one-character ones so
+// `<=` never lexes as `<` followed by `=`.
+function two_char_ops(): string[] {
+    return ["==", "!=", "<=", ">="];
+}
+
+function one_char_ops(): string[] {
+    return ["+", "-", "*", "/", "%", "<", ">", "=", "(", ")", "{", "}", ";"];
+}
+
+struct Lexed { tokens: Token[], error: string, line: i32, col: i32 }
+
+function lex(src: string): Lexed {
+    var toks: Token[] = [];
+    var i: i32 = 0;
+    var line: i32 = 1;
+    var col: i32 = 1;
+    while (i < src.len()) {
+        var b: i32 = src[i] as i32;
+        if (b == 10) { line = line + 1; col = 1; i = i + 1; continue; }
+        if (b == 32 || b == 9 || b == 13) { col = col + 1; i = i + 1; continue; }
+        // `# …` to end of line.
+        if (b == 35) {
+            while (i < src.len() && (src[i] as i32) != 10) { i = i + 1; col = col + 1; }
+            continue;
+        }
+        if (is_digit(b)) {
+            var start: i32 = i;
+            var v: i32 = 0;
+            while (i < src.len() && is_digit(src[i] as i32)) {
+                v = v * 10 + ((src[i] as i32) - 48);
+                i = i + 1;
+            }
+            var text: string = src[start:i].to_owned();
+            toks = toks.append(Token { kind: tk_num(), text: text, value: v,
+                                       line: line, col: col });
+            col = col + (i - start);
+            continue;
+        }
+        if (is_ident_start(b)) {
+            var start2: i32 = i;
+            while (i < src.len() && is_ident_part(src[i] as i32)) { i = i + 1; }
+            var word: string = src[start2:i].to_owned();
+            var k: i32 = tk_ident();
+            if (is_keyword(word)) { k = tk_keyword(); }
+            toks = toks.append(Token { kind: k, text: word, value: 0,
+                                       line: line, col: col });
+            col = col + (i - start2);
+            continue;
+        }
+        var matched: boolean = false;
+        var twos: string[] = two_char_ops();
+        for k in 0..twos.len() {
+            if (!matched && i + 2 <= src.len() && src[i:i + 2] == twos[k]) {
+                toks = toks.append(Token { kind: tk_punct(), text: twos[k],
+                                           value: 0, line: line, col: col });
+                i = i + 2;
+                col = col + 2;
+                matched = true;
+            }
+        }
+        if (matched) { continue; }
+        var ones: string[] = one_char_ops();
+        for k in 0..ones.len() {
+            if (!matched && src[i:i + 1] == ones[k]) {
+                toks = toks.append(Token { kind: tk_punct(), text: ones[k],
+                                           value: 0, line: line, col: col });
+                i = i + 1;
+                col = col + 1;
+                matched = true;
+            }
+        }
+        if (matched) { continue; }
+        return Lexed { tokens: [], error: "unexpected character", line: line, col: col };
+    }
+    toks = toks.append(Token { kind: tk_eof(), text: "", value: 0,
+                               line: line, col: col });
+    return Lexed { tokens: toks, error: "", line: 0, col: 0 };
+}
+
+// ------------------------------------------------------------------ AST
+
+enum Expr {
+    Num(i32),
+    Var(string),
+    Neg(Expr),
+    Bin(string, Expr, Expr),
+}
+
+enum Stmt {
+    Declare(string, Expr),
+    Assign(string, Expr),
+    Print(Expr),
+    If(Expr, Stmt[], Stmt[]),
+    While(Expr, Stmt[]),
+}
+
+// --------------------------------------------------------------- parser
+
+// The parser threads its position through a struct rather than mutating,
+// so a failed alternative cannot leave the cursor moved.
+struct P { toks: Token[], pos: i32, error: string, line: i32, col: i32 }
+
+function failed(p: P): boolean { return p.error.len() > 0; }
+
+function fail(p: P, msg: string): P {
+    if (failed(p)) { return p; }             // keep the FIRST error
+    var t: Token = p.toks[p.pos];
+    return P { ...p, error: msg, line: t.line, col: t.col };
+}
+
+function peek(p: P): Token { return p.toks[p.pos]; }
+
+function at_punct(p: P, s: string): boolean {
+    var t: Token = peek(p);
+    return t.kind == tk_punct() && t.text == s;
+}
+
+function at_keyword(p: P, s: string): boolean {
+    var t: Token = peek(p);
+    return t.kind == tk_keyword() && t.text == s;
+}
+
+function advance(p: P): P { return P { ...p, pos: p.pos + 1 }; }
+
+function expect_punct(p: P, s: string): P {
+    if (failed(p)) { return p; }
+    if (!at_punct(p, s)) { return fail(p, "expected \"" + s + "\""); }
+    return advance(p);
+}
+
+struct ExprResult { p: P, e: Expr }
+
+// Each precedence level is one function taking the level below it, so the
+// grammar's shape is visible in the call chain: equality < comparison <
+// term < factor < unary < primary. All binary levels are LEFT associative.
+function parse_expr(p: P): ExprResult { return parse_equality(p); }
+
+function parse_equality(p: P): ExprResult {
+    return parse_binary_level(p, ["==", "!="], 1);
+}
+
+function parse_comparison(p: P): ExprResult {
+    return parse_binary_level(p, ["<", ">", "<=", ">="], 2);
+}
+
+function parse_term(p: P): ExprResult {
+    return parse_binary_level(p, ["+", "-"], 3);
+}
+
+function parse_factor(p: P): ExprResult {
+    return parse_binary_level(p, ["*", "/", "%"], 4);
+}
+
+function parse_next_level(p: P, level: i32): ExprResult {
+    if (level == 1) { return parse_comparison(p); }
+    if (level == 2) { return parse_term(p); }
+    if (level == 3) { return parse_factor(p); }
+    return parse_unary(p);
+}
+
+function parse_binary_level(p: P, ops: string[], level: i32): ExprResult {
+    var r: ExprResult = parse_next_level(p, level);
+    if (failed(r.p)) { return r; }
+    var cur: P = r.p;
+    var lhs: Expr = r.e;
+    while (true) {
+        var op: string = "";
+        for k in 0..ops.len() {
+            if (op.len() == 0 && at_punct(cur, ops[k])) { op = ops[k]; }
+        }
+        if (op.len() == 0) { break; }
+        var rhs: ExprResult = parse_next_level(advance(cur), level);
+        if (failed(rhs.p)) { return rhs; }
+        lhs = Bin(op, lhs, rhs.e);
+        cur = rhs.p;
+    }
+    return ExprResult { p: cur, e: lhs };
+}
+
+function parse_unary(p: P): ExprResult {
+    if (at_punct(p, "-")) {
+        var inner: ExprResult = parse_unary(advance(p));
+        if (failed(inner.p)) { return inner; }
+        return ExprResult { p: inner.p, e: Neg(inner.e) };
+    }
+    return parse_primary(p);
+}
+
+function parse_primary(p: P): ExprResult {
+    var t: Token = peek(p);
+    if (t.kind == tk_num()) {
+        return ExprResult { p: advance(p), e: Num(t.value) };
+    }
+    if (t.kind == tk_ident()) {
+        return ExprResult { p: advance(p), e: Var(t.text) };
+    }
+    if (at_punct(p, "(")) {
+        var inner: ExprResult = parse_expr(advance(p));
+        if (failed(inner.p)) { return inner; }
+        var after: P = expect_punct(inner.p, ")");
+        return ExprResult { p: after, e: inner.e };
+    }
+    return ExprResult { p: fail(p, "expected an expression"), e: Num(0) };
+}
+
+struct StmtResult { p: P, s: Stmt }
+struct BlockResult { p: P, body: Stmt[] }
+
+function parse_block(p: P): BlockResult {
+    var cur: P = expect_punct(p, "{");
+    if (failed(cur)) { return BlockResult { p: cur, body: [] }; }
+    var body: Stmt[] = [];
+    while (!at_punct(cur, "}") && peek(cur).kind != tk_eof()) {
+        var r: StmtResult = parse_stmt(cur);
+        if (failed(r.p)) { return BlockResult { p: r.p, body: [] }; }
+        body = body.append(r.s);
+        cur = r.p;
+    }
+    cur = expect_punct(cur, "}");
+    return BlockResult { p: cur, body: body };
+}
+
+function parse_stmt(p: P): StmtResult {
+    if (at_keyword(p, "var")) {
+        var cur: P = advance(p);
+        var name: Token = peek(cur);
+        if (name.kind != tk_ident()) {
+            return StmtResult { p: fail(cur, "expected a variable name"),
+                                s: Print(Num(0)) };
+        }
+        cur = expect_punct(advance(cur), "=");
+        var r: ExprResult = parse_expr(cur);
+        if (failed(r.p)) { return StmtResult { p: r.p, s: Print(Num(0)) }; }
+        return StmtResult { p: expect_punct(r.p, ";"), s: Declare(name.text, r.e) };
+    }
+    if (at_keyword(p, "print")) {
+        var r2: ExprResult = parse_expr(advance(p));
+        if (failed(r2.p)) { return StmtResult { p: r2.p, s: Print(Num(0)) }; }
+        return StmtResult { p: expect_punct(r2.p, ";"), s: Print(r2.e) };
+    }
+    if (at_keyword(p, "if")) {
+        var c: P = expect_punct(advance(p), "(");
+        var cond: ExprResult = parse_expr(c);
+        if (failed(cond.p)) { return StmtResult { p: cond.p, s: Print(Num(0)) }; }
+        var afterc: P = expect_punct(cond.p, ")");
+        var then_b: BlockResult = parse_block(afterc);
+        if (failed(then_b.p)) { return StmtResult { p: then_b.p, s: Print(Num(0)) }; }
+        var else_body: Stmt[] = [];
+        var tail: P = then_b.p;
+        if (at_keyword(tail, "else")) {
+            var else_b: BlockResult = parse_block(advance(tail));
+            if (failed(else_b.p)) {
+                return StmtResult { p: else_b.p, s: Print(Num(0)) };
+            }
+            else_body = else_b.body;
+            tail = else_b.p;
+        }
+        return StmtResult { p: tail, s: If(cond.e, then_b.body, else_body) };
+    }
+    if (at_keyword(p, "while")) {
+        var w: P = expect_punct(advance(p), "(");
+        var wc: ExprResult = parse_expr(w);
+        if (failed(wc.p)) { return StmtResult { p: wc.p, s: Print(Num(0)) }; }
+        var afterw: P = expect_punct(wc.p, ")");
+        var wb: BlockResult = parse_block(afterw);
+        return StmtResult { p: wb.p, s: While(wc.e, wb.body) };
+    }
+    var lhs: Token = peek(p);
+    if (lhs.kind == tk_ident()) {
+        var a: P = expect_punct(advance(p), "=");
+        var rv: ExprResult = parse_expr(a);
+        if (failed(rv.p)) { return StmtResult { p: rv.p, s: Print(Num(0)) }; }
+        return StmtResult { p: expect_punct(rv.p, ";"), s: Assign(lhs.text, rv.e) };
+    }
+    return StmtResult { p: fail(p, "expected a statement"), s: Print(Num(0)) };
+}
+
+struct Parsed { body: Stmt[], error: string, line: i32, col: i32 }
+
+function parse(src: string): Parsed {
+    var lx: Lexed = lex(src);
+    if (lx.error.len() > 0) {
+        return Parsed { body: [], error: lx.error, line: lx.line, col: lx.col };
+    }
+    var cur: P = P { toks: lx.tokens, pos: 0, error: "", line: 0, col: 0 };
+    var body: Stmt[] = [];
+    while (peek(cur).kind != tk_eof()) {
+        var r: StmtResult = parse_stmt(cur);
+        if (failed(r.p)) {
+            return Parsed { body: [], error: r.p.error, line: r.p.line, col: r.p.col };
+        }
+        body = body.append(r.s);
+        cur = r.p;
+    }
+    return Parsed { body: body, error: "", line: 0, col: 0 };
+}
+
+// -------------------------------------------------------------- printer
+
+// Fully parenthesised, one statement per line, two-space indent. Explicit
+// parentheses are what make the round trip an oracle: the printed form
+// encodes the tree's shape rather than relying on the reader (or the
+// re-parser) to reconstruct it from precedence.
+function print_expr(e: Expr): string {
+    match (e) {
+        Num(v) => { return v.to_string(); },
+        Var(n) => { return n; },
+        Neg(x) => { return "(-" + print_expr(x) + ")"; },
+        Bin(op, l, r) => {
+            return "(" + print_expr(l) + " " + op + " " + print_expr(r) + ")";
+        },
+    }
+}
+
+function indent(n: i32): string {
+    var s: string = "";
+    for i in 0..n { s = s + "  "; }
+    return s;
+}
+
+function print_block(body: Stmt[], depth: i32): string {
+    var out: string = "";
+    for i in 0..body.len() { out = out + print_stmt(body[i], depth); }
+    return out;
+}
+
+function print_stmt(s: Stmt, depth: i32): string {
+    var pad: string = indent(depth);
+    match (s) {
+        Declare(n, e) => { return pad + "var " + n + " = " + print_expr(e) + ";\n"; },
+        Assign(n, e) => { return pad + n + " = " + print_expr(e) + ";\n"; },
+        Print(e) => { return pad + "print " + print_expr(e) + ";\n"; },
+        If(c, t, f) => {
+            var out: string = pad + "if (" + print_expr(c) + ") {\n"
+                + print_block(t, depth + 1) + pad + "}";
+            if (f.len() > 0) {
+                out = out + " else {\n" + print_block(f, depth + 1) + pad + "}";
+            }
+            return out + "\n";
+        },
+        While(c, b) => {
+            return pad + "while (" + print_expr(c) + ") {\n"
+                + print_block(b, depth + 1) + pad + "}\n";
+        },
+    }
+}
+
+function print_program(p: Parsed): string { return print_block(p.body, 0); }
+
+// ------------------------------------------------------------ evaluator
+
+// Enough of an interpreter to check that the tree MEANS what the source
+// said. Precedence bugs that survive the printer round trip (because both
+// directions agree on the wrong shape) show up here as wrong arithmetic.
+struct Env { names: string[], values: i32[], output: i32[], steps: i32 }
+
+function env_get(env: Env, name: string): i32 {
+    for i in 0..env.names.len() {
+        if (env.names[i] == name) { return env.values[i]; }
+    }
+    return 0;
+}
+
+function env_set(env: Env, name: string, v: i32): Env {
+    for i in 0..env.names.len() {
+        if (env.names[i] == name) {
+            return Env { ...env, values: env.values.with(i, v) };
+        }
+    }
+    return Env { ...env, names: env.names.append(name),
+                 values: env.values.append(v) };
+}
+
+function eval_expr(env: Env, e: Expr): i32 {
+    match (e) {
+        Num(v) => { return v; },
+        Var(n) => { return env_get(env, n); },
+        Neg(x) => { return 0 - eval_expr(env, x); },
+        Bin(op, l, r) => {
+            var a: i32 = eval_expr(env, l);
+            var b: i32 = eval_expr(env, r);
+            if (op == "+") { return a + b; }
+            if (op == "-") { return a - b; }
+            if (op == "*") { return a * b; }
+            if (op == "/") { if (b == 0) { return 0; } return a / b; }
+            if (op == "%") { if (b == 0) { return 0; } return a % b; }
+            if (op == "<") { if (a < b) { return 1; } return 0; }
+            if (op == ">") { if (a > b) { return 1; } return 0; }
+            if (op == "<=") { if (a <= b) { return 1; } return 0; }
+            if (op == ">=") { if (a >= b) { return 1; } return 0; }
+            if (op == "==") { if (a == b) { return 1; } return 0; }
+            if (a != b) { return 1; }
+            return 0;
+        },
+    }
+}
+
+function exec_block(env: Env, body: Stmt[]): Env {
+    var e: Env = env;
+    for i in 0..body.len() { e = exec_stmt(e, body[i]); }
+    return e;
+}
+
+function exec_stmt(env: Env, s: Stmt): Env {
+    if (env.steps > 100000) { return env; }
+    var st: Env = Env { ...env, steps: env.steps + 1 };
+    match (s) {
+        Declare(n, e) => { return env_set(st, n, eval_expr(st, e)); },
+        Assign(n, e) => { return env_set(st, n, eval_expr(st, e)); },
+        Print(e) => {
+            return Env { ...st, output: st.output.append(eval_expr(st, e)) };
+        },
+        If(c, t, f) => {
+            if (eval_expr(st, c) != 0) { return exec_block(st, t); }
+            return exec_block(st, f);
+        },
+        While(c, b) => {
+            var e2: Env = st;
+            while (eval_expr(e2, c) != 0 && e2.steps <= 100000) {
+                e2 = Env { ...e2, steps: e2.steps + 1 };
+                e2 = exec_block(e2, b);
+            }
+            return e2;
+        },
+    }
+}
+
+function run(src: string): i32[] {
+    var p: Parsed = parse(src);
+    if (p.error.len() > 0) { return []; }
+    var env: Env = Env { names: [], values: [], output: [], steps: 0 };
+    return exec_block(env, p.body).output;
+}
+
+// ---------------------------------------------------------- the corpus
+
+function valid_sources(): string[] {
+    return [
+        "print 1;",
+        "var x = 1; print x;",
+        "var x = 2 + 3 * 4; print x;",
+        "var x = 10 - 2 - 3; print x;",
+        "var x = 100 / 5 / 2; print x;",
+        "var x = -3 + 4; print x;",
+        "var x = --5; print x;",
+        "var x = (2 + 3) * 4; print x;",
+        "var x = 1 < 2 == 1; print x;",
+        "var n = 5; var acc = 1; while (n > 1) { acc = acc * n; n = n - 1; } print acc;",
+        "var x = 3; if (x > 2) { print 1; } else { print 0; }",
+        "var x = 1; if (x > 2) { print 1; } else { print 0; }",
+        "var i = 0; while (i < 3) { print i; i = i + 1; }",
+        "# a comment\nvar x = 1; # another\nprint x;",
+        "var a = 1;\nvar b = 2;\nif (a < b) {\n  if (b < 3) {\n    print 99;\n  }\n}",
+        "var x = 7 % 3 * 2; print x;",
+        "var x = 1 + 2 < 4 * 1; print x;",
+    ];
+}
+
+// ---------------------------------------------------------------- tests
+
+// THE test. The printer parenthesises fully, so reparsing its output must
+// land on the same tree — which means printing is a fixpoint after one
+// application. A parser that got precedence or associativity wrong still
+// builds a tree, and still prints it; it does not survive this.
+function test_printing_is_a_fixpoint(): test.TestOutcome {
+    var ss: string[] = valid_sources();
+    for i in 0..ss.len() {
+        var first: Parsed = parse(ss[i]);
+        if (first.error.len() > 0) {
+            return test.fail("source " + i.to_string() + " did not parse: "
+                + first.error + " at " + first.line.to_string() + ":"
+                + first.col.to_string());
+        }
+        var once: string = print_program(first);
+        var second: Parsed = parse(once);
+        if (second.error.len() > 0) {
+            return test.fail("source " + i.to_string()
+                + " printed to something unparseable: " + second.error
+                + "\n" + once);
+        }
+        var twice: string = print_program(second);
+        if (once != twice) {
+            return test.fail("source " + i.to_string() + " is not a fixpoint:\n"
+                + once + "--- vs ---\n" + twice);
+        }
+    }
+    return test.pass();
+}
+
+// The tree also has to MEAN what the source said. Round-tripping proves
+// the parser and printer agree; only running it proves they agree with
+// arithmetic. Both directions must produce identical output.
+function test_the_tree_means_what_the_source_says(): test.TestOutcome {
+    var ss: string[] = valid_sources();
+    var expected: i32[][] = [
+        [1], [1], [14], [5], [10], [1], [5], [20], [1],
+        [120], [1], [0], [0, 1, 2], [1], [99], [2], [1],
+    ];
+    for i in 0..ss.len() {
+        var got: i32[] = run(ss[i]);
+        if (!same(got, expected[i])) {
+            return test.fail("source " + i.to_string() + " printed ["
+                + join_ints(got) + "], wanted [" + join_ints(expected[i]) + "]");
+        }
+        // …and the printed form must compute the same thing.
+        var reprinted: i32[] = run(print_program(parse(ss[i])));
+        if (!same(reprinted, got)) {
+            return test.fail("source " + i.to_string()
+                + " changed meaning when reprinted: [" + join_ints(reprinted)
+                + "] vs [" + join_ints(got) + "]");
+        }
+    }
+    return test.pass();
+}
+
+function same(a: i32[], b: i32[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    for i in 0..a.len() { if (a[i] != b[i]) { return false; } }
+    return true;
+}
+
+function join_ints(xs: i32[]): string {
+    var s: string = "";
+    for i in 0..xs.len() {
+        if (i > 0) { s = s + ", "; }
+        s = s + xs[i].to_string();
+    }
+    return s;
+}
+
+// Whitespace, newlines and comments are not part of the tree. Three
+// spellings of one program must print identically.
+function test_layout_does_not_reach_the_tree(): test.TestOutcome {
+    var same_program: string[] = [
+        "var x=1+2;print x;",
+        "var x = 1 + 2;\nprint x;\n",
+        "  # lead\n  var   x\n = 1\n+ 2 ;  # trailing\n\n\tprint\tx ;  ",
+    ];
+    var first: string = print_program(parse(same_program[0]));
+    if (first.len() == 0) { return test.fail("the reference spelling did not parse"); }
+    for i in 1..same_program.len() {
+        var got: string = print_program(parse(same_program[i]));
+        if (got != first) {
+            return test.fail("spelling " + i.to_string() + " printed:\n" + got
+                + "--- but spelling 0 printed ---\n" + first);
+        }
+    }
+    return test.pass();
+}
+
+// A rejection must say WHERE. An error that points at the end of input is
+// a parser that lost track of its position, and it is the difference
+// between a usable message and "syntax error".
+function test_errors_carry_a_position(): test.TestOutcome {
+    var bad: string[] = [
+        "var = 1;",              // missing name
+        "var x 1;",              // missing =
+        "var x = ;",             // missing expression
+        "var x = 1",             // missing semicolon
+        "print (1 + 2;",         // unclosed paren
+        "if (1) print 2;",       // block required
+        "while 1 { }",           // missing paren
+        "var x = 1 +;",          // dangling operator
+        "}",                     // stray close
+        "var x = 1; @",          // unknown character
+        "if (1) { print 1; ",    // unclosed block
+    ];
+    var want_line: i32[] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+    var want_col: i32[] = [5, 7, 9, 10, 13, 8, 7, 12, 1, 12, 19];
+    for i in 0..bad.len() {
+        var p: Parsed = parse(bad[i]);
+        if (p.error.len() == 0) {
+            return test.fail("\"" + bad[i] + "\" parsed without error");
+        }
+        if (p.line != want_line[i] || p.col != want_col[i]) {
+            return test.fail("\"" + bad[i] + "\": error at " + p.line.to_string()
+                + ":" + p.col.to_string() + ", wanted " + want_line[i].to_string()
+                + ":" + want_col[i].to_string() + " (" + p.error + ")");
+        }
+    }
+    return test.pass();
+}
+
+// The FIRST error is the one reported. A parser that keeps going and
+// overwrites its error points at whatever confused it last, which is
+// usually the end of the file.
+function test_the_first_error_wins(): test.TestOutcome {
+    var p: Parsed = parse("var x = ; var y = ; var z = ;");
+    if (p.error.len() == 0) { return test.fail("expected an error"); }
+    if (p.col != 9) {
+        return test.fail("reported column " + p.col.to_string()
+            + ", wanted the first failure at 9");
+    }
+    // A later line's error keeps ITS line number.
+    var q: Parsed = parse("var x = 1;\nvar y = 2;\nvar z = ;");
+    if (q.line != 3 || q.col != 9) {
+        return test.fail("multi-line error at " + q.line.to_string() + ":"
+            + q.col.to_string() + ", wanted 3:9");
+    }
+    return test.pass();
+}
+
+// Truncating a valid program at any point inside a statement must be
+// rejected. This is the property that catches a parser which accepts an
+// unterminated construct by falling off the end of the token stream.
+function test_truncations_are_rejected(): test.TestOutcome {
+    var src: string = "var total = 0; while (total < 10) { total = total + 3; } print total;";
+    var accepted: i32 = 0;
+    for cut in 1..src.len() {
+        var head: string = src[0:cut].to_owned();
+        var p: Parsed = parse(head);
+        if (p.error.len() == 0) {
+            // A prefix ending exactly at a statement boundary IS valid.
+            // Anything else being accepted is the bug.
+            var reprinted: string = print_program(p);
+            if (reprinted.len() == 0 && head.trim().len() > 0) {
+                return test.fail("prefix of length " + cut.to_string()
+                    + " parsed to an empty program: \"" + head + "\"");
+            }
+            accepted = accepted + 1;
+        }
+    }
+    // The only valid prefixes are the empty-ish ones and the two full
+    // statement boundaries; anything much larger means the parser is
+    // accepting truncated constructs.
+    if (accepted > 20) {
+        return test.fail(accepted.to_string()
+            + " truncated prefixes were accepted — the parser is falling off"
+            + " the end of the token stream");
+    }
+    return test.pass();
+}
+
+// Parsing is a pure function of the source text.
+function test_parsing_is_deterministic(): test.TestOutcome {
+    var ss: string[] = valid_sources();
+    for i in 0..ss.len() {
+        var a: string = print_program(parse(ss[i]));
+        var b: string = print_program(parse(ss[i]));
+        if (a != b) {
+            return test.fail("source " + i.to_string() + " parsed differently twice");
+        }
+    }
+    return test.pass();
+}
+
+// ------------------------------------------------------------------ app
+
+function main(): i32 {
+    eprint("miniparse — recursive descent, checked by round-tripping its own output");
+    var src: string = "# factorial\nvar n = 5;\nvar acc = 1;\nwhile (n > 1) {\n  acc = acc * n;\n  n = n - 1;\n}\nprint acc;";
+    eprint("  source:");
+    var srclines: string[] = src.split("\n");
+    for i in 0..srclines.len() { eprint("    " + srclines[i]); }
+    var p: Parsed = parse(src);
+    if (p.error.len() > 0) {
+        eprint("  parse error: " + p.error + " at " + p.line.to_string()
+            + ":" + p.col.to_string());
+    } else {
+        eprint("  printed back (fully parenthesised):");
+        var out: string[] = print_program(p).split("\n");
+        for i in 0..out.len() {
+            if (out[i].len() > 0) { eprint("    " + out[i]); }
+        }
+        eprint("  running it prints: " + join_ints(run(src)));
+    }
+    var badp: Parsed = parse("var x = 1;\nvar y = ;");
+    eprint("  \"var y = ;\" -> " + badp.error + " at " + badp.line.to_string()
+        + ":" + badp.col.to_string());
+
+    var r: test.TestRunner = test.test_new("miniparse");
+    r = r.it("printing is a fixpoint", test_printing_is_a_fixpoint);
+    r = r.it("the tree means what the source says", test_the_tree_means_what_the_source_says);
+    r = r.it("layout does not reach the tree", test_layout_does_not_reach_the_tree);
+    r = r.it("errors carry a position", test_errors_carry_a_position);
+    r = r.it("the first error wins", test_the_first_error_wins);
+    r = r.it("truncations are rejected", test_truncations_are_rejected);
+    r = r.it("parsing is deterministic", test_parsing_is_deterministic);
+    return r.finish();
+}

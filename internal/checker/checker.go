@@ -1449,6 +1449,30 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// write_file_exec(path, content): Result[void, IoError] —
+	// write_file, but the file is created EXECUTABLE (0755 rather
+	// than 0644).
+	//
+	// It exists because a compiler that emits a finished binary has
+	// to be able to produce a runnable one, and `write_file` cannot:
+	// `bin/fern-selfhost -target arm64 -o out.bin` wrote 0644, where
+	// the native CLI writes 0755 and chmods. A non-executable binary
+	// run under qemu exits 1 with no output, which is indistinguishable
+	// from a program that ran and returned 1 — that cost one
+	// investigation a completely fabricated reproduction before
+	// anyone thought to check the mode (#6133).
+	//
+	// New native-only runtime surface, so it is a debt entry against
+	// the convergence freeze (#4451) until the self-host emitters
+	// carry it too — which this change does, because fern.fern calls
+	// it and the self-host compiler compiles fern.fern.
+	c.info.FuncSigs["write_file_exec"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// Streaming I/O constructors. open_reader / open_writer /
 	// open_appender all return `Result[Reader|Writer, IoError]`
 	// — the runtime helpers do the path_open / open(2) and
@@ -4806,8 +4830,11 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 }
 
 type checker struct {
-	info      *Info
-	errors    []error
+	info   *Info
+	errors []error
+	// seenDiags drops a diagnostic identical to one already recorded at
+	// the same position — see errfCode.
+	seenDiags map[diagKey]bool
 	current   *ast.FuncDecl
 	loopDepth int
 	// tryConvN uniquifies the temp-var name in the error-converting `?`
@@ -6883,6 +6910,44 @@ func (c *checker) argAssignable(want, got ast.Type, own bool) bool {
 	return gotStr && wantString
 }
 
+// freshOwnedProducers are calls whose result is a freshly allocated value by
+// contract, so an `own` parameter may consume one (E051). The general rule in
+// `isOwnedExpr` is conservative — a callee with a borrowed pointer parameter
+// could hand that same pointer back — and `to_owned` trips it: its parameter
+// is a borrowed `string`, even though its entire purpose is to return a copy
+// and its body is the `s + ""` concat `isOwnedExpr` already trusts in every
+// other position.
+//
+// That mattered because `.to_owned()` is what the checker TELLS the reader to
+// write: `argAssignable` refuses a `str` at an `own` parameter with
+// "materialise with .to_owned() instead", and doing so cleared the E038 only
+// to leave an E051 on the same expression. The advice and the rule disagreed;
+// this makes the rule agree with the advice.
+var freshOwnedProducers = map[string]bool{
+	"__method_string_to_owned": true,
+}
+
+// strCopyHint names the remedy when a borrowed `str` view reaches an owning
+// sink. Refusing the promotion is deliberate — see `assignable` — but the
+// diagnostic only restated the two type names, and the way out was written
+// down in a checker comment and nowhere the reader could see it. That dead-
+// ends the most ordinary string expression there is:
+//
+//	var t: string = s.trim();
+//	error[E003]: cannot assign str to variable of type string
+//
+// `.to_owned()` is the materialiser, and the stdlib already uses it at every
+// such site. Empty for any other pair, so it only fires where it applies.
+func strCopyHint(want, got ast.Type) string {
+	if _, gotStr := got.(ast.StrType); !gotStr {
+		return ""
+	}
+	if _, wantString := want.(ast.StringType); !wantString {
+		return ""
+	}
+	return " — `str` is a borrowed view of a string; add `.to_owned()` to copy it into an owned string"
+}
+
 func (c *checker) assignable(dst, src ast.Type) bool {
 	if ast.Equal(dst, src) {
 		return true
@@ -7085,7 +7150,32 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 // fields, wrong-arity calls). Future PRs expand coverage —
 // each stamping is mechanical, just touches the errf call.
 func (c *checker) errfCode(pos ast.Position, code, format string, args ...any) {
-	c.errors = append(c.errors, &Error{Pos: pos, Msg: fmt.Sprintf(format, args...), Path: c.currentFile(), ErrCode: code})
+	msg := fmt.Sprintf(format, args...)
+	path := c.currentFile()
+	// Identical diagnostics at the same position are dropped. Several
+	// checks reach the same expression by different routes — a string
+	// `a < b` produced the same E009 twice, byte for byte — and a reader
+	// counting errors has no way to tell a repeat from two real problems.
+	// Deduping here rather than at each site keeps it true for every
+	// check, including ones added later.
+	key := diagKey{pos: pos, code: code, msg: msg, path: path}
+	if c.seenDiags == nil {
+		c.seenDiags = map[diagKey]bool{}
+	}
+	if c.seenDiags[key] {
+		return
+	}
+	c.seenDiags[key] = true
+	c.errors = append(c.errors, &Error{Pos: pos, Msg: msg, Path: path, ErrCode: code})
+}
+
+// diagKey identifies a diagnostic for the duplicate check above: same
+// place, same code, same words, same file.
+type diagKey struct {
+	pos  ast.Position
+	code string
+	msg  string
+	path string
 }
 
 // requireValue rejects a void-typed expression used where a value is
@@ -7168,6 +7258,42 @@ func (c *checker) methodsOn(typeName string) []string {
 	return names
 }
 
+// methodsFor narrows methodsOn to the methods this particular receiver can
+// actually call. A collection namespace is shared across element types —
+// `Array` holds `sum` (i32[] only), `join` (string[] only) and `len`
+// (anything) side by side — so the unfiltered list advertises, to an
+// `i32[]` receiver, most of an API it does not have. Following one of those
+// names turns an E043 into an E038, which is a worse place to be than the
+// original typo: the reader now believes the method exists.
+//
+// A method survives when its receiver parameter accepts this receiver.
+// Anything the check cannot see through — no recorded signature, no
+// parameters, a generic receiver — is kept, so the filter only ever removes
+// a name it can prove inapplicable.
+func (c *checker) methodsFor(typeName string, recv ast.Type) []string {
+	all := c.methodsOn(typeName)
+	if recv == nil {
+		return all
+	}
+	out := all[:0:0]
+	for _, name := range all {
+		mangled, ok := c.info.Methods[typeName+"."+name]
+		if !ok {
+			out = append(out, name)
+			continue
+		}
+		sig, ok := c.info.FuncSigs[mangled]
+		if !ok || len(sig.Params) == 0 || containsParamType(sig.Params[0]) {
+			out = append(out, name)
+			continue
+		}
+		if c.argAssignable(sig.Params[0], recv, false) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // unknownMethodMessage builds the E043 text for a method call whose
 // receiver is a non-struct with a method namespace of its own — an
 // array, a map, a slice. The bare "field access on non-struct value of
@@ -7180,7 +7306,7 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 		return fmt.Sprintf("%s — the in-place spelling was removed; use %q, which returns the updated %s (assign the result back)",
 			msg, repl, typeName)
 	}
-	if s := diag.Suggest(method, c.methodsOn(typeName)); s != "" {
+	if s := diag.Suggest(method, c.methodsFor(typeName, recv)); s != "" {
 		return fmt.Sprintf("%s — did you mean %q?", msg, s)
 	}
 	// A scalar or string receiver keeps most of its methods in a stdlib
@@ -7190,7 +7316,7 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 	if mod := scalarModuleFor(recv); mod != "" {
 		return fmt.Sprintf("%s — if it comes from %s, add `import %q`", msg, mod, mod)
 	}
-	if names := c.methodsOn(typeName); len(names) > 0 {
+	if names := c.methodsFor(typeName, recv); len(names) > 0 {
 		return fmt.Sprintf("%s (it has: %s)", msg, strings.Join(names, ", "))
 	}
 	return msg
@@ -7521,6 +7647,63 @@ func scalarModuleFor(t ast.Type) string {
 		return ""
 	}
 	return mod
+}
+
+// unknownVariantHint explains an arm name that is not a variant. Two
+// distinct mistakes reach here and the bare message serves neither:
+//
+//   - a near-miss on a real variant, which wants the name;
+//   - a CATCH-ALL written the Rust way (`other => …`), where the reader
+//     meant "everything else, bound to `other`". Fern reads a bare ident
+//     in arm position as a variant name, so they are told their variant
+//     does not exist -- true, and no help at all. There is no binding
+//     catch-all (`other @ _` is refused too), so the answer is `_` plus
+//     binding the scrutinee first.
+//
+// The catch-all reading is only offered when the name resembles no
+// variant: a near-miss is far more likely to be a typo than an attempt
+// at a wildcard.
+func unknownVariantHint(name string, ed *ast.EnumDecl) string {
+	best, bestD := "", 0
+	max := len(name)/3 + 1
+	for i := range ed.Variants {
+		d := editDistanceStr(name, ed.Variants[i].Name)
+		if d <= max && (best == "" || d < bestD) {
+			best, bestD = ed.Variants[i].Name, d
+		}
+	}
+	if best != "" {
+		return fmt.Sprintf(" (did you mean %q?)", best)
+	}
+	return " — a bare name in arm position is a VARIANT, not a binding;" +
+		" for a catch-all use `_`, binding the scrutinee to a variable first if you need its value"
+}
+
+// editDistanceStr is Levenshtein over bytes, for the hint above.
+func editDistanceStr(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = prev[j] + 1
+			if cur[j-1]+1 < cur[j] {
+				cur[j] = cur[j-1] + 1
+			}
+			if prev[j-1]+cost < cur[j] {
+				cur[j] = prev[j-1] + cost
+			}
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
 }
 
 func (c *checker) errUnknownField(pos, namePos ast.Position, structName, field string, declared []string) {
@@ -8142,6 +8325,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
 					return true // variant-constructor call → fresh enum value
+				}
+				if freshOwnedProducers[id.Name] {
+					return true
 				}
 				// A user function with a pointer result whose every pointer
 				// parameter it could return is provably not BORROWED returns a
@@ -8938,7 +9124,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// concrete before monomorph runs.
 		c.refineCallTypeArgsFromDest(n.Value, want)
 		if got != nil && !c.assignable(want, got) {
-			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s", want, got)
+			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s%s", want, got, strCopyHint(want, got))
 		}
 	case *ast.Defer:
 		// Just type-check the action; its result is discarded (defer is
@@ -9024,7 +9210,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		} else if got != nil {
 			got = c.maybeWrapForUnion(n.Type, &n.Init, got, s)
 			if !c.assignable(n.Type, got) {
-				c.errfCode(n.P, "E003", "cannot assign %s to variable of type %s", got, n.Type)
+				c.errfCode(n.P, "E003", "cannot assign %s to variable of type %s%s", got, n.Type, strCopyHint(n.Type, got))
 			}
 		}
 		s.names[n.Name] = n.Type
@@ -9378,7 +9564,8 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			}
 		}
 		if varIdx < 0 {
-			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s", arm.VariantName, ed.Name)
+			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
+				arm.VariantName, ed.Name, unknownVariantHint(arm.VariantName, ed))
 			c.checkBlock(arm.Body, s)
 			continue
 		}
@@ -10160,7 +10347,8 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			}
 		}
 		if varIdx < 0 {
-			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s", arm.VariantName, ed.Name)
+			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
+				arm.VariantName, ed.Name, unknownVariantHint(arm.VariantName, ed))
 			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
 			continue
 		}
@@ -10583,6 +10771,27 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// `65 as char`: `char` is not a NumberType, so settle the
 			// inner at i32 (the slot a scalar rides) rather than handing
 			// settleNumeric a non-numeric target.
+			c.settleNumeric(n.Inner, ast.NumberType{Width: 32})
+		} else if nt, tgtNum := n.Target.(ast.NumberType); tgtNum &&
+			nt.NormalWidth() > 0 && nt.NormalWidth() < 32 &&
+			!isBareNumericLiteral(n.Inner) {
+			// A NARROWING cast must not push its target into a compound
+			// operand. `(i % 256) as u8` computes in i32 and narrows at the
+			// end — settling the whole binary at u8 range-checks the 256
+			// against u8 and rejects the canonical way to write a byte wrap.
+			//
+			// It only ever bit expressions with an UNSETTLED operand, which is
+			// what made it look arbitrary: `var x: i32 = …; (x % 256) as u8`
+			// was accepted all along, because x had already committed, while
+			// `for i in … { (i % 256) as u8 }` was rejected, because the loop
+			// variable had not. The same expression accepted or refused on
+			// whether its neighbour happened to be declared.
+			//
+			// Settling at i32 here makes the loop variable behave exactly like
+			// the declared local. A BARE literal still settles at the target,
+			// so `300 as u8` stays the E047 it should be — that is a typo, not
+			// an arithmetic intent, and it is the case the widening rule above
+			// (`4611686018427387904 as u64`) was written for.
 			c.settleNumeric(n.Inner, ast.NumberType{Width: 32})
 		} else {
 			c.settleNumeric(n.Inner, n.Target)
@@ -11610,10 +11819,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 				if sub != nil {
 					if !c.unifyType(expected, at, sub) {
-						c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s", i+1, expected, at)
+						c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s", i+1, expected, at, strCopyHint(expected, at))
 					}
 				} else if !c.argAssignable(expected, at, i < len(calleeOwnFlags) && calleeOwnFlags[i]) {
-					c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s", i+1, expected, at)
+					c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s", i+1, expected, at, strCopyHint(expected, at))
 				}
 			}
 		}
@@ -12031,7 +12240,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.requireInteger(n.P, rt, n.Op)
 			common, ok := commonIntegerWidth(lt, rt)
 			if !ok {
-				c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				// A cast cannot help operands that are not integers at all --
+				// `"a" < "b"` has no `as` that makes it work -- and requireInteger
+				// above has already said the true thing. Suggesting `as` there
+				// sends the reader to write a conversion that does not exist.
+				if isInteger(lt) && isInteger(rt) {
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				}
 				return ast.BoolType{}
 			}
 			c.settleNumeric(n.Left, common)
@@ -12209,7 +12424,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			rt = c.maybeWrapForUnion(lt, &n.Value, rt, s)
 		}
 		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !c.assignable(lt, rt) {
-			c.errfCode(n.P, "E003", "cannot assign %s to %s", rt, lt)
+			c.errfCode(n.P, "E003", "cannot assign %s to %s%s", rt, lt, strCopyHint(lt, rt))
 		}
 		// Fields are immutable after construction: a struct value
 		// can't have a field reassigned in place. This is the
@@ -12606,7 +12821,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// Show the substituted field type (`i32`) rather than the
 					// bare parameter (`T`) when the instantiation is known —
 					// e.g. seeded from a `Box[i32]` destination.
-					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s", f.Name, substituteType(expected, sub), vt)
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, substituteType(expected, sub), vt, strCopyHint(substituteType(expected, sub), vt))
 				}
 			} else if !ast.Equal(vt, expected) && !dynFieldOK {
 				// Allow the polymorphic / argless-enum vs
@@ -12616,7 +12831,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// to `Option` with empty Args). Same shape as
 				// the array-element widening from #541.
 				if unifyIfArms(expected, vt) == nil {
-					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s", f.Name, expected, vt)
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, expected, vt, strCopyHint(expected, vt))
 				}
 			}
 		}
@@ -13407,6 +13622,17 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 }
 
 func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
+	c.settleIntSigned(e, hn, false)
+}
+
+// settleIntSigned is settleInt carrying whether the expression sits under an
+// odd number of unary minuses. A NumberLit holds its magnitude — the sign is
+// a separate Unary node — so the range check needs that bit to judge the value
+// the source actually wrote. Without it the most negative number of a width
+// had no literal spelling at all: `var x: i32 = -2147483648;` was refused for
+// a magnitude that is only out of range as a POSITIVE value. i64 never showed
+// it, because its range check returns early.
+func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 	width := hn.NormalWidth()
 	isUnsigned := !hn.IsSigned()
 	switch x := e.(type) {
@@ -13414,11 +13640,13 @@ func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
 		if x.Width == 0 {
 			x.Width = width
 			x.IsUnsigned = isUnsigned
-			c.checkLiteralFits(x, hn)
+			c.checkLiteralFits(x, hn, negated)
 		}
 	case *ast.Unary:
-		if x.Op == "-" || x.Op == "+" {
-			c.settleInt(x.Operand, hn)
+		if x.Op == "-" {
+			c.settleIntSigned(x.Operand, hn, !negated)
+		} else if x.Op == "+" {
+			c.settleIntSigned(x.Operand, hn, negated)
 		}
 	case *ast.Binary:
 		switch x.Op {
@@ -13862,7 +14090,7 @@ func intLitExceedsI32(e ast.Expr) bool {
 	return false
 }
 
-func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType) {
+func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType, negated bool) {
 	w := t.NormalWidth()
 	if t.IsSigned() {
 		var min, max int64
@@ -13874,8 +14102,15 @@ func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType) {
 		default:
 			return
 		}
-		if lit.Value < min || lit.Value > max {
-			c.errfCode(lit.P, "E047", "literal %d does not fit in %s", lit.Value, t)
+		// Judge — and report — the value the source wrote, sign included. A
+		// literal is only ever the magnitude; `-2147483648` is in range and
+		// `2147483648` is not, and they share a NumberLit.
+		v := lit.Value
+		if negated {
+			v = -v
+		}
+		if v < min || v > max {
+			c.errfCode(lit.P, "E047", "literal %d does not fit in %s", v, t)
 		}
 	} else {
 		var max uint64
@@ -14159,4 +14394,17 @@ func (c *checker) requireBool(p ast.Position, t ast.Type, op string) {
 	if t != nil && !ast.Equal(t, ast.BoolType{}) {
 		c.errfCode(p, "E009", "operator %q requires boolean, got %s", op, t)
 	}
+}
+
+// isBareNumericLiteral reports whether `e` is a numeric literal, optionally
+// negated — the shape a narrowing cast still settles at its target so an
+// out-of-range constant stays an E047 rather than silently wrapping.
+func isBareNumericLiteral(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		return true
+	case *ast.Unary:
+		return x.Op == "-" && isBareNumericLiteral(x.Operand)
+	}
+	return false
 }

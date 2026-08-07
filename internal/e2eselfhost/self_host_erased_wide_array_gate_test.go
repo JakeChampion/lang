@@ -173,7 +173,8 @@ func TestSelfHostErasedWideArrayGateWasm(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	// fern.fern — the real CLI — because these programs `import "std/array"`, and
 	// a driver without a loader silently ignores the import and then reports a
-	// verdict about a broken program (the warning in CLAUDE.md's probing note).
+	// verdict about a broken program (the warning in docs/TEST-GATES.md's
+	// path-probe note).
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")

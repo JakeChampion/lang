@@ -13,15 +13,39 @@ and the whole fs family) over the `__syscall3` / `__syscall4` /
 reaching **arm64** as well: `random_bytes` first, then `read_file` /
 `write_file` / `remove_file` / `temp_dir` / `stat` with their shared
 `__fern_io_error`, then `env`. Each is ONE source across all three native
-targets, with the syscall numbers, `AT_FDCWD` and open flag-sets coming from
-`asmcore.sysno` / `at_fdcwd` / `oflag` keyed by the target. What remains
-hand-written — and what keeps
+targets, with the syscall numbers, `AT_FDCWD`, open flag-sets and struct
+offsets coming from `asmcore.sysno` / `at_fdcwd` / `oflag` / `statoff` keyed
+by the target. The **array producers** followed — the first non-syscall helpers
+to move, all three over the `__raw_arr_box` + `__raw_array` pair:
+`xs.reverse()` / `xs.concat(ys)` arch-independent (one source, no target
+parameter), and `a[start:end]` with one, because its bounds check traps.
+
+That trap is worth recording, because it read as a blocker and was not.
+`__fern_oob_abort` is only `exit(134)`, which the existing `__syscall3`
+sub-floor already expresses — so "there is no Fern expression for abort" was
+true and beside the point. All it cost was an `exit` row in `asmcore.sysno`
+(60 / 93 / 1); `darwinize`'s `darwin_sysno` already mapped `93 -> 1`. No new
+intrinsic, no new IR op, no new backend code. Before reaching for a primitive,
+check whether the floor already says the thing.
+
+What remains hand-written — and what keeps
 [#2649](https://github.com/JakeChampion/lang/issues/2649) open — is the
-core allocator / map / array runtime (`__fern_alloc`, `__fern_map_*`,
-`__fern_arr_*` mutators), the arm64 leaves whose Darwin form diverges in
-SHAPE rather than in constants (the clocks, `read_dir`,
-`remove_dir_all`), and the
-per-backend wasm helper bundles. This is the architecture document the end goal of
+core allocator / map runtime and the array MUTATORS (`__fern_alloc`,
+`__fern_map_*`, `__fern_arr_push`), the arm64
+leaves whose Darwin form diverges in SHAPE rather than in constants
+(`read_dir`, `remove_dir_all`), and the
+per-backend wasm helper bundles.
+
+The **clocks** used to be on that shape-diverging list and mostly are not.
+`now_unix_ms` / `now_ns` do diverge — Linux takes
+`clock_gettime(clk, &timespec)` filling `{i64 sec; i64 nsec}`, XNU takes
+`gettimeofday(&timeval, NULL)` (buffer FIRST) filling `{i64 sec; i32 usec}`,
+so the number, the argument order and the subsecond field's WIDTH all move
+at once — but every one of those is expressible with the existing floor, and
+`clock_read(t, clk)` is where all three live. Only `monotonic_ns` on Darwin
+is genuinely out of reach: XNU's monotonic clock on Apple Silicon is not a
+syscall at all but `mrs cntvct_el0` scaled by `cntfrq_el0`, and Fern has no
+system-register-read intrinsic. That one helper stays hand-written. This is the architecture document the end goal of
 [#2649](https://github.com/JakeChampion/lang/issues/2649) needs as more helpers
 move; see the "Slice 1 / Slice 2 (landed)" sections at the end for what the
 first migrations actually took, which was simpler than first proposed. The near-term stepping stone it references

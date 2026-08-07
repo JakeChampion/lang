@@ -45,6 +45,21 @@ var iifeFnArmCases = []struct {
 	// Regression guard: a NO-CAPTURE IIFE (constant condition, no free vars)
 	// must keep taking the existing `__lam_N` hoist, untouched by the new path.
 	{"nocapture-iife-unchanged", "function main(): i32 { var w: (i32) => i32 = (if (true) { ((a: i32) => 89) } else { ((b: i32) => b) }); return w(3); }", 89},
+
+	// #6323 — the DESTINATION half. The arms above are lambdas, which the
+	// #6256 hoist turns into a call whose result a binding already dispatches
+	// env-first. When the arms are instead closure LOCALS, no hoist is
+	// involved: `var w = (if (c) { v0 } else { v0 })` bound the result to a
+	// plain scalar slot because clo_init's match on the init had no case for an
+	// IIFE callee, so `w(3)` bare-called the box pointer as code. That compiled
+	// clean and SIGSEGV'd — no bail, so no bail-counting gate could see it.
+	{"ifexpr-closure-local-arms-called", "function main(): i32 { var v0: (i32) => i32 = ((a: i32) => 89); var n: i32 = 1; var w: (i32) => i32 = (if (n > 0) { v0 } else { v0 }); return w(3); }", 89},
+	{"matchexpr-closure-local-arms-called", "enum S { A, B } function main(): i32 { var v0: (i32) => i32 = ((a: i32) => 89); var v1: (i32) => i32 = ((b: i32) => 7); var e: S = S.A; var w: (i32) => i32 = (match (e) { A => v0, B => v1 }); return w(3); }", 89},
+	// The counterpart guard, and the reason the marking is gated on every arm
+	// being provably a box: BARE fn-name arms are plain fn pointers, so the
+	// slot must NOT be marked a closure local — env-first dispatch on a bare
+	// pointer is the same crash in the other direction.
+	{"ifexpr-bare-fnname-arms-stay-plain", "function inc(x: i32): i32 { return x + 1; } function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var n: i32 = 1; var w: (i32) => i32 = (if (n > 0) { inc } else { dbl }); return w(41); }", 42},
 }
 
 // TestSelfHostIIFEFnArmIRX86_64 — fn-valued value-position if/match arms

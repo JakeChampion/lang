@@ -284,18 +284,49 @@ pub function (s: CliSpec) usage(): string {
 // but only when colour is enabled: they honour the NO_COLOR
 // convention (no-color.org) so piping a coloured CLI tool into a
 // file or `less` degrades to plain text automatically — no
-// per-call guard at the use site. There is no isatty primitive in
-// the runtime yet, so terminal auto-detection is a follow-up;
-// callers who want to force colour on a non-terminal, or off, can
-// gate on `cli_color_enabled()` themselves.
+// per-call guard at the use site. FORCE_COLOR overrides it and
+// TERM=dumb disables it; see cli_color_enabled below for the
+// precedence. Terminal auto-detection still needs an isatty
+// primitive the runtime does not have.
 // ============================================================
 
-// `cli_color_enabled()` — false when the NO_COLOR environment
-// variable is present (any value, per no-color.org), true
-// otherwise. The gate every coloriser consults.
+// `cli_color_enabled()` — the gate every coloriser consults.
+//
+// Three conventions, in precedence order:
+//
+//   1. FORCE_COLOR (any value)  -> colour ON, whatever else says.
+//      The escape hatch for CI logs and for piping into a pager that
+//      renders SGR; without it there is no way to ask for colour on a
+//      non-terminal, which is the case terminal auto-detection would
+//      otherwise get wrong in the unhelpful direction.
+//   2. NO_COLOR (any value)     -> colour OFF (no-color.org).
+//   3. TERM=dumb                -> colour OFF. Emacs shell-mode, `M-x
+//      compile`, and plenty of CI runners set it precisely to say "I
+//      display text, not escapes", and a tool that ignores it prints
+//      `ESC[31m` at the reader.
+//
+// FORCE_COLOR wins over NO_COLOR because it is the more specific, more
+// deliberate signal: NO_COLOR is usually exported once in a profile,
+// FORCE_COLOR is set for a particular run.
+//
+// Terminal auto-detection is still absent — there is no isatty
+// primitive in the runtime, so a tool piped into a file with none of
+// these variables set still emits colour. That needs a runtime builtin
+// on every backend and is tracked separately.
 pub function cli_color_enabled(): boolean {
+    match (env("FORCE_COLOR")) {
+        Some(_) => { return true; },
+        None => { }
+    }
     match (env("NO_COLOR")) {
         Some(_) => { return false; },
+        None => { }
+    }
+    match (env("TERM")) {
+        Some(t) => {
+            if (t == "dumb") { return false; }
+            return true;
+        },
         None => { return true; }
     }
 }

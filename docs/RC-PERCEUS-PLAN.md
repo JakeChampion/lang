@@ -2304,7 +2304,7 @@ hook. Investigation overturned this doc's original "high risk" framing:
     escape-tainting their args in the eligibility walk — a taint-analysis
     change with broad blast radius, deliberately left out.
   - Tests: `internal/ir/enum_reuse_test.go` (6 cases) +
-    `internal/e2e/testdata/cases/enum_reuse_churn` (cross-variant box
+    `conformance/cases/enum_reuse_churn` (cross-variant box
     reuse, array payloads, green on all four backends through both
     free-on/free-off differential gates).
 
@@ -2428,7 +2428,7 @@ eligible loop-body array var; is skipped for a closure var) +
 `internal/e2e/rc_loop_var_test.go` (array / struct / enum / string churn
 loops, value-correct-only-if-reuse-sound folded with
 `__rc_underflow_count()`, on x86_64 + arm64 + wasm) +
-`internal/e2e/testdata/cases/loop_var_reclaim` (free-on == free-off
+`conformance/cases/loop_var_reclaim` (free-on == free-off
 differential fixture). Full e2e + rc-correctness corpus + the existing
 freelist / reuse suites stay green on all three backends.
 

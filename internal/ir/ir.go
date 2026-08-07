@@ -4349,21 +4349,28 @@ func (b *builder) emitPairFormPushValue(e ast.Expr) error {
 		variantName, payload := pairFormVariantOf(e)
 		payloadType := b.pairFormPayloadType(variantName)
 		payloadW := pairPayloadWidth(payloadType)
+		pushPayload := func() error {
+			if err := b.expr(payload); err != nil {
+				return err
+			}
+			b.emitPairFormPayloadRetain(payload)
+			return nil
+		}
 		switch variantName {
 		case "Some":
-			if err := b.expr(payload); err != nil {
+			if err := pushPayload(); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpMakeSomeI32, Width: payloadW})
 		case "None":
 			b.emit(Op{Kind: OpMakeNoneI32})
 		case "Ok":
-			if err := b.expr(payload); err != nil {
+			if err := pushPayload(); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpMakeOkI32, Width: payloadW})
 		case "Err":
-			if err := b.expr(payload); err != nil {
+			if err := pushPayload(); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpMakeErrI32, Width: payloadW})
@@ -4374,7 +4381,7 @@ func (b *builder) emitPairFormPushValue(e ast.Expr) error {
 			// keeps this tag mapping aligned with the variant's
 			// declared order.
 			if payload != nil {
-				if err := b.expr(payload); err != nil {
+				if err := pushPayload(); err != nil {
 					return err
 				}
 				b.emit(Op{Kind: OpMakeSomeI32, Width: payloadW})
@@ -4407,6 +4414,44 @@ func (b *builder) emitPairFormPushValue(e ast.Expr) error {
 		return nil
 	}
 	return fmt.Errorf("ir: emitPairFormPushValue: unrecognised shape %T (eligibility check / emitter out of sync)", e)
+}
+
+// emitPairFormPayloadRetain is the pair-form ABI's return-transfer inc,
+// emitted with the payload already on the operand stack (emitAliasInc is
+// inc-and-passthrough, so the value survives for OpMakeSomeI32 & co).
+//
+// The heap-box return path takes this inc in the Return lowering, on the
+// whole returned value. Pair-form does not go through there: it pushes
+// (tag, payload) and jumps straight to emitRcDecLocalsAtExit. So a payload
+// that ALIASES an rc-tracked local — `Some(arr[i])`, `Ok(rec.field)` — was
+// handed to the caller uninc'd, and the exit sweep then dropped the
+// container, freeing the very cell the caller had just been given:
+//
+//	function find(name: string): Option[Unit] {
+//	    var us: Unit[] = units();          // rc=1, swept at exit
+//	    for i in 0..us.len() {
+//	        if (us[i].name == name) { return Some(us[i]); }
+//	    }                                  // ^ element handed over uninc'd
+//	    return None;
+//	}
+//
+// The caller's first read of the payload is then a use-after-free — a
+// segfault on both natives once the freelist recycles the cell, and silent
+// corruption before that. wasm never recycles, so it "passed".
+//
+// The gate mirrors emitEnumNew's payload inc exactly, for the same reason:
+// needsRcIncOnAlias filters to the alias case (a fresh call result or
+// literal is nobody's local, so the sweep never touches it), and a payload
+// the move analysis already marked as a last-use owned local hands over its
+// own reference and must NOT be inc'd — that is the move-on-construction
+// pair-cancellation, and double-counting it would leak.
+func (b *builder) emitPairFormPayloadRetain(payload ast.Expr) {
+	if payload == nil {
+		return
+	}
+	if needsRcIncOnAlias(payload, b) && !b.rc.moveSites[payload] {
+		b.emitAliasInc(payload)
+	}
 }
 
 // loopFrame records one enclosing loop's label and its break/continue
@@ -6083,7 +6128,15 @@ func (b *builder) rangeMatchCond(p ast.Position, lit, rangeHi ast.Expr, inclusiv
 		c := &ast.Binary{P: p, Op: op, Left: &ast.Ident{P: p, Name: literalMatchScrName(scrSlot)}, Right: bound, IsFloat: isFloatType(tagT)}
 		if nt, ok := tagT.(ast.NumberType); ok {
 			c.IntWidth = nt.Width
-			c.IsUnsigned = !nt.Signed
+			// IsSigned(), not the bare field: `Signed` is false on the
+			// zero-value NumberType that a plain `i32` carries, and the
+			// width-0 default IS signed. Reading the field made every
+			// range comparison unsigned, so `match (v) { -10..0 => … }`
+			// matched nothing — as unsigned, -5 is 4294967291, which is
+			// not below 0. Ranges whose bounds share the value's sign
+			// (`-100..-10`, `0..10`) came out right either way, so only
+			// a range straddling zero showed it.
+			c.IsUnsigned = !nt.IsSigned()
 		}
 		if ft, ok := tagT.(ast.FloatType); ok {
 			c.FloatWidth = ft.Width
@@ -7382,12 +7435,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// consume (tag, payload) from the operand stack into two
 		// scratch locals, dispatch on the tag local, bind the
 		// payload from the payload local — zero alloc end-to-end.
-		// Scoped to Option[i32] today (the pair-form set's only
-		// shape); any arm with multiple bindings or pointer-
-		// shaped payload skips through to the heap-form path,
-		// but pair-form-eligibility already excludes those cases
-		// upstream so the fast path always covers Option[i32]
-		// matches end-to-end.
+		// The payload is a single slot, so it is not only Option[i32]:
+		// isPairFormPayloadShape admits array / slice / struct / tuple
+		// too, and for those the register is the ONLY reference to a
+		// value the callee allocated. Nothing owns it, which is what
+		// payReleaseSlot below exists to fix.
 		// An `@` binding needs the whole scrutinee box, so it forces the
 		// heap-form path (the pair-form fast path splits the value into a
 		// (tag, payload) pair with no single box pointer to bind).
@@ -7534,6 +7586,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// scrutinees load from `[ptr+offset]`.
 			offsets, _ := payloadLayout(arm.BindingTypes, len(arm.Bindings), b.ptrW)
 			armRestores := []func(){}
+			// A pair-form payload has no box behind it, so the reclaim the
+			// heap-form path gets from reclaimScrut doesn't apply and a
+			// pointer-shaped payload is left ownerless. Release it after the
+			// arm body instead — see reclaimablePairFormPayload.
+			payReleaseSlot := int32(-1)
+			var payReleaseType ast.Type
 			for i, name := range arm.Bindings {
 				bt := ast.Type(ast.NumberType{})
 				if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
@@ -7541,6 +7599,10 @@ func (b *builder) stmt(s ast.Stmt) error {
 				}
 				slot, restore := b.bindingSlotScoped(name, bt)
 				armRestores = append(armRestores, restore)
+				if pairFormScrutinee && arm.Guard == nil && arm.AtBinding == "" &&
+					b.reclaimablePairFormPayload(n.Tag, bt, arm.Body, name) {
+					payReleaseSlot, payReleaseType = slot, bt
+				}
 				if pairFormScrutinee {
 					b.emit(Op{Kind: OpLoadLocal, I32: payloadSlot})
 				} else {
@@ -7618,6 +7680,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 			if err := b.stmt(arm.Body); err != nil {
 				return err
+			}
+			// The borrowed payload binding is dead now, and it is the only
+			// reference to a value the callee freshly allocated. A `return`
+			// inside the body skips this and leaks as before — safe, and the
+			// binding would have escaped anyway (pairFormPayloadConfined
+			// rejects a body that mentions the name in a return).
+			if payReleaseSlot >= 0 {
+				b.emitOwnedSlotDrop(payReleaseSlot, payReleaseType)
 			}
 			// SAME-shape bindings stay in b.locals after the arm
 			// finishes: the IR only cares about slot indices
@@ -9141,6 +9211,19 @@ func (b *builder) expr(e ast.Expr) error {
 				}
 				b.emit(payloadStoreOpFor(ft, b.ptrW))
 			}
+			// A base nobody else owns has to be released here. The "borrowed,
+			// so do not drop" reasoning above is about an Ident base, whose
+			// local decs at its own scope exit; a base that is a FRESH value —
+			// a call result, a nested literal — has no such owner, so
+			// `T { ...mk(), f: v }` leaked one base box per evaluation,
+			// unbounded, while `var b = mk(); T { ...b, f: v }` was flat.
+			// Every pointer field was inc'd into the new box just above, so
+			// the deep drop nets each of them back to their new owner's single
+			// reference and frees the shell.
+			if ast.RcFreeEnabled && b.structUpdateBaseIsOwned(n.Base) {
+				b.emit(Op{Kind: OpLoadLocal, I32: updBaseSlot})
+				b.dropStructField(ast.StructType{Name: sd.Name})
+			}
 		}
 		for _, f := range n.Fields {
 			off := offs[f.Name]
@@ -9453,6 +9536,17 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		if ft, ok := b.info.FuncSigs[x.Name]; ok {
 			return ft
 		}
+	case *ast.Unary:
+		// `!e` is a boolean; `-e` has its operand's type. Without this a
+		// negated element made an enclosing TupleLit / StructLit record a
+		// NIL element type, and `(-1, 9)` passed straight to a call
+		// panicked the compiler in TupleType.String() when the argument
+		// temp's drop asked for its `__drop_tuple_<shape>` name. The
+		// literal `(1, 9)` was fine, so the crash needed a sign to appear.
+		if x.Op == "!" {
+			return ast.BoolType{}
+		}
+		return b.exprType(x.Operand)
 	case *ast.CaptureRef:
 		// Captured variable references carry their resolved
 		// outer-scope type on the AST node — needed when the
@@ -9907,6 +10001,24 @@ func (b *builder) fieldOwner(e ast.Expr) string {
 			}
 		}
 	case *ast.FieldAccess:
+		// `t.1.field` — the TARGET is a tuple element selector, so its owner
+		// comes from the tuple's element list, not from a struct's fields.
+		// Falling through to the struct path looks up a numeric selector that
+		// no struct declares, so the owner came back "" and lowering aborted
+		// with `field access on unresolved struct ""` — on code the checker
+		// accepts and the interpreter runs. Binding the element to a local
+		// first (`var p: P = t.1; p.field`) always worked, which is what kept
+		// this narrow.
+		if tup, ok := b.targetTupleType(x.Target); ok {
+			idx, err := strconv.Atoi(x.Field)
+			if err != nil || idx < 0 || idx >= len(tup.Elems) {
+				return ""
+			}
+			if st, ok := tup.Elems[idx].(ast.StructType); ok {
+				return st.Name
+			}
+			return ""
+		}
 		owner := b.fieldOwner(x.Target)
 		sd, ok := b.info.Structs[owner]
 		if !ok {
@@ -10323,6 +10435,7 @@ func (b *builder) binary(n *ast.Binary) error {
 	if err := b.expr(n.Right); err != nil {
 		return err
 	}
+	b.widenShiftCount(n)
 	if n.IsFloat {
 		op, ok := floatOp(n.Op)
 		if !ok {
@@ -10486,6 +10599,48 @@ func isAllOnesMask(v int64, intWidth int) bool {
 		return v == -1
 	}
 	return v == -1 || v == 0xFFFFFFFF
+}
+
+// widenShiftCount extends a 32-bit shift COUNT to 64 bits when the shift
+// itself is 64-bit. wasm's `i64.shl` / `i64.shr_s` / `i64.shr_u` require BOTH
+// operands to be i64, so a 32-bit count leaves an (i64, i32) pair on the stack
+// and produces a module that fails validation: "type mismatch: expected i64,
+// found i32". The compiler reported success and wasmtime refused to load the
+// result — a build that silently produced nothing runnable.
+//
+// Two of the three ways to write a count were already covered: a constant one
+// takes emitShlByConst, fixed earlier when strength reduction started rewriting
+// `i64-expr * 2^k` into a shift, and a parameter or ordinary local reaches the
+// shift through a checker-inserted cast. A LOOP VARIABLE goes through neither
+// — `for i in 0..n { s << i }` arrives as a bare 32-bit local under a 64-bit
+// shift. Covering the general case rather than that one shape keeps the
+// invariant ("the count reaches the shift at the shift's width") from
+// depending on which of those paths a future expression happens to take.
+//
+// Native targets read the count from a register regardless of its declared
+// width, which is why the interpreter, x86-64 and arm64 all agreed on the
+// right answer while only wasm broke.
+//
+// The extend follows the COUNT's own signedness. A shift count is a small
+// non-negative number in every valid program, so the two agree wherever it
+// matters; using the count's own signedness rather than the value's keeps the
+// widening faithful to the expression that produced it.
+func (b *builder) widenShiftCount(n *ast.Binary) {
+	if n.Op != "<<" && n.Op != ">>" {
+		return
+	}
+	if n.IntWidth != 64 || n.IsFloat {
+		return
+	}
+	rt, ok := b.exprType(n.Right).(ast.NumberType)
+	if !ok || rt.NormalWidth() == 64 || rt.IsPointerWidth() {
+		return
+	}
+	if rt.IsSigned() {
+		b.emit(Op{Kind: OpExtendI32S})
+		return
+	}
+	b.emit(Op{Kind: OpExtendI32U})
 }
 
 // emitShlByConst pushes a constant shift count `k` of the
@@ -13398,8 +13553,13 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 
 	// 1. Evaluate every payload arg into a scratch temp BEFORE the box
 	//    is reused (reads of the old c, still live in slot idx, complete
-	//    first). No inc — emitEnumNew doesn't inc payloads, so the
-	//    drop-side accounting matches a freshly constructed box.
+	//    first), taking the SAME alias inc emitEnumNew takes — the reused
+	//    box owns its pointer payloads exactly like a fresh one, and its
+	//    drop dec's them either way. This used to skip the inc, on the
+	//    (once-true, now stale) grounds that emitEnumNew didn't inc
+	//    either; Slice 1b gave the fresh path its payload inc and left
+	//    this one behind, so `c = Some(arr[i])` in a loop handed the box
+	//    an uncounted element and the array's drop freed it underneath.
 	type argTemp struct {
 		slot int32
 		typ  ast.Type
@@ -13412,6 +13572,10 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 		}
 		if err := b.expr(a); err != nil {
 			return true, err
+		}
+		if b.enumRcPayloadsEligible(enumName) && !b.rc.consumingMatchReuse[call] &&
+			needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
+			b.emitAliasInc(a)
 		}
 		ts := b.allocSlot()
 		b.locals[fmt.Sprintf("__ereuse_arg_%d", ts)] = ts
@@ -14378,22 +14542,58 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 	b.emit(Op{Kind: OpDrop})
 }
 
+// structUpdateBaseIsOwned reports whether a struct-update spread base is a
+// value this construction OWNS — one no local, parameter or container is
+// holding a reference to — so its box must be released once the copy is done.
+//
+// Deliberately narrow: only a struct literal (unambiguously fresh) and a call
+// whose callee the borrow analysis proved never returns one of its own
+// parameters. An Ident, a field read, an index — anything that could name
+// storage somebody else owns — stays borrowed, which is the pre-existing
+// behaviour and the one this must not disturb. Over-declining costs a leak
+// that was already there; over-claiming would be a use-after-free.
+func (b *builder) structUpdateBaseIsOwned(base ast.Expr) bool {
+	switch x := base.(type) {
+	case *ast.StructLit:
+		return true
+	case *ast.Call:
+		id, ok := x.Callee.(*ast.Ident)
+		if !ok {
+			return false
+		}
+		if _, isLocal := b.locals[id.Name]; isLocal {
+			return false // a closure call — the callee is not statically known
+		}
+		return b.returnsNoParamEscape[id.Name]
+	}
+	return false
+}
+
 // emitFieldDropOnStack consumes a pointer-shaped field value already on
 // the operand stack and releases it per its static type — the
-// struct-reuse-overwrite sibling of the exit sweep's dropStructField.
-// An array field frees its BUFFER via __fern_arr_dec (pointer-element
-// buffers leak their elements, exactly as the array exit-sweep / reinit
-// paths — leak-but-never-UAF); a concrete struct / enum / tuple field
-// recurses through its generated __drop_* fn; everything else (Map
-// handles, closures, non-droppable generics) keeps the flat one-level
-// __fern_rc_dec. Each helper is_unique-gates internally, so a field
-// shared with a live alias (or carried over with an eval-inc) is only
-// dec'd, never freed.
+// struct-reuse-overwrite sibling of the exit sweep's dropStructField, whose
+// ladder it now shares outright. A concrete struct / enum / tuple field
+// recurses through its generated __drop_* fn; an array field goes through
+// the same per-element-type dispatch a swept local does; everything else
+// (Map handles, closures, non-droppable generics) keeps the flat one-level
+// __fern_rc_dec. Each helper is_unique-gates internally, so a field shared
+// with a live alias (or carried over with an eval-inc) is only dec'd, never
+// freed.
 func (b *builder) emitFieldDropOnStack(t ast.Type) {
 	if at, ok := t.(ast.ArrayType); ok {
-		b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
-		b.emit(Op{Kind: OpDrop})
+		// Reuse `dropStructField`'s ladder rather than the flat
+		// `__fern_arr_dec` this used to emit unconditionally. That helper
+		// frees the BUFFER and nothing else, so an array field whose
+		// elements are rc-tracked lost every element when the field was
+		// replaced — `b.items = b.items.with(0, …)` on a struct field leaked
+		// one element box per call, unbounded, on all three compiled
+		// backends. (A bare local array is fine: its receiver is a
+		// reassign-to-self move, so `cow_inplace` takes the in-place branch
+		// and the overwritten element's own drop is the sole release. Only
+		// the copy branch — which a struct-field read forces by leaving the
+		// buffer at rc >= 2 — retains the elements, and only this release
+		// was failing to give those retains back.)
+		b.dropStructField(at)
 		return
 	}
 	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {

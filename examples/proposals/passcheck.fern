@@ -1,0 +1,430 @@
+// examples/proposals/passcheck.fern — proposal turn, drawn line 201:
+// "A password strength estimator with an entropy calculation."
+//
+// Entropy is length x log2(pool). `std/float` has a `log2`, and this file does
+// not use it: it does not build for the wasm target at all (#6404 — thirteen
+// libm methods share that gap), and on the targets where `pow` does build it
+// is several ULP off an exactly representable answer (#6405). An estimator
+// that reported different numbers on different backends, or refused to compile
+// for one of them, would be a poor thing to trust a password to.
+//
+// So log2 is computed here, in integers, to a thousandth of a bit. The
+// algorithm is the classic one: take the integer part from the bit length,
+// then extract the fraction one bit at a time by repeated squaring — each
+// squaring doubles the fractional exponent, so a value crossing 2 means the
+// next binary digit is a 1. Twenty iterations give far more precision than the
+// three digits reported.
+//
+// That makes the load-bearing test a numeric one with a real oracle: at every
+// exact power of two the answer must be exact (1000k, no rounding slop), and
+// across a swept range it must agree with independently computed reference
+// values to within a thousandth. A fixed-point routine that is merely
+// plausible passes neither.
+//
+// The estimator on top is deliberately conservative and says so. It reports
+// what an attacker who knows the character classes would face, then subtracts
+// for the structure a real cracker exploits — runs, repeats, and keyboard
+// sequences — because an estimate that ignores those is not conservative, it
+// is wrong in the direction that matters.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+// --------------------------------------------------------------- log2
+
+// log2(n) in thousandths of a bit, for n >= 1. Integer arithmetic only.
+//
+// The fraction comes out of repeated squaring: with x in [1,2), x^2 lands in
+// [1,4), and whether it reached 2 IS the next bit of the fraction. Halving it
+// back when it does keeps the invariant, so twenty iterations yield twenty
+// binary digits — about six decimal places, against the three reported.
+//
+// The intermediate is scaled by 2^20 and squared in i64, so the product needs
+// 42 bits and cannot overflow. Doing this in i32 would silently wrap at the
+// fourth iteration.
+function log2_milli(n: i32): i32 {
+    if (n <= 1) { return 0; }
+    var e: i32 = 0;
+    var v: i32 = n;
+    while (v > 1) { v = v / 2; e = e + 1; }        // floor(log2(n))
+    // x = n / 2^e, in [1,2), scaled by 2^20.
+    var x: i64 = ((n as i64) * 1048576) / ((1 as i64) << e);
+    var frac: i64 = 0;
+    var bit: i64 = 524288;                          // 0.5, same scale
+    for i in 0..20 {
+        x = (x * x) / 1048576;
+        if (x >= 2097152) {                         // >= 2.0
+            x = x / 2;
+            frac = frac + bit;
+        }
+        bit = bit / 2;
+    }
+    return ((e as i64) * 1000 + (frac * 1000) / 1048576) as i32;
+}
+
+// --------------------------------------------------------- classes
+
+function is_lower(b: i32): boolean { return b >= 97 && b <= 122; }
+function is_upper(b: i32): boolean { return b >= 65 && b <= 90; }
+function is_digit(b: i32): boolean { return b >= 48 && b <= 57; }
+
+// The pool an attacker must search: the union of the classes actually present.
+// Using the classes PRESENT rather than the full printable set is the
+// conservative direction — a lowercase-only password does not become stronger
+// because symbols exist.
+function pool_of(pw: string): i32 {
+    var lower: boolean = false;
+    var upper: boolean = false;
+    var digit: boolean = false;
+    var other: boolean = false;
+    for i in 0..pw.len() {
+        var b: i32 = pw[i] as i32;
+        if (is_lower(b)) { lower = true; }
+        else if (is_upper(b)) { upper = true; }
+        else if (is_digit(b)) { digit = true; }
+        else { other = true; }
+    }
+    var pool: i32 = 0;
+    if (lower) { pool = pool + 26; }
+    if (upper) { pool = pool + 26; }
+    if (digit) { pool = pool + 10; }
+    if (other) { pool = pool + 33; }        // printable ASCII, minus the above
+    return pool;
+}
+
+// ------------------------------------------------------------ structure
+
+// Characters that add nothing because they continue a run — "aaa" and "abc"
+// and "123" each cost an attacker one guess, not three. Counted as positions
+// that a run-aware search would not have to enumerate.
+function predictable_positions(pw: string): i32 {
+    var n: i32 = 0;
+    for i in 1..pw.len() {
+        var prev: i32 = pw[i - 1] as i32;
+        var cur: i32 = pw[i] as i32;
+        if (cur == prev || cur == prev + 1 || cur == prev - 1) { n = n + 1; }
+    }
+    return n;
+}
+
+// Effective length: the positions an attacker actually has to guess. Never
+// below 1 for a non-empty password — a run still has to start somewhere.
+function effective_len(pw: string): i32 {
+    if (pw.len() == 0) { return 0; }
+    var e: i32 = pw.len() - predictable_positions(pw);
+    if (e < 1) { return 1; }
+    return e;
+}
+
+// Entropy in thousandths of a bit: effective length x log2(pool).
+function entropy_milli(pw: string): i32 {
+    var pool: i32 = pool_of(pw);
+    if (pool <= 1) { return 0; }
+    return effective_len(pw) * log2_milli(pool);
+}
+
+function verdict(pw: string): string {
+    var bits: i32 = entropy_milli(pw) / 1000;
+    if (bits < 28) { return "very weak"; }
+    if (bits < 36) { return "weak"; }
+    if (bits < 60) { return "reasonable"; }
+    if (bits < 128) { return "strong"; }
+    return "very strong";
+}
+
+function fixed3(m: i32): string {
+    var whole: i32 = m / 1000;
+    var frac: i32 = m % 1000;
+    if (frac < 0) { frac = 0 - frac; }
+    var pad: string = "";
+    if (frac < 100) { pad = "0"; }
+    if (frac < 10) { pad = "00"; }
+    return whole.to_string() + "." + pad + frac.to_string();
+}
+
+// ------------------------------------------------------------- oracle
+
+// log2 x 1000, computed elsewhere and written down — the independent check
+// that the fixed-point routine is right and not merely self-consistent.
+function ref_inputs(): i32[] {
+    return [1, 2, 3, 4, 5, 6, 7, 10, 26, 36, 52, 62, 95, 100, 1000, 65536];
+}
+
+function ref_log2_milli(): i32[] {
+    return [0, 1000, 1585, 2000, 2322, 2585, 2807, 3322, 4700, 5170, 5700,
+            5954, 6570, 6644, 9966, 16000];
+}
+
+// ----------------------------------------------------------------- tests
+
+// THE test. At an exact power of two the answer must be EXACT — no rounding
+// slop — and across the swept range it must match independently computed
+// references to within one thousandth. A fixed-point log that drifts, or that
+// is merely monotone and plausible, fails one of these two.
+function test_log2_is_exact_on_powers_and_close_elsewhere(): test.TestOutcome {
+    var p: i32 = 1;
+    for k in 0..31 {
+        var got: i32 = log2_milli(p);
+        if (got != k * 1000) {
+            return test.fail("log2(2^" + k.to_string() + ") = "
+                + fixed3(got) + ", must be exactly " + k.to_string() + ".000");
+        }
+        if (k < 30) { p = p * 2; }
+    }
+    var xs: i32[] = ref_inputs();
+    var want: i32[] = ref_log2_milli();
+    for i in 0..xs.len() {
+        var got: i32 = log2_milli(xs[i]);
+        var d: i32 = got - want[i];
+        if (d < 0) { d = 0 - d; }
+        if (d > 1) {
+            return test.fail("log2(" + xs[i].to_string() + ") = " + fixed3(got)
+                + ", reference says " + fixed3(want[i]) + " (off by "
+                + d.to_string() + " thousandths)");
+        }
+    }
+    return test.pass();
+}
+
+// Monotone across a swept range, with no plateau where a doubling should have
+// moved it. A fixed-point routine that saturates looks fine on the reference
+// points and flat between them.
+function test_log2_is_monotone_and_never_flat_across_a_doubling(): test.TestOutcome {
+    var prev: i32 = -1;
+    for n in 1..2000 {
+        var got: i32 = log2_milli(n);
+        if (got < prev) {
+            return test.fail("log2 fell from " + fixed3(prev) + " to "
+                + fixed3(got) + " at n=" + n.to_string());
+        }
+        prev = got;
+    }
+    for n in 1..1000 {
+        if (log2_milli(n * 2) - log2_milli(n) != 1000) {
+            return test.fail("log2(" + (n * 2).to_string() + ") - log2("
+                + n.to_string() + ") = "
+                + fixed3(log2_milli(n * 2) - log2_milli(n))
+                + ", doubling must add exactly 1.000 bit");
+        }
+    }
+    return test.pass();
+}
+
+// The pool is the union of the classes present, and adding a class can only
+// grow it. An estimator that counted characters rather than classes would
+// report a different pool for "aab" than for "ab".
+function test_the_pool_is_the_union_of_the_classes_present(): test.TestOutcome {
+    var cases: string[] = ["abc", "ABC", "123", "!@#", "abcABC", "abc123",
+                           "abcABC123", "abcABC123!@#", "aab", "ab"];
+    var want: i32[] = [26, 26, 10, 33, 52, 36, 62, 95, 26, 26];
+    for i in 0..cases.len() {
+        var got: i32 = pool_of(cases[i]);
+        if (got != want[i]) {
+            return test.fail("\"" + cases[i] + "\": pool " + got.to_string()
+                + ", wanted " + want[i].to_string());
+        }
+    }
+    // Adding a class never shrinks the pool.
+    var base: string = "abc";
+    var grown: string[] = ["abcA", "abc1", "abc!", "abcA1!"];
+    for i in 0..grown.len() {
+        if (pool_of(grown[i]) <= pool_of(base)) {
+            return test.fail("\"" + grown[i] + "\" has pool "
+                + pool_of(grown[i]).to_string() + ", not more than \""
+                + base + "\"'s " + pool_of(base).to_string());
+        }
+    }
+    return test.pass();
+}
+
+// Entropy is length x log2(pool), checked against the two factors computed
+// separately — so a change to either shows up here rather than cancelling.
+function test_entropy_is_effective_length_times_pool_bits(): test.TestOutcome {
+    var pws: string[] = ["password", "Tr0ub4dor", "correcthorse", "x", "aA1!"];
+    for i in 0..pws.len() {
+        var want: i32 = effective_len(pws[i]) * log2_milli(pool_of(pws[i]));
+        if (entropy_milli(pws[i]) != want) {
+            return test.fail("\"" + pws[i] + "\": entropy "
+                + fixed3(entropy_milli(pws[i])) + " != effective length "
+                + effective_len(pws[i]).to_string() + " x pool bits "
+                + fixed3(log2_milli(pool_of(pws[i]))));
+        }
+    }
+    // 8 lowercase characters with no structure: 8 x log2(26).
+    if (entropy_milli("qwfpgjlu") != 8 * 4700) {
+        return test.fail("8 unstructured lowercase characters scored "
+            + fixed3(entropy_milli("qwfpgjlu")) + ", wanted "
+            + fixed3(8 * 4700));
+    }
+    return test.pass();
+}
+
+// Structure must cost something. A run, a repeat and a keyboard sequence each
+// have to score strictly below the same characters shuffled out of order — an
+// estimator that reports length x pool bits and stops calls "aaaaaaaa" as
+// strong as "qwfpgjlu", which is the single most common way these are wrong.
+function test_structure_scores_below_the_same_characters_unstructured(): test.TestOutcome {
+    var structured: string[] = ["aaaaaaaa", "abcdefgh", "12345678", "hgfedcba"];
+    var free: string[] = ["qwfpgjlu", "qwfpgjlu", "48159372", "qwfpgjlu"];
+    for i in 0..structured.len() {
+        if (structured[i].len() != free[i].len()) {
+            return test.fail("the comparison is not like for like: \""
+                + structured[i] + "\" and \"" + free[i] + "\" differ in length");
+        }
+        if (entropy_milli(structured[i]) >= entropy_milli(free[i])) {
+            return test.fail("\"" + structured[i] + "\" scored "
+                + fixed3(entropy_milli(structured[i])) + " against \""
+                + free[i] + "\"'s " + fixed3(entropy_milli(free[i]))
+                + " — structure cost nothing");
+        }
+    }
+    // A run still has to start somewhere: never zero for a non-empty password.
+    if (effective_len("aaaaaaaaaa") != 1) {
+        return test.fail("ten identical characters have effective length "
+            + effective_len("aaaaaaaaaa").to_string() + ", not 1");
+    }
+    if (entropy_milli("aaaaaaaaaa") != 4700) {
+        return test.fail("ten identical lowercase characters scored "
+            + fixed3(entropy_milli("aaaaaaaaaa")) + ", wanted one character's"
+            + " worth (4.700)");
+    }
+    return test.pass();
+}
+
+// Longer is stronger, for a fixed pool and no added structure. The property
+// that makes length advice worth giving, and the one a penalty applied
+// carelessly can invert.
+//
+// "no added structure" is load-bearing and the first draft got it wrong: the
+// pad string was "wfpgjluyzxkvmn", whose "yz" is a consecutive pair, so
+// appending the z was a PREDICTABLE position and the entropy correctly did not
+// move. The fix is a pad in which no adjacent characters are equal or
+// neighbours — and the discovery is worth an assertion of its own, below,
+// rather than a quietly corrected constant.
+function test_entropy_grows_with_length(): test.TestOutcome {
+    var pw: string = "q";
+    var prev: i32 = entropy_milli(pw);
+    var pad: string = "acegikmortvxz";
+    for i in 0..pad.len() {
+        pw = pw + ("" + pad[i:i + 1]);
+        var now: i32 = entropy_milli(pw);
+        if (now <= prev) {
+            return test.fail("\"" + pw + "\" (" + fixed3(now)
+                + ") did not score above its " + i.to_string()
+                + "-character prefix (" + fixed3(prev) + ")");
+        }
+        prev = now;
+    }
+    return test.pass();
+}
+
+// The flip side, and the reason the test above needs a carefully chosen pad:
+// appending a PREDICTABLE character must not raise the score at all. Longer is
+// only stronger when the extra character is actually a choice.
+function test_a_predictable_character_adds_nothing(): test.TestOutcome {
+    var base: string = "qacegik";
+    var b: i32 = entropy_milli(base);
+    var predictable: string[] = [base + "k", base + "l", base + "j"];
+    var why: string[] = ["a repeat", "the next letter", "the previous letter"];
+    for i in 0..predictable.len() {
+        var got: i32 = entropy_milli(predictable[i]);
+        if (got != b) {
+            return test.fail("appending " + why[i] + " to \"" + base
+                + "\" moved the score from " + fixed3(b) + " to "
+                + fixed3(got) + "; a predictable character is not a choice");
+        }
+    }
+    // And an UNpredictable one does raise it, so the check above is not
+    // passing because the estimator ignores appended characters entirely.
+    if (entropy_milli(base + "z") <= b) {
+        return test.fail("appending an unrelated character did not raise the"
+            + " score, so this test proves nothing");
+    }
+    return test.pass();
+}
+
+// The empty password is the degenerate case an estimator has to survive: no
+// classes, no pool, no entropy, and no division by a zero-sized alphabet.
+function test_the_empty_password_is_zero_not_a_crash(): test.TestOutcome {
+    if (pool_of("") != 0) {
+        return test.fail("the empty password has pool "
+            + pool_of("").to_string());
+    }
+    if (entropy_milli("") != 0) {
+        return test.fail("the empty password scored " + fixed3(entropy_milli("")));
+    }
+    if (effective_len("") != 0) {
+        return test.fail("the empty password has effective length "
+            + effective_len("").to_string());
+    }
+    if (verdict("") != "very weak") {
+        return test.fail("the empty password is \"" + verdict("") + "\"");
+    }
+    return test.pass();
+}
+
+// The verdict bands must be monotone in entropy — a stronger password can
+// never be described more weakly. Checked across the whole range rather than
+// at the boundaries, because an out-of-order band is invisible at its own edge.
+function test_the_verdict_never_goes_backwards(): test.TestOutcome {
+    var names: string[] = ["very weak", "weak", "reasonable", "strong",
+                           "very strong"];
+    var last: i32 = 0;
+    for bits in 0..200 {
+        var pw: string = "";
+        // Build a lowercase password whose entropy lands near `bits`.
+        var chars: string = "qwfpgjluyzxkvmnbrstdheaio";
+        var need: i32 = (bits * 1000) / 4700 + 1;
+        for i in 0..need { pw = pw + ("" + chars[(i * 7) % chars.len():(i * 7) % chars.len() + 1]); }
+        var v: string = verdict(pw);
+        var idx: i32 = -1;
+        for k in 0..names.len() {
+            if (names[k] == v) { idx = k; }
+        }
+        if (idx < 0) { return test.fail("unknown verdict \"" + v + "\""); }
+        if (idx < last) {
+            return test.fail("a longer password went backwards: \"" + v
+                + "\" after \"" + names[last] + "\" at " + bits.to_string()
+                + " bits");
+        }
+        last = idx;
+    }
+    return test.pass();
+}
+
+// ------------------------------------------------------------------- app
+
+function main(): i32 {
+    eprint("passcheck — entropy in integers, because log2 does not build for wasm");
+    var pws: string[] = ["password", "aaaaaaaa", "abcdefgh", "qwfpgjlu",
+                         "Tr0ub4dor&3", "correcthorsebatterystaple",
+                         "x", "", "P@ssw0rd!2024"];
+    for i in 0..pws.len() {
+        var pw: string = pws[i];
+        var shown: string = pw;
+        if (pw.len() == 0) { shown = "(empty)"; }
+        eprint("  " + shown);
+        eprint("    pool " + pool_of(pw).to_string() + " -> "
+            + fixed3(log2_milli(pool_of(pw))) + " bits/char"
+            + ", length " + pw.len().to_string()
+            + " -> effective " + effective_len(pw).to_string());
+        eprint("    entropy " + fixed3(entropy_milli(pw)) + " bits — "
+            + verdict(pw));
+    }
+
+    var t: test.TestRunner = test.test_new("passcheck");
+    t = t.it("log2 is exact on powers and close elsewhere", test_log2_is_exact_on_powers_and_close_elsewhere);
+    t = t.it("log2 is monotone and never flat across a doubling", test_log2_is_monotone_and_never_flat_across_a_doubling);
+    t = t.it("the pool is the union of the classes present", test_the_pool_is_the_union_of_the_classes_present);
+    t = t.it("entropy is effective length times pool bits", test_entropy_is_effective_length_times_pool_bits);
+    t = t.it("structure scores below the same characters unstructured", test_structure_scores_below_the_same_characters_unstructured);
+    t = t.it("entropy grows with length", test_entropy_grows_with_length);
+    t = t.it("a predictable character adds nothing", test_a_predictable_character_adds_nothing);
+    t = t.it("the empty password is zero not a crash", test_the_empty_password_is_zero_not_a_crash);
+    t = t.it("the verdict never goes backwards", test_the_verdict_never_goes_backwards);
+    return t.finish();
+}

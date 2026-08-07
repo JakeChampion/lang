@@ -81,23 +81,78 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > `stat` is one body like the rest. arm64 also gained the `__raw_scratch` op and
 > its `__fern_scratch` .bss slot, which the helper hands the kernel to write into.
 >
-> Still **x86-64 IR only**: the three clocks (`monotonic_ns` / `now_unix_ms` /
-> `now_ns`) and `read_dir` / `remove_dir_all`. These are the genuinely
-> shape-diverging ones. Darwin has no
-> `clock_gettime` at all (gettimeofday against a different struct, or CNTVCT_EL0,
-> not a syscall), and `getdirentries64` takes a 4th out-param that Linux's
-> `getdents64` has no equivalent of — an argument the caller must supply and
-> thread, which no constant can stand in for. Each needs a per-target source
-> BODY, which is why `sysno` deliberately has no entry for them. wasm has no
-> generic syscall at all. The clocks
-> slice added one
-> more floor primitive — `__raw_scratch` (a fixed static buffer for the kernel
-> to write `timespec`/`stat` into — no per-call heap leak) — and reuses the
-> existing `__load_i64` for the i64 `tv_sec`/`tv_nsec` read-back. What remains
-> hand-written (the residue tracked by
-> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is the shape-diverging
-> leaves on arm64 listed just above, the wasm bundles, `__fern_alloc` itself, and
-> the map/array mutator core.
+> **The array producers left the asm too.** `xs.reverse()` and `xs.concat(ys)`
+> (`asmcore.rt_src_arr_reverse` / `_arr_concat`) are Fern now, over the
+> `__raw_arr_box` + `__raw_array` pair added to the table below. These are the
+> first helpers to move that have nothing to do with syscalls, and they are
+> **arch-independent** — one source, no target parameter, replacing the two
+> hand-asm copies x86-64 and arm64 each carried. That is the shape the rest of
+> the array/map core should follow.
+>
+> Two properties make one `i32[]`-typed body serve every element type. The copy
+> is a raw 8-byte SLOT copy, so a `string[]`'s box pointers ride through
+> untouched; and it is deliberately SHALLOW — no element refcount traffic —
+> which is what the hand-asm did and what typing the parameters `i32[]` keeps
+> the RC insertion agreeing with.
+>
+> `a[start:end]` (`rt_src_arr_slice`) came last and is the one that takes a
+> target. Its construction-time bounds check (#5419) traps, and "abort" is not
+> a Fern expression — which read as needing a new primitive and did not.
+> `__fern_oob_abort` is only `exit(134)`, so the helper spells the trap
+> `__syscall3(sysno(t, "exit"), 134, 0, 0)`, the same sub-floor every syscall
+> leaf uses. The only new surface was an `exit` row in `asmcore.sysno`
+> (60 / 93 / 1); `darwinize`'s `darwin_sysno` already mapped `93 -> 1`. The
+> hand-asm's traps were UNSIGNED compares, which is how a negative bound
+> aborted rather than wrapping the copy loop; Fern's `i32` compares are signed,
+> so the helper spells the same condition with explicit `< 0` arms. Note the
+> exit NUMBER arrives as a pushed operand rather than a `mov x8, #N`, so
+> `darwinize` never sees it — a wrong `sysno` row would be invisible to every
+> other Darwin check, which is why the lock-in pins the pushed pair directly.
+> `__fern_oob_abort` itself stays: the per-access `jae` / `b.lo` checks still
+> branch to it.
+>
+> Still **x86-64 IR only**: `read_dir` / `remove_dir_all`. Darwin's
+> `getdirentries64` takes a 4th out-param that Linux's `getdents64` has no
+> equivalent of — an argument the caller must supply and thread, which no
+> constant can stand in for. They need a per-target source BODY, which is why
+> `sysno` deliberately has no entry for them. wasm has no generic syscall at all.
+>
+> The clocks slice added one more floor primitive — `__raw_scratch` (a fixed
+> static buffer for the kernel to write `timespec` / `timeval` / `stat` into —
+> no per-call heap leak) — and reuses the existing `__load_i64` / `__load_i32`
+> for the seconds and subseconds read-back.
+>
+> **The clocks were on that shape-diverging list and mostly should not have
+> been.** `now_unix_ms` / `now_ns` do diverge, and by more than a constant:
+> Linux takes `clock_gettime(clk, &timespec)` filling `{i64 sec @0; i64 nsec @8}`
+> while XNU takes `gettimeofday(&timeval, NULL)` — buffer FIRST — filling
+> `{i64 sec @0; i32 usec @8}`, so the number, the argument order and the
+> subsecond field's WIDTH all move at once. All three are expressible with the
+> existing floor, and `clock_read(t, clk)` is the single place they live; the
+> three helpers differ only in arithmetic afterwards.
+>
+> That width is load-bearing, not incidental. `tv_usec` is 32 bits with four
+> bytes of padding behind it and nothing promises the kernel zeroed them, so it
+> must be `__load_i32` — reading the slot as an i64 splices the padding into the
+> high half. Same class as the `__raw_addr` truncation.
+>
+> Only `monotonic_ns` on **Darwin** is genuinely out of reach: XNU's monotonic
+> clock on Apple Silicon is not a syscall at all but `mrs cntvct_el0` scaled by
+> `cntfrq_el0`, and Fern has no system-register-read intrinsic. That one helper
+> stays hand-written — emitted under the `__fn___fern_monotonic_ns` name its
+> Fern siblings use, because a zero-arg helper's stack and register conventions
+> coincide, so the call site never branches on the target.
+>
+> `__fern_scratch` moved out of arm64's `emit_rt_fs` in the same slice. The
+> clocks are heap-independent — a pure-scalar program that times something must
+> still link — so a slot gated on the fs runtime left such a program referencing
+> a label nothing defined. It is emitted by `emit_rt_clock_and_print` now, under
+> the gate `asm_ir` already used (`clocks || stat`).
+>
+> What remains hand-written (the residue tracked by
+> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is `read_dir` /
+> `remove_dir_all` on arm64, Darwin's `monotonic_ns`, the wasm bundles,
+> `__fern_alloc` itself, and the map/array mutator core.
 >
 > **Status update (2026-07, user-typed returns): `stat` migrated.** `stat` is the
 > first leaf returning a **user-typed** value — `Result[FileStat, IoError]` — and
@@ -209,6 +264,8 @@ nominal.
 | `__raw_scratch(n: i32): i32` | `leaq __fern_scratch(%rip), %rax` | a fixed static (.bss) scratch buffer the syscall leaves hand the kernel to write into (`timespec`, `stat`) — reused, never freed, so no per-call leak. `n` is a size hint; the buffer is fixed. **Non-reentrant** (one leaf reads it fully before another runs) |
 | `__syscall4(nr, a1, a2, a3, a4): i32` | like `__syscall3` plus `a4→%r10; syscall` | the 4-arg sub-floor sibling, for syscalls whose 4th arg is meaningful (`openat`'s `mode` with `O_CREAT`, `newfstatat`'s `flags`) |
 | `__raw_environ(): i32` | `movq __fern_envp(%rip), %rax` | the process `envp` pointer (saved by `_start`); the `env` leaf walks the array from it |
+| `__raw_arr_box(n: i32): i32` | `mov n→%rdi; call __fern_arr_box` → data ptr | a fresh n-element array box, rc header + length + capacity already written — the array sibling of `__raw_alloc`, and the one array primitive that stays a call. Element i is at `[ptr + (i+1)*W]`, exactly what `__raw_store_ptr` addresses, so a helper fills it without naming the layout |
+| `__raw_array(ptr: i32): i32[]` | nothing | the type-only bridge back to a typed array, the array sibling of `__raw_string`. The data pointer already IS the array value, so this emits no op — only the checker needed convincing |
 | `__raw_addr(ptr: i32, off: i32): i32` | `addq %rcx, %rax` / `add x0, x0, x1` | `ptr + off` at the machine's FULL pointer width, for an address that has to be **passed** somewhere (a syscall buffer arg). Writing `p + off` in the helper source does not work: a raw pointer's surface type is `i32`, so arm64 narrows the sum back (`sxtw x0, w0`) and a high heap address arrives truncated. The load/store intrinsics dodge this by folding the offset into the addressing mode; this is the form for everything else |
 
 Reading the kernel-written 8-byte fields (`tv_sec` / `tv_nsec`) back into i64

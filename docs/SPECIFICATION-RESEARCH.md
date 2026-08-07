@@ -40,7 +40,7 @@ across `docs/` and `internal/`, and no (c).
 
 | Spec ingredient | Fern's existing version | Gap |
 | --- | --- | --- |
-| Conformance suite | `internal/e2e/testdata/cases/` — 364 `.fern` fixtures, declarative sidecars (`expected.stdout`, `expected.exit`, `stdin`, `match`, `backends`, `expected.error`), run across interp / x86-64 / arm64 / wasm | Lives inside `internal/`, i.e. inside one implementation. Incidental, not normative: nothing says which behaviours are *required* vs which merely happen to be what the interp does. |
+| Conformance suite | `conformance/cases/` — 364 `.fern` fixtures, declarative sidecars (`expected.stdout`, `expected.exit`, `stdin`, `match`, `backends`, `expected.error`), run across interp / x86-64 / arm64 / wasm | Lives inside `internal/`, i.e. inside one implementation. Incidental, not normative: nothing says which behaviours are *required* vs which merely happen to be what the interp does. |
 | Conformance report | `selfhost-{wasm,x86_64,arm64}-known-divergences.txt` — per-target expectation files, where a new divergence fails *and* a listed fixture that starts passing fails | Already the right mechanism. Framed as a bug list rather than a conformance delta. |
 | Multiple implementations to keep honest | Five: `internal/interp`, three native backends, and the self-host compiler (its own parser + checker + three emitters) | The self-host is measured *against native*, not against a spec. |
 | Static-semantics catalogue | 71+ stable diagnostic codes with a `fern explain E0NN` catalogue (`internal/diag/explanations`) and `catalogue_completeness_test.go` forbidding an unexplained code | The codes are stable and explained; the *rules* they enforce are written down only as checker code. |
@@ -393,11 +393,41 @@ diagnostics. Publishing the catalogue is not the work; asking what
   disproves.
 
 The policy docs were indexed rather than rewritten, as planned — but
-that half shipped **ungated**, and `spec/README.md` says so rather than
-implying otherwise. Nothing checks that a claim in `INTEGER-SEMANTICS.md`
-is pinned by a case, or that a case has not quietly contradicted one.
-That is the next increment, and it is the diagnostics index's shape
-again: derive the truth, make the document match it.
+that half first shipped **ungated**: nothing checked that a claim in
+`INTEGER-SEMANTICS.md` was pinned by a case, or that a case had not
+quietly contradicted one.
+
+**Correction, from gating them.** `spec/semantics.md` now does for
+behaviour what `diagnostics.md` does for rejections: 33 claims across
+the six docs, 25 pinned by a conformance case, three deliberate
+freedoms, five gaps. Three things the plan did not anticipate:
+
+- **A one-directional index is not enough.** The diagnostics index can
+  verify itself by running the CLI and reading the code back. There is
+  no equivalent for a behavioural claim — nothing in a case's output
+  says which rule it is about — so the link has to be declared from
+  both ends. Each pinning case carries a `// spec: <ID>` marker naming
+  its claim, and the gate matches the two sets in both directions. A
+  case can then be rewritten, but not rewritten out from under the
+  claim it was written for.
+- **Freedoms are not gaps, and collapsing them hides the gaps.** Three
+  of `FLOAT-SEMANTICS.md`'s claims are that nothing is guaranteed — the
+  NaN bit-pattern, denormal handling, whether `-0.0` survives
+  arithmetic. A conformance case cannot pin one, because a case asserts
+  an output and the content of the claim is that no output is owed.
+  Marked `—` they would read as three oversights and bury the five real
+  ones; they are marked `n/a — freedom` and counted separately.
+- **Requiring an example that runs found a stale one.**
+  `docs/ARRAY-BOUNDS.md` illustrated an out-of-range write as
+  `xs[7] = 9`. That is `E056` — a subscript is read-only after
+  construction — so the program never reaches the bounds check the
+  section is about. Same lesson as `E039` and the invented grammar
+  rules, for the third time: a prose example nothing executes is a
+  claim nothing disproves.
+
+The gaps left are all rejections (`E009` on saturating `usize`, `E050`,
+`E067`), each currently exercised only by a Go test — the same shape,
+and the same freeze consequence, as the diagnostics index's own.
 
 ### Layer 3 — specify **Fern Core**, executably (the real work; 1–3 months)
 
@@ -449,6 +479,85 @@ several stages downstream (the closure-dispatch cluster
 them into an error naming the malformed op. It is also the natural
 enforcement point for Layer 3's typing rules, which is why it belongs
 here rather than in a testing doc.
+
+**Correction, from building it.** The structural half took an afternoon,
+not a week, and it found nothing: across **478 lowered programs** (the
+whole corpus, at both pointer widths) there was not one bad local index,
+unbalanced scope, out-of-range branch depth, or arity mismatch. That is
+a real result rather than a disappointment — it says the lowering passes
+are structurally sound today, and it is the precondition for the
+verifier being *usable*: a checker that fires on correct input gets
+disabled within a week.
+
+Two things the plan did not anticipate:
+
+- **The callee check needed an authority, not a heuristic.** The first
+  version accepted a defined function, an extern, or a `__`-prefixed
+  runtime symbol, and reported 166 problems — all of them builtins
+  (`print`, `map_new`, `now_ns`) that are none of those three.
+  `internal/caps` already holds the authoritative inventory, gated by
+  its own completeness tests, so the verifier consults it. A new builtin
+  therefore cannot quietly become an unverifiable callee.
+- **The type half is the real work.** Stack discipline and operand
+  widths need a stack-effect table for all 93 opcodes, which is where a
+  wasm-style validator gets its power. That is a separate increment, and
+  it is the one that would have caught the closure-dispatch cluster this
+  section cites.
+
+**Correction, from building the stack half.** It is now in
+(`internal/ir/verifystack.go`) and, like the structural half, it found
+nothing: 0 problems across the same 478 lowered programs, 8,100
+functions at both pointer widths, 97.8% of them fully modelled. Four
+things the plan had wrong.
+
+- **"Stack discipline and operand widths" is one phrase covering two
+  very different jobs, and only the first is checkable.** A slot's
+  *class* — integer-shaped or float-shaped — is a property of the op, so
+  it checks cleanly. Its *width* is not: `WidthPtr` is resolved by the
+  backend, and the IR does not distinguish a pointer from an integer of
+  the same width anywhere, deliberately. A width checker would need a
+  pointer-aware type system the IR does not carry, and would report that
+  deliberate looseness as a defect. The stack half checks discipline and
+  class, and says so.
+- **A stack-effect table is not enough, because an op's effect is not a
+  function of the op.** Under the two-word string ABI (every wasm32
+  build) a string value is its `(data, len)` pair, so `const.str` pushes
+  two slots on one target and one on another, and `str.len` pops two or
+  one to match. The pass is parameterised by `Program.PtrW` for exactly
+  this reason, and it is what makes the same op list well-formed at one
+  width and broken at the other — which no single table can express.
+- **The hard part was the callees, again.** A call's effect needs the
+  callee's signature, and for a builtin or a runtime helper that
+  signature lives in the backends. The structural half could defer to
+  `internal/caps` because it only asked "does this name exist"; the
+  stack half asks "how many slots", which caps does not know. So the
+  verifier keeps its own table (`verifyprovided.go`), cross-checked
+  against the wasm backend's helper registry by a test in that package —
+  a second record, because reading the emitter's own table would make
+  the two agree by construction and check nothing.
+- **Fail-soft turned out to be the design decision that mattered.**
+  Anything unmodellable — a generic callee whose argument types are
+  still type parameters at lowering time, where an erased `T` may arrive
+  as an integer, a float, or a two-word string — skips the function and
+  is counted, never reported. Coverage then becomes a number a gate can
+  hold a floor under, so an unmodelled construct surfaces as a coverage
+  regression instead of as a spurious failure. Without it the pass would
+  have had to guess, and a verifier that reports a defect in correct IR
+  is switched off within a week.
+
+Two findings of nothing in a row raise the obvious question of whether
+the pass checks anything, so the answer is measured rather than
+asserted: `TestIRVerifierCatchesLoweringDamage` deletes one
+stack-effecting op from each of 1,241 real lowered functions and
+requires the damage to be reported. It reports 97.6%. The residual is
+wasm's own rule — a `return` marks the rest of its scope unreachable and
+discards operands stranded below it, so an imbalance introduced before a
+`return` and never consumed is invisible to a wasm validator too.
+
+So the honest reading: the verifier makes two classes of bug impossible
+to ship silently, and both classes turn out to be empty today. What
+remains unbuilt is the part that needs Layer 3 — the typing rules
+themselves, as opposed to the stack shape they run on.
 
 ### Layer 5 — mechanisation and translation validation (not recommended yet)
 

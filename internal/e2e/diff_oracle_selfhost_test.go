@@ -8,8 +8,8 @@
 // run said the native backends agree and said nothing at all about
 // self-host lowering (#6138).
 //
-// That gap had a specific cost. The closure-dispatch cluster CLAUDE.md
-// names (#5001 / #5007 / #5009 / #5026 — escaping closures and closure
+// That gap had a specific cost. The closure-dispatch cluster
+// docs/TEST-GATES.md names (#5001 / #5007 / #5009 / #5026 — escaping closures and closure
 // arrays that lowered on the self-host IR path and then SIGSEGV'd or
 // silently miscompiled) was found by hand-written differential probes,
 // one program at a time, because nothing swept a corpus down that path.
