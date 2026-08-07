@@ -26,7 +26,7 @@ import (
 // by the loader: it justifies a case that asserts less than the maximum.
 var (
 	runSidecars = []string{"expected.stdout", "expected.exit", "stdin", "match", "backends"}
-	allSidecars = append([]string{"expected.error", "meta"}, runSidecars...)
+	allSidecars = append([]string{"expected.error", "meta", "reclaim-observable"}, runSidecars...)
 )
 
 // Waiver kinds a case may claim in its `meta` file. A waiver says why the
