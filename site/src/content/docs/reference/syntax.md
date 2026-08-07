@@ -33,13 +33,26 @@ position only, which keeps `float.pi()` module calls working.
 ## Comments
 
 Line comments only, introduced by `//`. The formatter preserves
-their original position.
+their original position, and emits declarations in source order so a
+comment stays with the declaration it documents.
 
 ```fern
 // Header comment.
 function main(): i32 {
     var x: i32 = 7;  // Trailing comment.
     return x;
+}
+```
+
+An enum or struct is written on one line when it fits, but a comment
+inside its braces expands it — the one-line form has nowhere to put the
+comment, so keeping it attached takes a line per element:
+
+```fern
+enum Verdict {
+  Balanced,
+  Unexpected(i32),  // closer at pos, nothing open
+  Unclosed(i32),  // opener never closed
 }
 ```
 
