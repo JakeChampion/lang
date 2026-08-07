@@ -95,12 +95,13 @@ maintained as living documents and a copy would drift:
 | `docs/CLOSURE-CAPTURE.md` | Capture-by-value, enforced as `E049`. |
 | `docs/MODE-LATTICE.md` | The `own` / borrow / view mode lattice. |
 | `docs/MUST-CONSUME.md` | `@must_consume` linear obligations, enforced as `E067`. |
+| `docs/ALLOCATION-OBSERVABLE.md` | What `__heap_bump_bytes()` measures, what is portable about it, and the two allocation-shape claims that can be pinned. |
 
 `semantics.md` is the index that ties these to tests. It extracts the
 claims each doc makes and names the conformance case that pins each one;
 the case names the claim back with a `// spec: <ID>` marker, so neither
-side can be edited out from under the other. **25 of 33** claims are
-pinned today, three are deliberate freedoms, and five are gaps.
+side can be edited out from under the other. **32 of 36** claims are
+pinned today, three are deliberate freedoms, and one is a gap.
 
 The docs stay where they are rather than moving here, because they are
 living documents — implementation notes, the reasoning behind a choice,

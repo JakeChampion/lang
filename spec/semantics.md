@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**30 of 34** claims are pinned by a conformance case. Of the four
+**32 of 36** claims are pinned by a conformance case. Of the four
 that are not, **three are freedoms** — see below — and one is a gap the
 corpus format cannot currently reach.
 
@@ -112,6 +112,8 @@ three apparent oversights, and hide the one real gap among them.
 | `ML-06` | `docs/MODE-LATTICE.md` | A `fbip` function that allocates without a donor to reuse is rejected (`E068`) | — |
 | `MC-01` | `docs/MUST-CONSUME.md` | A `@must_consume` value unconsumed on some path is rejected (`E067`) | `diag_e067` |
 | `MC-02` | `docs/MUST-CONSUME.md` | An `own` parameter is the declared sink, exempt from `E067` | `must_consume_own_sink` |
+| `AL-01` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that reclaims what it allocates does not grow the fresh-allocation high-water mark with the round count | `alloc_flat_under_reclaim` |
+| `AL-02` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that retains what it allocates does grow it with the round count | `alloc_grows_when_retained` |
 
 ## The one gap, and why the format cannot reach it
 
@@ -139,15 +141,33 @@ green — at which point a Go test measures the wrong thing. `E050` and
 `E067` were also two of the three codes `spec/diagnostics.md` listed as
 unpinned, so those rows closed in both indexes at once.
 
+## The store, and the first thing said about it
+
+`AL-01` / `AL-02` are the first claims here that are about the **store**
+rather than about values. Allocation was not unmeasured before them —
+`TestX86_64AllocScaling` bounds asymptotics and
+`TestSelfHostAllocDifferentialX86_64` compares the two compilers — but
+both are Go tests on one backend, so neither survives the freeze and
+neither can see a backend that allocates unlike the others. The
+*corpus* pinned allocation behaviour nowhere at all, and every leak
+investigation under #6127 had to build a bespoke differential harness
+before it could measure anything.
+
+They are deliberately weak: they say only that a reclaiming loop's
+fresh-allocation high-water mark does not grow with the round count and
+a retaining one's does. That is far short of a store semantics, and
+`docs/ALLOCATION-OBSERVABLE.md` says which questions it leaves open. But
+it is the difference between a property that can be pinned and one that
+cannot, and the first thing it found was a real leak: the wasm backend
+never reclaims a short-lived string, consuming exactly 32 fresh bytes
+per iteration where both natives are flat (#6423).
+
 ## What is still not here
 
 The claims above are the ones the policy docs happen to state. They are
 not a semantics: there is no evaluation order, no typing rule, no
-memory model, and — most conspicuously for a reference-counted language
-— no statement of when a value is freed. `conformance/cases` pins
-allocation behaviour nowhere at all; `docs/TEST-GATES.md` says so
-directly, and the leak investigations under #6127 were possible only
-because a differential harness was written for each one by hand.
+memory model, and — beyond the two allocation-shape claims — no
+statement of when a value is freed.
 
 Read this file as a list of the promises that have been written down,
 not as the set of promises Fern makes.
