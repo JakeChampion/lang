@@ -98,3 +98,21 @@
 # --- shared with the x86-64 leg (same bug, same measured value) ---
 
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---
+
+# --- negative literals (#6394) ---------------------------------------------
+# The native compiler accepts the smallest i32 as a literal, and negative
+# literals as match patterns; the self-host lowers neither, so both bail to a
+# strict-IR refusal rather than producing a wrong answer.
+#
+# `smallest_int_literal`: `return -2147483648;` bails with "`return` of unary
+# `-`". Narrow to the boundary magnitude — `return -5;`, `return 0 - 5;` and
+# `var v: i32 = -5; return v;` all lower. The magnitude is out of i32 range as
+# a POSITIVE value and the return-of-unary gate judges it without the sign,
+# which is the shape the native checker had before it threaded a `negated` bit
+# through settleInt.
+#
+# `negative_literal_patterns`: the whole `match` bails. The self-host parser's
+# literal-pattern test looks at one token and the sign is a separate one, so
+# `-1 => …` is declined — again the shape the native parser had.
+smallest_int_literal 6394 self-host: `return -<literal at the i32 limit>` does not lower
+negative_literal_patterns 6394 self-host: negative literal patterns do not lower

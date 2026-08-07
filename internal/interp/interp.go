@@ -2872,15 +2872,20 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			}
 			return result{flow: flowNormal}, nil
 		}
-		// Non-enum scrutinee (i32 / string / bool): literal-pattern
+		// Non-enum scrutinee (i32 / f64 / string / bool): literal-pattern
 		// match, mirroring the compiled backend's emitLiteralMatch.
 		// Each arm is a literal (dispatched by `==`) or the `_`
 		// fall-through; the checker (E035/E030) guarantees an
 		// unguarded `_` arm exists, so a match is always found. Any
 		// other value type reaching here is a type error the checker
 		// should have caught — keep the diagnostic.
+		//
+		// Float belongs here: armMatchesScalar and valuesEqual have both
+		// handled it all along, and the compiled backends match a float
+		// scrutinee happily. Only this gate said otherwise, so a program
+		// the natives and wasm ran refused to interpret at all.
 		switch tag.(type) {
-		case Number, Bool, String:
+		case Number, Float, Bool, String:
 		default:
 			return result{}, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
 		}
@@ -3591,13 +3596,14 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			}
 			return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (no tuple arm matched)")
 		}
-		// Non-enum scrutinee (i32 / string / bool): literal-pattern
+		// Non-enum scrutinee (i32 / f64 / string / bool): literal-pattern
 		// match expression, mirroring emitLiteralMatchExpr. Each arm
 		// dispatches via `==` against its literal, or the `_`
 		// fall-through. Any other value type is a type error the
-		// checker should have caught — keep the diagnostic.
+		// checker should have caught — keep the diagnostic. Float is
+		// included for the same reason as the statement form above.
 		switch tag.(type) {
-		case Number, Bool, String:
+		case Number, Float, Bool, String:
 		default:
 			return nil, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
 		}

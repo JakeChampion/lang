@@ -13577,6 +13577,17 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 }
 
 func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
+	c.settleIntSigned(e, hn, false)
+}
+
+// settleIntSigned is settleInt carrying whether the expression sits under an
+// odd number of unary minuses. A NumberLit holds its magnitude — the sign is
+// a separate Unary node — so the range check needs that bit to judge the value
+// the source actually wrote. Without it the most negative number of a width
+// had no literal spelling at all: `var x: i32 = -2147483648;` was refused for
+// a magnitude that is only out of range as a POSITIVE value. i64 never showed
+// it, because its range check returns early.
+func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 	width := hn.NormalWidth()
 	isUnsigned := !hn.IsSigned()
 	switch x := e.(type) {
@@ -13584,11 +13595,13 @@ func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
 		if x.Width == 0 {
 			x.Width = width
 			x.IsUnsigned = isUnsigned
-			c.checkLiteralFits(x, hn)
+			c.checkLiteralFits(x, hn, negated)
 		}
 	case *ast.Unary:
-		if x.Op == "-" || x.Op == "+" {
-			c.settleInt(x.Operand, hn)
+		if x.Op == "-" {
+			c.settleIntSigned(x.Operand, hn, !negated)
+		} else if x.Op == "+" {
+			c.settleIntSigned(x.Operand, hn, negated)
 		}
 	case *ast.Binary:
 		switch x.Op {
@@ -14032,7 +14045,7 @@ func intLitExceedsI32(e ast.Expr) bool {
 	return false
 }
 
-func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType) {
+func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType, negated bool) {
 	w := t.NormalWidth()
 	if t.IsSigned() {
 		var min, max int64
@@ -14044,8 +14057,15 @@ func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType) {
 		default:
 			return
 		}
-		if lit.Value < min || lit.Value > max {
-			c.errfCode(lit.P, "E047", "literal %d does not fit in %s", lit.Value, t)
+		// Judge — and report — the value the source wrote, sign included. A
+		// literal is only ever the magnitude; `-2147483648` is in range and
+		// `2147483648` is not, and they share a NumberLit.
+		v := lit.Value
+		if negated {
+			v = -v
+		}
+		if v < min || v > max {
+			c.errfCode(lit.P, "E047", "literal %d does not fit in %s", v, t)
 		}
 	} else {
 		var max uint64

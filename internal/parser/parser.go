@@ -3500,6 +3500,54 @@ func isLiteralPatternStart(t lexer.Token) bool {
 	return false
 }
 
+// atLiteralPattern is isLiteralPatternStart plus the leading `-` of a
+// negative number. A negative literal is a literal — `match (n) { -1 => …,
+// 0 => … }` is ordinary code — but the sign is a separate token, so the
+// single-token test above declined it and the arm was rejected by a message
+// that listed "literal" among what it accepted.
+//
+// Only a number may follow the minus. `-x` stays out: an identifier in arm
+// position is a variant name, not a value to negate.
+func (p *parser) atLiteralPattern() bool {
+	if isLiteralPatternStart(p.peek()) {
+		return true
+	}
+	if t := p.peek(); t.Kind == lexer.Punct && t.Text == "-" {
+		n := p.peekAt(1)
+		return n.Kind == lexer.Number || n.Kind == lexer.Float
+	}
+	return false
+}
+
+// parseLiteralPattern consumes one literal pattern, folding a leading `-`
+// into the literal it negates. Folding rather than wrapping in a Unary node
+// keeps `Pattern.Literal` a bare literal, which is what every consumer
+// downstream — the checker's type unification, the IR's equality dispatch —
+// already knows how to read.
+func (p *parser) parseLiteralPattern() (ast.Expr, error) {
+	neg := false
+	if t := p.peek(); t.Kind == lexer.Punct && t.Text == "-" {
+		p.advance()
+		neg = true
+	}
+	lit, err := p.parsePrimary()
+	if err != nil {
+		return nil, err
+	}
+	if !neg {
+		return lit, nil
+	}
+	switch x := lit.(type) {
+	case *ast.NumberLit:
+		x.Value = -x.Value
+	case *ast.FloatLit:
+		x.Value = -x.Value
+	default:
+		return nil, p.errorfCode(p.peek().Pos, "P001", "`-` in a match arm must be followed by a number")
+	}
+	return lit, nil
+}
+
 func (p *parser) parseMatch() (ast.Stmt, error) {
 	kw := p.advance() // `match`
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
@@ -3993,7 +4041,7 @@ func (mp *matchPattern) hasNestedSub() bool {
 // a plain binder named after the variant, exactly as before.
 func (p *parser) isNestedPatternStart() bool {
 	t := p.peek()
-	if isLiteralPatternStart(t) {
+	if p.atLiteralPattern() {
 		return true
 	}
 	if t.Kind == lexer.Ident && t.Text != "_" {
@@ -4053,8 +4101,8 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 			if et.Kind == lexer.Ident && et.Text == "_" {
 				p.advance()
 				elem.IsWildcard = true
-			} else if isLiteralPatternStart(et) {
-				lit, err := p.parsePrimary()
+			} else if p.atLiteralPattern() {
+				lit, err := p.parseLiteralPattern()
 				if err != nil {
 					return pat, err
 				}
@@ -4080,7 +4128,7 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 		if len(pat.TupleElems) < 2 {
 			return pat, p.errorfCode(t.Pos, "P001", "tuple pattern needs at least 2 elements")
 		}
-	} else if isLiteralPatternStart(t) {
+	} else if p.atLiteralPattern() {
 		// Literal pattern: `0 => …`, `"yes" => …`, `true => …`,
 		// `1.5f64 => …`. Dispatched via equality comparison
 		// against the scrutinee at IR-lower time. The checker
@@ -4088,7 +4136,7 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 		// scrutinee's type. parsePrimary (not parseExpr) stops at
 		// the single literal, so a following `|` reads as an
 		// or-pattern separator rather than a bitwise-or operator.
-		lit, err := p.parsePrimary()
+		lit, err := p.parseLiteralPattern()
 		if err != nil {
 			return pat, err
 		}
@@ -4101,7 +4149,7 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 			if !inclusive {
 				p.advance() // consume `..`
 			}
-			hi, err := p.parsePrimary()
+			hi, err := p.parseLiteralPattern()
 			if err != nil {
 				return pat, err
 			}

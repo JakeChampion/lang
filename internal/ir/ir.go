@@ -6128,7 +6128,15 @@ func (b *builder) rangeMatchCond(p ast.Position, lit, rangeHi ast.Expr, inclusiv
 		c := &ast.Binary{P: p, Op: op, Left: &ast.Ident{P: p, Name: literalMatchScrName(scrSlot)}, Right: bound, IsFloat: isFloatType(tagT)}
 		if nt, ok := tagT.(ast.NumberType); ok {
 			c.IntWidth = nt.Width
-			c.IsUnsigned = !nt.Signed
+			// IsSigned(), not the bare field: `Signed` is false on the
+			// zero-value NumberType that a plain `i32` carries, and the
+			// width-0 default IS signed. Reading the field made every
+			// range comparison unsigned, so `match (v) { -10..0 => … }`
+			// matched nothing — as unsigned, -5 is 4294967291, which is
+			// not below 0. Ranges whose bounds share the value's sign
+			// (`-100..-10`, `0..10`) came out right either way, so only
+			// a range straddling zero showed it.
+			c.IsUnsigned = !nt.IsSigned()
 		}
 		if ft, ok := tagT.(ast.FloatType); ok {
 			c.FloatWidth = ft.Width
@@ -9498,6 +9506,17 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		if ft, ok := b.info.FuncSigs[x.Name]; ok {
 			return ft
 		}
+	case *ast.Unary:
+		// `!e` is a boolean; `-e` has its operand's type. Without this a
+		// negated element made an enclosing TupleLit / StructLit record a
+		// NIL element type, and `(-1, 9)` passed straight to a call
+		// panicked the compiler in TupleType.String() when the argument
+		// temp's drop asked for its `__drop_tuple_<shape>` name. The
+		// literal `(1, 9)` was fine, so the crash needed a sign to appear.
+		if x.Op == "!" {
+			return ast.BoolType{}
+		}
+		return b.exprType(x.Operand)
 	case *ast.CaptureRef:
 		// Captured variable references carry their resolved
 		// outer-scope type on the AST node — needed when the

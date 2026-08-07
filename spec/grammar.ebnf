@@ -197,6 +197,8 @@ TuplePattern
 VariantPattern
             = QualName '(' [ Pattern { ',' Pattern } [ ',' ] ] ')' ;
 LiteralPattern
+            = LiteralValue [ ( '..=' | '..' ) LiteralValue ] ;
+LiteralValue
             = [ '-' ] ( NUMBER | FLOAT ) | STRING | 'true' | 'false' ;
 BindingPattern
             = QualName | '_' ;
