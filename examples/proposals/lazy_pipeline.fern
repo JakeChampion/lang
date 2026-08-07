@@ -1,0 +1,355 @@
+// examples/proposals/lazy_pipeline.fern — proposal turn, drawn line 182:
+// "An iterator pipeline that lazily maps, filters and takes from an infinite
+// source."
+//
+// There is no `std/iter`, so the pipeline is this file's own. That turns out
+// to be the interesting part: laziness is not a property you can assert by
+// looking at the output. A pipeline that eagerly evaluated a thousand elements
+// and returned the first five produces exactly the same array as one that
+// evaluated nine. The difference is only visible in what the pipeline *did*,
+// so the machinery here is built to report that.
+//
+// Two counters carry the whole contract:
+//
+//   - `Src.pulls`, how many elements the source was asked for. The source is
+//     infinite, so an eager implementation does not terminate at all — but
+//     "it terminated" is a weak test. "It pulled exactly nine" is a strong one.
+//   - `Run.applied`, how many times a map stage ran. This is what catches a
+//     pipeline that filters correctly but still evaluates the downstream
+//     stages on the elements it rejected: same output, more work.
+//
+// The source threads functionally rather than mutating, which is what makes
+// `pulls` trustworthy — it is carried in the value, so it cannot be observed
+// out of step with the elements it counts. It also gives the resumption test
+// something to say: a partly-consumed source is a value you can keep.
+//
+// The oracle for the results themselves is an eager pipeline over a bounded
+// prefix, written separately and sharing no code with the lazy one.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// ------------------------------------------------------------- the source
+
+// An infinite source, as a state pair plus a step. `a` is the value the source
+// yields; `step` advances the pair. Two very different sequences come out of
+// the same three fields, which is the check that the pipeline is not quietly
+// specialised to counting.
+struct Src { a: i32, b: i32, pulls: i32, step: (i32, i32) => (i32, i32) }
+
+function naturals(): Src {
+    return Src { a: 0, b: 0, pulls: 0, step: (x: i32, y: i32) => (x + 1, y) };
+}
+
+function fibonacci(): Src {
+    return Src { a: 0, b: 1, pulls: 0, step: (x: i32, y: i32) => (y, x + y) };
+}
+
+function pull(s: Src): (i32, Src) {
+    var n: (i32, i32) = (s.step)(s.a, s.b);
+    return (s.a, Src { a: n.0, b: n.1, pulls: s.pulls + 1, step: s.step });
+}
+
+// ------------------------------------------------------------- the stages
+
+enum Stage { Map((i32) => i32), Filter((i32) => boolean) }
+
+// A run's result: the elements taken, the source left over (so a pipeline can
+// be resumed), and how many map applications it cost.
+struct Run { out: i32[], src: Src, applied: i32 }
+
+// Pull from `src` until `n` elements have survived the stages. Two properties
+// live in this loop and nowhere else:
+//
+//   - it pulls one element at a time and stops the moment it has enough, so
+//     `take(0)` touches the source not at all;
+//   - a filter that rejects breaks out of the stage loop, so no later stage
+//     sees a value that is already gone.
+//
+// The second is the one worth stating: applying the remaining stages anyway
+// would produce identical output, which is precisely why it needs a counter
+// rather than an assertion about results.
+function run(src: Src, stages: Stage[], n: i32): Run {
+    var out: i32[] = [];
+    var s: Src = src;
+    var applied: i32 = 0;
+    while (out.len() < n) {
+        var p: (i32, Src) = pull(s);
+        s = p.1;
+        var v: i32 = p.0;
+        var keep: boolean = true;
+        for k in 0..stages.len() {
+            if (keep) {
+                match (stages[k]) {
+                    Map(f) => { v = f(v); applied = applied + 1; },
+                    Filter(g) => { if (!g(v)) { keep = false; } },
+                }
+            }
+        }
+        if (keep) { out = out.append(v); }
+    }
+    return Run { out: out, src: s, applied: applied };
+}
+
+// ------------------------------------------------------------- the oracle
+
+// An eager pipeline over a bounded prefix, sharing nothing with `run`: it
+// materialises the whole prefix first, then rewrites the array once per stage,
+// then slices. This is how you would write it if laziness were not the point,
+// and it is the independent check that the lazy one computes the same thing.
+function eager(src: Src, stages: Stage[], n: i32, prefix: i32): i32[] {
+    var vals: i32[] = [];
+    var s: Src = src;
+    for i in 0..prefix {
+        var p: (i32, Src) = pull(s);
+        vals = vals.append(p.0);
+        s = p.1;
+    }
+    for k in 0..stages.len() {
+        var next: i32[] = [];
+        for i in 0..vals.len() {
+            match (stages[k]) {
+                Map(f) => { next = next.append(f(vals[i])); },
+                Filter(g) => { if (g(vals[i])) { next = next.append(vals[i]); } },
+            }
+        }
+        vals = next;
+    }
+    var out: i32[] = [];
+    for i in 0..vals.len() {
+        if (out.len() < n) { out = out.append(vals[i]); }
+    }
+    return out;
+}
+
+// ------------------------------------------------------------- reporting
+
+function show(xs: i32[]): string {
+    var s: string = "[";
+    for i in 0..xs.len() {
+        if (i > 0) { s = s + ", "; }
+        s = s + xs[i].to_string();
+    }
+    return s + "]";
+}
+
+function same(a: i32[], b: i32[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    for i in 0..a.len() {
+        if (a[i] != b[i]) { return false; }
+    }
+    return true;
+}
+
+// --------------------------------------------------------------- the tests
+
+// THE test. Not "it terminated" — an exact pull count. Taking 5 even naturals
+// requires seeing 0..8, which is nine pulls; a pipeline that read ahead by a
+// block, or that materialised a prefix, would give the same five numbers at a
+// different cost, and only this number tells them apart.
+function test_the_source_is_pulled_exactly_as_far_as_needed(): test.TestOutcome {
+    var st: Stage[] = [Stage.Filter((x: i32) => x % 2 == 0)];
+    var r: Run = run(naturals(), st, 5);
+    var want: i32[] = [0, 2, 4, 6, 8];
+    if (!same(r.out, want)) {
+        return test.fail("took " + show(r.out) + ", wanted " + show(want));
+    }
+    if (r.src.pulls != 9) {
+        return test.fail("pulled " + r.src.pulls.to_string()
+            + " elements to take 5 evens; 9 are needed and 9 suffice");
+    }
+    return test.pass();
+}
+
+// The strongest statement laziness can make: asked for nothing, the pipeline
+// touches an infinite source zero times. An implementation that primes itself
+// with one element — a very natural thing to write — fails here and nowhere
+// else, because one extra pull is invisible in every output.
+function test_take_zero_pulls_nothing(): test.TestOutcome {
+    var st: Stage[] = [Stage.Map((x: i32) => x * 2), Stage.Filter((x: i32) => x > 100)];
+    var r: Run = run(naturals(), st, 0);
+    if (r.out.len() != 0) {
+        return test.fail("take 0 returned " + show(r.out));
+    }
+    if (r.src.pulls != 0) {
+        return test.fail("take 0 pulled " + r.src.pulls.to_string() + " elements");
+    }
+    if (r.applied != 0) {
+        return test.fail("take 0 applied " + r.applied.to_string() + " maps");
+    }
+    return test.pass();
+}
+
+// A filter that rejects must end the element's journey. Applying the later
+// stages anyway is invisible in the output — the value is discarded either
+// way — so this is a cost the results cannot see. Taking 3 of the doubled
+// evens means 3 map applications; a pipeline that maps before checking the
+// filter's verdict does 6.
+function test_a_stage_after_a_rejecting_filter_never_runs(): test.TestOutcome {
+    var st: Stage[] = [Stage.Filter((x: i32) => x % 2 == 0), Stage.Map((x: i32) => x * 2)];
+    var r: Run = run(naturals(), st, 3);
+    var want: i32[] = [0, 4, 8];
+    if (!same(r.out, want)) {
+        return test.fail("took " + show(r.out) + ", wanted " + show(want));
+    }
+    if (r.applied != 3) {
+        return test.fail("applied the map " + r.applied.to_string()
+            + " times for 3 results — it is running on elements the filter"
+            + " already rejected");
+    }
+    return test.pass();
+}
+
+// The lazy pipeline and an eager one over a bounded prefix must agree, across
+// several stage arrangements. The eager one shares no code with `run`, so a
+// mistake would have to occur twice, differently, to survive.
+function test_the_lazy_pipeline_agrees_with_an_eager_one(): test.TestOutcome {
+    var names: string[] = ["evens doubled", "map then filter", "two filters",
+                           "two maps", "no stages", "filter that rarely fires"];
+    var pipes: Stage[][] = [
+        [Stage.Filter((x: i32) => x % 2 == 0), Stage.Map((x: i32) => x * 2)],
+        [Stage.Map((x: i32) => x * 3), Stage.Filter((x: i32) => x % 2 == 1)],
+        [Stage.Filter((x: i32) => x % 2 == 0), Stage.Filter((x: i32) => x % 3 == 0)],
+        [Stage.Map((x: i32) => x + 1), Stage.Map((x: i32) => x * x)],
+        [],
+        [Stage.Filter((x: i32) => x % 17 == 0)],
+    ];
+    for i in 0..pipes.len() {
+        var lazy: i32[] = run(naturals(), pipes[i], 6).out;
+        var eag: i32[] = eager(naturals(), pipes[i], 6, 200);
+        if (!same(lazy, eag)) {
+            return test.fail(names[i] + ": lazy gave " + show(lazy)
+                + ", eager gave " + show(eag));
+        }
+    }
+    return test.pass();
+}
+
+// A partly-consumed source is a value. Taking 5 and then 5 more from what is
+// left must give the same ten elements as taking 10 at once — the property
+// that separates a real suspended computation from one that restarts.
+function test_the_source_resumes_where_it_stopped(): test.TestOutcome {
+    var st: Stage[] = [Stage.Filter((x: i32) => x % 2 == 0)];
+    var first: Run = run(naturals(), st, 5);
+    var second: Run = run(first.src, st, 5);
+    var joined: i32[] = first.out;
+    for i in 0..second.out.len() { joined = joined.append(second.out[i]); }
+    var whole: Run = run(naturals(), st, 10);
+    if (!same(joined, whole.out)) {
+        return test.fail("5 then 5 gave " + show(joined) + ", 10 at once gave "
+            + show(whole.out));
+    }
+    if (second.src.pulls != whole.src.pulls) {
+        return test.fail("resuming cost " + second.src.pulls.to_string()
+            + " total pulls, taking 10 at once cost "
+            + whole.src.pulls.to_string());
+    }
+    return test.pass();
+}
+
+// Fusing two maps into one changes the cost and not the answer. Stated as a
+// test because it is the identity an optimiser would rely on, and because it
+// pins the map counter to something independent of the pipeline's shape.
+function test_fusing_two_maps_changes_the_cost_and_not_the_answer(): test.TestOutcome {
+    var two: Stage[] = [Stage.Map((x: i32) => x + 1), Stage.Map((x: i32) => x * 2)];
+    var one: Stage[] = [Stage.Map((x: i32) => (x + 1) * 2)];
+    var a: Run = run(naturals(), two, 6);
+    var b: Run = run(naturals(), one, 6);
+    if (!same(a.out, b.out)) {
+        return test.fail("map;map gave " + show(a.out) + ", the fused map gave "
+            + show(b.out));
+    }
+    if (a.src.pulls != b.src.pulls) {
+        return test.fail("fusing changed the pull count: "
+            + a.src.pulls.to_string() + " vs " + b.src.pulls.to_string());
+    }
+    if (a.applied != 12 || b.applied != 6) {
+        return test.fail("expected 12 map applications unfused and 6 fused, got "
+            + a.applied.to_string() + " and " + b.applied.to_string());
+    }
+    return test.pass();
+}
+
+// Stage order is not a detail. Filtering the doubled values and doubling the
+// filtered ones give different answers, and a pipeline that reordered stages
+// for any reason would be caught here rather than in someone's output.
+function test_stage_order_is_observable(): test.TestOutcome {
+    var fm: Stage[] = [Stage.Filter((x: i32) => x % 2 == 1), Stage.Map((x: i32) => x * 2)];
+    var mf: Stage[] = [Stage.Map((x: i32) => x * 2), Stage.Filter((x: i32) => x % 2 == 1)];
+    var a: Run = run(naturals(), fm, 4);
+    var want: i32[] = [2, 6, 10, 14];
+    if (!same(a.out, want)) {
+        return test.fail("filter then map gave " + show(a.out) + ", wanted "
+            + show(want));
+    }
+    // Doubling first makes every element even, so the odd filter never fires:
+    // `run` would not terminate. Bounded-prefix evaluation is the only way to
+    // ask the question, and the answer is that nothing survives.
+    var b: i32[] = eager(naturals(), mf, 4, 200);
+    if (b.len() != 0) {
+        return test.fail("map then filter gave " + show(b)
+            + ", but doubling first leaves nothing odd to keep");
+    }
+    return test.pass();
+}
+
+// The same machinery over a different infinite sequence, checked against
+// Fibonacci numbers that owe nothing to this file. A pipeline specialised to
+// its source — an off-by-one in the step, a value yielded after advancing
+// rather than before — passes every test above and fails this one.
+function test_a_different_infinite_source_is_the_same_machinery(): test.TestOutcome {
+    var none: Stage[] = [];
+    var r: Run = run(fibonacci(), none, 10);
+    var want: i32[] = [0, 1, 1, 2, 3, 5, 8, 13, 21, 34];
+    if (!same(r.out, want)) {
+        return test.fail("fibonacci gave " + show(r.out) + ", wanted " + show(want));
+    }
+    if (r.src.pulls != 10) {
+        return test.fail("10 elements cost " + r.src.pulls.to_string() + " pulls");
+    }
+    var even: Stage[] = [Stage.Filter((x: i32) => x % 2 == 0)];
+    var e: Run = run(fibonacci(), even, 5);
+    var wante: i32[] = [0, 2, 8, 34, 144];
+    if (!same(e.out, wante)) {
+        return test.fail("even fibonacci gave " + show(e.out) + ", wanted "
+            + show(wante));
+    }
+    return test.pass();
+}
+
+// ----------------------------------------------------------------- the app
+
+function main(): i32 {
+    eprint("lazy_pipeline — map, filter and take over an infinite source");
+
+    var evens: Stage[] = [Stage.Filter((x: i32) => x % 2 == 0), Stage.Map((x: i32) => x * x)];
+    var r: Run = run(naturals(), evens, 6);
+    eprint("  squares of the first 6 even naturals: " + show(r.out));
+    eprint("    " + r.src.pulls.to_string() + " pulls, " + r.applied.to_string()
+        + " map applications");
+
+    var more: Run = run(r.src, evens, 4);
+    eprint("  resuming for 4 more: " + show(more.out) + " ("
+        + more.src.pulls.to_string() + " pulls in total)");
+
+    var fib: Run = run(fibonacci(), [Stage.Filter((x: i32) => x % 2 == 0)], 6);
+    eprint("  even fibonacci numbers: " + show(fib.out));
+
+    var nothing: Run = run(naturals(), evens, 0);
+    eprint("  taking 0 from an infinite source: " + show(nothing.out) + ", "
+        + nothing.src.pulls.to_string() + " pulls");
+
+    var t: test.TestRunner = test.test_new("lazy_pipeline");
+    t = t.it("the source is pulled exactly as far as needed", test_the_source_is_pulled_exactly_as_far_as_needed);
+    t = t.it("take 0 pulls nothing", test_take_zero_pulls_nothing);
+    t = t.it("a stage after a rejecting filter never runs", test_a_stage_after_a_rejecting_filter_never_runs);
+    t = t.it("the lazy pipeline agrees with an eager one", test_the_lazy_pipeline_agrees_with_an_eager_one);
+    t = t.it("the source resumes where it stopped", test_the_source_resumes_where_it_stopped);
+    t = t.it("fusing two maps changes the cost and not the answer", test_fusing_two_maps_changes_the_cost_and_not_the_answer);
+    t = t.it("stage order is observable", test_stage_order_is_observable);
+    t = t.it("a different infinite source is the same machinery", test_a_different_infinite_source_is_the_same_machinery);
+    return t.finish();
+}

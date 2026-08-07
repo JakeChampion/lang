@@ -165,6 +165,134 @@ function churn(n: i32): i32 {
 		maxRatio: 220,
 	},
 	{
+		// Replacing an element of an array held in a STRUCT FIELD. The loop
+		// holds two elements and replaces one per round, so its allocation is
+		// CONSTANT in n — every replaced element is reclaimed.
+		//
+		// It did not use to be. `emitFieldDropOnStack` released an array field
+		// with the buffer-only `__fern_arr_dec`, which drops no elements, so
+		// one element box leaked per call, unbounded (#6397). A bare local
+		// array was always fine — its receiver is a reassign-to-self move, so
+		// the CoW helper takes its in-place branch instead of the copy branch
+		// that retains the elements — and only a struct-field read forces the
+		// copy branch by leaving the buffer at rc >= 2. That is why this entry
+		// reads the array out of a field rather than a local.
+		name: "struct-field-array-with",
+		decls: `struct P { a: i32, b: i32 }
+struct Box { items: P[], tag: i32 }
+function churn(n: i32): i32 {
+    var b: Box = Box { items: [P { a: 0, b: 0 }, P { a: 0, b: 0 }], tag: 0 };
+    var i: i32 = 0;
+    while (i < n) {
+        b = Box { ...b, items: b.items.with(i % 2, P { a: i, b: i + 1 }) };
+        i = i + 1;
+    }
+    return b.items[0].a + b.items[1].b;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
+		// A struct-update spread whose base is a FRESH value. `T { ...b, f: v }`
+		// where `b` is a LOCAL borrows the base — the local releases at its own
+		// scope exit, so the construction must not — but that reasoning does
+		// not cover a call result or a nested literal, which nobody else holds.
+		// The base box leaked, one per evaluation, unbounded, while the
+		// local-base spelling of the same thing was flat.
+		//
+		// Constant in n: each round builds and discards one record.
+		name: "struct-update-fresh-base",
+		decls: `struct R { tag: string, note: string, n: i32 }
+function mk(): R { return R { tag: "base", note: "", n: 0 }; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var a: R = R { ...mk(), n: i };
+        var b: R = R { ...R { tag: "inner", note: "x", n: 0 }, n: i };
+        var c: R = R { ...R { ...mk(), note: "mid" }, n: i };
+        t = t + a.n + b.note.len() + c.note.len();
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
+		// A pair-form Option return carries `(tag, payload)` in registers with
+		// no box, so the box-reclaim the heap-form match path performs has
+		// nothing to free. The payload is still allowed to be POINTER-shaped
+		// (array / slice / struct / tuple all pass isPairFormPayloadShape),
+		// and for those the register was the ONLY reference to a value the
+		// callee had just allocated: bound as a borrow, owned by nobody. Every
+		// evaluation leaked the whole payload — 3200 / 6400 / 12800 bytes at
+		// 100 / 200 / 400 rounds, exactly linear.
+		//
+		// `match (mk()) { Some(v) => … }` is how a lookup is written, which is
+		// what made this expensive. Constant in n: one payload per round,
+		// released when the arm ends.
+		name: "pair-form-pointer-payload",
+		decls: `struct P { a: i32, b: i32 }
+function mkarr(k: i32): Option[i32[]] {
+    if (k == 0) { return None; }
+    return Some([k, k + 1, k + 2]);
+}
+function mkstruct(k: i32): Option[P] {
+    if (k == 0) { return None; }
+    return Some(P { a: k, b: k + 1 });
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        match (mkarr(1)) { Some(a) => { t = t + a[0]; }, None => { }, }
+        match (mkstruct(1)) { Some(p) => { t = t + p.b; }, None => { }, }
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
+		// Binding a tuple's STRUCT element to a local — `var q: P = p.1` —
+		// incs at the binding site and was never credited with owning the
+		// reference, so the element leaked once per extraction, unbounded.
+		//
+		// rhsTainted admits the same read out of a struct-typed local as a
+		// counted alias and was one type short of admitting it out of a tuple,
+		// though both halves of that rule's argument hold for tuples: the
+		// binding incs, and the tuple deep-drops its elements at scope exit.
+		// The leak grew with the ELEMENT's width (32 B at three fields, 80 B
+		// at fifteen) and not the tuple's, which is what identified it.
+		//
+		// `(value, state)` threading is the shape that hits it. Reading the
+		// field straight through the tuple was flat all along — but `p.1.a`
+		// did not compile at all until the sibling fix in this change, so
+		// there was no leak-free spelling.
+		//
+		// Constant in n: one tuple and one element per round.
+		name: "tuple-struct-element-binding",
+		decls: `struct P { a: i32, b: i32, c: i32 }
+function pull(s: P): (i32, P) { return (s.a, P { a: s.a + 1, b: s.b, c: s.c }); }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var s: P = P { a: 0, b: 0, c: 0 };
+    var i: i32 = 0;
+    while (i < n) {
+        var p: (i32, P) = pull(s);
+        var q: P = p.1;
+        t = t + q.a;
+        s = q;
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// CALIBRATION: naive left-fold string concatenation, which is
 		// inherently quadratic — every `+` copies the whole accumulated
 		// prefix. This is not a bug to fix; it is the control that proves the

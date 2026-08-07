@@ -1,0 +1,341 @@
+// examples/proposals/traffic.fern — proposal turn, drawn line 111:
+// "A traffic simulation on a one-lane loop, reporting throughput against
+// density."
+//
+// Nagel-Schreckenberg on a ring: accelerate, brake to the gap ahead,
+// randomise, move. The interesting output is the FUNDAMENTAL DIAGRAM —
+// throughput against density — which is not monotone: it rises to a peak
+// in the free-flowing regime and falls away as jams form. That shape is an
+// external oracle, so `test_flow_peaks_then_falls` fails if the model
+// drifts into something merely self-consistent.
+//
+// This app deliberately reaches for surface the earlier turns did not:
+// a trait + impl, the `|>` pipe, `let … else`, a labelled loop with
+// `continue`, and `defer`.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from
+// std/test, so the file is its own test suite.
+
+import "std/test";
+import "std/i32";
+import "std/i64";
+
+// A named summary of one run, so the report and the tests read the same
+// numbers rather than recomputing them differently.
+struct Flow {
+    cells: i32,
+    cars: i32,
+    steps: i32,
+    moves: i32,     // total cell-crossings over the run
+}
+
+// Rendered as "density -> flow", both in per-mille to stay in integers.
+trait Describe {
+    function describe(self: Self): string;
+}
+
+impl Describe for Flow {
+    function describe(self: Self): string {
+        return "density=" + density_permille(self).to_string()
+            + " flow=" + flow_permille(self).to_string();
+    }
+}
+
+function density_permille(f: Flow): i32 {
+    return f.cars * 1000 / f.cells;
+}
+
+// Flow is crossings per cell per step — the standard normalisation, so
+// runs of different length and size are comparable.
+function flow_permille(f: Flow): i32 {
+    if (f.steps == 0 || f.cells == 0) { return 0; }
+    return f.moves * 1000 / (f.cells * f.steps);
+}
+
+function xs_next(s: i64): i64 {
+    var x: i64 = s;
+    x = x ^ (x << 13);
+    x = x ^ (x >> 7);
+    x = x ^ (x << 17);
+    return x;
+}
+
+function xs_below(s: i64, m: i32): i32 {
+    var v: i64 = s;
+    if (v < 0) { v = 0 - v; }
+    return (v % (m as i64)) as i32;
+}
+
+// Positions of `cars` vehicles spread as evenly as the ring allows.
+function initial_positions(cells: i32, cars: i32): i32[] {
+    var pos: i32[] = [];
+    var i: i32 = 0;
+    while (i < cars) {
+        pos = pos.append(i * cells / cars);
+        i = i + 1;
+    }
+    return pos;
+}
+
+// Gap ahead of the car at index i, on a ring. Cars are kept sorted by
+// position, so the next car is the next index, wrapping.
+function gap_ahead(pos: i32[], i: i32, cells: i32): i32 {
+    var n: i32 = pos.len();
+    if (n == 1) { return cells - 1; }
+    var ahead: i32 = pos[(i + 1) % n];
+    var g: i32 = ahead - pos[i] - 1;
+    if (g < 0) { g = g + cells; }
+    return g;
+}
+
+// One Nagel-Schreckenberg step. Returns the new positions, the new
+// speeds, the number of cells crossed, and the advanced RNG state.
+function step(cells: i32, pos0: i32[], spd0: i32[], vmax: i32, brake_pct: i32,
+              seed: i64): (i32[], i32[], i32, i64) {
+    var pos: i32[] = pos0;
+    var spd: i32[] = spd0;
+    var s: i64 = seed;
+    var moved: i32 = 0;
+    var n: i32 = pos.len();
+
+    var i: i32 = 0;
+    while (i < n) {
+        var v: i32 = spd[i];
+        // 1. accelerate
+        if (v < vmax) { v = v + 1; }
+        // 2. brake to the gap ahead
+        var g: i32 = gap_ahead(pos, i, cells);
+        if (v > g) { v = g; }
+        // 3. randomise: dawdle with probability brake_pct
+        s = xs_next(s);
+        if (v > 0 && xs_below(s, 100) < brake_pct) { v = v - 1; }
+        spd = spd.with(i, v);
+        i = i + 1;
+    }
+
+    // 4. move — after every speed is settled, so the update is parallel
+    // rather than letting a car see its neighbour's new position.
+    var j: i32 = 0;
+    while (j < n) {
+        pos = pos.with(j, (pos[j] + spd[j]) % cells);
+        moved = moved + spd[j];
+        j = j + 1;
+    }
+    return (pos, spd, moved, s);
+}
+
+// Run the ring and summarise. `warmup` steps are simulated but not
+// counted, so the measurement describes the steady state rather than the
+// artificial evenly-spaced start.
+function simulate(cells: i32, cars: i32, steps: i32, warmup: i32,
+                  vmax: i32, brake_pct: i32, seed: i64): Flow {
+    if (cars <= 0) { return Flow { cells: cells, cars: 0, steps: steps, moves: 0 }; }
+    var pos: i32[] = initial_positions(cells, cars);
+    var spd: i32[] = [];
+    var i: i32 = 0;
+    while (i < cars) { spd = spd.append(0); i = i + 1; }
+
+    var s: i64 = seed;
+    var total: i32 = 0;
+    var t: i32 = 0;
+    sweep: while (t < warmup + steps) {
+        var (p2, v2, moved, s2) = step(cells, pos, spd, vmax, brake_pct, s);
+        pos = p2;
+        spd = v2;
+        s = s2;
+        t = t + 1;
+        if (t <= warmup) { continue sweep; }
+        total = total + moved;
+    }
+    return Flow { cells: cells, cars: cars, steps: steps, moves: total };
+}
+
+// A jammed ring: every cell occupied, so nothing can move at all.
+function gridlock(cells: i32): Flow {
+    return simulate(cells, cells, 20, 5, 5, 0, 99);
+}
+
+// ---------------------------------------------------------------- tests
+
+function densities(): i32[] {
+    return [2, 5, 10, 20, 30, 40, 60, 80];
+}
+
+function run_at(cars: i32): Flow {
+    return simulate(100, cars, 200, 50, 5, 20, 20260806);
+}
+
+// A completely full ring cannot move: every gap is zero, so every speed
+// brakes to zero. Flow must be exactly zero, not merely small.
+function test_a_full_ring_has_no_flow(): test.TestOutcome {
+    var f: Flow = gridlock(40);
+    if (f.moves != 0) {
+        return test.fail("a full ring moved " + f.moves.to_string() + " cells");
+    }
+    if (flow_permille(f) != 0) {
+        return test.fail("full ring reported flow " + flow_permille(f).to_string());
+    }
+    return test.pass();
+}
+
+// An empty ring has no cars and therefore no flow — the other endpoint.
+function test_an_empty_ring_has_no_flow(): test.TestOutcome {
+    var f: Flow = run_at(0);
+    if (flow_permille(f) != 0) {
+        return test.fail("empty ring reported flow " + flow_permille(f).to_string());
+    }
+    if (density_permille(f) != 0) {
+        return test.fail("empty ring reported a density");
+    }
+    return test.pass();
+}
+
+// Cars are conserved: the ring neither creates nor destroys them, and
+// every position stays on the ring.
+function test_cars_are_conserved_and_stay_on_the_ring(): test.TestOutcome {
+    var cells: i32 = 50;
+    var pos: i32[] = initial_positions(cells, 12);
+    var spd: i32[] = [];
+    for i in 0..12 { spd = spd.append(0); }
+    var s: i64 = 7;
+    for t in 0..100 {
+        var (p2, v2, _, s2) = step(cells, pos, spd, 5, 20, s);
+        pos = p2;
+        spd = v2;
+        s = s2;
+        if (pos.len() != 12) {
+            return test.fail("car count changed to " + pos.len().to_string()
+                + " at step " + t.to_string());
+        }
+        for k in 0..pos.len() {
+            if (pos[k] < 0 || pos[k] >= cells) {
+                return test.fail("car " + k.to_string() + " left the ring at "
+                    + pos[k].to_string());
+            }
+        }
+    }
+    return test.pass();
+}
+
+// No car may exceed vmax, and none may move further than the gap it had —
+// that is the collision-freedom property, stated as a speed bound.
+function test_speeds_respect_vmax_and_the_gap(): test.TestOutcome {
+    var cells: i32 = 60;
+    var vmax: i32 = 5;
+    var pos: i32[] = initial_positions(cells, 15);
+    var spd: i32[] = [];
+    for i in 0..15 { spd = spd.append(0); }
+    var s: i64 = 31337;
+    for t in 0..80 {
+        var gaps: i32[] = [];
+        for k in 0..pos.len() { gaps = gaps.append(gap_ahead(pos, k, cells)); }
+        var (p2, v2, _, s2) = step(cells, pos, spd, vmax, 20, s);
+        for k2 in 0..v2.len() {
+            if (v2[k2] > vmax) {
+                return test.fail("speed " + v2[k2].to_string() + " exceeds vmax");
+            }
+            if (v2[k2] > gaps[k2]) {
+                return test.fail("car " + k2.to_string() + " moved "
+                    + v2[k2].to_string() + " into a gap of "
+                    + gaps[k2].to_string() + " at step " + t.to_string());
+            }
+        }
+        pos = p2;
+        spd = v2;
+        s = s2;
+    }
+    return test.pass();
+}
+
+// The external oracle: the fundamental diagram is not monotone. Flow must
+// rise to a peak somewhere in the free-flowing regime and fall away as
+// jams form. A model that got the dynamics wrong but stayed
+// self-consistent would pass every other test here.
+function test_flow_peaks_then_falls(): test.TestOutcome {
+    var ds: i32[] = densities();
+    var flows: i32[] = [];
+    for i in 0..ds.len() { flows = flows.append(flow_permille(run_at(ds[i]))); }
+
+    var peak: i32 = 0;
+    var peak_at: i32 = 0;
+    for i in 0..flows.len() {
+        if (flows[i] > peak) { peak = flows[i]; peak_at = i; }
+    }
+    if (peak_at == 0) {
+        return test.fail("flow peaked at the lowest density; it should rise first");
+    }
+    if (peak_at == flows.len() - 1) {
+        return test.fail("flow peaked at the highest density; it should fall away");
+    }
+    if (flows[flows.len() - 1] >= peak) {
+        return test.fail("flow at the densest point ("
+            + flows[flows.len() - 1].to_string()
+            + ") is not below the peak (" + peak.to_string() + ")");
+    }
+    return test.pass();
+}
+
+// In the free-flow regime, adding cars adds throughput: below the peak
+// the diagram climbs.
+function test_flow_rises_in_free_flow(): test.TestOutcome {
+    let Some(low) = some_flow(2) else {
+        return test.fail("no flow measured at density 2");
+    };
+    let Some(mid) = some_flow(10) else {
+        return test.fail("no flow measured at density 10");
+    };
+    if (mid <= low) {
+        return test.fail("flow did not rise from " + low.to_string()
+            + " to " + mid.to_string() + " between densities 2 and 10");
+    }
+    return test.pass();
+}
+
+// A deliberately Option-returning helper, so `let … else` above has
+// something to destructure.
+function some_flow(cars: i32): Option[i32] {
+    if (cars <= 0) { return None; }
+    return Some(flow_permille(run_at(cars)));
+}
+
+// Determinism: the same seed must reproduce the same run exactly, on
+// every backend. Without it none of the numbers above mean anything.
+function test_runs_are_deterministic(): test.TestOutcome {
+    var a: Flow = run_at(25);
+    var b: Flow = run_at(25);
+    if (a.moves != b.moves) {
+        return test.fail("same seed gave " + a.moves.to_string()
+            + " then " + b.moves.to_string());
+    }
+    return test.pass();
+}
+
+// ----------------------------------------------------------------- app
+
+function main(): i32 {
+    defer eprint("(simulation complete)");
+    eprint("traffic — Nagel-Schreckenberg on a one-lane ring");
+
+    var ds: i32[] = densities();
+    for i in 0..ds.len() {
+        var f: Flow = run_at(ds[i]);
+        // `|>` for the render, so the pipe is exercised alongside the trait.
+        eprint(f.describe() |> indent_by("  "));
+    }
+
+    var r: test.TestRunner = test.test_new("traffic");
+    r = r.it("a full ring has no flow", test_a_full_ring_has_no_flow);
+    r = r.it("an empty ring has no flow", test_an_empty_ring_has_no_flow);
+    r = r.it("cars are conserved and stay on the ring", test_cars_are_conserved_and_stay_on_the_ring);
+    r = r.it("speeds respect vmax and the gap", test_speeds_respect_vmax_and_the_gap);
+    r = r.it("flow peaks then falls", test_flow_peaks_then_falls);
+    r = r.it("flow rises in free flow", test_flow_rises_in_free_flow);
+    r = r.it("runs are deterministic", test_runs_are_deterministic);
+    return r.finish();
+}
+
+// The pipe feeds its left-hand value in as the FIRST argument, so the
+// text being indented is the receiver and the padding is the parameter.
+function indent_by(body: string, pad: string): string {
+    return pad + body;
+}

@@ -1,0 +1,82 @@
+// A negative number is a literal, and a literal is a pattern.
+//
+// The sign is a separate token from the digits, so a single-token test for
+// "does a literal start here" declined `-1` and the arm was rejected — by a
+// message that listed "literal" among what it accepted. Every arm position
+// that takes a literal takes a negative one: a plain arm, an alternative in
+// an or-pattern, both ends of a range, and a tuple element.
+//
+// The float arms are here because the compiled backends have always matched
+// a float scrutinee while the interpreter refused one outright, so this
+// pins the two together.
+
+import "std/i32";
+
+function classify(v: i32): string {
+    match (v) {
+        -2147483648 => { return "min"; },
+        -1 => { return "neg one"; },
+        0 => { return "zero"; },
+        1 | -3 => { return "one or minus three"; },
+        _ => { return "other"; },
+    }
+}
+
+function bucket(v: i32): string {
+    match (v) {
+        -100..-10 => { return "very negative"; },
+        -10..0 => { return "negative"; },
+        0..=10 => { return "small"; },
+        _ => { return "big"; },
+    }
+}
+
+function corner(t: (i32, i32)): string {
+    match (t) {
+        (-1, -1) => { return "both minus one"; },
+        (-1, y) => { return "left minus one"; },
+        (x, -2) => { return "right minus two"; },
+        _ => { return "neither"; },
+    }
+}
+
+function sign_of(v: f64): string {
+    match (v) {
+        -1.5 => { return "minus one point five"; },
+        0.0 => { return "zero"; },
+        _ => { return "other"; },
+    }
+}
+
+// A tuple literal with a negated element, passed straight to a call: the
+// argument temp's drop needs the tuple's shape, and a negated element used
+// to leave that shape with a hole in it.
+function sum(t: (i32, i32)): i32 { return t.0 + t.1; }
+
+function main(): i32 {
+    print(classify(-2147483648));
+    print(classify(-1));
+    print(classify(0));
+    print(classify(-3));
+    print(classify(1));
+    print(classify(7));
+
+    print(bucket(-50));
+    print(bucket(-5));
+    print(bucket(5));
+    print(bucket(50));
+
+    print(corner((-1, -1)));
+    print(corner((-1, 9)));
+    print(corner((9, -2)));
+    print(corner((9, 9)));
+
+    print(sign_of(-1.5));
+    print(sign_of(0.0));
+    print(sign_of(3.25));
+
+    var n: i32 = 4;
+    print(sum((-1, 9)).to_string());
+    print(sum((-n, -9)).to_string());
+    return 0;
+}

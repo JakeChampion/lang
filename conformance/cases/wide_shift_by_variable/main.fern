@@ -1,0 +1,66 @@
+// A 64-bit shift whose COUNT is a variable.
+//
+// wasm's `i64.shl` / `i64.shr_s` / `i64.shr_u` require both operands to be
+// i64. The shift count is an independent expression that the checker does not
+// force to the value's width, so `s << i` with an i64 `s` and an i32 `i` left
+// an (i64, i32) pair on the stack. The compiler reported success and emitted a
+// module wasmtime refused to load:
+//
+//     type mismatch: expected i64, found i32
+//
+// which is worse than a build error, because the build looked like it worked.
+// The interpreter, x86-64 and arm64 all agreed on the right answer throughout
+// — natives take the count from a register regardless of its declared width —
+// so nothing but wasm could see it.
+//
+// The gap was narrow. A CONSTANT count was already correct — that half was
+// fixed when strength reduction started rewriting `i64-expr * 2^k` into a
+// shift — and a parameter or an ordinary local reaches the shift through a
+// checker-inserted cast. Only a LOOP VARIABLE went through neither, arriving
+// as a bare 32-bit local under a 64-bit shift. All three spellings are here,
+// so the two that were already right stay right.
+//
+// Shifting by 0 and by 63 are included because they are the ends of the
+// defined range, and the unsigned right shift is separate from the signed one
+// because they are distinct instructions that widen the same way. The u64
+// counts are written `n as u64` because the checker requires a u64 shift's
+// operands to share a type while an i64 shift accepts a bare i32 — an
+// asymmetry this case documents rather than relies on.
+
+import "std/i32";
+import "std/i64";
+import "std/u64";
+import "std/string";
+
+function shifted_left(s: i64, n: i32): i64 { return s << n; }
+function shifted_right(s: i64, n: i32): i64 { return s >> n; }
+function shifted_right_u(s: u64, n: i32): u64 { return s >> (n as u64); }
+
+function main(): i32 {
+    var one: i64 = 1;
+    var acc: string = "";
+    for i in 0..8 {
+        acc = acc + (one << i).to_string() + " ";
+    }
+    print(acc);
+
+    // Through a function, so the count is a parameter rather than a loop var.
+    print(shifted_left(1, 0).to_string());
+    print(shifted_left(1, 63).to_string());
+    print(shifted_right(-1024, 4).to_string());
+    print(shifted_right_u(18446744073709551615, 60).to_string());
+
+    // Unsigned, and the same value shifted by a variable and by the literal
+    // it holds — the two spellings lower differently and must agree.
+    var u: u64 = 1;
+    var k: i32 = 40;
+    print((u << (k as u64)).to_string());
+    print((u << 40).to_string());
+
+    // A count computed rather than named.
+    var base: i32 = 30;
+    print((one << (base + 2)).to_string());
+    print(((one << 62) >> (base + 1)).to_string());
+
+    return 0;
+}

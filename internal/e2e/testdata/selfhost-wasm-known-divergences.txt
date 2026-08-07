@@ -94,3 +94,31 @@
 # (expected 127) read 47 and 111 under #6008 and now read 255 and 127 — measured
 # on the self-host x86-64 leg, which has no exit cap, since this one still
 # cannot see them.
+
+# --- negative literals (#6394) ---------------------------------------------
+# The native compiler accepts the smallest i32 as a literal, and negative
+# literals as match patterns; the self-host lowers neither, so both bail to a
+# strict-IR refusal rather than producing a wrong answer.
+#
+# `smallest_int_literal`: `return -2147483648;` bails with "`return` of unary
+# `-`". Narrow to the boundary magnitude — `return -5;`, `return 0 - 5;` and
+# `var v: i32 = -5; return v;` all lower. The magnitude is out of i32 range as
+# a POSITIVE value and the return-of-unary gate judges it without the sign,
+# which is the shape the native checker had before it threaded a `negated` bit
+# through settleInt.
+#
+# `negative_literal_patterns`: the whole `match` bails. The self-host parser's
+# literal-pattern test looks at one token and the sign is a separate one, so
+# `-1 => …` is declined — again the shape the native parser had.
+smallest_int_literal 6394 self-host: `return -<literal at the i32 limit>` does not lower
+negative_literal_patterns 6394 self-host: negative literal patterns do not lower
+
+# --- i32 arithmetic through a negated literal (#6396) ----------------------
+# `int_min_arithmetic`: `var a: i32 = -2147483648;` is accepted by the
+# self-host and then computed in 64 BITS — the annotation is ignored, and
+# `0 - a` reads 2147483648 where every native backend reads -2147483648.
+# Not a bail: it compiles and answers wrong. The same value written
+# `0 - 2147483647 - 1` is correct, so the two spellings of one number
+# disagree. Ordinary i32 overflow (`2147483647 + 1`, `* 2`) wraps correctly,
+# so truncation is not missing in general — `a` is simply not an i32.
+int_min_arithmetic 6396 self-host: a negated out-of-i32-magnitude literal widens to 64 bits

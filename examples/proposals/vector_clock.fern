@@ -1,0 +1,237 @@
+// examples/proposals/vector_clock.fern — proposal turn, drawn line 235:
+// "A vector clock implementation that orders concurrent events."
+//
+// A vector clock gives a PARTIAL order: for two events either one
+// happened before the other, or they are concurrent — and "concurrent"
+// is a real answer, not a failure to decide. That is the property worth
+// testing hardest, because the easy mistake is a comparison that returns
+// a total order and silently calls concurrent events ordered.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from
+// std/test, so the file is its own test suite.
+
+import "std/test";
+import "std/i32";
+
+// One entry per node, indexed by node id. Fixed width keeps comparison
+// total over the vector while the ORDER it induces stays partial.
+struct Clock { t: i32[] }
+
+enum Ord {
+    Before,
+    After,
+    Equal,
+    Concurrent,
+}
+
+function clock_new(nodes: i32): Clock {
+    var v: i32[] = [];
+    var i: i32 = 0;
+    while (i < nodes) { v = v.append(0); i = i + 1; }
+    return Clock { t: v };
+}
+
+// A local event on `node`: bump only that node's entry.
+function tick(c: Clock, node: i32): Clock {
+    return Clock { t: c.t.with(node, c.t[node] + 1) };
+}
+
+// Receiving a message: take the pointwise max, then tick the receiver.
+function merge(recv: Clock, sent: Clock, node: i32): Clock {
+    var v: i32[] = recv.t;
+    var i: i32 = 0;
+    while (i < v.len()) {
+        if (sent.t[i] > v[i]) { v = v.with(i, sent.t[i]); }
+        i = i + 1;
+    }
+    return tick(Clock { t: v }, node);
+}
+
+// a <= b pointwise.
+function dominates(a: Clock, b: Clock): boolean {
+    var i: i32 = 0;
+    while (i < a.t.len()) {
+        if (a.t[i] > b.t[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function equal(a: Clock, b: Clock): boolean {
+    var i: i32 = 0;
+    while (i < a.t.len()) {
+        if (a.t[i] != b.t[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// The partial order. Concurrent is returned when NEITHER dominates —
+// the case a total-order comparison would wrongly resolve.
+function compare(a: Clock, b: Clock): Ord {
+    if (equal(a, b)) { return Equal; }
+    var ab: boolean = dominates(a, b);
+    var ba: boolean = dominates(b, a);
+    if (ab) { return Before; }
+    if (ba) { return After; }
+    return Concurrent;
+}
+
+function ord_name(o: Ord): string {
+    match (o) {
+        Before => { return "before"; },
+        After => { return "after"; },
+        Equal => { return "equal"; },
+        Concurrent => { return "concurrent"; },
+    }
+}
+
+function render(c: Clock): string {
+    var s: string = "[";
+    for i in 0..c.t.len() {
+        if (i > 0) { s = s + " "; }
+        s = s + c.t[i].to_string();
+    }
+    return s + "]";
+}
+
+// ---------------------------------------------------------------- tests
+
+// A local event advances only its own node, and is strictly after what
+// came before it on that node.
+function test_a_local_event_advances_one_entry(): test.TestOutcome {
+    var a: Clock = clock_new(3);
+    var b: Clock = tick(a, 1);
+    if (b.t[0] != 0 || b.t[2] != 0) {
+        return test.fail("tick disturbed another node's entry");
+    }
+    if (b.t[1] != 1) { return test.fail("tick did not advance its own entry"); }
+    match (compare(a, b)) {
+        Before => { },
+        _ => { return test.fail("a tick should put the new clock after the old"); },
+    }
+    return test.pass();
+}
+
+// THE property. Two nodes that never communicate produce concurrent
+// events, and the comparison must say so in both directions rather than
+// picking a winner.
+function test_independent_events_are_concurrent(): test.TestOutcome {
+    var base: Clock = clock_new(3);
+    var p: Clock = tick(base, 0);
+    var q: Clock = tick(base, 1);
+    // A catch-all arm cannot bind the scrutinee (`other => …` reads as a
+    // variant name, and `other @ _` is refused), so bind it first.
+    var fwd: Ord = compare(p, q);
+    match (fwd) {
+        Concurrent => { },
+        _ => { return test.fail("independent events compared " + ord_name(fwd)); },
+    }
+    var rev: Ord = compare(q, p);
+    match (rev) {
+        Concurrent => { },
+        _ => { return test.fail("the reverse compared " + ord_name(rev)); },
+    }
+    return test.pass();
+}
+
+// A message creates a happens-before edge: after receiving, the receiver
+// is strictly after the sender's send event.
+function test_a_message_orders_the_two_nodes(): test.TestOutcome {
+    var n0: Clock = tick(clock_new(2), 0);        // node 0 does something
+    var n1: Clock = tick(clock_new(2), 1);        // node 1 does something
+    match (compare(n0, n1)) {
+        Concurrent => { },
+        _ => { return test.fail("precondition: those should be concurrent"); },
+    }
+    var after: Clock = merge(n1, n0, 1);          // node 1 receives from 0
+    var o: Ord = compare(n0, after);
+    match (o) {
+        Before => { },
+        _ => {
+            return test.fail("after receiving, the send should be before the "
+                + "receive; got " + ord_name(o));
+        },
+    }
+    return test.pass();
+}
+
+// The order is antisymmetric and irreflexive where it should be: a clock
+// equals itself, and Before/After are mirror images.
+function test_the_order_is_consistent(): test.TestOutcome {
+    var base: Clock = clock_new(3);
+    var a: Clock = tick(base, 0);
+    var b: Clock = tick(a, 1);
+    match (compare(a, a)) {
+        Equal => { },
+        _ => { return test.fail("a clock is not equal to itself"); },
+    }
+    match (compare(a, b)) {
+        Before => { },
+        _ => { return test.fail("a should be before b"); },
+    }
+    match (compare(b, a)) {
+        After => { },
+        _ => { return test.fail("b should be after a"); },
+    }
+    return test.pass();
+}
+
+// happens-before is transitive: a chain of messages orders the ends.
+function test_happens_before_is_transitive(): test.TestOutcome {
+    var a: Clock = tick(clock_new(3), 0);
+    var b: Clock = merge(tick(clock_new(3), 1), a, 1);   // 1 hears from 0
+    var c: Clock = merge(tick(clock_new(3), 2), b, 2);   // 2 hears from 1
+    var ac: Ord = compare(a, c);
+    match (ac) {
+        Before => { },
+        _ => {
+            return test.fail("a should be before c through b; got "
+                + ord_name(ac));
+        },
+    }
+    return test.pass();
+}
+
+// Merging is idempotent and does not lose history: receiving the same
+// message twice advances only the receiver's own entry the second time.
+function test_merge_keeps_the_pointwise_max(): test.TestOutcome {
+    var sender: Clock = tick(tick(clock_new(2), 0), 0);   // [2, 0]
+    var recv: Clock = merge(clock_new(2), sender, 1);      // [2, 1]
+    if (recv.t[0] != 2) {
+        return test.fail("merge lost the sender's history: " + render(recv));
+    }
+    var again: Clock = merge(recv, sender, 1);             // [2, 2]
+    if (again.t[0] != 2) {
+        return test.fail("re-merging changed the sender's entry");
+    }
+    if (again.t[1] != 2) {
+        return test.fail("re-merging did not tick the receiver");
+    }
+    return test.pass();
+}
+
+// ----------------------------------------------------------------- app
+
+function main(): i32 {
+    eprint("vector_clock — a partial order over distributed events");
+    var a: Clock = tick(clock_new(3), 0);
+    var b: Clock = tick(clock_new(3), 1);
+    eprint("  A " + render(a) + "  B " + render(b)
+        + "  -> " + ord_name(compare(a, b)));
+    var b2: Clock = merge(b, a, 1);
+    eprint("  A " + render(a) + "  B' " + render(b2)
+        + "  -> " + ord_name(compare(a, b2)));
+    var c: Clock = merge(tick(clock_new(3), 2), b2, 2);
+    eprint("  A " + render(a) + "  C " + render(c)
+        + "  -> " + ord_name(compare(a, c)));
+
+    var r: test.TestRunner = test.test_new("vector_clock");
+    r = r.it("a local event advances one entry", test_a_local_event_advances_one_entry);
+    r = r.it("independent events are concurrent", test_independent_events_are_concurrent);
+    r = r.it("a message orders the two nodes", test_a_message_orders_the_two_nodes);
+    r = r.it("the order is consistent", test_the_order_is_consistent);
+    r = r.it("happens-before is transitive", test_happens_before_is_transitive);
+    r = r.it("merge keeps the pointwise max", test_merge_keeps_the_pointwise_max);
+    return r.finish();
+}
