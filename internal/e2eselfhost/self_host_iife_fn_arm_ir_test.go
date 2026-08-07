@@ -60,6 +60,23 @@ var iifeFnArmCases = []struct {
 	// slot must NOT be marked a closure local — env-first dispatch on a bare
 	// pointer is the same crash in the other direction.
 	{"ifexpr-bare-fnname-arms-stay-plain", "function inc(x: i32): i32 { return x + 1; } function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var n: i32 = 1; var w: (i32) => i32 = (if (n > 0) { inc } else { dbl }); return w(41); }", 42},
+
+	// #6324 — MIXED arms: one closure-local, one inline lambda. These bailed
+	// until the hoist could carry a fn-TYPED capture as a parameter, which needs
+	// the signature `cap_type`'s flat "fn" tag throws away (fn_ret /
+	// fn_param_types / fn_param_dyn). The capture is copied from the ParamDecl
+	// when it is a param and reconstructed from the lambda when it is a local
+	// bound from one; anything else still declines.
+	//
+	// The first of these is #6256's Repro D, which had been open since the issue
+	// was filed. All three exercise a different consumption of the result —
+	// array element, called local binding, and returned-then-called — because
+	// only the last two need the hoisted function to register as
+	// closure-returning (form (b') in closure_ret_fns_of), and the first passes
+	// without it.
+	{"mixed-arms-array-element", "function main(): i32 { var v0: (i32) => i32 = ((a: i32) => 89); var xs: ((i32) => i32)[] = [v0, (if (true) { v0 } else { ((b: i32) => b) }), v0]; return xs[1i32](3i32); }", 89},
+	{"mixed-arms-var-called", "function main(): i32 { var v0: (i32) => i32 = ((a: i32) => 89); var n: i32 = 1; var w: (i32) => i32 = (if (n > 0) { v0 } else { ((b: i32) => b) }); return w(3); }", 89},
+	{"mixed-arms-returned-then-called", "function gen(n: i32): (i32) => i32 { var v0: (i32) => i32 = ((a: i32) => 89); return (if (n > 0) { v0 } else { ((b: i32) => b) }); } function main(): i32 { var f: (i32) => i32 = gen(1); return f(3); }", 89},
 }
 
 // TestSelfHostIIFEFnArmIRX86_64 — fn-valued value-position if/match arms
