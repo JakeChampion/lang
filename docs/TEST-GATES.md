@@ -122,6 +122,16 @@ Worth knowing so you do not assume coverage you do not have:
   (2.655s → 0.014s) and the merge sort that copied the whole array every pass
   were both invisible to every correctness suite. ~1 s for the whole corpus.
 
+  It is **x86-64 only**, and that is a real blind spot rather than a
+  detail: a backend that allocates differently from the others cannot
+  fail it. `docs/ALLOCATION-OBSERVABLE.md` states the same observable as
+  a cross-backend conformance contract (`AL-01` / `AL-02` in
+  `spec/semantics.md`), and the first run of its cases found the wasm
+  backend never reclaiming a short-lived string — 32 fresh bytes per
+  loop iteration, unbounded, where both natives are flat (#6423). Being
+  a conformance case rather than a Go test, it also survives the freeze
+  this document's own framing is organised around.
+
 - **Allocation volume between the two compilers — gated by
   `TestSelfHostAllocDifferentialX86_64`.** Nothing used to compare how much the
   two compilers allocate, which is how they developed *opposite* cliffs
