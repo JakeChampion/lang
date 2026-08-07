@@ -10,7 +10,7 @@ package e2e
 //
 //   - `__heap_bump_bytes()` returned (cursor − the byte length just printed)
 //     instead of (cursor − heap base) — i.e. roughly the whole static region,
-//     not the bytes the program allocated. CLAUDE.md names this function as
+//     not the bytes the program allocated. docs/LOCAL-DEV-LOOP.md names it as
 //     *the* way to measure a Fern program's memory and as the right gate for
 //     a memory-regression test; on wasm it was neither.
 //   - `__rc_underflow_count()` returned an iov_base pointer, and
