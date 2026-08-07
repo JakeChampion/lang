@@ -827,4 +827,19 @@ jobs:
       # adding a shard here without updating the matrix (or vice versa) fails
       # that unit test rather than silently narrowing what gets enforced.
       - name: verify every shard reported success
+        id: verify
         run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=20 aarch64=8
+      # The verifier can only see that a marker is ABSENT, so it names all three
+      # causes at once ("runner reclaim, OOM-kill, or timeout"). They want
+      # opposite responses, and #6038 has been read as the apt-stall for
+      # occurrences on x86_64, a lane that runs no apt install. The job record
+      # distinguishes them and is reachable from here, so ask it. Advisory: it
+      # cannot change the verdict (the step above already failed) and exits 0
+      # even when the API is unreachable. The 20 must match the shard job's
+      # timeout-minutes — TestSelfHostWorkflowVanishedShardBudgetMatchesTimeout
+      # fails if they drift.
+      - name: why did a shard leave no outcome
+        if: failure() && steps.verify.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci-classify-vanished-shards "${{ github.run_id }}" 20

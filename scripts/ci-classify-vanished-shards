@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# ci-classify-vanished-shards — say WHY a shard left no outcome behind.
+#
+# Usage: ci-classify-vanished-shards RUN_ID BUDGET_MINUTES [NAME_PREFIX]
+#
+# ci-verify-shard-outcomes runs off-shard and can only see that a marker is
+# absent, so it reports all three causes with one sentence: "runner reclaim,
+# OOM-kill, or timeout". Those want opposite responses — a reclaim wants a
+# re-run, a shard over its own budget wants the partition rebalanced or the
+# budget raised — and #6038 has been read as "the apt-stall thing again" for
+# occurrences on x86_64, a lane that runs no apt install at all.
+#
+# The job's own record distinguishes them, and this runs where that record is
+# reachable. For every shard job in RUN_ID that did not conclude `success`, it
+# prints the conclusion, the wall-clock, and a verdict:
+#
+#   * ran to within a minute of BUDGET_MINUTES  -> the shard exceeded its own
+#     budget. NOT a reclaim: nothing external took the runner away, the slice
+#     did not fit. Rebalance (.github/selfhost-test-weights.txt) or raise the
+#     budget. Measured 2026-08-07: x86_64 shard2 died at 20m17s against a
+#     20-minute budget and passed in 5m33s on re-run with identical content, so
+#     the margin is real but thin, and a warm-artifact miss (any
+#     examples/self_host change invalidates them) is enough to cross it.
+#   * cancelled well inside the budget          -> runner reclaim, the case
+#     `continue-on-error` and the tolerate dial exist for. Re-run it.
+#   * failure / anything else                   -> the job died on its own
+#     terms; read its log, don't re-run blindly.
+#
+# Advisory only: it never changes the run's verdict (the caller already failed),
+# it only names the cause. Exits 0 even when it can't reach the API, because a
+# diagnostic that can break a build is worse than no diagnostic.
+
+set -uo pipefail
+
+RUN_ID="${1:?usage: ci-classify-vanished-shards RUN_ID BUDGET_MINUTES [NAME_PREFIX]}"
+BUDGET_MINUTES="${2:?usage: ci-classify-vanished-shards RUN_ID BUDGET_MINUTES [NAME_PREFIX]}"
+PREFIX="${3:-test-e2e-selfhost-}"
+REPO="${GITHUB_REPOSITORY:-JakeChampion/lang}"
+
+case "$BUDGET_MINUTES" in
+  '' | *[!0-9]*)
+    echo "ci-classify-vanished-shards: budget '$BUDGET_MINUTES' is not a whole number of minutes" >&2
+    exit 0
+    ;;
+esac
+budget_s=$((BUDGET_MINUTES * 60))
+# Within a minute of the budget counts as "hit the wall": the runner needs a
+# moment to notice and cancel, so a 20-minute job is recorded at 20m17s.
+near_s=$((budget_s - 60))
+
+# FERN_CI_JOBS_JSON substitutes a saved jobs payload for the API call, so the
+# three verdicts can be unit-tested against fixed durations rather than against
+# whatever CI happens to be doing (see TestClassifyVanishedShardsVerdicts).
+if [ -n "${FERN_CI_JOBS_JSON:-}" ]; then
+  jobs_json=$(cat "$FERN_CI_JOBS_JSON" 2>/dev/null)
+else
+  jobs_json=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" --paginate 2>/dev/null)
+fi
+if [ -z "$jobs_json" ]; then
+  echo "ci-classify-vanished-shards: could not read run $RUN_ID's jobs; skipping the diagnosis" >&2
+  exit 0
+fi
+
+# One line per non-success shard job: name, conclusion, duration in seconds.
+rows=$(printf '%s' "$jobs_json" | jq -r --arg p "$PREFIX" '
+  [.jobs? // [] | .[]] | .[]
+  | select(.name | startswith($p))
+  | select(.conclusion != "success" and .conclusion != null and .conclusion != "skipped")
+  | [ .name,
+      .conclusion,
+      (if .started_at and .completed_at
+       then ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601))
+       else -1 end) ]
+  | @tsv' 2>/dev/null)
+
+if [ -z "$rows" ]; then
+  echo "no non-success $PREFIX* job in run $RUN_ID — the missing marker was not left by a shard job that ran" >&2
+  exit 0
+fi
+
+echo "why the shard(s) left no outcome (budget ${BUDGET_MINUTES}m):" >&2
+while IFS=$'\t' read -r name conclusion secs; do
+  [ -n "$name" ] || continue
+  if [ "$secs" -lt 0 ] 2>/dev/null; then
+    printf '  %s: %s, duration unknown\n' "$name" "$conclusion" >&2
+    continue
+  fi
+  human="$((secs / 60))m$((secs % 60))s"
+  if [ "$secs" -ge "$near_s" ]; then
+    printf '  %s: %s after %s — EXCEEDED ITS %sm BUDGET, not a reclaim. Rebalance .github/selfhost-test-weights.txt or raise timeout-minutes; a re-run may pass on the same content.\n' \
+      "$name" "$conclusion" "$human" "$BUDGET_MINUTES" >&2
+  elif [ "$conclusion" = "cancelled" ]; then
+    printf '  %s: cancelled after %s, well inside the budget — RUNNER RECLAIM. Re-run the failed jobs.\n' \
+      "$name" "$human" >&2
+  else
+    printf '  %s: %s after %s — died on its own terms, READ ITS LOG rather than re-running.\n' \
+      "$name" "$conclusion" "$human" >&2
+  fi
+done <<<"$rows"
+exit 0
