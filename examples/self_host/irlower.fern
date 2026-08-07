@@ -44801,11 +44801,67 @@ function lift_call_arg(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
                 var nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
                 return LiftExpr { expr: parser.ExprIdent { name: nm, line: 0, col: 0 }, acc: nacc };
             }
-            return LiftExpr { expr: e, acc: acc };
+            // Capturing: keep the lambda, but walk its body so nested lambdas
+            // are still lifted.
+            return lift_lambda_body_only(lam, acc, gfns);
         },
         _ => { return lift_expr_walk(e, acc, gfns); }
     }
     return LiftExpr { expr: e, acc: acc };
+}
+
+// lift_call_callee lifts a call's CALLEE. It is lift_call_arg except for one
+// shape: the zero-param zero-arg lambda of a value-position `if`/`match`/
+// comprehension desugar. That IIFE is compiler-generated and its call is the
+// only thing that ever reaches it, so hoisting it to a top-level `__lam_N`
+// buys nothing — while doing so INSIDE another IIFE's body splits one desugar
+// across the IR and AST paths and costs coverage the whole form still had.
+// Its body is still walked through the ExprCall arm below, so a genuine user
+// lambda nested in the desugar is lifted either way.
+function lift_call_callee(c: parser.ExprCall, acc: LiftAcc, gfns: string[]): LiftExpr {
+    if (is_iife_callee(c) && lifting_inside_iife(gfns)) {
+        match (c.callee) {
+            parser.ExprLambda(lam) => { return lift_lambda_body_only(lam, acc, gfns); },
+            _ => { return LiftExpr { expr: c.callee, acc: acc }; }
+        }
+    }
+    return lift_call_arg(c.callee, acc, gfns);
+}
+
+// IIFE_MARK rides in `gfns` to say "this walk is already inside a value-position
+// desugar's IIFE body". `gfns` is only ever consulted by lambda_has_no_captures,
+// as `index_of_str(gfns, <a used identifier>)`, so a `$`-prefixed name cannot
+// change that answer — the same collision guarantee `$lamret$` and `$wc$` rely
+// on — and it is threaded through every lift function already, which a new
+// parameter would not be.
+//
+// Why the context matters: hoisting an inner IIFE to a top-level `__lam_N` is a
+// gain at the outside, but inside ANOTHER IIFE's body it splits one desugar
+// across the IR and AST paths and loses coverage the whole form still had.
+// Measured on the 512-seed corpus: hoisting everywhere is +14/-2, hoisting
+// nowhere is +21/-16, and hoisting only outside is +14/-0.
+function lifting_inside_iife(gfns: string[]): boolean { return util.index_of_str(gfns, "$in_iife$") >= 0; }
+
+function mark_inside_iife(gfns: string[]): string[] {
+    if (lifting_inside_iife(gfns)) { return gfns; }
+    return gfns.append("$in_iife$");
+}
+
+// lift_lambda_body_only walks a lambda's body for lifts and returns the lambda
+// itself unchanged in shape — never hoisted to a top-level `__lam_N`.
+function lift_lambda_body_only(lam: parser.ExprLambda, acc: LiftAcc, gfns0: string[]): LiftExpr {
+    var gfns: string[] = mark_inside_iife(gfns0);
+    var ba: LiftAcc = acc;
+    var nb: parser.Stmt[] = [];
+    var bi: i32 = 0;
+    while (bi < lam.body.len()) {
+        var br: LiftStmts = lift_stmt(lam.body[bi], ba, gfns);
+        ba = br.acc;
+        var bj: i32 = 0;
+        while (bj < br.stmts.len()) { nb = nb.append(br.stmts[bj]); bj = bj + 1; }
+        bi = bi + 1;
+    }
+    return LiftExpr { expr: parser.ExprLambda { params: lam.params, ret_type: lam.ret_type, body: nb, use_infer: lam.use_infer }, acc: ba };
 }
 
 // lift_expr_walk recurses through the expression forms that commonly hold calls,
@@ -44820,7 +44876,7 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
             // a non-lambda callee (ident / `mk()` / etc.), leaving it unchanged, so
             // a normal call's numbering is untouched (an ident callee consumes no
             // counter). A capturing lambda callee is left in place (stays on AST).
-            var ce: LiftExpr = lift_call_arg(c.callee, a, gfns);
+            var ce: LiftExpr = lift_call_callee(c, a, gfns);
             a = ce.acc;
             var nargs: parser.Expr[] = [];
             var i: i32 = 0;
