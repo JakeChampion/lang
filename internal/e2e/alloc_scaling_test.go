@@ -165,6 +165,34 @@ function churn(n: i32): i32 {
 		maxRatio: 220,
 	},
 	{
+		// Replacing an element of an array held in a STRUCT FIELD. The loop
+		// holds two elements and replaces one per round, so its allocation is
+		// CONSTANT in n — every replaced element is reclaimed.
+		//
+		// It did not use to be. `emitFieldDropOnStack` released an array field
+		// with the buffer-only `__fern_arr_dec`, which drops no elements, so
+		// one element box leaked per call, unbounded (#6397). A bare local
+		// array was always fine — its receiver is a reassign-to-self move, so
+		// the CoW helper takes its in-place branch instead of the copy branch
+		// that retains the elements — and only a struct-field read forces the
+		// copy branch by leaving the buffer at rc >= 2. That is why this entry
+		// reads the array out of a field rather than a local.
+		name: "struct-field-array-with",
+		decls: `struct P { a: i32, b: i32 }
+struct Box { items: P[], tag: i32 }
+function churn(n: i32): i32 {
+    var b: Box = Box { items: [P { a: 0, b: 0 }, P { a: 0, b: 0 }], tag: 0 };
+    var i: i32 = 0;
+    while (i < n) {
+        b = Box { ...b, items: b.items.with(i % 2, P { a: i, b: i + 1 }) };
+        i = i + 1;
+    }
+    return b.items[0].a + b.items[1].b;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// CALIBRATION: naive left-fold string concatenation, which is
 		// inherently quadratic — every `+` copies the whole accumulated
 		// prefix. This is not a bug to fix; it is the control that proves the

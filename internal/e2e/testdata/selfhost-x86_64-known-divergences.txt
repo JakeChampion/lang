@@ -92,13 +92,3 @@ negative_literal_patterns 6394 self-host: negative literal patterns do not lower
 # disagree. Ordinary i32 overflow (`2147483647 + 1`, `* 2`) wraps correctly,
 # so truncation is not missing in general — `a` is simply not an i32.
 int_min_arithmetic 6396 self-host: a negated out-of-i32-magnitude literal widens to 64 bits
-
-# --- array-element reclaim through .with (#6397) ---------------------------
-# `struct_field_array_with_reclaim`: the native side of this leak is FIXED
-# (the field release was a buffer-only free that dropped no elements); the
-# self-host leaks all THREE shapes the case measures, including the bare
-# local one native has always handled — 88 / 31 / 32 bytes per round against
-# native's flat. So this is the self-host's own reclaim gap rather than the
-# same bug, and it needs the RECLAIM side of the Perceus port rather than the
-# one-line release fix native took.
-struct_field_array_with_reclaim 6397 self-host: .with does not reclaim the replaced element, in any of the three shapes
