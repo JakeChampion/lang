@@ -1,0 +1,469 @@
+// examples/proposals/wal.fern — proposal turn, drawn line 226:
+// "A write-ahead log with replay and a torn-write check."
+//
+// A write-ahead log's entire reason to exist is what happens when the process
+// dies mid-write. Everything else about it — appending, reading back — is easy
+// and uninteresting. So the design is framed around the one hard requirement:
+//
+//   replaying ANY prefix of the file must yield a prefix of the records,
+//   never a partial record and never an invented one.
+//
+// That makes the load-bearing test enumerable rather than anecdotal. A log of
+// n bytes has n+1 truncation points; the test walks every one of them and
+// requires the replay to be a prefix of what was appended, with the torn flag
+// set exactly when the cut did not land on a record boundary. A framing bug
+// that survives three hand-picked truncations does not survive 300.
+//
+// Each record is `[len:2][crc:4][payload]`, little-endian. The length alone is
+// not enough: a torn write can leave a full-length record whose payload was
+// never flushed, so the checksum is what separates "short" from "wrong". Both
+// failures stop the replay at that record — a WAL that skipped a bad record
+// and kept going would resurrect state from after a crash that never
+// committed.
+//
+// File I/O here is byte-transparent (verified over all 256 byte values), so
+// the framing is real binary rather than a text encoding that dodges the
+// question. Payloads in the corpus deliberately contain NUL, 0xFF, and bytes
+// that look like length headers.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+// Fern has no top-level bindings, so the frame constant is a function.
+// `[len:2][crc:4]` — six bytes before every payload.
+function HEADER(): i32 { return 6; }
+
+// ------------------------------------------------------------- checksum
+
+// A modular rolling hash, accumulated in i64 so the multiply cannot overflow
+// before the reduction. The result stays below 2^31, so it fits the four
+// header bytes with room to spare.
+function crc_of(payload: u8[]): i32 {
+    var h: i64 = 1469598103;
+    for i in 0..payload.len() {
+        h = (h * 131 + (payload[i] as i64)) % 2147483647;
+    }
+    return h as i32;
+}
+
+// ------------------------------------------------------------- framing
+
+function put_u16(out: u8[], v: i32): u8[] {
+    return out.append((v % 256) as u8).append(((v / 256) % 256) as u8);
+}
+
+function put_u32(out: u8[], v: i32): u8[] {
+    var o: u8[] = out;
+    var x: i32 = v;
+    for i in 0..4 {
+        o = o.append((x % 256) as u8);
+        x = x / 256;
+    }
+    return o;
+}
+
+function get_u16(bs: u8[], at: i32): i32 {
+    return (bs[at] as i32) + (bs[at + 1] as i32) * 256;
+}
+
+function get_u32(bs: u8[], at: i32): i32 {
+    var v: i32 = 0;
+    var mul: i32 = 1;
+    for i in 0..4 {
+        v = v + (bs[at + i] as i32) * mul;
+        mul = mul * 256;
+    }
+    return v;
+}
+
+function frame(payload: u8[]): u8[] {
+    var out: u8[] = [];
+    out = put_u16(out, payload.len());
+    out = put_u32(out, crc_of(payload));
+    for i in 0..payload.len() { out = out.append(payload[i]); }
+    return out;
+}
+
+function append_record(log: u8[], payload: u8[]): u8[] {
+    var out: u8[] = log;
+    var f: u8[] = frame(payload);
+    for i in 0..f.len() { out = out.append(f[i]); }
+    return out;
+}
+
+// ------------------------------------------------------------- replay
+
+struct Replay { records: u8[][], torn: boolean, consumed: i32 }
+
+// Stop at the first record that does not fully validate, and say so. Skipping
+// a bad record and continuing would be the dangerous alternative: it
+// resurrects state written after a crash that never committed, which is the
+// exact failure a write-ahead log exists to prevent.
+//
+// Two ways a record fails, and both are torn writes:
+//   - the header or the payload is short — the process died mid-write;
+//   - the payload is complete but its checksum disagrees — the bytes reached
+//     the file in a state nobody wrote, which a length check cannot see.
+function replay(log: u8[]): Replay {
+    var recs: u8[][] = [];
+    var pos: i32 = 0;
+    var n: i32 = log.len();
+    while (pos + HEADER() <= n) {
+        var len: i32 = get_u16(log, pos);
+        var want: i32 = get_u32(log, pos + 2);
+        if (pos + HEADER() + len > n) {
+            return Replay { records: recs, torn: true, consumed: pos };
+        }
+        var payload: u8[] = [];
+        for i in 0..len { payload = payload.append(log[pos + HEADER() + i]); }
+        if (crc_of(payload) != want) {
+            return Replay { records: recs, torn: true, consumed: pos };
+        }
+        recs = recs.append(payload);
+        pos = pos + HEADER() + len;
+    }
+    return Replay { records: recs, torn: pos != n, consumed: pos };
+}
+
+// ------------------------------------------------------------- helpers
+
+function bytes_of(s: string): u8[] {
+    var out: u8[] = [];
+    for i in 0..s.len() { out = out.append(s[i]); }
+    return out;
+}
+
+function bytes_eq(a: u8[], b: u8[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    for i in 0..a.len() {
+        if (a[i] != b[i]) { return false; }
+    }
+    return true;
+}
+
+function take_bytes(bs: u8[], k: i32): u8[] {
+    var out: u8[] = [];
+    for i in 0..k { out = out.append(bs[i]); }
+    return out;
+}
+
+// Payloads that would break a naive framing: empty, a lone NUL, a run of
+// 0xFF, and bytes that read as plausible length headers.
+function corpus(): u8[][] {
+    return [
+        bytes_of("first"),
+        [],
+        [0 as u8],
+        [255 as u8, 255 as u8, 255 as u8],
+        [5 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8],
+        bytes_of("a longer record with spaces and punctuation!"),
+        [0 as u8, 1 as u8, 2 as u8, 253 as u8, 254 as u8, 255 as u8],
+        bytes_of("last"),
+    ];
+}
+
+function build_log(recs: u8[][]): u8[] {
+    var log: u8[] = [];
+    for i in 0..recs.len() { log = append_record(log, recs[i]); }
+    return log;
+}
+
+// How many whole records fit in the first `k` bytes — the answer the
+// truncation test checks replay against, computed by walking the frame
+// lengths rather than by replaying.
+function whole_records_within(recs: u8[][], k: i32): i32 {
+    var pos: i32 = 0;
+    var n: i32 = 0;
+    for i in 0..recs.len() {
+        var end: i32 = pos + HEADER() + recs[i].len();
+        if (end > k) { return n; }
+        pos = end;
+        n = n + 1;
+    }
+    return n;
+}
+
+// ----------------------------------------------------------------- tests
+
+// THE test. Every one of the n+1 truncation points, not three chosen ones.
+// At each cut the replay must return exactly the records that fit whole, with
+// the same bytes they were appended with, and must flag torn exactly when the
+// cut fell inside a record.
+function test_every_truncation_yields_a_valid_prefix(): test.TestOutcome {
+    var recs: u8[][] = corpus();
+    var log: u8[] = build_log(recs);
+    for k in 0..(log.len() + 1) {
+        var r: Replay = replay(take_bytes(log, k));
+        var want: i32 = whole_records_within(recs, k);
+        if (r.records.len() != want) {
+            return test.fail("cut at " + k.to_string() + " of "
+                + log.len().to_string() + ": replayed "
+                + r.records.len().to_string() + " records, "
+                + want.to_string() + " fit whole");
+        }
+        for i in 0..want {
+            if (!bytes_eq(r.records[i], recs[i])) {
+                return test.fail("cut at " + k.to_string() + ": record "
+                    + i.to_string() + " came back with different bytes");
+            }
+        }
+        // Torn exactly when the cut is not on a boundary.
+        var boundary: boolean = r.consumed == k;
+        if (r.torn == boundary) {
+            return test.fail("cut at " + k.to_string() + ": torn="
+                + r.torn.to_string() + " but consumed=" + r.consumed.to_string()
+                + " of " + k.to_string());
+        }
+    }
+    return test.pass();
+}
+
+// A whole log replays to exactly what went in, in order, untorn. The easy
+// half — but a framing that got this wrong would fail everything else in a
+// way that hid the real bug.
+function test_a_whole_log_replays_exactly(): test.TestOutcome {
+    var recs: u8[][] = corpus();
+    var r: Replay = replay(build_log(recs));
+    if (r.torn) {
+        return test.fail("an intact log replayed as torn after "
+            + r.records.len().to_string() + " records");
+    }
+    if (r.records.len() != recs.len()) {
+        return test.fail("replayed " + r.records.len().to_string()
+            + " records, appended " + recs.len().to_string());
+    }
+    for i in 0..recs.len() {
+        if (!bytes_eq(r.records[i], recs[i])) {
+            return test.fail("record " + i.to_string()
+                + " came back with different bytes (len "
+                + r.records[i].len().to_string() + " vs "
+                + recs[i].len().to_string() + ")");
+        }
+    }
+    return test.pass();
+}
+
+// Corrupting any single byte must never yield an invented record. The safety
+// property is not "every corruption is detected" — a checksum has collisions
+// and a mangled length field can reframe — it is that nothing replay hands
+// back is content that was never appended at that position.
+function test_corruption_never_invents_a_record(): test.TestOutcome {
+    var recs: u8[][] = corpus();
+    var log: u8[] = build_log(recs);
+    for pos in 0..log.len() {
+        var bad: u8[] = log.with(pos, ((log[pos] as i32) ^ 0x5A) as u8);
+        var r: Replay = replay(bad);
+        for i in 0..r.records.len() {
+            if (i >= recs.len() || !bytes_eq(r.records[i], recs[i])) {
+                return test.fail("corrupting byte " + pos.to_string()
+                    + " made replay return a record at index " + i.to_string()
+                    + " that was never appended there");
+            }
+        }
+    }
+    return test.pass();
+}
+
+// Corrupting a PAYLOAD byte is the case the checksum exists for: the record
+// is full length and still wrong, which no length check can see. That record
+// and everything after it must be dropped.
+function test_a_corrupt_payload_stops_the_replay(): test.TestOutcome {
+    var recs: u8[][] = corpus();
+    var log: u8[] = build_log(recs);
+    // Byte 0 of record 0's payload sits just past its header.
+    var at: i32 = HEADER();
+    var bad: u8[] = log.with(at, ((log[at] as i32) ^ 0xFF) as u8);
+    var r: Replay = replay(bad);
+    if (!r.torn) {
+        return test.fail("a corrupted payload replayed as intact");
+    }
+    if (r.records.len() != 0) {
+        return test.fail("corrupting the FIRST record's payload still"
+            + " replayed " + r.records.len().to_string() + " records");
+    }
+    // Same length, different bytes — so the length field alone cannot see it.
+    if (bad.len() != log.len()) {
+        return test.fail("the corruption changed the log's length, so this"
+            + " test is not about the checksum");
+    }
+    return test.pass();
+}
+
+// An empty log is not a torn one. A WAL that has never been written to is the
+// normal state on first boot, and reporting it as damaged would be worse than
+// useless.
+function test_an_empty_log_is_not_torn(): test.TestOutcome {
+    var r: Replay = replay([]);
+    if (r.torn || r.records.len() != 0) {
+        return test.fail("an empty log replayed as torn=" + r.torn.to_string()
+            + " with " + r.records.len().to_string() + " records");
+    }
+    // A zero-length RECORD is a real record, and distinct from no record.
+    var one: Replay = replay(append_record([], []));
+    if (one.torn || one.records.len() != 1 || one.records[0].len() != 0) {
+        return test.fail("a zero-length record did not replay as one empty"
+            + " record");
+    }
+    return test.pass();
+}
+
+// Appending is incremental: replaying after k appends gives the first k
+// records, for every k. This is what lets a reader tail a log that a writer
+// is still extending.
+function test_replay_after_k_appends_gives_the_first_k(): test.TestOutcome {
+    var recs: u8[][] = corpus();
+    var log: u8[] = [];
+    for k in 0..recs.len() {
+        log = append_record(log, recs[k]);
+        var r: Replay = replay(log);
+        if (r.torn) {
+            return test.fail("after " + (k + 1).to_string()
+                + " appends the log replayed as torn");
+        }
+        if (r.records.len() != k + 1) {
+            return test.fail("after " + (k + 1).to_string() + " appends,"
+                + " replay returned " + r.records.len().to_string());
+        }
+        for i in 0..(k + 1) {
+            if (!bytes_eq(r.records[i], recs[i])) {
+                return test.fail("after " + (k + 1).to_string()
+                    + " appends, record " + i.to_string() + " differs");
+            }
+        }
+    }
+    return test.pass();
+}
+
+// The framing must be binary-safe. A payload containing NUL, 0xFF, or bytes
+// that read as a plausible length header must round-trip untouched — a
+// delimiter-scanning parser passes every other test here and fails this.
+function test_the_framing_is_binary_safe(): test.TestOutcome {
+    var awkward: u8[] = [];
+    for i in 0..256 { awkward = awkward.append(i as u8); }
+    var log: u8[] = append_record(append_record([], awkward), awkward);
+    var r: Replay = replay(log);
+    if (r.torn || r.records.len() != 2) {
+        return test.fail("two all-byte-values records replayed as torn="
+            + r.torn.to_string() + " with " + r.records.len().to_string()
+            + " records");
+    }
+    for k in 0..2 {
+        if (!bytes_eq(r.records[k], awkward)) {
+            return test.fail("record " + k.to_string() + " of every byte value"
+                + " did not survive the round trip");
+        }
+    }
+    return test.pass();
+}
+
+// The whole thing against a real file, including a real truncation: write the
+// log, cut it mid-record, write it back, replay from disk. A WAL that only
+// works in memory has not been tested where it runs.
+function test_a_real_file_survives_a_real_truncation(): test.TestOutcome {
+    var recs: u8[][] = corpus();
+    var log: u8[] = build_log(recs);
+    match (temp_dir("wal")) {
+        Err(e) => { return test.fail("could not create a temp directory"); },
+        Ok(d) => {
+            var path: string = d + "/log.bin";
+            match (write_file(path, string_from_bytes_unchecked(log))) {
+                Err(e) => {
+                    var _x: Result[void, IoError] = remove_dir_all(d);
+                    return test.fail("could not write the log");
+                },
+                Ok(_) => { },
+            }
+            var whole: Replay = replay([]);
+            match (read_file(path)) {
+                Err(e) => {
+                    var _x: Result[void, IoError] = remove_dir_all(d);
+                    return test.fail("could not read the log back");
+                },
+                Ok(body) => { whole = replay(bytes_of(body)); },
+            }
+            if (whole.torn || whole.records.len() != recs.len()) {
+                var _x: Result[void, IoError] = remove_dir_all(d);
+                return test.fail("the log read from disk replayed as torn="
+                    + whole.torn.to_string() + " with "
+                    + whole.records.len().to_string() + " records");
+            }
+            // Cut three bytes into the last record's payload.
+            var cut: i32 = log.len() - 2;
+            var _t: Result[void, IoError] = write_file(path,
+                string_from_bytes_unchecked(take_bytes(log, cut)));
+            var torn: Replay = replay([]);
+            match (read_file(path)) {
+                Err(e) => {
+                    var _x: Result[void, IoError] = remove_dir_all(d);
+                    return test.fail("could not read the truncated log");
+                },
+                Ok(body) => { torn = replay(bytes_of(body)); },
+            }
+            var _x2: Result[void, IoError] = remove_dir_all(d);
+            if (!torn.torn) {
+                return test.fail("a log cut mid-record replayed as intact");
+            }
+            var want: i32 = whole_records_within(recs, cut);
+            if (torn.records.len() != want) {
+                return test.fail("the truncated log replayed "
+                    + torn.records.len().to_string() + " records, "
+                    + want.to_string() + " fit whole");
+            }
+            for i in 0..want {
+                if (!bytes_eq(torn.records[i], recs[i])) {
+                    return test.fail("truncated replay: record "
+                        + i.to_string() + " differs");
+                }
+            }
+            return test.pass();
+        },
+    }
+}
+
+// ------------------------------------------------------------------- app
+
+function main(): i32 {
+    eprint("wal — append, replay, and stop at the first torn record");
+    var recs: u8[][] = corpus();
+    var log: u8[] = build_log(recs);
+    eprint("  " + recs.len().to_string() + " records in "
+        + log.len().to_string() + " bytes");
+
+    var whole: Replay = replay(log);
+    eprint("  intact:    " + whole.records.len().to_string()
+        + " records, torn=" + whole.torn.to_string());
+
+    var cut: i32 = log.len() - 3;
+    var short: Replay = replay(take_bytes(log, cut));
+    eprint("  cut at " + cut.to_string() + ":  "
+        + short.records.len().to_string() + " records, torn="
+        + short.torn.to_string() + ", consumed=" + short.consumed.to_string());
+
+    var at: i32 = HEADER() + 1;
+    var bad: Replay = replay(log.with(at, ((log[at] as i32) ^ 0xFF) as u8));
+    eprint("  byte " + at.to_string() + " flipped: "
+        + bad.records.len().to_string() + " records, torn="
+        + bad.torn.to_string());
+
+    var torncuts: i32 = 0;
+    for k in 0..(log.len() + 1) {
+        if (replay(take_bytes(log, k)).torn) { torncuts = torncuts + 1; }
+    }
+    eprint("  of " + (log.len() + 1).to_string() + " truncation points, "
+        + torncuts.to_string() + " land inside a record");
+
+    var t: test.TestRunner = test.test_new("wal");
+    t = t.it("every truncation yields a valid prefix", test_every_truncation_yields_a_valid_prefix);
+    t = t.it("a whole log replays exactly", test_a_whole_log_replays_exactly);
+    t = t.it("corruption never invents a record", test_corruption_never_invents_a_record);
+    t = t.it("a corrupt payload stops the replay", test_a_corrupt_payload_stops_the_replay);
+    t = t.it("an empty log is not torn", test_an_empty_log_is_not_torn);
+    t = t.it("replay after k appends gives the first k", test_replay_after_k_appends_gives_the_first_k);
+    t = t.it("the framing is binary safe", test_the_framing_is_binary_safe);
+    t = t.it("a real file survives a real truncation", test_a_real_file_survives_a_real_truncation);
+    return t.finish();
+}
