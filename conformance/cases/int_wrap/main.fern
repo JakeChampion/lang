@@ -1,3 +1,4 @@
+// spec: IS-01
 import "std/i32";
 // i32 two's-complement wraparound: INT_MAX + 1 = INT_MIN. The value
 // flows through a function call so it isn't constant-folded away.

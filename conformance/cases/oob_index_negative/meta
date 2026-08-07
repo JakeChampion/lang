@@ -1,0 +1,11 @@
+waiver: harness-limit
+reason: an aborting program is only observable as an exit code on the
+  native backends. The wasm leg builds with PrintMainResult and recovers
+  the exit code from a trailing stdout line, which a trapping program
+  never reaches — the runner sees empty stdout and a trap, not 134. And
+  docs/ARRAY-BOUNDS.md makes the ABORT normative on all four backends
+  but deliberately not the code: the interpreter reports `array index N
+  out of range [0, L)` and exits 1 so `fern -interp` stays readable. So
+  the case asserts the one exit code two backends agree on, and the
+  other two are covered by internal/e2e/array_bounds_test.go, which
+  asserts non-zero-and-printed-nothing rather than a value.

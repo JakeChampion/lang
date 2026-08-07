@@ -1,0 +1,30 @@
+// spec: CC-01
+// spec: CC-02
+//
+// A closure captures a scalar by REFERENCE: the outer variable and the
+// capture are one cell, so a write on either side is visible to the
+// other. docs/CLOSURE-CAPTURE.md carried the opposite claim — capture
+// by value, a snapshot taken at closure creation — for long enough
+// that the doc had to be corrected rather than the compiler (#5479),
+// which is exactly the failure mode an unpinned normative claim has.
+//
+// Both directions matter and they fail independently: a boxing pass
+// that only fires when the closure assigns the name gets the first
+// half right and the second half wrong.
+import "std/i32";
+
+function main(): i32 {
+    // Outer write, visible inside.
+    var n: i32 = 1;
+    var read = function (): i32 { return n; };
+    n = 99;
+    print(read().to_string());
+
+    // Inner write, visible outside.
+    var m: i32 = 10;
+    var bump = function (): i32 { m = m + 1; return m; };
+    print(bump().to_string());
+    print(bump().to_string());
+    print(m.to_string());
+    return 0;
+}
