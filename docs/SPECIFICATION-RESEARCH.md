@@ -474,9 +474,60 @@ Two things the plan did not anticipate:
   it is the one that would have caught the closure-dispatch cluster this
   section cites.
 
-So the honest reading: the verifier as shipped is a floor, not the
-guard-rail the section promised. It makes a class of bug impossible to
-ship silently, and the class it currently covers turns out to be empty.
+**Correction, from building the stack half.** It is now in
+(`internal/ir/verifystack.go`) and, like the structural half, it found
+nothing: 0 problems across the same 478 lowered programs, 8,100
+functions at both pointer widths, 97.8% of them fully modelled. Four
+things the plan had wrong.
+
+- **"Stack discipline and operand widths" is one phrase covering two
+  very different jobs, and only the first is checkable.** A slot's
+  *class* — integer-shaped or float-shaped — is a property of the op, so
+  it checks cleanly. Its *width* is not: `WidthPtr` is resolved by the
+  backend, and the IR does not distinguish a pointer from an integer of
+  the same width anywhere, deliberately. A width checker would need a
+  pointer-aware type system the IR does not carry, and would report that
+  deliberate looseness as a defect. The stack half checks discipline and
+  class, and says so.
+- **A stack-effect table is not enough, because an op's effect is not a
+  function of the op.** Under the two-word string ABI (every wasm32
+  build) a string value is its `(data, len)` pair, so `const.str` pushes
+  two slots on one target and one on another, and `str.len` pops two or
+  one to match. The pass is parameterised by `Program.PtrW` for exactly
+  this reason, and it is what makes the same op list well-formed at one
+  width and broken at the other — which no single table can express.
+- **The hard part was the callees, again.** A call's effect needs the
+  callee's signature, and for a builtin or a runtime helper that
+  signature lives in the backends. The structural half could defer to
+  `internal/caps` because it only asked "does this name exist"; the
+  stack half asks "how many slots", which caps does not know. So the
+  verifier keeps its own table (`verifyprovided.go`), cross-checked
+  against the wasm backend's helper registry by a test in that package —
+  a second record, because reading the emitter's own table would make
+  the two agree by construction and check nothing.
+- **Fail-soft turned out to be the design decision that mattered.**
+  Anything unmodellable — a generic callee whose argument types are
+  still type parameters at lowering time, where an erased `T` may arrive
+  as an integer, a float, or a two-word string — skips the function and
+  is counted, never reported. Coverage then becomes a number a gate can
+  hold a floor under, so an unmodelled construct surfaces as a coverage
+  regression instead of as a spurious failure. Without it the pass would
+  have had to guess, and a verifier that reports a defect in correct IR
+  is switched off within a week.
+
+Two findings of nothing in a row raise the obvious question of whether
+the pass checks anything, so the answer is measured rather than
+asserted: `TestIRVerifierCatchesLoweringDamage` deletes one
+stack-effecting op from each of 1,241 real lowered functions and
+requires the damage to be reported. It reports 97.6%. The residual is
+wasm's own rule — a `return` marks the rest of its scope unreachable and
+discards operands stranded below it, so an imbalance introduced before a
+`return` and never consumed is invisible to a wasm validator too.
+
+So the honest reading: the verifier makes two classes of bug impossible
+to ship silently, and both classes turn out to be empty today. What
+remains unbuilt is the part that needs Layer 3 — the typing rules
+themselves, as opposed to the stack shape they run on.
 
 ### Layer 5 — mechanisation and translation validation (not recommended yet)
 

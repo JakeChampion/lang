@@ -22,8 +22,24 @@ func fn(name string, nSlots int, ops ...Op) *Func {
 	}
 }
 
+// structural runs only the structural half. These fixtures break one
+// structural invariant each and are otherwise hand-built rather than
+// lowered, so they carry no coherent operand stack for the stack half
+// (verifystack_test.go) to have an opinion about.
+func structural(funcs ...*Func) []Problem {
+	known := map[string]*Func{}
+	for _, f := range funcs {
+		known[f.Name] = f
+	}
+	var out []Problem
+	for _, f := range funcs {
+		out = append(out, verifyFunc(f, known, map[string]bool{})...)
+	}
+	return out
+}
+
 func verifyOne(f *Func, rest ...*Func) []Problem {
-	return Verify(&Program{Funcs: append([]*Func{f}, rest...)})
+	return structural(append([]*Func{f}, rest...)...)
 }
 
 func TestVerifyRejects(t *testing.T) {
@@ -118,7 +134,7 @@ func TestVerifyRejects(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Verify(&Program{Funcs: tc.prog})
+			got := structural(tc.prog...)
 			if len(got) != 1 {
 				t.Fatalf("got %d problems, want exactly 1:%s", len(got), FormatProblems(got, 10))
 			}

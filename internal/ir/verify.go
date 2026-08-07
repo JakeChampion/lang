@@ -14,10 +14,9 @@
 // that re-validate what Lean's kernel emitted: a second, simpler program
 // whose only job is to disbelieve the first.
 //
-// This pass checks STRUCTURE — the invariants a backend would have to
-// re-derive to emit anything at all. It does not yet check stack
-// discipline or operand types; that needs a per-opcode stack-effect
-// table and is the natural next increment.
+// This file checks STRUCTURE — the invariants a backend would have to
+// re-derive to emit anything at all. Its sibling verifystack.go checks
+// operand-stack discipline, the wasm-validator half. Verify runs both.
 package ir
 
 import (
@@ -56,23 +55,40 @@ func (p Problem) Error() string {
 }
 
 // Verify checks every function in the program and returns every problem
-// found, in program order. An empty result means the IR is structurally
-// sound as far as this pass can tell — not that it is correct.
-func Verify(p *Program) []Problem {
+// found, in program order, along with how much of the program the stack
+// half could model. No problems means the IR is sound as far as these
+// two passes can tell — not that it is correct.
+//
+// The Coverage is not optional decoration. The structural half applies
+// to every function, but the stack half skips whatever it cannot model
+// rather than guessing (see verifystack.go), so an empty problem list
+// means nothing without knowing how much was looked at.
+func Verify(p *Program) ([]Problem, Coverage) {
 	known := map[string]*Func{}
 	for _, f := range p.Funcs {
 		known[f.Name] = f
 	}
-	externs := map[string]bool{}
+	externNames := map[string]bool{}
+	externs := map[string]*ExternFunc{}
 	for _, e := range p.Externs {
-		externs[e.Name] = true
+		externNames[e.Name] = true
+		externs[e.Name] = e
 	}
 
 	var out []Problem
+	cov := Coverage{Funcs: len(p.Funcs)}
 	for _, f := range p.Funcs {
-		out = append(out, verifyFunc(f, known, externs)...)
+		out = append(out, verifyFunc(f, known, externNames)...)
+
+		stackProblems, bail := verifyStack(f, known, externs, p.PtrW)
+		if bail != "" {
+			cov.skip(f.Name, bail)
+			continue
+		}
+		cov.Modelled++
+		out = append(out, stackProblems...)
 	}
-	return out
+	return out, cov
 }
 
 // ctrl is one open structured-control scope.
