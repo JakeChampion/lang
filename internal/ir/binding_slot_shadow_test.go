@@ -100,7 +100,7 @@ function main(): i32 {
 // TwoWordOverride) colliding with a pointer-shaped binding
 // `ST(t)` — the binding must get a FRESH slot, not reuse the var's.
 //
-// bindingSlot's shape guard used to read the existing slot's type from
+// bindingSlotScoped's shape guard used to read the existing slot's type from
 // b.scratchType, which is never stamped for `var`-declared (info.Locals)
 // slots — nil read as "single-word", the guard passed, and the binding
 // reused the string's two-word slot. The backend sizes physical slots
@@ -198,7 +198,7 @@ function main(): i32 {
 // module fails validation ("type mismatch: expected i64, found i32") —
 // the TestExternVariant{MixedWidth,NonUniform}ResultCustomProvider
 // composition shape, which only runs where wasmtime/wasm-tools are
-// installed; this pin gates it in the unit lane. bindingSlot's shape
+// installed; this pin gates it in the unit lane. bindingSlotScoped's shape
 // guard used to compare only two-word-ness, under which i32 and i64 both
 // read "one word" and shared.
 func TestMatchBindingCrossWidthGetsDistinctSlots(t *testing.T) {
