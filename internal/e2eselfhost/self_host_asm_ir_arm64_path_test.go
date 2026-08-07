@@ -852,6 +852,13 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		// /tmp is a directory on every host and under qemu-user, and the
 		// missing sibling exercises the errno -> NotFound classification. A
 		// wrong st_mode offset reads st_nlink or st_dev and misclassifies.
+		// xs.reverse() / xs.concat(ys) through the Fern helpers (#2649). The
+		// string[] cases are the ones that matter: both copy raw 8-byte SLOTS,
+		// so an element that is a box POINTER has to survive untouched — the
+		// i32[] cases alone would pass even if the copy narrowed to 32 bits.
+		// The source array is re-read afterwards to catch a helper that
+		// consumed its borrowed parameter.
+		{"arr-reverse-concat", `function main(): i32 { var a: i32[] = [1,2,3,4,5]; var r = a.reverse(); if (r.len() != 5) { return 1; } if (r[0] != 5) { return 2; } if (r[4] != 1) { return 3; } if (a[0] != 1) { return 4; } var b: i32[] = [10,20]; var c = a.concat(b); if (c.len() != 7) { return 5; } if (c[4] != 5) { return 6; } if (c[6] != 20) { return 7; } var s: string[] = ["aa","bbb","c"]; var sr = s.reverse(); if (sr[0] != "c") { return 8; } if (sr[2] != "aa") { return 9; } var sc = s.concat(sr); if (sc.len() != 6) { return 10; } if (sc[5] != "aa") { return 11; } var e: i32[] = []; if (e.reverse().len() != 0) { return 12; } if (e.concat(b).len() != 2) { return 13; } return 35; }`, 35},
 		{"stat-dir-and-missing", `function main(): i32 { match (stat("/tmp")) { Ok(d) => { if (d.is_file) { return 1; } if (!d.is_dir) { return 2; } match (stat("/tmp/fern_no_such_path_xyz")) { Ok(_) => { return 3; }, Err(e) => { match (e) { NotFound(_) => { return 37; }, _ => { return 4; } } } } }, Err(_) => { return 5; } } }`, 37},
 		{"tempdir-env", `function main(): i32 { match (temp_dir("fernrt")) { Ok(d) => { if (d.len() < 12) { return 1; } match (write_file(d + "/f.txt", "abc")) { Ok(_) => {}, Err(_) => { return 2; } } match (read_file(d + "/f.txt")) { Ok(c) => { if (c != "abc") { return 3; } }, Err(_) => { return 4; } } match (remove_file(d + "/f.txt")) { Ok(_) => {}, Err(_) => { return 5; } } match (env("PATH")) { Some(v) => { if (v.len() == 0) { return 6; } }, None => { return 7; } } match (env("FERN_DEFINITELY_UNSET_XYZ")) { Some(_) => { return 8; }, None => {} } return 39; }, Err(_) => { return 9; } } }`, 39},
 		{"fs-roundtrip", `function main(): i32 { var p: string = "/tmp/fern_fsrt_a64.txt"; match (write_file(p, "hello world")) { Ok(_) => {}, Err(_) => { return 1; } } match (read_file(p)) { Ok(c) => { if (c != "hello world") { return 2; } }, Err(_) => { return 3; } } match (remove_file(p)) { Ok(_) => {}, Err(_) => { return 4; } } match (read_file(p)) { Ok(_) => { return 5; }, Err(_) => {} } return 41; }`, 41},

@@ -81,6 +81,22 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > `stat` is one body like the rest. arm64 also gained the `__raw_scratch` op and
 > its `__fern_scratch` .bss slot, which the helper hands the kernel to write into.
 >
+> **The array producers left the asm too.** `xs.reverse()` and `xs.concat(ys)`
+> (`asmcore.rt_src_arr_reverse` / `_arr_concat`) are Fern now, over the
+> `__raw_arr_box` + `__raw_array` pair added to the table below. These are the
+> first helpers to move that have nothing to do with syscalls, and they are
+> **arch-independent** — one source, no target parameter, replacing the two
+> hand-asm copies x86-64 and arm64 each carried. That is the shape the rest of
+> the array/map core should follow.
+>
+> Two properties make one `i32[]`-typed body serve every element type. The copy
+> is a raw 8-byte SLOT copy, so a `string[]`'s box pointers ride through
+> untouched; and it is deliberately SHALLOW — no element refcount traffic —
+> which is what the hand-asm did and what typing the parameters `i32[]` keeps
+> the RC insertion agreeing with. `arr_slice` did NOT come along: its
+> construction-time bounds check (#5419) traps to `__fern_oob_abort`, and there
+> is no Fern expression for "abort" — that needs its own primitive.
+>
 > Still **x86-64 IR only**: the three clocks (`monotonic_ns` / `now_unix_ms` /
 > `now_ns`) and `read_dir` / `remove_dir_all`. These are the genuinely
 > shape-diverging ones. Darwin has no
@@ -209,6 +225,8 @@ nominal.
 | `__raw_scratch(n: i32): i32` | `leaq __fern_scratch(%rip), %rax` | a fixed static (.bss) scratch buffer the syscall leaves hand the kernel to write into (`timespec`, `stat`) — reused, never freed, so no per-call leak. `n` is a size hint; the buffer is fixed. **Non-reentrant** (one leaf reads it fully before another runs) |
 | `__syscall4(nr, a1, a2, a3, a4): i32` | like `__syscall3` plus `a4→%r10; syscall` | the 4-arg sub-floor sibling, for syscalls whose 4th arg is meaningful (`openat`'s `mode` with `O_CREAT`, `newfstatat`'s `flags`) |
 | `__raw_environ(): i32` | `movq __fern_envp(%rip), %rax` | the process `envp` pointer (saved by `_start`); the `env` leaf walks the array from it |
+| `__raw_arr_box(n: i32): i32` | `mov n→%rdi; call __fern_arr_box` → data ptr | a fresh n-element array box, rc header + length + capacity already written — the array sibling of `__raw_alloc`, and the one array primitive that stays a call. Element i is at `[ptr + (i+1)*W]`, exactly what `__raw_store_ptr` addresses, so a helper fills it without naming the layout |
+| `__raw_array(ptr: i32): i32[]` | nothing | the type-only bridge back to a typed array, the array sibling of `__raw_string`. The data pointer already IS the array value, so this emits no op — only the checker needed convincing |
 | `__raw_addr(ptr: i32, off: i32): i32` | `addq %rcx, %rax` / `add x0, x0, x1` | `ptr + off` at the machine's FULL pointer width, for an address that has to be **passed** somewhere (a syscall buffer arg). Writing `p + off` in the helper source does not work: a raw pointer's surface type is `i32`, so arm64 narrows the sum back (`sxtw x0, w0`) and a high heap address arrives truncated. The load/store intrinsics dodge this by folding the offset into the addressing mode; this is the form for everything else |
 
 Reading the kernel-written 8-byte fields (`tv_sec` / `tv_nsec`) back into i64

@@ -452,6 +452,14 @@ pub function op_raw_environ(): Op { return op0("raw_environ"); }
 // `__load_ptr(a)`, which have no offset operand to fold, so their caller must
 // not reach for a bare `a + off`.
 pub function op_raw_addr(): Op { return op0("raw_addr"); }
+// raw_arr_box (#2649 raw-memory floor): pops [n] → the DATA pointer of a fresh
+// n-element array box, with the rc header, length and capacity already written
+// (a `call __fern_arr_box`, the one array primitive that stays asm — the same
+// role __raw_alloc plays for bytes). Element i lives at [ptr + (i+1)*W], which
+// is exactly what __raw_store_ptr / __raw_load_ptr address, so a Fern helper can
+// fill it without naming the layout. Its sibling __raw_array(ptr) is type-only
+// — the pointer already IS the array value — so it emits no op at all.
+pub function op_raw_arr_box(): Op { return op0("raw_arr_box"); }
 
 // Random / byte-source builtins (issue #2747) — the cross-backend byte source
 // uuid (#2682) and a future std/crypto build on. Each lowers to a runtime
@@ -1509,6 +1517,7 @@ function kind_id_4(name: string): i32 {
     if (name == "popcount") { return 221; }
     if (name == "map_hash_seed") { return 222; }
     if (name == "raw_addr") { return 223; }
+    if (name == "raw_arr_box") { return 224; }
     return 0;
 }
 
@@ -1761,13 +1770,14 @@ function kind_name_4(id: i32): string {
     if (id == 221) { return "popcount"; }
     if (id == 222) { return "map_hash_seed"; }
     if (id == 223) { return "raw_addr"; }
+    if (id == 224) { return "raw_arr_box"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … raw_addr=223)
+// extension tags beyond kind_count() (struct_copy=198 … raw_arr_box=224)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
