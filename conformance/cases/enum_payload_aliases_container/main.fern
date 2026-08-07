@@ -1,0 +1,82 @@
+// An enum payload may alias a container the constructing function still
+// owns — `Some(table[i])` is the ordinary shape of a lookup. The box is then
+// a co-owner of that element, and the container's drop at function exit must
+// leave the payload alive for the caller.
+//
+// Both enum construction paths are exercised, because they are separate
+// emitters and only one of them used to get this right: `find` returns the
+// variant directly (the register (tag, payload) ABI, which never reaches the
+// return lowering's transfer retain), while `last` assigns into a
+// loop-carried local (the in-place box-reuse overwrite).
+//
+// Getting it wrong is not a wrong answer — it is a use-after-free, so what
+// this case observes depends on what the allocator hands out next. The
+// repeated calls exist to make that concrete: the second lookup's table is
+// built in the cells the first lookup freed.
+
+import "std/i32";
+
+struct Unit { name: string, factor: i32 }
+
+function table(): Unit[] {
+    return [
+        Unit { name: "m", factor: 1 },
+        Unit { name: "km", factor: 1000 },
+        Unit { name: "cm", factor: -100 },
+    ];
+}
+
+function find(name: string): Option[Unit] {
+    var us: Unit[] = table();
+    for i in 0..us.len() {
+        if (us[i].name == name) { return Some(us[i]); }
+    }
+    return None;
+}
+
+function last(name: string): Option[Unit] {
+    var us: Unit[] = table();
+    var found: Option[Unit] = None;
+    for i in 0..us.len() {
+        if (us[i].name == name) { found = Some(us[i]); }
+    }
+    return found;
+}
+
+function factor_of(o: Option[Unit]): i32 {
+    match (o) {
+        Some(u) => { return u.factor; },
+        None => { return 0; },
+    }
+}
+
+function name_of(o: Option[Unit]): string {
+    match (o) {
+        Some(u) => { return u.name; },
+        None => { return "?"; },
+    }
+}
+
+function main(): i32 {
+    // Each lookup allocates and frees a whole table, so a payload that was
+    // not retained is read back out of a recycled cell.
+    var total: i32 = 0;
+    for i in 0..8 {
+        total = total + factor_of(find("km"));
+        total = total + factor_of(last("km"));
+        total = total + factor_of(find("cm"));
+        total = total + factor_of(last("cm"));
+    }
+    // 8 * (1000 + 1000 - 100 - 100) = 14400
+    print(total.to_string());
+
+    // The string field is a second pointer inside the payload: a payload
+    // freed underneath the caller usually still has a plausible i32 in it,
+    // but its name will not survive.
+    print(name_of(find("m")));
+    print(name_of(last("cm")));
+    print(name_of(find("furlong")));
+
+    if (total != 14400) { return 1; }
+    return 0;
+}

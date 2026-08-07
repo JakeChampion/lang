@@ -4349,21 +4349,28 @@ func (b *builder) emitPairFormPushValue(e ast.Expr) error {
 		variantName, payload := pairFormVariantOf(e)
 		payloadType := b.pairFormPayloadType(variantName)
 		payloadW := pairPayloadWidth(payloadType)
+		pushPayload := func() error {
+			if err := b.expr(payload); err != nil {
+				return err
+			}
+			b.emitPairFormPayloadRetain(payload)
+			return nil
+		}
 		switch variantName {
 		case "Some":
-			if err := b.expr(payload); err != nil {
+			if err := pushPayload(); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpMakeSomeI32, Width: payloadW})
 		case "None":
 			b.emit(Op{Kind: OpMakeNoneI32})
 		case "Ok":
-			if err := b.expr(payload); err != nil {
+			if err := pushPayload(); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpMakeOkI32, Width: payloadW})
 		case "Err":
-			if err := b.expr(payload); err != nil {
+			if err := pushPayload(); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpMakeErrI32, Width: payloadW})
@@ -4374,7 +4381,7 @@ func (b *builder) emitPairFormPushValue(e ast.Expr) error {
 			// keeps this tag mapping aligned with the variant's
 			// declared order.
 			if payload != nil {
-				if err := b.expr(payload); err != nil {
+				if err := pushPayload(); err != nil {
 					return err
 				}
 				b.emit(Op{Kind: OpMakeSomeI32, Width: payloadW})
@@ -4407,6 +4414,44 @@ func (b *builder) emitPairFormPushValue(e ast.Expr) error {
 		return nil
 	}
 	return fmt.Errorf("ir: emitPairFormPushValue: unrecognised shape %T (eligibility check / emitter out of sync)", e)
+}
+
+// emitPairFormPayloadRetain is the pair-form ABI's return-transfer inc,
+// emitted with the payload already on the operand stack (emitAliasInc is
+// inc-and-passthrough, so the value survives for OpMakeSomeI32 & co).
+//
+// The heap-box return path takes this inc in the Return lowering, on the
+// whole returned value. Pair-form does not go through there: it pushes
+// (tag, payload) and jumps straight to emitRcDecLocalsAtExit. So a payload
+// that ALIASES an rc-tracked local — `Some(arr[i])`, `Ok(rec.field)` — was
+// handed to the caller uninc'd, and the exit sweep then dropped the
+// container, freeing the very cell the caller had just been given:
+//
+//	function find(name: string): Option[Unit] {
+//	    var us: Unit[] = units();          // rc=1, swept at exit
+//	    for i in 0..us.len() {
+//	        if (us[i].name == name) { return Some(us[i]); }
+//	    }                                  // ^ element handed over uninc'd
+//	    return None;
+//	}
+//
+// The caller's first read of the payload is then a use-after-free — a
+// segfault on both natives once the freelist recycles the cell, and silent
+// corruption before that. wasm never recycles, so it "passed".
+//
+// The gate mirrors emitEnumNew's payload inc exactly, for the same reason:
+// needsRcIncOnAlias filters to the alias case (a fresh call result or
+// literal is nobody's local, so the sweep never touches it), and a payload
+// the move analysis already marked as a last-use owned local hands over its
+// own reference and must NOT be inc'd — that is the move-on-construction
+// pair-cancellation, and double-counting it would leak.
+func (b *builder) emitPairFormPayloadRetain(payload ast.Expr) {
+	if payload == nil {
+		return
+	}
+	if needsRcIncOnAlias(payload, b) && !b.rc.moveSites[payload] {
+		b.emitAliasInc(payload)
+	}
 }
 
 // loopFrame records one enclosing loop's label and its break/continue
@@ -13398,8 +13443,13 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 
 	// 1. Evaluate every payload arg into a scratch temp BEFORE the box
 	//    is reused (reads of the old c, still live in slot idx, complete
-	//    first). No inc — emitEnumNew doesn't inc payloads, so the
-	//    drop-side accounting matches a freshly constructed box.
+	//    first), taking the SAME alias inc emitEnumNew takes — the reused
+	//    box owns its pointer payloads exactly like a fresh one, and its
+	//    drop dec's them either way. This used to skip the inc, on the
+	//    (once-true, now stale) grounds that emitEnumNew didn't inc
+	//    either; Slice 1b gave the fresh path its payload inc and left
+	//    this one behind, so `c = Some(arr[i])` in a loop handed the box
+	//    an uncounted element and the array's drop freed it underneath.
 	type argTemp struct {
 		slot int32
 		typ  ast.Type
@@ -13412,6 +13462,10 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 		}
 		if err := b.expr(a); err != nil {
 			return true, err
+		}
+		if b.enumRcPayloadsEligible(enumName) && !b.rc.consumingMatchReuse[call] &&
+			needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
+			b.emitAliasInc(a)
 		}
 		ts := b.allocSlot()
 		b.locals[fmt.Sprintf("__ereuse_arg_%d", ts)] = ts
