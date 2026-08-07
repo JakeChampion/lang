@@ -93,9 +93,23 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > is a raw 8-byte SLOT copy, so a `string[]`'s box pointers ride through
 > untouched; and it is deliberately SHALLOW — no element refcount traffic —
 > which is what the hand-asm did and what typing the parameters `i32[]` keeps
-> the RC insertion agreeing with. `arr_slice` did NOT come along: its
-> construction-time bounds check (#5419) traps to `__fern_oob_abort`, and there
-> is no Fern expression for "abort" — that needs its own primitive.
+> the RC insertion agreeing with.
+>
+> `a[start:end]` (`rt_src_arr_slice`) came last and is the one that takes a
+> target. Its construction-time bounds check (#5419) traps, and "abort" is not
+> a Fern expression — which read as needing a new primitive and did not.
+> `__fern_oob_abort` is only `exit(134)`, so the helper spells the trap
+> `__syscall3(sysno(t, "exit"), 134, 0, 0)`, the same sub-floor every syscall
+> leaf uses. The only new surface was an `exit` row in `asmcore.sysno`
+> (60 / 93 / 1); `darwinize`'s `darwin_sysno` already mapped `93 -> 1`. The
+> hand-asm's traps were UNSIGNED compares, which is how a negative bound
+> aborted rather than wrapping the copy loop; Fern's `i32` compares are signed,
+> so the helper spells the same condition with explicit `< 0` arms. Note the
+> exit NUMBER arrives as a pushed operand rather than a `mov x8, #N`, so
+> `darwinize` never sees it — a wrong `sysno` row would be invisible to every
+> other Darwin check, which is why the lock-in pins the pushed pair directly.
+> `__fern_oob_abort` itself stays: the per-access `jae` / `b.lo` checks still
+> branch to it.
 >
 > Still **x86-64 IR only**: the three clocks (`monotonic_ns` / `now_unix_ms` /
 > `now_ns`) and `read_dir` / `remove_dir_all`. These are the genuinely
