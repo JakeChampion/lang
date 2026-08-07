@@ -252,7 +252,7 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-    eprint("usage: fern [-check | -interp | -fmt] [-ssa] [-target x86-64|x86-64-asm|arm64|arm64-asm|arm64-darwin|wasm] [-o OUT] <entry.fern> [stdlib-root]\n");
+    eprint("usage: fern [-check | -interp | -fmt] [-ssa] [-target x86-64|x86-64-asm|arm64|arm64-asm|arm64-android|arm64-darwin|arm64-darwin-asm|wasm|wasm-bin|wasm-component] [-o OUT] <entry.fern> [stdlib-root]\n");
     return 2;
 }
 
@@ -517,7 +517,7 @@ function run(): i32 {
     if (target != "x86-64" && target != "x86-64-asm" && target != "arm64" && target != "arm64-asm" && target != "arm64-android" && target != "arm64-darwin" && target != "arm64-darwin-asm" && target != "wasm" && target != "wasm-bin" && target != "wasm-component") {
         eprint("fern: unknown -target: ");
         eprint(target);
-        eprint(" (want x86-64, arm64, arm64-asm, arm64-darwin, arm64-darwin-asm, wasm, wasm-bin, or wasm-component)\n");
+        eprint(" (want x86-64, x86-64-asm, arm64, arm64-asm, arm64-android, arm64-darwin, arm64-darwin-asm, wasm, wasm-bin, or wasm-component)\n");
         return 2;
     }
 
