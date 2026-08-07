@@ -1533,6 +1533,15 @@ function kind_id_4(name: string): i32 {
     if (name == "raw_addr") { return 223; }
     if (name == "raw_arr_box") { return 224; }
     if (name == "memchr") { return 225; }
+    // ADDING AN EXTENSION TAG: take the next id here AND register it in
+    // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
+    // for the number you took. Two branches that each claim "the next free
+    // id" MERGE CLEANLY — memchr and raw_arr_box both landed on 224, and git
+    // conflicted only this file and the sweep lists. The three backends
+    // auto-merged into two `kind_tag == 224` arms apiece, first-one-wins,
+    // which builds and silently aliases the two ops. The registry golden is
+    // the only gate that catches it, and only if BOTH names survive the
+    // merge.
     return 0;
 }
 
