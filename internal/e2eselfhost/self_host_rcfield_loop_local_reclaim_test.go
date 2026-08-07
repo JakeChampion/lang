@@ -47,9 +47,9 @@ function main(): i32 {
 }
 
 // A SCALAR-only fresh-returning-CALL struct loop-local (`var t = mk(i)`, P = {x,y}
-// no rc field) previously leaked its BOX every iteration — collect_fresh_ret_call_
-// names excluded it via the struct_has_reclaim_array_field gate, so it never
-// reached reclaimable_names. Dropping that gate admits it (reclaimed by the
+// no rc field) leaks its BOX every iteration if collect_fresh_ret_call_names
+// excludes it via the struct_has_reclaim_array_field gate, since it then never
+// reaches reclaimable_names. Without that gate it is admitted (reclaimed by the
 // shallow box dec, complete for a scalar struct). #4357 follow-up.
 func scalarLoopLocalCallSrc(n string) string {
 	return `struct P { x: i32, y: i32 }

@@ -17,9 +17,9 @@ import (
 // imported generic enum (`async.Future[T]`) used inside an imported generic
 // function (`async.gather`) now monomorphizes correctly, because flatten now
 // mangles the imported EnumDecls + variant-struct enum_owner to match the
-// mangled variant structs (previously the EnumDecl kept bare names, so
-// monomorphize_enums couldn't find the mangled variants and the whole merged
-// program bailed to the AST emitter — where poll / the Future constructor can't
+// mangled variant structs. An EnumDecl that keeps bare names leaves
+// monomorphize_enums unable to find the mangled variants, bailing the whole
+// merged program to the AST emitter — where poll / the Future constructor can't
 // be emitted at all).
 //
 // The driver's `-decide` must report `ir` (the merged program routes the IR

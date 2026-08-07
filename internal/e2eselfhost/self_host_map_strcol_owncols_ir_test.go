@@ -13,8 +13,8 @@ import (
 // map_owncols now admits any map whose columns BOTH read back as snapshots
 // (i32 -> __fern_map_snapshot_col, string -> __fern_map_snapshot_col_str), so
 // __fern_map_set routes their appends through the reclaim-on-grow
-// __fern_arr_push_owned. Previously only i32/i32 maps were owned; a growing
-// Map[i32,string] / Map[string,i32] / Map[string,string] leaked every
+// __fern_arr_push_owned. Owning only i32/i32 maps leaves a growing
+// Map[i32,string] / Map[string,i32] / Map[string,string] leaking every
 // superseded keys/vals buffer (bounded per map but unbounded across a churn
 // loop, which is exactly what the fixpoint contract catches).
 //
@@ -35,8 +35,8 @@ var mapStrColOwncolsCases = []struct {
 	want  int
 }{
 	// A Map[i32,string] grown from cap 2 to 5 entries in a helper: each call
-	// previously leaked the superseded keys/vals buffers (2 grows x 2 columns);
-	// with owncols they are freed on the spot and the MAPVS exit free reclaims
+	// would otherwise leak the superseded keys/vals buffers (2 grows x 2
+	// columns); with owncols they are freed on the spot and the MAPVS exit free reclaims
 	// the final columns, so the per-call high-water is flat.
 	{name: "strval-grow", src: func(n string) string {
 		return `import "core/map";

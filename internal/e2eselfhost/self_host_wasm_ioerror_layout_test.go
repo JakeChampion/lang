@@ -13,13 +13,7 @@ import (
 // read_file's Err payload carries to the layout its CONSUMER reads: field i at
 // 8*(1+i).
 //
-// $__fern_build_io_error used to be shared by BOTH wasm emitters, which laid a
-// variant out at different slot widths (the legacy AST emitter at 4*(1+i)), and
-// the boxer emitted the IR layout for both — so an AST-path `NotFound(p)` read
-// its path out of the upper half of the id slot and printed garbage, and the
-// two-field default arm `Other(path, msg)` was wrong in both fields (#5795).
-// The AST emitter is gone (#3457) and its two cases with it; what remains is the
-// IR layout itself, which is still worth pinning because the boxer writes those
+// Worth pinning because the boxer writes those
 // offsets by hand.
 //
 // Each case asserts WHICH layout the emitted core carries before running it, so

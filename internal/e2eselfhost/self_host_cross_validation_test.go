@@ -29,19 +29,11 @@ import (
 // reason. A self-host-only comparison would prove the compiler agrees with
 // itself.
 //
-// SUBSET. This used to say "i32 only ... no arrays / strings / print* because
-// those aren't all supported by the asm emitter today", naming asm.fern — an
-// emitter deleted in #5972. asm_run now routes IR-or-error, and the IR path
-// handles far more, so that restriction was long stale and was hiding real
-// divergences behind an untested surface. The corpus below covers strings,
-// arrays, structs and their methods, tuples, closures, higher-order functions,
-// user enums with match, i64 and f64.
-//
-// Option / Result used to be listed here as a known gap: interp.fern mentioned
-// none of Some / None / Ok / Err, so `Some(42)` failed at CONSTRUCTION and the
-// driver exited 254 while native and both compiled backends answered correctly.
-// That is closed (#5990) and the rows are below, which is the definition of
-// done — a passing row, not a note.
+// SUBSET. asm_run routes IR-or-error, so the corpus below is not limited to
+// i32: it covers strings, arrays, structs and their methods, tuples, closures,
+// higher-order functions, user enums with match, i64 and f64, and Option /
+// Result (#5990). Restricting the corpus hides real divergences behind an
+// untested surface, so a closed gap belongs here as a passing row, not a note.
 //
 // `to_ascii_lower` / `to_ascii_upper` were listed alongside it and do NOT
 // belong here: they are `std/string` methods, not builtins, so `"A".to_ascii_

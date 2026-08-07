@@ -97,7 +97,7 @@ func TestArm64NativeBackendRunsUnderQemu(t *testing.T) {
 		{"bitor", "function main(): i32 { var x: i32 = 40; return x | 2; }", 42},
 		// Array element addressing past [0] needs the scaled/extended add
 		// forms (lsl #N for the element-size stride, uxtw to widen the
-		// 32-bit index). These previously corrupted element [1]+.
+		// 32-bit index), or element [1]+ is corrupted.
 		{"i32arr_index", "function main(): i32 { var a: i32[] = [10, 20, 12]; return a[1] + a[2]; }", 32},
 		{"i32arr_iter", "function main(): i32 { var a: i32[] = [1, 2, 3, 36]; var s: i32 = 0; for x in a { s = s + x; } return s; }", 42},
 		{"structarr_index", "struct P { x: i32, y: i32 } function main(): i32 { var ps: P[] = [P{x:1,y:2}, P{x:40,y:2}]; return ps[1].x + ps[1].y; }", 42},

@@ -14,7 +14,7 @@ import (
 // own mark_tuple_elems, which the loop lowering omitted. So `p.N` had no element
 // tag: an INFERRED `var s = p.1` (a string element) typed it wrong and `s.len()`
 // mis-read the length — a SILENT MISCOMPILE (p.1 itself printed fine; only its
-// derived length was wrong), on the IR path. Now the loop var carries the tuple
+// derived length was wrong), on the IR path. The loop var carries the tuple
 // tags, so `p.N` resolves — pointer elements (string / struct) included. Found by
 // differential probing; each case is oracle-checked vs the interpreter and
 // routing-pinned to "ir".

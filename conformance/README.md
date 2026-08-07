@@ -49,9 +49,9 @@ A case is a directory `cases/<name>/`. Contents:
 | `stdin` | no | Bytes fed to the program's stdin. |
 | `match` | no | `exact` (default) or `contains`. |
 | `backends` | no | Whitespace-separated subset of `interp x86_64 arm64 wasm`; `#` starts a comment. Defaults to all four. |
-| `reclaim-observable` | no | Marks a case whose output legitimately differs with reclamation off, exempting it from the free-off gate. Contents are ignored. See `docs/ALLOCATION-OBSERVABLE.md`. |
 | `expected.error` | no | Marks a **compile-error case** — see below. |
 | `meta` | no | Justifies a case that asserts less than the maximum — see below. Required exactly when the case does. |
+| `reclaim-observable` | no | Marks a case whose output deliberately DIFFERS with reclamation off, so the free-off gates invert for it rather than requiring a match. Contents are prose explaining why; only the file's presence is read. |
 
 No other filenames are permitted, and case directories have no
 subdirectories. Both are enforced (`TestConformanceCorpusFormat`),

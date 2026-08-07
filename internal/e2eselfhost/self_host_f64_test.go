@@ -7,10 +7,9 @@ import (
 
 // f64ToStringProgram formats a spread of f64 values one per line through
 // std/float's `.to_string()`. It imports the module explicitly: the register
-// backends used to carry a BUILTIN f64 `.to_string()` — a hand-asm k=15
-// fixed-precision formatter — which this test previously exercised without
-// any import. That builtin is gone (#5826). f64 formatting is now
-// std/float's shortest-round-trip formatter on every backend, the same one
+// f64 formatting is std/float's shortest-round-trip formatter on every
+// backend (there is no builtin `.to_string()` — #5826 removed the hand-asm
+// k=15 fixed-precision one), the same one
 // the Go backend compiles and the interpreter runs, so an import-free
 // `.to_string()` on an f64 is an unresolved method (native reports E043) —
 // exactly as it already was on wasm, which never had the builtin.

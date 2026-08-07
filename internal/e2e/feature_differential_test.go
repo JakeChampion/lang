@@ -357,9 +357,9 @@ function main(): i32 {
 }`},
 
 		// Map iteration order after a non-last delete must agree across
-		// the interpreter and every backend. The interp now mirrors the
-		// runtime's swap-with-last removal (it previously shifted down,
-		// giving a different order). Regression for M3 in
+		// the interpreter and every backend. The interp mirrors the
+		// runtime's swap-with-last removal; shifting down instead gives a
+		// different order. Regression for M3 in
 		// docs/ADVERSARIAL-REVIEW-2026-06.md.
 		{"map_delete_order", `import "std/i32";
 import "core/map";

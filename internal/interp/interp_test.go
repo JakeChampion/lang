@@ -508,10 +508,10 @@ func TestInterpMatchWildcard(t *testing.T) {
 // match on a NON-enum scrutinee (i32 / string / bool) dispatches
 // each arm by `==` against its literal, with `_` as the
 // fall-through — the same semantics the compiled backends produce
-// via emitLiteralMatch. The interpreter previously rejected this
-// ("match scrutinee is interp.Number, expected enum value"),
-// diverging from the compiled backends; this pins the fix in both
-// statement and expression position, including guards.
+// via emitLiteralMatch. The interpreter must not reject it
+// ("match scrutinee is interp.Number, expected enum value") and
+// diverge from the compiled backends; pinned in both statement
+// and expression position, including guards.
 func TestInterpMatchLiteralNonEnum(t *testing.T) {
 	cases := []struct {
 		name string

@@ -13,11 +13,11 @@ import (
 // 8 bytes so that is harmless, but on wasm32 an i32 is 4 bytes and an f64 is 8,
 // so the copy steps at 4 bytes through an 8-byte-element array.
 //
-// Before this gate, that produced SILENT WRONG VALUES: `array.reverse` on an
-// f64[] returned 1.5 where 4.5 was expected, with the compiler exiting 0 and
-// FERN_STRICT_IR=1 reporting nothing. Every other path was correct — native
+// Ungated, that produces SILENT WRONG VALUES: `array.reverse` on an f64[]
+// returns 1.5 where 4.5 is expected, with the compiler exiting 0 and
+// FERN_STRICT_IR=1 reporting nothing. Every other path is correct — native
 // interp, native x86-64, and the self-host's own x86-64 backend — so only the
-// wasm leg lied.
+// wasm leg lies.
 //
 // The erased-wide deferral gate is supposed to keep exactly this off the wasm IR
 // path. It missed the shape because it looks for a wide value passed BY VALUE
@@ -25,9 +25,9 @@ import (
 // the erasure is in the element type. Flag '7' (callee_param_is_erased_array)
 // closes it.
 //
-// erasedWideArrayFixedCases used to be the refusal set. The promotion widening
-// (clause (c-arr)) clones these per concrete element type, so they now COMPILE
-// AND RUN CORRECTLY — a real stride instead of a refusal. Asserting values, not
+// erasedWideArrayFixedCases are the promoted set: clause (c-arr) clones them
+// per concrete element type, so they COMPILE AND RUN CORRECTLY with a real
+// stride rather than being refused. Asserting values, not
 // routing, is the point: routing said "ir" while returning 1.5 for 4.5.
 var erasedWideArrayFixedCases = []struct {
 	name string
@@ -93,9 +93,9 @@ function main(): i32 {
 }
 
 // erasedWideArrayBlindCases are callees that take an erased `T[]` but never read
-// an ELEMENT — so no stride is ever used and there is nothing to miscompile. The
-// gate used to refuse them anyway, because it asked only whether a wide-element
-// array reached an erased `T[]` param. `is_empty` is the one such shape in the
+// an ELEMENT — so no stride is ever used and there is nothing to miscompile. A
+// gate that asks only whether a wide-element array reached an erased `T[]`
+// param refuses them anyway. `is_empty` is the one such shape in the
 // whole of std/array (the other concrete-return generics — `all`, `any`,
 // `count_where`, `position`, `sum_by` — feed elements to a predicate and stay
 // refused, correctly).

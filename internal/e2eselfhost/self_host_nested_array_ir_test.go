@@ -12,15 +12,15 @@ import (
 // nestedArrayIRCases pin array-of-arrays element reads (`T[][]`) to the self-host
 // IR path on x86-64 + wasm. A nested array element is a leak-only heap-array
 // pointer (one slot, like a struct/string/tuple element), so `m[i][j]` lowers
-// through the IR path and the module stays IR-eligible. This shape was previously
-// only exercised indirectly (string-array byte indexing in the csv pin, `f[2][0]`,
-// which is a string-array + byte load — not a true T[][] element load), so the
+// through the IR path and the module stays IR-eligible. Exercised directly
+// here: string-array byte indexing (`f[2][0]` in the csv pin) is a
+// string-array + byte load, not a true T[][] element load, so the
 // genuine nested-array load had no dedicated routing pin.
 //
 // Covers i32[][], string[][], and the 8-byte inner element kinds i64[][] /
-// f64[][]. The i64/f64 nested element read previously truncated to 32 bits
-// (silent miscompile): local_is_arrarr recorded only THAT a slot was T[][], not
-// what T was, so a nested read m[i][j] couldn't recover the inner width. #2691
+// f64[][]. Recording only THAT a slot is T[][] and not what T is leaves a
+// nested read m[i][j] unable to recover the inner width, truncating i64/f64
+// elements to 32 bits as a silent miscompile. #2691
 // adds local_arrarr_elem (the inner kind) so arr_index_is_i64/_f64 pick the
 // 8-byte load. Each case is oracle-checked against the interpreter and returns
 // <= 126 (wasmtime exit-code truncation, cf. #2908). Mirrors
@@ -44,12 +44,12 @@ var nestedArrayIRCases = []struct {
 
 // nestedArrayI64IRCases pin the i64[][] read AND construction fixes on x86-64 +
 // wasm. The READ side (local_arrarr_elem → arr_get_i64) and the CONSTRUCTION side
-// both now work on every backend: previously an i64 array LITERAL (`[5000000000]`)
-// emitted its 64-bit element as `i32.const` on the wasm backend (out of range, so
-// the module wouldn't parse), because infer_expr_width treated every bare integer
-// literal as i32. infer_expr_width now classifies a literal that exceeds i32-max as
-// i64 by value (it has no valid i32 reading — checker E047), so the inner array
-// literal takes the arr_make_i64 path and the element is emitted i64.const.
+// both work on every backend. If infer_expr_width treats every bare integer
+// literal as i32, an i64 array LITERAL (`[5000000000]`) emits its 64-bit element
+// as `i32.const` on wasm — out of range, so the module will not parse. It
+// classifies a literal that exceeds i32-max as i64 by value (it has no valid
+// i32 reading — checker E047), so the inner array literal takes the
+// arr_make_i64 path and the element is emitted i64.const.
 // (An UNANNOTATED 1-D big-literal array — `var a = [7000000000]` — would exercise
 // the same compiler path, but the tree-walking interpreter still defaults an
 // unannotated big literal to i32 and wraps, so it can't serve as an oracle here;

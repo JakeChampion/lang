@@ -52,8 +52,8 @@ var reuseDifferentialCases = []struct {
 	// (#4356 divergence 3): `d` is bound from a STRICT fresh-returning
 	// function (return_fresh_struct_ret_fns — every return a no-base literal,
 	// sole owner of box + fields), so donor_bind_type admits it exactly like
-	// a literal-bound donor. Previously only same-body literals could donate,
-	// so this shape fresh-allocated every time.
+	// a literal-bound donor. Restricting donors to same-body literals
+	// fresh-allocates this shape every time.
 	{"cross-struct-callret-donor", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { var one: i32 = 1; var d: P = mk(3); var u: i32 = d.x + d.y; var c: P = P { x: 10 * one, y: 20 }; return c.x + c.y + u; }`, 37, "call __fn___fern_alloc_reuse"},
 	{"cross-struct-callret-donor-detector", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { var one: i32 = 1; var d: P = mk(3); var u: i32 = d.x + d.y; var c: P = P { x: 10 * one, y: 20 }; var s: i32 = c.x + c.y + u; if (s != 37) { return 99; } return __rc_underflow(); }`, 0, "call __fn___fern_alloc_reuse"},
 	// Family 2h — OWN-PARAM struct donor (#4356 divergence 3): a construction in a
@@ -112,7 +112,7 @@ var reuseDifferentialCases = []struct {
 	// Family 2d — CROSS-TYPE class pairing (#4356 divergence 2): donor A and
 	// recipient B share only the box class (same field count; boxes are
 	// slot-uniform), with per-position field KINDS swapped (scalar/array vs
-	// array/scalar) — previously rejected by the position-wise identity rule.
+	// array/scalar) — which a position-wise identity rule would reject.
 	// The reuse arm releases A's old array at A's OWN slot (donor-layout
 	// walk), then B's fields overwrite. Values + detector prove the release
 	// hit the right slot (a recipient-layout walk would dec a scalar as a

@@ -989,8 +989,8 @@ func TestX86_64ReadLineBuiltin(t *testing.T) {
 // wasm — see Defunctionalise's pairEnvOffset parameter). The
 // pair allocation itself can't elide here because the slot's
 // writer is OpCallDirect makeAdder, not a direct OpMakeClosure.
-// `var f = nested_fn; f()` previously crashed with SIGSEGV
-// because defunctionalize only detected the directly-preceded
+// `var f = nested_fn; f()` crashes with SIGSEGV if
+// defunctionalize detects only the directly-preceded
 // OpMakeClosure / OpCallDirect-returning-closure source. Going
 // through an intermediate variable (or a chain of them) kept
 // the OpCallIndirect path, which at the backend would `call r11`
@@ -1667,8 +1667,8 @@ func TestX86_64UsizeDivRem(t *testing.T) {
 
 // TestX86_64FloatToUsize — `f64 as usize` must produce a 64-bit
 // truncation on natives (usize is pointer-width = 8 bytes). The shared
-// IR cast lowering previously clamped usize's width to 32, emitting a
-// 32-bit float-trunc that lost the high bits for values exceeding 2^32.
+// IR cast lowering must not clamp usize's width to 32: a 32-bit
+// float-trunc loses the high bits for values exceeding 2^32.
 // Regression for B2 in docs/ADVERSARIAL-REVIEW-2026-06.md (shared IR, so
 // arm64 has the matching test).
 func TestX86_64FloatToUsize(t *testing.T) {
@@ -1965,13 +1965,12 @@ function main(): i32 {
 	}
 }
 
-// Slice construction + indexing was previously unavailable on
-// natives: `__slice_make` was emitted only on wasm, so any
-// program containing `a[lo:hi]` failed to link with "undefined
-// reference to __slice_make". And the natives' inline
-// `__slice_idx_N` helper was wrong on top of that — it
-// computed `header_ptr + i*N` instead of dereferencing the
-// header's data_ptr field first. This PR adds the runtime
+// Slice construction + indexing on natives. `__slice_make` has to be
+// emitted there and not only on wasm, or any program containing
+// `a[lo:hi]` fails to link with "undefined reference to
+// __slice_make". The natives' inline `__slice_idx_N` helper must also
+// dereference the header's data_ptr field before indexing, not compute
+// `header_ptr + i*N`. The runtime
 // helper and fixes the inline so all strides (u8 / i32 /
 // i64-shape) work for both reads and writes.
 func TestX86_64SliceMake(t *testing.T) {

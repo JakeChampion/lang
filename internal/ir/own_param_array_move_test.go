@@ -61,8 +61,8 @@ function main(): i32 { var b: i32[] = [1, 2, 3]; b = wr(b, 0, 9); return b.len()
 
 // Caller side of the same move: `c = wr(c, …)` gives the callee the slot's only
 // reference, so the assignment's overwrite-drop of the old `c` has nothing left
-// to release. It used to emit __fern_arr_dec there, taking the live buffer the
-// callee just returned from rc 1 to 0.
+// to release. Emitting __fern_arr_dec there takes the live buffer the callee
+// just returned from rc 1 to 0.
 //
 // Asserted on the WINDOW between the call and the store that consumes it — the
 // overwrite drop is emitted exactly there. A whole-function dec count cannot see

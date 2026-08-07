@@ -66,13 +66,13 @@ func TestSelfHostFnValueX86IR(t *testing.T) {
 		{"two-arg", `function addmul(x: i32, y: i32): i32 { return x * 10 + y; } function run2(g: (i32, i32) => i32, p: i32, q: i32): i32 { return g(p, q); } function main(): i32 { return run2(addmul, 4, 2); }`, 42},
 		// #3574: bind a bare ZERO-ARG fn name to a `fn`-typed local, then call it.
 		// `f` is a value (the fn-typed target disambiguates), not a const-call of
-		// f — previously this stored f()'s result and `g()` segfaulted.
+		// f — storing f()'s result instead makes `g()` segfault.
 		{"bind-zero-arg", `function f(): i32 { return 7; } function main(): i32 { var g: () => i32 = f; return g(); }`, 7},
 		{"bind-call-twice", `function f(): i32 { return 7; } function main(): i32 { var g: () => i32 = f; return g() + g(); }`, 14},
 		{"bind-one-arg", `function inc(x: i32): i32 { return x + 1; } function main(): i32 { var g: (i32) => i32 = inc; return g(41); }`, 42},
 		// #3574 (array half): a `(() => i32)[]` literal of bare named-fn VALUES.
 		// Each element is a fn pointer (const_func), not a const-call of f, so the
-		// indexed `fns[i]()` dispatches the pointer — previously segfaulted.
+		// indexed `fns[i]()` dispatches the pointer.
 		{"arr-bind-call", `function f(): i32 { return 7; } function main(): i32 { var fns: (() => i32)[] = [f]; return fns[0](); }`, 7},
 		{"arr-two-sum", `function f(): i32 { return 7; } function g(): i32 { return 5; } function main(): i32 { var fns: (() => i32)[] = [f, g]; return fns[0]() + fns[1](); }`, 12},
 		// loop over a bare-named-fn array, calling each through a variable index.
@@ -84,9 +84,8 @@ func TestSelfHostFnValueX86IR(t *testing.T) {
 		// return-struct name is preserved through parse-time coarsening
 		// (ParamDecl.fn_ret) and registered as a `g|P` struct_ret_fns entry in
 		// lower_func, so the call-result field read `g().x` resolves P's field
-		// index and lowers on the IR path instead of bailing to AST. Previously
-		// `() => P` discarded P at coarsening, so `g().x` couldn't resolve the
-		// field and the module routed `ast`.
+		// index and lowers on the IR path. Discarding P at coarsening leaves
+		// `g().x` unable to resolve the field, routing the module to `ast`.
 		{"param-ret-struct-field", `struct P { x: i32 } function call(g: () => P): i32 { return g().x; } function mk(): P { return P { x: 4 }; } function main(): i32 { return call(mk); }`, 4},
 		{"param-ret-struct-var-2fields", `struct P { x: i32, y: i32 } function call(g: () => P): i32 { var p = g(); return p.x + p.y; } function mk(): P { return P { x: 4, y: 5 }; } function main(): i32 { return call(mk); }`, 9},
 		{"param-ret-struct-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function call(g: () => P): i32 { return g().dbl(); } function mk(): P { return P { x: 11 }; } function main(): i32 { return call(mk); }`, 22},
@@ -95,9 +94,9 @@ func TestSelfHostFnValueX86IR(t *testing.T) {
 		// (the local sibling of the slice-A param case). lower_func registers a
 		// `f|P` struct_ret_fns entry — recovering P from the target `mk`'s own
 		// struct return — so `f().x` / `var p = f()` / `f().method()` resolve the
-		// struct result and lower on the IR path. Previously the field read on the
-		// fn-value-local call result couldn't resolve P and bailed to AST (then
-		// crashed). The unannotated form `var f = mk` (no `: () => P`) is the
+		// struct result and lower on the IR path. Without the entry, the field
+		// read on the fn-value-local call result cannot resolve P and bails to
+		// AST. The unannotated form `var f = mk` (no `: () => P`) is the
 		// separate use-directed-inference slice and stays as-is.
 		{"local-ret-struct-field", `struct P { x: i32 } function mk(): P { return P { x: 4 }; } function main(): i32 { var f: () => P = mk; return f().x; }`, 4},
 		{"local-ret-struct-var-2fields", `struct P { x: i32, y: i32 } function mk(): P { return P { x: 4, y: 5 }; } function main(): i32 { var f: () => P = mk; var p = f(); return p.x + p.y; }`, 9},
@@ -106,8 +105,8 @@ func TestSelfHostFnValueX86IR(t *testing.T) {
 		// struct-returning fn and `f` is later CALLED. infer_fnvalue_locals_module
 		// (on the shared IR funnel) binds it as a fn-value rather than const-calling
 		// mk — matching the native compiler's use-directed inference — so it rides
-		// the slice-B.1 lowering. Previously this stored mk()'s struct and `f()`
-		// called the struct box as a code pointer (crash / wrong answer). A bare
+		// the slice-B.1 lowering. Const-calling instead stores mk()'s struct, and
+		// `f()` then calls the struct box as a code pointer. A bare
 		// `var p = mk` that is NOT called stays a const-call (unchanged).
 		{"local-infer-field", `struct P { x: i32 } function mk(): P { return P { x: 7 }; } function main(): i32 { var f = mk; return f().x; }`, 7},
 		{"local-infer-var-2fields", `struct P { x: i32, y: i32 } function mk(): P { return P { x: 4, y: 5 }; } function main(): i32 { var f = mk; var p = f(); return p.x + p.y; }`, 9},

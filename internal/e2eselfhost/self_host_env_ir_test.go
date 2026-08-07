@@ -70,8 +70,8 @@ func TestSelfHostEnvIR(t *testing.T) {
 }
 
 // TestSelfHostEnvIRWasm is the wasm mirror: env(name) now lowers through the
-// wasm IR path too (previously a strbuf-class exclusion — env was pinned off
-// wasm IR). wasm_ir emits `call $__fern_env`, and wasm_ir_run pulls in the
+// wasm IR path, not held off it as a strbuf-class exclusion. wasm_ir emits
+// `call $__fern_env`, and wasm_ir_run pulls in the
 // preview1 environ_sizes_get / environ_get imports + the $__fern_env body (the
 // same env_helpers/env_func runtime the AST path uses) + the heap. wasmtime
 // supplies env vars via `--env KEY=VAL`; the three cases exercise the

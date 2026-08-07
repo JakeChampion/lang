@@ -10,8 +10,8 @@ import (
 // strReclaimIRCases pin the reclamation of fresh, non-escaping, non-aliased heap
 // STRING locals on the self-hosted stack-IR path (#2649 string RC). A self-host
 // string is a header-less 16-byte box {data@0,len@8} + a separate __fern_alloc'd
-// data buffer (on the asm backends) that previously leaked one box + buffer per
-// iteration — the native backend reclaims it, the self-host did not. The fix
+// data buffer (on the asm backends). Unreclaimed that leaks one box + buffer
+// per iteration, where the native backend frees it. The self-host
 // classifies `var s: string = <fresh producer>` (concat / .to_ascii_upper()/.to_ascii_lower()/
 // .reverse()/.repeat(n) / chr / string_from_bytes_unchecked / str_to_* / __raw_string) that
 // never escapes (body_unsafe_for) and is never reassigned as reclaimable, then

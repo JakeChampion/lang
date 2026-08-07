@@ -17,9 +17,9 @@ import (
 // while going quadratic.
 //
 // BOTH halves are pinned, and the healthy case alone is not enough: the
-// self-host lowering previously did not know the builtin at all, and a reader
-// wired up without a bump site returns 0 forever — which reads as a clean run
-// rather than as missing instrumentation. The shared case is what proves the
+// self-host lowering has to know the builtin, and a reader wired up without a
+// bump site returns 0 forever — which reads as a clean run rather than as
+// missing instrumentation. The shared case is what proves the
 // counter can fire.
 //
 // The native backend is the oracle (interp has no refcounts and copies
