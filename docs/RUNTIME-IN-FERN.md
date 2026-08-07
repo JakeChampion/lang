@@ -13,14 +13,18 @@ and the whole fs family) over the `__syscall3` / `__syscall4` /
 reaching **arm64** as well: `random_bytes` first, then `read_file` /
 `write_file` / `remove_file` / `temp_dir` / `stat` with their shared
 `__fern_io_error`, then `env`. Each is ONE source across all three native
-targets, with the syscall numbers, `AT_FDCWD` and open flag-sets coming from
-`asmcore.sysno` / `at_fdcwd` / `oflag` keyed by the target. What remains
-hand-written — and what keeps
+targets, with the syscall numbers, `AT_FDCWD`, open flag-sets and struct
+offsets coming from `asmcore.sysno` / `at_fdcwd` / `oflag` / `statoff` keyed
+by the target. The **array producers** `xs.reverse()` / `xs.concat(ys)`
+followed — the first non-syscall helpers to move, and arch-independent (one
+source, no target parameter) over the `__raw_arr_box` + `__raw_array` pair.
+What remains hand-written — and what keeps
 [#2649](https://github.com/JakeChampion/lang/issues/2649) open — is the
-core allocator / map / array runtime (`__fern_alloc`, `__fern_map_*`,
-`__fern_arr_*` mutators), the arm64 leaves whose Darwin form diverges in
-SHAPE rather than in constants (the clocks, `read_dir`,
-`remove_dir_all`), and the
+core allocator / map runtime and the array MUTATORS (`__fern_alloc`,
+`__fern_map_*`, `__fern_arr_push`, `arr_slice` — whose bounds check traps to
+`__fern_oob_abort`, and there is no Fern expression for "abort"), the arm64
+leaves whose Darwin form diverges in SHAPE rather than in constants (the
+clocks, `read_dir`, `remove_dir_all`), and the
 per-backend wasm helper bundles. This is the architecture document the end goal of
 [#2649](https://github.com/JakeChampion/lang/issues/2649) needs as more helpers
 move; see the "Slice 1 / Slice 2 (landed)" sections at the end for what the

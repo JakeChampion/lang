@@ -86,7 +86,7 @@ A reuse is the pair **(static pairing, runtime guard)**:
 A mispaired or shared D therefore always degrades to the pre-reuse behaviour;
 it is *observationally transparent* — the native differential gates run
 free-off vs free-on **and** reuse-off vs reuse-on and require byte-identical
-results (see `internal/e2e/testdata/cases/general_reuse_struct/main.fern`).
+results (see `conformance/cases/general_reuse_struct/main.fern`).
 
 ---
 

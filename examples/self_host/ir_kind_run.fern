@@ -44,7 +44,7 @@ function main(): i32 {
     }
 
     // 1b. Extension-tag sweep — the registered ids BEYOND kind_count()
-    //     (struct_copy=198 … raw_addr=223). Each must sit past
+    //     (struct_copy=198 … write_file_exec=225). Each must sit past
     //     the dense table and round-trip through kind_name, so a tag reachable
     //     from kind_id but unrendered by kind_name (the #5452 skew, which made
     //     ssa_lift's struct_copy bail read "invalid") fails here.
@@ -59,7 +59,7 @@ function main(): i32 {
         "udp_send", "read_all_stdin", "arg_at", "proc_fork", "proc_waitpid",
         "proc_exec", "arr_reverse", "arr_concat", "arr_push_shared_count",
         "arr_push_shared_bytes", "const_struct", "clz", "ctz", "popcount",
-        "map_hash_seed", "raw_addr"
+        "map_hash_seed", "raw_addr", "raw_arr_box", "write_file_exec"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;
@@ -126,7 +126,8 @@ function main(): i32 {
         ir.op_struct_make("S", 1), ir.op_call_direct("f", 1), ir.op_if(0),
         ir.op_br(1), ir.op_drop(), ir.op_return(),
         ir.op_clz(32), ir.op_ctz(64), ir.op_popcount(32),
-        ir.op_map_hash_seed(), ir.op_raw_addr()
+        ir.op_map_hash_seed(), ir.op_raw_addr(), ir.op_raw_arr_box(),
+        ir.op_write_file_exec()
     ];
     var names: string[] = [
         "const_i32", "const_str", "load_local",
@@ -137,7 +138,8 @@ function main(): i32 {
         "struct_make", "call_direct", "if",
         "br", "drop", "return",
         "clz", "ctz", "popcount",
-        "map_hash_seed", "raw_addr"
+        "map_hash_seed", "raw_addr", "raw_arr_box",
+        "write_file_exec"
     ];
     var tag_ok: i32 = 0;
     var tag_bad: i32 = 0;

@@ -42,6 +42,8 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    match (temp_dir(\"lockin\")) { Ok(_) => {}, Err(_) => { return 4; } }\n" +
 		"    match (env(\"PATH\")) { Some(_) => {}, None => {} }\n" +
 		"    match (stat(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 5; } }\n" +
+		"    var xs: i32[] = [1, 2];\n" +
+		"    if (xs.reverse().concat(xs).len() != 4) { return 6; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -55,7 +57,8 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	}
 	asm := string(out)
 
-	for _, leaf := range []string{"random_bytes", "read_file", "write_file", "remove_file", "temp_dir", "env", "stat"} {
+	for _, leaf := range []string{"random_bytes", "read_file", "write_file", "remove_file", "temp_dir", "env", "stat",
+		"arr_reverse", "arr_concat"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -77,6 +80,11 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	// env has no syscall at all: it reads __fern_envp through the __raw_environ
 	// op. The .bss slot must still be emitted — _start's save is gated on `heap`,
 	// not on `env`, so a heap program that never calls env() stores here too.
+	// arr_reverse / arr_concat allocate their fresh box through __raw_arr_box,
+	// which is the one array primitive that stays a call.
+	if !strings.Contains(asm, "bl __fern_arr_box") {
+		t.Error("__raw_arr_box did not emit the __fern_arr_box call")
+	}
 	// stat writes into the fixed .bss scratch through __raw_scratch, so both the
 	// slot and the op's address materialisation have to be there.
 	if !strings.Contains(asm, "__fern_scratch: .skip 256") {
