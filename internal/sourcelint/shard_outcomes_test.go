@@ -263,3 +263,120 @@ func mustAtoi(t *testing.T, s string) int {
 	}
 	return n
 }
+
+// DRIFT GUARD for the classifier's budget. ci-classify-vanished-shards decides
+// "exceeded its budget" vs "runner reclaim" by comparing the job's wall-clock
+// against a budget passed on the command line. If that number stops matching
+// the shard job's own timeout-minutes, the verdict silently inverts: a shard
+// that hit the wall gets reported as a reclaim (re-run it) or a reclaim gets
+// reported as an over-budget shard (rebalance it) — and picking the wrong one
+// is the whole confusion #6038 was filed about.
+func TestSelfHostWorkflowVanishedShardBudgetMatchesTimeout(t *testing.T) {
+	wf, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "test-e2e-selfhost.yml"))
+	if err != nil {
+		t.Fatalf("read workflow: %v", err)
+	}
+	src := string(wf)
+
+	// The run-id argument is a `${{ … }}` expression with spaces inside it, so
+	// match to the end of the line and take the trailing budget.
+	classifyRe := regexp.MustCompile(`(?m)ci-classify-vanished-shards[^\n]*?(\d+)\s*$`)
+	cm := classifyRe.FindStringSubmatch(src)
+	if cm == nil {
+		t.Fatal("workflow does not invoke ci-classify-vanished-shards with a budget")
+	}
+	budget := mustAtoi(t, cm[1])
+
+	// The shard job is the one whose name is built from the matrix; take the
+	// timeout-minutes that follows its `name:`/`runs-on:` pair.
+	shardJobRe := regexp.MustCompile(`name: test-e2e-selfhost-\$\{\{ matrix\.host \}\}-shard\$\{\{ matrix\.shard \}\}\s*\n\s*runs-on:[^\n]*\n\s*timeout-minutes:\s*(\d+)`)
+	sm := shardJobRe.FindStringSubmatch(src)
+	if sm == nil {
+		t.Fatal("could not find the shard job's timeout-minutes — did the job header change?")
+	}
+	timeout := mustAtoi(t, sm[1])
+
+	if budget != timeout {
+		t.Errorf("ci-classify-vanished-shards is given a %dm budget but the shard job's timeout-minutes is %d — "+
+			"the over-budget/reclaim verdict would be wrong", budget, timeout)
+	}
+}
+
+// The classifier is advisory: it must never turn a diagnosis into a build
+// failure of its own. An unreachable API (no GH_TOKEN, bogus run id) exits 0
+// and says why.
+func TestClassifyVanishedShardsIsAdvisory(t *testing.T) {
+	p, err := filepath.Abs(filepath.Join("..", "..", "scripts", "ci-classify-vanished-shards"))
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("classifier script missing: %v", err)
+	}
+	for _, args := range [][]string{
+		{"0", "20"},           // a run id that cannot resolve
+		{"123", "notanumber"}, // a budget that is not minutes
+	} {
+		cmd := exec.Command("bash", append([]string{p}, args...)...)
+		// No GH_TOKEN and no network expectation: gh either errors or is absent,
+		// and either way the script must not fail the build.
+		cmd.Env = append(os.Environ(), "GH_TOKEN=", "GITHUB_TOKEN=")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Errorf("args %v: classifier must exit 0 even when it cannot diagnose; got %v: %s", args, err, out)
+		}
+	}
+}
+
+// The three verdicts, against fixed durations. This is the whole value of the
+// classifier — a wrong verdict sends you to rebalance a partition when the
+// runner was reclaimed, or to re-run a shard that will hit the same wall — so
+// it is tested against a saved jobs payload rather than live CI.
+func TestClassifyVanishedShardsVerdicts(t *testing.T) {
+	script, err := filepath.Abs(filepath.Join("..", "..", "scripts", "ci-classify-vanished-shards"))
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
+	// 20m17s (over a 20m budget), 4m10s cancelled (reclaimed), 3m0s failure.
+	const jobs = `{"jobs":[
+	  {"name":"test-e2e-selfhost-x86_64-shard2","conclusion":"cancelled",
+	   "started_at":"2026-08-07T15:53:53Z","completed_at":"2026-08-07T16:14:10Z"},
+	  {"name":"test-e2e-selfhost-x86_64-shard7","conclusion":"cancelled",
+	   "started_at":"2026-08-07T15:53:53Z","completed_at":"2026-08-07T15:58:03Z"},
+	  {"name":"test-e2e-selfhost-aarch64-shard1","conclusion":"failure",
+	   "started_at":"2026-08-07T15:53:53Z","completed_at":"2026-08-07T15:56:53Z"},
+	  {"name":"test-e2e-selfhost-x86_64-shard0","conclusion":"success",
+	   "started_at":"2026-08-07T15:53:53Z","completed_at":"2026-08-07T15:54:53Z"},
+	  {"name":"cli-driver-tests-x86_64","conclusion":"failure",
+	   "started_at":"2026-08-07T15:53:53Z","completed_at":"2026-08-07T16:14:10Z"}
+	]}`
+	path := filepath.Join(t.TempDir(), "jobs.json")
+	if err := os.WriteFile(path, []byte(jobs), 0o644); err != nil {
+		t.Fatalf("write jobs: %v", err)
+	}
+	cmd := exec.Command("bash", script, "12345", "20")
+	cmd.Env = append(os.Environ(), "FERN_CI_JOBS_JSON="+path)
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("classifier must exit 0; got %v: %s", err, raw)
+	}
+	out := string(raw)
+
+	for _, want := range []string{
+		"shard2: cancelled after 20m17s — EXCEEDED ITS 20m BUDGET",
+		"shard7: cancelled after 4m10s, well inside the budget — RUNNER RECLAIM",
+		"aarch64-shard1: failure after 3m0s — died on its own terms",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing verdict %q in:\n%s", want, out)
+		}
+	}
+	// A shard that succeeded is not a suspect, and a non-shard job is out of
+	// scope for the shard-name prefix — reporting either would send the reader
+	// after the wrong job.
+	for _, unwanted := range []string{"shard0", "cli-driver-tests"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("unexpectedly reported %q in:\n%s", unwanted, out)
+		}
+	}
+}
