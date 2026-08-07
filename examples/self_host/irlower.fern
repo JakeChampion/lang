@@ -44784,13 +44784,10 @@ function lift_call_arg(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
     return LiftExpr { expr: e, acc: acc };
 }
 
-// lift_call_callee lifts a call's CALLEE. It is lift_call_arg except for one
-// shape: the zero-param zero-arg lambda of a value-position `if`/`match`/
-// comprehension desugar. That IIFE is compiler-generated and its call is the
-// only thing that ever reaches it, so hoisting it to a top-level `__lam_N`
-// buys nothing — while doing so INSIDE another IIFE's body splits one desugar
-// across the IR and AST paths and costs coverage the whole form still had.
-// Its body is still walked through the ExprCall arm below, so a genuine user
+// lift_call_callee lifts a call's CALLEE, hoisting it as lift_call_arg does
+// except for one shape: a value-position desugar's IIFE nested inside another
+// IIFE's body. Hoisting that one splits a single desugar across the IR and AST
+// paths, and the outer form then refuses. Its body is still walked, so a user
 // lambda nested in the desugar is lifted either way.
 function lift_call_callee(c: parser.ExprCall, acc: LiftAcc, gfns: string[]): LiftExpr {
     if (is_iife_callee(c) && lifting_inside_iife(gfns)) {
@@ -44802,18 +44799,10 @@ function lift_call_callee(c: parser.ExprCall, acc: LiftAcc, gfns: string[]): Lif
     return lift_call_arg(c.callee, acc, gfns);
 }
 
-// IIFE_MARK rides in `gfns` to say "this walk is already inside a value-position
-// desugar's IIFE body". `gfns` is only ever consulted by lambda_has_no_captures,
-// as `index_of_str(gfns, <a used identifier>)`, so a `$`-prefixed name cannot
-// change that answer — the same collision guarantee `$lamret$` and `$wc$` rely
-// on — and it is threaded through every lift function already, which a new
-// parameter would not be.
-//
-// Why the context matters: hoisting an inner IIFE to a top-level `__lam_N` is a
-// gain at the outside, but inside ANOTHER IIFE's body it splits one desugar
-// across the IR and AST paths and loses coverage the whole form still had.
-// Measured on the 512-seed corpus: hoisting everywhere is +14/-2, hoisting
-// nowhere is +21/-16, and hoisting only outside is +14/-0.
+// `$in_iife$` rides in `gfns` to carry "already inside a desugar's IIFE body"
+// down the walk. `gfns` is only ever read as `index_of_str(gfns, <a used
+// identifier>)` by lambda_has_no_captures, so a `$`-prefixed name cannot change
+// that answer — the collision guarantee `$lamret$` and `$wc$` also rely on.
 function lifting_inside_iife(gfns: string[]): boolean { return util.index_of_str(gfns, "$in_iife$") >= 0; }
 
 function mark_inside_iife(gfns: string[]): string[] {

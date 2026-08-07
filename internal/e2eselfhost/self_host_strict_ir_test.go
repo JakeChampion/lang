@@ -837,23 +837,12 @@ function main(): i32 {
 }
 `, "__lam_0", "did not lower: `return` of ident `c`"},
 	// The OTHER half of func_ineligible_reason: the body lowered fine and the
-	// bail is a symbol that does not resolve. It is a different debugging task
-	// — look at the name, not the body — and the bare function name never said
-	// which of the two had happened. This is the #6256 cluster, the largest one
-	// left.
+	// bail is a symbol that does not resolve — a different debugging task from a
+	// refused body, which the bare function name never distinguished.
 	//
-	// The branch lambdas must CAPTURE, and that is the whole ingredient. This
-	// fixture used to be an array mixing a fn-valued ident with a non-capturing
-	// inline lambda; #6413 taught the lift to walk a value-position desugar's
-	// IIFE body, so a NO-capture lambda in an `if` branch now hoists to a
-	// top-level `__lam_N` and that program lowers — the fixture asserted a gap
-	// that had closed, exactly as `lifted-lambda-return` did for #6292.
-	//
-	// A capturing lambda cannot hoist (it needs its env), so it stays an
-	// AST-only closure, hoist_escaping_closure names it `<fn>$clo`, and the
-	// symbol never resolves. That makes this the precise complement of what
-	// #6413 fixed rather than an arbitrary replacement, and it is the shape the
-	// remaining 50 `$clo` seeds reduce to.
+	// The branch lambdas must CAPTURE. A no-capture one hoists to a top-level
+	// `__lam_N` and the module lowers; a capturing one cannot, so it stays an
+	// AST-only closure and `<fn>$clo` never resolves.
 	{"unresolved-function-value", `function main(): i32 {
     var n: i32 = 7i32;
     var v2: (i32) => i32 = (if (true) { ((x: i32) => (x + n)) } else { ((x: i32) => 41i32) });
