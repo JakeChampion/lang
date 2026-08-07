@@ -19791,6 +19791,14 @@ function emit_enum_deep_reinit_store(se: LowerState, slot: i32, enum_name: strin
 // the sweeps withhold __struct_drop_<T> and the reinit/rebind stores fall
 // back to emit_arr_store's shallow dec. See the marker computation in
 // reclaimable_names_of for the full soundness argument (#3425 residual).
+// The lookup is by slot_name and NOT reclaim_slot_name, which looks like an
+// oversight and is not one (#6127). Every consumer emits while the name is still
+// live — the four reinit/rebind stores run inside the declaring block, and the
+// exit sweep's scoped path withholds the deep drop outright — so a "!retired!"
+// name never reaches this predicate, and reading through the prefix was measured
+// to change nothing. It was tried as the explanation for #6375's gen1 segfault
+// (the theory: a NODEEP-marked block-scoped local silently losing its guard) and
+// DISPROVEN — with the marker visible, granting the deep drop still segfaults.
 function slot_nodeep(s: LowerState, i: i32): boolean {
     if (i < 0 || i >= s.locals.len()) { return false; }
     return util.index_of_str(s.reclaimable_names, "NODEEP:" + s.locals[i].slot_name) >= 0;
@@ -20803,6 +20811,9 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             // free the box. Order matters: read the fields before freeing the box.
             // A BLOCK-SCOPED slot (credit reached only through the retired name) takes
             // the BOX-ONLY form — the #3456 shallow contract, as for a "NODEEP:" slot.
+            // Making slot_nodeep read through the "!retired!" prefix (below) was tried
+            // as the explanation for #6375's segfault and is NOT it: with the marker
+            // visible, granting the deep drop here still segfaults gen1.
             if (!scoped_credit) { st = emit_struct_field_drops(st, j); }
             st = st.emit(ir.op_load_local(j));
             st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
