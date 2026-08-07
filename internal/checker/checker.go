@@ -7196,6 +7196,42 @@ func (c *checker) methodsOn(typeName string) []string {
 	return names
 }
 
+// methodsFor narrows methodsOn to the methods this particular receiver can
+// actually call. A collection namespace is shared across element types —
+// `Array` holds `sum` (i32[] only), `join` (string[] only) and `len`
+// (anything) side by side — so the unfiltered list advertises, to an
+// `i32[]` receiver, most of an API it does not have. Following one of those
+// names turns an E043 into an E038, which is a worse place to be than the
+// original typo: the reader now believes the method exists.
+//
+// A method survives when its receiver parameter accepts this receiver.
+// Anything the check cannot see through — no recorded signature, no
+// parameters, a generic receiver — is kept, so the filter only ever removes
+// a name it can prove inapplicable.
+func (c *checker) methodsFor(typeName string, recv ast.Type) []string {
+	all := c.methodsOn(typeName)
+	if recv == nil {
+		return all
+	}
+	out := all[:0:0]
+	for _, name := range all {
+		mangled, ok := c.info.Methods[typeName+"."+name]
+		if !ok {
+			out = append(out, name)
+			continue
+		}
+		sig, ok := c.info.FuncSigs[mangled]
+		if !ok || len(sig.Params) == 0 || containsParamType(sig.Params[0]) {
+			out = append(out, name)
+			continue
+		}
+		if c.argAssignable(sig.Params[0], recv, false) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // unknownMethodMessage builds the E043 text for a method call whose
 // receiver is a non-struct with a method namespace of its own — an
 // array, a map, a slice. The bare "field access on non-struct value of
@@ -7208,7 +7244,7 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 		return fmt.Sprintf("%s — the in-place spelling was removed; use %q, which returns the updated %s (assign the result back)",
 			msg, repl, typeName)
 	}
-	if s := diag.Suggest(method, c.methodsOn(typeName)); s != "" {
+	if s := diag.Suggest(method, c.methodsFor(typeName, recv)); s != "" {
 		return fmt.Sprintf("%s — did you mean %q?", msg, s)
 	}
 	// A scalar or string receiver keeps most of its methods in a stdlib
@@ -7218,7 +7254,7 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 	if mod := scalarModuleFor(recv); mod != "" {
 		return fmt.Sprintf("%s — if it comes from %s, add `import %q`", msg, mod, mod)
 	}
-	if names := c.methodsOn(typeName); len(names) > 0 {
+	if names := c.methodsFor(typeName, recv); len(names) > 0 {
 		return fmt.Sprintf("%s (it has: %s)", msg, strings.Join(names, ", "))
 	}
 	return msg
