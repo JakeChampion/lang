@@ -1,0 +1,59 @@
+// A narrowing cast narrows the RESULT; it does not retype the operands.
+//
+// `(i % 256) as u8` is the canonical way to write a byte wrap, and it was
+// rejected — E047, "literal 256 does not fit in u8" — whenever the other
+// operand was UNSETTLED. A loop variable is unsettled; a declared `i32` is
+// not, so `var x: i32 = …; (x % 256) as u8` was accepted all along. Whether
+// an expression type-checked depended on whether its neighbour happened to be
+// declared, which is why this reads as arbitrary rather than as a rule.
+//
+// The values matter as much as the acceptance: a cast that silently computed
+// in u8 would wrap at every intermediate step and give different answers, so
+// this case pins the arithmetic (i32 throughout, narrowed once at the end)
+// rather than only the fact that it compiles.
+//
+// A bare out-of-range literal is still an error and is not exercised here —
+// `300 as u8` is a typo rather than arithmetic, and the checker test covers
+// it. What is exercised is every place a narrowing cast can appear over a
+// non-literal: a loop variable, a parameter, a nested expression, and both
+// sub-i32 destinations a value can reach.
+
+import "std/i32";
+import "std/string";
+import "std/i64";
+
+function wrap_param(v: i32): u8 { return (v % 256) as u8; }
+
+function main(): i32 {
+    // The shape that was rejected: a loop variable under a narrowing cast.
+    var out: u8[] = [];
+    for i in 0..8 {
+        out = out.append(((i * 100) % 256) as u8);
+    }
+    var s: string = "";
+    for i in 0..out.len() { s = s + (out[i] as i32).to_string() + " "; }
+    print(s);
+
+    // Multiplication overflows a byte at every step but the first, so a cast
+    // that narrowed early would give a different answer here than at the end.
+    var m: string = "";
+    for i in 0..6 { m = m + ((i * 300) as u8 as i32).to_string() + " "; }
+    print(m);
+
+    // The declared-local spelling, which always worked — kept so the two
+    // cannot drift apart again.
+    var x: i32 = 300;
+    print((x % 256).to_string());
+    print(((x % 256) as u8 as i32).to_string());
+
+    // Through a parameter, and through a nested expression.
+    print((wrap_param(700) as i32).to_string());
+    print(((((3 * 200) + 1) % 256) as u8 as i32).to_string());
+
+    // Widening is unaffected: the literal must settle at the target width or
+    // it truncates on the way to the IR.
+    var big: i64 = 4611686018427387904 as i64;
+    print(big.to_string());
+
+    return 0;
+}

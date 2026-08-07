@@ -322,8 +322,8 @@ pub struct Import { path: string, is_reexport: boolean, reexport_names: string[]
 // raw-memory intrinsics, #5998), #5992 recorded "to_lower is not IR-eligible on
 // wasm" from a wasm_run `ast` verdict (it is eligible — the emitted module
 // called an undefined helper), and a third was made while fixing the second.
-// CLAUDE.md documents the trap in prose; a trap that careful readers walk into
-// repeatedly needs to announce itself at the point of use.
+// docs/TEST-GATES.md documents the trap in prose; a trap that careful readers
+// walk into repeatedly needs to announce itself at the point of use.
 //
 // Deliberately a WARNING, not an error, and deliberately not touching the exit
 // code: dozens of existing tests feed these drivers programs whose imports are
@@ -2233,37 +2233,21 @@ function if_expr_rt(e: Expr): string {
                 _ => { return "i32"; }
             }
         },
-        // An ARITHMETIC / BITWISE branch takes its width from its operands, so
-        // read them rather than falling through to "i32". That fall-through lost
-        // the width whenever the arm computed its value instead of naming it:
-        // `match (x /? y) { Some(v) => v, None => (3i64 * 5i64) }` labelled the
-        // IIFE i32 and the i64 `return` then bailed the module, while the same
-        // arm written as the bare literal `15i64` was fine. Magnitude never
-        // mattered — `2147483967i64` alone lowered; `2147483967i64 * 2i64` did not.
+        // ARITHMETIC over the branch value. The comment above says "the other
+        // branch kinds were already classified" — a binary was not, so
+        // `if (c) { 107u64 / 42u64 } else { … }` labelled its IIFE i32 while the
+        // body computed u64. Being non-empty, that tag also stops
+        // infer_ret_types_module revisiting the lambda, so nothing downstream
+        // can recover the width and the module bails ("did not lower: `return`
+        // of binary `/`").
+        //
+        // A comparison yields a bool whatever its operands are; anything else
+        // takes wider_rt of the two sides, the same combination parse_if_chain
+        // already applies ACROSS branches, so a width appearing on either side
+        // survives.
         ExprBinary(b) => {
-            // A COMPARISON / LOGICAL operator yields a boolean whatever its
-            // operands are, so their width says nothing about the branch's.
-            if (b.op == "||" || b.op == "&&" || b.op == "==" || b.op == "!="
-                    || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") { return "bool"; }
-            // A CHECKED operator yields an Option, not the operand type — the
-            // classifier has no tag for that, so leave it on the default.
-            if (b.op == "*?" || b.op == "/?" || b.op == "%?" || b.op == "+?"
-                    || b.op == "-?" || b.op == "<<?" || b.op == ">>?") { return "i32"; }
-            // A SHIFT is typed by the value being shifted; the count is an
-            // independent operand and may legitimately be narrower.
-            if (b.op == "<<" || b.op == ">>" || b.op == "<<|") { return if_expr_rt(b.left); }
+            if (irt_is_cmp(b.op)) { return "bool"; }
             return wider_rt(if_expr_rt(b.left), if_expr_rt(b.right));
-        },
-        // Unary shares the same width loss: `-x` / `~x` are as wide as their
-        // operand, and `!x` is a boolean regardless of it.
-        ExprUnary(u) => {
-            // An `as <type>` cast (op "as_<type>") is DECISIVE on its TARGET —
-            // reading the operand instead inverts the one construct whose whole
-            // job is to change the width, and `((163i64 >> 32i64) as i32) & 233i32`
-            // then reads i64 and bails the module it was previously fine in.
-            if (u.op.len() > 3 && u.op[0:3] == "as_") { return u.op[3:u.op.len()] + ""; }
-            if (u.op == "!") { return "bool"; }
-            return if_expr_rt(u.operand);
         },
         _ => { return "i32"; }
     }
@@ -4005,9 +3989,9 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
         // other, so it takes a trailing comma. Without this the `)` and the
         // `in` are each one token further right than the fixed lookahead
         // expects: neither is consumed, `in` parses as an ordinary identifier
-        // (it is not a lexer keyword), and the module bails with
-        // `did not lower: for k,v`. The native parser learned this in #6374,
-        // which shipped the conformance fixture the self-host then failed.
+        // (it is not a lexer keyword), and the module bails. The native parser
+        // learned this in #6358, which shipped the conformance fixture the
+        // self-host then failed on all three legs.
         if (p.peek_punct() == ",") { p = p.advance(); }
         if (p.peek_punct() == ")") { p = p.advance(); }
         if (p.peek_ident() == "in") { p = p.advance(); }
@@ -6038,7 +6022,7 @@ pub function builtin_function_names(): string[] {
         "stdin", "stdout", "stderr", "read_line", "read_int", "read_all_stdin",
         "open_reader", "open_writer", "open_appender",
         // filesystem
-        "read_file", "write_file", "read_dir", "remove_dir_all", "remove_file",
+        "read_file", "write_file", "write_file_exec", "read_dir", "remove_dir_all", "remove_file",
         "stat", "temp_dir",
         // clocks + randomness + sleep + reactor readiness
         "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "random_bytes",

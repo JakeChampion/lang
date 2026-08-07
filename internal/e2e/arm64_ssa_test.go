@@ -867,6 +867,25 @@ function main(): i32 {
 			want: 98, // 'b'
 		},
 		{
+			// std/string's single-byte search routes through __memchr, so this
+			// target needs the helper emitted (docs/ATLAS-PLATFORM-PLAN.md §3.4).
+			// It did not have one, and the adoption surfaced that as a LINK error
+			// — `branch to undefined label "fn___fern_memchr"` — via the split
+			// cases below, which reach it only incidentally. This case names the
+			// dependency directly so the next person sees what broke, and covers
+			// the three answers the helper can give: a hit, a miss, and a hit at
+			// a nonzero start. 4 + 1 + 6 = 11.
+			name: "string_memchr_paths",
+			src: `import "std/string";
+function main(): i32 {
+    var hit = "hello world".index_of("o");
+    var miss = "hello".index_of("z");
+    var later = "hello world".index_of("w");
+    return hit + (miss + 2) + later;
+}`,
+			want: 11,
+		},
+		{
 			// string[] from split, whose scope-exit drop uses __fern_drop_arr_str.
 			// "a,b,c".split(",") has 3 parts -> len 3.
 			name: "string_split_len",

@@ -1,0 +1,37 @@
+// spec: IS-02
+// spec: IS-03
+//
+// A shift count is masked to the operand width — `& 31` at 32 bits and
+// `& 63` at 64 — rather than being undefined or yielding zero. C leaves
+// an over-wide count undefined and the hardware answers differently per
+// ISA, so this is a place a language either states the rule or exports
+// the disagreement.
+//
+// The second claim rides along: `>>` propagates the sign for a signed
+// operand and fills with zeros for an unsigned one, which is the
+// difference between -4 and a very large positive number here.
+//
+// The helpers are spelled `shift_left` rather than `shl` because the
+// x86-64 backend emits a Fern function's name as its assembly label
+// unmangled, so a function named after a mnemonic produces a `.s` that
+// GNU `as` rejects (`invalid use of operator "shl"`). The in-process
+// assembler that `-target x86-64` uses by default accepts it; only the
+// gcc fallback path breaks.
+import "std/i32";
+import "std/i64";
+import "std/u32";
+
+function shift_left(a: i32, c: i32): i32 { return a << c; }
+function shift_right(a: i32, c: i32): i32 { return a >> c; }
+function shift_right_unsigned(a: u32, c: u32): u32 { return a >> c; }
+function shift_left_wide(a: i64, c: i64): i64 { return a << c; }
+
+function main(): i32 {
+    print(shift_left(1, 32).to_string());
+    print(shift_left(1, 33).to_string());
+    print(shift_right(0 - 8, 33).to_string());
+    print(shift_right(0 - 8, 1).to_string());
+    print(shift_right_unsigned(4294967288u32, 2u32).to_string());
+    print(shift_left_wide(1i64, 64i64).to_string());
+    return 0;
+}

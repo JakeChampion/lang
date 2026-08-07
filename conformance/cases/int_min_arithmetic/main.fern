@@ -1,0 +1,68 @@
+// spec: IS-06
+// spec: IS-07
+//
+// The arithmetic corners around the smallest i32, where implementations of
+// the same language routinely disagree.
+//
+// `INT_MIN / -1` is the sharpest: the true quotient 2147483648 is not
+// representable, so x86's `idiv` raises #DE, wasm's `i32.div_s` traps by
+// specification, and ARM's `sdiv` quietly yields INT_MIN. A language that
+// leaves this to the hardware has three different behaviours on four
+// backends. Fern answers INT_MIN everywhere, and `INT_MIN % -1` is 0 — this
+// case is what says so.
+//
+// It could not be written until the smallest i32 had a literal spelling; the
+// corpus reached this value only as `0 - 2147483647 - 1`, which is a
+// different expression that constant-folds down a different path.
+
+import "std/i32";
+
+function main(): i32 {
+    var mn: i32 = -2147483648;
+    var mx: i32 = 2147483647;
+
+    // The corner. Not a trap, not a fault, not a different answer per target.
+    print((mn / -1).to_string());
+    print((mn % -1).to_string());
+    print((mn / 1).to_string());
+    print((mn % 1).to_string());
+
+    // Truncation toward zero, with every sign combination.
+    var xs: i32[] = [7, -7, 7, -7];
+    var ys: i32[] = [3, 3, -3, -3];
+    for i in 0..xs.len() {
+        print(xs[i].to_string() + "/" + ys[i].to_string() + "="
+            + (xs[i] / ys[i]).to_string() + " %=" + (xs[i] % ys[i]).to_string());
+    }
+
+    // Two's-complement wrap at both ends, and the identity that makes the
+    // smallest value special: it is its own negation.
+    print((mx + 1).to_string());
+    print((mn - 1).to_string());
+    print((mx * 2).to_string());
+    print((0 - mn).to_string());
+    if (0 - mn != mn) { return 1; }
+
+    // Shifts. `>>` is arithmetic (sign-extending) and `<<` wraps into the
+    // sign bit rather than saturating.
+    print((-8 >> 1).to_string());
+    print((-1 >> 31).to_string());
+    print((1 << 31).to_string());
+    print((-1 << 1).to_string());
+
+    // Bitwise ops on a negative value read its two's-complement pattern.
+    print((-1 & 255).to_string());
+    print((-8 | 7).to_string());
+    print((-1 ^ 255).to_string());
+
+    // The smallest value survives a round trip through a wider type. The
+    // narrowing cast is bound before the comparison rather than written
+    // inline: the self-host IR path does not lower a cast INSIDE a `!=`
+    // (#6394), and this case is about the arithmetic, not about where a
+    // cast may appear.
+    var w: i64 = mn as i64;
+    var back: i32 = w as i32;
+    if (back != mn) { return 2; }
+    if (w != -2147483648) { return 3; }
+    return 0;
+}

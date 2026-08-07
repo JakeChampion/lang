@@ -29,9 +29,7 @@ import (
 // builtin to be callable. Builtins NOT in this table (print, eprint,
 // env, now_unix_ms, math, map/array/string runtime, …) are ungated —
 // every target provides them. The async/readiness set (poll,
-// timer_fd, wasm_* pollables) is deliberately ungated for now: that
-// surface is actively being reworked (see CLAUDE.md's wasm-IR
-// exclusions note) and gating it would fight in-flight work.
+// timer_fd, wasm_* pollables) is ungated by default, not by decision.
 var gatedBuiltins = map[string]string{
 	// Process spawning.
 	"subprocess": "subprocess",
@@ -69,16 +67,17 @@ var gatedBuiltins = map[string]string{
 	"udp_send":     "tcp",
 
 	// Filesystem.
-	"read_file":      "fs",
-	"write_file":     "fs",
-	"open_reader":    "fs",
-	"open_writer":    "fs",
-	"open_appender":  "fs",
-	"stat":           "fs",
-	"read_dir":       "fs",
-	"remove_file":    "fs",
-	"remove_dir_all": "fs",
-	"temp_dir":       "fs",
+	"read_file":       "fs",
+	"write_file":      "fs",
+	"write_file_exec": "fs",
+	"open_reader":     "fs",
+	"open_writer":     "fs",
+	"open_appender":   "fs",
+	"stat":            "fs",
+	"read_dir":        "fs",
+	"remove_file":     "fs",
+	"remove_dir_all":  "fs",
+	"temp_dir":        "fs",
 }
 
 // GatedBuiltin reports the capability gating the named builtin, if any.

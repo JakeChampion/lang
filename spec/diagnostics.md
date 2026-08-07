@@ -25,7 +25,7 @@ run against it. So a diagnostic rule with only Go-side coverage is a
 rule that stops being checked at exactly the moment it starts mattering
 most.
 
-**54 of 74** codes are pinned by a conformance case. The table
+**56 of 74** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -94,7 +94,7 @@ language does not have. It is deleted.
 | `E047` | Integer literal out of range | `diag_e047` |
 | `E048` | Field is immutable after construction | `compound_field_assign` |
 | `E049` | Reference-typed captured variable is read-only | `diag_e049` |
-| `E050` | Use of an owned parameter after it was consumed | — |
+| `E050` | Use of an owned parameter after it was consumed | `diag_e050` |
 | `E051` | Argument to an owned parameter must be an owned value | `diag_e051` |
 | `E052` | missing return in a value-returning function | `diag_e052` |
 | `E053` | `fip` / `fbip` function violates its shape rules | `diag_e053` |
@@ -111,7 +111,7 @@ language does not have. It is deleted.
 | `E064` | unknown type | — |
 | `E065` | returning a `str` view of a function-local string | `diag_e065` |
 | `E066` | target does not provide a required capability | — |
-| `E067` | a `@must_consume` value was not consumed on every path | — |
+| `E067` | a `@must_consume` value was not consumed on every path | `diag_e067` |
 | `E068` | `fip` / `fbip` function fails IR allocation verification | — |
 | `E069` | a 32-bit value was reinterpreted as a pointer-shaped type | — |
 | `E070` | a dependency package reaches a capability it was not granted | — |

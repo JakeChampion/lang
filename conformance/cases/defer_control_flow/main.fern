@@ -1,0 +1,82 @@
+// `defer`, a labelled `continue`, `let … else`, the `|>` pipe and a trait
+// impl each had exactly one conformance case, and no case combined them.
+// Interaction is where these bite, so this one runs them together.
+//
+// The contract being pinned:
+//   - defers run LIFO at FUNCTION exit, not at scope or loop exit, so a
+//     `defer` inside a loop body still fires once per execution of the
+//     statement but only when the function returns;
+//   - a defer fires on an early return;
+//   - a labelled `continue` skips the rest of the body without disturbing
+//     any pending defer;
+//   - `let … else` binds for the rest of the block and its else diverges;
+//   - `|>` feeds its left-hand value in as the FIRST argument.
+
+import "std/i32";
+
+trait Describe {
+    function describe(self: Self): string;
+}
+
+struct Tag { n: i32 }
+
+impl Describe for Tag {
+    function describe(self: Self): string { return "tag" + self.n.to_string(); }
+}
+
+function indent_by(body: string, pad: string): string { return pad + body; }
+
+// Returns None for a non-positive input, so `let … else` has a refutable
+// binding to work with.
+function checked(n: i32): Option[i32] {
+    if (n <= 0) { return None; }
+    return Some(n * 2);
+}
+
+// Defers are LIFO and fire at function exit, after the body.
+//
+// NOTE: this deliberately does NOT put a `defer` inside the loop body.
+// The interpreter registers one deferred call per EXECUTION of the
+// statement (four, here) and all three compiled backends fire it ONCE,
+// because IR lowering gives each defer statement a single boolean
+// "active" flag. That divergence is filed separately; pinning either
+// answer here would pick a winner this case is not entitled to pick.
+function run(): i32 {
+    defer print("outer-last");
+    var i: i32 = 0;
+    var seen: i32 = 0;
+    sweep: while (i < 4) {
+        i = i + 1;
+        if (i == 2) { continue sweep; }
+        seen = seen + i;
+    }
+    print("body-end seen=" + seen.to_string());
+    return seen;
+}
+
+function early(x: i32): i32 {
+    defer print("early-cleanup");
+    if (x > 0) { return 10; }
+    return 20;
+}
+
+function main(): i32 {
+    // 1 + 3 + 4 = 8; i == 2 is skipped by the labelled continue.
+    var seen: i32 = run();
+    if (seen != 8) { return 1; }
+
+    if (early(1) != 10) { return 2; }
+    if (early(0) != 20) { return 3; }
+
+    let Some(v) = checked(21) else { return 4; };
+    if (v != 42) { return 5; }
+
+    let Some(_) = checked(0) else {
+        // The else branch must be reached for a None.
+        var t: Tag = Tag { n: 7 };
+        var line: string = t.describe() |> indent_by(">> ");
+        if (line != ">> tag7") { return 6; }
+        return 0;
+    };
+    return 7;
+}

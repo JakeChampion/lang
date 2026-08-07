@@ -1,0 +1,36 @@
+// spec: AL-02
+//
+// The other half, and it is not decoration: without it, AL-01 is
+// satisfied by a program that allocates nothing at all, and a
+// conformance case that passes for the wrong reason is worse than
+// none.
+//
+// Here the loop RETAINS what it allocates — each string is appended
+// into an array that outlives the loop — so the fresh-byte count has
+// to scale with the round count. A backend on which this reads "flat"
+// is not reclaiming well; it is failing to allocate, and AL-01's case
+// would be measuring nothing on it.
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+function grow(n: i32): string[] {
+    var out: string[] = [];
+    for i in 0..n {
+        out = out.append("abcdefgh" + i.to_string());
+    }
+    return out;
+}
+
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var a: string[] = grow(50);
+    var b1: i64 = __heap_bump_bytes();
+    var b: string[] = grow(100);
+    var b2: i64 = __heap_bump_bytes();
+
+    print(a.len().to_string());
+    print(b.len().to_string());
+    if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
+    return 0;
+}

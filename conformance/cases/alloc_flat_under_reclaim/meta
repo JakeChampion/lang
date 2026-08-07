@@ -1,0 +1,10 @@
+waiver: implementation-gap
+issue: 6423
+reason: the wasm backend never reclaims the short-lived string this
+  case allocates — its fresh-byte count is exactly 32 per round,
+  linear in the loop count (1600 / 3200 / 6400 for 50 / 100 / 200
+  rounds), where both natives are flat after a bounded warm-up. The
+  case should widen to include wasm when #6423 lands. interp is out
+  for a different reason: it has no bump allocator, so
+  __heap_bump_bytes() is 0 there and the shape is unobservable — see
+  docs/ALLOCATION-OBSERVABLE.md.

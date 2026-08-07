@@ -2,16 +2,23 @@
 
 Status: policy doc.
 
-Indexing an array or slice out of range — `xs[i]` or `xs[i] = v` where
-`i < 0` or `i >= len` — **aborts the program** on every backend. It
-never reads or writes past the end and never returns a garbage value.
+Indexing an array or slice out of range — `xs[i]` or `xs.with(i, v)`
+where `i < 0` or `i >= len` — **aborts the program** on every backend.
+It never reads or writes past the end and never returns a garbage
+value.
 
 ```
 var xs: i32[] = [10, 20, 30];
-xs[5]        // aborts: index 5 out of range [0, 3)
-xs[0 - 1]    // aborts: negative index
-xs[7] = 9    // aborts: out-of-range write
+xs[5]                // aborts: index 5 out of range [0, 3)
+xs[0 - 1]            // aborts: negative index
+xs = xs.with(7, 9)   // aborts: out-of-range write
 ```
+
+The write is spelled `.with(i, v)` rather than `xs[i] = v`: a subscript
+is read-only after construction, so the assignment form never reaches
+the bounds check — the checker rejects it first with `E056`. This
+document showed `xs[7] = 9` until `spec/semantics.md` required an
+example that runs.
 
 This is the same "no silent corruption" stance as the rest of the
 language. Reading uninitialised adjacent memory (what an unchecked
@@ -52,7 +59,13 @@ index: natives exit 134 (the IR routes construction through the
 reports `slice [lo:hi] out of range for length N` and exits
 non-zero. The self-host backends check inside their copying
 helpers (`__fern_arr_slice` / `$__fern_substr`) and the inline
-`str_slice` view emit, branching to the shared `__fern_oob_abort`.
+`str_slice` view emit. The inline emits branch to the shared
+`__fern_oob_abort`; the native `__fern_arr_slice` is a Fern helper
+now (#2649, `asmcore.rt_src_arr_slice`) and cannot name an asm
+symbol, so it issues the same `exit(134)` through the `__syscall3`
+sub-floor instead. Same status, same four conditions — spelled with
+explicit `< 0` arms because Fern's `i32` compares are signed where
+the hand-asm's were unsigned.
 
 ## Cost
 

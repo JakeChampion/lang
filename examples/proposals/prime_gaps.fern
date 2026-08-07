@@ -1,0 +1,388 @@
+// examples/proposals/prime_gaps.fern — proposal turn, drawn line 83:
+// "A prime sieve that reports the count of primes below N and the largest
+// gap."
+//
+// Three independent sieves, because a count is exactly the kind of answer
+// that looks right when it is wrong. A byte sieve, a bit-packed sieve (32
+// numbers per i32 word), and a segmented sieve that never holds more than a
+// window at a time — plus trial division for small N, which owes nothing to
+// any of them. Every test that asks for π(N) or a gap asks all four and
+// requires agreement.
+//
+// The published values are the outer oracle: π(10^4) = 1229, and the largest
+// gap below 10^4 is 36, between 9551 and 9587. Three sieves agreeing on a
+// wrong number is possible; agreeing on a wrong number that matches the
+// literature is not.
+//
+// N stops at 10^4 because of the interpreter, not the sieve. `a = a.with(i,
+// v)` — the canonical in-place idiom, which the compiled backends turn into
+// an O(1) refcount-1 write — copies the whole array on every call in the
+// interpreter, so an ordinary sieve is quadratic there. Measured: N=10^4
+// takes 3.3 s interpreted and 3 ms compiled, and each doubling of N
+// quadruples the interpreted time.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from
+// std/test, so the file is its own test suite.
+
+import "std/test";
+import "std/i32";
+
+// ------------------------------------------------------------ byte sieve
+
+// Eratosthenes over a boolean array. `is_prime[i]` for i in 0..=n.
+function sieve_bytes(n: i32): boolean[] {
+    var s: boolean[] = [];
+    for i in 0..(n + 1) { s = s.append(true); }
+    if (n >= 0) { s = s.with(0, false); }
+    if (n >= 1) { s = s.with(1, false); }
+    var i: i32 = 2;
+    // `i * i <= n` rather than `i <= sqrt(n)`: no float, and it stops at
+    // exactly the right place. i*i cannot overflow for the n this app uses.
+    while (i * i <= n) {
+        if (s[i]) {
+            var j: i32 = i * i;
+            while (j <= n) { s = s.with(j, false); j = j + i; }
+        }
+        i = i + 1;
+    }
+    return s;
+}
+
+// ------------------------------------------------------------- bit sieve
+
+// The same sieve, 32 numbers to an i32 word. A separate implementation of
+// the same idea: the shift-and-mask arithmetic is where this one can go
+// wrong, and it is exactly where the byte sieve has nothing to get wrong.
+function bit_get(w: i32[], i: i32): boolean {
+    return ((w[i / 32] >> (i % 32)) & 1) == 1;
+}
+
+function bit_clear(w: i32[], i: i32): i32[] {
+    var word: i32 = i / 32;
+    return w.with(word, w[word] & (0 - 1 - (1 << (i % 32))));
+}
+
+function sieve_bits(n: i32): i32[] {
+    var words: i32 = n / 32 + 1;
+    var w: i32[] = [];
+    for i in 0..words { w = w.append(0 - 1); }   // all bits set
+    if (n >= 0) { w = bit_clear(w, 0); }
+    if (n >= 1) { w = bit_clear(w, 1); }
+    var i: i32 = 2;
+    while (i * i <= n) {
+        if (bit_get(w, i)) {
+            var j: i32 = i * i;
+            while (j <= n) { w = bit_clear(w, j); j = j + i; }
+        }
+        i = i + 1;
+    }
+    return w;
+}
+
+// --------------------------------------------------------- segmented sieve
+
+// Sieve [lo, hi] using the base primes below sqrt(hi), holding only the
+// window. The classic way to get this wrong is the start offset: the first
+// multiple of p at or above lo, which must not be p itself when p is inside
+// the window.
+function segment(lo: i32, hi: i32, base: i32[]): boolean[] {
+    var seg: boolean[] = [];
+    for i in 0..(hi - lo + 1) { seg = seg.append(true); }
+    for k in 0..base.len() {
+        var p: i32 = base[k];
+        if (p * p > hi) { break; }
+        // First multiple of p at or above lo, never below p*p.
+        var start: i32 = (lo / p) * p;
+        if (start < lo) { start = start + p; }
+        if (start < p * p) { start = p * p; }
+        var j: i32 = start;
+        while (j <= hi) {
+            seg = seg.with(j - lo, false);
+            j = j + p;
+        }
+    }
+    // 0 and 1 are not prime wherever the window happens to start.
+    if (lo <= 0 && hi >= 0) { seg = seg.with(0 - lo, false); }
+    if (lo <= 1 && hi >= 1) { seg = seg.with(1 - lo, false); }
+    return seg;
+}
+
+function primes_up_to(n: i32): i32[] {
+    var s: boolean[] = sieve_bytes(n);
+    var out: i32[] = [];
+    for i in 0..s.len() { if (s[i]) { out = out.append(i); } }
+    return out;
+}
+
+// Count via segments of `window` numbers each — never materialising a
+// table of size n.
+function count_segmented(n: i32, window: i32): i32 {
+    if (n < 2) { return 0; }
+    var root: i32 = 1;
+    while ((root + 1) * (root + 1) <= n) { root = root + 1; }
+    var base: i32[] = primes_up_to(root);
+    var total: i32 = 0;
+    var lo: i32 = 0;
+    while (lo <= n) {
+        var hi: i32 = lo + window - 1;
+        if (hi > n) { hi = n; }
+        var seg: boolean[] = segment(lo, hi, base);
+        for i in 0..seg.len() { if (seg[i]) { total = total + 1; } }
+        lo = hi + 1;
+    }
+    return total;
+}
+
+// ------------------------------------------------------- trial division
+
+// Owes nothing to any sieve. Only usable for small n, which is exactly
+// where a sieve's off-by-one at the boundary lives.
+function is_prime_trial(v: i32): boolean {
+    if (v < 2) { return false; }
+    var d: i32 = 2;
+    while (d * d <= v) {
+        if (v % d == 0) { return false; }
+        d = d + 1;
+    }
+    return true;
+}
+
+function count_trial(n: i32): i32 {
+    var c: i32 = 0;
+    for v in 0..(n + 1) { if (is_prime_trial(v)) { c = c + 1; } }
+    return c;
+}
+
+// -------------------------------------------------------------- reports
+
+struct Report { count: i32, max_gap: i32, gap_lo: i32, gap_hi: i32 }
+
+// The largest gap between CONSECUTIVE primes up to n, and where it is. The
+// first occurrence wins, so the answer is a single well-defined pair rather
+// than "some pair with that distance".
+function report(n: i32): Report {
+    var ps: i32[] = primes_up_to(n);
+    if (ps.len() < 2) {
+        return Report { count: ps.len(), max_gap: 0, gap_lo: 0, gap_hi: 0 };
+    }
+    var best: i32 = 0;
+    var lo: i32 = 0;
+    var hi: i32 = 0;
+    for i in 1..ps.len() {
+        var g: i32 = ps[i] - ps[i - 1];
+        if (g > best) { best = g; lo = ps[i - 1]; hi = ps[i]; }
+    }
+    return Report { count: ps.len(), max_gap: best, gap_lo: lo, gap_hi: hi };
+}
+
+function count_bits(n: i32): i32 {
+    var w: i32[] = sieve_bits(n);
+    var c: i32 = 0;
+    for i in 0..(n + 1) { if (bit_get(w, i)) { c = c + 1; } }
+    return c;
+}
+
+// ---------------------------------------------------------------- tests
+
+// THE test. Four routes to π(N) — byte sieve, bit sieve, segmented sieve,
+// and trial division — must agree, and must agree with the published
+// values. Three sieves sharing a wrong answer is possible; sharing one that
+// also matches the literature is not.
+function test_every_route_gives_the_same_count(): test.TestOutcome {
+    var ns: i32[] = [0, 1, 2, 3, 10, 30, 100, 541, 1000];
+    var expected: i32[] = [0, 0, 1, 2, 4, 10, 25, 100, 168];
+    for i in 0..ns.len() {
+        var n: i32 = ns[i];
+        var by_bytes: i32 = report(n).count;
+        if (by_bytes != expected[i]) {
+            return test.fail("byte sieve: pi(" + n.to_string() + ") = "
+                + by_bytes.to_string() + ", wanted " + expected[i].to_string());
+        }
+        var by_bits: i32 = count_bits(n);
+        if (by_bits != expected[i]) {
+            return test.fail("bit sieve: pi(" + n.to_string() + ") = "
+                + by_bits.to_string() + ", wanted " + expected[i].to_string());
+        }
+        var by_trial: i32 = count_trial(n);
+        if (by_trial != expected[i]) {
+            return test.fail("trial division: pi(" + n.to_string() + ") = "
+                + by_trial.to_string() + ", wanted " + expected[i].to_string());
+        }
+        // Several window sizes, so a segment boundary lands in a different
+        // place each time — the start-offset bug hides at one width and
+        // shows at another.
+        var windows: i32[] = [1, 2, 7, 30, 64, 1000];
+        for k in 0..windows.len() {
+            var by_seg: i32 = count_segmented(n, windows[k]);
+            if (by_seg != expected[i]) {
+                return test.fail("segmented (window " + windows[k].to_string()
+                    + "): pi(" + n.to_string() + ") = " + by_seg.to_string()
+                    + ", wanted " + expected[i].to_string());
+            }
+        }
+    }
+    return test.pass();
+}
+
+// The published largest gaps, with the pair they fall between — a count
+// alone would not notice a sieve that is wrong only in the sparse tail.
+function test_largest_gaps_match_the_published_values(): test.TestOutcome {
+    var ns: i32[] = [100, 1000, 10000];
+    var gaps: i32[] = [8, 20, 36];
+    var los: i32[] = [89, 887, 9551];
+    var his: i32[] = [97, 907, 9587];
+    for i in 0..ns.len() {
+        var r: Report = report(ns[i]);
+        if (r.max_gap != gaps[i]) {
+            return test.fail("largest gap below " + ns[i].to_string() + " is "
+                + r.max_gap.to_string() + ", wanted " + gaps[i].to_string());
+        }
+        if (r.gap_lo != los[i] || r.gap_hi != his[i]) {
+            return test.fail("the gap below " + ns[i].to_string() + " is between "
+                + r.gap_lo.to_string() + " and " + r.gap_hi.to_string()
+                + ", wanted " + los[i].to_string() + " and " + his[i].to_string());
+        }
+        // The pair really is a gap: both ends prime, nothing between.
+        if (!is_prime_trial(r.gap_lo) || !is_prime_trial(r.gap_hi)) {
+            return test.fail("a gap endpoint is not prime");
+        }
+        for v in (r.gap_lo + 1)..r.gap_hi {
+            if (is_prime_trial(v)) {
+                return test.fail("there is a prime at " + v.to_string()
+                    + " inside the reported gap");
+            }
+        }
+    }
+    return test.pass();
+}
+
+// The two sieves must agree on WHICH numbers are prime, not merely how many
+// — a count can be right with two errors that cancel.
+function test_the_sieves_agree_number_by_number(): test.TestOutcome {
+    var n: i32 = 2000;
+    var s: boolean[] = sieve_bytes(n);
+    var w: i32[] = sieve_bits(n);
+    for v in 0..(n + 1) {
+        var a: boolean = s[v];
+        var b: boolean = bit_get(w, v);
+        var c: boolean = is_prime_trial(v);
+        if (a != c) {
+            return test.fail("byte sieve disagrees with trial division at "
+                + v.to_string());
+        }
+        if (b != c) {
+            return test.fail("bit sieve disagrees with trial division at "
+                + v.to_string());
+        }
+    }
+    return test.pass();
+}
+
+// Bertrand's postulate: for every n >= 1 there is a prime p with
+// n < p <= 2n. A theorem the sieve must satisfy, checked over a range,
+// with no table of answers to copy from.
+function test_bertrands_postulate_holds(): test.TestOutcome {
+    var s: boolean[] = sieve_bytes(2000);
+    for n in 1..1000 {
+        var found: boolean = false;
+        var p: i32 = n + 1;
+        while (p <= 2 * n && !found) {
+            if (s[p]) { found = true; }
+            p = p + 1;
+        }
+        if (!found) {
+            return test.fail("no prime between " + n.to_string() + " and "
+                + (2 * n).to_string());
+        }
+    }
+    return test.pass();
+}
+
+// The gap can never exceed what the count allows: with `c` primes spread
+// over [2, n], some consecutive pair is at most that far apart, so a gap
+// larger than the whole interval is impossible and a gap of 0 or 1 is
+// impossible once past 3 (every gap after 2->3 is even).
+function test_the_gap_is_consistent_with_the_count(): test.TestOutcome {
+    var ns: i32[] = [10, 100, 1000, 5000];
+    for i in 0..ns.len() {
+        var r: Report = report(ns[i]);
+        if (r.max_gap > ns[i]) {
+            return test.fail("gap " + r.max_gap.to_string() + " exceeds n = "
+                + ns[i].to_string());
+        }
+        if (r.gap_hi > ns[i]) {
+            return test.fail("the gap ends past n");
+        }
+        if (ns[i] >= 5 && r.max_gap % 2 != 0) {
+            return test.fail("largest gap below " + ns[i].to_string()
+                + " is odd (" + r.max_gap.to_string()
+                + ") — past 3 every gap is even");
+        }
+    }
+    return test.pass();
+}
+
+// A sieve is a pure function of its bound, and a bigger sieve must agree
+// with a smaller one everywhere the smaller one reaches. That rules out a
+// table whose contents depend on how far it was asked to go.
+function test_a_bigger_sieve_agrees_with_a_smaller_one(): test.TestOutcome {
+    var small: boolean[] = sieve_bytes(200);
+    var large: boolean[] = sieve_bytes(3000);
+    for v in 0..small.len() {
+        if (small[v] != large[v]) {
+            return test.fail("the two sieves disagree at " + v.to_string());
+        }
+    }
+    var again: boolean[] = sieve_bytes(200);
+    for v in 0..small.len() {
+        if (small[v] != again[v]) { return test.fail("sieving twice differed"); }
+    }
+    return test.pass();
+}
+
+// Boundary bounds: a sieve asked for n must include n itself when n is
+// prime, and stop there when it is not.
+function test_the_bound_is_inclusive(): test.TestOutcome {
+    var primes: i32[] = [2, 3, 5, 97, 101, 997];
+    for i in 0..primes.len() {
+        var p: i32 = primes[i];
+        var ps: i32[] = primes_up_to(p);
+        if (ps.len() == 0 || ps[ps.len() - 1] != p) {
+            return test.fail("sieve to " + p.to_string() + " excluded "
+                + p.to_string() + " itself");
+        }
+        var below: i32[] = primes_up_to(p - 1);
+        if (below.len() != ps.len() - 1) {
+            return test.fail("sieve to " + (p - 1).to_string()
+                + " did not drop exactly one prime");
+        }
+    }
+    return test.pass();
+}
+
+// ------------------------------------------------------------------ app
+
+function main(): i32 {
+    eprint("prime_gaps — three sieves, one answer");
+    var ns: i32[] = [100, 1000, 10000];
+    for i in 0..ns.len() {
+        var r: Report = report(ns[i]);
+        eprint("  N=" + ns[i].to_string()
+            + "  primes=" + r.count.to_string()
+            + "  largest gap=" + r.max_gap.to_string()
+            + " between " + r.gap_lo.to_string() + " and " + r.gap_hi.to_string());
+    }
+    eprint("  (segmented, window 1000, N=10000: "
+        + count_segmented(10000, 1000).to_string() + " primes)");
+    eprint("  (bit-packed, N=10000: " + count_bits(10000).to_string() + " primes)");
+
+    var r: test.TestRunner = test.test_new("prime_gaps");
+    r = r.it("every route gives the same count", test_every_route_gives_the_same_count);
+    r = r.it("largest gaps match the published values", test_largest_gaps_match_the_published_values);
+    r = r.it("the sieves agree number by number", test_the_sieves_agree_number_by_number);
+    r = r.it("Bertrand's postulate holds", test_bertrands_postulate_holds);
+    r = r.it("the gap is consistent with the count", test_the_gap_is_consistent_with_the_count);
+    r = r.it("a bigger sieve agrees with a smaller one", test_a_bigger_sieve_agrees_with_a_smaller_one);
+    r = r.it("the bound is inclusive", test_the_bound_is_inclusive);
+    return r.finish();
+}

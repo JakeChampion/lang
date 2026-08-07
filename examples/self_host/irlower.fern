@@ -7918,6 +7918,19 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
             return ba.emit(ir.op_popcount(bw));
         }
     }
+    // __memchr(s, byte, from) → i32 (ATLAS-PLATFORM-PLAN §3). Three operands
+    // in source order, then one op — the native backends substitute a vector
+    // kernel for it, which is the whole reason it is an op and not a Fern
+    // function.
+    if (cid.name == "__memchr" && c.args.len() == 3) {
+        var mc0: LowerState = lower_expr(c.args[0], s);
+        if (!mc0.ok) { return mc0; }
+        var mc1: LowerState = lower_expr(c.args[1], mc0);
+        if (!mc1.ok) { return mc1; }
+        var mc2: LowerState = lower_expr(c.args[2], mc1);
+        if (!mc2.ok) { return mc2; }
+        return mc2.emit(ir.op_memchr());
+    }
     // __arr_push_shared_count(): appends that copied a buffer
     // which still had spare capacity — the rc==1 cliff. Same
     // allocation-free introspection shape as heap_bump_bytes;
@@ -8176,6 +8189,15 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         wfs = lower_expr(c.args[1], wfs);
         if (!wfs.ok) { return wfs; }
         return wfs.emit(ir.op_write_file());
+    }
+    // write_file_exec(path, contents) — write_file with the executable bit, so
+    // a compiler emitting a finished binary can produce a runnable one (#6133).
+    if (cid.name == "write_file_exec" && c.args.len() == 2) {
+        var wfx: LowerState = lower_expr(c.args[0], s);
+        if (!wfx.ok) { return wfx; }
+        wfx = lower_expr(c.args[1], wfx);
+        if (!wfx.ok) { return wfx; }
+        return wfx.emit(ir.op_write_file_exec());
     }
     // Built-in `remove_dir_all(path)` — recursively rm -rf the named
     // directory tree, push a fresh Result[(), IoError] box (Ok(()) on
@@ -43516,6 +43538,7 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     // still wins. read_file → Result[string, IoError].
     if (name == "read_file") { return "Result[string, IoError]"; }
     if (name == "write_file") { return "Result[void, IoError]"; }
+    if (name == "write_file_exec") { return "Result[void, IoError]"; }
     if (name == "remove_dir_all") { return "Result[void, IoError]"; }
     if (name == "remove_file") { return "Result[void, IoError]"; }
     if (name == "temp_dir") { return "Result[string, IoError]"; }

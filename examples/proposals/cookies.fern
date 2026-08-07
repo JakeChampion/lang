@@ -1,0 +1,422 @@
+// examples/proposals/cookies.fern — proposal turn, drawn line 38:
+// "A parser for `key=value; key=value` cookie strings with whitespace tolerance."
+//
+// This is a `Cookie:` REQUEST header parser — the client-to-server direction,
+// which is a flat `name=value` list — not `Set-Cookie:`, which carries exactly
+// one pair plus attributes and is a different grammar. RFC 6265 §4.2.1 gives
+// the wire form as pairs separated by "; ", and §5.4 tells a server to be
+// liberal about the surrounding whitespace. So the interesting content here is
+// almost entirely about what "liberal" is allowed to mean, and where it has to
+// stop.
+//
+// Three decisions are worth stating up front, because each is a place a
+// plausible parser goes wrong and the tests below are aimed at them:
+//
+//   1. Whitespace is stripped around the NAME and around the VALUE, but never
+//      inside a value. `a = 1 ; b = 2` and `a=1;b=2` are the same cookies;
+//      `a=hello world` keeps its space. A trim applied one layer too deep
+//      silently corrupts values that legitimately contain spaces.
+//   2. Only the FIRST `=` separates. `a=b=c` is the name `a` with value `b=c`,
+//      because base64 and JWT values contain `=` as padding all the time. A
+//      split-on-every-`=` parser truncates exactly the values people care most
+//      about not corrupting.
+//   3. A DQUOTE-wrapped value keeps its quotes as part of the value. RFC 6265
+//      defines cookie-value as optionally DQUOTE-wrapped but does NOT define
+//      the quotes as an escaping mechanism — there is no unescaping to do, and
+//      a parser that strips them cannot round-trip a value whose quotes are
+//      significant. Whitespace INSIDE the quotes is preserved either way.
+//
+// The load-bearing test is not a table of expected outputs. It is a sweep: for
+// each canonical input, whitespace is inserted at every position the grammar
+// tolerates it — before and after each name, each value, and each separator,
+// with both spaces and tabs — and every one of those variants must parse to
+// exactly the canonical result. That is a generated property over ~2 000
+// spellings, and it is what a hand-written "handles whitespace" case cannot be.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+struct Cookie { name: string, value: string }
+
+// ------------------------------------------------------------- parse
+
+// A pair is `name=value`. Everything before the FIRST `=` is the name;
+// everything after it — including any further `=` — is the value.
+//
+// A segment with no `=` at all is dropped rather than stored with an empty
+// value. RFC 6265 §5.4 step 2 says a `Cookie` header pair without `=` is
+// ignored, and the distinction matters: `a` and `a=` must not be the same
+// thing, because the second is a real cookie whose value happens to be empty.
+function parse_pair(seg: string): Option[Cookie] {
+    var at: i32 = seg.index_of("=");
+    if (at < 0) { return None; }
+    var name: string = seg.take(at).trim().to_owned();
+    var value: string = seg.drop(at + 1).trim().to_owned();
+    if (name.len() == 0) { return None; }
+    return Some(Cookie { name: name, value: value });
+}
+
+// Split on ';', parse each segment, drop the ones that are not pairs.
+//
+// Duplicate names are kept, both of them, in order. RFC 6265 permits a header
+// to carry several cookies of the same name (they differ by Domain/Path, which
+// the request header does not transmit) and explicitly does not say which
+// wins. Silently collapsing them here would destroy information the caller
+// needs; `first` and `all` below let the caller pick a policy.
+function parse(header: string): Cookie[] {
+    var out: Cookie[] = [];
+    var segs: string[] = header.split(";");
+    var i: i32 = 0;
+    while (i < segs.len()) {
+        match (parse_pair(segs[i])) {
+            Some(c) => { out = out.append(c); },
+            None => {},
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// First occurrence wins — the convention a caller that wants one value should
+// get, matching the order the client sent (most specific path first, per
+// RFC 6265 §5.4 step 2's sort).
+function first(cs: Cookie[], name: string): Option[string] {
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        if (cs[i].name == name) { return Some(cs[i].value); }
+        i = i + 1;
+    }
+    return None;
+}
+
+function all(cs: Cookie[], name: string): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        if (cs[i].name == name) { out = out.append(cs[i].value); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// The canonical spelling: `name=value; name=value`, one space after each
+// separator, no other whitespace. This is what RFC 6265 §4.2.1 shows on the
+// wire, and it is the fixed point the round-trip test uses.
+function serialize(cs: Cookie[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        if (i > 0) { out = out + "; "; }
+        out = out + cs[i].name + "=" + cs[i].value;
+        i = i + 1;
+    }
+    return out;
+}
+
+// ------------------------------------------------------------ helpers
+
+// A stable rendering used for comparing parse results. `\x1f` and `\x1e` are
+// unit/record separators — control bytes that cannot appear in a cookie
+// name and would have to be deliberately smuggled into a value — so a
+// difference in this string is a real difference in the parse and never an
+// artefact of the delimiter colliding with the data.
+function render(cs: Cookie[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        out = out + cs[i].name + "\x1f" + cs[i].value + "\x1e";
+        i = i + 1;
+    }
+    return out;
+}
+
+// Every way of padding one segment boundary. Index 0 is "no padding", so a
+// sweep that includes it also covers the canonical spelling.
+function pads(): string[] {
+    return ["", " ", "\t", "  ", " \t ", "\t\t"];
+}
+
+// ------------------------------------------------------------- tests
+
+// The sweep. For a canonical `a=1;b=2` input, whitespace is inserted at each
+// of the five tolerated positions per pair — before the name, between name and
+// `=`, between `=` and value, after the value, and around the `;` — and every
+// combination must parse to the canonical result.
+//
+// 6 paddings at 4 independent positions is 1 296 spellings per input, over
+// three inputs. Enumerating them by hand is not possible; asserting them is.
+function test_whitespace_is_tolerated_everywhere(): test.TestOutcome {
+    var inputs: string[] = ["a=1;b=2", "sid=abc;theme=dark", "x=1;y=2;z=3"];
+    var p: string[] = pads();
+    var n: i32 = 0;
+    var ii: i32 = 0;
+    while (ii < inputs.len()) {
+        var want: string = render(parse(inputs[ii]));
+        var segs: string[] = inputs[ii].split(";");
+
+        var a: i32 = 0;
+        while (a < p.len()) {
+            var b: i32 = 0;
+            while (b < p.len()) {
+                var c: i32 = 0;
+                while (c < p.len()) {
+                    var d: i32 = 0;
+                    while (d < p.len()) {
+                        // Rebuild the header with padding at all four spots of
+                        // every segment.
+                        var built: string = "";
+                        var s: i32 = 0;
+                        while (s < segs.len()) {
+                            if (s > 0) { built = built + ";"; }
+                            var at: i32 = segs[s].index_of("=");
+                            var nm: string = segs[s].take(at).to_owned();
+                            var vl: string = segs[s].drop(at + 1).to_owned();
+                            built = built + p[a] + nm + p[b] + "=" + p[c] + vl + p[d];
+                            s = s + 1;
+                        }
+                        var got: string = render(parse(built));
+                        if (got != want) {
+                            return test.fail("padding changed the parse of \""
+                                + inputs[ii] + "\": \"" + built + "\" gave a different result");
+                        }
+                        n = n + 1;
+                        d = d + 1;
+                    }
+                    c = c + 1;
+                }
+                b = b + 1;
+            }
+            a = a + 1;
+        }
+        ii = ii + 1;
+    }
+    if (n < 1000) {
+        return test.fail("sweep only covered " + n.to_string() + " spellings");
+    }
+    return test.pass();
+}
+
+// The counterpart to the sweep, and the reason the trim cannot simply be
+// applied to the whole segment: whitespace INSIDE a value is content.
+function test_whitespace_inside_a_value_is_preserved(): test.TestOutcome {
+    var cs: Cookie[] = parse("greeting=hello world; pad=a  b");
+    match (first(cs, "greeting")) {
+        Some(v) => {
+            if (v != "hello world") {
+                return test.fail("inner space lost: \"" + v + "\"");
+            }
+        },
+        None => { return test.fail("greeting missing"); },
+    }
+    match (first(cs, "pad")) {
+        Some(v) => {
+            if (v != "a  b") { return test.fail("inner run collapsed: \"" + v + "\""); }
+        },
+        None => { return test.fail("pad missing"); },
+    }
+    // ... and it survives surrounding padding, which is the whole distinction.
+    var padded: Cookie[] = parse("  greeting  =  hello world  ;  pad = a  b  ");
+    if (render(padded) != render(cs)) {
+        return test.fail("padding disturbed an inner-space value: \""
+            + render(padded) + "\" vs \"" + render(cs) + "\"");
+    }
+    return test.pass();
+}
+
+// Only the first `=` separates. This is the base64 / JWT case.
+function test_only_the_first_equals_separates(): test.TestOutcome {
+    var cases: string[] = ["t=a=b", "t=YWJjZA==", "t====", "t=a=b=c=d"];
+    var i: i32 = 0;
+    while (i < cases.len()) {
+        var want: string = cases[i].drop(2).to_owned();
+        match (first(parse(cases[i]), "t")) {
+            Some(v) => {
+                if (v != want) {
+                    return test.fail("\"" + cases[i] + "\" gave value \"" + v
+                        + "\", want \"" + want + "\"");
+                }
+            },
+            None => { return test.fail("\"" + cases[i] + "\" parsed to nothing"); },
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// An empty value is a cookie; a segment with no `=` is not. Conflating them is
+// the most common shortcut, and it makes `has(name)` unanswerable.
+function test_empty_value_differs_from_no_equals(): test.TestOutcome {
+    var withEq: Cookie[] = parse("a=");
+    if (withEq.len() != 1) {
+        return test.fail("\"a=\" produced " + withEq.len().to_string() + " cookies, want 1");
+    }
+    match (first(withEq, "a")) {
+        Some(v) => { if (v != "") { return test.fail("\"a=\" value not empty: \"" + v + "\""); } },
+        None => { return test.fail("\"a=\" lost its name"); },
+    }
+    var noEq: Cookie[] = parse("a");
+    if (noEq.len() != 0) {
+        return test.fail("\"a\" should be ignored, produced " + noEq.len().to_string());
+    }
+    // A nameless segment is also not a cookie, even though it has an `=`.
+    if (parse("=v").len() != 0) { return test.fail("\"=v\" should be ignored"); }
+    if (parse("  =  ").len() != 0) { return test.fail("\"  =  \" should be ignored"); }
+    return test.pass();
+}
+
+// Empty and malformed segments are skipped without disturbing their
+// neighbours — the property that makes a trailing `;` harmless.
+function test_empty_segments_are_skipped(): test.TestOutcome {
+    var want: string = render(parse("a=1;b=2"));
+    var variants: string[] = ["a=1;;b=2", "a=1;b=2;", ";a=1;b=2", "a=1; ;b=2",
+        "a=1;;;b=2;;", "a=1;junk;b=2", "  ;a=1;  ;b=2;  "];
+    var i: i32 = 0;
+    while (i < variants.len()) {
+        var got: string = render(parse(variants[i]));
+        if (got != want) {
+            return test.fail("\"" + variants[i] + "\" did not parse as \"a=1;b=2\"");
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Duplicates are kept in order, and the two accessors implement the two
+// policies a caller might want.
+function test_duplicates_are_kept_in_order(): test.TestOutcome {
+    var cs: Cookie[] = parse("id=first; other=x; id=second; id=third");
+    if (cs.len() != 4) {
+        return test.fail("wanted 4 cookies, got " + cs.len().to_string());
+    }
+    match (first(cs, "id")) {
+        Some(v) => { if (v != "first") { return test.fail("first(id) = \"" + v + "\""); } },
+        None => { return test.fail("id missing"); },
+    }
+    var every: string[] = all(cs, "id");
+    if (every.len() != 3) {
+        return test.fail("all(id) returned " + every.len().to_string() + ", want 3");
+    }
+    if (every[0] != "first" || every[1] != "second" || every[2] != "third") {
+        return test.fail("all(id) out of order: " + every[0] + "," + every[1] + "," + every[2]);
+    }
+    return test.pass();
+}
+
+// Quotes are part of the value, not syntax. Whitespace inside them is content
+// like any other whitespace inside a value.
+function test_quotes_are_part_of_the_value(): test.TestOutcome {
+    match (first(parse("a=\"hello world\""), "a")) {
+        Some(v) => {
+            if (v != "\"hello world\"") {
+                return test.fail("quotes not preserved: \"" + v + "\"");
+            }
+        },
+        None => { return test.fail("quoted cookie lost"); },
+    }
+    // An unbalanced quote is not an error and not a delimiter — it is a byte.
+    match (first(parse("a=\"oops"), "a")) {
+        Some(v) => { if (v != "\"oops") { return test.fail("unbalanced quote mangled: \"" + v + "\""); } },
+        None => { return test.fail("unbalanced-quote cookie lost"); },
+    }
+    return test.pass();
+}
+
+// serialize -> parse is the identity on any parse result. This is what makes
+// the canonical form canonical, and it is checked on the outputs of the other
+// tests' inputs rather than on hand-built values.
+function test_round_trip_through_the_canonical_form(): test.TestOutcome {
+    var inputs: string[] = ["a=1;b=2", "  a = 1 ;; b = 2  ", "t=YWJjZA==",
+        "greeting=hello world", "id=x;id=y", "a=", "solo=1"];
+    var i: i32 = 0;
+    while (i < inputs.len()) {
+        var once: Cookie[] = parse(inputs[i]);
+        var twice: Cookie[] = parse(serialize(once));
+        if (render(once) != render(twice)) {
+            return test.fail("round trip changed \"" + inputs[i] + "\": \""
+                + render(once) + "\" -> \"" + render(twice) + "\"");
+        }
+        // And it is a FIXED point, not merely stable in one step.
+        if (serialize(once) != serialize(twice)) {
+            return test.fail("serialize is not idempotent for \"" + inputs[i] + "\"");
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Values are byte-transparent apart from the two bytes the grammar spends:
+// `;` separates and `=` (the first one) divides. Everything else — including
+// bytes above 127 — must survive.
+function test_values_are_byte_transparent(): test.TestOutcome {
+    var vals: string[] = ["a,b", "a b", "{\"j\":1}", "%20", "café", "a/b+c", "\t"];
+    var i: i32 = 0;
+    while (i < vals.len()) {
+        // A value that is only a tab trims to empty — that is the documented
+        // rule, not an exception to it, so the expectation is computed the
+        // same way the parser would.
+        var want: string = vals[i].trim().to_owned();
+        match (first(parse("k=" + vals[i]), "k")) {
+            Some(v) => {
+                if (v != want) {
+                    return test.fail("value \"" + vals[i] + "\" came back as \"" + v + "\"");
+                }
+            },
+            None => { return test.fail("value \"" + vals[i] + "\" lost the cookie"); },
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Order is preserved. A caller relying on RFC 6265 §5.4's most-specific-first
+// ordering gets nothing from a parser that reorders.
+function test_order_is_preserved(): test.TestOutcome {
+    var cs: Cookie[] = parse("z=1; m=2; a=3");
+    if (cs.len() != 3) { return test.fail("wanted 3, got " + cs.len().to_string()); }
+    if (cs[0].name != "z" || cs[1].name != "m" || cs[2].name != "a") {
+        return test.fail("order changed: " + cs[0].name + "," + cs[1].name + "," + cs[2].name);
+    }
+    return test.pass();
+}
+
+function test_empty_and_degenerate_headers(): test.TestOutcome {
+    if (parse("").len() != 0) { return test.fail("empty header produced cookies"); }
+    if (parse("   ").len() != 0) { return test.fail("blank header produced cookies"); }
+    if (parse(";;;").len() != 0) { return test.fail("separators-only produced cookies"); }
+    if (serialize(parse("")) != "") { return test.fail("empty did not serialize to empty"); }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("cookies — RFC 6265 Cookie-header parsing with whitespace tolerance");
+
+    var raw: string = "  sid = abc123 ;; theme=dark ; token=YWJjZA== ; note=hello world ;";
+    var cs: Cookie[] = parse(raw);
+    eprint("input:      " + raw);
+    eprint("parsed:     " + cs.len().to_string() + " cookies");
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        eprint("  " + cs[i].name + " => \"" + cs[i].value + "\"");
+        i = i + 1;
+    }
+    eprint("canonical:  " + serialize(cs));
+    eprint("token:      " + match (first(cs, "token")) { Some(v) => v, None => "(none)" });
+    eprint("missing:    " + match (first(cs, "nope")) { Some(v) => v, None => "(none)" });
+
+    var r: test.TestRunner = test.test_new("cookies");
+    r = r.it("whitespace is tolerated everywhere", test_whitespace_is_tolerated_everywhere);
+    r = r.it("whitespace inside a value is preserved", test_whitespace_inside_a_value_is_preserved);
+    r = r.it("only the first equals separates", test_only_the_first_equals_separates);
+    r = r.it("an empty value differs from no equals", test_empty_value_differs_from_no_equals);
+    r = r.it("empty segments are skipped", test_empty_segments_are_skipped);
+    r = r.it("duplicates are kept in order", test_duplicates_are_kept_in_order);
+    r = r.it("quotes are part of the value", test_quotes_are_part_of_the_value);
+    r = r.it("round trip through the canonical form", test_round_trip_through_the_canonical_form);
+    r = r.it("values are byte transparent", test_values_are_byte_transparent);
+    r = r.it("order is preserved", test_order_is_preserved);
+    r = r.it("empty and degenerate headers", test_empty_and_degenerate_headers);
+    return r.finish();
+}

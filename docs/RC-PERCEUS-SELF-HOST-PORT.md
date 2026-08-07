@@ -4992,3 +4992,98 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   unrelated to columns — it drowned the first grow-probe draft; slice 4's
   counted-reads design is where lookup temps get owners). Refs #5335 #4353
   #4451.
+
+- 2026-08-07: **State of goal 2, and the traps this area sets.** Consolidated
+  here out of `CLAUDE.md`, which had accumulated it inline.
+
+  **Reuse is substantially complete.** Constructor reuse is implemented and
+  enabled in the self-host — self-overwrite, cross-local, enum-donor,
+  consuming-match, tuple reuse, nested-struct fields — and exercised by the
+  byte-identical self-compile. See `docs/SELFHOST-PERCEUS-REUSE.md`'s correction
+  header. The remaining REUSE deltas are marginal: struct reuse with enum / Map
+  / closure / tuple pointer fields (§3 Delta B there).
+
+  **"Marginal" describes reuse only — the RECLAIM side is where goal 2 is not
+  done.** #6127 measured seven unbounded leaks the self-host had and native did
+  not, via the `FERN_LEAKCHECK=1` differential: ~173 KB across six shapes at that
+  sweep, every one scaling linearly with the round count. **#6127 is now CLOSED**
+  — all seven shapes measure zero (#6218 / #6225 / #6232 / #6240 / #6251 / #6252
+  / #6255 / #6263 / #6274 / #6285 / #6291 / #6308 / #6319 / #6336 / #6347 /
+  #6375). It is no longer the live list.
+
+  **The live list is #6360**: an enum local bound from a CALL is never reclaimed
+  on the self-host — `frees=0`, exactly x2.0 per doubling, and not
+  Result-specific (`Option` behaves identically). Native is clean on every row.
+
+  **The block-scoped bare-name struct credit is HALF closed** (#6375, 8800 →
+  4000): the BOX is reclaimed, the field drop is not. Three fixpoint runs, one
+  variable each, located the culprit as `__struct_drop_<T>` on a block-scoped
+  slot — not the box dec, not the entry-zeroing, not the credit's other
+  consumers. Entry-zeroing alone is green (402 s); box-only free is green
+  (390 s); adding the field drop segfaults gen1. The remaining 4000 is the field
+  buffers.
+
+  Two theories are eliminated. (1) The other twelve consumers of
+  `slot_is_reclaimable_struct` — scoping the sweep + entry-zeroing and leaving
+  them alone still segfaults. (2) NODEEP visibility, i.e. that `slot_nodeep`'s
+  exact-name lookup silently loses the marker for a retired slot — making that
+  lookup prefix-aware is inert (every consumer emits while the name is live),
+  and with the marker visible, granting the deep drop STILL segfaults.
+
+  **The actual cause is known**, from a stack trace rather than a guess: gen1
+  faults in `asmcore.EmitState.has_need` → `__fern_str_eq`, reading a freed
+  string out of `needed`. The shape is `var lo: StringLitOut =
+  add_string_lit(s, ..); s = lo.state;` in
+  `asm_ir.emit_function_via_ir_pre` — `lo` is block-scoped and its `EmitState`
+  FIELD is moved into the live threaded `s`, so the deep drop frees that state's
+  arrays out from under it. `ShapeRefOut` / `ConstAggOut` are identical shapes.
+  Both escape analyses miss it for the same reason: `expr_unsafe_for` returns
+  false for `name.field` ("base read is a borrow" — true for a scalar field,
+  wrong for a nested-struct one), and `moves_fields_expr`, the "NODEEP:"
+  detector, has the same hole. Closing it needs the move detector to know the
+  FIELD TYPE (it takes no `structs` today); marking every bare field read
+  conservatively would withhold deep drops far beyond this class.
+
+  **Reproduce in seconds, not the 211 s fixpoint**: grant the drop, build gen1 as
+  `runEmitAllFixpoint` does, and run it under gdb with `-per-module-emit-all
+  -assume-eligible -unit-range 0:8`.
+
+  ### Traps, all paid for
+
+  **Re-measure before quoting any figure in this area — SIX attributions have
+  been wrong.** Four of #6127's own: three because a sub-shape (single bind /
+  declared-in-loop / rebound) went unprobed, and one because the leaked OBJECT
+  was misnamed — `optstruct_single` was recorded as a leaked struct box and was
+  the array FIELD buffer, identical in size at the probe's shape, so it read as
+  a missing dec when it was a missing `__struct_drop_<P>`. The fifth was a
+  recorded NEXT STEP mistaken for a measurement: `ARRSTRUCT:` / `ARRTUP:` were
+  noted as leaking 35200 / 32000, with "check whether the slot's `struct_type` /
+  `arrarr_elem` column is set at a nested binding" as the lead. Both are 0 at
+  HEAD, closed by #6291 (`.len()` is a borrow, not an escape) as a side effect of
+  a fix aimed elsewhere — and the column was never the cause, since `.len()`
+  marked the local as escaping, so no credit was earnable however the columns
+  were set. Following that lead would have cost a day in the wrong predicate.
+  The sixth: #6285 attributed the block-scoped struct segfault to the credit's
+  other consumers, and #6375's bisect showed it is the deep field drop alone —
+  the difference between "this class is entangled" and "one operation is
+  unsafe", and only the second is actionable.
+
+  **A leak this family hides well: the shape reclaims until you INDENT it.**
+  #6319 found that a `match (o)` scrutinee reads as an escape (`expr_unsafe_for`
+  flags any bare ident), and the analysis that disagrees skips the consuming
+  match by top-level statement INDEX — so it only ever reached a match that IS a
+  top-level statement. The same Option consumed by a match inside an `if` or a
+  `while` released NOTHING (8000–12800 per 100 rounds), while the top-level
+  spelling was flat at 0. When a probe reclaims cleanly, try it one block deeper
+  before concluding the class is closed.
+
+  **The probe corpus cannot see the segfault class at all.** All 162 differential
+  programs agreed with native on both the segfaulting and the green build in
+  #6375; only the self-compiler shows it. That is the concrete case for running
+  the fixpoint FIRST on a reclaim change.
+
+  **Vary one dimension at a time** (array length vs field count; access pattern
+  vs binding form) and re-measure before naming what leaked — it costs one
+  build. And a fix that lands incidentally needs a pin or it regresses silently,
+  which is why the two shapes above are now cases in
+  `TestSelfHostBlockScopedClassesX86_64`.

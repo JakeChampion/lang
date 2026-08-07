@@ -1,0 +1,525 @@
+// examples/proposals/dirwatch.fern — proposal turn, drawn line 158:
+// "A tool that watches a directory and reports created, modified and deleted
+// files."
+//
+// `stat` carries size and is_dir and deliberately NOT mtime — the language has
+// no Time type yet, so the field is omitted rather than faked. That constraint
+// shapes the whole tool, and for the better: a watcher that detects
+// modification by timestamp misses two edits in the same clock tick and
+// reports a spurious change for a touch that altered nothing. This one hashes
+// the contents, so "modified" means the bytes differ and nothing else.
+//
+// A watcher is a poller, and polling is a `diff` between two snapshots. That
+// makes the interesting half pure: `diff(before, after)` sorts every file into
+// exactly one of created / modified / deleted, and the load-bearing test is
+// that APPLYING the result to `before` reconstructs `after` exactly. A diff
+// that drops a file, double-counts one, or calls a rename a modification fails
+// that and passes every hand-picked example.
+//
+// The before/after pairs are generated rather than chosen — a deterministic
+// walk over a small name alphabet, so hundreds of shapes get covered including
+// the ones nobody would think to write down (everything deleted, everything
+// created, disjoint sets, identical sets).
+//
+// The other property worth stating is ORDER INDEPENDENCE. `read_dir` returns
+// entries in a platform-defined order, so a watcher that reported them in that
+// order would produce different output on different machines from the same
+// directory. Sorting is not cosmetic here; it is what makes the tool's output
+// a function of the directory.
+//
+// The real filesystem is exercised too — temp_dir, write_file, read_dir, stat,
+// remove_file — because a pure differ that has never seen a directory is only
+// half the tool. Paths never reach the output, so every backend prints the
+// same bytes.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/i64";
+import "std/string";
+import "std/sort";
+
+// `size` is i64 because `stat` reports it that way — a file is allowed to
+// be bigger than 2 GB, and narrowing here to save a cast would be the tool
+// lying about what it measured.
+struct Entry { name: string, size: i64, sum: i32 }
+
+// std/sort has no case-sensitive string sort — `sort_strings_asc_ci` folds
+// case, which would make "A.txt" and "a.txt" interchangeable in a file list
+// where they are two different files. `sort_by` with the module's own
+// `string_cmp` is the case-sensitive one.
+//
+// Sorting a string[] currently leaks its string buffers (#6407): `sort_by`
+// reaches `.with` through its insertion-sort base case, and `.with` on a
+// string[] takes the scalar path because arrElemIsRcTracked omits StringType.
+// Nothing here works around it — the tool wants sorted output and says so —
+// but a long-running watcher polling on a timer would grow, so the reference
+// belongs next to the call rather than in an issue nobody reads from here.
+function sort_names(xs: string[]): string[] {
+    return sort.sort_by(xs, (a: string, b: string) => sort.string_cmp(a, b));
+}
+
+struct Changes { created: string[], modified: string[], deleted: string[] }
+
+// A modular rolling hash over the bytes. Not cryptographic — this detects
+// accidental difference, not adversarial collision — but it does what mtime
+// cannot: notice an edit that leaves the size unchanged.
+function checksum(s: string): i32 {
+    var h: i32 = 7;
+    for i in 0..s.len() {
+        h = (h * 31 + (s[i] as i32)) % 1000003;
+    }
+    return h;
+}
+
+// ------------------------------------------------------------- the differ
+
+function find_entry(es: Entry[], name: string): Option[Entry] {
+    for i in 0..es.len() {
+        if (es[i].name == name) { return Some(es[i]); }
+    }
+    return None;
+}
+
+function names_of(es: Entry[]): string[] {
+    var out: string[] = [];
+    for i in 0..es.len() { out = out.append(es[i].name); }
+    return out;
+}
+
+function contains_name(xs: string[], n: string): boolean {
+    for i in 0..xs.len() {
+        if (xs[i] == n) { return true; }
+    }
+    return false;
+}
+
+// Sorted output, always. read_dir's order is platform-defined, so without this
+// the same directory reports differently on different machines — and the
+// four-way backend differential this file runs under would be comparing the
+// filesystem's iteration order rather than the tool.
+function diff(before: Entry[], after: Entry[]): Changes {
+    var created: string[] = [];
+    var modified: string[] = [];
+    var deleted: string[] = [];
+    for i in 0..after.len() {
+        match (find_entry(before, after[i].name)) {
+            None => { created = created.append(after[i].name); },
+            Some(b) => {
+                if (b.size != after[i].size || b.sum != after[i].sum) {
+                    modified = modified.append(after[i].name);
+                }
+            },
+        }
+    }
+    for i in 0..before.len() {
+        match (find_entry(after, before[i].name)) {
+            None => { deleted = deleted.append(before[i].name); },
+            Some(a) => { },
+        }
+    }
+    return Changes { created: sort_names(created),
+                     modified: sort_names(modified),
+                     deleted: sort_names(deleted) };
+}
+
+// Apply a change set to a name list — the inverse the round-trip test needs.
+// Only names are reconstructible from a Changes; the contents are not in it,
+// which is exactly why the test asserts on names and checks contents
+// separately.
+function apply_names(before: string[], c: Changes): string[] {
+    var out: string[] = [];
+    for i in 0..before.len() {
+        if (!contains_name(c.deleted, before[i])) { out = out.append(before[i]); }
+    }
+    for i in 0..c.created.len() { out = out.append(c.created[i]); }
+    return sort_names(out);
+}
+
+function total(c: Changes): i32 {
+    return c.created.len() + c.modified.len() + c.deleted.len();
+}
+
+// ---------------------------------------------------------- the real disk
+
+// Snapshot a directory: every regular file's name, size and content hash.
+// Directories are skipped rather than recursed — a watcher that silently
+// descended would report a nested change as a change to the parent.
+function snapshot(dir: string): Entry[] {
+    var out: Entry[] = [];
+    match (read_dir(dir)) {
+        Err(e) => { return out; },
+        Ok(names) => {
+            for i in 0..names.len() {
+                var path: string = dir + "/" + names[i];
+                match (stat(path)) {
+                    Err(e) => { },
+                    Ok(st) => {
+                        if (!st.is_dir) {
+                            var sum: i32 = 0;
+                            match (read_file(path)) {
+                                Err(e) => { },
+                                Ok(body) => { sum = checksum(body); },
+                            }
+                            out = out.append(Entry { name: names[i],
+                                                     size: st.size, sum: sum });
+                        }
+                    },
+                }
+            }
+        },
+    }
+    return sort_entries(out);
+}
+
+function sort_entries(es: Entry[]): Entry[] {
+    var ns: string[] = sort_names(names_of(es));
+    var out: Entry[] = [];
+    for i in 0..ns.len() {
+        match (find_entry(es, ns[i])) {
+            None => { },
+            Some(e) => { out = out.append(e); },
+        }
+    }
+    return out;
+}
+
+function write_at(dir: string, name: string, body: string): boolean {
+    match (write_file(dir + "/" + name, body)) {
+        Err(e) => { return false; },
+        Ok(_) => { return true; },
+    }
+}
+
+// ------------------------------------------------------- generated shapes
+
+// A deterministic pseudo-random walk over a fixed name alphabet, so the tests
+// cover hundreds of before/after shapes rather than the three anybody would
+// write by hand — including the degenerate ones: identical, disjoint,
+// everything-created, everything-deleted.
+function names_alphabet(): string[] {
+    return ["a.txt", "b.log", "c.md", "d.dat", "e.cfg", "f.bin"];
+}
+
+function gen_snapshot(seed: i32): Entry[] {
+    var az: string[] = names_alphabet();
+    var out: Entry[] = [];
+    var s: i32 = seed;
+    for i in 0..az.len() {
+        s = (s * 1103515245 + 12345) % 2147483647;
+        if (s < 0) { s = 0 - s; }
+        if (s % 3 != 0) {
+            var size: i64 = (s % 17) as i64;
+            out = out.append(Entry { name: az[i], size: size,
+                                     sum: (s / 7) % 1000003 });
+        }
+    }
+    return sort_entries(out);
+}
+
+// ----------------------------------------------------------------- tests
+
+// THE test. Applying the change set to `before` must reconstruct `after`'s
+// name list exactly, for every generated pair. A differ that drops a file,
+// double-counts one, or reports a rename as a modification fails here and
+// passes every hand-picked example.
+function test_applying_the_diff_reconstructs_the_after_state(): test.TestOutcome {
+    for i in 0..60 {
+        for j in 0..7 {
+            var before: Entry[] = gen_snapshot(i + 1);
+            var after: Entry[] = gen_snapshot(i * 7 + j + 2);
+            var c: Changes = diff(before, after);
+            var rebuilt: string[] = apply_names(names_of(before), c);
+            var want: string[] = sort_names(names_of(after));
+            if (rebuilt.len() != want.len()) {
+                return test.fail("seeds " + i.to_string() + "/" + j.to_string()
+                    + ": rebuilt " + rebuilt.len().to_string() + " names, wanted "
+                    + want.len().to_string());
+            }
+            for k in 0..want.len() {
+                if (rebuilt[k] != want[k]) {
+                    return test.fail("seeds " + i.to_string() + "/"
+                        + j.to_string() + ": rebuilt[" + k.to_string() + "]="
+                        + rebuilt[k] + ", wanted " + want[k]);
+                }
+            }
+        }
+    }
+    return test.pass();
+}
+
+// Every reported name lands in exactly one bucket. A name that is both created
+// and deleted, or modified and deleted, is a contradiction the round trip can
+// mask — deleting and re-creating reconstructs the same name list.
+function test_every_name_is_in_exactly_one_bucket(): test.TestOutcome {
+    for i in 0..60 {
+        var before: Entry[] = gen_snapshot(i + 1);
+        var after: Entry[] = gen_snapshot(i * 3 + 5);
+        var c: Changes = diff(before, after);
+        var all: string[] = names_alphabet();
+        for k in 0..all.len() {
+            var n: i32 = 0;
+            if (contains_name(c.created, all[k])) { n = n + 1; }
+            if (contains_name(c.modified, all[k])) { n = n + 1; }
+            if (contains_name(c.deleted, all[k])) { n = n + 1; }
+            if (n > 1) {
+                return test.fail("seed " + i.to_string() + ": \"" + all[k]
+                    + "\" appears in " + n.to_string() + " buckets");
+            }
+        }
+    }
+    return test.pass();
+}
+
+// A snapshot against itself reports nothing. Trivial to state and the first
+// thing a watcher gets wrong when it compares by identity rather than value.
+function test_nothing_changed_reports_nothing(): test.TestOutcome {
+    for i in 0..60 {
+        var s: Entry[] = gen_snapshot(i + 1);
+        var c: Changes = diff(s, s);
+        if (total(c) != 0) {
+            return test.fail("seed " + i.to_string() + ": a snapshot differs"
+                + " from itself by " + total(c).to_string() + " changes");
+        }
+    }
+    return test.pass();
+}
+
+// Swapping the snapshots swaps created and deleted and leaves modified alone.
+// A differ that computes one bucket and infers the others fails this.
+function test_swapping_the_snapshots_swaps_created_and_deleted(): test.TestOutcome {
+    for i in 0..60 {
+        var a: Entry[] = gen_snapshot(i + 1);
+        var b: Entry[] = gen_snapshot(i * 5 + 3);
+        var fwd: Changes = diff(a, b);
+        var rev: Changes = diff(b, a);
+        if (fwd.created.len() != rev.deleted.len()
+            || fwd.deleted.len() != rev.created.len()) {
+            return test.fail("seed " + i.to_string() + ": forward created/"
+                + "deleted " + fwd.created.len().to_string() + "/"
+                + fwd.deleted.len().to_string() + ", reverse "
+                + rev.created.len().to_string() + "/"
+                + rev.deleted.len().to_string());
+        }
+        for k in 0..fwd.created.len() {
+            if (fwd.created[k] != rev.deleted[k]) {
+                return test.fail("seed " + i.to_string()
+                    + ": created/deleted are not mirror images");
+            }
+        }
+        if (fwd.modified.len() != rev.modified.len()) {
+            return test.fail("seed " + i.to_string() + ": modified is not"
+                + " symmetric — " + fwd.modified.len().to_string() + " vs "
+                + rev.modified.len().to_string());
+        }
+    }
+    return test.pass();
+}
+
+// read_dir's order is platform-defined, so the tool's output must not depend
+// on it. Reversing the input entry order must change nothing at all — this is
+// the property that keeps the same directory reporting the same way on every
+// machine, and it is the one that would have quietly broken this file's own
+// four-way backend comparison.
+function test_the_report_does_not_depend_on_directory_order(): test.TestOutcome {
+    for i in 0..60 {
+        var a: Entry[] = gen_snapshot(i + 1);
+        var b: Entry[] = gen_snapshot(i * 11 + 4);
+        var ra: Entry[] = [];
+        for k in 0..a.len() { ra = ra.append(a[a.len() - 1 - k]); }
+        var rb: Entry[] = [];
+        for k in 0..b.len() { rb = rb.append(b[b.len() - 1 - k]); }
+        var straight: Changes = diff(a, b);
+        var reversed: Changes = diff(ra, rb);
+        if (straight.created.len() != reversed.created.len()
+            || straight.modified.len() != reversed.modified.len()
+            || straight.deleted.len() != reversed.deleted.len()) {
+            return test.fail("seed " + i.to_string() + ": reversing the entry"
+                + " order changed the report");
+        }
+        for k in 0..straight.created.len() {
+            if (straight.created[k] != reversed.created[k]) {
+                return test.fail("seed " + i.to_string() + ": created is not"
+                    + " sorted — order leaked through");
+            }
+        }
+        for k in 0..straight.modified.len() {
+            if (straight.modified[k] != reversed.modified[k]) {
+                return test.fail("seed " + i.to_string() + ": modified is not"
+                    + " sorted — order leaked through");
+            }
+        }
+    }
+    return test.pass();
+}
+
+// The reason this tool hashes rather than stats: an edit that preserves the
+// size is invisible to size alone, and invisible to mtime within a clock tick.
+// Two files of equal length and different bytes must read as modified.
+function test_a_same_size_edit_is_still_a_modification(): test.TestOutcome {
+    var before: Entry[] = [Entry { name: "a.txt", size: 5 as i64, sum: checksum("hello") }];
+    var after: Entry[] = [Entry { name: "a.txt", size: 5 as i64, sum: checksum("world") }];
+    var c: Changes = diff(before, after);
+    if (c.modified.len() != 1 || c.modified[0] != "a.txt") {
+        return test.fail("a same-size content change reported "
+            + c.modified.len().to_string() + " modifications");
+    }
+    if (c.created.len() != 0 || c.deleted.len() != 0) {
+        return test.fail("a same-size content change also reported "
+            + c.created.len().to_string() + " created and "
+            + c.deleted.len().to_string() + " deleted");
+    }
+    if (checksum("hello") == checksum("world")) {
+        return test.fail("the checksum collides on the two test strings, so"
+            + " this test proves nothing");
+    }
+    // And an identical rewrite is NOT a modification — the point of hashing.
+    var same: Entry[] = [Entry { name: "a.txt", size: 5 as i64, sum: checksum("hello") }];
+    if (total(diff(before, same)) != 0) {
+        return test.fail("rewriting a file with identical contents reported a"
+            + " change");
+    }
+    return test.pass();
+}
+
+// A rename is one creation and one deletion, never a modification. A differ
+// that matched on size or inode would call it a move and report neither.
+function test_a_rename_is_a_creation_and_a_deletion(): test.TestOutcome {
+    var before: Entry[] = [Entry { name: "old.txt", size: 5 as i64, sum: 42 }];
+    var after: Entry[] = [Entry { name: "new.txt", size: 5 as i64, sum: 42 }];
+    var c: Changes = diff(before, after);
+    if (c.created.len() != 1 || c.created[0] != "new.txt") {
+        return test.fail("rename: created = " + c.created.len().to_string());
+    }
+    if (c.deleted.len() != 1 || c.deleted[0] != "old.txt") {
+        return test.fail("rename: deleted = " + c.deleted.len().to_string());
+    }
+    if (c.modified.len() != 0) {
+        return test.fail("rename reported " + c.modified.len().to_string()
+            + " modifications");
+    }
+    return test.pass();
+}
+
+// The real filesystem, end to end: create, edit, delete, and confirm the
+// watcher reports exactly those three and nothing else. A pure differ that has
+// never seen a directory is only half the tool, and `stat`/`read_dir` are
+// where the platforms differ.
+function test_a_real_directory_reports_its_real_changes(): test.TestOutcome {
+    match (temp_dir("dirwatch")) {
+        Err(e) => { return test.fail("could not create a temp directory"); },
+        Ok(d) => {
+            if (!write_at(d, "keep.txt", "unchanged")
+                || !write_at(d, "edit.txt", "before")
+                || !write_at(d, "gone.txt", "doomed")) {
+                var _w: Result[void, IoError] = remove_dir_all(d);
+                return test.fail("could not write the initial files");
+            }
+            var before: Entry[] = snapshot(d);
+            if (before.len() != 3) {
+                var _w2: Result[void, IoError] = remove_dir_all(d);
+                return test.fail("the initial snapshot saw "
+                    + before.len().to_string() + " files, not 3");
+            }
+            // Same length as "before", so size alone cannot see this edit.
+            var _e: boolean = write_at(d, "edit.txt", "aftr!!");
+            var _n: boolean = write_at(d, "new.txt", "fresh");
+            var _r: Result[void, IoError] = remove_file(d + "/gone.txt");
+            var after: Entry[] = snapshot(d);
+            var c: Changes = diff(before, after);
+            var _w3: Result[void, IoError] = remove_dir_all(d);
+
+            if (c.created.len() != 1 || c.created[0] != "new.txt") {
+                return test.fail("created = " + c.created.len().to_string()
+                    + ", wanted just new.txt");
+            }
+            if (c.modified.len() != 1 || c.modified[0] != "edit.txt") {
+                return test.fail("modified = " + c.modified.len().to_string()
+                    + ", wanted just edit.txt (a same-size edit)");
+            }
+            if (c.deleted.len() != 1 || c.deleted[0] != "gone.txt") {
+                return test.fail("deleted = " + c.deleted.len().to_string()
+                    + ", wanted just gone.txt");
+            }
+            return test.pass();
+        },
+    }
+}
+
+// Polling twice with nothing in between must report nothing — the property
+// that keeps a watcher quiet, and the one a snapshot that captured a clock
+// or an iteration order would break.
+function test_polling_an_unchanged_directory_is_silent(): test.TestOutcome {
+    match (temp_dir("dirwatch2")) {
+        Err(e) => { return test.fail("could not create a temp directory"); },
+        Ok(d) => {
+            var _a: boolean = write_at(d, "x.txt", "one");
+            var _b: boolean = write_at(d, "y.txt", "two");
+            var first: Entry[] = snapshot(d);
+            var second: Entry[] = snapshot(d);
+            var c: Changes = diff(first, second);
+            var _w: Result[void, IoError] = remove_dir_all(d);
+            if (total(c) != 0) {
+                return test.fail("two snapshots of an untouched directory"
+                    + " differ by " + total(c).to_string() + " changes");
+            }
+            if (first.len() != 2) {
+                return test.fail("snapshot saw " + first.len().to_string()
+                    + " files, not 2");
+            }
+            return test.pass();
+        },
+    }
+}
+
+// ------------------------------------------------------------------- app
+
+function show(label: string, xs: string[]): string {
+    var s: string = label + "=[";
+    for i in 0..xs.len() {
+        if (i > 0) { s = s + " "; }
+        s = s + xs[i];
+    }
+    return s + "]";
+}
+
+function main(): i32 {
+    eprint("dirwatch — created, modified and deleted, by content not clock");
+    match (temp_dir("dirwatch-demo")) {
+        Err(e) => { eprint("  (no temp directory available)"); },
+        Ok(d) => {
+            var _a: boolean = write_at(d, "notes.md", "hello");
+            var _b: boolean = write_at(d, "data.csv", "1,2,3");
+            var _c: boolean = write_at(d, "stale.tmp", "junk");
+            var before: Entry[] = snapshot(d);
+            eprint("  first poll: " + before.len().to_string() + " files");
+
+            var _d: boolean = write_at(d, "notes.md", "world");   // same size
+            var _e: boolean = write_at(d, "fresh.log", "new");
+            var _f: Result[void, IoError] = remove_file(d + "/stale.tmp");
+
+            var after: Entry[] = snapshot(d);
+            var ch: Changes = diff(before, after);
+            eprint("  second poll: " + after.len().to_string() + " files");
+            eprint("  " + show("created", ch.created));
+            eprint("  " + show("modified", ch.modified));
+            eprint("  " + show("deleted", ch.deleted));
+            eprint("  third poll (nothing touched): "
+                + total(diff(after, snapshot(d))).to_string() + " changes");
+            var _g: Result[void, IoError] = remove_dir_all(d);
+        },
+    }
+
+    var t: test.TestRunner = test.test_new("dirwatch");
+    t = t.it("applying the diff reconstructs the after state", test_applying_the_diff_reconstructs_the_after_state);
+    t = t.it("every name is in exactly one bucket", test_every_name_is_in_exactly_one_bucket);
+    t = t.it("nothing changed reports nothing", test_nothing_changed_reports_nothing);
+    t = t.it("swapping the snapshots swaps created and deleted", test_swapping_the_snapshots_swaps_created_and_deleted);
+    t = t.it("the report does not depend on directory order", test_the_report_does_not_depend_on_directory_order);
+    t = t.it("a same size edit is still a modification", test_a_same_size_edit_is_still_a_modification);
+    t = t.it("a rename is a creation and a deletion", test_a_rename_is_a_creation_and_a_deletion);
+    t = t.it("a real directory reports its real changes", test_a_real_directory_reports_its_real_changes);
+    t = t.it("polling an unchanged directory is silent", test_polling_an_unchanged_directory_is_silent);
+    return t.finish();
+}

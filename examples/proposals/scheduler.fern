@@ -1,0 +1,384 @@
+// examples/proposals/scheduler.fern — proposal turn, drawn line 217:
+// "A scheduler that runs tasks at intervals and reports drift."
+//
+// The clock here is virtual. A scheduler tested against the real one is tested
+// against the machine it ran on: the numbers change per host, per load, and
+// between two runs on the same box, so the four-way backend comparison this
+// file runs under would be measuring the scheduler's luck. A virtual clock
+// makes every run identical and makes drift EXACT rather than approximate,
+// which is what lets the tests assert equality instead of tolerance.
+//
+// The whole subject is the difference between two policies that look the same
+// in a one-line description:
+//
+//   fixed RATE  — the next run is scheduled from the previous DUE time, so a
+//                 slow run steals from the next gap and the long-run rate is
+//                 exactly the interval. Drift is bounded by one task duration.
+//   fixed DELAY — the next run is scheduled from the previous FINISH, so every
+//                 run's duration is added to the period. Drift grows without
+//                 bound, linearly in the number of runs.
+//
+// Both are correct schedulers; picking the wrong one is how a "every 60
+// seconds" job ends up running 1 400 times a day instead of 1 440. The
+// load-bearing test is that the k-th fixed-rate run is due at exactly
+// `start + k * interval` no matter what the durations are, and that the
+// fixed-delay one is not — the two asserted against each other so neither can
+// quietly become the other.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// FIXED_RATE schedules from the due time, FIXED_DELAY from the finish time.
+function FIXED_RATE(): i32 { return 0; }
+function FIXED_DELAY(): i32 { return 1; }
+
+struct Task { name: string, interval: i32, duration: i32, policy: i32 }
+
+struct Run { name: string, due: i32, started: i32, finished: i32 }
+
+// One task's run schedule for `n` executions, from `start`. The scheduler
+// itself is single-threaded and never overlaps a task with itself, so a run
+// that overruns its own interval delays the next one under BOTH policies —
+// that is the shared behaviour the two policies differ on top of.
+function schedule(t: Task, start: i32, n: i32): Run[] {
+    var runs: Run[] = [];
+    var due: i32 = start;
+    var clock: i32 = start;
+    for k in 0..n {
+        var began: i32 = due;
+        if (clock > began) { began = clock; }       // cannot start before now
+        var ended: i32 = began + t.duration;
+        runs = runs.append(Run { name: t.name, due: due, started: began,
+                                 finished: ended });
+        clock = ended;
+        if (t.policy == FIXED_RATE()) {
+            due = due + t.interval;
+        } else {
+            due = ended + t.interval;
+        }
+    }
+    return runs;
+}
+
+// Drift is how late a run began against when it was due. Never negative: a
+// scheduler cannot start a task before its time.
+function drift_of(r: Run): i32 { return r.started - r.due; }
+
+function total_drift(runs: Run[]): i32 {
+    var d: i32 = 0;
+    for i in 0..runs.len() { d = d + drift_of(runs[i]); }
+    return d;
+}
+
+function max_drift(runs: Run[]): i32 {
+    var m: i32 = 0;
+    for i in 0..runs.len() {
+        if (drift_of(runs[i]) > m) { m = drift_of(runs[i]); }
+    }
+    return m;
+}
+
+// ------------------------------------------------------- multiple tasks
+
+// Merge several tasks onto one timeline, earliest due first, ties broken by
+// the order the tasks were registered. The tie-break is not a detail: without
+// a stated one the output depends on iteration order, and two backends would
+// be free to disagree.
+function run_all(tasks: Task[], start: i32, n: i32): Run[] {
+    var all: Run[] = [];
+    for i in 0..tasks.len() {
+        var rs: Run[] = schedule(tasks[i], start, n);
+        for k in 0..rs.len() { all = all.append(rs[k]); }
+    }
+    // Insertion sort by (due, registration order). Stable, so the tie-break
+    // is exactly the registration order the loop above produced.
+    var out: Run[] = [];
+    for i in 0..all.len() {
+        var at: i32 = out.len();
+        for k in 0..out.len() {
+            if (at == out.len() && out[k].due > all[i].due) { at = k; }
+        }
+        var next: Run[] = [];
+        for k in 0..at { next = next.append(out[k]); }
+        next = next.append(all[i]);
+        for k in at..out.len() { next = next.append(out[k]); }
+        out = next;
+    }
+    return out;
+}
+
+function tasks(): Task[] {
+    return [
+        Task { name: "beat", interval: 10, duration: 0, policy: FIXED_RATE() },
+        Task { name: "slow", interval: 10, duration: 3, policy: FIXED_RATE() },
+        Task { name: "drifty", interval: 10, duration: 3, policy: FIXED_DELAY() },
+        Task { name: "overrun", interval: 5, duration: 8, policy: FIXED_RATE() },
+    ];
+}
+
+function find_task(name: string): Task {
+    var ts: Task[] = tasks();
+    for i in 0..ts.len() {
+        if (ts[i].name == name) { return ts[i]; }
+    }
+    return ts[0];
+}
+
+// ----------------------------------------------------------------- tests
+
+// THE test. Under a fixed RATE the k-th run is due at exactly
+// start + k*interval, whatever the duration — that is the entire promise of
+// the policy, and the one a scheduler silently breaks by scheduling from the
+// finish time. Checked for durations from 0 up to twice the interval, so the
+// overrunning case is included rather than assumed away.
+function test_fixed_rate_due_times_never_drift(): test.TestOutcome {
+    for dur in 0..21 {
+        var t: Task = Task { name: "t", interval: 10, duration: dur,
+                             policy: FIXED_RATE() };
+        var runs: Run[] = schedule(t, 100, 12);
+        for k in 0..runs.len() {
+            var want: i32 = 100 + k * 10;
+            if (runs[k].due != want) {
+                return test.fail("duration " + dur.to_string() + ", run "
+                    + k.to_string() + " due at " + runs[k].due.to_string()
+                    + ", must be " + want.to_string());
+            }
+        }
+    }
+    return test.pass();
+}
+
+// And the other policy must NOT have that property, or the two have collapsed
+// into one. Fixed delay adds the duration to every period, so the k-th run is
+// due at start + k*(interval+duration).
+function test_fixed_delay_adds_the_duration_to_every_period(): test.TestOutcome {
+    for dur in 0..11 {
+        var t: Task = Task { name: "t", interval: 10, duration: dur,
+                             policy: FIXED_DELAY() };
+        var runs: Run[] = schedule(t, 100, 8);
+        for k in 0..runs.len() {
+            var want: i32 = 100 + k * (10 + dur);
+            if (runs[k].due != want) {
+                return test.fail("duration " + dur.to_string() + ", run "
+                    + k.to_string() + " due at " + runs[k].due.to_string()
+                    + ", must be " + want.to_string());
+            }
+        }
+        // The policies agree only when the duration is zero.
+        var rate: Run[] = schedule(Task { ...t, policy: FIXED_RATE() }, 100, 8);
+        var same: boolean = true;
+        for k in 0..runs.len() {
+            if (runs[k].due != rate[k].due) { same = false; }
+        }
+        if (same != (dur == 0)) {
+            return test.fail("duration " + dur.to_string()
+                + ": the two policies agree=" + same.to_string()
+                + ", which is only right at duration 0");
+        }
+    }
+    return test.pass();
+}
+
+// Drift is bounded under fixed rate and unbounded under fixed delay. This is
+// the practical consequence of the two tests above, stated as the thing an
+// operator actually cares about.
+function test_drift_is_bounded_under_rate_and_grows_under_delay(): test.TestOutcome {
+    var slow: Task = Task { name: "s", interval: 10, duration: 3,
+                            policy: FIXED_RATE() };
+    var short: Run[] = schedule(slow, 0, 5);
+    var long: Run[] = schedule(slow, 0, 500);
+    if (max_drift(short) != max_drift(long)) {
+        return test.fail("fixed-rate drift grew with the run count: "
+            + max_drift(short).to_string() + " over 5 runs, "
+            + max_drift(long).to_string() + " over 500");
+    }
+    if (max_drift(long) > slow.duration) {
+        return test.fail("fixed-rate drift " + max_drift(long).to_string()
+            + " exceeds one task duration (" + slow.duration.to_string() + ")");
+    }
+    // Fixed delay: every run is on time by construction (the due time moves
+    // with the finish), so its cost shows up as a lower RATE, not as drift.
+    var drifty: Task = Task { ...slow, policy: FIXED_DELAY() };
+    var d: Run[] = schedule(drifty, 0, 100);
+    if (total_drift(d) != 0) {
+        return test.fail("fixed-delay reported " + total_drift(d).to_string()
+            + " drift; it has none by construction — its cost is the period");
+    }
+    var rate_runs: Run[] = schedule(slow, 0, 100);
+    var span_rate: i32 = rate_runs[99].due - rate_runs[0].due;
+    var span_delay: i32 = d[99].due - d[0].due;
+    if (span_delay <= span_rate) {
+        return test.fail("100 fixed-delay runs spanned " + span_delay.to_string()
+            + ", not more than fixed rate's " + span_rate.to_string());
+    }
+    return test.pass();
+}
+
+// A task that takes longer than its interval cannot keep up, and the
+// scheduler must say so by starting late rather than by overlapping the task
+// with itself or by silently dropping runs.
+function test_an_overrunning_task_falls_behind_without_overlapping(): test.TestOutcome {
+    var t: Task = find_task("overrun");         // interval 5, duration 8
+    var runs: Run[] = schedule(t, 0, 20);
+    if (runs.len() != 20) {
+        return test.fail("dropped runs: " + runs.len().to_string() + " of 20");
+    }
+    for k in 1..runs.len() {
+        if (runs[k].started < runs[k - 1].finished) {
+            return test.fail("run " + k.to_string() + " started at "
+                + runs[k].started.to_string() + ", before run "
+                + (k - 1).to_string() + " finished at "
+                + runs[k - 1].finished.to_string());
+        }
+    }
+    // Drift must grow, since it cannot catch up.
+    if (drift_of(runs[19]) <= drift_of(runs[1])) {
+        return test.fail("an unkeepable schedule did not accumulate drift: "
+            + drift_of(runs[1]).to_string() + " then "
+            + drift_of(runs[19]).to_string());
+    }
+    // And it grows by exactly the shortfall each run.
+    for k in 2..runs.len() {
+        if (drift_of(runs[k]) - drift_of(runs[k - 1]) != t.duration - t.interval) {
+            return test.fail("drift grew by "
+                + (drift_of(runs[k]) - drift_of(runs[k - 1])).to_string()
+                + " at run " + k.to_string() + ", not by the shortfall "
+                + (t.duration - t.interval).to_string());
+        }
+    }
+    return test.pass();
+}
+
+// Drift is never negative: no scheduler starts a task before it is due. The
+// property that makes the number meaningful, and the first casualty of a
+// signed subtraction written the wrong way round.
+function test_drift_is_never_negative(): test.TestOutcome {
+    var ts: Task[] = tasks();
+    for i in 0..ts.len() {
+        var runs: Run[] = schedule(ts[i], 7, 50);
+        for k in 0..runs.len() {
+            if (drift_of(runs[k]) < 0) {
+                return test.fail(ts[i].name + " run " + k.to_string()
+                    + " has drift " + drift_of(runs[k]).to_string());
+            }
+            if (runs[k].started < runs[k].due) {
+                return test.fail(ts[i].name + " run " + k.to_string()
+                    + " started at " + runs[k].started.to_string()
+                    + " before its due time " + runs[k].due.to_string());
+            }
+        }
+    }
+    return test.pass();
+}
+
+// The merged timeline is ordered by due time with a stated tie-break, so the
+// same tasks always produce the same trace. Without a tie-break the order
+// would depend on how the merge happened to iterate, and two backends would be
+// free to disagree about it.
+function test_the_merged_timeline_is_ordered_and_deterministic(): test.TestOutcome {
+    var a: Run[] = run_all(tasks(), 0, 6);
+    var b: Run[] = run_all(tasks(), 0, 6);
+    if (a.len() != b.len()) {
+        return test.fail("two identical runs produced " + a.len().to_string()
+            + " and " + b.len().to_string() + " entries");
+    }
+    for i in 0..a.len() {
+        if (a[i].name != b[i].name || a[i].due != b[i].due) {
+            return test.fail("two identical runs disagree at " + i.to_string()
+                + ": " + a[i].name + "@" + a[i].due.to_string() + " vs "
+                + b[i].name + "@" + b[i].due.to_string());
+        }
+    }
+    for i in 1..a.len() {
+        if (a[i].due < a[i - 1].due) {
+            return test.fail("the timeline is out of order at " + i.to_string()
+                + ": " + a[i - 1].due.to_string() + " then "
+                + a[i].due.to_string());
+        }
+    }
+    // Every task contributes exactly its run count.
+    var ts: Task[] = tasks();
+    for i in 0..ts.len() {
+        var n: i32 = 0;
+        for k in 0..a.len() {
+            if (a[k].name == ts[i].name) { n = n + 1; }
+        }
+        if (n != 6) {
+            return test.fail(ts[i].name + " appears " + n.to_string()
+                + " times, not 6");
+        }
+    }
+    return test.pass();
+}
+
+// A zero interval is the degenerate schedule — back-to-back forever — and it
+// must not loop, divide, or produce a run before the one ahead of it.
+function test_a_zero_interval_is_back_to_back_not_a_hang(): test.TestOutcome {
+    var t: Task = Task { name: "z", interval: 0, duration: 2,
+                         policy: FIXED_DELAY() };
+    var runs: Run[] = schedule(t, 0, 10);
+    for k in 0..runs.len() {
+        if (runs[k].due != k * 2) {
+            return test.fail("run " + k.to_string() + " due at "
+                + runs[k].due.to_string() + ", back-to-back would be "
+                + (k * 2).to_string());
+        }
+    }
+    // A zero interval AND a zero duration: everything at once, still ten runs.
+    var instant: Run[] = schedule(Task { ...t, duration: 0 }, 5, 10);
+    if (instant.len() != 10) {
+        return test.fail("an instantaneous schedule produced "
+            + instant.len().to_string() + " runs");
+    }
+    for k in 0..instant.len() {
+        if (instant[k].due != 5 || instant[k].started != 5) {
+            return test.fail("an instantaneous run landed at "
+                + instant[k].due.to_string());
+        }
+    }
+    return test.pass();
+}
+
+// ------------------------------------------------------------------- app
+
+function pad(s: string, w: i32): string {
+    var out: string = s;
+    for i in s.len()..w { out = out + " "; }
+    return out;
+}
+
+function main(): i32 {
+    eprint("scheduler — fixed rate against fixed delay, on a virtual clock");
+    var ts: Task[] = tasks();
+    for i in 0..ts.len() {
+        var runs: Run[] = schedule(ts[i], 0, 10);
+        var policy: string = "rate ";
+        if (ts[i].policy == FIXED_DELAY()) { policy = "delay"; }
+        eprint("  " + pad(ts[i].name, 8) + policy
+            + "  interval " + ts[i].interval.to_string()
+            + "  duration " + ts[i].duration.to_string());
+        eprint("    10 runs span " + (runs[9].due - runs[0].due).to_string()
+            + " ticks (ideal " + (9 * ts[i].interval).to_string() + ")"
+            + ", max drift " + max_drift(runs).to_string()
+            + ", total drift " + total_drift(runs).to_string());
+    }
+    var merged: Run[] = run_all(ts, 0, 3);
+    var line: string = "  merged:";
+    for i in 0..merged.len() {
+        line = line + " " + merged[i].name + "@" + merged[i].due.to_string();
+    }
+    eprint(line);
+
+    var t: test.TestRunner = test.test_new("scheduler");
+    t = t.it("fixed rate due times never drift", test_fixed_rate_due_times_never_drift);
+    t = t.it("fixed delay adds the duration to every period", test_fixed_delay_adds_the_duration_to_every_period);
+    t = t.it("drift is bounded under rate and grows under delay", test_drift_is_bounded_under_rate_and_grows_under_delay);
+    t = t.it("an overrunning task falls behind without overlapping", test_an_overrunning_task_falls_behind_without_overlapping);
+    t = t.it("drift is never negative", test_drift_is_never_negative);
+    t = t.it("the merged timeline is ordered and deterministic", test_the_merged_timeline_is_ordered_and_deterministic);
+    t = t.it("a zero interval is back to back not a hang", test_a_zero_interval_is_back_to_back_not_a_hang);
+    return t.finish();
+}

@@ -457,6 +457,7 @@ func New() *Interp {
 	i.Builtins["env"] = &Builtin{Fn: builtinEnv}
 	i.Builtins["read_file"] = &Builtin{Fn: builtinReadFile}
 	i.Builtins["write_file"] = &Builtin{Fn: builtinWriteFile}
+	i.Builtins["write_file_exec"] = &Builtin{Fn: builtinWriteFileExec}
 	i.Builtins["open_reader"] = &Builtin{Fn: builtinOpenReader}
 	i.Builtins["open_writer"] = &Builtin{Fn: builtinOpenWriter}
 	i.Builtins["open_appender"] = &Builtin{Fn: builtinOpenAppender}
@@ -1594,19 +1595,48 @@ func builtinReadFile(_ *Interp, args []Value) (Value, error) {
 // builtinWriteFile mirrors $write_file / __fern_write_file:
 // truncate-write the content, return Option[IoError]
 // (None = success).
+// builtinWriteFileExec is builtinWriteFile with the executable bit —
+// see the checker's note on why a separate builtin rather than a mode
+// argument (#6133).
+func builtinWriteFileExec(i *Interp, args []Value) (Value, error) {
+	v, err := writeFileMode("write_file_exec", args, 0o755)
+	if err != nil {
+		return v, err
+	}
+	if e, ok := v.(*Enum); !ok || e.VariantName != "Ok" {
+		return v, nil // the write itself failed; that Err is the answer
+	}
+	// os.WriteFile applies perm only when it CREATES the file, so
+	// recompiling over a stale 0644 output would leave it unrunnable —
+	// the very failure this builtin removes. Chmod unconditionally, the
+	// way cmd/fern's own -o path does. Plain write_file deliberately does
+	// NOT, so it keeps preserving an existing file's mode.
+	path := args[0].(String)
+	if err := os.Chmod(string(path), 0o755); err != nil {
+		return resultErr(classifyIoError(string(path), err)), nil
+	}
+	return v, nil
+}
+
 func builtinWriteFile(_ *Interp, args []Value) (Value, error) {
+	return writeFileMode("write_file", args, 0o644)
+}
+
+// writeFileMode is the shared body of write_file / write_file_exec; `name`
+// only shapes the argument-error messages.
+func writeFileMode(name string, args []Value, mode os.FileMode) (Value, error) {
 	if len(args) != 2 {
-		return nil, fmt.Errorf("write_file: expected 2 args, got %d", len(args))
+		return nil, fmt.Errorf("%s: expected 2 args, got %d", name, len(args))
 	}
 	path, ok := args[0].(String)
 	if !ok {
-		return nil, fmt.Errorf("write_file: expected string path, got %T", args[0])
+		return nil, fmt.Errorf("%s: expected string path, got %T", name, args[0])
 	}
 	content, ok := args[1].(String)
 	if !ok {
-		return nil, fmt.Errorf("write_file: expected string content, got %T", args[1])
+		return nil, fmt.Errorf("%s: expected string content, got %T", name, args[1])
 	}
-	if err := os.WriteFile(string(path), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(string(path), []byte(content), mode); err != nil {
 		return resultErr(classifyIoError(string(path), err)), nil
 	}
 	return resultOk(unitValue()), nil
@@ -2872,15 +2902,20 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			}
 			return result{flow: flowNormal}, nil
 		}
-		// Non-enum scrutinee (i32 / string / bool): literal-pattern
+		// Non-enum scrutinee (i32 / f64 / string / bool): literal-pattern
 		// match, mirroring the compiled backend's emitLiteralMatch.
 		// Each arm is a literal (dispatched by `==`) or the `_`
 		// fall-through; the checker (E035/E030) guarantees an
 		// unguarded `_` arm exists, so a match is always found. Any
 		// other value type reaching here is a type error the checker
 		// should have caught — keep the diagnostic.
+		//
+		// Float belongs here: armMatchesScalar and valuesEqual have both
+		// handled it all along, and the compiled backends match a float
+		// scrutinee happily. Only this gate said otherwise, so a program
+		// the natives and wasm ran refused to interpret at all.
 		switch tag.(type) {
-		case Number, Bool, String:
+		case Number, Float, Bool, String:
 		default:
 			return result{}, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
 		}
@@ -3591,13 +3626,14 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			}
 			return nil, fmt.Errorf("interp: match-expression non-exhaustive at runtime (no tuple arm matched)")
 		}
-		// Non-enum scrutinee (i32 / string / bool): literal-pattern
+		// Non-enum scrutinee (i32 / f64 / string / bool): literal-pattern
 		// match expression, mirroring emitLiteralMatchExpr. Each arm
 		// dispatches via `==` against its literal, or the `_`
 		// fall-through. Any other value type is a type error the
-		// checker should have caught — keep the diagnostic.
+		// checker should have caught — keep the diagnostic. Float is
+		// included for the same reason as the statement form above.
 		switch tag.(type) {
-		case Number, Bool, String:
+		case Number, Float, Bool, String:
 		default:
 			return nil, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
 		}

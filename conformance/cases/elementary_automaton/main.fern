@@ -1,0 +1,102 @@
+// An elementary cellular automaton, pinned against its own specification:
+// bit k of the rule number is the output for neighbourhood k, so the
+// expected table is derived by arithmetic rather than read off the
+// implementation.
+//
+// Rules 0 and 255 are closed forms (kill everything / fill everything, and
+// both are then fixed points). Rule 90 is left XOR right, which catches a
+// reversed bit order — the classic way to get one of these subtly wrong
+// while it still looks plausible on screen.
+
+function rule_bit(rule: i32, k: i32): boolean {
+    return ((rule >> k) & 1) == 1;
+}
+
+// left<<2 | self<<1 | right, on a ring.
+function neighbourhood(cells: boolean[], i: i32): i32 {
+    var n: i32 = cells.len();
+    var v: i32 = 0;
+    if (cells[(i + n - 1) % n]) { v = v + 4; }
+    if (cells[i]) { v = v + 2; }
+    if (cells[(i + 1) % n]) { v = v + 1; }
+    return v;
+}
+
+function step(cells: boolean[], rule: i32): boolean[] {
+    var next: boolean[] = [];
+    var i: i32 = 0;
+    while (i < cells.len()) {
+        next = next.append(rule_bit(rule, neighbourhood(cells, i)));
+        i = i + 1;
+    }
+    return next;
+}
+
+function live(cells: boolean[]): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < cells.len()) {
+        if (cells[i]) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+function blank(width: i32): boolean[] {
+    var c: boolean[] = [];
+    var i: i32 = 0;
+    while (i < width) { c = c.append(false); i = i + 1; }
+    return c;
+}
+
+function main(): i32 {
+    // The rule number IS the table: check every neighbourhood of every rule
+    // against arithmetic on the number.
+    var rules: i32[] = [0, 30, 90, 110, 184, 255];
+    for r in 0..rules.len() {
+        var rule: i32 = rules[r];
+        for k in 0..8 {
+            var cells: boolean[] = blank(3);
+            if (k >= 4) { cells = cells.with(0, true); }
+            if ((k % 4) >= 2) { cells = cells.with(1, true); }
+            if ((k % 2) == 1) { cells = cells.with(2, true); }
+            if (neighbourhood(cells, 1) != k) { return 1; }
+
+            var pow: i32 = 1;
+            var e: i32 = 0;
+            while (e < k) { pow = pow * 2; e = e + 1; }
+            var want: boolean = ((rule / pow) % 2) == 1;
+            if (step(cells, rule)[1] != want) { return 2; }
+        }
+    }
+
+    // Rule 0 empties, rule 255 fills, both are fixed points.
+    var seeded: boolean[] = blank(16).with(8, true);
+    if (live(step(seeded, 0)) != 0) { return 3; }
+    if (live(step(step(seeded, 0), 0)) != 0) { return 4; }
+    if (live(step(blank(16), 255)) != 16) { return 5; }
+    if (live(step(step(blank(16), 255), 255)) != 16) { return 6; }
+
+    // Rule 90 is left XOR right, ignoring the centre.
+    var w: boolean[] = blank(32).with(16, true);
+    for t in 0..12 {
+        var after: boolean[] = step(w, 90);
+        var n: i32 = w.len();
+        for i in 0..n {
+            var l: boolean = w[(i + n - 1) % n];
+            var rr: boolean = w[(i + 1) % n];
+            if (after[i] != (l != rr)) { return 7; }
+        }
+        w = after;
+    }
+
+    // Rule 110 from a single right-edge cell must survive and grow.
+    var v: boolean[] = blank(48).with(47, true);
+    for t2 in 0..40 {
+        v = step(v, 110);
+        if (live(v) == 0) { return 8; }
+    }
+    if (live(v) <= 1) { return 9; }
+
+    return 0;
+}
