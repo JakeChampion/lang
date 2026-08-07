@@ -25615,13 +25615,11 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // threaded `s`, and the deep walk then freed that state's arrays out from
         // under it (gen1 faulted in EmitState.has_need → __fern_str_eq).
         //
-        // optstruct_bind_esc_expr already draws exactly the needed line, with the
-        // field TYPE in hand: a scalar field read is a value copy, `name.f[j]` and
-        // `name.f.len()` and longer borrow chains are borrows, and a bare
-        // non-scalar field is an extraction. It is reused here with
-        // bare_is_escape=false — a bare `name` use is the existing walker's
-        // business, not this marker's — and only when the local's struct type is
-        // known, so an untyped local keeps its prior verdict exactly.
+        // optstruct_body_moves_field names the MOVE positions positively (a bind /
+        // assign / return value, a call argument, a container element) rather than
+        // reporting every field read and exempting borrows — see its header for why
+        // that polarity matters. Only when the local's struct type is known, so an
+        // untyped local keeps its prior verdict exactly.
         var mvsty: string = mvty;
         if (mvsty == "") { mvsty = declared_struct_type_of(body, out[mvi], structs); }
         if (!mv_moves && mvsty != "" && optstruct_body_moves_field(body, out[mvi], mvsty, structs)) { mv_moves = true; }
@@ -28033,9 +28031,9 @@ function optstruct_chain_leaf_type(e: parser.Expr, name: string, sty: string, st
     }
 }
 
-function optstruct_bind_esc_expr(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[], bare_is_escape: boolean): boolean {
+function optstruct_bind_esc_expr(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
     match (e) {
-        parser.ExprIdent(id) => { return bare_is_escape && id.name == name; },   // bare payload box escapes
+        parser.ExprIdent(id) => { return id.name == name; },   // bare payload box escapes
         parser.ExprNumber(_) => { return false; },
         parser.ExprString(_) => { return false; },
         parser.ExprBool(_) => { return false; },
@@ -28045,19 +28043,19 @@ function optstruct_bind_esc_expr(e: parser.Expr, name: string, sty: string, stru
                 if (is_scalar_type_name(lt)) { return false; }   // scalar field copy
                 return true;                                     // rc field extracted bare
             }
-            return optstruct_bind_esc_expr(fa.obj, name, sty, structs, bare_is_escape);
+            return optstruct_bind_esc_expr(fa.obj, name, sty, structs);
         },
         parser.ExprIndex(ix) => {
             // name.<f>[j] / name.<f>.<g>[j] : indexed array-field read — safe; check
             // the index. An UNRESOLVED chain ("?") is an escape, not a borrow.
             var at: string = optstruct_chain_leaf_type(ix.array, name, sty, structs);
             if (at == "?") { return true; }
-            if (at.len() > 0) { return optstruct_bind_esc_expr(ix.index, name, sty, structs, bare_is_escape); }
+            if (at.len() > 0) { return optstruct_bind_esc_expr(ix.index, name, sty, structs); }
             match (ix.array) {
-                parser.ExprIdent(aid) => { if (bare_is_escape && aid.name == name) { return true; } },
+                parser.ExprIdent(aid) => { if (aid.name == name) { return true; } },
                 _ => {}
             }
-            return optstruct_bind_esc_expr(ix.array, name, sty, structs, bare_is_escape) || optstruct_bind_esc_expr(ix.index, name, sty, structs, bare_is_escape);
+            return optstruct_bind_esc_expr(ix.array, name, sty, structs) || optstruct_bind_esc_expr(ix.index, name, sty, structs);
         },
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -28068,94 +28066,78 @@ function optstruct_bind_esc_expr(e: parser.Expr, name: string, sty: string, stru
                     if (cfa.field == "len" && rt == "?") { return true; }
                     if (cfa.field == "len" && rt.len() > 0) {
                         var ci: i32 = 0;
-                        while (ci < c.args.len()) { if (optstruct_bind_esc_expr(c.args[ci], name, sty, structs, bare_is_escape)) { return true; } ci = ci + 1; }
+                        while (ci < c.args.len()) { if (optstruct_bind_esc_expr(c.args[ci], name, sty, structs)) { return true; } ci = ci + 1; }
                         return false;
                     }
                 },
                 _ => {}
             }
-            if (optstruct_bind_esc_expr(c.callee, name, sty, structs, bare_is_escape)) { return true; }
+            if (optstruct_bind_esc_expr(c.callee, name, sty, structs)) { return true; }
             var ai: i32 = 0;
-            while (ai < c.args.len()) { if (optstruct_bind_esc_expr(c.args[ai], name, sty, structs, bare_is_escape)) { return true; } ai = ai + 1; }
+            while (ai < c.args.len()) { if (optstruct_bind_esc_expr(c.args[ai], name, sty, structs)) { return true; } ai = ai + 1; }
             return false;
         },
-        parser.ExprBinary(b) => { return optstruct_bind_esc_expr(b.left, name, sty, structs, bare_is_escape) || optstruct_bind_esc_expr(b.right, name, sty, structs, bare_is_escape); },
-        parser.ExprUnary(u) => { return optstruct_bind_esc_expr(u.operand, name, sty, structs, bare_is_escape); },
-        parser.ExprSlice(sl) => { return optstruct_bind_esc_expr(sl.array, name, sty, structs, bare_is_escape) || optstruct_bind_esc_expr(sl.start, name, sty, structs, bare_is_escape) || optstruct_bind_esc_expr(sl.end, name, sty, structs, bare_is_escape); },
+        parser.ExprBinary(b) => { return optstruct_bind_esc_expr(b.left, name, sty, structs) || optstruct_bind_esc_expr(b.right, name, sty, structs); },
+        parser.ExprUnary(u) => { return optstruct_bind_esc_expr(u.operand, name, sty, structs); },
+        parser.ExprSlice(sl) => { return optstruct_bind_esc_expr(sl.array, name, sty, structs) || optstruct_bind_esc_expr(sl.start, name, sty, structs) || optstruct_bind_esc_expr(sl.end, name, sty, structs); },
         parser.ExprArray(ar) => {
             var i: i32 = 0;
-            while (i < ar.elements.len()) { if (optstruct_bind_esc_expr(ar.elements[i], name, sty, structs, bare_is_escape)) { return true; } i = i + 1; }
+            while (i < ar.elements.len()) { if (optstruct_bind_esc_expr(ar.elements[i], name, sty, structs)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
-            while (i < t.elements.len()) { if (optstruct_bind_esc_expr(t.elements[i], name, sty, structs, bare_is_escape)) { return true; } i = i + 1; }
+            while (i < t.elements.len()) { if (optstruct_bind_esc_expr(t.elements[i], name, sty, structs)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprStructLit(sl) => {
-            if (sl.has_base && optstruct_bind_esc_expr(sl.base, name, sty, structs, bare_is_escape)) { return true; }
+            if (sl.has_base && optstruct_bind_esc_expr(sl.base, name, sty, structs)) { return true; }
             var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (optstruct_bind_esc_expr(sl.field_values[i], name, sty, structs, bare_is_escape)) { return true; } i = i + 1; }
+            while (i < sl.field_values.len()) { if (optstruct_bind_esc_expr(sl.field_values[i], name, sty, structs)) { return true; } i = i + 1; }
             return false;
         },
         _ => { return false; }
     }
     return false;
 }
-function optstruct_bind_esc_stmt(st: parser.Stmt, name: string, sty: string, structs: parser.StructDecl[], bare_is_escape: boolean): boolean {
+function optstruct_bind_esc_stmt(st: parser.Stmt, name: string, sty: string, structs: parser.StructDecl[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return optstruct_bind_esc_expr(v.init, name, sty, structs, bare_is_escape); },
-        parser.StmtReturn(r) => { return optstruct_bind_esc_expr(r.value, name, sty, structs, bare_is_escape); },
-        parser.StmtExpr(e) => { return optstruct_bind_esc_expr(e.value, name, sty, structs, bare_is_escape); },
-        parser.StmtAssign(a) => { return optstruct_bind_esc_expr(a.value, name, sty, structs, bare_is_escape); },
+        parser.StmtVar(v) => { return optstruct_bind_esc_expr(v.init, name, sty, structs); },
+        parser.StmtReturn(r) => { return optstruct_bind_esc_expr(r.value, name, sty, structs); },
+        parser.StmtExpr(e) => { return optstruct_bind_esc_expr(e.value, name, sty, structs); },
+        parser.StmtAssign(a) => { return optstruct_bind_esc_expr(a.value, name, sty, structs); },
         parser.StmtIf(f) => {
-            if (optstruct_bind_esc_expr(f.cond, name, sty, structs, bare_is_escape)) { return true; }
+            if (optstruct_bind_esc_expr(f.cond, name, sty, structs)) { return true; }
             var ti: i32 = 0;
-            while (ti < f.then_body.len()) { if (optstruct_bind_esc_stmt(f.then_body[ti], name, sty, structs, bare_is_escape)) { return true; } ti = ti + 1; }
+            while (ti < f.then_body.len()) { if (optstruct_bind_esc_stmt(f.then_body[ti], name, sty, structs)) { return true; } ti = ti + 1; }
             var ei: i32 = 0;
-            while (ei < f.else_body.len()) { if (optstruct_bind_esc_stmt(f.else_body[ei], name, sty, structs, bare_is_escape)) { return true; } ei = ei + 1; }
+            while (ei < f.else_body.len()) { if (optstruct_bind_esc_stmt(f.else_body[ei], name, sty, structs)) { return true; } ei = ei + 1; }
             return false;
         },
         parser.StmtWhile(w) => {
-            if (optstruct_bind_esc_expr(w.cond, name, sty, structs, bare_is_escape)) { return true; }
+            if (optstruct_bind_esc_expr(w.cond, name, sty, structs)) { return true; }
             var i: i32 = 0;
-            while (i < w.body.len()) { if (optstruct_bind_esc_stmt(w.body[i], name, sty, structs, bare_is_escape)) { return true; } i = i + 1; }
+            while (i < w.body.len()) { if (optstruct_bind_esc_stmt(w.body[i], name, sty, structs)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtFor(fo) => {
-            if (optstruct_bind_esc_expr(fo.iter, name, sty, structs, bare_is_escape)) { return true; }
+            if (optstruct_bind_esc_expr(fo.iter, name, sty, structs)) { return true; }
             var i: i32 = 0;
-            while (i < fo.body.len()) { if (optstruct_bind_esc_stmt(fo.body[i], name, sty, structs, bare_is_escape)) { return true; } i = i + 1; }
+            while (i < fo.body.len()) { if (optstruct_bind_esc_stmt(fo.body[i], name, sty, structs)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtMatch(m) => {
-            // `match (name.f)` READS the field — it is the #6319 lesson one level
-            // down: a match consumes its scrutinee's tag and payload and retains
-            // neither, so it is a borrow, not an extraction. Without this, the
-            // "NODEEP:" marker fired on `match (t.e)` and withheld #4357's
-            // per-iteration struct-enum-field reclaim, leaking the variant payload
-            // at exactly 80 bytes an iteration (linear in N, and disguised as
-            // non-monotonic by that probe's /8-then-mod-256 exit code).
-            //
-            // Only for the marker (bare_is_escape false). The Option-payload caller
-            // keeps judging its scrutinee, so #6336's semantics are untouched, and an
-            // UNRESOLVED chain ("?") stays an escape either way.
-            var scrut_borrow: boolean = false;
-            if (!bare_is_escape) {
-                var slt: string = optstruct_chain_leaf_type(m.scrutinee, name, sty, structs);
-                if (slt.len() > 0 && slt != "?") { scrut_borrow = true; }
-            }
-            if (!scrut_borrow && optstruct_bind_esc_expr(m.scrutinee, name, sty, structs, bare_is_escape)) { return true; }
+            if (optstruct_bind_esc_expr(m.scrutinee, name, sty, structs)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && optstruct_bind_esc_expr(m.arms[ai].guard, name, sty, structs, bare_is_escape)) { return true; }
+                if (m.arms[ai].has_guard && optstruct_bind_esc_expr(m.arms[ai].guard, name, sty, structs)) { return true; }
                 var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) { if (optstruct_bind_esc_stmt(m.arms[ai].body[bi], name, sty, structs, bare_is_escape)) { return true; } bi = bi + 1; }
+                while (bi < m.arms[ai].body.len()) { if (optstruct_bind_esc_stmt(m.arms[ai].body[bi], name, sty, structs)) { return true; } bi = bi + 1; }
                 ai = ai + 1;
             }
             return false;
         },
-        parser.StmtDefer(d) => { return optstruct_bind_esc_stmt(d.action, name, sty, structs, bare_is_escape); },
+        parser.StmtDefer(d) => { return optstruct_bind_esc_stmt(d.action, name, sty, structs); },
         _ => { return false; }
     }
     return false;
@@ -28208,15 +28190,143 @@ function declared_struct_type_of(stmts: parser.Stmt[], name: string, structs: pa
     return "";
 }
 
-// optstruct_body_moves_field: any statement in `stmts` extracts a NON-SCALAR field
-// of the struct local `name` (declared type `sty`) bare — the field-level move the
-// "NODEEP:" detector could not see (#6127). Borrows are admitted by the shared
-// walker: a scalar field read, `name.f[j]`, `name.f.len()`, and longer chains.
-// bare_is_escape is false — a bare `name` use is judged by body_unsafe_for, not here.
+// --- fieldmove: which POSITIONS actually move a field out (#6127) -----------
+//
+// The "NODEEP:" marker needs to know when a local's NON-SCALAR field is handed to
+// something longer-lived — `var lo: StringLitOut = add_string_lit(s, ..); s =
+// lo.state;`, where the deep drop would then free that EmitState's arrays out
+// from under the live `s`.
+//
+// This is deliberately a POSITIVE list of move positions, not a general escape
+// walker with borrow exemptions. The first cut reused optstruct_bind_esc_expr
+// (#6336), which reports every bare non-scalar field read and admits a whitelist
+// of borrows — and that polarity is wrong for a WHOLE-FUNCTION scan: it fired on
+// `match (t.e)` (withholding #4357's per-iteration struct-enum reclaim, an 80
+// bytes/iteration leak) and on `h.f(10)` (withholding the k_clo drop for every
+// called fn-field struct), and each fix added another exemption. The borrow
+// positions are open-ended; the MOVE positions are not.
+//
+// A move is a chain rooted at `name` whose leaf field is non-scalar, appearing as
+// the WHOLE value of a bind / assign / return, as a direct call ARGUMENT, or as a
+// container element. Every other position — a match scrutinee, a call callee, an
+// index base, a `.len()` receiver, an operand — reads through and is a borrow.
+function fieldmove_is_move_value(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    var lt: string = optstruct_chain_leaf_type(e, name, sty, structs);
+    if (lt.len() == 0) { return false; }
+    if (lt == "?") { return true; }              // unresolved chain — assume the worst
+    return !is_scalar_type_name(lt);
+}
+
+// fieldmove_expr: the move positions reachable inside an expression — a direct
+// call argument, or an element of an array / tuple / struct literal (including a
+// functional-update base, which copies every field pointer into the new box).
+function fieldmove_expr(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                if (fieldmove_is_move_value(c.args[ai], name, sty, structs)) { return true; }
+                if (fieldmove_expr(c.args[ai], name, sty, structs)) { return true; }
+                ai = ai + 1;
+            }
+            return fieldmove_expr(c.callee, name, sty, structs);
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                if (fieldmove_is_move_value(a.elements[i], name, sty, structs)) { return true; }
+                if (fieldmove_expr(a.elements[i], name, sty, structs)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                if (fieldmove_is_move_value(t.elements[i], name, sty, structs)) { return true; }
+                if (fieldmove_expr(t.elements[i], name, sty, structs)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) {
+                if (fieldmove_is_move_value(sl.base, name, sty, structs)) { return true; }
+                if (fieldmove_expr(sl.base, name, sty, structs)) { return true; }
+            }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                if (fieldmove_is_move_value(sl.field_values[i], name, sty, structs)) { return true; }
+                if (fieldmove_expr(sl.field_values[i], name, sty, structs)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprBinary(b) => { return fieldmove_expr(b.left, name, sty, structs) || fieldmove_expr(b.right, name, sty, structs); },
+        parser.ExprUnary(u) => { return fieldmove_expr(u.operand, name, sty, structs); },
+        parser.ExprIndex(ix) => { return fieldmove_expr(ix.array, name, sty, structs) || fieldmove_expr(ix.index, name, sty, structs); },
+        parser.ExprSlice(sl2) => { return fieldmove_expr(sl2.array, name, sty, structs) || fieldmove_expr(sl2.start, name, sty, structs) || fieldmove_expr(sl2.end, name, sty, structs); },
+        parser.ExprFieldAccess(fa) => { return fieldmove_expr(fa.obj, name, sty, structs); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (st) {
+        // A direct `var t = x.f` init is a BORROW, not a move — the same split
+        // structfld_collect_unsafe_stmts (#6274) already draws for the whole-program
+        // scan, and for the same reason: the fresh binding dies with the scope, while
+        // a REASSIGN `t = x.f` hands the field to a name that outlives it. That is
+        // exactly the `s = lo.state` hazard, and dropping this case is what keeps
+        // `var xs = r.hs; xs[1]()` deep-drop-worthy.
+        parser.StmtVar(v) => { return fieldmove_expr(v.init, name, sty, structs); },
+        parser.StmtAssign(a) => { return fieldmove_is_move_value(a.value, name, sty, structs) || fieldmove_expr(a.value, name, sty, structs); },
+        parser.StmtReturn(r) => { return fieldmove_is_move_value(r.value, name, sty, structs) || fieldmove_expr(r.value, name, sty, structs); },
+        parser.StmtExpr(e) => { return fieldmove_expr(e.value, name, sty, structs); },
+        parser.StmtIf(f) => {
+            if (fieldmove_expr(f.cond, name, sty, structs)) { return true; }
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { if (fieldmove_stmt(f.then_body[ti], name, sty, structs)) { return true; } ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { if (fieldmove_stmt(f.else_body[ei], name, sty, structs)) { return true; } ei = ei + 1; }
+            return false;
+        },
+        parser.StmtWhile(w) => {
+            if (fieldmove_expr(w.cond, name, sty, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < w.body.len()) { if (fieldmove_stmt(w.body[i], name, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtFor(fo) => {
+            if (fieldmove_expr(fo.iter, name, sty, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < fo.body.len()) { if (fieldmove_stmt(fo.body[i], name, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtMatch(m) => {
+            if (fieldmove_expr(m.scrutinee, name, sty, structs)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && fieldmove_expr(m.arms[ai].guard, name, sty, structs)) { return true; }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { if (fieldmove_stmt(m.arms[ai].body[bi], name, sty, structs)) { return true; } bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return fieldmove_stmt(d.action, name, sty, structs); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// optstruct_body_moves_field: any statement in `stmts` moves a NON-SCALAR field of
+// the struct local `name` (declared type `sty`) into something longer-lived.
 function optstruct_body_moves_field(stmts: parser.Stmt[], name: string, sty: string, structs: parser.StructDecl[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
-        if (optstruct_bind_esc_stmt(stmts[i], name, sty, structs, false)) { return true; }
+        if (fieldmove_stmt(stmts[i], name, sty, structs)) { return true; }
         i = i + 1;
     }
     return false;
@@ -28242,10 +28352,10 @@ function opt_arm_field_moved(st: parser.Stmt, variant: string, sty: string, stru
                             vc = vc + 1;
                         }
                         if (vname == variant && pv.binding != "" && pv.binding != "_") {
-                            if (arm.has_guard && optstruct_bind_esc_expr(arm.guard, pv.binding, sty, structs, true)) { return true; }
+                            if (arm.has_guard && optstruct_bind_esc_expr(arm.guard, pv.binding, sty, structs)) { return true; }
                             var bi: i32 = 0;
                             while (bi < arm.body.len()) {
-                                if (optstruct_bind_esc_stmt(arm.body[bi], pv.binding, sty, structs, true)) { return true; }
+                                if (optstruct_bind_esc_stmt(arm.body[bi], pv.binding, sty, structs)) { return true; }
                                 bi = bi + 1;
                             }
                         }
