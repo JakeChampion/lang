@@ -91,8 +91,9 @@ func TestSelfHostReadFileIRX86_64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			// x86-64 read_file is now a Fern runtime function (#2649): op_read_file
-			// calls the stack-ABI __fn___fern_read_file (wasm/arm64 keep the
-			// register-ABI __fern_read_file — not migrated).
+			// calls the stack-ABI __fn___fern_read_file. arm64 migrated too
+			// (#6352) and asserts the same symbol below; only wasm still calls
+			// the register-ABI __fern_read_file, as its own case records.
 			if !bytes.Contains(asm, []byte("call __fn___fern_read_file")) {
 				t.Fatalf("%s: no call to __fn___fern_read_file — did not lower through the IR path", tc.name)
 			}
@@ -221,8 +222,14 @@ func TestSelfHostReadFileIRArm64(t *testing.T) {
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
 			}
-			if !bytes.Contains(asm, []byte("bl __fern_read_file")) {
-				t.Fatalf("%s: no bl __fern_read_file — did not lower through the arm64 IR path", tc.name)
+			// arm64's read_file moved onto the Fern helper in #6352, so the
+			// call is to the stack-ABI __fn___fern_read_file, as on x86-64.
+			// This assertion kept naming the pre-migration register-ABI
+			// __fern_read_file, which `bl __fn___fern_read_file` does not
+			// contain — so it failed on every case and never reached the
+			// build-and-run below that actually proves the path works.
+			if !bytes.Contains(asm, []byte("bl __fn___fern_read_file")) {
+				t.Fatalf("%s: no bl __fn___fern_read_file — did not lower through the arm64 IR path", tc.name)
 			}
 			assertNoDanglingLocalLabels(t, "arm64 "+tc.name, asm)
 			bin := buildBinArm64(t, arm64gcc, dir, "rf_"+tc.name, string(asm))
