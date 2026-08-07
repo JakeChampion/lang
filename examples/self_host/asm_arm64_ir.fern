@@ -685,14 +685,19 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap"); s = s.need("proc_exec");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_proc_exec\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 182) {  // monotonic_ns
-            // no operands; __fern_monotonic_ns() -> i64 in x0. asm_arm64.emit_
-            // runtime emits the helper unconditionally (heap-independent), so no
-            // need is set here.
-            s = s.write("    bl __fern_monotonic_ns\n    str x0, [sp, #-16]!\n");
+            // no operands; call the Fern-compiled __fn___fern_monotonic_ns
+            // (asmcore.rt_src_clock, #2649) -> i64 in x0. A ZERO-ARG helper has
+            // no ABI difference between the stack and register conventions, so
+            // the arm64-darwin case — still hand-asm, because XNU's monotonic
+            // clock is `mrs cntvct_el0` rather than a syscall — is emitted under
+            // this same name and the call site does not branch on the target.
+            s = s.need("monotonic_ns");
+            s = s.write("    bl __fn___fern_monotonic_ns\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 184) {  // now_unix_ms
-            // no operands; __fern_now_unix_ms() -> i64 in x0. Unconditional
-            // helper (asm_arm64.emit_runtime), same as monotonic_ns.
-            s = s.write("    bl __fern_now_unix_ms\n    str x0, [sp, #-16]!\n");
+            // no operands; __fn___fern_now_unix_ms() -> i64 in x0. Fern on every
+            // native target (gettimeofday on Darwin, clock_gettime on Linux).
+            s = s.need("now_unix_ms");
+            s = s.write("    bl __fn___fern_now_unix_ms\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 219) {  // clz
             // `clz` already returns the operand width for a zero input, which
             // is exactly what the op defines, so no fixup is needed.
@@ -758,8 +763,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.write("    adrp x0, __fern_arr_push_shared\n    add x0, x0, :lo12:__fern_arr_push_shared\n    ldr x0, [x0]\n");
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 183) {  // now_ns
-            // no operands; __fern_now_ns() -> i64 in x0. Unconditional helper.
-            s = s.write("    bl __fern_now_ns\n    str x0, [sp, #-16]!\n");
+            // no operands; __fn___fern_now_ns() -> i64 in x0, the nanosecond
+            // twin of now_unix_ms. Fern on every native target.
+            s = s.need("now_ns");
+            s = s.write("    bl __fn___fern_now_ns\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 187) {  // poll
             // operand stack [fds, timeout]; pop timeout (x1, top) then fds box
             // ptr (x0), call __fern_poll (ppoll(2) over the fd set) -> i32 ready
@@ -903,11 +910,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
         } else if (o.kind_tag == 174) {  // temp_dir
             // [prefixbox] IS param[0]; call the Fern-compiled __fn___fern_temp_dir
             // (asmcore.rt_src_temp_dir, #2649) via the stack ABI. Its body calls
-            // the monotonic_ns BUILTIN, which lowers as an op inside the bundle
-            // and reaches the hand-asm __fern_monotonic_ns (emitted
-            // unconditionally) — so the clock staying hand-written costs nothing
-            // here.
-            s = s.need("heap"); s = s.need("temp_dir");
+            // the monotonic_ns BUILTIN, so mark that need HERE rather than
+            // relying on the op inside the bundle: the clocks are emitted by
+            // emit_rt_clock_and_print, which runs before the fs bundle, so a
+            // need marked during the bundle's own lowering would arrive too
+            // late. Same reason asm_ir's op_temp_dir marks it.
+            s = s.need("heap"); s = s.need("monotonic_ns"); s = s.need("temp_dir");
             s = s.write("    bl __fn___fern_temp_dir\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 171) {  // read_dir
             // [pathbox] -> list a directory's base-name children, push a fresh
@@ -2313,120 +2321,62 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __fern_now_unix_ms / __fern_monotonic_ns: clock_gettime
-    // (arm64 syscall 113) helpers. Emitted unconditionally — they
-    // don't touch the heap, so they can't ride the needs_heap gate
-    // that carries read_file/write_file, and a pure-scalar program
-    // that times something must still link. The kernel writes a
-    // `struct timespec { i64 tv_sec; i64 tv_nsec }` to the buffer.
-    // Errno is ignored: with a fixed clock id and a stack buffer we
-    // control, the realistic failures (EFAULT/EINVAL) can't fire.
-    // now_unix_ms: CLOCK_REALTIME=0 → tv_sec*1000 + tv_nsec/1e6.
-    s = s.write("__fern_now_unix_ms:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    sub sp, sp, #16\n");        // time buffer
-    if (darwin) {
-        // Darwin has no clock_gettime syscall; gettimeofday(tp, NULL)
-        // (BSD 116) fills `struct timeval { i64 tv_sec @0; i32 tv_usec
-        // @8 }`. ms = tv_sec*1000 + tv_usec/1000.
-        s = s.write("    mov x0, sp\n");             // &timeval
-        s = s.write("    mov x1, #0\n");             // tz = NULL
-        s = s.write("    mov x16, #116\n");          // gettimeofday
-        s = s.write("    svc #0x80\n");
-        s = s.write("    ldr x9, [sp]\n");           // tv_sec
-        s = s.write("    mov x10, #1000\n");
-        s = s.write("    mul x9, x9, x10\n");        // sec * 1000
-        s = s.write("    ldr w11, [sp, #8]\n");      // tv_usec (i32)
-        s = s.write("    mov x12, #1000\n");
-        s = s.write("    udiv x11, x11, x12\n");     // usec / 1000
-        s = s.write("    add x0, x9, x11\n");
-    } else {
-        s = s.write("    mov x0, #0\n");             // CLOCK_REALTIME
-        s = s.write("    mov x1, sp\n");             // &timespec
-        s = s.write("    mov x8, #113\n");           // clock_gettime
-        s = s.write("    svc #0\n");
-        s = s.write("    ldr x9, [sp]\n");           // tv_sec
-        s = s.write("    mov x10, #1000\n");
-        s = s.write("    mul x9, x9, x10\n");        // sec * 1000
-        s = s.write("    ldr x11, [sp, #8]\n");      // tv_nsec
-        s = s.write("    ldr x12, =1000000\n");
-        s = s.write("    udiv x11, x11, x12\n");     // nsec / 1e6
-        s = s.write("    add x0, x9, x11\n");
+    // The clocks are Fern runtime functions now (#2649):
+    // asmcore.rt_src_clock, need-gated, lowered through the IR pipeline as
+    // __fn___fern_{monotonic_ns,now_unix_ms,now_ns}. They are emitted HERE
+    // rather than with the fs bundle because they are heap-independent — a
+    // pure-scalar program that times something must still link — and because
+    // emit_rt_clock_and_print runs before the fs bundle, which is what lets
+    // op_temp_dir's monotonic_ns need reach them.
+    //
+    // __fern_scratch is the fixed buffer the kernel writes the timespec /
+    // timeval / struct stat into (reused, never freed, so no per-call leak),
+    // reached through the __raw_scratch op. It moved out of emit_rt_fs for the
+    // same heap-independence reason: gating it on the fs runtime left a scalar
+    // timing program referencing a slot nothing defined. Same gate as asm_ir's.
+    var ctgt: string = "arm64";
+    if (darwin) { ctgt = "arm64-darwin"; }
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat")) {
+        s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
     }
-    s = s.write("    mov sp, x29\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    // monotonic_ns: CLOCK_MONOTONIC=1 → tv_sec*1e9 + tv_nsec.
-    s = s.write("__fern_monotonic_ns:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    if (darwin) {
-        // Darwin has no clock_gettime syscall. mach_absolute_time on
-        // Apple Silicon is a read of the architectural counter
-        // CNTVCT_EL0 (EL0-readable), scaled by its frequency CNTFRQ_EL0
-        // (24 MHz on Apple Silicon) to nanoseconds. Compute
-        // ns = (count/freq)*1e9 + ((count%freq)*1e9)/freq to avoid the
-        // u64 overflow a bare count*1e9 would hit over long uptimes.
-        s = s.write("    mrs x9, cntvct_el0\n");      // count
-        s = s.write("    mrs x10, cntfrq_el0\n");     // freq (Hz)
-        s = s.write("    udiv x11, x9, x10\n");       // sec = count / freq
-        s = s.write("    msub x12, x11, x10, x9\n");  // rem = count - sec*freq
-        s = s.write("    ldr x13, =1000000000\n");
-        s = s.write("    mul x11, x11, x13\n");       // sec * 1e9
-        s = s.write("    mul x12, x12, x13\n");       // rem * 1e9
-        s = s.write("    udiv x12, x12, x10\n");      // (rem*1e9) / freq
-        s = s.write("    add x0, x11, x12\n");        // ns
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-    } else {
-        s = s.write("    sub sp, sp, #16\n");        // timespec
-        s = s.write("    mov x0, #1\n");             // CLOCK_MONOTONIC
-        s = s.write("    mov x1, sp\n");             // &timespec
-        s = s.write("    mov x8, #113\n");           // clock_gettime
-        s = s.write("    svc #0\n");
-        s = s.write("    ldr x9, [sp]\n");           // tv_sec
-        s = s.write("    ldr x10, =1000000000\n");
-        s = s.write("    mul x9, x9, x10\n");        // sec * 1e9
-        s = s.write("    ldr x11, [sp, #8]\n");      // tv_nsec
-        s = s.write("    add x0, x9, x11\n");
-        s = s.write("    mov sp, x29\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
+    if (s.has_need("now_unix_ms")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_unix_ms", ctgt), s.struct_decls, s);
     }
-    // now_ns: CLOCK_REALTIME=0 → tv_sec*1e9 + tv_nsec (the
-    // nanosecond-resolution twin of now_unix_ms). Same frame as
-    // now_unix_ms; Darwin uses gettimeofday scaled to ns.
-    s = s.write("__fern_now_ns:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    sub sp, sp, #16\n");        // time buffer
-    if (darwin) {
-        s = s.write("    mov x0, sp\n");             // &timeval
-        s = s.write("    mov x1, #0\n");             // tz = NULL
-        s = s.write("    mov x16, #116\n");          // gettimeofday
-        s = s.write("    svc #0x80\n");
-        s = s.write("    ldr x9, [sp]\n");           // tv_sec
-        s = s.write("    ldr x10, =1000000000\n");
-        s = s.write("    mul x9, x9, x10\n");        // sec * 1e9
-        s = s.write("    ldr w11, [sp, #8]\n");      // tv_usec (i32)
-        s = s.write("    mov x12, #1000\n");
-        s = s.write("    mul x11, x11, x12\n");      // usec * 1000 = ns
-        s = s.write("    add x0, x9, x11\n");
-    } else {
-        s = s.write("    mov x0, #0\n");             // CLOCK_REALTIME
-        s = s.write("    mov x1, sp\n");             // &timespec
-        s = s.write("    mov x8, #113\n");           // clock_gettime
-        s = s.write("    svc #0\n");
-        s = s.write("    ldr x9, [sp]\n");           // tv_sec
-        s = s.write("    ldr x10, =1000000000\n");
-        s = s.write("    mul x9, x9, x10\n");        // sec * 1e9
-        s = s.write("    ldr x11, [sp, #8]\n");      // tv_nsec
-        s = s.write("    add x0, x9, x11\n");
+    if (s.has_need("now_ns")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_ns", ctgt), s.struct_decls, s);
     }
-    s = s.write("    mov sp, x29\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
+    if (s.has_need("monotonic_ns")) {
+        if (darwin) {
+            // The one clock with no Fern form. XNU has no clock_gettime
+            // syscall, and its monotonic clock on Apple Silicon is not a
+            // syscall at all: mach_absolute_time reads the architectural
+            // counter CNTVCT_EL0 (EL0-readable) and scales it by CNTFRQ_EL0
+            // (24 MHz on Apple Silicon). Fern has no system-register-read
+            // intrinsic, so this stays hand-written — under the __fn___ name
+            // the Fern siblings use, since a zero-arg helper's stack and
+            // register conventions coincide and the call site should not have
+            // to know which one it got.
+            //
+            // ns = (count/freq)*1e9 + ((count%freq)*1e9)/freq, split that way
+            // to avoid the u64 overflow a bare count*1e9 hits over long uptimes.
+            s = s.write("__fn___fern_monotonic_ns:\n");
+            s = s.write("    stp x29, x30, [sp, #-16]!\n");
+            s = s.write("    mov x29, sp\n");
+            s = s.write("    mrs x9, cntvct_el0\n");      // count
+            s = s.write("    mrs x10, cntfrq_el0\n");     // freq (Hz)
+            s = s.write("    udiv x11, x9, x10\n");       // sec = count / freq
+            s = s.write("    msub x12, x11, x10, x9\n");  // rem = count - sec*freq
+            s = s.write("    ldr x13, =1000000000\n");
+            s = s.write("    mul x11, x11, x13\n");       // sec * 1e9
+            s = s.write("    mul x12, x12, x13\n");       // rem * 1e9
+            s = s.write("    udiv x12, x12, x10\n");      // (rem*1e9) / freq
+            s = s.write("    add x0, x11, x12\n");        // ns
+            s = s.write("    ldp x29, x30, [sp], #16\n");
+            s = s.write("    ret\n");
+        } else {
+            s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("monotonic_ns", ctgt), s.struct_decls, s);
+        }
+    }
     // __fern_sleep_ms(x0 = ms) — nanosleep wrapper, no heap. Same
     // shape as the x86 mirror but arm64 syscall numbers: nanosleep=101.
     s = s.write(".globl __fern_sleep_ms\n");
@@ -4430,13 +4380,9 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write("    .section .bss\n");
     s = s.write("    .align 8\n");
     s = s.write("__fern_envp: .quad 0\n");
-    // __fern_scratch: the fixed buffer the kernel writes a `stat` into for the
-    // Fern __fern_stat (#2649), reached through the __raw_scratch op. Emitted
-    // alongside __fern_envp rather than gated, for the same reason: this whole
-    // block is already conditional on the fs runtime, and one 256-byte .bss slot
-    // is not worth a second gate to keep in sync with the helper's.
-    s = s.write("    .align 8\n");
-    s = s.write("__fern_scratch: .skip 256\n");
+    // __fern_scratch lives in emit_rt_clock_and_print now, not here: the
+    // clocks use it too and are heap-independent, so a slot gated on the fs
+    // runtime left a pure-scalar timing program referencing an undefined label.
     s = s.write("    .section .text\n");
     // __fern_env itself is a Fern runtime function now (#2649):
     // asmcore.rt_src_env, emitted need-gated in the fs bundle below. It reads

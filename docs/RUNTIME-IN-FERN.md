@@ -32,9 +32,20 @@ What remains hand-written — and what keeps
 [#2649](https://github.com/JakeChampion/lang/issues/2649) open — is the
 core allocator / map runtime and the array MUTATORS (`__fern_alloc`,
 `__fern_map_*`, `__fern_arr_push`), the arm64
-leaves whose Darwin form diverges in SHAPE rather than in constants (the
-clocks, `read_dir`, `remove_dir_all`), and the
-per-backend wasm helper bundles. This is the architecture document the end goal of
+leaves whose Darwin form diverges in SHAPE rather than in constants
+(`read_dir`, `remove_dir_all`), and the
+per-backend wasm helper bundles.
+
+The **clocks** used to be on that shape-diverging list and mostly are not.
+`now_unix_ms` / `now_ns` do diverge — Linux takes
+`clock_gettime(clk, &timespec)` filling `{i64 sec; i64 nsec}`, XNU takes
+`gettimeofday(&timeval, NULL)` (buffer FIRST) filling `{i64 sec; i32 usec}`,
+so the number, the argument order and the subsecond field's WIDTH all move
+at once — but every one of those is expressible with the existing floor, and
+`clock_read(t, clk)` is where all three live. Only `monotonic_ns` on Darwin
+is genuinely out of reach: XNU's monotonic clock on Apple Silicon is not a
+syscall at all but `mrs cntvct_el0` scaled by `cntfrq_el0`, and Fern has no
+system-register-read intrinsic. That one helper stays hand-written. This is the architecture document the end goal of
 [#2649](https://github.com/JakeChampion/lang/issues/2649) needs as more helpers
 move; see the "Slice 1 / Slice 2 (landed)" sections at the end for what the
 first migrations actually took, which was simpler than first proposed. The near-term stepping stone it references

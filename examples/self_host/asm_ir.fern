@@ -7461,15 +7461,15 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     }
     if (s.has_need("monotonic_ns")) {
         s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("monotonic_ns"), all_structs, s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("monotonic_ns", "x86_64"), all_structs, s);
     }
     if (s.has_need("now_unix_ms")) {
         s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_unix_ms"), all_structs, s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_unix_ms", "x86_64"), all_structs, s);
     }
     if (s.has_need("now_ns")) {
         s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_ns"), all_structs, s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_ns", "x86_64"), all_structs, s);
     }
     // The fs-syscall leaves (stat / read_file / remove_file / write_file /
     // temp_dir / read_dir / remove_dir_all) are now Fern runtime functions (#2649) that share ONE errno→IoError
