@@ -28129,7 +28129,23 @@ function optstruct_bind_esc_stmt(st: parser.Stmt, name: string, sty: string, str
             return false;
         },
         parser.StmtMatch(m) => {
-            if (optstruct_bind_esc_expr(m.scrutinee, name, sty, structs, bare_is_escape)) { return true; }
+            // `match (name.f)` READS the field — it is the #6319 lesson one level
+            // down: a match consumes its scrutinee's tag and payload and retains
+            // neither, so it is a borrow, not an extraction. Without this, the
+            // "NODEEP:" marker fired on `match (t.e)` and withheld #4357's
+            // per-iteration struct-enum-field reclaim, leaking the variant payload
+            // at exactly 80 bytes an iteration (linear in N, and disguised as
+            // non-monotonic by that probe's /8-then-mod-256 exit code).
+            //
+            // Only for the marker (bare_is_escape false). The Option-payload caller
+            // keeps judging its scrutinee, so #6336's semantics are untouched, and an
+            // UNRESOLVED chain ("?") stays an escape either way.
+            var scrut_borrow: boolean = false;
+            if (!bare_is_escape) {
+                var slt: string = optstruct_chain_leaf_type(m.scrutinee, name, sty, structs);
+                if (slt.len() > 0 && slt != "?") { scrut_borrow = true; }
+            }
+            if (!scrut_borrow && optstruct_bind_esc_expr(m.scrutinee, name, sty, structs, bare_is_escape)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 if (m.arms[ai].has_guard && optstruct_bind_esc_expr(m.arms[ai].guard, name, sty, structs, bare_is_escape)) { return true; }
