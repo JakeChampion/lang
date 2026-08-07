@@ -26673,13 +26673,29 @@ function fresh_scalar_option_init(v: parser.StmtVar): boolean {
 // (collect_fresh_rcenum_names via rcenum_call_init_owner) has admitted call
 // inits since #4355 slice 5. This is that same admission for Option / Result.
 //
-// The gate is STRICTER than the direct sibling's, and deliberately: that one
-// knows which variant it built and checks only that variant's payload, while a
-// call's variant is not statically known. The free here is SHALLOW (the box,
-// not its payloads), so a `Result[i32, string]` whose Err arm carries a string
-// pointer would leak that payload. Requiring EVERY variant's payload to be
-// scalar is what makes the shallow free sound; a mixed Result stays refused and
-// stays leaking, which is the safe direction.
+// The gate is stricter than the direct sibling's, because that one knows which
+// variant it built and checks only that variant's payload, while a call's
+// variant is not statically known. It checks the SUCCESS payload only.
+//
+// It used to require EVERY variant's payload to be scalar, on the grounds that
+// this is "what makes the shallow free sound". That conflates two things. The
+// free here is SHALLOW — one `__fern_rc_dec` on the box, never a reach into
+// offset 8 — so it cannot dangle a payload however the box is shaped; an
+// unreleased payload is a LEAK, not unsafety. Requiring Err to be scalar
+// therefore bought leak-freedom inside the admitted set while leaving
+// everything outside it leaking the box AS WELL as the payload, which is
+// strictly worse.
+//
+// `Result[T, string]` is the idiomatic error type, so that exclusion covered
+// the common case: measured 16000 bytes over 100 rounds at #6392, `frees=0`,
+// against 0 once admitted. On the Ok path — the overwhelmingly common one, and
+// the only one a scalar `T` can take — nothing is stranded at all; on the Err
+// path the string is stranded exactly as it already was, minus the box.
+//
+// A non-scalar SUCCESS payload (`Result[i32[], string]`) stays refused. Its
+// common path would strand a buffer, so the box-only free is a much weaker win
+// there, and closing it properly needs the runtime variant a deep drop would
+// dispatch on — a separate slice, not a widening of this gate.
 function fresh_scalar_option_call_init(v: parser.StmtVar, opt_fresh: string[]): boolean {
     var callee: string = "";
     match (v.init) {
@@ -26703,8 +26719,10 @@ function fresh_scalar_option_call_init(v: parser.StmtVar, opt_fresh: string[]): 
         return is_scalar_type_name(opt_payload_type(ann, "Ok"));
     }
     if (n >= 8 && ann[0:7] == "Result[") {
-        return is_scalar_type_name(opt_payload_type(ann, "Ok"))
-            && is_scalar_type_name(opt_payload_type(ann, "Err"));
+        // Err is deliberately unconstrained — see the header. A non-scalar Err
+        // strands its payload on the Err path only, which is what already
+        // happened, and the box is reclaimed on every path either way.
+        return is_scalar_type_name(opt_payload_type(ann, "Ok"));
     }
     return false;
 }
