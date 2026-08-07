@@ -74,7 +74,7 @@ var closureArrayIRCases = []struct {
 	// returns the array; the caller sums the calls. (10+0)+(10+1)+(10+2) = 33.
 	{"escape-loop-capture", `function adders(n: i32): ((i32) => i32)[] { var fs: ((i32) => i32)[] = []; var i = 0; while (i < n) { var k = i; fs = fs.append((x: i32) => x + k); i = i + 1; } return fs; } function main(): i32 { var fs = adders(3); var t = 0; for f in fs { t = t + f(10); } return t; }`, 33},
 	// #3574: a bare NAMED-fn value appended to an empty fn-pointer array (is_fnarr),
-	// then called — previously const-called f and segfaulted (exit -1).
+	// then called. Const-calling f instead segfaults (exit -1).
 	{"namedfn-append-empty", `function f(): i32 { return 7; } function main(): i32 { var fns: (() => i32)[] = []; fns = fns.append(f); return fns[0](); }`, 7},
 	// append two named fns, call both: 7 + 5 = 12.
 	{"namedfn-append-two", `function f(): i32 { return 7; } function g(): i32 { return 5; } function main(): i32 { var fns: (() => i32)[] = []; fns = fns.append(f); fns = fns.append(g); return fns[0]() + fns[1](); }`, 12},

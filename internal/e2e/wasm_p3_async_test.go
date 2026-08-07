@@ -126,7 +126,7 @@ func TestWasmP3AsyncExportFromFern(t *testing.T) {
 // result. A real Fern `async function big(): u64 { return 4294967338; }` (2^32 +
 // 42) is compiled with AsyncExportName/AsyncSourceFunc and lifted as `big: async
 // func() -> u64`: the synthetic wrapper hands the i64 result to a task-return
-// import now width-matched to i64 (previously hard-wired to i32). Running it
+// import width-matched to i64, not hard-wired to i32. Running it
 // returns the full 64-bit value under wasmtime's async features — a value that
 // would be truncated if the result were still forced through i32.
 func TestWasmP3AsyncExportU64FromFern(t *testing.T) {

@@ -306,10 +306,9 @@ type Generator struct {
 	// today: ProfileFree (the free-form Gen / GenBytes path,
 	// every production allowed) and ProfileRunnable (the
 	// MainProgram path that has to produce identical output
-	// across backends). Replaces what used to be a single
-	// `noFloats bool` whose three implicit meanings — skip
-	// f32, this is the runnable path, prefer deterministic
-	// choices — kept drifting together.
+	// across backends). An enum rather than a `noFloats bool`,
+	// which conflates three independent meanings — skip f32,
+	// this is the runnable path, prefer deterministic choices.
 	profile Profile
 	// helpers is the running list of every top-level function
 	// signature emitted so far. Subsequent function bodies
@@ -522,7 +521,7 @@ const (
 	// than a direct symbol reference.
 	//
 	// The shapes are the ones from the closure-dispatch cluster
-	// CLAUDE.md names — #5001 / #5007 / #5009 / #5026, escaping and
+	// docs/TEST-GATES.md names — #5001 / #5007 / #5009 / #5026, escaping and
 	// array-held closures that lowered fine and then SIGSEGV'd or
 	// silently miscompiled. Every one was found by a HAND-WRITTEN
 	// probe, because the generator could not produce a function

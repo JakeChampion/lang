@@ -11,9 +11,9 @@ import (
 
 // enumFreshMethodIRCases exercise an enum method called DIRECTLY on a freshly
 // constructed variant — a payload variant `Has(5).m()` or a bare unit variant
-// `Nil.m()` — through the stack-IR path. Previously such calls bailed to the
-// AST emitter: a fresh variant isn't a typed local, so the receiver's enum
-// couldn't be recovered for `<Enum>.<method>` dispatch (and a unit variant was
+// `Nil.m()` — through the stack-IR path. A fresh variant isn't a typed local,
+// so recovering the receiver's enum for `<Enum>.<method>` dispatch takes extra
+// work; without it such calls bail to the AST emitter (and a unit variant was
 // mis-read as an associated-function TYPE target). The parser now records each
 // variant's owning enum on its desugared StructDecl (`enum_owner`), and
 // irlower's `expr_enum_type` recovers it. Exit codes are the oracle.

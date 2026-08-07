@@ -4161,10 +4161,10 @@ func TestWASMIndirectCallApply(t *testing.T) {
 // #4804: a closure/fn-value whose signature contains a `string`
 // parameter must flow through wasm `call_indirect`. Strings use the
 // two-slot (data, len) ABI on wasm32, and the indirect-call signature
-// seam (addClosureSigType) previously typed each param via valtypeFor,
-// which rejected `string` outright — so any `(string, …) => …`
-// comparator/callback failed to compile for -target wasm. The seam now
-// fans string params through slotValtypes, matching the callee
+// seam (addClosureSigType) must not type each param via valtypeFor,
+// which rejects `string` outright and fails any `(string, …) => …`
+// comparator/callback for -target wasm. The seam fans string params
+// through slotValtypes, matching the callee
 // definition (paramValtypes). Exercises the motivating `sort_by`-style
 // string comparator shape end-to-end.
 func TestWASMIndirectCallStringParam(t *testing.T) {

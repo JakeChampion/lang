@@ -12,9 +12,9 @@ import (
 // i64ArrElemWidthIRCases pin an i32-element ARRAY index consumed in an i64
 // arithmetic context (`s64 + a[i]`, the canonical numeric reduction summing an
 // i32[] into an i64 accumulator) to the self-host IR path on x86-64 + wasm.
-// lower_i64's ExprIndex arm previously lowered only i64[]/u64[] (8-byte)
-// elements and bailed every other array source via `return s.fail()`, dropping
-// the whole module to the legacy AST emitter. #2691 widens it: a plain 32-bit
+// lower_i64's ExprIndex arm must not lower only i64[]/u64[] (8-byte) elements
+// and bail every other array source via `return s.fail()`, dropping the whole
+// module to the legacy AST emitter. #2691 widens it: a plain 32-bit
 // element array (new arr_index_is_i32_scalar — an i32[] or u32[] ident slot, not
 // i64[]/f64[]/string[]/T[][]/closure[]) has its element lowered via lower_expr
 // (arr_get) and sign/zero-extended to i64 (op_int_extend; the checker forbids

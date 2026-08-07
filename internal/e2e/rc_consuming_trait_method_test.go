@@ -7,9 +7,9 @@ import (
 )
 
 // Consuming trait method (`own self` declared on the trait + impl) returning the
-// Self enum — the FBIP map behind a trait bound. Previously blocked by a
-// spurious enum-kind coherence mismatch (E021); with that fixed and `own`-aware
-// conformance in place, it compiles and runs soundly on every backend.
+// Self enum — the FBIP map behind a trait bound. Needs `own`-aware
+// conformance and no spurious enum-kind coherence mismatch (E021) to compile
+// and run soundly on every backend.
 const consumingTraitMethodSrc = `enum List { Cons(i32, List), Nil }
 trait Mapper { function inc(own self: Self): List; }
 impl Mapper for List {

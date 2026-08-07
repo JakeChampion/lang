@@ -256,9 +256,9 @@ function main(): i32 {
 // the world-driven composer wires a WIT `[resource-drop]` import. The program
 // drops its pollable via an `@import("…","[resource-drop]pollable")` extern;
 // the composer surfaces `pollable` as a component-level type (an alias from the
-// poll instance) and emits a canon `resource.drop` referencing it — the path
-// ComposeFromWorldAuto previously rejected (hasResourceDropPrefix). The
-// resource is now released rather than leaked, validated + run under real WASI.
+// poll instance) and emits a canon `resource.drop` referencing it — the
+// ComposeFromWorldAuto path gated by hasResourceDropPrefix. The resource is
+// released rather than leaked, validated + run under real WASI.
 //
 // The drop extern is the test vehicle for the composer change; automatic
 // compiler-inserted drop is slice 3.

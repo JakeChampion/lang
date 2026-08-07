@@ -151,9 +151,8 @@ var keywords = map[string]bool{
 	"trait": true,
 	"impl":  true,
 	// `dyn` introduces a runtime trait-object type (`dyn Shape`) in
-	// type position. Reserved as a keyword for parser simplicity; it
-	// was not previously used as an identifier anywhere in the stdlib
-	// or examples. See docs/DYN-TRAITS.md.
+	// type position. Reserved as a keyword for parser simplicity.
+	// See docs/DYN-TRAITS.md.
 	"dyn": true,
 }
 

@@ -7,9 +7,9 @@ import "testing"
 // CAPTURES by reference (#2896): a captured outer i32/bool/f64 is ONE shared
 // cell, so writes are visible symmetrically in BOTH directions — a closure's
 // write escapes to the enclosing scope, AND an enclosing-scope write is seen by
-// a closure that reads the variable. The native pipeline previously captured
-// scalars BY VALUE, so the write was lost (repro → 8 not 49; counter → 0 not 2)
-// and, until the #4391 follow-up, an outer-scope mutation after capture was a
+// a closure that reads the variable. Capturing scalars BY VALUE loses the
+// write (repro → 8 not 49; counter → 0 not 2); an outer-scope mutation after
+// capture was, until the #4391 follow-up, a
 // stale make-time snapshot (`outer-mutation`/`loop-outer-mutation` returned 0
 // where the interpreter returned 5/10). The fix boxes captured mutable scalars
 // into 1-element array cells (closureconv.BoxMutatedCaptures) — boxing on

@@ -8,9 +8,9 @@ import (
 )
 
 // `char` (#5629) is a distinct type from every integer. That distinctness IS
-// the feature: a byte and a code point previously shared `i32`, so
+// the feature: sharing `i32` between a byte and a code point gives
 // `s[i].to_upper()` (an ASCII byte fold) and `to_upper_char(cp)` (a Unicode
-// mapping) had identical signatures. Every implicit conversion must be
+// mapping) identical signatures. Every implicit conversion must be
 // rejected in both directions; only an explicit cast crosses.
 func TestCharRejectsImplicitConversion(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{

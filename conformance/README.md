@@ -4,7 +4,7 @@ Status: normative. This directory defines observable Fern behaviour by
 example. A change to a case's expected output is a change to the
 language, and should be reviewed as one.
 
-`cases/` holds 430 self-contained programs, each a directory with the
+`cases/` holds 437 self-contained programs, each a directory with the
 program plus a few declarative sidecar files describing what running it
 must produce. Every Fern implementation is measured against it:
 `internal/interp`, the three native backends (x86-64, arm64, wasm), and
@@ -51,6 +51,7 @@ A case is a directory `cases/<name>/`. Contents:
 | `backends` | no | Whitespace-separated subset of `interp x86_64 arm64 wasm`; `#` starts a comment. Defaults to all four. |
 | `expected.error` | no | Marks a **compile-error case** — see below. |
 | `meta` | no | Justifies a case that asserts less than the maximum — see below. Required exactly when the case does. |
+| `reclaim-observable` | no | Marks a case whose output deliberately DIFFERS with reclamation off, so the free-off gates invert for it rather than requiring a match. Contents are prose explaining why; only the file's presence is read. |
 
 No other filenames are permitted, and case directories have no
 subdirectories. Both are enforced (`TestConformanceCorpusFormat`),

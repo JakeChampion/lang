@@ -2,7 +2,7 @@ package ir
 
 // RC type-capability classification — THE single home for "what reference-
 // counting capabilities does this type have?" (#4477, part of the #4393/#4474
-// extraction). Previously these predicates were scattered across ir.go /
+// extraction). Keep them here rather than scattered across ir.go /
 // rc_analysis.go / rc_insert.go, each answering one slice of the same
 // question with its own edges; the goal-2 port mirrors this one file.
 //

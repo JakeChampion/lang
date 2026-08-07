@@ -1,0 +1,428 @@
+// examples/proposals/barchart.fern — proposal turn, drawn line 101:
+// "An ASCII bar chart with axis labels and automatic scaling."
+//
+// "Automatic scaling" is the whole problem. Scaling the longest bar to the
+// full width is trivial and produces an axis nobody can read: a chart whose
+// top gridline is 8 137 tells you nothing you can compare against the next
+// chart. What a reader needs is a round number at the top — 1, 2 or 5 times a
+// power of ten — chosen as the SMALLEST such number that still contains the
+// data. That is the classic nice-number rule, and it has an exact oracle: for
+// any value there is one right answer, so the test can sweep thousands of
+// inputs and derive each expectation independently rather than tabulate a few.
+//
+// The bars are ASCII, and deliberately so. A Unicode block-element bar looks
+// better and makes every alignment claim untestable with `.len()`, because
+// byte length stops equalling column width — U+2588 is three bytes wide and
+// one column wide. With ASCII the two coincide, so "every line is the same
+// width" is a property this file can actually assert instead of eyeball.
+//
+// Rounding is the other place these get quietly wrong. A truncating bar length
+// makes every bar short by up to a cell and, worse, makes two adjacent values
+// render identically while a third that differs by less renders differently.
+// Bars here round half-up, and the test for it is not a spot check: it is the
+// monotonicity property, which truncation satisfies but which pins the
+// direction of the error, plus an exact check at the endpoints.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+// -------------------------------------------------------- nice numbers
+
+// The smallest number of the form {1,2,5} x 10^k that is >= v.
+//
+// Built by walking the mantissa/exponent ladder rather than by taking a
+// logarithm: log10 is not available on every backend (#6404) and would need
+// care at exact powers of ten anyway, where a result of 2.9999 rounds the
+// wrong way. Integer stepping has neither problem and is exact by
+// construction.
+function nice_max(v: i32): i32 {
+    if (v <= 0) { return 1; }
+    var step: i32 = 1;
+    while (true) {
+        if (v <= step) { return step; }
+        if (v <= step * 2) { return step * 2; }
+        if (v <= step * 5) { return step * 5; }
+        // The next decade. Guard the multiply rather than let it wrap: an
+        // i32 overflow here would loop forever instead of failing.
+        if (step > 214748364) { return 2147483647; }
+        step = step * 10;
+    }
+    return 1;
+}
+
+// ------------------------------------------------------------- scaling
+
+// Bar length in cells, rounded half-up. i64 intermediate because
+// v * width overflows i32 for values past ~2 x 10^6 at width 1000 — the kind
+// of input a chart of byte counts hands you routinely.
+function bar_len(v: i32, axis_max: i32, width: i32): i32 {
+    if (v <= 0 || axis_max <= 0 || width <= 0) { return 0; }
+    if (v >= axis_max) { return width; }
+    var num: i64 = (v as i64) * (width as i64) * 2 + (axis_max as i64);
+    return (num / ((axis_max as i64) * 2)) as i32;
+}
+
+// ------------------------------------------------------------ rendering
+
+function repeat(c: string, n: i32): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) { out = out + c; i = i + 1; }
+    return out;
+}
+
+function pad_left(s: string, w: i32): string {
+    if (s.len() >= w) { return s; }
+    return repeat(" ", w - s.len()) + s;
+}
+
+function pad_right(s: string, w: i32): string {
+    if (s.len() >= w) { return s; }
+    return s + repeat(" ", w - s.len());
+}
+
+function max_len(xs: string[]): i32 {
+    var m: i32 = 0;
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i].len() > m) { m = xs[i].len(); }
+        i = i + 1;
+    }
+    return m;
+}
+
+function max_val(vs: i32[]): i32 {
+    var m: i32 = 0;
+    var i: i32 = 0;
+    while (i < vs.len()) {
+        if (vs[i] > m) { m = vs[i]; }
+        i = i + 1;
+    }
+    return m;
+}
+
+// The chart: one line per row, then an axis rule and its tick labels.
+//
+// Every line is padded to the same width, including the axis, so the result
+// can be framed or written into a fixed-width report without the caller
+// measuring anything. That is the invariant test_every_line_is_the_same_width
+// pins.
+function chart(labels: string[], values: i32[], width: i32): string[] {
+    var out: string[] = [];
+    if (labels.len() == 0 || labels.len() != values.len() || width <= 0) {
+        return out;
+    }
+    var lw: i32 = max_len(labels);
+    var axis: i32 = nice_max(max_val(values));
+    // The value column is as wide as the axis maximum's own digits, which is
+    // the widest any value can print — no value exceeds the axis.
+    var vw: i32 = axis.to_string().len();
+
+    var i: i32 = 0;
+    while (i < labels.len()) {
+        var n: i32 = bar_len(values[i], axis, width);
+        out = out.append(pad_left(labels[i], lw) + " |" + pad_right(repeat("#", n), width)
+            + "| " + pad_left(values[i].to_string(), vw));
+        i = i + 1;
+    }
+
+    // Axis rule, aligned under the bar field.
+    out = out.append(repeat(" ", lw) + " +" + repeat("-", width) + "+ " + repeat(" ", vw));
+
+    // Tick labels: 0 at the left edge, the axis maximum right-aligned at the
+    // right edge. Both are inside the same field the bars occupy, so a reader
+    // can lay a ruler down the column.
+    var zero: string = "0";
+    var top: string = axis.to_string();
+    var gap: i32 = width - zero.len() - top.len();
+    var ticks: string = zero + repeat(" ", gap) + top;
+    if (gap < 0) { ticks = pad_right(zero, width); }
+    out = out.append(repeat(" ", lw) + " " + pad_right(ticks, width + 2) + " " + repeat(" ", vw));
+    return out;
+}
+
+// -------------------------------------------------------------- oracle
+
+// The nice-number answer, found by brute force over every candidate rather
+// than by the ladder the implementation walks. Slow and obviously correct,
+// which is what an oracle is for.
+function bf_nice_max(v: i32): i32 {
+    if (v <= 0) { return 1; }
+    var best: i32 = 0;
+    var step: i32 = 1;
+    var k: i32 = 0;
+    while (k < 9) {
+        var cands: i32[] = [step, step * 2, step * 5];
+        var c: i32 = 0;
+        while (c < 3) {
+            if (cands[c] >= v && (best == 0 || cands[c] < best)) { best = cands[c]; }
+            c = c + 1;
+        }
+        step = step * 10;
+        k = k + 1;
+    }
+    if (best == 0) { return 2147483647; }
+    return best;
+}
+
+// --------------------------------------------------------------- tests
+
+// The sweep. Every value from 1 to 2 000, plus each decade boundary and the
+// values either side of it, must get the brute-force answer.
+function test_nice_max_agrees_with_brute_force(): test.TestOutcome {
+    var v: i32 = 1;
+    while (v <= 2000) {
+        if (nice_max(v) != bf_nice_max(v)) {
+            return test.fail("nice_max(" + v.to_string() + ") = "
+                + nice_max(v).to_string() + ", want " + bf_nice_max(v).to_string());
+        }
+        v = v + 1;
+    }
+    // Decade boundaries, where an off-by-one is invisible in a dense sweep of
+    // small numbers: exactly on, one below, one above.
+    var pow: i32 = 1;
+    var k: i32 = 0;
+    while (k < 8) {
+        var probes: i32[] = [pow - 1, pow, pow + 1, pow * 2 - 1, pow * 2, pow * 2 + 1,
+            pow * 5 - 1, pow * 5, pow * 5 + 1];
+        var i: i32 = 0;
+        while (i < probes.len()) {
+            if (probes[i] > 0 && nice_max(probes[i]) != bf_nice_max(probes[i])) {
+                return test.fail("nice_max(" + probes[i].to_string() + ") = "
+                    + nice_max(probes[i]).to_string() + ", want "
+                    + bf_nice_max(probes[i]).to_string());
+            }
+            i = i + 1;
+        }
+        pow = pow * 10;
+        k = k + 1;
+    }
+    return test.pass();
+}
+
+// An axis maximum is already round, so scaling it again must not move it.
+// This is the property that catches a `>` written for a `>=`.
+function test_nice_max_is_idempotent(): test.TestOutcome {
+    var v: i32 = 1;
+    while (v <= 3000) {
+        var once: i32 = nice_max(v);
+        if (nice_max(once) != once) {
+            return test.fail("nice_max not idempotent at " + v.to_string() + ": "
+                + once.to_string() + " -> " + nice_max(once).to_string());
+        }
+        if (once < v) {
+            return test.fail("nice_max(" + v.to_string() + ") = " + once.to_string()
+                + " does not contain its input");
+        }
+        v = v + 1;
+    }
+    return test.pass();
+}
+
+// Order-preservation. A scale that inverts or flattens any pair is unusable
+// however pretty the axis is, and truncation-vs-rounding cannot hide here.
+function test_bar_lengths_are_monotone(): test.TestOutcome {
+    var widths: i32[] = [1, 7, 20, 64, 100];
+    var w: i32 = 0;
+    while (w < widths.len()) {
+        var axis: i32 = 500;
+        var prev: i32 = 0;
+        var v: i32 = 0;
+        while (v <= axis) {
+            var cur: i32 = bar_len(v, axis, widths[w]);
+            if (cur < prev) {
+                return test.fail("bar_len fell at v=" + v.to_string() + " width="
+                    + widths[w].to_string() + ": " + prev.to_string() + " -> " + cur.to_string());
+            }
+            if (cur < 0 || cur > widths[w]) {
+                return test.fail("bar_len out of range at v=" + v.to_string() + ": "
+                    + cur.to_string() + " for width " + widths[w].to_string());
+            }
+            prev = cur;
+            v = v + 1;
+        }
+        w = w + 1;
+    }
+    return test.pass();
+}
+
+// The endpoints are exact, which is what stops a rounding scheme from
+// stealing or inventing a cell at the ends of the scale.
+function test_bar_length_endpoints_are_exact(): test.TestOutcome {
+    if (bar_len(0, 100, 40) != 0) { return test.fail("zero did not render an empty bar"); }
+    if (bar_len(100, 100, 40) != 40) { return test.fail("the axis maximum did not fill the field"); }
+    if (bar_len(50, 100, 40) != 20) {
+        return test.fail("half the axis gave " + bar_len(50, 100, 40).to_string() + ", want 20");
+    }
+    // Round half-up: 1/8 of a 4-wide field is 0.5 cells and must round to 1,
+    // where truncation gives 0.
+    if (bar_len(1, 8, 4) != 1) {
+        return test.fail("half a cell rounded down: " + bar_len(1, 8, 4).to_string());
+    }
+    // A value above the axis clamps rather than overflowing the field.
+    if (bar_len(999, 100, 40) != 40) { return test.fail("an over-axis value did not clamp"); }
+    // Degenerate inputs are answers, not crashes.
+    if (bar_len(5, 0, 40) != 0) { return test.fail("zero axis did not yield 0"); }
+    if (bar_len(5, 100, 0) != 0) { return test.fail("zero width did not yield 0"); }
+    if (bar_len(-5, 100, 40) != 0) { return test.fail("a negative value did not yield 0"); }
+    return test.pass();
+}
+
+// The alignment invariant. It holds only because the bars are ASCII, so byte
+// length is column width — the reason this file does not use block elements.
+function test_every_line_is_the_same_width(): test.TestOutcome {
+    var cases: string[] = ["a|bb|ccc", "one", "alpha|beta|gamma|delta|epsilon"];
+    var vals: i32[][] = [[1, 50, 300], [7], [0, 1, 99, 100, 1000]];
+    var c: i32 = 0;
+    while (c < cases.len()) {
+        var labels: string[] = cases[c].split("|");
+        var lines: string[] = chart(labels, vals[c], 30);
+        if (lines.len() != labels.len() + 2) {
+            return test.fail("wanted " + (labels.len() + 2).to_string()
+                + " lines, got " + lines.len().to_string());
+        }
+        var w: i32 = lines[0].len();
+        var i: i32 = 1;
+        while (i < lines.len()) {
+            if (lines[i].len() != w) {
+                return test.fail("line " + i.to_string() + " is " + lines[i].len().to_string()
+                    + " wide, line 0 is " + w.to_string());
+            }
+            i = i + 1;
+        }
+        c = c + 1;
+    }
+    return test.pass();
+}
+
+// The label column is exactly as wide as it needs to be — no wider (wasted
+// space) and no narrower (a long label would push its row out of alignment,
+// which the width test would then catch as a symptom rather than a cause).
+function test_label_column_fits_the_widest_label(): test.TestOutcome {
+    var labels: string[] = ["a", "medium", "the longest one"];
+    var lines: string[] = chart(labels, [1, 2, 3], 10);
+    var lw: i32 = max_len(labels);
+    var i: i32 = 0;
+    while (i < labels.len()) {
+        // The label is right-aligned, so it ends exactly at column lw.
+        var head: string = lines[i].take(lw).to_owned();
+        if (head.trim().to_owned() != labels[i]) {
+            return test.fail("row " + i.to_string() + " label column is \"" + head
+                + "\", want \"" + labels[i] + "\" right-aligned in " + lw.to_string());
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Every bar sits inside its field, so the framing characters land in the same
+// column on every row. Checked structurally rather than by eye.
+function test_bars_stay_inside_the_field(): test.TestOutcome {
+    var labels: string[] = ["a", "b", "c", "d"];
+    var width: i32 = 24;
+    var lines: string[] = chart(labels, [0, 1, 999, 500], width);
+    var lw: i32 = 1;
+    var i: i32 = 0;
+    while (i < labels.len()) {
+        var line: string = lines[i];
+        if (line[lw + 1] as i32 != 124) {
+            return test.fail("row " + i.to_string() + " has no opening bar at column "
+                + (lw + 1).to_string());
+        }
+        if (line[lw + 2 + width] as i32 != 124) {
+            return test.fail("row " + i.to_string() + " has no closing bar at column "
+                + (lw + 2 + width).to_string());
+        }
+        // Inside the field: only '#' then only ' '.
+        var seen_space: boolean = false;
+        var k: i32 = 0;
+        while (k < width) {
+            var ch: i32 = line[lw + 2 + k] as i32;
+            if (ch == 35) {
+                if (seen_space) {
+                    return test.fail("row " + i.to_string() + " has a gap inside its bar");
+                }
+            } else if (ch == 32) {
+                seen_space = true;
+            } else {
+                return test.fail("row " + i.to_string() + " has byte " + ch.to_string()
+                    + " inside the bar field");
+            }
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Scaling is driven by the largest value, so adding a row that does not
+// exceed it must not move any existing bar.
+function test_adding_a_smaller_row_does_not_rescale(): test.TestOutcome {
+    var before: string[] = chart(["a", "b"], [10, 100], 20);
+    var after: string[] = chart(["a", "b", "c"], [10, 100, 3], 20);
+    var i: i32 = 0;
+    while (i < 2) {
+        // Compare the bar fields, not the whole line: the label column widens
+        // by nothing here, but the row count differs, so only rows 0..1 are
+        // comparable and only up to their bar content.
+        if (before[i] != after[i]) {
+            return test.fail("row " + i.to_string() + " moved when a smaller row was added:\n"
+                + "  " + before[i] + "\n  " + after[i]);
+        }
+        i = i + 1;
+    }
+    // ... and a row that DOES exceed it must rescale.
+    var bigger: string[] = chart(["a", "b", "c"], [10, 100, 5000], 20);
+    if (bigger[0] == after[0]) {
+        return test.fail("a larger row did not rescale the chart");
+    }
+    return test.pass();
+}
+
+function test_degenerate_inputs(): test.TestOutcome {
+    if (chart([], [], 20).len() != 0) { return test.fail("empty input produced lines"); }
+    if (chart(["a"], [], 20).len() != 0) { return test.fail("mismatched lengths produced lines"); }
+    if (chart(["a"], [1], 0).len() != 0) { return test.fail("zero width produced lines"); }
+    // All zeros: an axis still has to exist, and no bar may be drawn.
+    var z: string[] = chart(["a", "b"], [0, 0], 10);
+    if (z.len() != 4) { return test.fail("all-zero chart had " + z.len().to_string() + " lines"); }
+    if (z[0].contains("#")) { return test.fail("a zero value drew a bar"); }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("barchart — ASCII bars, nice-number axis, automatic scaling");
+
+    var labels: string[] = ["apples", "bananas", "cherries", "dates", "elderberries"];
+    var values: i32[] = [420, 137, 890, 12, 655];
+    var lines: string[] = chart(labels, values, 40);
+    var i: i32 = 0;
+    while (i < lines.len()) { eprint(lines[i]); i = i + 1; }
+
+    eprint("");
+    eprint("axis for max=" + max_val(values).to_string() + " is " + nice_max(max_val(values)).to_string());
+    var probes: i32[] = [1, 3, 7, 12, 45, 99, 100, 101, 4999, 5000, 5001];
+    var p: i32 = 0;
+    var line: string = "nice_max:";
+    while (p < probes.len()) {
+        line = line + " " + probes[p].to_string() + "->" + nice_max(probes[p]).to_string();
+        p = p + 1;
+    }
+    eprint(line);
+
+    var r: test.TestRunner = test.test_new("barchart");
+    r = r.it("nice_max agrees with brute force", test_nice_max_agrees_with_brute_force);
+    r = r.it("nice_max is idempotent", test_nice_max_is_idempotent);
+    r = r.it("bar lengths are monotone", test_bar_lengths_are_monotone);
+    r = r.it("bar length endpoints are exact", test_bar_length_endpoints_are_exact);
+    r = r.it("every line is the same width", test_every_line_is_the_same_width);
+    r = r.it("label column fits the widest label", test_label_column_fits_the_widest_label);
+    r = r.it("bars stay inside the field", test_bars_stay_inside_the_field);
+    r = r.it("adding a smaller row does not rescale", test_adding_a_smaller_row_does_not_rescale);
+    r = r.it("degenerate inputs", test_degenerate_inputs);
+    return r.finish();
+}

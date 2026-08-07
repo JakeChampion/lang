@@ -11,9 +11,9 @@ import (
 
 // i64FieldWidthIRCases pin an i32 STRUCT FIELD or i32 TUPLE ELEMENT consumed in
 // an i64 arithmetic context (`s64 + p.x`, `s64 + t.0`) to the self-host IR path
-// on x86-64 + wasm. lower_i64's ExprFieldAccess arm previously lowered only i64
+// on x86-64 + wasm. lower_i64's ExprFieldAccess arm must not lower only i64
 // struct fields / i64 tuple elements (8-byte struct_get_i64 / tuple_get_w) and
-// bailed every other field via `return s.fail()`, dropping the whole module to
+// bail every other field via `return s.fail()`, dropping the whole module to
 // the legacy AST emitter. #2691 widens it: an i32/u32 struct field or tuple
 // element has its value lowered via lower_expr and sign/zero-extended to i64
 // (op_int_extend). The checker forbids i64 + u32 (E009), so a plain i32 member

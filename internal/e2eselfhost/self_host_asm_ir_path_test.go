@@ -246,10 +246,10 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// reads the buffer length. 3 bytes written -> len 3.
 		{"builtin-byteswriter", "function main(): i32 { var w: BytesWriter = BytesWriter { data: [] }; w = BytesWriter { ...w, data: w.data.append(65 as u8) }; w = BytesWriter { ...w, data: w.data.append(66 as u8) }; w = BytesWriter { ...w, data: w.data.append(67 as u8) }; return w.data.len(); }"},
 		// A FRESH scalar-array-returning CALL as a struct-lit field value (move):
-		// `S { data: gen() }` where gen(): i32[]. Previously only array literals /
-		// idents / field-copies / `.with`/`.append` clones were admitted; a plain
-		// array-returning call (expr_is_arr_src — an arr_ret_fn move source) now
-		// lowers, owned by the struct with no alias-inc. gen() = [3,4,5]; sum 12.
+		// `S { data: gen() }` where gen(): i32[]. A plain array-returning call
+		// (expr_is_arr_src — an arr_ret_fn move source) lowers alongside array
+		// literals / idents / field-copies / `.with`/`.append` clones, owned by
+		// the struct with no alias-inc. gen() = [3,4,5]; sum 12.
 		{"scalar-arr-call-field", "struct S { data: i32[] } function gen(): i32[] { var a: i32[] = []; a = a.append(3); a = a.append(4); a = a.append(5); return a; } function (x: S) sum(): i32 { var d: i32[] = x.data; var t: i32 = 0; var i: i32 = 0; while (i < d.len()) { t = t + d[i]; i = i + 1; } return t; } function main(): i32 { var x: S = S { data: gen() }; return x.sum(); }"},
 		// The std/stream `stream_from_string` shape: a string `.bytes()` call (a
 		// fresh u8[] move source) as a u8[] struct-lit field value. 65+66+67 = 198.
@@ -379,8 +379,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// the std/json `json_get` shape. The match binds `m` from the variant
 		// payload; marking the slot mark_map_type (the new is_map_type_name case in
 		// the payload-binding cascade) lets `m.get(k)` recover Option[V] and
-		// dispatch as a map op (previously `m` bound without its value type, so
-		// `m.get` bailed). Builds {k: JNumber("42")}, gets it back, reads len = 2.
+		// dispatch as a map op; without the value type `m.get` bails. Builds
+		// {k: JNumber("42")}, gets it back, reads len = 2.
 		{"map-enum-payload-get", "function jget(obj: JsonValue, key: string): Option[JsonValue] { match (obj) { JObject(m) => { match (m.get(key)) { Some(v) => { return Some(v); }, None => { return None; } } }, _ => { return None; } } return None; } function main(): i32 { var m: Map[string, JsonValue] = map_new(8); m = m.set(\"k\", JNumber(\"42\")); var o: JsonValue = JObject(m); match (jget(o, \"k\")) { Some(v) => { match (v) { JNumber(s) => { return s.len(); }, _ => { return 0; } } }, None => { return 99; } } return 0; }"},
 		// A Map[K, V]-RECEIVER method — the shape core/map's contains_value /
 		// get_or_insert / merge use. A Map receiver is now map-tracked (not
@@ -584,10 +584,9 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"tuple-destructure", `function main(): i32 { var (a, b) = (40, 2); return a + b; }`},
 		{"tuple-expr-elems", `function main(): i32 { var x = 5; var t = (x * 2, x + 1); return t.0 + t.1; }`},
 		// A tuple-returning function with a `boolean` element. tuple_elems_lowerable
-		// gated this on `"bool"`, but the type is spelled `boolean`, so a boolean
-		// element wrongly bailed the whole function to AST. (Construction + `.N` /
-		// destructure already treat a boolean as a scalar — only the return-type
-		// gate was wrong.)
+		// gate on `"boolean"`, not `"bool"`: the wrong spelling bails the whole
+		// function to AST. (Construction + `.N` / destructure already treat a
+		// boolean as a scalar; only the return-type gate needs it.)
 		{"tuple-bool-first", `function f(): (boolean, i32) { return (true, 7); } function main(): i32 { var t = f(); if (t.0) { return t.1; } return 0; }`},
 		{"tuple-bool-first-false", `function f(): (boolean, i32) { return (false, 7); } function main(): i32 { var t = f(); if (t.0) { return t.1; } return 99; }`},
 		{"tuple-bool-second", `function f(): (i32, boolean) { return (9, true); } function main(): i32 { var t = f(); if (t.1) { return t.0; } return 0; }`},
@@ -766,9 +765,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// UNION-type (`type Node = A | B`) variant payload binding (#3179). Each
 		// variant is a pre-existing struct (no synthetic `__ev` field), so the
 		// match arm binds the WHOLE scrutinee box pointer typed with the variant's
-		// struct name — a later `x.value` then resolves. Previously the `__ev`
-		// payload read bailed the whole module to AST; now it lowers through IR,
-		// mirroring the legacy AST emitter's union-member split (asm.fern:3685).
+		// struct name — a later `x.value` then resolves. An `__ev` payload read
+		// here would bail the whole module to AST.
 		{"union-eval", `struct Num { value: i32 } struct Add { left: i32, right: i32 } type Node = Num | Add; function eval(n: Node): i32 { match (n) { Num(x) => { return x.value; }, Add(a) => { return a.left + a.right; } } return 0; } function main(): i32 { return eval(Num { value: 7 }) * 100 + eval(Add { left: 3, right: 9 }); }`},
 		{"union-multifield", `struct Pt { x: i32, y: i32 } struct Pt3 { x: i32, y: i32, z: i32 } type V = Pt | Pt3; function sum(v: V): i32 { match (v) { Pt(p) => { return p.x + p.y; }, Pt3(q) => { return q.x + q.y + q.z; } } return 0; } function main(): i32 { return sum(Pt { x: 3, y: 4 }) * 100 + sum(Pt3 { x: 1, y: 2, z: 3 }); }`},
 		{"union-field-in-expr", `struct VInt { v: i32 } struct VStr { s: string } type Val = VInt | VStr; function size(x: Val): i32 { match (x) { VInt(i) => { return i.v * 2; }, VStr(s) => { return s.s.len() + 1; } } return -1; } function main(): i32 { return size(VInt { v: 20 }) + size(VStr { s: "abc" }); }`},
@@ -1183,8 +1181,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"map-without-strkey", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("a", 1); m = m.insert("b", 2); var (m2, e) = m.without("a"); return m2.len() + m2.get_or("b", 0); }`},
 		{"map-without-then-insert", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("a", 1); var (m2, e) = m.without("a"); m2 = m2.insert("c", 5); return m2.get_or("c", 0); }`},
 		// if-EXPRESSION in value position (#2938): the parser desugars it to a
-		// 0-arg IIFE that the IR path now inlines as a value-producing void `if`
-		// (a temp local per branch); previously the whole module bailed to AST.
+		// 0-arg IIFE that the IR path inlines as a value-producing void `if`
+		// (a temp local per branch).
 		{"ifexpr-var", `function main(): i32 { var x = 5; var y = if (x > 3) { 10 } else { 20 }; return y; }`},
 		{"ifexpr-else", `function main(): i32 { var x = 2; var y = if (x > 3) { 10 } else { 20 }; return y; }`},
 		{"ifexpr-return", `function main(): i32 { var x = 5; return if (x > 3) { 10 } else { 20 }; }`},
@@ -1522,8 +1520,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"opt-fncall-if-expr", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { var o = if (true) { mkO(7) } else { Some(0) }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`},
 		{"result-fncall-if-expr", `function div(a: i32, b: i32): Result[i32, i32] { if (b == 0) { return Err(1); } return Ok(a / b); } function main(): i32 { var r = if (true) { div(20, 4) } else { Err(9) }; match (r) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`},
 		// `for x in <u64[]>`: the element rides the i64 8-byte read but is bound
-		// u64, so body compares/shifts on it are unsigned. The IR path now lowers
-		// this (previously bailed to AST); both paths must agree, and the large
+		// u64, so body compares/shifts on it are unsigned. Both paths must
+		// agree, and the large
 		// element (> 2^63) makes a signed-vs-unsigned miscompile observable — a
 		// signed `>` would mis-order it, picking the wrong max.
 		{"u64-forin-sum", "function main(): i32 { var xs: u64[] = [10u64, 20u64, 5u64]; var s: u64 = 0u64; for x in xs { s = s + x; } return s as i32; }"},
@@ -1582,9 +1580,9 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 	// this is an eligibility + assembly guard over ~930 programs, which is what
 	// slice 5 needs kept green.
 	//
-	// It is NOT the behaviour-equivalence oracle it used to be, and that loss is
-	// real: a miscompile that changes an exit code now passes here. See the header
-	// for why there is nothing left to compare against.
+	// It is NOT a behaviour-equivalence oracle: a miscompile that changes an
+	// exit code passes here. See the header for why there is nothing left to
+	// compare against.
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			emitAndRun(t, tc.src, true)
@@ -1898,6 +1896,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"arr-slice-fern", `function main(): i32 { var a: i32[] = [10,20,30,40,50]; var b = a[1:4]; if (b.len() != 3) { return 1; } if (b[0] != 20) { return 2; } if (b[2] != 40) { return 3; } if (a[1] != 20) { return 4; } if (a.len() != 5) { return 5; } if (a[0:0].len() != 0) { return 6; } if (a[5:5].len() != 0) { return 7; } var f = a[0:5]; if (f.len() != 5) { return 8; } if (f[4] != 50) { return 9; } var s: string[] = ["aa","bbb","c"]; var t = s[1:3]; if (t.len() != 2) { return 10; } if (t[0] != "bbb") { return 11; } if (t[1] != "c") { return 12; } if (s[0] != "aa") { return 13; } return 33; }`, 33},
 		{"clocks-fern", `function main(): i32 { var t0: i64 = monotonic_ns(); var w: i64 = now_unix_ms(); var n: i64 = now_ns(); var t1: i64 = monotonic_ns(); if (t1 < t0) { return 1; } if (w < (1577836800000 as i64)) { return 2; } if (w > (4102444800000 as i64)) { return 3; } var nms: i64 = n / (1000000 as i64); var d: i64 = nms - w; if (d < (0 as i64)) { d = 0 - d; } if (d > (5000 as i64)) { return 4; } if (t0 > (4102444800000000000 as i64)) { return 5; } return 71; }`, 71},
 		{"clocks-no-heap", `function main(): i32 { var t: i64 = monotonic_ns(); if (t > (0 as i64)) { return 55; } return 1; }`, 55},
+		{"dirs-fern", `function main(): i32 { match (temp_dir("dirp")) { Ok(d) => { match (write_file(d + "/a.txt", "aa")) { Ok(_) => {}, Err(_) => { return 1; } } match (write_file(d + "/b.txt", "bb")) { Ok(_) => {}, Err(_) => { return 2; } } match (read_dir(d)) { Ok(ns) => { if (ns.len() != 2) { return 3; } var seen: i32 = 0; var i: i32 = 0; while (i < ns.len()) { if (ns[i] == "a.txt") { seen = seen + 1; } if (ns[i] == "b.txt") { seen = seen + 2; } if (ns[i] == ".") { return 4; } if (ns[i] == "..") { return 5; } i = i + 1; } if (seen != 3) { return 6; } }, Err(_) => { return 7; } } match (remove_dir_all(d)) { Ok(_) => {}, Err(_) => { return 8; } } match (read_dir(d)) { Ok(_) => { return 9; }, Err(_) => {} } match (remove_dir_all(d)) { Ok(_) => {}, Err(_) => { return 10; } } return 83; }, Err(_) => { return 11; } } }`, 83},
+		{"rmdirall-on-file", `function main(): i32 { match (temp_dir("rmf")) { Ok(d) => { match (write_file(d + "/f.txt", "z")) { Ok(_) => {}, Err(_) => { return 1; } } match (remove_dir_all(d + "/f.txt")) { Ok(_) => {}, Err(_) => { return 2; } } match (read_file(d + "/f.txt")) { Ok(_) => { return 3; }, Err(_) => {} } match (remove_dir_all(d)) { Ok(_) => {}, Err(_) => { return 4; } } return 84; }, Err(_) => { return 5; } } }`, 84},
 		{"arr-slice-oob-trap", `function main(): i32 { var a: i32[] = [1,2,3]; var k: i32 = 3; return a[0:k + 2].len(); }`, 134},
 		{"arr-slice-reversed-trap", `function main(): i32 { var a: i32[] = [1,2,3]; var k: i32 = 0; return a[k + 2:k + 1].len(); }`, 134},
 		{"stat-dir-and-missing", `function main(): i32 { match (stat("/tmp")) { Ok(d) => { if (d.is_file) { return 1; } if (!d.is_dir) { return 2; } match (stat("/tmp/fern_no_such_path_xyz")) { Ok(_) => { return 3; }, Err(e) => { match (e) { NotFound(_) => { return 37; }, _ => { return 4; } } } } }, Err(_) => { return 5; } } }`, 37},
@@ -2069,8 +2069,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 	// argument at a bare-typevar param lowers via lower_i64 (fn_param_sigs flag
 	// '5'), and an erased return mirroring that argument reads back full-width
 	// (the str_ret_fns argref resolution in infer_expr_width / lower_i64).
-	// Previously these bailed the module to the AST path; the exit codes pin
-	// the 8-byte round-trip (a truncation returns the 38 arm).
+	// The exit codes pin the 8-byte round-trip (a truncation returns the 38
+	// arm).
 	irOnly = append(irOnly, []struct {
 		name string
 		src  string

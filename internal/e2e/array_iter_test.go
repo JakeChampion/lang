@@ -9,8 +9,8 @@ import (
 // core/iter's ArrayIter (`iter.of`) makes the whole combinator library usable
 // on a plain array — and, via a map's `.keys()` / `.values()` snapshot, on map
 // keys and values. It is the stdlib's first PARAMETRIC impl of a GENERIC trait
-// (`impl[T] Iterator[T] for ArrayIter[T]`), which previously failed two ways:
-// the checker's conformance compare split a substituted `StructType("T")` from
+// (`impl[T] Iterator[T] for ArrayIter[T]`), which fails two ways if unguarded:
+// the checker's conformance compare splits a substituted `StructType("T")` from
 // the hoisted method's `ParamType("T")` (identical when printed), and the
 // monomorphiser never cloned a parametric-impl method reached ONLY through a
 // trait bound (`it.next()` inside `sum[I: Iterator[i32]]`), since no direct

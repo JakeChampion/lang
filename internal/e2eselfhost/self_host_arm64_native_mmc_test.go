@@ -97,9 +97,8 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 
 	// Pick programs spanning the emit surface: a trivial baseline
 	// + large programs with extensive stdlib transitive imports.
-	// The json + http suites previously OOM'd the native mmc at
-	// the 64-MiB heap that arm64's __fern_alloc reserved (vs 512
-	// MiB on x86) — they ride the gate post the heap-parity bump.
+	// The json + http suites OOM the native mmc at a 64-MiB heap
+	// (vs 512 MiB on x86), so they ride the gate at heap parity.
 	// The strings / string_prelude_migrated / process_assertions
 	// suites were once dropped for the args() rc-header corruption
 	// (argv strings allocated without an L2 header, so rc ops hit

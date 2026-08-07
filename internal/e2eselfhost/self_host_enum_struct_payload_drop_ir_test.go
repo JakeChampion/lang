@@ -13,7 +13,7 @@ import (
 // holds an rc-array field) is now RECURSIVELY reclaimed when the enum local is
 // consumed by its match — `__struct_drop_<Inner>` releases the payload's array
 // buffers, then the payload box is freed, instead of the whole enum bailing the
-// reclaim (the payload type was previously undroppable, so the box + payload leaked).
+// reclaim, which leaks the box + payload when the payload type is undroppable.
 //
 // SOUNDNESS: the consume gate (consumed_rcpayload_enum_frees) admits the enum only
 // when the struct payload was a FRESH struct LITERAL (variant_struct_payloads_fresh),
@@ -64,7 +64,7 @@ func TestSelfHostEnumStructPayloadDropIRX86_64(t *testing.T) {
 	// CHURN: 40M consume-by-match cycles over `Full(Inner{items:[..]})`. The payload
 	// is a fresh literal, so the deep-drop reclaims Inner.items + the Inner box + the
 	// enum box each iteration → bounded (exit 0). Asserts __struct_drop_Inner is
-	// emitted; previously the whole enum was undroppable and leaked → SIGKILL (137).
+	// emitted; an undroppable enum leaks until SIGKILL (137).
 	run(t, `struct Inner { items: i32[] }
 enum Box { Full(Inner), Empty }
 function mk(): i32 {

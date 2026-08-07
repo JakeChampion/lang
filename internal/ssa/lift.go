@@ -7,216 +7,14 @@ import (
 	"github.com/jakechampion/lang/internal/ir"
 )
 
-// LiftFromIR converts a legacy ir.Func into SSA form. The
-// supported subset grows incrementally; each follow-up PR
-// extends the switch + adds tests for the newly handled ops.
-//
-// Supported (cumulative):
-//
-//	Phase 1:
-//	- OpConstI32 / OpConstI64 → OpConstInt
-//	- OpAdd / OpSub / OpMul → matching SSA op
-//	- OpReturn → ret <value>
-//	- OpReturnVoid → ret
-//
-//	Phase 2:
-//	- Function params — minted via AddParam, addressed by
-//	  OpLoadLocal at slot indices [0, len(in.Params))
-//	- OpLoadLocal for param slots only (non-param locals
-//	  still rejected — they need phi insertion)
-//
-//	Phase 3a:
-//	- OpDivS / OpRemS → OpDiv / OpRem
-//	- OpAnd / OpOr / OpXor → matching SSA op
-//	- OpShl / OpShrS → OpShl / OpShr
-//	- OpNot → OpNot
-//	- OpEq / OpNe / OpLtS / OpLeS / OpGtS / OpGeS → matching SSA cmp
-//
-//	Phase 4:
-//	- OpCallDirect → OpCall with Str = callee name, Args = the
-//	  popped arguments.
-//
-//	Phase 5:
-//	- OpConstStr → OpConstString with Str = string literal.
-//
-//	Phase 6:
-//	- OpConstF32 / OpConstF64 → OpConstFloat (F64 carries the value)
-//	- OpFAdd / OpFSub / OpFMul / OpFDiv → matching SSA float op
-//	- OpFNeg → OpFNeg
-//	- OpFEq / OpFNe / OpFLt / OpFLe / OpFGt / OpFGe → matching SSA fcmp
-//
-//	Phase 7:
-//	- OpStoreLocal / OpTeeLocal / OpLoadLocal for the non-param
-//	  slot range.
-//	- OpDrop pops the top stack value without emitting an SSA op.
-//
-//	Phase 8a:
-//	- OpIf / OpElse / OpEnd for if/else control flow, BlockTypeVoid
-//	  only. Creates a diamond CFG (then, else, post); phi nodes
-//	  synthesised at the merge for any local slot whose value
-//	  differs between the two arms. Nested ifs are fine — the
-//	  scope stack handles them. OpReturn inside either arm is
-//	  also fine — the arm just doesn't flow into the merge.
-//
-//	Phase 8b:
-//	- OpIf with BlockTypeI32 / BlockTypeI64 / BlockTypeF32 /
-//	  BlockTypeF64 — the if is an expression. Both arms push
-//	  exactly one value before their closing OpElse/OpEnd; the
-//	  two values are merged via a phi at postB and pushed back
-//	  onto the operand stack. Requires both arms (no
-//	  OpElse-less form for non-void blocks).
-//
-//	Phase 9:
-//	- OpBlock (BlockTypeVoid only) opens a forward-only labelled
-//	  scope; OpEnd closes it. Without an OpBr inside, the lift
-//	  emits `br fall-through-block` and switches cur to it —
-//	  functionally a no-op CFG-wise but establishes the
-//	  scope-stack machinery that OpBr/OpBrIf will use to find
-//	  their target. Non-void OpBlock + OpBr/OpBrIf land in
-//	  follow-up PRs.
-//
-//	Phase 9b:
-//	- OpBr to an enclosing OpBlock scope. The current block's
-//	  terminator becomes `br target.postB`; the slot snapshot
-//	  + (for non-void scopes) the popped stack-top become a
-//	  branch source on the target scope, merged via phi at
-//	  scope close. cur is set to nil after the OpBr — subsequent
-//	  ops up to the matching OpEnd are unreachable and skipped
-//	  by the per-handler `if cur == nil` guard.
-//
-//	Phase 10:
-//	- OpBrIf to an enclosing OpBlock scope. The current block's
-//	  terminator becomes `brif cond, target.postB, fallthrough`;
-//	  a new fallthrough block becomes the active cur. The branch
-//	  source captures slots at the OpBrIf site for the merge phi
-//	  at scope close.
-//
-//	Phase 10c:
-//	- OpBr / OpBrIf may target an enclosing OpIf scope (in
-//	  addition to OpBlock). The endIfScope merge already
-//	  iterates brSources so the only change is dropping the
-//	  "OpBlock only" reject path.
-//
-//	Phase 11:
-//	- OpLoop (BlockTypeVoid only) opens a backward-only labelled
-//	  scope. The lift mints a `header` block and emits br cur →
-//	  header at the OpLoop, then eagerly creates a phi at the
-//	  header for every initialised slot (Args[0] = the pre-loop
-//	  value). Loads inside the loop see the phi; stores update
-//	  the slot to a new Value. OpBr / OpBrIf with this scope as
-//	  target branches to header (not postB) — each back-edge
-//	  appends the current slot Value to every header phi's Args.
-//	  OpEnd terminates the loop body with br to postB; cur =
-//	  postB. TrivialPhis later prunes any phi whose Args reduce
-//	  to a single distinct Value.
-//
-//	Phase 12:
-//	- OpLoad / OpStore memory access. The IR's bit-width metadata
-//	  is dropped on the lift (SSA OpLoad/OpStore are width-
-//	  agnostic for now). OpLoad pushes the result Value; OpStore
-//	  emits a side-effect-only Op with no Result. DCE keeps both
-//	  since they're impure.
-//
-//	Phase 13:
-//	- Integer width conversions:
-//	    OpExtendI32S → OpExtendS
-//	    OpExtendI32U → OpExtendU
-//	    OpWrapI64    → OpTrunc
-//
-//	Phase 14:
-//	- Float width + int↔float conversions:
-//	    OpFPromoteF32 → OpFPromote
-//	    OpFDemoteF64  → OpFDemote
-//	    OpFConvertI32/I64 → OpIToFS or OpIToFU (per Unsigned)
-//	    OpITruncF32/F64   → OpFToIS or OpFToIU (per Unsigned)
-//
-//	Phase 15:
-//	- Bit reinterpret ops (same-width float ↔ int):
-//	    OpReinterpretI32F32 → OpReinterpretF32ToI32
-//	    OpReinterpretF32I32 → OpReinterpretI32ToF32
-//	    OpReinterpretI64F64 → OpReinterpretF64ToI64
-//	    OpReinterpretF64I64 → OpReinterpretI64ToF64
-//
-//	Phase 16:
-//	- OpConstFunc → OpMakeClosure with zero captures (a static
-//	  {fn_idx, env_ptr=0} cell), Str = target name.
-//	- OpCallIndirect → OpCallIndirect with Args[0] = popped
-//	  callee index, Args[1..] = the popped argument values.
-//	  IR convention: the callee idx is the top of stack at
-//	  the OpCallIndirect site (pushed after the args).
-//
-//	Phase 17:
-//	- Option / Result constructors (i32 payload variants):
-//	    OpMakeSomeI32 → pop payload; push (const_int 0, payload)
-//	    OpMakeNoneI32 → push (const_int 1, const_int 0)
-//	    OpMakeOkI32   → pop payload; push (const_int 0, payload)
-//	    OpMakeErrI32  → pop payload; push (const_int 1, payload)
-//	  These leave 2 values on the operand stack (tag, payload).
-//
-//	Phase 18:
-//	- OpMatchTag — pops a heap-pointer scrutinee and pushes the
-//	  i32 variant tag stored at [ptr+0]. Lifts to ssa.OpLoad
-//	  (the backend lowering already treats it as a load at
-//	  offset 0).
-//	- OpCallClosureDirect — defunctionalised closure direct
-//	  call. Args layout: (args..., env_ptr); I32 = arg count
-//	  including env_ptr. Lifts to ssa.OpCall with Str = callee.
-//
-//	Phase 19:
-//	- OpMakeClosure → ssa.OpMakeClosure with Str = target name,
-//	  Args = the N captures (per op.I32).
-//	- OpMakeEnv → ssa.OpMakeEnv with Args = the N captures.
-//
-//	Phase 20:
-//	- OpReturnPair → SSA TermRetPair. Pops (tag, payload),
-//	  terminates the active block with the pair return.
-//
-//	Phase 21:
-//	- OpCallDirectPair → SSA OpCallPair with Str = callee,
-//	  Args = popped arguments, Result + Result2 = the
-//	  (tag, payload) pair pushed back onto the stack.
-//
-//	Phase 22:
-//	- Sub-i32 load/store variants:
-//	    OpLoadByte → OpLoad8U
-//	    OpStoreI8  → OpStore8
-//	  Load variants take (addr); push result. Stores take
-//	  (addr, val); no result.
-//
-//	Phase 23:
-//	- Float memory access:
-//	    OpFLoad  → OpLoadF
-//	    OpFStore → OpStoreF
-//
-//	Phase 24:
-//	- OpAlloc → ssa.OpAlloc (Args[0] = size; impure).
-//	- OpEnumSentinel → ssa.OpEnumSentinel with Imm = the tag
-//	  value (pure — CSE can dedupe).
-//
-// After Phase 24 the lift covers every real IR op kind. The
-// remaining OpKinds in ir.OpKind are OpInvalid (the zero
-// sentinel) — never emitted by a well-formed builder.
-//
-// Anything else returns an `unsupported op` error. OpBlock /
-// OpLoop / OpBr / OpBrIf, indirect calls, and the conversion
-// ops land in follow-up PRs.
-//
-// The legacy IR is a stack-machine encoding: every Op consumes
-// its operand-stack inputs and pushes its result. The lift
-// maintains a runtime stack of SSA Values mirroring that
-// shape — pop N for an N-arg op, push the new Result.
 // ssaHelperName maps a runtime-helper name the legacy IR emits onto the
 // equivalent this backend family actually provides.
 //
-// Only __fern_str_append needs it (#5637). On the reclaiming backends that
-// helper grows a uniquely-held accumulator in place, CONSUMING its left
-// operand — the IR suppresses the release that would otherwise pair with it.
-// The SSA backends allocate from a bump heap that never reclaims, so a plain
-// __str_concat is a correct implementation of the same contract: the result
-// bytes are identical, and the consumed operand is simply left behind, which
-// is what this heap does with every dead allocation anyway. Emitting the real
-// helper here would buy nothing (there are no size classes to have slack in)
-// and would require a third copy of it in each SSA backend.
+// Only __fern_str_append needs it (#5637): it grows a uniquely-held
+// accumulator in place, consuming its left operand, and the IR suppresses the
+// release that would otherwise pair with it. The SSA backends bump-allocate
+// and never reclaim, so __str_concat satisfies the same contract — identical
+// result bytes, with the consumed operand simply left behind.
 func ssaHelperName(name string) string {
 	if name == "__fern_str_append" {
 		return "__str_concat"
@@ -224,6 +22,17 @@ func ssaHelperName(name string) string {
 	return name
 }
 
+// LiftFromIR converts a legacy ir.Func into SSA form.
+//
+// The legacy IR is a stack-machine encoding: every Op consumes its
+// operand-stack inputs and pushes its result. The lift maintains a runtime
+// stack of SSA Values mirroring that shape — pop N for an N-arg op, push the
+// new Result. Control flow (OpIf / OpBlock / OpLoop and their branches) is
+// tracked on a scope stack, which is what lets a branch find its target block
+// and merge slot values into phis at the join.
+//
+// The switch below is the authoritative list of handled ops; anything else
+// returns an `unsupported op` error.
 func LiftFromIR(in *ir.Func) (*Func, error) {
 	if in == nil {
 		return nil, fmt.Errorf("ssa.LiftFromIR: nil func")
@@ -1360,8 +1169,8 @@ func (l *lifter) mergeSlotsViaPhi(postB *Block, sources []mergeSource) {
 		// slot was never stored. That edge is unreachable, so filling its phi
 		// arg with the entry-block undef keeps SSA well-formed (every predecessor
 		// gets an arg that dominates it) without changing behaviour on the
-		// reachable paths. Previously the merge gave up here and picked a single
-		// arm's value, producing a `ret`/use of a value defined on only one path.
+		// reachable paths. Picking a single arm's value instead would produce a
+		// `ret`/use of a value defined on only one path.
 		anyValid := false
 		for _, a := range args {
 			if a.IsValid() {

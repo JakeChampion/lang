@@ -173,8 +173,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 
 		// now_unix_ms() is an i64, so this composes the clock import with the
 		// wide `.to_string()` formatter ($__fern_i64_to_str, #5826) — the last
-		// per-function IR gap a component core hit. It used to be the one
-		// out-of-subset row here that had nothing to do with component mode.
+		// per-function IR gap a component core hit.
 		{"clock-tostring", true, `function main(): i32 { write(now_unix_ms().to_string()); return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/wall-clock@0.2.0 now"}},
 	} {

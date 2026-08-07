@@ -11,9 +11,9 @@ import (
 // `strbuf_append(s)` / `strbuf_take()` builtins — the global string-builder
 // primitive (the compiled backends back it with a 64 MiB BSS scratch buffer;
 // reset zeroes the length, append adds a string's bytes, take returns the
-// accumulated string and resets). The interpreter previously had no
-// implementation at all (`undefined function "strbuf_reset"`, exit 1), so a
-// program using strbuf could not run through the reference oracle even though
+// accumulated string and resets). Without an interpreter implementation
+// (`undefined function "strbuf_reset"`, exit 1) a program using strbuf
+// cannot run through the reference oracle even though
 // the checker knows the signatures and native / self-host IR implement them.
 //
 // Each case cross-checks the interpreter exit against the native x86-64 exit

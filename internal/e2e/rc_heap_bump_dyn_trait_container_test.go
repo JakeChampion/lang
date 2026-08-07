@@ -177,9 +177,9 @@ func TestArm64DynMultiTraitArrayHeapBumpBounded(t *testing.T) {
 // --- wasm -----------------------------------------------------------------
 
 // TestWASMDynShapeArrayHeapBumpBounded: the same proof on wasm (inline
-// two-word `dyn` elements). wasm previously ALSO leaked the array case (it
-// fell to the buffer-only __fern_arr_dec, same as the natives) — the
-// dedicated array-of-dyn drop fixes both; this guards the wasm side.
+// two-word `dyn` elements). Falling to the buffer-only __fern_arr_dec leaks
+// the array case on wasm exactly as on the natives; the dedicated
+// array-of-dyn drop covers both, and this guards the wasm side.
 func TestWASMDynShapeArrayHeapBumpBounded(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true

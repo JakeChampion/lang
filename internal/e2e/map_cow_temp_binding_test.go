@@ -189,7 +189,7 @@ func TestMapCowTempBindingNoUnderflowArm64(t *testing.T) {
 //
 // __heap_bump_bytes() is the bump allocator's high-water mark — what the
 // freelist could NOT recycle — so it is host-independent, unlike RSS (see
-// CLAUDE.md on the THP 12x spread).
+// docs/LOCAL-DEV-LOOP.md on the THP 12x spread).
 //
 // x86-64 ONLY. arm64 leaks ~42 B per string-keyed insert in the DIRECT form
 // too — measured on stock main at 4576 / 16352 / 66528 B for 100 / 400 / 1600

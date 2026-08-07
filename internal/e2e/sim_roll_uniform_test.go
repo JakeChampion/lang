@@ -1,8 +1,8 @@
 package e2e
 
-// std/sim's `__roll` maps its PRNG onto a range. It used to be a Park-Miller
-// step mapped with a bare `x % n` — biased toward small values whenever `n`
-// does not divide the generator's range, and reading exactly the low bits an
+// std/sim's `__roll` maps its PRNG onto a range. A Park-Miller step mapped
+// with a bare `x % n` is biased toward small values whenever `n` does not
+// divide the generator's range, and reads exactly the low bits an
 // LCG is worst at. It now takes one PCG32 step from std/rand and maps it with
 // Lemire's multiply-shift-and-reject (#6193).
 //

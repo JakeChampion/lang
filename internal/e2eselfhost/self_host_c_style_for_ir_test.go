@@ -10,8 +10,8 @@ import (
 
 // TestSelfHostCStyleForIR covers the C-style `for (var i = INIT; COND; STEP)`
 // loop through the self-hosted x86-64 compiler on the IR path. The self-host
-// Stmt union has no C-style-for node and previously misparsed `for (` as the
-// `for (k, v) in m` map form, segfaulting (#2820). The parser now desugars a
+// Stmt union has no C-style-for node, so `for (` must not misparse as the
+// `for (k, v) in m` map form and segfault (#2820). The parser desugars a
 // `var`-init C-style for to a scoped `while (true)` with a first-iteration
 // flag, so `continue` re-runs STEP (matching C semantics) instead of skipping
 // it — reusing if / while / break (no new node).

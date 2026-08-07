@@ -5868,11 +5868,9 @@ func fcOff(name string) int {
 //
 // The kernels are fdlibm's, and the accuracy is the point. Measured
 // against the correctly-rounded reference over 20k samples per range,
-// these land at <= 1 ulp; the Taylor kernels they replace measured 3.2e10
-// ulp (sin), 4.5e7 (exp) and 9844 (log). The "a few ulp" this comment used
-// to claim was wrong by ten orders of magnitude — reducing against a
-// single rounded pi/2 costs ~7 digits by |x| ~ 10, which is what the
-// Cody-Waite split below fixes.
+// these land at <= 1 ulp; Taylor kernels measure 3.2e10 ulp (sin), 4.5e7
+// (exp) and 9844 (log). Reducing against a single rounded pi/2 costs ~7
+// digits by |x| ~ 10, which is what the Cody-Waite split below fixes.
 //
 // x86-64's emitFloatTranscendentalsRuntime is the same algorithm with the
 // same constants in the same order, including `frintn` here against
@@ -11969,9 +11967,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// The guard branches all target `done` a few instructions ahead,
 		// so plain cbz/tbnz/b.lo are in range (no condBranchFar needed).
 		//
-		// Keep the helper emitted (it used to be gated off this op
-		// reaching the OpCallDirect switch): runtime helpers tail-call it
-		// and the RcFreeDebug `bl` below needs a target.
+		// Mark the helper used even though this op inlines it: runtime
+		// helpers tail-call it and the RcFreeDebug `bl` below needs a
+		// target.
 		if op.Kind == ir.OpRcInc {
 			g.usesRcInc = true
 		} else {

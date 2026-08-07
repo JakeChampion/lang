@@ -11,9 +11,9 @@ import (
 
 // lambdaLiftNestedIRCases exercise no-capture lambda CALLS nested inside compound
 // expressions — binary / unary / index — which the lambda-lift pre-pass now
-// reaches by recursing through those forms in lift_expr_walk. Previously
-// lift_expr_walk only descended into call-arg / array / struct-field / tuple /
-// callee positions, so a lambda call inside `(...) + 1`, `0 - (...)`, or `a[...]`
+// reaches by recursing through those forms in lift_expr_walk. Descending only
+// into call-arg / array / struct-field / tuple / callee positions leaves a
+// lambda call inside `(...) + 1`, `0 - (...)`, or `a[...]`
 // survived unlifted and the module bailed to the AST path.
 //
 // All lambdas here are no-capture (lifted to a top-level `__lam_N`); a capturing

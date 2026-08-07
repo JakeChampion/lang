@@ -11,7 +11,7 @@ import (
 // TestSelfHostMapI64ValueIRX86_64 gates 64-bit Map VALUES (i64 / u64) on the
 // self-host x86-64 IR path (#5253). The map stores its value column 8-byte
 // (movq / stride 8) and __fern_map_get returns the value full-width, but the IR
-// LOWERING previously handled the value as a single i32 word, so:
+// LOWERING must not handle the value as a single i32 word, or:
 //
 //  1. a wide i64/u64 value (`Map { 1: 5000000007 }`) lowered as op_const_i32 and
 //     TRUNCATED to 32 bits before the 8-byte store (stayed on IR, silently wrong);

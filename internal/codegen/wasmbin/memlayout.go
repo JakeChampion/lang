@@ -9,20 +9,10 @@ package wasmbin
 // SIZES, which is the point: the map is a chain, so two consumers cannot
 // name the same bytes.
 //
-// They used to be hand-picked `const …Addr = N` values spread across
-// runtime.go and wasi.go, and four addresses were claimed twice (#6229):
-// __fern_print's iovec sat on the rc-underflow counter and the heap-base
-// seed, its fd_write nwritten slot sat on the append-cliff counter, and the
-// cached instance-network borrow sat on the cliff's weight accumulator. Each
-// pair's comment asserted sole ownership and neither mentioned the other. So
-// `__heap_bump_bytes()` — which CLAUDE.md names as *the* way to measure a
-// Fern program's memory — returned garbage on wasm after any print, and both
-// rc diagnostics could report a large non-zero on a healthy run or be zeroed
-// back out on a broken one.
-//
-// That is the same failure mode as #6142, where the closure-cell pool grew
-// into the freelist heads; the regions above the table were made derived
-// then, and this finishes the job for the scratch window below it.
+// Hand-picked `const …Addr = N` values cannot hold this invariant: two of
+// them can silently name the same bytes, each asserting sole ownership
+// (#6229 collided four, #6142 grew the closure-cell pool into the freelist
+// heads). Add a slot by extending the chain, never by picking an address.
 
 // scratchBase is where the reserved window starts. Address 0 is unusable as
 // a heap pointer anyway (every rc helper treats it as null), so the scratch
@@ -83,8 +73,7 @@ const (
 	// networkHandleInitAddr / networkHandleAddr cache the
 	// wasi:sockets/instance-network borrow tcp_listen's start-bind step
 	// consumes. The handle is an opaque i32 where 0 is VALID, which is why
-	// it needs a separate init flag to mean "not yet fetched" — and that
-	// flag is what the cliff-weight accumulator used to overwrite.
+	// it needs a separate init flag to mean "not yet fetched".
 	networkHandleInitAddr = strIdxScratchAddr + 8
 	networkHandleAddr     = networkHandleInitAddr + 4
 
@@ -149,9 +138,8 @@ const allocMinStart = scratchEnd
 // empty. Only consulted when ast.RcFreeEnabled; the flag-off allocator never
 // touches it.
 //
-// Derived rather than fixed at 256: the comment on the old constant claimed
-// the scratch "tops out at 92", which was already wrong when mapHashSeedAddr
-// took 96, and would have gone on being wrong for every slot added after.
+// Derived rather than fixed: any constant here encodes a scratch size that
+// the next slot added above invalidates.
 const freelistHeadsAddr = (scratchEnd + 7) &^ 7
 
 // Freelist class geometry. The heads table holds `freelistClasses` i32 slots

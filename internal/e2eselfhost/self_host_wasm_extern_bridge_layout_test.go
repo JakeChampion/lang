@@ -158,8 +158,8 @@ function on_request(x: i32): void { return; }`,
 // TestSelfHostWasmVariantF32ArmMatchIR pins the irlower fix the f32-arm WIT
 // variant surfaced, with no WIT involved: an f32 enum payload is CONSTRUCTED
 // widened to an 8-byte f64 (op_struct_new's f64.store), so the match arm must
-// read it back with f64.load. It used to read the low half with i32.load, which
-// made `x == 2.5` simply false. Runs under wasmtime, so the assertion is the
+// read it back with f64.load; reading the low half with i32.load makes
+// `x == 2.5` simply false. Runs under wasmtime, so the assertion is the
 // answer rather than the instruction selection.
 func TestSelfHostWasmVariantF32ArmMatchIR(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
