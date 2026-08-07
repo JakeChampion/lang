@@ -300,3 +300,42 @@ entry, or import a specific generated `.fern` instead).
 - The chunk grammar uses the `<<name>>` delimiters from `noweb`/WEB.
   A whole-line literal `<<name>>` is written `\<<name>>` (see Escaping
   above); `<<` / `>>` elsewhere on a line are never treated as markers.
+
+## Implementation map
+
+The engine is `internal/literate`: `Parse` → `Document`; `(*Document).Tangle`
+expands the root chunk `<<*>>` and returns generated Fern source plus a per-line
+provenance map; `(*Document).Weave` renders the cross-referenced Markdown.
+
+Multi-module documents live in `internal/literate/tanglefiles.go`: `TangleFiles`
+returns one `FileResult{Path, Code, LineMap, IsEntry}` per output path, and
+`EntryFile` resolves the compile entry. `expandBody` / `expandChunk` are the
+shared recursion behind both `Tangle` (root chunk) and `TangleFiles` (file-root
+bodies).
+
+On the CLI side (`cmd/fern/main.go`): `loadEntry` tangles a `.fern.md` entry in
+memory before the normal compile / `-check` / `-interp` pipeline, and
+`loadMultiFileEntry` feeds every generated module to `modload.LoadWith` as
+virtual-file overrides (keyed by path relative to the document dir), loading from
+the entry.
+
+Importing a literate library goes through `modload.readModuleSource`, which falls
+back to a sibling `.fern.md` when a `.fern` import target is missing and tangles
+it; `LoadWithLiterate` returns the per-module `LiterateModule{DocPath, DocSrc,
+LineMap}` provenance, so the CLI's `entry.remaps` (a per-module
+`litRemap{docPath, docSrc, remap}`) maps an imported library's diagnostics onto
+*its* document. Diagnostics are rendered through `diag.FormatRemapped`, the
+literate-only sibling of `diag.Format`.
+
+## Maintaining this
+
+Coverage lives in `internal/literate/*_test.go` (including
+`tanglefiles_test.go`), the `diag` `FormatRemapped` tests, and
+`internal/e2e/literate_test.go` + `literate_multifile_test.go` (interp + tangle
++ weave, plus the single- and multi-file diagnostic-remap contracts). Examples:
+`examples/literate/fizzbuzz.fern.md` (single root) and `multi_module.fern.md`
+(multi-file).
+
+When extending the chunk grammar or the remap, add cases at the layer you
+touched. **The diagnostic remap — generated line → document line — is the most
+regression-prone surface here**, so it is the one to cover first.

@@ -522,7 +522,7 @@ const (
 	// than a direct symbol reference.
 	//
 	// The shapes are the ones from the closure-dispatch cluster
-	// CLAUDE.md names — #5001 / #5007 / #5009 / #5026, escaping and
+	// docs/TEST-GATES.md names — #5001 / #5007 / #5009 / #5026, escaping and
 	// array-held closures that lowered fine and then SIGSEGV'd or
 	// silently miscompiled. Every one was found by a HAND-WRITTEN
 	// probe, because the generator could not produce a function

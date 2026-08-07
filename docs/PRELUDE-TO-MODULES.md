@@ -350,3 +350,27 @@ followed to the end). Covered end-to-end by the self-host IR e2e gates
 `TestSelfHostPubUseModloadX86_64` (x86-64) and
 `TestWasmSelfHostPubUseReexport` (wasm), mirroring the native
 `internal/e2e/pub_use_test.go`.
+
+## How loading works now (post-Phase 5 summary)
+
+There is no prelude injector anymore — a program sees only what it `import`s.
+
+`modload` loads each imported `std/` / `core/` module (and its transitive
+imports), mangles non-entry decls to `<mod>__name`, and rewrites qualified call
+sites. `ast.Program.LoadedStdlibPaths` records what was loaded, so a module
+pulled in twice (directly + transitively) dedupes rather than redeclaring its
+methods.
+
+That dedupe also closed an older bug: an explicit `import "std/foo";` of a
+module that transitively imports another (e.g. `std/json` → `core/int`) sent
+bare-name method dispatch (`(n).to_string()`) through the mangled
+`int__int_to_string` name and crashed the interpreter with "cast from
+interp.Array to i32 not supported". It is fixed and guarded by
+`TestInterpScriptInteropIntToStringViaMangling`
+(`internal/e2e/interp_script_test.go`), which exercises the explicit-import,
+transitive-import, and qualified-call shapes. Extend it if you touch the
+mangling / alias path.
+
+In-memory source (stdin, REPL, the wasm playground bundle) loads through
+`modload.LoadSource`, not bare `parser.Parse`, so those paths resolve stdlib
+imports the same way the file-based driver does.

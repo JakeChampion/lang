@@ -204,6 +204,42 @@ Worth knowing so you do not assume coverage you do not have:
    a name in `.github/` that resolves to no test; when you retire a test, run
    it before assuming the workflows followed.
 
+## The IR path-probe tells you WHERE, never whether it is RIGHT
+
+Route a probe program through the single-program path-probe driver
+(`asm_pathprobe_run.fern`) and it prints `ir` or `ast`. Two ways that misleads.
+
+**A bare `ast` verdict is not proof of a gap.** The driver routes *invalid*
+programs to `ast` too. Always confirm the probe is **native-valid first**
+(`go build -o /tmp/fern ./cmd/fern && /tmp/fern -interp prog.fern`) before
+treating a bail as a real gap. Three filed issues were wrong for exactly this
+reason. The single-program drivers now WARN on stderr when a program has imports
+they cannot resolve (#6004); that warning means the verdict describes a broken
+program and says nothing about the language.
+
+Most apparent "gaps" are invalid programs:
+
+- **Wrong keyword** — match guards are `when`, not `if`.
+- **Checker-rejected** — a bare-ident arm on a SCALAR match is E035; i32 matches
+  accept only literals or `_`.
+- **Parse errors** — an arrow lambda takes an EXPRESSION body, not a block, and
+  **every parameter must be type-annotated**: `(x: i32) => x+1`. Both
+  `(x) => x+1` and `(x: i32) => { … }` are P001. The annotation is what tells the
+  parser it is looking at a lambda rather than a parenthesized expression or a
+  tuple literal, decided before the matching `)` is reached. `function(x: i32):
+  i32 { … }` is the block-bodied form. (`spec/grammar.ebnf` claimed the
+  annotation was optional until the grammar was corrected to match.)
+- **Missing imports** — the path-probe driver resolves no stdlib, so anything
+  needing `std/iter` / `std/map` / … falsely reads `ast`.
+
+**And a green `ir` verdict says nothing about runtime correctness.** Differential
+probing (native `-interp` exit code vs the self-host-IR-compiled binary's) found
+a whole closure-dispatch bug cluster this methodology misses — escaping-closure /
+closure-array shapes that lowered on the IR path but SIGSEGV'd or silently
+miscompiled at runtime (#5001 / #5007 / #5009 / #5026, plus the param / branch /
+transitive / direct-index fixes). Probe for the path, then probe differentially
+for the answer.
+
 ## Diagnostic modes
 
 When a gate fails and the failure is a heap corruption rather than a wrong

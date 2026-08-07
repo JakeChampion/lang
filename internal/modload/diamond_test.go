@@ -10,7 +10,7 @@ package modload_test
 //	     c          (b also imports c)
 //
 // `c` is reachable two ways from main (directly, and transitively
-// through b). CLAUDE.md calls this the regression-prone path: the
+// through b). docs/PRELUDE-TO-MODULES.md calls this the regression-prone path: the
 // loader has to recognise it's already loaded `c` and dedupe, rather
 // than combine its decls twice (which would produce a duplicate
 // `c__shared` in prog.Funcs and a "redeclared" explosion downstream).

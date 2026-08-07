@@ -15,7 +15,7 @@ package wasmbin
 // seed, its fd_write nwritten slot sat on the append-cliff counter, and the
 // cached instance-network borrow sat on the cliff's weight accumulator. Each
 // pair's comment asserted sole ownership and neither mentioned the other. So
-// `__heap_bump_bytes()` — which CLAUDE.md names as *the* way to measure a
+// `__heap_bump_bytes()` — which docs/LOCAL-DEV-LOOP.md names as *the* way to measure a
 // Fern program's memory — returned garbage on wasm after any print, and both
 // rc diagnostics could report a large non-zero on a healthy run or be zeroed
 // back out on a broken one.
